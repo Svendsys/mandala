@@ -4,3 +4,10 @@ dist = "dist"
 
 [watch]
 watch = ["src", "lib", "web"]
+
+[serve]
+# Picked to dodge the common dev-server defaults (3000, 4200, 5000,
+# 5173, 8000, 8080, 8888, 9000, 9090) so `trunk serve` doesn't clash
+# with whatever else the developer has running. Override with
+# `trunk serve --port <N>` for a one-off.
+port = 41815
