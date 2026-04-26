@@ -367,7 +367,7 @@ fn execute_label(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         if !any_applied {
             return ExecResult::err(messages.join("; "));
         }
-        return ExecResult::Lines(messages);
+        return ExecResult::lines(messages);
     }
     if any_applied {
         ExecResult::ok_msg("label applied")

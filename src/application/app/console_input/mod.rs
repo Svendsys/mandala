@@ -34,6 +34,18 @@ pub(in crate::application::app) fn scroll_console_by_lines(
     edit::scroll_by_lines(state, delta);
 }
 
+/// Pure accumulator: fold a wheel delta into the running fractional
+/// residue and return the integer line steps to apply. The event
+/// loop calls this on every wheel event so slow scrolls accumulate
+/// across ticks instead of rounding to zero.
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::application::app) fn accumulate_wheel_lines(
+    accum: &mut f32,
+    dy: f32,
+) -> i32 {
+    edit::accumulate_wheel_lines(accum, dy)
+}
+
 use crate::application::console::{ConsoleLine, ConsoleState};
 use crate::application::document::MindMapDocument;
 use crate::application::keybinds::ResolvedKeybinds;

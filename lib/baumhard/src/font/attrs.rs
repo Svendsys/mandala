@@ -129,4 +129,73 @@ mod tests {
         let list = attrs_list_from_regions(&regions, &mut fs);
         assert_eq!(list.spans().len(), 2);
     }
+
+    /// A region pinned to a real loaded `AppFont` emits a span
+    /// whose `family_owned` is `Name(<family-name>)` — pinning the
+    /// data-model → renderer end-to-end resolution path that the
+    /// `font set` feature relies on. Regression guard against the
+    /// silent-no-op bug the tree-builder fix closed.
+    #[test]
+    fn test_attrs_list_pins_family_name_when_region_carries_app_font() {
+        use cosmic_text::FamilyOwned;
+
+        crate::font::fonts::init();
+        // Pick a real loaded family + its AppFont.
+        let family = crate::font::fonts::loaded_families_iter()
+            .next()
+            .expect("at least one loaded family");
+        let app_font = crate::font::fonts::app_font_by_family(family)
+            .expect("first family must round-trip");
+        let mut regions = ColorFontRegions::new_empty();
+        regions.submit_region(ColorFontRegion::new(
+            Range::new(0, 4),
+            Some(app_font),
+            Some([1.0, 1.0, 1.0, 1.0]),
+        ));
+        // Use the *global* FONT_SYSTEM so the lookup actually
+        // finds the bundled fonts — `FontSystem::new()` would
+        // start empty and fall back to monospace, missing the
+        // contract we're trying to pin.
+        let mut fs = crate::font::fonts::acquire_font_system_write(
+            "attrs_tests::test_attrs_list_pins_family_name_when_region_carries_app_font",
+        );
+        let list = attrs_list_from_regions(&regions, &mut fs);
+        let spans = list.spans();
+        assert_eq!(spans.len(), 1, "one region → one span");
+        match &spans[0].1.family_owned {
+            FamilyOwned::Name(name) => {
+                assert_eq!(name.as_str(), family);
+            }
+            other => panic!(
+                "expected Family::Name({:?}), got {:?}",
+                family, other
+            ),
+        }
+    }
+
+    /// `resolve_font_family` returns `None` for a region without a
+    /// font id; the calling path then pins `Family::Monospace` per
+    /// the §9 fallback policy. The test pins both halves: the
+    /// helper's `None` return *and* the resulting span's
+    /// `Family::Monospace`.
+    #[test]
+    fn test_attrs_list_falls_back_to_monospace_when_region_has_no_font() {
+        use cosmic_text::FamilyOwned;
+
+        let mut regions = ColorFontRegions::new_empty();
+        regions.submit_region(ColorFontRegion::new(
+            Range::new(0, 4),
+            None,
+            Some([0.0, 0.0, 0.0, 1.0]),
+        ));
+        let mut fs = FontSystem::new();
+        let list = attrs_list_from_regions(&regions, &mut fs);
+        let spans = list.spans();
+        assert_eq!(spans.len(), 1);
+        // Monospace is the documented fallback.
+        match &spans[0].1.family_owned {
+            FamilyOwned::Monospace => {}
+            other => panic!("expected Family::Monospace, got {:?}", other),
+        }
+    }
 }

@@ -13,8 +13,8 @@ use cosmic_text::SwashCache;
 use crate::font::fonts;
 use crate::font::fonts::{
     acquire_font_system_write, acquire_font_system_write_with_timeout,
-    app_font_by_family, list_loaded_families, measure_glyph_ink_bounds,
-    measure_text_block_unbounded, AppFont, FONT_SYSTEM,
+    app_font_by_family, list_loaded_families, loaded_families_iter,
+    measure_glyph_ink_bounds, measure_text_block_unbounded, AppFont, FONT_SYSTEM,
 };
 
 #[test]
@@ -307,18 +307,36 @@ fn test_app_font_by_family_round_trips() {
     do_app_font_by_family_round_trips();
 }
 
-/// Every family name from `list_loaded_families` resolves back to
+/// Every family name from `loaded_families_iter` resolves back to
 /// some `AppFont` via `app_font_by_family`. This is the
 /// round-trip contract `font set <name>` relies on: a name picked
 /// from the popup must always resolve when the user submits it.
 pub fn do_app_font_by_family_round_trips() {
     fonts::init();
-    for family in list_loaded_families() {
+    for family in loaded_families_iter() {
         assert!(
-            app_font_by_family(&family).is_some(),
+            app_font_by_family(family).is_some(),
             "family '{}' should resolve to some AppFont",
             family
         );
+    }
+}
+
+#[test]
+fn test_loaded_families_iter_matches_owned_list() {
+    do_loaded_families_iter_matches_owned_list();
+}
+
+/// `loaded_families_iter` yields the same names, in the same
+/// order, as the owned `list_loaded_families` helper — the iterator
+/// helper is a zero-allocation alternative, not a different shape.
+pub fn do_loaded_families_iter_matches_owned_list() {
+    fonts::init();
+    let owned = list_loaded_families();
+    let borrowed: Vec<&'static str> = loaded_families_iter().collect();
+    assert_eq!(owned.len(), borrowed.len());
+    for (a, b) in owned.iter().zip(borrowed.iter()) {
+        assert_eq!(a, b);
     }
 }
 

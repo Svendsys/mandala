@@ -226,7 +226,7 @@ pub(super) fn finalize_report(
         return ExecResult::err(report.messages.join("; "));
     }
     if !report.messages.is_empty() {
-        return ExecResult::Lines(report.messages);
+        return ExecResult::lines(report.messages);
     }
     if report.any_applied {
         ExecResult::ok_msg(format!("{} applied", verb))

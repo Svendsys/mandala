@@ -64,11 +64,11 @@ pub trait AcceptsWheelColor {
 
 /// Target supports being told "use this font family" — the
 /// channel-less companion of [`AcceptsWheelColor`]. The console's
-/// `font set <name>` verb pushes one family-name string at the
+/// `font set <name>` verb pushes one family-name choice at the
 /// selection and asks each component type to decide which channel
 /// the font choice belongs on.
 ///
-/// Per-variant routing (Step 3 of the font plan):
+/// Per-variant routing:
 /// - **Node** writes every `TextRun.font` (the node has no
 ///   per-channel font split today).
 /// - **Edge** writes `glyph_connection.font`.
@@ -81,16 +81,18 @@ pub trait AcceptsWheelColor {
 ///   the edge body's font. A future commit can add per-channel
 ///   slots when the graphical font picker calls for it.
 ///
-/// `family` is the family-name string the data model stores
-/// (`TextRun.font` / `GlyphConnectionConfig.font`), as listed by
-/// `baumhard::font::fonts::list_loaded_families`. Validation —
-/// "is this a loaded font?" — is the caller's job: by the time
-/// the trait runs, the value has been picked from the same list.
-/// `Outcome::Invalid` is reserved for programmatic callers that
-/// bypass validation; the console verb rejects unknown families
-/// upstream with a helpful message.
+/// `family` is `Some(name)` to pin a specific family or `None` to
+/// clear the override (channel falls back to its data-model
+/// default). `name` is the family-name string the data model
+/// stores, as listed by `baumhard::font::fonts::loaded_families_iter`.
+/// Validation — "is this a loaded font?" — is the caller's job:
+/// the console verb rejects unknown families upstream with a
+/// helpful message before the trait runs. Callers that bypass that
+/// check (programmatic apply_to_targets users) will land an
+/// unknown family in the data model, which the renderer's attrs
+/// builder degrades to monospace with a `warn!`.
 pub trait AcceptsFontFamily {
-    fn set_font_family(&mut self, family: &str) -> Outcome;
+    fn set_font_family(&mut self, family: Option<&str>) -> Outcome;
 }
 
 /// Target supports producing a text representation when the user

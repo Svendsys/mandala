@@ -150,17 +150,19 @@ fn complete_font(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completi
 /// Build font-family completions: one entry per loaded family
 /// whose name starts with `partial` (case-insensitive). Each entry
 /// carries `font_family = Some(<name>)` so the popup row shapes the
-/// candidate label in that very face.
+/// candidate label in that very face. Streams from
+/// [`baumhard::font::fonts::loaded_families_iter`] so the
+/// keystroke-hot path doesn't allocate a fresh `Vec<String>` per
+/// call.
 fn font_family_completions(partial: &str) -> Vec<Completion> {
     let partial_lc = partial.to_ascii_lowercase();
-    baumhard::font::fonts::list_loaded_families()
-        .into_iter()
+    baumhard::font::fonts::loaded_families_iter()
         .filter(|f| f.to_ascii_lowercase().starts_with(&partial_lc))
         .map(|family| Completion {
-            text: family.clone(),
-            display: family.clone(),
+            text: family.to_string(),
+            display: family.to_string(),
             hint: None,
-            font_family: Some(family),
+            font_family: Some(family.to_string()),
         })
         .collect()
 }
@@ -280,7 +282,7 @@ fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             if let Some(m) = applicable_msg {
                 lines.push(m);
             }
-            ExecResult::Lines(lines)
+            ExecResult::lines(lines)
         }
         SelectionState::Edge(er) => {
             let changed = doc.set_edge_font(&er, size, min, max);
@@ -332,7 +334,7 @@ fn node_font_outcome(
         if !any_applied {
             return ExecResult::err(messages.join("; "));
         }
-        return ExecResult::Lines(messages);
+        return ExecResult::lines(messages);
     }
     if any_applied {
         ExecResult::ok_msg("font applied")
@@ -378,12 +380,12 @@ fn execute_font_set(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             family
         ));
     }
-    let report = apply_to_targets(eff.document, |view| view.set_font_family(&family));
+    let report = apply_to_targets(eff.document, |view| view.set_font_family(Some(&family)));
     if report.all_failed {
         return ExecResult::err(report.messages.join("; "));
     }
     if !report.messages.is_empty() {
-        return ExecResult::Lines(report.messages);
+        return ExecResult::lines(report.messages);
     }
     if report.any_applied {
         ExecResult::ok_msg(format!("font set: {}", family))
@@ -394,17 +396,17 @@ fn execute_font_set(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
 
 /// `font list` — emit one scrollback line per loaded family, each
 /// pinned to render in its own face (so a long list is a
-/// font-by-font preview).
+/// font-by-font preview). Streams from `loaded_families_iter` so
+/// no intermediate `Vec<String>` allocates.
 fn execute_font_list(_args: &Args) -> ExecResult {
-    let families = baumhard::font::fonts::list_loaded_families();
-    if families.is_empty() {
+    use crate::application::console::OutputLine;
+    let lines: Vec<OutputLine> = baumhard::font::fonts::loaded_families_iter()
+        .map(|name| OutputLine::in_font(name, name))
+        .collect();
+    if lines.is_empty() {
         return ExecResult::err("font: no fonts loaded");
     }
-    let lines: Vec<(String, Option<String>)> = families
-        .into_iter()
-        .map(|name| (name.clone(), Some(name)))
-        .collect();
-    ExecResult::LinesWithFonts(lines)
+    ExecResult::Lines(lines)
 }
 
 #[cfg(test)]
@@ -442,15 +444,16 @@ mod tests {
         baumhard::font::fonts::init();
         let mut doc = fixture_doc();
         match run("font list", &mut doc) {
-            ExecResult::LinesWithFonts(rows) => {
-                let families = baumhard::font::fonts::list_loaded_families();
+            ExecResult::Lines(rows) => {
+                let families: Vec<&'static str> =
+                    baumhard::font::fonts::loaded_families_iter().collect();
                 assert_eq!(rows.len(), families.len());
-                for (i, (text, family)) in rows.iter().enumerate() {
-                    assert_eq!(text, &families[i]);
-                    assert_eq!(family.as_deref(), Some(families[i].as_str()));
+                for (i, line) in rows.iter().enumerate() {
+                    assert_eq!(line.text, families[i]);
+                    assert_eq!(line.font_family.as_deref(), Some(families[i]));
                 }
             }
-            other => panic!("expected LinesWithFonts, got {:?}", other),
+            other => panic!("expected Lines, got {:?}", other),
         }
     }
 
@@ -540,7 +543,11 @@ mod tests {
         );
         match run(&format!("font set {}", family), &mut doc) {
             ExecResult::Lines(msgs) => {
-                let all = msgs.join("\n");
+                let all = msgs
+                    .iter()
+                    .map(|l| l.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n");
                 assert!(all.contains("not applicable"));
             }
             ExecResult::Err(s) => {
@@ -556,6 +563,151 @@ mod tests {
         match run("font frobnicate", &mut doc) {
             ExecResult::Err(s) => assert!(s.contains("unknown subverb")),
             other => panic!("expected Err, got {:?}", other),
+        }
+    }
+
+    /// Multi-node selection fans out across every node and writes
+    /// the family on each — the trait dispatcher's
+    /// `apply_to_targets` path. Pre-fix, only `Single` was tested,
+    /// so the fanout aggregation was effectively dead code.
+    #[test]
+    fn set_on_multi_node_selection_writes_every_node() {
+        let family = first_loaded_family();
+        let mut doc = fixture_doc();
+        // Pick the first three node ids in the testament map.
+        let ids: Vec<String> = doc
+            .mindmap
+            .nodes
+            .keys()
+            .take(3)
+            .cloned()
+            .collect();
+        assert_eq!(ids.len(), 3, "testament map must have ≥3 nodes");
+        doc.selection = SelectionState::Multi(ids.clone());
+        match run(&format!("font set {}", family), &mut doc) {
+            ExecResult::Ok(_) | ExecResult::Lines(_) => {}
+            other => panic!("expected Ok / Lines, got {:?}", other),
+        }
+        for id in &ids {
+            let node = doc
+                .mindmap
+                .nodes
+                .get(id)
+                .expect("multi-selection ids exist in the doc");
+            for run in &node.text_runs {
+                assert_eq!(run.font, family, "every run on every node should be pinned");
+            }
+        }
+    }
+
+    /// Edge selection writes `glyph_connection.font`. Smoke-tests
+    /// the `TargetView::Edge` arm of the trait — pre-fix the path
+    /// existed but had no integration test through the console verb.
+    #[test]
+    fn set_on_edge_selection_writes_glyph_connection_font() {
+        let family = first_loaded_family();
+        let mut doc = fixture_doc();
+        let edge = doc
+            .mindmap
+            .edges
+            .first()
+            .expect("testament map has at least one edge")
+            .clone();
+        let er = crate::application::document::EdgeRef::new(
+            edge.from_id.clone(),
+            edge.to_id.clone(),
+            edge.edge_type.clone(),
+        );
+        doc.selection = SelectionState::Edge(er.clone());
+        match run(&format!("font set {}", family), &mut doc) {
+            ExecResult::Ok(_) => {}
+            other => panic!("expected Ok, got {:?}", other),
+        }
+        let idx = doc.edge_index(&er).expect("edge resolves");
+        assert_eq!(
+            doc.mindmap.edges[idx]
+                .glyph_connection
+                .as_ref()
+                .and_then(|c| c.font.as_deref()),
+            Some(family.as_str()),
+        );
+    }
+
+    /// PortalLabel selection routes through the edge body's font —
+    /// the icon shares the edge's `glyph_connection.font` slot, same
+    /// routing the existing `font size=` uses.
+    #[test]
+    fn set_on_portal_label_routes_to_edge_glyph_connection() {
+        use crate::application::document::PortalLabelSel;
+        use baumhard::mindmap::scene_cache::EdgeKey;
+
+        let family = first_loaded_family();
+        let mut doc = fixture_doc();
+        let edge = doc
+            .mindmap
+            .edges
+            .first()
+            .expect("testament map has at least one edge")
+            .clone();
+        let er = crate::application::document::EdgeRef::new(
+            edge.from_id.clone(),
+            edge.to_id.clone(),
+            edge.edge_type.clone(),
+        );
+        doc.selection = SelectionState::PortalLabel(PortalLabelSel {
+            edge_key: EdgeKey::new(&edge.from_id, &edge.to_id, &edge.edge_type),
+            endpoint_node_id: edge.to_id.clone(),
+        });
+        match run(&format!("font set {}", family), &mut doc) {
+            ExecResult::Ok(_) => {}
+            other => panic!("expected Ok, got {:?}", other),
+        }
+        // Verify the edge's glyph_connection.font carries the family.
+        let idx = doc.edge_index(&er).expect("edge resolves");
+        assert_eq!(
+            doc.mindmap.edges[idx]
+                .glyph_connection
+                .as_ref()
+                .and_then(|c| c.font.as_deref()),
+            Some(family.as_str()),
+        );
+    }
+
+    /// PortalText selection mirrors EdgeLabel: it returns
+    /// `NotApplicable` because portal text inherits the edge body's
+    /// font today (no per-channel `font_family` slot exists on
+    /// `PortalEndpointState`).
+    #[test]
+    fn set_on_portal_text_is_not_applicable() {
+        use crate::application::document::PortalLabelSel;
+        use baumhard::mindmap::scene_cache::EdgeKey;
+
+        let family = first_loaded_family();
+        let mut doc = fixture_doc();
+        let edge = doc
+            .mindmap
+            .edges
+            .first()
+            .expect("testament map has at least one edge")
+            .clone();
+        doc.selection = SelectionState::PortalText(PortalLabelSel {
+            edge_key: EdgeKey::new(&edge.from_id, &edge.to_id, &edge.edge_type),
+            endpoint_node_id: edge.to_id.clone(),
+        });
+        match run(&format!("font set {}", family), &mut doc) {
+            ExecResult::Lines(msgs) => {
+                let all = msgs
+                    .iter()
+                    .map(|l| l.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                assert!(all.contains("not applicable"));
+            }
+            ExecResult::Err(s) => assert!(s.contains("not applicable")),
+            other => panic!(
+                "expected Lines / Err with 'not applicable', got {:?}",
+                other
+            ),
         }
     }
 

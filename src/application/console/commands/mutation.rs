@@ -150,7 +150,7 @@ fn list(args: &Args, eff: &ConsoleEffects) -> ExecResult {
             name = name_width
         ));
     }
-    ExecResult::Lines(lines)
+    ExecResult::lines(lines)
 }
 
 fn apply(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
@@ -254,7 +254,7 @@ fn help(args: &Args, eff: &ConsoleEffects) -> ExecResult {
             lines.push(l.to_string());
         }
     }
-    ExecResult::Lines(lines)
+    ExecResult::lines(lines)
 }
 
 /// `mutation inspect <id>` — a terser sibling to `help` aimed at
@@ -310,7 +310,7 @@ fn inspect(args: &Args, eff: &ConsoleEffects) -> ExecResult {
         .map(|m| format!("{:?}", baumhard::mindmap::custom_mutation::mutator_reach(m)))
         .unwrap_or_else(|| "n/a (no mutator)".to_string());
 
-    ExecResult::Lines(vec![
+    ExecResult::lines(vec![
         format!("{} \u{2014} {}", cm.id, cm.name),
         format!("source: {}", source),
         format!("visibility: {}", visibility),
@@ -421,6 +421,16 @@ mod tests {
         execute_mutation(&Args::new(&toks[1..]), &mut eff)
     }
 
+    /// Join the `text` field of every line — saves every test from
+    /// repeating the same map+collect after the `Lines` collapse.
+    fn joined(lines: &[crate::application::console::OutputLine]) -> String {
+        lines
+            .iter()
+            .map(|l| l.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     #[test]
     fn list_hides_internal_by_default() {
         let mut doc = fixture_doc(
@@ -432,7 +442,7 @@ mod tests {
         );
         match run("mutation list", &mut doc) {
             ExecResult::Lines(ls) => {
-                let all = ls.join("\n");
+                let all = joined(&ls);
                 assert!(all.contains("public"));
                 assert!(!all.contains("secret"));
             }
@@ -447,7 +457,7 @@ mod tests {
             vec![],
         );
         match run("mutation list --all", &mut doc) {
-            ExecResult::Lines(ls) => assert!(ls.iter().any(|l| l.contains("secret"))),
+            ExecResult::Lines(ls) => assert!(ls.iter().any(|l| l.text.contains("secret"))),
             other => panic!("expected Lines, got {:?}", other),
         }
     }
@@ -463,7 +473,7 @@ mod tests {
         );
         match run("mutation list grow", &mut doc) {
             ExecResult::Lines(ls) => {
-                let all = ls.join("\n");
+                let all = joined(&ls);
                 assert!(all.contains("grow-font"));
                 assert!(!all.contains("shrink-font"));
             }
@@ -524,7 +534,7 @@ mod tests {
         );
         match run("mutation help grow-font", &mut doc) {
             ExecResult::Lines(ls) => {
-                let all = ls.join("\n");
+                let all = joined(&ls);
                 assert!(all.contains("grow-font"));
                 assert!(all.contains("source: app"));
                 assert!(all.contains("map.node, map.tree"));
@@ -611,7 +621,7 @@ mod tests {
         );
         match run("mutation help nudge", &mut doc) {
             ExecResult::Lines(ls) => {
-                let all = ls.join("\n");
+                let all = joined(&ls);
                 // No `{:?}` debug-format leakage.
                 assert!(!all.contains("SelfOnly"), "help should not leak Rust enum names");
                 assert!(!all.contains("Persistent"), "help should not leak Rust enum names");
@@ -634,7 +644,7 @@ mod tests {
         );
         match run("mutation inspect nudge", &mut doc) {
             ExecResult::Lines(ls) => {
-                let all = ls.join("\n");
+                let all = joined(&ls);
                 assert!(all.contains("source: app"));
                 assert!(all.contains("visibility:"));
                 assert!(all.contains("payload: tree mutator only"));

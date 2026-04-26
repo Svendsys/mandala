@@ -345,6 +345,56 @@ fn adjust_scroll_clamps_to_valid_range() {
 }
 
 #[test]
+fn accumulate_wheel_lines_carries_fractional_residue() {
+    // Three sub-line ticks of 0.4 sum to 1.2 → 1 line emitted, 0.2
+    // carried. The carry is the whole point — slow scrolls
+    // shouldn't round to zero forever.
+    let mut accum = 0.0f32;
+    assert_eq!(accumulate_wheel_lines(&mut accum, 0.4), 0);
+    assert!((accum - 0.4).abs() < 1e-5);
+    assert_eq!(accumulate_wheel_lines(&mut accum, 0.4), 0);
+    assert!((accum - 0.8).abs() < 1e-5);
+    assert_eq!(accumulate_wheel_lines(&mut accum, 0.4), 1);
+    assert!((accum - 0.2).abs() < 1e-5);
+}
+
+#[test]
+fn accumulate_wheel_lines_handles_negative_deltas() {
+    // Toward-zero truncation on negatives: -1.5 rounds toward 0
+    // to -1, leaves -0.5 in the accumulator. Another -0.5 brings
+    // total to -1.0 which truncates to -1, leaving 0.0.
+    let mut accum = 0.0f32;
+    assert_eq!(accumulate_wheel_lines(&mut accum, -1.5), -1);
+    assert!((accum - -0.5).abs() < 1e-5);
+    assert_eq!(accumulate_wheel_lines(&mut accum, -0.5), -1);
+    assert!(accum.abs() < 1e-5);
+}
+
+#[test]
+fn accumulate_wheel_lines_handles_large_deltas_without_panicking() {
+    // A jumbo wheel event (e.g. a trackpad fling) shouldn't panic
+    // or saturate the accumulator. The integer return type bounds
+    // the result; the residue stays in [-1, 1) by construction.
+    let mut accum = 0.0f32;
+    let lines = accumulate_wheel_lines(&mut accum, 12345.678);
+    assert_eq!(lines, 12345);
+    assert!(accum < 1.0 && accum >= 0.0);
+}
+
+#[test]
+fn accumulate_wheel_lines_drops_non_finite_deltas() {
+    // NaN / inf must not corrupt the accumulator. Guard at the
+    // boundary, reset to zero, return zero lines so the dispatcher
+    // does nothing.
+    let mut accum = 0.42f32;
+    assert_eq!(accumulate_wheel_lines(&mut accum, f32::NAN), 0);
+    assert_eq!(accum, 0.0);
+    let mut accum = 0.42f32;
+    assert_eq!(accumulate_wheel_lines(&mut accum, f32::INFINITY), 0);
+    assert_eq!(accum, 0.0);
+}
+
+#[test]
 fn scroll_by_lines_handles_positive_and_negative_deltas() {
     use crate::application::console::ConsoleLine;
     use crate::application::renderer::MAX_CONSOLE_SCROLLBACK_ROWS;

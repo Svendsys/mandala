@@ -141,14 +141,39 @@ pub enum ExecResult {
     Ok(String),
     /// Failed execution with a diagnostic message.
     Err(String),
-    /// Emit multiple lines of output (help text, `mutate list`
-    /// tables, etc.). All lines render in the console default font.
-    Lines(Vec<String>),
-    /// Emit multiple lines, each with an optional pinned font
-    /// family. Used by `font list` so each font name renders in
-    /// its own face. `None` per-line means "use the console
-    /// default font".
-    LinesWithFonts(Vec<(String, Option<String>)>),
+    /// Emit multiple output lines. Each line carries an optional
+    /// pinned font family — `font list` sets one per line so the
+    /// row shapes in its own face, while help text / mutate-list
+    /// tables leave it `None` and shape in the console default.
+    Lines(Vec<OutputLine>),
+}
+
+/// One line of multi-line console output. Default-shaped (font
+/// family unset) unless the producing command pins a face — used
+/// today by `font list` so each row renders in the family it
+/// names.
+#[derive(Clone, Debug, Default)]
+pub struct OutputLine {
+    pub text: String,
+    pub font_family: Option<String>,
+}
+
+impl OutputLine {
+    /// Plain text, console default font.
+    pub fn plain(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            font_family: None,
+        }
+    }
+
+    /// Text shaped in `family`.
+    pub fn in_font(text: impl Into<String>, family: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            font_family: Some(family.into()),
+        }
+    }
 }
 
 impl ExecResult {
@@ -160,6 +185,17 @@ impl ExecResult {
     }
     pub fn err(s: impl Into<String>) -> Self {
         ExecResult::Err(s.into())
+    }
+    /// Convenience for command handlers that emit plain
+    /// console-default-font output. Mirrors the pre-collapse
+    /// `Lines(Vec<String>)` ergonomics so existing call sites
+    /// stay one-liners.
+    pub fn lines<I, S>(lines: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        ExecResult::Lines(lines.into_iter().map(OutputLine::plain).collect())
     }
 }
 

@@ -43,11 +43,7 @@ where
 {
     let targets = selection_targets(&doc.selection);
     if targets.is_empty() {
-        return DispatchReport {
-            any_applied: false,
-            messages: vec!["no target for command (select a node, edge, or portal first)".into()],
-            all_failed: true,
-        };
+        return no_target_report();
     }
 
     let mut any_applied = false;
@@ -56,27 +52,13 @@ where
 
     for (k, v) in kvs {
         // Aggregate this pair across every target.
-        let mut applied_count = 0usize;
-        let mut unchanged_count = 0usize;
-        let mut na_count = 0usize;
-        let mut invalid_msgs: Vec<String> = Vec::new();
+        let mut tally = OutcomeTally::default();
         let mut unknown_key = false;
 
         for tid in &targets {
             let mut view = view_for(doc, tid);
             match applier(&mut view, k, v) {
-                Some(Outcome::Applied) => {
-                    applied_count += 1;
-                }
-                Some(Outcome::Unchanged) => {
-                    unchanged_count += 1;
-                }
-                Some(Outcome::NotApplicable) => {
-                    na_count += 1;
-                }
-                Some(Outcome::Invalid(msg)) => {
-                    invalid_msgs.push(msg);
-                }
+                Some(outcome) => tally.record(outcome),
                 None => {
                     unknown_key = true;
                     break;
@@ -88,19 +70,19 @@ where
             messages.push(format!("unknown key '{}'", k));
             continue;
         }
-        if !invalid_msgs.is_empty() {
-            for m in invalid_msgs {
+        if !tally.invalid.is_empty() {
+            for m in tally.invalid {
                 messages.push(format!("{}: {}", k, m));
             }
             continue;
         }
-        if applied_count > 0 {
+        if tally.applied > 0 {
             any_applied = true;
             any_pair_succeeded = true;
-        } else if unchanged_count > 0 {
+        } else if tally.unchanged > 0 {
             any_pair_succeeded = true;
             messages.push(format!("{} already {}", k, v));
-        } else if na_count == targets.len() {
+        } else if tally.not_applicable == targets.len() {
             messages.push(format!(
                 "{}: not applicable to {}",
                 k,
@@ -136,47 +118,76 @@ where
 {
     let targets = selection_targets(&doc.selection);
     if targets.is_empty() {
-        return DispatchReport {
-            any_applied: false,
-            messages: vec!["no target for command (select a node, edge, or portal first)".into()],
-            all_failed: true,
-        };
+        return no_target_report();
     }
 
-    let mut applied_count = 0usize;
-    let mut unchanged_count = 0usize;
-    let mut na_count = 0usize;
-    let mut invalid_msgs: Vec<String> = Vec::new();
-
+    let mut tally = OutcomeTally::default();
     for tid in &targets {
         let mut view = view_for(doc, tid);
-        match op(&mut view) {
-            Outcome::Applied => applied_count += 1,
-            Outcome::Unchanged => unchanged_count += 1,
-            Outcome::NotApplicable => na_count += 1,
-            Outcome::Invalid(msg) => invalid_msgs.push(msg),
+        tally.record(op(&mut view));
+    }
+    aggregate_single_op(tally, &targets)
+}
+
+/// Empty-selection report shared by [`apply_kvs`] and
+/// [`apply_to_targets`]. Both surface the same "select a node /
+/// edge / portal first" hint, so the boilerplate lives here.
+fn no_target_report() -> DispatchReport {
+    DispatchReport {
+        any_applied: false,
+        messages: vec!["no target for command (select a node, edge, or portal first)".into()],
+        all_failed: true,
+    }
+}
+
+/// Per-target outcome tally — the structure both aggregation paths
+/// fold into. Default-constructible so the kv loop can reset
+/// between pairs and the channel-less loop can build a single
+/// instance.
+#[derive(Default)]
+struct OutcomeTally {
+    applied: usize,
+    unchanged: usize,
+    not_applicable: usize,
+    invalid: Vec<String>,
+}
+
+impl OutcomeTally {
+    fn record(&mut self, outcome: Outcome) {
+        match outcome {
+            Outcome::Applied => self.applied += 1,
+            Outcome::Unchanged => self.unchanged += 1,
+            Outcome::NotApplicable => self.not_applicable += 1,
+            Outcome::Invalid(msg) => self.invalid.push(msg),
         }
     }
+}
 
+/// Aggregate a per-call tally for the channel-less
+/// [`apply_to_targets`] shape. Sibling of the kv-shaped
+/// aggregation tail inside [`apply_kvs`]; same outcome priorities
+/// (Invalid > Applied > Unchanged > NotApplicable) but no kv key
+/// to scope messages to.
+fn aggregate_single_op(tally: OutcomeTally, targets: &[TargetId]) -> DispatchReport {
     let mut messages: Vec<String> = Vec::new();
     let mut any_pair_succeeded = false;
-    if !invalid_msgs.is_empty() {
-        messages.extend(invalid_msgs);
-    } else if applied_count == 0 {
-        if unchanged_count > 0 {
+    if !tally.invalid.is_empty() {
+        messages.extend(tally.invalid);
+    } else if tally.applied == 0 {
+        if tally.unchanged > 0 {
             any_pair_succeeded = true;
             messages.push("already set".into());
-        } else if na_count == targets.len() {
+        } else if tally.not_applicable == targets.len() {
             messages.push(format!(
                 "not applicable to {}",
-                targets_kind_label(&targets),
+                targets_kind_label(targets),
             ));
         }
     } else {
         any_pair_succeeded = true;
     }
 
-    let any_applied = applied_count > 0;
+    let any_applied = tally.applied > 0;
     let all_failed = !any_pair_succeeded && !messages.is_empty();
     DispatchReport {
         any_applied,

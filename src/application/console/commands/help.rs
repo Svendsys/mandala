@@ -61,7 +61,7 @@ fn help_for(name: &str, _ctx: &ConsoleContext) -> ExecResult {
             if !cmd.aliases.is_empty() {
                 lines.push(format!("aliases: {}", cmd.aliases.join(", ")));
             }
-            ExecResult::Lines(lines)
+            ExecResult::lines(lines)
         }
         None => ExecResult::err(format!("unknown command: {}", name)),
     }
@@ -80,7 +80,7 @@ fn help_listing(ctx: &ConsoleContext, show_all: bool) -> ExecResult {
         }
         lines.push(format!("  {:<12} {}", cmd.name, cmd.summary));
     }
-    ExecResult::Lines(lines)
+    ExecResult::lines(lines)
 }
 
 #[cfg(test)]

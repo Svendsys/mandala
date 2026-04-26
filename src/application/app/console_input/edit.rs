@@ -93,6 +93,36 @@ pub(super) fn scroll_by_lines(state: &mut ConsoleState, delta: i32) {
     }
 }
 
+/// Drain a wheel delta into integer line steps, carrying the
+/// fractional remainder in `accum` for the next call. Native
+/// mousewheel events arrive as fixed pixel amounts (or per-platform
+/// line counts) that are rarely a clean multiple of one line; the
+/// accumulator keeps slow scrolls (sub-line per tick) from getting
+/// rounded to zero forever.
+///
+/// Pure function over `&mut f32` — extracted from the winit event
+/// closure so it can be unit-tested directly. Tests cover the
+/// fractional-carry, negative-delta, and large-delta paths.
+///
+/// `dy` is the wheel delta in lines (the caller's responsibility to
+/// divide pixel deltas by a per-platform line height before
+/// calling). Returns the integer line steps to apply this tick;
+/// `accum` retains the leftover fractional residue.
+pub(super) fn accumulate_wheel_lines(accum: &mut f32, dy: f32) -> i32 {
+    if !dy.is_finite() {
+        // Defensive: a bogus event must not poison the
+        // accumulator. Drop the tick and reset.
+        *accum = 0.0;
+        return 0;
+    }
+    *accum += dy;
+    let lines = accum.trunc() as i32;
+    if lines != 0 {
+        *accum -= lines as f32;
+    }
+    lines
+}
+
 pub(super) fn clear_line(state: &mut ConsoleState) -> EditOutcome {
     let ConsoleState::Open { input, cursor, history_idx, .. } = state else {
         return EditOutcome::Unchanged;

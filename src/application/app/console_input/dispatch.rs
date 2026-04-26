@@ -246,6 +246,7 @@ fn submit_line(ctx: SubmitLineContext<'_>) {
         completions,
         completion_idx,
         history,
+        scroll_offset,
         ..
     } = console_state
     {
@@ -254,6 +255,13 @@ fn submit_line(ctx: SubmitLineContext<'_>) {
         completions.clear();
         *completion_idx = None;
         scrollback.push(ConsoleLine::Input(format!("> {}", line)));
+        // Submitting a command should always pin the view to the
+        // bottom — same contract `push_scrollback_*` honors. The
+        // input echo above bypassed those helpers, so do the
+        // reset here to keep the documented `scroll_offset`
+        // contract intact regardless of whether the command
+        // produces any output.
+        *scroll_offset = 0;
         if !line.trim().is_empty()
             && history.last().map(|s| s.as_str()) != Some(line.as_str())
         {

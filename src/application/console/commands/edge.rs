@@ -209,7 +209,7 @@ fn execute_edge(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         if !any_applied {
             return ExecResult::err(messages.join("; "));
         }
-        return ExecResult::Lines(messages);
+        return ExecResult::lines(messages);
     }
     ExecResult::ok_msg("edge applied")
 }

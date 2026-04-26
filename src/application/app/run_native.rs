@@ -219,32 +219,35 @@ impl InitState {
                 };
                 // While the console is open, the wheel scrolls the
                 // scrollback rather than zooming the canvas — mouse
-                // events should follow keyboard focus. The
-                // `wheel_accum` accumulator absorbs sub-line deltas
-                // so a slow wheel still moves at all.
+                // events should follow keyboard focus. Fractional
+                // deltas accumulate via `accumulate_wheel_lines` so
+                // sub-line-per-tick scrolls don't round to zero.
                 if self.console_state.is_open() {
-                    if let crate::application::console::ConsoleState::Open {
+                    let lines = if let crate::application::console::ConsoleState::Open {
                         wheel_accum,
                         ..
                     } = &mut self.console_state
                     {
-                        *wheel_accum += scroll_y as f32;
-                        let lines = wheel_accum.trunc() as i32;
-                        if lines != 0 {
-                            *wheel_accum -= lines as f32;
-                            crate::application::app::console_input::scroll_console_by_lines(
-                                &mut self.console_state,
-                                lines,
+                        crate::application::app::console_input::accumulate_wheel_lines(
+                            wheel_accum,
+                            scroll_y as f32,
+                        )
+                    } else {
+                        0
+                    };
+                    if lines != 0 {
+                        crate::application::app::console_input::scroll_console_by_lines(
+                            &mut self.console_state,
+                            lines,
+                        );
+                        if let Some(doc) = self.document.as_ref() {
+                            crate::application::app::console_input::rebuild_console_overlay(
+                                &self.console_state,
+                                doc,
+                                &mut self.app_scene,
+                                &mut self.renderer,
+                                &self.keybinds,
                             );
-                            if let Some(doc) = self.document.as_ref() {
-                                crate::application::app::console_input::rebuild_console_overlay(
-                                    &self.console_state,
-                                    doc,
-                                    &mut self.app_scene,
-                                    &mut self.renderer,
-                                    &self.keybinds,
-                                );
-                            }
                         }
                     }
                 } else {

@@ -70,14 +70,23 @@ lazy_static! {
 
 /// Force lazy initialization of [`COMPILED_FONT_ID_MAP`] — and, via
 /// it, the one-time `FONT_SYSTEM` write-lock that registers every
-/// compiled-in font. Call once at program start before any shaping
-/// / measurement path.
+/// compiled-in font — and the [`FAMILY_INDEX`] that
+/// [`loaded_families_iter`] / [`app_font_by_family`] read.
+/// Call once at program start before any shaping / measurement
+/// path. Doing both eagerly here closes a latent re-entrant-read
+/// risk: `FAMILY_INDEX`'s lazy build acquires `FONT_SYSTEM.read()`,
+/// and `mindnode_to_glyph_area` indirectly calls
+/// `app_font_by_family` from inside the tree builder; if a future
+/// caller ever holds `FONT_SYSTEM.write()` while invoking the tree
+/// builder, the lazy path would deadlock. Eager init at startup
+/// makes that impossible.
 pub fn init() {
     COMPILED_FONT_ID_MAP.capacity();
+    FAMILY_INDEX.get_or_init(build_family_index);
 }
 
 /// Cached `(family_name, AppFont)` pairs, sorted by family name.
-/// Built once on first access by [`list_loaded_families`] /
+/// Built once on first access by [`loaded_families_iter`] /
 /// [`app_font_by_family`] from [`COMPILED_FONT_ID_MAP`] +
 /// [`FONT_SYSTEM`]. Trivially small — one entry per `AppFont` —
 /// so the whole list is O(n) to scan even on the lookup path.
@@ -96,6 +105,11 @@ static FAMILY_INDEX: OnceLock<Vec<(String, AppFont)>> = OnceLock::new();
 /// `AppFont` we encounter wins for the reverse-lookup path; that's
 /// fine because the user-facing surface only knows family names,
 /// not styles.
+///
+/// Misses (empty id list, fontdb face miss, empty `families` list)
+/// are logged at `warn!` so a corrupt build's silent disappearance
+/// from the index is observable — matches the §9 "warn and degrade"
+/// posture the renderer attrs builder uses for the same misses.
 fn build_family_index() -> Vec<(String, AppFont)> {
     let font_system = FONT_SYSTEM
         .read()
@@ -103,9 +117,27 @@ fn build_family_index() -> Vec<(String, AppFont)> {
     let mut seen: rustc_hash::FxHashSet<String> = rustc_hash::FxHashSet::default();
     let mut out: Vec<(String, AppFont)> = Vec::new();
     for (app_font, ids) in COMPILED_FONT_ID_MAP.iter() {
-        let Some(id) = ids.first() else { continue };
-        let Some(face) = font_system.db().face(*id) else { continue };
-        let Some((family, _)) = face.families.first() else { continue };
+        let Some(id) = ids.first() else {
+            log::warn!(
+                "build_family_index: AppFont {app_font:?} has no fontdb id; \
+                 omitting from the family index"
+            );
+            continue;
+        };
+        let Some(face) = font_system.db().face(*id) else {
+            log::warn!(
+                "build_family_index: fontdb face miss for AppFont {app_font:?}; \
+                 omitting from the family index"
+            );
+            continue;
+        };
+        let Some((family, _)) = face.families.first() else {
+            log::warn!(
+                "build_family_index: AppFont {app_font:?} has no family name; \
+                 omitting from the family index"
+            );
+            continue;
+        };
         if seen.insert(family.clone()) {
             out.push((family.clone(), *app_font));
         }
@@ -114,29 +146,33 @@ fn build_family_index() -> Vec<(String, AppFont)> {
     out
 }
 
-/// All compiled-in font families, sorted, as the family-name strings
-/// the data model stores in `TextRun.font` and
-/// `GlyphConnectionConfig.font`. The console populates its
-/// completion popup and `font list` output from this; future
-/// graphical font browsers reach the same primitive.
+/// All compiled-in font families, sorted ascending, as the
+/// family-name strings the data model stores in `TextRun.font` and
+/// `GlyphConnectionConfig.font`. Borrowing iterator — the per-call
+/// allocation `list_loaded_families` did is gone, which matters on
+/// the keystroke-hot completion path. The returned `&'static str`s
+/// borrow from the `OnceLock`-cached index built by
+/// [`build_family_index`].
 ///
-/// Caches the result on first call (one `FONT_SYSTEM.read()` +
-/// O(n) walk), so subsequent calls are O(n) over a `Vec<String>`
-/// that's already in memory. Allocates a fresh `Vec<String>` per
-/// call — call sites that walk it many times should bind the
-/// result locally.
-pub fn list_loaded_families() -> Vec<String> {
+/// Costs: O(1) for the cache hit; O(n) one-time on first call.
+pub fn loaded_families_iter() -> impl Iterator<Item = &'static str> {
     FAMILY_INDEX
         .get_or_init(build_family_index)
         .iter()
-        .map(|(name, _)| name.clone())
-        .collect()
+        .map(|(name, _)| name.as_str())
+}
+
+/// Materialise [`loaded_families_iter`] as `Vec<String>` — kept for
+/// callers that need an owned list (tests, future external API
+/// consumers). Allocates one `Vec<String>` per call.
+pub fn list_loaded_families() -> Vec<String> {
+    loaded_families_iter().map(str::to_string).collect()
 }
 
 /// Resolve a family-name string to the build-time `AppFont` enum
 /// `crate::core::primitives::ColorFontRegion` stores in its `font`
 /// slot. Exact-match (case-sensitive); fuzzy matching is the
-/// caller's job — pre-filter via [`list_loaded_families`] and
+/// caller's job — pre-filter via [`loaded_families_iter`] and
 /// feed the chosen exact string back in.
 ///
 /// Returns `None` for unknown families so callers can degrade

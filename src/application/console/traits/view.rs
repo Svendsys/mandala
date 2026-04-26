@@ -223,7 +223,7 @@ impl<'a> AcceptsWheelColor for TargetView<'a> {
 }
 
 impl<'a> AcceptsFontFamily for TargetView<'a> {
-    fn set_font_family(&mut self, family: &str) -> Outcome {
+    fn set_font_family(&mut self, family: Option<&str>) -> Outcome {
         match self {
             // Node: writes every `TextRun.font` plus the future
             // node-level default (when one is added). Node has no
@@ -233,13 +233,13 @@ impl<'a> AcceptsFontFamily for TargetView<'a> {
             }
             // Edge body: `glyph_connection.font` override.
             TargetView::Edge { doc, er } => {
-                Outcome::applied(doc.set_edge_font_family(er, Some(family)))
+                Outcome::applied(doc.set_edge_font_family(er, family))
             }
             // Portal icon shares the edge body's `glyph_connection.font` —
             // the same routing existing `font size=` uses for the
             // PortalLabel selection.
             TargetView::PortalLabel { doc, er, .. } => {
-                Outcome::applied(doc.set_edge_font_family(er, Some(family)))
+                Outcome::applied(doc.set_edge_font_family(er, family))
             }
             // Edge labels and portal text inherit the edge body's
             // font today; no per-channel `font_family` slot exists

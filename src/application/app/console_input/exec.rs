@@ -73,13 +73,12 @@ pub(in crate::application::app) fn execute_console_line(
         }
         ExecResult::Err(s) => push_scrollback_error(console_state, s),
         ExecResult::Lines(lines) => {
-            for l in lines {
-                push_scrollback_output(console_state, l);
-            }
-        }
-        ExecResult::LinesWithFonts(lines) => {
-            for (text, font_family) in lines {
-                push_scrollback_output_in_font(console_state, text, font_family);
+            for line in lines {
+                push_scrollback_output_in_font(
+                    console_state,
+                    line.text,
+                    line.font_family,
+                );
             }
         }
     }
