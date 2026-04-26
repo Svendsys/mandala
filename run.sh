@@ -31,9 +31,21 @@ if ! command -v trunk >/dev/null 2>&1; then
     exit 1
 fi
 
+# Read the WASM dev-server port from Trunk.toml so the echoed URL stays
+# in sync with the single source of truth. Falls back to trunk's own
+# default (8080) if the [serve] section is absent.
+WASM_PORT="$(awk '
+    /^\[serve\]/ { in_serve = 1; next }
+    /^\[/        { in_serve = 0 }
+    in_serve && /^[[:space:]]*port[[:space:]]*=/ {
+        gsub(/[^0-9]/, "", $0); print; exit
+    }
+' Trunk.toml)"
+WASM_PORT="${WASM_PORT:-8080}"
+
 echo "Launching:"
 echo "  Native: $NATIVE_BIN $MAP"
-echo "  WASM:   trunk serve --release   (http://127.0.0.1:8080)"
+echo "  WASM:   trunk serve --release   (http://127.0.0.1:${WASM_PORT})"
 echo
 echo "Ctrl+C to stop both."
 echo
