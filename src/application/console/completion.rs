@@ -29,11 +29,17 @@ use super::ConsoleContext;
 /// partial; `display` is what the popup shows (usually equal to
 /// `text`, but can include an arrow or padding); `hint` is the dim
 /// right-hand side text (e.g. summary).
+///
+/// `font_family` pins the shaped face for the candidate's `display`
+/// text (not the hint). Set by the font-name completer so each row
+/// renders in its own face — `font set A` shows every "A..." family
+/// pre-shaped in that family.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Completion {
     pub text: String,
     pub display: String,
     pub hint: Option<String>,
+    pub font_family: Option<String>,
 }
 
 /// Where the cursor is logically sitting. Computed by [`complete`]
@@ -157,6 +163,7 @@ fn complete_command_name(partial: &str, ctx: &ConsoleContext) -> Vec<Completion>
             text: c.name.to_string(),
             display: c.name.to_string(),
             hint: Some(c.summary.to_string()),
+            font_family: None,
         })
         .collect()
 }
@@ -172,6 +179,7 @@ pub fn prefix_filter<S: AsRef<str>>(options: &[S], partial: &str) -> Vec<Complet
             text: o.as_ref().to_string(),
             display: o.as_ref().to_string(),
             hint: None,
+            font_family: None,
         })
         .collect()
 }

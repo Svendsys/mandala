@@ -142,8 +142,13 @@ pub enum ExecResult {
     /// Failed execution with a diagnostic message.
     Err(String),
     /// Emit multiple lines of output (help text, `mutate list`
-    /// tables, etc.).
+    /// tables, etc.). All lines render in the console default font.
     Lines(Vec<String>),
+    /// Emit multiple lines, each with an optional pinned font
+    /// family. Used by `font list` so each font name renders in
+    /// its own face. `None` per-line means "use the console
+    /// default font".
+    LinesWithFonts(Vec<(String, Option<String>)>),
 }
 
 impl ExecResult {
@@ -159,13 +164,22 @@ impl ExecResult {
 }
 
 /// One rendered line in the scrollback. Colored at render time by
-/// variant.
+/// variant. The `Output` variant additionally carries an optional
+/// `font_family` — set by `font list` so each font name shapes in
+/// its own face. `Input` echoes and `Error` lines always use the
+/// console default font.
 #[derive(Clone, Debug)]
 pub enum ConsoleLine {
     /// Echo of a user-entered command (`> anchor set from auto`).
     Input(String),
     /// Normal output line from a command.
-    Output(String),
+    Output {
+        text: String,
+        /// Pinned font family for this line, or `None` for the
+        /// console default. Set by commands like `font list` that
+        /// want each row in its own face.
+        font_family: Option<String>,
+    },
     /// Error output from a failed command.
     Error(String),
 }
@@ -173,7 +187,8 @@ pub enum ConsoleLine {
 impl ConsoleLine {
     pub fn text(&self) -> &str {
         match self {
-            ConsoleLine::Input(s) | ConsoleLine::Output(s) | ConsoleLine::Error(s) => s,
+            ConsoleLine::Input(s) | ConsoleLine::Error(s) => s,
+            ConsoleLine::Output { text, .. } => text,
         }
     }
 }
@@ -213,6 +228,22 @@ pub enum ConsoleState {
         /// Which completion is highlighted. `None` when the popup is
         /// closed (no completions computed yet); `Some(idx)` after Tab.
         completion_idx: Option<usize>,
+        /// Scrollback view offset. `0` means "pinned to the bottom"
+        /// (the trailing N lines fill the visible window). `N` means
+        /// "the visible window's bottom edge sits N lines above the
+        /// newest line" — i.e. the user has scrolled up by N. Clamped
+        /// at read time against
+        /// `scrollback.len().saturating_sub(MAX_CONSOLE_SCROLLBACK_ROWS)`
+        /// so growing scrollback can never strand the offset
+        /// out-of-range. Reset to `0` on any input change or new
+        /// scrollback arrival so the next command shows in view.
+        scroll_offset: usize,
+        /// Mousewheel-line accumulator. Wheel deltas arrive as fixed
+        /// pixel amounts (or per-platform line counts) that are
+        /// rarely a clean multiple of one line. We accumulate the
+        /// fractional remainder here so a slow scroll with
+        /// sub-line-per-tick deltas still moves at all.
+        wheel_accum: f32,
     },
 }
 
@@ -233,6 +264,8 @@ impl ConsoleState {
             scrollback: Vec::new(),
             completions: Vec::new(),
             completion_idx: None,
+            scroll_offset: 0,
+            wheel_accum: 0.0,
         }
     }
 }

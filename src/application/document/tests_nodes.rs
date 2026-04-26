@@ -292,6 +292,51 @@ use super::defaults::default_cross_link_edge;
         assert!(!doc.set_node_border_color("nope", "#000".into()));
         assert!(!doc.set_node_text_color("nope", "#000".into()));
         assert!(!doc.set_node_font_size("nope", 10.0));
+        assert!(!doc.set_node_font_family("nope", "Norse"));
         assert!(doc.undo_stack.is_empty());
         assert!(!doc.dirty);
+    }
+
+    #[test]
+    fn test_set_node_font_family_writes_all_runs_and_round_trips() {
+        let mut doc = load_test_doc();
+        let nid = first_testament_node_id(&doc);
+        let before_fonts: Vec<String> = doc
+            .mindmap
+            .nodes
+            .get(&nid)
+            .unwrap()
+            .text_runs
+            .iter()
+            .map(|r| r.font.clone())
+            .collect();
+        // Pick any family different from whatever the node has
+        // so we can assert "changed" first time and "unchanged"
+        // second time.
+        let target = "Norse".to_string();
+        let already = before_fonts.iter().all(|f| f == &target);
+        assert!(
+            !already,
+            "test fixture node already has font='Norse' on every run; \
+             pick a different family for this test"
+        );
+        assert!(doc.set_node_font_family(&nid, &target));
+        let node = doc.mindmap.nodes.get(&nid).unwrap();
+        assert!(node.text_runs.iter().all(|r| r.font == target));
+        // Idempotent re-set is a no-op.
+        let stack_len = doc.undo_stack.len();
+        assert!(!doc.set_node_font_family(&nid, &target));
+        assert_eq!(doc.undo_stack.len(), stack_len);
+        // Undo restores the prior heterogeneous state.
+        assert!(doc.undo());
+        let after_fonts: Vec<String> = doc
+            .mindmap
+            .nodes
+            .get(&nid)
+            .unwrap()
+            .text_runs
+            .iter()
+            .map(|r| r.font.clone())
+            .collect();
+        assert_eq!(after_fonts, before_fonts);
     }

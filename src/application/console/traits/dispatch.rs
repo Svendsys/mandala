@@ -117,6 +117,74 @@ where
     }
 }
 
+/// Apply a single channel-less operation to every selected target,
+/// aggregating outcomes the same way [`apply_kvs`] aggregates per-pair
+/// outcomes. Used by commands like `font set <name>` whose trait
+/// shape is "one value, one method" — there is nothing to fan out
+/// kv-style, so the kv aggregation path doesn't apply.
+///
+/// `op` is invoked once per [`TargetView`] in the selection;
+/// returning [`Outcome::NotApplicable`] from every target surfaces a
+/// "not applicable to <kind>" message, exactly like
+/// [`apply_kvs`]. Returning [`Outcome::Invalid`] from a single target
+/// surfaces that message verbatim — the caller is expected to have
+/// validated the input upstream so an `Invalid` here is a
+/// programmatic bug, not a user typo.
+pub fn apply_to_targets<F>(doc: &mut MindMapDocument, mut op: F) -> DispatchReport
+where
+    F: FnMut(&mut TargetView) -> Outcome,
+{
+    let targets = selection_targets(&doc.selection);
+    if targets.is_empty() {
+        return DispatchReport {
+            any_applied: false,
+            messages: vec!["no target for command (select a node, edge, or portal first)".into()],
+            all_failed: true,
+        };
+    }
+
+    let mut applied_count = 0usize;
+    let mut unchanged_count = 0usize;
+    let mut na_count = 0usize;
+    let mut invalid_msgs: Vec<String> = Vec::new();
+
+    for tid in &targets {
+        let mut view = view_for(doc, tid);
+        match op(&mut view) {
+            Outcome::Applied => applied_count += 1,
+            Outcome::Unchanged => unchanged_count += 1,
+            Outcome::NotApplicable => na_count += 1,
+            Outcome::Invalid(msg) => invalid_msgs.push(msg),
+        }
+    }
+
+    let mut messages: Vec<String> = Vec::new();
+    let mut any_pair_succeeded = false;
+    if !invalid_msgs.is_empty() {
+        messages.extend(invalid_msgs);
+    } else if applied_count == 0 {
+        if unchanged_count > 0 {
+            any_pair_succeeded = true;
+            messages.push("already set".into());
+        } else if na_count == targets.len() {
+            messages.push(format!(
+                "not applicable to {}",
+                targets_kind_label(&targets),
+            ));
+        }
+    } else {
+        any_pair_succeeded = true;
+    }
+
+    let any_applied = applied_count > 0;
+    let all_failed = !any_pair_succeeded && !messages.is_empty();
+    DispatchReport {
+        any_applied,
+        messages,
+        all_failed,
+    }
+}
+
 fn targets_kind_label(targets: &[TargetId]) -> &'static str {
     // Multi-selection is homogeneously nodes today; other combos
     // are single-target. Pick the obvious label.

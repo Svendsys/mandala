@@ -217,12 +217,44 @@ impl InitState {
                     MouseScrollDelta::LineDelta(_, y) => y as f64,
                     MouseScrollDelta::PixelDelta(pos) => pos.y / 50.0,
                 };
-                let factor = if scroll_y > 0.0 { 1.1 } else { 1.0 / 1.1 };
-                self.renderer.process_decree(RenderDecree::CameraZoom {
-                    screen_x: self.cursor_pos.0 as f32,
-                    screen_y: self.cursor_pos.1 as f32,
-                    factor: factor as f32,
-                });
+                // While the console is open, the wheel scrolls the
+                // scrollback rather than zooming the canvas — mouse
+                // events should follow keyboard focus. The
+                // `wheel_accum` accumulator absorbs sub-line deltas
+                // so a slow wheel still moves at all.
+                if self.console_state.is_open() {
+                    if let crate::application::console::ConsoleState::Open {
+                        wheel_accum,
+                        ..
+                    } = &mut self.console_state
+                    {
+                        *wheel_accum += scroll_y as f32;
+                        let lines = wheel_accum.trunc() as i32;
+                        if lines != 0 {
+                            *wheel_accum -= lines as f32;
+                            crate::application::app::console_input::scroll_console_by_lines(
+                                &mut self.console_state,
+                                lines,
+                            );
+                            if let Some(doc) = self.document.as_ref() {
+                                crate::application::app::console_input::rebuild_console_overlay(
+                                    &self.console_state,
+                                    doc,
+                                    &mut self.app_scene,
+                                    &mut self.renderer,
+                                    &self.keybinds,
+                                );
+                            }
+                        }
+                    }
+                } else {
+                    let factor = if scroll_y > 0.0 { 1.1 } else { 1.0 / 1.1 };
+                    self.renderer.process_decree(RenderDecree::CameraZoom {
+                        screen_x: self.cursor_pos.0 as f32,
+                        screen_y: self.cursor_pos.1 as f32,
+                        factor: factor as f32,
+                    });
+                }
             }
             Event::WindowEvent {
                 event: WindowEvent::CursorMoved { position, .. },

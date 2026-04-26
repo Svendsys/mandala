@@ -37,6 +37,7 @@ fn complete_help(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completi
             text: c.name.to_string(),
             display: c.name.to_string(),
             hint: Some(c.summary.to_string()),
+            font_family: None,
         })
         .collect()
 }

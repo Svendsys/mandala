@@ -30,6 +30,69 @@ impl EditOutcome {
     }
 }
 
+/// Direction + magnitude for a scrollback navigation step. Mapped
+/// from the `Action` set in `dispatch::map_scroll_action`. The unit
+/// "page" matches `MAX_CONSOLE_SCROLLBACK_ROWS` so PgUp/PgDn move
+/// exactly one visible-window worth of lines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ScrollDirection {
+    LineUp,
+    LineDown,
+    PageUp,
+    PageDown,
+    Home,
+    End,
+}
+
+/// Adjust `ConsoleState::Open.scroll_offset` per `direction`,
+/// clamping against the maximum reachable offset (= scrollback
+/// length minus the visible window size). `Home` jumps to the
+/// oldest reachable line; `End` pins the bottom (offset = 0).
+pub(super) fn adjust_scroll(state: &mut ConsoleState, direction: ScrollDirection) {
+    use crate::application::renderer::MAX_CONSOLE_SCROLLBACK_ROWS;
+    if let ConsoleState::Open {
+        scrollback,
+        scroll_offset,
+        ..
+    } = state
+    {
+        let max = scrollback.len().saturating_sub(MAX_CONSOLE_SCROLLBACK_ROWS);
+        let new = match direction {
+            ScrollDirection::LineUp => scroll_offset.saturating_add(1).min(max),
+            ScrollDirection::LineDown => scroll_offset.saturating_sub(1),
+            ScrollDirection::PageUp => scroll_offset
+                .saturating_add(MAX_CONSOLE_SCROLLBACK_ROWS)
+                .min(max),
+            ScrollDirection::PageDown => {
+                scroll_offset.saturating_sub(MAX_CONSOLE_SCROLLBACK_ROWS)
+            }
+            ScrollDirection::Home => max,
+            ScrollDirection::End => 0,
+        };
+        *scroll_offset = new;
+    }
+}
+
+/// Adjust the scroll offset by an integer line delta returned from
+/// the mousewheel-step accumulator. Positive delta scrolls up
+/// (older lines into view), negative scrolls down. Same clamp as
+/// [`adjust_scroll`] — clamped to `[0, scrollback.len() -
+/// MAX_CONSOLE_SCROLLBACK_ROWS]`.
+pub(super) fn scroll_by_lines(state: &mut ConsoleState, delta: i32) {
+    use crate::application::renderer::MAX_CONSOLE_SCROLLBACK_ROWS;
+    if let ConsoleState::Open {
+        scrollback,
+        scroll_offset,
+        ..
+    } = state
+    {
+        let max = scrollback.len().saturating_sub(MAX_CONSOLE_SCROLLBACK_ROWS);
+        let signed = (*scroll_offset as i32).saturating_add(delta);
+        let clamped = signed.max(0) as usize;
+        *scroll_offset = clamped.min(max);
+    }
+}
+
 pub(super) fn clear_line(state: &mut ConsoleState) -> EditOutcome {
     let ConsoleState::Open { input, cursor, history_idx, .. } = state else {
         return EditOutcome::Unchanged;

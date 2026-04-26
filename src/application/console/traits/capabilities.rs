@@ -62,6 +62,37 @@ pub trait AcceptsWheelColor {
     fn apply_wheel_color(&mut self, c: ColorValue) -> Outcome;
 }
 
+/// Target supports being told "use this font family" — the
+/// channel-less companion of [`AcceptsWheelColor`]. The console's
+/// `font set <name>` verb pushes one family-name string at the
+/// selection and asks each component type to decide which channel
+/// the font choice belongs on.
+///
+/// Per-variant routing (Step 3 of the font plan):
+/// - **Node** writes every `TextRun.font` (the node has no
+///   per-channel font split today).
+/// - **Edge** writes `glyph_connection.font`.
+/// - **PortalLabel** routes through the edge's `glyph_connection.font`
+///   — the icon shares the edge body's font, same routing
+///   `font size=` already uses for portal-icon selections.
+/// - **EdgeLabel** and **PortalText** return
+///   [`Outcome::NotApplicable`]. Their config structs do not yet
+///   carry a `font_family` slot of their own; today they inherit
+///   the edge body's font. A future commit can add per-channel
+///   slots when the graphical font picker calls for it.
+///
+/// `family` is the family-name string the data model stores
+/// (`TextRun.font` / `GlyphConnectionConfig.font`), as listed by
+/// `baumhard::font::fonts::list_loaded_families`. Validation —
+/// "is this a loaded font?" — is the caller's job: by the time
+/// the trait runs, the value has been picked from the same list.
+/// `Outcome::Invalid` is reserved for programmatic callers that
+/// bypass validation; the console verb rejects unknown families
+/// upstream with a helpful message.
+pub trait AcceptsFontFamily {
+    fn set_font_family(&mut self, family: &str) -> Outcome;
+}
+
 /// Target supports producing a text representation when the user
 /// copies (Ctrl+C). The trait method is a pure data transformation —
 /// it reads the component's state and returns what should go on the

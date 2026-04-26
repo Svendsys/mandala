@@ -135,3 +135,76 @@ fn test_all_elements_are_glyph_areas() {
         );
     }
 }
+
+#[test]
+fn test_text_run_font_propagates_to_color_font_region() {
+    use crate::font::fonts;
+    use crate::mindmap::model::TextRun;
+
+    fonts::init();
+    // Pick any loaded family — the first one keeps the test
+    // resilient against future font additions / renames.
+    let family = fonts::list_loaded_families()
+        .into_iter()
+        .next()
+        .expect("at least one font family must be loaded");
+    let expected = fonts::app_font_by_family(&family)
+        .expect("the family we just picked must round-trip");
+
+    let mut node = synthetic_node("font-run", None, 0.0, 0.0);
+    node.text = "Hi".to_string();
+    node.text_runs = vec![TextRun {
+        start: 0,
+        end: 2,
+        bold: false,
+        italic: false,
+        underline: false,
+        font: family.clone(),
+        size_pt: 14,
+        color: "#ffffff".into(),
+        hyperlink: None,
+    }];
+    let map = synthetic_map(vec![node], vec![]);
+    let result = build_mindmap_tree(&map);
+    let area = glyph_area_of(&result.tree, *result.node_map.get("font-run").unwrap());
+    let regions = area.regions.all_regions();
+    assert_eq!(regions.len(), 1);
+    assert_eq!(
+        regions[0].font,
+        Some(expected),
+        "TextRun.font='{}' must resolve to AppFont::{:?}",
+        family,
+        expected
+    );
+}
+
+#[test]
+fn test_text_run_unknown_font_falls_back_to_none() {
+    use crate::font::fonts;
+    use crate::mindmap::model::TextRun;
+
+    fonts::init();
+    let mut node = synthetic_node("font-unknown", None, 0.0, 0.0);
+    node.text = "Hi".to_string();
+    node.text_runs = vec![TextRun {
+        start: 0,
+        end: 2,
+        bold: false,
+        italic: false,
+        underline: false,
+        font: "DefinitelyNotAFontFamilyXYZ".into(),
+        size_pt: 14,
+        color: "#ffffff".into(),
+        hyperlink: None,
+    }];
+    let map = synthetic_map(vec![node], vec![]);
+    let result = build_mindmap_tree(&map);
+    let area = glyph_area_of(&result.tree, *result.node_map.get("font-unknown").unwrap());
+    let regions = area.regions.all_regions();
+    assert_eq!(regions.len(), 1);
+    assert_eq!(
+        regions[0].font, None,
+        "unknown family must resolve to None so the attrs builder \
+         falls back to monospace"
+    );
+}

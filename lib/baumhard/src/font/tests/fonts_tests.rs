@@ -12,7 +12,8 @@ use cosmic_text::SwashCache;
 
 use crate::font::fonts;
 use crate::font::fonts::{
-    acquire_font_system_write, acquire_font_system_write_with_timeout, measure_glyph_ink_bounds,
+    acquire_font_system_write, acquire_font_system_write_with_timeout,
+    app_font_by_family, list_loaded_families, measure_glyph_ink_bounds,
     measure_text_block_unbounded, AppFont, FONT_SYSTEM,
 };
 
@@ -268,6 +269,71 @@ pub fn do_measure_text_block_unbounded_width_scales_with_font_size() {
         small.width,
         large.width
     );
+}
+
+#[test]
+fn test_list_loaded_families_is_nonempty_sorted_unique() {
+    do_list_loaded_families_is_nonempty_sorted_unique();
+}
+
+/// `list_loaded_families` returns every compiled-in font's family
+/// name, sorted ascending and free of duplicates. The console
+/// completion popup and `font list` verb both depend on the
+/// sort/uniqueness contract.
+pub fn do_list_loaded_families_is_nonempty_sorted_unique() {
+    fonts::init();
+    let families = list_loaded_families();
+    assert!(
+        !families.is_empty(),
+        "at least one bundled family must be listed"
+    );
+    let sorted = {
+        let mut copy = families.clone();
+        copy.sort();
+        copy
+    };
+    assert_eq!(families, sorted, "families must come back sorted");
+    let unique = {
+        let mut copy = families.clone();
+        copy.sort();
+        copy.dedup();
+        copy
+    };
+    assert_eq!(families.len(), unique.len(), "no duplicates allowed");
+}
+
+#[test]
+fn test_app_font_by_family_round_trips() {
+    do_app_font_by_family_round_trips();
+}
+
+/// Every family name from `list_loaded_families` resolves back to
+/// some `AppFont` via `app_font_by_family`. This is the
+/// round-trip contract `font set <name>` relies on: a name picked
+/// from the popup must always resolve when the user submits it.
+pub fn do_app_font_by_family_round_trips() {
+    fonts::init();
+    for family in list_loaded_families() {
+        assert!(
+            app_font_by_family(&family).is_some(),
+            "family '{}' should resolve to some AppFont",
+            family
+        );
+    }
+}
+
+#[test]
+fn test_app_font_by_family_unknown_returns_none() {
+    do_app_font_by_family_unknown_returns_none();
+}
+
+/// Unknown families return `None` rather than panicking. The
+/// console command relies on this to surface a clean error
+/// message for typos.
+pub fn do_app_font_by_family_unknown_returns_none() {
+    fonts::init();
+    assert!(app_font_by_family("DefinitelyNotAFontFamilyXYZ").is_none());
+    assert!(app_font_by_family("").is_none());
 }
 
 /// Freeze-hardening regression: `acquire_font_system_write` must

@@ -34,6 +34,7 @@ pub(super) fn recompute_console_completions(
                 text: c.text,
                 display: c.display,
                 hint: c.hint,
+                font_family: c.font_family,
             })
             .collect();
         // Default highlight: the first row. Matches the terminal /

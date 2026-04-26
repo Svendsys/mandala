@@ -63,6 +63,7 @@ fn complete_zoom(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completi
                             }
                             .into(),
                         ),
+                        font_family: None,
                     });
                 }
             }
@@ -75,6 +76,7 @@ fn complete_zoom(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completi
                 text: format!("{}=", k),
                 display: format!("{}=", k),
                 hint: None,
+                font_family: None,
             })
             .collect(),
         CompletionContext::KvValue { key } if KEYS.contains(&key.as_str()) => {

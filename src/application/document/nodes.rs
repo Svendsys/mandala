@@ -171,6 +171,49 @@ impl MindMapDocument {
         true
     }
 
+    /// Set the font family on every `TextRun` of `node_id` to
+    /// `family`. Returns `true` if any run actually changed.
+    ///
+    /// `family` is a family-name string as listed by
+    /// `baumhard::font::fonts::list_loaded_families` — the data
+    /// model stores it verbatim and the tree builder resolves it to
+    /// an `AppFont` at render time. Empty `family` clears the
+    /// per-run pin (run falls back to the document default at
+    /// render time).
+    ///
+    /// Capture / undo: piggybacks on the existing
+    /// `UndoAction::EditNodeStyle` envelope (which already includes
+    /// the full `text_runs` snapshot via `before_runs`), so a
+    /// `font set` on a node is reversed by the same `undo()` arm
+    /// that reverses every other node-style edit. No new
+    /// `UndoAction` variant.
+    pub fn set_node_font_family(&mut self, node_id: &str, family: &str) -> bool {
+        let node = match self.mindmap.nodes.get(node_id) {
+            Some(n) => n,
+            None => return false,
+        };
+        let already = node
+            .text_runs
+            .iter()
+            .all(|r| r.font.as_str() == family);
+        if already {
+            return false;
+        }
+        let before_style = node.style.clone();
+        let before_runs = node.text_runs.clone();
+        let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
+        for run in node.text_runs.iter_mut() {
+            run.font = family.to_string();
+        }
+        self.undo_stack.push(UndoAction::EditNodeStyle {
+            node_id: node_id.to_string(),
+            before_style,
+            before_runs,
+        });
+        self.dirty = true;
+        true
+    }
+
     /// Write the node's zoom-visibility window. Each of `min` /
     /// `max` is a [`crate::application::document::ZoomBoundEdit`]:
     /// `Keep` leaves the side untouched, `Clear` sets it to

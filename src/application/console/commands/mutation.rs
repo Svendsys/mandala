@@ -40,6 +40,7 @@ fn complete_mutation(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Compl
                     text: s.to_string(),
                     display: s.to_string(),
                     hint: None,
+                    font_family: None,
                 })
                 .collect()
         }
@@ -64,6 +65,7 @@ fn complete_mutation(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Compl
                     text: id.clone(),
                     display: id.clone(),
                     hint: Some(cm.name.clone()),
+                    font_family: None,
                 })
                 .collect()
         }

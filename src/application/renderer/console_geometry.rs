@@ -53,10 +53,16 @@ pub struct ConsoleOverlayGeometry {
 
 /// One line in the scrollback, carrying its kind so the renderer can
 /// color input echoes, normal output, and errors differently.
+///
+/// `font_family` pins the shaped face for the line's text. `None`
+/// means "use the console default". Set by output-producing
+/// commands like `font list` so each row shapes in its own face;
+/// input echoes and errors always set `None`.
 #[derive(Clone, Debug)]
 pub struct ConsoleOverlayLine {
     pub text: String,
     pub kind: ConsoleOverlayLineKind,
+    pub font_family: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -71,10 +77,17 @@ pub enum ConsoleOverlayLineKind {
 
 /// One completion candidate: the replacement text plus an optional
 /// dim hint printed to the right (e.g. the command's summary).
+///
+/// `font_family` pins the shaped face for the candidate's `text`
+/// (the hint, if any, stays in the console default font). Set by
+/// the font-name completer so each candidate row renders in its own
+/// face — `font set A` shows every "A..." family pre-shaped in
+/// that family. `None` means "use the console's default font".
 #[derive(Clone, Debug)]
 pub struct ConsoleOverlayCompletion {
     pub text: String,
     pub hint: Option<String>,
+    pub font_family: Option<String>,
 }
 
 /// Pure-function output of the console-overlay layout pass. Holds
@@ -133,11 +146,11 @@ pub(super) fn lerp_alpha(min: u8, max: u8, t: f32) -> u8 {
     v.round().clamp(0.0, 255.0) as u8
 }
 
-/// Rebuild a `cosmic_text::Color` with a new alpha byte, keeping
-/// RGB. Cosmic-text's `Color` is `[R, G, B, A]` packed into a u32,
-/// so we unpack via the getter accessors and re-pack.
-pub(super) fn with_alpha(c: cosmic_text::Color, a: u8) -> cosmic_text::Color {
-    cosmic_text::Color::rgba(c.r(), c.g(), c.b(), a)
+/// Rebuild a [`baumhard::font::Color`] with a new alpha byte,
+/// keeping RGB. Baumhard's `Color` is `[R, G, B, A]` packed into a
+/// u32, so we unpack via the getter accessors and re-pack.
+pub(super) fn with_alpha(c: baumhard::font::Color, a: u8) -> baumhard::font::Color {
+    baumhard::font::Color::rgba(c.r(), c.g(), c.b(), a)
 }
 
 impl ConsoleFrameLayout {

@@ -45,6 +45,7 @@ fn complete_label(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Complet
                         text: format!("{}=", k),
                         display: format!("{}=", k),
                         hint: None,
+                        font_family: None,
                     });
                 }
             }
@@ -57,6 +58,7 @@ fn complete_label(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Complet
                 text: format!("{}=", k),
                 display: format!("{}=", k),
                 hint: None,
+                font_family: None,
             })
             .collect(),
         CompletionContext::KvValue { key } if key == "position" => {

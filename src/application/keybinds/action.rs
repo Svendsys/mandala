@@ -76,6 +76,22 @@ pub enum Action {
     ConsoleKillToStart,
     /// Kill the word before cursor (shell Ctrl+W).
     ConsoleKillWord,
+    /// Scroll the scrollback window up by one line (Shift+Up).
+    /// Plain Up still walks command history.
+    ConsoleScrollUp,
+    /// Scroll the scrollback window down by one line (Shift+Down).
+    ConsoleScrollDown,
+    /// Scroll the scrollback window up by one page
+    /// (`MAX_CONSOLE_SCROLLBACK_ROWS` lines, PgUp).
+    ConsoleScrollPageUp,
+    /// Scroll the scrollback window down by one page (PgDn).
+    ConsoleScrollPageDown,
+    /// Pin the scrollback window at the bottom (newest line trailing,
+    /// Shift+End).
+    ConsoleScrollEnd,
+    /// Pin the scrollback window at the top (oldest reachable line,
+    /// Shift+Home).
+    ConsoleScrollHome,
 
     // ── Color Picker ─────────────────────────────────────────────
     /// Cancel the color picker (contextual mode only; ignored in standalone).
@@ -128,7 +144,13 @@ impl Action {
             | Action::ConsoleJumpStart
             | Action::ConsoleJumpEnd
             | Action::ConsoleKillToStart
-            | Action::ConsoleKillWord => InputContext::Console,
+            | Action::ConsoleKillWord
+            | Action::ConsoleScrollUp
+            | Action::ConsoleScrollDown
+            | Action::ConsoleScrollPageUp
+            | Action::ConsoleScrollPageDown
+            | Action::ConsoleScrollEnd
+            | Action::ConsoleScrollHome => InputContext::Console,
 
             Action::PickerCancel
             | Action::PickerCommit

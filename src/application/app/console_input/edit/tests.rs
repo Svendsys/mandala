@@ -14,6 +14,8 @@ fn open_with(input: &str, cursor: usize) -> ConsoleState {
         scrollback: Vec::new(),
         completions: Vec::new(),
         completion_idx: None,
+        scroll_offset: 0,
+        wheel_accum: 0.0,
     }
 }
 
@@ -26,6 +28,8 @@ fn open_with_history(input: &str, cursor: usize, history: Vec<String>) -> Consol
         scrollback: Vec::new(),
         completions: Vec::new(),
         completion_idx: None,
+        scroll_offset: 0,
+        wheel_accum: 0.0,
     }
 }
 
@@ -278,6 +282,7 @@ fn dismiss_popup_clears_completions_when_present() {
             text: "help".into(),
             display: "help".into(),
             hint: None,
+            font_family: None,
         });
         *completion_idx = Some(0);
     }
@@ -285,6 +290,85 @@ fn dismiss_popup_clears_completions_when_present() {
     if let ConsoleState::Open { completions, completion_idx, .. } = &s {
         assert!(completions.is_empty());
         assert_eq!(*completion_idx, None);
+    }
+}
+
+#[test]
+fn adjust_scroll_clamps_to_valid_range() {
+    use crate::application::console::ConsoleLine;
+    use crate::application::renderer::MAX_CONSOLE_SCROLLBACK_ROWS;
+    let mut s = open_with("", 0);
+    // Fill with three windows of scrollback so there is room
+    // for both single-line and page-sized moves before clamping.
+    let total = MAX_CONSOLE_SCROLLBACK_ROWS * 3;
+    if let ConsoleState::Open { scrollback, .. } = &mut s {
+        for i in 0..total {
+            scrollback.push(ConsoleLine::Output {
+                text: format!("line {i}"),
+                font_family: None,
+            });
+        }
+    }
+    let max_offset = total - MAX_CONSOLE_SCROLLBACK_ROWS;
+    // LineUp moves the offset by 1 each call.
+    adjust_scroll(&mut s, ScrollDirection::LineUp);
+    if let ConsoleState::Open { scroll_offset, .. } = &s {
+        assert_eq!(*scroll_offset, 1);
+    }
+    // PageUp jumps a window — fits within max_offset given the
+    // 3-window scrollback.
+    adjust_scroll(&mut s, ScrollDirection::PageUp);
+    if let ConsoleState::Open { scroll_offset, .. } = &s {
+        assert_eq!(*scroll_offset, 1 + MAX_CONSOLE_SCROLLBACK_ROWS);
+    }
+    // Home pins to the maximum reachable offset (= scrollback len
+    // minus the visible window).
+    adjust_scroll(&mut s, ScrollDirection::Home);
+    if let ConsoleState::Open { scroll_offset, .. } = &s {
+        assert_eq!(*scroll_offset, max_offset);
+    }
+    // Further LineUp clamps at the maximum.
+    adjust_scroll(&mut s, ScrollDirection::LineUp);
+    if let ConsoleState::Open { scroll_offset, .. } = &s {
+        assert_eq!(*scroll_offset, max_offset);
+    }
+    // End pins to the bottom.
+    adjust_scroll(&mut s, ScrollDirection::End);
+    if let ConsoleState::Open { scroll_offset, .. } = &s {
+        assert_eq!(*scroll_offset, 0);
+    }
+    // LineDown at zero stays at zero (saturating subtraction).
+    adjust_scroll(&mut s, ScrollDirection::LineDown);
+    if let ConsoleState::Open { scroll_offset, .. } = &s {
+        assert_eq!(*scroll_offset, 0);
+    }
+}
+
+#[test]
+fn scroll_by_lines_handles_positive_and_negative_deltas() {
+    use crate::application::console::ConsoleLine;
+    use crate::application::renderer::MAX_CONSOLE_SCROLLBACK_ROWS;
+    let mut s = open_with("", 0);
+    if let ConsoleState::Open { scrollback, .. } = &mut s {
+        for i in 0..MAX_CONSOLE_SCROLLBACK_ROWS * 3 {
+            scrollback.push(ConsoleLine::Output {
+                text: format!("line {i}"),
+                font_family: None,
+            });
+        }
+    }
+    scroll_by_lines(&mut s, 5);
+    if let ConsoleState::Open { scroll_offset, .. } = &s {
+        assert_eq!(*scroll_offset, 5);
+    }
+    scroll_by_lines(&mut s, -3);
+    if let ConsoleState::Open { scroll_offset, .. } = &s {
+        assert_eq!(*scroll_offset, 2);
+    }
+    // Underflow saturates at zero.
+    scroll_by_lines(&mut s, -100);
+    if let ConsoleState::Open { scroll_offset, .. } = &s {
+        assert_eq!(*scroll_offset, 0);
     }
 }
 

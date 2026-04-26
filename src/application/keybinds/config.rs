@@ -51,6 +51,12 @@ pub struct KeybindConfig {
     pub console_jump_end: Vec<String>,
     pub console_kill_to_start: Vec<String>,
     pub console_kill_word: Vec<String>,
+    pub console_scroll_up: Vec<String>,
+    pub console_scroll_down: Vec<String>,
+    pub console_scroll_page_up: Vec<String>,
+    pub console_scroll_page_down: Vec<String>,
+    pub console_scroll_end: Vec<String>,
+    pub console_scroll_home: Vec<String>,
 
     // ── Color Picker ─────────────────────────────────────────────
     pub picker_cancel: Vec<String>,
@@ -115,6 +121,12 @@ impl Default for KeybindConfig {
             console_jump_end: vec!["Ctrl+E".into()],
             console_kill_to_start: vec!["Ctrl+U".into()],
             console_kill_word: vec!["Ctrl+W".into()],
+            console_scroll_up: vec!["Shift+ArrowUp".into(), "Shift+Up".into()],
+            console_scroll_down: vec!["Shift+ArrowDown".into(), "Shift+Down".into()],
+            console_scroll_page_up: vec!["PageUp".into()],
+            console_scroll_page_down: vec!["PageDown".into()],
+            console_scroll_end: vec!["Shift+End".into()],
+            console_scroll_home: vec!["Shift+Home".into()],
 
             // Color Picker
             picker_cancel: vec!["Escape".into()],
@@ -187,6 +199,12 @@ impl KeybindConfig {
             (Action::ConsoleJumpEnd, &self.console_jump_end),
             (Action::ConsoleKillToStart, &self.console_kill_to_start),
             (Action::ConsoleKillWord, &self.console_kill_word),
+            (Action::ConsoleScrollUp, &self.console_scroll_up),
+            (Action::ConsoleScrollDown, &self.console_scroll_down),
+            (Action::ConsoleScrollPageUp, &self.console_scroll_page_up),
+            (Action::ConsoleScrollPageDown, &self.console_scroll_page_down),
+            (Action::ConsoleScrollEnd, &self.console_scroll_end),
+            (Action::ConsoleScrollHome, &self.console_scroll_home),
             // Color Picker
             (Action::PickerCancel, &self.picker_cancel),
             (Action::PickerCommit, &self.picker_commit),

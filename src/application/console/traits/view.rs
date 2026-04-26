@@ -13,8 +13,8 @@
 //! the owning edge's fields.
 
 use super::capabilities::{
-    AcceptsWheelColor, HandlesCopy, HandlesCut, HandlesPaste, HasBgColor, HasBorderColor,
-    HasLabel, HasTextColor,
+    AcceptsFontFamily, AcceptsWheelColor, HandlesCopy, HandlesCut, HandlesPaste, HasBgColor,
+    HasBorderColor, HasLabel, HasTextColor,
 };
 use super::color_value::ColorValue;
 use super::outcome::{ClipboardContent, Outcome};
@@ -218,6 +218,35 @@ impl<'a> AcceptsWheelColor for TargetView<'a> {
             | TargetView::EdgeLabel { .. }
             | TargetView::PortalLabel { .. }
             | TargetView::PortalText { .. } => self.set_border_color(c),
+        }
+    }
+}
+
+impl<'a> AcceptsFontFamily for TargetView<'a> {
+    fn set_font_family(&mut self, family: &str) -> Outcome {
+        match self {
+            // Node: writes every `TextRun.font` plus the future
+            // node-level default (when one is added). Node has no
+            // per-channel font split today.
+            TargetView::Node { doc, id } => {
+                Outcome::applied(doc.set_node_font_family(id, family))
+            }
+            // Edge body: `glyph_connection.font` override.
+            TargetView::Edge { doc, er } => {
+                Outcome::applied(doc.set_edge_font_family(er, Some(family)))
+            }
+            // Portal icon shares the edge body's `glyph_connection.font` —
+            // the same routing existing `font size=` uses for the
+            // PortalLabel selection.
+            TargetView::PortalLabel { doc, er, .. } => {
+                Outcome::applied(doc.set_edge_font_family(er, Some(family)))
+            }
+            // Edge labels and portal text inherit the edge body's
+            // font today; no per-channel `font_family` slot exists
+            // on `EdgeLabelConfig` / `PortalEndpointState` yet.
+            TargetView::EdgeLabel { .. } | TargetView::PortalText { .. } => {
+                Outcome::NotApplicable
+            }
         }
     }
 }

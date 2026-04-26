@@ -4,7 +4,7 @@
 //! every font it might need without touching the filesystem at run
 //! time.
 
-use std::sync::{Arc, RwLock, RwLockWriteGuard, TryLockError};
+use std::sync::{Arc, OnceLock, RwLock, RwLockWriteGuard, TryLockError};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -74,6 +74,80 @@ lazy_static! {
 /// / measurement path.
 pub fn init() {
     COMPILED_FONT_ID_MAP.capacity();
+}
+
+/// Cached `(family_name, AppFont)` pairs, sorted by family name.
+/// Built once on first access by [`list_loaded_families`] /
+/// [`app_font_by_family`] from [`COMPILED_FONT_ID_MAP`] +
+/// [`FONT_SYSTEM`]. Trivially small — one entry per `AppFont` —
+/// so the whole list is O(n) to scan even on the lookup path.
+static FAMILY_INDEX: OnceLock<Vec<(String, AppFont)>> = OnceLock::new();
+
+/// Build the `(family_name, AppFont)` index by resolving every
+/// compiled `AppFont` through the live `FONT_SYSTEM` fontdb. Holds
+/// the `FONT_SYSTEM` **read** lock for the scope of the call.
+///
+/// Multiple `AppFont` variants can map to the same family name when
+/// the bundled set carries several styles of one family (regular +
+/// bold + italic, for example) under matching `families[0]` strings
+/// — fontdb deduplicates faces by `(family, style)`, but the family
+/// string alone is not unique. We dedup by family name so a caller
+/// that only wants a list of families gets each one once. The first
+/// `AppFont` we encounter wins for the reverse-lookup path; that's
+/// fine because the user-facing surface only knows family names,
+/// not styles.
+fn build_family_index() -> Vec<(String, AppFont)> {
+    let font_system = FONT_SYSTEM
+        .read()
+        .expect("FONT_SYSTEM lock poisoned during family-index build");
+    let mut seen: rustc_hash::FxHashSet<String> = rustc_hash::FxHashSet::default();
+    let mut out: Vec<(String, AppFont)> = Vec::new();
+    for (app_font, ids) in COMPILED_FONT_ID_MAP.iter() {
+        let Some(id) = ids.first() else { continue };
+        let Some(face) = font_system.db().face(*id) else { continue };
+        let Some((family, _)) = face.families.first() else { continue };
+        if seen.insert(family.clone()) {
+            out.push((family.clone(), *app_font));
+        }
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+/// All compiled-in font families, sorted, as the family-name strings
+/// the data model stores in `TextRun.font` and
+/// `GlyphConnectionConfig.font`. The console populates its
+/// completion popup and `font list` output from this; future
+/// graphical font browsers reach the same primitive.
+///
+/// Caches the result on first call (one `FONT_SYSTEM.read()` +
+/// O(n) walk), so subsequent calls are O(n) over a `Vec<String>`
+/// that's already in memory. Allocates a fresh `Vec<String>` per
+/// call — call sites that walk it many times should bind the
+/// result locally.
+pub fn list_loaded_families() -> Vec<String> {
+    FAMILY_INDEX
+        .get_or_init(build_family_index)
+        .iter()
+        .map(|(name, _)| name.clone())
+        .collect()
+}
+
+/// Resolve a family-name string to the build-time `AppFont` enum
+/// `crate::core::primitives::ColorFontRegion` stores in its `font`
+/// slot. Exact-match (case-sensitive); fuzzy matching is the
+/// caller's job — pre-filter via [`list_loaded_families`] and
+/// feed the chosen exact string back in.
+///
+/// Returns `None` for unknown families so callers can degrade
+/// gracefully (e.g. fall back to the default font and surface a
+/// warning).
+pub fn app_font_by_family(name: &str) -> Option<AppFont> {
+    FAMILY_INDEX
+        .get_or_init(build_family_index)
+        .iter()
+        .find(|(family, _)| family == name)
+        .map(|(_, app_font)| *app_font)
 }
 
 /// Wall-clock ceiling for a `FONT_SYSTEM` write acquisition. Mandala

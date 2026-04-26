@@ -68,6 +68,7 @@ fn complete_edge(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completi
                 text: format!("{}=", k),
                 display: format!("{}=", k),
                 hint: None,
+                font_family: None,
             })
             .collect(),
         CompletionContext::KvValue { key } if key == "type" => {

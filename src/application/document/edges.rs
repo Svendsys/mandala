@@ -763,6 +763,50 @@ impl MindMapDocument {
         true
     }
 
+    /// Set the edge body's `glyph_connection.font` family override.
+    /// `Some("Norse")` pins the edge glyphs to that family; `None`
+    /// clears the override (edge falls back to the canvas default
+    /// font).
+    ///
+    /// Forks a fresh `GlyphConnectionConfig` on first edit via
+    /// `ensure_glyph_connection`. A single `UndoAction::EditEdge`
+    /// entry covers the change so Ctrl+Z reverses cleanly.
+    /// Family-name validation is the caller's job — the data model
+    /// stores the string verbatim and the tree builder resolves
+    /// it through `baumhard::font::fonts::app_font_by_family` at
+    /// render time, falling back to monospace with a warning if
+    /// the family is unknown.
+    pub fn set_edge_font_family(
+        &mut self,
+        edge_ref: &EdgeRef,
+        family: Option<&str>,
+    ) -> bool {
+        let idx = match self.mindmap.edges.iter().position(|e| edge_ref.matches(e)) {
+            Some(i) => i,
+            None => return false,
+        };
+        // Peek the effective family before forking so a no-op
+        // clear (`None` on an edge that already has no override)
+        // doesn't mint an undo entry.
+        let current = self.mindmap.edges[idx]
+            .glyph_connection
+            .as_ref()
+            .and_then(|c| c.font.as_deref());
+        let target = family.filter(|s| !s.is_empty());
+        if current == target {
+            return false;
+        }
+        let before = self.mindmap.edges[idx].clone();
+        let cfg = Self::ensure_glyph_connection(
+            &mut self.mindmap.edges[idx],
+            &self.mindmap.canvas,
+        );
+        cfg.font = target.map(|s| s.to_string());
+        self.undo_stack.push(UndoAction::EditEdge { index: idx, before });
+        self.dirty = true;
+        true
+    }
+
     /// Sibling of [`Self::set_edge_font`] targeting the edge
     /// **label** channel (`label_config.font_size_pt` / `min` /
     /// `max`). Same atomic ordering — min/max write before the
