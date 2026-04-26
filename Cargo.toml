@@ -49,7 +49,6 @@ lazy_static = "1.5.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 num_cpus = "1.17.0"
-rustix = "1.1.4"
 pollster = "0.4.0"
 arboard = "3.6.1"
 

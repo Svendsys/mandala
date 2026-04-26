@@ -1635,7 +1635,6 @@ dependencies = [
  "pollster",
  "regex",
  "rustc-hash 2.1.2",
- "rustix 1.1.4",
  "serde",
  "serde-lexpr",
  "serde_json",
