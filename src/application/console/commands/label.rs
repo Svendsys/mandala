@@ -45,6 +45,7 @@ fn complete_label(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Complet
                         text: format!("{}=", k),
                         display: format!("{}=", k),
                         hint: None,
+                        font_family: None,
                     });
                 }
             }
@@ -57,6 +58,7 @@ fn complete_label(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Complet
                 text: format!("{}=", k),
                 display: format!("{}=", k),
                 hint: None,
+                font_family: None,
             })
             .collect(),
         CompletionContext::KvValue { key } if key == "position" => {
@@ -365,7 +367,7 @@ fn execute_label(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         if !any_applied {
             return ExecResult::err(messages.join("; "));
         }
-        return ExecResult::Lines(messages);
+        return ExecResult::lines(messages);
     }
     if any_applied {
         ExecResult::ok_msg("label applied")

@@ -313,6 +313,19 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("measure_text_block_unbounded_width_scales_with_font_size", |b| {
         b.iter(|| do_measure_text_block_unbounded_width_scales_with_font_size())
     });
+    // font family enumeration / lookup //
+    c.bench_function("list_loaded_families_is_nonempty_sorted_unique", |b| {
+        b.iter(|| do_list_loaded_families_is_nonempty_sorted_unique())
+    });
+    c.bench_function("app_font_by_family_round_trips", |b| {
+        b.iter(|| do_app_font_by_family_round_trips())
+    });
+    c.bench_function("app_font_by_family_unknown_returns_none", |b| {
+        b.iter(|| do_app_font_by_family_unknown_returns_none())
+    });
+    c.bench_function("loaded_families_iter_matches_owned_list", |b| {
+        b.iter(|| do_loaded_families_iter_matches_owned_list())
+    });
     // scene + hit-test //
     c.bench_function("descendant_at_hits_single_area", |b| b.iter(|| do_descendant_at_hits_single_area()));
     c.bench_function("descendant_at_prefers_smallest", |b| b.iter(|| do_descendant_at_prefers_smallest()));

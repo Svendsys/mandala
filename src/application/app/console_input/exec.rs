@@ -16,7 +16,7 @@ use super::super::color_picker_flow::{
 use super::super::{
     open_label_edit, open_portal_text_edit, rebuild_all, LabelEditState, PortalTextEditState,
 };
-use super::{push_scrollback_error, push_scrollback_output};
+use super::{push_scrollback_error, push_scrollback_output, push_scrollback_output_in_font};
 
 /// Parse and execute a console line. Drains deferred modal handoffs
 /// (`open_label_edit`, `open_color_picker`), custom mutation apply
@@ -73,8 +73,12 @@ pub(in crate::application::app) fn execute_console_line(
         }
         ExecResult::Err(s) => push_scrollback_error(console_state, s),
         ExecResult::Lines(lines) => {
-            for l in lines {
-                push_scrollback_output(console_state, l);
+            for line in lines {
+                push_scrollback_output_in_font(
+                    console_state,
+                    line.text,
+                    line.font_family,
+                );
             }
         }
     }

@@ -33,11 +33,11 @@ mod view;
 mod tests;
 
 pub use capabilities::{
-    AcceptsWheelColor, HasBgColor, HasBorderColor, HandlesCopy, HandlesCut, HandlesPaste,
-    HasLabel, HasTextColor,
+    AcceptsFontFamily, AcceptsWheelColor, HasBgColor, HasBorderColor, HandlesCopy, HandlesCut,
+    HandlesPaste, HasLabel, HasTextColor,
 };
 pub use color_value::ColorValue;
-pub use dispatch::{apply_kvs, DispatchReport};
+pub use dispatch::{apply_kvs, apply_to_targets, DispatchReport};
 pub use outcome::{ClipboardContent, Outcome};
 // `TargetView` and `TargetId` are re-exported as part of the
 // public surface even when no in-tree caller imports them by name —

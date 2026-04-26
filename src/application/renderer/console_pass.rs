@@ -12,6 +12,8 @@ use cosmic_text::FontSystem;
 use glam::Vec2;
 
 use baumhard::core::primitives::{ColorFontRegions, Range as ColorFontRange, ColorFontRegion};
+use baumhard::font::fonts::app_font_by_family;
+use baumhard::font::Color;
 use baumhard::gfx_structs::area::GlyphArea;
 use baumhard::gfx_structs::element::GfxElement;
 use baumhard::gfx_structs::mutator::GfxMutator;
@@ -98,11 +100,12 @@ pub(super) fn console_overlay_areas(
     } = layout;
 
     let mk_area = |text: &str,
-                   color: cosmic_text::Color,
+                   color: Color,
                    font_size: f32,
                    line_height: f32,
                    pos: (f32, f32),
-                   bounds: (f32, f32)|
+                   bounds: (f32, f32),
+                   font_family: Option<&str>|
      -> GlyphArea {
         let mut area = GlyphArea::new_with_str(
             text,
@@ -117,10 +120,16 @@ pub(super) fn console_overlay_areas(
             color.b() as f32 / 255.0,
             color.a() as f32 / 255.0,
         ];
+        // Resolve the per-line family-name (if any) to an AppFont
+        // so the baumhard attrs builder pins the face. Unknown
+        // families fall through as `None`, which the attrs builder
+        // already degrades to monospace with a warning — never a
+        // panic per §9.
+        let font = font_family.and_then(app_font_by_family);
         area.regions = ColorFontRegions::single_span(
             baumhard::util::grapheme_chad::count_grapheme_clusters(text),
             Some(rgba),
-            None,
+            font,
         );
         area
     };
@@ -144,6 +153,7 @@ pub(super) fn console_overlay_areas(
             font_size,
             (left, top),
             (frame_width, font_size * 1.5),
+            None,
         ),
     ));
     out.push((
@@ -155,6 +165,7 @@ pub(super) fn console_overlay_areas(
             font_size,
             (left, top + frame_height),
             (frame_width, font_size * 1.5),
+            None,
         ),
     ));
     out.push((
@@ -166,6 +177,7 @@ pub(super) fn console_overlay_areas(
             row_height,
             (left, top + font_size),
             (measured_char_width, frame_height),
+            None,
         ),
     ));
     let right_col_x = left + (cols.saturating_sub(1) as f32) * measured_char_width;
@@ -178,6 +190,7 @@ pub(super) fn console_overlay_areas(
             row_height,
             (right_col_x, top + font_size),
             (measured_char_width, frame_height),
+            None,
         ),
     ));
 
@@ -264,6 +277,7 @@ pub(super) fn console_overlay_areas(
                 row_height,
                 (gutter_x, y),
                 (char_width, row_height),
+                None,
             ),
         ));
         out.push((
@@ -275,6 +289,7 @@ pub(super) fn console_overlay_areas(
                 row_height,
                 (content_left, y),
                 (content_width, row_height),
+                line.font_family.as_deref(),
             ),
         ));
     }
@@ -325,6 +340,7 @@ pub(super) fn console_overlay_areas(
                 row_height,
                 (content_left, y),
                 (content_width, row_height),
+                c.font_family.as_deref(),
             ),
         ));
     }
@@ -360,7 +376,7 @@ pub(super) fn console_overlay_areas(
         Vec2::new(content_width, prompt_budget),
     );
     let mut regions = ColorFontRegions::new_empty();
-    let to_rgba = |c: cosmic_text::Color| -> [f32; 4] {
+    let to_rgba = |c: Color| -> [f32; 4] {
         [
             c.r() as f32 / 255.0,
             c.g() as f32 / 255.0,

@@ -204,6 +204,19 @@ session doesn't have to trawl `#[cfg]` guards to learn what works where.
 - Cross-platform monotonic clock via `now_ms()` in
   `src/application/app/mod.rs` (native: `Instant`; WASM:
   `performance.now()`).
+- Per-glyph font-family pinning via `TextRun.font` /
+  `GlyphConnectionConfig.font`. Both fields are now honored
+  end-to-end — the tree builder
+  (`lib/baumhard/src/mindmap/tree_builder/node.rs`) resolves the
+  family-name string through
+  `baumhard::font::fonts::app_font_by_family` to an `AppFont` and
+  threads it onto the `ColorFontRegion`; the baumhard attrs
+  builder pins the face. Unknown families log a warning and fall
+  back to monospace per §9. The `AcceptsFontFamily` trait on
+  `TargetView` is the seam every font-applying surface (console
+  command today, graphical picker tomorrow) goes through — see
+  `format/fonts.md`. Enumeration helper:
+  `baumhard::font::fonts::list_loaded_families`.
 
 **Native-only today** (each is a parity gap, not a style choice):
 - Drag gestures: pan, move-node, edge-handle, portal-label, rect-select
@@ -216,7 +229,19 @@ session doesn't have to trawl `#[cfg]` guards to learn what works where.
   loader + registry run on both targets, only the UI shell is native.
   The label / portal-text editors commit on click outside the
   edited target's AABB (mirroring the node text editor); WASM
-  reaches the same operations via console verbs.
+  reaches the same operations via console verbs. The `font` verb
+  also lives in this shell: `font set <family>` pins the font
+  family on the current selection through the `AcceptsFontFamily`
+  trait, `font list` enumerates loaded families with each row
+  shaped in its own face, and the existing `size=`/`min=`/`max=`
+  KV form is unchanged. The console scrollback is now scrollable
+  (Shift+Up/Down + PgUp/PgDn + Shift+Home/End for the keyboard,
+  mousewheel intercepts while the console is open) so large
+  outputs like `font list` are reachable end-to-end. The
+  `AcceptsFontFamily` trait, the data-model fields, and the
+  enumeration helper all compile for `wasm32-unknown-unknown`;
+  the WASM gap is the console UI shell, not the font primitives.
+  See `format/fonts.md`.
 - Hover-based UI: `hovered_node` tracking, cursor-change on button
   nodes, `OnClick` trigger dispatch.
 - Clipboard copy/paste — `arboard` on native; WASM `clipboard.rs` stubs

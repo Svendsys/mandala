@@ -292,6 +292,72 @@ use super::defaults::default_cross_link_edge;
         assert!(!doc.set_node_border_color("nope", "#000".into()));
         assert!(!doc.set_node_text_color("nope", "#000".into()));
         assert!(!doc.set_node_font_size("nope", 10.0));
+        assert!(!doc.set_node_font_family("nope", Some("Norse")));
         assert!(doc.undo_stack.is_empty());
         assert!(!doc.dirty);
+    }
+
+    #[test]
+    fn test_set_node_font_family_writes_all_runs_and_round_trips() {
+        baumhard::font::fonts::init();
+        let mut doc = load_test_doc();
+        let nid = first_testament_node_id(&doc);
+        let before_fonts: Vec<String> = doc
+            .mindmap
+            .nodes
+            .get(&nid)
+            .unwrap()
+            .text_runs
+            .iter()
+            .map(|r| r.font.clone())
+            .collect();
+        // Pick a loaded family that doesn't already match every
+        // existing run — keeps the test self-healing against
+        // future fixture changes.
+        let target = baumhard::font::fonts::loaded_families_iter()
+            .find(|f| !before_fonts.iter().any(|b| b == f))
+            .map(str::to_string)
+            .expect("at least one loaded family must differ from the fixture");
+        assert!(doc.set_node_font_family(&nid, Some(&target)));
+        let node = doc.mindmap.nodes.get(&nid).unwrap();
+        assert!(node.text_runs.iter().all(|r| r.font == target));
+        // Idempotent re-set is a no-op.
+        let stack_len = doc.undo_stack.len();
+        assert!(!doc.set_node_font_family(&nid, Some(&target)));
+        assert_eq!(doc.undo_stack.len(), stack_len);
+        // Undo restores the prior heterogeneous state.
+        assert!(doc.undo());
+        let after_fonts: Vec<String> = doc
+            .mindmap
+            .nodes
+            .get(&nid)
+            .unwrap()
+            .text_runs
+            .iter()
+            .map(|r| r.font.clone())
+            .collect();
+        assert_eq!(after_fonts, before_fonts);
+    }
+
+    #[test]
+    fn test_set_node_font_family_none_clears_every_run() {
+        let mut doc = load_test_doc();
+        let nid = first_testament_node_id(&doc);
+        // Pin the runs to a known family first so the clear has
+        // something to clear.
+        baumhard::font::fonts::init();
+        let target = baumhard::font::fonts::loaded_families_iter()
+            .next()
+            .map(str::to_string)
+            .expect("at least one loaded family");
+        assert!(doc.set_node_font_family(&nid, Some(&target)));
+        // Now clear with None — every run should hold the empty
+        // sentinel that the tree builder reads as "use default".
+        assert!(doc.set_node_font_family(&nid, None));
+        let node = doc.mindmap.nodes.get(&nid).unwrap();
+        assert!(node.text_runs.iter().all(|r| r.font.is_empty()));
+        // Re-clear is a no-op.
+        let stack_len = doc.undo_stack.len();
+        assert!(!doc.set_node_font_family(&nid, None));
+        assert_eq!(doc.undo_stack.len(), stack_len);
     }

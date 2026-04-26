@@ -30,6 +30,99 @@ impl EditOutcome {
     }
 }
 
+/// Direction + magnitude for a scrollback navigation step. Mapped
+/// from the `Action` set in `dispatch::map_scroll_action`. The unit
+/// "page" matches `MAX_CONSOLE_SCROLLBACK_ROWS` so PgUp/PgDn move
+/// exactly one visible-window worth of lines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ScrollDirection {
+    LineUp,
+    LineDown,
+    PageUp,
+    PageDown,
+    Home,
+    End,
+}
+
+/// Adjust `ConsoleState::Open.scroll_offset` per `direction`,
+/// clamping against the maximum reachable offset (= scrollback
+/// length minus the visible window size). `Home` jumps to the
+/// oldest reachable line; `End` pins the bottom (offset = 0).
+pub(super) fn adjust_scroll(state: &mut ConsoleState, direction: ScrollDirection) {
+    use crate::application::renderer::MAX_CONSOLE_SCROLLBACK_ROWS;
+    if let ConsoleState::Open {
+        scrollback,
+        scroll_offset,
+        ..
+    } = state
+    {
+        let max = scrollback.len().saturating_sub(MAX_CONSOLE_SCROLLBACK_ROWS);
+        let new = match direction {
+            ScrollDirection::LineUp => scroll_offset.saturating_add(1).min(max),
+            ScrollDirection::LineDown => scroll_offset.saturating_sub(1),
+            ScrollDirection::PageUp => scroll_offset
+                .saturating_add(MAX_CONSOLE_SCROLLBACK_ROWS)
+                .min(max),
+            ScrollDirection::PageDown => {
+                scroll_offset.saturating_sub(MAX_CONSOLE_SCROLLBACK_ROWS)
+            }
+            ScrollDirection::Home => max,
+            ScrollDirection::End => 0,
+        };
+        *scroll_offset = new;
+    }
+}
+
+/// Adjust the scroll offset by an integer line delta returned from
+/// the mousewheel-step accumulator. Positive delta scrolls up
+/// (older lines into view), negative scrolls down. Same clamp as
+/// [`adjust_scroll`] — clamped to `[0, scrollback.len() -
+/// MAX_CONSOLE_SCROLLBACK_ROWS]`.
+pub(super) fn scroll_by_lines(state: &mut ConsoleState, delta: i32) {
+    use crate::application::renderer::MAX_CONSOLE_SCROLLBACK_ROWS;
+    if let ConsoleState::Open {
+        scrollback,
+        scroll_offset,
+        ..
+    } = state
+    {
+        let max = scrollback.len().saturating_sub(MAX_CONSOLE_SCROLLBACK_ROWS);
+        let signed = (*scroll_offset as i32).saturating_add(delta);
+        let clamped = signed.max(0) as usize;
+        *scroll_offset = clamped.min(max);
+    }
+}
+
+/// Drain a wheel delta into integer line steps, carrying the
+/// fractional remainder in `accum` for the next call. Native
+/// mousewheel events arrive as fixed pixel amounts (or per-platform
+/// line counts) that are rarely a clean multiple of one line; the
+/// accumulator keeps slow scrolls (sub-line per tick) from getting
+/// rounded to zero forever.
+///
+/// Pure function over `&mut f32` — extracted from the winit event
+/// closure so it can be unit-tested directly. Tests cover the
+/// fractional-carry, negative-delta, and large-delta paths.
+///
+/// `dy` is the wheel delta in lines (the caller's responsibility to
+/// divide pixel deltas by a per-platform line height before
+/// calling). Returns the integer line steps to apply this tick;
+/// `accum` retains the leftover fractional residue.
+pub(super) fn accumulate_wheel_lines(accum: &mut f32, dy: f32) -> i32 {
+    if !dy.is_finite() {
+        // Defensive: a bogus event must not poison the
+        // accumulator. Drop the tick and reset.
+        *accum = 0.0;
+        return 0;
+    }
+    *accum += dy;
+    let lines = accum.trunc() as i32;
+    if lines != 0 {
+        *accum -= lines as f32;
+    }
+    lines
+}
+
 pub(super) fn clear_line(state: &mut ConsoleState) -> EditOutcome {
     let ConsoleState::Open { input, cursor, history_idx, .. } = state else {
         return EditOutcome::Unchanged;

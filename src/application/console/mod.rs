@@ -141,9 +141,39 @@ pub enum ExecResult {
     Ok(String),
     /// Failed execution with a diagnostic message.
     Err(String),
-    /// Emit multiple lines of output (help text, `mutate list`
-    /// tables, etc.).
-    Lines(Vec<String>),
+    /// Emit multiple output lines. Each line carries an optional
+    /// pinned font family — `font list` sets one per line so the
+    /// row shapes in its own face, while help text / mutate-list
+    /// tables leave it `None` and shape in the console default.
+    Lines(Vec<OutputLine>),
+}
+
+/// One line of multi-line console output. Default-shaped (font
+/// family unset) unless the producing command pins a face — used
+/// today by `font list` so each row renders in the family it
+/// names.
+#[derive(Clone, Debug, Default)]
+pub struct OutputLine {
+    pub text: String,
+    pub font_family: Option<String>,
+}
+
+impl OutputLine {
+    /// Plain text, console default font.
+    pub fn plain(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            font_family: None,
+        }
+    }
+
+    /// Text shaped in `family`.
+    pub fn in_font(text: impl Into<String>, family: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            font_family: Some(family.into()),
+        }
+    }
 }
 
 impl ExecResult {
@@ -156,16 +186,36 @@ impl ExecResult {
     pub fn err(s: impl Into<String>) -> Self {
         ExecResult::Err(s.into())
     }
+    /// Convenience for command handlers that emit plain
+    /// console-default-font output. Mirrors the pre-collapse
+    /// `Lines(Vec<String>)` ergonomics so existing call sites
+    /// stay one-liners.
+    pub fn lines<I, S>(lines: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        ExecResult::Lines(lines.into_iter().map(OutputLine::plain).collect())
+    }
 }
 
 /// One rendered line in the scrollback. Colored at render time by
-/// variant.
+/// variant. The `Output` variant additionally carries an optional
+/// `font_family` — set by `font list` so each font name shapes in
+/// its own face. `Input` echoes and `Error` lines always use the
+/// console default font.
 #[derive(Clone, Debug)]
 pub enum ConsoleLine {
     /// Echo of a user-entered command (`> anchor set from auto`).
     Input(String),
     /// Normal output line from a command.
-    Output(String),
+    Output {
+        text: String,
+        /// Pinned font family for this line, or `None` for the
+        /// console default. Set by commands like `font list` that
+        /// want each row in its own face.
+        font_family: Option<String>,
+    },
     /// Error output from a failed command.
     Error(String),
 }
@@ -173,7 +223,8 @@ pub enum ConsoleLine {
 impl ConsoleLine {
     pub fn text(&self) -> &str {
         match self {
-            ConsoleLine::Input(s) | ConsoleLine::Output(s) | ConsoleLine::Error(s) => s,
+            ConsoleLine::Input(s) | ConsoleLine::Error(s) => s,
+            ConsoleLine::Output { text, .. } => text,
         }
     }
 }
@@ -213,6 +264,22 @@ pub enum ConsoleState {
         /// Which completion is highlighted. `None` when the popup is
         /// closed (no completions computed yet); `Some(idx)` after Tab.
         completion_idx: Option<usize>,
+        /// Scrollback view offset. `0` means "pinned to the bottom"
+        /// (the trailing N lines fill the visible window). `N` means
+        /// "the visible window's bottom edge sits N lines above the
+        /// newest line" — i.e. the user has scrolled up by N. Clamped
+        /// at read time against
+        /// `scrollback.len().saturating_sub(MAX_CONSOLE_SCROLLBACK_ROWS)`
+        /// so growing scrollback can never strand the offset
+        /// out-of-range. Reset to `0` on any input change or new
+        /// scrollback arrival so the next command shows in view.
+        scroll_offset: usize,
+        /// Mousewheel-line accumulator. Wheel deltas arrive as fixed
+        /// pixel amounts (or per-platform line counts) that are
+        /// rarely a clean multiple of one line. We accumulate the
+        /// fractional remainder here so a slow scroll with
+        /// sub-line-per-tick deltas still moves at all.
+        wheel_accum: f32,
     },
 }
 
@@ -233,6 +300,8 @@ impl ConsoleState {
             scrollback: Vec::new(),
             completions: Vec::new(),
             completion_idx: None,
+            scroll_offset: 0,
+            wheel_accum: 0.0,
         }
     }
 }

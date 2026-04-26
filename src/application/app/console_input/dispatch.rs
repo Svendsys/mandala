@@ -121,6 +121,16 @@ pub(in crate::application::app) fn handle_console_key(
         return;
     }
 
+    // Scrollback navigation. Plain Up/Down stays on history; these
+    // are the Shift+Up/Down + PgUp/PgDn + Shift+Home/End shortcuts.
+    if let Some(scroll_action) = action.and_then(map_scroll_action) {
+        edit::adjust_scroll(console_state, scroll_action);
+        after_state_change(
+            EditOutcome::Unchanged, console_state, document, app_scene, renderer, keybinds,
+        );
+        return;
+    }
+
     // All remaining Console actions are pure edits.
     let edit_outcome = match action {
         Some(Action::ConsoleClearLine) => edit::clear_line(console_state),
@@ -146,6 +156,23 @@ pub(in crate::application::app) fn handle_console_key(
     after_state_change(edit_outcome, console_state, document, app_scene, renderer, keybinds);
 }
 
+/// Translate the scroll-related `Action` variants into the small
+/// `ScrollDirection` enum the edit helper consumes. Returns `None`
+/// for non-scroll actions so the caller can fall through to the
+/// generic edit path.
+#[cfg(not(target_arch = "wasm32"))]
+fn map_scroll_action(action: Action) -> Option<edit::ScrollDirection> {
+    match action {
+        Action::ConsoleScrollUp => Some(edit::ScrollDirection::LineUp),
+        Action::ConsoleScrollDown => Some(edit::ScrollDirection::LineDown),
+        Action::ConsoleScrollPageUp => Some(edit::ScrollDirection::PageUp),
+        Action::ConsoleScrollPageDown => Some(edit::ScrollDirection::PageDown),
+        Action::ConsoleScrollHome => Some(edit::ScrollDirection::Home),
+        Action::ConsoleScrollEnd => Some(edit::ScrollDirection::End),
+        _ => None,
+    }
+}
+
 /// Apply the side-effects of an edit: recompute completions if the
 /// input changed, then rebuild the overlay so the next frame
 /// reflects the new state.
@@ -160,6 +187,12 @@ fn after_state_change(
 ) {
     if outcome.input_changed() {
         recompute_console_completions(console_state, document.as_ref());
+        // Typing should put the user back at the bottom of the
+        // scrollback so the next command's output is visible. Same
+        // contract as `push_scrollback_*`.
+        if let ConsoleState::Open { scroll_offset, .. } = console_state {
+            *scroll_offset = 0;
+        }
     }
     if let Some(doc) = document.as_ref() {
         rebuild_console_overlay(console_state, doc, app_scene, renderer, keybinds);
@@ -213,6 +246,7 @@ fn submit_line(ctx: SubmitLineContext<'_>) {
         completions,
         completion_idx,
         history,
+        scroll_offset,
         ..
     } = console_state
     {
@@ -221,6 +255,13 @@ fn submit_line(ctx: SubmitLineContext<'_>) {
         completions.clear();
         *completion_idx = None;
         scrollback.push(ConsoleLine::Input(format!("> {}", line)));
+        // Submitting a command should always pin the view to the
+        // bottom — same contract `push_scrollback_*` honors. The
+        // input echo above bypassed those helpers, so do the
+        // reset here to keep the documented `scroll_offset`
+        // contract intact regardless of whether the command
+        // produces any output.
+        *scroll_offset = 0;
         if !line.trim().is_empty()
             && history.last().map(|s| s.as_str()) != Some(line.as_str())
         {

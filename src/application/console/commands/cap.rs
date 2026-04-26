@@ -30,6 +30,7 @@ fn complete_cap(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completio
                 text: format!("{}=", k),
                 display: format!("{}=", k),
                 hint: None,
+                font_family: None,
             })
             .collect(),
         CompletionContext::KvValue { key } if KEYS.iter().any(|k| k == key) => {
@@ -93,7 +94,7 @@ fn execute_cap(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         if !any_applied {
             return ExecResult::err(messages.join("; "));
         }
-        return ExecResult::Lines(messages);
+        return ExecResult::lines(messages);
     }
     ExecResult::ok_msg("cap applied")
 }

@@ -24,16 +24,19 @@ fn sample_console_geometry() -> ConsoleOverlayGeometry {
             ConsoleOverlayLine {
                 text: "> help".to_string(),
                 kind: ConsoleOverlayLineKind::Input,
+                font_family: None,
             },
             ConsoleOverlayLine {
                 text: "commands:".to_string(),
                 kind: ConsoleOverlayLineKind::Output,
+                font_family: None,
             },
         ],
         completions: vec![
             ConsoleOverlayCompletion {
                 text: "top".to_string(),
                 hint: None,
+                font_family: None,
             },
         ],
         selected_completion: Some(0),
@@ -86,11 +89,13 @@ fn test_console_frame_height_linear_in_scrollback_rows() {
     g_one.scrollback.push(ConsoleOverlayLine {
         text: "one".into(),
         kind: ConsoleOverlayLineKind::Output,
+        font_family: None,
     });
     let mut g_two = g_one.clone();
     g_two.scrollback.push(ConsoleOverlayLine {
         text: "two".into(),
         kind: ConsoleOverlayLineKind::Output,
+        font_family: None,
     });
     let h0 = compute_console_frame_layout(&g_empty, 1920.0, 1080.0).frame_height;
     let h1 = compute_console_frame_layout(&g_one, 1920.0, 1080.0).frame_height;
@@ -107,6 +112,7 @@ fn test_console_scrollback_clamped_to_max_rows() {
         geometry.scrollback.push(ConsoleOverlayLine {
             text: format!("line {i}"),
             kind: ConsoleOverlayLineKind::Output,
+            font_family: None,
         });
     }
     let layout = compute_console_frame_layout(&geometry, 1920.0, 1080.0);
@@ -120,6 +126,7 @@ fn test_console_completions_clamped_to_max_rows() {
         geometry.completions.push(ConsoleOverlayCompletion {
             text: format!("cmd_{i}"),
             hint: None,
+            font_family: None,
         });
     }
     let layout = compute_console_frame_layout(&geometry, 1920.0, 1080.0);
@@ -145,6 +152,7 @@ fn test_console_frame_width_independent_of_scrollback_len() {
     huge.scrollback.push(ConsoleOverlayLine {
         text: "x".repeat(500),
         kind: ConsoleOverlayLineKind::Output,
+        font_family: None,
     });
     let long = compute_console_frame_layout(&huge, 1920.0, 1080.0).frame_width;
     assert_eq!(short, long);
@@ -160,6 +168,7 @@ fn test_console_frame_width_stable_for_wide_char_scrollback() {
     g.scrollback.push(ConsoleOverlayLine {
         text: "日本語".repeat(200),
         kind: ConsoleOverlayLineKind::Output,
+        font_family: None,
     });
     let layout = compute_console_frame_layout(&g, 1920.0, 1080.0);
     let (bd_left, _, bd_w, _) = layout.backdrop_rect();
@@ -228,15 +237,18 @@ fn test_console_prompt_y_sits_below_scrollback_and_completions() {
         ConsoleOverlayLine {
             text: "one".into(),
             kind: ConsoleOverlayLineKind::Output,
+            font_family: None,
         },
         ConsoleOverlayLine {
             text: "two".into(),
             kind: ConsoleOverlayLineKind::Output,
+            font_family: None,
         },
     ];
     g.completions = vec![ConsoleOverlayCompletion {
         text: "help".into(),
         hint: None,
+        font_family: None,
     }];
     g.selected_completion = Some(0);
     let layout = compute_console_frame_layout(&g, 1920.0, 1080.0);
@@ -380,6 +392,7 @@ fn console_signature_shifts_on_scrollback_grow() {
     g_one.scrollback = vec![ConsoleOverlayLine {
         text: "> help".into(),
         kind: ConsoleOverlayLineKind::Input,
+        font_family: None,
     }];
     let layout_one = compute_console_frame_layout(&g_one, 1280.0, 720.0);
 
@@ -388,10 +401,12 @@ fn console_signature_shifts_on_scrollback_grow() {
         ConsoleOverlayLine {
             text: "> help".into(),
             kind: ConsoleOverlayLineKind::Input,
+            font_family: None,
         },
         ConsoleOverlayLine {
             text: "new output line".into(),
             kind: ConsoleOverlayLineKind::Output,
+            font_family: None,
         },
     ];
     let layout_two = compute_console_frame_layout(&g_two, 1280.0, 720.0);
@@ -427,6 +442,7 @@ fn console_overlay_areas_degrades_when_scrollback_shorter_than_layout_rows() {
         .map(|i| ConsoleOverlayLine {
             text: format!("line {i}"),
             kind: ConsoleOverlayLineKind::Output,
+            font_family: None,
         })
         .collect();
     g.completions = Vec::new();
@@ -461,6 +477,7 @@ fn console_overlay_areas_degrades_when_completions_shorter_than_layout_rows() {
         .map(|i| ConsoleOverlayCompletion {
             text: format!("cand{i}"),
             hint: None,
+            font_family: None,
         })
         .collect();
     g.selected_completion = Some(0);

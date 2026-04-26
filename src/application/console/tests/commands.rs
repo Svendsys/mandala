@@ -572,7 +572,7 @@ fn test_label_position_t_out_of_range_echoes_clamp() {
     match result {
         ExecResult::Lines(lines) => {
             assert!(
-                lines.iter().any(|l| l.contains("clamped to 1")),
+                lines.iter().any(|l| l.text.contains("clamped to 1")),
                 "expected clamp echo in output lines, got {:?}",
                 lines
             );
@@ -641,8 +641,8 @@ fn test_help_with_known_command_prints_usage() {
     let result = run("help anchor", &mut doc);
     match result {
         ExecResult::Lines(lines) => {
-            assert!(lines.iter().any(|l| l.contains("anchor")));
-            assert!(lines.iter().any(|l| l.contains("usage:")));
+            assert!(lines.iter().any(|l| l.text.contains("anchor")));
+            assert!(lines.iter().any(|l| l.text.contains("usage:")));
         }
         other => panic!("expected Lines, got {:?}", other),
     }

@@ -80,14 +80,24 @@ pub(super) fn mindnode_to_glyph_area(
     // disappears at high zoom takes its glyph frame with it.
     area.zoom_visibility = node.zoom_window();
 
-    // Convert text runs to ColorFontRegions
+    // Convert text runs to ColorFontRegions. The data-model
+    // `TextRun.font` is a family-name string; resolve it through the
+    // font table so the per-region attrs builder
+    // (`baumhard::font::attrs::attrs_list_from_regions`) can pin the
+    // chosen face. Empty / unknown family resolves to `None`, and
+    // the attrs builder falls back to monospace with a warning.
     let mut regions = ColorFontRegions::new_empty();
     for run in &node.text_runs {
         let resolved = color::resolve_var(&run.color, vars);
         let rgba = color::hex_to_rgba_safe(resolved, [0.0, 0.0, 0.0, 1.0]);
+        let font = if run.font.is_empty() {
+            None
+        } else {
+            crate::font::fonts::app_font_by_family(&run.font)
+        };
         regions.submit_region(ColorFontRegion::new(
             Range::new(run.start, run.end),
-            None, // Font: use default (cosmic-text resolves family names at render time)
+            font,
             Some(rgba),
         ));
     }

@@ -68,6 +68,7 @@ fn kv_key_completions(partial: &str) -> Vec<Completion> {
             text: format!("{}=", k),
             display: format!("{}=", k),
             hint: Some(kv_hint(k).to_string()),
+            font_family: None,
         })
         .collect()
 }
@@ -225,7 +226,7 @@ pub(super) fn finalize_report(
         return ExecResult::err(report.messages.join("; "));
     }
     if !report.messages.is_empty() {
-        return ExecResult::Lines(report.messages);
+        return ExecResult::lines(report.messages);
     }
     if report.any_applied {
         ExecResult::ok_msg(format!("{} applied", verb))

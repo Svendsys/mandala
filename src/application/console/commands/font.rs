@@ -7,7 +7,7 @@
 //! first, then size clamps against the new bounds) instead of the
 //! wrong `size=14, max=10`.
 //!
-//! Routing against the active selection:
+//! Routing against the active selection (kv form):
 //! - `Node`: `size` sets the node font size; `min`/`max` are
 //!   NotApplicable (nodes have no screen-space clamps).
 //! - `Edge`: writes `glyph_connection.{font_size_pt, min_font_size_pt,
@@ -21,15 +21,33 @@
 //! - `PortalText`: writes `PortalEndpointState.{text_font_size_pt,
 //!   text_min_font_size_pt, text_max_font_size_pt}` — sibling of
 //!   `EdgeLabel` for portal-mode edges.
+//!
+//! Two positional subverbs sit alongside the kv form:
+//! - `font set <family>` — pin the font family on the current
+//!   selection via the `AcceptsFontFamily` trait
+//!   (`AcceptsFontFamily::set_font_family` on `TargetView`). Each
+//!   selection variant decides which channel the family lands on
+//!   (nodes → every `TextRun.font`, edges + portal icons →
+//!   `glyph_connection.font`); edge labels and portal text return
+//!   `NotApplicable` and surface a clear "not applicable to <kind>"
+//!   message.
+//! - `font list` — emit one scrollback line per loaded family,
+//!   each rendered in its own face. Sorted alphabetically.
 
 use super::Command;
-use crate::application::console::completion::{prefix_filter, Completion, CompletionContext, CompletionState};
+use crate::application::console::completion::{
+    prefix_filter, Completion, CompletionContext, CompletionState,
+};
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
+use crate::application::console::traits::{apply_to_targets, AcceptsFontFamily};
 use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
 use crate::application::document::SelectionState;
 
 pub const KEYS: &[&str] = &["size", "min", "max"];
+/// Positional subverbs surfaced as token-0 completions alongside
+/// the kv keys.
+pub const VERBS: &[&str] = &["set", "list"];
 /// Preset sizes surfaced in completion. Users can type any positive
 /// float; the preset list just makes the popup useful.
 pub const SIZE_PRESETS: &[&str] = &["10", "12", "14", "16", "18", "24", "32"];
@@ -37,9 +55,12 @@ pub const SIZE_PRESETS: &[&str] = &["10", "12", "14", "16", "18", "24", "32"];
 pub const COMMAND: Command = Command {
     name: "font",
     aliases: &[],
-    summary: "Set font size + optional min/max clamps on the selection",
-    usage: "font size=<pt> [min=<pt>] [max=<pt>]",
-    tags: &["font", "size", "min", "max", "clamp", "pt", "smaller", "larger"],
+    summary: "Set font family / size / clamps on the selection, or list fonts",
+    usage: "font set <family> | font list | font size=<pt> [min=<pt>] [max=<pt>]",
+    tags: &[
+        "font", "family", "set", "list", "size", "min", "max", "clamp", "pt",
+        "smaller", "larger",
+    ],
     applicable: always,
     complete: complete_font,
     execute: execute_font,
@@ -47,18 +68,76 @@ pub const COMMAND: Command = Command {
 
 fn complete_font(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completion> {
     match &state.context {
+        // Token 0: positional verbs (`set`, `list`) + kv keys.
+        CompletionContext::Token { index: 0 } => {
+            let mut out: Vec<Completion> = Vec::new();
+            for v in VERBS {
+                if v.starts_with(state.partial) {
+                    out.push(Completion {
+                        text: match *v {
+                            "set" => "set ".to_string(),
+                            other => other.to_string(),
+                        },
+                        display: v.to_string(),
+                        hint: Some(
+                            match *v {
+                                "set" => "pin the font family on the current selection",
+                                "list" => "list every loaded font, each rendered in its face",
+                                _ => "",
+                            }
+                            .into(),
+                        ),
+                        font_family: None,
+                    });
+                }
+            }
+            for k in KEYS {
+                if k.starts_with(state.partial) {
+                    out.push(Completion {
+                        text: format!("{}=", k),
+                        display: format!("{}=", k),
+                        hint: Some(
+                            match *k {
+                                "size" => "target on-screen size in points",
+                                "min" => "lower screen-space clamp in points",
+                                "max" => "upper screen-space clamp in points",
+                                _ => "points",
+                            }
+                            .into(),
+                        ),
+                        font_family: None,
+                    });
+                }
+            }
+            out
+        }
+        // Token 1 after `set`: every loaded font family, each
+        // pre-shaped in its own face so the user sees the look
+        // before committing.
+        CompletionContext::Token { index: 1 }
+            if state.tokens.get(1).map(String::as_str) == Some("set") =>
+        {
+            font_family_completions(state.partial)
+        }
+        // Bare-token slots past index 0 with no preceding `set`
+        // fall back to the kv keys (parity with the pre-existing
+        // shape).
         CompletionContext::Token { .. } => KEYS
             .iter()
             .filter(|k| k.starts_with(state.partial))
             .map(|k| Completion {
                 text: format!("{}=", k),
                 display: format!("{}=", k),
-                hint: Some(match *k {
-                    "size" => "target on-screen size in points",
-                    "min" => "lower screen-space clamp in points",
-                    "max" => "upper screen-space clamp in points",
-                    _ => "points",
-                }.into()),
+                hint: Some(
+                    match *k {
+                        "size" => "target on-screen size in points",
+                        "min" => "lower screen-space clamp in points",
+                        "max" => "upper screen-space clamp in points",
+                        _ => "points",
+                    }
+                    .into(),
+                ),
+                font_family: None,
             })
             .collect(),
         CompletionContext::KvValue { key } if KEYS.contains(&key.as_str()) => {
@@ -66,6 +145,26 @@ fn complete_font(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completi
         }
         _ => Vec::new(),
     }
+}
+
+/// Build font-family completions: one entry per loaded family
+/// whose name starts with `partial` (case-insensitive). Each entry
+/// carries `font_family = Some(<name>)` so the popup row shapes the
+/// candidate label in that very face. Streams from
+/// [`baumhard::font::fonts::loaded_families_iter`] so the
+/// keystroke-hot path doesn't allocate a fresh `Vec<String>` per
+/// call.
+fn font_family_completions(partial: &str) -> Vec<Completion> {
+    let partial_lc = partial.to_ascii_lowercase();
+    baumhard::font::fonts::loaded_families_iter()
+        .filter(|f| f.to_ascii_lowercase().starts_with(&partial_lc))
+        .map(|family| Completion {
+            text: family.to_string(),
+            display: family.to_string(),
+            hint: None,
+            font_family: Some(family.to_string()),
+        })
+        .collect()
 }
 
 /// Parse a kv value as a positive finite f32. Returns an
@@ -85,6 +184,22 @@ fn parse_pt(key: &str, value: &str) -> Result<f32, ExecResult> {
 }
 
 fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
+    // Positional subverbs are checked first — they're channel-less
+    // operations and don't share parse state with the kv triple.
+    if let Some(verb) = args.positional(0) {
+        match verb {
+            "set" => return execute_font_set(args, eff),
+            "list" => return execute_font_list(args),
+            _ => {
+                return ExecResult::err(format!(
+                    "font: unknown subverb '{}'; use 'set <family>', \
+                     'list', or 'size=<pt>' (kv form)",
+                    verb
+                ));
+            }
+        }
+    }
+
     // Parse every recognised kv up front so the atomic application
     // sees a complete Option triple. Unknown keys report an error
     // immediately — better than silently ignoring a typo.
@@ -111,7 +226,10 @@ fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         }
     }
     if !saw_any {
-        return ExecResult::err("usage: font size=<pt> [min=<pt>] [max=<pt>]");
+        return ExecResult::err(
+            "usage: font set <family> | font list | \
+             font size=<pt> [min=<pt>] [max=<pt>]",
+        );
     }
     if size.is_none() && min.is_none() && max.is_none() {
         return ExecResult::err("font: nothing to set");
@@ -164,7 +282,7 @@ fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             if let Some(m) = applicable_msg {
                 lines.push(m);
             }
-            ExecResult::Lines(lines)
+            ExecResult::lines(lines)
         }
         SelectionState::Edge(er) => {
             let changed = doc.set_edge_font(&er, size, min, max);
@@ -216,7 +334,7 @@ fn node_font_outcome(
         if !any_applied {
             return ExecResult::err(messages.join("; "));
         }
-        return ExecResult::Lines(messages);
+        return ExecResult::lines(messages);
     }
     if any_applied {
         ExecResult::ok_msg("font applied")
@@ -230,5 +348,394 @@ fn finalize(kind: &str, changed: bool) -> ExecResult {
         ExecResult::ok_msg(format!("font applied to {}", kind))
     } else {
         ExecResult::ok_msg(format!("font: no change on {}", kind))
+    }
+}
+
+/// `font set <family>` — pin the font family on the current
+/// selection through the `AcceptsFontFamily` trait. Validates the
+/// family name against `list_loaded_families()` first; an unknown
+/// name surfaces an error pointing the user at `font list`.
+fn execute_font_set(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
+    // Collect every positional after `set` into one family name.
+    // The tokenizer preserves quoted multi-word strings as one
+    // token already (`font set "Norse Bold"`), but a user can also
+    // bypass quoting entirely and just type `font set Norse Bold`
+    // — joining positionals with a single space matches both shapes
+    // and keeps the surface forgiving.
+    let positionals: Vec<&str> = args.positionals().collect();
+    if positionals.len() < 2 {
+        return ExecResult::err("usage: font set <family>");
+    }
+    let family = positionals[1..].join(" ");
+    if family.is_empty() {
+        return ExecResult::err("usage: font set <family>");
+    }
+    // Validate against the loaded family list. Exact-match per
+    // `app_font_by_family` semantics — the completion popup feeds
+    // the canonical string back, so an interactive submit always
+    // hits this branch with a known name.
+    if baumhard::font::fonts::app_font_by_family(&family).is_none() {
+        return ExecResult::err(format!(
+            "font: '{}' is not a loaded font; try `font list`",
+            family
+        ));
+    }
+    let report = apply_to_targets(eff.document, |view| view.set_font_family(Some(&family)));
+    if report.all_failed {
+        return ExecResult::err(report.messages.join("; "));
+    }
+    if !report.messages.is_empty() {
+        return ExecResult::lines(report.messages);
+    }
+    if report.any_applied {
+        ExecResult::ok_msg(format!("font set: {}", family))
+    } else {
+        ExecResult::ok_msg("font: no change")
+    }
+}
+
+/// `font list` — emit one scrollback line per loaded family, each
+/// pinned to render in its own face (so a long list is a
+/// font-by-font preview). Streams from `loaded_families_iter` so
+/// no intermediate `Vec<String>` allocates.
+fn execute_font_list(_args: &Args) -> ExecResult {
+    use crate::application::console::OutputLine;
+    let lines: Vec<OutputLine> = baumhard::font::fonts::loaded_families_iter()
+        .map(|name| OutputLine::in_font(name, name))
+        .collect();
+    if lines.is_empty() {
+        return ExecResult::err("font: no fonts loaded");
+    }
+    ExecResult::Lines(lines)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::console::parser::tokenize;
+    use crate::application::document::{EdgeRef, MindMapDocument, SelectionState};
+
+    /// Load the testament map fresh so tests don't share mutated
+    /// state. Mirrors the pattern used in `mutation::tests`.
+    fn fixture_doc() -> MindMapDocument {
+        let path = format!(
+            "{}/maps/testament.mindmap.json",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        MindMapDocument::load(&path).expect("testament map loads")
+    }
+
+    fn run(line: &str, doc: &mut MindMapDocument) -> ExecResult {
+        let toks = tokenize(line);
+        let mut eff = ConsoleEffects::new(doc);
+        execute_font(&Args::new(&toks[1..]), &mut eff)
+    }
+
+    fn first_loaded_family() -> String {
+        baumhard::font::fonts::init();
+        baumhard::font::fonts::list_loaded_families()
+            .into_iter()
+            .next()
+            .expect("at least one bundled family must be loaded")
+    }
+
+    #[test]
+    fn list_emits_lines_with_fonts_one_per_family() {
+        baumhard::font::fonts::init();
+        let mut doc = fixture_doc();
+        match run("font list", &mut doc) {
+            ExecResult::Lines(rows) => {
+                let families: Vec<&'static str> =
+                    baumhard::font::fonts::loaded_families_iter().collect();
+                assert_eq!(rows.len(), families.len());
+                for (i, line) in rows.iter().enumerate() {
+                    assert_eq!(line.text, families[i]);
+                    assert_eq!(line.font_family.as_deref(), Some(families[i]));
+                }
+            }
+            other => panic!("expected Lines, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn set_unknown_family_errors_with_pointer_to_list() {
+        let mut doc = fixture_doc();
+        // Pick a node so the trait would otherwise apply.
+        doc.selection = SelectionState::Single("0".into());
+        match run("font set DefinitelyNotAFontFamilyXYZ", &mut doc) {
+            ExecResult::Err(s) => {
+                assert!(s.contains("not a loaded font"));
+                assert!(s.contains("font list"));
+            }
+            other => panic!("expected Err, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn set_on_node_writes_text_run_font() {
+        let family = first_loaded_family();
+        let mut doc = fixture_doc();
+        doc.selection = SelectionState::Single("0".into());
+        match run(&format!("font set {}", family), &mut doc) {
+            ExecResult::Ok(_) => {}
+            other => panic!("expected Ok, got {:?}", other),
+        }
+        // Every TextRun on the node should now carry the family.
+        let node = doc.mindmap.nodes.get("0").expect("node 0 exists");
+        assert!(!node.text_runs.is_empty());
+        for run in &node.text_runs {
+            assert_eq!(run.font, family);
+        }
+    }
+
+    #[test]
+    fn set_with_multiword_quoted_family_is_unknown_when_not_loaded() {
+        let mut doc = fixture_doc();
+        doc.selection = SelectionState::Single("0".into());
+        // Quoted multi-word family — tokenizer keeps it as one token.
+        match run(r#"font set "Imaginary Sans""#, &mut doc) {
+            ExecResult::Err(s) => assert!(s.contains("not a loaded font")),
+            other => panic!("expected Err, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn set_with_no_argument_returns_usage() {
+        let mut doc = fixture_doc();
+        doc.selection = SelectionState::Single("0".into());
+        match run("font set", &mut doc) {
+            ExecResult::Err(s) => assert!(s.contains("usage: font set <family>")),
+            other => panic!("expected Err, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn set_no_selection_reports_no_target() {
+        let family = first_loaded_family();
+        let mut doc = fixture_doc();
+        doc.selection = SelectionState::None;
+        match run(&format!("font set {}", family), &mut doc) {
+            ExecResult::Err(s) => assert!(s.contains("no target")),
+            other => panic!("expected Err, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn set_on_edge_label_is_not_applicable() {
+        let family = first_loaded_family();
+        let mut doc = fixture_doc();
+        // Pick the first edge in the testament map and select its
+        // label channel — the test relies on the testament map
+        // having at least one edge, which it does (243 nodes,
+        // dozens of edges).
+        let edge = doc
+            .mindmap
+            .edges
+            .first()
+            .expect("testament map has at least one edge");
+        let er = EdgeRef::new(
+            edge.from_id.clone(),
+            edge.to_id.clone(),
+            edge.edge_type.clone(),
+        );
+        doc.selection = SelectionState::EdgeLabel(
+            crate::application::document::EdgeLabelSel { edge_ref: er },
+        );
+        match run(&format!("font set {}", family), &mut doc) {
+            ExecResult::Lines(msgs) => {
+                let all = msgs
+                    .iter()
+                    .map(|l| l.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                assert!(all.contains("not applicable"));
+            }
+            ExecResult::Err(s) => {
+                assert!(s.contains("not applicable"));
+            }
+            other => panic!("expected Lines / Err with 'not applicable', got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn unknown_subverb_errors_clearly() {
+        let mut doc = fixture_doc();
+        match run("font frobnicate", &mut doc) {
+            ExecResult::Err(s) => assert!(s.contains("unknown subverb")),
+            other => panic!("expected Err, got {:?}", other),
+        }
+    }
+
+    /// Multi-node selection fans out across every node and writes
+    /// the family on each — the trait dispatcher's
+    /// `apply_to_targets` path. Pre-fix, only `Single` was tested,
+    /// so the fanout aggregation was effectively dead code.
+    #[test]
+    fn set_on_multi_node_selection_writes_every_node() {
+        let family = first_loaded_family();
+        let mut doc = fixture_doc();
+        // Pick the first three node ids in the testament map.
+        let ids: Vec<String> = doc
+            .mindmap
+            .nodes
+            .keys()
+            .take(3)
+            .cloned()
+            .collect();
+        assert_eq!(ids.len(), 3, "testament map must have ≥3 nodes");
+        doc.selection = SelectionState::Multi(ids.clone());
+        match run(&format!("font set {}", family), &mut doc) {
+            ExecResult::Ok(_) | ExecResult::Lines(_) => {}
+            other => panic!("expected Ok / Lines, got {:?}", other),
+        }
+        for id in &ids {
+            let node = doc
+                .mindmap
+                .nodes
+                .get(id)
+                .expect("multi-selection ids exist in the doc");
+            for run in &node.text_runs {
+                assert_eq!(run.font, family, "every run on every node should be pinned");
+            }
+        }
+    }
+
+    /// Edge selection writes `glyph_connection.font`. Smoke-tests
+    /// the `TargetView::Edge` arm of the trait — pre-fix the path
+    /// existed but had no integration test through the console verb.
+    #[test]
+    fn set_on_edge_selection_writes_glyph_connection_font() {
+        let family = first_loaded_family();
+        let mut doc = fixture_doc();
+        let edge = doc
+            .mindmap
+            .edges
+            .first()
+            .expect("testament map has at least one edge")
+            .clone();
+        let er = crate::application::document::EdgeRef::new(
+            edge.from_id.clone(),
+            edge.to_id.clone(),
+            edge.edge_type.clone(),
+        );
+        doc.selection = SelectionState::Edge(er.clone());
+        match run(&format!("font set {}", family), &mut doc) {
+            ExecResult::Ok(_) => {}
+            other => panic!("expected Ok, got {:?}", other),
+        }
+        let idx = doc.edge_index(&er).expect("edge resolves");
+        assert_eq!(
+            doc.mindmap.edges[idx]
+                .glyph_connection
+                .as_ref()
+                .and_then(|c| c.font.as_deref()),
+            Some(family.as_str()),
+        );
+    }
+
+    /// PortalLabel selection routes through the edge body's font —
+    /// the icon shares the edge's `glyph_connection.font` slot, same
+    /// routing the existing `font size=` uses.
+    #[test]
+    fn set_on_portal_label_routes_to_edge_glyph_connection() {
+        use crate::application::document::PortalLabelSel;
+        use baumhard::mindmap::scene_cache::EdgeKey;
+
+        let family = first_loaded_family();
+        let mut doc = fixture_doc();
+        let edge = doc
+            .mindmap
+            .edges
+            .first()
+            .expect("testament map has at least one edge")
+            .clone();
+        let er = crate::application::document::EdgeRef::new(
+            edge.from_id.clone(),
+            edge.to_id.clone(),
+            edge.edge_type.clone(),
+        );
+        doc.selection = SelectionState::PortalLabel(PortalLabelSel {
+            edge_key: EdgeKey::new(&edge.from_id, &edge.to_id, &edge.edge_type),
+            endpoint_node_id: edge.to_id.clone(),
+        });
+        match run(&format!("font set {}", family), &mut doc) {
+            ExecResult::Ok(_) => {}
+            other => panic!("expected Ok, got {:?}", other),
+        }
+        // Verify the edge's glyph_connection.font carries the family.
+        let idx = doc.edge_index(&er).expect("edge resolves");
+        assert_eq!(
+            doc.mindmap.edges[idx]
+                .glyph_connection
+                .as_ref()
+                .and_then(|c| c.font.as_deref()),
+            Some(family.as_str()),
+        );
+    }
+
+    /// PortalText selection mirrors EdgeLabel: it returns
+    /// `NotApplicable` because portal text inherits the edge body's
+    /// font today (no per-channel `font_family` slot exists on
+    /// `PortalEndpointState`).
+    #[test]
+    fn set_on_portal_text_is_not_applicable() {
+        use crate::application::document::PortalLabelSel;
+        use baumhard::mindmap::scene_cache::EdgeKey;
+
+        let family = first_loaded_family();
+        let mut doc = fixture_doc();
+        let edge = doc
+            .mindmap
+            .edges
+            .first()
+            .expect("testament map has at least one edge")
+            .clone();
+        doc.selection = SelectionState::PortalText(PortalLabelSel {
+            edge_key: EdgeKey::new(&edge.from_id, &edge.to_id, &edge.edge_type),
+            endpoint_node_id: edge.to_id.clone(),
+        });
+        match run(&format!("font set {}", family), &mut doc) {
+            ExecResult::Lines(msgs) => {
+                let all = msgs
+                    .iter()
+                    .map(|l| l.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                assert!(all.contains("not applicable"));
+            }
+            ExecResult::Err(s) => assert!(s.contains("not applicable")),
+            other => panic!(
+                "expected Lines / Err with 'not applicable', got {:?}",
+                other
+            ),
+        }
+    }
+
+    #[test]
+    fn completion_after_set_returns_loaded_families_in_their_face() {
+        baumhard::font::fonts::init();
+        let families = baumhard::font::fonts::list_loaded_families();
+        assert!(!families.is_empty());
+        // Pick a prefix from a known family — the first letter
+        // of the first family — and confirm the completer surfaces
+        // every family starting with that prefix, each tagged
+        // with its own `font_family` so the renderer shapes the
+        // popup row in that face.
+        let prefix = families[0]
+            .chars()
+            .next()
+            .expect("non-empty family name")
+            .to_string();
+        let cands = font_family_completions(&prefix);
+        assert!(!cands.is_empty());
+        for c in &cands {
+            assert!(
+                c.text
+                    .to_ascii_lowercase()
+                    .starts_with(&prefix.to_ascii_lowercase())
+            );
+            assert_eq!(c.font_family.as_deref(), Some(c.text.as_str()));
+            assert_eq!(c.text, c.display);
+        }
     }
 }

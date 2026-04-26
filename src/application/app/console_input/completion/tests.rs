@@ -21,9 +21,12 @@ fn open_state(input: &str, cursor: usize, candidates: &[&str]) -> ConsoleState {
                 text: c.to_string(),
                 display: c.to_string(),
                 hint: None,
+                font_family: None,
             })
             .collect(),
         completion_idx: if candidates.is_empty() { None } else { Some(0) },
+        scroll_offset: 0,
+        wheel_accum: 0.0,
     }
 }
 

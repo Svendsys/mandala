@@ -821,6 +821,55 @@ use super::defaults::default_cross_link_edge;
     }
 
     #[test]
+    fn test_set_edge_font_family_set_and_clear() {
+        let mut doc = load_test_doc();
+        let er = first_testament_edge_ref(&doc);
+        // Set a family.
+        assert!(doc.set_edge_font_family(&er, Some("Norse")));
+        let idx = doc.edge_index(&er).unwrap();
+        assert_eq!(
+            doc.mindmap.edges[idx]
+                .glyph_connection
+                .as_ref()
+                .and_then(|c| c.font.as_deref()),
+            Some("Norse")
+        );
+        // Idempotent re-set is a no-op.
+        let stack_len = doc.undo_stack.len();
+        assert!(!doc.set_edge_font_family(&er, Some("Norse")));
+        assert_eq!(doc.undo_stack.len(), stack_len);
+        // Clearing the override removes the family.
+        assert!(doc.set_edge_font_family(&er, None));
+        assert_eq!(
+            doc.mindmap.edges[idx]
+                .glyph_connection
+                .as_ref()
+                .and_then(|c| c.font.as_deref()),
+            None
+        );
+        // Undo restores the prior 'Norse' value.
+        assert!(doc.undo());
+        assert_eq!(
+            doc.mindmap.edges[idx]
+                .glyph_connection
+                .as_ref()
+                .and_then(|c| c.font.as_deref()),
+            Some("Norse")
+        );
+    }
+
+    #[test]
+    fn test_set_edge_font_family_unknown_edge_returns_false() {
+        let mut doc = load_test_doc();
+        let bogus = crate::application::document::EdgeRef::new("nope-from", "nope-to", "cross_link");
+        doc.undo_stack.clear();
+        doc.dirty = false;
+        assert!(!doc.set_edge_font_family(&bogus, Some("Norse")));
+        assert!(doc.undo_stack.is_empty());
+        assert!(!doc.dirty);
+    }
+
+    #[test]
     fn test_set_edge_color_none_clears_override() {
         let mut doc = load_test_doc();
         let er = first_testament_edge_ref(&doc);

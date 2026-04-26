@@ -32,6 +32,7 @@ fn complete_spacing(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Compl
                 text: format!("{}=", k),
                 display: format!("{}=", k),
                 hint: None,
+                font_family: None,
             })
             .collect(),
         CompletionContext::KvValue { key } if key == "value" => {
