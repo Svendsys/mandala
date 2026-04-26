@@ -276,7 +276,7 @@ pub fn get_font_source(name: &AppFont) -> Source {
 /// Pick a random compiled-in font source. **Test-only helper** —
 /// production paths should pick fonts deterministically.
 pub fn get_some_font() -> Source {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     return FONT_SOURCES.values().choose(&mut rng).unwrap().clone();
 }
 
