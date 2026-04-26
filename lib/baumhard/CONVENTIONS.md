@@ -137,12 +137,16 @@ access to it.
   the write lock across a long computation serialises the whole
   renderer — which on a single-threaded event loop means stalling the
   entire frame.
-- **`create_cosmic_editor_str` is the blessed entry point for text
-  layout.** If you need layout behaviour it does not provide, extend
-  it rather than reaching into `cosmic_text::Buffer` or
-  `cosmic_text::Editor` directly from another module. Every call site
-  that does its own cosmic-text dance is a place where the lock
-  discipline can drift.
+- **Cosmic-text usage is concentrated in `lib/baumhard/src/font/`.**
+  `font/fonts.rs` owns the `FONT_SYSTEM` lock, font-id table, and
+  measurement primitives (`measure_glyph_ink_bounds`,
+  `measure_text_block_unbounded`); `font/attrs.rs` owns the
+  `ColorFontRegions` → cosmic-text bridges (`attrs_list_from_regions`
+  for `Editor::insert_string` callers, `RegionFamilies` +
+  `rich_text_spans_from_regions` for `Buffer::set_rich_text` callers).
+  Code outside `font/` does not import `cosmic_text` directly — if you
+  need a new bridge, add it here. Every call site that does its own
+  cosmic-text dance is a place where the lock discipline can drift.
 
 ## §B6 Regions and spatial indexing
 

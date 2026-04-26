@@ -2,6 +2,7 @@
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use baumhard::core::tests::primitives_tests::*;
+use baumhard::font::tests::attrs_tests::*;
 use baumhard::font::tests::fonts_tests::*;
 use baumhard::gfx_structs::tests::area_tests::*;
 use baumhard::gfx_structs::tests::zoom_visibility_tests::*;
@@ -314,6 +315,58 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("measure_text_block_unbounded_width_scales_with_font_size", |b| {
         b.iter(|| do_measure_text_block_unbounded_width_scales_with_font_size())
+    });
+    // font / region-attrs bridges //
+    c.bench_function("attrs_list_from_empty_regions_yields_no_spans", |b| {
+        b.iter(|| do_attrs_list_from_empty_regions_yields_no_spans())
+    });
+    c.bench_function("attrs_list_from_single_color_region_emits_one_span", |b| {
+        b.iter(|| do_attrs_list_from_single_color_region_emits_one_span())
+    });
+    c.bench_function("attrs_list_from_two_regions_emits_two_spans", |b| {
+        b.iter(|| do_attrs_list_from_two_regions_emits_two_spans())
+    });
+    c.bench_function("attrs_list_pins_family_name_when_region_carries_app_font", |b| {
+        b.iter(|| do_attrs_list_pins_family_name_when_region_carries_app_font())
+    });
+    c.bench_function("attrs_list_falls_back_to_monospace_when_region_has_no_font", |b| {
+        b.iter(|| do_attrs_list_falls_back_to_monospace_when_region_has_no_font())
+    });
+    c.bench_function("rich_text_spans_empty_regions_yield_single_whole_text_span", |b| {
+        b.iter(|| do_rich_text_spans_empty_regions_yield_single_whole_text_span())
+    });
+    c.bench_function("rich_text_spans_two_regions_slice_text_per_range", |b| {
+        b.iter(|| do_rich_text_spans_two_regions_slice_text_per_range())
+    });
+    c.bench_function("rich_text_spans_drop_zero_width_regions", |b| {
+        b.iter(|| do_rich_text_spans_drop_zero_width_regions())
+    });
+    c.bench_function("rich_text_spans_color_override_recolors_every_span", |b| {
+        b.iter(|| do_rich_text_spans_color_override_recolors_every_span())
+    });
+    c.bench_function("rich_text_spans_color_override_applies_to_uncolored_region", |b| {
+        b.iter(|| do_rich_text_spans_color_override_applies_to_uncolored_region())
+    });
+    c.bench_function("rich_text_spans_color_override_drops_zero_width_regions", |b| {
+        b.iter(|| do_rich_text_spans_color_override_drops_zero_width_regions())
+    });
+    c.bench_function("rich_text_spans_pin_family_name_when_region_has_app_font", |b| {
+        b.iter(|| do_rich_text_spans_pin_family_name_when_region_has_app_font())
+    });
+    c.bench_function("rich_text_spans_no_family_pin_when_region_has_no_font", |b| {
+        b.iter(|| do_rich_text_spans_no_family_pin_when_region_has_no_font())
+    });
+    c.bench_function("rich_text_spans_clamps_out_of_range_region_end", |b| {
+        b.iter(|| do_rich_text_spans_clamps_out_of_range_region_end())
+    });
+    c.bench_function("rich_text_spans_clamps_fully_out_of_range_region", |b| {
+        b.iter(|| do_rich_text_spans_clamps_fully_out_of_range_region())
+    });
+    c.bench_function("rich_text_spans_slice_at_emoji_scalar_boundary", |b| {
+        b.iter(|| do_rich_text_spans_slice_at_emoji_scalar_boundary())
+    });
+    c.bench_function("rich_text_spans_empty_text_with_region_yields_no_spans", |b| {
+        b.iter(|| do_rich_text_spans_empty_text_with_region_yields_no_spans())
     });
     // font family enumeration / lookup //
     c.bench_function("list_loaded_families_is_nonempty_sorted_unique", |b| {

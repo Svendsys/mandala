@@ -799,26 +799,39 @@ trait at build time. `build(ast, context)` returns a
 `MutatorTree<GfxMutator>` with `Repeat` expanded to N children
 on consecutive channels.
 
-### Font system — `FONT_SYSTEM`, `AppFont`, `attrs_list_from_regions`
+### Font system — `FONT_SYSTEM`, `AppFont`, `attrs_list_from_regions`, `RegionFamilies`, `rich_text_spans_from_regions`
 
 **Summary.** A single global cosmic-text `FontSystem`, a
-compile-time enum of available fonts, and the one bridge
-function from `ColorFontRegions` to cosmic-text's `AttrsList`.
+compile-time enum of available fonts, and a small set of bridges
+from `ColorFontRegions` to the two cosmic-text shaping API shapes.
 
 **What it's for.** Every piece of text shaping in the project
-flows through these three. `fonts::init()` is called once at
-startup; the `FONT_SYSTEM` `RwLock` is acquired through
+flows through these. `fonts::init()` is called once at startup;
+the `FONT_SYSTEM` `RwLock` is acquired through
 `acquire_font_system_write("site-name")` with a timeout-guarded
 write lock. `AppFont` is generated at build time by scanning
 `lib/baumhard/src/font/fonts/` — drop a font file in, recompile,
 and the variant appears.
 
-**Under the hood.** `lib/baumhard/src/font/`. The blessed entry
-`attrs_list_from_regions` in `attrs.rs` is the only place
-cosmic-text styling is constructed from Baumhard types.
-Unknown fonts fall back to `Family::Monospace` with a
-`log::warn!` rather than aborting — interactive paths must not
-panic. The 5-second timeout on the write lock is a re-entrancy
+**Under the hood.** `lib/baumhard/src/font/`. Two bridges, one
+shared private resolver, both live in `attrs.rs`:
+
+- `attrs_list_from_regions` returns a single
+  `cosmic_text::AttrsList` for callers using
+  `Editor::insert_string`. `None` family resolution forces
+  `Family::Monospace` per the `Editor` shape's existing fallback.
+- `RegionFamilies` + `rich_text_spans_from_regions` return a
+  `Vec<(&str, Attrs)>` for callers using `Buffer::set_rich_text`
+  — the renderer's tree walker today. `RegionFamilies::resolve`
+  caches the borrowed regions slice and pre-resolves family-name
+  strings once per text area so the renderer's nine shape passes
+  (one main + eight outline-halo stamps) reuse the same lookups.
+  `None` family resolution omits the family pin (cosmic-text
+  picks), preserving the walker's pre-existing fallback.
+
+Unknown fonts log a `warn!` and drop to a monospace / no-pin
+fallback rather than aborting — interactive paths must not panic
+(§9). The 5-second timeout on the write lock is a re-entrancy
 bug detector: the single-threaded app should never wait on this
 lock, so a timeout means the same thread is trying to acquire
 twice.
@@ -2453,7 +2466,7 @@ its full treatment above.
 - **`Applicable<T>`** — one-method dispatch trait for "apply this
   delta to that target". See [§2: `Applicable`](#applicablet).
 - **`AppFont`** — compile-time enum of available fonts. See
-  [§2: Font system](#font-system--font_system-appfont-attrs_list_from_regions).
+  [§2: Font system](#font-system--font_system-appfont-attrs_list_from_regions-regionfamilies-rich_text_spans_from_regions).
 - **`AppMode`** — modal state for reparent / connect operations.
   See [§5: `AppMode`](#appmode).
 - **`AppScene`** — two-role (canvas / overlay) scene container.
@@ -2463,7 +2476,7 @@ its full treatment above.
 - **`ApplyOperation`** — Add / Assign / Subtract / Multiply /
   Delete / Noop selector. See [§2: `ApplyOperation`](#applyoperation).
 - **`attrs_list_from_regions`** — bridge from `ColorFontRegions` to
-  cosmic-text. See [§2: Font system](#font-system--font_system-appfont-attrs_list_from_regions).
+  cosmic-text. See [§2: Font system](#font-system--font_system-appfont-attrs_list_from_regions-regionfamilies-rich_text_spans_from_regions).
 - **Baumhard** — the glyph-animation library under
   `lib/baumhard/`. See [§1: Mandala and Baumhard are one project](#mandala-and-baumhard-are-one-project).
 - **behavior** — `Persistent` or `Toggle` on a custom mutation.
@@ -2544,7 +2557,7 @@ its full treatment above.
 - **fold state** — `MindNode.folded` boolean. See
   [§3: Fold state](#fold-state).
 - **`FONT_SYSTEM`** — global cosmic-text `FontSystem`. See
-  [§2: Font system](#font-system--font_system-appfont-attrs_list_from_regions).
+  [§2: Font system](#font-system--font_system-appfont-attrs_list_from_regions-regionfamilies-rich_text_spans_from_regions).
 - **four-source loader** — App / User / Map / Inline mutation
   precedence. See [§4: Four-source loader](#four-source-loader).
 - **FPS overlay** — snapshot or debug frame-rate readout. See
@@ -2661,6 +2674,10 @@ its full treatment above.
   [§1: Preserved seams](#preserved-seams).
 - **`Range`** — half-open `[start, end)` span. See
   [§2: Range](#range).
+- **`RegionFamilies`** — pre-resolved family-name strings paired
+  with the regions they came from; built once per text area, reused
+  across the renderer's main + halo shape passes. See
+  [§2: Font system](#font-system--font_system-appfont-attrs_list_from_regions-regionfamilies-rich_text_spans_from_regions).
 - **`RegionIndexer` / `RegionParams` / `RegionError`** — spatial
   index over `ColorFontRegions`. See
   [§2: RegionParams, RegionIndexer, RegionError](#regionparams-regionindexer-regionerror).
@@ -2673,6 +2690,10 @@ its full treatment above.
   [§3: Scene builder](#scene-builder).
 - **`RepeatWhile`** — predicate-gated loop instruction. See
   [§2: Instruction](#instruction).
+- **`rich_text_spans_from_regions`** — bridge from
+  `ColorFontRegions` to a `Vec<(&str, Attrs)>` for cosmic-text's
+  `Buffer::set_rich_text` API. The renderer's tree walker calls it.
+  See [§2: Font system](#font-system--font_system-appfont-attrs_list_from_regions-regionfamilies-rich_text_spans_from_regions).
 - **runtime hole** — `Runtime("<label>")` value resolved by
   `SectionContext`. See [§4: Runtime holes](#runtime-holes--sectioncontext).
 - **scene builder** — `MindMap` → `RenderScene`. See

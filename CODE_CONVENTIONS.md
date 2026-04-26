@@ -46,9 +46,15 @@ never a reason.
   `lib/baumhard/src/gfx_structs/tree.rs`). Never clone-edit-reinsert a
   subtree to change one field.
 - **Font** through `baumhard::font::fonts`. `fonts::init()` once at
-  startup; read `FONT_SYSTEM` through its lock guard; layout via
-  `create_cosmic_editor_str`. New code does not reach into `cosmic_text`
-  from the app crate.
+  startup; acquire `FONT_SYSTEM` through `acquire_font_system_write`;
+  resolve families through `app_font_by_family` /
+  `loaded_families_iter`. Region-styled text reaches cosmic-text only
+  through `baumhard::font::attrs` (`attrs_list_from_regions`,
+  `RegionFamilies`, `rich_text_spans_from_regions`). New code does
+  not reach into `cosmic_text` from the app crate, with the renderer
+  (`src/application/renderer/`) as the sole exception — speed is king
+  there, but even renderer code uses the baumhard bridges where one
+  exists.
 - **Geometry, color, regions** are Baumhard's:
   `baumhard::util::geometry`, `baumhard::util::color`,
   `ColorFontRegions` (character-range runs), and `RegionIndexer`
