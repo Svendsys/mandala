@@ -59,11 +59,14 @@ not the rules.
   reads a shared `AtomicU64` timestamp the main loop pings — it
   never touches app state — so the single-threaded invariant for
   the model/view pipeline is preserved.
-- **Dual rendering pipeline.** Nodes render through a Baumhard
-  `Tree<GfxElement, GfxMutator>`; connections, borders, and portals
-  render through a flat `RenderScene` wired via
-  `src/application/scene_host.rs`. Be aware which pipeline you're
-  touching.
+- **Render through the Baumhard tree.** Nodes / connections /
+  borders / portals all flow toward
+  `Tree<GfxElement, GfxMutator>` and are walked into cosmic-text
+  buffers by `src/application/renderer/tree_walker.rs`. Some
+  legacy element types still pass through a flat scene
+  intermediary (`scene_builder/`) on their way to that walker;
+  treat that as a seam in flight, not a permanent second
+  pipeline. New visuals belong in the Baumhard tree.
 - **Mutation-first interaction model.** Where a user action can be
   expressed as a mutation cascading through the Baumhard tree, prefer
   that. Things outside the tree — edges, borders, overlays — reach the

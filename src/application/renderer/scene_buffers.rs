@@ -1,23 +1,35 @@
 // SPDX-License-Identifier: MPL-2.0
 
+//! ## Cosmic-text routing rule (CODE_CONVENTIONS.md §1)
+//!
+//! `(text + ColorFontRegions) → cosmic-text spans` ALWAYS goes
+//! through `baumhard::font::attrs::{RegionFamilies::resolve,
+//! rich_text_spans_from_regions}` — never hand-rolled here.
+//! `tree_walker.rs:89,158` is the canonical pattern; the border
+//! rebuild below mirrors it. If a new flat-pipeline rebuild path
+//! grows in this file, it routes through the same bridge.
+//!
+//! ## What this file owns
+//!
 //! Flat-scene buffer builders — every `rebuild_*_buffers*` method
 //! that works from a `RenderScene`'s element slices (borders,
 //! connections, edge handles, connection labels) plus the
 //! selection-rect overlay and `clear_overlay_buffers`.
 //!
-//! These are the "flat pipeline" counterpart to the tree-walk
-//! methods in `tree_buffers.rs`. Each method shapes cosmic-text
-//! buffers from `BorderElement` / `ConnectionElement` / etc. and
-//! stores them in a keyed cache (`FxHashMap`) or a flat `Vec`.
+//! Each method shapes cosmic-text buffers from `BorderElement` /
+//! `ConnectionElement` / etc. and stores them in a keyed cache
+//! (`FxHashMap`) or a flat `Vec`.
 
 use baumhard::font::fonts;
 use baumhard::mindmap::scene_builder::BorderElement;
 use cosmic_text::Attrs;
 use glam::Vec2;
 
-use super::borders::{
-    build_palette_aware_border_buffer, create_border_buffer, parse_hex_color,
-};
+use super::borders::{create_border_buffer, parse_hex_color};
+use baumhard::font::attrs::{rich_text_spans_from_regions, RegionFamilies};
+use baumhard::mindmap::border::build_border_regions;
+use baumhard::util::color::hex_to_rgba_safe;
+use baumhard::util::grapheme_chad::count_grapheme_clusters;
 use super::{MindMapTextBuffer, Renderer};
 
 impl Renderer {
@@ -103,16 +115,18 @@ impl Renderer {
                 }
             }
 
-            // Slow path: shape fresh.
-            let fallback_color = parse_hex_color(&elem.border_style.color)
-                .unwrap_or(cosmic_text::Color::rgba(255, 255, 255, 255));
-            let border_attrs = Attrs::new()
-                .color(fallback_color)
-                .metrics(cosmic_text::Metrics::new(font_size, font_size));
-
+            // Slow path: shape fresh through baumhard's
+            // styled-region → cosmic-text bridge. The same
+            // `(text, ColorFontRegions) → Vec<(&str, Attrs)>`
+            // path the tree walker uses
+            // (`tree_walker.rs:89,158`); see CODE_CONVENTIONS §1
+            // and the banner at the top of this file.
+            let fallback_rgba = hex_to_rgba_safe(
+                &elem.border_style.color,
+                [1.0, 1.0, 1.0, 1.0],
+            );
             let h_width = (char_count as f32 + 1.0) * approx_char_width;
             let v_width = approx_char_width * 2.0;
-
             let row_count = (nh / font_size).round().max(1.0) as usize;
 
             // Pattern-aware side text: corners + side fill on the
@@ -129,43 +143,94 @@ impl Renderer {
             // continuously around the rectangle (top → right →
             // bottom → left). Mirrors the tree builder's offset
             // math so the two pipelines paint the same colours.
-            use baumhard::util::grapheme_chad::count_grapheme_clusters;
             let top_clusters = count_grapheme_clusters(&top_text);
             let right_clusters = count_grapheme_clusters(&right_text);
             let bottom_clusters = count_grapheme_clusters(&bottom_text);
 
             let zv = elem.zoom_visibility;
-            let with_zv = |mut buf: MindMapTextBuffer| -> MindMapTextBuffer {
-                buf.zoom_visibility = zv;
-                buf
-            };
             let cycle = elem.palette_cycle.as_slice();
+
+            // Per-side dance: build `ColorFontRegions` via
+            // `build_border_regions` (the same helper the tree
+            // builder uses, so both pipelines paint identical
+            // colours per cluster), resolve family pins through
+            // `RegionFamilies::resolve`, and bridge to spans via
+            // `rich_text_spans_from_regions`. When `cycle` is
+            // empty `build_border_regions` emits a single uniform
+            // region, so the no-palette and palette-cycling paths
+            // collapse to one shape here — no early return.
+            let mut shape_side =
+                |text: &str,
+                 pos: (f32, f32),
+                 bounds: (f32, f32),
+                 palette_offset: usize|
+                 -> MindMapTextBuffer {
+                    let cluster_count = count_grapheme_clusters(text);
+                    let regions = build_border_regions(
+                        cluster_count,
+                        cycle,
+                        fallback_rgba,
+                        palette_offset,
+                    );
+                    let families =
+                        RegionFamilies::resolve(&regions, &mut font_system);
+                    let spans = rich_text_spans_from_regions(
+                        text,
+                        &families,
+                        font_size,
+                        font_size,
+                        None,
+                    );
+                    let mut buf = cosmic_text::Buffer::new(
+                        &mut font_system,
+                        cosmic_text::Metrics::new(font_size, font_size),
+                    );
+                    buf.set_size(
+                        &mut font_system,
+                        Some(bounds.0),
+                        Some(bounds.1),
+                    );
+                    buf.set_rich_text(
+                        &mut font_system,
+                        spans,
+                        &Attrs::new(),
+                        cosmic_text::Shaping::Advanced,
+                        None,
+                    );
+                    buf.shape_until_scroll(&mut font_system, false);
+                    MindMapTextBuffer {
+                        buffer: buf,
+                        pos,
+                        bounds,
+                        zoom_visibility: zv,
+                    }
+                };
+
             let entry = vec![
-                with_zv(build_palette_aware_border_buffer(
-                    &mut font_system, &top_text, &border_attrs, font_size,
+                shape_side(
+                    &top_text,
                     (nx - approx_char_width, top_y),
                     (h_width, font_size * 1.5),
-                    cycle, 0, fallback_color,
-                )),
-                with_zv(build_palette_aware_border_buffer(
-                    &mut font_system, &bottom_text, &border_attrs, font_size,
+                    0,
+                ),
+                shape_side(
+                    &bottom_text,
                     (nx - approx_char_width, bottom_y),
                     (h_width, font_size * 1.5),
-                    cycle, top_clusters + right_clusters, fallback_color,
-                )),
-                with_zv(build_palette_aware_border_buffer(
-                    &mut font_system, &left_text, &border_attrs, font_size,
+                    top_clusters + right_clusters,
+                ),
+                shape_side(
+                    &left_text,
                     (nx - approx_char_width, ny),
                     (v_width, nh),
-                    cycle, top_clusters + right_clusters + bottom_clusters,
-                    fallback_color,
-                )),
-                with_zv(build_palette_aware_border_buffer(
-                    &mut font_system, &right_text, &border_attrs, font_size,
+                    top_clusters + right_clusters + bottom_clusters,
+                ),
+                shape_side(
+                    &right_text,
                     (right_corner_x, ny),
                     (v_width, nh),
-                    cycle, top_clusters, fallback_color,
-                )),
+                    top_clusters,
+                ),
             ];
             self.border_buffers.insert(elem.node_id.clone(), entry);
         }

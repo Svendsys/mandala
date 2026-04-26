@@ -137,11 +137,7 @@ mod tests {
     use crate::application::document::MindMapDocument;
 
     fn fixture_doc() -> MindMapDocument {
-        let path = format!(
-            "{}/maps/testament.mindmap.json",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        MindMapDocument::load(&path).expect("testament map loads")
+        crate::application::document::tests_common::load_test_doc()
     }
 
     fn state<'a>(

@@ -9,14 +9,33 @@
 //! - [`attrs_list_from_regions`] returns an `AttrsList` for
 //!   callers using `Editor::insert_string`.
 //! - [`RegionFamilies`] + [`rich_text_spans_from_regions`] returns
-//!   a `Vec<(&str, Attrs)>` for callers using `Buffer::set_rich_text`
-//!   (the renderer's tree walker).
+//!   a `Vec<(&str, Attrs)>` for callers using `Buffer::set_rich_text`.
 //!
 //! Both honour the per-region color, font pin, and (for the spans
 //! API) grapheme-aware byte slicing. The shared private
 //! `resolve_font_family` keeps the lookup + fallback discipline in
 //! one place — see `CODE_CONVENTIONS.md` §1 and
 //! `lib/baumhard/CONVENTIONS.md` §B5.
+//!
+//! ## Consumers
+//!
+//! This is the single owner of the `(ColorFontRegions, &mut
+//! FontSystem) → cosmic-text` bridge. New renderer-side code
+//! that needs styled spans MUST route through here rather than
+//! reinventing the bridge inline (`CODE_CONVENTIONS.md` §1; the
+//! regression PR #125 cleaned up).
+//!
+//! Current consumers — keep this list current when adding a new
+//! call site:
+//!
+//! - `src/application/renderer/tree_walker.rs:89,158` — main
+//!   tree-to-buffer walker for nodes / connections / portals
+//!   (Baumhard tree path).
+//! - `src/application/renderer/scene_buffers.rs::rebuild_border_buffers_keyed` —
+//!   per-side border rebuild for framed nodes (flat-pipeline
+//!   `BorderElement` path), routed here in PR #126's review-fix
+//!   commit after the initial commit hand-rolled the bridge in
+//!   `borders.rs::build_palette_aware_border_buffer`.
 
 use cosmic_text::{Attrs, AttrsList, Color, Family, FontSystem, Metrics, Style};
 use log::warn;

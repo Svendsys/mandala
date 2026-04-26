@@ -418,13 +418,13 @@ mod tests {
     use crate::application::document::{EdgeRef, MindMapDocument, SelectionState};
 
     /// Load the testament map fresh so tests don't share mutated
-    /// state. Mirrors the pattern used in `mutation::tests`.
+    /// state. Routes through the process-wide cache in
+    /// `document::tests_common::load_test_doc` — clones the
+    /// already-parsed `MindMap` and skips the per-node
+    /// FONT_SYSTEM write-lock acquisitions `MindMapDocument::load`
+    /// would otherwise trigger.
     fn fixture_doc() -> MindMapDocument {
-        let path = format!(
-            "{}/maps/testament.mindmap.json",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        MindMapDocument::load(&path).expect("testament map loads")
+        crate::application::document::tests_common::load_test_doc()
     }
 
     fn run(line: &str, doc: &mut MindMapDocument) -> ExecResult {

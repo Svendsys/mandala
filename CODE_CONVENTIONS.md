@@ -101,9 +101,14 @@ decision, not a drive-by edit.
   representations (`Tree<GfxElement, GfxMutator>`, `RenderScene`). The
   renderer never reaches into the document; the document never holds
   GPU handles.
-- **Two-pipeline render, biased toward Baumhard.** Nodes and connections
-  render through the Baumhard tree; borders and portals through the flat
-  `RenderScene`. New visuals belong in the Baumhard tree by default.
+- **Render through the Baumhard tree.** All visuals — nodes,
+  connections, borders, portals — converge on
+  `Tree<GfxElement, GfxMutator>` and are shaped by
+  `src/application/renderer/tree_walker.rs`. Some element types
+  still travel through a flat scene intermediary
+  (`scene_builder/`) before reaching the walker, but that's a
+  consolidation seam, not a permanent second pipeline. New
+  visuals belong in the Baumhard tree.
 - **Mutation-first interaction.** Where a user action can be expressed
   as a `MutatorTree<GfxMutator>`, express it that way. Every user-facing
   mutation gets a matching `UndoAction` variant and an `undo()` branch.

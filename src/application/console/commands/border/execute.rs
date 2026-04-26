@@ -7,6 +7,31 @@
 //! its typed parser, then hands the whole bundle to
 //! [`MindMapDocument::set_node_border_config`] per selected node.
 //! Validation failures abort before any node is mutated.
+//!
+//! ## Why parse-then-dispatch instead of `apply_kvs` / capability traits
+//!
+//! The `color` verb dispatches per-kv through `apply_kvs` against
+//! the capability traits on `TargetView` (`HasBgColor`,
+//! `HasTextColor`, `HasBorderColor`) because each kv targets a
+//! *different* trait channel — `bg=#x text=#y border=#z` writes
+//! three independent fields, each of which can have its own
+//! "not applicable to this selection" answer.
+//!
+//! `border` and `font` (see `commands/font.rs`) are
+//! single-channel verbs: every kv targets the same per-node
+//! `GlyphBorderConfig` (or, for `font`, the same edge / label /
+//! portal channel). The right shape there is to parse every kv
+//! up front, validate the bundle, and hand it to one document
+//! setter that applies the whole bundle atomically — exactly
+//! what this file does. A `HasBorder` trait would be
+//! multi-method, only ever implemented on `TargetView::Node`
+//! with `NotApplicable` everywhere else, and would force one
+//! trait call per kv per node which breaks the atomic-apply
+//! invariant the verb relies on for parse-error rejection.
+//!
+//! Recorded so a future reviewer doesn't relitigate this. See
+//! `apply_kvs` (`src/application/console/traits/dispatch.rs`)
+//! and `font.rs::execute_font` for the two precedents.
 
 use baumhard::mindmap::border::PaletteField;
 use baumhard::mindmap::border_pattern::SidePattern;

@@ -799,11 +799,7 @@ mod tests {
     use crate::application::document::MindMapDocument;
 
     fn fixture_doc() -> MindMapDocument {
-        let path = format!(
-            "{}/maps/testament.mindmap.json",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        MindMapDocument::load(&path).expect("testament map loads")
+        super::super::tests_common::load_test_doc()
     }
 
     fn first_node_id(doc: &MindMapDocument) -> String {

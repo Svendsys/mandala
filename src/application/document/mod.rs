@@ -33,7 +33,7 @@ mod undo_action;
 mod zoom_bounds;
 
 #[cfg(test)]
-mod tests_common;
+pub(crate) mod tests_common;
 #[cfg(test)]
 mod tests_delete;
 #[cfg(test)]
@@ -306,6 +306,24 @@ impl MindMapDocument {
         info!("Loaded mindmap '{}' with {} nodes", map.name, map.nodes.len());
         grow_node_sizes_to_fit_text(&mut map);
         grow_node_sizes_to_fit_borders(&mut map);
+        Self::from_mindmap(map, file_path)
+    }
+
+    /// Wrap a *pre-finalized* `MindMap` in a fresh document shell
+    /// without rerunning the grow passes. Same shape as
+    /// [`Self::load`] / [`Self::from_json_str`] but skips
+    /// [`grow_node_sizes_to_fit_text`] and
+    /// [`grow_node_sizes_to_fit_borders`] — both of which
+    /// acquire the global `FONT_SYSTEM` write lock per-node.
+    ///
+    /// Surfaced primarily as a test seam: the test fixture
+    /// loader in `tests_common::load_test_doc` caches a single
+    /// finalized `MindMap` in a `OnceLock` and clones it through
+    /// here per call, so a 30-test parallel run no longer
+    /// thrashes the lock 30×N times. Production code paths
+    /// continue to use [`Self::load`] / [`Self::from_json_str`]
+    /// / [`Self::new_blank`].
+    pub fn from_finalized_mindmap(map: MindMap, file_path: Option<String>) -> Self {
         Self::from_mindmap(map, file_path)
     }
 

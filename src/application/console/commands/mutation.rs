@@ -376,17 +376,15 @@ mod tests {
     };
 
     /// Build a fresh doc by loading the testament map, then overwrite
-    /// the registry + sources with the supplied fixtures. Avoids
-    /// depending on private helpers in other modules.
+    /// the registry + sources with the supplied fixtures. Routes
+    /// through the process-wide cache in
+    /// `document::tests_common::load_test_doc` — see that helper
+    /// for the FONT_SYSTEM-lock-contention rationale.
     fn fixture_doc(
         reg: Vec<(&str, CustomMutation)>,
         sources: Vec<(&str, MutationSource)>,
     ) -> MindMapDocument {
-        let path = format!(
-            "{}/maps/testament.mindmap.json",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        let mut doc = MindMapDocument::load(&path).expect("testament map loads");
+        let mut doc = crate::application::document::tests_common::load_test_doc();
         doc.mutation_registry = reg
             .into_iter()
             .map(|(k, v)| (k.to_string(), v))
@@ -678,11 +676,7 @@ mod tests {
     /// path.
     #[test]
     fn user_override_of_bundled_id_takes_declarative_path() {
-        let path = format!(
-            "{}/maps/testament.mindmap.json",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        let mut doc = MindMapDocument::load(&path).expect("testament loads");
+        let mut doc = crate::application::document::tests_common::load_test_doc();
 
         // User mutation shadowing the bundled `flower-layout` id.
         let user_cm = make_cm(
