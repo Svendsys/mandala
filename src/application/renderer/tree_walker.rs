@@ -143,7 +143,6 @@ pub(super) fn walk_tree_into_buffers(
                 for (dx, dy) in outline.offsets() {
                     let halo_spans = rich_text_spans_from_regions(
                         text,
-                        &area.regions,
                         &families,
                         scale,
                         line_height,
@@ -156,8 +155,7 @@ pub(super) fn walk_tree_into_buffers(
 
         // Main glyph. Always emitted last so it sits on top of any
         // halos.
-        let main_spans =
-            rich_text_spans_from_regions(text, &area.regions, &families, scale, line_height, None);
+        let main_spans = rich_text_spans_from_regions(text, &families, scale, line_height, None);
         shape_and_yield(main_spans, 0.0, 0.0, font_system);
     }
 }
