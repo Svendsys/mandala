@@ -310,9 +310,13 @@ impl Renderer {
         }
         drop(font_system);
 
-        let Ok(frame) = self.surface.get_current_texture() else {
-            debug!("Failed to get the surface texture, can't render.");
-            return;
+        let frame = match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(t)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+            other => {
+                debug!("Failed to get the surface texture ({other:?}), can't render.");
+                return;
+            }
         };
         let view = frame
             .texture

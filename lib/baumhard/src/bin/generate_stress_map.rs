@@ -58,7 +58,7 @@ use baumhard::mindmap::model::{
 };
 use baumhard::util::grapheme_chad::count_grapheme_clusters;
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 
 /// Canvas units between sibling columns in grid layouts.
 const COL_SPACING: f64 = 320.0;
@@ -450,8 +450,8 @@ fn add_random_cross_links(
     let mut added = 0;
     while added < count && attempts < max_attempts {
         attempts += 1;
-        let a = rng.gen_range(0..nodes.len());
-        let b = rng.gen_range(0..nodes.len());
+        let a = rng.random_range(0..nodes.len());
+        let b = rng.random_range(0..nodes.len());
         if a == b {
             continue;
         }

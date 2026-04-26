@@ -13,55 +13,54 @@ license.workspace = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-rustc-hash = "2.0.0"
-unicode-segmentation = "1.11.0"
-wgpu = { version = "28.0", features = ["webgl"] }
-glyphon = "0.10.0"
-cosmic-text = "0.15.0"
-tinyvec = "1.8.0"
+rustc-hash = "2.1.2"
+unicode-segmentation = "1.13.2"
+wgpu = { version = "29.0", features = ["webgl"] }
+glyphon = "0.11.0"
+cosmic-text = "0.18.2"
+tinyvec = "1.11.0"
 # Alternative: https://crates.io/crates/ab_glyph
-glam = {version = "0.29.0", features = ["serde"]}
-futures = "0.3.30"
-winit = "0.30.1"
-serde = {version = "1.0.194", features = ["derive"]}
-serde_json = "1.0"
+glam = {version = "0.32.1", features = ["serde"]}
+futures = "0.3.32"
+winit = "0.30.13"
+serde = {version = "1.0.228", features = ["derive"]}
+serde_json = "1.0.149"
 serde-lexpr = "0.1.3"
 lazy_static = "1.5.0"
-syn = "2.0.53"
-log = { version = "0.4.20", features = ["release_max_level_off"] }
-env_logger = "0.11.3"
-smol_str = "0.3.1"
-indextree = {version = "4.7.2", features = ["serde"]}
-ttf-parser = "0.25.0"
+syn = "2.0.117"
+log = { version = "0.4.29", features = ["release_max_level_off"] }
+env_logger = "0.11.10"
+smol_str = "0.3.6"
+indextree = {version = "4.8.1", features = ["serde"]}
+ttf-parser = "0.25.1"
 baumhard = {path="./lib/baumhard"}
 # Cross-platform `Instant` — on native re-exports `std::time::Instant`;
 # on wasm32 uses `performance.now()`. Needed because
 # `std::time::Instant::now()` panics on `wasm32-unknown-unknown`
 # ("time not implemented on this platform").
-web-time = "1"
+web-time = "1.1.0"
 
 [build-dependencies]
 walkdir = "2.5.0"
 path-slash = "0.2.1"
-ttf-parser = "0.25.0"
-regex = "1.11.0"
+ttf-parser = "0.25.1"
+regex = "1.12.3"
 lazy_static = "1.5.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-num_cpus = "1.16.0"
-rustix = "0.38.28"
-pollster = "0.3.0"
-arboard = "3"
+num_cpus = "1.17.0"
+rustix = "1.1.4"
+pollster = "0.4.0"
+arboard = "3.6.1"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-wasm-bindgen = "0.2"
-wasm-bindgen-futures = "0.4"
-js-sys = "0.3"
-web-sys = { version = "0.3", features = ["Window", "Document", "Element", "HtmlCanvasElement", "Storage", "Location", "Performance", "EventTarget", "KeyboardEvent", "Response"] }
-console_log = "1"
-console_error_panic_hook = "0.1"
-getrandom = { version = "0.2", features = ["js"] }
+wasm-bindgen = "0.2.118"
+wasm-bindgen-futures = "0.4.68"
+js-sys = "0.3.95"
+web-sys = { version = "0.3.95", features = ["Window", "Document", "Element", "HtmlCanvasElement", "Storage", "Location", "Performance", "EventTarget", "KeyboardEvent", "Response"] }
+console_log = "1.0.0"
+console_error_panic_hook = "0.1.7"
+getrandom = { version = "0.4.2", features = ["wasm_js"] }
 
 [dev-dependencies]
-criterion = { version = "0.5.1", features = ["html_reports"] }
-
+criterion = { version = "0.8.2", features = ["html_reports"] }
