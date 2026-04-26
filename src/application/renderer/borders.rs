@@ -170,6 +170,80 @@ pub(super) fn create_centered_cell_buffer(
     MindMapTextBuffer { buffer: buf, pos, bounds, zoom_visibility: ZoomVisibility::unbounded() }
 }
 
+/// Build a border buffer that paints each grapheme cluster from a
+/// rotating palette cycle. When `palette_cycle` is empty, falls
+/// back to the single-attrs path (same cost as the legacy
+/// renderer); when non-empty, lays out one
+/// `(cluster, Attrs::color(...))` span per cluster so each cell
+/// can carry its own colour.
+///
+/// `glyph_index_offset` chains adjacent sides into one continuous
+/// sweep around the rectangle (top → right → bottom → left).
+/// Newline `'\n'` clusters in vertical-column text don't paint a
+/// glyph but still occupy a span; they use the same colour as the
+/// preceding cluster so single-line shaping isn't disturbed.
+///
+/// Cost: O(cluster_count) extra `Attrs::clone` calls when cycling
+/// — only paid when the user opts in.
+pub(super) fn build_palette_aware_border_buffer(
+    font_system: &mut FontSystem,
+    text: &str,
+    fallback_attrs: &Attrs,
+    font_size: f32,
+    pos: (f32, f32),
+    bounds: (f32, f32),
+    palette_cycle: &[[f32; 4]],
+    glyph_index_offset: usize,
+    fallback_color: cosmic_text::Color,
+) -> MindMapTextBuffer {
+    if palette_cycle.is_empty() {
+        return create_border_buffer(
+            font_system,
+            text,
+            fallback_attrs,
+            font_size,
+            pos,
+            bounds,
+        );
+    }
+    use unicode_segmentation::UnicodeSegmentation;
+    let clusters: Vec<&str> = text.graphemes(true).collect();
+    let mut spans: Vec<(&str, Attrs)> = Vec::with_capacity(clusters.len());
+    let mut visible_idx = 0usize;
+    for cluster in &clusters {
+        let attrs = if *cluster == "\n" {
+            fallback_attrs.clone().color(fallback_color)
+        } else {
+            let pos_in_cycle =
+                (glyph_index_offset + visible_idx) % palette_cycle.len();
+            visible_idx += 1;
+            fallback_attrs
+                .clone()
+                .color(float_rgba_to_cosmic(palette_cycle[pos_in_cycle]))
+        };
+        spans.push((cluster, attrs));
+    }
+    create_border_buffer_spans(font_system, &spans, font_size, pos, bounds)
+}
+
+/// Convert a baumhard-style `[f32; 4]` RGBA in 0.0..=1.0 to a
+/// cosmic-text `Color`. Out-of-range values clamp; non-finite
+/// inputs are forced to opaque white per `CODE_CONVENTIONS.md` §9.
+fn float_rgba_to_cosmic(rgba: [f32; 4]) -> cosmic_text::Color {
+    let to_byte = |c: f32| -> u8 {
+        if !c.is_finite() {
+            return 255;
+        }
+        (c.clamp(0.0, 1.0) * 255.0).round() as u8
+    };
+    cosmic_text::Color::rgba(
+        to_byte(rgba[0]),
+        to_byte(rgba[1]),
+        to_byte(rgba[2]),
+        to_byte(rgba[3]),
+    )
+}
+
 pub(super) fn parse_hex_color(hex: &str) -> Option<cosmic_text::Color> {
     let hex = hex.strip_prefix('#')?;
     if hex.len() != 6 {

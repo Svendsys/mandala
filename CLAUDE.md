@@ -204,6 +204,32 @@ session doesn't have to trawl `#[cfg]` guards to learn what works where.
 - Cross-platform monotonic clock via `now_ms()` in
   `src/application/app/mod.rs` (native: `Instant`; WASM:
   `performance.now()`).
+- Glyph-border configuration: per-node `GlyphBorderConfig` is
+  now honoured end-to-end by all three border-build pipelines
+  (`scene_builder/node_pass.rs`, `tree_builder/border.rs`, and
+  `renderer/scene_buffers.rs`) through the shared
+  `baumhard::mindmap::border::resolve_border_style` resolver.
+  The four side fields under `glyphs` accept a **side-pattern
+  syntax** — atomic-repeat (`+=##=+`) or prefix/fill/suffix
+  (`###(*)###`, `+=#(\(\))#=+` with `\(`/`\)`/`\\` escapes),
+  parsed by the new `lib/baumhard/src/mindmap/border_pattern.rs`
+  module. The four corners stay static glyph strings.
+  Optional `color_palette` + `color_palette_field` cycle each
+  glyph's colour continuously around the rectangle (top → right
+  → bottom → left) through any palette in `MindMap.palettes`,
+  reading whichever `ColorGroup` channel the field selects
+  (`frame` default, or `background` / `text` / `title`).
+  Nodes auto-grow at load time and after every console edit so
+  the chosen pattern's static parts always fit
+  (`grow_node_sizes_to_fit_borders` in
+  `src/application/document/mod.rs`, sibling of the text-fitting
+  floor; same monotonic "grow, never shrink" posture). The
+  authoring path is the native-only `border` console verb
+  (`on` / `off` / `show` / `reset` plus a composable kv form for
+  preset / font / size / colour / palette / sides / corners in
+  one atomic edit), but the model + parser + resolver + setter
+  all compile for `wasm32` so a future WASM gesture can attach
+  without rewiring. See `format/border-patterns.md`.
 - Per-glyph font-family pinning via `TextRun.font` /
   `GlyphConnectionConfig.font`. Both fields are now honored
   end-to-end — the tree builder

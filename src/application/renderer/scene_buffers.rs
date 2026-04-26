@@ -15,7 +15,9 @@ use baumhard::mindmap::scene_builder::BorderElement;
 use cosmic_text::Attrs;
 use glam::Vec2;
 
-use super::borders::{create_border_buffer, parse_hex_color};
+use super::borders::{
+    build_palette_aware_border_buffer, create_border_buffer, parse_hex_color,
+};
 use super::{MindMapTextBuffer, Renderer};
 
 impl Renderer {
@@ -102,11 +104,10 @@ impl Renderer {
             }
 
             // Slow path: shape fresh.
-            let border_color = parse_hex_color(&elem.border_style.color)
+            let fallback_color = parse_hex_color(&elem.border_style.color)
                 .unwrap_or(cosmic_text::Color::rgba(255, 255, 255, 255));
-            let glyph_set = &elem.border_style.glyph_set;
             let border_attrs = Attrs::new()
-                .color(border_color)
+                .color(fallback_color)
                 .metrics(cosmic_text::Metrics::new(font_size, font_size));
 
             let h_width = (char_count as f32 + 1.0) * approx_char_width;
@@ -114,38 +115,56 @@ impl Renderer {
 
             let row_count = (nh / font_size).round().max(1.0) as usize;
 
-            let top_text = glyph_set.top_border(char_count);
-            let bottom_text = glyph_set.bottom_border(char_count);
-            let left_text: String =
-                std::iter::repeat_n(format!("{}\n", glyph_set.left_char()), row_count).collect();
-            let right_text: String =
-                std::iter::repeat_n(format!("{}\n", glyph_set.right_char()), row_count).collect();
+            // Pattern-aware side text: corners + side fill on the
+            // horizontals; one cluster per line on the verticals.
+            // Routes through `BorderStyle`'s pattern-aware methods
+            // so the renderer paints whatever the per-node config
+            // resolved to (preset / custom corners / patterns).
+            let top_text = elem.border_style.top_text(char_count);
+            let bottom_text = elem.border_style.bottom_text(char_count);
+            let left_text = elem.border_style.left_column_text(row_count);
+            let right_text = elem.border_style.right_column_text(row_count);
+
+            // Per-side palette offsets so the colour cycle wraps
+            // continuously around the rectangle (top → right →
+            // bottom → left). Mirrors the tree builder's offset
+            // math so the two pipelines paint the same colours.
+            use baumhard::util::grapheme_chad::count_grapheme_clusters;
+            let top_clusters = count_grapheme_clusters(&top_text);
+            let right_clusters = count_grapheme_clusters(&right_text);
+            let bottom_clusters = count_grapheme_clusters(&bottom_text);
 
             let zv = elem.zoom_visibility;
             let with_zv = |mut buf: MindMapTextBuffer| -> MindMapTextBuffer {
                 buf.zoom_visibility = zv;
                 buf
             };
+            let cycle = elem.palette_cycle.as_slice();
             let entry = vec![
-                with_zv(create_border_buffer(
+                with_zv(build_palette_aware_border_buffer(
                     &mut font_system, &top_text, &border_attrs, font_size,
                     (nx - approx_char_width, top_y),
                     (h_width, font_size * 1.5),
+                    cycle, 0, fallback_color,
                 )),
-                with_zv(create_border_buffer(
+                with_zv(build_palette_aware_border_buffer(
                     &mut font_system, &bottom_text, &border_attrs, font_size,
                     (nx - approx_char_width, bottom_y),
                     (h_width, font_size * 1.5),
+                    cycle, top_clusters + right_clusters, fallback_color,
                 )),
-                with_zv(create_border_buffer(
+                with_zv(build_palette_aware_border_buffer(
                     &mut font_system, &left_text, &border_attrs, font_size,
                     (nx - approx_char_width, ny),
                     (v_width, nh),
+                    cycle, top_clusters + right_clusters + bottom_clusters,
+                    fallback_color,
                 )),
-                with_zv(create_border_buffer(
+                with_zv(build_palette_aware_border_buffer(
                     &mut font_system, &right_text, &border_attrs, font_size,
                     (right_corner_x, ny),
                     (v_width, nh),
+                    cycle, top_clusters, fallback_color,
                 )),
             ];
             self.border_buffers.insert(elem.node_id.clone(), entry);

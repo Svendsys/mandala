@@ -101,6 +101,12 @@ pub struct BorderElement {
     /// node is culled would be a floating frame fragment, so the
     /// border renders only when the node does.
     pub zoom_visibility: crate::gfx_structs::zoom_visibility::ZoomVisibility,
+    /// Resolved per-cycle-position colours when the user opts into
+    /// `border_style.color_palette`; empty otherwise. Pre-resolved
+    /// here so the renderer doesn't need `&MindMap` access on the
+    /// hot rebuild path. Sibling of
+    /// [`crate::mindmap::tree_builder::BorderNodeData::palette_cycle`].
+    pub palette_cycle: Vec<[f32; 4]>,
 }
 
 /// A connection (edge) between two nodes, with pre-computed glyph positions.

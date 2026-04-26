@@ -344,6 +344,8 @@ fn append_border_run_region_sized_by_grapheme_cluster_count_not_codepoints() {
         (100.0, 20.0),
         [1.0, 1.0, 1.0, 1.0],
         crate::gfx_structs::zoom_visibility::ZoomVisibility::unbounded(),
+        &[],
+        0,
     );
 
     let run = parent.children(&tree.arena).next().unwrap();
@@ -354,5 +356,131 @@ fn append_border_run_region_sized_by_grapheme_cluster_count_not_codepoints() {
         regions[0].range.end - regions[0].range.start,
         1,
         "region must cover 1 grapheme cluster, not 5 codepoints"
+    );
+}
+
+/// Per-node `GlyphBorderConfig` reaches the tree's emitted text:
+/// when the user authors a custom side pattern, the border-tree
+/// builder's resolved style consumes it through
+/// `BorderStyle::top_text` / `bottom_text` etc. Pre-fix, the
+/// builder ignored `node.style.border` entirely; this test fails
+/// loudly on a regression to that behaviour.
+#[test]
+fn border_tree_honors_custom_side_pattern() {
+    use crate::mindmap::model::{CustomBorderGlyphs, GlyphBorderConfig};
+
+    let mut map = synthetic_map(vec![synthetic_node("a", None, 0.0, 0.0)], vec![]);
+    let node = map.nodes.get_mut("a").unwrap();
+    // Wide enough that the fitter picks at least one full fill
+    // iteration; the synthetic node's 80px width × the default
+    // ~14pt border font gives a generous cluster budget.
+    node.size.width = 400.0;
+    node.size.height = 80.0;
+    node.style.border = Some(GlyphBorderConfig {
+        preset: "custom".into(),
+        font: None,
+        font_size_pt: 14.0,
+        color: None,
+        glyphs: Some(CustomBorderGlyphs {
+            top: "###(*)###".into(),
+            bottom: "+=##=+".into(),
+            left: "|".into(),
+            right: "|".into(),
+            top_left: "<".into(),
+            top_right: ">".into(),
+            bottom_left: "<".into(),
+            bottom_right: ">".into(),
+        }),
+        padding: 4.0,
+        color_palette: None,
+        color_palette_field: None,
+    });
+
+    let tree = build_border_tree(&map, &HashMap::new());
+    let parent = tree.root.children(&tree.arena).next().unwrap();
+    let runs: Vec<_> = parent.children(&tree.arena).collect();
+    assert_eq!(runs.len(), 4, "expect top/bottom/left/right runs");
+
+    let top_text = &tree
+        .arena
+        .get(runs[0])
+        .unwrap()
+        .get()
+        .glyph_area()
+        .unwrap()
+        .text;
+    // Top row starts with '<', ends with '>' (the configured corners),
+    // and contains '#' / '*' (the prefix-fill-suffix pattern).
+    assert!(top_text.starts_with('<'), "got: '{}'", top_text);
+    assert!(top_text.ends_with('>'), "got: '{}'", top_text);
+    assert!(top_text.contains('*'), "got: '{}'", top_text);
+}
+
+/// `color_palette` resolution: when the cfg names a palette that
+/// exists, the per-cluster regions on each run pick up colours
+/// from that palette (one region per cluster). The
+/// `BorderNodeData.palette_cycle` resolution fans out per-side
+/// from a single name → group mapping.
+#[test]
+fn border_tree_honors_palette_cycling() {
+    use crate::mindmap::model::{
+        ColorGroup, CustomBorderGlyphs, GlyphBorderConfig, Palette,
+    };
+
+    let mut map = synthetic_map(vec![synthetic_node("a", None, 0.0, 0.0)], vec![]);
+    map.palettes.insert(
+        "rainbow".into(),
+        Palette {
+            groups: vec![
+                ColorGroup {
+                    background: "#000000".into(),
+                    frame: "#ff0000".into(),
+                    text: "#000000".into(),
+                    title: "#000000".into(),
+                },
+                ColorGroup {
+                    background: "#000000".into(),
+                    frame: "#00ff00".into(),
+                    text: "#000000".into(),
+                    title: "#000000".into(),
+                },
+            ],
+        },
+    );
+    let node = map.nodes.get_mut("a").unwrap();
+    node.size.width = 400.0;
+    node.style.border = Some(GlyphBorderConfig {
+        preset: "rounded".into(),
+        font: None,
+        font_size_pt: 14.0,
+        color: None,
+        glyphs: None,
+        padding: 4.0,
+        color_palette: Some("rainbow".into()),
+        color_palette_field: Some("frame".into()),
+    });
+
+    let tree = build_border_tree(&map, &HashMap::new());
+    let parent = tree.root.children(&tree.arena).next().unwrap();
+    let top = parent.children(&tree.arena).next().unwrap();
+    let area = tree.arena.get(top).unwrap().get().glyph_area().unwrap();
+    let regions = area.regions.all_regions();
+    assert!(
+        regions.len() >= 2,
+        "palette cycling should emit one region per cluster (got {})",
+        regions.len()
+    );
+    // First region is red, second is green per the palette order.
+    let r0 = regions[0].color.unwrap();
+    let r1 = regions[1].color.unwrap();
+    assert!(
+        (r0[0] - 1.0).abs() < 0.05 && r0[1] < 0.05,
+        "first cluster should be red; got {:?}",
+        r0
+    );
+    assert!(
+        r1[0] < 0.05 && (r1[1] - 1.0).abs() < 0.05,
+        "second cluster should be green; got {:?}",
+        r1
     );
 }

@@ -243,7 +243,9 @@ rendered differently.
 ## GlyphBorderConfig
 
 Optional per-node border rendered from font glyphs. All fields are
-optional with defaults.
+optional with defaults. The four side fields under `glyphs`
+(`top`, `bottom`, `left`, `right`) are parsed as **side patterns**;
+see [`border-patterns.md`](./border-patterns.md) for the grammar.
 
 | Field | Type | Notes |
 |---|---|---|
@@ -251,8 +253,10 @@ optional with defaults.
 | `font` | string\|null | Font family |
 | `font_size_pt` | number | Glyph size |
 | `color` | string\|null | `#RRGGBB`, falls back to `style.frame_color` |
-| `glyphs` | object\|null | Custom glyphs when `preset == "custom"` |
+| `glyphs` | object\|null | Custom glyphs when `preset == "custom"`. Sides (`top`, `bottom`, `left`, `right`) accept the [side-pattern grammar](./border-patterns.md); corners (`top_left`, `top_right`, `bottom_left`, `bottom_right`) are static glyph strings. |
 | `padding` | number | Border-to-content padding in pixels |
+| `color_palette` | string\|null | Optional palette name (key in top-level `palettes`) whose colours cycle per glyph around the border. When unset, every glyph paints in `color`. A missing palette name warns and falls back to the single-colour path. |
+| `color_palette_field` | string\|null | Which `ColorGroup` channel is cycled when `color_palette` is set: `"frame"` (default), `"background"`, `"text"`, or `"title"`. Unknown values warn and fall back to `"frame"`. |
 
 ## GlyphConnectionConfig
 

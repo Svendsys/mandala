@@ -20,7 +20,7 @@ use std::collections::HashMap;
 
 use glam::Vec2;
 
-use crate::mindmap::border::BorderStyle;
+use crate::mindmap::border::resolve_border_style;
 use crate::mindmap::model::{MindMap, TextRun};
 use crate::util::color::resolve_var;
 
@@ -65,9 +65,16 @@ pub(super) fn build_node_elements(
         // `font_size` vertically and one `approx_char_width` horizontally.
         // Expand the clip box to match so connection glyphs don't land
         // inside the visible frame area (see renderer::rebuild_border_buffers
-        // for the matching layout math).
+        // for the matching layout math). Routes through
+        // `resolve_border_style` so the per-node config's font size /
+        // preset / pattern reach the clip math (a border with a 32pt
+        // font needs a deeper clip than a 14pt one).
         let (clip_pos, clip_size) = if node.style.show_frame {
-            let border_style = BorderStyle::default_with_color(frame_color);
+            let border_style = resolve_border_style(
+                node.style.border.as_ref(),
+                map.canvas.default_border.as_ref(),
+                frame_color,
+            );
             let bf = border_style.font_size_pt;
             let bcw = bf * crate::mindmap::border::BORDER_APPROX_CHAR_WIDTH_FRAC;
             (
@@ -103,17 +110,62 @@ pub(super) fn build_node_elements(
 
         // Border element — inherits the owning node's zoom window
         // so the frame never outlives its node at any zoom level.
+        // The per-node `style.border` and the canvas-level
+        // `default_border` cascade through `resolve_border_style`,
+        // so preset / font / size / colour / patterns / palette all
+        // reach the renderer through one resolution path.
         if node.style.show_frame {
-            let border_style = BorderStyle::default_with_color(frame_color);
+            let border_style = resolve_border_style(
+                node.style.border.as_ref(),
+                map.canvas.default_border.as_ref(),
+                frame_color,
+            );
+            let fallback_rgba = crate::util::color::hex_to_rgba_safe(
+                &border_style.color,
+                [1.0, 1.0, 1.0, 1.0],
+            );
+            let palette_cycle =
+                resolve_scene_palette_cycle(map, &border_style, fallback_rgba);
             border_elements.push(BorderElement {
                 node_id: node.id.clone(),
                 border_style,
                 node_position: (pos_x, pos_y),
                 node_size: (size_x, size_y),
                 zoom_visibility: node.zoom_window(),
+                palette_cycle,
             });
         }
     }
 
     (text_elements, border_elements, node_aabbs)
+}
+
+/// Resolve the per-cycle-position RGBA list for the scene-builder
+/// path. Mirror of `tree_builder::border::resolve_palette_cycle`
+/// kept local to this module so each builder owns its
+/// scene-vs-tree resolution; the cascade is identical so the two
+/// pipelines paint the same colours per cluster.
+fn resolve_scene_palette_cycle(
+    map: &MindMap,
+    border_style: &crate::mindmap::border::BorderStyle,
+    fallback_rgba: [f32; 4],
+) -> Vec<[f32; 4]> {
+    let Some(name) = border_style.color_palette.as_deref() else {
+        return Vec::new();
+    };
+    let Some(palette) = map.palettes.get(name) else {
+        log::warn!(
+            "border color_palette '{}' not found in map; falling back to single colour",
+            name
+        );
+        return Vec::new();
+    };
+    palette
+        .groups
+        .iter()
+        .map(|g| {
+            let hex = border_style.palette_field.read(g);
+            crate::util::color::hex_to_rgba_safe(hex, fallback_rgba)
+        })
+        .collect()
 }
