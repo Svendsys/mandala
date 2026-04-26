@@ -129,3 +129,162 @@ fn font_family_completions(partial: &str) -> Vec<Completion> {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::console::completion::CompletionContext;
+    use crate::application::document::MindMapDocument;
+
+    fn fixture_doc() -> MindMapDocument {
+        let path = format!(
+            "{}/maps/testament.mindmap.json",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        MindMapDocument::load(&path).expect("testament map loads")
+    }
+
+    fn state<'a>(
+        partial: &'a str,
+        ctx: CompletionContext,
+        tokens_owned: &'a [String],
+    ) -> CompletionState<'a> {
+        CompletionState {
+            tokens: tokens_owned,
+            cursor_token: 0,
+            partial,
+            context: ctx,
+        }
+    }
+
+    /// `border <TAB>` at token 0 surfaces every verb (on / off /
+    /// show / reset) plus every kv key — the user gets a
+    /// scannable menu of every operation the verb supports.
+    #[test]
+    fn complete_token_zero_offers_verbs_and_kv_keys() {
+        let doc = fixture_doc();
+        let ctx = ConsoleContext::from_document(&doc);
+        let tokens = Vec::<String>::new();
+        let s = state("", CompletionContext::Token { index: 0 }, &tokens);
+        let out = complete_border(&s, &ctx);
+        let labels: Vec<&str> = out.iter().map(|c| c.display.as_str()).collect();
+        // Verbs.
+        for v in &["on", "off", "show", "reset"] {
+            assert!(
+                labels.iter().any(|l| l == v),
+                "expected verb '{}' in completions: {:?}",
+                v, labels
+            );
+        }
+        // A handful of kv keys.
+        for k in &["preset=", "font=", "size=", "color=", "palette="] {
+            assert!(
+                labels.iter().any(|l| l == k),
+                "expected kv key '{}' in completions: {:?}",
+                k, labels
+            );
+        }
+    }
+
+    /// `border preset=<TAB>` lists every preset name. Static
+    /// vocabulary; doesn't need the document.
+    #[test]
+    fn complete_preset_value_lists_five_presets() {
+        let doc = fixture_doc();
+        let ctx = ConsoleContext::from_document(&doc);
+        let tokens = Vec::<String>::new();
+        let s = state(
+            "",
+            CompletionContext::KvValue { key: "preset".to_string() },
+            &tokens,
+        );
+        let out = complete_border(&s, &ctx);
+        let labels: Vec<&str> = out.iter().map(|c| c.text.as_str()).collect();
+        for p in &["light", "heavy", "double", "rounded", "custom"] {
+            assert!(
+                labels.iter().any(|l| l == p),
+                "expected preset '{}' in completions: {:?}",
+                p, labels
+            );
+        }
+    }
+
+    /// `border palette=<TAB>` lists every palette in the
+    /// document plus the `off` sentinel for clearing. Dynamic —
+    /// reaches into `doc.mindmap.palettes`.
+    #[test]
+    fn complete_palette_value_lists_doc_palettes_and_off() {
+        let doc = fixture_doc();
+        let ctx = ConsoleContext::from_document(&doc);
+        let tokens = Vec::<String>::new();
+        let s = state(
+            "",
+            CompletionContext::KvValue { key: "palette".to_string() },
+            &tokens,
+        );
+        let out = complete_border(&s, &ctx);
+        let labels: Vec<&str> = out.iter().map(|c| c.text.as_str()).collect();
+        // Off sentinel must always appear.
+        assert!(
+            labels.iter().any(|l| l == &"off"),
+            "expected 'off' sentinel: {:?}",
+            labels
+        );
+        // Every palette key in the doc must appear.
+        for name in doc.mindmap.palettes.keys() {
+            assert!(
+                labels.iter().any(|l| l == &name.as_str()),
+                "expected palette '{}' in completions: {:?}",
+                name, labels
+            );
+        }
+    }
+
+    /// `border field=<TAB>` lists the four `ColorGroup` channels.
+    #[test]
+    fn complete_field_value_lists_four_channels() {
+        let doc = fixture_doc();
+        let ctx = ConsoleContext::from_document(&doc);
+        let tokens = Vec::<String>::new();
+        let s = state(
+            "",
+            CompletionContext::KvValue { key: "field".to_string() },
+            &tokens,
+        );
+        let out = complete_border(&s, &ctx);
+        let labels: Vec<&str> = out.iter().map(|c| c.text.as_str()).collect();
+        for f in &["frame", "background", "text", "title"] {
+            assert!(
+                labels.iter().any(|l| l == f),
+                "expected field '{}' in completions: {:?}",
+                f, labels
+            );
+        }
+    }
+
+    /// `border font=<TAB>` reuses the font-family completer:
+    /// every popup row carries `font_family = Some(<name>)` so
+    /// the renderer shapes the candidate label in that face.
+    /// Mirrors `font.rs::tests::completion_after_set_returns_loaded_families_in_their_face`.
+    #[test]
+    fn complete_font_value_rows_carry_family_tag() {
+        baumhard::font::fonts::init();
+        let doc = fixture_doc();
+        let ctx = ConsoleContext::from_document(&doc);
+        let tokens = Vec::<String>::new();
+        let s = state(
+            "",
+            CompletionContext::KvValue { key: "font".to_string() },
+            &tokens,
+        );
+        let out = complete_border(&s, &ctx);
+        assert!(!out.is_empty(), "loaded fonts list must not be empty");
+        for c in &out {
+            assert_eq!(
+                c.font_family.as_deref(),
+                Some(c.text.as_str()),
+                "every font-completion row must tag its display family"
+            );
+        }
+    }
+}

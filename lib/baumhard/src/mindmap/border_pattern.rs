@@ -54,7 +54,14 @@ use unicode_segmentation::UnicodeSegmentation;
 /// A parsed side pattern. The two variants reflect the two
 /// well-formed inputs the grammar accepts; everything else
 /// surfaces from [`SidePattern::parse`] as `Err(String)`.
+///
+/// `#[non_exhaustive]` so external callers must construct via
+/// [`SidePattern::parse`] — that's the one place the empty-fill
+/// invariant (and the future "no nested fill region" invariant)
+/// is enforced. Internal construction inside this module is
+/// still allowed and is what the parser uses.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SidePattern {
     /// `+=##=+` — repeat the whole cluster sequence atomically.
     /// The cluster vector preserves grapheme boundaries so the
@@ -62,7 +69,11 @@ pub enum SidePattern {
     AtomicRepeat { cluster: Vec<String> },
     /// `prefix(fill)suffix` — fixed ends, repeating fill in
     /// between. Each `Vec<String>` is a list of grapheme clusters,
-    /// already escape-resolved.
+    /// already escape-resolved. The parser guarantees `fill` is
+    /// non-empty (an empty fill region errors with `"empty fill
+    /// region"`) and that there is exactly one fill region —
+    /// these invariants are not enforced by the type system,
+    /// hence `#[non_exhaustive]` on the enum.
     PrefixFillSuffix {
         prefix: Vec<String>,
         fill: Vec<String>,
@@ -70,13 +81,23 @@ pub enum SidePattern {
     },
 }
 
-/// Output of [`SidePattern::render`]. The text is concatenated
-/// clusters (ready to push onto a `GlyphArea.text` or a
-/// cosmic-text buffer); `cluster_count` is what palette-cycling
-/// callers use to size their `ColorFontRegions`.
+/// Output of [`SidePattern::render`]. Plain data carrier; cheap
+/// to move (`text` is one allocation sized to the cluster total,
+/// `cluster_count` is `Copy`).
+///
+/// `text` is the concatenated grapheme clusters, ready to push
+/// onto a [`crate::gfx_structs::area::GlyphArea`]'s `text` field
+/// or a cosmic-text buffer. `cluster_count` is the cluster
+/// length of `text` — palette-cycling callers use it to size
+/// their `ColorFontRegions` without re-walking grapheme
+/// boundaries.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RenderedSide {
+    /// Concatenated grapheme clusters, ready for layout.
     pub text: String,
+    /// Cluster count of `text`. Equals `text.graphemes(true).count()`
+    /// by construction; carried inline so callers don't need to
+    /// re-walk the string.
     pub cluster_count: usize,
 }
 
@@ -198,6 +219,16 @@ impl SidePattern {
     /// sequence — every render path that calls this should also
     /// have called [`Self::minimum_cluster_width`] against
     /// auto-resize so the truncation is unreachable in practice.
+    ///
+    /// # Cost
+    ///
+    /// O(`cluster_width`) cluster pushes plus one `String`
+    /// allocation sized to the rendered byte length. Both hot
+    /// border-rebuild paths (the renderer's
+    /// `rebuild_border_buffers_keyed` and the tree builder's
+    /// `build_border_mutator_tree_from_nodes`) call this once per
+    /// side per visible node per frame, so the per-glyph push has
+    /// to stay branchless — no parser work happens here.
     pub fn render(&self, cluster_width: usize) -> RenderedSide {
         match self {
             SidePattern::AtomicRepeat { cluster } => {
@@ -553,5 +584,84 @@ mod tests {
         // statics = 6, one fill iteration = 2.
         assert_eq!(p.minimum_cluster_width(), 6);
         assert_eq!(p.minimum_with_one_fill(), 8);
+    }
+
+    /// `()` (immediately-closed fill region) errors with the
+    /// dedicated empty-fill message, not with an "unmatched (" or
+    /// trailing-input lurker. Guards the line-182 branch.
+    #[test]
+    fn parse_open_immediately_closed_errors() {
+        let err = SidePattern::parse("()")
+            .expect_err("immediately-closed fill errors");
+        assert!(
+            err.contains("empty fill"),
+            "expected empty-fill diagnostic, got: {}",
+            err
+        );
+    }
+
+    /// `(\)` parses as a fill containing a literal `)`. Guards
+    /// the case where the fill-region's only content is an
+    /// escaped close-paren — easy to mis-handle as "unmatched".
+    #[test]
+    fn parse_fill_of_only_escaped_close() {
+        let p = SidePattern::parse(r"(\))").expect("parses");
+        match p {
+            SidePattern::PrefixFillSuffix { prefix, fill, suffix } => {
+                assert!(prefix.is_empty());
+                assert_eq!(fill, vec![")"]);
+                assert!(suffix.is_empty());
+            }
+            other => panic!("expected PrefixFillSuffix, got {:?}", other),
+        }
+    }
+
+    /// ZWJ-joined emoji as a corner-equivalent atomic-repeat
+    /// (corners use `SidePattern::parse` too via the console verb's
+    /// `stage_corner_or_err`). Confirms grapheme-cluster awareness
+    /// holds for multi-codepoint clusters that the renderer will
+    /// shape as a single visual glyph.
+    #[test]
+    fn parse_zwj_emoji_as_single_cluster() {
+        // 👨‍👩‍👧 — five codepoints joined by ZWJ, one cluster.
+        let p = SidePattern::parse("\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}")
+            .expect("parses");
+        match p {
+            SidePattern::AtomicRepeat { cluster } => {
+                assert_eq!(
+                    cluster.len(),
+                    1,
+                    "ZWJ-joined emoji must count as one cluster"
+                );
+            }
+            other => panic!("expected AtomicRepeat, got {:?}", other),
+        }
+    }
+
+    /// Round-trip: parse a simple atomic-repeat string, then
+    /// `render` it at exactly its own cluster length, and confirm
+    /// the rendered text equals the input. Catches a regression
+    /// where atomic-repeat's render somehow re-orders or corrupts
+    /// clusters.
+    #[test]
+    fn parse_render_identity_atomic_repeat() {
+        let input = "+=##=+";
+        let p = SidePattern::parse(input).expect("parses");
+        let r = p.render(6);
+        assert_eq!(r.text, input);
+        assert_eq!(r.cluster_count, 6);
+    }
+
+    /// Very large render width — guards against accidental
+    /// quadratic / overflow regressions on the fitter.
+    #[test]
+    fn render_atomic_repeat_at_very_large_width() {
+        let p = SidePattern::parse("ab").expect("parses");
+        let r = p.render(20_000);
+        assert_eq!(r.cluster_count, 20_000);
+        // Spot-check first / last bytes; full string equality
+        // would allocate 20k * 2 bytes for the comparison.
+        assert!(r.text.starts_with("ab"));
+        assert!(r.text.ends_with("ab"));
     }
 }

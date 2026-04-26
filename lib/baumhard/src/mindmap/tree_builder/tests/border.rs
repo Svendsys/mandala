@@ -416,6 +416,118 @@ fn border_tree_honors_custom_side_pattern() {
     assert!(top_text.contains('*'), "got: '{}'", top_text);
 }
 
+/// Mutator-vs-fresh-build parity when the user changes a side
+/// pattern between snapshots — specifically, the in-place
+/// `build_border_mutator_tree_from_nodes` path must rewrite each
+/// run's `text` field through `GlyphAreaField::Text(...)` so the
+/// rendered glyphs match a fresh build's output. A regression
+/// dropping the text field from the mutator delta (the kind of
+/// bug that survives the no-pattern-change parity test above)
+/// shows up here as a `text` mismatch on every run.
+#[test]
+fn border_mutator_picks_up_pattern_change() {
+    use crate::core::primitives::Applicable;
+    use crate::mindmap::model::{CustomBorderGlyphs, GlyphBorderConfig};
+
+    let mut map = synthetic_map(
+        vec![synthetic_node("a", None, 0.0, 0.0)],
+        vec![],
+    );
+    map.nodes.get_mut("a").unwrap().size.width = 400.0;
+    map.nodes.get_mut("a").unwrap().size.height = 80.0;
+
+    // State A: simple atomic-repeat side glyphs.
+    map.nodes.get_mut("a").unwrap().style.border = Some(GlyphBorderConfig {
+        preset: "custom".into(),
+        font: None,
+        font_size_pt: 14.0,
+        color: None,
+        glyphs: Some(CustomBorderGlyphs {
+            top: "-".into(),
+            bottom: "-".into(),
+            left: "|".into(),
+            right: "|".into(),
+            top_left: "+".into(),
+            top_right: "+".into(),
+            bottom_left: "+".into(),
+            bottom_right: "+".into(),
+        }),
+        padding: 4.0,
+        color_palette: None,
+        color_palette_field: None,
+    });
+    let mut tree_a = build_border_tree(&map, &HashMap::new());
+
+    // State B: same node, new prefix/fill/suffix top pattern.
+    map.nodes
+        .get_mut("a")
+        .unwrap()
+        .style
+        .border
+        .as_mut()
+        .unwrap()
+        .glyphs
+        .as_mut()
+        .unwrap()
+        .top = "###(*)###".into();
+
+    let nodes_b = border_node_data(&map, &HashMap::new());
+    let mutator = build_border_mutator_tree_from_nodes(&nodes_b);
+    mutator.apply_to(&mut tree_a);
+
+    let expected = build_border_tree(&map, &HashMap::new());
+
+    // Compare the top run's text on both trees. If the mutator
+    // dropped the text field, `tree_a`'s top run would still
+    // carry the State-A `+----+` text while `expected` carries
+    // the State-B prefix/fill/suffix output.
+    let actual_top = tree_a
+        .arena
+        .get(
+            tree_a
+                .root
+                .children(&tree_a.arena)
+                .next()
+                .unwrap()
+                .children(&tree_a.arena)
+                .next()
+                .unwrap(),
+        )
+        .unwrap()
+        .get()
+        .glyph_area()
+        .unwrap()
+        .text
+        .clone();
+    let expected_top = expected
+        .arena
+        .get(
+            expected
+                .root
+                .children(&expected.arena)
+                .next()
+                .unwrap()
+                .children(&expected.arena)
+                .next()
+                .unwrap(),
+        )
+        .unwrap()
+        .get()
+        .glyph_area()
+        .unwrap()
+        .text
+        .clone();
+    assert_eq!(
+        actual_top, expected_top,
+        "mutator path must rewrite top text after pattern change"
+    );
+    assert!(
+        actual_top.contains('*'),
+        "expected fill glyph in updated top text; got: '{}'",
+        actual_top
+    );
+}
+
 /// `color_palette` resolution: when the cfg names a palette that
 /// exists, the per-cluster regions on each run pick up colours
 /// from that palette (one region per cluster). The

@@ -184,12 +184,23 @@ fn build_side_column(glyph: char, rows: usize) -> String {
 /// ([`CustomBorderGlyphs`]) already stores corners as `String`, so
 /// a user-supplied multi-cluster corner like `tl = "<<"` survives
 /// serialization round-trip; this type is its render-time shape,
-/// after preset / config / fallback resolution.
+/// populated by [`resolve_border_style`] from either a
+/// `CustomBorderGlyphs` payload (when the preset is `"custom"`)
+/// or the chosen preset's single-char defaults.
+///
+/// Each field is one or more grapheme clusters. Empty strings are
+/// allowed by the type but actively normalised to the preset
+/// fallback during resolution, so the renderer never receives a
+/// corner with zero glyphs.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BorderCorners {
+    /// Glyphs at the top-left corner of the rectangle.
     pub top_left: String,
+    /// Glyphs at the top-right corner of the rectangle.
     pub top_right: String,
+    /// Glyphs at the bottom-left corner of the rectangle.
     pub bottom_left: String,
+    /// Glyphs at the bottom-right corner of the rectangle.
     pub bottom_right: String,
 }
 
@@ -594,6 +605,46 @@ fn default_custom_glyphs() -> CustomBorderGlyphs {
         bottom_left: "\u{2570}".to_string(),
         bottom_right: "\u{256F}".to_string(),
     }
+}
+
+/// Resolve `border_style.color_palette` (a name) to a list of
+/// per-cycle-position RGBA colours, reading the configured
+/// `palette_field` channel out of each `ColorGroup`. Returns an
+/// empty `Vec` when the name is unset or the named palette is not
+/// in the map (logs a warning in the latter case per
+/// `CODE_CONVENTIONS.md` §9). Pre-resolution lets the renderer and
+/// tree builder consume the colour list without re-walking the
+/// palette every frame; the resolved cycle is stamped on
+/// [`crate::mindmap::scene_builder::BorderElement::palette_cycle`]
+/// and
+/// [`crate::mindmap::tree_builder::BorderNodeData::palette_cycle`]
+/// at scene-build time.
+///
+/// Cost: O(groups.len()) hex parses on names that resolve, O(1) on
+/// the unset / missing fallback paths.
+pub fn resolve_palette_cycle(
+    palettes: &std::collections::HashMap<String, crate::mindmap::model::Palette>,
+    border_style: &BorderStyle,
+    fallback_rgba: FloatRgba,
+) -> Vec<FloatRgba> {
+    let Some(name) = border_style.color_palette.as_deref() else {
+        return Vec::new();
+    };
+    let Some(palette) = palettes.get(name) else {
+        log::warn!(
+            "border color_palette '{}' not found in map; falling back to single colour",
+            name
+        );
+        return Vec::new();
+    };
+    palette
+        .groups
+        .iter()
+        .map(|g| {
+            let hex = border_style.palette_field.read(g);
+            crate::util::color::hex_to_rgba_safe(hex, fallback_rgba)
+        })
+        .collect()
 }
 
 /// Build a [`ColorFontRegions`] that paints `cluster_count` glyph

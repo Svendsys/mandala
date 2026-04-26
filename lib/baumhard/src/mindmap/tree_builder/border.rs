@@ -117,8 +117,11 @@ pub fn border_node_data(
             frame_color_hex,
         );
         let color_rgba = color::hex_to_rgba_safe(&border_style.color, [1.0, 1.0, 1.0, 1.0]);
-        let palette_cycle =
-            resolve_palette_cycle(map, &border_style, color_rgba);
+        let palette_cycle = crate::mindmap::border::resolve_palette_cycle(
+            &map.palettes,
+            &border_style,
+            color_rgba,
+        );
 
         out.push(BorderNodeData {
             node_id: node.id.clone(),
@@ -137,37 +140,6 @@ pub fn border_node_data(
     out
 }
 
-/// Resolve `border_style.color_palette` (a name) to a list of
-/// per-cycle-position RGBA colours, reading the configured
-/// `palette_field` channel out of each `ColorGroup`. Returns an
-/// empty `Vec` when the name is unset, the palette doesn't
-/// exist, or the resolved palette has zero groups — the renderer
-/// then falls back to the single-colour path. Logs a warning on
-/// unknown names per `CODE_CONVENTIONS.md` §9.
-fn resolve_palette_cycle(
-    map: &MindMap,
-    border_style: &crate::mindmap::border::BorderStyle,
-    fallback_rgba: [f32; 4],
-) -> Vec<[f32; 4]> {
-    let Some(name) = border_style.color_palette.as_deref() else {
-        return Vec::new();
-    };
-    let Some(palette) = map.palettes.get(name) else {
-        log::warn!(
-            "border color_palette '{}' not found in map; falling back to single colour",
-            name
-        );
-        return Vec::new();
-    };
-    palette
-        .groups
-        .iter()
-        .map(|g| {
-            let hex = border_style.palette_field.read(g);
-            color::hex_to_rgba_safe(hex, fallback_rgba)
-        })
-        .collect()
-}
 
 /// Identity sequence for a slice of [`BorderNodeData`] — the
 /// sorted sequence of `node_id`s in tree-insertion order. Two

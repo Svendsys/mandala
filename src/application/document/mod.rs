@@ -60,7 +60,7 @@ pub use types::{
     AnimationInstance, EdgeLabelSel, EdgeRef, PortalLabelSel, SelectionState,
     HIGHLIGHT_COLOR, REPARENT_SOURCE_COLOR, REPARENT_TARGET_COLOR,
 };
-pub use nodes::{BorderConfigEdits, BorderFieldEdit, BorderSide};
+pub use nodes::{BorderConfigEdits, BorderEditOutcome, BorderFieldEdit, BorderSide};
 pub use undo_action::UndoAction;
 pub use zoom_bounds::ZoomBoundEdit;
 

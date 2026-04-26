@@ -107,9 +107,21 @@ fn format_border_readout(
     )));
     lines.push(OutputLine::plain(format!("color:   {}", style.color)));
     lines.push(OutputLine::plain(format!("palette: {}", palette_summary)));
-    if let Some(cfg) = node.style.border.as_ref() {
-        lines.push(OutputLine::plain(format!("padding: {} px", cfg.padding)));
-    }
+    // Padding cascades per-node → canvas-default → 4px hardcoded
+    // floor. Always print the resolved value so the readout is
+    // useful even for nodes with no per-node override (the canvas
+    // default may still set a non-default padding).
+    let resolved_padding = node
+        .style
+        .border
+        .as_ref()
+        .map(|c| c.padding)
+        .or_else(|| canvas_default.map(|c| c.padding))
+        .unwrap_or(4.0);
+    lines.push(OutputLine::plain(format!(
+        "padding: {} px",
+        resolved_padding
+    )));
     lines.push(OutputLine::plain(format!(
         "size:    {}×{} px ({} cluster cols, {} rows)",
         node.size.width as i64,

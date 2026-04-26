@@ -15,7 +15,7 @@ use crate::application::console::parser::Args;
 use crate::application::console::traits::ColorValue;
 use crate::application::console::{ConsoleEffects, ExecResult};
 use crate::application::document::{
-    BorderConfigEdits, BorderFieldEdit, BorderSide, MindMapDocument, SelectionState,
+    BorderConfigEdits, BorderEditOutcome, BorderFieldEdit, BorderSide, SelectionState,
 };
 
 use super::show::execute_border_show;
@@ -93,15 +93,39 @@ fn apply_edits(eff: &mut ConsoleEffects, edits: BorderConfigEdits) -> ExecResult
         Err(e) => return e,
     };
     let mut changed = 0usize;
+    let mut auto_promoted: Option<String> = None;
     for id in &ids {
-        if eff.document.set_node_border_config(id, edits.clone()) {
+        let outcome: BorderEditOutcome =
+            eff.document.set_node_border_config(id, edits.clone());
+        if outcome.changed {
             changed += 1;
+        }
+        if outcome.preset_auto_promoted && auto_promoted.is_none() {
+            auto_promoted = outcome.requested_preset.clone();
         }
     }
     if changed == 0 {
         return ExecResult::ok_msg("border: no change");
     }
-    ExecResult::ok_msg(format!("border applied to {} node(s)", changed))
+    // Surface auto-promotion exactly once per command invocation,
+    // not once per affected node — the same edit applies to every
+    // selected node so the message would be redundant. Only the
+    // first promoted node's `requested_preset` is reported; every
+    // other node received the same edit struct, so the value is
+    // necessarily the same.
+    let main = format!("border applied to {} node(s)", changed);
+    match auto_promoted {
+        Some(name) => ExecResult::lines(vec![
+            main,
+            format!(
+                "note: preset='{}' auto-promoted to 'custom' \
+                 (a side or corner glyph was set; non-custom presets \
+                 ignore the per-node glyph override)",
+                name
+            ),
+        ]),
+        None => ExecResult::ok_msg(main),
+    }
 }
 
 /// Resolve the current selection into a list of node ids, or an
@@ -155,7 +179,11 @@ fn stage_kv(
         "tr" => stage_corner_or_err(&mut edits.corner_top_right, "tr", value),
         "bl" => stage_corner_or_err(&mut edits.corner_bottom_left, "bl", value),
         "br" => stage_corner_or_err(&mut edits.corner_bottom_right, "br", value),
-        other => Err(format!("unknown key '{}'", other)),
+        other => Err(format!(
+            "unknown key '{}'; valid keys: {}",
+            other,
+            super::KEYS.join(" | ")
+        )),
     }
 }
 
@@ -271,6 +299,16 @@ fn stage_corner_or_err(
         SidePattern::PrefixFillSuffix { .. } => {
             return Err(format!(
                 "{}: corner doesn't take a fill region — use a static glyph",
+                label
+            ));
+        }
+        // `SidePattern` is `#[non_exhaustive]` so an unrecognised
+        // future variant degrades to a clear error rather than a
+        // panic — interactive paths must never panic per
+        // `CODE_CONVENTIONS.md` §9.
+        _ => {
+            return Err(format!(
+                "{}: unsupported pattern shape for a corner",
                 label
             ));
         }

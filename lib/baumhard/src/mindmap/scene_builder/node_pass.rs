@@ -60,21 +60,30 @@ pub(super) fn build_node_elements(
         // both the clip AABB sizing and the border element below.
         let frame_color = resolve_var(&node.style.frame_color, vars);
 
+        // Resolve the per-node border config once when the frame is
+        // visible, then reuse for clip-AABB math, palette-cycle
+        // resolution, and the emitted `BorderElement`. The cascade
+        // walks `node.style.border` → `canvas.default_border` →
+        // hardcoded defaults; doing this twice per visible node was a
+        // hot-path regression — the resolver also reparses each side
+        // pattern, so the cost compounds.
+        let resolved_border = if node.style.show_frame {
+            Some(resolve_border_style(
+                node.style.border.as_ref(),
+                map.canvas.default_border.as_ref(),
+                frame_color,
+            ))
+        } else {
+            None
+        };
+
         // Clip AABB: when a node has a visible frame, the rendered border
         // extends beyond the raw node rect by roughly one border
         // `font_size` vertically and one `approx_char_width` horizontally.
         // Expand the clip box to match so connection glyphs don't land
         // inside the visible frame area (see renderer::rebuild_border_buffers
-        // for the matching layout math). Routes through
-        // `resolve_border_style` so the per-node config's font size /
-        // preset / pattern reach the clip math (a border with a 32pt
-        // font needs a deeper clip than a 14pt one).
-        let (clip_pos, clip_size) = if node.style.show_frame {
-            let border_style = resolve_border_style(
-                node.style.border.as_ref(),
-                map.canvas.default_border.as_ref(),
-                frame_color,
-            );
+        // for the matching layout math).
+        let (clip_pos, clip_size) = if let Some(border_style) = &resolved_border {
             let bf = border_style.font_size_pt;
             let bcw = bf * crate::mindmap::border::BORDER_APPROX_CHAR_WIDTH_FRAC;
             (
@@ -110,22 +119,18 @@ pub(super) fn build_node_elements(
 
         // Border element — inherits the owning node's zoom window
         // so the frame never outlives its node at any zoom level.
-        // The per-node `style.border` and the canvas-level
-        // `default_border` cascade through `resolve_border_style`,
-        // so preset / font / size / colour / patterns / palette all
-        // reach the renderer through one resolution path.
-        if node.style.show_frame {
-            let border_style = resolve_border_style(
-                node.style.border.as_ref(),
-                map.canvas.default_border.as_ref(),
-                frame_color,
-            );
+        // Reuses the `resolved_border` populated above so the
+        // resolver runs at most once per visible framed node.
+        if let Some(border_style) = resolved_border {
             let fallback_rgba = crate::util::color::hex_to_rgba_safe(
                 &border_style.color,
                 [1.0, 1.0, 1.0, 1.0],
             );
-            let palette_cycle =
-                resolve_scene_palette_cycle(map, &border_style, fallback_rgba);
+            let palette_cycle = crate::mindmap::border::resolve_palette_cycle(
+                &map.palettes,
+                &border_style,
+                fallback_rgba,
+            );
             border_elements.push(BorderElement {
                 node_id: node.id.clone(),
                 border_style,
@@ -138,34 +143,4 @@ pub(super) fn build_node_elements(
     }
 
     (text_elements, border_elements, node_aabbs)
-}
-
-/// Resolve the per-cycle-position RGBA list for the scene-builder
-/// path. Mirror of `tree_builder::border::resolve_palette_cycle`
-/// kept local to this module so each builder owns its
-/// scene-vs-tree resolution; the cascade is identical so the two
-/// pipelines paint the same colours per cluster.
-fn resolve_scene_palette_cycle(
-    map: &MindMap,
-    border_style: &crate::mindmap::border::BorderStyle,
-    fallback_rgba: [f32; 4],
-) -> Vec<[f32; 4]> {
-    let Some(name) = border_style.color_palette.as_deref() else {
-        return Vec::new();
-    };
-    let Some(palette) = map.palettes.get(name) else {
-        log::warn!(
-            "border color_palette '{}' not found in map; falling back to single colour",
-            name
-        );
-        return Vec::new();
-    };
-    palette
-        .groups
-        .iter()
-        .map(|g| {
-            let hex = border_style.palette_field.read(g);
-            crate::util::color::hex_to_rgba_safe(hex, fallback_rgba)
-        })
-        .collect()
 }

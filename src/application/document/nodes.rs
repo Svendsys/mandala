@@ -269,17 +269,27 @@ impl MindMapDocument {
     }
 }
 
-/// One field of a [`GlyphBorderConfig`] edit, distinguishing
-/// "leave alone" (no edit) from "explicitly clear to default"
-/// (the field was set, the user wants it unset). Mirrors
-/// [`super::ZoomBoundEdit`]'s posture for the same reason — the
-/// console verb's `palette=off` shape needs a way to ask the
-/// model to drop an existing override.
+/// One field of a [`baumhard::mindmap::model::GlyphBorderConfig`]
+/// edit. The three variants distinguish "leave alone" from
+/// "explicitly clear an existing override" from "set to a
+/// concrete value" — the same triple-state pattern
+/// [`super::ZoomBoundEdit`] uses for the same reason: the console
+/// verb's `palette=off` / `font=off` shapes need a way to ask the
+/// model to drop a previous override, distinct from "the user
+/// didn't mention this field at all".
+///
+/// `Keep` is the default so [`BorderConfigEdits`]'s
+/// `#[derive(Default)]` builds the no-op edit set, and the
+/// console verb only fills in the keys the user actually typed.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum BorderFieldEdit<T> {
+    /// No edit — leave the model field at its current value.
     #[default]
     Keep,
+    /// Drop the per-node override; the resolver cascade falls
+    /// through to the canvas-level default or hardcoded floor.
     Clear,
+    /// Write this concrete value to the field.
     Set(T),
 }
 
@@ -405,21 +415,33 @@ impl MindMapDocument {
     /// After mutation, runs [`grow_one_node_to_fit_border`] so
     /// the node grows to fit the new static parts; the same
     /// `EditNodeStyle` undo envelope captures both the style
-    /// change and the size change. Returns `true` when anything
-    /// actually changed.
+    /// change and the size change.
+    ///
+    /// Returns a [`BorderEditOutcome`] describing whether
+    /// anything changed and whether the preset was auto-promoted
+    /// to `"custom"` (which happens whenever any side or corner
+    /// glyph is set against a non-custom preset). The console
+    /// verb surfaces the auto-promotion so the user knows their
+    /// `preset=heavy top=…` request resulted in a `custom` border,
+    /// not a `heavy` one with a side override.
     pub fn set_node_border_config(
         &mut self,
         node_id: &str,
         edits: BorderConfigEdits,
-    ) -> bool {
+    ) -> BorderEditOutcome {
         let canvas_default = self.mindmap.canvas.default_border.clone();
         let node = match self.mindmap.nodes.get_mut(node_id) {
             Some(n) => n,
-            None => return false,
+            None => return BorderEditOutcome::default(),
         };
         let before_style = node.style.clone();
         let before_runs = node.text_runs.clone();
+        let preset_before = before_style
+            .border
+            .as_ref()
+            .map(|c| c.preset.clone());
 
+        let mut outcome = BorderEditOutcome::default();
         let any_change = if edits.clear {
             if node.style.border.is_none() && edits.visible.is_none() {
                 false
@@ -431,11 +453,30 @@ impl MindMapDocument {
                 true
             }
         } else {
-            apply_border_edits(node, &edits)
+            apply_border_edits(node, &edits, &mut outcome)
         };
 
         if !any_change {
-            return false;
+            return outcome;
+        }
+
+        // Detect a preset auto-promotion to "custom" so the
+        // verb's success message can tell the user their
+        // explicit `preset=…` choice was overridden by a side
+        // / corner edit. The user-asked-for preset (if any) is
+        // captured up-front in `outcome.requested_preset` by
+        // `apply_border_edits`; here we compare against what
+        // landed in the model.
+        if let Some(cfg) = node.style.border.as_ref() {
+            if cfg.preset.eq_ignore_ascii_case("custom") {
+                let was_already_custom = preset_before
+                    .as_deref()
+                    .map(|p| p.eq_ignore_ascii_case("custom"))
+                    .unwrap_or(false);
+                if !was_already_custom && outcome.requested_preset.is_some() {
+                    outcome.preset_auto_promoted = true;
+                }
+            }
         }
 
         // The size grow is monotonic by design (mirrors
@@ -450,8 +491,33 @@ impl MindMapDocument {
             before_runs,
         });
         self.dirty = true;
-        true
+        outcome.changed = true;
+        outcome
     }
+}
+
+/// Result of [`MindMapDocument::set_node_border_config`] —
+/// distinguishes "no change" from "applied" and surfaces the
+/// preset auto-promotion side effect so the console verb can
+/// tell the user when their `preset=heavy top=…` request landed
+/// as `preset=custom` (because setting any side or corner glyph
+/// requires the custom preset for the data model to honour the
+/// override at render time).
+#[derive(Clone, Debug, Default)]
+pub struct BorderEditOutcome {
+    /// `true` when any field on the node actually changed.
+    /// Console callers surface "no change" when this is false.
+    pub changed: bool,
+    /// `true` when the preset was auto-flipped from a non-custom
+    /// value to `"custom"` because the same call also set a side
+    /// or corner glyph. The verb's success message includes a
+    /// note in that case.
+    pub preset_auto_promoted: bool,
+    /// The preset the user explicitly asked for in this edit, or
+    /// `None` if no `preset=` kv was provided. Used together with
+    /// `preset_auto_promoted` to phrase the auto-promotion note
+    /// (`"preset=heavy was auto-promoted to 'custom'…"`).
+    pub requested_preset: Option<String>,
 }
 
 /// Apply non-clear edits to a node's style/border. Returns
@@ -466,8 +532,12 @@ impl MindMapDocument {
 fn apply_border_edits(
     node: &mut baumhard::mindmap::model::MindNode,
     edits: &BorderConfigEdits,
+    outcome: &mut BorderEditOutcome,
 ) -> bool {
     let mut changed = false;
+    if let BorderFieldEdit::Set(p) = &edits.preset {
+        outcome.requested_preset = Some(p.clone());
+    }
     if let Some(v) = edits.visible {
         if node.style.show_frame != v {
             node.style.show_frame = v;
@@ -721,4 +791,156 @@ fn set_node_style_field(
     });
     doc.dirty = true;
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::document::MindMapDocument;
+
+    fn fixture_doc() -> MindMapDocument {
+        let path = format!(
+            "{}/maps/testament.mindmap.json",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        MindMapDocument::load(&path).expect("testament map loads")
+    }
+
+    fn first_node_id(doc: &MindMapDocument) -> String {
+        doc.mindmap
+            .nodes
+            .keys()
+            .next()
+            .cloned()
+            .expect("testament map has nodes")
+    }
+
+    /// `BorderConfigEdits::with_side_pattern` validates the
+    /// pattern *before* mutating the bundle — a parse error
+    /// leaves the slot untouched so a half-applied edit can't
+    /// leak into the document. Critical for the verb's atomic
+    /// contract.
+    #[test]
+    fn with_side_pattern_rejects_bad_input_without_mutation() {
+        let mut edits = BorderConfigEdits::default();
+        let err = edits
+            .with_side_pattern(BorderSide::Top, "a)b")
+            .expect_err("unmatched ')' must error");
+        assert!(err.contains("top:"), "missing prefix: {}", err);
+        assert!(matches!(edits.side_top, BorderFieldEdit::Keep));
+    }
+
+    /// Setting a side pattern auto-promotes the preset to
+    /// `"custom"` and surfaces that through `BorderEditOutcome`.
+    /// The console verb consumes the `preset_auto_promoted` flag
+    /// to print a note; this test guards the document-layer
+    /// signal independently.
+    #[test]
+    fn set_node_border_config_signals_preset_auto_promotion() {
+        let mut doc = fixture_doc();
+        let id = first_node_id(&doc);
+        let mut edits = BorderConfigEdits::default();
+        edits.preset = BorderFieldEdit::Set("heavy".into());
+        edits.with_side_pattern(BorderSide::Top, "###(*)###")
+            .expect("pattern parses");
+        let outcome = doc.set_node_border_config(&id, edits);
+        assert!(outcome.changed, "expected change applied");
+        assert!(
+            outcome.preset_auto_promoted,
+            "side override against preset=heavy must auto-promote"
+        );
+        assert_eq!(outcome.requested_preset.as_deref(), Some("heavy"));
+        let cfg = doc
+            .mindmap
+            .nodes
+            .get(&id)
+            .unwrap()
+            .style
+            .border
+            .as_ref()
+            .expect("config materialised");
+        assert_eq!(cfg.preset, "custom");
+    }
+
+    /// `set_node_border_config` writes through the existing
+    /// `EditNodeStyle` undo envelope so the next `undo()`
+    /// restores the pre-edit `style.border`. Round-trip test:
+    /// apply an edit, undo, confirm the override is gone (or
+    /// matches its prior value).
+    #[test]
+    fn set_node_border_config_undo_round_trip_restores_style() {
+        let mut doc = fixture_doc();
+        let id = first_node_id(&doc);
+        let before_border = doc
+            .mindmap
+            .nodes
+            .get(&id)
+            .unwrap()
+            .style
+            .border
+            .clone();
+        let mut edits = BorderConfigEdits::default();
+        edits.preset = BorderFieldEdit::Set("double".into());
+        let outcome = doc.set_node_border_config(&id, edits);
+        assert!(outcome.changed);
+        // Sanity: the edit landed.
+        assert_eq!(
+            doc.mindmap
+                .nodes
+                .get(&id)
+                .unwrap()
+                .style
+                .border
+                .as_ref()
+                .map(|c| c.preset.clone()),
+            Some("double".to_string()),
+        );
+        // Now reverse.
+        assert!(doc.undo(), "undo must succeed");
+        let after_border = doc.mindmap.nodes.get(&id).unwrap().style.border.clone();
+        assert_eq!(
+            before_border.as_ref().map(|c| c.preset.clone()),
+            after_border.as_ref().map(|c| c.preset.clone()),
+            "undo must restore the pre-edit preset"
+        );
+    }
+
+    /// `set_node_border_config` with `clear=true` on a node that
+    /// already has no border override is a no-op — no undo
+    /// entry, no `dirty` flag flip, returns `changed=false`.
+    /// Guards the early-return branch.
+    #[test]
+    fn set_node_border_config_clear_no_op_when_already_none() {
+        let mut doc = fixture_doc();
+        let id = first_node_id(&doc);
+        // Strip any pre-existing override.
+        doc.mindmap.nodes.get_mut(&id).unwrap().style.border = None;
+        doc.dirty = false;
+        let undo_len_before = doc.undo_stack.len();
+        let mut edits = BorderConfigEdits::default();
+        edits.clear = true;
+        let outcome = doc.set_node_border_config(&id, edits);
+        assert!(!outcome.changed);
+        assert!(!doc.dirty, "no-op clear must not mark the document dirty");
+        assert_eq!(
+            doc.undo_stack.len(),
+            undo_len_before,
+            "no-op clear must not push an undo entry"
+        );
+    }
+
+    /// `set_node_border_visible` toggles `style.show_frame` and
+    /// returns `true` iff the value changed. Sibling test of
+    /// the `set_*` patterns elsewhere in this module.
+    #[test]
+    fn set_node_border_visible_returns_true_only_on_change() {
+        let mut doc = fixture_doc();
+        let id = first_node_id(&doc);
+        // Force a known starting state.
+        doc.mindmap.nodes.get_mut(&id).unwrap().style.show_frame = false;
+        assert!(doc.set_node_border_visible(&id, true));
+        assert!(doc.mindmap.nodes.get(&id).unwrap().style.show_frame);
+        // Second call same value → no-op.
+        assert!(!doc.set_node_border_visible(&id, true));
+    }
 }
