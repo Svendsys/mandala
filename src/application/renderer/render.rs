@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Frame rendering — the `Renderer::render()` body plus its
 //! geometry / vertex helpers. Lifted verbatim from
 //! `renderer/mod.rs` so the per-frame hot path has its own file

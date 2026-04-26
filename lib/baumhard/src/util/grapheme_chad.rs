@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Grapheme-cluster aware text utilities. Mandala's text editing,
 //! console scrollback, and label rendering all flow through these
 //! helpers so emoji, combining marks, and CJK glyphs round-trip

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `zoom min=<pt|unset> max=<pt|unset>` / `zoom clear` — set or
 //! clear the zoom-visibility window on the current selection.
 //!

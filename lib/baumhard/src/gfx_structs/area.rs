@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `GlyphArea` — the text-region element variant of a `GfxElement`.
 //! Owns the text content, font scale, position, bounding size,
 //! halo outline, and the `ColorFontRegions` set that carries per-

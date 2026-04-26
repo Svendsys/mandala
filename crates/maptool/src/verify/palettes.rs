@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Palette invariants: every node's color_schema.palette must resolve to
 //! a defined palette; every palette must have at least one group.
 

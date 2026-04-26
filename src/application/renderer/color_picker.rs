@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Color picker overlay renderer-side helpers. The picker's
 //! buffer rebuild + §B2 mutator application entry points live
 //! here; `Renderer` keeps thin wrapper methods that call these

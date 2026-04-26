@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Centre preview ࿕ glyph: the wheel's focal point and commit
 //! button. Tints to the current preview color (or the
 //! commit-hovered highlight). Rendered ~3× the base font size so it

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Tests for [`RegionIndexer`] — the spatial bucket index (§T1).
 //!
 //! Covers initialization, insert/remove/query, reverse index,

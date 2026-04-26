@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Tree-builder tests sharded by subject so each file stays small
 //! and greppable. Shared fixtures (`test_map_path`, `synthetic_node`,
 //! `synthetic_map`, `mk_chain_map`, `mk_star_map`, `synthetic_portal`,

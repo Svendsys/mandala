@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Mindmap tree builder — projects a `MindMap` into a Baumhard
 //! `Tree<GfxElement, GfxMutator>` and exposes per-canvas-role
 //! builders (borders, portals, connections, connection-labels,

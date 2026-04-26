@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `PickerAreas` table + section enum: the channel-ordered list of
 //! `(channel, GlyphArea)` pairs the layout-phase builders fill, plus
 //! per-section index arrays so the mutator path can look up an area

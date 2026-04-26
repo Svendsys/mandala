@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 pub(crate) mod app;
 pub(crate) mod clipboard;
 pub(crate) mod color_picker;

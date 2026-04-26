@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Per-command `is_applicable` predicate tests — verifies that
 //! commands hide / show themselves correctly based on the current
 //! selection and document state.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Picker state / channel invariants: strictly-ascending channels,
 //! dynamic-apply short-circuit key equality, resize gesture math.
 

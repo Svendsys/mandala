@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Serde intermediaries for [`super::CustomMutation`].
 //!
 //! `CustomMutationIn` is the on-disk deserialization shape; it

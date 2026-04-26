@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Shared test fixtures: the plausible-stub `ColorPickerOverlayGeometry`
 //! the pure-function layout/hit tests feed into `compute_color_picker_layout`.
 //! Duplicating the fixture across every submodule would be cheaper

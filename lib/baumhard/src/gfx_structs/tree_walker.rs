@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Walker that drives `MutatorTree::apply_to` — aligns mutators to
 //! target-tree elements by their
 //! [`BranchChannel`](crate::gfx_structs::tree::BranchChannel) and

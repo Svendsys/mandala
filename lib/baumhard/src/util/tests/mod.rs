@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 pub mod arena_utils_tests;
 pub mod color_tests;
 pub mod geometry_tests;

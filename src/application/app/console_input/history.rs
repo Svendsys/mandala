@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! On-disk console-history persistence. Best-effort: every path
 //! swallows IO errors and logs a warning — a failing history file
 //! must never take the app down.

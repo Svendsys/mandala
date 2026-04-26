@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Completion-engine tests — verifies that the completion path emits
 //! the expected suggestions for command-name prefixes, kv keys, kv
 //! values, and unknown commands.

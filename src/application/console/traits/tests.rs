@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Unit tests for the trait dispatcher's data types — color value
 //! parsing, outcome helper, and selection materialization.
 

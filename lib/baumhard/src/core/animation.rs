@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Animation traits and timeline primitives.
 //!
 //! Defines the vocabulary used to sequence `Mutable` changes over

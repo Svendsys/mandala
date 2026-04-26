@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `MindMapDocument::undo()` — the dispatch that matches on the
 //! `UndoAction` the stack just popped and reverses the mutation
 //! that pushed it. Each variant of `UndoAction` has a matching

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! RGB → cosmic-text conversion and highlight mixes shared by the
 //! picker's tree / mutator / area builders.
 

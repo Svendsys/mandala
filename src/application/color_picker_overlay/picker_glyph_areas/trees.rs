@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Tree- and mutator-tree builders the renderer calls from
 //! `apply_color_picker_overlay_*`. The initial-build path produces a
 //! freshly-allocated `Tree<GfxElement, GfxMutator>`; the layout and

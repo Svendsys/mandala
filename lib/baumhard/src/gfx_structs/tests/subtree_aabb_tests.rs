@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Tests for per-node subtree AABB computation and invalidation (§T1).
 //!
 //! Covers [`Tree::ensure_subtree_aabbs`], bottom-up computation,

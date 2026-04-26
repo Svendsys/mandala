@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Tests for [`crate::gfx_structs::element::GfxElement`] — constructor
 //! variants and accessor fundamentals (§T1).
 //!

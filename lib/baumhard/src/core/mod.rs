@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Core data types and animation primitives shared across baumhard.
 //!
 //! `primitives` defines the model-level vocabulary (ranges, styled

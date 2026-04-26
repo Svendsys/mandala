@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 use criterion::{criterion_group, criterion_main, Criterion};
 use baumhard::core::tests::primitives_tests::*;
 use baumhard::font::tests::fonts_tests::*;

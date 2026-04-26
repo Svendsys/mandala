@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Shared per-call context for the native event-loop dispatchers.
 //!
 //! Mouse, keyboard, cursor, and console-submit handlers each need

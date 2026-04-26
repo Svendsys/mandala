@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Shared fixtures used by the `tests_*` submodules. Kept pub(super)
 //! so a single definition covers every themed split without
 //! forcing per-file duplication.

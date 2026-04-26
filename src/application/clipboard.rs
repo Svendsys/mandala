@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Platform clipboard abstraction — thin wrapper over the system
 //! clipboard so trait methods stay pure data transformations and the
 //! event loop does the I/O at the boundary.

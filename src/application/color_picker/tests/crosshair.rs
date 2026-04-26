@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Crosshair-arm geometry: each arm renders exactly 8 cells, the
 //! four arms emit a symmetric per-cell advance, and per-cell ink
 //! correction lands each restored cell on its radial target.

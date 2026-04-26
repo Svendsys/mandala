@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 use baumhard::mindmap::loader::load_from_file;
 use baumhard::mindmap::model::MindMap;
 use regex::{Regex, RegexBuilder};

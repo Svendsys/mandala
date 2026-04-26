@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Cursor-move dispatch extracted from the native event loop in
 //! [`super::run_native`]. Owns the drag-state transition logic
 //! (pending → Panning / MovingNode / SelectingRect /

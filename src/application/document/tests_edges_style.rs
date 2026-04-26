@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Edge-handle hit-test, ensure_glyph_connection, color-picker preview, edge style setters (first half).
 //!
 //! Part of the tests split for `document`. Helpers live in

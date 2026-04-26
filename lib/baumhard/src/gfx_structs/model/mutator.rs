@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Glyph-model mutators: `DeltaGlyphModel` (field-level deltas) and
 //! `GlyphModelCommand` (high-level commands like nudge / rotate /
 //! insert). Both implement

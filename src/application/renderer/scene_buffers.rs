@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Flat-scene buffer builders — every `rebuild_*_buffers*` method
 //! that works from a `RenderScene`'s element slices (borders,
 //! connections, edge handles, connection labels) plus the

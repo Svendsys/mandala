@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Cosmic-text font integration — the single blessed boundary
 //! between baumhard's styled-region data model and the underlying
 //! font system. `fonts` owns the compiled font table and the shared

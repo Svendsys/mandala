@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Markdown export for mindmap files.
 //!
 //! Walks the node tree starting at the roots and emits a plain

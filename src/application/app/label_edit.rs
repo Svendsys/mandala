@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Inline edge-label editor: open / handle key / close. Opens an
 //! in-place editor on a selected edge, routes printable / navigation
 //! / commit keystrokes through `route_label_edit_key`, and commits or

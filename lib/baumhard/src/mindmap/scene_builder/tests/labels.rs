@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Connection-label emission: label present, missing/empty, position_t follow, color inheritance, GlyphConnectionConfig override.
 
 use super::fixtures::*;

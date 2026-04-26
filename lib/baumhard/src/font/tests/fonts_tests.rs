@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Tests for [`crate::font::fonts`] measurement primitives:
 //! [`measure_glyph_ink_bounds`] and [`measure_text_block_unbounded`].
 //!

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Font-size derivation for the picker layout — steps 1–3 of the
 //! canonical sizing formula: recover per-script advance ratios,
 //! compute `wheel_side_in_fonts`, back-solve font_size from the

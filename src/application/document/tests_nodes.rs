@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Node text / background / border / text-colour / font-size setters + set_node_style_field helper.
 //!
 //! Part of the tests split for `document`. Helpers live in

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Application-bundled mutations, shipped inside the binary via
 //! `include_str!`. This is the lowest-precedence source: the user's
 //! file overrides app mutations by id, the map overrides user, and

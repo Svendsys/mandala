@@ -9,7 +9,7 @@ God?* We know the answer is that we never reach it, and yet we try with
 all we have.
 
 Low-effort work is not just unwelcome here; it is heretic. The standard
-is **canonical** or **exemplary** — nothing less. This is a public-domain
+is **canonical** or **exemplary** — nothing less. This is an open source
 project with no commercial pressure; do not apply for-profit or
 industrial cost/benefit reasoning to it.
 
@@ -20,6 +20,7 @@ other way around. Where existing code deviates, the deviation is closed
 by the next session that touches the file.
 
 See also:
+
 - [`TEST_CONVENTIONS.md`](./TEST_CONVENTIONS.md) — testing spec.
 - [`lib/baumhard/CONVENTIONS.md`](./lib/baumhard/CONVENTIONS.md) —
   foundation-grade rules for the Baumhard crate.

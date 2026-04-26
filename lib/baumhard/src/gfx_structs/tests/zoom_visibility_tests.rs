@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Tests for [`crate::gfx_structs::zoom_visibility`] — inclusive
 //! `[min, max]` containment, `None`-as-open-bound semantics, and the
 //! `GlyphArea` mutator round-trip via `GlyphAreaField::ZoomVisibility`.

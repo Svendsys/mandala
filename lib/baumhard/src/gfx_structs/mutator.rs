@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `GfxMutator` — the top-level mutator variant that rides one node
 //! of a `MutatorTree<GfxMutator>`. The four variants cover single-
 //! target mutations (`Single`), padded alignment slots (`Void`),

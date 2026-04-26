@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Compiled-in font table, shared `FontSystem`, and cosmic-text
 //! editor factories. The `AppFont` enum + `FONT_DATA` array are
 //! emitted by `build.rs` at crate-compile time so the binary carries

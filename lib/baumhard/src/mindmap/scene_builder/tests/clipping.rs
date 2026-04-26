@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Connection glyph clipping behaviour: inside-node clip, frame-area clip, cap survival for unframed endpoints, cap clip for framed endpoints.
 
 use super::fixtures::*;

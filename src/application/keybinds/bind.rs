@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `KeyBind` parser/matcher and the two `winit::Key` ↔ binding-string
 //! shims (`normalize_key_name`, `key_to_name`). Pure data — no
 //! platform-specific concerns.

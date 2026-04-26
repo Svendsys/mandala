@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Document-level data structures: the animation runtime record,
 //! the ref types (`EdgeRef`, `ReparentUndoData`), the selection
 //! state enum, and the reparent-highlight / selection colour

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Named-enum invariants: check string fields against the known value sets.
 
 use baumhard::mindmap::model::MindMap;

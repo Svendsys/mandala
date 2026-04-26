@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Theme-variable resolution across scene-builder paths: background, frame, connection, and raw fall-through on missing vars.
 
 use super::fixtures::*;

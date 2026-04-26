@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `color bg=#009c15 text=accent border=reset` — kv-form color
 //! setter dispatched through the capability traits. Each key maps to
 //! a trait (`bg` → HasBgColor, `text` → HasTextColor, `border` →

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 use crate::util::ordered_vec2::OrderedVec2;
 
 pub fn equals() {

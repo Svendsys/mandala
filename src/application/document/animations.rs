@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Animation runtime — the `MindMapDocument` methods that build
 //! the mutation registry, evaluate triggered mutations, start /
 //! tick / fast-forward animations. Also carries

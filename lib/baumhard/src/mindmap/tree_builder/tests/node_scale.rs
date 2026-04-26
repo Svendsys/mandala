@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Tree-builder scale / performance regression guards — N=1000 chain, N=500 star, deep chain stack-safety.
 
 use super::fixtures::*;

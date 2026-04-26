@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Hue-ring + arm glyph script grouping. The ring has Devanagari,
 //! Hebrew, and Tibetan arcs; each crosshair arm pins one script.
 //! Codepoint-range checks — not the identity of individual glyphs —

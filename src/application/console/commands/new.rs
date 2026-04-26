@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `new [path]` — start a fresh, blank mindmap.
 //!
 //! Like `open`, refuses to discard a dirty document. Without a path

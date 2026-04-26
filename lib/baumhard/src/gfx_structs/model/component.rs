@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `GlyphComponent` + `GlyphComponentField` — the leaf of the glyph
 //! model hierarchy: one contiguous run of text sharing a font and a
 //! colour. A `GlyphLine` is a `Vec<GlyphComponent>`; a `GlyphMatrix`

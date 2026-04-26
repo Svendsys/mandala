@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Per-node border rendering vocabulary — the `GlyphBorder*` config
 //! structs the loader deserializes and the geometry constants the
 //! renderer and `tree_builder::build_border_tree` share to keep

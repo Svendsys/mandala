@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Arena-backed glyph tree + its mutator sibling. `Tree<T, M>` wraps
 //! an `indextree::Arena` for O(1) child iteration and O(1) node
 //! access; `MutatorTree<M>` mirrors that shape but carries mutations

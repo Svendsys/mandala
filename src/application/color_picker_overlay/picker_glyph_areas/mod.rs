@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Single source of truth for the picker's per-section
 //! `GlyphArea` set, plus the tree- and mutator-builders that wrap it
 //! into the shapes the renderer registers. Everything that turns

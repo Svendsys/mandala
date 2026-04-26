@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `ConsoleState` shape smoke tests — verifies the open/closed
 //! constructors set up the expected fields.
 

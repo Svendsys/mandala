@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Picker lifecycle terminals: cancel, close-standalone, commit
 //! (single-target / selection fan-out) and the hover-preview stamp
 //! that feeds `doc.color_picker_preview` during mouse-move.

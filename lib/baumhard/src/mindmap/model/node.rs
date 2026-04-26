@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Node data model: `MindNode` and the small structs that travel with
 //! it — position, size, text runs, node style, layout, colour schema,
 //! and the glyph-border config. Borders belong here because they are

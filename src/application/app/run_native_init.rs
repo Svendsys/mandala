@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Native event-loop first-run initialisation. Lifted out of
 //! [`super::run_native::run`] so that the handler struct lives in
 //! `run_native.rs` without being drowned by ~150 lines of setup.

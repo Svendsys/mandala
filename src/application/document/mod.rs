@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `MindMapDocument` — owns the data model (`MindMap`, selection,
 //! undo stack, animation state, mutation registry, transient
 //! previews) and hands intermediate representations to the

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Picker sizing: screen-short-side target, user size_scale
 //! monotonicity, small-window font shrink, dimensionless advance
 //! ratios, and the safety clamp that dominates user scale on

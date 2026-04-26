@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Keyboard dispatch for the open picker. Routes keystrokes through
 //! the contextual keybind resolver (`InputContext::ColorPicker`) so
 //! all picker keys are user-customizable. Unmatched keys fall

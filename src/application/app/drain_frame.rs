@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Per-frame drain helpers for the non-throttled paths in the
 //! `AboutToWait` arm of the native event loop. Each function
 //! handles one self-contained drain block and takes its mutable

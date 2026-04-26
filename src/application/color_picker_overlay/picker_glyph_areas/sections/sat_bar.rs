@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Saturation bar: 16 cells (8 left + 8 right of the centre slot,
 //! centre slot is the preview ࿕ glyph and rendered separately).
 //! Each cell tints to the HSV at its position, with the

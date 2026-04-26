@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Legacy `portals` → portal-mode edges migration. Reads a pre-refactor
 //! `.mindmap.json` that still has a top-level `portals` array and
 //! rewrites each entry as an edge with `display_mode = "portal"`.

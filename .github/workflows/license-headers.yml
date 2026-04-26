@@ -1,0 +1,15 @@
+name: License headers
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify SPDX headers on all .rs files
+        run: ./scripts/add_license_headers.sh --check

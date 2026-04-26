@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Field-shape cleanup that runs after IDs, enums, and palettes have
 //! been rewritten.
 //!

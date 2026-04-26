@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Shader name constants and the `(name, source)` table consumed by
 //! the renderer's shader-loading pass.
 //!

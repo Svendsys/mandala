@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Unified shell for continuous, high-frequency-input-driven
 //! mutations.
 //!

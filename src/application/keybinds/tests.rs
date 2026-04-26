@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Unit tests for keybinds — parsing, matching, default config,
 //! custom-mutation binding lifecycle, JSON round-trip, and
 //! contextual resolution.

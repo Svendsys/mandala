@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Native-only main-loop watchdog. A background thread wakes
 //! periodically and checks whether the main thread has pinged its
 //! liveness atomic recently; if the main thread has been silent

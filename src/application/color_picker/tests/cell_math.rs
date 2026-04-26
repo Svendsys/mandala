@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Cell-index ↔ HSV-value round trips: hue slot ↔ degrees (incl.
 //! wrap-around and rounding), sat/val cell ↔ [0,1] endpoints.
 

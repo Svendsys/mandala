@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Arena-wide tree copy helpers built on `indextree`.
 
 use indextree::{Arena, NodeId};

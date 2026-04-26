@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Throttled interaction for the edge grab-handle drag gesture.
 //!
 //! The user drags one of a selected edge's handles (anchor,

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Edge mutations — every `set_edge_*` / `reset_edge_*` /
 //! hit-test-handle method on `MindMapDocument`. Each goes through
 //! `ensure_glyph_connection` (also here) so the first style edit

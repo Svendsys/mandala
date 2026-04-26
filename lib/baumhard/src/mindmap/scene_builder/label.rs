@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Connection-label emission. Runs as a post-pass over
 //! `map.edges` — labels are at most one per edge and rebuilt each
 //! frame at trivial cost (no cache). Two internal passes:

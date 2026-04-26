@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `TargetView` — the enum that holds a mutable doc reference plus
 //! enough identity to find the component each iteration. All
 //! capability-trait impls live here; selection materialization

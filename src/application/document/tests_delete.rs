@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Edge-ref equality, hit-test-edge, delete-node, delete-edge, cross-link creation, orphan selection.
 //!
 //! Part of the tests split for `document`. Helpers live in

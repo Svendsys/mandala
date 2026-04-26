@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Inline node text editor: open / close / handle key /
 //! apply preview-to-tree. The text editor is a multi-line in-place
 //! buffer whose cursor + content live on `TextEditState::Open` and

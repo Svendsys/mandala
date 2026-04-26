@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Custom-mutation application, registry, trigger evaluation.
 //!
 //! Part of the tests split for `document`. Helpers live in

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Tests for [`Instruction::SpatialDescend`] and [`MouseEventData`]
 //! (§T1).
 //!

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Modal state machine for the picker: the two modes (Contextual /
 //! Standalone), the two mutually-exclusive drag gestures (Move /
 //! Resize), the `ColorPickerState` enum that either of those live

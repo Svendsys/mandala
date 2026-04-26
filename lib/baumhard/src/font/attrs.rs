@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Attribute-list construction for cosmic-text spans.
 //!
 //! Bridges baumhard's `ColorFontRegions` (the model-level

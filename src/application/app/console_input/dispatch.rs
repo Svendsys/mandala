@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Console keystroke dispatcher. Routes each key event through the
 //! contextual keybind resolver (`InputContext::Console`) and
 //! delegates state mutations to the pure helpers in `edit.rs`.

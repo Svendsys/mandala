@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Edge undo chain + remaining edge-setter coverage (second half).
 //!
 //! Part of the tests split for `document`. Helpers live in

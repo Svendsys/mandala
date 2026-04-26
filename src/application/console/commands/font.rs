@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `font size=14 [min=8] [max=128]` — atomic font + clamp setter
 //! dispatched against the current selection.
 //!

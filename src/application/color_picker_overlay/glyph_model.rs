@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `GlyphModel` mirror for a picker `GlyphArea`. Peer file to the
 //! picker's `GlyphArea`-side construction inside
 //! [`super::picker_glyph_areas`] — both are baumhard `GfxElement`

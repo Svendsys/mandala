@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Per-node pass — emits `TextElement`s + `BorderElement`s and
 //! computes the per-node clip AABBs (`node_aabbs`) in a single
 //! iteration over visible nodes. Kept as one pass rather than split

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Console line-editor: per-keystroke dispatch, completion-popup
 //! helpers, command execution, overlay rebuild, and history
 //! persistence. Split across four leaf modules:

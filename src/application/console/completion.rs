@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Contextual completion engine.
 //!
 //! Dispatches off a small [`CompletionContext`] enum that the engine

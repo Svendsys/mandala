@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Canvas — the per-map rendering context: background colour, default
 //! border / connection styles applied when no per-node or per-edge
 //! override exists, and the live theme-variable map that `var(--name)`

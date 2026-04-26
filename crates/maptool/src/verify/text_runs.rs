@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Text-run invariants: ordered, non-overlapping, within text bounds.
 //!
 //! `start` and `end` are measured in **Unicode code points** (Rust's

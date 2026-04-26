@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Hex readout position coverage: visibility-coupled `Option`,
 //! and horizontal centering when visible.
 

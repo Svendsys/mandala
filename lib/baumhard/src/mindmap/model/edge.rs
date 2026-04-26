@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Edge data model: `MindEdge` (the serialized edge record),
 //! `ControlPoint` (its Bezier anchors), and `GlyphConnectionConfig`
 //! (the per-edge / per-canvas glyph-connection rendering config plus

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `cap from=arrow to=none` — set the start/end cap glyph on the
 //! selected edge. Edge-specific.
 

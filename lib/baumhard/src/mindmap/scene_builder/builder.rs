@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Scene builders — `build_scene`, `build_scene_with_cache`, and
 //! the cache-less wrappers. The big `build_scene_with_cache`
 //! orchestrator is a thin linear pipeline: [`super::node_pass`] →

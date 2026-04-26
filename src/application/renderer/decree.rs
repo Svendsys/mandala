@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Render-decree dispatch: the single entry point the event loop
 //! uses to push commands (`SetSurfaceSize`, `SetClearColor`, and
 //! the zoom-related cache invalidations) into the renderer without

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! WASM event-loop body for [`super::Application::run`]. Lifted
 //! verbatim out of the pre-split `app/mod.rs` so the browser-side
 //! event loop has its own file. Every identifier the body reaches

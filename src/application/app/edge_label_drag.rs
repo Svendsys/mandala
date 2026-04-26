@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Edge-label drag math: given a cursor position in canvas
 //! space, project it onto the selected edge's connection path
 //! and write the resulting `(position_t, perpendicular_offset)`

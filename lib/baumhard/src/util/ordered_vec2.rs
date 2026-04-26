@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Hashable 2D float vector — the wrapper baumhard uses wherever
 //! `glam::Vec2` would sit in a `HashMap` key, a `BTreeSet`, or the
 //! mutation system's keyed collections. `glam::Vec2` lacks `Hash` /

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Value bar: 16 cells (8 top + 8 bottom of the centre slot, centre
 //! is the preview ࿕). Top arm uses Devanagari fallback fonts; bottom
 //! arm pins `arm_bottom_font()` (Egyptian hieroglyphs). Selected /

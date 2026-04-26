@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Timing envelope, easing curves, and lerp helpers for animated
 //! `CustomMutation`s. Any custom mutation with
 //! `timing: Some(AnimationTiming { ... })` is started as an

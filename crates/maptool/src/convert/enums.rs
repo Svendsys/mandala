@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Legacy-format migration seam: rewrites miMind's numeric enum codes
 //! as the named string values the current format expects.
 //!

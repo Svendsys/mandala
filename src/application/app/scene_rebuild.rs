@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Scene rebuilders: turn the document model + selection into the
 //! per-role baumhard trees the renderer registers, and dispatch
 //! between full rebuild and §B2 in-place mutator paths via

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Completion-popup helpers: recompute against the current input,
 //! navigate the popup row by row, and accept the highlighted
 //! candidate into the input buffer.

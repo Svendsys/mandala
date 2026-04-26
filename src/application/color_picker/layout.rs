@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `ColorPickerLayout` — pure-function output of the picker layout
 //! pass, holding every screen-space anchor the renderer and the
 //! hit-test need. The `compute_color_picker_layout` fn that

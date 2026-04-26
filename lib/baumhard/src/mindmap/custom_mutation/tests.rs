@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Tests for the `CustomMutation` carrier — serde roundtrip,
 //! backward-compat with pre-unification JSON, and the
 //! `contexts` / `is_internal` / `targets_map` helpers.

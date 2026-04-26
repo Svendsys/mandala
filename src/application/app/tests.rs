@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Double-click detection + already-editing guard tests. The
 //! predicates under test (`is_double_click`, the guard
 //! predicate embedded in the MouseInput handler) are pure

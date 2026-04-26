@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Desktop config-source plumbing: file-based `KeybindConfig` loading
 //! with the `$XDG_CONFIG_HOME` / `$HOME/.config` fallback, plus the
 //! layered `load_for_desktop` driver. Not compiled on WASM.

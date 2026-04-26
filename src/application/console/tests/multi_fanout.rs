@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Multi-selection fanout + trait dispatcher aggregation tests.
 //! Verifies that commands invoked against `Multi(ids)` reach every
 //! selected target and that NotApplicable propagates correctly when

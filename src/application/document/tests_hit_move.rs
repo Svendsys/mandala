@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Hit-testing, rect-select, selection, tree highlights, move, drag, animations.
 //!
 //! Part of the tests split for `document`. Helpers live in

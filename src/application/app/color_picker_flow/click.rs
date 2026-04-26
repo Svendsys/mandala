@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Click dispatch + gesture end: LMB/RMB hit-test routing, wheel
 //! commit, standalone selection commit, drag-anchor gesture start,
 //! and mouse-up gesture release.

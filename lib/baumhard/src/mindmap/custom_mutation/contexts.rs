@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Well-known context tags for
 //! [`CustomMutation::contexts`](crate::mindmap::custom_mutation::CustomMutation::contexts).
 //!

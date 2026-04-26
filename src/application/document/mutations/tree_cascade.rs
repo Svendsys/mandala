@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `tree-cascade` — arranges the target node's descendants as a
 //! top-down tree. Each level sits below the previous at a configurable
 //! row height; siblings spread horizontally, centered under their

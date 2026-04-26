@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Recursive walker that turns a [`MutatorNode`] + [`SectionContext`]
 //! into a concrete `MutatorTree<GfxMutator>`.
 

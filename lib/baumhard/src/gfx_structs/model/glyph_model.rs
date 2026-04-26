@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `GlyphModel` — the renderable glyph matrix + its positional
 //! metadata (layer, origin, hit box). Scene builders emit one per
 //! tree-node.

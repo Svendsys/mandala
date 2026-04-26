@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Runtime-value interface the [`super::build`](crate::mutator_builder::build) function
 //! consults while expanding an AST. Consumers implement only the
 //! methods their AST actually exercises; the others default to

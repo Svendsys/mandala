@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `save [path]` — write the current mindmap to disk.
 //!
 //! No args: writes to the document's bound `file_path`. Errors if no

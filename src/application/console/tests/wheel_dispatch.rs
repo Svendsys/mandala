@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! AcceptsWheelColor dispatch tests.
 //!
 //! The standalone color wheel applies a single color to whatever is

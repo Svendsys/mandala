@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Tests for [`RegionParams::calculate_regions_intersected_by_rectangle`].
 //!
 //! Separated from `region_tests.rs` to keep files under 1000 lines.

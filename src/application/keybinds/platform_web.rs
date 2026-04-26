@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Web (WASM) config-source plumbing: URL `?keybinds=` query param +
 //! `localStorage` fallback. Not compiled on native.
 

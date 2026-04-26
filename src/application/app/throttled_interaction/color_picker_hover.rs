@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Throttled interaction for glyph-wheel color-picker hover.
 //!
 //! Unlike the four drag interactions, this one coexists with other

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Throttled interaction for dragging a portal label along its
 //! owning node's border.
 //!

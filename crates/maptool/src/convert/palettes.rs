@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Hoist per-node color_schema groups into a top-level `palettes` map.
 //!
 //! miMind stored the full group list on every node that carried a

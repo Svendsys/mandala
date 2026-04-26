@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Precomputed primes below `PRIME_CEILING` via a lazy Sieve of
 //! Eratosthenes. The sieve runs once on first access; subsequent
 //! queries are a binary search into the cached vector.

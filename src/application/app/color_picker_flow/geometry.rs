@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `compute_picker_geometry` — the pre-rebuild pass that turns the
 //! state's HSV + measurement values into a
 //! `ColorPickerOverlayGeometry`, runs the pure-function layout, and

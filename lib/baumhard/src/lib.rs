@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Baumhard — glyph-oriented rendering primitives for Mandala.
 //!
 //! Baumhard owns the GPU-adjacent data model: the `Tree<GfxElement,

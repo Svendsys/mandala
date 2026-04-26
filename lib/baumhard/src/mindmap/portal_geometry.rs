@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Portal-label geometry: converts between points on a node's
 //! rectangular border and the scalar `border_t` parameter used to
 //! store a label's position. Also computes the directional default

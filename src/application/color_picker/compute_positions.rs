@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Per-cell position computations for the picker layout — step 4
 //! of the canonical formula, after `compute_sizing` has settled the
 //! font_size / ring_r / step. Produces the 24 hue-ring anchors, the

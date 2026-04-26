@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Web user-source plumbing: URL `?mutations=` query param +
 //! `localStorage` fallback. Not compiled on native. Mirrors
 //! `keybinds::platform_web` so a future session wiring up web-side

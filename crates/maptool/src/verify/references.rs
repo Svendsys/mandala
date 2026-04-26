@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Reference invariants: every edge's endpoints must point to nodes
 //! that exist in the map. Applies uniformly to line-mode and
 //! portal-mode edges (since portals are now an edge display mode).

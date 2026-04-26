@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Four-source mutation loader: application bundle, user file, map,
 //! inline-on-node — in ascending precedence.
 //!

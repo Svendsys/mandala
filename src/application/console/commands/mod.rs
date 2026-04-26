@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Console command registry.
 //!
 //! Each command lives in its own submodule so the surface stays

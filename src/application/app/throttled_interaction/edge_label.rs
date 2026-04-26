@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Throttled interaction for dragging a line-mode edge's text
 //! label along its connection path.
 //!

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Portal label drag math: given a cursor position in canvas
 //! space, snap it to the nearest point on the owning node's
 //! border and write both the resulting `border_t` (slide along

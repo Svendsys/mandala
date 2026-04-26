@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `edge` — one top-level verb for all edge lifecycle and style
 //! operations. Handles:
 //!

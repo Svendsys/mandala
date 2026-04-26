@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Hue ring: 24 sacred-script glyphs around the wheel's outer ring,
 //! each fixed to its own hue (15° apart). Hover bumps a single cell's
 //! scale + brightness; everything else stays stable across frames.

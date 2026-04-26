@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Pure per-action edit helpers for the console line editor. Each
 //! takes `&mut ConsoleState` and returns whether the input text
 //! changed, so the dispatcher knows to recompute completions.

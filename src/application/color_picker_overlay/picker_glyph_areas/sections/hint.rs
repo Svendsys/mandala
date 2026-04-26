@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Hint footer: small mode-aware affordance text rendered below the
 //! wheel (e.g. `Esc cancel · ࿕ commit · drag to move · RMB resize`).
 //! Re-tinted to the live preview color every frame.

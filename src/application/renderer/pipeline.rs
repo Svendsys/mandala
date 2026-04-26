@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! One-time device / surface / shader / pipeline-layout setup.
 //! Lifted verbatim from `renderer/mod.rs` so the frame-hot code
 //! isn't interleaved with startup scaffolding. Every item here runs

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Magical glyph-wheel color picker — a custom modal overlay for choosing
 //! colors that fits Mandala's "everything is a positioned glyph" aesthetic.
 //!

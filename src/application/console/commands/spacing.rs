@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `spacing value=4.0` or `spacing value=tight` — glyph-spacing
 //! setter for the selected edge. Accepts named presets
 //! (tight / normal / wide) or a raw float in the preset's unit.

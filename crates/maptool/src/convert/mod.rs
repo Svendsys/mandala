@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! One-way migration from the miMind-derived legacy `.mindmap.json`
 //! format to the current one.
 //!

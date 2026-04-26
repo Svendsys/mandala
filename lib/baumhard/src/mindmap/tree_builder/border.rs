@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Border-tree builder: emits one per-node Void parent and four
 //! `GlyphArea` runs (top, bottom, left, right) per framed node.
 //! Sorted lexicographically by node id so the per-node Void

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! JSON-backed spec for the color picker widget.
 //!
 //! Loaded once via `include_str!` + `OnceLock` — so the JSON ships

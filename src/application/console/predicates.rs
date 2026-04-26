@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Applicability predicates migrated from `palette.rs`.
 //!
 //! These are the "is this command relevant to the current selection"

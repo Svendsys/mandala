@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Glyph-wheel color picker flow: open / commit / cancel / per-frame
 //! mouse + keyboard handlers + the §B2 dispatcher
 //! (`rebuild_color_picker_overlay`) the event loop calls each frame.

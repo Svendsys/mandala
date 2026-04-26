@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Edge handle drag math: applies a full drag delta to the
 //! document's edge model in place. Used by the per-frame mouse-move
 //! handler in the event loop and once more at release to commit the

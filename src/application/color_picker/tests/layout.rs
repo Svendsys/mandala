@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Pure-function layout positioning coverage: hue ring circle,
 //! sat/val bar monotonicity, center override translation, backdrop
 //! fit, preview centering, preview clearance from adjacent cells,

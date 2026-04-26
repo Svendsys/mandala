@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Reparent operations + undo round-trips.
 //!
 //! Part of the tests split for `document`. Helpers live in

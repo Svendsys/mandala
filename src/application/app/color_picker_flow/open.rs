@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Picker open paths: Contextual (bound target) and Standalone
 //! (persistent palette). The shared `open_picker_inner` performs the
 //! one-time font-system measurement pass that seeds

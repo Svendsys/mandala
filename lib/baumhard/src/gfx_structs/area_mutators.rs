@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Command and delta mutators for `GlyphArea` — the two `Applicable`
 //! implementations that the tree walker dispatches through.
 

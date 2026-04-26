@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Tests for [`crate::gfx_structs::tree::Tree`] — arena operations,
 //! mutations, events, and subscriber dispatch (§T1).
 

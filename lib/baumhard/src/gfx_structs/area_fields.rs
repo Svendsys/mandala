@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Field-level delta types for `GlyphArea` — the vocabulary the mutation
 //! pipeline uses to describe which field to touch and how.
 

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Picker sizing constants, JSON-backed glyph accessors, and the
 //! discrete-cell ↔ continuous-HSV helpers that compute_layout /
 //! hit_test / picker_glyph_areas all route through.

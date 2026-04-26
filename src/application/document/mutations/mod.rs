@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Dynamic mutation handlers — imperative Rust implementations of
 //! mutations too structural or size-aware to express as a pure-data
 //! `MutatorNode` + `flat_mutations` reach.

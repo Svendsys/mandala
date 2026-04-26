@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Picker geometry — the plain-data struct the app builds each
 //! frame and hands to the layout fn. No rendering primitives, no
 //! GPU references; mirrors `PaletteOverlayGeometry` in shape so

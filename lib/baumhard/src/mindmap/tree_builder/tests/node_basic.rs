@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Tree-builder node tests — structure, root nodes, glyph_area properties, color regions, parent/child hierarchy, unique IDs.
 
 use super::fixtures::*;

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Hit-test bounding-rectangle bag carried on every `GlyphModel`. A
 //! single `GlyphModel` can occupy multiple rectangles (e.g. a
 //! wrapped-line node where each visual line has its own box), so the

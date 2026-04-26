@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Configurable keybindings.
 //!
 //! This module holds the configuration for every keyboard-driven action the

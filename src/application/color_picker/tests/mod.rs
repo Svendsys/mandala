@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Picker unit tests, sharded by subject so each file stays small
 //! and greppable. Shared fixtures live in [`fixtures`].
 //!

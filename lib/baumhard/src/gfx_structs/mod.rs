@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Render-side graph structures — the `GfxElement` tree, its
 //! mutators, the predicate language that steers walker traversal, and
 //! the `Scene` that composes multiple trees into one frame. Mindmap

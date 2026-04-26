@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Topology mutations — creating / deleting / moving / reparenting
 //! nodes. Everything that reshapes which nodes exist, where they
 //! sit, and who their parent is. Also carries `delete_node` —

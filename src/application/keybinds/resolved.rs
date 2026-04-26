@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `ResolvedKeybinds` — the runtime lookup table the event loop calls
 //! into. Built once via `KeybindConfig::resolve`, then queried per
 //! input event.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Default constructors for `MindEdge` and `MindNode` values —
 //! the shapes new orphan nodes, new parent→child edges, and new
 //! cross-link edges inherit when the user creates them. Keeps the

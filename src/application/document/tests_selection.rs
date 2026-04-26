@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `SelectionState` accessor + collapser coverage. Each of the
 //! four edge-adjacent variants (`Edge`, `EdgeLabel`, `PortalLabel`,
 //! `PortalText`) has a narrow accessor and a collapser

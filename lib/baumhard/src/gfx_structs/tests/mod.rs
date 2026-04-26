@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Test modules for [`crate::gfx_structs`]. Each module covers one
 //! conceptual area; see individual module docs for scope.
 //!

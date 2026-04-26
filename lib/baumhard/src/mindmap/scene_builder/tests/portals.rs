@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Portal element emission tests. Portals are now edges with
 //! `display_mode = "portal"` — these tests verify two-marker
 //! emission, missing/folded endpoint filtering, theme-variable

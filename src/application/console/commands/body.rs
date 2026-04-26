@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `body glyph=dash` — set the body glyph of the selected edge.
 //! Edge-specific; the concept doesn't generalize beyond edges.
 

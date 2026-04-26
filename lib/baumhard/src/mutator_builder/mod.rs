@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Declarative mutator-tree DSL.
 //!
 //! A `MutatorNode` is a serde-friendly AST mirroring the four

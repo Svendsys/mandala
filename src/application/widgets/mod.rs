@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Widget definitions loaded from embedded JSON.
 //!
 //! First step toward user-authored widgets: today the glyph-wheel

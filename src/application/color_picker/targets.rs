@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! What the picker is currently editing, and how to resolve / read
 //! the live color off the document for that target. Two target
 //! classes today — `Edge` (covers both line-mode and portal-mode

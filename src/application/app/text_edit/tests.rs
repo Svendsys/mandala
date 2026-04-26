@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Unit tests for the text-edit cursor / grapheme / caret helpers
 //! defined in the parent module, plus `Mutation::AreaDelta`
 //! round-trips that pin the editor-to-baumhard contract.

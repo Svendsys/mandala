@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Mindmap-model tests: ancestry, connection config resolution, label
 //! position + display_mode round-trips. Kept in a sibling file so
 //! the `mod.rs` itself reads purely as the public surface.

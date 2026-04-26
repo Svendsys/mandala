@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Tree-builder node-background tests — hex, empty, transparent, theme var, malformed, three-digit.
 
 use super::fixtures::*;

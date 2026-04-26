@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `ZoomVisibility` — an optional lower/upper bound on the camera
 //! zoom level at which a [`crate::gfx_structs::area::GlyphArea`] is
 //! allowed to render. Orthogonal to the per-element font-size clamps

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Edge handle builder tests — channel ordering/distinctness, mutator round-trip, identity shift on midpoint→control-point transitions.
 
 use super::super::*;

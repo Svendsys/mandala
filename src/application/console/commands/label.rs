@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `label text="hi"` / `label clear` / `label position=middle` —
 //! edge label operations.
 //!

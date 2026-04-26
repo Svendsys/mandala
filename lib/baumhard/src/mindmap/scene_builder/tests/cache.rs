@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `SceneConnectionCache` integration: population, hit identity, endpoint invalidation, drag stability, clip rerun, eviction, empty-after-new, fold edge, selection stability, plus a real-map smoke test.
 
 use super::fixtures::*;

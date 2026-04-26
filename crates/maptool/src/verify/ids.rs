@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! ID-consistency invariants: HashMap key matches node.id, and Dewey
 //! structure agrees with parent_id.
 

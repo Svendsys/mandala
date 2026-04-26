@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! App-layer scene host — bridges the application and
 //! [`baumhard::gfx_structs::scene::Scene`].
 //!

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Glyph-model data types — the render-time shape of a tree node's
 //! content. Split into five leaf modules so each concern stays
 //! skimmable:

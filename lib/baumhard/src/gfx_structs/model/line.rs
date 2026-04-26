@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `GlyphLine` — a horizontal run of [`GlyphComponent`]s forming one
 //! visual line in a [`crate::gfx_structs::model::GlyphMatrix`]. Carries
 //! the `overriding_insert` / `expanding_insert` logic used by the

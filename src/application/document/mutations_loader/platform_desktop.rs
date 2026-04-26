@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Desktop user-file plumbing: filesystem-based user mutation loading
 //! with `$XDG_CONFIG_HOME` / `$HOME/.config` fallback, mirroring the
 //! shape of `keybinds::platform_desktop`. Not compiled on WASM.

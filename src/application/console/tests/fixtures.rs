@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Shared fixtures for the console test suite. Used by every sibling
 //! test module via `use super::fixtures::*;`.
 

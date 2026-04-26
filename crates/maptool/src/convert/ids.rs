@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Dewey-decimal ID assignment for legacy maps.
 //!
 //! miMind identified nodes with opaque integer IDs and relied on a

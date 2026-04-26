@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Cubic-Bezier math and arc-length sampling. Kept in its own file so
 //! the sampling internals are easy to skim without wading through the
 //! higher-level `sample_path` / `distance_to_path` surface in

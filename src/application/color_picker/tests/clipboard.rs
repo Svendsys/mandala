@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Clipboard trait tests for `ColorPickerState`.
 
 use crate::application::color_picker::{

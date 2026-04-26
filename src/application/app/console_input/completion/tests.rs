@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Acceptance tests for [`accept_console_completion`] — the
 //! console-popup completion helper that distinguishes positional
 //! completions (append trailing space) from kv-key / kv-value

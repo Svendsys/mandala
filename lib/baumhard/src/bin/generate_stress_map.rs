@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Stress-test map generator.
 //!
 //! Writes a `.mindmap.json` file of configurable size and topology. Used to

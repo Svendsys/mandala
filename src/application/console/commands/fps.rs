@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `fps on` / `fps off` / `fps debug` — toggle the yellow
 //! screen-space FPS readout in the upper-left corner.
 //!

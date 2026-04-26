@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Tests for BVH-accelerated `descendant_at` / `descendant_near` (§T1).
 //!
 //! Covers hit/miss, pruning, overlapping siblings, boundary points,

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `flower-layout` — arranges the target node's direct children in a
 //! circle around it. The radius scales with both the parent's size
 //! and the children's bounding box so the result reads as a flower,

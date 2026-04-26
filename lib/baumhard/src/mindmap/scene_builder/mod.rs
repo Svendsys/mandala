@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Scene builder — projects a `MindMap` into a flat `RenderScene`
 //! of per-element plain-data items (`TextElement`, `BorderElement`,
 //! `ConnectionElement`, `PortalElement`, `ConnectionLabelElement`,

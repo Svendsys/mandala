@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Layout-then-dynamic apply composition: ensures the dynamic
 //! mutator's slim per-cell delta lands on the same observable state
 //! as a fresh build, when applied on top of a layout-built tree.

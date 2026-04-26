@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Spatial bucket index for efficient element lookup by screen region.
 //!
 //! A `RegionIndexer` partitions a pixel grid into a flat vector of

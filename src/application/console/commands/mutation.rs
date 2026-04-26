@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `mutation` — list, apply, and describe registered custom mutations.
 //!
 //! Sub-commands:

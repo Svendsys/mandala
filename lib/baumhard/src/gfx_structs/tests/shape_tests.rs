@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Tests for [`crate::gfx_structs::shape`] — the `NodeShape` enum
 //! and its point-in-shape / shape-vs-AABB primitives.
 //!

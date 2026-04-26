@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Connection element emission — the cache-coupled pass. For each
 //! visible edge, one of three paths runs:
 //!

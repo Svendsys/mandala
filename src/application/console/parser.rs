@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Shell-style tokenizer and command resolver for the console.
 //!
 //! The surface is small — whitespace splits, `"quoted strings"` keep

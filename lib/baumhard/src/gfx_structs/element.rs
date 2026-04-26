@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `GfxElement` — the value type every `Tree<GfxElement, _>` node
 //! holds. Three variants cover the two renderable glyph types
 //! (`GlyphArea` for text regions, `GlyphModel` for composed glyph

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Inline node text editor — module root.
 //!
 //! Holds [`TextEditState`] + the grapheme-aware cursor / buffer

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Reference palettes — internal seeds and example constants.
 //! Application code should define its own palettes rather than
 //! importing these directly; they exist to keep the colour-math

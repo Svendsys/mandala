@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Mindmap data model — the types the loader deserializes from
 //! `.mindmap.json` and the document layer mutates. Split across four
 //! leaf modules so each concern stays skimmable:

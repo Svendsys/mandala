@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Connection-path geometry: anchor resolution, straight/cubic Bezier
 //! path construction, arc-length sampling, and point-to-path distance.
 //!

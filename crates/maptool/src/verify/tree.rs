@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Tree-structure invariants: parent_id references and cycle detection.
 
 use baumhard::mindmap::model::MindMap;

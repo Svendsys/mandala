@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Core primitives shared across the Baumhard crate.
 //!
 //! This module defines the foundational data types that every higher-level

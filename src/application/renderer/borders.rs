@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Border-buffer creators + glyph-advance measurement + hex-color
 //! parser. The renderer's flat-pass shapes (border rows, columns,
 //! single-row spans) all flow through these helpers so cosmic-text

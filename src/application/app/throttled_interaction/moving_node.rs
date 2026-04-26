@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Throttled interaction for the `MovingNode` drag gesture.
 //!
 //! Accumulates incremental canvas-space deltas from every

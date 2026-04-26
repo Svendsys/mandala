@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `help [command | all]` — list commands or print full usage.
 //!
 //! With no args: show every *applicable* command for the current

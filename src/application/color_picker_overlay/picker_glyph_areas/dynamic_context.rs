@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `PickerDynamicContext` — the slim per-frame `SectionContext`
 //! impl that replaces the full `compute_picker_areas` pass on the
 //! dynamic mutator path. Computes each requested `GlyphAreaField`

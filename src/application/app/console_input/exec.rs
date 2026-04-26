@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Console line execution and Ctrl+S save. Split from the dispatcher
 //! so the command-runner concern (parse → execute → drain effects)
 //! lives independently from the per-keystroke edit logic.

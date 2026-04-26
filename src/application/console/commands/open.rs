@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `open <path>` — replace the current mindmap with one loaded from disk.
 //!
 //! Refuses to load over a dirty document so unsaved work is never

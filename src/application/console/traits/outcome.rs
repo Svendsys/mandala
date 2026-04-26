@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `Outcome` — the result type for a single capability-trait call.
 //! Aggregated by the dispatcher into a per-kv report line.
 

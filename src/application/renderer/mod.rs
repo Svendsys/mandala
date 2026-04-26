@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 mod borders;
 mod color_picker;
 mod console_geometry;

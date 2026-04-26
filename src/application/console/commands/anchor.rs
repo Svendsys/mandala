@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `anchor from=top to=auto` — edge anchor side setter.
 //!
 //! Component-specific (edge only); the anchor concept doesn't

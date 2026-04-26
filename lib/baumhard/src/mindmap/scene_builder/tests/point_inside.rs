@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `point_inside_any_node` boundary cases: strictly inside, on boundary (not inside), outside, and multi-AABB fan-out.
 
 use super::super::connection::point_inside_any_node;

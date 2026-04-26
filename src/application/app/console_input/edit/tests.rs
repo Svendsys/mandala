@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Unit tests for the pure edit helpers. No renderer / scene
 //! involvement — every test constructs a `ConsoleState::Open` with
 //! known input, calls a helper, and asserts on the resulting fields.

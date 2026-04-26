@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Test suite for the color picker overlay. Split by concern so each
 //! file stays focused on one promise the picker has to honour.
 //!

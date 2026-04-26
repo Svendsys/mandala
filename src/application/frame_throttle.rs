@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Mutation-frequency throttle — the governing invariant in code.
 //!
 //! **Responsiveness is never traded for visual fidelity.** When per-frame

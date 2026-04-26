@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Per-section layout-phase builders. One file per picker section;
 //! each `build` fn pushes its cells into the shared `PickerAreas`
 //! table the [`super::compute::compute_picker_areas`] dispatcher owns.

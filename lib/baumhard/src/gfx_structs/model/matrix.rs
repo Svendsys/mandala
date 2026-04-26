@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `GlyphMatrix` — a column-of-[`GlyphLine`]s wrapper. The `place_in`
 //! method paints the matrix onto a target `String` + `ColorFontRegions`
 //! at an offset, the workhorse of the scene-builder's glyph placement

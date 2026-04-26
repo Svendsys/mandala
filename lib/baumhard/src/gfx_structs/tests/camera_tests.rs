@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Tests for [`crate::gfx_structs::camera::Camera2D`] — viewport math
 //! fundamentals (§T1).
 //!

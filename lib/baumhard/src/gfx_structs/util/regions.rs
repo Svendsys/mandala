@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Grid-parameter management for the spatial region system.
 //!
 //! `RegionParams` computes how to subdivide a pixel resolution into

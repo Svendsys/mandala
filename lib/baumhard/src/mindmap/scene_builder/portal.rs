@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Portal marker emission. One `PortalElement` per endpoint per
 //! edge with `display_mode = "portal"` (so two markers per such
 //! edge), attached to its owning node's border at the point that

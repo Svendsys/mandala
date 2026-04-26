@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Initial-build path invariants — channel ordering, preview
 //! centering, and the GlyphArea/GlyphModel pairing the picker tree's
 //! mutator-walker safety relies on.

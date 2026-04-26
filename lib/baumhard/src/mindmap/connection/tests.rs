@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Tests for anchor resolution, path sampling, Bezier math, and edge
 //! hit-test. Includes performance regression guards for the long-edge
 //! code paths whose drag-frame cost is governed by the invariant

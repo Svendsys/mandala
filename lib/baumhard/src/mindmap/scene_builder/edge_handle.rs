@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Edge-handle emission for the currently-selected edge. One
 //! function, called at most once per scene build (single-edge
 //! selection). Mirrors `tree_builder/edge_handle.rs` — same role,

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Connection tree builder: one `Void` per edge, with one cap /
 //! body-glyph / cap GlyphArea per on-screen glyph. Channels are
 //! layered so layout-stable changes (color, theme) take the

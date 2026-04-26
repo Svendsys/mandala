@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Layout-phase dispatcher: walks each section in declaration order,
 //! delegating to the per-section builders in [`super::sections`]. The
 //! returned [`PickerAreas`] is what the layout-mutator path and the

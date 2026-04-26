@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Tests for [`RegionParams`] — grid parameter management (§T1).
 //!
 //! Covers construction, pixel↔region mapping, adaptation, factor

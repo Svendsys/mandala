@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Title cell: one `GlyphArea` showing the picker's mode-aware
 //! header text (e.g. `࿕ edge color` in contextual mode,
 //! `࿕ color palette` in standalone mode). Re-tinted to the live

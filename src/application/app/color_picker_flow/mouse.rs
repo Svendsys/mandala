@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Mouse-move dispatch: feed active drag gestures on one branch,
 //! hit-test and update hover_preview / hovered_hit on the other.
 //! Delegates to `apply_picker_preview` when the preview changes so

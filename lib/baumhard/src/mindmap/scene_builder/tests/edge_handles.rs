@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Edge-handle emission: unselected baseline, straight-edge midpoint, curved-edge control points, cubic two-CP, absolute canvas positioning.
 
 use super::fixtures::*;

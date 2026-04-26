@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! 2D pan/zoom camera — the projection between canvas space
 //! (where mindmap nodes live) and screen space (pixel coordinates).
 //! Single `Camera2D` struct plus its `canvas_to_screen` /

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Shared constants used across multiple console command files.
 //!
 //! String literals used by only one file live at the top of that

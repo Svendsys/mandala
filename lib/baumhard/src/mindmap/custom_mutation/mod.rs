@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Custom mutation carrier — identity + metadata + payload.
 //!
 //! A `CustomMutation` is a named, reusable bundle the host application

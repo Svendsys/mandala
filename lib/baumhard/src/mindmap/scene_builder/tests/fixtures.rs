@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Shared fixtures for the scene_builder tests. Exposed as
 //! `pub(super)` so themed sibling modules can reuse them without
 //! per-file duplication.

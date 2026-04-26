@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Console overlay buffer + mutator builders. Stable-channel scheme
 //! that mirrors the picker's discipline: every console GlyphArea
 //! sits at a deterministic channel so the §B2 in-place mutator path

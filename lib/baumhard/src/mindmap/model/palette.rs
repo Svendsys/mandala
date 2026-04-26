@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Palette definitions: named color palettes referenced by nodes'
 //! `color_schema.palette` field. Each palette defines a list of
 //! color groups indexed by tree depth.

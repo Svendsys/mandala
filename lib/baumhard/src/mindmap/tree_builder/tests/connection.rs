@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Connection tree builder tests — per-edge voids, cap filters, identity-sequence drift, mutator round-trips (incl. connection labels).
 
 use super::super::*;

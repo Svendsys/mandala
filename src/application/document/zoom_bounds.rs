@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Document-level setters for the zoom-visibility pair
 //! (`min_zoom_to_render` / `max_zoom_to_render`) across every
 //! authored site: `MindNode`, `MindEdge`, `EdgeLabelConfig`,

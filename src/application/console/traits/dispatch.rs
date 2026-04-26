@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `apply_kvs` + `DispatchReport` — the per-kv aggregation loop that
 //! every kv-style console command (`color`, `font`, `label`, …) goes
 //! through. The applier closure decides which trait method a key

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Shared fixtures for the tree_builder tests. All helpers exposed
 //! as `pub(super)` so sibling test modules can reuse them without
 //! per-file duplication.

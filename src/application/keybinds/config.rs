@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `KeybindConfig` — the user-editable config struct + JSON loader +
 //! `resolve()` step that produces the runtime `ResolvedKeybinds` table.
 

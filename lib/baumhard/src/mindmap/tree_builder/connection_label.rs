@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Connection-label tree builder: one `GlyphArea` per labeled
 //! edge, keyed by `EdgeKey`. Returns per-edge AABB hitboxes so
 //! the renderer can resolve label clicks back to the edge.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Node-style mutations — `set_node_text` /
 //! `set_node_bg_color` / `set_node_border_color` /
 //! `set_node_text_color` / `set_node_font_size`, plus the

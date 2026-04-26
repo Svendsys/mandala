@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Mouse-input event handler extracted from the native event loop in
 //! [`super::run_native`]. Routes left / middle / right button press
 //! and release through selection, click, double-click detection, drag

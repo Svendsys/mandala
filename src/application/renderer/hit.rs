@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Hit-testing + camera-fit methods. Grouped together because
 //! they share an idiom (canvas-space or screen-space coordinate
 //! math against a cached bounding rect or scene extent) and

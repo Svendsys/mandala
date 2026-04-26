@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Layout-mutator output shape + round-trip equivalence between
 //! a freshly-built tree and an in-place mutator apply.
 

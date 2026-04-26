@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `.mindmap.json` loader + saver. Accepts both the current edge-based
 //! portal shape and pre-refactor files that still ship a top-level
 //! `portals[]` array, rejecting the latter with a concrete migration

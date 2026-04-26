@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! CLI-style console for Mandala.
 //!
 //! Input is tokenized shell-style — whitespace splits, `"quoted

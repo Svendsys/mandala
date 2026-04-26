@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Hex readout: the `#rrggbb` text shown when the cursor is inside
 //! the picker's backdrop. Always emitted at a stable channel so the
 //! mutator path doesn't have to handle a flickering element — when

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Node-tree helpers: convert a `MindNode` to a `GlyphArea`
 //! (background-color resolution + text-run → `ColorFontRegions`
 //! projection) and the recursive child-insertion walker that

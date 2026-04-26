@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `Action` — the abstract user-action vocabulary the event loop
 //! dispatches on. New keyboard interactions go here, then add a
 //! matching `KeybindConfig` field + default + binding-string list.

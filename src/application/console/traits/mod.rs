@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Capability traits and the [`TargetView`] dispatcher — the core of
 //! the console's trait-dispatched cross-cutting command layer.
 //!

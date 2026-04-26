@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Small helpers for constructing `MindNode` and `MindEdge` values in
 //! verify unit tests. Kept out of the public surface — only the test
 //! modules in this crate use them.

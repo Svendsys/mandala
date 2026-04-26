@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 use std::time::Duration;
 // `web_time::Instant` is a drop-in for `std::time::Instant` that works
 // on wasm32: native re-exports `std`, wasm maps to `performance.now()`.

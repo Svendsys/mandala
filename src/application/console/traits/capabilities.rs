@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Capability traits a console-target component can implement. The
 //! `TargetView` enum implements each trait and dispatches on its
 //! variant; commands reach for the trait method matching their key

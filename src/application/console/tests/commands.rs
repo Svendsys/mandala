@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Per-command execution tests: anchor / body / cap / spacing /
 //! color / label / edge / font / help. Each test runs a single
 //! command line through `parse → execute` and asserts the

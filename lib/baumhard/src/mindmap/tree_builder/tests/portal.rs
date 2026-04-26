@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Portal tree builder tests — marker emission, fold filtering, selection highlight, ascending channels, mutator round-trip, identity sequence. Edges with `display_mode = "portal"` drive the portal pass.
 
 use super::fixtures::*;

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Per-edge cache of connection glyph geometry.
 //!
 //! Why it exists: during a drag the scene builder would otherwise

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `ColorValue` — the parsed form of a color spec from the kv console.
 //! Resolution of `Var` happens downstream at scene-build time via
 //! `baumhard::util::color::resolve_var`; the model's color fields are

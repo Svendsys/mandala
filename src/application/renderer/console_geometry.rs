@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Console overlay geometry types and pure-function layout math.
 //!
 //! These types are the pre-layout interchange between the app event

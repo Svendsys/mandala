@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Hit-test / rect-select / drag / highlight helpers. None live on
 //! `MindMapDocument` — they all take a `MindMapTree` / `MindMap` +
 //! screen coordinates and return values, so unit tests don't need a

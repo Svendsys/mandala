@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `make_area` — the single `GlyphArea` constructor every layout-phase
 //! per-section builder routes through. Centralizes the conversion
 //! from `(text, position, bounds, style)` into a fully-populated

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Shared test fixtures for the color picker overlay tests. Kept
 //! `pub(super)` so each sibling test module can construct geometry +
 //! pull pre-computed area lists without re-deriving the constants.

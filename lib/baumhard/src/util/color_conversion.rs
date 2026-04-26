@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Colour-space conversion utilities — hex / RGB / HSV.
 //!
 //! These helpers are the single source of truth for "how do we turn a

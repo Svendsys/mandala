@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Clipboard trait dispatch tests for `TargetView`. Covers the
 //! `HandlesCopy`, `HandlesPaste`, and `HandlesCut` impls per
 //! component variant (Node / Edge / EdgeLabel / PortalLabel /

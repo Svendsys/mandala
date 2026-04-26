@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Click-target handlers for the native event loop. Four free
 //! functions lifted verbatim from `app/mod.rs`:
 //!

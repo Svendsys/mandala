@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Tests for [`crate::gfx_structs::model::GlyphModel`] — line/matrix
 //! construction and component layout (§T1).
 

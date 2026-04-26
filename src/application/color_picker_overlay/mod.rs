@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Glyph-wheel color picker overlay: tree / mutator / area builders
 //! for the picker the user opens from an edge or portal context menu
 //! (modal) or via the `color picker` console command (standalone

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Scene-builder tests sharded by subject so each file stays small
 //! and greppable. Shared fixtures (`test_map_path`, `synthetic_node`,
 //! `synthetic_edge`, `synthetic_map`, `themed_node`, `two_node_edge_map`,

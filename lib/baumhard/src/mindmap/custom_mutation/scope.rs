@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Constructor helpers that produce a
 //! [`MutatorNode`](crate::mutator_builder::MutatorNode) equivalent to
 //! each legacy `TargetScope` variant. A

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `hit_test_picker` coverage: Outside (far + backdrop-corner), Commit
 //! on center, DragAnchor inside the wheel disk but not on any glyph,
 //! Hue slot, SatCell. Together with the hit enum variants covered by

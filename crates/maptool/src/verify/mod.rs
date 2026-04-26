@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Structural invariant verification for `.mindmap.json` files.
 //!
 //! Verification is a boundary check, not a best-effort parse: a file

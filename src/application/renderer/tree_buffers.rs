@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Tree-to-buffer pipeline — walks a Baumhard `Tree`, shapes cosmic-text
 //! buffers for each `GlyphArea`, and stores them (with optional background
 //! rects) into the `Renderer`'s per-role buffer maps.

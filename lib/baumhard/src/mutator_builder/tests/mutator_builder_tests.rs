@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Pure-data tests for the mutator-builder walker. These exercise
 //! the builder against a stub `SectionContext` so we don't need any
 //! picker / widget / GPU state.

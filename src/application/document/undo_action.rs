@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `UndoAction` — the tagged union the undo stack stores. One
 //! variant per user-facing mutation the document can perform; the
 //! `undo()` dispatch lives in `undo.rs` and branches on these

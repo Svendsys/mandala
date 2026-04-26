@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Hit-testing for the picker — classify a screen-space `(x, y)`
 //! cursor position against a cached `ColorPickerLayout`. Used by
 //! the mouse-move and click handlers in `app.rs`; pure function,

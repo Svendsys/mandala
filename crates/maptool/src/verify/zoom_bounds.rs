@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Zoom-visibility range invariant: whenever both
 //! `min_zoom_to_render` and `max_zoom_to_render` are `Some` on a
 //! `MindNode`, `MindEdge`, `EdgeLabelConfig`, or

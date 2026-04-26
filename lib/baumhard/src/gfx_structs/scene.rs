@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Top-level container for multiple
 //! [`Tree`](crate::gfx_structs::tree::Tree)s that together make up
 //! one rendered frame.

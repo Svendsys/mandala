@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
 fn run_bench() {

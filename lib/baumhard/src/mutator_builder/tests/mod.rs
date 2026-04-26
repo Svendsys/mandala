@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Tests for [`crate::mutator_builder`]. `pub mod` (not
 //! `#[cfg(test)] mod`) per §T2.2 so criterion benches can reach the
 //! `do_*()` bodies.

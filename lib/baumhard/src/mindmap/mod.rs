@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Mindmap data model, loader/saver, and the builders that project a
 //! `MindMap` into the Baumhard render tree and flat scene. Borders,
 //! connections, portal labels, and edge handles all descend from the

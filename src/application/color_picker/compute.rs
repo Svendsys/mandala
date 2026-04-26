@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `compute_color_picker_layout` — pure-function layout pass.
 //! Orchestrates the two-step derivation in `compute_sizing` (font
 //! size, ring radius, cell step) and `compute_positions` (per-cell

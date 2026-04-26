@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Tests for [`crate::gfx_structs::area`] primitives.
 //!
 //! Per [`crate::gfx_structs::tests::tree_tests`], the legacy

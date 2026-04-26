@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `apply_kvs` dispatcher aggregation tests.
 
 use super::fixtures::load_test_doc;

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Integration tests that exercise the console against the canonical
 //! `testament.mindmap.json` fixture. Split by concern so each file
 //! stays focused on one area of the console's surface.

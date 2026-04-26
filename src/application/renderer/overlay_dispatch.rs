@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Overlay rebuild / mutator dispatchers — the four `Renderer` entry
 //! points that bridge the app's `AppScene` overlay slots (console,
 //! color picker) to the renderer's buffer pipeline.

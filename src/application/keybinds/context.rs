@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! `InputContext` — the active input focus that determines which
 //! `Action` variants are eligible for a given key event. The event
 //! loop derives the context from which modal is open; the resolver

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Clipboard trait implementations for `ColorPickerState`. The picker
 //! is the first GUI widget to support clipboard operations — copy
 //! produces the current hex color, paste accepts a hex string and

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 use lazy_static::lazy_static;
 use path_slash::PathExt;
 use regex::Regex;

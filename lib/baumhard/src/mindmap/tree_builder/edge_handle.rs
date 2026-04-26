@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Edge-handle tree builder: one `GlyphArea` per visible handle
 //! (AnchorFrom, AnchorTo, Midpoint, ControlPoint(n)). The
 //! channel is derived from the handle kind so the identity

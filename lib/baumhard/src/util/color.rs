@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Core colour type and arithmetic, plus macros for compile-time
 //! colour literals. The conversion utilities (hex/RGB/HSV, theme
 //! variable resolution) live in the companion `super::color_conversion`

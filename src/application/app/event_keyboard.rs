@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Keyboard-event dispatch extracted from the native event loop
 //! in [`super::run_native`]. Routes `WindowEvent::KeyboardInput`
 //! (Pressed state only) through the modal-steal ladder

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Picker overlay rebuild dispatcher. The event loop calls this each
 //! frame the picker is open; it picks between first-build, layout-phase
 //! mutator, dynamic-phase mutator, and unregister paths by comparing

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Tree-to-cosmic-text walker. The hot-path function that turns a
 //! Baumhard `Tree<GfxElement, GfxMutator>` into shaped text buffers
 //! the renderer pipes to glyphon. Owned by the renderer module

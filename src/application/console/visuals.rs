@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Console palette + glyph constants.
 //!
 //! Kept in one file so "what does the console look like" is a single

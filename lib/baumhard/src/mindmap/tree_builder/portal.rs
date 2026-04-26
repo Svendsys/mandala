@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Portal tree builder — one subtree per (portal-mode edge ×
 //! endpoint). Each endpoint subtree carries an **icon** glyph
 //! (the portal marker) and a **text** glyph (the endpoint's

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Grapheme-safe line editing via baumhard::util::grapheme_chad.
 //!
 //! The `ConsoleState::cursor` is a grapheme-cluster index, not a

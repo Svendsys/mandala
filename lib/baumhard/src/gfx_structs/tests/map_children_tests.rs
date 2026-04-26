@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Tests for [`crate::gfx_structs::mutator::Instruction::MapChildren`]
 //! — the zip-by-sibling-position walker primitive that stands
 //! alongside the default channel-based aligner.

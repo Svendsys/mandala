@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Predicate language that steers walker traversal — the condition
 //! expressions inside `Instruction::RepeatWhile` and its siblings.
 //! A `Predicate` pairs a `Comparator` with a field selector drawn

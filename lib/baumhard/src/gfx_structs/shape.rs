@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Per-node background / hit-test shapes.
 //!
 //! [`NodeShape`] is the single source of truth for "what shape does

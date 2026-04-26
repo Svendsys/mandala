@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Small-scale 2D geometry helpers: rotation around a pivot,
 //! epsilon-aware float comparisons, and pixel-space ordering.
 

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! Custom-mutation infrastructure — `apply_custom_mutation` and
 //! its helpers. The bridge between the declarative
 //! `CustomMutation` shape and the document's mutation-and-undo

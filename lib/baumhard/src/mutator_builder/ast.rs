@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 //! AST types for the mutator-tree DSL. See `super` for the high-level
 //! tour; this file is the type-level wire format that JSON parses into.
 
