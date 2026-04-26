@@ -10,12 +10,12 @@ use std::sync::{Arc, OnceLock, RwLock, RwLockWriteGuard, TryLockError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use cosmic_text::fontdb::ID;
-use cosmic_text::{Attrs, AttrsList, Buffer, BufferRef, Color, Edit, Editor, Family, Metrics, Shaping, Stretch, Style, SwashCache, Weight, Wrap};
 use cosmic_text::fontdb::Source;
+use cosmic_text::fontdb::ID;
 use cosmic_text::FontSystem;
+use cosmic_text::{Attrs, Buffer, Family, Metrics, Shaping, SwashCache};
 use lazy_static::lazy_static;
-use log::{debug};
+use log::debug;
 use rand::seq::IteratorRandom;
 use rustc_hash::FxHashMap;
 use tinyvec::TinyVec;
@@ -282,87 +282,6 @@ pub fn get_some_font() -> Source {
 
 /// Opaque black. The default foreground colour for newly-built
 /// `AttrsList`s.
-pub const DEFAULT_FONT_COLOR: Color = Color::rgba(0, 0, 0, 255);
-
-/// Build a single-span `AttrsList` pinned to `font_family_name`,
-/// opaque-black text, normal style / stretch / weight. Convenience
-/// for call sites that need a baseline attribute set before layering
-/// per-region overrides on top.
-pub fn get_default_attr_list(font_family_name: &str) -> AttrsList {
-    AttrsList::new(
-        &Attrs::new()
-            .family(Family::Name(font_family_name))
-            .color(DEFAULT_FONT_COLOR)
-            .style(Style::Normal)
-            .stretch(Stretch::Normal)
-            .weight(Weight::NORMAL),
-    )
-}
-
-/// Build a cosmic-text `Editor` seeded with `text`, shaping it
-/// against the given `font_id`.
-///
-/// Acquires the `FONT_SYSTEM` **write** lock for the duration of
-/// the call via [`acquire_font_system_write`]; a caller that already
-/// holds a guard on [`FONT_SYSTEM`] is a re-entrancy bug and will
-/// trigger the helper's timeout panic with a stack trace pointing
-/// at the second acquisition site. Panics if `font_id` is missing from
-/// [`COMPILED_FONT_ID_MAP`] or if the face cannot be resolved.
-pub fn create_cosmic_editor_str(
-    font_id: &AppFont,
-    scale: f32,
-    line_height: f32,
-    text: &str,
-) -> Editor<'static> {
-    debug!("Waiting for font-system write lock");
-    let mut font_system = acquire_font_system_write("create_cosmic_editor_str");
-
-    let buffer = Buffer::new(&mut font_system, Metrics::new(scale, line_height));
-
-    let mut editor = Editor::new(buffer);
-
-    let font_id = COMPILED_FONT_ID_MAP.get(font_id).expect("Font not found");
-
-    let face = font_system.db().face(font_id[0]).unwrap();
-
-    editor.insert_string(text, Some(get_default_attr_list(&face.families[0].0)));
-    return editor;
-}
-
-/// Build an empty cosmic-text `Editor` with word-wrap enabled at the
-/// given bounds.
-///
-/// Acquires the `FONT_SYSTEM` **write** lock for the duration of
-/// the call via [`acquire_font_system_write`]; a caller that already
-/// holds a guard on [`FONT_SYSTEM`] is a re-entrancy bug and will
-/// trigger the helper's timeout panic with a stack trace pointing
-/// at the second acquisition site.
-pub fn create_cosmic_editor(scale: f32, line_height: f32, bound_x: f32, bound_y: f32) -> Editor<'static> {
-    debug!("Waiting for font-system write lock");
-    let mut font_system = acquire_font_system_write("create_cosmic_editor");
-    let mut buffer = Buffer::new(&mut font_system, Metrics::new(scale, line_height));
-    buffer.set_size(&mut font_system, Some(bound_x), Some(bound_y));
-    buffer.set_wrap(&mut font_system, Wrap::Word);
-    return Editor::new(buffer);
-}
-
-/// Borrow the inner `Buffer` out of a cosmic-text `BufferRef`,
-/// regardless of its Owned / Borrowed / Arc variant.
-pub fn unwrap_buffer_ref<'a>(buffer_ref: &'a BufferRef) -> &'a Buffer {
-    return match buffer_ref {
-
-    BufferRef::Owned(owned) => {&owned}BufferRef::Borrowed(borrowed) => {borrowed}BufferRef::Arc(arc) => {arc.as_ref()}}
-}
-
-/// Replace the `Metrics` on `buffer`. Acquires the `FONT_SYSTEM`
-/// **write** lock for the set; callers holding any existing guard on
-/// [`FONT_SYSTEM`] will deadlock.
-pub fn adjust_buffer_metrics(buffer: &mut Buffer, metrics: Metrics) {
-    debug!("Waiting for font-system write lock");
-    let mut font_system = acquire_font_system_write("adjust_buffer_metrics");
-    buffer.set_metrics(&mut font_system, metrics);
-}
-
 /// Ink bounding box of a shaped glyph string, measured at a specific
 /// font size. Sibling of the `measure_max_glyph_advance` scalar
 /// measurement (currently in the app-level renderer as pre-existing
@@ -549,7 +468,11 @@ pub struct TextBlockSize {
 impl TextBlockSize {
     /// Zero-sized measurement — what empty input produces. Useful as
     /// an early-return sentinel.
-    pub const ZERO: Self = Self { width: 0.0, height: 0.0, line_count: 0 };
+    pub const ZERO: Self = Self {
+        width: 0.0,
+        height: 0.0,
+        line_count: 0,
+    };
 }
 
 /// Shape `text` through cosmic-text without a width constraint and

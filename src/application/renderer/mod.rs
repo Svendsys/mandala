@@ -36,39 +36,34 @@ use console_pass::{
     console_overlay_signature,
 };
 #[cfg(test)]
-#[cfg(test)]
 use tree_walker::walk_tree_into_buffers;
 
 use std::borrow::Cow;
-use std::ops::Range;
 use std::sync::Arc;
 use std::time::Duration;
 use web_time::Instant;
 
-use cosmic_text::{Attrs, AttrsList, Buffer, FontSystem};
-use cosmic_text::{Family, Style};
+use cosmic_text::{Attrs, Buffer};
 use glyphon::{Cache, Resolution, SwashCache, TextAtlas, TextRenderer, Viewport};
 use log::{error, info, warn};
 
 use rustc_hash::FxHashMap;
 
 use wgpu::{
-    Adapter, Color, Device, Instance, MultisampleState, Queue, RenderPipeline,
-    ShaderModule, Surface, SurfaceCapabilities, SurfaceConfiguration, TextureFormat,
+    Adapter, Color, Device, Instance, MultisampleState, Queue, RenderPipeline, ShaderModule,
+    Surface, SurfaceCapabilities, SurfaceConfiguration, TextureFormat,
 };
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
 use crate::application::common::{FpsDisplayMode, PollTimer, RedrawMode, RenderDecree, StopWatch};
 use baumhard::font::fonts;
-use baumhard::font::fonts::AppFont;
 #[cfg(test)]
 use baumhard::gfx_structs::area::GlyphArea;
 use baumhard::gfx_structs::camera::Camera2D;
 use baumhard::mindmap::scene_cache::EdgeKey;
 use baumhard::shaders::shaders::SHADER_APPLICATION;
 use glam::Vec2;
-
 
 /// Inline WGSL shader for the colored-rectangle pipeline. Draws a
 /// stream of NDC-space vertices, each carrying its own RGBA color,
@@ -445,12 +440,8 @@ impl NodeBackgroundRect {
     /// with the zoom-window cull
     /// (`ZoomVisibility::contains`). Pure, no allocation; the
     /// render loop calls this once per rect per frame.
-    pub(super) fn visible_at(
-        &self,
-        camera: &baumhard::gfx_structs::camera::Camera2D,
-    ) -> bool {
-        camera.is_visible(self.position, self.size)
-            && self.zoom_visibility.contains(camera.zoom)
+    pub(super) fn visible_at(&self, camera: &baumhard::gfx_structs::camera::Camera2D) -> bool {
+        camera.is_visible(self.position, self.size) && self.zoom_visibility.contains(camera.zoom)
     }
 }
 
@@ -467,11 +458,7 @@ impl NodeBackgroundRect {
 /// proactively trades a letterboxed frame for a non-hung UI. The
 /// scenario is realistic on ultra-wide displays or multi-monitor-
 /// maxed windows.
-pub(crate) fn clamp_surface_size_to_gpu_limit(
-    width: u32,
-    height: u32,
-    max_dim: u32,
-) -> (u32, u32) {
+pub(crate) fn clamp_surface_size_to_gpu_limit(width: u32, height: u32, max_dim: u32) -> (u32, u32) {
     let clamped_width = if width > max_dim {
         warn!(
             "Requested surface width {} exceeds GPU max_texture_dimension_2d {}; clamping",
@@ -673,7 +660,12 @@ impl Renderer {
             main_rect_vertices: Vec::new(),
             console_rect_vertices: Vec::new(),
             console_backdrop: None,
-            clear_color: Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 },
+            clear_color: Color {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: 1.0,
+            },
         }
     }
 
@@ -720,7 +712,6 @@ impl Renderer {
     pub fn set_fps_display(&mut self, mode: FpsDisplayMode) {
         self.process_decree(RenderDecree::SetFpsDisplay(mode));
     }
-
 
     /// Returns and resets the connection geometry-dirty flag. Called by
     /// the event loop once per frame; a `true` return means the zoom
@@ -842,7 +833,6 @@ impl Renderer {
         self.window.inner_size()
     }
 
-
     #[inline]
     fn update_surface_size(&mut self, width: u32, height: u32) {
         if width <= 0 {
@@ -860,44 +850,13 @@ impl Renderer {
         self.config.height = height;
 
         self.surface.configure(&self.device, &self.config);
-        self.viewport.update(&self.queue, Resolution { width, height });
+        self.viewport
+            .update(&self.queue, Resolution { width, height });
         self.camera.set_viewport_size(width, height);
         // Canvas-space glyph positions and shaped buffers survive a
         // viewport resize; the per-frame `visible_at` cull handles
         // whether each buffer falls inside the new bounds.
     }
-
-
-}
-
-
-pub fn example_attrib(font_system: &mut FontSystem) -> AttrsList {
-    let evilz_font = fonts::COMPILED_FONT_ID_MAP.get(&AppFont::Evilz).unwrap();
-    let evilz_face = font_system.db().face(evilz_font[0]).unwrap();
-    let mut attr_list = AttrsList::new(&Attrs::new());
-    attr_list.add_span(
-        Range { start: 0, end: 10 },
-        &Attrs::new()
-            .style(Style::Normal)
-            .color(cosmic_text::Color::rgba(102, 51, 51, 255))
-            .family(Family::Name(evilz_face.families[0].0.as_ref())),
-    );
-    let nightcrow_font = fonts::COMPILED_FONT_ID_MAP
-        .get(&AppFont::NIGHTCROW)
-        .unwrap();
-    let nightcrow_face = font_system.db().face(nightcrow_font[0]).unwrap();
-    attr_list.add_span(
-        Range {
-            start: 11,
-            end: 500,
-        },
-        &Attrs::new()
-            .style(Style::Normal)
-            .color(cosmic_text::Color::rgba(0, 153, 51, 255))
-            .family(Family::Name(nightcrow_face.families[0].0.as_ref())),
-    );
-
-    attr_list
 }
 
 pub struct MindMapTextBuffer {
@@ -919,18 +878,12 @@ impl MindMapTextBuffer {
     /// (`ZoomVisibility::contains`). Pure, no allocation; the
     /// render loop calls this once per buffer per frame in the
     /// `main_text_areas` collector.
-    pub(super) fn visible_at(
-        &self,
-        camera: &baumhard::gfx_structs::camera::Camera2D,
-    ) -> bool {
+    pub(super) fn visible_at(&self, camera: &baumhard::gfx_structs::camera::Camera2D) -> bool {
         let pos = Vec2::new(self.pos.0, self.pos.1);
         let size = Vec2::new(self.bounds.0, self.bounds.1);
         camera.is_visible(pos, size) && self.zoom_visibility.contains(camera.zoom)
     }
 }
-
-
-
 
 #[cfg(test)]
 mod tests;

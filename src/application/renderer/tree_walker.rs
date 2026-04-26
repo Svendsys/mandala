@@ -3,18 +3,19 @@
 //! Tree-to-cosmic-text walker. The hot-path function that turns a
 //! Baumhard `Tree<GfxElement, GfxMutator>` into shaped text buffers
 //! the renderer pipes to glyphon. Owned by the renderer module
-//! (rather than baumhard) because the input shape requires
-//! cosmic-text awareness — `attrs_list_from_regions` lives in
-//! baumhard but the `Buffer::set_rich_text` call sites stay here.
+//! (rather than baumhard) because the `Buffer::set_rich_text` call
+//! sites are renderer-side; the per-region `Attrs` construction
+//! lives in baumhard's `font::attrs` (`RegionFamilies` +
+//! `rich_text_spans_from_regions`) so the styled-region → cosmic-text
+//! bridge has a single owner.
 
-use cosmic_text::{Attrs, Family, FontSystem};
+use cosmic_text::{Attrs, FontSystem};
 use glam::Vec2;
 
-use baumhard::font::fonts;
+use baumhard::font::attrs::{rich_text_spans_from_regions, RegionFamilies};
 use baumhard::gfx_structs::element::GfxElement;
 use baumhard::gfx_structs::mutator::GfxMutator;
 use baumhard::gfx_structs::tree::Tree;
-use baumhard::util::grapheme_chad;
 
 use super::{MindMapTextBuffer, NodeBackgroundRect};
 
@@ -80,101 +81,18 @@ pub(super) fn walk_tree_into_buffers(
         let bound_x = area.render_bounds.x.0;
         let bound_y = area.render_bounds.y.0;
 
-        // Pre-compute font family names per region. The walker had a
-        // long-standing bug where `region.font` was stored on the
-        // GlyphArea but never threaded into the cosmic-text `Attrs`,
-        // so SMP-range glyphs that needed an explicit face (Egyptian
-        // hieroglyphs in the color-picker bottom arm in particular)
-        // silently rendered as tofu — cosmic-text's default fallback
-        // doesn't pick the Noto Sans Egyptian Hieroglyphs face.
-        //
-        // The family lookup borrows `font_system.db()` immutably,
-        // while `set_rich_text` below needs `&mut font_system`. We
-        // collect the family strings into an owned `Vec<Option<String>>`
-        // here so the immutable borrow ends before the mutable one
-        // begins, and the owned strings outlive each spans Vec that
-        // borrows them via `Family::Name`. The same names are reused
-        // across the main buffer and every halo copy.
-        let family_names: Vec<Option<String>> = if area.regions.num_regions() == 0 {
-            vec![None]
-        } else {
-            area.regions
-                .all_regions()
-                .iter()
-                .map(|region| {
-                    region.font.and_then(|f| {
-                        fonts::COMPILED_FONT_ID_MAP.get(&f).and_then(|ids| {
-                            font_system
-                                .db()
-                                .face(ids[0])
-                                .map(|face| face.families[0].0.clone())
-                        })
-                    })
-                })
-                .collect()
-        };
+        // Pre-resolve every region's family-name string once; reuse
+        // the result across the main glyph + every halo stamp so the
+        // `font_system.db().face(...)` lookups don't re-run per
+        // stamp. Lives in baumhard so the styled-region → cosmic-text
+        // bridge has a single owner.
+        let families = RegionFamilies::resolve(&area.regions, font_system);
 
         let text = &area.text;
         let alignment = if area.align_center {
             Some(cosmic_text::Align::Center)
         } else {
             None
-        };
-
-        // Build a `Vec<(&str, Attrs)>` for shaping, with an optional
-        // color override that recolors *every* span to the given
-        // color (used by the halo loop below). `None` keeps each
-        // region's own color. Per-region font pinning is preserved
-        // either way, so a halo behind an Egyptian hieroglyph still
-        // shapes through the Noto Egyptian Hieroglyphs face.
-        let build_spans = |color_override: Option<cosmic_text::Color>| -> Vec<(&str, Attrs)> {
-            if area.regions.num_regions() == 0 {
-                let mut attrs = Attrs::new();
-                if let Some(c) = color_override {
-                    attrs = attrs.color(c);
-                }
-                attrs = attrs.metrics(cosmic_text::Metrics::new(scale, line_height));
-                vec![(text.as_str(), attrs)]
-            } else {
-                area.regions
-                    .all_regions()
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, region)| {
-                        let start =
-                            grapheme_chad::find_byte_index_of_char(text, region.range.start)
-                                .unwrap_or(text.len());
-                        let end = grapheme_chad::find_byte_index_of_char(text, region.range.end)
-                            .unwrap_or(text.len());
-                        if start >= end {
-                            return None;
-                        }
-                        let slice = &text[start..end];
-                        let mut attrs = Attrs::new();
-                        let color = color_override.or_else(|| {
-                            region.color.map(|rgba| {
-                                let u8c = baumhard::util::color::convert_f32_to_u8(&rgba);
-                                cosmic_text::Color::rgba(u8c[0], u8c[1], u8c[2], u8c[3])
-                            })
-                        });
-                        if let Some(c) = color {
-                            attrs = attrs.color(c);
-                        }
-                        // Pin the per-region font when the GlyphArea
-                        // specified one. The family name is owned by
-                        // `family_names`; `Family::Name` borrows it
-                        // for the lifetime of `attrs`. Iterators have
-                        // identical length by construction (both run
-                        // over `area.regions.all_regions()`), so
-                        // direct indexing is safe.
-                        if let Some(family) = family_names[i].as_deref() {
-                            attrs = attrs.family(Family::Name(family));
-                        }
-                        attrs = attrs.metrics(cosmic_text::Metrics::new(scale, line_height));
-                        Some((slice, attrs))
-                    })
-                    .collect()
-            }
         };
 
         // Helper to shape one buffer at an offset and yield it. The
@@ -184,10 +102,8 @@ pub(super) fn walk_tree_into_buffers(
         // exceeded the cell box.
         let mut shape_and_yield =
             |spans: Vec<(&str, Attrs)>, x_off: f32, y_off: f32, fs: &mut FontSystem| {
-                let mut buffer = cosmic_text::Buffer::new(
-                    fs,
-                    cosmic_text::Metrics::new(scale, line_height),
-                );
+                let mut buffer =
+                    cosmic_text::Buffer::new(fs, cosmic_text::Metrics::new(scale, line_height));
                 buffer.set_size(fs, Some(bound_x), Some(bound_y));
                 buffer.set_rich_text(
                     fs,
@@ -212,8 +128,10 @@ pub(super) fn walk_tree_into_buffers(
         // Halos first — DFS yield order means later buffers render on
         // top, so emitting halos before the main glyph puts them
         // visually behind. The stamp geometry is canonical in
-        // baumhard (`OutlineStyle::offsets`) — we just recolor every
-        // span to `outline.color` and shape one buffer per offset.
+        // baumhard (`OutlineStyle::offsets`); the per-region attrs
+        // construction is canonical in
+        // `baumhard::font::attrs::rich_text_spans_from_regions`. We
+        // just stamp once per offset.
         if let Some(outline) = area.outline {
             if outline.px > 0.0 {
                 let halo_color = cosmic_text::Color::rgba(
@@ -223,7 +141,14 @@ pub(super) fn walk_tree_into_buffers(
                     outline.color[3],
                 );
                 for (dx, dy) in outline.offsets() {
-                    let halo_spans = build_spans(Some(halo_color));
+                    let halo_spans = rich_text_spans_from_regions(
+                        text,
+                        &area.regions,
+                        &families,
+                        scale,
+                        line_height,
+                        Some(halo_color),
+                    );
                     shape_and_yield(halo_spans, dx, dy, font_system);
                 }
             }
@@ -231,7 +156,8 @@ pub(super) fn walk_tree_into_buffers(
 
         // Main glyph. Always emitted last so it sits on top of any
         // halos.
-        let main_spans = build_spans(None);
+        let main_spans =
+            rich_text_spans_from_regions(text, &area.regions, &families, scale, line_height, None);
         shape_and_yield(main_spans, 0.0, 0.0, font_system);
     }
 }
