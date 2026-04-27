@@ -143,19 +143,8 @@ impl ThrottledInteraction for MovingNodeInteraction {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::app::throttled_interaction::test_utils::drive_throttle_over_budget;
     use std::time::Duration;
-
-    /// Push the throttle's moving average over budget until `n > 1`.
-    /// Separated from the trait tests' helper so each per-interaction
-    /// suite is self-contained.
-    fn drive_throttle_over_budget(t: &mut MutationFrequencyThrottle) -> u32 {
-        for _ in 0..80 {
-            if t.should_drain() {
-                t.record_work_duration(Duration::from_micros(50_000));
-            }
-        }
-        t.current_n()
-    }
 
     #[test]
     fn test_new_initialises_fields_with_zero_deltas() {
