@@ -657,6 +657,19 @@ pub fn resolve_palette_cycle(
 /// continuous cycle around the rectangle (top → right → bottom →
 /// left), so a colour sweep wraps cleanly across corners.
 ///
+/// # Newlines in vertical sides
+///
+/// Vertical-side text is one cluster per line (`"|\n|\n|"` for a
+/// 3-row column) — newline `'\n'` is its own grapheme cluster, so
+/// `cluster_count` includes them and the palette index advances
+/// across newlines too. The visible glyphs end up at palette
+/// positions `[offset, offset+2, offset+4, …]` rather than
+/// `[offset, offset+1, offset+2, …]`. This matches the tree
+/// builder's per-side region emission, which means the flat-scene
+/// renderer and the Baumhard-tree renderer paint identical colour
+/// sequences. Callers that want a denser cycle on a column can
+/// shorten the palette to compensate.
+///
 /// Cost: O(cluster_count) when palette-cycling, O(1) otherwise.
 /// Per-cluster regions are only built when the caller opts in
 /// (non-empty cycle) — the default single-region path matches

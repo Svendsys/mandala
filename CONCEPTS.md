@@ -379,12 +379,15 @@ transient live-edit previews.
 by `BTreeSet<ColorFontRegion>` keyed on the `Range`, so lookups
 by range are `O(log n)` but two regions with the same range and
 different payloads collide (last write wins) — this is
-deliberate, not a bug. The `Range` indices are **Unicode
-code-point offsets** when the caller comes from mindmap text
-runs (matching [`text runs`](#text-runs)); the primitive itself
-just holds `usize` pairs and does not enforce a unit, so
-consumers that reach in from elsewhere must agree on the same
-convention. Five mutation primitives keep the set
+deliberate, not a bug. The `Range` indices are **grapheme-cluster
+offsets** — the unit baumhard's text primitives speak in (see
+`lib/baumhard/CONVENTIONS.md §B1` and the helpers in
+`util/grapheme_chad.rs`). Every fresh producer counts via
+`count_grapheme_clusters`; the cosmic-text bridges in
+`font/attrs.rs` slice through `find_byte_index_of_grapheme`. The
+primitive itself just holds `usize` pairs and does not enforce a
+unit at the type level, so consumers that reach in from elsewhere
+must agree on the grapheme convention. Five mutation primitives keep the set
 consistent under text edit: `insert_regions_at`,
 `shrink_regions_after`, `split_and_separate`,
 `shift_regions_after`, `set_or_insert`. A spatial index

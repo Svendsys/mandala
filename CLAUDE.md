@@ -62,15 +62,17 @@ not the rules.
 - **Render through the Baumhard tree.** Nodes / connections /
   borders / portals all flow toward
   `Tree<GfxElement, GfxMutator>` and are walked into cosmic-text
-  buffers by `src/application/renderer/tree_walker.rs`. Some
-  legacy element types still pass through a flat scene
-  intermediary (`scene_builder/`) on their way to that walker;
-  treat that as a seam in flight, not a permanent second
+  buffers by `src/application/renderer/tree_walker.rs`. Edge
+  handles, the selection rect, the console overlay, and (today)
+  the per-frame border-buffer keyed cache still live on a flat
+  scene intermediary (`scene_builder/` + the `rebuild_*_buffers*`
+  family in `renderer/scene_buffers.rs`); treat those as the
+  consolidation seam — code in flight, not a permanent second
   pipeline. New visuals belong in the Baumhard tree.
 - **Mutation-first interaction model.** Where a user action can be
   expressed as a mutation cascading through the Baumhard tree, prefer
-  that. Things outside the tree — edges, borders, overlays — reach the
-  scene builder or renderer directly.
+  that. The flat-scene path is the fallback for things that haven't
+  been folded in yet (and won't grow new entries).
 - **Unified throttled-interaction seam.** Every continuous,
   high-rate-input-driven mutation (node drag, edge-handle drag,
   portal-label drag, edge-label drag, color-picker hover) flows

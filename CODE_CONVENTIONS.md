@@ -57,7 +57,8 @@ never a reason.
   exists.
 - **Geometry, color, regions** are Baumhard's:
   `baumhard::util::geometry`, `baumhard::util::color`,
-  `ColorFontRegions` (character-range runs), and `RegionIndexer`
+  `ColorFontRegions` (grapheme-cluster-range runs — see
+  `lib/baumhard/CONVENTIONS.md §B1`), and `RegionIndexer`
   (spatial index for hit-testing — distinct from `ColorFontRegions`).
   Do not redefine any of these in the app crate.
 

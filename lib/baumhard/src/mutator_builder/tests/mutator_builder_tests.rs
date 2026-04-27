@@ -37,7 +37,11 @@ impl StubCtx {
                 Vec2::new(i as f32, 0.0),
                 Vec2::new(20.0, 30.0),
             );
-            a.regions = ColorFontRegions::single_span(text.chars().count(), None, None);
+            a.regions = ColorFontRegions::single_span(
+                crate::util::grapheme_chad::count_grapheme_clusters(&text),
+                None,
+                None,
+            );
             areas.push(a);
         }
         Self {

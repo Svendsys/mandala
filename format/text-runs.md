@@ -36,17 +36,20 @@ When `text_runs` is non-empty:
 - Runs must not overlap: each run's `end` must be `<= next.start`
   (which implies ascending `start` order for well-formed runs)
 - `start < end` for every run
-- `start` and `end` are measured in **Unicode code points** (Rust's
-  `char` count) — not bytes, not grapheme clusters
+- `start` and `end` are measured in **grapheme clusters** — what users
+  see as "one character" — not bytes and not Unicode code points
 - Uncovered ranges inherit the node's base style (so partial coverage is
   valid — you can decorate just the first word without declaring runs for
   the rest)
 
-Code points match how `ColorFontRegions` interprets the ranges in the
-tree builder and how miMind stored them in the legacy format. Hebrew text
-with combining marks has more code points than graphemes; CJK characters
-outside the BMP have more bytes than code points. Code points are the
-unit that stays stable through round-trips.
+Grapheme clusters match the unit baumhard's text primitives speak in
+(see `lib/baumhard/CONVENTIONS.md §B1` and the helpers in
+`lib/baumhard/src/util/grapheme_chad.rs`). The cosmic-text bridges in
+`baumhard::font::attrs` slice text by grapheme too, so a run that ends
+on a ZWJ-emoji or combining-mark cluster boundary lands on a UTF-8-valid
+byte boundary and shapes correctly. The `text` field carries the
+authored characters verbatim; clusters are the unit that stays stable
+through round-trips and matches what `maptool verify` checks.
 
 `maptool verify` checks all these invariants and reports specific
 violations with run indices.

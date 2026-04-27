@@ -316,14 +316,20 @@ impl MindMapDocument {
     /// [`grow_node_sizes_to_fit_borders`] — both of which
     /// acquire the global `FONT_SYSTEM` write lock per-node.
     ///
-    /// Surfaced primarily as a test seam: the test fixture
-    /// loader in `tests_common::load_test_doc` caches a single
-    /// finalized `MindMap` in a `OnceLock` and clones it through
-    /// here per call, so a 30-test parallel run no longer
-    /// thrashes the lock 30×N times. Production code paths
-    /// continue to use [`Self::load`] / [`Self::from_json_str`]
-    /// / [`Self::new_blank`].
-    pub fn from_finalized_mindmap(map: MindMap, file_path: Option<String>) -> Self {
+    /// Test-only seam — `#[cfg(test)] pub(crate)` so production
+    /// code can't accidentally call it (any such call becomes a
+    /// compile error). The test fixture loader in
+    /// `tests_common::load_test_doc` caches a single finalized
+    /// `MindMap` in a `OnceLock` and clones it through here per
+    /// call, so a 30-test parallel run no longer thrashes the
+    /// lock 30×N times. Production code paths continue to use
+    /// [`Self::load`] / [`Self::from_json_str`] /
+    /// [`Self::new_blank`].
+    #[cfg(test)]
+    pub(crate) fn from_finalized_mindmap(
+        map: MindMap,
+        file_path: Option<String>,
+    ) -> Self {
         Self::from_mindmap(map, file_path)
     }
 

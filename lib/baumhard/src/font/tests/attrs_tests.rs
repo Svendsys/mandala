@@ -29,7 +29,7 @@ fn test_attrs_list_from_empty_regions_yields_no_spans() {
 pub fn do_attrs_list_from_empty_regions_yields_no_spans() {
     let regions = ColorFontRegions::new_empty();
     let mut fs = FontSystem::new();
-    let list = attrs_list_from_regions(&regions, &mut fs);
+    let list = attrs_list_from_regions("hello world", &regions, &mut fs);
     assert_eq!(list.spans().len(), 0);
 }
 
@@ -48,7 +48,7 @@ pub fn do_attrs_list_from_single_color_region_emits_one_span() {
         Some([1.0, 0.0, 0.0, 1.0]),
     ));
     let mut fs = FontSystem::new();
-    let list = attrs_list_from_regions(&regions, &mut fs);
+    let list = attrs_list_from_regions("hello world", &regions, &mut fs);
     assert_eq!(list.spans().len(), 1);
 }
 
@@ -72,7 +72,7 @@ pub fn do_attrs_list_from_two_regions_emits_two_spans() {
         Some([0.0, 1.0, 0.0, 1.0]),
     ));
     let mut fs = FontSystem::new();
-    let list = attrs_list_from_regions(&regions, &mut fs);
+    let list = attrs_list_from_regions("hello world", &regions, &mut fs);
     assert_eq!(list.spans().len(), 2);
 }
 
@@ -103,7 +103,7 @@ pub fn do_attrs_list_pins_family_name_when_region_carries_app_font() {
     let mut fs = crate::font::fonts::acquire_font_system_write(
         "attrs_tests::do_attrs_list_pins_family_name_when_region_carries_app_font",
     );
-    let list = attrs_list_from_regions(&regions, &mut fs);
+    let list = attrs_list_from_regions("hello world", &regions, &mut fs);
     let spans = list.spans();
     assert_eq!(spans.len(), 1, "one region → one span");
     match &spans[0].1.family_owned {
@@ -132,7 +132,7 @@ pub fn do_attrs_list_falls_back_to_monospace_when_region_has_no_font() {
         Some([0.0, 0.0, 0.0, 1.0]),
     ));
     let mut fs = FontSystem::new();
-    let list = attrs_list_from_regions(&regions, &mut fs);
+    let list = attrs_list_from_regions("hello world", &regions, &mut fs);
     let spans = list.spans();
     assert_eq!(spans.len(), 1);
     match &spans[0].1.family_owned {
@@ -384,22 +384,23 @@ pub fn do_rich_text_spans_color_override_drops_zero_width_regions() {
 }
 
 #[test]
-fn test_rich_text_spans_slice_at_emoji_scalar_boundary() {
-    do_rich_text_spans_slice_at_emoji_scalar_boundary();
+fn test_rich_text_spans_slice_at_grapheme_boundary() {
+    do_rich_text_spans_slice_at_grapheme_boundary();
 }
 
-/// `find_byte_index_of_char` operates on Unicode scalars (chars),
-/// matching the documented unit of `ColorFontRegions::Range`
-/// (CONCEPTS.md line 382). A region that ends mid-grapheme — e.g.
-/// after the base codepoint of a flag (regional-indicator pair) —
-/// must produce a span whose byte slice ends at that scalar
-/// boundary. The shaped output may render as tofu, but the byte
-/// boundary itself stays UTF-8-valid (no broken scalar). This pins
-/// the scalar-not-grapheme contract.
-pub fn do_rich_text_spans_slice_at_emoji_scalar_boundary() {
+/// `find_byte_index_of_grapheme` operates on grapheme clusters,
+/// matching the documented unit of `ColorFontRegion::Range` (see
+/// `CONCEPTS.md`'s Range entry and `lib/baumhard/CONVENTIONS.md
+/// §B1`). A region whose `[start, end)` covers one grapheme
+/// produces a span whose byte slice covers that whole cluster —
+/// even when the cluster is multiple Unicode scalars (a regional-
+/// indicator pair flag, a ZWJ-joined emoji family, etc). This
+/// pins the grapheme-not-scalar contract.
+pub fn do_rich_text_spans_slice_at_grapheme_boundary() {
     let mut regions = ColorFontRegions::new_empty();
-    // Text is "🇸🇪" — two regional-indicator scalars forming one
-    // grapheme. Region [0, 1) selects only the first scalar.
+    // Text is "🇸🇪🇫🇮" — two flag emojis, each a regional-indicator
+    // pair (2 scalars). One grapheme cluster per flag, two clusters
+    // total. Region [0, 1) selects only the first flag.
     regions.submit_region(ColorFontRegion::new(
         Range::new(0, 1),
         None,
@@ -407,12 +408,46 @@ pub fn do_rich_text_spans_slice_at_emoji_scalar_boundary() {
     ));
     let mut fs = FontSystem::new();
     let families = RegionFamilies::resolve(&regions, &mut fs);
-    let spans = rich_text_spans_from_regions("\u{1F1F8}\u{1F1EA}", &families, 16.0, 18.0, None);
+    let spans = rich_text_spans_from_regions(
+        "\u{1F1F8}\u{1F1EA}\u{1F1EB}\u{1F1EE}",
+        &families,
+        16.0,
+        18.0,
+        None,
+    );
     assert_eq!(spans.len(), 1);
-    // First regional-indicator is 4 UTF-8 bytes — span slice is the
-    // first scalar only.
-    assert_eq!(spans[0].0, "\u{1F1F8}");
-    assert_eq!(spans[0].0.len(), 4);
+    // First flag is one grapheme = two scalars = 8 UTF-8 bytes.
+    assert_eq!(spans[0].0, "\u{1F1F8}\u{1F1EA}");
+    assert_eq!(spans[0].0.len(), 8);
+}
+
+#[test]
+fn test_rich_text_spans_slice_at_zwj_grapheme_boundary() {
+    do_rich_text_spans_slice_at_zwj_grapheme_boundary();
+}
+
+/// Sibling guard: a ZWJ-joined emoji (`👨‍👩‍👧` — five scalars, one
+/// grapheme) at a region boundary must be sliced as one cluster,
+/// not split mid-ZWJ. Catches a regression to char-indexed
+/// slicing more dramatically than the regional-indicator test
+/// because mis-slicing a ZWJ sequence emits a partial codepoint
+/// run that's a different visible glyph.
+pub fn do_rich_text_spans_slice_at_zwj_grapheme_boundary() {
+    let mut regions = ColorFontRegions::new_empty();
+    // Text is "👨‍👩‍👧A" — one ZWJ-emoji grapheme (5 scalars, 18
+    // bytes) followed by ASCII "A". Two grapheme clusters.
+    let text = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}A";
+    regions.submit_region(ColorFontRegion::new(
+        Range::new(0, 1),
+        None,
+        Some([1.0, 0.0, 0.0, 1.0]),
+    ));
+    let mut fs = FontSystem::new();
+    let families = RegionFamilies::resolve(&regions, &mut fs);
+    let spans = rich_text_spans_from_regions(text, &families, 16.0, 18.0, None);
+    assert_eq!(spans.len(), 1);
+    assert_eq!(spans[0].0, "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}");
+    assert_eq!(spans[0].0.len(), 18, "5 scalars × 4 + 2 (ZWJs) = 18 bytes");
 }
 
 #[test]
