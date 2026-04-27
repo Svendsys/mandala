@@ -19,7 +19,10 @@ use crate::application::document::{EdgeRef, MindMapDocument, SelectionState};
 // same path that surfaces `run`. `load_test_doc` stays narrower
 // because the per-command modules already pull it through
 // `document::tests_common::load_test_doc as fixture_doc` directly.
-pub(in crate::application::console) use crate::application::document::tests_common::first_testament_node_id as first_node_id;
+pub(in crate::application::console) use crate::application::document::tests_common::{
+    first_testament_node_id as first_node_id,
+    two_testament_node_ids,
+};
 pub(super) use crate::application::document::tests_common::load_test_doc;
 
 /// Collapse a slice of `OutputLine` values into one `\n`-joined

@@ -101,7 +101,10 @@ fn test_clipboard_content_eq() {
 // here we cover the dispatcher mechanics directly via a stub
 // closure that doesn't touch the doc.
 
-use crate::application::document::tests_common::load_test_doc as fresh_doc;
+use crate::application::document::tests_common::{
+    first_n_testament_node_ids as first_n_node_ids,
+    load_test_doc as fresh_doc,
+};
 
 #[test]
 fn test_apply_to_targets_empty_selection_reports_no_target() {
@@ -117,7 +120,7 @@ fn test_apply_to_targets_empty_selection_reports_no_target() {
 #[test]
 fn test_apply_to_targets_multi_node_fanout_aggregates_applied() {
     let mut doc = fresh_doc();
-    let ids: Vec<String> = doc.mindmap.nodes.keys().take(3).cloned().collect();
+    let ids = first_n_node_ids(&doc, 3);
     assert_eq!(ids.len(), 3);
     doc.selection = SelectionState::Multi(ids);
 
@@ -135,7 +138,7 @@ fn test_apply_to_targets_multi_node_fanout_aggregates_applied() {
 #[test]
 fn test_apply_to_targets_all_not_applicable_surfaces_label() {
     let mut doc = fresh_doc();
-    let ids: Vec<String> = doc.mindmap.nodes.keys().take(2).cloned().collect();
+    let ids = first_n_node_ids(&doc, 2);
     doc.selection = SelectionState::Multi(ids);
     let report = apply_to_targets(&mut doc, |_| Outcome::NotApplicable);
     assert!(!report.any_applied);
@@ -147,7 +150,7 @@ fn test_apply_to_targets_all_not_applicable_surfaces_label() {
 #[test]
 fn test_apply_to_targets_invalid_surfaces_per_target_messages() {
     let mut doc = fresh_doc();
-    let ids: Vec<String> = doc.mindmap.nodes.keys().take(2).cloned().collect();
+    let ids = first_n_node_ids(&doc, 2);
     doc.selection = SelectionState::Multi(ids);
     let mut idx = 0;
     let report = apply_to_targets(&mut doc, |_| {
@@ -165,7 +168,7 @@ fn test_apply_to_targets_invalid_surfaces_per_target_messages() {
 #[test]
 fn test_apply_to_targets_mixed_applied_and_unchanged_succeeds_silently() {
     let mut doc = fresh_doc();
-    let ids: Vec<String> = doc.mindmap.nodes.keys().take(3).cloned().collect();
+    let ids = first_n_node_ids(&doc, 3);
     doc.selection = SelectionState::Multi(ids);
     let mut tick = 0;
     let report = apply_to_targets(&mut doc, |_| {
@@ -186,7 +189,7 @@ fn test_apply_to_targets_mixed_applied_and_unchanged_succeeds_silently() {
 #[test]
 fn test_apply_to_targets_all_unchanged_reports_already_set() {
     let mut doc = fresh_doc();
-    let ids: Vec<String> = doc.mindmap.nodes.keys().take(2).cloned().collect();
+    let ids = first_n_node_ids(&doc, 2);
     doc.selection = SelectionState::Multi(ids);
     let report = apply_to_targets(&mut doc, |_| Outcome::Unchanged);
     // No Applied means `any_applied = false`; "already set" surfaces as a

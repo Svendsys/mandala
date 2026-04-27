@@ -80,6 +80,32 @@ pub(crate) fn first_testament_node_id(doc: &MindMapDocument) -> String {
         .expect("testament map has nodes")
 }
 
+/// Pick the first `n` node ids from the testament map. Used by
+/// multi-selection fanout tests that want a `Multi(ids)`
+/// selection of arbitrary cardinality without picking specific
+/// ids. Panics if the map has fewer than `n` nodes — the testament
+/// fixture is large enough that any reasonable `n` succeeds.
+pub(crate) fn first_n_testament_node_ids(doc: &MindMapDocument, n: usize) -> Vec<String> {
+    let ids: Vec<String> = doc.mindmap.nodes.keys().take(n).cloned().collect();
+    assert!(
+        ids.len() == n,
+        "testament map has {} nodes; needed {}",
+        ids.len(),
+        n
+    );
+    ids
+}
+
+/// Pick two distinct node ids in `(a, b)` form — the shape
+/// portal-edge / cross-link tests want when they need a
+/// from-and-to pair without caring which specific nodes those are.
+pub(crate) fn two_testament_node_ids(doc: &MindMapDocument) -> (String, String) {
+    let mut iter = doc.mindmap.nodes.keys();
+    let a = iter.next().expect("testament map has at least one node").clone();
+    let b = iter.next().expect("testament map has at least two nodes").clone();
+    (a, b)
+}
+
 /// Pick the first visible edge and return its EdgeRef + a guaranteed
 /// on-path sample point. Used by hit-test edge tests.
 pub(super) fn pick_test_edge(doc: &MindMapDocument) -> (super::EdgeRef, glam::Vec2) {

@@ -211,9 +211,7 @@ mod tests {
         // pointing each at the other as parent. `children_of` scans
         // `nodes.values().filter(|n| n.parent_id == Some(parent))`,
         // so this creates `A → B → A → ...` for the BFS.
-        let mut ids = doc.mindmap.nodes.keys().cloned();
-        let a = ids.next().expect("fixture has at least one node");
-        let b = ids.next().expect("fixture has at least two nodes");
+        let (a, b) = crate::application::document::tests_common::two_testament_node_ids(&doc);
         doc.mindmap.nodes.get_mut(&a).unwrap().parent_id = Some(b.clone());
         doc.mindmap.nodes.get_mut(&b).unwrap().parent_id = Some(a.clone());
         // Seed the BFS at one of the cycle nodes so the loop can
