@@ -8,29 +8,16 @@
 
 use crate::application::console::parser::{tokenize, Args};
 use crate::application::console::{ConsoleEffects, ExecResult};
+use crate::application::document::tests_common::{
+    first_testament_node_id as first_node_id,
+    load_test_doc as fixture_doc,
+};
 use crate::application::document::{MindMapDocument, SelectionState};
-
-/// Load the testament map fresh per test so mutation isn't
-/// shared. Routes through the process-wide cache in
-/// `document::tests_common::load_test_doc` — see that doc for
-/// the FONT_SYSTEM-lock-contention rationale.
-fn fixture_doc() -> MindMapDocument {
-    crate::application::document::tests_common::load_test_doc()
-}
 
 fn run(line: &str, doc: &mut MindMapDocument) -> ExecResult {
     let toks = tokenize(line);
     let mut eff = ConsoleEffects::new(doc);
     super::execute_border(&Args::new(&toks[1..]), &mut eff)
-}
-
-fn first_node_id(doc: &MindMapDocument) -> String {
-    doc.mindmap
-        .nodes
-        .keys()
-        .next()
-        .cloned()
-        .expect("testament map has nodes")
 }
 
 #[test]

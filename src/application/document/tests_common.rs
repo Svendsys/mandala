@@ -64,10 +64,20 @@ pub(super) fn load_test_tree() -> MindMapTree {
     load_test_doc().build_tree()
 }
 
-/// Pick a stable node id from the testament map that has a real
-/// text value. The root node id is well-known from other tests.
-pub(super) fn first_testament_node_id(_doc: &MindMapDocument) -> String {
-    "0".to_string()
+/// Pick the first node id the testament map's loader exposes
+/// from its `nodes` HashMap. Stable within one process because
+/// the cached fixture clone is the same `MindMap` every call.
+/// Used by tests that just need *some* node to operate on; tests
+/// that want the well-known root specifically should index by
+/// `"0"` directly so the dependency on the testament shape is
+/// visible at the call site.
+pub(crate) fn first_testament_node_id(doc: &MindMapDocument) -> String {
+    doc.mindmap
+        .nodes
+        .keys()
+        .next()
+        .cloned()
+        .expect("testament map has nodes")
 }
 
 /// Pick the first visible edge and return its EdgeRef + a guaranteed

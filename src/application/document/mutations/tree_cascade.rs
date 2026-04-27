@@ -124,11 +124,7 @@ mod tests {
     const FIXTURE_MIN_CHILDREN: usize = 4;
 
     fn test_doc() -> (MindMapDocument, String) {
-        let path = format!(
-            "{}/maps/testament.mindmap.json",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        let doc = MindMapDocument::load(&path).expect("testament loads");
+        let doc = crate::application::document::tests_common::load_test_doc();
         let count = doc.mindmap.children_of(FIXTURE_PARENT_ID).len();
         assert!(
             count >= FIXTURE_MIN_CHILDREN,
@@ -187,11 +183,7 @@ mod tests {
 
     #[test]
     fn apply_on_leaf_is_noop() {
-        let path = format!(
-            "{}/maps/testament.mindmap.json",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        let mut doc = MindMapDocument::load(&path).unwrap();
+        let mut doc = crate::application::document::tests_common::load_test_doc();
         let leaf = doc
             .mindmap
             .nodes
@@ -214,11 +206,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "tree-cascade BFS exceeded")]
     fn cycle_in_parent_links_panics_instead_of_freezing() {
-        let path = format!(
-            "{}/maps/testament.mindmap.json",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        let mut doc = MindMapDocument::load(&path).unwrap();
+        let mut doc = crate::application::document::tests_common::load_test_doc();
         // Pick any two distinct nodes and wire them into a cycle by
         // pointing each at the other as parent. `children_of` scans
         // `nodes.values().filter(|n| n.parent_id == Some(parent))`,

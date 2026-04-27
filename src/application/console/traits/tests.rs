@@ -101,18 +101,7 @@ fn test_clipboard_content_eq() {
 // here we cover the dispatcher mechanics directly via a stub
 // closure that doesn't touch the doc.
 
-use crate::application::document::MindMapDocument;
-
-/// Load a fresh testament-map doc — same fixture pattern other
-/// tests in this crate use. The closure-based op never reads the
-/// doc, so any well-formed fixture works.
-fn fresh_doc() -> MindMapDocument {
-    let path = format!(
-        "{}/maps/testament.mindmap.json",
-        env!("CARGO_MANIFEST_DIR")
-    );
-    MindMapDocument::load(&path).expect("testament map loads")
-}
+use crate::application::document::tests_common::load_test_doc as fresh_doc;
 
 #[test]
 fn test_apply_to_targets_empty_selection_reports_no_target() {

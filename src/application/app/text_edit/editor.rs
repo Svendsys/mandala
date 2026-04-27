@@ -478,16 +478,10 @@ mod tests {
     //! `Assign`-delta contract without needing a live `Renderer`.
 
     use super::*;
+    use crate::application::document::tests_common::test_map_path;
     use baumhard::core::primitives::{ColorFontRegion, ColorFontRegions, Range};
     use baumhard::mindmap::loader;
     use baumhard::mindmap::tree_builder::build_mindmap_tree;
-    use std::path::PathBuf;
-
-    fn test_map_path() -> PathBuf {
-        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        path.push("maps/testament.mindmap.json");
-        path
-    }
 
     /// Build a fresh tree from the testament map and pick the first
     /// node id whose `GlyphArea::text` is non-empty — we need a
