@@ -74,22 +74,31 @@ pub(super) fn walk_tree_into_buffers(
 
         if let Some(color) = area.background_color {
             // Inflate the fill rect outward by `background_padding`
-            // — per-edge values so framed nodes whose top/bottom
-            // border extents differ (top pulled inward by
-            // `corner_overlap`, bottom extends 1.5·fs - corner_overlap
-            // below the rect) get an asymmetric fill that matches the
-            // visible border cell edges. `EdgePadding::ZERO` for
-            // areas without a border keeps the historical behaviour
-            // (background coincides with the text rect).
+            // — per-edge values so framed nodes whose four border
+            // runs sit at different visible-stroke offsets get an
+            // asymmetric fill that matches each side. The `is_zero`
+            // fast-path skips the four-add arithmetic for unframed
+            // nodes (the common case): `EdgePadding::ZERO` means
+            // the fill coincides with the text rect, the historical
+            // behaviour, so we can read `position` / `render_bounds`
+            // straight through.
             let pad = area.background_padding;
             let pos = Vec2::new(area.position.x.0, area.position.y.0);
             let size = Vec2::new(area.render_bounds.x.0, area.render_bounds.y.0);
+            let (rect_pos, rect_size) = if pad.is_zero() {
+                (pos, size)
+            } else {
+                (
+                    Vec2::new(pos.x - pad.left(), pos.y - pad.top()),
+                    Vec2::new(
+                        size.x + pad.left() + pad.right(),
+                        size.y + pad.top() + pad.bottom(),
+                    ),
+                )
+            };
             yield_background(NodeBackgroundRect {
-                position: Vec2::new(pos.x - pad.left(), pos.y - pad.top()) + offset,
-                size: Vec2::new(
-                    size.x + pad.left() + pad.right(),
-                    size.y + pad.top() + pad.bottom(),
-                ),
+                position: rect_pos + offset,
+                size: rect_size,
                 color,
                 shape_id: area.shape.shader_id(),
                 zoom_visibility: area.zoom_visibility,

@@ -553,6 +553,15 @@ pub fn measure_text_block_unbounded(
     // cosmic-text's default monospace and the box undersizes by
     // 30–60%. The family-name string must outlive `attrs`, so
     // we hold it in a local binding.
+    //
+    // The four `?` short-circuits (missing AppFont, empty id list,
+    // fontdb face miss, empty families list) all silently fall
+    // back to the cosmic-text default — same monospace fallback
+    // the shaper uses if the family pin fails to resolve, so the
+    // floor we measure matches what the user will eventually see.
+    // `build_family_index` warns and skips the same misses on the
+    // index-build side; the asymmetry is deliberate (warn once at
+    // build, degrade gracefully at every measure).
     let family_name: Option<String> = font.and_then(|app_font| {
         let ids = COMPILED_FONT_ID_MAP.get(&app_font)?;
         let face = font_system.db().face(*ids.first()?)?;
