@@ -143,19 +143,7 @@ impl ThrottledInteraction for MovingNodeInteraction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
-
-    /// Push the throttle's moving average over budget until `n > 1`.
-    /// Separated from the trait tests' helper so each per-interaction
-    /// suite is self-contained.
-    fn drive_throttle_over_budget(t: &mut MutationFrequencyThrottle) -> u32 {
-        for _ in 0..80 {
-            if t.should_drain() {
-                t.record_work_duration(Duration::from_micros(50_000));
-            }
-        }
-        t.current_n()
-    }
+    use crate::application::app::throttled_interaction::test_utils::drive_throttle_over_budget;
 
     #[test]
     fn test_new_initialises_fields_with_zero_deltas() {
@@ -222,56 +210,10 @@ mod tests {
         assert!(i.individual);
     }
 
-    #[test]
-    fn test_should_perform_drain_false_when_idle() {
-        let mut i = MovingNodeInteraction::new(vec!["n".into()], false);
-        assert!(!i.should_perform_drain());
-    }
-
-    #[test]
-    fn test_should_perform_drain_true_when_pending_and_throttle_fresh() {
-        let mut i = MovingNodeInteraction::new(vec!["n".into()], false);
-        i.pending_delta = Vec2::new(1.0, 0.0);
-        assert!(i.should_perform_drain());
-    }
-
-    #[test]
-    fn test_should_perform_drain_false_when_throttle_skipping() {
-        // Throttle cadence under sustained over-budget load: at n > 1,
-        // should_perform_drain must return false on the skipped frames
-        // even when pending_delta is non-zero.
-        let mut i = MovingNodeInteraction::new(vec!["n".into()], false);
-        drive_throttle_over_budget(&mut i.throttle);
-        assert!(i.throttle.current_n() > 1);
-
-        let n = i.throttle.current_n() as usize;
-        i.pending_delta = Vec2::new(1.0, 0.0);
-        let mut saw_skip = false;
-        for _ in 0..(n * 2) {
-            if !i.should_perform_drain() {
-                saw_skip = true;
-            }
-            // Keep n stable while probing cadence.
-            i.throttle.record_work_duration(Duration::from_micros(50_000));
+    crate::application::app::throttled_interaction::test_utils::trait_default_tests_for_throttled_interaction! {
+        build = || MovingNodeInteraction::new(vec!["n".into()], false),
+        set_pending = |i: &mut MovingNodeInteraction| {
             i.pending_delta = Vec2::new(1.0, 0.0);
-        }
-        assert!(saw_skip, "expected at least one skipped drain at n > 1");
-    }
-
-    #[test]
-    fn test_idle_should_perform_drain_does_not_advance_throttle() {
-        // Invariant — if should_perform_drain consulted should_drain
-        // first, this would be off by n: several idle calls would
-        // advance `frames_since_drain` and the next pending tick
-        // would skip instead of drain.
-        let mut i = MovingNodeInteraction::new(vec!["n".into()], false);
-        for _ in 0..5 {
-            assert!(!i.should_perform_drain());
-        }
-        i.pending_delta = Vec2::new(1.0, 0.0);
-        assert!(
-            i.should_perform_drain(),
-            "first pending tick after idles must drain: throttle counter advanced anyway"
-        );
+        },
     }
 }

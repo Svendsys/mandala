@@ -4,7 +4,7 @@
 //! channel alignment, and instruction processing (§T1).
 
 use crate::font::fonts;
-use crate::gfx_structs::area::{GlyphArea, GlyphAreaCommand, GlyphAreaField};
+use crate::gfx_structs::area::{GlyphAreaCommand, GlyphAreaField};
 use crate::gfx_structs::element::{GfxElement, GfxElementField};
 use crate::gfx_structs::mutator::Instruction::RepeatWhile;
 use crate::gfx_structs::mutator::{GfxMutator, Mutation};
@@ -24,32 +24,7 @@ use indextree::NodeId;
 // also the building blocks for the focused mutation tests at the bottom of
 // this file.
 
-/// Build a `GfxElement::GlyphArea` at the given canvas position with the
-/// provided channel and unique id. All other fields use sensible defaults
-/// (scale 1.0, line_height 10, bounds 100x100).
-fn mk_area(x: f32, y: f32, channel: usize, unique_id: usize) -> GfxElement {
-    GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new(1.0, 10.0, Vec2::new(x, y), Vec2::new(100.0, 100.0)),
-        channel,
-        unique_id,
-    )
-}
-
-/// Allocate a new `GlyphArea` element in `model`, append it to `parent`, and
-/// return its `NodeId`. Collapses the 4-line arena-then-append dance used in
-/// the hand-written tests into one call.
-fn append_area(
-    model: &mut Tree<GfxElement, GfxMutator>,
-    parent: NodeId,
-    x: f32,
-    y: f32,
-    channel: usize,
-    unique_id: usize,
-) -> NodeId {
-    let id = model.arena.new_node(mk_area(x, y, channel, unique_id));
-    parent.append(id, &mut model.arena);
-    id
-}
+use crate::gfx_structs::tests::fixtures::{append_area, mk_area};
 
 /// Assert the canvas position of the node at `id`. Replaces the pair of
 /// `assert_eq!(... .position().x, ...)` / `.position().y` lines that the

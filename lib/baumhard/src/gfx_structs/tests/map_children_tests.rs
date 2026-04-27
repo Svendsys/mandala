@@ -13,11 +13,10 @@
 //! Follows the `do_*()` / `test_*()` benchmark-reuse split (§T2.2) so
 //! future criterion benches can reuse the bodies.
 
-use glam::Vec2;
 use indextree::NodeId;
 
 use crate::font::fonts;
-use crate::gfx_structs::area::{GlyphArea, GlyphAreaCommand};
+use crate::gfx_structs::area::GlyphAreaCommand;
 use crate::gfx_structs::element::GfxElement;
 use crate::gfx_structs::mutator::{GfxMutator, Instruction, Mutation};
 use crate::gfx_structs::tree::{MutatorTree, Tree};
@@ -27,26 +26,7 @@ use crate::gfx_structs::tree_walker::walk_tree_from;
 // Shared helpers
 // ---------------------------------------------------------------------------
 
-fn mk_area(x: f32, y: f32, channel: usize, unique_id: usize) -> GfxElement {
-    GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new(1.0, 10.0, Vec2::new(x, y), Vec2::new(100.0, 100.0)),
-        channel,
-        unique_id,
-    )
-}
-
-fn append_area(
-    model: &mut Tree<GfxElement, GfxMutator>,
-    parent: NodeId,
-    x: f32,
-    y: f32,
-    channel: usize,
-    unique_id: usize,
-) -> NodeId {
-    let id = model.arena.new_node(mk_area(x, y, channel, unique_id));
-    parent.append(id, &mut model.arena);
-    id
-}
+use crate::gfx_structs::tests::fixtures::{append_area, mk_area};
 
 /// Build a target tree: root at (0, 0) on channel 0, with `n` children
 /// at (100, i*10), channels from `channels`. Returns (tree, child ids

@@ -60,7 +60,7 @@ mod state;
 mod targets;
 
 #[cfg(test)]
-mod tests;
+pub(in crate::application) mod tests;
 
 pub use compute::compute_color_picker_layout;
 pub use geometry::ColorPickerOverlayGeometry;

@@ -101,11 +101,7 @@ mod tests {
     const FIXTURE_MIN_CHILDREN: usize = 4;
 
     fn test_doc_with_children() -> (MindMapDocument, String, Vec<String>) {
-        let path = format!(
-            "{}/maps/testament.mindmap.json",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        let doc = MindMapDocument::load(&path).expect("testament loads");
+        let doc = crate::application::document::tests_common::load_test_doc();
         let child_ids: Vec<String> = doc
             .mindmap
             .children_of(FIXTURE_PARENT_ID)
@@ -181,11 +177,7 @@ mod tests {
 
     #[test]
     fn apply_on_leaf_node_is_noop() {
-        let path = format!(
-            "{}/maps/testament.mindmap.json",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        let mut doc = MindMapDocument::load(&path).unwrap();
+        let mut doc = crate::application::document::tests_common::load_test_doc();
         let leaf = doc
             .mindmap
             .nodes

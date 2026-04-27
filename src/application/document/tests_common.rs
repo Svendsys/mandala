@@ -64,10 +64,46 @@ pub(super) fn load_test_tree() -> MindMapTree {
     load_test_doc().build_tree()
 }
 
-/// Pick a stable node id from the testament map that has a real
-/// text value. The root node id is well-known from other tests.
-pub(super) fn first_testament_node_id(_doc: &MindMapDocument) -> String {
-    "0".to_string()
+/// Pick the first node id the testament map's loader exposes
+/// from its `nodes` HashMap. Stable within one process because
+/// the cached fixture clone is the same `MindMap` every call.
+/// Used by tests that just need *some* node to operate on; tests
+/// that want the well-known root specifically should index by
+/// `"0"` directly so the dependency on the testament shape is
+/// visible at the call site.
+pub(in crate::application) fn first_testament_node_id(doc: &MindMapDocument) -> String {
+    doc.mindmap
+        .nodes
+        .keys()
+        .next()
+        .cloned()
+        .expect("testament map has nodes")
+}
+
+/// Pick the first `n` node ids from the testament map. Used by
+/// multi-selection fanout tests that want a `Multi(ids)`
+/// selection of arbitrary cardinality without picking specific
+/// ids. Panics if the map has fewer than `n` nodes — the testament
+/// fixture is large enough that any reasonable `n` succeeds.
+pub(in crate::application) fn first_n_testament_node_ids(doc: &MindMapDocument, n: usize) -> Vec<String> {
+    let ids: Vec<String> = doc.mindmap.nodes.keys().take(n).cloned().collect();
+    assert!(
+        ids.len() == n,
+        "testament map has {} nodes; needed {}",
+        ids.len(),
+        n
+    );
+    ids
+}
+
+/// Pick two distinct node ids in `(a, b)` form — the shape
+/// portal-edge / cross-link tests want when they need a
+/// from-and-to pair without caring which specific nodes those are.
+pub(in crate::application) fn two_testament_node_ids(doc: &MindMapDocument) -> (String, String) {
+    let mut iter = doc.mindmap.nodes.keys();
+    let a = iter.next().expect("testament map has at least one node").clone();
+    let b = iter.next().expect("testament map has at least two nodes").clone();
+    (a, b)
 }
 
 /// Pick the first visible edge and return its EdgeRef + a guaranteed
@@ -98,4 +134,100 @@ pub(super) fn pick_test_edge(doc: &MindMapDocument) -> (super::EdgeRef, glam::Ve
 pub(super) fn first_testament_edge_ref(doc: &MindMapDocument) -> super::EdgeRef {
     let e = doc.mindmap.edges.first().expect("testament map has edges");
     super::EdgeRef::new(&e.from_id, &e.to_id, &e.edge_type)
+}
+
+/// Builder for a `CustomMutation` carrying a single `NudgeRight`
+/// area command. Replaces three near-identical local factories
+/// that diverged only in default magnitude (`make_test_mutation`
+/// at 10.0, `make_cm` at 1.0, `make_animated_mutation` at 100.0)
+/// and a four-position positional helper that grew thin per-call-
+/// site wrappers everywhere it landed.
+///
+/// Two required fields (`id`, `scope`); everything else has a
+/// default and a chainable setter. Each setter takes `self` by
+/// value and returns `Self`, so call sites read as a fluent chain
+/// terminating in `.build()`:
+///
+/// ```ignore
+/// let cm = TestNudgeMutation::new("nudge", TargetScope::SelfOnly)
+///     .magnitude(10.0)
+///     .build();
+/// ```
+///
+/// Cost: trivial — one struct instantiation + one
+/// `CustomMutation` build per `.build()`.
+pub(in crate::application) struct TestNudgeMutation {
+    id: String,
+    scope: baumhard::mindmap::custom_mutation::TargetScope,
+    magnitude: f32,
+    contexts: Vec<String>,
+    description: String,
+    timing: Option<baumhard::mindmap::animation::AnimationTiming>,
+}
+
+impl TestNudgeMutation {
+    /// Start a builder with the required `id` and target scope.
+    /// Magnitude defaults to 1.0; everything else empty / `None`.
+    pub(in crate::application) fn new(
+        id: &str,
+        scope: baumhard::mindmap::custom_mutation::TargetScope,
+    ) -> Self {
+        Self {
+            id: id.to_string(),
+            scope,
+            magnitude: 1.0,
+            contexts: Vec::new(),
+            description: String::new(),
+            timing: None,
+        }
+    }
+
+    /// Override the `NudgeRight` magnitude in canvas pixels.
+    pub(in crate::application) fn magnitude(mut self, magnitude: f32) -> Self {
+        self.magnitude = magnitude;
+        self
+    }
+
+    /// Replace the `contexts` list (default empty).
+    pub(in crate::application) fn contexts(mut self, contexts: Vec<String>) -> Self {
+        self.contexts = contexts;
+        self
+    }
+
+    /// Replace the `description` field (default empty).
+    pub(in crate::application) fn description(mut self, description: &str) -> Self {
+        self.description = description.to_string();
+        self
+    }
+
+    /// Attach an `AnimationTiming` so the mutation becomes
+    /// animated. Default `None` produces an instant mutation.
+    pub(in crate::application) fn timing(
+        mut self,
+        timing: baumhard::mindmap::animation::AnimationTiming,
+    ) -> Self {
+        self.timing = Some(timing);
+        self
+    }
+
+    /// Materialise the `CustomMutation`. Consumes the builder.
+    pub(in crate::application) fn build(self) -> baumhard::mindmap::custom_mutation::CustomMutation {
+        use baumhard::gfx_structs::area::GlyphAreaCommand;
+        use baumhard::gfx_structs::mutator::Mutation;
+        use baumhard::mindmap::custom_mutation::{CustomMutation, MutationBehavior};
+        CustomMutation {
+            id: self.id.clone(),
+            name: self.id,
+            description: self.description,
+            contexts: self.contexts,
+            mutator: Some(baumhard::mindmap::custom_mutation::scope::self_only(vec![
+                Mutation::area_command(GlyphAreaCommand::NudgeRight(self.magnitude)),
+            ])),
+            target_scope: self.scope,
+            behavior: MutationBehavior::Persistent,
+            predicate: None,
+            document_actions: vec![],
+            timing: self.timing,
+        }
+    }
 }

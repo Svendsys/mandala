@@ -828,20 +828,10 @@ fn set_node_style_field(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::document::MindMapDocument;
-
-    fn fixture_doc() -> MindMapDocument {
-        super::super::tests_common::load_test_doc()
-    }
-
-    fn first_node_id(doc: &MindMapDocument) -> String {
-        doc.mindmap
-            .nodes
-            .keys()
-            .next()
-            .cloned()
-            .expect("testament map has nodes")
-    }
+    use crate::application::document::tests_common::{
+        first_testament_node_id as first_node_id,
+        load_test_doc as fixture_doc,
+    };
 
     /// `BorderConfigEdits::with_side_pattern` validates the
     /// pattern *before* mutating the bundle — a parse error

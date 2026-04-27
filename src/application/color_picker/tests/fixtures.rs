@@ -9,7 +9,7 @@ use crate::application::color_picker::{
     ColorPickerOverlayGeometry, CROSSHAIR_CENTER_CELL,
 };
 
-pub(super) fn sample_geometry() -> ColorPickerOverlayGeometry {
+pub(in crate::application) fn sample_geometry() -> ColorPickerOverlayGeometry {
     // Plausible stub advances measured at a notional 16 pt
     // baseline. cell ratio = 1.0 (worst-case sacred-script-ish),
     // ring ratio = 0.7 (typical at ring_scale = 1.7). The

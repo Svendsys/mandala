@@ -71,6 +71,7 @@ pub(in crate::application::app) mod edge_handle;
 pub(in crate::application::app) mod edge_label;
 pub(in crate::application::app) mod moving_node;
 pub(in crate::application::app) mod portal_label;
+#[cfg(test)]
 mod test_utils;
 
 pub(in crate::application::app) use color_picker_hover::ColorPickerHoverInteraction;

@@ -16,7 +16,7 @@
 //! - [`state`] — channel ordering, dynamic-apply short-circuit key,
 //!   resize-gesture math.
 
-mod fixtures;
+pub(in crate::application) mod fixtures;
 
 mod cell_math;
 mod clipboard;

@@ -23,6 +23,29 @@ use crate::gfx_structs::predicate::Predicate;
 use crate::gfx_structs::tree::{MutatorTree, Tree};
 use crate::util::geometry::almost_equal;
 
+/// Build a single `GfxElement::GlyphArea` for tests that need one
+/// subject element with explicit text + scale + font_size + canvas
+/// placement. Channel and unique_id default to 0 — every `do_*` body
+/// in this file uses the trivial values; tests that want different
+/// channels (e.g. the multi-node tree-walker shape) construct the
+/// element directly. `fonts::init()` is folded in so the bench
+/// harness keeps each `do_*` body self-contained without restating
+/// the preamble at every call site.
+fn subject_area_element(
+    text: &str,
+    scale: f32,
+    font_size: f32,
+    pos: Vec2,
+    size: Vec2,
+) -> GfxElement {
+    fonts::init();
+    GfxElement::new_area_non_indexed_with_id(
+        GlyphArea::new_with_str(text, scale, font_size, pos, size),
+        0,
+        0,
+    )
+}
+
 // ── Mutation::AreaDelta ────────────────────────────────────────────
 
 #[test]
@@ -33,18 +56,12 @@ fn test_mutation_area_delta_applies_field() {
 /// Construct a `GlyphArea` element, apply a `Mutation::AreaDelta`
 /// that adds to its position, and verify the position changed.
 pub fn do_mutation_area_delta_applies_field() {
-    fonts::init();
-
-    let mut element = GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "hello",
-            1.0,
-            10.0,
-            Vec2::new(10.0, 20.0),
-            Vec2::new(100.0, 50.0),
-        ),
-        0,
-        0,
+    let mut element = subject_area_element(
+        "hello",
+        1.0,
+        10.0,
+        Vec2::new(10.0, 20.0),
+        Vec2::new(100.0, 50.0),
     );
 
     // Position starts at (10, 20).
@@ -82,18 +99,12 @@ fn test_mutation_area_command_nudge_right() {
 /// Apply a `NudgeRight` command and verify the x position shifted
 /// by the expected pixel delta.
 pub fn do_mutation_area_command_nudge_right() {
-    fonts::init();
-
-    let mut element = GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "nudge",
-            1.0,
-            10.0,
-            Vec2::new(50.0, 50.0),
-            Vec2::new(100.0, 50.0),
-        ),
-        0,
-        0,
+    let mut element = subject_area_element(
+        "nudge",
+        1.0,
+        10.0,
+        Vec2::new(50.0, 50.0),
+        Vec2::new(100.0, 50.0),
     );
 
     let original_x = element.position().x;
@@ -126,18 +137,12 @@ fn test_mutation_noop_leaves_tree_unchanged() {
 
 /// Apply `Mutation::None` to an element and verify nothing changed.
 pub fn do_mutation_noop_leaves_tree_unchanged() {
-    fonts::init();
-
-    let mut element = GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "stable",
-            2.0,
-            12.0,
-            Vec2::new(30.0, 40.0),
-            Vec2::new(200.0, 100.0),
-        ),
-        0,
-        0,
+    let mut element = subject_area_element(
+        "stable",
+        2.0,
+        12.0,
+        Vec2::new(30.0, 40.0),
+        Vec2::new(200.0, 100.0),
     );
 
     let pos_before = element.position();
@@ -252,18 +257,12 @@ fn test_instruction_rotate_while() {
 /// delivers its attached `mutation` field to the target element. The
 /// rotation instruction itself is a no-op today.
 pub fn do_instruction_rotate_while() {
-    fonts::init();
-
-    let mut element = GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "rotate",
-            1.0,
-            10.0,
-            Vec2::new(20.0, 30.0),
-            Vec2::new(100.0, 50.0),
-        ),
-        0,
-        0,
+    let mut element = subject_area_element(
+        "rotate",
+        1.0,
+        10.0,
+        Vec2::new(20.0, 30.0),
+        Vec2::new(100.0, 50.0),
     );
 
     // Build an Instruction::RotateWhile mutator with an attached
@@ -397,18 +396,12 @@ fn test_mutator_macro_applies_all_mutations_in_order() {
 /// entries so the assertion proves *both* ran — a single-apply bug
 /// would leave one component short of the summed delta.
 pub fn do_mutator_macro_applies_all_mutations_in_order() {
-    fonts::init();
-
-    let mut element = GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "macro",
-            1.0,
-            10.0,
-            Vec2::new(0.0, 0.0),
-            Vec2::new(100.0, 50.0),
-        ),
-        0,
-        0,
+    let mut element = subject_area_element(
+        "macro",
+        1.0,
+        10.0,
+        Vec2::new(0.0, 0.0),
+        Vec2::new(100.0, 50.0),
     );
 
     let first = Mutation::area_delta(DeltaGlyphArea::new(vec![
@@ -446,18 +439,12 @@ fn test_mutator_macro_empty_is_noop() {
 /// empty-vec `Macro` is a valid carrier even if nothing inside it
 /// fires.
 pub fn do_mutator_macro_empty_is_noop() {
-    fonts::init();
-
-    let mut element = GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "empty",
-            1.0,
-            10.0,
-            Vec2::new(15.0, 25.0),
-            Vec2::new(100.0, 50.0),
-        ),
-        0,
-        0,
+    let mut element = subject_area_element(
+        "empty",
+        1.0,
+        10.0,
+        Vec2::new(15.0, 25.0),
+        Vec2::new(100.0, 50.0),
     );
     let before = element.position();
     let text_before = element.glyph_area().unwrap().text.clone();
@@ -481,18 +468,12 @@ fn test_mutator_void_is_noop_when_applied_directly() {
 /// placeholder in a `MutatorTree` can never corrupt the target that
 /// happens to align under it.
 pub fn do_mutator_void_is_noop_when_applied_directly() {
-    fonts::init();
-
-    let mut element = GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "void",
-            1.0,
-            10.0,
-            Vec2::new(42.0, 17.0),
-            Vec2::new(100.0, 50.0),
-        ),
-        0,
-        0,
+    let mut element = subject_area_element(
+        "void",
+        1.0,
+        10.0,
+        Vec2::new(42.0, 17.0),
+        Vec2::new(100.0, 50.0),
     );
     let before = element.position();
     let text_before = element.glyph_area().unwrap().text.clone();

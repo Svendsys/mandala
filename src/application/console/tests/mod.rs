@@ -20,7 +20,7 @@ mod applicability;
 mod clipboard;
 mod commands;
 mod completion;
-mod fixtures;
+pub(in crate::application::console) mod fixtures;
 mod grapheme;
 mod multi_fanout;
 mod state;

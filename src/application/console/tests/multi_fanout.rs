@@ -5,7 +5,7 @@
 //! selected target and that NotApplicable propagates correctly when
 //! the bound trait doesn't match the target type.
 
-use super::fixtures::{load_test_doc, run};
+use super::fixtures::{first_node_id, load_test_doc, run, two_testament_node_ids};
 use crate::application::console::ExecResult;
 use crate::application::document::SelectionState;
 
@@ -15,9 +15,7 @@ use crate::application::document::SelectionState;
 #[test]
 fn test_color_bg_fans_out_across_multi_selection() {
     let mut doc = load_test_doc();
-    let mut ids = doc.mindmap.nodes.keys().cloned();
-    let a = ids.next().unwrap();
-    let b = ids.next().unwrap();
+    let (a, b) = two_testament_node_ids(&doc);
     doc.selection = SelectionState::Multi(vec![a.clone(), b.clone()]);
     doc.undo_stack.clear();
     let _ = run("color bg=#402030", &mut doc);
@@ -33,7 +31,7 @@ fn test_color_bg_fans_out_across_multi_selection() {
 #[test]
 fn test_label_text_kv_not_applicable_on_node_selection() {
     let mut doc = load_test_doc();
-    let nid = doc.mindmap.nodes.keys().next().unwrap().clone();
+    let nid = first_node_id(&doc);
     doc.selection = SelectionState::Single(nid);
     let result = run(r#"label text="hello""#, &mut doc);
     // Dispatcher reports the single pair as NotApplicable; with

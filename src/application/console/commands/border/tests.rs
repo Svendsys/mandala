@@ -6,32 +6,15 @@
 //! `execute_border`, assert on `ExecResult` and the resulting
 //! model fields.
 
-use crate::application::console::parser::{tokenize, Args};
-use crate::application::console::{ConsoleEffects, ExecResult};
+use crate::application::console::tests::fixtures::{
+    assert_exec_err_contains, assert_exec_ok, join_lines, run,
+};
+use crate::application::console::ExecResult;
+use crate::application::document::tests_common::{
+    first_testament_node_id as first_node_id,
+    load_test_doc as fixture_doc,
+};
 use crate::application::document::{MindMapDocument, SelectionState};
-
-/// Load the testament map fresh per test so mutation isn't
-/// shared. Routes through the process-wide cache in
-/// `document::tests_common::load_test_doc` — see that doc for
-/// the FONT_SYSTEM-lock-contention rationale.
-fn fixture_doc() -> MindMapDocument {
-    crate::application::document::tests_common::load_test_doc()
-}
-
-fn run(line: &str, doc: &mut MindMapDocument) -> ExecResult {
-    let toks = tokenize(line);
-    let mut eff = ConsoleEffects::new(doc);
-    super::execute_border(&Args::new(&toks[1..]), &mut eff)
-}
-
-fn first_node_id(doc: &MindMapDocument) -> String {
-    doc.mindmap
-        .nodes
-        .keys()
-        .next()
-        .cloned()
-        .expect("testament map has nodes")
-}
 
 #[test]
 fn border_on_then_off_toggles_show_frame() {
@@ -40,15 +23,9 @@ fn border_on_then_off_toggles_show_frame() {
     doc.selection = SelectionState::Single(id.clone());
     // Testament fixture defaults to show_frame=false; turn on
     // first, then back off, and assert each leg actually moved.
-    match run("border on", &mut doc) {
-        ExecResult::Ok(_) => {}
-        other => panic!("expected Ok, got {:?}", other),
-    }
+    assert_exec_ok(run("border on", &mut doc));
     assert!(doc.mindmap.nodes.get(&id).unwrap().style.show_frame);
-    match run("border off", &mut doc) {
-        ExecResult::Ok(_) => {}
-        other => panic!("expected Ok, got {:?}", other),
-    }
+    assert_exec_ok(run("border off", &mut doc));
     assert!(!doc.mindmap.nodes.get(&id).unwrap().style.show_frame);
 }
 
@@ -57,10 +34,7 @@ fn border_preset_writes_field() {
     let mut doc = fixture_doc();
     let id = first_node_id(&doc);
     doc.selection = SelectionState::Single(id.clone());
-    match run("border preset=heavy", &mut doc) {
-        ExecResult::Ok(_) => {}
-        other => panic!("expected Ok, got {:?}", other),
-    }
+    assert_exec_ok(run("border preset=heavy", &mut doc));
     let cfg = doc
         .mindmap
         .nodes
@@ -88,11 +62,7 @@ fn border_preset_custom_alone_emits_glyph_field_hint() {
         ExecResult::Lines(rows) => rows,
         other => panic!("expected Lines for the hint output, got {:?}", other),
     };
-    let blob = lines
-        .iter()
-        .map(|l| l.text.as_str())
-        .collect::<Vec<_>>()
-        .join("\n");
+    let blob = join_lines(&lines);
     assert!(
         blob.contains("preset=custom"),
         "expected the readout to mention preset=custom; got: {}",
@@ -123,11 +93,7 @@ fn border_preset_custom_with_glyph_field_skips_hint() {
         ExecResult::Ok(_) => return, // no hint at all is also fine
         other => panic!("expected Ok / Lines, got {:?}", other),
     };
-    let blob = lines
-        .iter()
-        .map(|l| l.text.as_str())
-        .collect::<Vec<_>>()
-        .join("\n");
+    let blob = join_lines(&lines);
     // The hint string identifies itself via "preset=custom" plus a
     // catalogue of side / corner keys joined together. Confirm that
     // *catalogue text* doesn't appear when at least one glyph
@@ -160,10 +126,7 @@ fn border_pattern_promotes_preset_to_custom() {
     let mut doc = fixture_doc();
     let id = first_node_id(&doc);
     doc.selection = SelectionState::Single(id.clone());
-    match run("border top=\"###(*)###\"", &mut doc) {
-        ExecResult::Ok(_) => {}
-        other => panic!("expected Ok, got {:?}", other),
-    }
+    assert_exec_ok(run("border top=\"###(*)###\"", &mut doc));
     let cfg = doc
         .mindmap
         .nodes
@@ -208,10 +171,7 @@ fn border_palette_records_palette_name() {
     doc.selection = SelectionState::Single(first_node_id(&doc));
     let palette_name = parser_friendly_palette_name(&doc);
     let line = format!("border palette={}", palette_name);
-    match run(&line, &mut doc) {
-        ExecResult::Ok(_) => {}
-        other => panic!("expected Ok, got {:?}", other),
-    }
+    assert_exec_ok(run(&line, &mut doc));
     let id = first_node_id(&doc);
     let cfg = doc
         .mindmap
@@ -254,11 +214,7 @@ fn border_show_emits_lines() {
             assert!(!rows.is_empty());
             // Every readout includes the visible / preset / size
             // header lines — sanity-check the labels.
-            let joined: String = rows
-                .iter()
-                .map(|l| l.text.clone())
-                .collect::<Vec<_>>()
-                .join("\n");
+            let joined = join_lines(&rows);
             assert!(joined.contains("preset:"));
             assert!(joined.contains("size:"));
             assert!(joined.contains("top:"));
@@ -271,10 +227,7 @@ fn border_show_emits_lines() {
 fn border_no_selection_errors() {
     let mut doc = fixture_doc();
     doc.selection = SelectionState::None;
-    match run("border preset=heavy", &mut doc) {
-        ExecResult::Err(s) => assert!(s.contains("no selection")),
-        other => panic!("expected Err, got {:?}", other),
-    }
+    assert_exec_err_contains(run("border preset=heavy", &mut doc), "no selection");
 }
 
 #[test]
@@ -295,13 +248,7 @@ fn border_grows_node_to_fit_static_parts() {
     doc.selection = SelectionState::Single(id.clone());
     // 10-cluster prefix and 10-cluster suffix → border floor is
     // wider than 10 px regardless of font size.
-    match run(
-        "border top=\"##########(*)##########\"",
-        &mut doc,
-    ) {
-        ExecResult::Ok(_) => {}
-        other => panic!("expected Ok, got {:?}", other),
-    }
+    assert_exec_ok(run("border top=\"##########(*)##########\"", &mut doc));
     let w = doc.mindmap.nodes.get(&id).unwrap().size.width;
     assert!(
         w > 10.0,
@@ -314,20 +261,14 @@ fn border_grows_node_to_fit_static_parts() {
 fn border_unknown_key_errors_with_pointer() {
     let mut doc = fixture_doc();
     doc.selection = SelectionState::Single(first_node_id(&doc));
-    match run("border bogus=1", &mut doc) {
-        ExecResult::Err(s) => assert!(s.contains("unknown key")),
-        other => panic!("expected Err, got {:?}", other),
-    }
+    assert_exec_err_contains(run("border bogus=1", &mut doc), "unknown key");
 }
 
 #[test]
 fn border_unknown_subverb_errors_clearly() {
     let mut doc = fixture_doc();
     doc.selection = SelectionState::Single(first_node_id(&doc));
-    match run("border frobnicate", &mut doc) {
-        ExecResult::Err(s) => assert!(s.contains("unknown subverb")),
-        other => panic!("expected Err, got {:?}", other),
-    }
+    assert_exec_err_contains(run("border frobnicate", &mut doc), "unknown subverb");
 }
 
 /// `border palette=My Palette` (unquoted multi-word value) tokenises
@@ -408,11 +349,7 @@ fn border_show_on_node_without_per_node_override() {
     doc.selection = SelectionState::Single(id);
     match run("border show", &mut doc) {
         ExecResult::Lines(rows) => {
-            let joined: String = rows
-                .iter()
-                .map(|l| l.text.clone())
-                .collect::<Vec<_>>()
-                .join("\n");
+            let joined = join_lines(&rows);
             // Padding line is now unconditional — confirm it
             // surfaces with the hardcoded floor.
             assert!(
@@ -445,11 +382,7 @@ fn border_preset_auto_promotion_is_announced() {
         &mut doc,
     ) {
         ExecResult::Lines(rows) => {
-            let joined: String = rows
-                .iter()
-                .map(|l| l.text.clone())
-                .collect::<Vec<_>>()
-                .join("\n");
+            let joined = join_lines(&rows);
             assert!(
                 joined.contains("auto-promoted") && joined.contains("'heavy'"),
                 "expected auto-promotion note mentioning 'heavy', got:\n{}",

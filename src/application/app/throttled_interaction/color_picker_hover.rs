@@ -21,7 +21,6 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use crate::application::frame_throttle::MutationFrequencyThrottle;
-use std::time::Duration;
 
 use super::super::color_picker_flow::rebuild_color_picker_overlay;
 use super::super::scene_rebuild::rebuild_scene_only;
@@ -116,7 +115,6 @@ impl ThrottledInteraction for ColorPickerHoverInteraction {
 mod tests {
     use super::*;
     use crate::application::app::throttled_interaction::test_utils::drive_throttle_over_budget;
-    use std::time::Duration;
 
     #[test]
     fn test_default_is_not_dirty() {
@@ -162,47 +160,13 @@ mod tests {
         assert!(i.dirty);
     }
 
-    #[test]
-    fn test_should_perform_drain_false_when_idle() {
-        let mut i = ColorPickerHoverInteraction::new();
-        assert!(!i.should_perform_drain());
-    }
-
-    #[test]
-    fn test_should_perform_drain_true_when_dirty_and_throttle_fresh() {
-        let mut i = ColorPickerHoverInteraction::new();
-        i.dirty = true;
-        assert!(i.should_perform_drain());
-    }
-
-    #[test]
-    fn test_should_perform_drain_false_when_throttle_skipping() {
-        let mut i = ColorPickerHoverInteraction::new();
-        drive_throttle_over_budget(&mut i.throttle);
-        assert!(i.throttle.current_n() > 1);
-
-        let n = i.throttle.current_n() as usize;
-        i.dirty = true;
-        let mut saw_skip = false;
-        for _ in 0..(n * 2) {
-            if !i.should_perform_drain() {
-                saw_skip = true;
-            }
-            i.throttle.record_work_duration(Duration::from_micros(50_000));
+    crate::application::app::throttled_interaction::test_utils::trait_default_tests_for_throttled_interaction! {
+        build = ColorPickerHoverInteraction::new,
+        set_pending = |i: &mut ColorPickerHoverInteraction| {
             i.dirty = true;
-        }
-        assert!(saw_skip);
+        },
     }
 
-    #[test]
-    fn test_idle_should_perform_drain_does_not_advance_throttle() {
-        let mut i = ColorPickerHoverInteraction::new();
-        for _ in 0..5 {
-            assert!(!i.should_perform_drain());
-        }
-        i.dirty = true;
-        assert!(i.should_perform_drain());
-    }
 
     #[test]
     fn test_canvas_needs_rebuild_false_by_default() {

@@ -2,7 +2,7 @@
 
 //! `apply_kvs` dispatcher aggregation tests.
 
-use super::fixtures::load_test_doc;
+use super::fixtures::{first_node_id, load_test_doc, two_testament_node_ids};
 use crate::application::console::traits::{apply_kvs, Outcome};
 use crate::application::document::SelectionState;
 
@@ -23,9 +23,7 @@ fn test_apply_kvs_with_no_selection_reports_no_target_and_fails() {
 #[test]
 fn test_apply_kvs_unknown_key_reported_once_per_pair() {
     let mut doc = load_test_doc();
-    let mut ids = doc.mindmap.nodes.keys().cloned();
-    let a = ids.next().unwrap();
-    let b = ids.next().unwrap();
+    let (a, b) = two_testament_node_ids(&doc);
     doc.selection = SelectionState::Multi(vec![a, b]);
     let kvs = vec![("bogus".to_string(), "x".to_string())];
     let seen_calls = std::cell::Cell::new(0usize);
@@ -45,9 +43,7 @@ fn test_apply_kvs_unknown_key_reported_once_per_pair() {
 #[test]
 fn test_apply_kvs_not_applicable_reported_when_no_target_applies() {
     let mut doc = load_test_doc();
-    let mut ids = doc.mindmap.nodes.keys().cloned();
-    let a = ids.next().unwrap();
-    let b = ids.next().unwrap();
+    let (a, b) = two_testament_node_ids(&doc);
     doc.selection = SelectionState::Multi(vec![a, b]);
     let kvs = vec![("text".to_string(), "accent".to_string())];
     let report = apply_kvs(&mut doc, &kvs, |_v, _k, _val| Some(Outcome::NotApplicable));
@@ -62,7 +58,7 @@ fn test_apply_kvs_not_applicable_reported_when_no_target_applies() {
 #[test]
 fn test_apply_kvs_all_applied_produces_no_messages() {
     let mut doc = load_test_doc();
-    let nid = doc.mindmap.nodes.keys().next().unwrap().clone();
+    let nid = first_node_id(&doc);
     doc.selection = SelectionState::Single(nid);
     let kvs = vec![("bg".to_string(), "#123".to_string())];
     let report = apply_kvs(&mut doc, &kvs, |_v, _k, _val| Some(Outcome::Applied));
@@ -75,7 +71,7 @@ fn test_apply_kvs_all_applied_produces_no_messages() {
 #[test]
 fn test_apply_kvs_invalid_is_reported_as_error_per_pair() {
     let mut doc = load_test_doc();
-    let nid = doc.mindmap.nodes.keys().next().unwrap().clone();
+    let nid = first_node_id(&doc);
     doc.selection = SelectionState::Single(nid);
     let kvs = vec![("size".to_string(), "nope".to_string())];
     let report = apply_kvs(&mut doc, &kvs, |_v, _k, val| {

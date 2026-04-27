@@ -8,7 +8,7 @@
 //! future refactor can't silently migrate a node's default to
 //! `text_color` or an edge's default to a non-existent `bg_color`.
 
-use super::fixtures::{load_test_doc, select_first_edge};
+use super::fixtures::{first_node_id, load_test_doc, select_first_edge, two_testament_node_ids};
 use crate::application::console::traits::{
     view_for, AcceptsWheelColor, ColorValue, Outcome, TargetId,
 };
@@ -19,7 +19,7 @@ use crate::application::document::EdgeRef;
 #[test]
 fn wheel_color_on_node_paints_background() {
     let mut doc = load_test_doc();
-    let nid = doc.mindmap.nodes.keys().next().unwrap().clone();
+    let nid = first_node_id(&doc);
     let tid = TargetId::Node(nid.clone());
     let outcome = {
         let mut view = view_for(&mut doc, &tid);
@@ -67,9 +67,7 @@ fn wheel_color_on_edge_paints_line() {
 #[test]
 fn wheel_color_on_portal_mode_edge_paints_through_edge_path() {
     let mut doc = load_test_doc();
-    let mut ids = doc.mindmap.nodes.keys().cloned();
-    let a = ids.next().unwrap();
-    let b = ids.next().unwrap();
+    let (a, b) = two_testament_node_ids(&doc);
     doc.create_portal_edge(&a, &b).unwrap();
     let er = EdgeRef::new(&a, &b, "cross_link");
     let tid = TargetId::Edge(er.clone());

@@ -369,11 +369,8 @@ fn source_label(s: &crate::application::document::mutations_loader::MutationSour
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::console::parser::tokenize;
     use crate::application::document::mutations_loader::MutationSource;
-    use baumhard::mindmap::custom_mutation::{
-        CustomMutation, MutationBehavior, TargetScope,
-    };
+    use baumhard::mindmap::custom_mutation::{CustomMutation, TargetScope};
 
     /// Build a fresh doc by loading the testament map, then overwrite
     /// the registry + sources with the supplied fixtures. Routes
@@ -397,39 +394,14 @@ mod tests {
     }
 
     fn make_cm(id: &str, contexts: Vec<&str>, description: &str) -> CustomMutation {
-        use baumhard::gfx_structs::area::GlyphAreaCommand;
-        use baumhard::gfx_structs::mutator::Mutation;
-        CustomMutation {
-            id: id.to_string(),
-            name: id.to_string(),
-            description: description.to_string(),
-            contexts: contexts.into_iter().map(String::from).collect(),
-            mutator: Some(baumhard::mindmap::custom_mutation::scope::self_only(vec![
-                Mutation::area_command(GlyphAreaCommand::NudgeRight(1.0)),
-            ])),
-            target_scope: TargetScope::SelfOnly,
-            behavior: MutationBehavior::Persistent,
-            predicate: None,
-            document_actions: vec![],
-            timing: None,
-        }
+        crate::application::document::tests_common::TestNudgeMutation::new(id, TargetScope::SelfOnly)
+            .magnitude(1.0)
+            .contexts(contexts.into_iter().map(String::from).collect())
+            .description(description)
+            .build()
     }
 
-    fn run(line: &str, doc: &mut MindMapDocument) -> ExecResult {
-        let toks = tokenize(line);
-        let mut eff = ConsoleEffects::new(doc);
-        execute_mutation(&Args::new(&toks[1..]), &mut eff)
-    }
-
-    /// Join the `text` field of every line — saves every test from
-    /// repeating the same map+collect after the `Lines` collapse.
-    fn joined(lines: &[crate::application::console::OutputLine]) -> String {
-        lines
-            .iter()
-            .map(|l| l.text.as_str())
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
+    use crate::application::console::tests::fixtures::{first_node_id, join_lines as joined, run};
 
     #[test]
     fn list_hides_internal_by_default() {
@@ -551,7 +523,7 @@ mod tests {
             vec![],
         );
         // Pick the root node of testament, selection still empty.
-        let node_id = doc.mindmap.nodes.keys().next().unwrap().clone();
+        let node_id = first_node_id(&doc);
         let line = format!("mutation apply nudge {}", node_id);
         match run(&line, &mut doc) {
             ExecResult::Ok(s) => assert!(s.contains(&node_id)),
@@ -574,7 +546,7 @@ mod tests {
             )],
             vec![],
         );
-        let node_id = doc.mindmap.nodes.keys().next().unwrap().clone();
+        let node_id = first_node_id(&doc);
         let before_x = doc.mindmap.nodes.get(&node_id).unwrap().position.x;
         let before_undo_len = doc.undo_stack.len();
 

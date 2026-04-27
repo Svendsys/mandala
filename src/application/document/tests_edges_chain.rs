@@ -5,8 +5,7 @@
 //! Part of the tests split for `document`. Helpers live in
 //! `tests_common`; only the tests for this theme live here.
 use super::tests_common::{
-    first_testament_edge_ref, load_test_doc
-    ,
+    first_testament_edge_ref, first_testament_node_id, load_test_doc, two_testament_node_ids,
 };
 use super::*;
 
@@ -186,9 +185,7 @@ use baumhard::util::grapheme_chad::count_grapheme_clusters;
     #[test]
     fn portal_edge_create_success_picks_first_glyph() {
         let mut doc = load_test_doc();
-        let mut iter = doc.mindmap.nodes.keys();
-        let a = iter.next().unwrap().clone();
-        let b = iter.next().unwrap().clone();
+        let (a, b) = two_testament_node_ids(&doc);
 
         let idx = doc.create_portal_edge(&a, &b).expect("should succeed");
         let edge = &doc.mindmap.edges[idx];
@@ -205,10 +202,8 @@ use baumhard::util::grapheme_chad::count_grapheme_clusters;
     #[test]
     fn portal_edge_create_rotates_glyph_presets() {
         let mut doc = load_test_doc();
-        let mut iter = doc.mindmap.nodes.keys();
-        let a = iter.next().unwrap().clone();
-        let b = iter.next().unwrap().clone();
-        let c = iter.next().unwrap().clone();
+        let ids = super::tests_common::first_n_testament_node_ids(&doc, 3);
+        let (a, b, c) = (ids[0].clone(), ids[1].clone(), ids[2].clone());
 
         let i1 = doc.create_portal_edge(&a, &b).unwrap();
         let i2 = doc.create_portal_edge(&b, &c).unwrap();
@@ -225,14 +220,14 @@ use baumhard::util::grapheme_chad::count_grapheme_clusters;
     #[test]
     fn portal_edge_create_rejects_self() {
         let mut doc = load_test_doc();
-        let id = doc.mindmap.nodes.keys().next().unwrap().clone();
+        let id = first_testament_node_id(&doc);
         assert!(doc.create_portal_edge(&id, &id).is_none());
     }
 
     #[test]
     fn portal_edge_create_rejects_unknown_node() {
         let mut doc = load_test_doc();
-        let known = doc.mindmap.nodes.keys().next().unwrap().clone();
+        let known = first_testament_node_id(&doc);
         assert!(doc.create_portal_edge(&known, "does_not_exist").is_none());
         assert!(doc.create_portal_edge("does_not_exist", &known).is_none());
     }
@@ -240,10 +235,8 @@ use baumhard::util::grapheme_chad::count_grapheme_clusters;
     #[test]
     fn portal_edge_delete_and_undo_restore_index() {
         let mut doc = load_test_doc();
-        let mut iter = doc.mindmap.nodes.keys();
-        let a = iter.next().unwrap().clone();
-        let b = iter.next().unwrap().clone();
-        let c = iter.next().unwrap().clone();
+        let ids = super::tests_common::first_n_testament_node_ids(&doc, 3);
+        let (a, b, c) = (ids[0].clone(), ids[1].clone(), ids[2].clone());
 
         let i1 = doc.create_portal_edge(&a, &b).unwrap();
         let i2 = doc.create_portal_edge(&b, &c).unwrap();
@@ -277,9 +270,7 @@ use baumhard::util::grapheme_chad::count_grapheme_clusters;
     #[test]
     fn undo_create_edge_clears_matching_selection() {
         let mut doc = load_test_doc();
-        let mut iter = doc.mindmap.nodes.keys();
-        let a = iter.next().unwrap().clone();
-        let b = iter.next().unwrap().clone();
+        let (a, b) = two_testament_node_ids(&doc);
         let idx = doc.create_cross_link_edge(&a, &b).unwrap();
         doc.undo_stack.push(UndoAction::CreateEdge { index: idx });
         let er = EdgeRef::new(&a, &b, "cross_link");
@@ -295,13 +286,11 @@ use baumhard::util::grapheme_chad::count_grapheme_clusters;
     #[test]
     fn undo_create_edge_preserves_nonmatching_selection() {
         let mut doc = load_test_doc();
-        let mut iter = doc.mindmap.nodes.keys();
-        let a = iter.next().unwrap().clone();
-        let b = iter.next().unwrap().clone();
+        let (a, b) = two_testament_node_ids(&doc);
         let idx = doc.create_cross_link_edge(&a, &b).unwrap();
         doc.undo_stack.push(UndoAction::CreateEdge { index: idx });
         // Select some other node (not the edge we're about to undo).
-        let other = doc.mindmap.nodes.keys().next().unwrap().clone();
+        let other = first_testament_node_id(&doc);
         doc.selection = SelectionState::Single(other.clone());
 
         assert!(doc.undo());
@@ -314,9 +303,7 @@ use baumhard::util::grapheme_chad::count_grapheme_clusters;
     #[test]
     fn portal_edge_set_display_mode_toggles_visual() {
         let mut doc = load_test_doc();
-        let mut iter = doc.mindmap.nodes.keys();
-        let a = iter.next().unwrap().clone();
-        let b = iter.next().unwrap().clone();
+        let (a, b) = two_testament_node_ids(&doc);
 
         let idx = doc.create_portal_edge(&a, &b).unwrap();
         let er = EdgeRef::new(&a, &b, "cross_link");
@@ -337,9 +324,7 @@ use baumhard::util::grapheme_chad::count_grapheme_clusters;
         // from `glyph_connection.color` (override) or `edge.color`
         // (fallback), so setting the override steers the marker.
         let mut doc = load_test_doc();
-        let mut iter = doc.mindmap.nodes.keys();
-        let a = iter.next().unwrap().clone();
-        let b = iter.next().unwrap().clone();
+        let (a, b) = two_testament_node_ids(&doc);
 
         let idx = doc.create_portal_edge(&a, &b).unwrap();
         let er = EdgeRef::new(&a, &b, "cross_link");
@@ -368,9 +353,7 @@ use baumhard::util::grapheme_chad::count_grapheme_clusters;
     #[test]
     fn portal_edge_selection_uses_edge_variant() {
         let mut doc = load_test_doc();
-        let mut iter = doc.mindmap.nodes.keys();
-        let a = iter.next().unwrap().clone();
-        let b = iter.next().unwrap().clone();
+        let (a, b) = two_testament_node_ids(&doc);
         let idx = doc.create_portal_edge(&a, &b).unwrap();
         let er = EdgeRef::new(
             doc.mindmap.edges[idx].from_id.clone(),

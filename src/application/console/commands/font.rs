@@ -436,24 +436,9 @@ fn execute_font_list(_args: &Args) -> ExecResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::console::parser::tokenize;
+    use crate::application::console::tests::fixtures::{assert_exec_ok, join_lines, run};
+    use crate::application::document::tests_common::load_test_doc as fixture_doc;
     use crate::application::document::{EdgeRef, MindMapDocument, SelectionState};
-
-    /// Load the testament map fresh so tests don't share mutated
-    /// state. Routes through the process-wide cache in
-    /// `document::tests_common::load_test_doc` — clones the
-    /// already-parsed `MindMap` and skips the per-node
-    /// FONT_SYSTEM write-lock acquisitions `MindMapDocument::load`
-    /// would otherwise trigger.
-    fn fixture_doc() -> MindMapDocument {
-        crate::application::document::tests_common::load_test_doc()
-    }
-
-    fn run(line: &str, doc: &mut MindMapDocument) -> ExecResult {
-        let toks = tokenize(line);
-        let mut eff = ConsoleEffects::new(doc);
-        execute_font(&Args::new(&toks[1..]), &mut eff)
-    }
 
     fn first_loaded_family() -> String {
         baumhard::font::fonts::init();
@@ -500,10 +485,7 @@ mod tests {
         let family = first_loaded_family();
         let mut doc = fixture_doc();
         doc.selection = SelectionState::Single("0".into());
-        match run(&format!("font set {}", family), &mut doc) {
-            ExecResult::Ok(_) => {}
-            other => panic!("expected Ok, got {:?}", other),
-        }
+        assert_exec_ok(run(&format!("font set {}", family), &mut doc));
         // Every TextRun on the node should now carry the family.
         let node = doc.mindmap.nodes.get("0").expect("node 0 exists");
         assert!(!node.text_runs.is_empty());
@@ -567,12 +549,7 @@ mod tests {
         );
         match run(&format!("font set {}", family), &mut doc) {
             ExecResult::Lines(msgs) => {
-                let all = msgs
-                    .iter()
-                    .map(|l| l.text.as_str())
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                assert!(all.contains("not applicable"));
+                assert!(join_lines(&msgs).contains("not applicable"));
             }
             ExecResult::Err(s) => {
                 assert!(s.contains("not applicable"));
@@ -643,10 +620,7 @@ mod tests {
             edge.edge_type.clone(),
         );
         doc.selection = SelectionState::Edge(er.clone());
-        match run(&format!("font set {}", family), &mut doc) {
-            ExecResult::Ok(_) => {}
-            other => panic!("expected Ok, got {:?}", other),
-        }
+        assert_exec_ok(run(&format!("font set {}", family), &mut doc));
         let idx = doc.edge_index(&er).expect("edge resolves");
         assert_eq!(
             doc.mindmap.edges[idx]
@@ -682,10 +656,7 @@ mod tests {
             edge_key: EdgeKey::new(&edge.from_id, &edge.to_id, &edge.edge_type),
             endpoint_node_id: edge.to_id.clone(),
         });
-        match run(&format!("font set {}", family), &mut doc) {
-            ExecResult::Ok(_) => {}
-            other => panic!("expected Ok, got {:?}", other),
-        }
+        assert_exec_ok(run(&format!("font set {}", family), &mut doc));
         // Verify the edge's glyph_connection.font carries the family.
         let idx = doc.edge_index(&er).expect("edge resolves");
         assert_eq!(
@@ -720,12 +691,7 @@ mod tests {
         });
         match run(&format!("font set {}", family), &mut doc) {
             ExecResult::Lines(msgs) => {
-                let all = msgs
-                    .iter()
-                    .map(|l| l.text.as_str())
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                assert!(all.contains("not applicable"));
+                assert!(join_lines(&msgs).contains("not applicable"));
             }
             ExecResult::Err(s) => assert!(s.contains("not applicable")),
             other => panic!(

@@ -5,8 +5,7 @@
 //! Part of the tests split for `document`. Helpers live in
 //! `tests_common`; only the tests for this theme live here.
 use super::tests_common::{
-    load_test_doc,
-    pick_test_edge,
+    first_testament_node_id, load_test_doc, pick_test_edge, two_testament_node_ids,
 };
 use super::*;
 
@@ -414,9 +413,7 @@ use super::defaults::default_cross_link_edge;
     fn test_create_cross_link_edge_success() {
         let mut doc = load_test_doc();
         // Pick two nodes that are definitely distinct
-        let mut iter = doc.mindmap.nodes.keys();
-        let a = iter.next().unwrap().clone();
-        let b = iter.next().unwrap().clone();
+        let (a, b) = two_testament_node_ids(&doc);
         let orig_count = doc.mindmap.edges.len();
 
         let idx = doc.create_cross_link_edge(&a, &b).expect("should succeed");
@@ -431,7 +428,7 @@ use super::defaults::default_cross_link_edge;
     #[test]
     fn test_create_cross_link_rejects_self_link() {
         let mut doc = load_test_doc();
-        let id = doc.mindmap.nodes.keys().next().unwrap().clone();
+        let id = first_testament_node_id(&doc);
         let orig_count = doc.mindmap.edges.len();
         assert!(doc.create_cross_link_edge(&id, &id).is_none());
         assert_eq!(doc.mindmap.edges.len(), orig_count);
@@ -440,9 +437,7 @@ use super::defaults::default_cross_link_edge;
     #[test]
     fn test_create_cross_link_rejects_duplicate() {
         let mut doc = load_test_doc();
-        let mut iter = doc.mindmap.nodes.keys();
-        let a = iter.next().unwrap().clone();
-        let b = iter.next().unwrap().clone();
+        let (a, b) = two_testament_node_ids(&doc);
 
         assert!(doc.create_cross_link_edge(&a, &b).is_some());
         // Second attempt should be a no-op
@@ -454,7 +449,7 @@ use super::defaults::default_cross_link_edge;
     #[test]
     fn test_create_cross_link_rejects_unknown_node() {
         let mut doc = load_test_doc();
-        let known = doc.mindmap.nodes.keys().next().unwrap().clone();
+        let known = first_testament_node_id(&doc);
         assert!(doc.create_cross_link_edge(&known, "does_not_exist").is_none());
         assert!(doc.create_cross_link_edge("does_not_exist", &known).is_none());
     }
@@ -462,9 +457,7 @@ use super::defaults::default_cross_link_edge;
     #[test]
     fn test_undo_create_edge_removes_it() {
         let mut doc = load_test_doc();
-        let mut iter = doc.mindmap.nodes.keys();
-        let a = iter.next().unwrap().clone();
-        let b = iter.next().unwrap().clone();
+        let (a, b) = two_testament_node_ids(&doc);
         let orig_count = doc.mindmap.edges.len();
 
         let idx = doc.create_cross_link_edge(&a, &b).unwrap();

@@ -3,40 +3,69 @@
 //! Shared fixtures for the console test suite. Used by every sibling
 //! test module via `use super::fixtures::*;`.
 
-use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
-
-use baumhard::mindmap::loader;
-
 use crate::application::console::parser::{parse, Args, ParseResult};
 use crate::application::console::{ConsoleEffects, ExecResult};
 use crate::application::document::{EdgeRef, MindMapDocument, SelectionState};
 
-pub(super) fn test_map_path() -> PathBuf {
-    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    path.push("maps/testament.mindmap.json");
-    path
+// Re-export the canonical testament-map loader so console tests
+// inherit the cached, finalize-skipped doc from
+// `document::tests_common`. Until this re-export landed, the
+// console suite hand-built its own doc shell + reloaded the JSON
+// every test, thrashing the FONT_SYSTEM lock.
+//
+// Visibility: `first_node_id` is widened to
+// `pub(in crate::application::console)` so the per-command test
+// modules under `console::commands::*` can reach it through the
+// same path that surfaces `run`. `load_test_doc` stays narrower
+// because the per-command modules already pull it through
+// `document::tests_common::load_test_doc as fixture_doc` directly.
+pub(in crate::application::console) use crate::application::document::tests_common::{
+    first_testament_node_id as first_node_id,
+    two_testament_node_ids,
+};
+pub(super) use crate::application::document::tests_common::load_test_doc;
+
+/// Collapse a slice of `OutputLine` values into one `\n`-joined
+/// `String`. Used by the substring assertions across the console
+/// command tests — every callers does the same `.iter().map(|l|
+/// l.text...).collect().join("\n")` chain otherwise.
+pub(in crate::application::console) fn join_lines(
+    lines: &[crate::application::console::OutputLine],
+) -> String {
+    lines
+        .iter()
+        .map(|l| l.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
-pub(super) fn load_test_doc() -> MindMapDocument {
-    let map = loader::load_from_file(&test_map_path()).unwrap();
-    let mut doc = MindMapDocument {
-        mindmap: map,
-        file_path: None,
-        dirty: false,
-        selection: SelectionState::None,
-        undo_stack: Vec::new(),
-        mutation_registry: HashMap::new(),
-        mutation_sources: HashMap::new(),
-        mutation_handlers: HashMap::new(),
-        active_toggles: HashSet::new(),
-        label_edit_preview: None,
-        portal_text_edit_preview: None,
-        color_picker_preview: None,
-        active_animations: Vec::new(),
-    };
-    doc.build_mutation_registry();
-    doc
+/// Assert `result` is `ExecResult::Ok(_)`, panicking with the
+/// alternate variant printed otherwise. Replaces the
+/// three-line `match { Ok(_) => {} other => panic!(...) }`
+/// idiom that 25+ command tests grew used to.
+pub(in crate::application::console) fn assert_exec_ok(result: ExecResult) {
+    match result {
+        ExecResult::Ok(_) => {}
+        other => panic!("expected Ok, got {:?}", other),
+    }
+}
+
+/// Assert `result` is `ExecResult::Err(_)` whose message contains
+/// `needle`. Surfaces both halves of the assertion in the panic
+/// message so a substring drift doesn't print just `false`.
+pub(in crate::application::console) fn assert_exec_err_contains(
+    result: ExecResult,
+    needle: &str,
+) {
+    match result {
+        ExecResult::Err(s) => assert!(
+            s.contains(needle),
+            "expected Err containing {:?}, got Err({:?})",
+            needle,
+            s
+        ),
+        other => panic!("expected Err containing {:?}, got {:?}", needle, other),
+    }
 }
 
 /// Pick the first edge in the map and point the selection at it.
@@ -52,7 +81,7 @@ pub(super) fn select_first_edge(doc: &mut MindMapDocument) -> EdgeRef {
 /// Parse `line`, run the resolved command against `doc`, and return
 /// the `ExecResult`. Panics on parse failure — these are unit tests
 /// with known-good input.
-pub(super) fn run(line: &str, doc: &mut MindMapDocument) -> ExecResult {
+pub(in crate::application::console) fn run(line: &str, doc: &mut MindMapDocument) -> ExecResult {
     let (cmd, tokens) = match parse(line) {
         ParseResult::Ok { cmd, args } => (cmd, args),
         ParseResult::Empty => panic!("empty input: {:?}", line),
@@ -61,4 +90,3 @@ pub(super) fn run(line: &str, doc: &mut MindMapDocument) -> ExecResult {
     let mut eff = ConsoleEffects::new(doc);
     (cmd.execute)(&Args::new(&tokens), &mut eff)
 }
-

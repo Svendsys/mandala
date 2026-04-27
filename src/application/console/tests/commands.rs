@@ -7,7 +7,7 @@
 //! commands now live under `edge` (`edge portal`, `edge body=…`)
 //! and are covered in this file alongside the other `edge` cases.
 
-use super::fixtures::{load_test_doc, run, select_first_edge};
+use super::fixtures::{first_node_id, load_test_doc, run, select_first_edge, two_testament_node_ids};
 use crate::application::console::parser::{parse, Args, ParseResult};
 use crate::application::console::{ConsoleEffects, ExecResult};
 use crate::application::document::{EdgeRef, SelectionState};
@@ -92,7 +92,7 @@ fn test_color_kv_text_accent_sets_var_accent_on_edge() {
 #[test]
 fn test_color_kv_bg_sets_node_background() {
     let mut doc = load_test_doc();
-    let nid = doc.mindmap.nodes.keys().next().unwrap().clone();
+    let nid = first_node_id(&doc);
     doc.selection = SelectionState::Single(nid.clone());
     let _ = run("color bg=#112233", &mut doc);
     assert_eq!(
@@ -108,7 +108,7 @@ fn test_color_kv_bg_sets_node_background() {
 fn test_color_bg_no_value_on_node_opens_picker_with_bg_axis() {
     use crate::application::color_picker::{ColorTarget, NodeColorAxis};
     let mut doc = load_test_doc();
-    let nid = doc.mindmap.nodes.keys().next().unwrap().clone();
+    let nid = first_node_id(&doc);
     doc.selection = SelectionState::Single(nid.clone());
     let (cmd, toks) = match parse("color bg") {
         ParseResult::Ok { cmd, args } => (cmd, args),
@@ -150,9 +150,7 @@ fn test_color_text_no_value_on_edge_opens_picker_on_edge() {
 #[test]
 fn test_color_text_on_portal_edge_applies() {
     let mut doc = load_test_doc();
-    let mut ids = doc.mindmap.nodes.keys().cloned();
-    let a = ids.next().unwrap();
-    let b = ids.next().unwrap();
+    let (a, b) = two_testament_node_ids(&doc);
     let _idx = doc.create_portal_edge(&a, &b).unwrap();
     doc.selection = SelectionState::Edge(EdgeRef::new(&a, &b, "cross_link"));
     let result = run("color text=#112233", &mut doc);
@@ -162,7 +160,7 @@ fn test_color_text_on_portal_edge_applies() {
 #[test]
 fn test_color_kv_rejects_invalid_hex() {
     let mut doc = load_test_doc();
-    let nid = doc.mindmap.nodes.keys().next().unwrap().clone();
+    let nid = first_node_id(&doc);
     doc.selection = SelectionState::Single(nid);
     let result = run("color bg=notacolor", &mut doc);
     assert!(matches!(result, ExecResult::Err(_)));
@@ -612,9 +610,7 @@ fn test_edge_type_parent_child_updates_edge() {
 #[test]
 fn test_edge_display_mode_portal_then_line_toggles() {
     let mut doc = load_test_doc();
-    let mut ids = doc.mindmap.nodes.keys().cloned();
-    let a = ids.next().unwrap();
-    let b = ids.next().unwrap();
+    let (a, b) = two_testament_node_ids(&doc);
     let _ = doc.create_portal_edge(&a, &b).unwrap();
     doc.selection = SelectionState::Edge(EdgeRef::new(&a, &b, "cross_link"));
     let _ = run("edge display_mode=line", &mut doc);

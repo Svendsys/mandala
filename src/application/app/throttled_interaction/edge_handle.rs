@@ -125,7 +125,6 @@ mod tests {
     use super::*;
     use crate::application::app::throttled_interaction::test_utils::{drive_throttle_over_budget, fixture_edge};
     use baumhard::mindmap::scene_builder::EdgeHandleKind;
-    use std::time::Duration;
 
     fn fixture_interaction() -> EdgeHandleInteraction {
         EdgeHandleInteraction::new(
@@ -179,46 +178,11 @@ mod tests {
         assert_eq!(i.handle, EdgeHandleKind::AnchorFrom);
     }
 
-    #[test]
-    fn test_should_perform_drain_false_when_idle() {
-        let mut i = fixture_interaction();
-        assert!(!i.should_perform_drain());
-    }
-
-    #[test]
-    fn test_should_perform_drain_true_when_pending_and_throttle_fresh() {
-        let mut i = fixture_interaction();
-        i.pending_delta = Vec2::new(2.0, 0.0);
-        assert!(i.should_perform_drain());
-    }
-
-    #[test]
-    fn test_should_perform_drain_false_when_throttle_skipping() {
-        let mut i = fixture_interaction();
-        drive_throttle_over_budget(&mut i.throttle);
-        assert!(i.throttle.current_n() > 1);
-
-        let n = i.throttle.current_n() as usize;
-        i.pending_delta = Vec2::new(2.0, 0.0);
-        let mut saw_skip = false;
-        for _ in 0..(n * 2) {
-            if !i.should_perform_drain() {
-                saw_skip = true;
-            }
-            i.throttle.record_work_duration(Duration::from_micros(50_000));
+    crate::application::app::throttled_interaction::test_utils::trait_default_tests_for_throttled_interaction! {
+        build = fixture_interaction,
+        set_pending = |i: &mut EdgeHandleInteraction| {
             i.pending_delta = Vec2::new(2.0, 0.0);
-        }
-        assert!(saw_skip);
-    }
-
-    #[test]
-    fn test_idle_should_perform_drain_does_not_advance_throttle() {
-        let mut i = fixture_interaction();
-        for _ in 0..5 {
-            assert!(!i.should_perform_drain());
-        }
-        i.pending_delta = Vec2::new(2.0, 0.0);
-        assert!(i.should_perform_drain());
+        },
     }
 
     #[test]
