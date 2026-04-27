@@ -371,9 +371,7 @@ mod tests {
     use super::*;
     use crate::application::console::parser::tokenize;
     use crate::application::document::mutations_loader::MutationSource;
-    use baumhard::mindmap::custom_mutation::{
-        CustomMutation, MutationBehavior, TargetScope,
-    };
+    use baumhard::mindmap::custom_mutation::{CustomMutation, TargetScope};
 
     /// Build a fresh doc by loading the testament map, then overwrite
     /// the registry + sources with the supplied fixtures. Routes
@@ -397,22 +395,14 @@ mod tests {
     }
 
     fn make_cm(id: &str, contexts: Vec<&str>, description: &str) -> CustomMutation {
-        use baumhard::gfx_structs::area::GlyphAreaCommand;
-        use baumhard::gfx_structs::mutator::Mutation;
-        CustomMutation {
-            id: id.to_string(),
-            name: id.to_string(),
-            description: description.to_string(),
-            contexts: contexts.into_iter().map(String::from).collect(),
-            mutator: Some(baumhard::mindmap::custom_mutation::scope::self_only(vec![
-                Mutation::area_command(GlyphAreaCommand::NudgeRight(1.0)),
-            ])),
-            target_scope: TargetScope::SelfOnly,
-            behavior: MutationBehavior::Persistent,
-            predicate: None,
-            document_actions: vec![],
-            timing: None,
-        }
+        crate::application::document::tests_common::make_test_nudge_mutation(
+            id,
+            TargetScope::SelfOnly,
+            1.0,
+            contexts.into_iter().map(String::from).collect(),
+            description,
+            None,
+        )
     }
 
     fn run(line: &str, doc: &mut MindMapDocument) -> ExecResult {

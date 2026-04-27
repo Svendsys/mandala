@@ -5,19 +5,12 @@
 //! Part of the tests split for `document`. Helpers live in
 //! `tests_common`; only the tests for this theme live here.
 use super::tests_common::{
-    load_test_doc, load_test_tree
-    ,
+    load_test_doc, load_test_tree, make_test_nudge_mutation,
 };
 use super::*;
 
-use baumhard::gfx_structs::area::GlyphAreaCommand;
-use baumhard::gfx_structs::mutator::Mutation;
 use baumhard::mindmap::animation::{AnimationTiming, Easing};
-use baumhard::mindmap::custom_mutation::{
-    CustomMutation as CM,
-    MutationBehavior as MB, TargetScope as TS
-    ,
-};
+use baumhard::mindmap::custom_mutation::{CustomMutation as CM, TargetScope as TS};
 use glam::Vec2;
 
 
@@ -466,20 +459,7 @@ use glam::Vec2;
         scope: TS,
         timing: Option<baumhard::mindmap::animation::AnimationTiming>,
     ) -> CM {
-        CM {
-            id: id.to_string(),
-            name: id.to_string(),
-            description: String::new(),
-            contexts: vec![],
-            mutator: Some(baumhard::mindmap::custom_mutation::scope::self_only(vec![
-                Mutation::area_command(GlyphAreaCommand::NudgeRight(10.0)),
-            ])),
-            target_scope: scope,
-            behavior: MB::Persistent,
-            predicate: None,
-            document_actions: vec![],
-            timing,
-        }
+        make_test_nudge_mutation(id, scope, 10.0, vec![], "", timing)
     }
 
     #[test]

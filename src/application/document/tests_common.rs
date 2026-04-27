@@ -109,3 +109,39 @@ pub(super) fn first_testament_edge_ref(doc: &MindMapDocument) -> super::EdgeRef 
     let e = doc.mindmap.edges.first().expect("testament map has edges");
     super::EdgeRef::new(&e.from_id, &e.to_id, &e.edge_type)
 }
+
+/// Build a `CustomMutation` carrying a single `NudgeRight(amount)`
+/// area command. Tests parameterise the magnitude so an assertion
+/// can read against a known offset; `timing` defaults to `None`
+/// (instant), `contexts` and `description` to empty.
+///
+/// Replaces three near-identical local builders that diverged
+/// only in their default magnitude (`make_test_mutation` at 10.0,
+/// `make_cm` at 1.0, `make_animated_mutation` at 100.0). Callers
+/// pick the magnitude and the timing they need.
+pub(crate) fn make_test_nudge_mutation(
+    id: &str,
+    scope: baumhard::mindmap::custom_mutation::TargetScope,
+    nudge_x: f32,
+    contexts: Vec<String>,
+    description: &str,
+    timing: Option<baumhard::mindmap::animation::AnimationTiming>,
+) -> baumhard::mindmap::custom_mutation::CustomMutation {
+    use baumhard::gfx_structs::area::GlyphAreaCommand;
+    use baumhard::gfx_structs::mutator::Mutation;
+    use baumhard::mindmap::custom_mutation::{CustomMutation, MutationBehavior};
+    CustomMutation {
+        id: id.to_string(),
+        name: id.to_string(),
+        description: description.to_string(),
+        contexts,
+        mutator: Some(baumhard::mindmap::custom_mutation::scope::self_only(vec![
+            Mutation::area_command(GlyphAreaCommand::NudgeRight(nudge_x)),
+        ])),
+        target_scope: scope,
+        behavior: MutationBehavior::Persistent,
+        predicate: None,
+        document_actions: vec![],
+        timing,
+    }
+}

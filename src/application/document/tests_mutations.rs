@@ -5,13 +5,10 @@
 //! Part of the tests split for `document`. Helpers live in
 //! `tests_common`; only the tests for this theme live here.
 use super::tests_common::{
-    first_testament_node_id, load_test_doc
-    ,
+    first_testament_node_id, load_test_doc, make_test_nudge_mutation,
 };
 use super::*;
 
-use baumhard::gfx_structs::area::GlyphAreaCommand;
-use baumhard::gfx_structs::mutator::Mutation;
 use baumhard::mindmap::animation::{AnimationTiming, Easing};
 use baumhard::mindmap::custom_mutation::{
     CustomMutation as CM, DocumentAction,
@@ -21,21 +18,8 @@ use baumhard::mindmap::custom_mutation::{
 
 
 fn make_test_mutation(id: &str, scope: TS) -> CM {
-        CM {
-            id: id.to_string(),
-            name: id.to_string(),
-            description: String::new(),
-            contexts: vec![],
-            mutator: Some(baumhard::mindmap::custom_mutation::scope::self_only(
-                vec![Mutation::area_command(GlyphAreaCommand::NudgeRight(10.0))],
-            )),
-            target_scope: scope,
-            behavior: MB::Persistent,
-            predicate: None,
-            document_actions: vec![],
-            timing: None,
-        }
-    }
+    make_test_nudge_mutation(id, scope, 10.0, vec![], "", None)
+}
 
     /// Build a `CustomMutation` whose only payload is a single
     /// `SetThemeVariables` document-level action that sets `--bg`
@@ -363,25 +347,19 @@ fn make_test_mutation(id: &str, scope: TS) -> CM {
     // ----- Animation lifecycle tests (§T1 — fundamental) -----
 
     fn make_animated_mutation(id: &str, duration_ms: u32) -> CM {
-        CM {
-            id: id.to_string(),
-            name: id.to_string(),
-            description: String::new(),
-            contexts: vec![],
-            mutator: Some(baumhard::mindmap::custom_mutation::scope::self_only(
-                vec![Mutation::area_command(GlyphAreaCommand::NudgeRight(100.0))],
-            )),
-            target_scope: TS::SelfOnly,
-            behavior: MB::Persistent,
-            predicate: None,
-            document_actions: vec![],
-            timing: Some(AnimationTiming {
+        make_test_nudge_mutation(
+            id,
+            TS::SelfOnly,
+            100.0,
+            vec![],
+            "",
+            Some(AnimationTiming {
                 duration_ms,
                 delay_ms: 0,
                 easing: Easing::Linear,
                 then: None,
             }),
-        }
+        )
     }
 
     #[test]
