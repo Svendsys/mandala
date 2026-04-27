@@ -240,7 +240,12 @@ pub struct GlyphBorderConfig {
 }
 
 fn default_shape() -> String { "rectangle".to_string() }
-fn default_border_preset() -> String { "rounded".to_string() }
+// `light` is the chosen default rather than `rounded` so corner
+// glyphs (`┌┐└┘`) extend to the cell edges and join cleanly with
+// the side glyphs in monospace fonts. The rounded preset's
+// `╭╮╰╯` curve inward away from the cell edges, leaving a visible
+// gap at every corner.
+fn default_border_preset() -> String { "light".to_string() }
 fn default_border_font_size() -> f32 { 14.0 }
 fn default_border_padding() -> f32 { 4.0 }
 
@@ -276,10 +281,13 @@ pub struct CustomBorderGlyphs {
 
 fn default_h_glyph() -> String { "\u{2500}".to_string() }
 fn default_v_glyph() -> String { "\u{2502}".to_string() }
-fn default_tl_glyph() -> String { "\u{256D}".to_string() }
-fn default_tr_glyph() -> String { "\u{256E}".to_string() }
-fn default_bl_glyph() -> String { "\u{2570}".to_string() }
-fn default_br_glyph() -> String { "\u{256F}".to_string() }
+// Light-preset corners (┌┐└┘). Match the new `default_border_preset`
+// so a `preset=custom` payload that omits a corner falls back to
+// the same shape the surrounding sides connect with.
+fn default_tl_glyph() -> String { "\u{250C}".to_string() }
+fn default_tr_glyph() -> String { "\u{2510}".to_string() }
+fn default_bl_glyph() -> String { "\u{2514}".to_string() }
+fn default_br_glyph() -> String { "\u{2518}".to_string() }
 
 /// Descriptor for how this node arranges its children — a
 /// miMind-compat record carried through for round-trip fidelity.

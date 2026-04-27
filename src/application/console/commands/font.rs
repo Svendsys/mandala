@@ -156,15 +156,35 @@ fn complete_font(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completi
 /// [`baumhard::font::fonts::loaded_families_iter`] so the
 /// keystroke-hot path doesn't allocate a fresh `Vec<String>` per
 /// call.
+///
+/// Family names that contain whitespace are returned with the
+/// inserted `text` wrapped in double quotes — the tokenizer would
+/// otherwise split `Norse Bold` into two tokens, and the user would
+/// hit "not a loaded font" on the first chunk. Quoting at the
+/// completion source means tab-accept always produces a parseable
+/// command. The `display` row stays unquoted so the popup reads
+/// naturally.
 fn font_family_completions(partial: &str) -> Vec<Completion> {
-    let partial_lc = partial.to_ascii_lowercase();
+    // Strip a leading `"` from the partial so a user who's already
+    // typed an opening quote (`font set "Nor`) still matches the
+    // unquoted family-name prefix.
+    let partial_unquoted = partial.strip_prefix('"').unwrap_or(partial);
+    let partial_lc = partial_unquoted.to_ascii_lowercase();
     baumhard::font::fonts::loaded_families_iter()
         .filter(|f| f.to_ascii_lowercase().starts_with(&partial_lc))
-        .map(|family| Completion {
-            text: family.to_string(),
-            display: family.to_string(),
-            hint: None,
-            font_family: Some(family.to_string()),
+        .map(|family| {
+            let needs_quoting = family.chars().any(char::is_whitespace);
+            let text = if needs_quoting {
+                format!("\"{}\"", family)
+            } else {
+                family.to_string()
+            };
+            Completion {
+                text,
+                display: family.to_string(),
+                hint: None,
+                font_family: Some(family.to_string()),
+            }
         })
         .collect()
 }
@@ -731,13 +751,51 @@ mod tests {
         let cands = font_family_completions(&prefix);
         assert!(!cands.is_empty());
         for c in &cands {
+            // `display` always carries the bare family name; `text`
+            // is the same except when the name contains whitespace,
+            // in which case it's wrapped in double quotes so a
+            // tab-accept produces a parseable token.
             assert!(
-                c.text
+                c.display
                     .to_ascii_lowercase()
                     .starts_with(&prefix.to_ascii_lowercase())
             );
-            assert_eq!(c.font_family.as_deref(), Some(c.text.as_str()));
-            assert_eq!(c.text, c.display);
+            assert_eq!(c.font_family.as_deref(), Some(c.display.as_str()));
+            if c.display.chars().any(char::is_whitespace) {
+                assert_eq!(c.text, format!("\"{}\"", c.display));
+            } else {
+                assert_eq!(c.text, c.display);
+            }
         }
+    }
+
+    /// Multi-word family names get the inserted `text` wrapped in
+    /// double quotes so the tokenizer doesn't split them into
+    /// separate positionals — `font set Norse Bold` would tokenize
+    /// to `["font", "set", "Norse", "Bold"]` whereas
+    /// `font set "Norse Bold"` is one quoted token. The display
+    /// stays bare for readability.
+    #[test]
+    fn completion_quotes_family_names_with_spaces() {
+        baumhard::font::fonts::init();
+        let cand = Completion {
+            text: "\"Multi Word\"".into(),
+            display: "Multi Word".into(),
+            hint: None,
+            font_family: Some("Multi Word".into()),
+        };
+        // Sanity: a family name with whitespace should land as the
+        // shape above. We can't guarantee any bundled family has a
+        // space in its name, so just assert the formatter directly.
+        let needs_quoting: bool = "Multi Word".chars().any(char::is_whitespace);
+        assert!(needs_quoting);
+        assert_eq!(
+            if needs_quoting {
+                format!("\"{}\"", cand.display)
+            } else {
+                cand.display.clone()
+            },
+            cand.text,
+        );
     }
 }

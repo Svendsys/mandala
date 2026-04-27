@@ -153,34 +153,46 @@ pub enum ColorPickerPreview {
 }
 
 fn grow_node_sizes_to_fit_text(map: &mut MindMap) {
+    for node in map.nodes.values_mut() {
+        grow_one_node_to_fit_text(node);
+    }
+}
+
+/// Per-node version of [`grow_node_sizes_to_fit_text`] — used by
+/// the per-edit setters so a `font set <family>` on a single node
+/// grows the box without re-walking the whole map. Same monotonic
+/// "grow, never shrink" posture as the bulk pass: node sizes are
+/// author intent, the loader and the per-edit setter just enforce
+/// a floor.
+pub(super) fn grow_one_node_to_fit_text(
+    node: &mut baumhard::mindmap::model::MindNode,
+) {
     use baumhard::font::fonts::{acquire_font_system_write, measure_text_block_unbounded};
 
-    for node in map.nodes.values_mut() {
-        let scale = node
-            .text_runs
-            .first()
-            .map(|r| r.size_pt as f32)
-            .unwrap_or(14.0);
-        let line_height = scale * 1.2;
-        let pad_x = scale * 1.5;
-        let pad_y = scale * 0.5;
+    let scale = node
+        .text_runs
+        .first()
+        .map(|r| r.size_pt as f32)
+        .unwrap_or(14.0);
+    let line_height = scale * 1.2;
+    let pad_x = scale * 1.5;
+    let pad_y = scale * 0.5;
 
-        // Per-node lock scope: a renderer frame scheduled during
-        // document load can interleave between nodes rather than
-        // waiting for every measurement. §B5.
-        let block = {
-            let mut fs = acquire_font_system_write("grow_node_sizes_to_fit_text");
-            measure_text_block_unbounded(&mut fs, &node.text, scale, line_height)
-        };
+    // Per-node lock scope: a renderer frame scheduled during
+    // document load can interleave between nodes rather than
+    // waiting for every measurement. §B5.
+    let block = {
+        let mut fs = acquire_font_system_write("grow_one_node_to_fit_text");
+        measure_text_block_unbounded(&mut fs, &node.text, scale, line_height)
+    };
 
-        let need_w = (block.width + pad_x) as f64;
-        let need_h = (block.height + pad_y) as f64;
-        if node.size.width < need_w {
-            node.size.width = need_w;
-        }
-        if node.size.height < need_h {
-            node.size.height = need_h;
-        }
+    let need_w = (block.width + pad_x) as f64;
+    let need_h = (block.height + pad_y) as f64;
+    if node.size.width < need_w {
+        node.size.width = need_w;
+    }
+    if node.size.height < need_h {
+        node.size.height = need_h;
     }
 }
 

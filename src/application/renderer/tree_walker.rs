@@ -73,9 +73,16 @@ pub(super) fn walk_tree_into_buffers(
         };
 
         if let Some(color) = area.background_color {
+            // Inflate the fill rect outward by `background_padding`
+            // so the fill extends behind border glyphs that sit
+            // outside the text rect. Default `Vec2::ZERO` for areas
+            // without a border keeps the historical behaviour
+            // (background coincides with the text rect).
+            let pad = Vec2::new(area.background_padding.x.0, area.background_padding.y.0);
             yield_background(NodeBackgroundRect {
-                position: Vec2::new(area.position.x.0, area.position.y.0) + offset,
-                size: Vec2::new(area.render_bounds.x.0, area.render_bounds.y.0),
+                position: Vec2::new(area.position.x.0, area.position.y.0) - pad + offset,
+                size: Vec2::new(area.render_bounds.x.0, area.render_bounds.y.0)
+                    + 2.0 * pad,
                 color,
                 shape_id: area.shape.shader_id(),
                 zoom_visibility: area.zoom_visibility,

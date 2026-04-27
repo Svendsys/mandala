@@ -132,6 +132,17 @@ fn apply_edits(eff: &mut ConsoleEffects, edits: BorderConfigEdits) -> ExecResult
         Ok(ids) => ids,
         Err(e) => return e,
     };
+    // Detect a bare `preset=custom` (no other glyph fields). The
+    // `custom` preset is the canvas the per-node `top=` / `bottom=`
+    // / `left=` / `right=` / `tl=` / `tr=` / `bl=` / `br=` fields
+    // paint on; without any of those, it falls back to the same
+    // single-cluster glyphs the `rounded` preset uses, which makes
+    // the choice look like a no-op. Surface that explicitly so the
+    // user knows what `preset=custom` is asking for.
+    let bare_custom = matches!(
+        edits.preset,
+        BorderFieldEdit::Set(ref s) if s.eq_ignore_ascii_case("custom")
+    ) && !edits_has_glyph_field(&edits);
     let mut changed = 0usize;
     let mut auto_promoted: Option<String> = None;
     for id in &ids {
@@ -144,7 +155,18 @@ fn apply_edits(eff: &mut ConsoleEffects, edits: BorderConfigEdits) -> ExecResult
             auto_promoted = outcome.requested_preset.clone();
         }
     }
+    let mut lines: Vec<String> = Vec::new();
     if changed == 0 {
+        // A `preset=custom`-only edit on a node that already records
+        // `preset: custom` is a no-op at the data-model level, but
+        // the user still benefits from the same orientation message
+        // as the changed-path branch. Emit it instead of the bare
+        // "no change" line so the input doesn't feel ignored.
+        if bare_custom {
+            lines.push("border: preset=custom set; no glyph fields were given".into());
+            lines.push(custom_preset_hint());
+            return ExecResult::lines(lines);
+        }
         return ExecResult::ok_msg("border: no change");
     }
     // Surface auto-promotion exactly once per command invocation,
@@ -153,19 +175,48 @@ fn apply_edits(eff: &mut ConsoleEffects, edits: BorderConfigEdits) -> ExecResult
     // first promoted node's `requested_preset` is reported; every
     // other node received the same edit struct, so the value is
     // necessarily the same.
-    let main = format!("border applied to {} node(s)", changed);
-    match auto_promoted {
-        Some(name) => ExecResult::lines(vec![
-            main,
-            format!(
-                "note: preset='{}' auto-promoted to 'custom' \
-                 (a side or corner glyph was set; non-custom presets \
-                 ignore the per-node glyph override)",
-                name
-            ),
-        ]),
-        None => ExecResult::ok_msg(main),
+    lines.push(format!("border applied to {} node(s)", changed));
+    if let Some(name) = auto_promoted {
+        lines.push(format!(
+            "note: preset='{}' auto-promoted to 'custom' \
+             (a side or corner glyph was set; non-custom presets \
+             ignore the per-node glyph override)",
+            name
+        ));
     }
+    if bare_custom {
+        lines.push(custom_preset_hint());
+    }
+    if lines.len() == 1 {
+        ExecResult::ok_msg(lines.into_iter().next().expect("len==1"))
+    } else {
+        ExecResult::lines(lines)
+    }
+}
+
+/// `true` iff the staged edits include any side-pattern or corner
+/// override — the fields that make `preset=custom` actually
+/// distinguishable from `rounded`.
+fn edits_has_glyph_field(edits: &BorderConfigEdits) -> bool {
+    !matches!(edits.side_top, BorderFieldEdit::Keep)
+        || !matches!(edits.side_bottom, BorderFieldEdit::Keep)
+        || !matches!(edits.side_left, BorderFieldEdit::Keep)
+        || !matches!(edits.side_right, BorderFieldEdit::Keep)
+        || !matches!(edits.corner_top_left, BorderFieldEdit::Keep)
+        || !matches!(edits.corner_top_right, BorderFieldEdit::Keep)
+        || !matches!(edits.corner_bottom_left, BorderFieldEdit::Keep)
+        || !matches!(edits.corner_bottom_right, BorderFieldEdit::Keep)
+}
+
+/// Multi-line orientation for users who set `preset=custom` without
+/// any glyph fields. Lists the eight overrides the preset takes and
+/// shows one example so a user can copy-paste a starting point.
+fn custom_preset_hint() -> String {
+    "hint: 'custom' is the preset that lets you author per-side / per-corner glyphs. \
+     Combine it with any of: top=… bottom=… left=… right=… tl=… tr=… bl=… br=…  \
+     e.g. `border preset=custom top=\"###(*)###\" tl=\"+\" tr=\"+\" bl=\"+\" br=\"+\"`. \
+     See `format/border-patterns.md` for the side-pattern grammar."
+        .to_string()
 }
 
 /// Resolve the current selection into a list of node ids, or an

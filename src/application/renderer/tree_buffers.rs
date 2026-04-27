@@ -86,9 +86,18 @@ impl Renderer {
             let Some(node) = tree.arena.get(descendant_id) else { continue };
             let Some(area) = node.get().glyph_area() else { continue };
             if let Some(color) = area.background_color {
+                // Sibling of `tree_walker::walk_tree_into_buffers` —
+                // same `background_padding` inflation so the drag
+                // path doesn't paint a smaller fill than the
+                // shape-and-rebuild path.
+                let pad = Vec2::new(
+                    area.background_padding.x.0,
+                    area.background_padding.y.0,
+                );
                 self.node_background_rects.push(super::NodeBackgroundRect {
-                    position: Vec2::new(area.position.x.0, area.position.y.0),
-                    size: Vec2::new(area.render_bounds.x.0, area.render_bounds.y.0),
+                    position: Vec2::new(area.position.x.0, area.position.y.0) - pad,
+                    size: Vec2::new(area.render_bounds.x.0, area.render_bounds.y.0)
+                        + 2.0 * pad,
                     color,
                     shape_id: area.shape.shader_id(),
                     zoom_visibility: area.zoom_visibility,

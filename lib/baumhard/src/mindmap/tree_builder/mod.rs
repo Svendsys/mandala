@@ -99,12 +99,13 @@ pub fn build_mindmap_tree(map: &MindMap) -> MindMapTree {
     let mut id_counter: usize = 1; // 0 is reserved for the Void root
 
     let vars = &map.canvas.theme_variables;
+    let canvas_default_border = map.canvas.default_border.as_ref();
     let roots = map.root_nodes();
     for root in &roots {
         if map.is_hidden_by_fold(root) {
             continue;
         }
-        let area = mindnode_to_glyph_area(root, vars);
+        let area = mindnode_to_glyph_area(root, vars, canvas_default_border);
         let element = GfxElement::new_area_non_indexed_with_id(area, root.channel, id_counter);
         id_counter += 1;
 

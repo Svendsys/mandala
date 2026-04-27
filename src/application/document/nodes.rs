@@ -165,10 +165,15 @@ impl MindMapDocument {
         }
         let before_style = node.style.clone();
         let before_runs = node.text_runs.clone();
+        let canvas_default = self.mindmap.canvas.default_border.clone();
         let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
         for run in node.text_runs.iter_mut() {
             run.size_pt = size_u;
         }
+        // Larger text needs a larger box. Same monotonic floor as
+        // `set_node_font_family`: grow on demand, never shrink.
+        super::grow_one_node_to_fit_text(node);
+        super::grow_one_node_to_fit_border(node, canvas_default.as_ref());
         self.undo_stack.push(UndoAction::EditNodeStyle {
             node_id: node_id.to_string(),
             before_style,
@@ -211,10 +216,20 @@ impl MindMapDocument {
         }
         let before_style = node.style.clone();
         let before_runs = node.text_runs.clone();
+        let canvas_default = self.mindmap.canvas.default_border.clone();
         let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
         for run in node.text_runs.iter_mut() {
             run.font = target.to_string();
         }
+        // Re-measure the node's text in the new face. Fonts vary
+        // wildly in advance width — pinning a wide display face on
+        // a node previously sized for a narrow monospace would clip
+        // the text against the right edge. Same monotonic floor the
+        // text loader enforces: grow if the new measurement exceeds
+        // the current size; never shrink. The border floor runs
+        // after because a wider node may also need a wider frame.
+        super::grow_one_node_to_fit_text(node);
+        super::grow_one_node_to_fit_border(node, canvas_default.as_ref());
         self.undo_stack.push(UndoAction::EditNodeStyle {
             node_id: node_id.to_string(),
             before_style,
@@ -717,7 +732,7 @@ fn default_glyph_border_config() -> GlyphBorderConfig {
     // setter doesn't need access to the private `default_*`
     // factory functions in the model module.
     GlyphBorderConfig {
-        preset: "rounded".to_string(),
+        preset: "light".to_string(),
         font: None,
         font_size_pt: 14.0,
         color: None,
@@ -729,15 +744,18 @@ fn default_glyph_border_config() -> GlyphBorderConfig {
 }
 
 fn default_custom_glyphs() -> CustomBorderGlyphs {
+    // Light-preset corners (`┌┐└┘`) match the new default border
+    // preset, so a `custom` payload that omits a corner falls back
+    // to the same join-cleanly shape the surrounding sides expect.
     CustomBorderGlyphs {
         top: "\u{2500}".to_string(),
         bottom: "\u{2500}".to_string(),
         left: "\u{2502}".to_string(),
         right: "\u{2502}".to_string(),
-        top_left: "\u{256D}".to_string(),
-        top_right: "\u{256E}".to_string(),
-        bottom_left: "\u{2570}".to_string(),
-        bottom_right: "\u{256F}".to_string(),
+        top_left: "\u{250C}".to_string(),
+        top_right: "\u{2510}".to_string(),
+        bottom_left: "\u{2514}".to_string(),
+        bottom_right: "\u{2518}".to_string(),
     }
 }
 
