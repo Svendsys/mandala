@@ -53,6 +53,21 @@ pub fn execute_border(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             "show" => return execute_border_show(args, eff),
             "reset" => return apply_reset(eff),
             other if !other.contains('=') => {
+                // A bare positional alongside a recognised kv almost
+                // always means the user typed an unquoted multi-word
+                // value (`border palette=My Palette` → tokens are
+                // `["palette=My", "Palette"]` because the tokenizer
+                // splits on whitespace). Hint at quoting rather than
+                // the generic "unknown subverb" message — the latter
+                // is technically correct but unhelpful.
+                if args.kvs().next().is_some() {
+                    return ExecResult::err(format!(
+                        "border: unexpected positional '{}' alongside a kv pair — \
+                         did you mean to quote a multi-word value? \
+                         e.g. `border palette=\"{}\"`",
+                        other, other
+                    ));
+                }
                 return ExecResult::err(format!(
                     "border: unknown subverb '{}'; use \
                      'on', 'off', 'show', 'reset', or kv form",

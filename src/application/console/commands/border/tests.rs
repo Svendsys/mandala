@@ -117,18 +117,29 @@ fn border_pattern_promotes_preset_to_custom() {
     );
 }
 
+/// Pick a palette name suitable for unquoted use in the console
+/// kv form — i.e. no whitespace. The testament map has both
+/// space-bearing names ("My Palette") and plain ones ("coral");
+/// `keys().next()` is non-deterministic across HashMap orderings,
+/// and the cached fixture loader makes that ordering stable, so
+/// without filtering the test would flake on whichever name lands
+/// first. Quoted-palette-name parsing is its own concern (covered
+/// indirectly by the existing tokenizer tests); this helper keeps
+/// the palette tests focused on the kv-pipeline contract.
+fn parser_friendly_palette_name(doc: &MindMapDocument) -> String {
+    doc.mindmap
+        .palettes
+        .keys()
+        .find(|n| !n.chars().any(char::is_whitespace))
+        .cloned()
+        .expect("testament map has at least one whitespace-free palette name")
+}
+
 #[test]
 fn border_palette_records_palette_name() {
     let mut doc = fixture_doc();
     doc.selection = SelectionState::Single(first_node_id(&doc));
-    // Pick any palette that exists in the testament map.
-    let palette_name: String = doc
-        .mindmap
-        .palettes
-        .keys()
-        .next()
-        .cloned()
-        .expect("testament map has palettes");
+    let palette_name = parser_friendly_palette_name(&doc);
     let line = format!("border palette={}", palette_name);
     match run(&line, &mut doc) {
         ExecResult::Ok(_) => {}
@@ -152,13 +163,7 @@ fn border_palette_off_clears_field() {
     let mut doc = fixture_doc();
     let id = first_node_id(&doc);
     doc.selection = SelectionState::Single(id.clone());
-    let palette_name: String = doc
-        .mindmap
-        .palettes
-        .keys()
-        .next()
-        .cloned()
-        .expect("testament map has palettes");
+    let palette_name = parser_friendly_palette_name(&doc);
     let _ = run(&format!("border palette={}", palette_name), &mut doc);
     let _ = run("border palette=off", &mut doc);
     let cfg = doc
@@ -254,6 +259,34 @@ fn border_unknown_subverb_errors_clearly() {
     doc.selection = SelectionState::Single(first_node_id(&doc));
     match run("border frobnicate", &mut doc) {
         ExecResult::Err(s) => assert!(s.contains("unknown subverb")),
+        other => panic!("expected Err, got {:?}", other),
+    }
+}
+
+/// `border palette=My Palette` (unquoted multi-word value) tokenises
+/// as `["palette=My", "Palette"]` because the parser splits on
+/// whitespace. The verb sees a bare positional alongside a kv and
+/// surfaces a quoting hint rather than the generic "unknown subverb"
+/// message — the latter is technically correct but unhelpful when
+/// the user obviously meant a single multi-word value.
+#[test]
+fn border_unquoted_multi_word_value_hints_at_quoting() {
+    let mut doc = fixture_doc();
+    doc.selection = SelectionState::Single(first_node_id(&doc));
+    match run("border palette=My Palette", &mut doc) {
+        ExecResult::Err(s) => {
+            assert!(
+                s.contains("did you mean to quote"),
+                "expected quoting hint, got: {}",
+                s
+            );
+            // The hint should suggest the correct quoted form.
+            assert!(
+                s.contains("palette=\"Palette\""),
+                "expected the hint to show the quoted form, got: {}",
+                s
+            );
+        }
         other => panic!("expected Err, got {:?}", other),
     }
 }
