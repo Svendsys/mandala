@@ -164,26 +164,59 @@ fn grow_node_sizes_to_fit_text(map: &mut MindMap) {
 /// "grow, never shrink" posture as the bulk pass: node sizes are
 /// author intent, the loader and the per-edit setter just enforce
 /// a floor.
+///
+/// Measures with the node's pinned font face when one is set
+/// (`TextRun.font` resolves through `app_font_by_family`). Falls
+/// back to cosmic-text's default when the run carries the empty
+/// sentinel or names an unknown family. Without this, a node
+/// pinned to a wide display face measures as if it were monospace
+/// and the box undersizes by 30–60%, leaving text overflowing the
+/// right edge after a `font set` or `font size=` edit.
+///
+/// Picks the *largest* `size_pt` across all runs rather than the
+/// first — runs are usually homogeneous today (the inline editor
+/// collapses to one), but a multi-size future shouldn't silently
+/// fall back to the smallest measurement.
 pub(super) fn grow_one_node_to_fit_text(
     node: &mut baumhard::mindmap::model::MindNode,
 ) {
-    use baumhard::font::fonts::{acquire_font_system_write, measure_text_block_unbounded};
+    use baumhard::font::fonts::{
+        acquire_font_system_write, app_font_by_family, measure_text_block_unbounded,
+    };
 
     let scale = node
         .text_runs
-        .first()
+        .iter()
         .map(|r| r.size_pt as f32)
-        .unwrap_or(14.0);
+        .fold(0.0_f32, f32::max);
+    let scale = if scale > 0.0 { scale } else { 14.0 };
     let line_height = scale * 1.2;
     let pad_x = scale * 1.5;
     let pad_y = scale * 0.5;
+
+    // Pin the family of the run with the largest size so the
+    // measurement reflects whatever face occupies the widest row.
+    // Empty sentinel / unknown family resolves to None, which
+    // lands on cosmic-text's default monospace — same fallback the
+    // shaper uses, so the floor matches what the user will see.
+    let measure_font = node
+        .text_runs
+        .iter()
+        .max_by(|a, b| a.size_pt.cmp(&b.size_pt))
+        .and_then(|r| {
+            if r.font.is_empty() {
+                None
+            } else {
+                app_font_by_family(&r.font)
+            }
+        });
 
     // Per-node lock scope: a renderer frame scheduled during
     // document load can interleave between nodes rather than
     // waiting for every measurement. §B5.
     let block = {
         let mut fs = acquire_font_system_write("grow_one_node_to_fit_text");
-        measure_text_block_unbounded(&mut fs, &node.text, scale, line_height)
+        measure_text_block_unbounded(&mut fs, &node.text, scale, line_height, measure_font)
     };
 
     let need_w = (block.width + pad_x) as f64;

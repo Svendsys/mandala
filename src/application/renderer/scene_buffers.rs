@@ -127,7 +127,10 @@ impl Renderer {
             );
             let h_width = (char_count as f32 + 1.0) * approx_char_width;
             let v_width = approx_char_width * 2.0;
-            let row_count = (nh / font_size).round().max(1.0) as usize;
+            // `.ceil()` rather than `.round()` so side columns
+            // always reach the node bottom — see the matching
+            // explanation in `tree_builder::border::append_border_sub_tree`.
+            let row_count = (nh / font_size).ceil().max(1.0) as usize;
 
             // Pattern-aware side text: corners + side fill on the
             // horizontals; one cluster per line on the verticals.

@@ -73,15 +73,17 @@ fn test_background_color_malformed_hex_degrades_to_none() {
     assert!(area.background_color.is_none());
 }
 
-/// Framed nodes get `background_padding` set to the border's
-/// outward extension (one `font_size` vertically, one
-/// `approx_char_width` horizontally) so the renderer's fill rect
-/// draws under the border glyphs that sit outside the node's text
-/// rect. Without this, the border would render against the canvas
-/// backdrop instead of the node's fill colour.
+/// Framed nodes get `background_padding` set per-edge to the
+/// border's actual outward extension. Top is pulled inward by
+/// `corner_overlap` (so `pad_top = font_size - corner_overlap`),
+/// bottom extends `1.5·font_size - corner_overlap` because the
+/// bottom run cell is taller than the node's text rect, and
+/// left/right both equal `approx_char_width` (the column buffers
+/// start one cell outside the node). Mirrors the layout math in
+/// `tree_builder::border::append_border_sub_tree`.
 #[test]
-fn test_framed_node_carries_background_padding_for_border() {
-    use crate::mindmap::border::BORDER_APPROX_CHAR_WIDTH_FRAC;
+fn test_framed_node_carries_asymmetric_background_padding_for_border() {
+    use crate::mindmap::border::{BORDER_APPROX_CHAR_WIDTH_FRAC, BORDER_CORNER_OVERLAP_FRAC};
     let map = synthetic_map(
         vec![synthetic_node("n", None, 0.0, 0.0)],
         vec![],
@@ -89,19 +91,42 @@ fn test_framed_node_carries_background_padding_for_border() {
     // `synthetic_node` defaults `show_frame: true`.
     let result = build_mindmap_tree(&map);
     let area = glyph_area_of(&result.tree, *result.node_map.get("n").unwrap());
-    let expected_x = 14.0 * BORDER_APPROX_CHAR_WIDTH_FRAC;
-    let expected_y = 14.0;
+    let fs = 14.0_f32;
+    let approx = fs * BORDER_APPROX_CHAR_WIDTH_FRAC;
+    let overlap = fs * BORDER_CORNER_OVERLAP_FRAC;
+    let expected_top = fs - overlap;
+    let expected_bottom = 1.5 * fs - overlap;
+    let pad = area.background_padding;
     assert!(
-        (area.background_padding.x() - expected_x).abs() < 0.01,
-        "background_padding.x = {} but expected {}",
-        area.background_padding.x(),
-        expected_x
+        (pad.top() - expected_top).abs() < 0.01,
+        "pad.top = {} but expected {}",
+        pad.top(),
+        expected_top
     );
     assert!(
-        (area.background_padding.y() - expected_y).abs() < 0.01,
-        "background_padding.y = {} but expected {}",
-        area.background_padding.y(),
-        expected_y
+        (pad.bottom() - expected_bottom).abs() < 0.01,
+        "pad.bottom = {} but expected {}",
+        pad.bottom(),
+        expected_bottom
+    );
+    assert!(
+        (pad.left() - approx).abs() < 0.01,
+        "pad.left = {} but expected {}",
+        pad.left(),
+        approx
+    );
+    assert!(
+        (pad.right() - approx).abs() < 0.01,
+        "pad.right = {} but expected {}",
+        pad.right(),
+        approx
+    );
+    // Sanity: top and bottom differ — symmetric padding would have
+    // missed this regression. `expected_bottom > expected_top` by
+    // `0.5·fs = 7.0 px` at fs=14.
+    assert!(
+        pad.bottom() > pad.top(),
+        "pad.bottom should exceed pad.top for an asymmetric border"
     );
 }
 
@@ -117,8 +142,7 @@ fn test_frameless_node_keeps_zero_background_padding() {
     map.nodes.get_mut("n").unwrap().style.show_frame = false;
     let result = build_mindmap_tree(&map);
     let area = glyph_area_of(&result.tree, *result.node_map.get("n").unwrap());
-    assert_eq!(area.background_padding.x(), 0.0);
-    assert_eq!(area.background_padding.y(), 0.0);
+    assert!(area.background_padding.is_zero());
 }
 
 #[test]

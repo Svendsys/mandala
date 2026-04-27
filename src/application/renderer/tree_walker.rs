@@ -74,15 +74,22 @@ pub(super) fn walk_tree_into_buffers(
 
         if let Some(color) = area.background_color {
             // Inflate the fill rect outward by `background_padding`
-            // so the fill extends behind border glyphs that sit
-            // outside the text rect. Default `Vec2::ZERO` for areas
-            // without a border keeps the historical behaviour
+            // — per-edge values so framed nodes whose top/bottom
+            // border extents differ (top pulled inward by
+            // `corner_overlap`, bottom extends 1.5·fs - corner_overlap
+            // below the rect) get an asymmetric fill that matches the
+            // visible border cell edges. `EdgePadding::ZERO` for
+            // areas without a border keeps the historical behaviour
             // (background coincides with the text rect).
-            let pad = Vec2::new(area.background_padding.x.0, area.background_padding.y.0);
+            let pad = area.background_padding;
+            let pos = Vec2::new(area.position.x.0, area.position.y.0);
+            let size = Vec2::new(area.render_bounds.x.0, area.render_bounds.y.0);
             yield_background(NodeBackgroundRect {
-                position: Vec2::new(area.position.x.0, area.position.y.0) - pad + offset,
-                size: Vec2::new(area.render_bounds.x.0, area.render_bounds.y.0)
-                    + 2.0 * pad,
+                position: Vec2::new(pos.x - pad.left(), pos.y - pad.top()) + offset,
+                size: Vec2::new(
+                    size.x + pad.left() + pad.right(),
+                    size.y + pad.top() + pad.bottom(),
+                ),
                 color,
                 shape_id: area.shape.shader_id(),
                 zoom_visibility: area.zoom_visibility,

@@ -436,6 +436,119 @@ use super::defaults::default_cross_link_edge;
         );
     }
 
+    /// Pinning a wide display face must measure with that face, not
+    /// cosmic-text's default monospace. Pre-fix,
+    /// `measure_text_block_unbounded` shaped with `Attrs::new()`
+    /// regardless of the run's `font` field, so a node pinned to a
+    /// wide face under-measured by 30–60% and the box undersized.
+    /// This test compares the floor reached by two consecutive
+    /// font-family pins on the same fixture node — one to a face
+    /// with a known wide advance, one to a known narrow face — and
+    /// asserts the wide-face floor is strictly larger. If the
+    /// measurement reverts to font-blind, both pins land at the
+    /// monospace floor and the assertion fires.
+    #[test]
+    fn test_set_node_font_family_wide_face_grows_more_than_narrow() {
+        baumhard::font::fonts::init();
+        // Strategy: shape "MMMMMMMM" through every loaded face,
+        // pick the narrowest and widest measured advance, and
+        // compare the two floors. This is fixture-resilient — we
+        // don't rely on any particular family being bundled, just
+        // on at least two faces having distinct advances (which is
+        // the case for the >40 bundled families).
+        let families: Vec<String> =
+            baumhard::font::fonts::loaded_families_iter()
+                .map(str::to_string)
+                .collect();
+        if families.len() < 2 {
+            // Not enough variety to discriminate; skip without
+            // failing the suite.
+            return;
+        }
+
+        // Measure each family's advance for "MMMMMMMM" at 14 pt;
+        // pick narrowest and widest. Skip families that resolve to
+        // None for app_font_by_family (shouldn't happen given the
+        // iter source, but defensive).
+        let mut measurements: Vec<(String, f32)> = Vec::new();
+        for fam in &families {
+            let app_font = match baumhard::font::fonts::app_font_by_family(fam) {
+                Some(f) => f,
+                None => continue,
+            };
+            let mut fs = baumhard::font::fonts::acquire_font_system_write(
+                "tests::wide_vs_narrow_measure",
+            );
+            let block = baumhard::font::fonts::measure_text_block_unbounded(
+                &mut fs,
+                "MMMMMMMM",
+                14.0,
+                16.8,
+                Some(app_font),
+            );
+            drop(fs);
+            measurements.push((fam.clone(), block.width));
+        }
+        measurements.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        if measurements.len() < 2 || measurements.first().unwrap().1 <= 0.0 {
+            return;
+        }
+        let narrow_fam = measurements.first().unwrap().0.clone();
+        let wide_fam = measurements.last().unwrap().0.clone();
+        if (measurements.last().unwrap().1 - measurements.first().unwrap().1).abs() < 1.0 {
+            // Insufficient spread — bundled set may be pathologically
+            // uniform. Don't assert.
+            return;
+        }
+
+        // Apply each family in turn to a fresh node and read the
+        // resulting size.
+        let measure_floor = |fam: &str| -> f64 {
+            let mut doc = load_test_doc();
+            let nid = first_testament_node_id(&doc);
+            let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+            node.size.width = 1.0;
+            node.size.height = 1.0;
+            assert!(doc.set_node_font_family(&nid, Some(fam)));
+            doc.mindmap.nodes.get(&nid).unwrap().size.width
+        };
+
+        let narrow_floor = measure_floor(&narrow_fam);
+        let wide_floor = measure_floor(&wide_fam);
+        assert!(
+            wide_floor > narrow_floor,
+            "wide face '{}' floor ({}) should exceed narrow face '{}' floor ({}); \
+             likely measure_text_block_unbounded reverted to font-blind",
+            wide_fam,
+            wide_floor,
+            narrow_fam,
+            narrow_floor
+        );
+    }
+
+    /// `set_node_text` must re-fit on text change — pre-fix the
+    /// inline editor's commit path could overflow because the box
+    /// stayed at its prior size while the new text grew.
+    #[test]
+    fn test_set_node_text_grows_node_to_fit_longer_text() {
+        baumhard::font::fonts::init();
+        let mut doc = load_test_doc();
+        let nid = first_testament_node_id(&doc);
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        node.size.width = 1.0;
+        node.size.height = 1.0;
+        let long_text =
+            "this is some text that is meaningfully longer than a tiny box".to_string();
+        assert!(doc.set_node_text(&nid, long_text));
+        let node = doc.mindmap.nodes.get(&nid).unwrap();
+        assert!(
+            node.size.width > 1.0 && node.size.height > 1.0,
+            "set_node_text must re-fit the node box; got {}×{}",
+            node.size.width,
+            node.size.height
+        );
+    }
+
     #[test]
     fn test_set_node_font_family_none_clears_every_run() {
         let mut doc = load_test_doc();

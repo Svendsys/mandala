@@ -21,7 +21,6 @@ use crate::mindmap::border::{
 };
 use crate::mindmap::model::{MindMap, MindNode};
 use crate::util::color;
-use crate::util::ordered_vec2::OrderedVec2;
 
 /// Converts a MindNode's data into a Baumhard GlyphArea. Text-run colors
 /// are resolved through the map's theme variables before being converted
@@ -50,15 +49,35 @@ pub(super) fn mindnode_to_glyph_area(
     let mut area = GlyphArea::new_with_str(&node.text, scale, line_height, position, bounds);
 
     // Background-fill padding: the border's four glyph runs sit
-    // outside the text rect by one `font_size` vertically and one
-    // `approx_char_width` horizontally on each side (see
-    // `tree_builder::border::append_border_sub_tree`). Stamp the
-    // same outward expansion onto the area's `background_padding`
-    // so the renderer's fill rect covers the border area too. The
-    // padding is computed from the resolved border style (per-node
-    // override → canvas default → hardcoded preset defaults), and
-    // is `Vec2::ZERO` when the frame is hidden or the shape isn't
-    // a rectangle (the only shape borders attach to today).
+    // OUTSIDE the text rect at asymmetric distances. Mirror the
+    // exact layout math `tree_builder::border::append_border_sub_tree`
+    // uses so the fill ends precisely where the border-cell edges
+    // do, instead of the symmetric (and visibly wrong)
+    // `(approx_char_width, font_size)` pad the prior pass shipped:
+    //
+    //   pos_y     ── ny ─────────────────────── ▲ TEXT RECT
+    //                                          │
+    //   bottom_y  ── ny + nh - corner_overlap   ▼ TEXT RECT
+    //
+    //   top run cell occupies        [ny - fs + corner_overlap,
+    //                                 ny - fs + corner_overlap + 1.5·fs]
+    //                              = [ny - (fs - corner_overlap),
+    //                                 ny + (0.5·fs + corner_overlap)]
+    //   bottom run cell occupies     [ny + nh - corner_overlap,
+    //                                 ny + nh + 1.5·fs - corner_overlap]
+    //   left/right column cells start at `nx - approx_char_width`
+    //   and `right_corner_x` respectively, both with width
+    //   `2·approx_char_width`; the visible vertical line within
+    //   each cell sits in the left half (the column's text start).
+    //
+    // Outward extents from the text rect:
+    //   top    = fs - corner_overlap
+    //   bottom = 1.5·fs - corner_overlap
+    //   left   = approx_char_width
+    //   right  = approx_char_width
+    //
+    // `EdgePadding::ZERO` when the frame is hidden or the shape
+    // isn't a rectangle (the only shape borders attach to today).
     if node.style.show_frame
         && NodeShape::from_style_string(&node.style.shape) == NodeShape::Rectangle
     {
@@ -68,11 +87,14 @@ pub(super) fn mindnode_to_glyph_area(
             canvas_default_border,
             frame_color_resolved,
         );
-        let approx_char_width =
-            border_style.font_size_pt * BORDER_APPROX_CHAR_WIDTH_FRAC;
-        area.background_padding = OrderedVec2::new_f32(
-            approx_char_width,
-            border_style.font_size_pt,
+        let fs = border_style.font_size_pt;
+        let approx_char_width = fs * BORDER_APPROX_CHAR_WIDTH_FRAC;
+        let corner_overlap = fs * crate::mindmap::border::BORDER_CORNER_OVERLAP_FRAC;
+        area.background_padding = crate::gfx_structs::area::EdgePadding::new(
+            /* top    */ fs - corner_overlap,
+            /* right  */ approx_char_width,
+            /* bottom */ 1.5 * fs - corner_overlap,
+            /* left   */ approx_char_width,
         );
     }
 

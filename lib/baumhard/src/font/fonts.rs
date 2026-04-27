@@ -523,6 +523,15 @@ impl TextBlockSize {
 /// line height in px (not a multiplier), applied uniformly to every
 /// line. Empty input returns [`TextBlockSize::ZERO`] without shaping.
 ///
+/// `font` pins the cosmic-text [`Family`] so the measurement uses
+/// the same face the renderer will eventually shape with. Pass
+/// `None` to fall back to cosmic-text's default (typically a
+/// monospace) — historical behaviour, but a fragile floor for
+/// nodes whose `TextRun.font` pins a wider display face. The pin
+/// follows the same `COMPILED_FONT_ID_MAP → face.families.first()`
+/// path [`measure_glyph_ink_bounds`] uses, so the two measurement
+/// primitives agree on which face name to pin.
+///
 /// Costs: one scratch `Buffer`, one shaping pass, O(lines) fold
 /// over `layout_runs`. No rasterisation (no `SwashCache` required).
 pub fn measure_text_block_unbounded(
@@ -530,6 +539,7 @@ pub fn measure_text_block_unbounded(
     text: &str,
     scale: f32,
     line_height: f32,
+    font: Option<AppFont>,
 ) -> TextBlockSize {
     if text.is_empty() {
         return TextBlockSize::ZERO;
@@ -537,7 +547,23 @@ pub fn measure_text_block_unbounded(
     let mut buffer = Buffer::new(font_system, Metrics::new(scale, line_height));
     // `None` on both axes = unbounded; measure natural widths.
     buffer.set_size(font_system, None, None);
-    buffer.set_text(font_system, text, &Attrs::new(), Shaping::Advanced, None);
+
+    // Pin the requested AppFont family if any — without this, a
+    // node pinned to a wide display face measures as if it were
+    // cosmic-text's default monospace and the box undersizes by
+    // 30–60%. The family-name string must outlive `attrs`, so
+    // we hold it in a local binding.
+    let family_name: Option<String> = font.and_then(|app_font| {
+        let ids = COMPILED_FONT_ID_MAP.get(&app_font)?;
+        let face = font_system.db().face(*ids.first()?)?;
+        Some(face.families.first()?.0.clone())
+    });
+    let attrs = match family_name.as_deref() {
+        Some(name) => Attrs::new().family(Family::Name(name)),
+        None => Attrs::new(),
+    };
+
+    buffer.set_text(font_system, text, &attrs, Shaping::Advanced, None);
 
     let mut max_w = 0.0_f32;
     let mut line_count = 0_u32;

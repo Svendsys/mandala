@@ -23,6 +23,71 @@ use crate::util::grapheme_chad;
 use crate::util::ordered_vec2::OrderedVec2;
 use derivative::Derivative;
 use glam::f32::Vec2;
+
+/// Asymmetric per-edge expansion in pixels. Used by
+/// [`GlyphArea::background_padding`] to extend the fill rect
+/// outward by an independent amount on each side. Default is
+/// `0.0` everywhere — the fill coincides with the text rect, the
+/// historical behaviour. All fields stored as
+/// [`ordered_float::OrderedFloat`] so the type is hashable and
+/// `PartialEq`-able with float-bit equality, mirroring
+/// [`OrderedVec2`].
+///
+/// Why per-edge rather than the previous symmetric `OrderedVec2`:
+/// node borders are NOT symmetric — the top run sits
+/// `font_size - corner_overlap` above the node rect, the bottom
+/// run extends `1.5 * font_size - corner_overlap` below it. A
+/// symmetric pad either over-extends top or under-extends bottom.
+/// Carrying four independent values lets the producer
+/// (`tree_builder::node::mindnode_to_glyph_area`) state the actual
+/// outward extent on each side.
+#[derive(Clone, Copy, Hash, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+pub struct EdgePadding {
+    pub top: ordered_float::OrderedFloat<f32>,
+    pub right: ordered_float::OrderedFloat<f32>,
+    pub bottom: ordered_float::OrderedFloat<f32>,
+    pub left: ordered_float::OrderedFloat<f32>,
+}
+
+impl EdgePadding {
+    /// All-zero padding. Equivalent to `Default::default()`; named
+    /// for use in `const` contexts and to read clearly at call
+    /// sites that want "no inflation".
+    pub const ZERO: EdgePadding = EdgePadding {
+        top: ordered_float::OrderedFloat(0.0),
+        right: ordered_float::OrderedFloat(0.0),
+        bottom: ordered_float::OrderedFloat(0.0),
+        left: ordered_float::OrderedFloat(0.0),
+    };
+
+    /// Construct from raw `f32`s.
+    pub fn new(top: f32, right: f32, bottom: f32, left: f32) -> Self {
+        EdgePadding {
+            top: ordered_float::OrderedFloat(top),
+            right: ordered_float::OrderedFloat(right),
+            bottom: ordered_float::OrderedFloat(bottom),
+            left: ordered_float::OrderedFloat(left),
+        }
+    }
+
+    /// `true` when every edge is exactly zero. Used by the
+    /// renderer's per-frame fast-path to skip the pad arithmetic
+    /// for unframed nodes (the common case).
+    pub fn is_zero(&self) -> bool {
+        self.top.0 == 0.0 && self.right.0 == 0.0 && self.bottom.0 == 0.0 && self.left.0 == 0.0
+    }
+
+    pub fn top(&self) -> f32 { self.top.0 }
+    pub fn right(&self) -> f32 { self.right.0 }
+    pub fn bottom(&self) -> f32 { self.bottom.0 }
+    pub fn left(&self) -> f32 { self.left.0 }
+}
+
+impl Default for EdgePadding {
+    fn default() -> Self {
+        EdgePadding::ZERO
+    }
+}
 use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
@@ -58,19 +123,22 @@ pub struct GlyphArea {
     /// rendering reads it during `rebuild_buffers_from_tree`.
     #[serde(default)]
     pub background_color: Option<[u8; 4]>,
-    /// Outward expansion of the background fill rect beyond
-    /// `(position, render_bounds)`. The renderer draws the fill at
-    /// `position - background_padding` with size
-    /// `render_bounds + 2 * background_padding`; text shaping
-    /// continues to use the unmodified `position` / `render_bounds`,
-    /// so this field doesn't affect layout. Default `Vec2::ZERO` —
-    /// the background coincides with the text bounds, the
-    /// historical behaviour. Used by mindmap nodes to extend the
-    /// fill behind border glyphs that sit outside the text rect so
-    /// the border draws against the node's background colour rather
-    /// than the canvas underneath.
+    /// Asymmetric outward expansion of the background fill rect
+    /// beyond `(position, render_bounds)`. The renderer draws the
+    /// fill at `(position.x - left, position.y - top)` with size
+    /// `(render_bounds.x + left + right, render_bounds.y + top + bottom)`;
+    /// text shaping uses the unmodified `position` / `render_bounds`,
+    /// so this field doesn't affect layout. Default `EdgePadding::ZERO`
+    /// — the background coincides with the text bounds, the historical
+    /// behaviour. Used by mindmap nodes to extend the fill behind
+    /// border glyphs that sit outside the text rect so the border
+    /// draws against the node's background colour rather than the
+    /// canvas underneath. Per-edge rather than symmetric because
+    /// node borders are inherently asymmetric — the top run sits
+    /// `font_size - corner_overlap` above the rect and the bottom
+    /// run extends `1.5 * font_size - corner_overlap` below it.
     #[serde(default)]
-    pub background_padding: OrderedVec2,
+    pub background_padding: EdgePadding,
     /// When `true`, the renderer shapes this area's text with
     /// `cosmic_text::Align::Center` so cross-script glyphs whose
     /// per-glyph advance varies (e.g. the picker's Devanagari /
@@ -132,8 +200,7 @@ impl Hash for GlyphArea {
         self.render_bounds.y().to_bits().hash(state);
         self.regions.hash(state);
         self.background_color.hash(state);
-        self.background_padding.x().to_bits().hash(state);
-        self.background_padding.y().to_bits().hash(state);
+        self.background_padding.hash(state);
         self.align_center.hash(state);
         self.outline.hash(state);
         self.shape.hash(state);
@@ -157,7 +224,7 @@ impl GlyphArea {
             render_bounds: OrderedVec2::from_vec2(bounds),
             regions: ColorFontRegions::default(),
             background_color: None,
-            background_padding: OrderedVec2::from_vec2(Vec2::ZERO),
+            background_padding: EdgePadding::ZERO,
             align_center: false,
             outline: None,
             shape: NodeShape::Rectangle,
@@ -183,7 +250,7 @@ impl GlyphArea {
             render_bounds: OrderedVec2::from_vec2(bounds),
             regions: ColorFontRegions::default(),
             background_color: None,
-            background_padding: OrderedVec2::from_vec2(Vec2::ZERO),
+            background_padding: EdgePadding::ZERO,
             align_center: false,
             outline: None,
             shape: NodeShape::Rectangle,
