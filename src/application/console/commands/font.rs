@@ -437,17 +437,8 @@ fn execute_font_list(_args: &Args) -> ExecResult {
 mod tests {
     use super::*;
     use crate::application::console::parser::tokenize;
+    use crate::application::document::tests_common::load_test_doc as fixture_doc;
     use crate::application::document::{EdgeRef, MindMapDocument, SelectionState};
-
-    /// Load the testament map fresh so tests don't share mutated
-    /// state. Routes through the process-wide cache in
-    /// `document::tests_common::load_test_doc` — clones the
-    /// already-parsed `MindMap` and skips the per-node
-    /// FONT_SYSTEM write-lock acquisitions `MindMapDocument::load`
-    /// would otherwise trigger.
-    fn fixture_doc() -> MindMapDocument {
-        crate::application::document::tests_common::load_test_doc()
-    }
 
     fn run(line: &str, doc: &mut MindMapDocument) -> ExecResult {
         let toks = tokenize(line);

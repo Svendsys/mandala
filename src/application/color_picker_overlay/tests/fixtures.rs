@@ -1,41 +1,21 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Shared test fixtures for the color picker overlay tests. Kept
-//! `pub(super)` so each sibling test module can construct geometry +
-//! pull pre-computed area lists without re-deriving the constants.
+//! Shared test fixtures for the color picker overlay tests. The
+//! geometry-stub builder is the same as the one in
+//! `color_picker::tests::fixtures::sample_geometry` — same struct,
+//! same field values — so it lives once under the conceptual
+//! owner (the picker, where `ColorPickerOverlayGeometry` is
+//! defined) and is re-exported here under the historical
+//! `picker_sample_geometry` name to keep call sites unchanged.
 
 use baumhard::gfx_structs::area::GlyphArea;
 
 use crate::application::color_picker::{
-    compute_color_picker_layout, ColorPickerOverlayGeometry, CROSSHAIR_CENTER_CELL,
+    compute_color_picker_layout, ColorPickerOverlayGeometry,
 };
 use crate::application::color_picker_overlay::picker_glyph_areas::picker_glyph_areas;
 
-/// Plausible stub picker geometry for tests. The pure-function layout
-/// only cares that the advances are non-zero and self-consistent;
-/// ink offsets default to zero so the layout uses classic em-box
-/// centering unless a test overrides them.
-pub(super) fn picker_sample_geometry() -> ColorPickerOverlayGeometry {
-    ColorPickerOverlayGeometry {
-        target_label: "edge",
-        hue_deg: 0.0,
-        sat: 1.0,
-        val: 1.0,
-        preview_hex: "#ff0000".to_string(),
-        hex_visible: false,
-        max_cell_advance: 16.0,
-        max_ring_advance: 24.0,
-        measurement_font_size: 16.0,
-        size_scale: 1.0,
-        center_override: None,
-        hovered_hit: None,
-        arm_top_ink_offsets: [(0.0, 0.0); CROSSHAIR_CENTER_CELL],
-        arm_bottom_ink_offsets: [(0.0, 0.0); CROSSHAIR_CENTER_CELL],
-        arm_left_ink_offsets: [(0.0, 0.0); CROSSHAIR_CENTER_CELL],
-        arm_right_ink_offsets: [(0.0, 0.0); CROSSHAIR_CENTER_CELL],
-        preview_ink_offset: (0.0, 0.0),
-    }
-}
+pub(super) use crate::application::color_picker::tests::fixtures::sample_geometry as picker_sample_geometry;
 
 /// Compute the picker's channel-ordered `(channel, GlyphArea)` list
 /// at the canonical 1280×720 viewport — what every test that reasons
