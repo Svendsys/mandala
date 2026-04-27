@@ -362,9 +362,6 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("rich_text_spans_clamps_fully_out_of_range_region", |b| {
         b.iter(|| do_rich_text_spans_clamps_fully_out_of_range_region())
     });
-    c.bench_function("rich_text_spans_slice_at_emoji_scalar_boundary", |b| {
-        b.iter(|| do_rich_text_spans_slice_at_emoji_scalar_boundary())
-    });
     c.bench_function("rich_text_spans_empty_text_with_region_yields_no_spans", |b| {
         b.iter(|| do_rich_text_spans_empty_text_with_region_yields_no_spans())
     });
