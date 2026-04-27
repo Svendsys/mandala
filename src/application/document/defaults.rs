@@ -10,7 +10,7 @@ use glam::Vec2;
 
 use baumhard::mindmap::model::{MindEdge, MindNode, NodeLayout, NodeStyle, Position, Size, TextRun};
 
-pub(super) fn default_parent_child_edge(from_id: &str, to_id: &str) -> MindEdge {
+pub(crate) fn default_parent_child_edge(from_id: &str, to_id: &str) -> MindEdge {
     MindEdge {
         from_id: from_id.to_string(),
         to_id: to_id.to_string(),
@@ -35,7 +35,7 @@ pub(super) fn default_parent_child_edge(from_id: &str, to_id: &str) -> MindEdge 
 
 /// Build a fresh "orphan" MindNode with sensible defaults, positioned at
 /// `position` and marked as a root (`parent_id = None`).
-pub(super) fn default_orphan_node(id: &str, position: Vec2) -> MindNode {
+pub(crate) fn default_orphan_node(id: &str, position: Vec2) -> MindNode {
     let text = "New node".to_string();
     let text_runs = vec![TextRun {
         start: 0,
@@ -91,7 +91,7 @@ pub(super) fn default_orphan_node(id: &str, position: Vec2) -> MindNode {
 /// Build a default-styled cross_link edge from `from_id` to `to_id`.
 /// Used by connect mode (Ctrl+D) to create non-hierarchical connections.
 /// Cross-links don't affect the tree structure.
-pub(super) fn default_cross_link_edge(from_id: &str, to_id: &str) -> MindEdge {
+pub(crate) fn default_cross_link_edge(from_id: &str, to_id: &str) -> MindEdge {
     MindEdge {
         from_id: from_id.to_string(),
         to_id: to_id.to_string(),

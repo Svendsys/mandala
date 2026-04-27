@@ -20,7 +20,7 @@ use baumhard::mindmap::tree_builder::{self, MindMapTree};
 
 pub mod animations;
 mod custom;
-mod defaults;
+pub(crate) mod defaults;
 mod edges;
 mod hit_test;
 pub mod mutations;

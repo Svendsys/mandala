@@ -170,87 +170,38 @@ fn test_double_click_guard_allows_when_editor_closed() {
 mod drag_helper_tests {
     use super::super::edge_label_drag::apply_edge_label_drag;
     use super::super::portal_label_drag::apply_portal_label_drag;
+    use crate::application::document::defaults::{default_cross_link_edge, default_orphan_node};
     use crate::application::document::{EdgeRef, MindMapDocument};
-    use baumhard::mindmap::model::{
-        MindEdge, MindNode, NodeLayout, NodeStyle, Position, Size, TextRun,
-        DISPLAY_MODE_PORTAL,
-    };
+    use baumhard::mindmap::model::{MindEdge, MindNode, Size, DISPLAY_MODE_PORTAL};
     use glam::Vec2;
 
     const FROM_ID: &str = "node-a";
     const TO_ID: &str = "node-b";
     const EDGE_TYPE: &str = "cross_link";
 
+    /// Tighter than the production `default_orphan_node`: 100×60 box,
+    /// single-grapheme `"n"` text. The drag-projection math under test
+    /// is a function of node geometry, so the size is load-bearing for
+    /// the cursor coordinates the tests below pick.
     fn fixture_node(id: &str, x: f64, y: f64) -> MindNode {
-        MindNode {
-            id: id.to_string(),
-            parent_id: None,
-            position: Position { x, y },
-            size: Size { width: 100.0, height: 60.0 },
-            text: "n".to_string(),
-            text_runs: vec![TextRun {
-                start: 0,
-                end: 1,
-                bold: false,
-                italic: false,
-                underline: false,
-                font: "LiberationSans".to_string(),
-                size_pt: 24,
-                color: "#ffffff".to_string(),
-                hyperlink: None,
-            }],
-            style: NodeStyle {
-                background_color: "#141414".to_string(),
-                frame_color: "#30b082".to_string(),
-                text_color: "#ffffff".to_string(),
-                shape: "rectangle".to_string(),
-                corner_radius_percent: 10.0,
-                frame_thickness: 4.0,
-                show_frame: true,
-                show_shadow: false,
-                border: None,
-            },
-            layout: NodeLayout {
-                layout_type: "map".to_string(),
-                direction: "auto".to_string(),
-                spacing: 50.0,
-            },
-            folded: false,
-            notes: String::new(),
-            color_schema: None,
-            channel: 0,
-            trigger_bindings: Vec::new(),
-            inline_mutations: Vec::new(),
-            min_zoom_to_render: None,
-            max_zoom_to_render: None,
-        }
+        let mut n = default_orphan_node(id, Vec2::new(x as f32, y as f32));
+        n.size = Size { width: 100.0, height: 60.0 };
+        n.text = "n".to_string();
+        n.text_runs[0].end = 1;
+        n
     }
 
+    /// Cross-link edge in line-mode (`portal=false`) or portal-mode
+    /// (`portal=true`). The portal variant deliberately omits
+    /// `glyph_connection` — `default_portal_edge` would supply one,
+    /// but these tests want the bare display-mode flip without the
+    /// glyph-marker baggage.
     fn fixture_edge(portal: bool) -> MindEdge {
-        MindEdge {
-            from_id: FROM_ID.to_string(),
-            to_id: TO_ID.to_string(),
-            edge_type: EDGE_TYPE.to_string(),
-            color: "#aa88cc".to_string(),
-            width: 3,
-            line_style: "solid".to_string(),
-            visible: true,
-            label: None,
-            label_config: None,
-            anchor_from: "auto".to_string(),
-            anchor_to: "auto".to_string(),
-            control_points: Vec::new(),
-            glyph_connection: None,
-            display_mode: if portal {
-                Some(DISPLAY_MODE_PORTAL.to_string())
-            } else {
-                None
-            },
-            portal_from: None,
-            portal_to: None,
-            min_zoom_to_render: None,
-            max_zoom_to_render: None,
+        let mut e = default_cross_link_edge(FROM_ID, TO_ID);
+        if portal {
+            e.display_mode = Some(DISPLAY_MODE_PORTAL.to_string());
         }
+        e
     }
 
     fn portal_doc() -> MindMapDocument {

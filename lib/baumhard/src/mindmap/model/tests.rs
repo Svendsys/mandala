@@ -202,26 +202,10 @@ fn effective_font_size_respects_custom_bounds() {
 // label_config + resolved_for helper.
 
 fn synthetic_edge_with_label(label: Option<&str>, config: Option<EdgeLabelConfig>) -> MindEdge {
-    MindEdge {
-        from_id: "a".to_string(),
-        to_id: "b".to_string(),
-        edge_type: "cross_link".to_string(),
-        color: "#fff".to_string(),
-        width: 1,
-        line_style: "solid".to_string(),
-        visible: true,
-        label: label.map(|s| s.to_string()),
-        label_config: config,
-        anchor_from: "auto".to_string(),
-        anchor_to: "auto".to_string(),
-        control_points: Vec::new(),
-        glyph_connection: None,
-        display_mode: None,
-        portal_from: None,
-        portal_to: None,
-        min_zoom_to_render: None,
-        max_zoom_to_render: None,
-    }
+    let mut e = crate::mindmap::test_helpers::synthetic_edge("a", "b", "auto", "auto");
+    e.label = label.map(|s| s.to_string());
+    e.label_config = config;
+    e
 }
 
 #[test]
