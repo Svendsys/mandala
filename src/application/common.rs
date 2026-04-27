@@ -51,18 +51,6 @@ impl Default for RenderDecree {
     }
 }
 
-// winit::KeyEvent does not derive copy, so we will create our own type that does
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum KeyPress {
-    Placeholder,
-}
-
-impl KeyPress {
-    pub(crate) fn placeholder() -> Self {
-        KeyPress::Placeholder
-    }
-}
-
 #[derive(Copy, Clone)]
 pub enum WindowMode {
     Fullscreen,
