@@ -436,15 +436,9 @@ fn execute_font_list(_args: &Args) -> ExecResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::console::parser::tokenize;
+    use crate::application::console::tests::fixtures::run;
     use crate::application::document::tests_common::load_test_doc as fixture_doc;
     use crate::application::document::{EdgeRef, MindMapDocument, SelectionState};
-
-    fn run(line: &str, doc: &mut MindMapDocument) -> ExecResult {
-        let toks = tokenize(line);
-        let mut eff = ConsoleEffects::new(doc);
-        execute_font(&Args::new(&toks[1..]), &mut eff)
-    }
 
     fn first_loaded_family() -> String {
         baumhard::font::fonts::init();

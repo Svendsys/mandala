@@ -47,7 +47,7 @@ pub mod traits;
 pub mod visuals;
 
 #[cfg(test)]
-mod tests;
+pub(in crate::application::console) mod tests;
 
 // Re-exports kept narrow — only what crosses module boundaries is
 // surfaced. The rest stays reachable via the submodule path for

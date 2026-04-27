@@ -369,7 +369,6 @@ fn source_label(s: &crate::application::document::mutations_loader::MutationSour
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::console::parser::tokenize;
     use crate::application::document::mutations_loader::MutationSource;
     use baumhard::mindmap::custom_mutation::{CustomMutation, TargetScope};
 
@@ -405,11 +404,7 @@ mod tests {
         )
     }
 
-    fn run(line: &str, doc: &mut MindMapDocument) -> ExecResult {
-        let toks = tokenize(line);
-        let mut eff = ConsoleEffects::new(doc);
-        execute_mutation(&Args::new(&toks[1..]), &mut eff)
-    }
+    use crate::application::console::tests::fixtures::run;
 
     /// Join the `text` field of every line — saves every test from
     /// repeating the same map+collect after the `Lines` collapse.

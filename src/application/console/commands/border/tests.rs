@@ -6,19 +6,13 @@
 //! `execute_border`, assert on `ExecResult` and the resulting
 //! model fields.
 
-use crate::application::console::parser::{tokenize, Args};
-use crate::application::console::{ConsoleEffects, ExecResult};
+use crate::application::console::tests::fixtures::run;
+use crate::application::console::ExecResult;
 use crate::application::document::tests_common::{
     first_testament_node_id as first_node_id,
     load_test_doc as fixture_doc,
 };
 use crate::application::document::{MindMapDocument, SelectionState};
-
-fn run(line: &str, doc: &mut MindMapDocument) -> ExecResult {
-    let toks = tokenize(line);
-    let mut eff = ConsoleEffects::new(doc);
-    super::execute_border(&Args::new(&toks[1..]), &mut eff)
-}
 
 #[test]
 fn border_on_then_off_toggles_show_frame() {

@@ -27,7 +27,7 @@ pub(super) fn select_first_edge(doc: &mut MindMapDocument) -> EdgeRef {
 /// Parse `line`, run the resolved command against `doc`, and return
 /// the `ExecResult`. Panics on parse failure — these are unit tests
 /// with known-good input.
-pub(super) fn run(line: &str, doc: &mut MindMapDocument) -> ExecResult {
+pub(in crate::application::console) fn run(line: &str, doc: &mut MindMapDocument) -> ExecResult {
     let (cmd, tokens) = match parse(line) {
         ParseResult::Ok { cmd, args } => (cmd, args),
         ParseResult::Empty => panic!("empty input: {:?}", line),
