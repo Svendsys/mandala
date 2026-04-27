@@ -112,7 +112,7 @@ fn now_ms() -> f64 {
         .unwrap_or(0.0)
 }
 use glam::Vec2;
-use wgpu::{Instance, SurfaceTargetUnsafe};
+use wgpu::Instance;
 use winit::event::{ElementState, Event, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::ControlFlow;
 use winit::keyboard::ModifiersState;
