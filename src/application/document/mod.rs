@@ -33,7 +33,7 @@ mod undo_action;
 mod zoom_bounds;
 
 #[cfg(test)]
-mod tests_common;
+pub(crate) mod tests_common;
 #[cfg(test)]
 mod tests_delete;
 #[cfg(test)]
@@ -60,6 +60,7 @@ pub use types::{
     AnimationInstance, EdgeLabelSel, EdgeRef, PortalLabelSel, SelectionState,
     HIGHLIGHT_COLOR, REPARENT_SOURCE_COLOR, REPARENT_TARGET_COLOR,
 };
+pub use nodes::{BorderConfigEdits, BorderEditOutcome, BorderFieldEdit, BorderSide};
 pub use undo_action::UndoAction;
 pub use zoom_bounds::ZoomBoundEdit;
 
@@ -183,6 +184,70 @@ fn grow_node_sizes_to_fit_text(map: &mut MindMap) {
     }
 }
 
+/// Grow every framed node's size to also accommodate its border's
+/// static parts plus, when feasible, one full fill iteration on
+/// each side. Mirrors [`grow_node_sizes_to_fit_text`]'s posture:
+/// only grows, never shrinks — node sizes are author intent, the
+/// loader and the per-edit setter just enforce a floor.
+///
+/// Composes monotonically with the text floor (max wins) when
+/// both run on the same map.
+pub(super) fn grow_node_sizes_to_fit_borders(map: &mut MindMap) {
+    let canvas_default = map.canvas.default_border.clone();
+    for node in map.nodes.values_mut() {
+        grow_one_node_to_fit_border(node, canvas_default.as_ref());
+    }
+}
+
+/// Per-node version of [`grow_node_sizes_to_fit_borders`] — used
+/// by the per-edit setters so a `border preset=heavy` on a small
+/// node grows the box without re-walking the whole map. The
+/// canvas default is passed in so callers can hold a single
+/// borrow once and re-use it.
+pub(super) fn grow_one_node_to_fit_border(
+    node: &mut baumhard::mindmap::model::MindNode,
+    canvas_default: Option<&baumhard::mindmap::model::GlyphBorderConfig>,
+) {
+    use baumhard::mindmap::border::{
+        resolve_border_style, BORDER_APPROX_CHAR_WIDTH_FRAC,
+    };
+    if !node.style.show_frame {
+        return;
+    }
+    let style = resolve_border_style(
+        node.style.border.as_ref(),
+        canvas_default,
+        &node.style.frame_color,
+    );
+    let approx_char_width =
+        style.font_size_pt * BORDER_APPROX_CHAR_WIDTH_FRAC;
+    let corners = style.corner_clusters();
+
+    // Soft target: include one full fill iteration on each side.
+    // Hard floor: cover the static parts only.
+    let need_top = style.side_patterns.top.minimum_with_one_fill()
+        + corners.top_horizontal();
+    let need_bottom = style.side_patterns.bottom.minimum_with_one_fill()
+        + corners.bottom_horizontal();
+    let need_left = style.side_patterns.left.minimum_with_one_fill();
+    let need_right = style.side_patterns.right.minimum_with_one_fill();
+
+    let need_horizontal_clusters = need_top.max(need_bottom);
+    let need_vertical_clusters = need_left.max(need_right);
+
+    let need_w =
+        need_horizontal_clusters as f32 * approx_char_width;
+    let need_h =
+        need_vertical_clusters as f32 * style.font_size_pt;
+
+    if (node.size.width as f32) < need_w {
+        node.size.width = need_w as f64;
+    }
+    if (node.size.height as f32) < need_h {
+        node.size.height = need_h as f64;
+    }
+}
+
 impl MindMapDocument {
     /// Wrap a `MindMap` in a fresh document shell (selection cleared,
     /// undo stack empty, mutation registry rebuilt from the map's
@@ -232,12 +297,39 @@ impl MindMapDocument {
             })
     }
 
-    /// Grow undersized node boxes to fit their text before the model
-    /// is handed to the tree/scene builders — see
-    /// `grow_node_sizes_to_fit_text` for the invariants.
+    /// Grow undersized node boxes to fit their text and their
+    /// border's static parts before the model is handed to the
+    /// tree/scene builders. Both passes only grow, so the order
+    /// composes — text-driven floor first, then border-driven —
+    /// and the larger of the two wins per node.
     fn finalize(mut map: MindMap, file_path: Option<String>) -> Self {
         info!("Loaded mindmap '{}' with {} nodes", map.name, map.nodes.len());
         grow_node_sizes_to_fit_text(&mut map);
+        grow_node_sizes_to_fit_borders(&mut map);
+        Self::from_mindmap(map, file_path)
+    }
+
+    /// Wrap a *pre-finalized* `MindMap` in a fresh document shell
+    /// without rerunning the grow passes. Same shape as
+    /// [`Self::load`] / [`Self::from_json_str`] but skips
+    /// [`grow_node_sizes_to_fit_text`] and
+    /// [`grow_node_sizes_to_fit_borders`] — both of which
+    /// acquire the global `FONT_SYSTEM` write lock per-node.
+    ///
+    /// Test-only seam — `#[cfg(test)] pub(crate)` so production
+    /// code can't accidentally call it (any such call becomes a
+    /// compile error). The test fixture loader in
+    /// `tests_common::load_test_doc` caches a single finalized
+    /// `MindMap` in a `OnceLock` and clones it through here per
+    /// call, so a 30-test parallel run no longer thrashes the
+    /// lock 30×N times. Production code paths continue to use
+    /// [`Self::load`] / [`Self::from_json_str`] /
+    /// [`Self::new_blank`].
+    #[cfg(test)]
+    pub(crate) fn from_finalized_mindmap(
+        map: MindMap,
+        file_path: Option<String>,
+    ) -> Self {
         Self::from_mindmap(map, file_path)
     }
 

@@ -220,6 +220,23 @@ pub struct GlyphBorderConfig {
     /// Padding between border and content (in pixels).
     #[serde(default = "default_border_padding")]
     pub padding: f32,
+    /// Optional palette name (key in `MindMap.palettes`) whose
+    /// colours cycle per glyph around the border. When absent, the
+    /// resolved single colour (cascade `border.color` →
+    /// `style.frame_color`) paints every glyph. When present but
+    /// missing from the map, the renderer logs a warning and falls
+    /// back to the single-colour path — interactive paths must not
+    /// panic per `CODE_CONVENTIONS.md` §9.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color_palette: Option<String>,
+    /// Which `ColorGroup` field is cycled when `color_palette` is
+    /// set: `"frame" | "background" | "text" | "title"`. Defaults
+    /// to `"frame"` (the channel whose meaning matches the border
+    /// today). Unknown values warn-and-fall-back to `"frame"`.
+    /// Open seam for "cycle title colours" without redesigning the
+    /// field later.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color_palette_field: Option<String>,
 }
 
 fn default_shape() -> String { "rectangle".to_string() }

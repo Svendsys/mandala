@@ -2,11 +2,15 @@
 
 //! Text-run invariants: ordered, non-overlapping, within text bounds.
 //!
-//! `start` and `end` are measured in **Unicode code points** (Rust's
-//! `char` count), matching how `ColorFontRegions` interprets them in the
-//! tree builder. Not bytes, not grapheme clusters — code points.
+//! `start` and `end` are measured in **grapheme clusters** — what
+//! users see as one character — matching how `ColorFontRegions`
+//! interprets them in the tree builder and the cosmic-text bridges
+//! in `baumhard::font::attrs`. See `lib/baumhard/CONVENTIONS.md §B1`,
+//! `CONCEPTS.md`'s `Range` entry, and `format/text-runs.md` for the
+//! shared unit contract.
 
 use baumhard::mindmap::model::MindMap;
+use baumhard::util::grapheme_chad::count_grapheme_clusters;
 
 use super::Violation;
 
@@ -18,7 +22,7 @@ pub fn check(map: &MindMap) -> Vec<Violation> {
             continue;
         }
 
-        let total = node.text.chars().count();
+        let total = count_grapheme_clusters(&node.text);
         let mut prev_end: Option<usize> = None;
 
         for (i, run) in node.text_runs.iter().enumerate() {
@@ -39,7 +43,7 @@ pub fn check(map: &MindMap) -> Vec<Violation> {
                     category: "text_runs",
                     location: node.id.clone(),
                     message: format!(
-                        "run[{}] end {} exceeds text length {} (code points)",
+                        "run[{}] end {} exceeds text length {} (grapheme clusters)",
                         i, run.end, total
                     ),
                 });
@@ -134,5 +138,57 @@ mod tests {
         map.nodes.insert("0".into(), n);
         let v = check(&map);
         assert!(v.iter().any(|x| x.category == "text_runs" && x.message.contains("not less than")));
+    }
+
+    /// `text_runs` ranges are grapheme-cluster indices, not Unicode
+    /// code points. Verifier must measure against the grapheme count;
+    /// a region covering one ZWJ-joined emoji family
+    /// (`👨‍👩‍👧` — five codepoints, one cluster) at `[0, 1)` is
+    /// **valid** and must not raise an "exceeds text length" violation.
+    /// Pre-`dc5661a`, the verifier used `chars().count()` and would
+    /// have measured 5, so any range > 1 wouldn't have flagged either —
+    /// the test here is the positive case the new contract specifies.
+    #[test]
+    fn zwj_emoji_grapheme_range_passes() {
+        let mut map = MindMap::new_blank("t");
+        let mut n = node("0", None);
+        // 👨‍👩‍👧 = 5 codepoints joined by ZWJ, 1 grapheme cluster.
+        n.text = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}A".into();
+        // Two clusters: the family + the trailing 'A'.
+        n.text_runs = vec![run(0, 1), run(1, 2)];
+        map.nodes.insert("0".into(), n);
+        let v = check(&map);
+        assert!(
+            v.is_empty(),
+            "two grapheme-cluster runs over a 2-cluster string should pass; got {:?}",
+            v
+        );
+    }
+
+    /// The same emoji-bearing string with a range past the cluster
+    /// count must flag with the new "(grapheme clusters)" suffix —
+    /// proves the error message migrated alongside the unit.
+    #[test]
+    fn zwj_emoji_out_of_bounds_uses_grapheme_unit_in_message() {
+        let mut map = MindMap::new_blank("t");
+        let mut n = node("0", None);
+        n.text = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}A".into();
+        n.text_runs = vec![run(0, 5)]; // 5 > 2 clusters
+        map.nodes.insert("0".into(), n);
+        let v = check(&map);
+        let exceeded = v
+            .iter()
+            .find(|x| x.category == "text_runs" && x.message.contains("exceeds"))
+            .expect("expected an out-of-bounds violation");
+        assert!(
+            exceeded.message.contains("grapheme clusters"),
+            "error message must name the new unit; got: {}",
+            exceeded.message
+        );
+        assert!(
+            !exceeded.message.contains("code points"),
+            "error message must drop the old unit; got: {}",
+            exceeded.message
+        );
     }
 }

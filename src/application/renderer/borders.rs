@@ -1,5 +1,29 @@
 // SPDX-License-Identifier: MPL-2.0
 
+//! ## STOP — read this before adding a new helper here
+//!
+//! If you're about to write a `(text + per-cluster colour or
+//! font) → Vec<(&str, cosmic_text::Attrs)>` helper, **don't**.
+//! That bridge already exists in baumhard at
+//! `lib/baumhard/src/font/attrs.rs`:
+//!
+//! - `attrs_list_from_regions(text, &ColorFontRegions, &mut FontSystem)`
+//!   for `Editor::insert_string` callers
+//! - `RegionFamilies::resolve(&ColorFontRegions, &mut FontSystem)`
+//!   + `rich_text_spans_from_regions(text, &families, scale,
+//!   line_height, color_override)` for `Buffer::set_rich_text`
+//!   callers (renderer's tree walker uses this; the
+//!   border-buffer rebuild in `scene_buffers.rs` does too).
+//!
+//! Reinventing the styled-region → cosmic-text bridge in the
+//! renderer is a `CODE_CONVENTIONS.md §1` violation. PR #125
+//! consolidated every prior duplicate; PR #126 (commit `a778600`'s
+//! review) caught the next slip and routed it back through the
+//! bridge. If you legitimately need a new shape (e.g. centre-
+//! aligned multi-span), extend baumhard, not this file.
+//!
+//! ## What this file owns
+//!
 //! Border-buffer creators + glyph-advance measurement + hex-color
 //! parser. The renderer's flat-pass shapes (border rows, columns,
 //! single-row spans) all flow through these helpers so cosmic-text

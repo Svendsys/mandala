@@ -113,6 +113,19 @@ static FAMILY_INDEX: OnceLock<Vec<(String, AppFont)>> = OnceLock::new();
 /// from the index is observable — matches the §9 "warn and degrade"
 /// posture the renderer attrs builder uses for the same misses.
 fn build_family_index() -> Vec<(String, AppFont)> {
+    // Force `COMPILED_FONT_ID_MAP`'s lazy-static init **before** we
+    // grab the `FONT_SYSTEM` read lock. `load_fonts()` (the lazy
+    // initialiser) needs `FONT_SYSTEM.write()`, and a same-thread
+    // read-then-write deadlocks the worker. `init()` documents this
+    // ordering at the top of the module and explicitly does both
+    // initialisations in the right order, but tests / call paths
+    // that reach `app_font_by_family` without going through
+    // `init()` first (the cosmic-text tree builder, the inline text
+    // editor, the console completion popup) would otherwise hit the
+    // race. Touching `.capacity()` is enough to drive the
+    // lazy_static — `load_fonts()` runs on this line, returns, and
+    // releases its write guard before the read below acquires.
+    COMPILED_FONT_ID_MAP.capacity();
     let font_system = FONT_SYSTEM
         .read()
         .expect("FONT_SYSTEM lock poisoned during family-index build");

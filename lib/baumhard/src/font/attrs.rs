@@ -9,14 +9,35 @@
 //! - [`attrs_list_from_regions`] returns an `AttrsList` for
 //!   callers using `Editor::insert_string`.
 //! - [`RegionFamilies`] + [`rich_text_spans_from_regions`] returns
-//!   a `Vec<(&str, Attrs)>` for callers using `Buffer::set_rich_text`
-//!   (the renderer's tree walker).
+//!   a `Vec<(&str, Attrs)>` for callers using `Buffer::set_rich_text`.
 //!
-//! Both honour the per-region color, font pin, and (for the spans
-//! API) grapheme-aware byte slicing. The shared private
-//! `resolve_font_family` keeps the lookup + fallback discipline in
-//! one place — see `CODE_CONVENTIONS.md` §1 and
-//! `lib/baumhard/CONVENTIONS.md` §B5.
+//! Both honour the per-region color, font pin, and grapheme-aware
+//! byte slicing — `Range` indices on `ColorFontRegion` carry
+//! grapheme-cluster offsets (see `CONCEPTS.md`'s `Range` entry,
+//! `format/text-runs.md`, and `lib/baumhard/CONVENTIONS.md §B1`).
+//! The shared private `resolve_font_family` keeps the lookup +
+//! fallback discipline in one place — see `CODE_CONVENTIONS.md`
+//! §1 and `lib/baumhard/CONVENTIONS.md` §B5.
+//!
+//! ## Consumers
+//!
+//! This is the single owner of the `(ColorFontRegions, &mut
+//! FontSystem) → cosmic-text` bridge. New renderer-side code
+//! that needs styled spans MUST route through here rather than
+//! reinventing the bridge inline (`CODE_CONVENTIONS.md` §1; the
+//! regression PR #125 cleaned up).
+//!
+//! Current consumers — keep this list current when adding a new
+//! call site:
+//!
+//! - `src/application/renderer/tree_walker.rs:89,158` — main
+//!   tree-to-buffer walker for nodes / connections / portals
+//!   (Baumhard tree path).
+//! - `src/application/renderer/scene_buffers.rs::rebuild_border_buffers_keyed` —
+//!   per-side border rebuild for framed nodes (flat-pipeline
+//!   `BorderElement` path), routed here in PR #126's review-fix
+//!   commit after the initial commit hand-rolled the bridge in
+//!   `borders.rs::build_palette_aware_border_buffer`.
 
 use cosmic_text::{Attrs, AttrsList, Color, Family, FontSystem, Metrics, Style};
 use log::warn;
@@ -26,7 +47,8 @@ use crate::font::fonts::COMPILED_FONT_ID_MAP;
 use crate::util::color::{convert_f32_to_u8, FloatRgba};
 use crate::util::grapheme_chad;
 
-/// Build a cosmic-text `AttrsList` from a `ColorFontRegions` source.
+/// Build a cosmic-text `AttrsList` from a `ColorFontRegions` source
+/// over `text`.
 ///
 /// One span is emitted per region. A region with `color = Some(rgba)`
 /// gets that color; otherwise the span uses cosmic-text's default. A
@@ -35,11 +57,23 @@ use crate::util::grapheme_chad;
 /// with a warning — this function runs inside the renderer's frame
 /// loop and a corrupt save must not abort it.
 ///
+/// `text` is required because `AttrsList::add_span` expects byte
+/// ranges into the text it styles, while `Range` on the data layer
+/// carries grapheme-cluster indices (the unit baumhard's text
+/// primitives speak in — see `lib/baumhard/CONVENTIONS.md §B1` and
+/// `CONCEPTS.md`'s `Range` entry). The conversion goes through
+/// [`grapheme_chad::find_byte_index_of_grapheme`] so a region whose
+/// end lands on a ZWJ-emoji or combining-mark cluster boundary
+/// produces a UTF-8-valid byte range that matches the visual
+/// glyph.
+///
 /// Cost: O(n_regions) iteration plus one `font_system.db().face()`
-/// lookup per region with a font id. The caller is expected to hold
-/// the `FONT_SYSTEM` write lock for the same scope it uses the
-/// returned list — that's how the renderer wires it today.
+/// lookup per region with a font id, plus an O(n_text) walk per
+/// region for grapheme-to-byte conversion. The caller is expected
+/// to hold the `FONT_SYSTEM` write lock for the same scope it uses
+/// the returned list — that's how the renderer wires it today.
 pub fn attrs_list_from_regions(
+    text: &str,
     source: &ColorFontRegions,
     font_system: &mut FontSystem,
 ) -> AttrsList {
@@ -60,7 +94,14 @@ pub fn attrs_list_from_regions(
             Some(ref name) => attrs.family(Family::Name(name.as_str())),
             None => attrs.family(Family::Monospace),
         };
-        attr_list.add_span(region.range.to_rust_range(), &attrs);
+        let start = grapheme_chad::find_byte_index_of_grapheme(text, region.range.start)
+            .unwrap_or(text.len());
+        let end = grapheme_chad::find_byte_index_of_grapheme(text, region.range.end)
+            .unwrap_or(text.len());
+        if start >= end {
+            continue;
+        }
+        attr_list.add_span(start..end, &attrs);
     }
     attr_list
 }
@@ -196,14 +237,22 @@ pub fn rich_text_spans_from_regions<'a>(
         }
         return vec![(text, attrs)];
     }
-    families
+        families
         .regions
         .iter()
         .zip(families.names.iter())
         .filter_map(|(region, family_name)| {
-            let start = grapheme_chad::find_byte_index_of_char(text, region.range.start)
+            // Grapheme-correct slicing: `Range` carries grapheme-cluster
+            // indices per the data-layer contract (CONCEPTS.md, §B1
+            // in `lib/baumhard/CONVENTIONS.md`, and `format/text-runs.md`),
+            // so converting via `find_byte_index_of_grapheme` is the
+            // unit-correct path. A region that ends mid-grapheme would
+            // be a malformed input — by construction this never
+            // happens, since every fresh producer counts via
+            // `count_grapheme_clusters`.
+            let start = grapheme_chad::find_byte_index_of_grapheme(text, region.range.start)
                 .unwrap_or(text.len());
-            let end = grapheme_chad::find_byte_index_of_char(text, region.range.end)
+            let end = grapheme_chad::find_byte_index_of_grapheme(text, region.range.end)
                 .unwrap_or(text.len());
             if start >= end {
                 return None;

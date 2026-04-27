@@ -379,12 +379,15 @@ transient live-edit previews.
 by `BTreeSet<ColorFontRegion>` keyed on the `Range`, so lookups
 by range are `O(log n)` but two regions with the same range and
 different payloads collide (last write wins) — this is
-deliberate, not a bug. The `Range` indices are **Unicode
-code-point offsets** when the caller comes from mindmap text
-runs (matching [`text runs`](#text-runs)); the primitive itself
-just holds `usize` pairs and does not enforce a unit, so
-consumers that reach in from elsewhere must agree on the same
-convention. Five mutation primitives keep the set
+deliberate, not a bug. The `Range` indices are **grapheme-cluster
+offsets** — the unit baumhard's text primitives speak in (see
+`lib/baumhard/CONVENTIONS.md §B1` and the helpers in
+`util/grapheme_chad.rs`). Every fresh producer counts via
+`count_grapheme_clusters`; the cosmic-text bridges in
+`font/attrs.rs` slice through `find_byte_index_of_grapheme`. The
+primitive itself just holds `usize` pairs and does not enforce a
+unit at the type level, so consumers that reach in from elsewhere
+must agree on the grapheme convention. Five mutation primitives keep the set
 consistent under text edit: `insert_regions_at`,
 `shrink_regions_after`, `split_and_separate`,
 `shift_regions_after`, `set_or_insert`. A spatial index
@@ -1123,14 +1126,17 @@ the middle, a link at the end — all on one node.
 **Under the hood.** `lib/baumhard/src/mindmap/model/node.rs`.
 Each run carries `start`, `end`, `bold`, `italic`, `underline`,
 optional `font`, optional `size_pt`, optional `color`, optional
-`hyperlink`. Indexed by **Unicode code points**, not bytes and
-not graphemes — this matches `ColorFontRegions` and the legacy
-miMind format. Indices are stable across round-trip even when
-text contains characters outside the BMP (more bytes than code
-points) or combining marks (more code points than graphemes).
-Validation: non-overlapping, ascending, `end <= text's
-code-point count`. Uncovered ranges inherit the node-level
-style. Full reference:
+`hyperlink`. Indexed by **grapheme clusters** — what users see
+as one character — matching `ColorFontRegions::Range` and
+baumhard's text primitives (see
+`lib/baumhard/CONVENTIONS.md §B1` and the
+[`Range`](#range) entry above). Cluster indexing keeps a run
+that ends after a Hebrew niqqud combining mark or a ZWJ-emoji
+family on the same boundary the cosmic-text bridges in
+`baumhard::font::attrs` slice on, so per-region styling lands
+on whole glyphs. Validation: non-overlapping, ascending,
+`end <= text's grapheme-cluster count`. Uncovered ranges
+inherit the node-level style. Full reference:
 [`format/text-runs.md`](./format/text-runs.md).
 
 **Caveat.** If `text_runs` is non-empty, **only covered ranges

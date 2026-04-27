@@ -77,6 +77,46 @@ well-formed. It should exit 0 with no violations. If it doesn't,
 the input had structural problems the converter couldn't resolve (cycles,
 orphaned nodes, etc.).
 
+## TextRun ranges: code points → grapheme clusters
+
+`TextRun.start` and `TextRun.end` were originally measured in
+**Unicode code points** (Rust's `char` count). The current spec
+measures them in **grapheme clusters** — what users see as one
+character — to match `ColorFontRegions::Range`, the cosmic-text
+bridges in `baumhard::font::attrs`, and the rest of baumhard's
+text primitives (see `lib/baumhard/CONVENTIONS.md §B1` and the
+[`Range`](../CONCEPTS.md#range) entry).
+
+ASCII / single-codepoint BMP text is unaffected — for that text
+`chars().count()` and grapheme-cluster count agree, so existing
+ranges remain valid. The migration matters only for text that
+contains:
+
+- combining marks (Hebrew niqqud, Arabic shadda, Devanagari matra,
+  combining accents over Latin letters)
+- ZWJ-joined emoji families (`👨‍👩‍👧`)
+- regional-indicator pairs (flag emoji, `🇸🇪`)
+
+For files with ranges authored against the old code-point spec,
+`maptool verify` flags them with `"end N exceeds text length M
+(grapheme clusters)"` because the grapheme count is lower than
+the codepoint count for combining-mark text. The existing
+`maps/testament.mindmap.json` (243 nodes, ~15 with Hebrew niqqud)
+was migrated as part of the spec-flip commit. If you maintain a
+custom map predating the flip and `maptool verify` reports
+text-run violations on a node whose text has the kinds of
+characters listed above, the ranges need to be recomputed
+against grapheme clusters.
+
+A grapheme-segmentation pass (`unicode-segmentation` in Rust;
+`regex.findall(r'\X', text)` in Python; equivalents in most
+languages) produces the right mapping: walk `node.text` once,
+build a `char_index → grapheme_index` table, then rewrite each
+run's `start` and `end` through the table. The spec-flip commit
+message in this PR sketches a Python one-liner that uses
+`unicodedata.combining` — sufficient for Hebrew niqqud but not
+ZWJ emoji.
+
 ## Why a separate tool?
 
 Mandala rejects legacy files at load time rather than silently migrating

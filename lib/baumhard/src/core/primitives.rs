@@ -126,21 +126,27 @@ impl ColorFontRegions {
     }
 
     /// Build a `ColorFontRegions` containing a single region that
-    /// covers `[0, char_count)` with the given `color` and `font`
-    /// pin. Returns `new_empty()` when `char_count == 0` — the guard
-    /// every caller used to write by hand. Used by app-crate
+    /// covers `[0, cluster_count)` with the given `color` and `font`
+    /// pin. Returns `new_empty()` when `cluster_count == 0` — the
+    /// guard every caller used to write by hand. Used by app-crate
     /// `make_area` / `mk_area` factories that build a `GlyphArea`
     /// from one string and one color, so they don't have to
     /// open-code `new_empty + submit_region` three places.
     ///
+    /// `cluster_count` is in grapheme clusters (the unit `Range`
+    /// carries — see this struct's doc); callers typically derive
+    /// it via `baumhard::util::grapheme_chad::count_grapheme_clusters`.
+    /// Passing a char or byte count silently mis-styles ZWJ-emoji
+    /// or combining-mark text.
+    ///
     /// Costs: one `BTreeSet::insert`; no walks, no clones.
-    pub fn single_span(char_count: usize, color: Option<FloatRgba>, font: Option<AppFont>) -> Self {
-        if char_count == 0 {
+    pub fn single_span(cluster_count: usize, color: Option<FloatRgba>, font: Option<AppFont>) -> Self {
+        if cluster_count == 0 {
             return Self::new_empty();
         }
         let mut out = Self::new_empty();
         out.regions.insert(ColorFontRegion::new(
-            Range::new(0, char_count),
+            Range::new(0, cluster_count),
             font,
             color,
         ));

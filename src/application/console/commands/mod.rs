@@ -14,6 +14,7 @@ use crate::application::console::parser::Args;
 
 pub mod anchor;
 pub mod body;
+pub mod border;
 pub mod cap;
 pub mod color;
 pub mod edge;
@@ -65,6 +66,7 @@ pub const COMMANDS: &[Command] = &[
     help::COMMAND,
     anchor::COMMAND,
     body::COMMAND,
+    border::COMMAND,
     cap::COMMAND,
     color::COMMAND,
     edge::COMMAND,
@@ -117,7 +119,7 @@ mod tests {
     #[test]
     fn test_command_registry_has_every_migrated_verb() {
         let expected = [
-            "help", "anchor", "body", "cap", "color", "edge", "font",
+            "help", "anchor", "body", "border", "cap", "color", "edge", "font",
             "fps", "spacing", "label", "mutation", "save", "open", "new", "zoom",
         ];
         for name in expected {

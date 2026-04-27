@@ -1,43 +1,63 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Shared fixtures used by the `tests_*` submodules. Kept pub(super)
-//! so a single definition covers every themed split without
-//! forcing per-file duplication.
+//! Shared fixtures used by the `tests_*` submodules and by every
+//! console / document test outside the `document/` tree that
+//! needs the testament map. The single-source-of-truth loader
+//! (`load_test_doc`) caches one parsed `MindMap` in a process-wide
+//! `OnceLock` and clones it per call — this avoids the
+//! `FONT_SYSTEM` write-lock contention `MindMapDocument::load`
+//! would otherwise trigger N times in a parallel test run (each
+//! call hits `finalize` → `grow_node_sizes_to_fit_text` →
+//! per-node lock acquisition). The cache itself is harmless for
+//! tests that mutate the doc — every caller gets a fresh clone
+//! and the cached `MindMap` is untouched.
+//!
+//! Visibility: `pub(crate)` under `#[cfg(test)]` so callers in
+//! `console/commands/*` and other crate-test scopes outside
+//! `document/` can re-use the same loader (per `TEST_CONVENTIONS.md`
+//! "the project owns one fixture loader, not five").
 
-use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 use baumhard::mindmap::loader;
+use baumhard::mindmap::model::MindMap;
 use baumhard::mindmap::tree_builder::MindMapTree;
 
-use super::types::SelectionState;
 use super::MindMapDocument;
 
-pub(super) fn test_map_path() -> PathBuf {
+pub(crate) fn test_map_path() -> PathBuf {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.push("maps/testament.mindmap.json");
     path
 }
 
-pub(super) fn load_test_doc() -> MindMapDocument {
-    let map = loader::load_from_file(&test_map_path()).unwrap();
-    let mut doc = MindMapDocument {
-        mindmap: map,
-        file_path: None,
-        dirty: false,
-        selection: SelectionState::None,
-        undo_stack: Vec::new(),
-        mutation_registry: HashMap::new(),
-        mutation_sources: HashMap::new(),
-        mutation_handlers: HashMap::new(),
-        active_toggles: HashSet::new(),
-        label_edit_preview: None,
-        portal_text_edit_preview: None,
-        color_picker_preview: None,
-        active_animations: Vec::new(),
-    };
-    doc.build_mutation_registry();
-    doc
+/// Process-wide cache for the testament `MindMap`. Filled lazily
+/// on first call to [`load_test_doc`]; subsequent calls clone
+/// from the cache. The clone cost is one walk over the node /
+/// edge / palette `HashMap`s — far cheaper than the JSON parse,
+/// and *much* cheaper than the per-node FONT_SYSTEM write-lock
+/// acquisitions a `MindMapDocument::load` call would otherwise
+/// trigger.
+static CACHED_TESTAMENT_MAP: OnceLock<MindMap> = OnceLock::new();
+
+/// Load the testament map into a fresh `MindMapDocument` shell.
+/// Backed by a `OnceLock` so the JSON parse only happens once
+/// per process; subsequent calls clone the cached `MindMap` into
+/// a new doc shell via [`MindMapDocument::from_finalized_mindmap`].
+///
+/// Skips `finalize` (the grow-node-sizes-to-fit-text + border
+/// passes) since the testament map's authored sizes already
+/// accommodate its text and borders. Tests that explicitly need
+/// to exercise `finalize` (e.g. the load-time auto-resize test
+/// in `tests_nodes.rs`) build their own synthetic fixture and
+/// route through `MindMapDocument::from_json_str`.
+pub(crate) fn load_test_doc() -> MindMapDocument {
+    let map = CACHED_TESTAMENT_MAP.get_or_init(|| {
+        loader::load_from_file(&test_map_path())
+            .expect("testament map parses")
+    });
+    MindMapDocument::from_finalized_mindmap(map.clone(), None)
 }
 
 pub(super) fn load_test_tree() -> MindMapTree {

@@ -11,14 +11,16 @@ use std::collections::HashMap;
 use glam::Vec2;
 use indextree::NodeId;
 
-use crate::core::primitives::{ColorFontRegion, ColorFontRegions, Range};
 use crate::gfx_structs::area::GlyphArea;
 use crate::gfx_structs::element::GfxElement;
 use crate::gfx_structs::mutator::GfxMutator;
 use crate::gfx_structs::shape::NodeShape;
 use crate::gfx_structs::tree::Tree;
 use crate::gfx_structs::zoom_visibility::ZoomVisibility;
-use crate::mindmap::border::{BORDER_APPROX_CHAR_WIDTH_FRAC, BORDER_CORNER_OVERLAP_FRAC};
+use crate::mindmap::border::{
+    build_border_regions, resolve_border_style, BORDER_APPROX_CHAR_WIDTH_FRAC,
+    BORDER_CORNER_OVERLAP_FRAC,
+};
 use crate::mindmap::model::MindMap;
 use crate::util::color;
 
@@ -44,6 +46,14 @@ pub struct BorderNodeData {
     /// mutator-update time so the frame disappears atomically
     /// with its node at any zoom level.
     pub zoom_visibility: ZoomVisibility,
+    /// Resolved per-cycle-position colours for palette cycling,
+    /// or empty when `border_style.color_palette` is unset / the
+    /// named palette doesn't exist. Pre-resolved upstream so the
+    /// mutator path doesn't need to thread `&MindMap` through
+    /// `build_border_mutator_tree_from_nodes`. One entry per
+    /// `ColorGroup` in the palette, reading the configured
+    /// `palette_field` channel.
+    pub palette_cycle: Vec<[f32; 4]>,
 }
 
 /// Compute the border layout for the current `(map, offsets)`
@@ -57,8 +67,6 @@ pub fn border_node_data(
     map: &MindMap,
     offsets: &HashMap<String, (f32, f32)>,
 ) -> Vec<BorderNodeData> {
-    use crate::mindmap::border::BorderStyle;
-
     let vars = &map.canvas.theme_variables;
     let mut sorted_ids: Vec<&String> = map.nodes.keys().collect();
     sorted_ids.sort();
@@ -96,8 +104,24 @@ pub fn border_node_data(
         }
         let (ox, oy) = offsets.get(&node.id).copied().unwrap_or((0.0, 0.0));
         let frame_color_hex = color::resolve_var(&node.style.frame_color, vars);
-        let border_style = BorderStyle::default_with_color(frame_color_hex);
+        // Routes through `resolve_border_style` so per-node
+        // GlyphBorderConfig (preset / font / size / color /
+        // pattern / palette) drives the rendered output. Without
+        // this the data-model fields exist but the renderer
+        // ignores them; with it, all three border-build paths
+        // (this, scene_builder/node_pass, renderer/scene_buffers)
+        // resolve through one shared function.
+        let border_style = resolve_border_style(
+            node.style.border.as_ref(),
+            map.canvas.default_border.as_ref(),
+            frame_color_hex,
+        );
         let color_rgba = color::hex_to_rgba_safe(&border_style.color, [1.0, 1.0, 1.0, 1.0]);
+        let palette_cycle = crate::mindmap::border::resolve_palette_cycle(
+            &map.palettes,
+            &border_style,
+            color_rgba,
+        );
 
         out.push(BorderNodeData {
             node_id: node.id.clone(),
@@ -109,11 +133,13 @@ pub fn border_node_data(
             size_x: node.size.width as f32,
             size_y: node.size.height as f32,
             zoom_visibility: node.zoom_window(),
+            palette_cycle,
         });
         parent_channel += 1;
     }
     out
 }
+
 
 /// Identity sequence for a slice of [`BorderNodeData`] — the
 /// sorted sequence of `node_id`s in tree-insertion order. Two
@@ -176,14 +202,7 @@ pub fn build_border_tree_from_nodes(nodes: &[BorderNodeData]) -> Tree<GfxElement
     for node in nodes {
         append_border_sub_tree(
             &mut tree,
-            &node.border_style,
-            node.color_rgba,
-            node.pos_x,
-            node.pos_y,
-            node.size_x,
-            node.size_y,
-            node.parent_channel,
-            node.zoom_visibility,
+            node,
             &mut unique_id,
         );
     }
@@ -246,13 +265,31 @@ pub fn build_border_mutator_tree_from_nodes(
         let v_width = approx_char_width * 2.0;
         let row_count = (node.size_y / font_size).round().max(1.0) as usize;
 
-        let glyph_set = &node.border_style.glyph_set;
-        let top_text = glyph_set.top_border(char_count);
-        let bottom_text = glyph_set.bottom_border(char_count);
-        let left_text: String =
-            std::iter::repeat_n(format!("{}\n", glyph_set.left_char()), row_count).collect();
-        let right_text: String =
-            std::iter::repeat_n(format!("{}\n", glyph_set.right_char()), row_count).collect();
+        // Pattern-aware layout: corners + side fill on the
+        // horizontals; vertical sides are one-cluster-per-row
+        // columns of the resolved pattern. See `BorderStyle`'s
+        // `top_text` / `bottom_text` / `left_column_text` /
+        // `right_column_text`.
+        let style = &node.border_style;
+        let top_text = style.top_text(char_count);
+        let bottom_text = style.bottom_text(char_count);
+        let left_text = style.left_column_text(row_count);
+        let right_text = style.right_column_text(row_count);
+
+        // Per-side glyph-index offsets so a palette-cycling
+        // border sweeps continuously around the rectangle in
+        // top → right → bottom → left order. Each offset is the
+        // total cluster count of every preceding side. Vertical
+        // text strings include `'\n'` separators which the
+        // grapheme counter folds into one cluster per visible
+        // glyph, so the indices line up with the per-cluster
+        // regions the renderer attaches.
+        let top_clusters =
+            crate::util::grapheme_chad::count_grapheme_clusters(&top_text);
+        let right_clusters =
+            crate::util::grapheme_chad::count_grapheme_clusters(&right_text);
+        let bottom_clusters =
+            crate::util::grapheme_chad::count_grapheme_clusters(&bottom_text);
 
         let runs = [
             (
@@ -261,6 +298,7 @@ pub fn build_border_mutator_tree_from_nodes(
                 font_size,
                 (node.pos_x - approx_char_width, top_y),
                 (h_width, font_size * 1.5),
+                0usize,
             ),
             (
                 2usize,
@@ -268,6 +306,7 @@ pub fn build_border_mutator_tree_from_nodes(
                 font_size,
                 (node.pos_x - approx_char_width, bottom_y),
                 (h_width, font_size * 1.5),
+                top_clusters + right_clusters,
             ),
             (
                 3usize,
@@ -275,6 +314,7 @@ pub fn build_border_mutator_tree_from_nodes(
                 font_size,
                 (node.pos_x - approx_char_width, node.pos_y),
                 (v_width, node.size_y),
+                top_clusters + right_clusters + bottom_clusters,
             ),
             (
                 4usize,
@@ -282,19 +322,19 @@ pub fn build_border_mutator_tree_from_nodes(
                 font_size,
                 (right_corner_x, node.pos_y),
                 (v_width, node.size_y),
+                top_clusters,
             ),
         ];
 
-        for (channel, text, fs, pos, bounds) in runs {
-            let cluster_count = crate::util::grapheme_chad::count_grapheme_clusters(&text);
-            let mut regions = ColorFontRegions::new_empty();
-            if cluster_count > 0 {
-                regions.submit_region(ColorFontRegion::new(
-                    Range::new(0, cluster_count),
-                    None,
-                    Some(node.color_rgba),
-                ));
-            }
+        for (channel, text, fs, pos, bounds, palette_offset) in runs {
+            let cluster_count =
+                crate::util::grapheme_chad::count_grapheme_clusters(&text);
+            let regions = build_border_regions(
+                cluster_count,
+                &node.palette_cycle,
+                node.color_rgba,
+                palette_offset,
+            );
             let delta = DeltaGlyphArea::new(vec![
                 GlyphAreaField::Text(text),
                 GlyphAreaField::position(pos.0, pos.1),
@@ -324,52 +364,52 @@ pub fn build_border_mutator_tree_from_nodes(
 
 /// Build one per-node sub-tree (Void parent + 4 GlyphArea runs) and
 /// append it under `tree.root`. Kept as a private helper so
-/// `build_border_tree` stays readable. `parent_channel` is the
-/// stable 1-based sorted-index channel — see
+/// `build_border_tree` stays readable. `BorderNodeData.parent_channel`
+/// is the stable 1-based sorted-index channel — see
 /// [`BorderNodeData::parent_channel`].
 fn append_border_sub_tree(
     tree: &mut Tree<GfxElement, GfxMutator>,
-    border_style: &crate::mindmap::border::BorderStyle,
-    color_rgba: [f32; 4],
-    pos_x: f32,
-    pos_y: f32,
-    size_x: f32,
-    size_y: f32,
-    parent_channel: usize,
-    zoom_visibility: ZoomVisibility,
+    node: &BorderNodeData,
     unique_id: &mut usize,
 ) {
+    let border_style = &node.border_style;
     let font_size = border_style.font_size_pt;
     let approx_char_width = font_size * BORDER_APPROX_CHAR_WIDTH_FRAC;
-    let char_count = ((size_x / approx_char_width) + 2.0).ceil().max(3.0) as usize;
+    let char_count = ((node.size_x / approx_char_width) + 2.0).ceil().max(3.0) as usize;
     let right_corner_x =
-        pos_x - approx_char_width + (char_count - 1) as f32 * approx_char_width;
+        node.pos_x - approx_char_width + (char_count - 1) as f32 * approx_char_width;
     let corner_overlap = font_size * BORDER_CORNER_OVERLAP_FRAC;
-    let top_y = pos_y - font_size + corner_overlap;
-    let bottom_y = pos_y + size_y - corner_overlap;
+    let top_y = node.pos_y - font_size + corner_overlap;
+    let bottom_y = node.pos_y + node.size_y - corner_overlap;
     let h_width = (char_count as f32 + 1.0) * approx_char_width;
     let v_width = approx_char_width * 2.0;
-    let row_count = (size_y / font_size).round().max(1.0) as usize;
+    let row_count = (node.size_y / font_size).round().max(1.0) as usize;
 
-    let glyph_set = &border_style.glyph_set;
-    let top_text = glyph_set.top_border(char_count);
-    let bottom_text = glyph_set.bottom_border(char_count);
-    let left_text: String =
-        std::iter::repeat_n(format!("{}\n", glyph_set.left_char()), row_count).collect();
-    let right_text: String =
-        std::iter::repeat_n(format!("{}\n", glyph_set.right_char()), row_count).collect();
+    let top_text = border_style.top_text(char_count);
+    let bottom_text = border_style.bottom_text(char_count);
+    let left_text = border_style.left_column_text(row_count);
+    let right_text = border_style.right_column_text(row_count);
+
+    let top_clusters =
+        crate::util::grapheme_chad::count_grapheme_clusters(&top_text);
+    let right_clusters =
+        crate::util::grapheme_chad::count_grapheme_clusters(&right_text);
+    let bottom_clusters =
+        crate::util::grapheme_chad::count_grapheme_clusters(&bottom_text);
 
     // Per-node Void parent — groups the four runs for targeted
     // mutation. The parent's channel is the stable sorted-index
     // value so distinct nodes never collide across rebuilds.
     let parent_id = tree
         .arena
-        .new_node(GfxElement::new_void_with_id(parent_channel, *unique_id));
+        .new_node(GfxElement::new_void_with_id(node.parent_channel, *unique_id));
     tree.root.append(parent_id, &mut tree.arena);
     *unique_id += 1;
 
     // Stable channels 1..=4 inside each border sub-tree. The
     // per-node Void parent already disambiguates across nodes.
+    // Palette offsets sweep top → right → bottom → left around
+    // the rectangle so a colour cycle wraps cleanly.
     append_border_run(
         tree,
         parent_id,
@@ -377,10 +417,12 @@ fn append_border_sub_tree(
         *unique_id,
         &top_text,
         font_size,
-        (pos_x - approx_char_width, top_y),
+        (node.pos_x - approx_char_width, top_y),
         (h_width, font_size * 1.5),
-        color_rgba,
-        zoom_visibility,
+        node.color_rgba,
+        node.zoom_visibility,
+        &node.palette_cycle,
+        0,
     );
     *unique_id += 1;
     append_border_run(
@@ -390,10 +432,12 @@ fn append_border_sub_tree(
         *unique_id,
         &bottom_text,
         font_size,
-        (pos_x - approx_char_width, bottom_y),
+        (node.pos_x - approx_char_width, bottom_y),
         (h_width, font_size * 1.5),
-        color_rgba,
-        zoom_visibility,
+        node.color_rgba,
+        node.zoom_visibility,
+        &node.palette_cycle,
+        top_clusters + right_clusters,
     );
     *unique_id += 1;
     append_border_run(
@@ -403,10 +447,12 @@ fn append_border_sub_tree(
         *unique_id,
         &left_text,
         font_size,
-        (pos_x - approx_char_width, pos_y),
-        (v_width, size_y),
-        color_rgba,
-        zoom_visibility,
+        (node.pos_x - approx_char_width, node.pos_y),
+        (v_width, node.size_y),
+        node.color_rgba,
+        node.zoom_visibility,
+        &node.palette_cycle,
+        top_clusters + right_clusters + bottom_clusters,
     );
     *unique_id += 1;
     append_border_run(
@@ -416,10 +462,12 @@ fn append_border_sub_tree(
         *unique_id,
         &right_text,
         font_size,
-        (right_corner_x, pos_y),
-        (v_width, size_y),
-        color_rgba,
-        zoom_visibility,
+        (right_corner_x, node.pos_y),
+        (v_width, node.size_y),
+        node.color_rgba,
+        node.zoom_visibility,
+        &node.palette_cycle,
+        top_clusters,
     );
     *unique_id += 1;
 }
@@ -435,6 +483,8 @@ pub(super) fn append_border_run(
     bounds: (f32, f32),
     color_rgba: [f32; 4],
     zoom_visibility: ZoomVisibility,
+    palette_cycle: &[[f32; 4]],
+    palette_offset: usize,
 ) {
     let mut area = GlyphArea::new_with_str(
         text,
@@ -445,24 +495,17 @@ pub(super) fn append_border_run(
     );
     area.zoom_visibility = zoom_visibility;
 
-    // Single ColorFontRegion covering the whole run — the renderer
-    // walker translates this into a cosmic-text `Attrs::color`
-    // span. The grapheme counter matches `chars().count()` on the
-    // default box-drawing presets (single-scalar codepoints) but
-    // keeps the math correct if a future preset or custom border
-    // mixes in combining marks or ZWJ sequences — §1 prescribes
-    // grapheme-aware counts everywhere a region is derived from
-    // reachable user text.
+    // Per-cluster ColorFontRegions when the user opts into palette
+    // cycling, otherwise a single uniform region (matches the
+    // pre-pattern path's cost). Grapheme-aware cluster counts per
+    // §1 — combining marks and ZWJ emoji each occupy one cell.
     let cluster_count = crate::util::grapheme_chad::count_grapheme_clusters(text);
-    if cluster_count > 0 {
-        let mut regions = ColorFontRegions::new_empty();
-        regions.submit_region(ColorFontRegion::new(
-            Range::new(0, cluster_count),
-            None,
-            Some(color_rgba),
-        ));
-        area.regions = regions;
-    }
+    area.regions = build_border_regions(
+        cluster_count,
+        palette_cycle,
+        color_rgba,
+        palette_offset,
+    );
 
     let element = GfxElement::new_area_non_indexed_with_id(area, channel, unique_id);
     let node = tree.arena.new_node(element);

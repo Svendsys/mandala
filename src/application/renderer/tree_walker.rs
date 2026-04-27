@@ -1,13 +1,23 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Tree-to-cosmic-text walker. The hot-path function that turns a
-//! Baumhard `Tree<GfxElement, GfxMutator>` into shaped text buffers
-//! the renderer pipes to glyphon. Owned by the renderer module
+//! ## Cosmic-text routing rule (CODE_CONVENTIONS.md §1)
+//!
+//! This walker is one of the two renderer-side consumers of
+//! baumhard's `font::attrs` bridge (the other is the border
+//! rebuild in `scene_buffers.rs`). Per-region `Attrs` construction
+//! lives in baumhard, NOT here — `RegionFamilies::resolve` +
+//! `rich_text_spans_from_regions` are the single owners. If you
+//! find yourself reaching for `Attrs::clone().color(...)` to wrap
+//! per-cluster styling, stop and extend the bridge instead.
+//!
+//! ## What this file owns
+//!
+//! The hot-path function that turns a Baumhard
+//! `Tree<GfxElement, GfxMutator>` into shaped text buffers the
+//! renderer pipes to glyphon. Owned by the renderer module
 //! (rather than baumhard) because the `Buffer::set_rich_text` call
-//! sites are renderer-side; the per-region `Attrs` construction
-//! lives in baumhard's `font::attrs` (`RegionFamilies` +
-//! `rich_text_spans_from_regions`) so the styled-region → cosmic-text
-//! bridge has a single owner.
+//! sites are renderer-side; only the `Buffer::new → set_size →
+//! set_rich_text → shape_until_scroll` dance lives here.
 
 use cosmic_text::{Attrs, FontSystem};
 use glam::Vec2;

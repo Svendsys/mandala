@@ -19,6 +19,9 @@ Each of these documents one decision, with the reasoning:
 - [`channels.md`](./channels.md) — the `channel` field and mutation targeting
 - [`enums.md`](./enums.md) — named string enums over integer codes
 - [`text-runs.md`](./text-runs.md) — rich text formatting
+- [`border-patterns.md`](./border-patterns.md) — side-pattern grammar
+  for `GlyphBorderConfig.glyphs` (atomic-repeat vs.
+  prefix/fill/suffix, escapes, palette cycling)
 - [`zoom-bounds.md`](./zoom-bounds.md) — per-element
   `min_zoom_to_render` / `max_zoom_to_render` window gating render
   presence on camera zoom

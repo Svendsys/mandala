@@ -20,7 +20,7 @@ use std::collections::HashMap;
 
 use glam::Vec2;
 
-use crate::mindmap::border::BorderStyle;
+use crate::mindmap::border::resolve_border_style;
 use crate::mindmap::model::{MindMap, TextRun};
 use crate::util::color::resolve_var;
 
@@ -60,14 +60,30 @@ pub(super) fn build_node_elements(
         // both the clip AABB sizing and the border element below.
         let frame_color = resolve_var(&node.style.frame_color, vars);
 
+        // Resolve the per-node border config once when the frame is
+        // visible, then reuse for clip-AABB math, palette-cycle
+        // resolution, and the emitted `BorderElement`. The cascade
+        // walks `node.style.border` → `canvas.default_border` →
+        // hardcoded defaults; doing this twice per visible node was a
+        // hot-path regression — the resolver also reparses each side
+        // pattern, so the cost compounds.
+        let resolved_border = if node.style.show_frame {
+            Some(resolve_border_style(
+                node.style.border.as_ref(),
+                map.canvas.default_border.as_ref(),
+                frame_color,
+            ))
+        } else {
+            None
+        };
+
         // Clip AABB: when a node has a visible frame, the rendered border
         // extends beyond the raw node rect by roughly one border
         // `font_size` vertically and one `approx_char_width` horizontally.
         // Expand the clip box to match so connection glyphs don't land
         // inside the visible frame area (see renderer::rebuild_border_buffers
         // for the matching layout math).
-        let (clip_pos, clip_size) = if node.style.show_frame {
-            let border_style = BorderStyle::default_with_color(frame_color);
+        let (clip_pos, clip_size) = if let Some(border_style) = &resolved_border {
             let bf = border_style.font_size_pt;
             let bcw = bf * crate::mindmap::border::BORDER_APPROX_CHAR_WIDTH_FRAC;
             (
@@ -103,14 +119,25 @@ pub(super) fn build_node_elements(
 
         // Border element — inherits the owning node's zoom window
         // so the frame never outlives its node at any zoom level.
-        if node.style.show_frame {
-            let border_style = BorderStyle::default_with_color(frame_color);
+        // Reuses the `resolved_border` populated above so the
+        // resolver runs at most once per visible framed node.
+        if let Some(border_style) = resolved_border {
+            let fallback_rgba = crate::util::color::hex_to_rgba_safe(
+                &border_style.color,
+                [1.0, 1.0, 1.0, 1.0],
+            );
+            let palette_cycle = crate::mindmap::border::resolve_palette_cycle(
+                &map.palettes,
+                &border_style,
+                fallback_rgba,
+            );
             border_elements.push(BorderElement {
                 node_id: node.id.clone(),
                 border_style,
                 node_position: (pos_x, pos_y),
                 node_size: (size_x, size_y),
                 zoom_visibility: node.zoom_window(),
+                palette_cycle,
             });
         }
     }

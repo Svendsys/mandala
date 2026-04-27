@@ -19,6 +19,10 @@ pub mod loader;
 /// Per-node glyph-border configuration plus the geometry constants
 /// shared by the renderer and the border tree builder.
 pub mod border;
+/// Border-side pattern syntax — parser and grapheme-aware fitter
+/// for the strings stored in `CustomBorderGlyphs.{top, bottom,
+/// left, right}`. Pure data, cross-platform.
+pub mod border_pattern;
 /// Connection-path geometry: anchor resolution, straight/cubic
 /// Bezier construction, arc-length sampling, point-to-path distance.
 pub mod connection;

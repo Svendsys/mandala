@@ -363,3 +363,101 @@ use super::defaults::default_cross_link_edge;
         assert!(!doc.set_node_font_family(&nid, None));
         assert_eq!(doc.undo_stack.len(), stack_len);
     }
+
+    /// `grow_node_sizes_to_fit_borders` runs at finalize so a
+    /// map loaded with a wide static side pattern on a tiny node
+    /// grows the node automatically — the same monotonic posture
+    /// as `grow_node_sizes_to_fit_text`. Without this floor the
+    /// renderer would clip the static prefix at load time.
+    #[test]
+    fn finalize_grows_nodes_to_fit_border_static_parts() {
+        use std::collections::HashMap;
+        use baumhard::mindmap::model::{
+            Canvas, CustomBorderGlyphs, GlyphBorderConfig, MindMap,
+        };
+
+        let mut nodes = HashMap::new();
+        let style = NodeStyle {
+            background_color: "#000".into(),
+            frame_color: "#fff".into(),
+            text_color: "#fff".into(),
+            shape: "rectangle".into(),
+            corner_radius_percent: 0.0,
+            frame_thickness: 1.0,
+            show_frame: true,
+            show_shadow: false,
+            border: Some(GlyphBorderConfig {
+                preset: "custom".into(),
+                font: None,
+                font_size_pt: 14.0,
+                color: None,
+                glyphs: Some(CustomBorderGlyphs {
+                    top: "##########(*)##########".into(),
+                    bottom: "-".into(),
+                    left: "|".into(),
+                    right: "|".into(),
+                    top_left: "<".into(),
+                    top_right: ">".into(),
+                    bottom_left: "<".into(),
+                    bottom_right: ">".into(),
+                }),
+                padding: 4.0,
+                color_palette: None,
+                color_palette_field: None,
+            }),
+        };
+        nodes.insert(
+            "0".into(),
+            MindNode {
+                id: "0".into(),
+                parent_id: None,
+                position: Position { x: 0.0, y: 0.0 },
+                size: Size { width: 5.0, height: 5.0 },
+                text: "n".into(),
+                text_runs: vec![],
+                style,
+                layout: NodeLayout {
+                    layout_type: "map".into(),
+                    direction: "auto".into(),
+                    spacing: 0.0,
+                },
+                folded: false,
+                notes: String::new(),
+                color_schema: None,
+                channel: 0,
+                trigger_bindings: vec![],
+                inline_mutations: vec![],
+                min_zoom_to_render: None,
+                max_zoom_to_render: None,
+            },
+        );
+        let map = MindMap {
+            version: "1.0".into(),
+            name: "fixture".into(),
+            canvas: Canvas {
+                background_color: "#000".into(),
+                default_border: None,
+                default_connection: None,
+                theme_variables: HashMap::new(),
+                theme_variants: HashMap::new(),
+            },
+            palettes: HashMap::new(),
+            nodes,
+            edges: vec![],
+            custom_mutations: vec![],
+        };
+        // Round-trip through JSON to exercise the finalize hook
+        // — `MindMapDocument::from_json_str` calls `finalize`,
+        // which runs both grow passes. Direct construction skips
+        // it.
+        let json = serde_json::to_string(&map).expect("serialises");
+        let doc = MindMapDocument::from_json_str(&json, None)
+            .expect("loads through finalize");
+        let n = doc.mindmap.nodes.get("0").expect("node 0 exists");
+        assert!(
+            n.size.width > 5.0,
+            "load-time floor must grow the box to fit the border statics; \
+             got width={}",
+            n.size.width,
+        );
+    }
