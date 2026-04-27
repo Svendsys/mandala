@@ -7,7 +7,7 @@
 //! That bridge already exists in baumhard at
 //! `lib/baumhard/src/font/attrs.rs`:
 //!
-//! - `attrs_list_from_regions(&ColorFontRegions, &mut FontSystem)`
+//! - `attrs_list_from_regions(text, &ColorFontRegions, &mut FontSystem)`
 //!   for `Editor::insert_string` callers
 //! - `RegionFamilies::resolve(&ColorFontRegions, &mut FontSystem)`
 //!   + `rich_text_spans_from_regions(text, &families, scale,

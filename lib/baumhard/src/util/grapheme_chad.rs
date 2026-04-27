@@ -69,15 +69,6 @@ pub fn replace_graphemes_until_newline(
     }
 }
 
-/// Return the byte offset of the `index`-th *char* (Unicode scalar
-/// value). Returns `None` if `index` is out of bounds. O(n) over
-/// `s.char_indices()`. Prefer [`find_byte_index_of_grapheme`] unless
-/// you are specifically working with scalar offsets — chars split
-/// grapheme clusters on emoji.
-pub fn find_byte_index_of_char(s: &str, index: usize) -> Option<usize> {
-    s.char_indices().nth(index).map(|(byte_idx, _)| byte_idx)
-}
-
 /// Return the byte offset of the `index`-th grapheme cluster in `s`.
 /// Returns `None` if `index` is out of bounds. O(n) over
 /// `s.graphemes(true)`. This is the grapheme-correct counterpart to
