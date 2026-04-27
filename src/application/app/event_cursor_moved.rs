@@ -10,12 +10,12 @@
 
 #![cfg(not(target_arch = "wasm32"))]
 
-use super::*;
 use super::input_context::InputHandlerContext;
 use super::throttled_interaction::{
     EdgeHandleInteraction, EdgeLabelInteraction, MovingNodeInteraction,
     PortalLabelInteraction, ThrottledDrag,
 };
+use super::*;
 use winit::dpi::PhysicalPosition;
 use winit::window::Window;
 

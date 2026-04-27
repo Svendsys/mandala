@@ -7,9 +7,9 @@
 
 #![cfg(not(target_arch = "wasm32"))]
 
-use super::*;
 use super::input_context::InputHandlerContext;
 use super::throttled_interaction::ThrottledDrag;
+use super::*;
 
 /// Dispatch a `WindowEvent::MouseInput` event. Event payload
 /// (`state`, `button`) stays as direct arguments; all persistent

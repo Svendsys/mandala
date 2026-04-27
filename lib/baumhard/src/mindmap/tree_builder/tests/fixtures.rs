@@ -8,8 +8,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::mindmap::model::{
-    Canvas, MindEdge, MindMap, MindNode, NodeLayout, NodeStyle, Position, Size,
-    DISPLAY_MODE_PORTAL, GlyphConnectionConfig,
+    Canvas, GlyphConnectionConfig, MindEdge, MindMap, MindNode, NodeLayout, NodeStyle, Position,
+    Size, DISPLAY_MODE_PORTAL,
 };
 
 pub(super) fn test_map_path() -> PathBuf {

@@ -7,10 +7,10 @@
 //! each axis in `ordered_float::OrderedFloat` to make those traits
 //! available without giving up component-wise arithmetic.
 
-use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
 use glam::Vec2;
 use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
+use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
 
 /// Hashable, `Eq`-able 2D float vector. Wraps each component in
 /// [`OrderedFloat`] so instances can live inside hash maps, `BTreeSet`s,

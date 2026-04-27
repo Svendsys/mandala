@@ -191,12 +191,10 @@ pub(in crate::application::app) trait ThrottledInteraction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use baumhard::mindmap::model::MindEdge;
-    use baumhard::mindmap::scene_builder::EdgeHandleKind;
-    use glam::Vec2;
-    use std::time::Duration;
     use crate::application::app::throttled_interaction::test_utils::{drive_throttle_over_budget, fixture_edge};
     use crate::application::document::EdgeRef;
+    use baumhard::mindmap::scene_builder::EdgeHandleKind;
+    use glam::Vec2;
 
     #[test]
     fn test_as_dyn_mut_routes_to_moving_node() {

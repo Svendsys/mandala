@@ -2,8 +2,8 @@
 
 //! Tree-builder node tests — structure, root nodes, glyph_area properties, color regions, parent/child hierarchy, unique IDs.
 
-use super::fixtures::*;
 use super::super::*;
+use super::fixtures::*;
 use crate::mindmap::loader;
 
 #[test]

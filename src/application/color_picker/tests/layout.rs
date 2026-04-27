@@ -7,7 +7,7 @@
 
 use super::fixtures::sample_geometry;
 use crate::application::color_picker::{
-    compute_color_picker_layout, CROSSHAIR_CENTER_CELL, HUE_SLOT_COUNT, PickerHit,
+    compute_color_picker_layout, PickerHit, CROSSHAIR_CENTER_CELL, HUE_SLOT_COUNT,
     SAT_CELL_COUNT, VAL_CELL_COUNT,
 };
 use crate::application::widgets::color_picker_widget::load_spec;

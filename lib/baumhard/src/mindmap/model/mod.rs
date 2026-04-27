@@ -41,9 +41,9 @@ pub use node::{
 };
 pub use palette::Palette;
 
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
 use crate::mindmap::custom_mutation::CustomMutation;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// The whole-map value type — what [`crate::mindmap::loader`]
 /// deserializes from a `.mindmap.json` file and what the document

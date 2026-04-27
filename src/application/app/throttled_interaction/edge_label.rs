@@ -97,8 +97,8 @@ impl ThrottledInteraction for EdgeLabelInteraction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
     use crate::application::app::throttled_interaction::test_utils::{drive_throttle_over_budget, fixture_edge};
+    use std::time::Duration;
 
     fn fixture_interaction() -> EdgeLabelInteraction {
         EdgeLabelInteraction::new(

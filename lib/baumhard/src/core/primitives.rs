@@ -15,10 +15,10 @@
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
 
-use std::hash::{Hash, Hasher};
-use std::ops::{AddAssign, MulAssign, SubAssign};
 use log::{debug, warn};
 use serde::{Deserialize, Serialize};
+use std::hash::{Hash, Hasher};
+use std::ops::{AddAssign, MulAssign, SubAssign};
 
 use crate::font::fonts::AppFont;
 use crate::util::color::FloatRgba;
@@ -411,8 +411,8 @@ impl Default for ColorFontRegions {
     }
 }
 
-use strum_macros::{EnumString, Display};
 use crate::util::ordered_vec2::OrderedVec2;
+use strum_macros::{Display, EnumString};
 
 /// Selects the arithmetic used when a [`DeltaGlyphArea`](crate::gfx_structs::area::DeltaGlyphArea)
 /// is applied to a [`GlyphArea`](crate::gfx_structs::area::GlyphArea).

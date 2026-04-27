@@ -35,8 +35,8 @@ mod view;
 mod tests;
 
 pub use capabilities::{
-    AcceptsFontFamily, AcceptsWheelColor, HasBgColor, HasBorderColor, HandlesCopy, HandlesCut,
-    HandlesPaste, HasLabel, HasTextColor,
+    AcceptsFontFamily, AcceptsWheelColor, HandlesCopy, HandlesCut, HandlesPaste, HasBgColor,
+    HasBorderColor, HasLabel, HasTextColor,
 };
 pub use color_value::ColorValue;
 pub use dispatch::{apply_kvs, apply_to_targets, DispatchReport};

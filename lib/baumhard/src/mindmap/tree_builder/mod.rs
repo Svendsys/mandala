@@ -39,8 +39,8 @@ mod portal;
 mod tests;
 
 pub use border::{
-    border_identity_sequence, build_border_mutator_tree, build_border_mutator_tree_from_nodes,
-    build_border_tree, build_border_tree_from_nodes, border_node_data, BorderNodeData,
+    border_identity_sequence, border_node_data, build_border_mutator_tree,
+    build_border_mutator_tree_from_nodes, build_border_tree, build_border_tree_from_nodes, BorderNodeData,
 };
 pub use connection::{
     build_connection_mutator_tree, build_connection_tree, connection_identity_sequence,

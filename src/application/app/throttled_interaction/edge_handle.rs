@@ -123,9 +123,9 @@ impl ThrottledInteraction for EdgeHandleInteraction {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::app::throttled_interaction::test_utils::{drive_throttle_over_budget, fixture_edge};
     use baumhard::mindmap::scene_builder::EdgeHandleKind;
     use std::time::Duration;
-    use crate::application::app::throttled_interaction::test_utils::{drive_throttle_over_budget, fixture_edge};
 
     fn fixture_interaction() -> EdgeHandleInteraction {
         EdgeHandleInteraction::new(

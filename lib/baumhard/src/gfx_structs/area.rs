@@ -18,6 +18,8 @@ use crate::core::primitives::{
 };
 use crate::font::fonts::AppFont;
 use crate::gfx_structs::shape::NodeShape;
+use crate::gfx_structs::util::hitbox::HitBox;
+use crate::gfx_structs::zoom_visibility::ZoomVisibility;
 use crate::util::color::FloatRgba;
 use crate::util::grapheme_chad;
 use crate::util::ordered_vec2::OrderedVec2;
@@ -26,8 +28,6 @@ use glam::f32::Vec2;
 use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
-use crate::gfx_structs::util::hitbox::HitBox;
-use crate::gfx_structs::zoom_visibility::ZoomVisibility;
 
 /// A text-region element. One `GlyphArea` corresponds to one
 /// `glyphon::TextArea` in the renderer; every field here maps

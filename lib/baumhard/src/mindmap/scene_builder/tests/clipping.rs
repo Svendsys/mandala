@@ -2,8 +2,8 @@
 
 //! Connection glyph clipping behaviour: inside-node clip, frame-area clip, cap survival for unframed endpoints, cap clip for framed endpoints.
 
-use super::fixtures::*;
 use super::super::*;
+use super::fixtures::*;
 
 #[test]
 fn test_scene_clips_connection_glyphs_inside_node() {

@@ -2,13 +2,13 @@
 
 //! `SceneConnectionCache` integration: population, hit identity, endpoint invalidation, drag stability, clip rerun, eviction, empty-after-new, fold edge, selection stability, plus a real-map smoke test.
 
-use super::fixtures::*;
 use super::super::*;
+use super::fixtures::*;
 use crate::mindmap::loader;
 use crate::mindmap::model::GlyphConnectionConfig;
 use crate::mindmap::scene_cache::{CachedConnection, SceneConnectionCache};
-use std::collections::HashMap;
 use glam::Vec2;
+use std::collections::HashMap;
 
 #[test]
 fn test_cache_populated_on_first_build() {

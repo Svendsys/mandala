@@ -23,8 +23,8 @@ use crate::application::color_picker::{
 use crate::application::color_picker_overlay::color::{
     highlight_hovered_cell_color, highlight_selected_cell_color, rgb_to_cosmic_color,
 };
-use baumhard::mutator_builder::{CellField, SectionContext};
 use crate::application::widgets::color_picker_widget::load_spec;
+use baumhard::mutator_builder::{CellField, SectionContext};
 
 use super::areas::PickerSection;
 

@@ -3,11 +3,11 @@
 use lazy_static::lazy_static;
 
 use crate::util::grapheme_chad::{
-   count_grapheme_clusters, count_number_lines, delete_back_unicode, delete_front_unicode,
-   delete_grapheme_at, find_byte_index_of_grapheme, find_nth_line_byte_range,
-   find_nth_line_grapheme_range, grapheme_display_width, insert_new_lines,
-   insert_str_at_grapheme, push_spaces, replace_graphemes_until_newline, scalar_display_width,
-   slice_to_newline, split_off_graphemes, truncate_to_display_width,
+    count_grapheme_clusters, count_number_lines, delete_back_unicode, delete_front_unicode,
+    delete_grapheme_at, find_byte_index_of_grapheme, find_nth_line_byte_range,
+    find_nth_line_grapheme_range, grapheme_display_width, insert_new_lines,
+    insert_str_at_grapheme, push_spaces, replace_graphemes_until_newline, scalar_display_width,
+    slice_to_newline, split_off_graphemes, truncate_to_display_width,
 };
 
 lazy_static! {

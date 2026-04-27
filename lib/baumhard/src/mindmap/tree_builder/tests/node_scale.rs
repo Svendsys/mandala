@@ -2,8 +2,8 @@
 
 //! Tree-builder scale / performance regression guards — N=1000 chain, N=500 star, deep chain stack-safety.
 
-use super::fixtures::*;
 use super::super::*;
+use super::fixtures::*;
 
 #[test]
 fn test_build_tree_scale_1000_node_chain() {

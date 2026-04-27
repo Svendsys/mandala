@@ -2,8 +2,8 @@
 
 //! Border tree builder tests — void-per-framed, frame filters, drag offset, theme resolution, stable channels, mutator round-trip, identity sequence.
 
-use super::fixtures::*;
 use super::super::*;
+use super::fixtures::*;
 use crate::mindmap::border::{BORDER_APPROX_CHAR_WIDTH_FRAC, BORDER_CORNER_OVERLAP_FRAC};
 
 #[test]
@@ -536,7 +536,7 @@ fn border_mutator_picks_up_pattern_change() {
 #[test]
 fn border_tree_honors_palette_cycling() {
     use crate::mindmap::model::{
-        ColorGroup, CustomBorderGlyphs, GlyphBorderConfig, Palette,
+        ColorGroup, GlyphBorderConfig, Palette,
     };
 
     let mut map = synthetic_map(vec![synthetic_node("a", None, 0.0, 0.0)], vec![]);

@@ -41,8 +41,8 @@ pub fn check(map: &MindMap) -> Vec<Violation> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use baumhard::mindmap::model::{ColorGroup, ColorSchema, Palette};
     use crate::verify::test_helpers::node;
+    use baumhard::mindmap::model::{ColorGroup, ColorSchema, Palette};
 
     fn group() -> ColorGroup {
         ColorGroup {

@@ -2,8 +2,8 @@
 
 //! Connection-label emission: label present, missing/empty, position_t follow, color inheritance, GlyphConnectionConfig override.
 
-use super::fixtures::*;
 use super::super::*;
+use super::fixtures::*;
 use crate::mindmap::model::{EdgeLabelConfig, GlyphConnectionConfig};
 
 #[test]

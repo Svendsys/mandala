@@ -26,11 +26,11 @@ use cosmic_text::Attrs;
 use glam::Vec2;
 
 use super::borders::{create_border_buffer, parse_hex_color};
+use super::{MindMapTextBuffer, Renderer};
 use baumhard::font::attrs::{rich_text_spans_from_regions, RegionFamilies};
 use baumhard::mindmap::border::build_border_regions;
 use baumhard::util::color::hex_to_rgba_safe;
 use baumhard::util::grapheme_chad::count_grapheme_clusters;
-use super::{MindMapTextBuffer, Renderer};
 
 impl Renderer {
     /// Full (non-keyed) border rebuild — wipes the keyed cache and rebuilds

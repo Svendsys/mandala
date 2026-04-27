@@ -2,8 +2,8 @@
 
 //! Theme-variable resolution across scene-builder paths: background, frame, connection, and raw fall-through on missing vars.
 
-use super::fixtures::*;
 use super::super::*;
+use super::fixtures::*;
 
 #[test]
 fn test_scene_background_resolves_theme_variable() {

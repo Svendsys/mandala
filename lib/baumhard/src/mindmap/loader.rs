@@ -5,9 +5,9 @@
 //! `portals[]` array, rejecting the latter with a concrete migration
 //! pointer instead of silently dropping data.
 
+use crate::mindmap::model::MindMap;
 use std::fs;
 use std::path::Path;
-use crate::mindmap::model::MindMap;
 
 /// Load a `MindMap` from a file path. Reads the entire file into
 /// memory via `std::fs::read_to_string`, then delegates to

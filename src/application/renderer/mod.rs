@@ -14,6 +14,11 @@ mod tree_buffers;
 mod tree_walker;
 
 pub use borders::measure_max_glyph_advance;
+// These imports are referenced only from the test block; the
+// non-test build flags them as unused. Gate to keep cargo check
+// clean while leaving the test build self-contained.
+#[cfg(test)]
+use borders::{create_border_buffer, parse_hex_color};
 // `ConsoleFrameLayout` / `MAX_*` / `build_console_border_strings` are
 // part of the renderer's public surface and consumed by the test
 // block at the bottom of this file plus external callers (the app
@@ -25,11 +30,6 @@ pub use console_geometry::{
     ConsoleOverlayCompletion, ConsoleOverlayGeometry, ConsoleOverlayLine, ConsoleOverlayLineKind,
     MAX_CONSOLE_COMPLETION_ROWS, MAX_CONSOLE_SCROLLBACK_ROWS,
 };
-// These imports are referenced only from the test block; the
-// non-test build flags them as unused. Gate to keep cargo check
-// clean while leaving the test build self-contained.
-#[cfg(test)]
-use borders::{create_border_buffer, parse_hex_color};
 #[cfg(test)]
 use console_pass::{
     build_console_overlay_mutator, build_console_overlay_tree, console_overlay_areas,

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use std::time::Duration;
-use baumhard::mindmap::model::MindEdge;
 use crate::application::frame_throttle::MutationFrequencyThrottle;
+use baumhard::mindmap::model::MindEdge;
+use std::time::Duration;
 
 /// Push the throttle's average over-budget until `n > 1`. Returns
 /// the final drain divisor for assertion plumbing.

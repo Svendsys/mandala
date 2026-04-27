@@ -9,11 +9,11 @@ use winit::event::MouseButton;
 use crate::application::document::MindMapDocument;
 use crate::application::renderer::Renderer;
 
+use super::super::throttled_interaction::ColorPickerHoverInteraction;
 use super::commit::{
     apply_picker_preview, cancel_color_picker, commit_color_picker,
     commit_color_picker_to_selection,
 };
-use super::super::throttled_interaction::ColorPickerHoverInteraction;
 
 /// Click handler for the picker. Semantics:
 ///

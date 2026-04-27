@@ -1,25 +1,25 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use criterion::{criterion_group, criterion_main, Criterion};
 use baumhard::core::tests::primitives_tests::*;
 use baumhard::font::tests::attrs_tests::*;
 use baumhard::font::tests::fonts_tests::*;
 use baumhard::gfx_structs::tests::area_tests::*;
-use baumhard::gfx_structs::tests::zoom_visibility_tests::*;
 use baumhard::gfx_structs::tests::model_tests::*;
-use baumhard::gfx_structs::tests::shape_tests::*;
 use baumhard::gfx_structs::tests::mutator_tests::*;
 use baumhard::gfx_structs::tests::region_indexer_tests::*;
 use baumhard::gfx_structs::tests::region_params_tests::*;
 use baumhard::gfx_structs::tests::region_rect_tests::*;
 use baumhard::gfx_structs::tests::scene_tests::*;
+use baumhard::gfx_structs::tests::shape_tests::*;
 use baumhard::gfx_structs::tests::tree_tests::*;
 use baumhard::gfx_structs::tests::tree_walker_tests::*;
+use baumhard::gfx_structs::tests::zoom_visibility_tests::*;
 use baumhard::util::tests::arena_utils_tests::*;
 use baumhard::util::tests::color_tests::*;
 use baumhard::util::tests::geometry_tests::*;
 use baumhard::util::tests::grapheme_chad_tests::*;
 use baumhard::util::tests::primes_test::do_primes;
+use criterion::{criterion_group, criterion_main, Criterion};
 
 use std::collections::HashMap;
 use std::path::PathBuf;

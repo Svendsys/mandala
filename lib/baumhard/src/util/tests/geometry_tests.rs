@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use glam::Vec2;
 use crate::util::geometry::{almost_equal, almost_equal_vec2, clockwise_rotation_around_pivot, pixel_greater_or_equal,
                             pixel_greater_than, pixel_less_or_equal, pixel_lesser_than};
+use glam::Vec2;
 
 #[test]
 fn test_90_deg_rotation() {

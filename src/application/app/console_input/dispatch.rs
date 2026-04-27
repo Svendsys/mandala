@@ -15,9 +15,9 @@ use crate::application::keybinds::{Action, InputContext, ResolvedKeybinds};
 use crate::application::renderer::Renderer;
 
 use super::super::LabelEditState;
+use super::super::PortalTextEditState;
 use super::completion::{accept_console_completion, nav_popup, recompute_console_completions};
 use super::edit::{self, EditOutcome};
-use super::super::PortalTextEditState;
 use super::exec::execute_console_line;
 use super::history::save_console_history;
 use super::rebuild_console_overlay;

@@ -19,8 +19,8 @@ pub const TOTAL_BLACK: Color = Color {
 
 /// Earth-toned five-colour palette.
 pub mod light_forest {
-    use crate::util::color::FloatRgba;
     use crate::rgba;
+    use crate::util::color::FloatRgba;
 
     /// The full palette as an ordered array.
     pub const LIGHT_FOREST: [FloatRgba; 5] =
@@ -40,8 +40,8 @@ pub mod light_forest {
 
 /// Cool-toned five-colour palette.
 pub mod smooth_ocean {
-    use crate::util::color::FloatRgba;
     use crate::rgba;
+    use crate::util::color::FloatRgba;
 
     /// The full palette as an ordered array.
     pub const SMOOTH_OCEAN: [FloatRgba; 5] = [DARK_TURQUOISE, TURQUOISE, GREY, ALMOST_WHITE, BEIGE];

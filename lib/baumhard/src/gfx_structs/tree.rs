@@ -12,8 +12,8 @@
 use crate::core::primitives::Applicable;
 use crate::gfx_structs::element::GfxElement;
 use crate::gfx_structs::mutator::{GfxMutator, GlyphTreeEventInstance};
-use crate::gfx_structs::util::regions::{RegionElementKeyPair, RegionIndexer, RegionParams};
 use crate::gfx_structs::tree_walker::walk_tree_from;
+use crate::gfx_structs::util::regions::{RegionElementKeyPair, RegionIndexer, RegionParams};
 use crate::util::arena_utils;
 use crossbeam_channel::Sender;
 use glam::Vec2;

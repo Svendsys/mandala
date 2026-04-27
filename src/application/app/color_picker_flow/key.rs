@@ -12,11 +12,11 @@ use crate::application::document::MindMapDocument;
 use crate::application::keybinds::{Action, InputContext, ResolvedKeybinds};
 use crate::application::renderer::Renderer;
 
+use super::super::throttled_interaction::ColorPickerHoverInteraction;
 use super::commit::{
     apply_picker_preview, cancel_color_picker, commit_color_picker,
     commit_color_picker_to_selection,
 };
-use super::super::throttled_interaction::ColorPickerHoverInteraction;
 
 /// Route a keystroke to the picker via `action_for_context`. Returns
 /// `true` if the key was consumed, `false` to let it fall through

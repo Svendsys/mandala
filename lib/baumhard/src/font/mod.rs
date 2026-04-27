@@ -28,6 +28,7 @@ pub mod tests;
 /// [`Color::rgba`].
 pub use cosmic_text::Color;
 
+
 /// Glyph-rasterization cache that `measure_glyph_ink_bounds` fills
 /// in on demand. Owned by the caller (one per picker-open pass, not
 /// one per glyph) so repeated measurements against the same glyphs
@@ -35,3 +36,4 @@ pub use cosmic_text::Color;
 /// alongside [`Color`] so the app crate can construct one without
 /// importing `cosmic_text` directly.
 pub use cosmic_text::SwashCache;
+
