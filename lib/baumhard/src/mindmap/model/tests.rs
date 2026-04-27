@@ -6,15 +6,7 @@
 
 use super::*;
 use crate::mindmap::loader;
-use std::path::PathBuf;
-
-fn test_map_path() -> PathBuf {
-    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    path.pop(); // lib/baumhard -> lib
-    path.pop(); // lib -> root
-    path.push("maps/testament.mindmap.json");
-    path
-}
+use crate::mindmap::test_helpers::{blank_canvas, testament_map_path as test_map_path};
 
 #[test]
 fn test_all_descendants() {
@@ -305,14 +297,8 @@ fn label_config_perpendicular_offset_only_round_trips() {
 fn effective_font_size_pt_partial_clamp_inheritance() {
     // Own `min` only: resolver should pick up the label's min and
     // fall back to the body's max. Inverts for "own max only".
-    use crate::mindmap::model::{Canvas, GlyphConnectionConfig};
-    let canvas = Canvas {
-        background_color: "#000".into(),
-        default_border: None,
-        default_connection: None,
-        theme_variables: std::collections::HashMap::new(),
-        theme_variants: std::collections::HashMap::new(),
-    };
+    use crate::mindmap::model::GlyphConnectionConfig;
+    let canvas = blank_canvas();
     let mut edge = synthetic_edge_with_label(Some("x"), None);
     edge.glyph_connection = Some(GlyphConnectionConfig {
         font_size_pt: 20.0,
@@ -399,14 +385,8 @@ fn label_config_partial_fields_round_trip() {
 
 #[test]
 fn effective_font_size_pt_inherits_body_when_label_override_absent() {
-    use crate::mindmap::model::{Canvas, GlyphConnectionConfig, DEFAULT_LABEL_SIZE_FACTOR};
-    let canvas = Canvas {
-        background_color: "#000".into(),
-        default_border: None,
-        default_connection: None,
-        theme_variables: std::collections::HashMap::new(),
-        theme_variants: std::collections::HashMap::new(),
-    };
+    use crate::mindmap::model::{GlyphConnectionConfig, DEFAULT_LABEL_SIZE_FACTOR};
+    let canvas = blank_canvas();
     let mut edge = synthetic_edge_with_label(Some("x"), None);
     edge.glyph_connection = Some(GlyphConnectionConfig {
         font_size_pt: 20.0,
@@ -422,14 +402,8 @@ fn effective_font_size_pt_inherits_body_when_label_override_absent() {
 
 #[test]
 fn effective_font_size_pt_label_override_wins_over_body() {
-    use crate::mindmap::model::{Canvas, GlyphConnectionConfig};
-    let canvas = Canvas {
-        background_color: "#000".into(),
-        default_border: None,
-        default_connection: None,
-        theme_variables: std::collections::HashMap::new(),
-        theme_variants: std::collections::HashMap::new(),
-    };
+    use crate::mindmap::model::GlyphConnectionConfig;
+    let canvas = blank_canvas();
     let mut edge = synthetic_edge_with_label(Some("x"), None);
     edge.glyph_connection = Some(GlyphConnectionConfig {
         font_size_pt: 20.0,
@@ -492,13 +466,7 @@ fn resolved_for_returns_borrowed_from_edge_when_present() {
         ..GlyphConnectionConfig::default()
     };
     edge.glyph_connection = Some(custom);
-    let canvas = Canvas {
-        background_color: "#000".to_string(),
-        default_border: None,
-        default_connection: None,
-        theme_variables: std::collections::HashMap::new(),
-        theme_variants: std::collections::HashMap::new(),
-    };
+    let canvas = blank_canvas();
     let resolved = GlyphConnectionConfig::resolved_for(&edge, &canvas);
     assert_eq!(resolved.body, "◆");
     // It's borrowed, not owned — clone-count unchanged.
@@ -527,13 +495,7 @@ fn resolved_for_falls_back_to_canvas_default() {
 #[test]
 fn resolved_for_falls_back_to_hardcoded_default() {
     let edge = synthetic_edge_with_label(None, None);
-    let canvas = Canvas {
-        background_color: "#000".to_string(),
-        default_border: None,
-        default_connection: None,
-        theme_variables: std::collections::HashMap::new(),
-        theme_variants: std::collections::HashMap::new(),
-    };
+    let canvas = blank_canvas();
     let resolved = GlyphConnectionConfig::resolved_for(&edge, &canvas);
     assert_eq!(resolved.body, GlyphConnectionConfig::default().body);
     // Owned — the caller got a freshly-built default.

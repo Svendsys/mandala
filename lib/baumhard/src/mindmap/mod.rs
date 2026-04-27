@@ -44,6 +44,9 @@ pub mod scene_cache;
 /// connections, edge handles).
 pub mod tree_builder;
 
+#[cfg(test)]
+pub(crate) mod test_helpers;
+
 /// Cyan selection highlight applied at scene / tree emission time
 /// (selected edges, edge handles, portal markers, portal mutator
 /// output). The app crate's `document::types::HIGHLIGHT_COLOR` is

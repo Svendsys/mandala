@@ -64,15 +64,8 @@ pub fn save_to_file(path: &Path, map: &MindMap) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mindmap::test_helpers::testament_map_path as test_map_path;
     use std::path::PathBuf;
-
-    fn test_map_path() -> PathBuf {
-        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        path.pop(); // lib/baumhard -> lib
-        path.pop(); // lib -> root
-        path.push("maps/testament.mindmap.json");
-        path
-    }
 
     #[test]
     fn test_load_testament_map() {
