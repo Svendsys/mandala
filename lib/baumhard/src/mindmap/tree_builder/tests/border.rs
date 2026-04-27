@@ -316,6 +316,53 @@ fn border_identity_sequence_changes_on_show_frame_toggle() {
     assert_ne!(before, after);
 }
 
+/// `row_count` for the side columns must use `.ceil()` rather
+/// than `.round()` — with `.round()`, a node whose `size_y / fs`
+/// rounds *down* (e.g. 100/14 = 7.14 → 7 rows = 98 px on a 100 px
+/// node) leaves the bottom row's corner cell hanging below the
+/// last `│`, rendering as a visible gap at BL/BR.
+///
+/// We assert structurally rather than by counting characters: the
+/// emitted left-column text must contain at least
+/// `ceil(size_y / fs)` clusters (separated by `\n`). For
+/// nh=100, fs=14 this is 8.
+#[test]
+fn border_tree_left_column_rows_use_ceil_not_round() {
+    let mut map = synthetic_map(vec![synthetic_node("a", None, 0.0, 0.0)], vec![]);
+    let node = map.nodes.get_mut("a").unwrap();
+    node.size.width = 200.0;
+    node.size.height = 100.0;
+
+    let tree = build_border_tree(&map, &HashMap::new());
+    // Walk to the per-node Void parent, then to the LEFT column
+    // (channel 3 in the tree-builder convention).
+    let mut left_col_text: Option<String> = None;
+    for parent in tree.root.children(&tree.arena) {
+        for run_id in parent.children(&tree.arena) {
+            let run = tree.arena.get(run_id).unwrap().get();
+            let area = run.glyph_area().unwrap();
+            // Channel 3 is the left column (top=1, bottom=2,
+            // left=3, right=4). Disambiguate by content shape: a
+            // vertical column has internal `\n` separators.
+            if area.text.contains('\n') && area.position.x.0 < 50.0 {
+                left_col_text = Some(area.text.clone());
+                break;
+            }
+        }
+    }
+    let text = left_col_text.expect("left column run found in tree");
+    let cluster_count = text
+        .split('\n')
+        .filter(|s| !s.is_empty())
+        .count();
+    // ceil(100 / 14) = 8 clusters, NOT round(100/14) = 7.
+    assert_eq!(
+        cluster_count, 8,
+        "left column should have ceil(100/14)=8 rows, got {}: '{}'",
+        cluster_count, text
+    );
+}
+
 /// The `append_border_run` helper sizes its `ColorFontRegions`
 /// span to the text's grapheme-cluster count, not its codepoint
 /// count. Current production BorderGlyphSet only emits ASCII-range

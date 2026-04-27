@@ -193,7 +193,7 @@ fn test_measure_text_block_unbounded_empty_is_zero() {
 pub fn do_measure_text_block_unbounded_empty_is_zero() {
     fonts::init();
     let mut fs = acquire_font_system_write("fonts_tests::do_*");
-    let out = measure_text_block_unbounded(&mut fs, "", 14.0, 16.8);
+    let out = measure_text_block_unbounded(&mut fs, "", 14.0, 16.8, None);
     assert_eq!(out.width, 0.0);
     assert_eq!(out.height, 0.0);
     assert_eq!(out.line_count, 0);
@@ -209,7 +209,7 @@ fn test_measure_text_block_unbounded_single_line_nonzero() {
 pub fn do_measure_text_block_unbounded_single_line_nonzero() {
     fonts::init();
     let mut fs = acquire_font_system_write("fonts_tests::do_*");
-    let out = measure_text_block_unbounded(&mut fs, "Hello", 14.0, 16.8);
+    let out = measure_text_block_unbounded(&mut fs, "Hello", 14.0, 16.8, None);
     assert_eq!(out.line_count, 1, "one line expected for no-newline input");
     assert!(out.width > 0.0, "non-empty text must produce positive width");
     assert!(
@@ -229,9 +229,9 @@ fn test_measure_text_block_unbounded_multiline_width_is_widest_line() {
 pub fn do_measure_text_block_unbounded_multiline_width_is_widest_line() {
     fonts::init();
     let mut fs = acquire_font_system_write("fonts_tests::do_*");
-    let narrow = measure_text_block_unbounded(&mut fs, "a", 14.0, 16.8);
-    let wide = measure_text_block_unbounded(&mut fs, "ccccc", 14.0, 16.8);
-    let block = measure_text_block_unbounded(&mut fs, "a\nbb\nccccc", 14.0, 16.8);
+    let narrow = measure_text_block_unbounded(&mut fs, "a", 14.0, 16.8, None);
+    let wide = measure_text_block_unbounded(&mut fs, "ccccc", 14.0, 16.8, None);
+    let block = measure_text_block_unbounded(&mut fs, "a\nbb\nccccc", 14.0, 16.8, None);
     assert_eq!(block.line_count, 3, "three \\n-separated lines expected");
     assert!(
         (block.height - 3.0 * 16.8).abs() < 0.001,
@@ -261,8 +261,8 @@ fn test_measure_text_block_unbounded_width_scales_with_font_size() {
 pub fn do_measure_text_block_unbounded_width_scales_with_font_size() {
     fonts::init();
     let mut fs = acquire_font_system_write("fonts_tests::do_*");
-    let small = measure_text_block_unbounded(&mut fs, "Hello world", 14.0, 16.8);
-    let large = measure_text_block_unbounded(&mut fs, "Hello world", 28.0, 33.6);
+    let small = measure_text_block_unbounded(&mut fs, "Hello world", 14.0, 16.8, None);
+    let large = measure_text_block_unbounded(&mut fs, "Hello world", 28.0, 33.6, None);
     let ratio = large.width / small.width;
     assert!(
         (1.8..=2.2).contains(&ratio),

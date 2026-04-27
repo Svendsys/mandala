@@ -263,7 +263,13 @@ pub fn build_border_mutator_tree_from_nodes(
         let bottom_y = node.pos_y + node.size_y - corner_overlap;
         let h_width = (char_count as f32 + 1.0) * approx_char_width;
         let v_width = approx_char_width * 2.0;
-        let row_count = (node.size_y / font_size).round().max(1.0) as usize;
+        // `.ceil()` rather than `.round()` so the side columns
+        // always extend at least as far down as the node bottom.
+        // With `.round()`, a node whose `size_y / font_size` rounds
+        // down (e.g. 100/14 = 7.14 → 7 rows = 98 px on a 100 px
+        // node) leaves the last row 2 px short of the bottom row's
+        // corner cell, which renders as a visible gap at BL/BR.
+        let row_count = (node.size_y / font_size).ceil().max(1.0) as usize;
 
         // Pattern-aware layout: corners + side fill on the
         // horizontals; vertical sides are one-cluster-per-row
@@ -383,7 +389,10 @@ fn append_border_sub_tree(
     let bottom_y = node.pos_y + node.size_y - corner_overlap;
     let h_width = (char_count as f32 + 1.0) * approx_char_width;
     let v_width = approx_char_width * 2.0;
-    let row_count = (node.size_y / font_size).round().max(1.0) as usize;
+    // `.ceil()` rather than `.round()` so the side columns always
+    // reach the node bottom — see the matching mutator-path
+    // explanation a few hundred lines up.
+    let row_count = (node.size_y / font_size).ceil().max(1.0) as usize;
 
     let top_text = border_style.top_text(char_count);
     let bottom_text = border_style.bottom_text(char_count);

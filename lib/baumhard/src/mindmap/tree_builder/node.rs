@@ -21,7 +21,6 @@ use crate::mindmap::border::{
 };
 use crate::mindmap::model::{MindMap, MindNode};
 use crate::util::color;
-use crate::util::ordered_vec2::OrderedVec2;
 
 /// Converts a MindNode's data into a Baumhard GlyphArea. Text-run colors
 /// are resolved through the map's theme variables before being converted
@@ -49,16 +48,55 @@ pub(super) fn mindnode_to_glyph_area(
 
     let mut area = GlyphArea::new_with_str(&node.text, scale, line_height, position, bounds);
 
-    // Background-fill padding: the border's four glyph runs sit
-    // outside the text rect by one `font_size` vertically and one
-    // `approx_char_width` horizontally on each side (see
-    // `tree_builder::border::append_border_sub_tree`). Stamp the
-    // same outward expansion onto the area's `background_padding`
-    // so the renderer's fill rect covers the border area too. The
-    // padding is computed from the resolved border style (per-node
-    // override → canvas default → hardcoded preset defaults), and
-    // is `Vec2::ZERO` when the frame is hidden or the shape isn't
-    // a rectangle (the only shape borders attach to today).
+    // Background-fill padding: extend the fill outward to land on
+    // the *visible glyph stroke* of the surrounding border runs,
+    // not on the runs' buffer-cell edges. The previous pass used
+    // cell-edge values, but cosmic-text positions text inside the
+    // cell — the visible `─` and `│` strokes sit roughly at the
+    // centre of the em-square (`0.5·fs` from the cell top for the
+    // horizontals, `0.5·acw` from the cell left for the verticals),
+    // not at the cell boundary. Cell-edge padding therefore
+    // overshot the visible line by 0.5·fs ≈ 7px on top/bottom and
+    // 0.5·acw ≈ 4px on left/right.
+    //
+    // Layout reference (matching `tree_builder::border::append_border_sub_tree`):
+    //   top run buffer top:    ny - fs + corner_overlap
+    //   bottom run buffer top: ny + nh - corner_overlap
+    //   left column cell left:  nx - approx_char_width
+    //   right column cell left: right_corner_x
+    //   right_corner_x = nx + char_count·acw - 2·acw
+    //                    where char_count = ceil(nw/acw + 2).max(3)
+    //
+    // Visible stroke centres (assuming `─` and `│` are at em
+    // centre, the convention for box-drawing in monospace faces):
+    //   top:    (ny - fs + corner_overlap) + 0.5·fs = ny - (0.5·fs - corner_overlap)
+    //   bottom: (ny + nh - corner_overlap) + 0.5·fs = ny + nh + (0.5·fs - corner_overlap)
+    //   left:   (nx - acw) + 0.5·acw = nx - 0.5·acw
+    //   right:  right_corner_x + 0.5·acw
+    //         = nx + char_count·acw - 2·acw + 0.5·acw
+    //         = (nx + nw) + (char_count·acw - 1.5·acw - nw)
+    //
+    // Outward extents from the text rect (this is `pad_*`):
+    //   pad_top    = 0.5·fs - corner_overlap
+    //   pad_bottom = 0.5·fs - corner_overlap   (same, by symmetry of the math)
+    //   pad_left   = 0.5·acw
+    //   pad_right  = char_count·acw - 1.5·acw - nw
+    //
+    // pad_right is per-node — when `nw mod acw != 0`, `char_count`
+    // rounds up by one and the right column's outer edge can sit
+    // up to `acw` further from `nx + nw` than the left column's
+    // does from `nx`. Symmetric `pad_right = pad_left` was wrong:
+    // it under-padded by 0..acw px depending on `nw`.
+    //
+    // The 0.5·fs and 0.5·acw multipliers approximate the per-glyph
+    // position of `─` / `│` within the em-square. They're correct
+    // for LiberationSans-style monospace box-drawing, less so for
+    // exotic faces — see the calibration-drift TODO on
+    // `BORDER_CORNER_OVERLAP_FRAC` / `BORDER_APPROX_CHAR_WIDTH_FRAC`
+    // in `border.rs`.
+    //
+    // `EdgePadding::ZERO` when the frame is hidden or the shape
+    // isn't a rectangle (the only shape borders attach to today).
     if node.style.show_frame
         && NodeShape::from_style_string(&node.style.shape) == NodeShape::Rectangle
     {
@@ -68,11 +106,23 @@ pub(super) fn mindnode_to_glyph_area(
             canvas_default_border,
             frame_color_resolved,
         );
-        let approx_char_width =
-            border_style.font_size_pt * BORDER_APPROX_CHAR_WIDTH_FRAC;
-        area.background_padding = OrderedVec2::new_f32(
-            approx_char_width,
-            border_style.font_size_pt,
+        let fs = border_style.font_size_pt;
+        let acw = fs * BORDER_APPROX_CHAR_WIDTH_FRAC;
+        let corner_overlap = fs * crate::mindmap::border::BORDER_CORNER_OVERLAP_FRAC;
+        let nw = node.size.width as f32;
+        // Mirror the char_count formula in `append_border_sub_tree`
+        // so `pad_right` and the actual right-column placement stay
+        // in lock-step. `.max(3.0)` covers the degenerate
+        // `nw < acw` case the same way the layout does.
+        let char_count = ((nw / acw) + 2.0).ceil().max(3.0);
+        let pad_top_bottom = 0.5 * fs - corner_overlap;
+        let pad_left = 0.5 * acw;
+        let pad_right = char_count * acw - 1.5 * acw - nw;
+        area.background_padding = crate::gfx_structs::area::EdgePadding::new(
+            /* top    */ pad_top_bottom,
+            /* right  */ pad_right,
+            /* bottom */ pad_top_bottom,
+            /* left   */ pad_left,
         );
     }
 

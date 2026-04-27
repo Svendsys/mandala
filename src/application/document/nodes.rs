@@ -30,7 +30,11 @@ impl MindMapDocument {
     /// formatting on any edit — a future per-run splitter would preserve
     /// it, but until then the editor path is single-run.
     pub fn set_node_text(&mut self, node_id: &str, new_text: String) -> bool {
-        let node = match self.mindmap.nodes.get_mut(node_id) {
+        // Validate + capture under an immutable borrow so the mutable
+        // re-acquisition below can coexist with the canvas-default
+        // clone (which would otherwise overlap the borrow held by
+        // an upfront `get_mut`).
+        let node = match self.mindmap.nodes.get(node_id) {
             Some(n) => n,
             None => return false,
         };
@@ -58,8 +62,18 @@ impl MindMapDocument {
             end: baumhard::util::grapheme_chad::count_grapheme_clusters(&new_text),
             ..template
         }];
+        let canvas_default = self.mindmap.canvas.default_border.clone();
+        let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
         node.text = new_text;
         node.text_runs = new_runs;
+        // Re-fit the box on text change for the same reason
+        // `set_node_font_size` / `set_node_font_family` do: longer
+        // text on the same face overflows the right edge, and the
+        // monotonic floor only applies if we measure here. Border
+        // floor runs after because a wider node may also need a
+        // wider frame.
+        super::grow_one_node_to_fit_text(node);
+        super::grow_one_node_to_fit_border(node, canvas_default.as_ref());
         self.undo_stack.push(UndoAction::EditNodeText {
             node_id: node_id.to_string(),
             before_text,
