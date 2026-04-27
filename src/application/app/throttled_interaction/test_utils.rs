@@ -1,5 +1,26 @@
 // SPDX-License-Identifier: MPL-2.0
 
+//! Shared helpers and the trait-default test macro for the
+//! throttled-interaction implementors.
+//!
+//! Five impls under this module (`MovingNodeInteraction`,
+//! `EdgeHandleInteraction`, `EdgeLabelInteraction`,
+//! `PortalLabelInteraction`, `ColorPickerHoverInteraction`) all
+//! inherit the `should_perform_drain` ordering invariant from
+//! [`super::ThrottledInteraction`]'s default method. Pre-macro,
+//! every impl carried its own four copies of the same four tests
+//! exercising that invariant — the only varying parts being a
+//! fixture constructor and a per-impl "set pending" hook. Those
+//! four tests now live once, inside
+//! [`trait_default_tests_for_throttled_interaction!`], and each
+//! impl invokes the macro with its own `build` and `set_pending`
+//! closures.
+//!
+//! Per-impl-specific tests (e.g. `test_handle_variant_round_trips_control_point`
+//! on `EdgeHandleInteraction`, `test_canvas_needs_rebuild_*` on
+//! `ColorPickerHoverInteraction`) are not in the macro's scope —
+//! they stay inline at their respective sites.
+
 use crate::application::frame_throttle::MutationFrequencyThrottle;
 use baumhard::mindmap::model::MindEdge;
 use std::time::Duration;
@@ -40,3 +61,107 @@ pub fn fixture_edge() -> MindEdge {
         max_zoom_to_render: None,
     }
 }
+
+/// Emit the four trait-default `should_perform_drain` tests for a
+/// [`super::ThrottledInteraction`] implementor.
+///
+/// The default method's contract is identical for every implementor:
+///
+/// - **Idle** → returns `false` without touching the throttle.
+/// - **Pending + fresh throttle** → returns `true`.
+/// - **Pending + skipping throttle (n > 1)** → returns `false` on the
+///   skipped frames in the cadence.
+/// - **Idle calls don't advance the throttle's skip counter.**
+///
+/// A new implementor invokes this macro once inside its
+/// `#[cfg(test)] mod tests { ... }` block:
+///
+/// ```ignore
+/// trait_default_tests_for_throttled_interaction! {
+///     build = || MyInteraction::new(/* idle inputs */),
+///     set_pending = |i: &mut MyInteraction| { i.dirty = true; },
+/// }
+/// ```
+///
+/// `build` returns a fresh idle instance (the throttle at `n = 1`,
+/// no pending state). `set_pending` is `FnMut(&mut T)` and flips
+/// the impl's `has_pending()` to true — the macro calls it
+/// repeatedly inside the cadence-skip test, so it must be cheap
+/// and idempotent.
+///
+/// The macro accesses the impl's `throttle` field directly. Every
+/// implementor exposes `pub throttle: MutationFrequencyThrottle`
+/// (the per-gesture cost-profile rationale lives on the trait
+/// definition); a future implementor that doesn't is asking for
+/// a different macro.
+macro_rules! trait_default_tests_for_throttled_interaction {
+    (
+        build = $build:expr,
+        set_pending = $set_pending:expr $(,)?
+    ) => {
+        #[test]
+        fn test_should_perform_drain_false_when_idle() {
+            let mut i = ($build)();
+            assert!(
+                !$crate::application::app::throttled_interaction::ThrottledInteraction::should_perform_drain(&mut i),
+                "idle interaction must report no drain"
+            );
+        }
+
+        #[test]
+        fn test_should_perform_drain_true_when_pending_and_throttle_fresh() {
+            let mut i = ($build)();
+            ($set_pending)(&mut i);
+            assert!(
+                $crate::application::app::throttled_interaction::ThrottledInteraction::should_perform_drain(&mut i),
+                "pending interaction with fresh throttle must drain"
+            );
+        }
+
+        #[test]
+        fn test_should_perform_drain_false_when_throttle_skipping() {
+            // Throttle cadence under sustained over-budget load: at
+            // n > 1, should_perform_drain must return false on the
+            // skipped frames even when pending state is set.
+            let mut i = ($build)();
+            $crate::application::app::throttled_interaction::test_utils::drive_throttle_over_budget(
+                &mut i.throttle,
+            );
+            assert!(i.throttle.current_n() > 1);
+
+            let n = i.throttle.current_n() as usize;
+            ($set_pending)(&mut i);
+            let mut saw_skip = false;
+            for _ in 0..(n * 2) {
+                if !$crate::application::app::throttled_interaction::ThrottledInteraction::should_perform_drain(&mut i) {
+                    saw_skip = true;
+                }
+                // Keep n stable while probing cadence.
+                i.throttle.record_work_duration(::std::time::Duration::from_micros(50_000));
+                ($set_pending)(&mut i);
+            }
+            assert!(saw_skip, "expected at least one skipped drain at n > 1");
+        }
+
+        #[test]
+        fn test_idle_should_perform_drain_does_not_advance_throttle() {
+            // Invariant — if should_perform_drain consulted
+            // should_drain first, this would be off by n: several
+            // idle calls would advance `frames_since_drain` and the
+            // next pending tick would skip instead of drain.
+            let mut i = ($build)();
+            for _ in 0..5 {
+                assert!(
+                    !$crate::application::app::throttled_interaction::ThrottledInteraction::should_perform_drain(&mut i)
+                );
+            }
+            ($set_pending)(&mut i);
+            assert!(
+                $crate::application::app::throttled_interaction::ThrottledInteraction::should_perform_drain(&mut i),
+                "first pending tick after idles must drain"
+            );
+        }
+    };
+}
+
+pub(crate) use trait_default_tests_for_throttled_interaction;
