@@ -16,16 +16,27 @@ use crate::gfx_structs::element::GfxElement;
 use crate::gfx_structs::mutator::GfxMutator;
 use crate::gfx_structs::shape::NodeShape;
 use crate::gfx_structs::tree::Tree;
+use crate::mindmap::border::{
+    resolve_border_style, BORDER_APPROX_CHAR_WIDTH_FRAC,
+};
 use crate::mindmap::model::{MindMap, MindNode};
 use crate::util::color;
+use crate::util::ordered_vec2::OrderedVec2;
 
 /// Converts a MindNode's data into a Baumhard GlyphArea. Text-run colors
 /// are resolved through the map's theme variables before being converted
 /// to RGBA; unknown references and malformed hex fall back to transparent
 /// black rather than panicking so a theme typo can't crash the render.
+///
+/// `canvas_default_border` is threaded through so the area can stamp the
+/// resolved border's outward padding onto its `background_padding` —
+/// without that, the node's background fill ends at the text rect and
+/// the border glyphs (which sit one cell outside the rect) draw against
+/// the canvas backdrop instead of the node's fill colour.
 pub(super) fn mindnode_to_glyph_area(
     node: &MindNode,
     vars: &HashMap<String, String>,
+    canvas_default_border: Option<&crate::mindmap::model::GlyphBorderConfig>,
 ) -> GlyphArea {
     let scale = node
         .text_runs
@@ -37,6 +48,33 @@ pub(super) fn mindnode_to_glyph_area(
     let bounds = Vec2::new(node.size.width as f32, node.size.height as f32);
 
     let mut area = GlyphArea::new_with_str(&node.text, scale, line_height, position, bounds);
+
+    // Background-fill padding: the border's four glyph runs sit
+    // outside the text rect by one `font_size` vertically and one
+    // `approx_char_width` horizontally on each side (see
+    // `tree_builder::border::append_border_sub_tree`). Stamp the
+    // same outward expansion onto the area's `background_padding`
+    // so the renderer's fill rect covers the border area too. The
+    // padding is computed from the resolved border style (per-node
+    // override → canvas default → hardcoded preset defaults), and
+    // is `Vec2::ZERO` when the frame is hidden or the shape isn't
+    // a rectangle (the only shape borders attach to today).
+    if node.style.show_frame
+        && NodeShape::from_style_string(&node.style.shape) == NodeShape::Rectangle
+    {
+        let frame_color_resolved = color::resolve_var(&node.style.frame_color, vars);
+        let border_style = resolve_border_style(
+            node.style.border.as_ref(),
+            canvas_default_border,
+            frame_color_resolved,
+        );
+        let approx_char_width =
+            border_style.font_size_pt * BORDER_APPROX_CHAR_WIDTH_FRAC;
+        area.background_padding = OrderedVec2::new_f32(
+            approx_char_width,
+            border_style.font_size_pt,
+        );
+    }
 
     // Resolve the node's background color through theme variables and
     // pack it as u8 RGBA onto the tree element. The renderer's rect
@@ -117,12 +155,13 @@ pub(super) fn build_children_recursive(
     id_counter: &mut usize,
 ) {
     let vars = &map.canvas.theme_variables;
+    let canvas_default_border = map.canvas.default_border.as_ref();
     let children = map.children_of(parent_mind_id);
     for child in &children {
         if map.is_hidden_by_fold(child) {
             continue;
         }
-        let area = mindnode_to_glyph_area(child, vars);
+        let area = mindnode_to_glyph_area(child, vars, canvas_default_border);
         let element = GfxElement::new_area_non_indexed_with_id(area, child.channel, *id_counter);
         *id_counter += 1;
 

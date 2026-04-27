@@ -73,6 +73,73 @@ fn border_preset_writes_field() {
     assert_eq!(cfg.preset, "heavy");
 }
 
+/// `border preset=custom` alone (no glyph fields) is the
+/// vocabulary's most confusing surface: the data model accepts it
+/// but the visual is identical to the `light` preset until at
+/// least one of `top=` / `bottom=` / `left=` / `right=` / `tl=` /
+/// `tr=` / `bl=` / `br=` is supplied. Surface a hint listing those
+/// keys so the user knows what to type next.
+#[test]
+fn border_preset_custom_alone_emits_glyph_field_hint() {
+    let mut doc = fixture_doc();
+    let id = first_node_id(&doc);
+    doc.selection = SelectionState::Single(id.clone());
+    let lines = match run("border preset=custom", &mut doc) {
+        ExecResult::Lines(rows) => rows,
+        other => panic!("expected Lines for the hint output, got {:?}", other),
+    };
+    let blob = lines
+        .iter()
+        .map(|l| l.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        blob.contains("preset=custom"),
+        "expected the readout to mention preset=custom; got: {}",
+        blob
+    );
+    // The hint mentions the eight glyph keys so the user can copy
+    // a starting pair without a doc dive.
+    for key in &["top=", "bottom=", "left=", "right=", "tl=", "tr=", "bl=", "br="] {
+        assert!(
+            blob.contains(key),
+            "hint missing '{}': {}",
+            key,
+            blob
+        );
+    }
+}
+
+/// `preset=custom` together with a glyph field is the productive
+/// shape — no hint should fire then. The user has already supplied
+/// a side / corner override so they clearly know what they want.
+#[test]
+fn border_preset_custom_with_glyph_field_skips_hint() {
+    let mut doc = fixture_doc();
+    let id = first_node_id(&doc);
+    doc.selection = SelectionState::Single(id.clone());
+    let lines = match run("border preset=custom top=#", &mut doc) {
+        ExecResult::Lines(rows) => rows,
+        ExecResult::Ok(_) => return, // no hint at all is also fine
+        other => panic!("expected Ok / Lines, got {:?}", other),
+    };
+    let blob = lines
+        .iter()
+        .map(|l| l.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    // The hint string identifies itself via "preset=custom" plus a
+    // catalogue of side / corner keys joined together. Confirm that
+    // *catalogue text* doesn't appear when at least one glyph
+    // field is set — the preset-was-promoted note can still fire,
+    // but the orientation hint shouldn't.
+    assert!(
+        !blob.contains("hint: 'custom' is the preset"),
+        "hint fired despite a glyph field being set: {}",
+        blob
+    );
+}
+
 #[test]
 fn border_top_pattern_parse_error_surfaces_with_prefix() {
     let mut doc = fixture_doc();

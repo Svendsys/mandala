@@ -181,6 +181,37 @@ use super::defaults::default_cross_link_edge;
         assert_eq!(doc.mindmap.nodes.get(&nid).unwrap().style.frame_color, "#ff00ff");
     }
 
+    /// First-edit materialization of `node.style.border` uses
+    /// `default_glyph_border_config()` (private to `nodes.rs`).
+    /// Pin the resulting `preset` to `"light"` so a regression to
+    /// `"rounded"` — the previous default — surfaces here. The
+    /// trigger is any kv edit that *touches a config field*; we
+    /// use `padding=` because it's a leaf field with no other
+    /// behaviour entanglement.
+    #[test]
+    fn test_default_border_config_first_edit_materialises_light_preset() {
+        use crate::application::document::{BorderConfigEdits, BorderFieldEdit};
+        let mut doc = load_test_doc();
+        let nid = first_testament_node_id(&doc);
+        // Strip any pre-existing per-node border so we exercise the
+        // `get_or_insert_with(default_glyph_border_config)` path.
+        doc.mindmap.nodes.get_mut(&nid).unwrap().style.border = None;
+        let mut edits = BorderConfigEdits::default();
+        edits.padding = BorderFieldEdit::Set(8.0);
+        let outcome = doc.set_node_border_config(&nid, edits);
+        assert!(outcome.changed);
+        let cfg = doc
+            .mindmap
+            .nodes
+            .get(&nid)
+            .unwrap()
+            .style
+            .border
+            .as_ref()
+            .expect("first-edit materialised the per-node config");
+        assert_eq!(cfg.preset, "light");
+    }
+
     /// Setting text color rewrites `style.text_color` and every run
     /// whose color matched the pre-edit default. A run the user
     /// colored by hand (mismatched) keeps its override.
@@ -339,6 +370,70 @@ use super::defaults::default_cross_link_edge;
             .map(|r| r.font.clone())
             .collect();
         assert_eq!(after_fonts, before_fonts);
+    }
+
+    /// Pinning a wide-advance face on a node previously sized for
+    /// a narrow monospace must grow the box so the new text fits.
+    /// The setter calls `grow_one_node_to_fit_text` after mutating
+    /// the runs; before the fix, font changes left the rect at its
+    /// prior size and the new text overflowed the right edge.
+    #[test]
+    fn test_set_node_font_family_grows_node_to_fit_new_face() {
+        baumhard::font::fonts::init();
+        let mut doc = load_test_doc();
+        let nid = first_testament_node_id(&doc);
+
+        // Shrink the node *below* its measured floor so the per-edit
+        // re-fit has something concrete to grow back. Note: the
+        // production loader's `grow_node_sizes_to_fit_text` would
+        // never leave a node this small, but the test fixture is
+        // already loaded so we shrink in place to set up the
+        // measurement.
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        node.size.width = 1.0;
+        node.size.height = 1.0;
+
+        // Use whatever family the fixture already references so the
+        // setter doesn't bail out as "already". If the fixture's
+        // first run carries the empty sentinel, pin to a real
+        // family instead.
+        let pin = baumhard::font::fonts::loaded_families_iter()
+            .next()
+            .map(str::to_string)
+            .expect("at least one loaded family");
+        assert!(doc.set_node_font_family(&nid, Some(&pin)));
+
+        let node = doc.mindmap.nodes.get(&nid).unwrap();
+        assert!(
+            node.size.width > 1.0 && node.size.height > 1.0,
+            "set_node_font_family must re-fit the node box; got {}×{}",
+            node.size.width,
+            node.size.height
+        );
+    }
+
+    /// `set_node_font_size` likewise has to re-fit — the same
+    /// regression as the family case, just driven by the size
+    /// channel.
+    #[test]
+    fn test_set_node_font_size_grows_node_to_fit_new_size() {
+        baumhard::font::fonts::init();
+        let mut doc = load_test_doc();
+        let nid = first_testament_node_id(&doc);
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        node.size.width = 1.0;
+        node.size.height = 1.0;
+        // Pick a size different from whatever the fixture's first
+        // run uses so the setter actually applies. 96 pt is well
+        // above any default.
+        assert!(doc.set_node_font_size(&nid, 96.0));
+        let node = doc.mindmap.nodes.get(&nid).unwrap();
+        assert!(
+            node.size.width > 1.0 && node.size.height > 1.0,
+            "set_node_font_size must re-fit the node box; got {}×{}",
+            node.size.width,
+            node.size.height
+        );
     }
 
     #[test]

@@ -58,6 +58,19 @@ pub struct GlyphArea {
     /// rendering reads it during `rebuild_buffers_from_tree`.
     #[serde(default)]
     pub background_color: Option<[u8; 4]>,
+    /// Outward expansion of the background fill rect beyond
+    /// `(position, render_bounds)`. The renderer draws the fill at
+    /// `position - background_padding` with size
+    /// `render_bounds + 2 * background_padding`; text shaping
+    /// continues to use the unmodified `position` / `render_bounds`,
+    /// so this field doesn't affect layout. Default `Vec2::ZERO` —
+    /// the background coincides with the text bounds, the
+    /// historical behaviour. Used by mindmap nodes to extend the
+    /// fill behind border glyphs that sit outside the text rect so
+    /// the border draws against the node's background colour rather
+    /// than the canvas underneath.
+    #[serde(default)]
+    pub background_padding: OrderedVec2,
     /// When `true`, the renderer shapes this area's text with
     /// `cosmic_text::Align::Center` so cross-script glyphs whose
     /// per-glyph advance varies (e.g. the picker's Devanagari /
@@ -119,6 +132,8 @@ impl Hash for GlyphArea {
         self.render_bounds.y().to_bits().hash(state);
         self.regions.hash(state);
         self.background_color.hash(state);
+        self.background_padding.x().to_bits().hash(state);
+        self.background_padding.y().to_bits().hash(state);
         self.align_center.hash(state);
         self.outline.hash(state);
         self.shape.hash(state);
@@ -129,8 +144,10 @@ impl Hash for GlyphArea {
 impl GlyphArea {
     /// Construct an empty-text area with the given metrics and
     /// placement. Regions and hitbox start empty; `align_center`,
-    /// `background_color`, and `outline` default off. O(1); one
-    /// heap allocation for the empty `text` String.
+    /// `background_color`, `background_padding`, and `outline`
+    /// default off; `shape` defaults to `Rectangle`;
+    /// `zoom_visibility` to unbounded. O(1); one heap allocation
+    /// for the empty `text` String.
     pub fn new(scale: f32, line_height: f32, position: Vec2, bounds: Vec2) -> Self {
         GlyphArea {
             text: "".to_string(),
@@ -140,6 +157,7 @@ impl GlyphArea {
             render_bounds: OrderedVec2::from_vec2(bounds),
             regions: ColorFontRegions::default(),
             background_color: None,
+            background_padding: OrderedVec2::from_vec2(Vec2::ZERO),
             align_center: false,
             outline: None,
             shape: NodeShape::Rectangle,
@@ -165,6 +183,7 @@ impl GlyphArea {
             render_bounds: OrderedVec2::from_vec2(bounds),
             regions: ColorFontRegions::default(),
             background_color: None,
+            background_padding: OrderedVec2::from_vec2(Vec2::ZERO),
             align_center: false,
             outline: None,
             shape: NodeShape::Rectangle,

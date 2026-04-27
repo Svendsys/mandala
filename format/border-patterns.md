@@ -120,6 +120,12 @@ border tl="<glyph>" tr="<glyph>" bl="<glyph>" br="<glyph>"
 border padding=<px>
 ```
 
+`light` is the default preset. Its corner glyphs (`┌┐└┘`) extend
+to the cell edges, so corners and sides connect cleanly in any
+monospace face. `rounded` (`╭╮╰╯`) curves inward and leaves a
+small visible gap at every corner — pick it deliberately if that's
+the look you want.
+
 Setting any side or corner glyph automatically promotes the
 preset to `"custom"`. Quoted patterns survive the tokenizer
 unchanged so `(` / `)` / spaces don't need shell escaping.

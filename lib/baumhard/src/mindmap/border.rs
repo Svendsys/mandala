@@ -289,8 +289,8 @@ pub struct BorderStyle {
     /// using `top_border` / `side_border` etc. unchanged.
     pub glyph_set: BorderGlyphSet,
     /// Multi-cluster runtime corners. Populated by
-    /// [`resolve_border_style`]; defaults to the rounded preset's
-    /// corners as single-cluster strings.
+    /// [`resolve_border_style`]; defaults to the light preset's
+    /// corners (`┌┐└┘`) as single-cluster strings.
     pub corners: BorderCorners,
     /// Parsed [`SidePattern`] for each side. Populated by
     /// [`resolve_border_style`] from the user's
@@ -315,13 +315,19 @@ pub struct BorderStyle {
 
 impl BorderStyle {
     /// Construct a default visible border with the given color
-    /// (`#RRGGBB` hex or resolved theme variable). Uses the rounded
+    /// (`#RRGGBB` hex or resolved theme variable). Uses the light
     /// box-drawing preset + 14 pt default font size — matches the
     /// scene builder's per-framed-node default so node borders keep
     /// the same look when a caller asks for "a default border in this
     /// color" instead of building one field-by-field.
+    ///
+    /// `light` (`┌─│┘`) is the chosen default rather than `rounded`
+    /// (`╭─│╯`) because the rounded corners curve inward away from
+    /// the cell edges, leaving a visible gap where corner meets
+    /// side in any monospace face. The light preset's corners
+    /// extend to the cell edges, so corner and side connect cleanly.
     pub fn default_with_color(color: &str) -> Self {
-        let glyph_set = BorderGlyphSet::box_drawing_rounded();
+        let glyph_set = BorderGlyphSet::box_drawing_light();
         BorderStyle {
             corners: glyph_set.corners(),
             side_patterns: glyph_set.side_patterns(),
@@ -457,7 +463,7 @@ fn parse_legacy_glyph(c: char) -> SidePattern {
 /// Cascade for each field, most-specific wins:
 /// 1. Per-node `GlyphBorderConfig` (the `cfg` arg).
 /// 2. Canvas-level default (the `canvas_default` arg).
-/// 3. Hardcoded preset / font / size defaults (rounded, system,
+/// 3. Hardcoded preset / font / size defaults (light, system,
 ///    14 pt, the resolved `frame_color`).
 ///
 /// Pattern parse errors on a configured side fall back to the
@@ -471,8 +477,8 @@ pub fn resolve_border_style(
 ) -> BorderStyle {
     // Field-by-field cascade. `cfg` takes precedence; if a key
     // sits at a meaningful default in `cfg` (e.g. the
-    // `default_border_preset` literal "rounded"), the cascade
-    // can't tell the difference between "author chose rounded"
+    // `default_border_preset` literal "light"), the cascade
+    // can't tell the difference between "author chose light"
     // and "author left the field unset". We accept that: the
     // canvas default only contributes when the per-node cfg is
     // absent entirely, mirroring the existing `style.frame_color`
@@ -481,7 +487,7 @@ pub fn resolve_border_style(
 
     let preset_name = chosen
         .map(|c| c.preset.as_str())
-        .unwrap_or("rounded");
+        .unwrap_or("light");
     let glyph_set = preset_glyph_set(preset_name);
 
     // Multi-cluster corners + side patterns: prefer the cfg's
@@ -524,21 +530,23 @@ pub fn resolve_border_style(
 }
 
 /// Pick the [`BorderGlyphSet`] for a preset name, case-insensitively.
-/// Unknown preset names fall back to `rounded` and log a warning;
-/// the `"custom"` preset returns `rounded` here too — its corners /
-/// sides are overridden downstream by the `glyphs` payload.
+/// Unknown preset names fall back to `light` and log a warning;
+/// the `"custom"` preset returns `light` here too — its corners /
+/// sides are overridden downstream by the `glyphs` payload, so the
+/// fallback only shows through when the user picked custom but
+/// supplied no glyph fields.
 pub fn preset_glyph_set(preset: &str) -> BorderGlyphSet {
     match preset.to_ascii_lowercase().as_str() {
-        "light" => BorderGlyphSet::box_drawing_light(),
+        "rounded" => BorderGlyphSet::box_drawing_rounded(),
         "heavy" => BorderGlyphSet::box_drawing_heavy(),
         "double" => BorderGlyphSet::box_drawing_double(),
-        "rounded" | "custom" => BorderGlyphSet::box_drawing_rounded(),
+        "light" | "custom" => BorderGlyphSet::box_drawing_light(),
         other => {
             log::warn!(
-                "border preset '{}' unknown; using 'rounded'",
+                "border preset '{}' unknown; using 'light'",
                 other
             );
-            BorderGlyphSet::box_drawing_rounded()
+            BorderGlyphSet::box_drawing_light()
         }
     }
 }
@@ -595,15 +603,18 @@ fn parse_side_or_fallback(s: &str, fallback: char, side: &str) -> SidePattern {
 fn default_custom_glyphs() -> CustomBorderGlyphs {
     // Mirrors the `default_*_glyph` defaults on the data-model
     // type. Used when `preset = "custom"` but `glyphs` is absent.
+    // Corners are the light preset's `┌┐└┘` rather than the
+    // rounded `╭╮╰╯` so the fallback joins cleanly with the
+    // side glyphs at cell boundaries.
     CustomBorderGlyphs {
         top: "\u{2500}".to_string(),
         bottom: "\u{2500}".to_string(),
         left: "\u{2502}".to_string(),
         right: "\u{2502}".to_string(),
-        top_left: "\u{256D}".to_string(),
-        top_right: "\u{256E}".to_string(),
-        bottom_left: "\u{2570}".to_string(),
-        bottom_right: "\u{256F}".to_string(),
+        top_left: "\u{250C}".to_string(),
+        top_right: "\u{2510}".to_string(),
+        bottom_left: "\u{2514}".to_string(),
+        bottom_right: "\u{2518}".to_string(),
     }
 }
 
@@ -883,11 +894,33 @@ mod tests {
         let style = BorderStyle::default_with_color("#ff0000");
         assert_eq!(style.color, "#ff0000");
         assert!(style.visible);
-        // Default preset is rounded.
+        // Default preset is light — its corners extend to the cell
+        // edges so they connect cleanly with the side glyphs.
         assert_eq!(
             style.glyph_set.top_left,
-            BorderGlyphSet::box_drawing_rounded().top_left
+            BorderGlyphSet::box_drawing_light().top_left
         );
         assert_eq!(style.font_name, None);
+    }
+
+    /// `resolve_border_style(None, None, ...)` is the most common
+    /// path: a framed node with no per-node `GlyphBorderConfig` and
+    /// a canvas with no `default_border` falls all the way through
+    /// the cascade to the hardcoded preset / font / size defaults.
+    /// Pin that the corners and side patterns land on the light
+    /// preset so a future flip of the default doesn't silently
+    /// change the rendered look for every map that lacks an
+    /// explicit border config.
+    #[test]
+    fn resolve_border_style_with_no_overrides_uses_light_preset() {
+        let style = resolve_border_style(None, None, "#abcdef");
+        let expected = BorderGlyphSet::box_drawing_light();
+        assert_eq!(style.corners.top_left, expected.top_left.to_string());
+        assert_eq!(style.corners.top_right, expected.top_right.to_string());
+        assert_eq!(style.corners.bottom_left, expected.bottom_left.to_string());
+        assert_eq!(style.corners.bottom_right, expected.bottom_right.to_string());
+        assert_eq!(style.color, "#abcdef");
+        assert_eq!(style.font_size_pt, 14.0);
+        assert!(style.visible);
     }
 }

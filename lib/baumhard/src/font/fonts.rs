@@ -94,24 +94,28 @@ pub fn init() {
 /// so the whole list is O(n) to scan even on the lookup path.
 static FAMILY_INDEX: OnceLock<Vec<(String, AppFont)>> = OnceLock::new();
 
-/// Build the `(family_name, AppFont)` index by resolving every
-/// compiled `AppFont` through the live `FONT_SYSTEM` fontdb. Holds
-/// the `FONT_SYSTEM` **read** lock for the scope of the call.
+/// Build the `(family_name, AppFont)` index by walking every
+/// face fontdb knows about. Holds the `FONT_SYSTEM` **read** lock
+/// for the scope of the call.
 ///
-/// Multiple `AppFont` variants can map to the same family name when
-/// the bundled set carries several styles of one family (regular +
-/// bold + italic, for example) under matching `families[0]` strings
-/// — fontdb deduplicates faces by `(family, style)`, but the family
-/// string alone is not unique. We dedup by family name so a caller
-/// that only wants a list of families gets each one once. The first
-/// `AppFont` we encounter wins for the reverse-lookup path; that's
-/// fine because the user-facing surface only knows family names,
-/// not styles.
+/// Iteration is over `font_system.db().faces()` rather than over
+/// our `COMPILED_FONT_ID_MAP`'s first id per `AppFont` so that:
+/// 1. A single source that registers multiple faces (a TTC, or a
+///    TTF whose name table exposes several subfamilies) contributes
+///    every distinct family name, not just the one tied to the
+///    first id;
+/// 2. Faces whose `families[0]` is a localized name still surface
+///    their English alias when fontdb knows about both — we walk
+///    every entry in `face.families`, dedup by name, so a Devanagari
+///    Noto font shows up under both its English label and its
+///    Devanagari one.
 ///
-/// Misses (empty id list, fontdb face miss, empty `families` list)
-/// are logged at `warn!` so a corrupt build's silent disappearance
-/// from the index is observable — matches the §9 "warn and degrade"
-/// posture the renderer attrs builder uses for the same misses.
+/// The reverse lookup (`app_font_by_family`) maps each unique
+/// family name to the first `AppFont` whose face advertises that
+/// name. Faces fontdb knows about but that aren't compiled in (none
+/// today; we own the database) map to `Any` so the cosmic-text
+/// fallback picks them up. Sorting is alphabetical so a UI list is
+/// stable.
 fn build_family_index() -> Vec<(String, AppFont)> {
     // Force `COMPILED_FONT_ID_MAP`'s lazy-static init **before** we
     // grab the `FONT_SYSTEM` read lock. `load_fonts()` (the lazy
@@ -126,35 +130,55 @@ fn build_family_index() -> Vec<(String, AppFont)> {
     // lazy_static — `load_fonts()` runs on this line, returns, and
     // releases its write guard before the read below acquires.
     COMPILED_FONT_ID_MAP.capacity();
+
+    // Reverse map id → AppFont so we can attribute each face to a
+    // compiled-in variant when one exists.
+    let mut id_to_app_font: FxHashMap<ID, AppFont> =
+        FxHashMap::with_capacity_and_hasher(COMPILED_FONT_ID_MAP.len(), Default::default());
+    for (app_font, ids) in COMPILED_FONT_ID_MAP.iter() {
+        for id in ids.iter() {
+            id_to_app_font.insert(*id, *app_font);
+        }
+    }
+
     let font_system = FONT_SYSTEM
         .read()
         .expect("FONT_SYSTEM lock poisoned during family-index build");
     let mut seen: rustc_hash::FxHashSet<String> = rustc_hash::FxHashSet::default();
     let mut out: Vec<(String, AppFont)> = Vec::new();
-    for (app_font, ids) in COMPILED_FONT_ID_MAP.iter() {
-        let Some(id) = ids.first() else {
+    for face in font_system.db().faces() {
+        if face.families.is_empty() {
             log::warn!(
-                "build_family_index: AppFont {app_font:?} has no fontdb id; \
-                 omitting from the family index"
+                "build_family_index: face id {:?} has no family names; skipping",
+                face.id
             );
             continue;
+        }
+        let attributed = match id_to_app_font.get(&face.id).copied() {
+            Some(app_font) => app_font,
+            None => {
+                // The codebase owns the fontdb today (see `build.rs`
+                // and the comment at the top of this file), so any
+                // face we don't recognise comes from a future
+                // system-fonts loader or a test that registered
+                // fonts directly. Surface that at `debug` so it's
+                // observable without spamming `warn`.
+                log::debug!(
+                    "build_family_index: face id {:?} ({:?}) is not in COMPILED_FONT_ID_MAP; \
+                     attributing to AppFont::Any",
+                    face.id,
+                    face.families.first().map(|(n, _)| n.as_str()).unwrap_or("?"),
+                );
+                AppFont::Any
+            }
         };
-        let Some(face) = font_system.db().face(*id) else {
-            log::warn!(
-                "build_family_index: fontdb face miss for AppFont {app_font:?}; \
-                 omitting from the family index"
-            );
-            continue;
-        };
-        let Some((family, _)) = face.families.first() else {
-            log::warn!(
-                "build_family_index: AppFont {app_font:?} has no family name; \
-                 omitting from the family index"
-            );
-            continue;
-        };
-        if seen.insert(family.clone()) {
-            out.push((family.clone(), *app_font));
+        for (family, _lang) in face.families.iter() {
+            if family.is_empty() {
+                continue;
+            }
+            if seen.insert(family.clone()) {
+                out.push((family.clone(), attributed));
+            }
         }
     }
     out.sort_by(|a, b| a.0.cmp(&b.0));

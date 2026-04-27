@@ -30,6 +30,12 @@ impl PartialEq for OrderedVec2 {
     }
 }
 
+impl Default for OrderedVec2 {
+    fn default() -> Self {
+        Self::new_f32(0.0, 0.0)
+    }
+}
+
 impl OrderedVec2 {
     /// Construct from a `glam::Vec2`. O(1).
     pub fn from_vec2(vec2: Vec2) -> Self {

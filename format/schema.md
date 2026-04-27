@@ -249,7 +249,7 @@ see [`border-patterns.md`](./border-patterns.md) for the grammar.
 
 | Field | Type | Notes |
 |---|---|---|
-| `preset` | string | `"light"`, `"heavy"`, `"double"`, `"rounded"`, `"custom"` |
+| `preset` | string | One of `"light"` (default), `"heavy"`, `"double"`, `"rounded"`, `"custom"`. The default's corner glyphs (`┌┐└┘`) extend to the cell edges so they connect cleanly with the side glyphs in monospace fonts; `"rounded"` (`╭╮╰╯`) curves inward and leaves a small visible gap at every corner — pick it deliberately if that's the intended look. |
 | `font` | string\|null | Font family |
 | `font_size_pt` | number | Glyph size |
 | `color` | string\|null | `#RRGGBB`, falls back to `style.frame_color` |
