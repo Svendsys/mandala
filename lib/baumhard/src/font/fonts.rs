@@ -154,10 +154,24 @@ fn build_family_index() -> Vec<(String, AppFont)> {
             );
             continue;
         }
-        let attributed = id_to_app_font
-            .get(&face.id)
-            .copied()
-            .unwrap_or(AppFont::Any);
+        let attributed = match id_to_app_font.get(&face.id).copied() {
+            Some(app_font) => app_font,
+            None => {
+                // The codebase owns the fontdb today (see `build.rs`
+                // and the comment at the top of this file), so any
+                // face we don't recognise comes from a future
+                // system-fonts loader or a test that registered
+                // fonts directly. Surface that at `debug` so it's
+                // observable without spamming `warn`.
+                log::debug!(
+                    "build_family_index: face id {:?} ({:?}) is not in COMPILED_FONT_ID_MAP; \
+                     attributing to AppFont::Any",
+                    face.id,
+                    face.families.first().map(|(n, _)| n.as_str()).unwrap_or("?"),
+                );
+                AppFont::Any
+            }
+        };
         for (family, _lang) in face.families.iter() {
             if family.is_empty() {
                 continue;

@@ -181,6 +181,37 @@ use super::defaults::default_cross_link_edge;
         assert_eq!(doc.mindmap.nodes.get(&nid).unwrap().style.frame_color, "#ff00ff");
     }
 
+    /// First-edit materialization of `node.style.border` uses
+    /// `default_glyph_border_config()` (private to `nodes.rs`).
+    /// Pin the resulting `preset` to `"light"` so a regression to
+    /// `"rounded"` — the previous default — surfaces here. The
+    /// trigger is any kv edit that *touches a config field*; we
+    /// use `padding=` because it's a leaf field with no other
+    /// behaviour entanglement.
+    #[test]
+    fn test_default_border_config_first_edit_materialises_light_preset() {
+        use crate::application::document::{BorderConfigEdits, BorderFieldEdit};
+        let mut doc = load_test_doc();
+        let nid = first_testament_node_id(&doc);
+        // Strip any pre-existing per-node border so we exercise the
+        // `get_or_insert_with(default_glyph_border_config)` path.
+        doc.mindmap.nodes.get_mut(&nid).unwrap().style.border = None;
+        let mut edits = BorderConfigEdits::default();
+        edits.padding = BorderFieldEdit::Set(8.0);
+        let outcome = doc.set_node_border_config(&nid, edits);
+        assert!(outcome.changed);
+        let cfg = doc
+            .mindmap
+            .nodes
+            .get(&nid)
+            .unwrap()
+            .style
+            .border
+            .as_ref()
+            .expect("first-edit materialised the per-node config");
+        assert_eq!(cfg.preset, "light");
+    }
+
     /// Setting text color rewrites `style.text_color` and every run
     /// whose color matched the pre-edit default. A run the user
     /// colored by hand (mismatched) keeps its override.

@@ -144,8 +144,10 @@ impl Hash for GlyphArea {
 impl GlyphArea {
     /// Construct an empty-text area with the given metrics and
     /// placement. Regions and hitbox start empty; `align_center`,
-    /// `background_color`, and `outline` default off. O(1); one
-    /// heap allocation for the empty `text` String.
+    /// `background_color`, `background_padding`, and `outline`
+    /// default off; `shape` defaults to `Rectangle`;
+    /// `zoom_visibility` to unbounded. O(1); one heap allocation
+    /// for the empty `text` String.
     pub fn new(scale: f32, line_height: f32, position: Vec2, bounds: Vec2) -> Self {
         GlyphArea {
             text: "".to_string(),

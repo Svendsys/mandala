@@ -164,12 +164,14 @@ fn complete_font(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completi
 /// completion source means tab-accept always produces a parseable
 /// command. The `display` row stays unquoted so the popup reads
 /// naturally.
+///
+/// `partial` arrives already-unquoted: the tokenizer
+/// (`parser::tokenize`) drops the leading `"` on an unterminated
+/// quoted token, so a user mid-typing `font set "Nor` lands here
+/// with `partial = "Nor"`, not `"\"Nor"`. No leading-quote
+/// stripping is needed.
 fn font_family_completions(partial: &str) -> Vec<Completion> {
-    // Strip a leading `"` from the partial so a user who's already
-    // typed an opening quote (`font set "Nor`) still matches the
-    // unquoted family-name prefix.
-    let partial_unquoted = partial.strip_prefix('"').unwrap_or(partial);
-    let partial_lc = partial_unquoted.to_ascii_lowercase();
+    let partial_lc = partial.to_ascii_lowercase();
     baumhard::font::fonts::loaded_families_iter()
         .filter(|f| f.to_ascii_lowercase().starts_with(&partial_lc))
         .map(|family| {
