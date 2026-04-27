@@ -25,6 +25,10 @@ use crate::gfx_structs::tree::Tree;
 /// (scale 1.0, line_height 10, bounds 100×100). Used wherever the
 /// test only cares about a node's position and does not exercise
 /// the area's text or scale.
+///
+/// Cost: one `GfxElement::new_area_non_indexed_with_id` call —
+/// allocates an empty-text `GlyphArea` and wraps it in the
+/// element variant. No font-system lock; no shaping.
 pub fn mk_area(x: f32, y: f32, channel: usize, unique_id: usize) -> GfxElement {
     GfxElement::new_area_non_indexed_with_id(
         GlyphArea::new(1.0, 10.0, Vec2::new(x, y), Vec2::new(100.0, 100.0)),
@@ -38,6 +42,9 @@ pub fn mk_area(x: f32, y: f32, channel: usize, unique_id: usize) -> GfxElement {
 /// four-line `arena.new_node(...) + parent.append(...)` dance into
 /// one call — the dance was the same shape across every test that
 /// builds a multi-node tree by hand.
+///
+/// Cost: one [`mk_area`] call plus one `arena.new_node` allocation
+/// and one `parent.append` link operation. O(1) total.
 pub fn append_area(
     model: &mut Tree<GfxElement, GfxMutator>,
     parent: NodeId,

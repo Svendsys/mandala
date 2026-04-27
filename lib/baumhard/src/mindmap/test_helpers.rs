@@ -33,6 +33,8 @@ use crate::mindmap::model::{
 /// from the workspace root. Climbs from `lib/baumhard/` up two
 /// levels (`lib/baumhard -> lib -> root`) and joins the relative
 /// fixture path so tests work regardless of working directory.
+///
+/// Cost: one `PathBuf` heap allocation; trivial.
 pub(crate) fn testament_map_path() -> PathBuf {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.pop(); // lib/baumhard -> lib
@@ -52,6 +54,10 @@ pub(crate) fn testament_map_path() -> PathBuf {
 /// `scene_builder/tests/fixtures.rs` thin over this with their
 /// preferred argument shape — neither call-site list rewrites
 /// 161+ lines as a result.
+///
+/// Cost: ~12 `String` heap allocations (id, parent_id, defaulted
+/// style strings) plus an empty `Vec` for `text_runs`. No font-
+/// system lock; no measurement passes. Trivial.
 pub(crate) fn synthetic_node_full(
     id: &str,
     parent: Option<&str>,
@@ -98,6 +104,10 @@ pub(crate) fn synthetic_node_full(
 /// Build a synthetic `MindMap` from a list of nodes and edges.
 /// Canvas is the test-canonical [`blank_canvas`]; palettes and
 /// custom_mutations are empty. `name` is `"synthetic"`.
+///
+/// Cost: O(N) inserts into a fresh `HashMap<String, MindNode>`,
+/// each clone-copying the node. Two `String` allocs for the
+/// version + name fields, plus a `blank_canvas()` call.
 pub(crate) fn synthetic_map(nodes_vec: Vec<MindNode>, edges: Vec<MindEdge>) -> MindMap {
     let mut nodes = HashMap::new();
     for n in nodes_vec {
@@ -117,6 +127,10 @@ pub(crate) fn synthetic_map(nodes_vec: Vec<MindNode>, edges: Vec<MindEdge>) -> M
 /// Build a minimal cross-link `MindEdge` with explicit endpoints
 /// and anchors. Color `#fff`, width 1, no label, no glyph
 /// connection. The shape every scene_builder edge fixture wanted.
+///
+/// Cost: ~7 `String` heap allocations (endpoints, anchors, plus
+/// the static-defaulted edge_type / color / line_style). Empty
+/// `Vec` for `control_points`. Trivial.
 pub(crate) fn synthetic_edge(
     from: &str,
     to: &str,
@@ -149,6 +163,10 @@ pub(crate) fn synthetic_edge(
 /// given color. `display_mode = "portal"`, `glyph_connection.body
 /// = "◈"`, 16pt portal-marker font size — the shape every
 /// post-refactor portal fixture wanted.
+///
+/// Cost: ~10 `String` allocations across the edge's fields and the
+/// nested `GlyphConnectionConfig`. Empty `Vec` for control points.
+/// Trivial.
 pub(crate) fn synthetic_portal_edge(a: &str, b: &str, color: &str) -> MindEdge {
     MindEdge {
         from_id: a.into(),
@@ -179,6 +197,10 @@ pub(crate) fn synthetic_portal_edge(a: &str, b: &str, color: &str) -> MindEdge {
 /// Trivial `Canvas` with `#000` background, no defaults, empty
 /// theme tables. Used by tests that need a Canvas placeholder
 /// but don't exercise canvas behaviour.
+///
+/// Cost: one `String` allocation for the background hex, two
+/// empty `HashMap` allocations (theme variables + variants).
+/// Trivial.
 pub(crate) fn blank_canvas() -> Canvas {
     Canvas {
         background_color: "#000".into(),

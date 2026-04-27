@@ -4,9 +4,7 @@
 //!
 //! Part of the tests split for `document`. Helpers live in
 //! `tests_common`; only the tests for this theme live here.
-use super::tests_common::{
-    load_test_doc, load_test_tree, make_test_nudge_mutation,
-};
+use super::tests_common::{load_test_doc, load_test_tree, TestNudgeMutation};
 use super::*;
 
 use baumhard::mindmap::animation::{AnimationTiming, Easing};
@@ -459,7 +457,11 @@ use glam::Vec2;
         scope: TS,
         timing: Option<baumhard::mindmap::animation::AnimationTiming>,
     ) -> CM {
-        make_test_nudge_mutation(id, scope, 10.0, vec![], "", timing)
+        let mut b = TestNudgeMutation::new(id, scope).magnitude(10.0);
+        if let Some(t) = timing {
+            b = b.timing(t);
+        }
+        b.build()
     }
 
     #[test]

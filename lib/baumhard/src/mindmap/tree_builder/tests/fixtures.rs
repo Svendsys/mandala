@@ -6,18 +6,19 @@
 //! tree_builder tests grew used to (parent linkage as second arg,
 //! fixed 80×40 size, frame always shown).
 
-use crate::mindmap::model::{MindEdge, MindMap, MindNode};
+use crate::mindmap::model::{MindMap, MindNode};
 
 pub(super) use crate::mindmap::test_helpers::{
-    synthetic_portal_edge, testament_map_path as test_map_path,
+    synthetic_map, synthetic_portal_edge, testament_map_path as test_map_path,
 };
 
+/// Per-tree_builder shape: 80×40 box, frame on, parent-aware.
+/// Distinct from scene_builder's `synthetic_node` (which takes
+/// explicit size + show_frame), so the shapes don't collapse to a
+/// re-export. Both delegate to
+/// [`crate::mindmap::test_helpers::synthetic_node_full`].
 pub(super) fn synthetic_node(id: &str, parent: Option<&str>, x: f64, y: f64) -> MindNode {
     crate::mindmap::test_helpers::synthetic_node_full(id, parent, x, y, 80.0, 40.0, true)
-}
-
-pub(super) fn synthetic_map(nodes_vec: Vec<MindNode>, edges: Vec<MindEdge>) -> MindMap {
-    crate::mindmap::test_helpers::synthetic_map(nodes_vec, edges)
 }
 
 /// Builds an N-node linear spine: `n0 -> n1 -> n2 -> ... -> n{N-1}`.

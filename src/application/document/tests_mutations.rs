@@ -5,7 +5,7 @@
 //! Part of the tests split for `document`. Helpers live in
 //! `tests_common`; only the tests for this theme live here.
 use super::tests_common::{
-    first_testament_node_id, load_test_doc, make_test_nudge_mutation,
+    first_testament_node_id, load_test_doc, TestNudgeMutation,
 };
 use super::*;
 
@@ -18,7 +18,7 @@ use baumhard::mindmap::custom_mutation::{
 
 
 fn make_test_mutation(id: &str, scope: TS) -> CM {
-    make_test_nudge_mutation(id, scope, 10.0, vec![], "", None)
+    TestNudgeMutation::new(id, scope).magnitude(10.0).build()
 }
 
     /// Build a `CustomMutation` whose only payload is a single
@@ -347,19 +347,15 @@ fn make_test_mutation(id: &str, scope: TS) -> CM {
     // ----- Animation lifecycle tests (§T1 — fundamental) -----
 
     fn make_animated_mutation(id: &str, duration_ms: u32) -> CM {
-        make_test_nudge_mutation(
-            id,
-            TS::SelfOnly,
-            100.0,
-            vec![],
-            "",
-            Some(AnimationTiming {
+        TestNudgeMutation::new(id, TS::SelfOnly)
+            .magnitude(100.0)
+            .timing(AnimationTiming {
                 duration_ms,
                 delay_ms: 0,
                 easing: Easing::Linear,
                 then: None,
-            }),
-        )
+            })
+            .build()
     }
 
     #[test]

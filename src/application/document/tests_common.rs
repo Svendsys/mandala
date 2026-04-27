@@ -136,38 +136,98 @@ pub(super) fn first_testament_edge_ref(doc: &MindMapDocument) -> super::EdgeRef 
     super::EdgeRef::new(&e.from_id, &e.to_id, &e.edge_type)
 }
 
-/// Build a `CustomMutation` carrying a single `NudgeRight(amount)`
-/// area command. Tests parameterise the magnitude so an assertion
-/// can read against a known offset; `timing` defaults to `None`
-/// (instant), `contexts` and `description` to empty.
+/// Builder for a `CustomMutation` carrying a single `NudgeRight`
+/// area command. Replaces three near-identical local factories
+/// that diverged only in default magnitude (`make_test_mutation`
+/// at 10.0, `make_cm` at 1.0, `make_animated_mutation` at 100.0)
+/// and a four-position positional helper that grew thin per-call-
+/// site wrappers everywhere it landed.
 ///
-/// Replaces three near-identical local builders that diverged
-/// only in their default magnitude (`make_test_mutation` at 10.0,
-/// `make_cm` at 1.0, `make_animated_mutation` at 100.0). Callers
-/// pick the magnitude and the timing they need.
-pub(in crate::application) fn make_test_nudge_mutation(
-    id: &str,
+/// Two required fields (`id`, `scope`); everything else has a
+/// default and a chainable setter. Each setter takes `self` by
+/// value and returns `Self`, so call sites read as a fluent chain
+/// terminating in `.build()`:
+///
+/// ```ignore
+/// let cm = TestNudgeMutation::new("nudge", TargetScope::SelfOnly)
+///     .magnitude(10.0)
+///     .build();
+/// ```
+///
+/// Cost: trivial — one struct instantiation + one
+/// `CustomMutation` build per `.build()`.
+pub(in crate::application) struct TestNudgeMutation {
+    id: String,
     scope: baumhard::mindmap::custom_mutation::TargetScope,
-    nudge_x: f32,
+    magnitude: f32,
     contexts: Vec<String>,
-    description: &str,
+    description: String,
     timing: Option<baumhard::mindmap::animation::AnimationTiming>,
-) -> baumhard::mindmap::custom_mutation::CustomMutation {
-    use baumhard::gfx_structs::area::GlyphAreaCommand;
-    use baumhard::gfx_structs::mutator::Mutation;
-    use baumhard::mindmap::custom_mutation::{CustomMutation, MutationBehavior};
-    CustomMutation {
-        id: id.to_string(),
-        name: id.to_string(),
-        description: description.to_string(),
-        contexts,
-        mutator: Some(baumhard::mindmap::custom_mutation::scope::self_only(vec![
-            Mutation::area_command(GlyphAreaCommand::NudgeRight(nudge_x)),
-        ])),
-        target_scope: scope,
-        behavior: MutationBehavior::Persistent,
-        predicate: None,
-        document_actions: vec![],
-        timing,
+}
+
+impl TestNudgeMutation {
+    /// Start a builder with the required `id` and target scope.
+    /// Magnitude defaults to 1.0; everything else empty / `None`.
+    pub(in crate::application) fn new(
+        id: &str,
+        scope: baumhard::mindmap::custom_mutation::TargetScope,
+    ) -> Self {
+        Self {
+            id: id.to_string(),
+            scope,
+            magnitude: 1.0,
+            contexts: Vec::new(),
+            description: String::new(),
+            timing: None,
+        }
+    }
+
+    /// Override the `NudgeRight` magnitude in canvas pixels.
+    pub(in crate::application) fn magnitude(mut self, magnitude: f32) -> Self {
+        self.magnitude = magnitude;
+        self
+    }
+
+    /// Replace the `contexts` list (default empty).
+    pub(in crate::application) fn contexts(mut self, contexts: Vec<String>) -> Self {
+        self.contexts = contexts;
+        self
+    }
+
+    /// Replace the `description` field (default empty).
+    pub(in crate::application) fn description(mut self, description: &str) -> Self {
+        self.description = description.to_string();
+        self
+    }
+
+    /// Attach an `AnimationTiming` so the mutation becomes
+    /// animated. Default `None` produces an instant mutation.
+    pub(in crate::application) fn timing(
+        mut self,
+        timing: baumhard::mindmap::animation::AnimationTiming,
+    ) -> Self {
+        self.timing = Some(timing);
+        self
+    }
+
+    /// Materialise the `CustomMutation`. Consumes the builder.
+    pub(in crate::application) fn build(self) -> baumhard::mindmap::custom_mutation::CustomMutation {
+        use baumhard::gfx_structs::area::GlyphAreaCommand;
+        use baumhard::gfx_structs::mutator::Mutation;
+        use baumhard::mindmap::custom_mutation::{CustomMutation, MutationBehavior};
+        CustomMutation {
+            id: self.id.clone(),
+            name: self.id,
+            description: self.description,
+            contexts: self.contexts,
+            mutator: Some(baumhard::mindmap::custom_mutation::scope::self_only(vec![
+                Mutation::area_command(GlyphAreaCommand::NudgeRight(self.magnitude)),
+            ])),
+            target_scope: self.scope,
+            behavior: MutationBehavior::Persistent,
+            predicate: None,
+            document_actions: vec![],
+            timing: self.timing,
+        }
     }
 }

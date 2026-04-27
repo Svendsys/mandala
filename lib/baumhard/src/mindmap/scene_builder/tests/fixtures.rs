@@ -6,18 +6,19 @@
 //! scene_builder tests grew used to (parameterised size +
 //! `show_frame`, no parent linkage).
 
-use crate::mindmap::model::{MindEdge, MindMap, MindNode};
+use crate::mindmap::model::{MindMap, MindNode};
 
 pub(super) use crate::mindmap::test_helpers::{
-    synthetic_edge, synthetic_portal_edge, testament_map_path as test_map_path,
+    synthetic_edge, synthetic_map, synthetic_portal_edge, testament_map_path as test_map_path,
 };
 
+/// Per-scene_builder shape: explicit size + show_frame, no parent.
+/// Distinct from tree_builder's `synthetic_node` (which takes
+/// `parent: Option<&str>` and pins 80×40), so the shapes don't
+/// collapse to a re-export. Both delegate to
+/// [`crate::mindmap::test_helpers::synthetic_node_full`].
 pub(super) fn synthetic_node(id: &str, x: f64, y: f64, w: f64, h: f64, show_frame: bool) -> MindNode {
     crate::mindmap::test_helpers::synthetic_node_full(id, None, x, y, w, h, show_frame)
-}
-
-pub(super) fn synthetic_map(nodes_vec: Vec<MindNode>, edges: Vec<MindEdge>) -> MindMap {
-    crate::mindmap::test_helpers::synthetic_map(nodes_vec, edges)
 }
 
 pub(super) fn themed_node(id: &str, bg: &str, frame: &str, text: &str) -> MindNode {

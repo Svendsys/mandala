@@ -21,6 +21,7 @@
 //! `ColorPickerHoverInteraction`) are not in the macro's scope —
 //! they stay inline at their respective sites.
 
+use crate::application::document::defaults::default_parent_child_edge;
 use crate::application::frame_throttle::MutationFrequencyThrottle;
 use baumhard::mindmap::model::MindEdge;
 use std::time::Duration;
@@ -38,28 +39,12 @@ pub fn drive_throttle_over_budget(t: &mut MutationFrequencyThrottle) -> u32 {
 
 /// Construct a minimally-valid `MindEdge` for the tests. The drag
 /// state only references the snapshot for its pre-drag identity
-/// bookkeeping; no field inside it is under test here.
+/// bookkeeping; no field inside it is under test here. Routes
+/// through `defaults::default_parent_child_edge` so the field-set
+/// stays in lockstep with the production-side parent-child default
+/// — they were byte-for-byte identical before this delegation.
 pub fn fixture_edge() -> MindEdge {
-    MindEdge {
-        from_id: "a".to_string(),
-        to_id: "b".to_string(),
-        edge_type: "parent_child".to_string(),
-        color: "#888888".to_string(),
-        width: 4,
-        line_style: "solid".to_string(),
-        visible: true,
-        label: None,
-        label_config: None,
-        anchor_from: "auto".to_string(),
-        anchor_to: "auto".to_string(),
-        control_points: Vec::new(),
-        glyph_connection: None,
-        display_mode: None,
-        portal_from: None,
-        portal_to: None,
-        min_zoom_to_render: None,
-        max_zoom_to_render: None,
-    }
+    default_parent_child_edge("a", "b")
 }
 
 /// Emit the four trait-default `should_perform_drain` tests for a

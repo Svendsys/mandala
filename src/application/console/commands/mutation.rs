@@ -394,14 +394,11 @@ mod tests {
     }
 
     fn make_cm(id: &str, contexts: Vec<&str>, description: &str) -> CustomMutation {
-        crate::application::document::tests_common::make_test_nudge_mutation(
-            id,
-            TargetScope::SelfOnly,
-            1.0,
-            contexts.into_iter().map(String::from).collect(),
-            description,
-            None,
-        )
+        crate::application::document::tests_common::TestNudgeMutation::new(id, TargetScope::SelfOnly)
+            .magnitude(1.0)
+            .contexts(contexts.into_iter().map(String::from).collect())
+            .description(description)
+            .build()
     }
 
     use crate::application::console::tests::fixtures::{first_node_id, join_lines as joined, run};
