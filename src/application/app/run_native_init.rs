@@ -31,10 +31,16 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
     // Single-threaded architecture: the handler owns the Renderer directly.
     baumhard::font::fonts::init();
 
-    let unsafe_target = unsafe { SurfaceTargetUnsafe::from_window(window.as_ref()) }
-        .expect("Failed to create a SurfaceTargetUnsafe");
+    // Hand wgpu the owned `Arc<Window>` rather than pre-snapshotting
+    // raw handles via `SurfaceTargetUnsafe::from_window`: under
+    // wgpu 29 + winit 0.30 the latter blew up with
+    // `Hal(MissingDisplayHandle)` on EGL/GL Linux because the GL
+    // surface ctor re-queries the display handle and won't accept a
+    // captured raw struct. WASM uses the same safe API path.
     let instance = Instance::default();
-    let surface = unsafe { instance.create_surface_unsafe(unsafe_target) }.unwrap();
+    let surface = instance
+        .create_surface(window.clone())
+        .expect("Failed to create wgpu surface for window");
 
     let mut renderer = block_on(Renderer::new(instance, surface, Arc::clone(&window)));
 
