@@ -36,6 +36,35 @@ pub(in crate::application::console) fn join_lines(
         .join("\n")
 }
 
+/// Assert `result` is `ExecResult::Ok(_)`, panicking with the
+/// alternate variant printed otherwise. Replaces the
+/// three-line `match { Ok(_) => {} other => panic!(...) }`
+/// idiom that 25+ command tests grew used to.
+pub(in crate::application::console) fn assert_exec_ok(result: ExecResult) {
+    match result {
+        ExecResult::Ok(_) => {}
+        other => panic!("expected Ok, got {:?}", other),
+    }
+}
+
+/// Assert `result` is `ExecResult::Err(_)` whose message contains
+/// `needle`. Surfaces both halves of the assertion in the panic
+/// message so a substring drift doesn't print just `false`.
+pub(in crate::application::console) fn assert_exec_err_contains(
+    result: ExecResult,
+    needle: &str,
+) {
+    match result {
+        ExecResult::Err(s) => assert!(
+            s.contains(needle),
+            "expected Err containing {:?}, got Err({:?})",
+            needle,
+            s
+        ),
+        other => panic!("expected Err containing {:?}, got {:?}", needle, other),
+    }
+}
+
 /// Pick the first edge in the map and point the selection at it.
 /// Returns the edge ref so tests can assert against the mutated
 /// fields afterwards.
