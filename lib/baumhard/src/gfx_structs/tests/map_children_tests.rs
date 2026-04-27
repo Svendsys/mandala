@@ -13,11 +13,10 @@
 //! Follows the `do_*()` / `test_*()` benchmark-reuse split (§T2.2) so
 //! future criterion benches can reuse the bodies.
 
-use glam::Vec2;
 use indextree::NodeId;
 
 use crate::font::fonts;
-use crate::gfx_structs::area::{GlyphArea, GlyphAreaCommand};
+use crate::gfx_structs::area::GlyphAreaCommand;
 use crate::gfx_structs::element::GfxElement;
 use crate::gfx_structs::mutator::{GfxMutator, Instruction, Mutation};
 use crate::gfx_structs::tree::{MutatorTree, Tree};

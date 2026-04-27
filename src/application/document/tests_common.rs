@@ -71,7 +71,7 @@ pub(super) fn load_test_tree() -> MindMapTree {
 /// that want the well-known root specifically should index by
 /// `"0"` directly so the dependency on the testament shape is
 /// visible at the call site.
-pub(crate) fn first_testament_node_id(doc: &MindMapDocument) -> String {
+pub(in crate::application) fn first_testament_node_id(doc: &MindMapDocument) -> String {
     doc.mindmap
         .nodes
         .keys()
@@ -85,7 +85,7 @@ pub(crate) fn first_testament_node_id(doc: &MindMapDocument) -> String {
 /// selection of arbitrary cardinality without picking specific
 /// ids. Panics if the map has fewer than `n` nodes — the testament
 /// fixture is large enough that any reasonable `n` succeeds.
-pub(crate) fn first_n_testament_node_ids(doc: &MindMapDocument, n: usize) -> Vec<String> {
+pub(in crate::application) fn first_n_testament_node_ids(doc: &MindMapDocument, n: usize) -> Vec<String> {
     let ids: Vec<String> = doc.mindmap.nodes.keys().take(n).cloned().collect();
     assert!(
         ids.len() == n,
@@ -99,7 +99,7 @@ pub(crate) fn first_n_testament_node_ids(doc: &MindMapDocument, n: usize) -> Vec
 /// Pick two distinct node ids in `(a, b)` form — the shape
 /// portal-edge / cross-link tests want when they need a
 /// from-and-to pair without caring which specific nodes those are.
-pub(crate) fn two_testament_node_ids(doc: &MindMapDocument) -> (String, String) {
+pub(in crate::application) fn two_testament_node_ids(doc: &MindMapDocument) -> (String, String) {
     let mut iter = doc.mindmap.nodes.keys();
     let a = iter.next().expect("testament map has at least one node").clone();
     let b = iter.next().expect("testament map has at least two nodes").clone();
@@ -145,7 +145,7 @@ pub(super) fn first_testament_edge_ref(doc: &MindMapDocument) -> super::EdgeRef 
 /// only in their default magnitude (`make_test_mutation` at 10.0,
 /// `make_cm` at 1.0, `make_animated_mutation` at 100.0). Callers
 /// pick the magnitude and the timing they need.
-pub(crate) fn make_test_nudge_mutation(
+pub(in crate::application) fn make_test_nudge_mutation(
     id: &str,
     scope: baumhard::mindmap::custom_mutation::TargetScope,
     nudge_x: f32,

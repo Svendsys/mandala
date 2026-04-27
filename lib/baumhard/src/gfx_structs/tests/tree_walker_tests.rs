@@ -4,7 +4,7 @@
 //! channel alignment, and instruction processing (§T1).
 
 use crate::font::fonts;
-use crate::gfx_structs::area::{GlyphArea, GlyphAreaCommand, GlyphAreaField};
+use crate::gfx_structs::area::{GlyphAreaCommand, GlyphAreaField};
 use crate::gfx_structs::element::{GfxElement, GfxElementField};
 use crate::gfx_structs::mutator::Instruction::RepeatWhile;
 use crate::gfx_structs::mutator::{GfxMutator, Mutation};

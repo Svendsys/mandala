@@ -89,11 +89,12 @@ pub fn fixture_edge() -> MindEdge {
 /// repeatedly inside the cadence-skip test, so it must be cheap
 /// and idempotent.
 ///
-/// The macro accesses the impl's `throttle` field directly. Every
-/// implementor exposes `pub throttle: MutationFrequencyThrottle`
-/// (the per-gesture cost-profile rationale lives on the trait
-/// definition); a future implementor that doesn't is asking for
-/// a different macro.
+/// The macro reaches the throttle through the trait's
+/// [`ThrottledInteraction::throttle`] accessor — the same seam
+/// production drain code uses. A future implementor that satisfies
+/// the trait works without macro changes; a renamed `throttle` field
+/// shows up as a clean compile error at the trait impl, not at every
+/// macro expansion.
 macro_rules! trait_default_tests_for_throttled_interaction {
     (
         build = $build:expr,
@@ -101,19 +102,21 @@ macro_rules! trait_default_tests_for_throttled_interaction {
     ) => {
         #[test]
         fn test_should_perform_drain_false_when_idle() {
+            use $crate::application::app::throttled_interaction::ThrottledInteraction;
             let mut i = ($build)();
             assert!(
-                !$crate::application::app::throttled_interaction::ThrottledInteraction::should_perform_drain(&mut i),
+                !i.should_perform_drain(),
                 "idle interaction must report no drain"
             );
         }
 
         #[test]
         fn test_should_perform_drain_true_when_pending_and_throttle_fresh() {
+            use $crate::application::app::throttled_interaction::ThrottledInteraction;
             let mut i = ($build)();
             ($set_pending)(&mut i);
             assert!(
-                $crate::application::app::throttled_interaction::ThrottledInteraction::should_perform_drain(&mut i),
+                i.should_perform_drain(),
                 "pending interaction with fresh throttle must drain"
             );
         }
@@ -123,21 +126,22 @@ macro_rules! trait_default_tests_for_throttled_interaction {
             // Throttle cadence under sustained over-budget load: at
             // n > 1, should_perform_drain must return false on the
             // skipped frames even when pending state is set.
+            use $crate::application::app::throttled_interaction::ThrottledInteraction;
             let mut i = ($build)();
             $crate::application::app::throttled_interaction::test_utils::drive_throttle_over_budget(
-                &mut i.throttle,
+                i.throttle(),
             );
-            assert!(i.throttle.current_n() > 1);
+            assert!(i.throttle().current_n() > 1);
 
-            let n = i.throttle.current_n() as usize;
+            let n = i.throttle().current_n() as usize;
             ($set_pending)(&mut i);
             let mut saw_skip = false;
             for _ in 0..(n * 2) {
-                if !$crate::application::app::throttled_interaction::ThrottledInteraction::should_perform_drain(&mut i) {
+                if !i.should_perform_drain() {
                     saw_skip = true;
                 }
                 // Keep n stable while probing cadence.
-                i.throttle.record_work_duration(::std::time::Duration::from_micros(50_000));
+                i.throttle().record_work_duration(::std::time::Duration::from_micros(50_000));
                 ($set_pending)(&mut i);
             }
             assert!(saw_skip, "expected at least one skipped drain at n > 1");
@@ -149,15 +153,14 @@ macro_rules! trait_default_tests_for_throttled_interaction {
             // should_drain first, this would be off by n: several
             // idle calls would advance `frames_since_drain` and the
             // next pending tick would skip instead of drain.
+            use $crate::application::app::throttled_interaction::ThrottledInteraction;
             let mut i = ($build)();
             for _ in 0..5 {
-                assert!(
-                    !$crate::application::app::throttled_interaction::ThrottledInteraction::should_perform_drain(&mut i)
-                );
+                assert!(!i.should_perform_drain());
             }
             ($set_pending)(&mut i);
             assert!(
-                $crate::application::app::throttled_interaction::ThrottledInteraction::should_perform_drain(&mut i),
+                i.should_perform_drain(),
                 "first pending tick after idles must drain"
             );
         }
