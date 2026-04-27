@@ -13,8 +13,8 @@ use std::path::Path;
 use log::{error, info};
 
 use baumhard::mindmap::custom_mutation::CustomMutation;
-use baumhard::mindmap::model::MindMap;
 use baumhard::mindmap::loader;
+use baumhard::mindmap::model::MindMap;
 use baumhard::mindmap::scene_builder::{self, RenderScene};
 use baumhard::mindmap::tree_builder::{self, MindMapTree};
 
@@ -56,11 +56,11 @@ pub use hit_test::{
     apply_tree_highlights, hit_test, hit_test_edge,
     point_in_node_aabb, rect_select,
 };
+pub use nodes::{BorderConfigEdits, BorderEditOutcome, BorderFieldEdit, BorderSide};
 pub use types::{
     AnimationInstance, EdgeLabelSel, EdgeRef, PortalLabelSel, SelectionState,
     HIGHLIGHT_COLOR, REPARENT_SOURCE_COLOR, REPARENT_TARGET_COLOR,
 };
-pub use nodes::{BorderConfigEdits, BorderEditOutcome, BorderFieldEdit, BorderSide};
 pub use undo_action::UndoAction;
 pub use zoom_bounds::ZoomBoundEdit;
 

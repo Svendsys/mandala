@@ -531,7 +531,7 @@ fn point_at_t_clamps_out_of_range() {
 
 // ── Bezier math (bezier.rs) ────────────────────────────────────────
 
-use super::bezier::{cubic_bezier_point, cubic_bezier_length, sample_cubic_bezier};
+use super::bezier::{cubic_bezier_length, cubic_bezier_point, sample_cubic_bezier};
 use crate::util::geometry::almost_equal;
 
 #[test]

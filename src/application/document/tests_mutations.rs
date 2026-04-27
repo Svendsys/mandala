@@ -4,33 +4,23 @@
 //!
 //! Part of the tests split for `document`. Helpers live in
 //! `tests_common`; only the tests for this theme live here.
-use super::*;
 use super::tests_common::{
-    first_testament_edge_ref, first_testament_node_id, load_test_doc, load_test_tree,
-    pick_test_edge, test_map_path,
+    first_testament_node_id, load_test_doc
+    ,
 };
+use super::*;
 
 use baumhard::gfx_structs::area::GlyphAreaCommand;
 use baumhard::gfx_structs::mutator::Mutation;
 use baumhard::mindmap::animation::{AnimationTiming, Easing};
 use baumhard::mindmap::custom_mutation::{
-    apply_mutations_to_element, CustomMutation as CM, DocumentAction,
+    CustomMutation as CM, DocumentAction,
     MutationBehavior as MB, PlatformContext as PC, TargetScope as TS,
     Trigger as Tr, TriggerBinding as TB,
 };
-use baumhard::mindmap::model::{
-    Canvas, GlyphConnectionConfig, MindEdge, MindNode, NodeLayout, NodeStyle, Position, Size,
-    TextRun, PORTAL_GLYPH_PRESETS,
-};
-use baumhard::mindmap::scene_builder::EdgeHandleKind;
-use baumhard::mindmap::model::ControlPoint;
-use glam::Vec2;
-
-use super::defaults::default_cross_link_edge;
 
 
-
-    fn make_test_mutation(id: &str, scope: TS) -> CM {
+fn make_test_mutation(id: &str, scope: TS) -> CM {
         CM {
             id: id.to_string(),
             name: id.to_string(),

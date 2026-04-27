@@ -8,10 +8,10 @@
 //! [`GlyphModel`](crate::gfx_structs::model::GlyphModel)'s internal
 //! `apply_operation` or its public methods.
 
+use super::component::GlyphComponent;
 use super::glyph_model::GlyphModel;
 use super::line::GlyphLine;
 use super::matrix::GlyphMatrix;
-use super::component::GlyphComponent;
 
 use crate::core::primitives::{Applicable, ApplyOperation};
 use crate::util::ordered_vec2::OrderedVec2;

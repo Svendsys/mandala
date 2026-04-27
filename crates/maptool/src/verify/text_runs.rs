@@ -71,8 +71,8 @@ pub fn check(map: &MindMap) -> Vec<Violation> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use baumhard::mindmap::model::TextRun;
     use crate::verify::test_helpers::node;
+    use baumhard::mindmap::model::TextRun;
 
     fn run(start: usize, end: usize) -> TextRun {
         TextRun {

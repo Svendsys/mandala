@@ -12,18 +12,18 @@
 //! `GlyphTreeEventInstance` types that the walker threads through
 //! the tree as a side channel during `apply_to`.
 
+use crate::core::primitives::Applicable;
+use crate::gfx_structs::area::{DeltaGlyphArea, GlyphArea, GlyphAreaCommand};
+use crate::gfx_structs::element::GfxElement;
+use crate::gfx_structs::model::{DeltaGlyphModel, GlyphModel, GlyphModelCommand};
+use crate::gfx_structs::mutator::Mutation::{AreaCommand, AreaDelta, Event, ModelCommand, ModelDelta};
+use crate::gfx_structs::predicate::Predicate;
+use crate::gfx_structs::tree::{BranchChannel, TreeEventConsumer, TreeNode};
+use crate::util::ordered_vec2::OrderedVec2;
 use log::debug;
 use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
 use strum_macros::Display;
-use crate::gfx_structs::element::GfxElement;
-use crate::gfx_structs::area::{DeltaGlyphArea, GlyphArea, GlyphAreaCommand};
-use crate::gfx_structs::model::{DeltaGlyphModel, GlyphModel, GlyphModelCommand};
-use crate::gfx_structs::tree::{BranchChannel, TreeEventConsumer, TreeNode};
-use crate::gfx_structs::mutator::Mutation::{AreaCommand, AreaDelta, Event, ModelCommand, ModelDelta};
-use crate::gfx_structs::predicate::Predicate;
-use crate::core::primitives::Applicable;
-use crate::util::ordered_vec2::OrderedVec2;
 
 /// A control-flow directive attached to a [`GfxMutator::Instruction`]
 /// node. Instructions govern *how* the tree walker processes the

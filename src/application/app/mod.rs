@@ -61,12 +61,6 @@ use text_edit::{
     insert_at_cursor, open_text_edit, TextEditState,
 };
 
-// Native-only imports: every name below is only referenced from
-// `run_native` or native-only helpers in this file.
-#[cfg(not(target_arch = "wasm32"))]
-use std::time::Instant;
-#[cfg(not(target_arch = "wasm32"))]
-use pollster::block_on;
 #[cfg(not(target_arch = "wasm32"))]
 use click::{
     handle_click, handle_connect_target_click, handle_reparent_target_click,
@@ -85,13 +79,19 @@ use console_input::{
 #[cfg(not(target_arch = "wasm32"))]
 use edge_drag::apply_edge_handle_drag;
 #[cfg(not(target_arch = "wasm32"))]
-use portal_label_drag::apply_portal_label_drag;
-#[cfg(not(target_arch = "wasm32"))]
 use label_edit::{
     close_label_edit, close_portal_text_edit, handle_label_edit_key,
     handle_portal_text_edit_key, open_label_edit, open_portal_text_edit,
     LabelEditState, PortalTextEditState,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use pollster::block_on;
+#[cfg(not(target_arch = "wasm32"))]
+use portal_label_drag::apply_portal_label_drag;
+// Native-only imports: every name below is only referenced from
+// `run_native` or native-only helpers in this file.
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
 
 /// Cross-platform monotonic clock returning milliseconds since first call.
 /// Native: uses `Instant` (guaranteed monotonic). WASM: uses
@@ -120,19 +120,19 @@ use winit::window::CursorIcon;
 use winit::{event_loop::EventLoop, window::Window};
 
 use crate::application::common::{InputMode, RenderDecree, WindowMode};
-use crate::application::document::{
-    EdgeRef, MindMapDocument, SelectionState, UndoAction,
-    hit_test, hit_test_edge, rect_select,
-    apply_drag_delta,
-    apply_tree_highlights,
-    HIGHLIGHT_COLOR, REPARENT_SOURCE_COLOR, REPARENT_TARGET_COLOR,
-};
-#[cfg(not(target_arch = "wasm32"))]
-use throttled_interaction::ThrottledDrag;
-use crate::application::keybinds::{Action, ResolvedKeybinds};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::application::console::ConsoleState;
+use crate::application::document::{
+    apply_drag_delta, apply_tree_highlights, hit_test, hit_test_edge,
+    rect_select, EdgeRef, MindMapDocument,
+    SelectionState,
+    UndoAction,
+    HIGHLIGHT_COLOR, REPARENT_SOURCE_COLOR, REPARENT_TARGET_COLOR,
+};
+use crate::application::keybinds::{Action, ResolvedKeybinds};
 use crate::application::renderer::Renderer;
+#[cfg(not(target_arch = "wasm32"))]
+use throttled_interaction::ThrottledDrag;
 
 #[cfg(not(target_arch = "wasm32"))]
 use baumhard::mindmap::custom_mutation::{PlatformContext, Trigger};

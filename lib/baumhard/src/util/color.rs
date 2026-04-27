@@ -5,8 +5,8 @@
 //! variable resolution) live in the companion `super::color_conversion`
 //! module.
 
-use std::ops::{Add, Div, Index, IndexMut, Mul, Sub};
 use serde::{Deserialize, Serialize};
+use std::ops::{Add, Div, Index, IndexMut, Mul, Sub};
 
 // Re-export every public item from color_conversion so existing
 // `use baumhard::util::color::*` imports continue to resolve.

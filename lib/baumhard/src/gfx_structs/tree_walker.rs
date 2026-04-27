@@ -13,15 +13,15 @@
 //! `pub` so mutator-DSL authors
 //! can compose custom terminators without forking the walker.
 
+use crate::core::primitives::Applicable;
+use crate::gfx_structs::element::GfxElement;
+use crate::gfx_structs::mutator::{GfxMutator, Instruction};
+use crate::gfx_structs::predicate::Predicate;
+use crate::gfx_structs::tree::{BranchChannel, MutatorTree, Tree};
+use crate::util::ordered_vec2::OrderedVec2;
 use glam::Vec2;
 use indextree::{Arena, Node, NodeId};
 use log::{debug, warn};
-use crate::gfx_structs::element::GfxElement;
-use crate::gfx_structs::tree::{BranchChannel, MutatorTree, Tree};
-use crate::gfx_structs::mutator::{GfxMutator, Instruction};
-use crate::gfx_structs::predicate::Predicate;
-use crate::core::primitives::Applicable;
-use crate::util::ordered_vec2::OrderedVec2;
 
 /// Continuation called after a conditional loop ([`Instruction`])
 /// exits — it resumes the normal walk from the mutator sibling

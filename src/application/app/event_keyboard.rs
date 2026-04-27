@@ -10,8 +10,8 @@
 
 #![cfg(not(target_arch = "wasm32"))]
 
-use super::*;
 use super::input_context::InputHandlerContext;
+use super::*;
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::Key;
 

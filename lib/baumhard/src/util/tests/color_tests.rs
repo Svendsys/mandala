@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use lazy_static::lazy_static;
 use crate::util::color::{from_hex, hex_to_rgba_safe};
 use crate::{hex, rgb, rgba};
+use lazy_static::lazy_static;
 
 #[test]
 pub fn test_from_hex() {

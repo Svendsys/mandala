@@ -9,11 +9,10 @@
 //! (`build_console_overlay_mutator`) consume its output so the two
 //! paths cannot drift.
 
-
 use cosmic_text::FontSystem;
 use glam::Vec2;
 
-use baumhard::core::primitives::{ColorFontRegions, Range as ColorFontRange, ColorFontRegion};
+use baumhard::core::primitives::{ColorFontRegion, ColorFontRegions, Range as ColorFontRange};
 use baumhard::font::fonts::app_font_by_family;
 use baumhard::font::Color;
 use baumhard::gfx_structs::area::GlyphArea;

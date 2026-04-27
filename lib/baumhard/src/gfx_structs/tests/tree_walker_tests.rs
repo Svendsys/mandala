@@ -3,17 +3,17 @@
 //! Tests for [`crate::gfx_structs::tree_walker`] — RepeatWhile,
 //! channel alignment, and instruction processing (§T1).
 
+use crate::font::fonts;
+use crate::gfx_structs::area::{GlyphArea, GlyphAreaCommand, GlyphAreaField};
+use crate::gfx_structs::element::{GfxElement, GfxElementField};
+use crate::gfx_structs::mutator::Instruction::RepeatWhile;
+use crate::gfx_structs::mutator::{GfxMutator, Mutation};
+use crate::gfx_structs::predicate::{Comparator, Predicate};
+use crate::gfx_structs::tree::{BranchChannel, MutatorTree, Tree};
+use crate::gfx_structs::tree_walker::walk_tree;
+use crate::util::ordered_vec2::OrderedVec2;
 use glam::Vec2;
 use indextree::NodeId;
-use crate::font::fonts;
-use crate::gfx_structs::element::{GfxElement, GfxElementField};
-use crate::gfx_structs::area::{GlyphArea, GlyphAreaCommand, GlyphAreaField};
-use crate::gfx_structs::tree::{BranchChannel, MutatorTree, Tree};
-use crate::gfx_structs::mutator::{GfxMutator, Mutation};
-use crate::gfx_structs::mutator::Instruction::RepeatWhile;
-use crate::gfx_structs::predicate::{Comparator, Predicate};
-use crate::gfx_structs::tree_walker::{walk_tree, walk_tree_from};
-use crate::util::ordered_vec2::OrderedVec2;
 
 // ---------------------------------------------------------------------------
 // Shared test helpers

@@ -2,8 +2,8 @@
 
 //! Edge-handle emission: unselected baseline, straight-edge midpoint, curved-edge control points, cubic two-CP, absolute canvas positioning.
 
-use super::fixtures::*;
 use super::super::*;
+use super::fixtures::*;
 use crate::mindmap::loader;
 use crate::mindmap::scene_cache::SceneConnectionCache;
 use std::collections::HashMap;

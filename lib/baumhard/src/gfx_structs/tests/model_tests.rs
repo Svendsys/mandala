@@ -3,10 +3,10 @@
 //! Tests for [`crate::gfx_structs::model::GlyphModel`] — line/matrix
 //! construction and component layout (§T1).
 
-use crate::font::fonts::AppFont;
-use crate::util::color::Color;
-use crate::gfx_structs::model::{GlyphComponent, GlyphLine, GlyphMatrix};
 use crate::core::primitives::{ColorFontRegions, Range};
+use crate::font::fonts::AppFont;
+use crate::gfx_structs::model::{GlyphComponent, GlyphLine, GlyphMatrix};
+use crate::util::color::Color;
 
 /// The tests are written in a non-test-annotated function and then wrapped by an annotated test function
 /// So that they can be reused for benchmarking

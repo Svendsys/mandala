@@ -5,7 +5,7 @@
 
 use crossbeam_channel::unbounded;
 use glam::Vec2;
-use indextree::{NodeId};
+use indextree::NodeId;
 use lazy_static::lazy_static;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::{Arc, Mutex};
@@ -13,12 +13,12 @@ use strum::IntoEnumIterator;
 
 use crate::font::fonts;
 use crate::font::fonts::AppFont;
-use crate::font::fonts::AppFont::{AliceInWonderland, Evilz};
 use crate::font::fonts::AppFont::AlphaMusicMan;
 use crate::font::fonts::AppFont::AppleTea;
 use crate::font::fonts::AppFont::Casanova;
 use crate::font::fonts::AppFont::DenseLetters;
 use crate::font::fonts::AppFont::NorseBold;
+use crate::font::fonts::AppFont::{AliceInWonderland, Evilz};
 use crate::gfx_structs::area::{
     DeltaGlyphArea, GlyphArea, GlyphAreaCommand, GlyphAreaCommandType, GlyphAreaField,
 };

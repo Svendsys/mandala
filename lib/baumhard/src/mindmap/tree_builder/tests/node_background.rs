@@ -2,8 +2,8 @@
 
 //! Tree-builder node-background tests — hex, empty, transparent, theme var, malformed, three-digit.
 
-use super::fixtures::*;
 use super::super::*;
+use super::fixtures::*;
 
 #[test]
 fn test_background_color_opaque_hex_populates_field() {

@@ -11,9 +11,9 @@ use serde::{Deserialize, Serialize};
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::core::primitives::{ColorFontRegion, ColorFontRegions, Range};
-use crate::util::color::FloatRgba;
 use crate::mindmap::border_pattern::SidePattern;
 use crate::mindmap::model::{ColorGroup, CustomBorderGlyphs, GlyphBorderConfig};
+use crate::util::color::FloatRgba;
 
 /// Fraction of `font_size` by which a border's top/bottom runs
 /// are pulled inward so their glyph visible extents overlap with

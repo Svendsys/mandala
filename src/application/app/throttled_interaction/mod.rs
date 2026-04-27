@@ -71,6 +71,7 @@ pub(in crate::application::app) mod edge_handle;
 pub(in crate::application::app) mod edge_label;
 pub(in crate::application::app) mod moving_node;
 pub(in crate::application::app) mod portal_label;
+mod test_utils;
 
 pub(in crate::application::app) use color_picker_hover::ColorPickerHoverInteraction;
 pub(in crate::application::app) use edge_handle::EdgeHandleInteraction;
@@ -190,46 +191,10 @@ pub(in crate::application::app) trait ThrottledInteraction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use baumhard::mindmap::model::MindEdge;
+    use crate::application::app::throttled_interaction::test_utils::{drive_throttle_over_budget, fixture_edge};
+    use crate::application::document::EdgeRef;
     use baumhard::mindmap::scene_builder::EdgeHandleKind;
     use glam::Vec2;
-    use std::time::Duration;
-
-    use crate::application::document::EdgeRef;
-
-    fn fixture_edge() -> MindEdge {
-        MindEdge {
-            from_id: "a".to_string(),
-            to_id: "b".to_string(),
-            edge_type: "parent_child".to_string(),
-            color: "#888888".to_string(),
-            width: 4,
-            line_style: "solid".to_string(),
-            visible: true,
-            label: None,
-            label_config: None,
-            anchor_from: "auto".to_string(),
-            anchor_to: "auto".to_string(),
-            control_points: Vec::new(),
-            glyph_connection: None,
-            display_mode: None,
-            portal_from: None,
-            portal_to: None,
-            min_zoom_to_render: None,
-            max_zoom_to_render: None,
-        }
-    }
-
-    /// Push the throttle's average over-budget until `n > 1`. Returns
-    /// the final drain divisor for assertion plumbing.
-    fn drive_throttle_over_budget(t: &mut MutationFrequencyThrottle) -> u32 {
-        for _ in 0..80 {
-            if t.should_drain() {
-                t.record_work_duration(Duration::from_micros(50_000));
-            }
-        }
-        t.current_n()
-    }
 
     #[test]
     fn test_as_dyn_mut_routes_to_moving_node() {

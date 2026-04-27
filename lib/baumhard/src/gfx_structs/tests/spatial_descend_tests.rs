@@ -12,8 +12,8 @@
 
 use glam::Vec2;
 
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use crate::font::fonts;
 use crate::gfx_structs::area::GlyphArea;
@@ -27,7 +27,7 @@ use crate::gfx_structs::tree_walker::walk_tree_from;
 use crate::util::ordered_vec2::OrderedVec2;
 
 use crate::gfx_structs::tests::subtree_aabb_tests::{
-    build_test_tree, build_deep_chain, build_wide_tree,
+    build_deep_chain, build_test_tree, build_wide_tree,
 };
 
 /// Build a MutatorTree that delivers a MouseEvent via SpatialDescend.

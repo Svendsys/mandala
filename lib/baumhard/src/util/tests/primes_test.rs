@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use crate::util::primes::{is_prime};
+use crate::util::primes::is_prime;
 
 #[test]
 pub fn test_primes() {

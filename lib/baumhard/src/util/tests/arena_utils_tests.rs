@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use indextree::Arena;
 use crate::util::arena_utils::clone_subtree;
+use indextree::Arena;
 
 #[test]
 fn test_clone() {

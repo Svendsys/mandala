@@ -21,6 +21,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use crate::application::frame_throttle::MutationFrequencyThrottle;
+use std::time::Duration;
 
 use super::super::color_picker_flow::rebuild_color_picker_overlay;
 use super::super::scene_rebuild::rebuild_scene_only;
@@ -114,16 +115,8 @@ impl ThrottledInteraction for ColorPickerHoverInteraction {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::app::throttled_interaction::test_utils::drive_throttle_over_budget;
     use std::time::Duration;
-
-    fn drive_throttle_over_budget(t: &mut MutationFrequencyThrottle) -> u32 {
-        for _ in 0..80 {
-            if t.should_drain() {
-                t.record_work_duration(Duration::from_micros(50_000));
-            }
-        }
-        t.current_n()
-    }
 
     #[test]
     fn test_default_is_not_dirty() {

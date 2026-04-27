@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use lazy_static::lazy_static;
 use crate::core::primitives::{ColorFontRegion, ColorFontRegions, Range};
 use crate::font::fonts::AppFont;
+use lazy_static::lazy_static;
 
 lazy_static!(
     pub static ref OVERLAPS_TEST: Vec<(Range, Range, bool)> = vec![

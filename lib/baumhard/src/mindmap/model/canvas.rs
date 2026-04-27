@@ -5,8 +5,8 @@
 //! override exists, and the live theme-variable map that `var(--name)`
 //! colour references resolve against.
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 use super::{GlyphBorderConfig, GlyphConnectionConfig};
 

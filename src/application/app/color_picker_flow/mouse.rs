@@ -9,8 +9,8 @@
 
 use crate::application::document::MindMapDocument;
 
-use super::commit::apply_picker_preview;
 use super::super::throttled_interaction::ColorPickerHoverInteraction;
+use super::commit::apply_picker_preview;
 
 /// Mouse-move handler for the picker. Branches on active-drag vs
 /// hover:

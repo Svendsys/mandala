@@ -7,8 +7,8 @@
 //! follow. Line-mode edges stay in the connection pipeline and are
 //! covered by the connection tests.
 
-use super::fixtures::*;
 use super::super::*;
+use super::fixtures::*;
 use crate::mindmap::scene_cache::{EdgeKey, SceneConnectionCache};
 use glam::Vec2;
 use std::collections::HashMap;
@@ -414,7 +414,7 @@ fn portal_text_aabb_never_overlaps_icon_aabb() {
     // around the border — including the cardinal-corner
     // transitions in `border_outward_normal` — and every text
     // length from 1 char to a realistic long label.
-    use super::super::portal::{layout_portal_label, layout_portal_text, PortalLabelLayout};
+    use super::super::portal::{layout_portal_label, layout_portal_text};
     use crate::mindmap::model::PortalEndpointState;
 
     let owner_pos = Vec2::new(100.0, 100.0);
