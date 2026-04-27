@@ -8,6 +8,8 @@
 //! can reach the `do_*()` bodies. Removing that gate is load-bearing
 //! — see TEST_CONVENTIONS.md §T2.2 and §B8.
 
+pub mod fixtures;
+
 pub mod area_tests;
 pub mod zoom_visibility_tests;
 pub mod shape_tests;

@@ -12,7 +12,29 @@ use crate::application::document::{EdgeRef, MindMapDocument, SelectionState};
 // `document::tests_common`. Until this re-export landed, the
 // console suite hand-built its own doc shell + reloaded the JSON
 // every test, thrashing the FONT_SYSTEM lock.
+//
+// Visibility: `first_node_id` is widened to
+// `pub(in crate::application::console)` so the per-command test
+// modules under `console::commands::*` can reach it through the
+// same path that surfaces `run`. `load_test_doc` stays narrower
+// because the per-command modules already pull it through
+// `document::tests_common::load_test_doc as fixture_doc` directly.
+pub(in crate::application::console) use crate::application::document::tests_common::first_testament_node_id as first_node_id;
 pub(super) use crate::application::document::tests_common::load_test_doc;
+
+/// Collapse a slice of `OutputLine` values into one `\n`-joined
+/// `String`. Used by the substring assertions across the console
+/// command tests — every callers does the same `.iter().map(|l|
+/// l.text...).collect().join("\n")` chain otherwise.
+pub(in crate::application::console) fn join_lines(
+    lines: &[crate::application::console::OutputLine],
+) -> String {
+    lines
+        .iter()
+        .map(|l| l.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 
 /// Pick the first edge in the map and point the selection at it.
 /// Returns the edge ref so tests can assert against the mutated

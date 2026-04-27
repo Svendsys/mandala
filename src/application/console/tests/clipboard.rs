@@ -5,7 +5,7 @@
 //! component variant (Node / Edge / EdgeLabel / PortalLabel /
 //! PortalText).
 
-use super::fixtures::{load_test_doc, select_first_edge};
+use super::fixtures::{first_node_id, load_test_doc, select_first_edge};
 use crate::application::console::traits::{
     view_for, ClipboardContent, HandlesCopy, HandlesCut, HandlesPaste, Outcome, TargetId,
 };
@@ -15,7 +15,7 @@ use crate::application::console::traits::{
 #[test]
 fn node_copy_returns_node_text() {
     let mut doc = load_test_doc();
-    let nid = doc.mindmap.nodes.keys().next().unwrap().clone();
+    let nid = first_node_id(&doc);
     let original = doc.mindmap.nodes.get(&nid).unwrap().text.clone();
     let tid = TargetId::Node(nid);
     let view = view_for(&mut doc, &tid);
@@ -28,7 +28,7 @@ fn node_copy_returns_node_text() {
 #[test]
 fn node_copy_empty_text_returns_empty() {
     let mut doc = load_test_doc();
-    let nid = doc.mindmap.nodes.keys().next().unwrap().clone();
+    let nid = first_node_id(&doc);
     doc.set_node_text(&nid, String::new());
     let tid = TargetId::Node(nid);
     let view = view_for(&mut doc, &tid);
@@ -38,7 +38,7 @@ fn node_copy_empty_text_returns_empty() {
 #[test]
 fn node_paste_replaces_text_and_pushes_undo() {
     let mut doc = load_test_doc();
-    let nid = doc.mindmap.nodes.keys().next().unwrap().clone();
+    let nid = first_node_id(&doc);
     let undo_before = doc.undo_stack.len();
     let tid = TargetId::Node(nid.clone());
     let outcome = {
@@ -53,7 +53,7 @@ fn node_paste_replaces_text_and_pushes_undo() {
 #[test]
 fn node_paste_unchanged_text_reports_unchanged() {
     let mut doc = load_test_doc();
-    let nid = doc.mindmap.nodes.keys().next().unwrap().clone();
+    let nid = first_node_id(&doc);
     // Pre-trim the node's text. The paste handler trims trailing
     // whitespace (paragraph-copy ergonomics); pasting raw `original`
     // on a node whose text happens to end in whitespace would
@@ -77,7 +77,7 @@ fn node_paste_unchanged_text_reports_unchanged() {
 #[test]
 fn node_cut_returns_text_and_clears_node() {
     let mut doc = load_test_doc();
-    let nid = doc.mindmap.nodes.keys().next().unwrap().clone();
+    let nid = first_node_id(&doc);
     let original = doc.mindmap.nodes.get(&nid).unwrap().text.clone();
     assert!(!original.is_empty(), "fixture node should have text");
     let tid = TargetId::Node(nid.clone());

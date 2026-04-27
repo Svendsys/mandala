@@ -6,7 +6,7 @@
 //! `execute_border`, assert on `ExecResult` and the resulting
 //! model fields.
 
-use crate::application::console::tests::fixtures::run;
+use crate::application::console::tests::fixtures::{join_lines, run};
 use crate::application::console::ExecResult;
 use crate::application::document::tests_common::{
     first_testament_node_id as first_node_id,
@@ -69,11 +69,7 @@ fn border_preset_custom_alone_emits_glyph_field_hint() {
         ExecResult::Lines(rows) => rows,
         other => panic!("expected Lines for the hint output, got {:?}", other),
     };
-    let blob = lines
-        .iter()
-        .map(|l| l.text.as_str())
-        .collect::<Vec<_>>()
-        .join("\n");
+    let blob = join_lines(&lines);
     assert!(
         blob.contains("preset=custom"),
         "expected the readout to mention preset=custom; got: {}",
@@ -104,11 +100,7 @@ fn border_preset_custom_with_glyph_field_skips_hint() {
         ExecResult::Ok(_) => return, // no hint at all is also fine
         other => panic!("expected Ok / Lines, got {:?}", other),
     };
-    let blob = lines
-        .iter()
-        .map(|l| l.text.as_str())
-        .collect::<Vec<_>>()
-        .join("\n");
+    let blob = join_lines(&lines);
     // The hint string identifies itself via "preset=custom" plus a
     // catalogue of side / corner keys joined together. Confirm that
     // *catalogue text* doesn't appear when at least one glyph
@@ -235,11 +227,7 @@ fn border_show_emits_lines() {
             assert!(!rows.is_empty());
             // Every readout includes the visible / preset / size
             // header lines — sanity-check the labels.
-            let joined: String = rows
-                .iter()
-                .map(|l| l.text.clone())
-                .collect::<Vec<_>>()
-                .join("\n");
+            let joined = join_lines(&rows);
             assert!(joined.contains("preset:"));
             assert!(joined.contains("size:"));
             assert!(joined.contains("top:"));
@@ -389,11 +377,7 @@ fn border_show_on_node_without_per_node_override() {
     doc.selection = SelectionState::Single(id);
     match run("border show", &mut doc) {
         ExecResult::Lines(rows) => {
-            let joined: String = rows
-                .iter()
-                .map(|l| l.text.clone())
-                .collect::<Vec<_>>()
-                .join("\n");
+            let joined = join_lines(&rows);
             // Padding line is now unconditional — confirm it
             // surfaces with the hardcoded floor.
             assert!(
@@ -426,11 +410,7 @@ fn border_preset_auto_promotion_is_announced() {
         &mut doc,
     ) {
         ExecResult::Lines(rows) => {
-            let joined: String = rows
-                .iter()
-                .map(|l| l.text.clone())
-                .collect::<Vec<_>>()
-                .join("\n");
+            let joined = join_lines(&rows);
             assert!(
                 joined.contains("auto-promoted") && joined.contains("'heavy'"),
                 "expected auto-promotion note mentioning 'heavy', got:\n{}",

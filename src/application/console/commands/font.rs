@@ -436,7 +436,7 @@ fn execute_font_list(_args: &Args) -> ExecResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::console::tests::fixtures::run;
+    use crate::application::console::tests::fixtures::{join_lines, run};
     use crate::application::document::tests_common::load_test_doc as fixture_doc;
     use crate::application::document::{EdgeRef, MindMapDocument, SelectionState};
 
@@ -552,12 +552,7 @@ mod tests {
         );
         match run(&format!("font set {}", family), &mut doc) {
             ExecResult::Lines(msgs) => {
-                let all = msgs
-                    .iter()
-                    .map(|l| l.text.as_str())
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                assert!(all.contains("not applicable"));
+                assert!(join_lines(&msgs).contains("not applicable"));
             }
             ExecResult::Err(s) => {
                 assert!(s.contains("not applicable"));
@@ -705,12 +700,7 @@ mod tests {
         });
         match run(&format!("font set {}", family), &mut doc) {
             ExecResult::Lines(msgs) => {
-                let all = msgs
-                    .iter()
-                    .map(|l| l.text.as_str())
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                assert!(all.contains("not applicable"));
+                assert!(join_lines(&msgs).contains("not applicable"));
             }
             ExecResult::Err(s) => assert!(s.contains("not applicable")),
             other => panic!(

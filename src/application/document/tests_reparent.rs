@@ -4,7 +4,7 @@
 //!
 //! Part of the tests split for `document`. Helpers live in
 //! `tests_common`; only the tests for this theme live here.
-use super::tests_common::load_test_doc;
+use super::tests_common::{first_testament_node_id, load_test_doc};
 use super::*;
 
 use baumhard::mindmap::model::MindEdge;
@@ -162,7 +162,7 @@ fn find_reparent_pair(doc: &MindMapDocument) -> (String, String) {
     #[test]
     fn test_apply_reparent_rejects_self() {
         let mut doc = load_test_doc();
-        let source = doc.mindmap.nodes.keys().next().unwrap().clone();
+        let source = first_testament_node_id(&doc);
         let orig_parent = doc.mindmap.nodes.get(&source).unwrap().parent_id.clone();
 
         // Try to reparent a node under itself — should be silently rejected

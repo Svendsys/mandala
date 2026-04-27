@@ -2,7 +2,7 @@
 
 //! `apply_kvs` dispatcher aggregation tests.
 
-use super::fixtures::load_test_doc;
+use super::fixtures::{first_node_id, load_test_doc};
 use crate::application::console::traits::{apply_kvs, Outcome};
 use crate::application::document::SelectionState;
 
@@ -62,7 +62,7 @@ fn test_apply_kvs_not_applicable_reported_when_no_target_applies() {
 #[test]
 fn test_apply_kvs_all_applied_produces_no_messages() {
     let mut doc = load_test_doc();
-    let nid = doc.mindmap.nodes.keys().next().unwrap().clone();
+    let nid = first_node_id(&doc);
     doc.selection = SelectionState::Single(nid);
     let kvs = vec![("bg".to_string(), "#123".to_string())];
     let report = apply_kvs(&mut doc, &kvs, |_v, _k, _val| Some(Outcome::Applied));
@@ -75,7 +75,7 @@ fn test_apply_kvs_all_applied_produces_no_messages() {
 #[test]
 fn test_apply_kvs_invalid_is_reported_as_error_per_pair() {
     let mut doc = load_test_doc();
-    let nid = doc.mindmap.nodes.keys().next().unwrap().clone();
+    let nid = first_node_id(&doc);
     doc.selection = SelectionState::Single(nid);
     let kvs = vec![("size".to_string(), "nope".to_string())];
     let report = apply_kvs(&mut doc, &kvs, |_v, _k, val| {

@@ -4,10 +4,7 @@
 //!
 //! Part of the tests split for `document`. Helpers live in
 //! `tests_common`; only the tests for this theme live here.
-use super::tests_common::{
-    first_testament_edge_ref, load_test_doc
-    ,
-};
+use super::tests_common::{first_testament_edge_ref, first_testament_node_id, load_test_doc};
 use super::*;
 
 use baumhard::mindmap::model::{
@@ -225,14 +222,14 @@ use baumhard::util::grapheme_chad::count_grapheme_clusters;
     #[test]
     fn portal_edge_create_rejects_self() {
         let mut doc = load_test_doc();
-        let id = doc.mindmap.nodes.keys().next().unwrap().clone();
+        let id = first_testament_node_id(&doc);
         assert!(doc.create_portal_edge(&id, &id).is_none());
     }
 
     #[test]
     fn portal_edge_create_rejects_unknown_node() {
         let mut doc = load_test_doc();
-        let known = doc.mindmap.nodes.keys().next().unwrap().clone();
+        let known = first_testament_node_id(&doc);
         assert!(doc.create_portal_edge(&known, "does_not_exist").is_none());
         assert!(doc.create_portal_edge("does_not_exist", &known).is_none());
     }
@@ -301,7 +298,7 @@ use baumhard::util::grapheme_chad::count_grapheme_clusters;
         let idx = doc.create_cross_link_edge(&a, &b).unwrap();
         doc.undo_stack.push(UndoAction::CreateEdge { index: idx });
         // Select some other node (not the edge we're about to undo).
-        let other = doc.mindmap.nodes.keys().next().unwrap().clone();
+        let other = first_testament_node_id(&doc);
         doc.selection = SelectionState::Single(other.clone());
 
         assert!(doc.undo());

@@ -404,17 +404,7 @@ mod tests {
         )
     }
 
-    use crate::application::console::tests::fixtures::run;
-
-    /// Join the `text` field of every line — saves every test from
-    /// repeating the same map+collect after the `Lines` collapse.
-    fn joined(lines: &[crate::application::console::OutputLine]) -> String {
-        lines
-            .iter()
-            .map(|l| l.text.as_str())
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
+    use crate::application::console::tests::fixtures::{first_node_id, join_lines as joined, run};
 
     #[test]
     fn list_hides_internal_by_default() {
@@ -536,7 +526,7 @@ mod tests {
             vec![],
         );
         // Pick the root node of testament, selection still empty.
-        let node_id = doc.mindmap.nodes.keys().next().unwrap().clone();
+        let node_id = first_node_id(&doc);
         let line = format!("mutation apply nudge {}", node_id);
         match run(&line, &mut doc) {
             ExecResult::Ok(s) => assert!(s.contains(&node_id)),
@@ -559,7 +549,7 @@ mod tests {
             )],
             vec![],
         );
-        let node_id = doc.mindmap.nodes.keys().next().unwrap().clone();
+        let node_id = first_node_id(&doc);
         let before_x = doc.mindmap.nodes.get(&node_id).unwrap().position.x;
         let before_undo_len = doc.undo_stack.len();
 

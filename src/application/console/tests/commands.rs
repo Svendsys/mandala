@@ -7,7 +7,7 @@
 //! commands now live under `edge` (`edge portal`, `edge body=…`)
 //! and are covered in this file alongside the other `edge` cases.
 
-use super::fixtures::{load_test_doc, run, select_first_edge};
+use super::fixtures::{first_node_id, load_test_doc, run, select_first_edge};
 use crate::application::console::parser::{parse, Args, ParseResult};
 use crate::application::console::{ConsoleEffects, ExecResult};
 use crate::application::document::{EdgeRef, SelectionState};
@@ -92,7 +92,7 @@ fn test_color_kv_text_accent_sets_var_accent_on_edge() {
 #[test]
 fn test_color_kv_bg_sets_node_background() {
     let mut doc = load_test_doc();
-    let nid = doc.mindmap.nodes.keys().next().unwrap().clone();
+    let nid = first_node_id(&doc);
     doc.selection = SelectionState::Single(nid.clone());
     let _ = run("color bg=#112233", &mut doc);
     assert_eq!(
@@ -108,7 +108,7 @@ fn test_color_kv_bg_sets_node_background() {
 fn test_color_bg_no_value_on_node_opens_picker_with_bg_axis() {
     use crate::application::color_picker::{ColorTarget, NodeColorAxis};
     let mut doc = load_test_doc();
-    let nid = doc.mindmap.nodes.keys().next().unwrap().clone();
+    let nid = first_node_id(&doc);
     doc.selection = SelectionState::Single(nid.clone());
     let (cmd, toks) = match parse("color bg") {
         ParseResult::Ok { cmd, args } => (cmd, args),
@@ -162,7 +162,7 @@ fn test_color_text_on_portal_edge_applies() {
 #[test]
 fn test_color_kv_rejects_invalid_hex() {
     let mut doc = load_test_doc();
-    let nid = doc.mindmap.nodes.keys().next().unwrap().clone();
+    let nid = first_node_id(&doc);
     doc.selection = SelectionState::Single(nid);
     let result = run("color bg=notacolor", &mut doc);
     assert!(matches!(result, ExecResult::Err(_)));
