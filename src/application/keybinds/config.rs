@@ -11,33 +11,6 @@ use super::action::Action;
 use super::bind::KeyBind;
 use super::resolved::ResolvedKeybinds;
 
-/// A binding for a payload-bearing parametric Action. Where a unit
-/// Action like `Undo` is bound by its combo string alone, parametric
-/// Actions like `SetBorderPreset(String)` need both a combo and the
-/// payload arguments. `args` shape is interpreted per-Action by
-/// the dispatcher; for single-payload Actions this is a one-element
-/// vec, for two-arg shapes (`SetEdgeAnchor { from, to }`) it is two.
-///
-/// Args are free-form strings — typed validation happens at dispatch
-/// time so the resolve table doesn't need a per-Action schema.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ParametricBinding {
-    pub combo: String,
-    #[serde(default)]
-    pub args: Vec<String>,
-}
-
-impl ParametricBinding {
-    /// Convenience for tests / programmatic construction. Real users
-    /// build these via `serde_json` from `keybinds.json`.
-    pub fn new(combo: impl Into<String>, args: Vec<String>) -> Self {
-        Self {
-            combo: combo.into(),
-            args,
-        }
-    }
-}
-
 /// The raw, user-editable config. Every field is a list of binding strings
 /// so users can assign multiple keys to the same action (e.g. Ctrl+Z and
 /// the Undo key both mapped to `Undo`). Fields default via serde so a

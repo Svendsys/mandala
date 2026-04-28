@@ -95,13 +95,6 @@ impl ResolvedKeybinds {
         self.binds.iter().any(|(a, _)| *a == action)
     }
 
-    /// Same as `has_any_binding_for` but takes a reference — useful
-    /// for payload-bearing variants where cloning the lookup key
-    /// would be wasteful.
-    pub fn has_any_binding_for_ref(&self, action: &Action) -> bool {
-        self.binds.iter().any(|(a, _)| a == action)
-    }
-
     /// Return the action bound to the given key event, if any. The caller
     /// passes the normalized key name (see `normalize_key_name`) and the
     /// current modifier state. Searches all actions regardless of context —

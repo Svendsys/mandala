@@ -879,9 +879,10 @@ pub(in crate::application::app) fn dispatch_action(
 
 // `apply_text_edit_action` lives in `text_edit/mod.rs` (cross-platform)
 // so the WASM build can call it from the editor's modal handler.
-// Re-exported here for the dispatch arm above and for module-internal
-// callers that already wrote `dispatch::apply_text_edit_action`.
-pub(in crate::application::app) use super::text_edit::apply_text_edit_action;
+// Brought into scope here for the dispatch arm above. Not re-exported
+// — external callers should reach the function via `text_edit::`
+// directly (see `text_edit/editor.rs` for the canonical caller).
+use super::text_edit::apply_text_edit_action;
 
 /// Apply a LabelEdit cursor / delete primitive to a generic
 /// `(buffer, cursor)` pair. Both `LabelEditState` and

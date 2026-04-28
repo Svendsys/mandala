@@ -85,8 +85,14 @@ impl MacroSource {
     ///
     /// All four tiers load today on native; the gate is fully
     /// active. Adding a new privileged `Action` variant requires
-    /// updating the denylist below; the `#[non_exhaustive]` marker
-    /// on `Action` is the structural reminder.
+    /// updating the denylist below by hand — the denylist is
+    /// open by default, so a missing entry silently bypasses the
+    /// gate rather than raising a compile error. The structural
+    /// reminder lives on the `Action::wasm_compatibility` exhaustive
+    /// match, which `#[non_exhaustive]` *does* enforce; that match
+    /// is the forcing function for "review every new variant
+    /// against the cross-cutting policy concerns" — including
+    /// whether the variant belongs on this denylist.
     pub fn allows_action(self, action: &Action) -> bool {
         if matches!(self, MacroSource::User) {
             return true;
@@ -204,8 +210,9 @@ impl MacroSource {
     /// matches the variant declaration so `MacroSource as usize`
     /// would conceptually agree, but the explicit `match` survives
     /// future re-ordering and `#[non_exhaustive]` keeps it honest.
-    /// Higher index = higher precedence.
-    pub(super) const fn index(self) -> usize {
+    /// Higher index = higher precedence. Module-private — only the
+    /// registry's slot array consumes it.
+    const fn index(self) -> usize {
         match self {
             MacroSource::App => 0,
             MacroSource::User => 1,
@@ -253,7 +260,7 @@ impl MacroRegistry {
         let slots = self
             .macros
             .entry(id)
-            .or_insert_with(|| [None, None, None, None]);
+            .or_insert_with(|| std::array::from_fn(|_| None));
         slots[source.index()].replace(m)
     }
 
@@ -647,11 +654,43 @@ mod tests {
         assert!(!src.allows_console_line(), "App tier rejects ConsoleLine");
     }
 
-    /// `MacroRegistry::get_with_source` returns the loader-pinned
-    /// tier alongside the macro. This is the load-bearing accessor
-    /// the dispatcher uses to gate `ConsoleLine` and privileged
-    /// `Action` steps. Without it, a future caller that uses bare
-    /// `get` would silently bypass the gate.
+    /// Sentinel for `TIER_COUNT` ↔ `MacroSource` variant-count drift.
+    /// If a future contributor adds a fifth `MacroSource` variant
+    /// without bumping `TIER_COUNT`, `MacroSource::index()` would
+    /// return an out-of-bounds index for the new variant and
+    /// every lookup involving it would panic in `dispatch_macro`.
+    /// Inserting at every existing tier and asserting the count
+    /// catches the omission at test time rather than at runtime.
+    #[test]
+    fn macro_registry_every_tier_holds_an_entry() {
+        let mut reg = MacroRegistry::new();
+        let make = |id: &str| Macro {
+            id: id.into(),
+            name: String::new(),
+            description: String::new(),
+            steps: vec![],
+        };
+        for (i, src) in [
+            MacroSource::App,
+            MacroSource::User,
+            MacroSource::Map,
+            MacroSource::Inline,
+        ]
+        .iter()
+        .enumerate()
+        {
+            reg.insert(make(&format!("id-{}", i)), *src);
+            assert!(
+                reg.get_with_source(&format!("id-{}", i)).is_some(),
+                "tier {:?} (TIER_COUNT={}) failed to store an entry — \
+                 likely a TIER_COUNT/MacroSource drift",
+                src,
+                TIER_COUNT,
+            );
+        }
+        assert_eq!(reg.len(), 4);
+    }
+
     /// `clear_tier` removes only entries with the matching source —
     /// other tiers stay in place. Critical for the document-replace
     /// path: opening a different document must wipe Map-tier macros
@@ -856,6 +895,11 @@ mod tests {
         assert!(!src_a.allows_action(&Action::SaveDocument));
     }
 
+    /// `MacroRegistry::get_with_source` returns the loader-pinned
+    /// tier alongside the macro. This is the load-bearing accessor
+    /// the dispatcher uses to gate `ConsoleLine` and privileged
+    /// `Action` steps. Without it, a future caller that uses bare
+    /// `get` would silently bypass the gate.
     #[test]
     fn macro_registry_get_with_source_returns_pinned_tier() {
         let mut reg = MacroRegistry::new();
