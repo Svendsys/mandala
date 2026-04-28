@@ -15,76 +15,9 @@ use winit::keyboard::Key;
 pub(super) fn handle_keyboard_input(
     logical_key: Key,
     _event_loop: &ActiveEventLoop,
-    ctx: InputHandlerContext<'_>,
+    ctx: &mut InputHandlerContext<'_>,
 ) {
-    let InputHandlerContext {
-        document,
-        mindmap_tree,
-        app_scene,
-        renderer,
-        scene_cache,
-        drag_state,
-        app_mode,
-        console_state,
-        console_history,
-        label_edit_state,
-        portal_text_edit_state,
-        text_edit_state,
-        color_picker_state,
-        last_click,
-        hovered_node,
-        cursor_pos,
-        modifiers,
-        cursor_is_hand,
-        picker_hover,
-        keybinds,
-        macros,
-    } = ctx;
     let key_name = crate::application::keybinds::key_to_name(&logical_key);
-
-    // Function-local macro — `macro_rules!` cannot easily share state
-    // across modules when its expansion needs to capture caller-side
-    // locals, so the same body lives here and in `event_mouse_click`.
-    // See the FIELD COUNT comment in `app/mod.rs` for the drift
-    // invariants.
-    //
-    // Each `bundle!()` expansion MOVES the destructured locals into
-    // the new struct — so it can only be used once per execution
-    // path. The two callsites below sit in mutually-exclusive
-    // `if let Some(a) = action` / `else` branches, so each branch
-    // independently consumes the locals.
-    //
-    // **Rename hazard.** If you rename a local in the destructure
-    // above, you MUST rename it in this macro body too — the
-    // compiler error will point at the macro expansion, not the
-    // rename.
-    macro_rules! bundle {
-        () => {
-            InputHandlerContext {
-                document,
-                mindmap_tree,
-                app_scene,
-                renderer,
-                scene_cache,
-                drag_state,
-                app_mode,
-                console_state,
-                console_history,
-                label_edit_state,
-                portal_text_edit_state,
-                text_edit_state,
-                color_picker_state,
-                last_click,
-                hovered_node,
-                cursor_pos,
-                modifiers,
-                cursor_is_hand,
-                picker_hover,
-                keybinds,
-                macros,
-            }
-        };
-    }
 
     // When the console is open, it steals all
     // keyboard input. Character keys insert at the
@@ -92,25 +25,25 @@ pub(super) fn handle_keyboard_input(
     // history, Enter parses + executes, Escape
     // closes. Regular hotkeys are suppressed until
     // the console closes.
-    if console_state.is_open() {
+    if ctx.console_state.is_open() {
         handle_console_key(
             &key_name,
             &logical_key,
-            modifiers.control_key(),
-            modifiers.shift_key(),
-            modifiers.alt_key(),
-            console_state,
-            console_history,
-            label_edit_state,
-            portal_text_edit_state,
-            color_picker_state,
-            document,
-            mindmap_tree,
-            app_scene,
-            renderer,
-            scene_cache,
-            keybinds,
-            macros,
+            ctx.modifiers.control_key(),
+            ctx.modifiers.shift_key(),
+            ctx.modifiers.alt_key(),
+            ctx.console_state,
+            ctx.console_history,
+            ctx.label_edit_state,
+            ctx.portal_text_edit_state,
+            ctx.color_picker_state,
+            ctx.document,
+            ctx.mindmap_tree,
+            ctx.app_scene,
+            ctx.renderer,
+            ctx.scene_cache,
+            ctx.keybinds,
+            ctx.macros,
         );
         return;
     }
@@ -122,21 +55,21 @@ pub(super) fn handle_keyboard_input(
     // trigger `/` — falls through so the Standalone
     // persistent palette doesn't deadlock the user
     // out of the normal keybind dispatch.
-    if color_picker_state.is_open() {
-        let consumed = if let Some(doc) = document.as_mut() {
+    if ctx.color_picker_state.is_open() {
+        let consumed = if let Some(doc) = ctx.document.as_mut() {
             handle_color_picker_key(
                 &key_name,
-                modifiers.control_key(),
-                modifiers.shift_key(),
-                modifiers.alt_key(),
-                keybinds,
-                color_picker_state,
+                ctx.modifiers.control_key(),
+                ctx.modifiers.shift_key(),
+                ctx.modifiers.alt_key(),
+                ctx.keybinds,
+                ctx.color_picker_state,
                 doc,
-                mindmap_tree,
-                picker_hover,
-                app_scene,
-                renderer,
-                scene_cache,
+                ctx.mindmap_tree,
+                ctx.picker_hover,
+                ctx.app_scene,
+                ctx.renderer,
+                ctx.scene_cache,
             )
         } else {
             false
@@ -149,21 +82,21 @@ pub(super) fn handle_keyboard_input(
     // Inline label edit modal. Steals keys the same way
     // the console does. Escape discards, Enter commits,
     // Backspace pops, character keys append.
-    if label_edit_state.is_open() {
-        if let Some(doc) = document.as_mut() {
+    if ctx.label_edit_state.is_open() {
+        if let Some(doc) = ctx.document.as_mut() {
             handle_label_edit_key(
                 &key_name,
                 &logical_key,
-                modifiers.control_key(),
-                modifiers.shift_key(),
-                modifiers.alt_key(),
-                keybinds,
-                label_edit_state,
+                ctx.modifiers.control_key(),
+                ctx.modifiers.shift_key(),
+                ctx.modifiers.alt_key(),
+                ctx.keybinds,
+                ctx.label_edit_state,
                 doc,
-                mindmap_tree,
-                app_scene,
-                renderer,
-                scene_cache,
+                ctx.mindmap_tree,
+                ctx.app_scene,
+                ctx.renderer,
+                ctx.scene_cache,
             );
         }
         return;
@@ -173,21 +106,21 @@ pub(super) fn handle_keyboard_input(
     // edge label editor but keyed to
     // `(edge_ref, endpoint_node_id)`. Same keystroke
     // routing via `InputContext::LabelEdit`.
-    if portal_text_edit_state.is_open() {
-        if let Some(doc) = document.as_mut() {
+    if ctx.portal_text_edit_state.is_open() {
+        if let Some(doc) = ctx.document.as_mut() {
             handle_portal_text_edit_key(
                 &key_name,
                 &logical_key,
-                modifiers.control_key(),
-                modifiers.shift_key(),
-                modifiers.alt_key(),
-                keybinds,
-                portal_text_edit_state,
+                ctx.modifiers.control_key(),
+                ctx.modifiers.shift_key(),
+                ctx.modifiers.alt_key(),
+                ctx.keybinds,
+                ctx.portal_text_edit_state,
                 doc,
-                mindmap_tree,
-                app_scene,
-                renderer,
-                scene_cache,
+                ctx.mindmap_tree,
+                ctx.app_scene,
+                ctx.renderer,
+                ctx.scene_cache,
             );
         }
         return;
@@ -199,33 +132,33 @@ pub(super) fn handle_keyboard_input(
     // a multi-line paragraph editor, not an outliner.
     // Esc cancels; commit is via click-outside in the
     // mouse handler.
-    if text_edit_state.is_open() {
-        if let Some(doc) = document.as_mut() {
+    if ctx.text_edit_state.is_open() {
+        if let Some(doc) = ctx.document.as_mut() {
             handle_text_edit_key(
                 &key_name,
                 &logical_key,
-                modifiers.control_key(),
-                modifiers.shift_key(),
-                modifiers.alt_key(),
-                keybinds,
-                text_edit_state,
+                ctx.modifiers.control_key(),
+                ctx.modifiers.shift_key(),
+                ctx.modifiers.alt_key(),
+                ctx.keybinds,
+                ctx.text_edit_state,
                 doc,
-                mindmap_tree,
-                app_scene,
-                renderer,
-                scene_cache,
+                ctx.mindmap_tree,
+                ctx.app_scene,
+                ctx.renderer,
+                ctx.scene_cache,
             );
         }
         return;
     }
 
     let action = key_name.as_deref().and_then(|k| {
-        keybinds.action_for_context(
+        ctx.keybinds.action_for_context(
             crate::application::keybinds::InputContext::Document,
             k,
-            modifiers.control_key(),
-            modifiers.shift_key(),
-            modifiers.alt_key(),
+            ctx.modifiers.control_key(),
+            ctx.modifiers.shift_key(),
+            ctx.modifiers.alt_key(),
         )
     });
 
@@ -242,8 +175,8 @@ pub(super) fn handle_keyboard_input(
     // means rebinding `'a'` to a Document action keeps that
     // binding alive even when an edge label is selected.
     if action.is_none()
-        && !modifiers.control_key()
-        && !modifiers.alt_key()
+        && !ctx.modifiers.control_key()
+        && !ctx.modifiers.alt_key()
     {
         if let Key::Character(ref c) = logical_key {
             // Reject empty payloads and pure-control payloads up
@@ -251,17 +184,17 @@ pub(super) fn handle_keyboard_input(
             // hasn't claimed don't accidentally open an editor.
             let has_printable = c.as_str().chars().any(|ch| !ch.is_control());
             if has_printable {
-                if let Some(doc) = document.as_mut() {
+                if let Some(doc) = ctx.document.as_mut() {
                     let opened = match doc.selection.clone() {
                         SelectionState::EdgeLabel(s) => {
                             open_label_edit(
                                 &s.edge_ref,
                                 doc,
-                                label_edit_state,
-                                app_scene,
-                                renderer,
+                                ctx.label_edit_state,
+                                ctx.app_scene,
+                                ctx.renderer,
                             );
-                            label_edit_state.is_open()
+                            ctx.label_edit_state.is_open()
                         }
                         SelectionState::PortalLabel(s)
                         | SelectionState::PortalText(s) => {
@@ -270,11 +203,11 @@ pub(super) fn handle_keyboard_input(
                                 &er,
                                 &s.endpoint_node_id,
                                 doc,
-                                portal_text_edit_state,
-                                app_scene,
-                                renderer,
+                                ctx.portal_text_edit_state,
+                                ctx.app_scene,
+                                ctx.renderer,
                             );
-                            portal_text_edit_state.is_open()
+                            ctx.portal_text_edit_state.is_open()
                         }
                         _ => false,
                     };
@@ -283,35 +216,35 @@ pub(super) fn handle_keyboard_input(
                         // newly-opened editor so the first key
                         // ends up in the buffer instead of being
                         // swallowed by the open gesture.
-                        if label_edit_state.is_open() {
+                        if ctx.label_edit_state.is_open() {
                             handle_label_edit_key(
                                 &key_name,
                                 &logical_key,
-                                modifiers.control_key(),
-                                modifiers.shift_key(),
-                                modifiers.alt_key(),
-                                keybinds,
-                                label_edit_state,
+                                ctx.modifiers.control_key(),
+                                ctx.modifiers.shift_key(),
+                                ctx.modifiers.alt_key(),
+                                ctx.keybinds,
+                                ctx.label_edit_state,
                                 doc,
-                                mindmap_tree,
-                                app_scene,
-                                renderer,
-                                scene_cache,
+                                ctx.mindmap_tree,
+                                ctx.app_scene,
+                                ctx.renderer,
+                                ctx.scene_cache,
                             );
-                        } else if portal_text_edit_state.is_open() {
+                        } else if ctx.portal_text_edit_state.is_open() {
                             handle_portal_text_edit_key(
                                 &key_name,
                                 &logical_key,
-                                modifiers.control_key(),
-                                modifiers.shift_key(),
-                                modifiers.alt_key(),
-                                keybinds,
-                                portal_text_edit_state,
+                                ctx.modifiers.control_key(),
+                                ctx.modifiers.shift_key(),
+                                ctx.modifiers.alt_key(),
+                                ctx.keybinds,
+                                ctx.portal_text_edit_state,
                                 doc,
-                                mindmap_tree,
-                                app_scene,
-                                renderer,
-                                scene_cache,
+                                ctx.mindmap_tree,
+                                ctx.app_scene,
+                                ctx.renderer,
+                                ctx.scene_cache,
                             );
                         }
                         return;
@@ -337,30 +270,28 @@ pub(super) fn handle_keyboard_input(
 
     if let Some(a) = action {
         // Action body lives in `super::dispatch::dispatch_action`.
-        let mut bundle = bundle!();
-        let _ = super::dispatch::dispatch_action(a, &mut bundle, None);
+        let _ = super::dispatch::dispatch_action(a, ctx, None);
     } else {
-        // No built-in action matched — try macros first, then custom
+        // No built-in action matched — try ctx.macros first, then custom
         // mutations. Resolution order is documented in CONCEPTS.md §5
         // "Action dispatch": Action -> Macro -> CustomMutation.
         if let Some(k) = key_name.as_deref() {
-            let macro_id = keybinds
+            let macro_id = ctx.keybinds
                 .macro_for(
                     k,
-                    modifiers.control_key(),
-                    modifiers.shift_key(),
-                    modifiers.alt_key(),
+                    ctx.modifiers.control_key(),
+                    ctx.modifiers.shift_key(),
+                    ctx.modifiers.alt_key(),
                 )
                 .map(|s| s.to_string());
-            let mut bundle = bundle!();
             // If a macro is bound but its id isn't in the registry
-            // (typo'd config, half-loaded macros file, etc.),
+            // (typo'd config, half-loaded ctx.macros file, etc.),
             // `dispatch_macro` returns false. Fall through to the
             // custom-mutation tier so the keystroke still has a
             // chance to do something — better UX than swallowing
             // silently.
             let macro_handled = if let Some(id) = macro_id {
-                super::dispatch::dispatch_macro(&id, &mut bundle)
+                super::dispatch::dispatch_macro(&id, ctx)
             } else {
                 false
             };
@@ -369,11 +300,11 @@ pub(super) fn handle_keyboard_input(
                 // animation-timing aware, always invokes
                 // `apply_document_actions`).
                 let _ = super::dispatch::dispatch_custom_mutation_for_key(
-                    &mut bundle,
+                    ctx,
                     k,
-                    modifiers.control_key(),
-                    modifiers.shift_key(),
-                    modifiers.alt_key(),
+                    ctx.modifiers.control_key(),
+                    ctx.modifiers.shift_key(),
+                    ctx.modifiers.alt_key(),
                 );
             }
         }

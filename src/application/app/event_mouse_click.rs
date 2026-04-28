@@ -15,78 +15,17 @@ use super::*;
 pub(super) fn handle_mouse_input(
     state: ElementState,
     button: MouseButton,
-    ctx: InputHandlerContext<'_>,
+    ctx: &mut InputHandlerContext<'_>,
 ) {
-    let InputHandlerContext {
-        document,
-        mindmap_tree,
-        app_scene,
-        renderer,
-        scene_cache,
-        drag_state,
-        app_mode,
-        console_state,
-        console_history,
-        label_edit_state,
-        portal_text_edit_state,
-        text_edit_state,
-        color_picker_state,
-        last_click,
-        hovered_node,
-        cursor_pos,
-        modifiers,
-        cursor_is_hand,
-        picker_hover,
-        keybinds,
-        macros,
-    } = ctx;
-    let cursor_pos_val = *cursor_pos;
-
-    // Function-local `bundle!()` macro identical to the one in
-    // `event_keyboard.rs`. See the FIELD COUNT comment in
-    // `app/mod.rs` and the macro's rustdoc there for the drift /
-    // rename / move-once invariants. Each expansion moves the
-    // destructured locals into the new struct; the two call sites
-    // below are in mutually-exclusive `match button` arms so each
-    // arm consumes them independently.
-    //
-    // **Rename hazard.** If you rename a local in the destructure
-    // above, rename it in this macro body too.
-    macro_rules! bundle {
-        () => {
-            InputHandlerContext {
-                document,
-                mindmap_tree,
-                app_scene,
-                renderer,
-                scene_cache,
-                drag_state,
-                app_mode,
-                console_state,
-                console_history,
-                label_edit_state,
-                portal_text_edit_state,
-                text_edit_state,
-                color_picker_state,
-                last_click,
-                hovered_node,
-                cursor_pos,
-                modifiers,
-                cursor_is_hand,
-                picker_hover,
-                keybinds,
-                macros,
-            }
-        };
-    }
+    let cursor_pos_val = *ctx.cursor_pos;
     // The console swallows mouse clicks as a close
     // gesture. Clicking anywhere while open dismisses
     // the console without running a command, mirroring
     // Escape.
-    if console_state.is_open() && state == ElementState::Pressed {
-        save_console_history(console_history);
-        *console_state = ConsoleState::Closed;
-        renderer.rebuild_console_overlay_buffers(app_scene, None);
+    if ctx.console_state.is_open() && state == ElementState::Pressed {
+        save_console_history(ctx.console_history);
+        *ctx.console_state = ConsoleState::Closed;
+        ctx.renderer.rebuild_console_overlay_buffers(ctx.app_scene, None);
         return;
     }
 
@@ -109,21 +48,21 @@ pub(super) fn handle_mouse_input(
     // else while the palette was open. In
     // **Contextual** mode the picker captures
     // everything; outside-click cancels.
-    if color_picker_state.is_open()
+    if ctx.color_picker_state.is_open()
         && matches!(button, MouseButton::Left | MouseButton::Right)
     {
         let consumed = if state == ElementState::Pressed {
-            if let Some(doc) = document.as_mut() {
+            if let Some(doc) = ctx.document.as_mut() {
                 handle_color_picker_click(
                     cursor_pos_val,
                     button,
-                    color_picker_state,
+                    ctx.color_picker_state,
                     doc,
-                    mindmap_tree,
-                    app_scene,
-                    renderer,
-                    scene_cache,
-                    picker_hover,
+                    ctx.mindmap_tree,
+                    ctx.app_scene,
+                    ctx.renderer,
+                    ctx.scene_cache,
+                    ctx.picker_hover,
                 )
             } else {
                 true
@@ -134,7 +73,7 @@ pub(super) fn handle_mouse_input(
             // Standalone + outside-press fell
             // through), this is a no-op and the
             // release should also fall through.
-            end_color_picker_gesture(color_picker_state)
+            end_color_picker_gesture(ctx.color_picker_state)
         };
         if consumed {
             return;
@@ -156,61 +95,60 @@ pub(super) fn handle_mouse_input(
                 // MiddleClick binding when no exact-modifier match
                 // exists. Preserves pre-branch modifier-agnostic
                 // behaviour for mouse gestures.
-                let action = keybinds.action_for_gesture(
+                let action = ctx.keybinds.action_for_gesture(
                     name,
-                    modifiers.control_key(),
-                    modifiers.shift_key(),
-                    modifiers.alt_key(),
+                    ctx.modifiers.control_key(),
+                    ctx.modifiers.shift_key(),
+                    ctx.modifiers.alt_key(),
                 );
                 if let Some(a) = action {
-                    let mut bundle = bundle!();
-                    let _ = super::dispatch::dispatch_action(a, &mut bundle, None);
+                                        let _ = super::dispatch::dispatch_action(a, ctx, None);
                 }
             } else {
-                *drag_state = DragState::None;
+                *ctx.drag_state = DragState::None;
             }
         }
         MouseButton::Left => {
             // In reparent or connect mode, left-click (release) is consumed as
             // a "choose target" gesture and never transitions to Pending/drag.
-            if matches!(app_mode, AppMode::Reparent { .. }) {
+            if matches!(ctx.app_mode, AppMode::Reparent { .. }) {
                 if state == ElementState::Released {
                     handle_reparent_target_click(
                         cursor_pos_val,
-                        app_mode,
-                        hovered_node,
-                        document,
-                        mindmap_tree,
-                        app_scene,
-                        renderer,
-                        scene_cache,
+                        ctx.app_mode,
+                        ctx.hovered_node,
+                        ctx.document,
+                        ctx.mindmap_tree,
+                        ctx.app_scene,
+                        ctx.renderer,
+                        ctx.scene_cache,
                     );
                     // Mode-exit via target click — clear any stale
                     // click so the first post-mode click can't be
                     // paired into a double-click.
-                    *last_click = None;
+                    *ctx.last_click = None;
                 }
                 // Pressed: swallow — do not transition drag state
-            } else if matches!(app_mode, AppMode::Connect { .. }) {
+            } else if matches!(ctx.app_mode, AppMode::Connect { .. }) {
                 if state == ElementState::Released {
                     handle_connect_target_click(
                         cursor_pos_val,
-                        app_mode,
-                        hovered_node,
-                        document,
-                        mindmap_tree,
-                        app_scene,
-                        renderer,
-                        scene_cache,
+                        ctx.app_mode,
+                        ctx.hovered_node,
+                        ctx.document,
+                        ctx.mindmap_tree,
+                        ctx.app_scene,
+                        ctx.renderer,
+                        ctx.scene_cache,
                     );
-                    *last_click = None;
+                    *ctx.last_click = None;
                 }
                 // Pressed: swallow
             } else if state == ElementState::Pressed {
                 // Hit test to determine if clicking on a node
-                let canvas_pos = renderer.screen_to_canvas(
-                    cursor_pos.0 as f32,
-                    cursor_pos.1 as f32,
+                let canvas_pos = ctx.renderer.screen_to_canvas(
+                    ctx.cursor_pos.0 as f32,
+                    ctx.cursor_pos.1 as f32,
                 );
 
                 // Double-click detection. If this press within the
@@ -228,7 +166,7 @@ pub(super) fn handle_mouse_input(
                 // press fall through; the corresponding release
                 // will be swallowed as click-inside.
                 let now = now_ms();
-                let parts = super::compute_click_hit(canvas_pos, mindmap_tree.as_mut(), renderer);
+                let parts = super::compute_click_hit(canvas_pos, ctx.mindmap_tree.as_mut(), ctx.renderer);
                 let super::ClickHitParts {
                     click_hit,
                     hit_node,
@@ -248,11 +186,11 @@ pub(super) fn handle_mouse_input(
                 // model value and silently destroys the in-progress
                 // edit.
                 let already_editing_same_target = {
-                    let node_match = text_edit_state
+                    let node_match = ctx.text_edit_state
                         .node_id()
                         .map(|id| hit_node.as_deref() == Some(id))
                         .unwrap_or(false);
-                    let edge_label_match = label_edit_state
+                    let edge_label_match = ctx.label_edit_state
                         .edited_edge_ref()
                         .zip(edge_label_hit.as_ref())
                         .map(|(er, hit)| {
@@ -261,7 +199,7 @@ pub(super) fn handle_mouse_input(
                                 && hit.edge_type == er.edge_type.as_str()
                         })
                         .unwrap_or(false);
-                    let portal_text_match = portal_text_edit_state
+                    let portal_text_match = ctx.portal_text_edit_state
                         .edited_endpoint()
                         .zip(portal_text_hit.as_ref())
                         .map(|((er, ep), (hit_key, hit_ep))| {
@@ -274,12 +212,12 @@ pub(super) fn handle_mouse_input(
                     node_match || edge_label_match || portal_text_match
                 };
                 let is_dblclick = !already_editing_same_target
-                    && last_click
+                    && ctx.last_click
                         .as_ref()
                         .map(|prev| is_double_click(prev, now, cursor_pos_val, &click_hit))
                         .unwrap_or(false);
                 if is_dblclick {
-                    *last_click = None;
+                    *ctx.last_click = None;
                     // Look up which Action (if any) the user has bound
                     // to `DoubleClick`. Default is `DoubleClickActivate`
                     // which routes by `ClickHit`; `Empty` only fires
@@ -292,27 +230,26 @@ pub(super) fn handle_mouse_input(
                     // Modifier-fallback so Shift+DoubleClick still
                     // activates the bare DoubleClick binding when no
                     // explicit Shift+DoubleClick binding exists.
-                    let action = keybinds.action_for_gesture(
+                    let action = ctx.keybinds.action_for_gesture(
                         dblclick_name,
-                        modifiers.control_key(),
-                        modifiers.shift_key(),
-                        modifiers.alt_key(),
+                        ctx.modifiers.control_key(),
+                        ctx.modifiers.shift_key(),
+                        ctx.modifiers.alt_key(),
                     );
                     if let Some(a) = action {
                         let dispatch_hit = super::dispatch::DispatchHit {
                             click_hit: click_hit.clone(),
                             canvas_pos,
                         };
-                        let mut bundle = bundle!();
-                        let _ = super::dispatch::dispatch_action(a, &mut bundle, Some(&dispatch_hit));
+                                                let _ = super::dispatch::dispatch_action(a, ctx, Some(&dispatch_hit));
                         return;
                     }
                     // No Action bound to DoubleClick: silently no-op.
-                    // (The double-click consumed `last_click`; we don't
+                    // (The double-click consumed `ctx.last_click`; we don't
                     // fall through to the single-click selection path.)
                     return;
                 }
-                *last_click = Some(LastClick {
+                *ctx.last_click = Some(LastClick {
                     time: now,
                     screen_pos: cursor_pos_val,
                     hit: click_hit,
@@ -327,11 +264,11 @@ pub(super) fn handle_mouse_input(
                 // edge is selected, nothing is in range,
                 // or the hit test infrastructure isn't
                 // ready yet.
-                let hit_edge_handle = match document.as_ref() {
+                let hit_edge_handle = match ctx.document.as_ref() {
                     Some(doc) => match &doc.selection {
                         SelectionState::Edge(er) => {
                             let tol = EDGE_HANDLE_HIT_TOLERANCE_PX
-                                * renderer.canvas_per_pixel();
+                                * ctx.renderer.canvas_per_pixel();
                             doc.hit_test_edge_handle(canvas_pos, er, tol)
                                 .map(|(kind, _pos)| (er.clone(), kind))
                         }
@@ -363,7 +300,7 @@ pub(super) fn handle_mouse_input(
                 // ordering in `event_cursor_moved.rs` still
                 // gives portal-label / edge-handle drag higher
                 // precedence when multiple hits overlap.
-                *drag_state = DragState::Pending {
+                *ctx.drag_state = DragState::Pending {
                     start_pos: cursor_pos_val,
                     hit_node,
                     hit_edge_handle,
@@ -372,7 +309,7 @@ pub(super) fn handle_mouse_input(
                 };
             } else {
                 // Released
-                match std::mem::replace(drag_state, DragState::None) {
+                match std::mem::replace(ctx.drag_state, DragState::None) {
                     DragState::Pending { hit_node, hit_edge_label, .. } => {
                         // If the node text editor is open, the
                         // release decides whether to commit or
@@ -380,14 +317,14 @@ pub(super) fn handle_mouse_input(
                         // edited node's AABB, keep editing (no
                         // commit, no selection change). Otherwise
                         // commit and fall through.
-                        if text_edit_state.is_open() {
-                            let release_canvas = renderer.screen_to_canvas(
-                                cursor_pos.0 as f32,
-                                cursor_pos.1 as f32,
+                        if ctx.text_edit_state.is_open() {
+                            let release_canvas = ctx.renderer.screen_to_canvas(
+                                ctx.cursor_pos.0 as f32,
+                                ctx.cursor_pos.1 as f32,
                             );
-                            let inside = text_edit_state
+                            let inside = ctx.text_edit_state
                                 .node_id()
-                                .zip(mindmap_tree.as_ref())
+                                .zip(ctx.mindmap_tree.as_ref())
                                 .map(|(id, tree)| {
                                     crate::application::document::point_in_node_aabb(
                                         release_canvas, id, tree,
@@ -410,15 +347,15 @@ pub(super) fn handle_mouse_input(
                             // through to the regular
                             // click path so the new
                             // selection lands.
-                            if let Some(doc) = document.as_mut() {
+                            if let Some(doc) = ctx.document.as_mut() {
                                 close_text_edit(
                                     true,
                                     doc,
-                                    text_edit_state,
-                                    mindmap_tree,
-                                    app_scene,
-                                    renderer,
-                                    scene_cache,
+                                    ctx.text_edit_state,
+                                    ctx.mindmap_tree,
+                                    ctx.app_scene,
+                                    ctx.renderer,
+                                    ctx.scene_cache,
                                 );
                             }
                         }
@@ -432,16 +369,16 @@ pub(super) fn handle_mouse_input(
                         // and clicking elsewhere felt unresponsive.
                         // Mirrors the node text editor's behaviour
                         // so the same muscle memory transfers.
-                        if label_edit_state.is_open() {
-                            let release_canvas = renderer.screen_to_canvas(
-                                cursor_pos.0 as f32,
-                                cursor_pos.1 as f32,
+                        if ctx.label_edit_state.is_open() {
+                            let release_canvas = ctx.renderer.screen_to_canvas(
+                                ctx.cursor_pos.0 as f32,
+                                ctx.cursor_pos.1 as f32,
                             );
-                            let edited = label_edit_state.edited_edge_ref().cloned();
+                            let edited = ctx.label_edit_state.edited_edge_ref().cloned();
                             let stays_on_edited_label = edited
                                 .as_ref()
                                 .and_then(|er| {
-                                    renderer
+                                    ctx.renderer
                                         .hit_test_any_edge_label(release_canvas)
                                         .map(|hit| {
                                             hit.from_id == er.from_id.as_str()
@@ -453,15 +390,15 @@ pub(super) fn handle_mouse_input(
                             if stays_on_edited_label {
                                 return;
                             }
-                            if let Some(doc) = document.as_mut() {
+                            if let Some(doc) = ctx.document.as_mut() {
                                 close_label_edit(
                                     true,
                                     doc,
-                                    label_edit_state,
-                                    mindmap_tree,
-                                    app_scene,
-                                    renderer,
-                                    scene_cache,
+                                    ctx.label_edit_state,
+                                    ctx.mindmap_tree,
+                                    ctx.app_scene,
+                                    ctx.renderer,
+                                    ctx.scene_cache,
                                 );
                             }
                         }
@@ -473,18 +410,18 @@ pub(super) fn handle_mouse_input(
                         // commits this side and then routes the
                         // click as a fresh selection on the new
                         // endpoint.
-                        if portal_text_edit_state.is_open() {
-                            let release_canvas = renderer.screen_to_canvas(
-                                cursor_pos.0 as f32,
-                                cursor_pos.1 as f32,
+                        if ctx.portal_text_edit_state.is_open() {
+                            let release_canvas = ctx.renderer.screen_to_canvas(
+                                ctx.cursor_pos.0 as f32,
+                                ctx.cursor_pos.1 as f32,
                             );
-                            let edited = portal_text_edit_state
+                            let edited = ctx.portal_text_edit_state
                                 .edited_endpoint()
                                 .map(|(er, ep)| (er.clone(), ep.to_string()));
                             let stays_on_edited_text = edited
                                 .as_ref()
                                 .and_then(|(er, ep)| {
-                                    renderer
+                                    ctx.renderer
                                         .hit_test_portal_text(release_canvas)
                                         .map(|(hit_key, hit_ep)| {
                                             hit_key.from_id
@@ -500,15 +437,15 @@ pub(super) fn handle_mouse_input(
                             if stays_on_edited_text {
                                 return;
                             }
-                            if let Some(doc) = document.as_mut() {
+                            if let Some(doc) = ctx.document.as_mut() {
                                 close_portal_text_edit(
                                     true,
                                     doc,
-                                    portal_text_edit_state,
-                                    mindmap_tree,
-                                    app_scene,
-                                    renderer,
-                                    scene_cache,
+                                    ctx.portal_text_edit_state,
+                                    ctx.mindmap_tree,
+                                    ctx.app_scene,
+                                    ctx.renderer,
+                                    ctx.scene_cache,
                                 );
                             }
                         }
@@ -540,7 +477,7 @@ pub(super) fn handle_mouse_input(
                             });
                         let entered_label_select =
                             if let Some(er) = edge_label_target {
-                                if let Some(doc) = document.as_mut() {
+                                if let Some(doc) = ctx.document.as_mut() {
                                     let prev = doc.selection.clone();
                                     doc.selection = SelectionState::EdgeLabel(
                                         crate::application::document::EdgeLabelSel::new(
@@ -550,10 +487,10 @@ pub(super) fn handle_mouse_input(
                                     rebuild_after_selection_change(
                                         &prev,
                                         doc,
-                                        mindmap_tree,
-                                        app_scene,
-                                        renderer,
-                                        scene_cache,
+                                        ctx.mindmap_tree,
+                                        ctx.app_scene,
+                                        ctx.renderer,
+                                        ctx.scene_cache,
                                     );
                                     true
                                 } else {
@@ -566,12 +503,12 @@ pub(super) fn handle_mouse_input(
                             handle_click(
                                 hit_node,
                                 cursor_pos_val,
-                                modifiers.shift_key(),
-                                document,
-                                mindmap_tree,
-                                app_scene,
-                                renderer,
-                                scene_cache,
+                                ctx.modifiers.shift_key(),
+                                ctx.document,
+                                ctx.mindmap_tree,
+                                ctx.app_scene,
+                                ctx.renderer,
+                                ctx.scene_cache,
                             );
                         }
                     }
@@ -582,14 +519,14 @@ pub(super) fn handle_mouse_input(
                         // the throttle was mid-stretch skipping intermediate drains.
                         let had_pending = i.pending_delta != Vec2::ZERO;
                         if had_pending {
-                            if let Some(tree) = mindmap_tree.as_mut() {
+                            if let Some(tree) = ctx.mindmap_tree.as_mut() {
                                 for nid in &i.node_ids {
                                     apply_drag_delta(tree, nid, i.pending_delta.x, i.pending_delta.y, !i.individual);
                                 }
                             }
                         }
                         // Drop: sync to model, full rebuild, push undo
-                        if let Some(doc) = document.as_mut() {
+                        if let Some(doc) = ctx.document.as_mut() {
                             let dx = i.total_delta.x as f64;
                             let dy = i.total_delta.y as f64;
                             let undo_data = doc.apply_move_multiple(&i.node_ids, dx, dy, i.individual);
@@ -614,11 +551,11 @@ pub(super) fn handle_mouse_input(
                             // (mutation or zoom). Clearing here forces a
                             // resample from the now-authoritative model.
                             if had_pending {
-                                scene_cache.clear();
+                                ctx.scene_cache.clear();
                             }
 
                             // Full rebuild from model
-                            rebuild_all(doc, mindmap_tree, app_scene, renderer, scene_cache);
+                            rebuild_all(doc, ctx.mindmap_tree, ctx.app_scene, ctx.renderer, ctx.scene_cache);
                         }
                     }
                     DragState::Throttled(ThrottledDrag::EdgeHandle(i)) => {
@@ -643,7 +580,7 @@ pub(super) fn handle_mouse_input(
                             total_delta,
                             ..
                         } = i;
-                        if let Some(doc) = document.as_mut() {
+                        if let Some(doc) = ctx.document.as_mut() {
                             apply_edge_handle_drag(
                                 doc,
                                 &edge_ref,
@@ -654,7 +591,7 @@ pub(super) fn handle_mouse_input(
                             // Crossing the drag threshold guarantees a
                             // state change, so commit unconditionally.
                             doc.commit_throttled_edge_drag(&edge_ref, original, |_, _| true);
-                            rebuild_all(doc, mindmap_tree, app_scene, renderer, scene_cache);
+                            rebuild_all(doc, ctx.mindmap_tree, ctx.app_scene, ctx.renderer, ctx.scene_cache);
                         }
                     }
                     DragState::Throttled(ThrottledDrag::PortalLabel(i)) => {
@@ -675,7 +612,7 @@ pub(super) fn handle_mouse_input(
                             ..
                         } = i;
                         if let (Some(doc), Some(cursor)) =
-                            (document.as_mut(), pending_cursor)
+                            (ctx.document.as_mut(), pending_cursor)
                         {
                             apply_portal_label_drag(
                                 doc,
@@ -692,11 +629,11 @@ pub(super) fn handle_mouse_input(
                         // `portal_to`) — whole-edge `PartialEq`
                         // would fold in float-fragile
                         // `control_points`.
-                        if let Some(doc) = document.as_mut() {
+                        if let Some(doc) = ctx.document.as_mut() {
                             doc.commit_throttled_edge_drag(&edge_ref, original, |c, o| {
                                 c.portal_from != o.portal_from || c.portal_to != o.portal_to
                             });
-                            rebuild_all(doc, mindmap_tree, app_scene, renderer, scene_cache);
+                            rebuild_all(doc, ctx.mindmap_tree, ctx.app_scene, ctx.renderer, ctx.scene_cache);
                         }
                     }
                     DragState::Throttled(ThrottledDrag::EdgeLabel(i)) => {
@@ -712,7 +649,7 @@ pub(super) fn handle_mouse_input(
                             ..
                         } = i;
                         if let (Some(doc), Some(cursor)) =
-                            (document.as_mut(), pending_cursor)
+                            (ctx.document.as_mut(), pending_cursor)
                         {
                             super::edge_label_drag::apply_edge_label_drag(
                                 doc,
@@ -723,7 +660,7 @@ pub(super) fn handle_mouse_input(
                         // Commit with a single `EditEdge` carrying
                         // the pre-drag snapshot, skipping the undo
                         // entry if nothing actually moved.
-                        if let Some(doc) = document.as_mut() {
+                        if let Some(doc) = ctx.document.as_mut() {
                             doc.commit_throttled_edge_drag(&edge_ref, original, |c, o| {
                                 c.label_config != o.label_config
                             });
@@ -732,16 +669,16 @@ pub(super) fn handle_mouse_input(
                             // because node trees are untouched by a
                             // label move; the release commit is
                             // the same story.
-                            rebuild_scene_only(doc, app_scene, renderer, scene_cache);
+                            rebuild_scene_only(doc, ctx.app_scene, ctx.renderer, ctx.scene_cache);
                         }
                     }
                     DragState::SelectingRect { start_canvas, current_canvas } => {
                         // Finalize: select all nodes in the rectangle
-                        renderer.clear_overlay_buffers();
-                        if let (Some(doc), Some(tree)) = (document.as_mut(), mindmap_tree.as_ref()) {
+                        ctx.renderer.clear_overlay_buffers();
+                        if let (Some(doc), Some(tree)) = (ctx.document.as_mut(), ctx.mindmap_tree.as_ref()) {
                             let hits = rect_select(start_canvas, current_canvas, tree);
                             doc.selection = SelectionState::from_ids(hits);
-                            rebuild_all(doc, mindmap_tree, app_scene, renderer, scene_cache);
+                            rebuild_all(doc, ctx.mindmap_tree, ctx.app_scene, ctx.renderer, ctx.scene_cache);
                         }
                     }
                     DragState::Panning | DragState::None => {}

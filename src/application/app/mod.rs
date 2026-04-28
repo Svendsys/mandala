@@ -45,19 +45,17 @@ mod throttled_interaction;
 #[cfg(target_arch = "wasm32")]
 mod run_wasm;
 
-// FIELD COUNT: `InputHandlerContext` has 21 fields. The drift surface
-// is four sites that must move together when adding a new field:
+// FIELD COUNT: `InputHandlerContext` has 21 fields. Drift surface for
+// new fields:
 //   1. The struct in `app/input_context.rs`.
 //   2. The `InitState::input_context()` builder in `run_native.rs`.
-//   3. The destructure pattern in `event_keyboard.rs::handle_keyboard_input`.
-//   4. The `bundle!()` macro body in BOTH `event_keyboard.rs` AND
-//      `event_mouse_click.rs` (and the parallel destructure in the
-//      mouse handler too — total 5 sites in practice).
-// The compiler catches missing fields in struct literals, but does
-// NOT catch identifier drift between the destructure pattern and the
-// macro body — a renamed local in the destructure breaks `bundle!()`
-// with errors that point at the macro expansion, not the rename.
-// Keep the destructure identifiers identical to the field names.
+//   3. `dispatch_action`'s signature in `app/dispatch.rs` (the funnel
+//      every handler ultimately calls).
+// Input handlers (`event_keyboard.rs`, `event_mouse_click.rs`,
+// `event_cursor_moved.rs`) take `ctx: &mut InputHandlerContext<'_>`
+// and access fields via `ctx.foo`, so adding a field doesn't ripple
+// through their bodies — Rust's split borrows let modal handlers
+// receive `&mut ctx.console_state` etc. without re-destructuring.
 
 // Cross-platform imports.
 use scene_rebuild::{

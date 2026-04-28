@@ -211,7 +211,8 @@ impl InitState {
                 event: WindowEvent::MouseInput { state, button, .. },
                 ..
             } => {
-                event_mouse_click::handle_mouse_input(state, button, self.input_context());
+                let mut ctx = self.input_context();
+                event_mouse_click::handle_mouse_input(state, button, &mut ctx);
             }
             Event::WindowEvent {
                 event: WindowEvent::MouseWheel { delta, .. },
@@ -296,10 +297,11 @@ impl InitState {
                 ..
             } => {
                 let window = self.window.clone();
+                let mut ctx = self.input_context();
                 event_cursor_moved::handle_cursor_moved(
                     position,
                     window.as_ref(),
-                    self.input_context(),
+                    &mut ctx,
                 );
             }
             //// KEYBOARD ////
@@ -322,10 +324,11 @@ impl InitState {
                     },
                 ..
             } => {
+                let mut ctx = self.input_context();
                 event_keyboard::handle_keyboard_input(
                     logical_key,
                     event_loop,
-                    self.input_context(),
+                    &mut ctx,
                 );
             }
             Event::AboutToWait => self.drain_frame(),
