@@ -261,6 +261,40 @@ impl DeltaGlyphArea {
         DeltaGlyphArea { fields: field_map }
     }
 
+    /// Build a full-coverage `Assign` delta that mirrors every
+    /// per-glyph field of `area` the in-place mutator path needs to
+    /// re-stamp on a tree leaf. Emits `Text`, `position`, `bounds`,
+    /// `scale`, `line_height`, `ColorFontRegions`, `Outline`, and
+    /// `ZoomVisibility` (the latter required per `lib/baumhard/CONVENTIONS.md`
+    /// §B2 — without it a mutator rebuild silently resets each
+    /// element's authored zoom window to `Default`), with
+    /// `ApplyOperation::Assign` as the global mode.
+    ///
+    /// Single source of truth for the per-leaf delta shape every
+    /// `tree_builder/*::build_*_mutator_tree` function needs; lifting
+    /// it to baumhard means any consumer (border, connection,
+    /// connection_label, edge_handle, portal — and any future
+    /// renderable element type) shares one definition of "what fields
+    /// need to be re-asserted to keep the leaf in sync with its
+    /// source area." Adding a new per-leaf field becomes a one-line
+    /// change here, fanning out to every consumer.
+    ///
+    /// Cost: clones the area's text, regions, and outline; one
+    /// 9-entry `FxHashMap`. No font-system access, no shaping.
+    pub fn full_assign_from(area: &GlyphArea) -> DeltaGlyphArea {
+        DeltaGlyphArea::new(vec![
+            GlyphAreaField::Text(area.text.clone()),
+            GlyphAreaField::position(area.position.x.0, area.position.y.0),
+            GlyphAreaField::bounds(area.render_bounds.x.0, area.render_bounds.y.0),
+            GlyphAreaField::scale(area.scale.0),
+            GlyphAreaField::line_height(area.line_height.0),
+            GlyphAreaField::ColorFontRegions(area.regions.clone()),
+            GlyphAreaField::Outline(area.outline),
+            GlyphAreaField::ZoomVisibility(area.zoom_visibility),
+            GlyphAreaField::Operation(ApplyOperation::Assign),
+        ])
+    }
+
     /// The global arithmetic mode this delta applies with
     /// (`Assign` / `Add` / `Subtract`), or `Noop` when no
     /// `Operation` entry is present. O(1).

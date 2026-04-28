@@ -7,7 +7,7 @@
 
 use glam::Vec2;
 
-use crate::core::primitives::{ColorFontRegion, ColorFontRegions, Range};
+use crate::core::primitives::ColorFontRegions;
 use crate::gfx_structs::area::GlyphArea;
 use crate::gfx_structs::element::GfxElement;
 use crate::gfx_structs::mutator::GfxMutator;
@@ -79,15 +79,7 @@ fn connection_edge_layout(
             GlyphArea::new_with_str(text, font_size, font_size, pos, glyph_bounds);
         area.zoom_visibility = edge_zoom_window;
         let cluster_count = crate::util::grapheme_chad::count_grapheme_clusters(text);
-        if cluster_count > 0 {
-            let mut regions = ColorFontRegions::new_empty();
-            regions.submit_region(ColorFontRegion::new(
-                Range::new(0, cluster_count),
-                None,
-                Some(color_rgba),
-            ));
-            area.regions = regions;
-        }
+        area.regions = ColorFontRegions::single_span(cluster_count, Some(color_rgba), None);
         area
     };
 
@@ -176,8 +168,7 @@ pub fn build_connection_tree(
 pub fn build_connection_mutator_tree(
     elements: &[crate::mindmap::scene_builder::ConnectionElement],
 ) -> crate::gfx_structs::tree::MutatorTree<GfxMutator> {
-    use crate::core::primitives::ApplyOperation;
-    use crate::gfx_structs::area::{DeltaGlyphArea, GlyphAreaField};
+    use crate::gfx_structs::area::DeltaGlyphArea;
     use crate::gfx_structs::mutator::Mutation;
     use crate::gfx_structs::tree::MutatorTree;
 
@@ -188,19 +179,7 @@ pub fn build_connection_mutator_tree(
         mt.root.append(edge_node, &mut mt.arena);
 
         for (channel, area) in children {
-            let delta = DeltaGlyphArea::new(vec![
-                GlyphAreaField::Text(area.text),
-                GlyphAreaField::position(area.position.x.0, area.position.y.0),
-                GlyphAreaField::bounds(area.render_bounds.x.0, area.render_bounds.y.0),
-                GlyphAreaField::scale(area.scale.0),
-                GlyphAreaField::line_height(area.line_height.0),
-                GlyphAreaField::ColorFontRegions(area.regions),
-                GlyphAreaField::Outline(area.outline),
-                // Required per §B2 — without it, mutator rebuilds
-                // would reset each glyph's zoom window to Default.
-                GlyphAreaField::ZoomVisibility(area.zoom_visibility),
-                GlyphAreaField::Operation(ApplyOperation::Assign),
-            ]);
+            let delta = DeltaGlyphArea::full_assign_from(&area);
             let leaf = mt.arena.new_node(GfxMutator::new(
                 Mutation::AreaDelta(Box::new(delta)),
                 channel,

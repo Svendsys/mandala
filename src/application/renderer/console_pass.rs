@@ -456,23 +456,13 @@ pub(super) fn build_console_overlay_mutator(
     layout: &ConsoleFrameLayout,
     font_system: &mut FontSystem,
 ) -> baumhard::gfx_structs::tree::MutatorTree<GfxMutator> {
-    use baumhard::core::primitives::ApplyOperation;
-    use baumhard::gfx_structs::area::{DeltaGlyphArea, GlyphAreaField};
+    use baumhard::gfx_structs::area::DeltaGlyphArea;
     use baumhard::gfx_structs::mutator::Mutation;
     use baumhard::gfx_structs::tree::MutatorTree;
 
     let mut mt = MutatorTree::new_with(GfxMutator::new_void(0));
     for (channel, area) in console_overlay_areas(geometry, layout, font_system) {
-        let delta = DeltaGlyphArea::new(vec![
-            GlyphAreaField::Text(area.text),
-            GlyphAreaField::position(area.position.x.0, area.position.y.0),
-            GlyphAreaField::bounds(area.render_bounds.x.0, area.render_bounds.y.0),
-            GlyphAreaField::scale(area.scale.0),
-            GlyphAreaField::line_height(area.line_height.0),
-            GlyphAreaField::ColorFontRegions(area.regions),
-            GlyphAreaField::Outline(area.outline),
-            GlyphAreaField::Operation(ApplyOperation::Assign),
-        ]);
+        let delta = DeltaGlyphArea::full_assign_from(&area);
         let mutator = GfxMutator::new(Mutation::AreaDelta(Box::new(delta)), channel);
         let id = mt.arena.new_node(mutator);
         mt.root.append(id, &mut mt.arena);

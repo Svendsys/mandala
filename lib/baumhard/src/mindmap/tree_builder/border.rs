@@ -237,8 +237,7 @@ pub fn build_border_mutator_tree(
 pub fn build_border_mutator_tree_from_nodes(
     nodes: &[BorderNodeData],
 ) -> crate::gfx_structs::tree::MutatorTree<GfxMutator> {
-    use crate::core::primitives::ApplyOperation;
-    use crate::gfx_structs::area::{DeltaGlyphArea, GlyphAreaField};
+    use crate::gfx_structs::area::DeltaGlyphArea;
     use crate::gfx_structs::mutator::Mutation;
     use crate::gfx_structs::tree::MutatorTree;
 
@@ -341,23 +340,16 @@ pub fn build_border_mutator_tree_from_nodes(
                 node.color_rgba,
                 palette_offset,
             );
-            let delta = DeltaGlyphArea::new(vec![
-                GlyphAreaField::Text(text),
-                GlyphAreaField::position(pos.0, pos.1),
-                GlyphAreaField::bounds(bounds.0, bounds.1),
-                GlyphAreaField::scale(fs),
-                GlyphAreaField::line_height(fs),
-                GlyphAreaField::ColorFontRegions(regions),
-                GlyphAreaField::Outline(None),
-                // Required per §B2: without this, a mutator
-                // rebuild would silently reset each run's zoom
-                // window to Default, and a node that "disappears
-                // above zoom 2×" would have a ghost frame the
-                // first time the border path took its in-place
-                // update path after the window was authored.
-                GlyphAreaField::ZoomVisibility(node.zoom_visibility),
-                GlyphAreaField::Operation(ApplyOperation::Assign),
-            ]);
+            let mut area = GlyphArea::new_with_str(
+                &text,
+                fs,
+                fs,
+                Vec2::new(pos.0, pos.1),
+                Vec2::new(bounds.0, bounds.1),
+            );
+            area.regions = regions;
+            area.zoom_visibility = node.zoom_visibility;
+            let delta = DeltaGlyphArea::full_assign_from(&area);
             let leaf = mt.arena.new_node(GfxMutator::new(
                 Mutation::AreaDelta(Box::new(delta)),
                 channel,
