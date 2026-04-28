@@ -96,14 +96,12 @@ pub(in crate::application::app) fn execute_console_line(
         *label_edit_state = LabelEditState::Closed;
         *portal_text_edit_state = PortalTextEditState::Closed;
         *color_picker_state = ColorPickerState::Closed;
-        // Rebuild the Map and Inline tiers of the macro registry —
-        // App and User tiers loaded at startup are untouched. The
-        // new document contributes via `mindmap.macros` (Map) and
-        // every node's `inline_macros` (Inline). Inline tier is
-        // rebuilt after Map so its higher precedence wins on id
-        // collision.
-        crate::application::macros::loader::rebuild_map_macros(macros, doc);
-        crate::application::macros::loader::rebuild_inline_macros(macros, doc);
+        // Rebuild the document-derived tiers (Map + Inline). App
+        // and User tiers loaded at startup are untouched. The
+        // single-entry helper enforces Map-then-Inline ordering
+        // (Inline is highest precedence) so the two-call ordering
+        // can't drift between this site and `run_native_init::build`.
+        crate::application::macros::loader::rebuild_document_macros(macros, doc);
     }
 
     // `fps on` / `fps off` — forward to the renderer. The decree bus

@@ -61,37 +61,93 @@ native-only state" (console, color picker, label editor, AppMode,
 DragState, filesystem). The doc-comment on `wasm_compatibility`
 spells out the rules in detail.
 
-## Three porting tracks (do them in any order)
+## Three porting tracks
+
+The tracks have soft dependencies. **Track C is the prerequisite
+for Track A landing through `dispatch_action`** — the native
+`dispatch_action` takes `&mut InputHandlerContext` (21 native-only
+fields). Until a shared context type exists, individual Action
+ports under Track A must add inline arms to `run_wasm.rs` rather
+than route through the unified dispatcher. **Track B (the macro
+registry) can land independently of A and C** — the registry's
+data and resolver are self-contained — but does require the
+prerequisite step 0 below.
 
 ### Track A — port a NativeOnly Action
 
 When you want a specific feature in the browser. Pick an Action
 classified `NativeOnly` (e.g. `Action::OpenConsole`).
 
+**Two paths today, depending on Track C's status:**
+
+- **Path A1 (Track C not yet landed — current state).** Port the
+  Action by adding an inline arm to `run_wasm.rs` that touches
+  WASM-shaped state. The dispatch logic is duplicated between
+  native (`dispatch.rs`) and WASM (`run_wasm.rs`) until Track C
+  consolidates. This is what `run_wasm.rs`'s existing arms (Undo,
+  CreateOrphanNode, OrphanSelection, DeleteSelection,
+  EditSelection-Single-only) do today.
+- **Path A2 (Track C landed).** Route the Action through
+  `dispatch_action` once both targets share a context type. This
+  is the cleaner endpoint.
+
+**Steps for Path A1:**
+
 1. Decide whether to port the underlying system (full console on
    WASM) or surface a WASM-shaped equivalent (e.g. a `<dialog>`
    element instead of an in-canvas overlay).
 2. Add the corresponding state to `WasmInputState` in
    `run_wasm.rs`.
-3. Open the matching dispatch arm in
-   `src/application/app/dispatch.rs` and inspect what `ctx` fields
-   it touches. Audit: does the WASM-side state shape match
-   closely enough that the SAME arm body works?
-4. If yes: extend `WasmInputState` to expose those fields the same
-   way `InputHandlerContext` does, and write a `WasmInputContext`
-   adapter that satisfies the same field-access pattern.
+3. Open the matching native dispatch arm in
+   `src/application/app/dispatch.rs` to understand the body.
+4. Write a parallel arm in `run_wasm.rs`'s `match a { ... }` block
+   that does the same thing against `WasmInputState`. Comment with
+   `// MIRROR OF dispatch.rs::Action::Foo arm — keep in sync until
+   Track C consolidates.`
 5. Flip the Action's `wasm_compatibility` classification to
-   `Compatible`.
-6. Call `dispatch_action(a, &mut wasm_bundle, hit)` from
-   `run_wasm.rs` instead of the inline match arm.
-7. Remove the inline arm from `run_wasm.rs`'s match.
-8. Update the test in `src/application/keybinds/tests.rs`
-   (search `test_wasm_compatibility_*`).
+   `Compatible`. Update the corresponding test in
+   `src/application/keybinds/tests.rs`.
+
+**Steps for Path A2 (after Track C):**
+
+1. Decide whether to port the underlying system or surface a
+   WASM-shaped equivalent.
+2. Add the state to whatever shared context Track C lands.
+3. Audit the dispatch arm: does it work unchanged on the shared
+   context, or does it need branching on the platform?
+4. Flip the classification, update the test.
+5. Remove the inline arm from `run_wasm.rs` (if it exists from
+   a prior Path A1 port).
 
 ### Track B — port the macro registry
 
 WASM currently has no `MacroRegistry`. Once it does, every macro
-that's already `Compatible` works in the browser.
+whose Action steps are already `Compatible` works in the browser.
+
+**Step 0 — prerequisite: lift the cfg gate.**
+`src/application/macros/loader.rs` is `#![cfg(not(target_arch =
+"wasm32"))]`-gated at module level (line 16), and
+`src/application/macros/mod.rs:18` only declares `pub mod loader`
+under the same cfg. Today no part of the loader compiles on WASM.
+Audit each function for `std::fs` / native-only API usage:
+
+| Function | Status | Action |
+|---|---|---|
+| `load_app_macros` | `include_str!`-based, pure | move out from under the cfg |
+| `parse_map_macros` | pure | same |
+| `rebuild_map_macros` | pure (calls `parse_map_macros` + registry methods) | same |
+| `parse_inline_macros` | pure | same |
+| `rebuild_inline_macros` | pure | same |
+| `load_user_macros` | reads `~/.config/...` via `std::fs` | keeps the cfg gate (or grows a WASM-side sibling) |
+
+The cleanest shape: split `loader.rs` into a portable file
+(everything except `load_user_macros`) and a `cfg`-gated
+`platform_desktop.rs` for the native filesystem reader, parallel
+to `keybinds/platform_desktop.rs` and the mutations loader. Then
+add `platform_web.rs` for WASM's `?macros=` / `localStorage`
+loader.
+
+**Once Step 0 is done:**
 
 1. Decide where the user-tier loader reads from on WASM. There's
    no `~/.config/mandala/macros.json` in a browser; the natural
@@ -99,26 +155,21 @@ that's already `Compatible` works in the browser.
    param, or `localStorage["mandala_macros"]`. See
    `src/application/keybinds/platform_web.rs` for the existing
    pattern.
-2. Add `loader::load_user_macros_wasm()` parallel to the native
-   `load_user_macros`.
-3. Reuse `loader::load_app_macros()` — it's `include_str!`-based
-   so it works on both targets unchanged.
-4. Reuse `loader::rebuild_map_macros(registry, doc)` — it's
-   pure logic, no platform-specific I/O.
+2. Add `loader::platform_web::load_user_macros()` parallel to
+   the native loader.
+3. Reuse `loader::load_app_macros()` — `include_str!`-based.
+4. Reuse `loader::rebuild_map_macros` and
+   `loader::rebuild_inline_macros` — both pure once the cfg gate
+   is lifted.
 5. Add `macros: MacroRegistry` to `WasmInputState`. Build it at
    startup in `run_wasm::run`.
 6. When the document loads (and re-loads via `?map=`), call
-   `rebuild_map_macros(macros, doc)`.
-7. After dispatching keys to `dispatch_action` per Track A, also
-   dispatch through the macro path — see
-   `src/application/app/event_keyboard.rs` for the resolution
-   order: Action → Macro → CustomMutation.
-8. **Do not skip the privilege gate.** `dispatch_macro` enforces
-   `MacroSource::allows_console_line` and `allows_action`. If
-   you reimplement the dispatch loop on WASM, port the gate too —
-   `src/application/app/dispatch.rs::dispatch_macro` is the
-   reference. A hostile mindmap loaded in the browser is the
-   primary threat model the gate exists to defend against.
+   `rebuild_map_macros(macros, doc)` and
+   `rebuild_inline_macros(macros, doc)`.
+7. Dispatch macros after the WASM keyboard handler's
+   `Action::is_some()` branch. See `event_keyboard.rs:347-378`
+   for the native chain (Action → Macro → CustomMutation).
+8. **Do not skip the privilege gate.** See Track-D below.
 
 ### Track C — unify the bundle / context type
 
@@ -146,17 +197,49 @@ Shape 1 is closer to the current code and likely the better
 landing point. Shape 2 is more idiomatic Rust but is a bigger
 diff.
 
+**Scaffolding posture.** This branch ships ZERO scaffolding for
+Track C — no stub `InputContextCore` struct, no
+`DispatchableContext` trait. The choice between Shape 1 and
+Shape 2 is left to the contributor who lands the refactor; pre-
+committing to one shape via a stub would close off the other.
+Track A path A1 is the working alternative until Track C is
+chosen and built.
+
 ### Track-D meta — keep the privilege model intact
 
-Whatever shape Track C takes, the macro privilege gate
-(`MacroSource::allows_console_line`, `allows_action`, fail-closed
-in `dispatch_macro`) MUST remain in the dispatch path on both
-targets. The `WasmCompatibility` classification is orthogonal —
-a `Compatible` Action might still be `NativeOnly`-equivalent for
-non-User macro tiers (e.g. `SaveDocument` is `NativeOnly` only
-because filesystem; a future cloud-save would be `Compatible`,
-but it must STILL be denylisted on `MacroSource::allows_action`
-because hostile mindmaps shouldn't be able to invoke it).
+The macro privilege gate (`MacroSource::allows_console_line`,
+`allows_action`, fail-closed in `dispatch_macro`) MUST remain
+single-sourced on both targets. The `WasmCompatibility`
+classification is orthogonal — a `Compatible` Action might still
+be denylisted by `MacroSource::allows_action` for non-User
+macros (e.g. `Action::SaveDocument` would be `Compatible` once
+WASM gains a save path, but it'd still be in the denylist
+because hostile mindmaps shouldn't invoke it).
+
+**Where the gate lives today, and where it must stay.**
+`MacroSource::allows_action` and `allows_console_line` live in
+`src/application/macros/mod.rs` — these methods are NOT cfg-
+gated; they compile on both targets. The fail-closed enforcement
+loop, however, is in `dispatch::dispatch_macro` at
+`src/application/app/dispatch.rs`, and the *entire* `dispatch.rs`
+module is `#![cfg(not(target_arch = "wasm32"))]`-gated at line 9.
+
+When you implement WASM macro dispatch, **do NOT re-implement the
+`allows_action` / `allows_console_line` checks inline.** Two
+acceptable shapes:
+
+- **(a) Lift the cfg gate off `dispatch.rs`'s module declaration**
+  and gate individual native-only arms instead. The privilege-
+  enforcement code becomes cross-platform automatically.
+- **(b) Extract `dispatch_macro` and its enforcement loop into
+  `dispatch_macro_core.rs`** (cross-platform), leaving the
+  Action-arm dispatcher gated. WASM imports the core module
+  unchanged.
+
+Re-implementing the privilege check inline is **forbidden** —
+it's the threat-model defence and must be single-sourced. A
+forked enforcement copy would silently drift when a future
+contributor adds an Action to the denylist (`mod.rs:91-114`).
 
 ## What's deferred today (and tracked in TODO.md)
 

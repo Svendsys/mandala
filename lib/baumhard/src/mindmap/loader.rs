@@ -472,6 +472,102 @@ mod tests {
         let _ = std::fs::remove_file(&tmp_full);
     }
 
+    /// `MindNode.inline_macros` round-trips through save+load
+    /// with absence preserved (skip_serializing_if = "Vec::is_empty")
+    /// and non-empty content preserved exactly. Parallel to
+    /// `test_save_to_file_macros_round_trip` for the per-node
+    /// field added in the Inline-tier macro work.
+    #[test]
+    fn test_save_to_file_inline_macros_round_trip() {
+        // Build a map with one node carrying a populated
+        // `inline_macros`. Empty case is implicitly covered by
+        // `test_save_blank_map_round_trip` (every node has an
+        // empty Vec).
+        use crate::mindmap::model::{
+            Canvas, MindNode, NodeLayout, NodeStyle, Position, Size,
+        };
+        use std::collections::HashMap;
+
+        let node = MindNode {
+            id: "0".to_string(),
+            parent_id: None,
+            position: Position { x: 0.0, y: 0.0 },
+            size: Size { width: 100.0, height: 50.0 },
+            text: "n".to_string(),
+            text_runs: Vec::new(),
+            style: NodeStyle {
+                background_color: "#000000".to_string(),
+                frame_color: "#ffffff".to_string(),
+                text_color: "#ffffff".to_string(),
+                shape: "rectangle".to_string(),
+                corner_radius_percent: 0.0,
+                frame_thickness: 1.0,
+                show_frame: true,
+                show_shadow: false,
+                border: None,
+            },
+            layout: NodeLayout {
+                layout_type: "map".to_string(),
+                direction: "auto".to_string(),
+                spacing: 0.0,
+            },
+            folded: false,
+            notes: String::new(),
+            color_schema: None,
+            channel: 0,
+            trigger_bindings: Vec::new(),
+            inline_mutations: Vec::new(),
+            inline_macros: vec![serde_json::json!({
+                "id": "0.tag-as-inbox",
+                "steps": [{"kind": "Action", "action": "Undo"}]
+            })],
+            min_zoom_to_render: None,
+            max_zoom_to_render: None,
+        };
+        let mut nodes = HashMap::new();
+        nodes.insert("0".to_string(), node);
+        let map = MindMap {
+            version: "1.0".to_string(),
+            name: "inline-rt".to_string(),
+            canvas: Canvas {
+                background_color: "#000000".to_string(),
+                default_border: None,
+                default_connection: None,
+                theme_variables: HashMap::new(),
+                theme_variants: HashMap::new(),
+            },
+            palettes: HashMap::new(),
+            nodes,
+            edges: Vec::new(),
+            custom_mutations: Vec::new(),
+            macros: Vec::new(),
+        };
+
+        let tmp = std::env::temp_dir().join("mandala_inline_macros_rt.mindmap.json");
+        save_to_file(&tmp, &map).expect("save failed");
+        let reloaded = load_from_file(&tmp).expect("reload failed");
+
+        let n = reloaded.nodes.get("0").expect("node");
+        assert_eq!(n.inline_macros.len(), 1);
+        assert_eq!(n.inline_macros[0], map.nodes.get("0").unwrap().inline_macros[0]);
+
+        // Empty-case absence: a node with no inline_macros must
+        // not have the key on disk (skip_serializing_if).
+        let raw = std::fs::read_to_string(&tmp).expect("read raw");
+        // The serialised node has `"inline_macros":` exactly once
+        // (the populated one). A second occurrence would mean
+        // empty Vecs were serialised. Today the map has exactly
+        // one node, so 1 match is correct; if we had a second
+        // node with no inline_macros it should be absent.
+        assert_eq!(
+            raw.matches("\"inline_macros\"").count(),
+            1,
+            "non-empty inline_macros must be serialised; empty must not"
+        );
+
+        let _ = std::fs::remove_file(&tmp);
+    }
+
     #[test]
     fn test_is_hidden_by_fold() {
         let path = test_map_path();

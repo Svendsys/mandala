@@ -52,10 +52,18 @@ pub enum Action {
     /// Save the currently-open mindmap document to its bound file path.
     SaveDocument,
     /// Copy the focused component's clipboard representation.
+    /// **WASM:** the underlying `clipboard::write_clipboard` is a
+    /// log-and-no-op stub today (async-clipboard integration
+    /// pending). The Action is classified `Compatible` because it
+    /// doesn't crash, but the user-visible behaviour is "nothing
+    /// happens." Tracked in `WASM_CONVERGENCE.md`.
     Copy,
     /// Paste the system clipboard's text content into the focused component.
+    /// **WASM:** same stub posture as `Copy` — `read_clipboard`
+    /// returns `None`.
     Paste,
     /// Cut: copy then clear the focused component's clipboard representation.
+    /// **WASM:** same stub posture as `Copy`.
     Cut,
 
     // ── Console ──────────────────────────────────────────────────
@@ -164,6 +172,15 @@ pub enum Action {
     /// Click outside an open editor → commit the editor's buffer.
     /// Mouse handler dispatches when the release lands outside the
     /// edited target's AABB.
+    ///
+    /// **Scaffolded — no dispatch arm yet.** The variant exists so
+    /// `KeybindConfig` and macros can refer to it stably, but
+    /// `dispatch.rs` does not currently match on it. Pressing a
+    /// key bound to `CommitOrCloseEditor` falls through the
+    /// dispatcher's catch-all (silent no-op + debug log). Wiring
+    /// the body — folding the existing inline click-outside-commit
+    /// paths in `event_mouse_click.rs:425-563` into a dispatch arm
+    /// — is tracked as a follow-up in `TODO.md`.
     CommitOrCloseEditor,
 
     // ── Navigation / camera (Document context) ──────────────────
@@ -350,7 +367,7 @@ impl Action {
     /// exhaustive on `Action`. Combined with `#[non_exhaustive]`,
     /// adding a new variant forces a developer to classify it
     /// here — the compile error is the structural reminder. When
-    /// classifying, the rule of thumb is:
+    /// classifying, the rule is:
     ///
     /// - Reads/writes only `MindMapDocument`, `Renderer`, or
     ///   `text_edit_state` → [`WasmCompatibility::Compatible`]
@@ -358,21 +375,38 @@ impl Action {
     /// - Touches `console_state`, `color_picker_state`,
     ///   `label_edit_state`, `portal_text_edit_state`, `app_mode`,
     ///   `drag_state`, or filesystem → [`WasmCompatibility::NativeOnly`].
-    /// - Mixed-branch Actions (e.g. `DoubleClickActivate` whose
-    ///   `EdgeLabel` arm needs `label_edit_state`) classify as
-    ///   `Compatible` only when the WASM-reachable branches are
-    ///   the only ones reachable in practice. Document the
-    ///   reasoning in a comment near the variant in the match.
+    /// - Mixed-branch Actions (where the dispatch arm reads /
+    ///   writes different state per branch) classify as
+    ///   `Compatible` ONLY when EVERY branch is Compatible. If
+    ///   ANY branch reads or writes NativeOnly state — even a
+    ///   branch unreachable from current callers — the variant
+    ///   is `NativeOnly`. Future callers may reach previously-
+    ///   unreachable branches; the classification is a
+    ///   forward-compat contract, not a current-callers
+    ///   snapshot.
+    ///
+    /// **`NativeOnly` does not preclude WASM-relevant side-effects.**
+    /// A handler may still special-case a `NativeOnly` variant
+    /// before the compatibility filter when the action has a
+    /// meaningful WASM-side effect even without the native
+    /// state — see `run_wasm.rs`'s `CancelMode` short-circuit,
+    /// which clears `last_click` (relevant on both targets) even
+    /// though the variant is `NativeOnly` because it primarily
+    /// touches `app_mode`.
     pub fn wasm_compatibility(&self) -> WasmCompatibility {
         match self {
             // ── Document-only — works on both targets ─────────
+            // Copy/Cut/Paste are Compatible because the
+            // `crate::application::clipboard` module has cfg-gated
+            // WASM stubs that log+no-op rather than panic. They
+            // function as silent no-ops on WASM until the async
+            // web-clipboard integration lands; `clipboard.rs`
+            // documents the stub behaviour.
             Action::Undo
             | Action::DeleteSelection
             | Action::OrphanSelection
             | Action::CreateOrphanNode
             | Action::CreateOrphanNodeAndEdit
-            | Action::EditSelection
-            | Action::EditSelectionClean
             | Action::Copy
             | Action::Cut
             | Action::Paste
@@ -415,20 +449,40 @@ impl Action {
             | Action::TextEditDeleteWordBack
             | Action::TextEditDeleteWordForward => WasmCompatibility::Compatible,
 
-            // ── Mouse-gesture Actions — DoubleClickActivate's
-            //    Node / PortalMarker / Empty branches all touch
-            //    state WASM has; the EdgeLabel branch reaches
-            //    `label_edit_state` (NativeOnly) but in practice
-            //    edge labels are also rendered by the same path
-            //    on WASM via the existing `compute_click_hit`.
-            //    `CommitOrCloseEditor` is similar shape. ────────
-            Action::DoubleClickActivate
-            | Action::CommitOrCloseEditor => WasmCompatibility::Compatible,
-
             // ── Native-only: AppMode (Reparent / Connect) ────
             Action::EnterReparentMode
             | Action::EnterConnectMode
             | Action::CancelMode => WasmCompatibility::NativeOnly,
+
+            // ── Mixed-branch Actions — NativeOnly per the
+            //    "ANY NativeOnly branch ⇒ NativeOnly" rule. ──
+            //
+            // `EditSelection` / `EditSelectionClean` route through
+            // `dispatch.rs:222-260` based on selection state:
+            //   - `Single` → `open_text_edit` (Compatible)
+            //   - `PortalLabel` / `PortalText` → `open_portal_text_edit`
+            //     (touches `portal_text_edit_state`, NativeOnly)
+            //   - `EdgeLabel` → `open_label_edit` (touches
+            //     `label_edit_state`, NativeOnly)
+            // Any user with a portal or edge-label selection
+            // reaches the NativeOnly branches — not a future-only
+            // concern. Classification flips when WASM gains the
+            // inline portal-text + label editors.
+            //
+            // `DoubleClickActivate` (`dispatch.rs:319-432`) has
+            // the same shape: Node / PortalMarker branches are
+            // Compatible, but the EdgeLabel branch calls
+            // `open_label_edit` (NativeOnly).
+            //
+            // `CommitOrCloseEditor` is Compatible-by-arm-body
+            // (the variant has no dispatch arm yet — orphan,
+            // see TODO.md). Classified `NativeOnly` defensively
+            // until its arm lands; flipping is safe once the arm
+            // body is verified Compatible.
+            Action::DoubleClickActivate
+            | Action::EditSelection
+            | Action::EditSelectionClean
+            | Action::CommitOrCloseEditor => WasmCompatibility::NativeOnly,
 
             // ── Native-only: console modal ────────────────────
             Action::OpenConsole

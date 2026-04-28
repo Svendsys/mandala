@@ -77,9 +77,19 @@ pub struct MindNode {
     /// application crate.
     ///
     /// Privilege model: Inline-tier macros — same as Map-tier —
-    /// cannot run `ConsoleLine` or destructive Actions. The
-    /// privilege gate is enforced at dispatch time in the
-    /// application's `dispatch_macro`. See `format/macros.md`.
+    /// cannot run `ConsoleLine` or destructive `Action` variants
+    /// (`SaveDocument`, `DeleteSelection`, `Cut`, `Paste`, `Copy`,
+    /// `OrphanSelection`, `CreateOrphanNode`,
+    /// `CreateOrphanNodeAndEdit`, `DoubleClickActivate`,
+    /// `EditSelection`, `EditSelectionClean`, `NewDocument`).
+    /// The privilege gate is enforced at dispatch time in the
+    /// application's `dispatch_macro`; see `format/macros.md`
+    /// for the full threat model.
+    ///
+    /// Cross-node id collisions inside the Inline tier are
+    /// non-deterministic — namespace your ids
+    /// (e.g. `<node-id>.action`) to avoid them. The loader emits
+    /// a `warn!` when a collision is detected at load time.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inline_macros: Vec<serde_json::Value>,
     /// Lower bound on `camera.zoom` at which this node (and its

@@ -344,6 +344,162 @@ fn test_wasm_compatibility_modal_actions_are_native_only() {
     }
 }
 
+/// Mixed-branch Actions (whose dispatch arm reads/writes
+/// different state per branch) classify as NativeOnly per the
+/// "ANY NativeOnly branch ⇒ NativeOnly" rule. Locks the
+/// classification so a future contributor can't silently
+/// downgrade the rule to "the WASM-reachable branch is
+/// reachable in practice" — that's the looser semantic the
+/// reviewer flagged as a forward-compat trap.
+#[test]
+fn test_wasm_compatibility_mixed_branch_actions_are_native_only() {
+    use crate::application::keybinds::WasmCompatibility::NativeOnly;
+    for a in [
+        // EdgeLabel branch reaches `open_label_edit` (NativeOnly state).
+        Action::DoubleClickActivate,
+        // EdgeLabel + Portal* selection branches reach NativeOnly editors.
+        Action::EditSelection,
+        Action::EditSelectionClean,
+        // No dispatch arm yet (orphan variant — see TODO.md);
+        // classified defensively.
+        Action::CommitOrCloseEditor,
+    ] {
+        assert_eq!(
+            a.wasm_compatibility(),
+            NativeOnly,
+            "{:?} should be NativeOnly under the 'ANY NativeOnly branch' rule",
+            a
+        );
+    }
+}
+
+/// Exhaustiveness pin: every variant returns one of the two
+/// `WasmCompatibility` values. The list is hand-maintained, so
+/// adding a new `Action` variant requires extending it (a PR-
+/// review forcing function — the compiler doesn't enforce list
+/// completeness, but the test name + comment make the
+/// requirement loud). Catches a future broad-default
+/// `_ => Compatible` regression that would lose the match's
+/// arm-per-variant structural property.
+#[test]
+fn test_wasm_compatibility_classifies_every_variant_explicitly() {
+    use crate::application::keybinds::WasmCompatibility;
+    let all_variants: &[Action] = &[
+        // Document-level
+        Action::Undo,
+        Action::EnterReparentMode,
+        Action::EnterConnectMode,
+        Action::DeleteSelection,
+        Action::CancelMode,
+        Action::CreateOrphanNode,
+        Action::OrphanSelection,
+        Action::EditSelection,
+        Action::EditSelectionClean,
+        Action::OpenConsole,
+        Action::SaveDocument,
+        Action::Copy,
+        Action::Paste,
+        Action::Cut,
+        // Console
+        Action::ConsoleClose,
+        Action::ConsoleSubmit,
+        Action::ConsoleTabComplete,
+        Action::ConsoleHistoryUp,
+        Action::ConsoleHistoryDown,
+        Action::ConsoleCursorLeft,
+        Action::ConsoleCursorRight,
+        Action::ConsoleCursorHome,
+        Action::ConsoleCursorEnd,
+        Action::ConsoleDeleteBack,
+        Action::ConsoleDeleteForward,
+        Action::ConsoleInsertSpace,
+        Action::ConsoleClearLine,
+        Action::ConsoleJumpStart,
+        Action::ConsoleJumpEnd,
+        Action::ConsoleKillToStart,
+        Action::ConsoleKillWord,
+        Action::ConsoleScrollUp,
+        Action::ConsoleScrollDown,
+        Action::ConsoleScrollPageUp,
+        Action::ConsoleScrollPageDown,
+        Action::ConsoleScrollEnd,
+        Action::ConsoleScrollHome,
+        // Picker
+        Action::PickerCancel,
+        Action::PickerCommit,
+        Action::PickerNudgeHueDown,
+        Action::PickerNudgeHueUp,
+        Action::PickerNudgeSatDown,
+        Action::PickerNudgeSatUp,
+        Action::PickerNudgeValDown,
+        Action::PickerNudgeValUp,
+        // Label / text-edit cancel/commit
+        Action::LabelEditCancel,
+        Action::LabelEditCommit,
+        Action::TextEditCancel,
+        // Mouse gestures
+        Action::DoubleClickActivate,
+        Action::CreateOrphanNodeAndEdit,
+        Action::PanCanvas,
+        Action::CommitOrCloseEditor,
+        // Navigation / camera
+        Action::ZoomIn,
+        Action::ZoomOut,
+        Action::ZoomReset,
+        Action::ZoomFit,
+        Action::PanCameraNorth,
+        Action::PanCameraSouth,
+        Action::PanCameraEast,
+        Action::PanCameraWest,
+        Action::CenterOnSelection,
+        Action::JumpToRoot,
+        // Selection
+        Action::SelectAll,
+        Action::DeselectAll,
+        Action::InvertSelection,
+        Action::SelectParent,
+        Action::SelectChild,
+        Action::SelectNextSibling,
+        Action::SelectPrevSibling,
+        // TextEdit cursor primitives
+        Action::TextEditCursorLeft,
+        Action::TextEditCursorRight,
+        Action::TextEditCursorUp,
+        Action::TextEditCursorDown,
+        Action::TextEditCursorHome,
+        Action::TextEditCursorEnd,
+        Action::TextEditWordLeft,
+        Action::TextEditWordRight,
+        Action::TextEditDeleteBack,
+        Action::TextEditDeleteForward,
+        Action::TextEditDeleteWordBack,
+        Action::TextEditDeleteWordForward,
+        Action::TextEditCommit,
+        // LabelEdit cursor primitives
+        Action::LabelEditCursorLeft,
+        Action::LabelEditCursorRight,
+        Action::LabelEditCursorHome,
+        Action::LabelEditCursorEnd,
+        Action::LabelEditDeleteBack,
+        Action::LabelEditDeleteForward,
+        // Console verbs
+        Action::OpenColorPicker,
+        Action::CloseColorPicker,
+        Action::LabelEditOnSelection,
+        Action::ToggleFps,
+        Action::ToggleFpsDebug,
+        Action::NewDocument,
+    ];
+    for a in all_variants {
+        let c = a.wasm_compatibility();
+        assert!(
+            matches!(c, WasmCompatibility::Compatible | WasmCompatibility::NativeOnly),
+            "{:?} returned an unexpected classification {:?}",
+            a, c
+        );
+    }
+}
+
 #[test]
 fn test_wasm_compatibility_text_edit_primitives_are_compatible() {
     // text_edit_state exists on both targets, so the cursor /

@@ -34,26 +34,34 @@ use crate::application::keybinds::Action;
 /// mindmap from doing arbitrary file I/O, only [`MacroSource::User`]
 /// macros are allowed to contain `ConsoleLine` steps. The
 /// dispatcher rejects `ConsoleLine` from `App`, `Map`, and
-/// `Inline` tiers with a `warn!`. The gate is **active**: App
-/// and Map tiers load today; Inline is the only deferred one.
+/// `Inline` tiers with a `warn!`. All four tiers load today on
+/// native; the gate is fully active.
 ///
-/// Document-mutating step kinds (`Action`, `CustomMutation`) have
-/// no privilege constraint — they can only do what their backing
-/// machinery already permits.
+/// Document-mutating step kinds (`Action`, `CustomMutation`) also
+/// gate via [`MacroSource::allows_action`] — see the denylist
+/// there for which Actions are blocked from non-User tiers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum MacroSource {
-    /// Shipped with the binary (placeholder; no app-bundle loader
-    /// today).
+    /// Shipped with the binary via
+    /// `assets/macros/application.json`. Loaded by
+    /// [`crate::application::macros::loader::load_app_macros`] at
+    /// startup.
     App,
-    /// Loaded from the user's `macros.json`. Same trust posture as
-    /// `keybinds.json` — the user owns the file.
+    /// Loaded from the user's `macros.json`
+    /// (`$XDG_CONFIG_HOME/mandala/macros.json` on native). Same
+    /// trust posture as `keybinds.json` — the user owns the file.
     User,
-    /// Declared in the currently-loaded map's macros array
-    /// (placeholder; no inline-on-map loader today).
+    /// Declared in `MindMap.macros` on the currently-loaded
+    /// document. Reloaded on every `open` / `new` console verb via
+    /// [`crate::application::macros::loader::rebuild_map_macros`].
     Map,
-    /// Declared on a specific node's inline-macros array
-    /// (placeholder).
+    /// Declared on individual nodes via `MindNode.inline_macros`.
+    /// Walked across every node and aggregated into the registry
+    /// by
+    /// [`crate::application::macros::loader::rebuild_inline_macros`].
+    /// Highest precedence — overrides Map / User / App on id
+    /// collision.
     Inline,
 }
 
@@ -75,13 +83,10 @@ impl MacroSource {
     /// to a hotkey and overwrite the user's file the next time
     /// they press the bound key).
     ///
-    /// The gate is now **active**: App tier loads from
-    /// `assets/macros/application.json` (today empty), Map tier
-    /// loads from `MindMap.macros` on the open document. Inline
-    /// tier is the only deferred one. Adding a new privileged
-    /// `Action` variant requires updating the denylist below; the
-    /// `#[non_exhaustive]` marker on `Action` is the structural
-    /// reminder.
+    /// All four tiers load today on native; the gate is fully
+    /// active. Adding a new privileged `Action` variant requires
+    /// updating the denylist below; the `#[non_exhaustive]` marker
+    /// on `Action` is the structural reminder.
     pub fn allows_action(self, action: Action) -> bool {
         if matches!(self, MacroSource::User) {
             return true;
@@ -99,6 +104,15 @@ impl MacroSource {
         // branch is unreachable from a macro — but this is a
         // forward-compat block for any future contributor who
         // synthesises a hit for macro-triggered double-click.
+        //
+        // `EditSelection` / `EditSelectionClean` are blocked
+        // because their `EdgeLabel` / `PortalText` / `PortalLabel`
+        // selection branches open inline editors that mutate the
+        // model on commit. A hostile macro firing
+        // `EditSelectionClean` while an edge label is selected
+        // would erase the label's content via the empty buffer
+        // open. The Compatible Node-only branch alone isn't
+        // worth the gate exception.
         let blocked = matches!(
             action,
             Action::SaveDocument
@@ -107,6 +121,8 @@ impl MacroSource {
                 | Action::CreateOrphanNode
                 | Action::CreateOrphanNodeAndEdit
                 | Action::DoubleClickActivate
+                | Action::EditSelection
+                | Action::EditSelectionClean
                 | Action::Copy
                 | Action::Cut
                 | Action::Paste
@@ -343,6 +359,13 @@ mod tests {
                 Action::OrphanSelection,
                 Action::CreateOrphanNode,
                 Action::CreateOrphanNodeAndEdit,
+                // Mixed-branch destructive Actions — added to the
+                // denylist after the WASM reviewer flagged that
+                // their dispatch arms reach editor modals that
+                // mutate model state on commit.
+                Action::DoubleClickActivate,
+                Action::EditSelection,
+                Action::EditSelectionClean,
                 Action::NewDocument,
             ] {
                 assert!(
@@ -448,6 +471,32 @@ mod tests {
         let step = MacroStep::ConsoleLine { line: "save".into() };
         let json = serde_json::to_string(&step).unwrap();
         assert_eq!(json, r#"{"kind":"ConsoleLine","line":"save"}"#);
+    }
+
+    /// Inline-tier macros override every lower tier on id
+    /// collision. Locks the precedence contract for the highest-
+    /// precedence tier — the property load-bearing for the
+    /// privilege gate, since Inline is the most-likely-untrusted
+    /// source (per-node in a shared mindmap).
+    #[test]
+    fn macro_registry_inline_overrides_user_and_map_by_id() {
+        let mut reg = MacroRegistry::new();
+        let mk = |name: &str| Macro {
+            id: "shared".into(),
+            name: name.into(),
+            description: "".into(),
+            steps: vec![],
+        };
+        // Order matches run_native_init::build: App → User →
+        // Map → Inline.
+        reg.insert(mk("app"), MacroSource::App);
+        reg.insert(mk("user"), MacroSource::User);
+        reg.insert(mk("map"), MacroSource::Map);
+        let prev = reg.insert(mk("inline"), MacroSource::Inline);
+        assert!(prev.is_some(), "Map entry should be displaced");
+        let (m, src) = reg.get_with_source("shared").unwrap();
+        assert_eq!(m.name, "inline");
+        assert_eq!(src, MacroSource::Inline);
     }
 
     /// Higher-tier macros override lower-tier ones with the same

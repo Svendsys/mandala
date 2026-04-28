@@ -4,14 +4,18 @@
 //!
 //! The format reference is in `format/macros.md`. Each tier has a
 //! pinned `MacroSource`; the registry picks the highest-tier macro
-//! by id when collisions happen. Today only App and User tiers are
-//! wired — Map / Inline (`MindMap::macros` / `MindNode::inline_macros`)
-//! are deferred per `TODO.md`.
+//! by id when collisions happen. All four tiers ship on native:
+//! App (`assets/macros/application.json`), User
+//! (`~/.config/mandala/macros.json`), Map (`MindMap::macros`),
+//! Inline (`MindNode::inline_macros`). On WASM only the parsing
+//! helpers compile today — see `WASM_CONVERGENCE.md` Track B for
+//! the porting path.
 //!
 //! Resilience: app-bundle parses with `expect()` (a malformed bundle
-//! is a startup-time bug, not a user input error). User-tier
-//! parsing failures log `warn!` and fall through to an empty slice
-//! so the application boots even if the user file is broken.
+//! is a startup-time bug, not a user input error). Other tiers'
+//! parse failures log `warn!` and fall through to an empty slice
+//! / skipped entry so the application boots even if user input is
+//! broken.
 
 #![cfg(not(target_arch = "wasm32"))]
 
@@ -123,10 +127,31 @@ pub fn parse_inline_macros(
     doc: &crate::application::document::MindMapDocument,
 ) -> Vec<super::Macro> {
     let mut out = Vec::new();
+    // Cross-node id collisions inside the Inline tier are
+    // non-deterministic — `MindMap.nodes` is a HashMap, so the
+    // walk order changes per process start. The "winner" for an
+    // id duplicated across nodes depends on hash randomization.
+    // Warn at parse time so authors notice and namespace their
+    // ids (e.g. `<node-id>.action`).
+    let mut seen: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
     for (node_id, node) in &doc.mindmap.nodes {
         for (idx, v) in node.inline_macros.iter().enumerate() {
             match serde_json::from_value::<super::Macro>(v.clone()) {
-                Ok(m) => out.push(m),
+                Ok(m) => {
+                    if let Some(prev_node) = seen.insert(m.id.clone(), node_id.clone()) {
+                        if prev_node != *node_id {
+                            log::warn!(
+                                "macros: Inline-tier id '{}' duplicated across nodes \
+                                 '{}' and '{}'; HashMap iteration order is \
+                                 non-deterministic so the winner varies per process \
+                                 start. Namespace your ids (e.g. '<node-id>.{}').",
+                                m.id, prev_node, node_id, m.id
+                            );
+                        }
+                    }
+                    out.push(m);
+                }
                 Err(e) => {
                     let id_hint = v
                         .get("id")
@@ -161,6 +186,24 @@ pub fn rebuild_inline_macros(
         );
     }
     registry.extend_with_tier(inline_macros, super::MacroSource::Inline);
+}
+
+/// Refresh both document-derived tiers (Map and Inline) in the
+/// correct order. Map is rebuilt first so Inline's higher
+/// precedence wins on id collision via the registry's
+/// last-writer-wins insert semantics.
+///
+/// Single entry point for callers that load / replace a
+/// document so the two-call ordering can't drift between sites.
+/// Used at startup in `run_native_init::build` and at every
+/// `open` / `new` console verb in
+/// `console_input::exec::execute_console_line`.
+pub fn rebuild_document_macros(
+    registry: &mut super::MacroRegistry,
+    doc: &crate::application::document::MindMapDocument,
+) {
+    rebuild_map_macros(registry, doc);
+    rebuild_inline_macros(registry, doc);
 }
 
 /// Load the user-layer macros. Tier: `MacroSource::User`, assigned

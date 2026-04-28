@@ -19,16 +19,20 @@ Four loader tiers contribute to the active registry, in ascending
 precedence (later writers override earlier ones with the same `id`):
 
 <!-- SOURCE-OF-TRUTH: the tier order below is also encoded in
-     three other places that must move together when the order or
+     four other places that must move together when the order or
      set of tiers changes:
        1. src/application/macros/mod.rs — MacroSource enum variant
           order.
        2. src/application/app/run_native_init.rs::build — the load
-          order of the calls into MacroRegistry.
+          order of the App + User tier calls AND the
+          rebuild_map_macros + rebuild_inline_macros calls.
        3. src/application/app/console_input/exec.rs — the
-          rebuild_map_macros invocation in the document-replace
-          path.
-     Update all four in the same commit. -->
+          rebuild_map_macros + rebuild_inline_macros invocations
+          in the document-replace path. Inline rebuilds AFTER Map
+          so Inline's higher precedence wins on id collision.
+       4. src/application/macros/loader.rs — the parse_*_macros /
+          rebuild_*_macros helpers themselves.
+     Update all five in the same commit. -->
 
 1. **Application bundle** — `assets/macros/application.json`,
    compiled into the binary via `include_str!`. Lowest precedence so
@@ -62,6 +66,16 @@ Two entries with the same `id` in the same tier (e.g. a Map-tier
 `macros` array containing two entries both `id: "x"`) follow
 last-writer-wins — the second entry overwrites the first.
 Authoring tip: keep ids unique within a single source.
+
+**Inline tier is special.** Inline macros are scoped per-node,
+but the registry is flat (id-keyed across all nodes). So
+"within-tier" for Inline means "across every node in the
+document." And because `MindMap.nodes` is a `HashMap`, the
+walk order is non-deterministic — the "winner" for an id
+duplicated across nodes varies per process start. The loader
+emits a `warn!` on cross-node Inline collisions, but the only
+robust fix is namespacing: prefix each inline-macro id with the
+owning node's id (e.g. `"3.2.1.save-and-quit"`).
 
 Cross-tier: a higher-tier entry **displaces** a lower-tier entry
 with the same id at registry-insert time — the lower-tier entry
@@ -100,8 +114,8 @@ action, no document loaded) keep the existing best-effort
 
 ### Threat model
 
-Once Map and Inline tiers ship, **opening any `.mindmap.json` from
-an untrusted source becomes a privilege event**. Treat third-party
+Map and Inline tiers ship today; **opening any `.mindmap.json` from
+an untrusted source IS a privilege event**. Treat third-party
 mindmap files as code, not data:
 
 - A hostile mindmap can bind any non-destructive Action to a hotkey
