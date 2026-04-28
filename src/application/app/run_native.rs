@@ -250,13 +250,12 @@ impl InitState {
                         }
                     }
                 } else {
-                    // Wheel zoom routed through dispatch_action so users
-                    // can rebind WheelUp / WheelDown to anything (or
-                    // unbind them entirely). Default keybinds map both
-                    // to ZoomIn / ZoomOut respectively. Falls back to
-                    // the legacy hardcoded factor when no Action is
-                    // bound, preserving today's behaviour for users
-                    // who haven't touched their config.
+                    // Wheel zoom is routed through `dispatch_action` so
+                    // users can rebind `WheelUp` / `WheelDown` to any
+                    // Action (or unbind them entirely). Defaults bind
+                    // both to `ZoomIn` / `ZoomOut`. If the user
+                    // explicitly clears the bindings, wheel events are
+                    // silently ignored.
                     let gesture_name = if scroll_y > 0.0 {
                         crate::application::keybinds::gesture_key_name(
                             crate::application::keybinds::MouseGesture::WheelUp,
@@ -266,8 +265,14 @@ impl InitState {
                             crate::application::keybinds::MouseGesture::WheelDown,
                         )
                     };
-                    let action = self.keybinds.action_for_context(
-                        crate::application::keybinds::InputContext::Document,
+                    // `action_for_gesture` falls back to the unmodified
+                    // binding when no exact-modifier match exists, so
+                    // `Ctrl+Wheel` keeps zooming even though only
+                    // `WheelUp` / `WheelDown` are bound in defaults —
+                    // pre-branch behaviour was modifier-agnostic and
+                    // we preserve it here without forcing every user
+                    // to enumerate modifier permutations.
+                    let action = self.keybinds.action_for_gesture(
                         gesture_name,
                         self.modifiers.control_key(),
                         self.modifiers.shift_key(),
@@ -279,9 +284,6 @@ impl InitState {
                             a, &mut bundle, None,
                         );
                     }
-                    // No fallback: if the user unbinds WheelUp/WheelDown
-                    // explicitly, wheel events are silently ignored (same
-                    // contract as DoubleClick).
                 }
             }
             Event::WindowEvent {

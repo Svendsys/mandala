@@ -113,8 +113,11 @@ pub(super) fn handle_mouse_input(
                 let name = crate::application::keybinds::gesture_key_name(
                     crate::application::keybinds::MouseGesture::MiddleClick,
                 );
-                let action = keybinds.action_for_context(
-                    crate::application::keybinds::InputContext::Document,
+                // Modifier-fallback: Ctrl+MiddleClick matches the bare
+                // MiddleClick binding when no exact-modifier match
+                // exists. Preserves pre-branch modifier-agnostic
+                // behaviour for mouse gestures.
+                let action = keybinds.action_for_gesture(
                     name,
                     modifiers.control_key(),
                     modifiers.shift_key(),
@@ -268,8 +271,10 @@ pub(super) fn handle_mouse_input(
                     let dblclick_name = crate::application::keybinds::gesture_key_name(
                         crate::application::keybinds::MouseGesture::DoubleClick,
                     );
-                    let action = keybinds.action_for_context(
-                        crate::application::keybinds::InputContext::Document,
+                    // Modifier-fallback so Shift+DoubleClick still
+                    // activates the bare DoubleClick binding when no
+                    // explicit Shift+DoubleClick binding exists.
+                    let action = keybinds.action_for_gesture(
                         dblclick_name,
                         modifiers.control_key(),
                         modifiers.shift_key(),

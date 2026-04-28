@@ -2128,12 +2128,31 @@ Some(&DispatchHit { click_hit, canvas_pos }))`.
    §8 trajectory).
 3. `keybinds.custom_mutation_for(...)` — per-node custom mutations.
 
-**`LeftClick` / `LeftDrag` reservation.** Both names parse but
-behave specially: a single left-press is consumed by the selection
-state machine *before* dispatch, so binding `LeftClick` fires *after*
-selection updates. `LeftDrag` is the continuous "press + movement
-past threshold on empty canvas" gesture (default `PanCanvas`); the
-arm sets `DragState::Panning` for the press duration.
+**Dispatch status per gesture.** `DoubleClick`, `MiddleClick`,
+`LeftDrag`, `WheelUp`, `WheelDown` are dispatched through
+`dispatch_action` from their respective handlers. `LeftClick` and
+`RightClick` are reserved tokens — the parser accepts them so user
+configs don't fail validation, but no handler currently looks up
+an Action for them. A single left-press is already consumed by the
+selection state machine; wiring `LeftClick` would need a clear
+post-selection dispatch point. `RightClick` has no non-color-picker
+dispatch site at all.
+
+**`LeftDrag`** is the continuous "press + movement past threshold
+on empty canvas" gesture (default `PanCanvas`). The arm sets
+`DragState::Panning` for the press duration; the per-frame pan
+delta stays inline in `event_cursor_moved.rs` because per-cursor-
+move state is legitimately not a discrete-action concern.
+
+**Modifier-fallback for mouse gestures.** Mouse handlers resolve
+through `ResolvedKeybinds::action_for_gesture`, which tries the
+exact `(key, ctrl, shift, alt)` binding first and falls back to
+the unmodified `(key, false, false, false)` binding if no exact
+match exists. Modifiers on mouse gestures are typically decorations,
+not distinct bindings — pre-branch `Ctrl+Wheel` zoomed exactly the
+same as a bare `Wheel`, and the fallback preserves that. Users who
+*do* want `Shift+DoubleClick` to mean something different just
+bind it explicitly.
 
 **Default-off `CreateOrphanNodeAndEdit`.** Empty-canvas double-click
 ships unbound. Users opt back in via:

@@ -349,9 +349,15 @@ pub(super) fn handle_cursor_moved(
                     // doesn't fire. Default `KeybindConfig::default()`
                     // ships with `pan_canvas: ["LeftDrag", "MiddleClick"]`
                     // so out-of-the-box behaviour is unchanged.
+                    // `action_for_gesture` falls back to unmodified
+                    // when no exact-modifier binding exists, so
+                    // Ctrl+LeftDrag-on-empty pans like a bare
+                    // LeftDrag-on-empty did pre-branch. Only
+                    // `PanCanvas` is dispatched via this shortcut;
+                    // future Actions bound to `LeftDrag` won't fire
+                    // here without explicit handling.
                     let leftdrag_pans = keybinds
-                        .action_for_context(
-                            crate::application::keybinds::InputContext::Document,
+                        .action_for_gesture(
                             crate::application::keybinds::gesture_key_name(
                                 crate::application::keybinds::MouseGesture::LeftDrag,
                             ),

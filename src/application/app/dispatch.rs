@@ -581,6 +581,42 @@ pub(in crate::application::app) fn dispatch_action(
     }
 }
 
+/// Pure inner helper for the keybind-triggered custom-mutation path.
+/// Runs the same animation-aware apply + always-`apply_document_actions`
+/// sequence the click-trigger path at `click.rs:35-64` uses, but
+/// without touching the renderer. Returns `true` when the mutation
+/// was applied.
+///
+/// Factored out so unit tests can lock the Phase-7 parity contract
+/// (no `apply_document_actions` skipping, no missed animation
+/// envelope) without needing a wgpu renderer per `TEST_CONVENTIONS.md
+/// §T8`. The caller is responsible for the post-apply scene rebuild.
+///
+/// `pub(crate)` because the parity tests in
+/// `crate::application::document::tests_mutations` import it.
+pub(crate) fn apply_keybind_custom_mutation(
+    doc: &mut crate::application::document::MindMapDocument,
+    mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
+    scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
+    cm: &baumhard::mindmap::custom_mutation::CustomMutation,
+    node_id: &str,
+    now_ms: u64,
+) -> bool {
+    if cm.timing.as_ref().is_some_and(|t| t.duration_ms > 0) {
+        doc.start_animation(cm, node_id, now_ms);
+    } else if let Some(tree) = mindmap_tree.as_mut() {
+        doc.apply_custom_mutation(cm, node_id, Some(tree));
+        scene_cache.clear();
+    } else {
+        // No tree available and no animation requested — nothing to apply.
+        return false;
+    }
+    // Phase-7 parity: always invoke document actions, regardless of
+    // whether the mutation animated or applied directly.
+    doc.apply_document_actions(cm);
+    true
+}
+
 /// Resolve a custom-mutation key binding and apply it through the same
 /// path the click-trigger handler at `click.rs:35-64` uses: animation-
 /// aware (`start_animation` when `timing.duration_ms > 0`), and always
@@ -591,7 +627,7 @@ pub(in crate::application::app) fn dispatch_action(
 /// `event_keyboard.rs:528-553` skipped both `apply_document_actions`
 /// and the timing envelope, so document-action and animated mutations
 /// silently mis-fired when triggered from a key. This helper unifies
-/// the two paths.
+/// the two paths through `apply_keybind_custom_mutation`.
 pub(in crate::application::app) fn dispatch_custom_mutation_for_key(
     ctx: &mut InputHandlerContext<'_>,
     key_name: &str,
@@ -616,21 +652,24 @@ pub(in crate::application::app) fn dispatch_custom_mutation_for_key(
         return false;
     };
     let now = super::now_ms() as u64;
-    if cm.timing.as_ref().is_some_and(|t| t.duration_ms > 0) {
-        doc.start_animation(&cm, &nid, now);
-    } else if let Some(tree) = ctx.mindmap_tree.as_mut() {
-        doc.apply_custom_mutation(&cm, &nid, Some(tree));
-        ctx.scene_cache.clear();
-    }
-    doc.apply_document_actions(&cm);
-    rebuild_all(
+    let applied = apply_keybind_custom_mutation(
         doc,
         ctx.mindmap_tree,
-        ctx.app_scene,
-        ctx.renderer,
         ctx.scene_cache,
+        &cm,
+        &nid,
+        now,
     );
-    true
+    if applied {
+        rebuild_all(
+            doc,
+            ctx.mindmap_tree,
+            ctx.app_scene,
+            ctx.renderer,
+            ctx.scene_cache,
+        );
+    }
+    applied
 }
 
 /// Inline helper for the empty-canvas orphan-and-edit gesture so

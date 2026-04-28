@@ -260,6 +260,126 @@ fn test_gesture_key_name_matches_parser_token() {
     }
 }
 
+// ─── Mouse-gesture default-binding regression guards ───────────
+// These tests pin the user-facing contract for mouse-gesture
+// defaults. A future contributor flipping a default array (or
+// re-introducing the empty-canvas double-click that the user
+// asked us to remove) fails one of these tests.
+
+#[test]
+fn test_double_click_activate_default_resolves_to_action() {
+    let r = KeybindConfig::default().resolve();
+    assert_eq!(
+        r.action_for_context(InputContext::Document, "doubleclick", false, false, false),
+        Some(Action::DoubleClickActivate)
+    );
+}
+
+#[test]
+fn test_create_orphan_node_and_edit_default_is_unbound() {
+    // The user's primary feature request: empty-canvas double-click
+    // does nothing by default. Implemented via an unbound default for
+    // CreateOrphanNodeAndEdit, gated by has_any_binding_for in
+    // dispatch::dispatch_action's DoubleClickActivate arm.
+    let r = KeybindConfig::default().resolve();
+    assert!(!r.has_any_binding_for(Action::CreateOrphanNodeAndEdit));
+}
+
+#[test]
+fn test_has_any_binding_for_returns_true_when_user_opts_in() {
+    let cfg = KeybindConfig {
+        create_orphan_node_and_edit: vec!["DoubleClick".into()],
+        ..KeybindConfig::default()
+    };
+    let r = cfg.resolve();
+    assert!(r.has_any_binding_for(Action::CreateOrphanNodeAndEdit));
+}
+
+#[test]
+fn test_pan_canvas_default_resolves_via_middle_click_and_left_drag() {
+    let r = KeybindConfig::default().resolve();
+    assert_eq!(
+        r.action_for_context(InputContext::Document, "middleclick", false, false, false),
+        Some(Action::PanCanvas)
+    );
+    assert_eq!(
+        r.action_for_context(InputContext::Document, "leftdrag", false, false, false),
+        Some(Action::PanCanvas)
+    );
+}
+
+#[test]
+fn test_zoom_in_default_resolves_to_wheelup() {
+    let r = KeybindConfig::default().resolve();
+    assert_eq!(
+        r.action_for_context(InputContext::Document, "wheelup", false, false, false),
+        Some(Action::ZoomIn)
+    );
+}
+
+#[test]
+fn test_zoom_out_default_resolves_to_wheeldown() {
+    let r = KeybindConfig::default().resolve();
+    assert_eq!(
+        r.action_for_context(InputContext::Document, "wheeldown", false, false, false),
+        Some(Action::ZoomOut)
+    );
+}
+
+#[test]
+fn test_action_for_gesture_falls_back_to_unmodified_binding() {
+    // Modifier-fallback: Ctrl+WheelUp resolves to ZoomIn even though
+    // only the bare WheelUp is bound by default. Exact-modifier
+    // override still wins when the user explicitly binds the
+    // modified form.
+    let r = KeybindConfig::default().resolve();
+    assert_eq!(
+        r.action_for_gesture("wheelup", true, false, false),
+        Some(Action::ZoomIn),
+        "Ctrl+WheelUp should fall back to bare WheelUp -> ZoomIn"
+    );
+    assert_eq!(
+        r.action_for_gesture("middleclick", true, true, true),
+        Some(Action::PanCanvas),
+        "Ctrl+Shift+Alt+MiddleClick should fall back"
+    );
+}
+
+#[test]
+fn test_action_for_gesture_exact_modifier_match_wins_over_fallback() {
+    // Clear default zoom_in (also bound to WheelUp) so the test
+    // exercises only the configured bindings.
+    let cfg = KeybindConfig {
+        zoom_in: vec![],
+        zoom_out: vec!["WheelUp".into()],            // bare WheelUp -> ZoomOut
+        zoom_reset: vec!["Ctrl+WheelUp".into()],     // Ctrl+WheelUp -> ZoomReset
+        ..KeybindConfig::default()
+    };
+    let r = cfg.resolve();
+    assert_eq!(
+        r.action_for_gesture("wheelup", true, false, false),
+        Some(Action::ZoomReset),
+        "exact Ctrl+WheelUp binding wins over the bare-WheelUp fallback"
+    );
+    assert_eq!(
+        r.action_for_gesture("wheelup", false, false, false),
+        Some(Action::ZoomOut),
+        "bare wheelup honours its bare binding"
+    );
+}
+
+#[test]
+fn test_action_for_gesture_returns_none_when_completely_unbound() {
+    let cfg = KeybindConfig {
+        zoom_in: vec![],
+        zoom_out: vec![],
+        ..KeybindConfig::default()
+    };
+    let r = cfg.resolve();
+    assert_eq!(r.action_for_gesture("wheelup", false, false, false), None);
+    assert_eq!(r.action_for_gesture("wheelup", true, false, false), None);
+}
+
 #[test]
 fn test_default_console_font_size_is_16() {
     let cfg = KeybindConfig::default();

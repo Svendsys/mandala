@@ -29,31 +29,44 @@ pub struct KeyBind {
 ///
 /// Each variant has a canonical binding-string form ([`gesture_key_name`])
 /// that mouse handlers feed through `KeyBind::matches` exactly the way
-/// keyboard names go through it. `LeftClick` and `LeftDrag` share the
-/// reservation caveat: a single left-press is consumed by the selection
-/// state machine *before* dispatch, so a binding on `LeftClick` fires
-/// *after* selection updates. `LeftDrag` is the continuous "press +
-/// movement past threshold on empty canvas" gesture used by `PanCanvas`;
-/// the dispatcher enters the bound mode on press and exits on release.
+/// keyboard names go through it.
+///
+/// **Dispatch status (current branch).** `DoubleClick`, `MiddleClick`,
+/// `LeftDrag`, `WheelUp`, `WheelDown` are dispatched through
+/// `dispatch_action` from their respective handlers (`event_mouse_click`,
+/// `event_cursor_moved`, `run_native` wheel branch). `LeftClick` and
+/// `RightClick` are **parsed but not yet dispatched** — they're
+/// reserved tokens so user keybind files don't fail validation, but
+/// no handler currently looks up an Action for them. Adding a
+/// `LeftClick` dispatch site is non-trivial because a single
+/// left-press is already consumed by the selection state machine;
+/// any future binding on `LeftClick` would need a clear post-
+/// selection point in the mouse handler. `RightClick` has no
+/// non-color-picker dispatch site at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MouseGesture {
-    /// Single left-button press. Selection runs first — bind for
-    /// post-selection effects only.
+    /// Single left-button press. **Reserved, not dispatched.** Parsed
+    /// so user configs can name it; no current handler looks it up.
     LeftClick,
     /// Left-button held down + cursor movement past the drag threshold,
     /// only when the press landed on empty canvas. Continuous: the bound
-    /// action's body runs for the duration of the press.
+    /// action's body runs for the duration of the press. Dispatched
+    /// from `event_cursor_moved` for `Action::PanCanvas` only.
     LeftDrag,
     /// Two left-button presses within the double-click time + distance
-    /// window with matching `ClickHit`.
+    /// window with matching `ClickHit`. Dispatched.
     DoubleClick,
-    /// Single middle-button press.
+    /// Single middle-button press. Dispatched.
     MiddleClick,
-    /// Single right-button press.
+    /// Single right-button press. **Reserved, not dispatched.** The
+    /// only handler that currently consumes a right-press is the
+    /// color picker (`event_mouse_click.rs` color-picker branch),
+    /// which doesn't go through the dispatch funnel.
     RightClick,
-    /// One mouse-wheel tick upward (zoom-in by convention).
+    /// One mouse-wheel tick upward (zoom-in by convention). Dispatched
+    /// when the console isn't open.
     WheelUp,
-    /// One mouse-wheel tick downward (zoom-out by convention).
+    /// One mouse-wheel tick downward (zoom-out by convention). Same.
     WheelDown,
 }
 

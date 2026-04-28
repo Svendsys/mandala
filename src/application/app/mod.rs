@@ -15,7 +15,7 @@ mod color_picker_flow;
 #[cfg(not(target_arch = "wasm32"))]
 mod console_input;
 #[cfg(not(target_arch = "wasm32"))]
-mod dispatch;
+pub(crate) mod dispatch;
 #[cfg(not(target_arch = "wasm32"))]
 mod drain_frame;
 #[cfg(not(target_arch = "wasm32"))]

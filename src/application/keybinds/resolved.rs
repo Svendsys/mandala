@@ -45,6 +45,40 @@ impl ResolvedKeybinds {
         }
     }
 
+    /// Resolve a mouse gesture to an action with modifier-fallback
+    /// semantics. Tries the exact `(key, ctrl, shift, alt)` binding
+    /// first; if no match, falls back to the unmodified `(key, false,
+    /// false, false)` binding.
+    ///
+    /// Mouse gestures use this instead of `action_for_context` because
+    /// modifiers on mouse gestures are typically decorations rather
+    /// than distinct bindings — pre-branch behaviour was that
+    /// `Ctrl+Wheel` zoomed exactly the same as a bare `Wheel`. Strict
+    /// modifier matching would silently break that. Users who *do*
+    /// want a modified gesture to mean something different just bind
+    /// the modified form explicitly; the exact-match check above
+    /// honours it.
+    ///
+    /// Always resolves in the `Document` context — the modal-steal
+    /// cascade in `event_keyboard.rs` returns before any mouse
+    /// handler runs, so mouse gestures only ever fire in Document
+    /// context today.
+    pub fn action_for_gesture(
+        &self,
+        key: &str,
+        ctrl: bool,
+        shift: bool,
+        alt: bool,
+    ) -> Option<Action> {
+        if let Some(a) = self.action_for_context(InputContext::Document, key, ctrl, shift, alt) {
+            return Some(a);
+        }
+        if ctrl || shift || alt {
+            return self.action_for_context(InputContext::Document, key, false, false, false);
+        }
+        None
+    }
+
     /// Return `true` if the action has at least one binding in the
     /// resolved table. Used by the dispatcher to gate "off-by-default"
     /// gesture sub-actions: the empty-canvas branch of

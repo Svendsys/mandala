@@ -129,10 +129,32 @@ decision, not a drive-by edit.
   `dispatch_action` (`src/application/app/dispatch.rs`). New gestures,
   new console verbs that mutate state, new navigation keys: variant,
   default binding, dispatch arm — in that order. No second copy of
-  behaviour in a handler. Mouse handlers synthesize a gesture name
-  through `gesture_key_name(MouseGesture::*)` and feed it through the
-  same `action_for_context` lookup as keyboard input. See
-  CONCEPTS.md §5 "Action dispatch".
+  Action body logic in a handler. Mouse handlers synthesize a gesture
+  name through `gesture_key_name(MouseGesture::*)` and feed it through
+  `action_for_gesture` (mouse — modifier-fallback) or
+  `action_for_context` (keyboard — exact). See CONCEPTS.md §5 "Action
+  dispatch".
+
+  **Carve-outs that legitimately stay outside the funnel:**
+  - **Modal steals.** When console / color-picker / label-edit /
+    portal-text-edit / text-edit modals are open, their handlers
+    consume the event before the funnel runs. Modals own the literal
+    `winit::Key` payload (character insertion, IME sequences) which
+    `Action` discards.
+  - **Pre-funnel state-machine bookkeeping.** Selection updates on
+    single-click, drag-state cleanup on release, double-click time +
+    distance + hit detection, and the `last_click` tracker run
+    before the funnel. They're not user-named effects; they're
+    machinery the funnel rests on.
+  - **Per-frame continuous-gesture state.** A drag's per-cursor-move
+    delta (e.g. `RenderDecree::CameraPan(dx, dy)` in `event_cursor_moved`)
+    legitimately stays inline. The funnel covers the discrete entry
+    + exit (the press → `Action::PanCanvas`); the per-frame body
+    is not a discrete-action concern.
+
+  Anything else — a new gesture or a new console-verb behaviour that
+  mutates document state or changes view state — must go through the
+  funnel.
 
 ## §4 Cross-platform as first class
 
