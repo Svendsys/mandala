@@ -15,7 +15,17 @@ use super::context::InputContext;
 ///
 /// `Serialize` / `Deserialize` are derived so macros can carry actions
 /// in their JSON payload — see `crate::application::macros::MacroStep`.
+///
+/// `#[non_exhaustive]` because new variants need to be reviewed
+/// against the macro privilege gate
+/// (`MacroSource::allows_action`) before they ship — the gate uses
+/// a denylist of destructive Actions, and a new I/O / clipboard /
+/// document-lifecycle variant added without updating the denylist
+/// would silently bypass the gate from non-User macro tiers. The
+/// `#[non_exhaustive]` is the structural signal that "review the
+/// gate when extending."
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum Action {
     // ── Document-level (global) ──────────────────────────────────
     /// Undo the last action on the document.

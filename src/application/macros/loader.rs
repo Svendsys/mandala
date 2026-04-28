@@ -69,9 +69,19 @@ pub fn parse_map_macros(values: &[serde_json::Value]) -> Vec<Macro> {
         match serde_json::from_value::<Macro>(v.clone()) {
             Ok(m) => out.push(m),
             Err(e) => {
+                // Surface the entry's `id` field in the warning when
+                // available — the user / map author addresses macros
+                // by id, so "entry [3] (id=save-and-quit)" is a much
+                // better diagnostic than "entry [3]" alone. The id
+                // may be missing entirely on a malformed entry; fall
+                // back to a placeholder.
+                let id_hint = v
+                    .get("id")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("<no id>");
                 log::warn!(
-                    "macros: Map-tier entry [{}] failed to parse: {} (skipping)",
-                    idx, e
+                    "macros: Map-tier entry [{}] (id={}) failed to parse: {} (skipping)",
+                    idx, id_hint, e
                 );
             }
         }

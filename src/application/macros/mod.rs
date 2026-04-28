@@ -34,9 +34,8 @@ use crate::application::keybinds::Action;
 /// mindmap from doing arbitrary file I/O, only [`MacroSource::User`]
 /// macros are allowed to contain `ConsoleLine` steps. The
 /// dispatcher rejects `ConsoleLine` from `App`, `Map`, and
-/// `Inline` tiers with a `warn!`. Today only the `User` tier
-/// loads macros (`loader::load_user_macros`), so the gate is
-/// dormant — but it must hold before any other tier ships.
+/// `Inline` tiers with a `warn!`. The gate is **active**: App
+/// and Map tiers load today; Inline is the only deferred one.
 ///
 /// Document-mutating step kinds (`Action`, `CustomMutation`) have
 /// no privilege constraint — they can only do what their backing
@@ -76,9 +75,13 @@ impl MacroSource {
     /// to a hotkey and overwrite the user's file the next time
     /// they press the bound key).
     ///
-    /// Today only the `User` tier loads, so the gate is dormant —
-    /// but it MUST hold before app-bundle / map-inline / node-inline
-    /// tiers ship. See CODE_CONVENTIONS.md §3 carve-out.
+    /// The gate is now **active**: App tier loads from
+    /// `assets/macros/application.json` (today empty), Map tier
+    /// loads from `MindMap.macros` on the open document. Inline
+    /// tier is the only deferred one. Adding a new privileged
+    /// `Action` variant requires updating the denylist below; the
+    /// `#[non_exhaustive]` marker on `Action` is the structural
+    /// reminder.
     pub fn allows_action(self, action: Action) -> bool {
         if matches!(self, MacroSource::User) {
             return true;
@@ -88,6 +91,14 @@ impl MacroSource {
         // makes the gate explicit; new Actions default to "allowed"
         // because they are typically navigation / view-state shaped.
         // Adding a new Action that deserves blocking goes here.
+        //
+        // `DoubleClickActivate` is blocked because its `Empty`-hit
+        // branch synthesises an orphan-create gesture (which
+        // bypasses the direct `CreateOrphanNodeAndEdit` block).
+        // Today macros never carry a `DispatchHit` so the empty
+        // branch is unreachable from a macro — but this is a
+        // forward-compat block for any future contributor who
+        // synthesises a hit for macro-triggered double-click.
         let blocked = matches!(
             action,
             Action::SaveDocument
@@ -95,6 +106,7 @@ impl MacroSource {
                 | Action::OrphanSelection
                 | Action::CreateOrphanNode
                 | Action::CreateOrphanNodeAndEdit
+                | Action::DoubleClickActivate
                 | Action::Copy
                 | Action::Cut
                 | Action::Paste
@@ -518,6 +530,34 @@ mod tests {
         assert!(reg.contains("app"));
         assert!(reg.contains("user"));
         assert!(!reg.contains("map"));
+    }
+
+    /// Within-tier id collisions follow last-writer-wins —
+    /// documented at `format/macros.md` "Within-tier and cross-
+    /// tier collision semantics". A Map-tier `mindmap.macros`
+    /// array with two entries both `id: "x"` keeps only the
+    /// second.
+    #[test]
+    fn macro_registry_extend_with_tier_within_tier_collision_is_last_writer() {
+        let mut reg = MacroRegistry::new();
+        let macros = vec![
+            Macro {
+                id: "x".into(),
+                name: "first".into(),
+                description: "".into(),
+                steps: vec![],
+            },
+            Macro {
+                id: "x".into(),
+                name: "second".into(),
+                description: "".into(),
+                steps: vec![],
+            },
+        ];
+        reg.extend_with_tier(macros, MacroSource::Map);
+        assert_eq!(reg.len(), 1);
+        let (m, _src) = reg.get_with_source("x").unwrap();
+        assert_eq!(m.name, "second", "later writer wins within a tier");
     }
 
     /// `extend_with_tier` is the bulk-insert form used by the

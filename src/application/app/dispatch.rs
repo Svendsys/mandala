@@ -1242,9 +1242,9 @@ pub(in crate::application::app) fn dispatch_macro(
                 // app-bundled, map-inline, and node-inline tiers
                 // come from sources the user didn't necessarily
                 // author, so they cannot do file I/O via macros.
-                // Today only the User tier loads, so this gate is
-                // dormant — but it must hold before any other tier
-                // ships. See CODE_CONVENTIONS.md §3 carve-out.
+                // Gate is active: App and Map tiers load today;
+                // Inline is the only deferred tier. See
+                // CODE_CONVENTIONS.md §3 carve-out.
                 if !source.allows_console_line() {
                     // Fail-closed: a tier that's not allowed to run
                     // console verbs aborts the rest of the macro.

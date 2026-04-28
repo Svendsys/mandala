@@ -19,9 +19,16 @@ Four loader tiers contribute to the active registry, in ascending
 precedence (later writers override earlier ones with the same `id`):
 
 <!-- SOURCE-OF-TRUTH: the tier order below is also encoded in
-     src/application/macros/mod.rs as the MacroSource enum variant
-     order. When the order or set of tiers changes, update all
-     three in the same commit. -->
+     three other places that must move together when the order or
+     set of tiers changes:
+       1. src/application/macros/mod.rs — MacroSource enum variant
+          order.
+       2. src/application/app/run_native_init.rs::build — the load
+          order of the calls into MacroRegistry.
+       3. src/application/app/console_input/exec.rs — the
+          rebuild_map_macros invocation in the document-replace
+          path.
+     Update all four in the same commit. -->
 
 1. **Application bundle** — `assets/macros/application.json`,
    compiled into the binary via `include_str!`. Lowest precedence so
@@ -31,15 +38,40 @@ precedence (later writers override earlier ones with the same `id`):
    (falls back to `$HOME/.config/mandala/macros.json`). On WASM the
    user tier is not yet wired (deferred — see `TODO.md`). Tier:
    `MacroSource::User`.
-3. **Map-inline** *(planned, not yet wired)* — `MindMap.macros` on
-   the loaded document. Tier: `MacroSource::Map`.
+3. **Map-inline** — `MindMap.macros` on the loaded document
+   (initial load + every `open` / `new` console verb). On WASM
+   this tier is also not yet wired — opening a `.mindmap.json`
+   in the browser silently ignores its `macros` array. Tier:
+   `MacroSource::Map`.
 4. **Node-inline** *(planned, not yet wired)* — `MindNode.inline_macros`
-   on individual nodes. Tier: `MacroSource::Inline`.
+   on individual nodes. Tier: `MacroSource::Inline`. The field name
+   is provisional.
 
 The `MacroSource` tier is **loader-pinned** — assigned at the
 loader call site, never read from the on-disk content. A user
 editing `~/.config/mandala/macros.json` cannot smuggle `App` tier
 into their entries.
+
+### Within-tier and cross-tier collision semantics
+
+Two entries with the same `id` in the same tier (e.g. a Map-tier
+`macros` array containing two entries both `id: "x"`) follow
+last-writer-wins — the second entry overwrites the first.
+Authoring tip: keep ids unique within a single source.
+
+Cross-tier: a higher-tier entry **displaces** a lower-tier entry
+with the same id at registry-insert time — the lower-tier entry
+is removed from the HashMap, not stacked under it. So:
+
+- Open document A with `Map`-tier `id: "save-and-quit"` shadows the
+  user's `User`-tier `id: "save-and-quit"`.
+- Open document B with no `macros` → `clear_tier(Map)` runs,
+  removing the Map entry — but the User entry is **not** restored.
+
+The displacement is permanent within the session. To avoid
+this, Map-tier authors should namespace their ids
+(e.g. `"my-map.save"` rather than bare `"save"`). A future
+shadow-stacked registry could fix this; tracked in `TODO.md`.
 
 ## Privilege model — read this before shipping a non-User loader
 

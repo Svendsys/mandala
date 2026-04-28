@@ -432,6 +432,46 @@ mod tests {
         let _ = std::fs::remove_file(&tmp);
     }
 
+    /// `MindMap.macros` round-trips through save+load with absence
+    /// preserved (skip_serializing_if = "Vec::is_empty") and
+    /// non-empty content preserved exactly. Locks the on-disk
+    /// contract for the new field added in commit 5964448.
+    #[test]
+    fn test_save_to_file_macros_round_trip() {
+        // Empty case: no `macros` key written, no key on reload.
+        let blank = MindMap::new_blank("macro-rt");
+        assert!(blank.macros.is_empty());
+        let tmp_empty = std::env::temp_dir().join("mandala_macros_empty.mindmap.json");
+        save_to_file(&tmp_empty, &blank).expect("save failed");
+        let reloaded_empty = load_from_file(&tmp_empty).expect("reload failed");
+        assert!(reloaded_empty.macros.is_empty());
+
+        // Verify the key is absent on disk (skip_serializing_if).
+        let raw = std::fs::read_to_string(&tmp_empty).expect("read raw");
+        assert!(
+            !raw.contains("\"macros\""),
+            "empty macros must not be serialised"
+        );
+        let _ = std::fs::remove_file(&tmp_empty);
+
+        // Non-empty case: round-trip preserves the JSON shape.
+        let mut populated = MindMap::new_blank("macro-rt-2");
+        populated.macros = vec![
+            serde_json::json!({
+                "id": "save-and-quit",
+                "name": "Save and Quit",
+                "description": "",
+                "steps": [{"kind": "Action", "action": "SaveDocument"}]
+            }),
+        ];
+        let tmp_full = std::env::temp_dir().join("mandala_macros_full.mindmap.json");
+        save_to_file(&tmp_full, &populated).expect("save failed");
+        let reloaded_full = load_from_file(&tmp_full).expect("reload failed");
+        assert_eq!(reloaded_full.macros.len(), 1);
+        assert_eq!(reloaded_full.macros, populated.macros);
+        let _ = std::fs::remove_file(&tmp_full);
+    }
+
     #[test]
     fn test_is_hidden_by_fold() {
         let path = test_map_path();

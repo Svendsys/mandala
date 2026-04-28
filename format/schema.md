@@ -12,7 +12,8 @@ Complete field reference for every type in `.mindmap.json`.
   "palettes": { ... },
   "nodes": { ... },
   "edges": [ ... ],
-  "custom_mutations": [ ... ]
+  "custom_mutations": [ ... ],
+  "macros": [ ... ]
 }
 ```
 
@@ -25,6 +26,7 @@ Complete field reference for every type in `.mindmap.json`.
 | `nodes` | object | yes | Node map keyed by ID |
 | `edges` | array | yes | Ordered edge records (can be empty). Portals are edges with `display_mode = "portal"` — no separate top-level collection. |
 | `custom_mutations` | array | no | Map-level reusable mutations |
+| `macros` | array | no | Map-level macro definitions (`Map` privilege tier — cannot run `ConsoleLine` or destructive Actions). Stored as opaque JSON in baumhard; the application crate parses each entry. Full reference: [`macros.md`](./macros.md). |
 
 ## Canvas
 
