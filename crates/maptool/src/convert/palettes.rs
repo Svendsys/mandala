@@ -1,16 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Hoist per-node color_schema groups into a top-level `palettes` map.
-//!
-//! miMind stored the full group list on every node that carried a
-//! palette, so a single palette shared across dozens of nodes was
-//! duplicated dozens of times in the file. The current format names
-//! each palette once at the map level and references it by key from
-//! each node — same visual result, diffs that survive palette tweaks.
-//! Each node's color_schema is rewritten to the reference form
-//! (palette key + level + flags). `theme_id` is dropped; `variant` is
-//! folded into the key name so two schemas that differ only in variant
-//! get distinct palette entries instead of clobbering each other.
+//! Hoist per-node color_schema groups into a top-level `palettes`
+//! map; rewrite each node to reference its palette by key. `theme_id`
+//! is dropped; `variant != 2` is folded into the key (`coral-v3`).
 
 use serde_json::{json, Value};
 use std::collections::HashMap;

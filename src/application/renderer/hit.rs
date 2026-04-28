@@ -1,11 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Hit-testing + camera-fit methods. Grouped together because
-//! they share an idiom (canvas-space or screen-space coordinate
-//! math against a cached bounding rect or scene extent) and
-//! because they all operate against state the other impls
-//! build up — `connection_label_hitboxes`,
-//! `portal_icon_hitboxes`, `portal_text_hitboxes`, `camera`.
+//! Hit-testing + camera-fit methods on `Renderer`. Operate against
+//! the cached `*_hitboxes` maps and the camera.
 
 use baumhard::gfx_structs::element::GfxElement;
 use baumhard::gfx_structs::mutator::GfxMutator;
@@ -18,18 +14,11 @@ use std::hash::Hash;
 
 use super::Renderer;
 
-/// AABB containment predicate. The four hit-test bodies in this
-/// file each open-coded the same `pos.x >= min.x && pos.x <=
-/// max.x && pos.y >= min.y && pos.y <= max.y` cascade; lifting it
-/// here means the rectangle bound semantics live in one place.
 fn aabb_contains(pos: Vec2, min: Vec2, max: Vec2) -> bool {
     pos.x >= min.x && pos.x <= max.x && pos.y >= min.y && pos.y <= max.y
 }
 
-/// Linear scan over an AABB-keyed map; return the first key whose
-/// rectangle contains `pos`. Generic over the key type so the
-/// edge-label (`EdgeKey`) and portal (`(EdgeKey, String)`) hit
-/// maps share the same body.
+/// First key in `map` whose AABB contains `pos`; linear scan.
 fn find_first_aabb_hit<K: Clone + Hash + Eq>(
     map: &FxHashMap<K, (Vec2, Vec2)>,
     pos: Vec2,
@@ -225,15 +214,13 @@ impl Renderer {
     }
 
 
-    /// Convert screen coordinates to canvas (world) coordinates using the camera transform.
     pub fn screen_to_canvas(&self, screen_x: f32, screen_y: f32) -> Vec2 {
         self.camera.screen_to_canvas(Vec2::new(screen_x, screen_y))
     }
 
-    /// Returns the size of one screen pixel in canvas (world) units.
-    /// Used to convert screen-space tolerances (e.g. click tolerance for
-    /// edge hit testing) into canvas-space distances that stay visually
-    /// consistent across zoom levels.
+    /// Size of one screen pixel in canvas units — used to convert
+    /// screen-space tolerances (e.g. click tolerance) to canvas-space
+    /// distances that stay visually consistent across zoom.
     pub fn canvas_per_pixel(&self) -> f32 {
         if self.camera.zoom > f32::EPSILON {
             1.0 / self.camera.zoom

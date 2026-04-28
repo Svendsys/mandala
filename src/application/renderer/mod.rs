@@ -677,16 +677,12 @@ impl Renderer {
         self.camera.zoom
     }
 
-    /// Width of the swapchain surface in pixels. Used by overlay
-    /// modal layouts (palette, glyph-wheel color picker) so they can
-    /// position themselves in screen space without poking the wgpu
-    /// config directly.
+    /// Swapchain surface width in pixels.
     pub fn surface_width(&self) -> u32 {
         self.config.width
     }
 
-    /// Height of the swapchain surface in pixels. Counterpart to
-    /// `surface_width`.
+    /// Swapchain surface height in pixels.
     pub fn surface_height(&self) -> u32 {
         self.config.height
     }

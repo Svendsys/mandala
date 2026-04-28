@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Keyboard-event dispatch extracted from the native event loop
-//! in [`super::run_native`]. Routes `WindowEvent::KeyboardInput`
-//! (Pressed state only) through the modal-steal ladder
-//! (console, color picker, label / portal / node text editors)
-//! down to the action table and finally to the
-//! custom-mutation key bindings. Persistent state flows in through
-//! [`super::input_context::InputHandlerContext`].
+//! Keyboard-event dispatch. Routes `KeyboardInput` (Pressed only)
+//! through the modal-steal ladder (console, color picker, label /
+//! portal / node text editors), then the action table, then the
+//! custom-mutation key bindings.
 
 #![cfg(not(target_arch = "wasm32"))]
 

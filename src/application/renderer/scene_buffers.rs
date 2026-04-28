@@ -1,24 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! ## Cosmic-text routing rule (CODE_CONVENTIONS.md §1)
-//!
-//! `(text + ColorFontRegions) → cosmic-text spans` ALWAYS goes
-//! through `baumhard::font::attrs::{RegionFamilies::resolve,
-//! rich_text_spans_from_regions}` — never hand-rolled here.
-//! `tree_walker.rs:89,158` is the canonical pattern; the border
-//! rebuild below mirrors it. If a new flat-pipeline rebuild path
-//! grows in this file, it routes through the same bridge.
-//!
-//! ## What this file owns
-//!
-//! Flat-scene buffer builders — every `rebuild_*_buffers*` method
-//! that works from a `RenderScene`'s element slices (borders,
-//! connections, edge handles, connection labels) plus the
-//! selection-rect overlay and `clear_overlay_buffers`.
-//!
-//! Each method shapes cosmic-text buffers from `BorderElement` /
-//! `ConnectionElement` / etc. and stores them in a keyed cache
-//! (`FxHashMap`) or a flat `Vec`.
+//! Flat-scene buffer builders — `rebuild_*_buffers*` for borders,
+//! connections, edge handles, connection labels, plus the selection
+//! overlay. Per CODE_CONVENTIONS §1, styled-region → cosmic-text
+//! spans go through `baumhard::font::attrs`.
 
 use baumhard::font::fonts;
 use baumhard::mindmap::scene_builder::BorderElement;

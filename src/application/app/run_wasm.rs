@@ -1,21 +1,14 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! WASM event-loop body for [`super::Application::run`]. Lifted
-//! verbatim out of the pre-split `app/mod.rs` so the browser-side
-//! event loop has its own file. Every identifier the body reaches
-//! is either owned by the `Application` value passed in, imported
-//! via `use super::*`, or a fully-qualified `crate::`/`baumhard::`
-//! path.
+//! WASM event-loop body for [`super::Application::run`]. Browser
+//! thread owned by winit-web's loop; on shutdown the closure returns
+//! and winit propagates any internal failure.
 
 #![cfg(target_arch = "wasm32")]
 
 use super::*;
 
-/// Run the browser event loop against `app`. Called by the
-/// `Application::run` dispatcher on wasm32 targets. winit-web's
-/// loop takes over the browser thread; on shutdown the closure
-/// returns and winit's `.expect(...)` at the bottom propagates any
-/// internal failure up the call stack.
+/// Run the browser event loop against `app`.
 pub(super) fn run(mut app: Application) {
 use wasm_bindgen::JsCast;
 use winit::platform::web::WindowExtWebSys;

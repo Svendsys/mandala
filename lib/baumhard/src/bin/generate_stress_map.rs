@@ -90,13 +90,11 @@ impl Topology {
     }
 }
 
+// Topology-conditional: `nodes` for skewed/star, `depth`+`branching` for balanced.
 struct Config {
     topology: Topology,
-    /// Used by `skewed` and `star`; ignored by `balanced`.
     nodes: usize,
-    /// Used by `balanced`; ignored by the others.
     depth: usize,
-    /// Used by `balanced`; ignored by the others.
     branching: usize,
     cross_links: usize,
     long_edges: usize,
@@ -220,8 +218,7 @@ fn parse_args() -> Result<Option<Config>, String> {
     Ok(Some(cfg))
 }
 
-/// A minimal styled node. Picks a frame color per depth level so the map is
-/// visually structured without needing theme variables.
+/// Minimal styled node; frame color cycles per depth level.
 fn make_node(id: String, parent_id: Option<String>, x: f64, y: f64, depth: usize) -> MindNode {
     let frame_palette = [
         "#30b082", "#b03080", "#3080b0", "#b08030", "#8030b0", "#30b0b0", "#b03030",
@@ -276,7 +273,7 @@ fn make_node(id: String, parent_id: Option<String>, x: f64, y: f64, depth: usize
     }
 }
 
-/// Build a parent→child edge with hierarchy-style defaults.
+/// Parent→child edge with hierarchy defaults.
 fn make_parent_child_edge(from_id: &str, to_id: &str) -> MindEdge {
     MindEdge {
         from_id: from_id.to_string(),
@@ -300,8 +297,7 @@ fn make_parent_child_edge(from_id: &str, to_id: &str) -> MindEdge {
     }
 }
 
-/// Build a cross-link edge with the same defaults `connect mode` (Ctrl+D)
-/// would produce in the app.
+/// Cross-link edge with the app's connect-mode defaults.
 fn make_cross_link_edge(from_id: &str, to_id: &str) -> MindEdge {
     MindEdge {
         from_id: from_id.to_string(),
@@ -329,11 +325,8 @@ fn make_cross_link_edge(from_id: &str, to_id: &str) -> MindEdge {
 fn gen_balanced(depth: usize, branching: usize) -> (Vec<MindNode>, Vec<MindEdge>) {
     let mut nodes = Vec::new();
     let mut edges = Vec::new();
-    // BFS, level by level. At each level we know how many nodes there are so
-    // we can centre them horizontally.
-    // (parent_idx_in_previous_level, parent_id) pairs for the current level.
+    // BFS by level; each level is centred.
     let mut current_level: Vec<(usize, String)> = Vec::new();
-    // Root.
     let root_id = "n0".to_string();
     nodes.push(make_node(root_id.clone(), None, 0.0, 0.0, 0));
     current_level.push((0, root_id));
@@ -369,13 +362,10 @@ fn gen_skewed(nodes: usize) -> (Vec<MindNode>, Vec<MindEdge>) {
     if nodes == 0 {
         return (result_nodes, edges);
     }
-    // Half spine, half leaves (roughly). Ensures at least one spine node.
     let spine_len = (nodes / 2).max(1);
-    // Root of the spine.
     result_nodes.push(make_node("n0".to_string(), None, 0.0, 0.0, 0));
     let mut next_id = 1usize;
-    // Spine nodes after the root. Each one's parent is the previous spine node.
-    // Positioned on a diagonal so successive spine nodes are visually far apart.
+    // Spine on a diagonal so successive nodes don't overlap.
     for i in 1..spine_len {
         let parent_id = format!("n{}", i - 1);
         let id = format!("n{}", i);
@@ -512,7 +502,6 @@ fn add_longest_edges(nodes: &[MindNode], edges: &mut Vec<MindEdge>, count: usize
     }
 }
 
-/// Wrap a node list and edge list into a `MindMap` ready for serialisation.
 fn assemble_mindmap(name: &str, nodes: Vec<MindNode>, edges: Vec<MindEdge>) -> MindMap {
     let mut node_map: HashMap<String, MindNode> = HashMap::with_capacity(nodes.len());
     for n in nodes {
@@ -544,9 +533,6 @@ fn run(cfg: Config) -> Result<(), String> {
     };
     add_random_cross_links(&nodes, &mut edges, cfg.cross_links, &mut rng);
     add_longest_edges(&nodes, &mut edges, cfg.long_edges);
-
-    // IDs are already assigned structurally by the generators, so no
-    // re-indexing needed.
 
     let name = format!(
         "stress-{}-{}n-{}e",

@@ -1,22 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Scene rebuilders: turn the document model + selection into the
-//! per-role baumhard trees the renderer registers, and dispatch
-//! between full rebuild and §B2 in-place mutator paths via
-//! `scene_host`'s canvas-signature comparator.
-//!
-//! `rebuild_all` is the post-mutation entry point — it rebuilds the
-//! node tree from the model and walks every canvas role
-//! (`update_*_tree`). `rebuild_scene_only` skips the node-tree
-//! rebuild for paths that only changed scene data (selection,
-//! preview overrides) without touching the model.
-//!
-//! `rebuild_after_selection_change` is the post-selection-change
-//! chooser: scene-only when both prev and new selections are edge-
-//! adjacent (no node-tree highlight to shift), full rebuild
-//! otherwise. Exists so every selection-change callsite picks the
-//! right granularity through one seam rather than reasoning about
-//! which variants touch the tree.
+//! Scene rebuilders: turn (document, selection) into the per-role
+//! Baumhard trees the renderer uses. `rebuild_all` walks every
+//! canvas role; `rebuild_scene_only` skips the node tree;
+//! `rebuild_after_selection_change` picks the right granularity for
+//! a selection delta. Each `update_*_tree` dispatches between full
+//! rebuild and §B2 in-place mutator via `AppScene`'s signature.
 
 use crate::application::document::{
     apply_tree_highlights, MindMapDocument, SelectionState, HIGHLIGHT_COLOR,

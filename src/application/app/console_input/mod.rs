@@ -2,15 +2,8 @@
 
 //! Console line-editor: per-keystroke dispatch, completion-popup
 //! helpers, command execution, overlay rebuild, and history
-//! persistence. Split across four leaf modules:
-//!
-//! - [`dispatch`] — `handle_console_key`: the keystroke router.
-//! - [`completion`] — recompute / nav / accept for the popup.
-//! - [`exec`] — `execute_console_line` + Ctrl+S save.
-//! - [`history`] — load / save of the on-disk history file.
-//!
-//! `mod.rs` itself owns `rebuild_console_overlay` (shared by
-//! dispatch + exec) and the tiny scrollback push helpers both use.
+//! persistence. `mod.rs` owns `rebuild_console_overlay` (shared by
+//! dispatch + exec) and the scrollback push helpers.
 
 #![cfg(not(target_arch = "wasm32"))]
 

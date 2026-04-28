@@ -1,11 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Native event-loop body for [`super::Application::run`]. Uses
-//! winit 0.30's `ApplicationHandler` trait: the window is created
-//! in `resumed()` the first time it fires, and per-event dispatch
-//! flows through [`InitState::handle_event`]. First-time
-//! initialisation (GPU surface, renderer, mindmap load, scene
-//! build, etc.) lives in [`super::run_native_init::build`].
+//! winit 0.30's `ApplicationHandler`; first-time init lives in
+//! [`super::run_native_init::build`].
 
 #![cfg(not(target_arch = "wasm32"))]
 

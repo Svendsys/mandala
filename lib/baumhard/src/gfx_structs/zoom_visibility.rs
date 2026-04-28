@@ -1,42 +1,21 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! `ZoomVisibility` — an optional lower/upper bound on the camera
-//! zoom level at which a [`crate::gfx_structs::area::GlyphArea`] is
-//! allowed to render. Orthogonal to the per-element font-size clamps
-//! on connections / portals (which reshape *size* with zoom); this
-//! primitive controls *presence* — is the element drawn at all at
-//! the current zoom?
-//!
-//! Default is unbounded (both bounds `None`) — any existing
-//! `GlyphArea` with no opinion keeps its historical always-visible
-//! behaviour. When either bound is `Some`, the renderer's final
-//! cull pass skips the element whenever `camera.zoom` falls outside
-//! `[min, max]` (inclusive). This is the layering primitive that
-//! lets map authors build Google-Maps-style zoom-dependent detail:
-//! "only show this label when zoomed in past 1.5×", "only show this
-//! landmark when zoomed out below 0.5×".
-//!
-//! The primitive lives at the Baumhard level so every downstream
-//! target — nodes, edges, labels, portals, borders — gets the same
-//! cull without each builder re-implementing a parallel check (per
-//! `CODE_CONVENTIONS.md` §3 "everything is glyphs" — one filter at
-//! the shared seam).
+//! `ZoomVisibility` — an optional `[min, max]` window on
+//! `camera.zoom` controlling whether a
+//! [`crate::gfx_structs::area::GlyphArea`] renders. Orthogonal to
+//! the connection / portal font-size clamps that reshape *size*
+//! with zoom; this primitive controls *presence*. The shared cull
+//! seam lets every downstream target (nodes, edges, labels,
+//! portals, borders) inherit one filter rather than re-implement
+//! the check.
 
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 
-/// Optional inclusive `[min, max]` window on camera zoom controlling
-/// whether a [`crate::gfx_structs::area::GlyphArea`] renders. Each
-/// bound is independently optional: `None` means "unbounded on that
-/// side". The default `{ min: None, max: None }` renders at every
-/// zoom — existing call sites that don't care pay nothing.
-///
-/// # Costs
-///
-/// [`ZoomVisibility::contains`] is two branchless float comparisons;
-/// safe to call inside the render-loop filter on every frame without
-/// measurable overhead (bench: `zoom_visibility_contains`). Clones
-/// and hashes are `Copy`-cheap (no heap).
+/// Optional inclusive `[min, max]` window on `camera.zoom`. Each
+/// bound is independently optional: `None` = unbounded on that
+/// side. The default `{ min: None, max: None }` renders at every
+/// zoom. `Copy`; bench: `zoom_visibility_contains`.
 ///
 /// # Example
 ///
@@ -48,12 +27,10 @@ use std::hash::{Hash, Hasher};
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ZoomVisibility {
-    /// Lower bound on `camera.zoom`. `None` = unbounded below; the
-    /// element renders at arbitrarily small zoom levels.
+    /// Lower bound on `camera.zoom`; `None` = unbounded below.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min: Option<f32>,
-    /// Upper bound on `camera.zoom`. `None` = unbounded above; the
-    /// element renders at arbitrarily large zoom levels.
+    /// Upper bound on `camera.zoom`; `None` = unbounded above.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max: Option<f32>,
 }
@@ -64,18 +41,14 @@ impl Default for ZoomVisibility {
     }
 }
 
-/// `Eq` is asserted manually because `f32` is only `PartialEq`. The
-/// invariant — both bounds are finite when `Some` — holds for every
-/// constructor in this codebase (model loaders, verifier, mutator
-/// apply). A future caller stashing `f32::NAN` here would be a bug
-/// at the construction site, not a soundness issue at this assert.
+/// Manual `Eq` — `f32` is only `PartialEq`. The finite-bound
+/// invariant holds for every constructor in this codebase
+/// (loaders, verifier, mutator apply); a `NaN` here is a
+/// construction-site bug, not a soundness issue at this assert.
 impl Eq for ZoomVisibility {}
 
 impl Hash for ZoomVisibility {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        // `f32` does not implement `Hash`; round-trip through bits
-        // for stable hashing (mirrors the `OutlineStyle::px` pattern
-        // in `area_fields.rs`).
         self.min.map(f32::to_bits).hash(state);
         self.max.map(f32::to_bits).hash(state);
     }

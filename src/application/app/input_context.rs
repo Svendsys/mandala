@@ -2,27 +2,11 @@
 
 //! Shared per-call context for the native event-loop dispatchers.
 //!
-//! Mouse, keyboard, cursor, and console-submit handlers each need
-//! roughly the same bundle of mutable references into `InitState`:
-//! the document, renderer, scene, modal-state machines, keybinds,
-//! and so on. Before this module existed, every handler spelled the
-//! bundle out as twenty separate function parameters and silenced
-//! `clippy::too_many_arguments` over the top. That silencing is the
-//! §6 smell this type closes.
-//!
+//! Each handler reaches into the same mutable bundle on `InitState`.
 //! `InputHandlerContext<'a>` borrows each persistent field as
-//! `&'a mut T` (or `&'a T` for read-only state); handlers destructure
-//! the fields they need via `ctx.field`. Fields that are *per-event*
-//! (button press state, key code, modifiers snapshot, cursor position
-//! delivered by the event) stay as separate function parameters —
-//! the context is about persistent state, not the event payload.
-//!
-//! Borrow-check-wise, a `&mut InputHandlerContext<'_>` lets a handler
-//! take disjoint mutable field borrows under Rust's standard rules,
-//! exactly as if the state lived in a single struct.
-//!
-//! The builder lives on `InitState::input_context` in
-//! `src/application/app/run_native.rs`.
+//! `&'a mut T` so handlers can destructure it; per-event payloads stay
+//! as separate function parameters. Built once per event in
+//! [`super::run_native::InitState::input_context`].
 
 #![cfg(not(target_arch = "wasm32"))]
 

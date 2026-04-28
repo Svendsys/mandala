@@ -1,32 +1,15 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Per-frame drain helpers for the non-throttled paths in the
-//! `AboutToWait` arm of the native event loop. Each function
-//! handles one self-contained drain block and takes its mutable
-//! state dependencies as parameters so the event-loop body stays a
-//! thin dispatcher.
-//!
-//! Throttled, continuous-input-driven drains (node drag, edge-
-//! handle drag, portal-label drag, edge-label drag, color-picker
-//! hover) moved under [`super::throttled_interaction`] behind the
-//! unified [`ThrottledInteraction`](super::throttled_interaction::ThrottledInteraction)
-//! trait; what remains here are the three paths that deliberately
-//! skip the throttle:
-//!
-//! - [`drain_selecting_rect`] — rubber-band overlay + preview
-//!   highlight. Lightweight enough to run every frame.
-//! - [`drain_camera_geometry_rebuild`] — gated by its own
-//!   `take_connection_geometry_dirty` / viewport-dirty flags on
-//!   the renderer; layering the mutation throttle on top would
-//!   add gating without reducing work.
-//! - [`drain_animation_tick`] — paced by `now_ms()` and the
-//!   animation's own timing envelope, not mutation frequency.
+//! Per-frame drain helpers for the non-throttled paths in
+//! `AboutToWait`. Throttled drains (drag, hover) live under
+//! [`super::throttled_interaction`]; what's here are the three paths
+//! that deliberately skip the throttle: rect-select overlay,
+//! camera-driven geometry rebuild, animation tick.
 
 #![cfg(not(target_arch = "wasm32"))]
 
 use super::*;
 
-/// Update selection rectangle overlay + preview highlight (once per frame)
 pub(super) fn drain_selecting_rect(
     start_canvas: Vec2,
     current_canvas: Vec2,

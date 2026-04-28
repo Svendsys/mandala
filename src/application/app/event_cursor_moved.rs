@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Cursor-move dispatch extracted from the native event loop in
-//! [`super::run_native`]. Owns the drag-state transition logic
-//! (pending → Panning / MovingNode / SelectingRect /
-//! DraggingEdgeHandle / DraggingPortalLabel), plus hover
-//! highlights for Reparent / Connect modes and the button-
-//! cursor swap for trigger-bearing nodes. Persistent state flows
-//! in through [`super::input_context::InputHandlerContext`].
+//! Cursor-move dispatch. Owns drag-state transitions (pending →
+//! Panning / MovingNode / SelectingRect / DraggingEdgeHandle /
+//! DraggingPortalLabel), Reparent/Connect hover highlights, and
+//! the button-cursor swap for trigger-bearing nodes.
 
 #![cfg(not(target_arch = "wasm32"))]
 

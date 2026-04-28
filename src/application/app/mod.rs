@@ -3,17 +3,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-// Cross-platform submodules: compile for both native and WASM.
 mod scene_rebuild;
 mod text_edit;
 
-// Native-only submodules: the interactive modal state machines
-// (click routing, console, color picker, label edit, edge drag) live
-// here and are entirely absent from the WASM build. Per
-// `CODE_CONVENTIONS.md §2`, cross-platform `cfg` discipline puts the
-// split at the module boundary rather than per-item; the one-line
-// status of what's native-only vs. cross-platform lives in
-// `CLAUDE.md`'s "Dual-target status" section.
+// Native-only — interactive modal state machines absent on WASM.
+// See CLAUDE.md "Dual-target status".
 #[cfg(not(target_arch = "wasm32"))]
 mod click;
 #[cfg(not(target_arch = "wasm32"))]
@@ -88,15 +82,12 @@ use label_edit::{
 use pollster::block_on;
 #[cfg(not(target_arch = "wasm32"))]
 use portal_label_drag::apply_portal_label_drag;
-// Native-only imports: every name below is only referenced from
-// `run_native` or native-only helpers in this file.
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
-/// Cross-platform monotonic clock returning milliseconds since first call.
-/// Native: uses `Instant` (guaranteed monotonic). WASM: uses
-/// `performance.now()` (monotonic from page load, Spectre-clamped to ≥1ms
-/// but fine for our 400ms double-click window).
+/// Cross-platform monotonic clock in ms since first call. Native:
+/// `Instant`. WASM: `performance.now()` (≥1ms quantised; fine for
+/// the 400ms double-click window).
 #[cfg(not(target_arch = "wasm32"))]
 fn now_ms() -> f64 {
     use std::sync::OnceLock;
@@ -527,10 +518,7 @@ enum DragState {
     Throttled(ThrottledDrag),
 }
 
-/**
-Represents the root container of the application
-Manages the winit window and event_loop, and launches the rendering pipeline
- **/
+/// Application root: winit window + event loop, launches the rendering pipeline.
 #[cfg(target_arch = "wasm32")]
 pub struct Application {
     options: Options,
@@ -587,9 +575,7 @@ impl Application {
     }
 }
 
-/**
-Launch and run options for the application and the application instance
- **/
+/// Launch options for the application.
 #[derive(Clone)]
 pub struct Options {
     pub launch_gpu_prefer_low_power: bool,

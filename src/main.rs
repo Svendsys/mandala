@@ -11,9 +11,6 @@ mod application;
 
 const DEFAULT_MINDMAP: &str = "maps/testament.mindmap.json";
 
-/// Parse the desktop CLI: the first non-flag positional argument is the
-/// mindmap path, and `--keybinds <path>` specifies a custom keybinds JSON
-/// file. Unknown flags are ignored for forward compatibility.
 #[cfg(not(target_arch = "wasm32"))]
 fn parse_cli() -> (String, Option<std::path::PathBuf>) {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -62,9 +59,7 @@ fn create_options() -> Options {
 
 #[cfg(target_arch = "wasm32")]
 fn create_options() -> Options {
-    // WASM: mindmap_path is replaced later by reading ?map=, and keybinds
-    // are loaded from ?keybinds= / localStorage inside the WASM run() path.
-    // We still seed the Options with sane defaults here.
+    // WASM: mindmap_path and keybind_config are replaced later by run_wasm.
     Options {
         launch_gpu_prefer_low_power: false,
         should_exit: false,

@@ -1,16 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Color picker overlay renderer-side helpers. The picker's
-//! buffer rebuild + §B2 mutator application entry points live
-//! here; `Renderer` keeps thin wrapper methods that call these
-//! free fns and then invoke the renderer-owned
-//! `rebuild_overlay_scene_buffers` to reshape cosmic-text buffers.
-//!
-//! The backdrop value travels back through each wrapper via a
-//! "return-value publish" pattern — the `color_picker_backdrop`
-//! field stays owned by `Renderer` (the rect pipeline's render
-//! pass reads it in the same frame) rather than being relocated
-//! here with `pub(super)` visibility.
+//! Color-picker overlay helpers split out of `Renderer`. Wrappers in
+//! `Renderer` call these free fns and then
+//! `rebuild_overlay_scene_buffers`. The backdrop rect is returned to
+//! the wrapper rather than relocated here, so `Renderer` keeps it for
+//! the rect-pipeline pass.
 
 use crate::application::color_picker::{ColorPickerLayout, ColorPickerOverlayGeometry};
 use crate::application::color_picker_overlay;

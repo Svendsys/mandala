@@ -12,7 +12,6 @@ use crate::application::common::{FpsDisplayMode, RedrawMode, RenderDecree};
 use super::Renderer;
 
 impl Renderer {
-    /// Process a single decree directly
     pub fn process_decree(&mut self, decree: RenderDecree) {
         self.handle_render_decree(decree);
     }
@@ -21,20 +20,10 @@ impl Renderer {
         match decree {
             RenderDecree::SetFpsDisplay(mode) => {
                 self.fps_display_mode = mode;
-                // Reset every per-mode bit on every transition so a
-                // prior mode's state can't bleed into the new one:
-                //  - `last_frame_instant` so the first delta in the new
-                //    mode isn't measured against a stale timestamp from
-                //    seconds (or longer) ago, which would yield a one-
-                //    frame FPS of ~0 right after toggling.
-                //  - `fps_clock` so Snapshot's first sample fires on the
-                //    next frame rather than after a full window.
-                //  - the debug ring so a prior debug run's samples
-                //    don't seed a fresh window.
-                //  - `last_fps_shaped` so the overlay re-shapes with
-                //    the new mode's first reading even if it happens
-                //    to round to the same integer the previous mode
-                //    last displayed.
+                // Reset all per-mode FPS bookkeeping so prior-mode
+                // samples can't bleed in (a stale `last_frame_instant`
+                // would yield a ~0 FPS for the first frame after
+                // toggling).
                 self.last_frame_instant = None;
                 self.fps_clock = 0;
                 self.fps_ring.clear();
@@ -66,12 +55,6 @@ impl Renderer {
                         screen_delta: Vec2::new(dx, dy),
                     },
                 );
-                // Pan is a pure camera-matrix update. Canvas-space
-                // glyph positions and shaped buffers do not change;
-                // the shader applies the transform at draw time and
-                // the per-frame `MindMapTextBuffer::visible_at`
-                // check in `render.rs` handles viewport containment
-                // cheaply.
             }
             RenderDecree::CameraZoom { screen_x, screen_y, factor } => {
                 self.camera.apply_mutation(

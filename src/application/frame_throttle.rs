@@ -1,46 +1,23 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Mutation-frequency throttle — the governing invariant in code.
+//! Mutation-frequency throttle.
 //!
-//! **Responsiveness is never traded for visual fidelity.** When per-frame
-//! work threatens the screen refresh budget, we sacrifice how often we
-//! *apply* mutations (and the rebuilds they drive), not how often we
-//! *accept* input. Input accumulation stays running every tick; mutation
-//! application is the valve this module turns.
+//! Responsiveness is never traded for visual fidelity. Input is
+//! accumulated every tick; the throttle gates only how often the
+//! mutation-and-rebuild work runs. A moving average over
+//! [`WINDOW_SIZE`] drained frames raises the drain divisor `n`
+//! toward [`MAX_N`] when work overruns the budget and decays it
+//! back when it drops, with a 30% hysteresis band to prevent
+//! oscillation. Self-tuning — the only knob is the budget at
+//! construction.
 //!
-//! # Mechanism
-//!
-//! The drag path in `AboutToWait` calls [`should_drain`] each frame. On
-//! `false`, the caller skips its heavy drain work and leaves its
-//! accumulated state (`pending_delta`) intact — next tick will pick up
-//! where this one left off, with more delta folded in from whatever
-//! mouse events arrived in the meantime. On `true`, the caller runs the
-//! work, times it with `Instant::now()`, and feeds the resulting
-//! [`Duration`] back via [`record_work_duration`].
-//!
-//! The struct maintains a moving average over the last [`WINDOW_SIZE`]
-//! drained frames. When the average exceeds the configured refresh
-//! budget, `n` (the drain divisor) increments toward [`MAX_N`]. When the
-//! average drops comfortably under budget, `n` decays back toward `1`.
-//! The 30% hysteresis band between "raise" and "lower" thresholds
-//! prevents oscillation on borderline frames.
-//!
-//! # Visual consequences
-//!
-//! With `n = 1` (the healthy steady state) the throttle is a no-op — the
-//! drag runs every frame exactly as before. With `n > 1`, the dragged
-//! node advances in chunks, catching up to the cursor every `n` frames.
-//! On a 60 Hz display at `n = 4` the node updates every ~66ms, which is
-//! perceptible but still clearly *tracking* — and the refresh rate
-//! itself never drops, because the GPU swap chain keeps presenting
-//! already-built buffers on the skipped frames. The cursor (hardware)
-//! never lags at all.
-//!
-//! # Configuration
-//!
-//! Zero — the throttle is self-tuning. The only knob is the budget
-//! passed at construction. Everything else (window size, max N,
-//! hysteresis) is baked in.
+//! Visual consequences: with `n = 1` the throttle is a no-op. With
+//! `n > 1` the dragged content advances in chunks, catching up to
+//! the cursor every `n` frames; on a 60 Hz display at `n = 4` the
+//! update cadence is ~66 ms, perceptible but still tracking. The
+//! refresh rate itself never drops — the GPU swap chain keeps
+//! presenting already-built buffers on skipped frames — and the
+//! hardware cursor never lags.
 
 use std::collections::VecDeque;
 use std::time::Duration;
@@ -64,21 +41,7 @@ pub const MAX_N: u32 = 8;
 pub const DEFAULT_BUDGET: Duration = Duration::from_micros(14_000);
 
 /// Per-frame throttle that degrades mutation frequency under load.
-///
-/// See the module doc for the governing invariant. The caller's usage
-/// per tick looks like:
-///
-/// ```ignore
-/// if throttle.should_drain() {
-///     let started = Instant::now();
-///     // ...heavy work...
-///     throttle.record_work_duration(started.elapsed());
-/// }
-/// // else: skip this frame, accumulated state stays
-/// ```
-///
-/// Call [`reset`] when the drag ends so the next drag starts fresh (no
-/// lingering `n > 1` carried over from the previous run).
+/// Call [`reset`] when the drag ends so the next drag starts at `n = 1`.
 #[derive(Debug)]
 pub struct MutationFrequencyThrottle {
     budget: Duration,
@@ -88,10 +51,7 @@ pub struct MutationFrequencyThrottle {
 }
 
 impl MutationFrequencyThrottle {
-    /// Construct a throttle with the given per-frame work budget. A good
-    /// default is [`DEFAULT_BUDGET`] for 60 Hz displays; on higher-refresh
-    /// monitors the budget should be tighter (monitor interval minus a
-    /// small safety margin).
+    /// Construct with the given per-frame work budget. See [`DEFAULT_BUDGET`].
     pub fn new(budget: Duration) -> Self {
         MutationFrequencyThrottle {
             budget,
@@ -158,16 +118,12 @@ impl MutationFrequencyThrottle {
         self.frames_since_drain = 0;
     }
 
-    /// Current drain divisor. `1` means "drain every frame" (healthy);
-    /// higher means "drain every Nth frame" (stressed). Exposed for
-    /// diagnostics and tests.
+    /// Current drain divisor (1 = every frame; higher under load).
     pub fn current_n(&self) -> u32 {
         self.n
     }
 
-    /// Current moving average of measured work durations, or
-    /// [`Duration::ZERO`] if no frames have been recorded yet. Exposed
-    /// for diagnostics and tests.
+    /// Current moving average, or [`Duration::ZERO`] when nothing recorded.
     pub fn moving_average(&self) -> Duration {
         if self.window.is_empty() {
             return Duration::ZERO;
@@ -176,8 +132,6 @@ impl MutationFrequencyThrottle {
         sum / self.window.len() as u32
     }
 
-    /// The configured budget. Useful for tests that need to feed
-    /// over-budget or under-budget durations.
     #[cfg(test)]
     pub fn budget(&self) -> Duration {
         self.budget
