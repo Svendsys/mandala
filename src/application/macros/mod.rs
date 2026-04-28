@@ -162,9 +162,9 @@ pub enum MacroTarget {
 }
 
 /// A user-defined macro: id + ordered list of steps. Loaded from
-/// `~/.config/mandala/macros.json` on native (Phase 8 scaffolding —
-/// app-bundle and inline-on-document layers are left for a
-/// future commit, mirroring how the mutation loader grew).
+/// up to four tiers on native (App bundle / User config /
+/// per-Map / per-node Inline); see `MacroSource` for the
+/// precedence order and `loader.rs` for the parse plumbing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Macro {
     pub id: String,

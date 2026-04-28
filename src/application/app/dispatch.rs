@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! `dispatch_action` — the single entry point that runs `Action`
-//! bodies. Mouse handlers, the keyboard handler, and (via Phase 9)
-//! the WASM handler all funnel through here. Adding a new behaviour
+//! bodies on native. Mouse handlers and the keyboard handler funnel
+//! through here. WASM has its own dispatch path today; the
+//! convergence track is documented in `WASM_CONVERGENCE.md`.
+//! Adding a new behaviour
 //! is variant + default + arm, in that order; never inline a body in
 //! a handler.
 
@@ -65,8 +67,9 @@ pub enum DispatchOutcome {
 /// the cursor was in canvas space). Keyboard / macro callers pass
 /// `None`; mouse callers populate it before invoking the dispatcher.
 ///
-/// The function is platform-gated to native today; Phase 9 brings
-/// WASM into the same funnel.
+/// The function is platform-gated to native today;
+/// `WASM_CONVERGENCE.md` documents the path to bringing WASM
+/// into the same funnel.
 pub(in crate::application::app) fn dispatch_action(
     action: Action,
     ctx: &mut InputHandlerContext<'_>,
@@ -684,7 +687,7 @@ pub(in crate::application::app) fn dispatch_action(
             DispatchOutcome::Handled
         }
 
-        // ── Selection Actions (Phase 11 wiring) ───────────────
+        // ── Selection Actions ────────────────────────────────
         Action::SelectAll => {
             // Only visible nodes — selecting hidden-by-fold descendants
             // would let a follow-up `DeleteSelection` silently nuke
@@ -838,7 +841,7 @@ pub(in crate::application::app) fn dispatch_action(
             DispatchOutcome::Handled
         }
 
-        // ── TextEdit cursor primitives (Phase 5) ──────────────
+        // ── TextEdit cursor primitives ────────────────────────
         // Each arm mutates `ctx.text_edit_state` in place. The modal
         // handler `handle_text_edit_key` calls `dispatch_action` and
         // refreshes the preview tree afterwards, so arms here only
@@ -858,13 +861,13 @@ pub(in crate::application::app) fn dispatch_action(
             apply_text_edit_action(action, ctx.text_edit_state);
             DispatchOutcome::Handled
         }
-        Action::TextEditCommit => {
-            // Commit is delegated to the modal handler — it needs the
-            // renderer for the rebuild-and-close path.
-            DispatchOutcome::Unhandled
-        }
+        // `TextEditCommit` falls through to the catch-all `Unhandled`;
+        // the modal handler at `text_edit/editor.rs` owns the renderer-
+        // touching close-and-rebuild path. The dead `Action::TextEditCommit
+        // => Unhandled` arm that used to live here was structurally
+        // identical to the catch-all and added no information.
 
-        // ── LabelEdit cursor primitives (Phase 5) ─────────────
+        // ── LabelEdit cursor primitives ───────────────────────
         Action::LabelEditCursorLeft
         | Action::LabelEditCursorRight
         | Action::LabelEditCursorHome

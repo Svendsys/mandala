@@ -81,7 +81,6 @@ pub struct KeybindConfig {
     pub double_click_activate: Vec<String>,
     pub create_orphan_node_and_edit: Vec<String>,
     pub pan_canvas: Vec<String>,
-    pub commit_or_close_editor: Vec<String>,
 
     // ── Navigation / camera ──────────────────────────────────────
     pub zoom_in: Vec<String>,
@@ -209,17 +208,13 @@ impl Default for KeybindConfig {
             // Text Editor
             text_edit_cancel: vec!["Escape".into()],
 
-            // Mouse-gesture Actions. Bodies for these arms land in
-            // Phase 4. Defaults that the user explicitly approved are
-            // set here; the rest ship empty until their arm is wired.
-            //
-            // `create_orphan_node_and_edit` is intentionally `vec![]` —
+            // Mouse-gesture Actions. `create_orphan_node_and_edit`
+            // is intentionally `vec![]` —
             // the user found the empty-canvas double-click annoying;
             // it's now opt-in.
             double_click_activate: vec!["DoubleClick".into()],
             create_orphan_node_and_edit: vec![],
             pan_canvas: vec!["LeftDrag".into(), "MiddleClick".into()],
-            commit_or_close_editor: vec![],
 
             // Navigation / camera. `ZoomIn`/`ZoomOut` default to mouse
             // wheel per user request; key shortcuts (e.g. Ctrl++/Ctrl+-)
@@ -291,9 +286,9 @@ impl Default for KeybindConfig {
             label_edit_delete_back: vec!["Backspace".into()],
             label_edit_delete_forward: vec!["Delete".into()],
 
-            // Console-verb Actions. Bodies land in Phase 6. Defaults
-            // empty — these mirror typed console verbs and the user
-            // opts in by binding a key.
+            // Console-verb Actions. Defaults empty — these mirror
+            // typed console verbs and the user opts in by binding
+            // a key.
             open_color_picker: vec![],
             close_color_picker: vec![],
             label_edit_on_selection: vec![],
@@ -380,7 +375,6 @@ impl KeybindConfig {
             (Action::DoubleClickActivate, &self.double_click_activate),
             (Action::CreateOrphanNodeAndEdit, &self.create_orphan_node_and_edit),
             (Action::PanCanvas, &self.pan_canvas),
-            (Action::CommitOrCloseEditor, &self.commit_or_close_editor),
             // Navigation / camera
             (Action::ZoomIn, &self.zoom_in),
             (Action::ZoomOut, &self.zoom_out),

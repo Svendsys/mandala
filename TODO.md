@@ -4,71 +4,73 @@
 
 # Deferred work from configurable-canvas-actions branch
 
-Wired and shipping after the review-fix cycle:
-- Dispatch funnel (Phases 1, 4)
-- Mouse-gesture rebinding via extended KeyBind grammar (Phase 2) with
-  modifier-fallback so Ctrl+Wheel etc. still work
-- All ~46 Action variants (Phase 3) — most have functioning bodies
-  after Phases 5/6
-- 5 console-verb Actions (Phase 6)
-- Custom-mutation keybind parity with the click path (Phase 7)
-- TextEdit / LabelEdit cursor primitives (Phase 5)
-- Macro scaffolding with user-layer JSON loader (Phase 8)
-- Documentation (Phase 10) — CONCEPTS.md §5 "Action dispatch",
-  CODE_CONVENTIONS.md §3 "Single dispatch funnel" with carve-outs
+Shipped on this branch:
+- Dispatch funnel: `dispatch_action`, `dispatch_macro`,
+  `dispatch_custom_mutation_for_key`. Native dispatch goes through
+  the funnel; mouse and keyboard handlers feed into it via gesture-
+  name lookup.
+- Mouse-gesture rebinding via extended `KeyBind` grammar with
+  modifier-fallback for `Ctrl+Wheel` etc.
+- ~70 `Action` variants with bodies for navigation (zoom, pan,
+  fit, jump-to-root, center-on-selection), selection
+  (`SelectAll/DeselectAll/Invert`, `SelectParent/Child/Sibling*`),
+  TextEdit / LabelEdit cursor primitives, and several no-arg
+  console verbs (`OpenColorPicker`, `ToggleFps`, `ToggleFpsDebug`,
+  `LabelEditOnSelection`, `NewDocument`).
+- Custom-mutation keybind parity with the click-trigger path
+  (animation-aware, `apply_document_actions` envelope).
+- Macro scaffolding: four-tier registry (App / User / Map / Inline),
+  shadow-stacked storage so higher tiers reveal lower tiers when
+  cleared, fail-closed privilege gate, JSON loader.
+- Privilege gate is structurally enforced: `Action::is_destructive`
+  is an exhaustive match the compiler enforces against
+  `#[non_exhaustive]` `Action`. New variants cannot land without an
+  explicit destructive / non-destructive classification.
+- Cross-platform `apply_text_edit_action` and the cursor / word
+  primitives moved to `text_edit/mod.rs` so the WASM editor can
+  reach them through `text_edit::` directly.
+- WASM keyboard handler honours empty-canvas double-click opt-in
+  gate; `EditSelection` / `EditSelectionClean` Single-selection
+  branch fires on WASM through a pre-filter exception.
 
-Phase 9 is partially done: WASM's empty-canvas double-click now also
-honours the `CreateOrphanNodeAndEdit` opt-in gate (matches native).
-The full WASM convergence below is still outstanding.
+## Outstanding
 
-- **WASM convergence — full porting.** The foundation is in place:
-  `Action::wasm_compatibility()` classifies every variant as
-  `Compatible` or `NativeOnly`, the WASM keyboard handler filters on
-  the classification, and `WASM_CONVERGENCE.md` documents the
-  three porting tracks (port a NativeOnly Action, port the macro
-  registry, unify the bundle/context type). Pick a track and walk
-  it. The doc has the step-by-step recipe; the
-  `Action::wasm_compatibility` rustdoc has the classification rules
-  for new variants. WASM-side macro registry is the highest-value
-  next step (Track B) because it unblocks every `Compatible`
-  Action a user has bound to a macro id.
+- **WASM convergence — full funnel.** Today WASM has its own inline
+  Action match in `run_wasm.rs` for `Undo`, `CreateOrphanNode`,
+  `OrphanSelection`, `DeleteSelection`, `EditSelection*`, plus
+  inline `DoubleClickActivate` routing. The "single funnel" claim
+  holds on native; WASM is a parallel path that Tracks A and B in
+  `WASM_CONVERGENCE.md` are designed to fold. WASM-side macro
+  registry (Track B) is the highest-value next step.
+- **WASM Compatible Actions need arms.** ~15 Action variants
+  classified `Compatible` (`ZoomIn/Out/Reset/Fit`, `PanCamera*`,
+  `CenterOnSelection`, `JumpToRoot`, `SelectAll/DeselectAll/Invert`,
+  `SelectParent/Child/Sibling*`, `Copy/Cut/Paste`, `ToggleFps/Debug`)
+  log "Compatible but no WASM arm yet" when fired today. Wire-up is
+  ~6 lines per arm — Track A in `WASM_CONVERGENCE.md`.
 - **Parameterised console verbs as Actions.** `open <path>`,
-  `save-as <path>`, `mutation apply <id>`, kv-shaped
-  `border` / `edge` / `color` / `font` / `zoom` / `spacing` setters
-  intentionally stay console-only — minting parameter-less Action
-  stubs would be a half-feature per CODE_CONVENTIONS.md §5.
-- **Action variants scaffolded with no dispatch arm.** These exist in
-  the `Action` enum, have a config field + default + resolve-table
-  entry, and parse from `keybinds.json` — but their dispatch arm
-  hasn't been written yet. `dispatch_action`'s catch-all
-  `_ => Unhandled` swallows them with a debug log. All ship with
-  `vec![]` defaults so user-facing behaviour is "binding does
-  nothing." Wiring is per-arm work:
-  - **Navigation/camera:** `ZoomReset`, `ZoomFit`, `PanCameraNorth`,
-    `PanCameraSouth`, `PanCameraEast`, `PanCameraWest`,
-    `CenterOnSelection`, `JumpToRoot`. Each needs a small arm body
-    using `Renderer::set_camera_center` / `RenderDecree::CameraPan` /
-    `Renderer::fit_camera_to_tree`.
-  - **Selection:** `SelectAll`, `DeselectAll`, `InvertSelection`,
-    `SelectParent`, `SelectChild`, `SelectNextSibling`,
-    `SelectPrevSibling`. Each needs a small arm body using existing
-    `MindMap` parent/children traversal.
-  - **Editor commit-on-click:** `CommitOrCloseEditor` reified for the
-    click-outside path in `event_mouse_click.rs:425-563`; that path
-    still calls `close_text_edit` / `close_label_edit` /
-    `close_portal_text_edit` directly. Wiring the Action would
-    consolidate three identical "click-outside commits" branches.
-  - **Document lifecycle:** `NewDocument` (no path) is mostly wireable
-    by mimicking the `new` console verb's `replace_document` field
-    drain, but needs the `ConsoleEffects` drain refactor referenced
-    in Phase 6 of the plan. Parameterised `open <path>` / `save-as
-    <path>` stay console-only by design.
-- **InputHandlerContext rebuild duplication.** Four sites manually
-  reconstruct `InputHandlerContext` from destructured locals before
-  calling `dispatch_action`: `event_keyboard.rs` (twice — action +
-  custom-mutation fall-through), `event_mouse_click.rs` (twice —
-  Middle-click + DoubleClick). The rebuild exists because both
-  handler functions destructure `ctx` at entry for borrow-split
-  reasons. Cleaner shape: drop the destructure, take
-  `ctx: &mut InputHandlerContext<'_>` and pass through directly.
-  Mechanical refactor.
+  `save-as <path>`, `mutation apply <id>`, kv-shaped `border` /
+  `edge` / `color` / `font` / `zoom` / `spacing` setters
+  intentionally stay console-only today. Per-verb Action variants
+  with payload (the user-approved approach) require flipping
+  `Action: Copy → Clone` (already done) and adding a
+  `ParametricBinding { combo, args }` shape to `KeybindConfig`
+  per family. Per-family commits remain.
+- **Reparent / Connect target-click handlers bypass the funnel.**
+  `event_mouse_click.rs` calls `handle_reparent_target_click` /
+  `handle_connect_target_click` directly. Both push undo entries
+  but aren't `Action` variants — they should be.
+- **Modal commit/cancel inline in modal handlers.** `text_edit`,
+  `label_edit`, `portal_text_edit` each have their own commit /
+  cancel branches in their modal handler bodies; only `TextEdit`
+  Cancel routes through the funnel. Folding the rest is a §3
+  cleanup.
+- **Console-verb Action bodies inline in `console_input/dispatch.rs`.**
+  Every `Action::Console*` variant is matched and run inline at
+  the console handler; none reach `dispatch_action`. Either route
+  through the funnel or document the carve-out clearly.
+- **`word_left` / `word_right` belong in baumhard.**
+  `text_edit/mod.rs` houses these primitives today, but per
+  CODE_CONVENTIONS §B3 text primitives extend
+  `lib/baumhard/src/util/grapheme_chad.rs`. Cross-crate move +
+  bench per §B3.

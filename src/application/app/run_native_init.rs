@@ -106,15 +106,14 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
     // to on every Enter; written back on close.
     let console_history: Vec<String> = load_console_history();
 
-    // User-layer macros, loaded once at startup. Failures log a
-    // warning and yield an empty registry — same posture as the
-    // mutation loader.
-    // Build the macro registry across all wired tiers, in ascending
-    // precedence order. App tier first so the User tier (loaded
-    // second) overrides any colliding ids — matches the format
-    // reference at `format/macros.md`. Map / Inline tiers are
-    // deferred (see `TODO.md`); when they land they'll be inserted
-    // last.
+    // Build the macro registry across all four tiers, in ascending
+    // precedence order: App < User at startup; Map < Inline are
+    // refreshed via `rebuild_document_macros` whenever a document
+    // loads. Higher-tier ids shadow lower-tier ones; clearing a
+    // higher tier reveals what's underneath. See
+    // `format/macros.md` for the threat model and the SOURCE-OF-
+    // TRUTH list of places that must move together when the order
+    // changes.
     let mut macros = crate::application::macros::MacroRegistry::new();
     let mut app_count = 0usize;
     for m in crate::application::macros::loader::load_app_macros() {

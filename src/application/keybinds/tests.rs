@@ -197,9 +197,7 @@ fn test_keybind_parse_mouse_gestures() {
     let cases = &[
         ("DoubleClick", "doubleclick"),
         ("MiddleClick", "middleclick"),
-        ("RightClick", "rightclick"),
         ("LeftDrag", "leftdrag"),
-        ("LeftClick", "leftclick"),
         ("WheelUp", "wheelup"),
         ("WheelDown", "wheeldown"),
     ];
@@ -245,11 +243,9 @@ fn test_gesture_key_name_matches_parser_token() {
     // Every MouseGesture's canonical name must round-trip through
     // KeyBind::parse to a binding with the matching key field.
     let gestures = [
-        MouseGesture::LeftClick,
         MouseGesture::LeftDrag,
         MouseGesture::DoubleClick,
         MouseGesture::MiddleClick,
-        MouseGesture::RightClick,
         MouseGesture::WheelUp,
         MouseGesture::WheelDown,
     ];
@@ -360,9 +356,6 @@ fn test_wasm_compatibility_mixed_branch_actions_are_native_only() {
         // EdgeLabel + Portal* selection branches reach NativeOnly editors.
         Action::EditSelection,
         Action::EditSelectionClean,
-        // No dispatch arm yet (orphan variant — see TODO.md);
-        // classified defensively.
-        Action::CommitOrCloseEditor,
     ] {
         assert_eq!(
             a.wasm_compatibility(),
@@ -441,7 +434,6 @@ fn test_wasm_compatibility_classifies_every_variant_explicitly() {
         Action::DoubleClickActivate,
         Action::CreateOrphanNodeAndEdit,
         Action::PanCanvas,
-        Action::CommitOrCloseEditor,
         // Navigation / camera
         Action::ZoomIn,
         Action::ZoomOut,
@@ -712,7 +704,7 @@ fn test_action_for_gesture_exact_modifier_match_wins_over_fallback() {
     );
 }
 
-// ─── Macro-tier resolution-order tests (Phase 8) ───────────────
+// ─── Macro-tier resolution-order tests ─────────────────────────
 
 #[test]
 fn test_macro_for_returns_bound_id() {

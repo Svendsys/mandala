@@ -22,9 +22,9 @@ and [`src/application/app/run_wasm.rs`](./src/application/app/run_wasm.rs).
   triggered custom mutations.
 - A 21-field `InputHandlerContext` covering every modal /
   state-machine / per-frame field the dispatch arms might touch.
-- A `MacroRegistry` with App / User / Map tiers loaded.
-- `bundle!()` macros in `event_keyboard.rs` and `event_mouse_click.rs`
-  that rebuild the context bundle for the dispatcher.
+- A `MacroRegistry` with App / User / Map / Inline tiers loaded.
+- Input handlers that take `&mut InputHandlerContext<'_>` directly
+  and forward to `dispatch_action` without re-bundling.
 
 **WASM** (`src/application/app/run_wasm.rs`) has:
 - Its own `WasmInputState` struct with 9 fields (a strict subset of
@@ -161,8 +161,12 @@ loader.
 4. Reuse `loader::rebuild_map_macros` and
    `loader::rebuild_inline_macros` — both pure once the cfg gate
    is lifted.
-5. Add `macros: MacroRegistry` to `WasmInputState`. Build it at
-   startup in `run_wasm::run`.
+5. Add `macros: MacroRegistry` to `WasmInputState`. Note that
+   `WasmInputState` is currently a closure-local struct inside
+   `run_wasm::run` (`run_wasm.rs:138-156`); promote it to a
+   module-level struct first so dispatch helpers can take a
+   reference cleanly. Build the registry at startup in
+   `run_wasm::run`.
 6. When the document loads (and re-loads via `?map=`), call
    `rebuild_map_macros(macros, doc)` and
    `rebuild_inline_macros(macros, doc)`.
@@ -171,10 +175,10 @@ loader.
    for the native chain (Action → Macro → CustomMutation).
 8. **Do not skip the privilege gate.** See Track-D below.
 
-### Track C — unify the bundle / context type
+### Track C — unify the context type
 
-Eventually the two `bundle!()` macros and the `WasmInputState`
-should converge. Two viable shapes:
+Eventually `WasmInputState` should converge with
+`InputHandlerContext`. Two viable shapes:
 
 **Shape 1: shared `InputContextCore` + native-only extension.**
 Define a new `InputContextCore` containing the 9 fields both
@@ -272,7 +276,8 @@ today, per `TEST_CONVENTIONS.md §T9`).
 2. [`src/application/app/dispatch.rs`](./src/application/app/dispatch.rs) —
    the native dispatch funnel arms are the reference implementation.
 3. [`src/application/app/input_context.rs`](./src/application/app/input_context.rs) —
-   the 21-field bundle every native arm reads.
+   the 21-field context every native arm reads (passed by
+   `&mut InputHandlerContext<'_>`).
 4. [`src/application/app/run_wasm.rs`](./src/application/app/run_wasm.rs) —
    the WASM event loop with its inline match blocks. This file
    shrinks dramatically as Track A ports land.

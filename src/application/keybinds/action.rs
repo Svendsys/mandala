@@ -173,19 +173,6 @@ pub enum Action {
     /// Default-bound to `LeftDrag` and `MiddleClick`. The dispatcher
     /// enters `DragState::Panning` on press and exits on release.
     PanCanvas,
-    /// Click outside an open editor → commit the editor's buffer.
-    /// Mouse handler dispatches when the release lands outside the
-    /// edited target's AABB.
-    ///
-    /// **Scaffolded — no dispatch arm yet.** The variant exists so
-    /// `KeybindConfig` and macros can refer to it stably, but
-    /// `dispatch.rs` does not currently match on it. Pressing a
-    /// key bound to `CommitOrCloseEditor` falls through the
-    /// dispatcher's catch-all (silent no-op + debug log). Wiring
-    /// the body — folding the existing inline click-outside-commit
-    /// paths in `event_mouse_click.rs:425-563` into a dispatch arm
-    /// — is tracked as a follow-up in `TODO.md`.
-    CommitOrCloseEditor,
 
     // ── Navigation / camera (Document context) ──────────────────
     /// Zoom the camera in by one step. Default-bound to `WheelUp`.
@@ -430,8 +417,7 @@ impl Action {
             | Action::TextEditDeleteForward
             | Action::TextEditDeleteWordBack
             | Action::TextEditDeleteWordForward
-            | Action::TextEditCommit
-            | Action::CommitOrCloseEditor => false,
+            | Action::TextEditCommit => false,
         }
     }
 
@@ -522,7 +508,6 @@ impl Action {
             | Action::DoubleClickActivate
             | Action::CreateOrphanNodeAndEdit
             | Action::PanCanvas
-            | Action::CommitOrCloseEditor
             | Action::ZoomIn
             | Action::ZoomOut
             | Action::ZoomReset
@@ -669,16 +654,9 @@ impl Action {
             // the same shape: Node / PortalMarker branches are
             // Compatible, but the EdgeLabel branch calls
             // `open_label_edit` (NativeOnly).
-            //
-            // `CommitOrCloseEditor` is Compatible-by-arm-body
-            // (the variant has no dispatch arm yet — orphan,
-            // see TODO.md). Classified `NativeOnly` defensively
-            // until its arm lands; flipping is safe once the arm
-            // body is verified Compatible.
             Action::DoubleClickActivate
             | Action::EditSelection
-            | Action::EditSelectionClean
-            | Action::CommitOrCloseEditor => WasmCompatibility::NativeOnly,
+            | Action::EditSelectionClean => WasmCompatibility::NativeOnly,
 
             // ── Native-only: console modal ────────────────────
             Action::OpenConsole

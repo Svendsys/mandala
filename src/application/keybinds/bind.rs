@@ -27,27 +27,16 @@ pub struct KeyBind {
 
 /// User-driven mouse gestures that participate in the keybind lookup.
 ///
-/// Each variant has a canonical binding-string form ([`gesture_key_name`])
+/// Each variant has a canonical binding-string form ([`MouseGesture::tokens`])
 /// that mouse handlers feed through `KeyBind::matches` exactly the way
 /// keyboard names go through it.
 ///
-/// **Dispatch status (current branch).** `DoubleClick`, `MiddleClick`,
-/// `LeftDrag`, `WheelUp`, `WheelDown` are dispatched through
-/// `dispatch_action` from their respective handlers (`event_mouse_click`,
-/// `event_cursor_moved`, `run_native` wheel branch). `LeftClick` and
-/// `RightClick` are **parsed but not yet dispatched** — they're
-/// reserved tokens so user keybind files don't fail validation, but
-/// no handler currently looks up an Action for them. Adding a
-/// `LeftClick` dispatch site is non-trivial because a single
-/// left-press is already consumed by the selection state machine;
-/// any future binding on `LeftClick` would need a clear post-
-/// selection point in the mouse handler. `RightClick` has no
-/// non-color-picker dispatch site at all.
+/// `LeftClick` and `RightClick` were previously reserved-but-not-
+/// dispatched; per CODE_CONVENTIONS §5 (no half-features) they were
+/// removed. A future commit that adds a real dispatch site can
+/// reintroduce the variant in the same patch as its body.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MouseGesture {
-    /// Single left-button press. **Reserved, not dispatched.** Parsed
-    /// so user configs can name it; no current handler looks it up.
-    LeftClick,
     /// Left-button held down + cursor movement past the drag threshold,
     /// only when the press landed on empty canvas. Continuous: the bound
     /// action's body runs for the duration of the press. Dispatched
@@ -58,11 +47,6 @@ pub enum MouseGesture {
     DoubleClick,
     /// Single middle-button press. Dispatched.
     MiddleClick,
-    /// Single right-button press. **Reserved, not dispatched.** The
-    /// only handler that currently consumes a right-press is the
-    /// color picker (`event_mouse_click.rs` color-picker branch),
-    /// which doesn't go through the dispatch funnel.
-    RightClick,
     /// One mouse-wheel tick upward (zoom-in by convention). Dispatched
     /// when the console isn't open.
     WheelUp,
@@ -70,20 +54,41 @@ pub enum MouseGesture {
     WheelDown,
 }
 
+impl MouseGesture {
+    /// `(lowercase token, pascal-case token)` for this gesture.
+    /// Single source of truth — the `match` is exhaustive over
+    /// `MouseGesture`, so the compiler enforces that adding a new
+    /// gesture variant updates both forms in lockstep.
+    pub fn tokens(self) -> (&'static str, &'static str) {
+        match self {
+            MouseGesture::LeftDrag => ("leftdrag", "LeftDrag"),
+            MouseGesture::DoubleClick => ("doubleclick", "DoubleClick"),
+            MouseGesture::MiddleClick => ("middleclick", "MiddleClick"),
+            MouseGesture::WheelUp => ("wheelup", "WheelUp"),
+            MouseGesture::WheelDown => ("wheeldown", "WheelDown"),
+        }
+    }
+
+    /// Iterator over every gesture variant. Used by `gesture_emit_form`
+    /// and tests to walk the canonical set without hand-listing.
+    fn all() -> impl Iterator<Item = MouseGesture> {
+        [
+            MouseGesture::LeftDrag,
+            MouseGesture::DoubleClick,
+            MouseGesture::MiddleClick,
+            MouseGesture::WheelUp,
+            MouseGesture::WheelDown,
+        ]
+        .into_iter()
+    }
+}
+
 /// Canonical lowercase binding-string token for a [`MouseGesture`].
 /// The same token `KeyBind::parse` produces from `"DoubleClick"`,
 /// `"MiddleClick"`, etc. Mouse handlers feed this directly into
 /// `ResolvedKeybinds::action_for_context`.
 pub fn gesture_key_name(g: MouseGesture) -> &'static str {
-    match g {
-        MouseGesture::LeftClick => "leftclick",
-        MouseGesture::LeftDrag => "leftdrag",
-        MouseGesture::DoubleClick => "doubleclick",
-        MouseGesture::MiddleClick => "middleclick",
-        MouseGesture::RightClick => "rightclick",
-        MouseGesture::WheelUp => "wheelup",
-        MouseGesture::WheelDown => "wheeldown",
-    }
+    g.tokens().0
 }
 
 /// PascalCase emit form for a recognised gesture token. Used by
@@ -91,16 +96,9 @@ pub fn gesture_key_name(g: MouseGesture) -> &'static str {
 /// to its canonical capitalisation rather than the lowercased
 /// internal form.
 fn gesture_emit_form(lower: &str) -> Option<&'static str> {
-    match lower {
-        "leftclick" => Some("LeftClick"),
-        "leftdrag" => Some("LeftDrag"),
-        "doubleclick" => Some("DoubleClick"),
-        "middleclick" => Some("MiddleClick"),
-        "rightclick" => Some("RightClick"),
-        "wheelup" => Some("WheelUp"),
-        "wheeldown" => Some("WheelDown"),
-        _ => None,
-    }
+    MouseGesture::all()
+        .find(|g| g.tokens().0 == lower)
+        .map(|g| g.tokens().1)
 }
 
 impl KeyBind {
