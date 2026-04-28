@@ -1,8 +1,20 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Font-size derivation for the picker layout: recover per-script
-//! advance ratios, compute `wheel_side_in_fonts`, back-solve
-//! font_size from the target wheel-diameter fraction.
+//! Font-size derivation for the picker layout.
+//!
+//! The picker is a *widget*, not a modal — its size is driven from a
+//! target wheel-diameter fraction of the screen's shorter side. The
+//! sizing pass back-solves font_size by inverting the geometry chain:
+//!
+//! 1. Convert measured glyph advances (absolute pixels from
+//!    `measure_max_glyph_advance` at picker open) into dimensionless
+//!    ratios by dividing by `measurement_font_size`.
+//! 2. Compute `wheel_side_in_fonts` — the wheel-enclosing square's
+//!    side measured in units of `font_size`.
+//! 3. Pick `target_side = short_axis * target_frac * size_scale` and
+//!    derive `font_size = clamp(target_side / wheel_side_in_fonts,
+//!    font_min, font_max)`, then re-derive every dimension at the
+//!    chosen `font_size`.
 
 use std::f32::consts::TAU;
 

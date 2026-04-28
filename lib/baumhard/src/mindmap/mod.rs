@@ -6,16 +6,37 @@
 //! types declared under `model` and materialise through
 //! `tree_builder` / `scene_builder`.
 
+/// Timing envelope, easing, and lerp helpers for animated
+/// `CustomMutation`s.
 pub mod animation;
+/// Mindmap data model — `MindMap`, `MindNode`, `MindEdge`, palettes,
+/// canvas.
 pub mod model;
+/// `.mindmap.json` loader and saver — the serialization boundary.
 pub mod loader;
+/// Per-node glyph-border configuration plus geometry constants
+/// shared by the renderer and the border tree builder.
 pub mod border;
+/// Border-side pattern syntax — parser and grapheme-aware fitter
+/// for `CustomBorderGlyphs.{top, bottom, left, right}` strings.
 pub mod border_pattern;
+/// Connection-path geometry: anchor resolution, straight/cubic
+/// Bezier construction, arc-length sampling, point-to-path distance.
 pub mod connection;
+/// `CustomMutation` carrier — identity, metadata, and the
+/// `MutatorNode` payload.
 pub mod custom_mutation;
+/// Portal-label geometry: point ↔ `border_t` on a node's rectangular
+/// border, plus the directional default orientation.
 pub mod portal_geometry;
+/// `MindMap` → `RenderScene` flat builder for connections, borders,
+/// portals, edge-handles, and connection labels.
 pub mod scene_builder;
+/// Per-edge cache of connection glyph geometry — keeps the scene
+/// builder from re-sampling every visible edge every drag frame.
 pub mod scene_cache;
+/// `MindMap` → `Tree<GfxElement, GfxMutator>` builder with
+/// per-canvas-role sub-builders.
 pub mod tree_builder;
 
 #[cfg(test)]

@@ -10,6 +10,14 @@
 //! back when it drops, with a 30% hysteresis band to prevent
 //! oscillation. Self-tuning — the only knob is the budget at
 //! construction.
+//!
+//! Visual consequences: with `n = 1` the throttle is a no-op. With
+//! `n > 1` the dragged content advances in chunks, catching up to
+//! the cursor every `n` frames; on a 60 Hz display at `n = 4` the
+//! update cadence is ~66 ms, perceptible but still tracking. The
+//! refresh rate itself never drops — the GPU swap chain keeps
+//! presenting already-built buffers on skipped frames — and the
+//! hardware cursor never lags.
 
 use std::collections::VecDeque;
 use std::time::Duration;

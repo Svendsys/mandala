@@ -109,6 +109,7 @@ pub struct GlyphTreeEventInstance {
 }
 
 impl GlyphTreeEventInstance {
+   /// Construct an event instance. O(1), no allocation.
    pub fn new(event_type: GlyphTreeEvent, event_time_millis: usize) -> Self {
       GlyphTreeEventInstance {
          event_type,
@@ -135,6 +136,7 @@ pub struct MouseEventData {
 }
 
 impl MouseEventData {
+    /// Construct from raw `f32` coordinates. O(1), no allocation.
     pub fn new(x: f32, y: f32) -> Self {
         Self {
             x: OrderedFloat(x),

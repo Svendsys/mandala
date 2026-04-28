@@ -27,8 +27,10 @@ use std::hash::{Hash, Hasher};
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ZoomVisibility {
+    /// Lower bound on `camera.zoom`; `None` = unbounded below.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min: Option<f32>,
+    /// Upper bound on `camera.zoom`; `None` = unbounded above.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max: Option<f32>,
 }

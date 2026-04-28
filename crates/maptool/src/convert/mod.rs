@@ -42,6 +42,9 @@ pub fn convert_legacy(input_path: &Path, output_path: &Path) -> Result<(), Strin
     let mut root: Value = serde_json::from_str(&content)
         .map_err(|e| format!("failed to parse {}: {e}", input_path.display()))?;
 
+    // Order matters: IDs first so the rest can rewrite references;
+    // enums before palettes so `theme_id` is gone before the palette
+    // hoist; cleanup last so it can drop `index` once IDs encode it.
     let nodes = root
         .get("nodes")
         .and_then(|v| v.as_object())

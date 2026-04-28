@@ -6,8 +6,15 @@
 //! `FONT_SYSTEM`; `attrs` translates `ColorFontRegions` into
 //! cosmic-text `AttrsList`s.
 
+/// `ColorFontRegions` → cosmic-text bridges (`attrs_list_from_regions`
+/// for `Editor::insert_string`, `RegionFamilies` +
+/// `rich_text_spans_from_regions` for `Buffer::set_rich_text`).
 pub mod attrs;
+/// Compiled-in font table, shared `FONT_SYSTEM`, cosmic-text editor
+/// factories, and the text-measurement primitives.
 pub mod fonts;
+/// Test bodies exposed via `pub mod tests` so `benches/test_bench.rs`
+/// can reuse the `do_*()` functions as micro-benchmarks (§B8).
 pub mod tests;
 
 /// Packed-RGBA colour, re-exported from `cosmic_text::Color` so

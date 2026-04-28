@@ -17,6 +17,11 @@ mod context;
 
 pub mod tests;
 
+// `InstructionSpec` and `MutationListSrc` are retained as `pub`
+// re-exports even when no in-tree consumer uses them — they cover
+// scope-topology follow-ups (recursive `Macro` / `Instruction` via
+// `MutationListSrc` / `InstructionSpec`) on the named trajectory
+// (§7 seam preservation).
 #[allow(unused_imports)]
 pub use ast::{
     CellField, ChannelSrc, CountSrc, InstructionSpec, MutationListSrc, MutationSrc, MutatorNode,
