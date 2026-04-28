@@ -170,6 +170,9 @@ it. This is the single strongest rule in the document.
 - **Fix fundamentals in the same commit that reveals them.** A refactor
   that leaves the suite red is not a refactor; it is an unfinished
   commit.
+- **Avoid duplicating logic.** Identical logic copy / pasted throughout the codebase
+  becomes a nightmare to maintain. If a function is needed in two or more places, the answer
+  is never to copy it, but to use a single function called in two or more places.
 
 ## §6 Modular design by default
 
@@ -179,16 +182,15 @@ code should reflect that.
 - **Divide and conquer.** Split files by conceptual boundary, not line
   count. Small files, each representing a clear concept, organized in
   modules. A module boundary is a promise: if the concept is
-  load-bearing, name it and isolate it.
+  load-bearing, name it and isolate it. A one-line helper is not a module; a
+  private function used once does not need its own file. New files
+  should feel justified — but so should monolith files that have
+  outgrown their concept.
 - **Reach for a strategy pattern when the shape is plural.** When there
   are clearly multiple reasonable ways to do something — and another
   context is likely to want a different one — use a strategy, trait, or
   equivalent extension point. Do not hardcode one approach into a shape
   that is inherently plural.
-- **Prefer editing over creating.** A one-line helper is not a module; a
-  private function used once does not need its own file. New files
-  should feel justified — but so should monolith files that have
-  outgrown their concept.
 
 ## §7 Strategic over-engineering
 
@@ -213,10 +215,6 @@ industrial cost/benefit reasoning. This is not license for speculation.
 - **Three similar lines beats a premature abstraction.** Extract a
   helper when a pattern repeats three times *and* the repetition
   obscures intent. Two occurrences is a coincidence.
-- **Trust internal invariants past the boundary.** Validate at
-  boundaries — file loaders, CLI args, `?map=`, user input — and trust
-  your own data structures past that point. Interactive paths are the
-  exception (see §9).
 
 ## §8 Documentation discipline
 
@@ -282,8 +280,6 @@ Workspace-level commitment:
 
 ## §12 Commit hygiene
 
-- **One conceptual change per commit.** Three unrelated changes is
-  three commits.
 - **Tests land in the commit that introduces the code they test.**
 - **`./test.sh` is green before committing.** `./test.sh --lint` is
   advisory; review it. `./test.sh --bench` for performance-conscious
