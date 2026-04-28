@@ -364,10 +364,7 @@ pub(in crate::application::app) fn handle_text_edit_key(
     // (which handles `Enter` / `Tab` / printable chars uniformly).
     let mut changed = false;
     if let Some(a) = action {
-        changed = crate::application::app::dispatch::apply_text_edit_action(
-            a,
-            text_edit_state,
-        );
+        changed = super::apply_text_edit_action(a, text_edit_state);
     } else {
         // No Action matched — insert literal `\n` for Enter, `\t` for
         // Tab, or printable chars. Pre-existing behaviour preserved.

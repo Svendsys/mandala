@@ -196,6 +196,125 @@ pub(in crate::application::app) fn move_cursor_down_line(buffer: &str, cursor: u
     next_line_start + col.min(next_line_len)
 }
 
+/// Apply a TextEdit cursor / delete primitive to the editor state.
+/// Pure: only mutates the in-memory buffer + cursor + regions, no
+/// renderer touches. Returns `true` when state changed (caller
+/// refreshes the preview iff this returns true).
+///
+/// Lives here (cross-platform) rather than in
+/// `app/dispatch.rs` (native-only) so the WASM build of the modal
+/// handler in `editor.rs` can call it on every keystroke. Native
+/// dispatch arms re-export from here via `dispatch::apply_text_edit_action`.
+pub(in crate::application::app) fn apply_text_edit_action(
+    action: crate::application::keybinds::Action,
+    state: &mut TextEditState,
+) -> bool {
+    use crate::application::keybinds::Action;
+    let TextEditState::Open {
+        buffer,
+        cursor_grapheme_pos,
+        buffer_regions,
+        ..
+    } = state else { return false; };
+    let cursor = cursor_grapheme_pos;
+    let before = *cursor;
+    let len_before = buffer.len();
+    match action {
+        Action::TextEditCursorLeft => {
+            if *cursor > 0 {
+                *cursor -= 1;
+            }
+        }
+        Action::TextEditCursorRight => {
+            if *cursor < grapheme_chad::count_grapheme_clusters(buffer) {
+                *cursor += 1;
+            }
+        }
+        Action::TextEditCursorUp => {
+            *cursor = move_cursor_up_line(buffer, *cursor);
+        }
+        Action::TextEditCursorDown => {
+            *cursor = move_cursor_down_line(buffer, *cursor);
+        }
+        Action::TextEditCursorHome => {
+            *cursor = cursor_to_line_start(buffer, *cursor);
+        }
+        Action::TextEditCursorEnd => {
+            *cursor = cursor_to_line_end(buffer, *cursor);
+        }
+        Action::TextEditDeleteBack => {
+            if *cursor > 0 {
+                buffer_regions.shrink_regions_after(*cursor - 1, 1);
+                *cursor = delete_before_cursor(buffer, *cursor);
+            }
+        }
+        Action::TextEditDeleteForward => {
+            if *cursor < grapheme_chad::count_grapheme_clusters(buffer) {
+                buffer_regions.shrink_regions_after(*cursor, 1);
+                *cursor = delete_at_cursor(buffer, *cursor);
+            }
+        }
+        Action::TextEditWordLeft => {
+            *cursor = word_left(buffer, *cursor);
+        }
+        Action::TextEditWordRight => {
+            *cursor = word_right(buffer, *cursor);
+        }
+        Action::TextEditDeleteWordBack => {
+            let target = word_left(buffer, *cursor);
+            while *cursor > target {
+                buffer_regions.shrink_regions_after(*cursor - 1, 1);
+                *cursor = delete_before_cursor(buffer, *cursor);
+            }
+        }
+        Action::TextEditDeleteWordForward => {
+            let target = word_right(buffer, *cursor);
+            let total = grapheme_chad::count_grapheme_clusters(buffer);
+            let to_delete = target.saturating_sub(*cursor).min(total - *cursor);
+            for _ in 0..to_delete {
+                buffer_regions.shrink_regions_after(*cursor, 1);
+                *cursor = delete_at_cursor(buffer, *cursor);
+            }
+        }
+        _ => {}
+    }
+    *cursor != before || buffer.len() != len_before
+}
+
+/// Word-boundary cursor helpers. A "word" is a run of alphanumeric
+/// characters; punctuation and whitespace are word-boundary characters.
+fn word_left(buffer: &str, cursor: usize) -> usize {
+    use unicode_segmentation::UnicodeSegmentation;
+    if cursor == 0 {
+        return 0;
+    }
+    let graphemes: Vec<&str> = buffer.graphemes(true).collect();
+    let mut i = cursor;
+    let is_word = |g: &str| g.chars().next().map(char::is_alphanumeric).unwrap_or(false);
+    while i > 0 && !is_word(graphemes[i - 1]) {
+        i -= 1;
+    }
+    while i > 0 && is_word(graphemes[i - 1]) {
+        i -= 1;
+    }
+    i
+}
+
+fn word_right(buffer: &str, cursor: usize) -> usize {
+    use unicode_segmentation::UnicodeSegmentation;
+    let graphemes: Vec<&str> = buffer.graphemes(true).collect();
+    let len = graphemes.len();
+    let mut i = cursor;
+    let is_word = |g: &str| g.chars().next().map(char::is_alphanumeric).unwrap_or(false);
+    while i < len && !is_word(graphemes[i]) {
+        i += 1;
+    }
+    while i < len && is_word(graphemes[i]) {
+        i += 1;
+    }
+    i
+}
+
 /// Build the display text for the edited node by inserting the caret
 /// glyph at the cursor's grapheme position. Used on every keystroke
 /// to produce the `Mutation::AreaDelta` payload.

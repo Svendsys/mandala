@@ -7,6 +7,7 @@
 #![cfg(target_arch = "wasm32")]
 
 use super::*;
+use crate::application::keybinds::Action;
 
 /// Run the browser event loop against `app`.
 pub(super) fn run(mut app: Application) {

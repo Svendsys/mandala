@@ -877,98 +877,11 @@ pub(in crate::application::app) fn dispatch_action(
     }
 }
 
-/// Apply a TextEdit cursor / delete primitive to the editor state.
-/// Pure: only mutates the in-memory buffer + cursor + regions, no
-/// renderer touches. Returns `true` when state changed (caller
-/// refreshes the preview iff this returns true).
-pub(in crate::application::app) fn apply_text_edit_action(
-    action: Action,
-    state: &mut super::TextEditState,
-) -> bool {
-    use super::text_edit::{
-        cursor_to_line_end, cursor_to_line_start, delete_at_cursor, delete_before_cursor,
-        move_cursor_down_line, move_cursor_up_line,
-    };
-    use super::TextEditState;
-    use baumhard::util::grapheme_chad;
-    let TextEditState::Open {
-        buffer,
-        cursor_grapheme_pos,
-        buffer_regions,
-        ..
-    } = state else { return false; };
-    let cursor = cursor_grapheme_pos;
-    let before = *cursor;
-    let len_before = buffer.len();
-    match action {
-        Action::TextEditCursorLeft => {
-            if *cursor > 0 {
-                *cursor -= 1;
-            }
-        }
-        Action::TextEditCursorRight => {
-            if *cursor < grapheme_chad::count_grapheme_clusters(buffer) {
-                *cursor += 1;
-            }
-        }
-        Action::TextEditCursorUp => {
-            *cursor = move_cursor_up_line(buffer, *cursor);
-        }
-        Action::TextEditCursorDown => {
-            *cursor = move_cursor_down_line(buffer, *cursor);
-        }
-        Action::TextEditCursorHome => {
-            *cursor = cursor_to_line_start(buffer, *cursor);
-        }
-        Action::TextEditCursorEnd => {
-            *cursor = cursor_to_line_end(buffer, *cursor);
-        }
-        Action::TextEditDeleteBack => {
-            if *cursor > 0 {
-                buffer_regions.shrink_regions_after(*cursor - 1, 1);
-                *cursor = delete_before_cursor(buffer, *cursor);
-            }
-        }
-        Action::TextEditDeleteForward => {
-            if *cursor < grapheme_chad::count_grapheme_clusters(buffer) {
-                buffer_regions.shrink_regions_after(*cursor, 1);
-                *cursor = delete_at_cursor(buffer, *cursor);
-            }
-        }
-        Action::TextEditWordLeft => {
-            *cursor = word_left(buffer, *cursor);
-        }
-        Action::TextEditWordRight => {
-            *cursor = word_right(buffer, *cursor);
-        }
-        Action::TextEditDeleteWordBack => {
-            let target = word_left(buffer, *cursor);
-            while *cursor > target {
-                buffer_regions.shrink_regions_after(*cursor - 1, 1);
-                *cursor = delete_before_cursor(buffer, *cursor);
-            }
-        }
-        Action::TextEditDeleteWordForward => {
-            // `delete_at_cursor` returns the cursor unchanged
-            // (Delete semantics — buffer collapses leftward into
-            // the cursor). So we cannot drive the loop off the
-            // cursor; instead, count how many graphemes lie between
-            // the cursor and the next word boundary, and delete that
-            // many. Each delete shrinks the buffer by one grapheme;
-            // `target` was captured against the original buffer so
-            // the count is correct.
-            let target = word_right(buffer, *cursor);
-            let total = grapheme_chad::count_grapheme_clusters(buffer);
-            let to_delete = target.saturating_sub(*cursor).min(total - *cursor);
-            for _ in 0..to_delete {
-                buffer_regions.shrink_regions_after(*cursor, 1);
-                *cursor = delete_at_cursor(buffer, *cursor);
-            }
-        }
-        _ => {}
-    }
-    *cursor != before || buffer.len() != len_before
-}
+// `apply_text_edit_action` lives in `text_edit/mod.rs` (cross-platform)
+// so the WASM build can call it from the editor's modal handler.
+// Re-exported here for the dispatch arm above and for module-internal
+// callers that already wrote `dispatch::apply_text_edit_action`.
+pub(in crate::application::app) use super::text_edit::apply_text_edit_action;
 
 /// Apply a LabelEdit cursor / delete primitive to a generic
 /// `(buffer, cursor)` pair. Both `LabelEditState` and
@@ -1073,44 +986,6 @@ fn sibling_id(
             .find(|(_, hidden)| !*hidden)
             .map(|(id, _)| id.clone())
     }
-}
-
-/// Word-boundary cursor helpers. A "word" is a run of alphanumeric
-/// characters; punctuation and whitespace are word-boundary characters.
-/// Returns the target grapheme cursor position to the left/right of
-/// the current cursor.
-fn word_left(buffer: &str, cursor: usize) -> usize {
-    use unicode_segmentation::UnicodeSegmentation;
-    if cursor == 0 {
-        return 0;
-    }
-    let graphemes: Vec<&str> = buffer.graphemes(true).collect();
-    let mut i = cursor;
-    let is_word = |g: &str| g.chars().next().map(char::is_alphanumeric).unwrap_or(false);
-    // Step left through any non-word graphemes first.
-    while i > 0 && !is_word(graphemes[i - 1]) {
-        i -= 1;
-    }
-    // Then through the word itself.
-    while i > 0 && is_word(graphemes[i - 1]) {
-        i -= 1;
-    }
-    i
-}
-
-fn word_right(buffer: &str, cursor: usize) -> usize {
-    use unicode_segmentation::UnicodeSegmentation;
-    let graphemes: Vec<&str> = buffer.graphemes(true).collect();
-    let len = graphemes.len();
-    let mut i = cursor;
-    let is_word = |g: &str| g.chars().next().map(char::is_alphanumeric).unwrap_or(false);
-    while i < len && !is_word(graphemes[i]) {
-        i += 1;
-    }
-    while i < len && is_word(graphemes[i]) {
-        i += 1;
-    }
-    i
 }
 
 /// Run a macro by id against the current `InputHandlerContext`.
