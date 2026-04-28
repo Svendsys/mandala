@@ -457,11 +457,7 @@ impl MindMapDocument {
         // negligible next to the per-frame scene build.
         let edge_label = match &self.selection {
             crate::application::document::SelectionState::EdgeLabel(s) => {
-                Some(baumhard::mindmap::scene_cache::EdgeKey::new(
-                    s.edge_ref.from_id.as_str(),
-                    s.edge_ref.to_id.as_str(),
-                    s.edge_ref.edge_type.as_str(),
-                ))
+                Some(baumhard::mindmap::scene_cache::EdgeKey::from(&s.edge_ref))
             }
             _ => None,
         };

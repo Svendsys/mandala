@@ -653,7 +653,7 @@ mod tests {
             edge.edge_type.clone(),
         );
         doc.selection = SelectionState::PortalLabel(PortalLabelSel {
-            edge_key: EdgeKey::new(&edge.from_id, &edge.to_id, &edge.edge_type),
+            edge_key: EdgeKey::from_edge(&edge),
             endpoint_node_id: edge.to_id.clone(),
         });
         assert_exec_ok(run(&format!("font set {}", family), &mut doc));
@@ -686,7 +686,7 @@ mod tests {
             .expect("testament map has at least one edge")
             .clone();
         doc.selection = SelectionState::PortalText(PortalLabelSel {
-            edge_key: EdgeKey::new(&edge.from_id, &edge.to_id, &edge.edge_type),
+            edge_key: EdgeKey::from_edge(&edge),
             endpoint_node_id: edge.to_id.clone(),
         });
         match run(&format!("font set {}", family), &mut doc) {

@@ -96,11 +96,7 @@ impl ThrottledInteraction for EdgeHandleInteraction {
             );
             self.handle = new_handle;
 
-            let edge_key = baumhard::mindmap::scene_cache::EdgeKey::new(
-                &self.edge_ref.from_id,
-                &self.edge_ref.to_id,
-                &self.edge_ref.edge_type,
-            );
+            let edge_key = baumhard::mindmap::scene_cache::EdgeKey::from(&self.edge_ref);
             scene_cache.invalidate_edge(&edge_key);
 
             let offsets: HashMap<String, (f32, f32)> = HashMap::new();

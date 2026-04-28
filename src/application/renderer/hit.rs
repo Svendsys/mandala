@@ -13,8 +13,34 @@ use baumhard::gfx_structs::tree::Tree;
 use baumhard::mindmap::scene_builder::RenderScene;
 use baumhard::mindmap::scene_cache::EdgeKey;
 use glam::Vec2;
+use rustc_hash::FxHashMap;
+use std::hash::Hash;
 
 use super::Renderer;
+
+/// AABB containment predicate. The four hit-test bodies in this
+/// file each open-coded the same `pos.x >= min.x && pos.x <=
+/// max.x && pos.y >= min.y && pos.y <= max.y` cascade; lifting it
+/// here means the rectangle bound semantics live in one place.
+fn aabb_contains(pos: Vec2, min: Vec2, max: Vec2) -> bool {
+    pos.x >= min.x && pos.x <= max.x && pos.y >= min.y && pos.y <= max.y
+}
+
+/// Linear scan over an AABB-keyed map; return the first key whose
+/// rectangle contains `pos`. Generic over the key type so the
+/// edge-label (`EdgeKey`) and portal (`(EdgeKey, String)`) hit
+/// maps share the same body.
+fn find_first_aabb_hit<K: Clone + Hash + Eq>(
+    map: &FxHashMap<K, (Vec2, Vec2)>,
+    pos: Vec2,
+) -> Option<K> {
+    for (key, (min, max)) in map {
+        if aabb_contains(pos, *min, *max) {
+            return Some(key.clone());
+        }
+    }
+    None
+}
 
 impl Renderer {
 
@@ -54,14 +80,9 @@ impl Renderer {
         canvas_pos: Vec2,
         edge_key: &EdgeKey,
     ) -> bool {
-        if let Some((min, max)) = self.connection_label_hitboxes.get(edge_key) {
-            canvas_pos.x >= min.x
-                && canvas_pos.x <= max.x
-                && canvas_pos.y >= min.y
-                && canvas_pos.y <= max.y
-        } else {
-            false
-        }
+        self.connection_label_hitboxes
+            .get(edge_key)
+            .is_some_and(|(min, max)| aabb_contains(canvas_pos, *min, *max))
     }
 
     /// Scan every registered edge-label hitbox and return the
@@ -75,16 +96,7 @@ impl Renderer {
     /// `SelectionState::EdgeLabel` without requiring the edge to
     /// already be selected.
     pub fn hit_test_any_edge_label(&self, canvas_pos: Vec2) -> Option<EdgeKey> {
-        for (key, (min, max)) in &self.connection_label_hitboxes {
-            if canvas_pos.x >= min.x
-                && canvas_pos.x <= max.x
-                && canvas_pos.y >= min.y
-                && canvas_pos.y <= max.y
-            {
-                return Some(key.clone());
-            }
-        }
-        None
+        find_first_aabb_hit(&self.connection_label_hitboxes, canvas_pos)
     }
 
     /// Replace the connection-label hitbox map wholesale.
@@ -97,10 +109,7 @@ impl Renderer {
         &mut self,
         hitboxes: std::collections::HashMap<EdgeKey, (Vec2, Vec2)>,
     ) {
-        self.connection_label_hitboxes.clear();
-        for (k, v) in hitboxes {
-            self.connection_label_hitboxes.insert(k, v);
-        }
+        self.connection_label_hitboxes = hitboxes.into_iter().collect();
     }
 
     /// Replace the portal **icon** hitbox map wholesale. Called
@@ -112,8 +121,7 @@ impl Renderer {
         &mut self,
         hitboxes: std::collections::HashMap<(EdgeKey, String), (Vec2, Vec2)>,
     ) {
-        self.portal_icon_hitboxes.clear();
-        self.portal_icon_hitboxes.extend(hitboxes);
+        self.portal_icon_hitboxes = hitboxes.into_iter().collect();
     }
 
     /// Replace the portal **text** hitbox map wholesale. Sibling
@@ -126,8 +134,7 @@ impl Renderer {
         &mut self,
         hitboxes: std::collections::HashMap<(EdgeKey, String), (Vec2, Vec2)>,
     ) {
-        self.portal_text_hitboxes.clear();
-        self.portal_text_hitboxes.extend(hitboxes);
+        self.portal_text_hitboxes = hitboxes.into_iter().collect();
     }
 
     /// Hit-test portal **icon** markers at `canvas_pos`. Returns
@@ -147,16 +154,7 @@ impl Renderer {
     /// from text clicks — callers that want "any portal sub-part"
     /// check both in sequence.
     pub fn hit_test_portal(&self, canvas_pos: Vec2) -> Option<(EdgeKey, String)> {
-        for ((key, endpoint), (min, max)) in &self.portal_icon_hitboxes {
-            if canvas_pos.x >= min.x
-                && canvas_pos.x <= max.x
-                && canvas_pos.y >= min.y
-                && canvas_pos.y <= max.y
-            {
-                return Some((key.clone(), endpoint.clone()));
-            }
-        }
-        None
+        find_first_aabb_hit(&self.portal_icon_hitboxes, canvas_pos)
     }
 
     /// Hit-test portal **text** labels at `canvas_pos`. Sibling of
@@ -166,16 +164,7 @@ impl Renderer {
     /// the event loop checks text first so per-channel routing
     /// stays deterministic.
     pub fn hit_test_portal_text(&self, canvas_pos: Vec2) -> Option<(EdgeKey, String)> {
-        for ((key, endpoint), (min, max)) in &self.portal_text_hitboxes {
-            if canvas_pos.x >= min.x
-                && canvas_pos.x <= max.x
-                && canvas_pos.y >= min.y
-                && canvas_pos.y <= max.y
-            {
-                return Some((key.clone(), endpoint.clone()));
-            }
-        }
-        None
+        find_first_aabb_hit(&self.portal_text_hitboxes, canvas_pos)
     }
 
     /// Pan the camera so `target` (canvas coordinates) is centred

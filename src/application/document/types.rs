@@ -98,6 +98,27 @@ impl EdgeRef {
     }
 }
 
+/// Convert an `EdgeRef` (the app-side identity triple) into the
+/// baumhard-side `EdgeKey` of the same shape. Bridges five
+/// previously open-coded `EdgeKey::new(&er.from_id, &er.to_id,
+/// &er.edge_type)` constructions in the label-edit / edge-handle
+/// flows.
+impl From<&EdgeRef> for EdgeKey {
+    fn from(er: &EdgeRef) -> Self {
+        EdgeKey::new(&er.from_id, &er.to_id, &er.edge_type)
+    }
+}
+
+/// Mirror conversion for the reverse direction. The drag-state
+/// promotion path in `event_cursor_moved` builds an `EdgeRef`
+/// from a freshly-stored `EdgeKey` snapshot; previously each
+/// site rebuilt the `EdgeRef` field-by-field.
+impl From<&EdgeKey> for EdgeRef {
+    fn from(key: &EdgeKey) -> Self {
+        EdgeRef::new(&key.from_id, &key.to_id, &key.edge_type)
+    }
+}
+
 /// Tracks what is currently selected in the document. The
 /// variants are mutually exclusive — selecting one kind clears
 /// any prior selection of the others, enforced by construction
