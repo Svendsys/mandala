@@ -250,12 +250,38 @@ impl InitState {
                         }
                     }
                 } else {
-                    let factor = if scroll_y > 0.0 { 1.1 } else { 1.0 / 1.1 };
-                    self.renderer.process_decree(RenderDecree::CameraZoom {
-                        screen_x: self.cursor_pos.0 as f32,
-                        screen_y: self.cursor_pos.1 as f32,
-                        factor: factor as f32,
-                    });
+                    // Wheel zoom routed through dispatch_action so users
+                    // can rebind WheelUp / WheelDown to anything (or
+                    // unbind them entirely). Default keybinds map both
+                    // to ZoomIn / ZoomOut respectively. Falls back to
+                    // the legacy hardcoded factor when no Action is
+                    // bound, preserving today's behaviour for users
+                    // who haven't touched their config.
+                    let gesture_name = if scroll_y > 0.0 {
+                        crate::application::keybinds::gesture_key_name(
+                            crate::application::keybinds::MouseGesture::WheelUp,
+                        )
+                    } else {
+                        crate::application::keybinds::gesture_key_name(
+                            crate::application::keybinds::MouseGesture::WheelDown,
+                        )
+                    };
+                    let action = self.keybinds.action_for_context(
+                        crate::application::keybinds::InputContext::Document,
+                        gesture_name,
+                        self.modifiers.control_key(),
+                        self.modifiers.shift_key(),
+                        self.modifiers.alt_key(),
+                    );
+                    if let Some(a) = action {
+                        let mut bundle = self.input_context();
+                        let _ = crate::application::app::dispatch::dispatch_action(
+                            a, &mut bundle, None,
+                        );
+                    }
+                    // No fallback: if the user unbinds WheelUp/WheelDown
+                    // explicitly, wheel events are silently ignored (same
+                    // contract as DoubleClick).
                 }
             }
             Event::WindowEvent {

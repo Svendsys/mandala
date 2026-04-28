@@ -320,30 +320,41 @@ pub(super) fn handle_keyboard_input(
         let _ = super::dispatch::dispatch_action(a, &mut bundle, None);
     } else {
         // No built-in action matched — try the user-defined
-        // `custom_mutation_bindings`. (Phase 7 lifts this fallthrough
-        // into `dispatch::dispatch_custom_mutation_for_key` so the
-        // keybind path matches the click-trigger path's
-        // `apply_document_actions` + animation `timing` handling.)
-        if let Some(id) = key_name.as_deref().and_then(|k| {
-            keybinds
-                .custom_mutation_for(
-                    k,
-                    modifiers.control_key(),
-                    modifiers.shift_key(),
-                    modifiers.alt_key(),
-                )
-                .map(|s| s.to_string())
-        }) {
-            if let Some(doc) = document.as_mut() {
-                if let SelectionState::Single(nid) = doc.selection.clone() {
-                    let mutation = doc.mutation_registry.get(&id).cloned();
-                    if let (Some(m), Some(tree)) = (mutation, mindmap_tree.as_mut()) {
-                        doc.apply_custom_mutation(&m, &nid, Some(tree));
-                        scene_cache.clear();
-                        rebuild_all(doc, mindmap_tree, app_scene, renderer, scene_cache);
-                    }
-                }
-            }
+        // `custom_mutation_bindings`. Routes through the unified
+        // `dispatch_custom_mutation_for_key` helper so this path
+        // matches the click-trigger path at `click.rs:40-63` byte
+        // for byte (animation-timing aware, always invokes
+        // `apply_document_actions`). Phase-7 parity fix.
+        if let Some(k) = key_name.as_deref() {
+            let mut bundle = InputHandlerContext {
+                document,
+                mindmap_tree,
+                app_scene,
+                renderer,
+                scene_cache,
+                drag_state,
+                app_mode,
+                console_state,
+                console_history,
+                label_edit_state,
+                portal_text_edit_state,
+                text_edit_state,
+                color_picker_state,
+                last_click,
+                hovered_node,
+                cursor_pos,
+                modifiers,
+                cursor_is_hand,
+                picker_hover,
+                keybinds,
+            };
+            let _ = super::dispatch::dispatch_custom_mutation_for_key(
+                &mut bundle,
+                k,
+                modifiers.control_key(),
+                modifiers.shift_key(),
+                modifiers.alt_key(),
+            );
         }
     }
 }

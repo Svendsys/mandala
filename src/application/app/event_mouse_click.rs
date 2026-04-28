@@ -104,7 +104,47 @@ pub(super) fn handle_mouse_input(
     match button {
         MouseButton::Middle => {
             if state == ElementState::Pressed {
-                *drag_state = DragState::Panning;
+                // Middle-click press: lookup what's bound to MiddleClick
+                // (default `PanCanvas`). The dispatch arm sets
+                // `DragState::Panning`. Release unconditionally resets
+                // drag state below — mirrors today's behaviour where
+                // any drag's release goes to None regardless of which
+                // gesture started it.
+                let name = crate::application::keybinds::gesture_key_name(
+                    crate::application::keybinds::MouseGesture::MiddleClick,
+                );
+                let action = keybinds.action_for_context(
+                    crate::application::keybinds::InputContext::Document,
+                    name,
+                    modifiers.control_key(),
+                    modifiers.shift_key(),
+                    modifiers.alt_key(),
+                );
+                if let Some(a) = action {
+                    let mut bundle = crate::application::app::input_context::InputHandlerContext {
+                        document,
+                        mindmap_tree,
+                        app_scene,
+                        renderer,
+                        scene_cache,
+                        drag_state,
+                        app_mode,
+                        console_state,
+                        console_history,
+                        label_edit_state,
+                        portal_text_edit_state,
+                        text_edit_state,
+                        color_picker_state,
+                        last_click,
+                        hovered_node,
+                        cursor_pos,
+                        modifiers,
+                        cursor_is_hand,
+                        picker_hover,
+                        keybinds,
+                    };
+                    let _ = super::dispatch::dispatch_action(a, &mut bundle, None);
+                }
             } else {
                 *drag_state = DragState::None;
             }

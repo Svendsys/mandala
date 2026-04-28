@@ -465,6 +465,24 @@ pub(in crate::application::app) fn dispatch_action(
             *ctx.drag_state = DragState::Panning;
             DispatchOutcome::Handled
         }
+        Action::ZoomIn | Action::ZoomOut => {
+            // Step zoom centred on the cursor. Factor mirrors the
+            // legacy hardcoded wheel handler (1.1 step) so wheel-bound
+            // ZoomIn/ZoomOut behave identically to today's wheel zoom.
+            let factor = if matches!(action, Action::ZoomIn) {
+                1.1f32
+            } else {
+                1.0f32 / 1.1f32
+            };
+            ctx.renderer.process_decree(
+                crate::application::common::RenderDecree::CameraZoom {
+                    screen_x: ctx.cursor_pos.0 as f32,
+                    screen_y: ctx.cursor_pos.1 as f32,
+                    factor,
+                },
+            );
+            DispatchOutcome::Handled
+        }
 
         // Console / Picker / LabelEdit / TextEdit modal-context actions
         // are dispatched by their respective modal handlers, not here.
@@ -475,6 +493,58 @@ pub(in crate::application::app) fn dispatch_action(
             DispatchOutcome::Unhandled
         }
     }
+}
+
+/// Resolve a custom-mutation key binding and apply it through the same
+/// path the click-trigger handler at `click.rs:35-64` uses: animation-
+/// aware (`start_animation` when `timing.duration_ms > 0`), and always
+/// invoking `apply_document_actions`. Returns `true` when a mutation
+/// was found and applied.
+///
+/// Phase-7 fix: the previous keyboard-side fall-through at
+/// `event_keyboard.rs:528-553` skipped both `apply_document_actions`
+/// and the timing envelope, so document-action and animated mutations
+/// silently mis-fired when triggered from a key. This helper unifies
+/// the two paths.
+pub(in crate::application::app) fn dispatch_custom_mutation_for_key(
+    ctx: &mut InputHandlerContext<'_>,
+    key_name: &str,
+    ctrl: bool,
+    shift: bool,
+    alt: bool,
+) -> bool {
+    let id = match ctx
+        .keybinds
+        .custom_mutation_for(key_name, ctrl, shift, alt)
+    {
+        Some(s) => s.to_string(),
+        None => return false,
+    };
+    let Some(doc) = ctx.document.as_mut() else {
+        return false;
+    };
+    let SelectionState::Single(nid) = doc.selection.clone() else {
+        return false;
+    };
+    let Some(cm) = doc.mutation_registry.get(&id).cloned() else {
+        return false;
+    };
+    let now = super::now_ms() as u64;
+    if cm.timing.as_ref().is_some_and(|t| t.duration_ms > 0) {
+        doc.start_animation(&cm, &nid, now);
+    } else if let Some(tree) = ctx.mindmap_tree.as_mut() {
+        doc.apply_custom_mutation(&cm, &nid, Some(tree));
+        ctx.scene_cache.clear();
+    }
+    doc.apply_document_actions(&cm);
+    rebuild_all(
+        doc,
+        ctx.mindmap_tree,
+        ctx.app_scene,
+        ctx.renderer,
+        ctx.scene_cache,
+    );
+    true
 }
 
 /// Inline helper for the empty-canvas orphan-and-edit gesture so

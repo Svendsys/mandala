@@ -35,6 +35,7 @@ pub(super) fn handle_cursor_moved(
         cursor_is_hand,
         picker_hover,
         modifiers,
+        keybinds,
         ..
     } = ctx;
     let prev_pos = *cursor_pos;
@@ -342,10 +343,29 @@ pub(super) fn handle_cursor_moved(
                         current_canvas,
                     };
                 } else {
-                    *drag_state = DragState::Panning;
-                    let dx = cursor_pos_val.0 - prev_pos.0;
-                    let dy = cursor_pos_val.1 - prev_pos.1;
-                    renderer.process_decree(RenderDecree::CameraPan(dx as f32, dy as f32));
+                    // LeftDrag-on-empty pan. Honour the user's
+                    // PanCanvas binding: if they unbound LeftDrag from
+                    // PanCanvas (or rebound it elsewhere), the pan
+                    // doesn't fire. Default `KeybindConfig::default()`
+                    // ships with `pan_canvas: ["LeftDrag", "MiddleClick"]`
+                    // so out-of-the-box behaviour is unchanged.
+                    let leftdrag_pans = keybinds
+                        .action_for_context(
+                            crate::application::keybinds::InputContext::Document,
+                            crate::application::keybinds::gesture_key_name(
+                                crate::application::keybinds::MouseGesture::LeftDrag,
+                            ),
+                            modifiers.control_key(),
+                            modifiers.shift_key(),
+                            modifiers.alt_key(),
+                        )
+                        == Some(crate::application::keybinds::Action::PanCanvas);
+                    if leftdrag_pans {
+                        *drag_state = DragState::Panning;
+                        let dx = cursor_pos_val.0 - prev_pos.0;
+                        let dy = cursor_pos_val.1 - prev_pos.1;
+                        renderer.process_decree(RenderDecree::CameraPan(dx as f32, dy as f32));
+                    }
                 }
             }
         }
