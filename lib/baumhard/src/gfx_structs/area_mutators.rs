@@ -419,7 +419,6 @@ mod tests {
     use crate::gfx_structs::zoom_visibility::ZoomVisibility;
     use crate::core::primitives::ColorFontRegions;
     use glam::Vec2;
-    use ordered_float::OrderedFloat;
 
     /// `full_assign_from` emits exactly the nine fields the
     /// in-place mutator path needs (Text / position / bounds /
@@ -511,8 +510,4 @@ mod tests {
         assert_eq!(target.zoom_visibility, source.zoom_visibility);
     }
 
-    // Silence dead-code-on-clippy lint for OrderedFloat import; only
-    // referenced via type inference in the assertions above.
-    #[allow(dead_code)]
-    fn _of_marker(_: OrderedFloat<f32>) {}
 }
