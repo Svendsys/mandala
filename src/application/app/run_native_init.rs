@@ -106,6 +106,17 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
     // to on every Enter; written back on close.
     let console_history: Vec<String> = load_console_history();
 
+    // User-layer macros, loaded once at startup. Failures log a
+    // warning and yield an empty registry — same posture as the
+    // mutation loader.
+    let mut macros = crate::application::macros::MacroRegistry::new();
+    for m in crate::application::macros::loader::load_user_macros() {
+        macros.insert(m);
+    }
+    if !macros.is_empty() {
+        log::info!("loaded {} user macro(s)", macros.len());
+    }
+
     InitState {
         window,
         renderer,
@@ -137,5 +148,6 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
         // struct on entry (see `event_cursor_moved`).
         picker_hover: super::throttled_interaction::ColorPickerHoverInteraction::new(),
         keybinds,
+        macros,
     }
 }

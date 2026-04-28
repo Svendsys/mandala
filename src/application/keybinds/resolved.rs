@@ -22,6 +22,11 @@ pub struct ResolvedKeybinds {
     /// bound to both a built-in action and a custom mutation
     /// resolves to the built-in action (action_for runs first).
     custom_binds: Vec<(KeyBind, String)>,
+    /// Parsed `(KeyBind, macro_id)` pairs from
+    /// `KeybindConfig::macro_bindings`. Resolved BEFORE custom
+    /// mutations and AFTER built-in actions, so a key bound to both
+    /// a macro and a custom mutation runs the macro.
+    macro_binds: Vec<(KeyBind, String)>,
     /// Console font family. Empty means "use cosmic-text default".
     pub console_font: String,
     /// Console overlay font size in pixels.
@@ -34,12 +39,14 @@ impl ResolvedKeybinds {
     pub(super) fn new(
         binds: Vec<(Action, KeyBind)>,
         custom_binds: Vec<(KeyBind, String)>,
+        macro_binds: Vec<(KeyBind, String)>,
         console_font: String,
         console_font_size: f32,
     ) -> Self {
         Self {
             binds,
             custom_binds,
+            macro_binds,
             console_font,
             console_font_size,
         }
@@ -124,6 +131,27 @@ impl ResolvedKeybinds {
                 if bind.matches(key, ctrl, shift, alt) && action.context() == parent {
                     return Some(*action);
                 }
+            }
+        }
+        None
+    }
+
+    /// Return the macro id bound to the given key event, if any.
+    /// Resolved AFTER built-in `action_for` and BEFORE
+    /// `custom_mutation_for` — macros override custom mutations on
+    /// the same combo, so a user replacing a single-mutation
+    /// shortcut with a multi-step macro just adds the macro entry
+    /// without un-binding the mutation.
+    pub fn macro_for(
+        &self,
+        key: &str,
+        ctrl: bool,
+        shift: bool,
+        alt: bool,
+    ) -> Option<&str> {
+        for (bind, id) in &self.macro_binds {
+            if bind.matches(key, ctrl, shift, alt) {
+                return Some(id.as_str());
             }
         }
         None

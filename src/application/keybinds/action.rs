@@ -4,13 +4,18 @@
 //! dispatches on. New keyboard interactions go here, then add a
 //! matching `KeybindConfig` field + default + binding-string list.
 
+use serde::{Deserialize, Serialize};
+
 use super::context::InputContext;
 
 /// High-level user actions that can be bound to keys. Add a new variant
 /// here when a new keyboard interaction is introduced, extend
 /// `KeybindConfig` with a matching field + default, and handle the variant
 /// in the event loop.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+///
+/// `Serialize` / `Deserialize` are derived so macros can carry actions
+/// in their JSON payload — see `crate::application::macros::MacroStep`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Action {
     // ── Document-level (global) ──────────────────────────────────
     /// Undo the last action on the document.

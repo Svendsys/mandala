@@ -800,6 +800,119 @@ fn word_right(buffer: &str, cursor: usize) -> usize {
     i
 }
 
+/// Run a macro by id against the current `InputHandlerContext`.
+/// Iterates the macro's steps in order, forwarding each through the
+/// matching dispatch surface:
+/// - `MacroStep::Action` → `dispatch_action`
+/// - `MacroStep::CustomMutation` → `apply_keybind_custom_mutation`
+///   (selection-fallback target resolution)
+/// - `MacroStep::ConsoleLine` → `console_input::execute_console_line`
+///
+/// Steps are run sequentially; a step that fails (e.g. an unbound
+/// custom-mutation id, or an Action that returns Unhandled) logs and
+/// the next step still runs. This matches "best-effort macro" — if a
+/// later step depends on an earlier one, the macro author can split
+/// it into two macros.
+///
+/// Returns `true` if any step ran successfully.
+pub(in crate::application::app) fn dispatch_macro(
+    macro_id: &str,
+    ctx: &mut InputHandlerContext<'_>,
+) -> bool {
+    use crate::application::macros::{MacroStep, MacroTarget};
+    let mac = match ctx.macros.get(macro_id) {
+        Some(m) => m.clone(),
+        None => {
+            log::warn!("dispatch_macro: unknown macro id '{}'", macro_id);
+            return false;
+        }
+    };
+    let mut any_ran = false;
+    for step in &mac.steps {
+        match step {
+            MacroStep::Action { action } => {
+                let outcome = dispatch_action(*action, ctx, None);
+                if matches!(outcome, DispatchOutcome::Handled) {
+                    any_ran = true;
+                }
+            }
+            MacroStep::CustomMutation { id, target } => {
+                let nid_opt: Option<String> = match target {
+                    MacroTarget::CurrentSelection => {
+                        ctx.document.as_ref().and_then(|d| {
+                            if let SelectionState::Single(nid) = &d.selection {
+                                Some(nid.clone())
+                            } else {
+                                None
+                            }
+                        })
+                    }
+                    MacroTarget::NodeId(s) => Some(s.clone()),
+                };
+                let Some(nid) = nid_opt else {
+                    log::debug!(
+                        "macro step CustomMutation: no resolvable target; skipping id={}",
+                        id
+                    );
+                    continue;
+                };
+                let cm = ctx
+                    .document
+                    .as_ref()
+                    .and_then(|d| d.mutation_registry.get(id).cloned());
+                let Some(cm) = cm else {
+                    log::warn!("macro step: unknown custom-mutation id '{}'", id);
+                    continue;
+                };
+                if let Some(doc) = ctx.document.as_mut() {
+                    let now = super::now_ms() as u64;
+                    if apply_keybind_custom_mutation(
+                        doc,
+                        ctx.mindmap_tree,
+                        ctx.scene_cache,
+                        &cm,
+                        &nid,
+                        now,
+                    ) {
+                        any_ran = true;
+                        rebuild_all(
+                            doc,
+                            ctx.mindmap_tree,
+                            ctx.app_scene,
+                            ctx.renderer,
+                            ctx.scene_cache,
+                        );
+                    }
+                }
+            }
+            MacroStep::ConsoleLine { line } => {
+                // `execute_console_line` lives behind a private `mod
+                // exec` in console_input — use the dispatch-layer
+                // helper which re-exports it via the parent module
+                // path. (Console verbs that mutate the document are
+                // already exercised by the console at large; this
+                // step kind just feeds them a typed line.)
+                if let Some(doc) = ctx.document.as_mut() {
+                    crate::application::app::console_input::exec::execute_console_line(
+                        line,
+                        ctx.console_state,
+                        ctx.label_edit_state,
+                        ctx.portal_text_edit_state,
+                        ctx.color_picker_state,
+                        doc,
+                        ctx.mindmap_tree,
+                        ctx.app_scene,
+                        ctx.renderer,
+                        ctx.scene_cache,
+                    );
+                    any_ran = true;
+                }
+            }
+        }
+    }
+    any_ran
+}
+
 /// Pure inner helper for the keybind-triggered custom-mutation path.
 /// Runs the same animation-aware apply + always-`apply_document_actions`
 /// sequence the click-trigger path at `click.rs:35-64` uses, but

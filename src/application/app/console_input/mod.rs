@@ -10,7 +10,7 @@
 mod completion;
 mod dispatch;
 mod edit;
-mod exec;
+pub(in crate::application::app) mod exec;
 mod history;
 
 pub(super) use dispatch::handle_console_key;

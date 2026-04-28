@@ -38,6 +38,7 @@ pub(super) fn handle_mouse_input(
         cursor_is_hand,
         picker_hover,
         keybinds,
+        macros,
     } = ctx;
     let cursor_pos_val = *cursor_pos;
     // The console swallows mouse clicks as a close
@@ -145,6 +146,7 @@ pub(super) fn handle_mouse_input(
                         cursor_is_hand,
                         picker_hover,
                         keybinds,
+                        macros,
                     };
                     let _ = super::dispatch::dispatch_action(a, &mut bundle, None);
                 }
@@ -306,6 +308,7 @@ pub(super) fn handle_mouse_input(
                             cursor_is_hand,
                             picker_hover,
                             keybinds,
+                            macros,
                         };
                         let _ = super::dispatch::dispatch_action(a, &mut bundle, Some(&dispatch_hit));
                         return;

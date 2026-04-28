@@ -126,6 +126,10 @@ pub(super) struct InitState {
     /// `ThrottledDrag` variant.
     pub(super) picker_hover: super::throttled_interaction::ColorPickerHoverInteraction,
     pub(super) keybinds: ResolvedKeybinds,
+    /// User-defined macro registry. Loaded once at startup
+    /// (`run_native_init::build`) from `~/.config/mandala/macros.json`;
+    /// queried at dispatch time via `keybinds.macro_for(...)`.
+    pub(super) macros: crate::application::macros::MacroRegistry,
 }
 
 impl InitState {
@@ -155,6 +159,7 @@ impl InitState {
             cursor_is_hand: &mut self.cursor_is_hand,
             picker_hover: &mut self.picker_hover,
             keybinds: &mut self.keybinds,
+            macros: &self.macros,
         }
     }
 

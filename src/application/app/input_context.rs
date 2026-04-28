@@ -16,6 +16,7 @@ use crate::application::color_picker::ColorPickerState;
 use crate::application::console::ConsoleState;
 use crate::application::document::MindMapDocument;
 use crate::application::keybinds::ResolvedKeybinds;
+use crate::application::macros::MacroRegistry;
 use crate::application::renderer::Renderer;
 use crate::application::scene_host::AppScene;
 
@@ -80,4 +81,7 @@ pub(in crate::application::app) struct InputHandlerContext<'a> {
     pub picker_hover: &'a mut ColorPickerHoverInteraction,
     /// Resolved user keybinds.
     pub keybinds: &'a mut ResolvedKeybinds,
+    /// User-defined macro registry (Phase 8 scaffolding). Read-only
+    /// in the dispatch path — macros are loaded once at startup.
+    pub macros: &'a MacroRegistry,
 }

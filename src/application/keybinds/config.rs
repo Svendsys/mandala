@@ -142,6 +142,10 @@ pub struct KeybindConfig {
     pub console_font_size: f32,
     /// Map of key combo → custom mutation id.
     pub custom_mutation_bindings: HashMap<String, String>,
+    /// Map of key combo → macro id. Macros are resolved AFTER built-in
+    /// `Action`s and BEFORE custom mutations, so a key bound to both a
+    /// macro and a custom mutation fires the macro.
+    pub macro_bindings: HashMap<String, String>,
 }
 
 impl Default for KeybindConfig {
@@ -287,6 +291,7 @@ impl Default for KeybindConfig {
             console_font: String::new(),
             console_font_size: 16.0,
             custom_mutation_bindings: HashMap::new(),
+            macro_bindings: HashMap::new(),
         }
     }
 }
@@ -428,10 +433,21 @@ impl KeybindConfig {
                 ),
             }
         }
+        let mut macro_binds: Vec<(KeyBind, String)> = Vec::new();
+        for (combo, macro_id) in &self.macro_bindings {
+            match KeyBind::parse(combo) {
+                Ok(k) => macro_binds.push((k, macro_id.clone())),
+                Err(e) => warn!(
+                    "skipping invalid macro_binding '{}': {}",
+                    combo, e
+                ),
+            }
+        }
 
         ResolvedKeybinds::new(
             binds,
             custom_binds,
+            macro_binds,
             self.console_font.clone(),
             self.console_font_size.max(4.0),
         )

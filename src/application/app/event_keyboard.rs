@@ -38,6 +38,7 @@ pub(super) fn handle_keyboard_input(
         cursor_is_hand,
         picker_hover,
         keybinds,
+        macros,
     } = ctx;
     let key_name = crate::application::keybinds::key_to_name(&logical_key);
 
@@ -316,16 +317,22 @@ pub(super) fn handle_keyboard_input(
             cursor_is_hand,
             picker_hover,
             keybinds,
+            macros,
         };
         let _ = super::dispatch::dispatch_action(a, &mut bundle, None);
     } else {
-        // No built-in action matched — try the user-defined
-        // `custom_mutation_bindings`. Routes through the unified
-        // `dispatch_custom_mutation_for_key` helper so this path
-        // matches the click-trigger path at `click.rs:40-63` byte
-        // for byte (animation-timing aware, always invokes
-        // `apply_document_actions`). Phase-7 parity fix.
+        // No built-in action matched — try macros first, then custom
+        // mutations. Resolution order is documented in CONCEPTS.md §5
+        // "Action dispatch": Action -> Macro -> CustomMutation.
         if let Some(k) = key_name.as_deref() {
+            let macro_id = keybinds
+                .macro_for(
+                    k,
+                    modifiers.control_key(),
+                    modifiers.shift_key(),
+                    modifiers.alt_key(),
+                )
+                .map(|s| s.to_string());
             let mut bundle = InputHandlerContext {
                 document,
                 mindmap_tree,
@@ -347,14 +354,22 @@ pub(super) fn handle_keyboard_input(
                 cursor_is_hand,
                 picker_hover,
                 keybinds,
+                macros,
             };
-            let _ = super::dispatch::dispatch_custom_mutation_for_key(
-                &mut bundle,
-                k,
-                modifiers.control_key(),
-                modifiers.shift_key(),
-                modifiers.alt_key(),
-            );
+            if let Some(id) = macro_id {
+                let _ = super::dispatch::dispatch_macro(&id, &mut bundle);
+            } else {
+                // Custom mutation fall-through (Phase-7 parity:
+                // animation-timing aware, always invokes
+                // `apply_document_actions`).
+                let _ = super::dispatch::dispatch_custom_mutation_for_key(
+                    &mut bundle,
+                    k,
+                    modifiers.control_key(),
+                    modifiers.shift_key(),
+                    modifiers.alt_key(),
+                );
+            }
         }
     }
 }
