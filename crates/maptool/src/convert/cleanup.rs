@@ -13,10 +13,7 @@
 use serde_json::Value;
 
 pub fn cleanup_nodes(root: &mut Value) {
-    let nodes = match root.get_mut("nodes").and_then(|v| v.as_object_mut()) {
-        Some(obj) => obj,
-        None => return,
-    };
+    let Some(nodes) = super::nodes_obj_mut(root) else { return };
     for node in nodes.values_mut() {
         let obj = match node.as_object_mut() {
             Some(o) => o,

@@ -194,17 +194,7 @@ fn font_family_completions(partial: &str) -> Vec<Completion> {
 /// Parse a kv value as a positive finite f32. Returns an
 /// `ExecResult::Err` for non-numbers, NaN, infinity, or ≤ 0.
 fn parse_pt(key: &str, value: &str) -> Result<f32, ExecResult> {
-    match value.parse::<f32>() {
-        Ok(pt) if pt.is_finite() && pt > 0.0 => Ok(pt),
-        Ok(pt) => Err(ExecResult::err(format!(
-            "{}='{}' must be positive and finite; got {}",
-            key, value, pt
-        ))),
-        Err(_) => Err(ExecResult::err(format!(
-            "{}='{}' is not a number",
-            key, value
-        ))),
-    }
+    crate::application::console::helpers::parse_finite_pt(key, value).map_err(ExecResult::err)
 }
 
 fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
@@ -653,7 +643,7 @@ mod tests {
             edge.edge_type.clone(),
         );
         doc.selection = SelectionState::PortalLabel(PortalLabelSel {
-            edge_key: EdgeKey::new(&edge.from_id, &edge.to_id, &edge.edge_type),
+            edge_key: EdgeKey::from_edge(&edge),
             endpoint_node_id: edge.to_id.clone(),
         });
         assert_exec_ok(run(&format!("font set {}", family), &mut doc));
@@ -686,7 +676,7 @@ mod tests {
             .expect("testament map has at least one edge")
             .clone();
         doc.selection = SelectionState::PortalText(PortalLabelSel {
-            edge_key: EdgeKey::new(&edge.from_id, &edge.to_id, &edge.edge_type),
+            edge_key: EdgeKey::from_edge(&edge),
             endpoint_node_id: edge.to_id.clone(),
         });
         match run(&format!("font set {}", family), &mut doc) {

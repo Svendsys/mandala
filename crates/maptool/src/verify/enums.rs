@@ -20,14 +20,13 @@ const DISPLAY_MODES: &[&str] = &["line", "portal"];
 pub fn check(map: &MindMap) -> Vec<Violation> {
     let mut out = Vec::new();
 
-    for node in map.nodes.values() {
-        check_value(&mut out, &node.id, "style.shape", &node.style.shape, SHAPES);
-        check_value(&mut out, &node.id, "layout.type", &node.layout.layout_type, LAYOUT_TYPES);
-        check_value(&mut out, &node.id, "layout.direction", &node.layout.direction, DIRECTIONS);
+    for (loc, node) in map.node_locations() {
+        check_value(&mut out, &loc, "style.shape", &node.style.shape, SHAPES);
+        check_value(&mut out, &loc, "layout.type", &node.layout.layout_type, LAYOUT_TYPES);
+        check_value(&mut out, &loc, "layout.direction", &node.layout.direction, DIRECTIONS);
     }
 
-    for (i, edge) in map.edges.iter().enumerate() {
-        let loc = format!("edge[{}]", i);
+    for (loc, edge) in map.edge_locations() {
         check_value(&mut out, &loc, "type", &edge.edge_type, EDGE_TYPES);
         check_value(&mut out, &loc, "line_style", &edge.line_style, LINE_STYLES);
         check_value(&mut out, &loc, "anchor_from", &edge.anchor_from, ANCHORS);
@@ -48,11 +47,11 @@ fn check_value(
     allowed: &[&str],
 ) {
     if !allowed.contains(&value) {
-        out.push(Violation {
-            category: "enums",
-            location: location.to_string(),
-            message: format!("{} {:?} is not one of {:?}", field, value, allowed),
-        });
+        out.push(Violation::at(
+            "enums",
+            location.to_string(),
+            format!("{} {:?} is not one of {:?}", field, value, allowed),
+        ));
     }
 }
 

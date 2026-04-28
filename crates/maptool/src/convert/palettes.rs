@@ -88,10 +88,7 @@ fn inject_palettes(root: &mut Value, palettes: &HashMap<String, Value>) {
 /// Simplify each node's color_schema: keep palette (as key), level,
 /// starts_at_root, connections_colored. Drop groups, theme_id, variant.
 fn simplify_node_schemas(root: &mut Value) {
-    let nodes = match root.get_mut("nodes").and_then(|v| v.as_object_mut()) {
-        Some(obj) => obj,
-        None => return,
-    };
+    let Some(nodes) = super::nodes_obj_mut(root) else { return };
 
     for node in nodes.values_mut() {
         let schema = match node.get("color_schema") {

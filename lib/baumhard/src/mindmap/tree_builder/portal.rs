@@ -32,7 +32,7 @@ use std::collections::HashMap;
 
 use glam::Vec2;
 
-use crate::core::primitives::{ColorFontRegion, ColorFontRegions, Range};
+use crate::core::primitives::ColorFontRegions;
 use crate::gfx_structs::area::GlyphArea;
 use crate::gfx_structs::element::GfxElement;
 use crate::gfx_structs::mutator::GfxMutator;
@@ -282,15 +282,8 @@ pub fn portal_pair_data(
             icon_area.zoom_visibility = endpoint_zoom_window;
             let icon_clusters =
                 crate::util::grapheme_chad::count_grapheme_clusters(&style.glyph);
-            if icon_clusters > 0 {
-                let mut regions = ColorFontRegions::new_empty();
-                regions.submit_region(ColorFontRegion::new(
-                    Range::new(0, icon_clusters),
-                    None,
-                    Some(icon_color_rgba),
-                ));
-                icon_area.regions = regions;
-            }
+            icon_area.regions =
+                ColorFontRegions::single_span(icon_clusters, Some(icon_color_rgba), None);
 
             let mut text_area = GlyphArea::new_with_str(
                 &text_string,
@@ -302,15 +295,8 @@ pub fn portal_pair_data(
             text_area.zoom_visibility = endpoint_zoom_window;
             let text_clusters =
                 crate::util::grapheme_chad::count_grapheme_clusters(&text_string);
-            if text_clusters > 0 {
-                let mut regions = ColorFontRegions::new_empty();
-                regions.submit_region(ColorFontRegion::new(
-                    Range::new(0, text_clusters),
-                    None,
-                    Some(text_color_rgba),
-                ));
-                text_area.regions = regions;
-            }
+            text_area.regions =
+                ColorFontRegions::single_span(text_clusters, Some(text_color_rgba), None);
 
             // Two hitboxes — one per clickable sub-part. The icon
             // hitbox always exists; the text hitbox exists only
@@ -481,8 +467,7 @@ pub fn build_portal_mutator_tree(
 /// Variant of [`build_portal_mutator_tree`] that consumes
 /// pre-computed pair data.
 pub fn build_portal_mutator_tree_from_pairs(pairs: &[PortalPairData]) -> PortalMutator {
-    use crate::core::primitives::ApplyOperation;
-    use crate::gfx_structs::area::{DeltaGlyphArea, GlyphAreaField};
+    use crate::gfx_structs::area::DeltaGlyphArea;
     use crate::gfx_structs::mutator::Mutation;
     use crate::gfx_structs::tree::MutatorTree;
 
@@ -500,21 +485,7 @@ pub fn build_portal_mutator_tree_from_pairs(pairs: &[PortalPairData]) -> PortalM
             pair_node.append(endpoint_void, &mut mt.arena);
 
             for (slot, area) in [(ICON_SLOT, &ep.icon), (TEXT_SLOT, &ep.text)] {
-                let delta = DeltaGlyphArea::new(vec![
-                    GlyphAreaField::Text(area.text.clone()),
-                    GlyphAreaField::position(area.position.x.0, area.position.y.0),
-                    GlyphAreaField::bounds(area.render_bounds.x.0, area.render_bounds.y.0),
-                    GlyphAreaField::scale(area.scale.0),
-                    GlyphAreaField::line_height(area.line_height.0),
-                    GlyphAreaField::ColorFontRegions(area.regions.clone()),
-                    GlyphAreaField::Outline(area.outline.clone()),
-                    // Required per §B2 — without this, an in-place
-                    // mutator rebuild would reset each endpoint's
-                    // zoom window to Default, silently undoing an
-                    // authored per-endpoint visibility override.
-                    GlyphAreaField::ZoomVisibility(area.zoom_visibility),
-                    GlyphAreaField::Operation(ApplyOperation::Assign),
-                ]);
+                let delta = DeltaGlyphArea::full_assign_from(area);
                 let leaf = mt.arena.new_node(GfxMutator::new(
                     Mutation::AreaDelta(Box::new(delta)),
                     slot,

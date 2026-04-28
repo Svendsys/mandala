@@ -325,58 +325,31 @@ impl GlyphArea {
             }
         }
 
-        if let Some(outline) = delta.outline() {
-            match operation {
-                // For Add / Assign we just take the delta's value —
-                // halo state is on/off; "merging" two halos isn't
-                // meaningful (see `Add` impl on `GlyphAreaField`).
-                ApplyOperation::Assign | ApplyOperation::Add => {
-                    self.outline = outline;
-                }
-                // Subtract clears the halo entirely. The delta's
-                // payload doesn't matter for this branch — the
-                // semantic is "remove what's there".
-                ApplyOperation::Subtract => {
-                    self.outline = None;
-                }
-                _ => {}
-            }
-        }
+        // Halo state is on/off; "merging" two halos isn't
+        // meaningful (see `Add` impl on `GlyphAreaField`). Both
+        // Assign and Add overwrite; Subtract clears.
+        apply_overwrite_or_reset(operation, delta.outline(), &mut self.outline, None);
 
-        if let Some(shape) = delta.shape() {
-            match operation {
-                // Shapes don't compose (you can't "add" an ellipse
-                // to a rectangle), so `Assign` and `Add` both
-                // overwrite.
-                ApplyOperation::Assign | ApplyOperation::Add => {
-                    self.shape = shape;
-                }
-                // `Subtract` resets to the default rectangle — the
-                // counterpart of "remove the custom shape".
-                ApplyOperation::Subtract => {
-                    self.shape = NodeShape::Rectangle;
-                }
-                _ => {}
-            }
-        }
+        // Shapes don't compose (you can't "add" an ellipse to a
+        // rectangle); Assign and Add both overwrite, Subtract
+        // resets to the default rectangle.
+        apply_overwrite_or_reset(
+            operation,
+            delta.shape(),
+            &mut self.shape,
+            NodeShape::Rectangle,
+        );
 
-        if let Some(zoom_visibility) = delta.zoom_visibility() {
-            match operation {
-                // Windows don't compose arithmetically (combining
-                // "zoomed in only" with "zoomed out only" yields
-                // nothing sensible). Both Assign and Add overwrite,
-                // matching the Outline / Shape precedents above.
-                ApplyOperation::Assign | ApplyOperation::Add => {
-                    self.zoom_visibility = zoom_visibility;
-                }
-                // Subtract restores the unbounded default — the
-                // counterpart of "remove the window".
-                ApplyOperation::Subtract => {
-                    self.zoom_visibility = ZoomVisibility::unbounded();
-                }
-                _ => {}
-            }
-        }
+        // Zoom windows don't compose arithmetically (combining
+        // "zoomed in only" with "zoomed out only" yields nothing
+        // sensible); Assign and Add overwrite, Subtract restores
+        // the unbounded default.
+        apply_overwrite_or_reset(
+            operation,
+            delta.zoom_visibility(),
+            &mut self.zoom_visibility,
+            ZoomVisibility::unbounded(),
+        );
     }
 
     /// Remove `pop_count` grapheme clusters from the front of the
@@ -503,5 +476,31 @@ impl GlyphArea {
     pub fn rotate(&mut self, pivot: Vec2, angle: f32) {
         self.position =
             OrderedVec2::from_vec2(Vec2::from_angle(angle).rotate(self.position.to_vec2() - pivot));
+    }
+}
+
+/// Apply the "overwrite-on-Assign/Add, reset-on-Subtract,
+/// no-op otherwise" policy to a single field. The three
+/// non-arithmetic per-leaf fields (`outline`, `shape`,
+/// `zoom_visibility`) all share this contract — the values
+/// don't compose under addition (you can't "add" two halos /
+/// shapes / zoom windows), so the apply path treats `Add` and
+/// `Assign` identically and uses `Subtract` as the canonical
+/// "remove the override" signal.
+///
+/// `delta` is `None` when the corresponding [`DeltaGlyphArea`]
+/// field wasn't set on construction; the helper short-circuits
+/// in that case so the target field is untouched.
+fn apply_overwrite_or_reset<T>(
+    op: ApplyOperation,
+    delta: Option<T>,
+    target: &mut T,
+    reset: T,
+) {
+    let Some(value) = delta else { return };
+    match op {
+        ApplyOperation::Assign | ApplyOperation::Add => *target = value,
+        ApplyOperation::Subtract => *target = reset,
+        _ => {}
     }
 }

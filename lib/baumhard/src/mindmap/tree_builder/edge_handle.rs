@@ -7,7 +7,7 @@
 
 use glam::Vec2;
 
-use crate::core::primitives::{ColorFontRegion, ColorFontRegions, Range};
+use crate::core::primitives::ColorFontRegions;
 use crate::gfx_structs::area::GlyphArea;
 use crate::gfx_structs::element::GfxElement;
 use crate::gfx_structs::mutator::GfxMutator;
@@ -72,15 +72,7 @@ fn edge_handle_layout(
         bounds,
     );
     let cluster_count = crate::util::grapheme_chad::count_grapheme_clusters(&elem.glyph);
-    if cluster_count > 0 {
-        let mut regions = ColorFontRegions::new_empty();
-        regions.submit_region(ColorFontRegion::new(
-            Range::new(0, cluster_count),
-            None,
-            Some(color_rgba),
-        ));
-        area.regions = regions;
-    }
+    area.regions = ColorFontRegions::single_span(cluster_count, Some(color_rgba), None);
 
     (edge_handle_channel_for(elem.kind), area)
 }
@@ -120,31 +112,23 @@ pub fn build_edge_handle_tree(
 /// sequence (per [`edge_handle_identity_sequence`]) updates each
 /// handle's variable fields in place.
 ///
-/// Variable fields covered: text, position, bounds, scale,
-/// line_height, regions, outline. The `Assign` operation
-/// overwrites whichever changed — same shape as the picker /
-/// portal mutators so any shift in glyph or color is picked up.
+/// Variable fields covered: see
+/// [`crate::gfx_structs::area::DeltaGlyphArea::full_assign_from`]
+/// — text, position, bounds, scale, line_height, regions, outline,
+/// and zoom_visibility. The `Assign` operation overwrites whichever
+/// changed — same shape as the picker / portal mutators so any shift
+/// in glyph or color is picked up.
 pub fn build_edge_handle_mutator_tree(
     elements: &[crate::mindmap::scene_builder::EdgeHandleElement],
 ) -> crate::gfx_structs::tree::MutatorTree<GfxMutator> {
-    use crate::core::primitives::ApplyOperation;
-    use crate::gfx_structs::area::{DeltaGlyphArea, GlyphAreaField};
+    use crate::gfx_structs::area::DeltaGlyphArea;
     use crate::gfx_structs::mutator::Mutation;
     use crate::gfx_structs::tree::MutatorTree;
 
     let mut mt: MutatorTree<GfxMutator> = MutatorTree::new_with(GfxMutator::new_void(0));
     for elem in elements {
         let (channel, area) = edge_handle_layout(elem);
-        let delta = DeltaGlyphArea::new(vec![
-            GlyphAreaField::Text(area.text),
-            GlyphAreaField::position(area.position.x.0, area.position.y.0),
-            GlyphAreaField::bounds(area.render_bounds.x.0, area.render_bounds.y.0),
-            GlyphAreaField::scale(area.scale.0),
-            GlyphAreaField::line_height(area.line_height.0),
-            GlyphAreaField::ColorFontRegions(area.regions),
-            GlyphAreaField::Outline(area.outline),
-            GlyphAreaField::Operation(ApplyOperation::Assign),
-        ]);
+        let delta = DeltaGlyphArea::full_assign_from(&area);
         let leaf = mt
             .arena
             .new_node(GfxMutator::new(Mutation::AreaDelta(Box::new(delta)), channel));

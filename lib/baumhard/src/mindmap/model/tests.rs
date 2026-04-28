@@ -678,3 +678,76 @@ fn mindnode_zoom_window_round_trips() {
     assert!(back_json.contains("\"min_zoom_to_render\":0.25"));
     assert!(back_json.contains("\"max_zoom_to_render\":4.0"));
 }
+
+/// `node_locations()` yields every node in the map exactly once,
+/// stamping each with its `node.id` as the location string. The
+/// stamp format is part of the public contract — `maptool verify`
+/// emits violations against this string and a future loader-time
+/// validator will share the same canonical stamp.
+#[test]
+fn node_locations_yields_every_node_with_id_stamp() {
+    use crate::mindmap::test_helpers::{synthetic_map, synthetic_node_full};
+    let map = synthetic_map(
+        vec![
+            synthetic_node_full("0", None, 0.0, 0.0, 100.0, 50.0, false),
+            synthetic_node_full("0.0", Some("0"), 10.0, 10.0, 80.0, 40.0, false),
+            synthetic_node_full("0.1", Some("0"), 90.0, 10.0, 80.0, 40.0, false),
+        ],
+        Vec::new(),
+    );
+
+    let locations: Vec<(String, String)> = map
+        .node_locations()
+        .map(|(loc, n)| (loc, n.id.clone()))
+        .collect();
+    assert_eq!(locations.len(), 3);
+    // Location stamp must equal the node's id for every yield.
+    for (loc, id) in &locations {
+        assert_eq!(loc, id);
+    }
+    // All three node ids appear; HashMap iteration order is
+    // unspecified, so check via set membership.
+    let ids: std::collections::HashSet<&str> =
+        locations.iter().map(|(_, id)| id.as_str()).collect();
+    assert!(ids.contains("0"));
+    assert!(ids.contains("0.0"));
+    assert!(ids.contains("0.1"));
+}
+
+/// `edge_locations()` yields every edge in vector order, stamping
+/// each with `"edge[<idx>]"`. Bracket-format is the contract every
+/// per-checker previously open-coded; locking it here prevents a
+/// silent drift to e.g. `"edges[0]"` from flowing through to
+/// downstream tools.
+#[test]
+fn edge_locations_uses_bracket_index_stamp() {
+    use crate::mindmap::test_helpers::{synthetic_edge, synthetic_map, synthetic_node_full};
+    let map = synthetic_map(
+        vec![
+            synthetic_node_full("a", None, 0.0, 0.0, 50.0, 25.0, false),
+            synthetic_node_full("b", None, 100.0, 0.0, 50.0, 25.0, false),
+            synthetic_node_full("c", None, 200.0, 0.0, 50.0, 25.0, false),
+        ],
+        vec![
+            synthetic_edge("a", "b", "auto", "auto"),
+            synthetic_edge("b", "c", "auto", "auto"),
+            synthetic_edge("a", "c", "auto", "auto"),
+        ],
+    );
+
+    let stamps: Vec<String> = map
+        .edge_locations()
+        .map(|(loc, _e)| loc)
+        .collect();
+    assert_eq!(stamps, vec!["edge[0]", "edge[1]", "edge[2]"]);
+}
+
+/// Empty maps yield empty iterators — the no-op base case the
+/// checker call sites rely on (no location-stamp leakage when
+/// the map carries zero nodes / zero edges).
+#[test]
+fn node_and_edge_locations_empty_on_blank_map() {
+    let map = MindMap::new_blank("blank");
+    assert_eq!(map.node_locations().count(), 0);
+    assert_eq!(map.edge_locations().count(), 0);
+}

@@ -15,18 +15,17 @@ use super::Violation;
 pub fn check(map: &MindMap) -> Vec<Violation> {
     let mut out = Vec::new();
 
-    for node in map.nodes.values() {
+    for (loc, node) in map.node_locations() {
         check_pair(
             &mut out,
-            &node.id,
+            &loc,
             "",
             node.min_zoom_to_render,
             node.max_zoom_to_render,
         );
     }
 
-    for (i, edge) in map.edges.iter().enumerate() {
-        let loc = format!("edge[{}]", i);
+    for (loc, edge) in map.edge_locations() {
         check_pair(
             &mut out,
             &loc,
@@ -78,38 +77,32 @@ fn check_pair(
     // the file on disk is a bug to surface, not a state to accept.
     if let Some(m) = min {
         if !m.is_finite() {
-            out.push(Violation {
-                category: "zoom_bounds",
-                location: location.to_string(),
-                message: format!(
-                    "{}min_zoom_to_render {} is not finite",
-                    field_prefix, m
-                ),
-            });
+            out.push(Violation::at(
+                "zoom_bounds",
+                location,
+                format!("{}min_zoom_to_render {} is not finite", field_prefix, m),
+            ));
         }
     }
     if let Some(m) = max {
         if !m.is_finite() {
-            out.push(Violation {
-                category: "zoom_bounds",
-                location: location.to_string(),
-                message: format!(
-                    "{}max_zoom_to_render {} is not finite",
-                    field_prefix, m
-                ),
-            });
+            out.push(Violation::at(
+                "zoom_bounds",
+                location,
+                format!("{}max_zoom_to_render {} is not finite", field_prefix, m),
+            ));
         }
     }
     if let (Some(min), Some(max)) = (min, max) {
         if min.is_finite() && max.is_finite() && min > max {
-            out.push(Violation {
-                category: "zoom_bounds",
-                location: location.to_string(),
-                message: format!(
+            out.push(Violation::at(
+                "zoom_bounds",
+                location,
+                format!(
                     "{}min_zoom_to_render {} > {}max_zoom_to_render {}",
                     field_prefix, min, field_prefix, max
                 ),
-            });
+            ));
         }
     }
 }

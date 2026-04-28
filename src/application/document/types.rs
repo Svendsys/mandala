@@ -98,6 +98,27 @@ impl EdgeRef {
     }
 }
 
+/// Convert an `EdgeRef` (the app-side identity triple) into the
+/// baumhard-side `EdgeKey` of the same shape. Bridges five
+/// previously open-coded `EdgeKey::new(&er.from_id, &er.to_id,
+/// &er.edge_type)` constructions in the label-edit / edge-handle
+/// flows.
+impl From<&EdgeRef> for EdgeKey {
+    fn from(er: &EdgeRef) -> Self {
+        EdgeKey::new(&er.from_id, &er.to_id, &er.edge_type)
+    }
+}
+
+/// Mirror conversion for the reverse direction. The drag-state
+/// promotion path in `event_cursor_moved` builds an `EdgeRef`
+/// from a freshly-stored `EdgeKey` snapshot; previously each
+/// site rebuilt the `EdgeRef` field-by-field.
+impl From<&EdgeKey> for EdgeRef {
+    fn from(key: &EdgeKey) -> Self {
+        EdgeRef::new(&key.from_id, &key.to_id, &key.edge_type)
+    }
+}
+
 /// Tracks what is currently selected in the document. The
 /// variants are mutually exclusive — selecting one kind clears
 /// any prior selection of the others, enforced by construction
@@ -386,4 +407,37 @@ impl PortalLabelSel {
 pub struct ReparentUndoData {
     pub entries: Vec<(String, Option<String>)>,
     pub old_edges: Vec<MindEdge>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `EdgeKey` and `EdgeRef` are structural twins; the two
+    /// `From` impls round-trip cleanly for all three fields.
+    #[test]
+    fn edge_ref_to_edge_key_round_trips() {
+        let er = EdgeRef::new("alpha", "beta", "cross_link");
+        let key = EdgeKey::from(&er);
+        let er2 = EdgeRef::from(&key);
+        assert_eq!(er, er2);
+        assert_eq!(key.from_id, "alpha");
+        assert_eq!(key.to_id, "beta");
+        assert_eq!(key.edge_type, "cross_link");
+    }
+
+    /// Conversion preserves the field values across the
+    /// `String` boundary (no truncation, no normalization).
+    #[test]
+    fn edge_ref_edge_key_conversion_preserves_strings() {
+        let er = EdgeRef::new(
+            "a-with-dashes-and-1.0.2",
+            "b/with/slashes",
+            "parent_child",
+        );
+        let key = EdgeKey::from(&er);
+        assert_eq!(key.from_id, er.from_id);
+        assert_eq!(key.to_id, er.to_id);
+        assert_eq!(key.edge_type, er.edge_type);
+    }
 }

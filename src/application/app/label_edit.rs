@@ -121,11 +121,7 @@ pub(in crate::application::app) fn open_label_edit(
     // Store the preview on the document so every subsequent
     // `doc.build_scene_*` call picks it up automatically — no renderer
     // field, no read-time override, no belt-and-suspenders branch.
-    let edge_key = baumhard::mindmap::scene_cache::EdgeKey::new(
-        &edge_ref.from_id,
-        &edge_ref.to_id,
-        &edge_ref.edge_type,
-    );
+    let edge_key = baumhard::mindmap::scene_cache::EdgeKey::from(edge_ref);
     doc.label_edit_preview = Some((edge_key, insert_caret(&buffer, cursor_grapheme_pos)));
     // Rebuild the connection-label canvas so the caret is visible
     // immediately. The caller already ran `rebuild_all` before this,
@@ -198,11 +194,7 @@ pub(in crate::application::app) fn handle_label_edit_key(
         ..
     } = label_edit_state
     {
-        let edge_key = baumhard::mindmap::scene_cache::EdgeKey::new(
-            &edge_ref.from_id,
-            &edge_ref.to_id,
-            &edge_ref.edge_type,
-        );
+        let edge_key = baumhard::mindmap::scene_cache::EdgeKey::from(&*edge_ref);
         doc.label_edit_preview = Some((edge_key, insert_caret(buffer, *cursor_grapheme_pos)));
         // Same scope as `open_label_edit`: only the connection-
         // label canvas reads `label_edit_preview`, so the portal
@@ -354,11 +346,7 @@ pub(in crate::application::app) fn open_portal_text_edit(
         cursor_grapheme_pos,
         original,
     };
-    let edge_key = baumhard::mindmap::scene_cache::EdgeKey::new(
-        &edge_ref.from_id,
-        &edge_ref.to_id,
-        &edge_ref.edge_type,
-    );
+    let edge_key = baumhard::mindmap::scene_cache::EdgeKey::from(edge_ref);
     doc.portal_text_edit_preview = Some((
         edge_key,
         endpoint_node_id.to_string(),
@@ -455,11 +443,7 @@ pub(in crate::application::app) fn handle_portal_text_edit_key(
         ..
     } = state
     {
-        let edge_key = baumhard::mindmap::scene_cache::EdgeKey::new(
-            &edge_ref.from_id,
-            &edge_ref.to_id,
-            &edge_ref.edge_type,
-        );
+        let edge_key = baumhard::mindmap::scene_cache::EdgeKey::from(&*edge_ref);
         doc.portal_text_edit_preview = Some((
             edge_key,
             endpoint_node_id.clone(),

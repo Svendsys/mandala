@@ -261,6 +261,40 @@ impl DeltaGlyphArea {
         DeltaGlyphArea { fields: field_map }
     }
 
+    /// Build a full-coverage `Assign` delta that mirrors every
+    /// per-glyph field of `area` the in-place mutator path needs to
+    /// re-stamp on a tree leaf. Emits `Text`, `position`, `bounds`,
+    /// `scale`, `line_height`, `ColorFontRegions`, `Outline`, and
+    /// `ZoomVisibility` (the latter required per `lib/baumhard/CONVENTIONS.md`
+    /// §B2 — without it a mutator rebuild silently resets each
+    /// element's authored zoom window to `Default`), with
+    /// `ApplyOperation::Assign` as the global mode.
+    ///
+    /// Single source of truth for the per-leaf delta shape every
+    /// `tree_builder/*::build_*_mutator_tree` function needs; lifting
+    /// it to baumhard means any consumer (border, connection,
+    /// connection_label, edge_handle, portal — and any future
+    /// renderable element type) shares one definition of "what fields
+    /// need to be re-asserted to keep the leaf in sync with its
+    /// source area." Adding a new per-leaf field becomes a one-line
+    /// change here, fanning out to every consumer.
+    ///
+    /// Cost: clones the area's text, regions, and outline; one
+    /// 9-entry `FxHashMap`. No font-system access, no shaping.
+    pub fn full_assign_from(area: &GlyphArea) -> DeltaGlyphArea {
+        DeltaGlyphArea::new(vec![
+            GlyphAreaField::Text(area.text.clone()),
+            GlyphAreaField::position(area.position.x.0, area.position.y.0),
+            GlyphAreaField::bounds(area.render_bounds.x.0, area.render_bounds.y.0),
+            GlyphAreaField::scale(area.scale.0),
+            GlyphAreaField::line_height(area.line_height.0),
+            GlyphAreaField::ColorFontRegions(area.regions.clone()),
+            GlyphAreaField::Outline(area.outline),
+            GlyphAreaField::ZoomVisibility(area.zoom_visibility),
+            GlyphAreaField::Operation(ApplyOperation::Assign),
+        ])
+    }
+
     /// The global arithmetic mode this delta applies with
     /// (`Assign` / `Add` / `Subtract`), or `Noop` when no
     /// `Operation` entry is present. O(1).
@@ -375,4 +409,105 @@ impl DeltaGlyphArea {
             None
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gfx_structs::area::GlyphArea;
+    use crate::gfx_structs::shape::NodeShape;
+    use crate::gfx_structs::zoom_visibility::ZoomVisibility;
+    use crate::core::primitives::ColorFontRegions;
+    use glam::Vec2;
+
+    /// `full_assign_from` emits exactly the nine fields the
+    /// in-place mutator path needs (Text / position / bounds /
+    /// scale / line_height / regions / Outline / ZoomVisibility /
+    /// Operation(Assign)). Locks the contract against a future
+    /// silent omission of any per-leaf field — `lib/baumhard/CONVENTIONS.md
+    /// §B2`.
+    #[test]
+    fn full_assign_from_emits_all_nine_fields() {
+        let area = GlyphArea::new_with_str(
+            "test",
+            12.0,
+            12.0,
+            Vec2::new(1.0, 2.0),
+            Vec2::new(100.0, 50.0),
+        );
+        let delta = DeltaGlyphArea::full_assign_from(&area);
+        assert!(delta.fields.contains_key(&GlyphAreaFieldType::Text));
+        assert!(delta.fields.contains_key(&GlyphAreaFieldType::Position));
+        assert!(delta.fields.contains_key(&GlyphAreaFieldType::Bounds));
+        assert!(delta.fields.contains_key(&GlyphAreaFieldType::Scale));
+        assert!(delta.fields.contains_key(&GlyphAreaFieldType::LineHeight));
+        assert!(delta.fields.contains_key(&GlyphAreaFieldType::ColorFontRegions));
+        assert!(delta.fields.contains_key(&GlyphAreaFieldType::Outline));
+        assert!(delta.fields.contains_key(&GlyphAreaFieldType::ZoomVisibility));
+        assert!(delta.fields.contains_key(&GlyphAreaFieldType::ApplyOperation));
+        assert_eq!(delta.operation_variant(), ApplyOperation::Assign);
+    }
+
+    /// The fields the helper emits round-trip through the
+    /// `apply_to` path: applying the delta to a fresh `GlyphArea`
+    /// reproduces the source's per-leaf state.
+    #[test]
+    fn full_assign_from_round_trips_through_apply_to() {
+        use crate::core::primitives::Applicable;
+
+        let mut source = GlyphArea::new_with_str(
+            "round-trip",
+            14.0,
+            16.0,
+            Vec2::new(7.0, 11.0),
+            Vec2::new(200.0, 80.0),
+        );
+        source.zoom_visibility = ZoomVisibility::try_new(Some(0.5), Some(2.0)).unwrap();
+        source.regions = ColorFontRegions::single_span(
+            crate::util::grapheme_chad::count_grapheme_clusters("round-trip"),
+            Some([1.0, 0.5, 0.25, 1.0]),
+            None,
+        );
+
+        let delta = DeltaGlyphArea::full_assign_from(&source);
+        let mut target = GlyphArea::new(0.0, 0.0, Vec2::ZERO, Vec2::ZERO);
+        // Pre-condition: target shape differs from source shape so
+        // any field that fails to overwrite would still be visible
+        // in the post-state.
+        target.shape = NodeShape::Ellipse;
+        delta.apply_to(&mut target);
+
+        assert_eq!(target.text, source.text);
+        assert_eq!(target.scale, source.scale);
+        assert_eq!(target.line_height, source.line_height);
+        assert_eq!(target.position, source.position);
+        assert_eq!(target.render_bounds, source.render_bounds);
+        assert_eq!(target.regions, source.regions);
+        assert_eq!(target.outline, source.outline);
+        assert_eq!(target.zoom_visibility, source.zoom_visibility);
+        // `Shape` is intentionally NOT in the full-assign field set —
+        // it's policy, not per-leaf identity. Verify it stayed at
+        // the pre-apply value (Ellipse) rather than being reset.
+        assert_eq!(target.shape, NodeShape::Ellipse);
+    }
+
+    /// Authored zoom-visibility windows survive the round-trip.
+    /// Locks the §B2 latent-bug fix that made `edge_handle.rs`'s
+    /// mutator stop omitting `ZoomVisibility` from its delta.
+    #[test]
+    fn full_assign_from_preserves_authored_zoom_window() {
+        use crate::core::primitives::Applicable;
+
+        let mut source = GlyphArea::new(12.0, 12.0, Vec2::ZERO, Vec2::new(10.0, 10.0));
+        source.zoom_visibility = ZoomVisibility::try_new(Some(1.5), Some(3.0)).unwrap();
+
+        let delta = DeltaGlyphArea::full_assign_from(&source);
+        let mut target = GlyphArea::new(0.0, 0.0, Vec2::ZERO, Vec2::ZERO);
+        // Target starts with unbounded zoom — if the helper omits
+        // ZoomVisibility from the delta, this assert fails.
+        assert!(target.zoom_visibility.is_default());
+        delta.apply_to(&mut target);
+        assert_eq!(target.zoom_visibility, source.zoom_visibility);
+    }
+
 }

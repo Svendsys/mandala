@@ -13,18 +13,18 @@ pub fn check(map: &MindMap) -> Vec<Violation> {
 
     for (i, edge) in map.edges.iter().enumerate() {
         if !map.nodes.contains_key(&edge.from_id) {
-            out.push(Violation {
-                category: "references",
-                location: format!("edge[{}]", i),
-                message: format!("from_id {:?} is not a node", edge.from_id),
-            });
+            out.push(Violation::edge(
+                "references",
+                i,
+                format!("from_id {:?} is not a node", edge.from_id),
+            ));
         }
         if !map.nodes.contains_key(&edge.to_id) {
-            out.push(Violation {
-                category: "references",
-                location: format!("edge[{}]", i),
-                message: format!("to_id {:?} is not a node", edge.to_id),
-            });
+            out.push(Violation::edge(
+                "references",
+                i,
+                format!("to_id {:?} is not a node", edge.to_id),
+            ));
         }
     }
 

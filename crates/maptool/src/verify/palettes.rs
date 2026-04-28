@@ -10,28 +10,28 @@ use super::Violation;
 pub fn check(map: &MindMap) -> Vec<Violation> {
     let mut out = Vec::new();
 
-    for node in map.nodes.values() {
+    for (_loc, node) in map.node_locations() {
         if let Some(ref schema) = node.color_schema {
             if !map.palettes.contains_key(&schema.palette) {
-                out.push(Violation {
-                    category: "palettes",
-                    location: node.id.clone(),
-                    message: format!(
+                out.push(Violation::node(
+                    "palettes",
+                    node,
+                    format!(
                         "palette {:?} is not defined in map.palettes",
                         schema.palette
                     ),
-                });
+                ));
             }
         }
     }
 
     for (name, palette) in &map.palettes {
         if palette.groups.is_empty() {
-            out.push(Violation {
-                category: "palettes",
-                location: name.clone(),
-                message: "palette has no color groups".to_string(),
-            });
+            out.push(Violation::at(
+                "palettes",
+                name.clone(),
+                "palette has no color groups",
+            ));
         }
     }
 

@@ -113,10 +113,7 @@ fn rewrite_nodes(root: &mut Value, id_map: &HashMap<String, String>) {
 }
 
 fn rewrite_edges(root: &mut Value, id_map: &HashMap<String, String>) {
-    let edges = match root.get_mut("edges").and_then(|v| v.as_array_mut()) {
-        Some(arr) => arr,
-        None => return,
-    };
+    let Some(edges) = super::edges_arr_mut(root) else { return };
     for edge in edges.iter_mut() {
         rewrite_field(edge, "from_id", id_map);
         rewrite_field(edge, "to_id", id_map);
@@ -124,10 +121,7 @@ fn rewrite_edges(root: &mut Value, id_map: &HashMap<String, String>) {
 }
 
 fn rewrite_portals(root: &mut Value, id_map: &HashMap<String, String>) {
-    let portals = match root.get_mut("portals").and_then(|v| v.as_array_mut()) {
-        Some(arr) => arr,
-        None => return,
-    };
+    let Some(portals) = super::portals_arr_mut(root) else { return };
     for portal in portals.iter_mut() {
         rewrite_field(portal, "endpoint_a", id_map);
         rewrite_field(portal, "endpoint_b", id_map);

@@ -5,6 +5,9 @@
 
 use super::Command;
 use crate::application::console::completion::{prefix_filter, Completion, CompletionContext, CompletionState};
+use crate::application::console::helpers::{
+    collect_kvs_or_usage, require_edge_or_portal, ApplyTally,
+};
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::edge_selected;
 use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
@@ -54,31 +57,27 @@ fn resolve_cap(endpoint_from: bool, name: &str) -> Option<Option<&'static str>> 
 }
 
 fn execute_cap(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
-    let er = match eff.document.selection.selected_edge_or_portal_edge() {
-        Some(e) => e,
-        None => return ExecResult::err("no edge selected"),
+    let er = match require_edge_or_portal(eff) {
+        Ok(e) => e,
+        Err(r) => return r,
     };
-    let kvs: Vec<(String, String)> = args
-        .kvs()
-        .map(|(k, v)| (k.to_string(), v.to_string()))
-        .collect();
-    if kvs.is_empty() {
-        return ExecResult::err("usage: cap from=<name> to=<name>");
-    }
+    let kvs = match collect_kvs_or_usage(args, "usage: cap from=<name> to=<name>") {
+        Ok(k) => k,
+        Err(r) => return r,
+    };
 
-    let mut messages: Vec<String> = Vec::new();
-    let mut any_applied = false;
+    let mut tally = ApplyTally::new();
     for (k, v) in kvs {
         let is_from = match k.as_str() {
             "from" => true,
             "to" => false,
             other => {
-                messages.push(format!("unknown key '{}'", other));
+                tally.note_error(format!("unknown key '{}'", other));
                 continue;
             }
         };
         let Some(glyph) = resolve_cap(is_from, &v) else {
-            messages.push(format!("'{}': expected arrow|circle|diamond|none", v));
+            tally.note_error(format!("'{}': expected arrow|circle|diamond|none", v));
             continue;
         };
         let changed = if is_from {
@@ -86,17 +85,7 @@ fn execute_cap(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         } else {
             eff.document.set_edge_cap_end(&er, glyph)
         };
-        if changed {
-            any_applied = true;
-        } else {
-            messages.push(format!("cap {} already {}", k, v));
-        }
+        tally.note(changed, || format!("cap {} already {}", k, v));
     }
-    if !messages.is_empty() {
-        if !any_applied {
-            return ExecResult::err(messages.join("; "));
-        }
-        return ExecResult::lines(messages);
-    }
-    ExecResult::ok_msg("cap applied")
+    tally.finalize("cap")
 }

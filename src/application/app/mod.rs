@@ -158,7 +158,7 @@ const EDGE_HANDLE_HIT_TOLERANCE_PX: f32 = 12.0;
 /// empty-space double-click (create orphan). Two clicks "match" as
 /// a double-click only when they have the same `ClickHit`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum ClickHit {
+pub(super) enum ClickHit {
     /// No node and no portal marker under the cursor. Empty-canvas
     /// double-click creates a new orphan unless an edge is selected.
     Empty,
@@ -233,6 +233,121 @@ fn is_double_click(
         return false;
     }
     &prev.hit == new_hit
+}
+
+/// Bag of "what was hit" that the click dispatch on both
+/// platforms needs. The collapsed `click_hit` is what
+/// double-click detection compares against; the four
+/// individual `Option`s are what the editor-state guards
+/// (already-editing-same-target) and the WASM
+/// `pending_click` snapshot consume — those checks need the
+/// underlying hits, not just the collapsed enum.
+pub(super) struct ClickHitParts {
+    pub(super) click_hit: ClickHit,
+    pub(super) hit_node: Option<String>,
+    pub(super) portal_text_hit:
+        Option<(baumhard::mindmap::scene_cache::EdgeKey, String)>,
+    pub(super) portal_icon_hit:
+        Option<(baumhard::mindmap::scene_cache::EdgeKey, String)>,
+    pub(super) edge_label_hit:
+        Option<baumhard::mindmap::scene_cache::EdgeKey>,
+}
+
+/// Pure router for "what did this click target?". Runs the
+/// node → portal-text → portal-icon → edge-label priority
+/// chain and folds the four hits into a single
+/// [`ClickHitParts`]. Both the native click handler and the
+/// WASM click handler previously open-coded byte-identical
+/// versions of this body — they now both call here.
+///
+/// Priority rationale: node hits beat portal hits (a node
+/// under a portal marker is the more common target).
+/// Portal sub-parts are resolved text-first, then icon — the
+/// two AABBs don't overlap in practice but the ordering keeps
+/// routing deterministic if geometry ever places them
+/// adjacent. Edge-label hits only register when no node /
+/// portal sub-part has claimed the click — labels sit along
+/// the connection path, and placing them behind the portal
+/// check keeps the portal's "floating over a node" behaviour
+/// correct even if a label happens to overlap.
+pub(super) fn compute_click_hit(
+    canvas_pos: glam::Vec2,
+    mindmap_tree: Option<&mut baumhard::mindmap::tree_builder::MindMapTree>,
+    renderer: &crate::application::renderer::Renderer,
+) -> ClickHitParts {
+    let hit_node = mindmap_tree
+        .and_then(|tree| crate::application::document::hit_test(canvas_pos, tree));
+
+    let portal_text_hit = if hit_node.is_none() {
+        renderer.hit_test_portal_text(canvas_pos)
+    } else {
+        None
+    };
+    let portal_icon_hit =
+        if hit_node.is_none() && portal_text_hit.is_none() {
+            renderer.hit_test_portal(canvas_pos)
+        } else {
+            None
+        };
+    let edge_label_hit = if hit_node.is_none()
+        && portal_text_hit.is_none()
+        && portal_icon_hit.is_none()
+    {
+        renderer.hit_test_any_edge_label(canvas_pos)
+    } else {
+        None
+    };
+
+    let click_hit = click_hit_from_priority(
+        &hit_node,
+        &portal_text_hit,
+        &portal_icon_hit,
+        &edge_label_hit,
+    );
+
+    ClickHitParts {
+        click_hit,
+        hit_node,
+        portal_text_hit,
+        portal_icon_hit,
+        edge_label_hit,
+    }
+}
+
+/// Pure priority-ladder for `ClickHit` construction. Given the
+/// four already-resolved hit options, returns the highest-priority
+/// `ClickHit` variant that's `Some`. Priority order: node beats
+/// portal-text beats portal-icon beats edge-label beats empty.
+///
+/// Separated from [`compute_click_hit`] so the priority contract
+/// can be unit-tested without a `Renderer`. The cascade gating
+/// inside `compute_click_hit` already guarantees that at most one
+/// of the lower-priority options is `Some` at a time, but this
+/// ladder remains correct when callers pass overlapping hits — the
+/// ladder is the canonical tie-breaker.
+fn click_hit_from_priority(
+    hit_node: &Option<String>,
+    portal_text_hit: &Option<(baumhard::mindmap::scene_cache::EdgeKey, String)>,
+    portal_icon_hit: &Option<(baumhard::mindmap::scene_cache::EdgeKey, String)>,
+    edge_label_hit: &Option<baumhard::mindmap::scene_cache::EdgeKey>,
+) -> ClickHit {
+    if let Some(id) = hit_node {
+        ClickHit::Node(id.clone())
+    } else if let Some((key, ep)) = portal_text_hit {
+        ClickHit::PortalText {
+            edge: key.clone(),
+            endpoint: ep.clone(),
+        }
+    } else if let Some((key, ep)) = portal_icon_hit {
+        ClickHit::PortalMarker {
+            edge: key.clone(),
+            endpoint: ep.clone(),
+        }
+    } else if let Some(key) = edge_label_hit {
+        ClickHit::EdgeLabel(key.clone())
+    } else {
+        ClickHit::Empty
+    }
 }
 
 /// Pure router for the label-edit key loop. Dispatches a winit

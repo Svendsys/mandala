@@ -413,6 +413,143 @@ impl BorderStyle {
     }
 }
 
+/// Per-side run geometry the three border-emit pipelines (the
+/// in-place mutator path, the initial-build tree path, and the
+/// flat-pipeline `rebuild_border_buffers_keyed` in the renderer)
+/// each previously open-coded with byte-identical math.
+///
+/// One spec describes one side (top / bottom / left / right):
+/// where the run sits in canvas space, how big its text bounds
+/// are, what glyph string it carries, what palette offset to
+/// hand to [`build_border_regions`], and the pre-counted
+/// grapheme cluster count so consumers don't re-walk the string.
+///
+/// Pure data — no allocation beyond the `String` text. Consumers
+/// translate the spec into their pipeline-specific output:
+/// the tree path wraps it into a [`crate::gfx_structs::area::GlyphArea`];
+/// the renderer's flat path shapes it into a `cosmic_text::Buffer`.
+/// Color, palette cycle, and zoom-visibility belong with the
+/// consumer (those are policy, not geometry).
+#[derive(Clone, Debug, PartialEq)]
+pub struct BorderRunSpec {
+    /// 1=top, 2=bottom, 3=left, 4=right. Stable across rebuilds —
+    /// the in-place mutator path keys leaves on this channel.
+    pub channel: usize,
+    /// Concatenated glyph string for this run (corners + side fill
+    /// for horizontals, vertical column for verticals).
+    pub text: String,
+    /// Font size in pt; identical for all 4 sides (sourced from
+    /// the [`BorderStyle::font_size_pt`]).
+    pub font_size_pt: f32,
+    /// Top-left position of the run's text bounds in canvas space.
+    pub position: (f32, f32),
+    /// Width / height of the run's text bounds.
+    pub bounds: (f32, f32),
+    /// Glyph-index offset into the per-cycle palette so a palette-
+    /// cycling border sweeps continuously around the rectangle in
+    /// top → right → bottom → left order. Zero when the upstream
+    /// palette is empty (single-colour border).
+    pub palette_offset: usize,
+    /// Pre-computed `count_grapheme_clusters(text)`. Carried on
+    /// the spec so consumers handing it to [`build_border_regions`]
+    /// don't re-walk the string.
+    pub cluster_count: usize,
+}
+
+/// Compute the four-side run geometry for one node's border.
+/// Single source of truth for the per-side `(text, position,
+/// bounds, palette_offset)` arithmetic that the in-place mutator
+/// path, the initial-build tree path, and the flat-pipeline
+/// `rebuild_border_buffers_keyed` previously reproduced
+/// independently.
+///
+/// Channels:
+/// - `1` = top, `2` = bottom, `3` = left, `4` = right.
+///
+/// Palette offsets (for a continuous top→right→bottom→left
+/// sweep) are `[0, top_clusters + right_clusters,
+/// top_clusters + right_clusters + bottom_clusters,
+/// top_clusters]`. Vertical text strings include `'\n'`
+/// separators which the grapheme counter folds into one cluster
+/// per visible glyph, so the indices line up with the per-cluster
+/// regions [`build_border_regions`] emits.
+///
+/// Cost: 4 `String` allocations (one per side text), 4
+/// `count_grapheme_clusters` walks. No font-system access, no
+/// shaping. Pure: same inputs → same array.
+pub fn border_run_specs(
+    border_style: &BorderStyle,
+    node_pos: (f32, f32),
+    node_size: (f32, f32),
+) -> [BorderRunSpec; 4] {
+    let font_size = border_style.font_size_pt;
+    let approx_char_width = font_size * BORDER_APPROX_CHAR_WIDTH_FRAC;
+    let char_count = ((node_size.0 / approx_char_width) + 2.0).ceil().max(3.0) as usize;
+    let right_corner_x =
+        node_pos.0 - approx_char_width + (char_count - 1) as f32 * approx_char_width;
+    let corner_overlap = font_size * BORDER_CORNER_OVERLAP_FRAC;
+    let top_y = node_pos.1 - font_size + corner_overlap;
+    let bottom_y = node_pos.1 + node_size.1 - corner_overlap;
+    let h_width = (char_count as f32 + 1.0) * approx_char_width;
+    let v_width = approx_char_width * 2.0;
+    // `.ceil()` rather than `.round()` so the side columns always
+    // extend at least as far down as the node bottom. With
+    // `.round()`, a node whose `size_y / font_size` rounds down
+    // (e.g. 100/14 = 7.14 → 7 rows = 98 px on a 100 px node)
+    // leaves the last row 2 px short of the bottom row's corner
+    // cell, which renders as a visible gap at BL/BR.
+    let row_count = (node_size.1 / font_size).ceil().max(1.0) as usize;
+
+    let top_text = border_style.top_text(char_count);
+    let bottom_text = border_style.bottom_text(char_count);
+    let left_text = border_style.left_column_text(row_count);
+    let right_text = border_style.right_column_text(row_count);
+
+    let top_clusters = count_clusters(&top_text);
+    let right_clusters = count_clusters(&right_text);
+    let bottom_clusters = count_clusters(&bottom_text);
+    let left_clusters = count_clusters(&left_text);
+
+    [
+        BorderRunSpec {
+            channel: 1,
+            text: top_text,
+            font_size_pt: font_size,
+            position: (node_pos.0 - approx_char_width, top_y),
+            bounds: (h_width, font_size * 1.5),
+            palette_offset: 0,
+            cluster_count: top_clusters,
+        },
+        BorderRunSpec {
+            channel: 2,
+            text: bottom_text,
+            font_size_pt: font_size,
+            position: (node_pos.0 - approx_char_width, bottom_y),
+            bounds: (h_width, font_size * 1.5),
+            palette_offset: top_clusters + right_clusters,
+            cluster_count: bottom_clusters,
+        },
+        BorderRunSpec {
+            channel: 3,
+            text: left_text,
+            font_size_pt: font_size,
+            position: (node_pos.0 - approx_char_width, node_pos.1),
+            bounds: (v_width, node_size.1),
+            palette_offset: top_clusters + right_clusters + bottom_clusters,
+            cluster_count: left_clusters,
+        },
+        BorderRunSpec {
+            channel: 4,
+            text: right_text,
+            font_size_pt: font_size,
+            position: (right_corner_x, node_pos.1),
+            bounds: (v_width, node_size.1),
+            palette_offset: top_clusters,
+            cluster_count: right_clusters,
+        },
+    ]
+}
+
 /// Per-corner cluster counts, used by the auto-resize pass to
 /// reason about minimum widths in the same cluster units the
 /// pattern fitter speaks in.
@@ -798,6 +935,75 @@ fn count_clusters(s: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `border_run_specs` produces four runs in the contractually
+    /// required channel order (top=1, bottom=2, left=3, right=4)
+    /// and assigns palette offsets that sweep continuously
+    /// top→right→bottom→left. The invariant the three border
+    /// pipelines (initial-build tree, in-place mutator tree,
+    /// flat-pipeline scene_buffers) all rely on.
+    #[test]
+    fn border_run_specs_channels_and_palette_offsets() {
+        let style = BorderStyle::default_with_color("#ffffff");
+        let specs = border_run_specs(&style, (10.0, 20.0), (100.0, 50.0));
+        assert_eq!(specs[0].channel, 1, "top channel");
+        assert_eq!(specs[1].channel, 2, "bottom channel");
+        assert_eq!(specs[2].channel, 3, "left channel");
+        assert_eq!(specs[3].channel, 4, "right channel");
+        // top offset is 0 (sweep starts here).
+        assert_eq!(specs[0].palette_offset, 0);
+        // right offset = top_clusters.
+        assert_eq!(specs[3].palette_offset, specs[0].cluster_count);
+        // bottom offset = top + right clusters.
+        assert_eq!(
+            specs[1].palette_offset,
+            specs[0].cluster_count + specs[3].cluster_count
+        );
+        // left offset = top + right + bottom clusters.
+        assert_eq!(
+            specs[2].palette_offset,
+            specs[0].cluster_count + specs[3].cluster_count + specs[1].cluster_count
+        );
+    }
+
+    /// Each spec's `cluster_count` is consistent with
+    /// `count_grapheme_clusters(text)` — the field exists so
+    /// consumers handing the spec to `build_border_regions`
+    /// don't re-walk the string, but the contract is that the
+    /// pre-counted value matches a fresh count.
+    #[test]
+    fn border_run_specs_cluster_count_matches_text() {
+        let style = BorderStyle::default_with_color("#ffffff");
+        let specs = border_run_specs(&style, (0.0, 0.0), (200.0, 80.0));
+        for spec in &specs {
+            assert_eq!(
+                spec.cluster_count,
+                count_clusters(&spec.text),
+                "spec channel {} cluster_count mismatch",
+                spec.channel
+            );
+        }
+    }
+
+    /// `row_count` uses `.ceil()` not `.round()` so the side
+    /// columns always extend to the node bottom — even when
+    /// `node_size.1 / font_size` rounds down. The 100/14 case
+    /// in the existing comment block at the spec is the
+    /// canonical regression case.
+    #[test]
+    fn border_run_specs_uses_ceil_for_row_count() {
+        let style = BorderStyle::default_with_color("#ffffff");
+        // 100 / 14 = 7.14 — .round() = 7, .ceil() = 8. Verify
+        // the left column carries 8 newline-separated lines (7
+        // newlines + the last cluster), matching .ceil().
+        let specs = border_run_specs(&style, (0.0, 0.0), (100.0, 100.0));
+        let left_lines = specs[2].text.matches('\n').count() + 1;
+        assert!(
+            left_lines >= 8,
+            "left column must use .ceil() (>= 8 rows for 100/14 = 7.14); got {}",
+            left_lines
+        );
+    }
 
     /// The light preset's top border at width 5 is corners + 3 fill
     /// characters. Structural invariant: first char is `top_left`, last

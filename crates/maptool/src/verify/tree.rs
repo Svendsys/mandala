@@ -10,31 +10,31 @@ use super::Violation;
 pub fn check(map: &MindMap) -> Vec<Violation> {
     let mut out = Vec::new();
 
-    for node in map.nodes.values() {
+    for (_loc, node) in map.node_locations() {
         if let Some(ref pid) = node.parent_id {
             if !map.nodes.contains_key(pid) {
-                out.push(Violation {
-                    category: "tree",
-                    location: node.id.clone(),
-                    message: format!("parent_id {:?} references a node that does not exist", pid),
-                });
+                out.push(Violation::node(
+                    "tree",
+                    node,
+                    format!("parent_id {:?} references a node that does not exist", pid),
+                ));
                 continue;
             }
         }
     }
 
     // Cycle detection: walk each node's parent chain, flag if we revisit.
-    for node in map.nodes.values() {
+    for (_loc, node) in map.node_locations() {
         let mut seen: HashSet<&str> = HashSet::new();
         seen.insert(node.id.as_str());
         let mut current = node.parent_id.as_deref();
         while let Some(pid) = current {
             if !seen.insert(pid) {
-                out.push(Violation {
-                    category: "tree",
-                    location: node.id.clone(),
-                    message: format!("cycle detected in parent_id chain (revisited {:?})", pid),
-                });
+                out.push(Violation::node(
+                    "tree",
+                    node,
+                    format!("cycle detected in parent_id chain (revisited {:?})", pid),
+                ));
                 break;
             }
             current = map.nodes.get(pid).and_then(|n| n.parent_id.as_deref());

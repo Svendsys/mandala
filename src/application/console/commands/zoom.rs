@@ -24,7 +24,7 @@ use crate::application::console::completion::{prefix_filter, Completion, Complet
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
 use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
-use crate::application::document::{SelectionState, ZoomBoundEdit};
+use crate::application::document::{OptionEdit, SelectionState};
 
 pub const KEYS: &[&str] = &["min", "max"];
 pub const VERBS: &[&str] = &["clear"];
@@ -88,17 +88,17 @@ fn complete_zoom(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completi
     }
 }
 
-/// Parse a kv value into a [`ZoomBoundEdit::Set`] or
-/// [`ZoomBoundEdit::Clear`]. `unset` or empty string → Clear;
+/// Parse a kv value into a [`OptionEdit::Set`] or
+/// [`OptionEdit::Clear`]. `unset` or empty string → Clear;
 /// anything else must parse as a positive finite `f32`. Returns
 /// an `ExecResult::Err` for malformed values so the console
 /// surfaces a clear error instead of a silent no-op.
-fn parse_bound(key: &str, value: &str) -> Result<ZoomBoundEdit, ExecResult> {
+fn parse_bound(key: &str, value: &str) -> Result<OptionEdit<f32>, ExecResult> {
     if value.is_empty() || value.eq_ignore_ascii_case("unset") {
-        return Ok(ZoomBoundEdit::Clear);
+        return Ok(OptionEdit::Clear);
     }
     match value.parse::<f32>() {
-        Ok(v) if v.is_finite() && v > 0.0 => Ok(ZoomBoundEdit::Set(v)),
+        Ok(v) if v.is_finite() && v > 0.0 => Ok(OptionEdit::Set(v)),
         Ok(v) => Err(ExecResult::err(format!(
             "{}='{}' must be positive and finite or `unset`; got {}",
             key, value, v
@@ -113,15 +113,15 @@ fn parse_bound(key: &str, value: &str) -> Result<ZoomBoundEdit, ExecResult> {
 fn execute_zoom(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     // Positional `clear` verb: treat as `min=unset max=unset`.
     let (min_edit, max_edit) = match args.positional(0) {
-        Some("clear") => (ZoomBoundEdit::Clear, ZoomBoundEdit::Clear),
+        Some("clear") => (OptionEdit::Clear, OptionEdit::Clear),
         Some(other) => {
             return ExecResult::err(format!(
                 "unknown verb '{other}' — usage: zoom [min=<zoom|unset>] [max=<zoom|unset>]   |   zoom clear"
             ))
         }
         None => {
-            let mut min = ZoomBoundEdit::Keep;
-            let mut max = ZoomBoundEdit::Keep;
+            let mut min = OptionEdit::Keep;
+            let mut max = OptionEdit::Keep;
             let mut saw_any = false;
             for (k, v) in args.kvs() {
                 saw_any = true;
@@ -146,14 +146,14 @@ fn execute_zoom(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         }
     };
 
-    if matches!(min_edit, ZoomBoundEdit::Keep) && matches!(max_edit, ZoomBoundEdit::Keep) {
+    if matches!(min_edit, OptionEdit::Keep) && matches!(max_edit, OptionEdit::Keep) {
         return ExecResult::err("zoom: nothing to set");
     }
 
     // Reject obviously-inverted explicit bounds up front so the
     // user sees a clear error instead of a silent no-op from the
     // setter's inverted-bounds guard. Mirrors the `font` command.
-    if let (ZoomBoundEdit::Set(lo), ZoomBoundEdit::Set(hi)) = (min_edit, max_edit) {
+    if let (OptionEdit::Set(lo), OptionEdit::Set(hi)) = (min_edit, max_edit) {
         if lo > hi {
             return ExecResult::err(format!(
                 "zoom: min={lo} > max={hi} (inverted bounds)"
@@ -228,15 +228,15 @@ mod tests {
     fn parse_bound_unset_is_clear() {
         assert_eq!(
             parse_bound("min", "unset").expect("parses"),
-            ZoomBoundEdit::Clear
+            OptionEdit::Clear
         );
         assert_eq!(
             parse_bound("min", "").expect("parses"),
-            ZoomBoundEdit::Clear
+            OptionEdit::Clear
         );
         assert_eq!(
             parse_bound("min", "UNSET").expect("case-insensitive"),
-            ZoomBoundEdit::Clear
+            OptionEdit::Clear
         );
     }
 
@@ -244,11 +244,11 @@ mod tests {
     fn parse_bound_numeric_is_set() {
         assert_eq!(
             parse_bound("min", "1.5").expect("parses"),
-            ZoomBoundEdit::Set(1.5)
+            OptionEdit::Set(1.5)
         );
         assert_eq!(
             parse_bound("max", "0.05").expect("parses"),
-            ZoomBoundEdit::Set(0.05)
+            OptionEdit::Set(0.05)
         );
     }
 

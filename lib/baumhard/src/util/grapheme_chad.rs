@@ -84,53 +84,6 @@ pub fn find_byte_index_of_grapheme(s: &str, index: usize) -> Option<usize> {
     None
 }
 
-/// Byte index immediately after the `n`-th grapheme cluster.
-/// Preserved as a seam alongside `find_byte_index_of_grapheme` —
-/// future grapheme-aware text-editing paths (IME runs, cursor motion
-/// across clusters) want the "after-nth" variant too
-/// (CODE_CONVENTIONS.md §6).
-#[allow(dead_code)]
-fn find_index_after_nth_grapheme(str: &str, n: usize) -> Option<usize> {
-    // Graphemes method provides an iterator over the grapheme clusters
-    let mut graphemes = str.graphemes(true);
-
-    // Skip n graphemes and take the next one to find the boundary after the nth grapheme
-    let skipped_graphemes = graphemes.by_ref().take(n + 1).collect::<Vec<&str>>();
-
-    // If the number of graphemes collected is less than or equal to n, we've reached or exceeded the end of the string
-    if skipped_graphemes.len() <= n {
-        return None; // Return None if we cannot move n graphemes into the string
-    }
-    // Calculate the byte index: the sum of the lengths (in bytes) of all taken graphemes
-    let byte_index = skipped_graphemes.iter().map(|g| g.len()).sum();
-
-    Some(byte_index)
-}
-
-/// Return the byte offset where the `n`-th grapheme cluster starts.
-/// `n = 0` returns `Some(0)` for non-empty strings. Returns `None`
-/// when `n` exceeds the grapheme count. O(n) over
-/// `s.grapheme_indices(true)`.
-///
-/// Functionally equivalent to [`find_byte_index_of_grapheme`] but
-/// uses `grapheme_indices` for the scan. Exists because early callers
-/// predated the other function; both are kept for call-site clarity
-/// (one says "byte index of grapheme #n", the other says "nth cluster
-/// byte index").
-pub fn nth_grapheme_cluster_byte_index(s: &str, n: usize) -> Option<usize> {
-    let mut index = 0;
-    for (i, (start, _)) in s.grapheme_indices(true).enumerate() {
-        if i == n {
-            return Some(start);
-        }
-        index = start;
-    }
-    if n == 0 {
-        return Some(index);
-    }
-    None
-}
-
 fn replace_substring(s: &mut String, i: usize, n: usize, source: &str) {
     let mut bytes = s.as_bytes().to_vec();
     let source_bytes = source.as_bytes();
@@ -268,11 +221,9 @@ pub fn push_spaces(s: &mut String, n: usize) {
 /// grapheme walk + O(len) `String::insert_str` shift.
 pub fn insert_spaces(s: &mut String, idx: usize, n: usize) {
     let spaces = " ".repeat(n);
-    let maybe = nth_grapheme_cluster_byte_index(s, idx);
-    if let Some(byte_offset) = maybe {
-        s.insert_str(byte_offset, &spaces);
-    } else {
-        push_spaces(s, n);
+    match find_byte_index_of_grapheme(s, idx) {
+        Some(byte_offset) => s.insert_str(byte_offset, &spaces),
+        None => push_spaces(s, n),
     }
 }
 

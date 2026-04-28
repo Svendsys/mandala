@@ -56,13 +56,12 @@ pub use hit_test::{
     apply_tree_highlights, hit_test, hit_test_edge,
     point_in_node_aabb, rect_select,
 };
-pub use nodes::{BorderConfigEdits, BorderEditOutcome, BorderFieldEdit, BorderSide};
+pub use nodes::{BorderConfigEdits, BorderEditOutcome, OptionEdit, BorderSide};
 pub use types::{
     AnimationInstance, EdgeLabelSel, EdgeRef, PortalLabelSel, SelectionState,
     HIGHLIGHT_COLOR, REPARENT_SOURCE_COLOR, REPARENT_TARGET_COLOR,
 };
 pub use undo_action::UndoAction;
-pub use zoom_bounds::ZoomBoundEdit;
 
 /// Owns the MindMap data model and provides scene-building for the Renderer.
 pub struct MindMapDocument {
@@ -457,11 +456,7 @@ impl MindMapDocument {
         // negligible next to the per-frame scene build.
         let edge_label = match &self.selection {
             crate::application::document::SelectionState::EdgeLabel(s) => {
-                Some(baumhard::mindmap::scene_cache::EdgeKey::new(
-                    s.edge_ref.from_id.as_str(),
-                    s.edge_ref.to_id.as_str(),
-                    s.edge_ref.edge_type.as_str(),
-                ))
+                Some(baumhard::mindmap::scene_cache::EdgeKey::from(&s.edge_ref))
             }
             _ => None,
         };

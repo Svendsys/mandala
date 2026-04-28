@@ -95,6 +95,43 @@ impl MindMap {
         }
     }
 
+    /// Yield every node paired with its canonical "location string"
+    /// (the node's id) for downstream diagnostic emission. The
+    /// location-string contract is part of the data-model surface —
+    /// validators (loader-time and `maptool verify`) format
+    /// violations as `(category, location, message)` triples and
+    /// every node-keyed violation needs the same stamp.
+    ///
+    /// Iteration order: HashMap-iteration order. Non-deterministic
+    /// across runs; consumers that need a stable order sort the
+    /// emitted violations on their end (the verifier already does).
+    ///
+    /// Cost: one `String` clone per node for the location stamp.
+    /// Equivalent to the hand-rolled `for node in map.nodes.values()
+    /// { ... node.id.clone() ... }` shape every per-checker
+    /// previously open-coded.
+    pub fn node_locations(&self) -> impl Iterator<Item = (String, &MindNode)> {
+        self.nodes.values().map(|n| (n.id.clone(), n))
+    }
+
+    /// Yield every edge paired with its canonical `"edge[<idx>]"`
+    /// location string. The bracket-index format is part of the
+    /// data-model surface — the maptool `verify` violations and any
+    /// future loader-time validators emit the same stamp so a user
+    /// can grep across both.
+    ///
+    /// Iteration order: edge-vector order, stable across calls
+    /// against the same `MindMap`.
+    ///
+    /// Cost: one `format!` allocation per edge (`"edge[0]"`,
+    /// `"edge[1]"`, ...).
+    pub fn edge_locations(&self) -> impl Iterator<Item = (String, &MindEdge)> {
+        self.edges
+            .iter()
+            .enumerate()
+            .map(|(i, e)| (format!("edge[{}]", i), e))
+    }
+
     /// Returns root nodes (nodes with no parent), sorted by ID segment.
     pub fn root_nodes(&self) -> Vec<&MindNode> {
         let mut roots: Vec<&MindNode> = self.nodes.values()

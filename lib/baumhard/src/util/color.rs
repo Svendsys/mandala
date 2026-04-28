@@ -108,6 +108,23 @@ pub struct Color {
     pub rgba: Rgba,
 }
 
+impl Color {
+    /// Apply a binary `u8 -> u8` op channel-wise across two
+    /// `Color`s. Single source of truth for the four wrapping
+    /// arithmetic impls (`Add`/`Sub`/`Mul`/`Div`) — each used to
+    /// open-code an identical 4-channel loop differing only in
+    /// the wrapping-method name. Inline; no heap; O(1).
+    #[inline]
+    fn channel_apply(self, rhs: Self, op: fn(u8, u8) -> u8) -> Self {
+        Color::new_u8(&[
+            op(self[0], rhs[0]),
+            op(self[1], rhs[1]),
+            op(self[2], rhs[2]),
+            op(self[3], rhs[3]),
+        ])
+    }
+}
+
 /// Component-wise wrapping division of two [`Color`]s. Uses
 /// `u8::wrapping_div` per channel. Wrapping was chosen over
 /// saturating because colour arithmetic in Baumhard is used for
@@ -119,16 +136,7 @@ impl Div for Color {
     /// Divide each RGBA channel of `self` by the corresponding
     /// channel of `rhs` using wrapping semantics. O(1), no heap.
     fn div(self, rhs: Self) -> Self::Output {
-        let mut result = self[0].wrapping_div(rhs[0]);
-        let mut output = [0; 4];
-        output[0] = result;
-        result = self[1].wrapping_div(rhs[1]);
-        output[1] = result;
-        result = self[2].wrapping_div(rhs[2]);
-        output[2] = result;
-        result = self[3].wrapping_div(rhs[3]);
-        output[3] = result;
-        Color::new_u8(&output)
+        self.channel_apply(rhs, u8::wrapping_div)
     }
 }
 
@@ -144,16 +152,7 @@ impl Mul for Color {
     /// Multiply each RGBA channel of `self` by the corresponding
     /// channel of `rhs` using wrapping semantics. O(1), no heap.
     fn mul(self, rhs: Self) -> Self::Output {
-        let mut result = self[0].wrapping_mul(rhs[0]);
-        let mut output = [0; 4];
-        output[0] = result;
-        result = self[1].wrapping_mul(rhs[1]);
-        output[1] = result;
-        result = self[2].wrapping_mul(rhs[2]);
-        output[2] = result;
-        result = self[3].wrapping_mul(rhs[3]);
-        output[3] = result;
-        Color::new_u8(&output)
+        self.channel_apply(rhs, u8::wrapping_mul)
     }
 }
 
@@ -169,16 +168,7 @@ impl Sub for Color {
     /// Subtract each RGBA channel of `rhs` from the corresponding
     /// channel of `self` using wrapping semantics. O(1), no heap.
     fn sub(self, rhs: Self) -> Self::Output {
-        let mut result = self[0].wrapping_sub(rhs[0]);
-        let mut output = [0; 4];
-        output[0] = result;
-        result = self[1].wrapping_sub(rhs[1]);
-        output[1] = result;
-        result = self[2].wrapping_sub(rhs[2]);
-        output[2] = result;
-        result = self[3].wrapping_sub(rhs[3]);
-        output[3] = result;
-        Color::new_u8(&output)
+        self.channel_apply(rhs, u8::wrapping_sub)
     }
 }
 
@@ -194,16 +184,7 @@ impl Add for Color {
     /// Add each RGBA channel of `rhs` to the corresponding channel
     /// of `self` using wrapping semantics. O(1), no heap.
     fn add(self, rhs: Self) -> Self::Output {
-        let mut result = self[0].wrapping_add(rhs[0]);
-        let mut output = [0; 4];
-        output[0] = result;
-        result = self[1].wrapping_add(rhs[1]);
-        output[1] = result;
-        result = self[2].wrapping_add(rhs[2]);
-        output[2] = result;
-        result = self[3].wrapping_add(rhs[3]);
-        output[3] = result;
-        Color::new_u8(&output)
+        self.channel_apply(rhs, u8::wrapping_add)
     }
 }
 
@@ -592,5 +573,62 @@ mod tests {
             assert!(c.is_ascii_hexdigit());
             assert!(!c.is_ascii_uppercase());
         }
+    }
+
+    /// `Color + Color` wraps modulo 256 per channel — the
+    /// procedural-palette use case the wrapping policy exists
+    /// for. Locks the contract against any future drift to
+    /// saturating semantics.
+    #[test]
+    fn color_add_wraps_per_channel_modulo_256() {
+        let a = Color::new_u8(&[200, 100, 50, 255]);
+        let b = Color::new_u8(&[100, 200, 50, 1]);
+        let r = a + b;
+        // 200+100=300 → 44, 100+200=300 → 44, 50+50=100, 255+1=256 → 0.
+        assert_eq!(r[0], 44);
+        assert_eq!(r[1], 44);
+        assert_eq!(r[2], 100);
+        assert_eq!(r[3], 0);
+    }
+
+    /// `Color - Color` underflow wraps modulo 256.
+    #[test]
+    fn color_sub_wraps_underflow_modulo_256() {
+        let a = Color::new_u8(&[10, 0, 100, 255]);
+        let b = Color::new_u8(&[20, 1, 100, 0]);
+        let r = a - b;
+        // 10-20=-10 → 246, 0-1=-1 → 255, 100-100=0, 255-0=255.
+        assert_eq!(r[0], 246);
+        assert_eq!(r[1], 255);
+        assert_eq!(r[2], 0);
+        assert_eq!(r[3], 255);
+    }
+
+    /// `Color * Color` overflow wraps modulo 256.
+    #[test]
+    fn color_mul_wraps_overflow_modulo_256() {
+        let a = Color::new_u8(&[16, 4, 0, 255]);
+        let b = Color::new_u8(&[16, 64, 200, 1]);
+        let r = a * b;
+        // 16*16=256 → 0, 4*64=256 → 0, 0*200=0, 255*1=255.
+        assert_eq!(r[0], 0);
+        assert_eq!(r[1], 0);
+        assert_eq!(r[2], 0);
+        assert_eq!(r[3], 255);
+    }
+
+    /// `Color / Color` uses `u8::wrapping_div`. Division by
+    /// zero panics in `wrapping_div` on debug builds and
+    /// returns `0` in release; this test exercises only the
+    /// non-zero divisor path that consumers actually use.
+    #[test]
+    fn color_div_per_channel() {
+        let a = Color::new_u8(&[200, 100, 50, 255]);
+        let b = Color::new_u8(&[2, 4, 5, 255]);
+        let r = a / b;
+        assert_eq!(r[0], 100);
+        assert_eq!(r[1], 25);
+        assert_eq!(r[2], 10);
+        assert_eq!(r[3], 1);
     }
 }
