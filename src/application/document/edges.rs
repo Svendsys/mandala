@@ -310,27 +310,14 @@ impl MindMapDocument {
     /// setting `dirty`. Returns `false` if the edge was not found or
     /// the anchor was already at the requested value.
     pub fn set_edge_anchor(&mut self, edge_ref: &EdgeRef, is_from: bool, value: &str) -> bool {
-        let idx = match self.mindmap.edges.iter().position(|e| edge_ref.matches(e)) {
-            Some(i) => i,
-            None => return false,
-        };
-        let current = if is_from {
-            &self.mindmap.edges[idx].anchor_from
-        } else {
-            &self.mindmap.edges[idx].anchor_to
-        };
-        if current == value {
-            return false;
-        }
-        let before = self.mindmap.edges[idx].clone();
-        if is_from {
-            self.mindmap.edges[idx].anchor_from = value.to_string();
-        } else {
-            self.mindmap.edges[idx].anchor_to = value.to_string();
-        }
-        self.undo_stack.push(UndoAction::EditEdge { index: idx, before });
-        self.dirty = true;
-        true
+        self.mutate_edge(edge_ref, |edge, _canvas| {
+            let slot = if is_from { &mut edge.anchor_from } else { &mut edge.anchor_to };
+            if slot == value {
+                return false;
+            }
+            *slot = value.to_string();
+            true
+        })
     }
 
     /// Look up the index of an edge in `mindmap.edges` matching the
@@ -375,14 +362,50 @@ impl MindMapDocument {
         edge: &'a mut MindEdge,
         canvas: &Canvas,
     ) -> &'a mut GlyphConnectionConfig {
-        if edge.glyph_connection.is_none() {
-            let seed = canvas
-                .default_connection
-                .clone()
-                .unwrap_or_default();
-            edge.glyph_connection = Some(seed);
+        ensure_glyph_connection_inline(edge, canvas)
+    }
+
+    /// Run `mutate` against the edge selected by `edge_ref` with the
+    /// before-snapshot, rollback-on-no-op, and `EditEdge` undo-push
+    /// scaffolding handled here. The closure returns `true` to commit
+    /// (push undo + mark dirty) or `false` to rollback the edit
+    /// (any in-place mutations on `edge` and any `glyph_connection`
+    /// fork are reverted from the snapshot).
+    ///
+    /// Single source of truth for the "find idx → clone before →
+    /// mutate → push undo" template documented in this module's
+    /// "Connection style and label mutation helpers" comment block.
+    /// Each remaining bespoke setter that touches a single field on
+    /// a MindEdge collapses to a body that returns `true`/`false`
+    /// from a closure, with no responsibility for the surrounding
+    /// undo discipline.
+    ///
+    /// Why a method rather than a free fn: the closure receives
+    /// `&mut MindEdge` and `&Canvas` (sibling fields of `MindMap`),
+    /// which Rust's split-borrow rules allow under a single
+    /// `&mut self` because both are direct field projections of
+    /// `self.mindmap`. The closure can reach
+    /// [`ensure_glyph_connection`] through the free
+    /// [`ensure_glyph_connection_inline`] without having to
+    /// re-fetch `&mut self`.
+    pub(super) fn mutate_edge<F>(&mut self, edge_ref: &EdgeRef, mutate: F) -> bool
+    where
+        F: FnOnce(&mut MindEdge, &Canvas) -> bool,
+    {
+        let idx = match self.mindmap.edges.iter().position(|e| edge_ref.matches(e)) {
+            Some(i) => i,
+            None => return false,
+        };
+        let before = self.mindmap.edges[idx].clone();
+        let changed = mutate(&mut self.mindmap.edges[idx], &self.mindmap.canvas);
+        if !changed {
+            self.mindmap.edges[idx] = before;
+            return false;
         }
-        edge.glyph_connection.as_mut().expect("just installed")
+        self.undo_stack
+            .push(UndoAction::EditEdge { index: idx, before });
+        self.dirty = true;
+        true
     }
 
     /// Set the body glyph string for a connection. Empty strings are
@@ -392,79 +415,49 @@ impl MindMapDocument {
         if body.is_empty() {
             return false;
         }
-        let idx = match self.mindmap.edges.iter().position(|e| edge_ref.matches(e)) {
-            Some(i) => i,
-            None => return false,
-        };
-        // Peek at the effective body before forking to detect no-ops.
-        let current_body = self.mindmap.edges[idx]
-            .glyph_connection
-            .as_ref()
-            .map(|c| c.body.as_str())
-            .or_else(|| self.mindmap.canvas.default_connection.as_ref().map(|c| c.body.as_str()))
-            .unwrap_or(&GlyphConnectionConfig::default().body.clone())
-            .to_string();
-        if current_body == body {
-            return false;
-        }
-        let before = self.mindmap.edges[idx].clone();
-        let cfg = Self::ensure_glyph_connection(
-            &mut self.mindmap.edges[idx],
-            &self.mindmap.canvas,
-        );
-        cfg.body = body.to_string();
-        self.undo_stack.push(UndoAction::EditEdge { index: idx, before });
-        self.dirty = true;
-        true
+        self.mutate_edge(edge_ref, |edge, canvas| {
+            // Peek at the effective body before forking to detect no-ops.
+            let default_body = GlyphConnectionConfig::default().body;
+            let current_body = edge
+                .glyph_connection
+                .as_ref()
+                .map(|c| c.body.as_str())
+                .or_else(|| canvas.default_connection.as_ref().map(|c| c.body.as_str()))
+                .unwrap_or(&default_body);
+            if current_body == body {
+                return false;
+            }
+            ensure_glyph_connection_inline(edge, canvas).body = body.to_string();
+            true
+        })
     }
 
     /// Set the `cap_start` glyph (or clear it with `None`). Returns
     /// `true` if the edge existed and the value changed.
     pub fn set_edge_cap_start(&mut self, edge_ref: &EdgeRef, cap: Option<&str>) -> bool {
-        let idx = match self.mindmap.edges.iter().position(|e| edge_ref.matches(e)) {
-            Some(i) => i,
-            None => return false,
-        };
-        let before = self.mindmap.edges[idx].clone();
-        let cfg = Self::ensure_glyph_connection(
-            &mut self.mindmap.edges[idx],
-            &self.mindmap.canvas,
-        );
         let new_val = cap.map(|s| s.to_string());
-        if cfg.cap_start == new_val {
-            // Roll back the fork if nothing actually changed (ensure_glyph_connection
-            // may have installed a default when the edge previously had
-            // glyph_connection = None).
-            self.mindmap.edges[idx] = before;
-            return false;
-        }
-        cfg.cap_start = new_val;
-        self.undo_stack.push(UndoAction::EditEdge { index: idx, before });
-        self.dirty = true;
-        true
+        self.mutate_edge(edge_ref, |edge, canvas| {
+            let cfg = ensure_glyph_connection_inline(edge, canvas);
+            if cfg.cap_start == new_val {
+                return false;
+            }
+            cfg.cap_start = new_val;
+            true
+        })
     }
 
     /// Set the `cap_end` glyph (or clear it with `None`). Returns
     /// `true` if the edge existed and the value changed.
     pub fn set_edge_cap_end(&mut self, edge_ref: &EdgeRef, cap: Option<&str>) -> bool {
-        let idx = match self.mindmap.edges.iter().position(|e| edge_ref.matches(e)) {
-            Some(i) => i,
-            None => return false,
-        };
-        let before = self.mindmap.edges[idx].clone();
-        let cfg = Self::ensure_glyph_connection(
-            &mut self.mindmap.edges[idx],
-            &self.mindmap.canvas,
-        );
         let new_val = cap.map(|s| s.to_string());
-        if cfg.cap_end == new_val {
-            self.mindmap.edges[idx] = before;
-            return false;
-        }
-        cfg.cap_end = new_val;
-        self.undo_stack.push(UndoAction::EditEdge { index: idx, before });
-        self.dirty = true;
-        true
+        self.mutate_edge(edge_ref, |edge, canvas| {
+            let cfg = ensure_glyph_connection_inline(edge, canvas);
+            if cfg.cap_end == new_val {
+                return false;
+            }
+            cfg.cap_end = new_val;
+            true
+        })
     }
 
     /// Set (or clear, with `color = None`) the `label_config.color`
@@ -478,35 +471,27 @@ impl MindMapDocument {
     /// rollback discipline on `set_portal_label_color` so unchanged
     /// selections don't leave undo droppings.
     pub fn set_edge_label_color(&mut self, edge_ref: &EdgeRef, color: Option<&str>) -> bool {
-        let idx = match self.mindmap.edges.iter().position(|e| edge_ref.matches(e)) {
-            Some(i) => i,
-            None => return false,
-        };
-        let current = self.mindmap.edges[idx]
-            .label_config
-            .as_ref()
-            .and_then(|c| c.color.clone());
         let new_val = color.map(|s| s.to_string());
-        if current == new_val {
-            return false;
-        }
-        let before = self.mindmap.edges[idx].clone();
-        match new_val {
-            Some(c) => {
-                Self::ensure_label_config(&mut self.mindmap.edges[idx]).color = Some(c);
+        self.mutate_edge(edge_ref, |edge, _canvas| {
+            let current = edge.label_config.as_ref().and_then(|c| c.color.clone());
+            if current == new_val {
+                return false;
             }
-            None => {
-                if let Some(cfg) = self.mindmap.edges[idx].label_config.as_mut() {
-                    cfg.color = None;
-                    if cfg == &EdgeLabelConfig::default() {
-                        self.mindmap.edges[idx].label_config = None;
+            match new_val {
+                Some(c) => {
+                    ensure_label_config_inline(edge).color = Some(c);
+                }
+                None => {
+                    if let Some(cfg) = edge.label_config.as_mut() {
+                        cfg.color = None;
+                        if cfg == &EdgeLabelConfig::default() {
+                            edge.label_config = None;
+                        }
                     }
                 }
             }
-        }
-        self.undo_stack.push(UndoAction::EditEdge { index: idx, before });
-        self.dirty = true;
-        true
+            true
+        })
     }
 
     /// Read the resolved **edge body** color for copy-to-clipboard.
@@ -584,24 +569,15 @@ impl MindMapDocument {
     /// `edge.color` (or the canvas default). Returns `true` if the edge
     /// existed and the value changed.
     pub fn set_edge_color(&mut self, edge_ref: &EdgeRef, color: Option<&str>) -> bool {
-        let idx = match self.mindmap.edges.iter().position(|e| edge_ref.matches(e)) {
-            Some(i) => i,
-            None => return false,
-        };
-        let before = self.mindmap.edges[idx].clone();
-        let cfg = Self::ensure_glyph_connection(
-            &mut self.mindmap.edges[idx],
-            &self.mindmap.canvas,
-        );
         let new_val = color.map(|s| s.to_string());
-        if cfg.color == new_val {
-            self.mindmap.edges[idx] = before;
-            return false;
-        }
-        cfg.color = new_val;
-        self.undo_stack.push(UndoAction::EditEdge { index: idx, before });
-        self.dirty = true;
-        true
+        self.mutate_edge(edge_ref, |edge, canvas| {
+            let cfg = ensure_glyph_connection_inline(edge, canvas);
+            if cfg.color == new_val {
+                return false;
+            }
+            cfg.color = new_val;
+            true
+        })
     }
 
     /// Step the connection's base `font_size_pt` by `delta_pt`,
@@ -609,25 +585,16 @@ impl MindMapDocument {
     /// `true` if the clamp yielded a different value from the current
     /// (i.e. we're not already pinned at the relevant bound).
     pub fn set_edge_font_size_step(&mut self, edge_ref: &EdgeRef, delta_pt: f32) -> bool {
-        let idx = match self.mindmap.edges.iter().position(|e| edge_ref.matches(e)) {
-            Some(i) => i,
-            None => return false,
-        };
-        let before = self.mindmap.edges[idx].clone();
-        let cfg = Self::ensure_glyph_connection(
-            &mut self.mindmap.edges[idx],
-            &self.mindmap.canvas,
-        );
-        let new_val = (cfg.font_size_pt + delta_pt)
-            .clamp(cfg.min_font_size_pt, cfg.max_font_size_pt);
-        if (cfg.font_size_pt - new_val).abs() < f32::EPSILON {
-            self.mindmap.edges[idx] = before;
-            return false;
-        }
-        cfg.font_size_pt = new_val;
-        self.undo_stack.push(UndoAction::EditEdge { index: idx, before });
-        self.dirty = true;
-        true
+        self.mutate_edge(edge_ref, |edge, canvas| {
+            let cfg = ensure_glyph_connection_inline(edge, canvas);
+            let new_val = (cfg.font_size_pt + delta_pt)
+                .clamp(cfg.min_font_size_pt, cfg.max_font_size_pt);
+            if (cfg.font_size_pt - new_val).abs() < f32::EPSILON {
+                return false;
+            }
+            cfg.font_size_pt = new_val;
+            true
+        })
     }
 
     /// Set the connection's `font_size_pt` to an absolute value,
@@ -638,47 +605,29 @@ impl MindMapDocument {
     /// `font size=<pt>` kv form, where callers have an absolute
     /// target rather than a delta.
     pub fn set_edge_font_size(&mut self, edge_ref: &EdgeRef, pt: f32) -> bool {
-        let idx = match self.mindmap.edges.iter().position(|e| edge_ref.matches(e)) {
-            Some(i) => i,
-            None => return false,
-        };
-        let before = self.mindmap.edges[idx].clone();
-        let cfg = Self::ensure_glyph_connection(
-            &mut self.mindmap.edges[idx],
-            &self.mindmap.canvas,
-        );
-        let new_val = pt.clamp(cfg.min_font_size_pt, cfg.max_font_size_pt);
-        if (cfg.font_size_pt - new_val).abs() < f32::EPSILON {
-            self.mindmap.edges[idx] = before;
-            return false;
-        }
-        cfg.font_size_pt = new_val;
-        self.undo_stack.push(UndoAction::EditEdge { index: idx, before });
-        self.dirty = true;
-        true
+        self.mutate_edge(edge_ref, |edge, canvas| {
+            let cfg = ensure_glyph_connection_inline(edge, canvas);
+            let new_val = pt.clamp(cfg.min_font_size_pt, cfg.max_font_size_pt);
+            if (cfg.font_size_pt - new_val).abs() < f32::EPSILON {
+                return false;
+            }
+            cfg.font_size_pt = new_val;
+            true
+        })
     }
 
     /// Reset the connection's `font_size_pt` to the hardcoded default
     /// (12.0). Returns `true` if the value actually changed.
     pub fn reset_edge_font_size(&mut self, edge_ref: &EdgeRef) -> bool {
         let default_size = GlyphConnectionConfig::default().font_size_pt;
-        let idx = match self.mindmap.edges.iter().position(|e| edge_ref.matches(e)) {
-            Some(i) => i,
-            None => return false,
-        };
-        let before = self.mindmap.edges[idx].clone();
-        let cfg = Self::ensure_glyph_connection(
-            &mut self.mindmap.edges[idx],
-            &self.mindmap.canvas,
-        );
-        if (cfg.font_size_pt - default_size).abs() < f32::EPSILON {
-            self.mindmap.edges[idx] = before;
-            return false;
-        }
-        cfg.font_size_pt = default_size;
-        self.undo_stack.push(UndoAction::EditEdge { index: idx, before });
-        self.dirty = true;
-        true
+        self.mutate_edge(edge_ref, |edge, canvas| {
+            let cfg = ensure_glyph_connection_inline(edge, canvas);
+            if (cfg.font_size_pt - default_size).abs() < f32::EPSILON {
+                return false;
+            }
+            cfg.font_size_pt = default_size;
+            true
+        })
     }
 
     /// Atomic `font size / min / max` setter for the edge body's
@@ -1052,46 +1001,32 @@ impl MindMapDocument {
     /// adjacent body glyphs). Returns `true` if the value actually
     /// changed.
     pub fn set_edge_spacing(&mut self, edge_ref: &EdgeRef, spacing: f32) -> bool {
-        let idx = match self.mindmap.edges.iter().position(|e| edge_ref.matches(e)) {
-            Some(i) => i,
-            None => return false,
-        };
-        let before = self.mindmap.edges[idx].clone();
-        let cfg = Self::ensure_glyph_connection(
-            &mut self.mindmap.edges[idx],
-            &self.mindmap.canvas,
-        );
-        if (cfg.spacing - spacing).abs() < f32::EPSILON {
-            self.mindmap.edges[idx] = before;
-            return false;
-        }
-        cfg.spacing = spacing;
-        self.undo_stack.push(UndoAction::EditEdge { index: idx, before });
-        self.dirty = true;
-        true
+        self.mutate_edge(edge_ref, |edge, canvas| {
+            let cfg = ensure_glyph_connection_inline(edge, canvas);
+            if (cfg.spacing - spacing).abs() < f32::EPSILON {
+                return false;
+            }
+            cfg.spacing = spacing;
+            true
+        })
     }
 
     /// Set the label text on an edge. Passing `None` (or `Some("")`)
     /// clears the label. Returns `true` if the value actually changed.
     pub fn set_edge_label(&mut self, edge_ref: &EdgeRef, text: Option<String>) -> bool {
-        let idx = match self.mindmap.edges.iter().position(|e| edge_ref.matches(e)) {
-            Some(i) => i,
-            None => return false,
-        };
         // Normalize empty string to None so hit testing and rendering
         // only need to check one absence case.
         let new_val = match text {
             Some(s) if s.is_empty() => None,
             other => other,
         };
-        if self.mindmap.edges[idx].label == new_val {
-            return false;
-        }
-        let before = self.mindmap.edges[idx].clone();
-        self.mindmap.edges[idx].label = new_val;
-        self.undo_stack.push(UndoAction::EditEdge { index: idx, before });
-        self.dirty = true;
-        true
+        self.mutate_edge(edge_ref, |edge, _canvas| {
+            if edge.label == new_val {
+                return false;
+            }
+            edge.label = new_val;
+            true
+        })
     }
 
     /// Set the label's tangential position along the connection path.
@@ -1102,21 +1037,14 @@ impl MindMapDocument {
     /// (mirrors `ensure_glyph_connection` on the body cascade).
     pub fn set_edge_label_position(&mut self, edge_ref: &EdgeRef, t: f32) -> bool {
         let clamped = t.clamp(0.0, 1.0);
-        let idx = match self.mindmap.edges.iter().position(|e| edge_ref.matches(e)) {
-            Some(i) => i,
-            None => return false,
-        };
-        let current = EdgeLabelConfig::effective_position_t(
-            self.mindmap.edges[idx].label_config.as_ref(),
-        );
-        if (current - clamped).abs() < f32::EPSILON {
-            return false;
-        }
-        let before = self.mindmap.edges[idx].clone();
-        Self::ensure_label_config(&mut self.mindmap.edges[idx]).position_t = Some(clamped);
-        self.undo_stack.push(UndoAction::EditEdge { index: idx, before });
-        self.dirty = true;
-        true
+        self.mutate_edge(edge_ref, |edge, _canvas| {
+            let current = EdgeLabelConfig::effective_position_t(edge.label_config.as_ref());
+            if (current - clamped).abs() < f32::EPSILON {
+                return false;
+            }
+            ensure_label_config_inline(edge).position_t = Some(clamped);
+            true
+        })
     }
 
     /// Return a mutable reference to `edge.label_config`, lazily
@@ -1140,22 +1068,6 @@ impl MindMapDocument {
         edge_ref: &EdgeRef,
         offset: Option<f32>,
     ) -> bool {
-        let idx = match self.mindmap.edges.iter().position(|e| edge_ref.matches(e)) {
-            Some(i) => i,
-            None => return false,
-        };
-        let current = self.mindmap.edges[idx]
-            .label_config
-            .as_ref()
-            .and_then(|c| c.perpendicular_offset);
-        let matches = match (current, offset) {
-            (None, None) => true,
-            (Some(a), Some(b)) => (a - b).abs() < f32::EPSILON,
-            _ => false,
-        };
-        if matches {
-            return false;
-        }
         // Reject NaN / infinity at the boundary; the label
         // config stores only finite values.
         if let Some(v) = offset {
@@ -1163,24 +1075,26 @@ impl MindMapDocument {
                 return false;
             }
         }
-        let before = self.mindmap.edges[idx].clone();
-        match offset {
-            Some(v) => {
-                Self::ensure_label_config(&mut self.mindmap.edges[idx]).perpendicular_offset =
-                    Some(v);
+        self.mutate_edge(edge_ref, |edge, _canvas| {
+            let current = edge.label_config.as_ref().and_then(|c| c.perpendicular_offset);
+            if option_f32_eps_eq(current, offset) {
+                return false;
             }
-            None => {
-                if let Some(cfg) = self.mindmap.edges[idx].label_config.as_mut() {
-                    cfg.perpendicular_offset = None;
-                    if cfg == &EdgeLabelConfig::default() {
-                        self.mindmap.edges[idx].label_config = None;
+            match offset {
+                Some(v) => {
+                    ensure_label_config_inline(edge).perpendicular_offset = Some(v);
+                }
+                None => {
+                    if let Some(cfg) = edge.label_config.as_mut() {
+                        cfg.perpendicular_offset = None;
+                        if cfg == &EdgeLabelConfig::default() {
+                            edge.label_config = None;
+                        }
                     }
                 }
             }
-        }
-        self.undo_stack.push(UndoAction::EditEdge { index: idx, before });
-        self.dirty = true;
-        true
+            true
+        })
     }
 
     /// Change the `edge_type` of an edge. Refuses the change (returns
@@ -1339,39 +1253,18 @@ impl MindMapDocument {
         endpoint_node_id: &str,
         color: Option<&str>,
     ) -> bool {
-        let idx = match self.mindmap.edges.iter().position(|e| edge_ref.matches(e)) {
-            Some(i) => i,
-            None => return false,
-        };
-        let before = self.mindmap.edges[idx].clone();
-        let slot = match portal_endpoint_state_mut(
-            &mut self.mindmap.edges[idx],
-            endpoint_node_id,
-        ) {
-            Some(s) => s,
-            None => return false,
-        };
-        let current = slot.as_ref().and_then(|s| s.color.clone());
         let new_val = color.map(|s| s.to_string());
-        if current == new_val {
-            return false;
-        }
-        match new_val {
-            Some(c) => {
-                slot.get_or_insert_with(PortalEndpointState::default).color = Some(c);
+        self.mutate_edge(edge_ref, |edge, _canvas| {
+            let Some(slot) = portal_endpoint_state_mut(edge, endpoint_node_id) else {
+                return false;
+            };
+            let current = slot.as_ref().and_then(|s| s.color.clone());
+            if current == new_val {
+                return false;
             }
-            None => {
-                if let Some(existing) = slot.as_mut() {
-                    existing.color = None;
-                    if existing == &PortalEndpointState::default() {
-                        *slot = None;
-                    }
-                }
-            }
-        }
-        self.undo_stack.push(UndoAction::EditEdge { index: idx, before });
-        self.dirty = true;
-        true
+            write_endpoint_field(slot, new_val, |s, v| s.color = v);
+            true
+        })
     }
 
     /// Set (or clear, with `t = None`) the per-endpoint
@@ -1385,44 +1278,18 @@ impl MindMapDocument {
         endpoint_node_id: &str,
         t: Option<f32>,
     ) -> bool {
-        let idx = match self.mindmap.edges.iter().position(|e| edge_ref.matches(e)) {
-            Some(i) => i,
-            None => return false,
-        };
         let wrapped = t.map(baumhard::mindmap::portal_geometry::wrap_border_t);
-        let before = self.mindmap.edges[idx].clone();
-        let slot = match portal_endpoint_state_mut(
-            &mut self.mindmap.edges[idx],
-            endpoint_node_id,
-        ) {
-            Some(s) => s,
-            None => return false,
-        };
-        let current = slot.as_ref().and_then(|s| s.border_t);
-        let matched = match (current, wrapped) {
-            (None, None) => true,
-            (Some(a), Some(b)) => (a - b).abs() < f32::EPSILON,
-            _ => false,
-        };
-        if matched {
-            return false;
-        }
-        match wrapped {
-            Some(t) => {
-                slot.get_or_insert_with(PortalEndpointState::default).border_t = Some(t);
+        self.mutate_edge(edge_ref, |edge, _canvas| {
+            let Some(slot) = portal_endpoint_state_mut(edge, endpoint_node_id) else {
+                return false;
+            };
+            let current = slot.as_ref().and_then(|s| s.border_t);
+            if option_f32_eps_eq(current, wrapped) {
+                return false;
             }
-            None => {
-                if let Some(existing) = slot.as_mut() {
-                    existing.border_t = None;
-                    if existing == &PortalEndpointState::default() {
-                        *slot = None;
-                    }
-                }
-            }
-        }
-        self.undo_stack.push(UndoAction::EditEdge { index: idx, before });
-        self.dirty = true;
-        true
+            write_endpoint_field(slot, wrapped, |s, v| s.border_t = v);
+            true
+        })
     }
 
     /// Set (or clear, with `offset = None`) the per-endpoint
@@ -1440,10 +1307,6 @@ impl MindMapDocument {
         endpoint_node_id: &str,
         offset: Option<f32>,
     ) -> bool {
-        let idx = match self.mindmap.edges.iter().position(|e| edge_ref.matches(e)) {
-            Some(i) => i,
-            None => return false,
-        };
         // Reject NaN / infinity at the boundary; the model stores
         // only finite values.
         if let Some(v) = offset {
@@ -1451,40 +1314,17 @@ impl MindMapDocument {
                 return false;
             }
         }
-        let before = self.mindmap.edges[idx].clone();
-        let slot = match portal_endpoint_state_mut(
-            &mut self.mindmap.edges[idx],
-            endpoint_node_id,
-        ) {
-            Some(s) => s,
-            None => return false,
-        };
-        let current = slot.as_ref().and_then(|s| s.perpendicular_offset);
-        let matches = match (current, offset) {
-            (None, None) => true,
-            (Some(a), Some(b)) => (a - b).abs() < f32::EPSILON,
-            _ => false,
-        };
-        if matches {
-            return false;
-        }
-        match offset {
-            Some(v) => {
-                slot.get_or_insert_with(PortalEndpointState::default)
-                    .perpendicular_offset = Some(v);
+        self.mutate_edge(edge_ref, |edge, _canvas| {
+            let Some(slot) = portal_endpoint_state_mut(edge, endpoint_node_id) else {
+                return false;
+            };
+            let current = slot.as_ref().and_then(|s| s.perpendicular_offset);
+            if option_f32_eps_eq(current, offset) {
+                return false;
             }
-            None => {
-                if let Some(existing) = slot.as_mut() {
-                    existing.perpendicular_offset = None;
-                    if existing == &PortalEndpointState::default() {
-                        *slot = None;
-                    }
-                }
-            }
-        }
-        self.undo_stack.push(UndoAction::EditEdge { index: idx, before });
-        self.dirty = true;
-        true
+            write_endpoint_field(slot, offset, |s, v| s.perpendicular_offset = v);
+            true
+        })
     }
 
     /// Set (or clear, with `text = None`) the per-endpoint text
@@ -1497,42 +1337,21 @@ impl MindMapDocument {
         endpoint_node_id: &str,
         text: Option<String>,
     ) -> bool {
-        let idx = match self.mindmap.edges.iter().position(|e| edge_ref.matches(e)) {
-            Some(i) => i,
-            None => return false,
-        };
         let normalized = match text {
             Some(s) if s.is_empty() => None,
             other => other,
         };
-        let before = self.mindmap.edges[idx].clone();
-        let slot = match portal_endpoint_state_mut(
-            &mut self.mindmap.edges[idx],
-            endpoint_node_id,
-        ) {
-            Some(s) => s,
-            None => return false,
-        };
-        let current = slot.as_ref().and_then(|s| s.text.clone());
-        if current == normalized {
-            return false;
-        }
-        match normalized {
-            Some(t) => {
-                slot.get_or_insert_with(PortalEndpointState::default).text = Some(t);
+        self.mutate_edge(edge_ref, |edge, _canvas| {
+            let Some(slot) = portal_endpoint_state_mut(edge, endpoint_node_id) else {
+                return false;
+            };
+            let current = slot.as_ref().and_then(|s| s.text.clone());
+            if current == normalized {
+                return false;
             }
-            None => {
-                if let Some(existing) = slot.as_mut() {
-                    existing.text = None;
-                    if existing == &PortalEndpointState::default() {
-                        *slot = None;
-                    }
-                }
-            }
-        }
-        self.undo_stack.push(UndoAction::EditEdge { index: idx, before });
-        self.dirty = true;
-        true
+            write_endpoint_field(slot, normalized, |s, v| s.text = v);
+            true
+        })
     }
 
     /// Set (or clear, with `color = None`) the per-endpoint
@@ -1551,39 +1370,18 @@ impl MindMapDocument {
         endpoint_node_id: &str,
         color: Option<&str>,
     ) -> bool {
-        let idx = match self.mindmap.edges.iter().position(|e| edge_ref.matches(e)) {
-            Some(i) => i,
-            None => return false,
-        };
-        let before = self.mindmap.edges[idx].clone();
-        let slot = match portal_endpoint_state_mut(
-            &mut self.mindmap.edges[idx],
-            endpoint_node_id,
-        ) {
-            Some(s) => s,
-            None => return false,
-        };
-        let current = slot.as_ref().and_then(|s| s.text_color.clone());
         let new_val = color.map(|s| s.to_string());
-        if current == new_val {
-            return false;
-        }
-        match new_val {
-            Some(c) => {
-                slot.get_or_insert_with(PortalEndpointState::default).text_color = Some(c);
+        self.mutate_edge(edge_ref, |edge, _canvas| {
+            let Some(slot) = portal_endpoint_state_mut(edge, endpoint_node_id) else {
+                return false;
+            };
+            let current = slot.as_ref().and_then(|s| s.text_color.clone());
+            if current == new_val {
+                return false;
             }
-            None => {
-                if let Some(existing) = slot.as_mut() {
-                    existing.text_color = None;
-                    if existing == &PortalEndpointState::default() {
-                        *slot = None;
-                    }
-                }
-            }
-        }
-        self.undo_stack.push(UndoAction::EditEdge { index: idx, before });
-        self.dirty = true;
-        true
+            write_endpoint_field(slot, new_val, |s, v| s.text_color = v);
+            true
+        })
     }
 
     /// Read the current portal label text for one endpoint, if
@@ -1628,5 +1426,90 @@ impl MindMapDocument {
             1.0,
         );
         Some(style.color)
+    }
+}
+
+/// Free-fn body of [`MindMapDocument::ensure_glyph_connection`].
+/// Reachable from closures passed into
+/// [`MindMapDocument::mutate_edge`] without having to capture
+/// `Self`. Forks the canvas-default connection style onto the
+/// edge on first edit; subsequent edits reuse the per-edge copy.
+/// Must be called AFTER the caller has snapshotted the edge into
+/// an `UndoAction::EditEdge { before, .. }` so the undo entry
+/// still carries the pre-fork `None`.
+fn ensure_glyph_connection_inline<'a>(
+    edge: &'a mut MindEdge,
+    canvas: &Canvas,
+) -> &'a mut GlyphConnectionConfig {
+    if edge.glyph_connection.is_none() {
+        let seed = canvas
+            .default_connection
+            .clone()
+            .unwrap_or_default();
+        edge.glyph_connection = Some(seed);
+    }
+    edge.glyph_connection.as_mut().expect("just installed")
+}
+
+/// Free-fn body of [`MindMapDocument::ensure_label_config`].
+/// Reachable from closures passed into
+/// [`MindMapDocument::mutate_edge`]. Forks a default
+/// [`EdgeLabelConfig`] onto the edge on first label edit;
+/// subsequent edits reuse it. Mirrors
+/// [`ensure_glyph_connection_inline`] for the label channel.
+fn ensure_label_config_inline(edge: &mut MindEdge) -> &mut EdgeLabelConfig {
+    edge.label_config.get_or_insert_with(EdgeLabelConfig::default)
+}
+
+/// EPSILON-tolerant equality on `Option<f32>` slots. The setter
+/// no-op short-circuit on perpendicular offsets and portal
+/// `border_t` writes used to hand-roll the same `match (a, b)
+/// { (None, None) => true, (Some(a), Some(b)) => (a-b).abs() <
+/// EPSILON, _ => false }` cascade. Lifting it here lets every
+/// such setter shrink to one call.
+fn option_f32_eps_eq(a: Option<f32>, b: Option<f32>) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(x), Some(y)) => (x - y).abs() < f32::EPSILON,
+        _ => false,
+    }
+}
+
+/// Write `value` to the `Option<T>` field on the
+/// `PortalEndpointState` slot, lazily forking a default state on
+/// `Some` and scrubbing the slot back to `None` on `Some(field) ->
+/// None` clears that leave the state entirely default.
+///
+/// `setter` is given `(&mut state, value)` and writes the field
+/// directly (`s.color = v`, `s.text = v`, etc.). The "scrub when
+/// default" rollback ensures unchanged selections leave no undo
+/// droppings — the rule the pre-helper portal setters each
+/// hand-rolled with the same `if existing == &PortalEndpointState::
+/// default() { *slot = None; }` block.
+///
+/// Caller is responsible for the equality / no-op short-circuit
+/// before invoking — this helper unconditionally writes. Pairs
+/// with [`MindMapDocument::mutate_edge`]: the closure does
+/// `current == new_val? false : { write_endpoint_field(...); true }`.
+fn write_endpoint_field<T, S>(
+    slot: &mut Option<PortalEndpointState>,
+    value: Option<T>,
+    setter: S,
+) where
+    S: FnOnce(&mut PortalEndpointState, Option<T>),
+{
+    match value {
+        Some(v) => {
+            let s = slot.get_or_insert_with(PortalEndpointState::default);
+            setter(s, Some(v));
+        }
+        None => {
+            if let Some(existing) = slot.as_mut() {
+                setter(existing, None);
+                if existing == &PortalEndpointState::default() {
+                    *slot = None;
+                }
+            }
+        }
     }
 }

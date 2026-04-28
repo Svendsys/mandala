@@ -22,7 +22,6 @@
 use log::warn;
 
 use super::nodes::validate_zoom_pair;
-use super::undo_action::UndoAction;
 use super::{EdgeRef, MindMapDocument};
 
 /// One console-argument's worth of edit to a single zoom bound.
@@ -72,29 +71,23 @@ impl MindMapDocument {
         min: ZoomBoundEdit,
         max: ZoomBoundEdit,
     ) -> bool {
-        let idx = match self.mindmap.edges.iter().position(|e| edge_ref.matches(e)) {
-            Some(i) => i,
-            None => return false,
-        };
-        let before = self.mindmap.edges[idx].clone();
-        let new_min = min.apply(before.min_zoom_to_render);
-        let new_max = max.apply(before.max_zoom_to_render);
-        if !validate_zoom_pair(new_min, new_max) {
-            warn!(
-                "set_edge_zoom_visibility: rejected invalid pair min={:?} max={:?}",
-                new_min, new_max
-            );
-            return false;
-        }
-        if new_min == before.min_zoom_to_render && new_max == before.max_zoom_to_render {
-            return false;
-        }
-        let e = &mut self.mindmap.edges[idx];
-        e.min_zoom_to_render = new_min;
-        e.max_zoom_to_render = new_max;
-        self.undo_stack.push(UndoAction::EditEdge { index: idx, before });
-        self.dirty = true;
-        true
+        self.mutate_edge(edge_ref, |edge, _canvas| {
+            let new_min = min.apply(edge.min_zoom_to_render);
+            let new_max = max.apply(edge.max_zoom_to_render);
+            if !validate_zoom_pair(new_min, new_max) {
+                warn!(
+                    "set_edge_zoom_visibility: rejected invalid pair min={:?} max={:?}",
+                    new_min, new_max
+                );
+                return false;
+            }
+            if new_min == edge.min_zoom_to_render && new_max == edge.max_zoom_to_render {
+                return false;
+            }
+            edge.min_zoom_to_render = new_min;
+            edge.max_zoom_to_render = new_max;
+            true
+        })
     }
 
     /// Write the edge's label-level zoom-visibility window. Forks
@@ -109,36 +102,29 @@ impl MindMapDocument {
         min: ZoomBoundEdit,
         max: ZoomBoundEdit,
     ) -> bool {
-        let idx = match self.mindmap.edges.iter().position(|e| edge_ref.matches(e)) {
-            Some(i) => i,
-            None => return false,
-        };
-        let before = self.mindmap.edges[idx].clone();
-        let (cur_min, cur_max) = before
-            .label_config
-            .as_ref()
-            .map(|c| (c.min_zoom_to_render, c.max_zoom_to_render))
-            .unwrap_or((None, None));
-        let new_min = min.apply(cur_min);
-        let new_max = max.apply(cur_max);
-        if !validate_zoom_pair(new_min, new_max) {
-            warn!(
-                "set_edge_label_zoom_visibility: rejected invalid pair min={:?} max={:?}",
-                new_min, new_max
-            );
-            return false;
-        }
-        if new_min == cur_min && new_max == cur_max {
-            return false;
-        }
-        let cfg = self.mindmap.edges[idx]
-            .label_config
-            .get_or_insert_with(Default::default);
-        cfg.min_zoom_to_render = new_min;
-        cfg.max_zoom_to_render = new_max;
-        self.undo_stack.push(UndoAction::EditEdge { index: idx, before });
-        self.dirty = true;
-        true
+        self.mutate_edge(edge_ref, |edge, _canvas| {
+            let (cur_min, cur_max) = edge
+                .label_config
+                .as_ref()
+                .map(|c| (c.min_zoom_to_render, c.max_zoom_to_render))
+                .unwrap_or((None, None));
+            let new_min = min.apply(cur_min);
+            let new_max = max.apply(cur_max);
+            if !validate_zoom_pair(new_min, new_max) {
+                warn!(
+                    "set_edge_label_zoom_visibility: rejected invalid pair min={:?} max={:?}",
+                    new_min, new_max
+                );
+                return false;
+            }
+            if new_min == cur_min && new_max == cur_max {
+                return false;
+            }
+            let cfg = edge.label_config.get_or_insert_with(Default::default);
+            cfg.min_zoom_to_render = new_min;
+            cfg.max_zoom_to_render = new_max;
+            true
+        })
     }
 
     /// Write a portal endpoint's zoom-visibility window. Forks a
@@ -154,44 +140,34 @@ impl MindMapDocument {
         min: ZoomBoundEdit,
         max: ZoomBoundEdit,
     ) -> bool {
-        let idx = match self.mindmap.edges.iter().position(|e| edge_ref.matches(e)) {
-            Some(i) => i,
-            None => return false,
-        };
-        let before = self.mindmap.edges[idx].clone();
-        let is_from = endpoint_node_id == before.from_id;
-        let is_to = endpoint_node_id == before.to_id;
-        if !is_from && !is_to {
-            return false;
-        }
-        let cur = if is_from {
-            before.portal_from.as_ref()
-        } else {
-            before.portal_to.as_ref()
-        };
-        let (cur_min, cur_max) = cur
-            .map(|s| (s.min_zoom_to_render, s.max_zoom_to_render))
-            .unwrap_or((None, None));
-        let new_min = min.apply(cur_min);
-        let new_max = max.apply(cur_max);
-        if !validate_zoom_pair(new_min, new_max) {
-            warn!(
-                "set_portal_endpoint_zoom_visibility: rejected invalid pair min={:?} max={:?}",
-                new_min, new_max
-            );
-            return false;
-        }
-        if new_min == cur_min && new_max == cur_max {
-            return false;
-        }
-        let e = &mut self.mindmap.edges[idx];
-        let slot = if is_from { &mut e.portal_from } else { &mut e.portal_to };
-        let state = slot.get_or_insert_with(Default::default);
-        state.min_zoom_to_render = new_min;
-        state.max_zoom_to_render = new_max;
-        self.undo_stack.push(UndoAction::EditEdge { index: idx, before });
-        self.dirty = true;
-        true
+        self.mutate_edge(edge_ref, |edge, _canvas| {
+            let is_from = endpoint_node_id == edge.from_id;
+            let is_to = endpoint_node_id == edge.to_id;
+            if !is_from && !is_to {
+                return false;
+            }
+            let slot = if is_from { &mut edge.portal_from } else { &mut edge.portal_to };
+            let (cur_min, cur_max) = slot
+                .as_ref()
+                .map(|s| (s.min_zoom_to_render, s.max_zoom_to_render))
+                .unwrap_or((None, None));
+            let new_min = min.apply(cur_min);
+            let new_max = max.apply(cur_max);
+            if !validate_zoom_pair(new_min, new_max) {
+                warn!(
+                    "set_portal_endpoint_zoom_visibility: rejected invalid pair min={:?} max={:?}",
+                    new_min, new_max
+                );
+                return false;
+            }
+            if new_min == cur_min && new_max == cur_max {
+                return false;
+            }
+            let state = slot.get_or_insert_with(Default::default);
+            state.min_zoom_to_render = new_min;
+            state.max_zoom_to_render = new_max;
+            true
+        })
     }
 }
 

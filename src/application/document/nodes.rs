@@ -598,79 +598,16 @@ fn apply_border_edits(
             changed = true;
         }
     }
-    match &edits.font {
-        BorderFieldEdit::Set(v) => {
-            if cfg.font.as_deref() != Some(v.as_str()) {
-                cfg.font = Some(v.clone());
-                changed = true;
-            }
-        }
-        BorderFieldEdit::Clear => {
-            if cfg.font.is_some() {
-                cfg.font = None;
-                changed = true;
-            }
-        }
-        BorderFieldEdit::Keep => {}
-    }
-    if let BorderFieldEdit::Set(v) = edits.font_size_pt.clone() {
-        if cfg.font_size_pt != v {
-            cfg.font_size_pt = v;
-            changed = true;
-        }
-    }
-    match &edits.color {
-        BorderFieldEdit::Set(v) => {
-            if cfg.color.as_deref() != Some(v.as_str()) {
-                cfg.color = Some(v.clone());
-                changed = true;
-            }
-        }
-        BorderFieldEdit::Clear => {
-            if cfg.color.is_some() {
-                cfg.color = None;
-                changed = true;
-            }
-        }
-        BorderFieldEdit::Keep => {}
-    }
-    if let BorderFieldEdit::Set(v) = edits.padding.clone() {
-        if cfg.padding != v {
-            cfg.padding = v;
-            changed = true;
-        }
-    }
-    match &edits.color_palette {
-        BorderFieldEdit::Set(v) => {
-            if cfg.color_palette.as_deref() != Some(v.as_str()) {
-                cfg.color_palette = Some(v.clone());
-                changed = true;
-            }
-        }
-        BorderFieldEdit::Clear => {
-            if cfg.color_palette.is_some() {
-                cfg.color_palette = None;
-                changed = true;
-            }
-        }
-        BorderFieldEdit::Keep => {}
-    }
-    match &edits.color_palette_field {
-        BorderFieldEdit::Set(v) => {
-            let s = v.as_str().to_string();
-            if cfg.color_palette_field.as_deref() != Some(s.as_str()) {
-                cfg.color_palette_field = Some(s);
-                changed = true;
-            }
-        }
-        BorderFieldEdit::Clear => {
-            if cfg.color_palette_field.is_some() {
-                cfg.color_palette_field = None;
-                changed = true;
-            }
-        }
-        BorderFieldEdit::Keep => {}
-    }
+    changed |= apply_option_edit(&edits.font, &mut cfg.font, |v| v.clone());
+    changed |= apply_value_set(&edits.font_size_pt, &mut cfg.font_size_pt);
+    changed |= apply_option_edit(&edits.color, &mut cfg.color, |v| v.clone());
+    changed |= apply_value_set(&edits.padding, &mut cfg.padding);
+    changed |= apply_option_edit(&edits.color_palette, &mut cfg.color_palette, |v| v.clone());
+    changed |= apply_option_edit(
+        &edits.color_palette_field,
+        &mut cfg.color_palette_field,
+        |v| v.as_str().to_string(),
+    );
 
     // Sides + corners: ensure the `glyphs` slot exists if any of
     // the eight glyph-string fields is being edited. The schema
@@ -712,6 +649,59 @@ fn apply_string_set(edit: &BorderFieldEdit<String>, slot: &mut String) -> bool {
         }
         _ => false,
     }
+}
+
+/// Apply a `BorderFieldEdit<T>` to an `Option<U>` slot, with `to_target`
+/// projecting `T → U` for the value-write path. Returns `true` when the
+/// slot actually changed. The four `font / color / color_palette /
+/// color_palette_field` arms in `apply_border_edits` were structurally
+/// identical (Set→write-if-different, Clear→None-if-some, Keep→no-op);
+/// they collapse to one call each through this helper. The `to_target`
+/// closure exists because `color_palette_field` writes a `String`-typed
+/// slot from a `PaletteField` enum, so the projection isn't always
+/// `clone()`.
+fn apply_option_edit<T, U>(
+    edit: &BorderFieldEdit<T>,
+    slot: &mut Option<U>,
+    to_target: impl FnOnce(&T) -> U,
+) -> bool
+where
+    U: PartialEq,
+{
+    match edit {
+        BorderFieldEdit::Set(v) => {
+            let new = to_target(v);
+            if slot.as_ref() != Some(&new) {
+                *slot = Some(new);
+                return true;
+            }
+        }
+        BorderFieldEdit::Clear => {
+            if slot.is_some() {
+                *slot = None;
+                return true;
+            }
+        }
+        BorderFieldEdit::Keep => {}
+    }
+    false
+}
+
+/// Apply a `BorderFieldEdit<T>` to a non-optional `T` slot — the
+/// `Set`-only path used for `font_size_pt` and `padding` (their
+/// underlying type stores a hardcoded default rather than `Option`,
+/// so `Clear` is a no-op for them).
+fn apply_value_set<T>(edit: &BorderFieldEdit<T>, slot: &mut T) -> bool
+where
+    T: PartialEq + Clone,
+{
+    if let BorderFieldEdit::Set(v) = edit {
+        if slot != v {
+            *slot = v.clone();
+            return true;
+        }
+    }
+    false
 }
 
 fn edits_touch_cfg_field(edits: &BorderConfigEdits) -> bool {
