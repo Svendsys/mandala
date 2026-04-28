@@ -50,6 +50,21 @@ pub struct MindMap {
     /// Map-level custom mutation definitions, available to all nodes in this map.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub custom_mutations: Vec<CustomMutation>,
+    /// Map-level macro definitions, opaque to baumhard. Loaded into
+    /// the application-side `MacroRegistry` at the `Map` tier;
+    /// stored as untyped JSON values here because the typed
+    /// `Macro` lives in the application crate (whose `Action` enum
+    /// would otherwise force a circular dependency). The
+    /// application-side loader parses each entry per-Macro;
+    /// per-entry failures log a `warn!` and skip rather than
+    /// failing the whole map load.
+    ///
+    /// Privilege model: Map-tier macros cannot run `ConsoleLine`
+    /// or destructive Actions — see `format/macros.md`. The
+    /// privilege gate is enforced at dispatch time in the
+    /// application's `dispatch_macro`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub macros: Vec<serde_json::Value>,
 }
 
 impl MindMap {
@@ -73,6 +88,7 @@ impl MindMap {
             nodes: HashMap::new(),
             edges: Vec::new(),
             custom_mutations: Vec::new(),
+            macros: Vec::new(),
         }
     }
 

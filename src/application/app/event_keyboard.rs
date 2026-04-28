@@ -110,6 +110,7 @@ pub(super) fn handle_keyboard_input(
             renderer,
             scene_cache,
             keybinds,
+            macros,
         );
         return;
     }

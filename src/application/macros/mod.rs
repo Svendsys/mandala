@@ -219,6 +219,28 @@ impl MacroRegistry {
     pub fn ids(&self) -> impl Iterator<Item = &str> {
         self.macros.keys().map(|s| s.as_str())
     }
+
+    /// Drop every entry whose tier matches `source`. Used by the
+    /// document-replace path to wipe Map / Inline tiers before the
+    /// new document's macros are loaded — App and User tiers
+    /// (loaded once at startup) survive the swap.
+    pub fn clear_tier(&mut self, source: MacroSource) {
+        self.macros.retain(|_, (_, src)| *src != source);
+    }
+
+    /// Bulk-insert macros at the given tier. Existing entries with
+    /// the same id are displaced — caller is responsible for
+    /// tier-precedence ordering (e.g. App tier inserted before
+    /// User tier so User wins on collision).
+    pub fn extend_with_tier<I: IntoIterator<Item = Macro>>(
+        &mut self,
+        macros: I,
+        source: MacroSource,
+    ) {
+        for m in macros {
+            self.insert(m, source);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -456,6 +478,80 @@ mod tests {
     /// the dispatcher uses to gate `ConsoleLine` and privileged
     /// `Action` steps. Without it, a future caller that uses bare
     /// `get` would silently bypass the gate.
+    /// `clear_tier` removes only entries with the matching source —
+    /// other tiers stay in place. Critical for the document-replace
+    /// path: opening a different document must wipe Map-tier macros
+    /// from the previous document while keeping App / User intact.
+    #[test]
+    fn macro_registry_clear_tier_only_drops_matching() {
+        let mut reg = MacroRegistry::new();
+        reg.insert(
+            Macro {
+                id: "app".into(),
+                name: "".into(),
+                description: "".into(),
+                steps: vec![],
+            },
+            MacroSource::App,
+        );
+        reg.insert(
+            Macro {
+                id: "user".into(),
+                name: "".into(),
+                description: "".into(),
+                steps: vec![],
+            },
+            MacroSource::User,
+        );
+        reg.insert(
+            Macro {
+                id: "map".into(),
+                name: "".into(),
+                description: "".into(),
+                steps: vec![],
+            },
+            MacroSource::Map,
+        );
+        assert_eq!(reg.len(), 3);
+        reg.clear_tier(MacroSource::Map);
+        assert_eq!(reg.len(), 2);
+        assert!(reg.contains("app"));
+        assert!(reg.contains("user"));
+        assert!(!reg.contains("map"));
+    }
+
+    /// `extend_with_tier` is the bulk-insert form used by the
+    /// document-load path. Combined with `clear_tier`, it gives a
+    /// "wipe and reinstall this tier" idiom.
+    #[test]
+    fn macro_registry_extend_with_tier_inserts_at_correct_source() {
+        let mut reg = MacroRegistry::new();
+        let macros = vec![
+            Macro {
+                id: "a".into(),
+                name: "".into(),
+                description: "".into(),
+                steps: vec![],
+            },
+            Macro {
+                id: "b".into(),
+                name: "".into(),
+                description: "".into(),
+                steps: vec![],
+            },
+        ];
+        reg.extend_with_tier(macros, MacroSource::Map);
+        assert_eq!(reg.len(), 2);
+        let (_, src_a) = reg.get_with_source("a").unwrap();
+        let (_, src_b) = reg.get_with_source("b").unwrap();
+        assert_eq!(src_a, MacroSource::Map);
+        assert_eq!(src_b, MacroSource::Map);
+        // Both tagged Map — should reject ConsoleLine and destructive
+        // Actions (the privilege gate).
+        assert!(!src_a.allows_console_line());
+        assert!(!src_a.allows_action(Action::SaveDocument));
+    }
+
     #[test]
     fn macro_registry_get_with_source_returns_pinned_tier() {
         let mut reg = MacroRegistry::new();

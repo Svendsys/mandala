@@ -159,7 +159,7 @@ impl InitState {
             cursor_is_hand: &mut self.cursor_is_hand,
             picker_hover: &mut self.picker_hover,
             keybinds: &mut self.keybinds,
-            macros: &self.macros,
+            macros: &mut self.macros,
         }
     }
 

@@ -52,6 +52,54 @@ fn user_macros_path() -> Option<PathBuf> {
     Some(PathBuf::from(home).join(".config").join("mandala").join("macros.json"))
 }
 
+/// Parse Map-tier macros out of a loaded document's
+/// `mindmap.macros: Vec<serde_json::Value>`. Per-entry parse
+/// failures log a `warn!` and are skipped — a malformed Map-tier
+/// macro doesn't break document loading. Tier assignment
+/// (`MacroSource::Map`) happens at the call site in the document-
+/// load path.
+///
+/// Map-tier macros are stored as untyped JSON in baumhard because
+/// the typed `Macro` lives in the application crate (its `Action`
+/// enum would otherwise force a circular dependency). The JSON
+/// shape matches the User / App tiers — see `format/macros.md`.
+pub fn parse_map_macros(values: &[serde_json::Value]) -> Vec<Macro> {
+    let mut out = Vec::with_capacity(values.len());
+    for (idx, v) in values.iter().enumerate() {
+        match serde_json::from_value::<Macro>(v.clone()) {
+            Ok(m) => out.push(m),
+            Err(e) => {
+                log::warn!(
+                    "macros: Map-tier entry [{}] failed to parse: {} (skipping)",
+                    idx, e
+                );
+            }
+        }
+    }
+    out
+}
+
+/// Refresh the registry's `Map` tier from a loaded document. App
+/// and User tiers are untouched — those load once at startup and
+/// don't depend on which document is open. Called from:
+///
+/// 1. `run_native_init::build` after the initial document load.
+/// 2. `execute_console_line` when `replace_document` swaps the
+///    document via `open` / `new`.
+/// 3. *(future)* the WASM document-load path when Phase-9
+///    convergence lands.
+pub fn rebuild_map_macros(
+    registry: &mut super::MacroRegistry,
+    doc: &crate::application::document::MindMapDocument,
+) {
+    registry.clear_tier(super::MacroSource::Map);
+    let map_macros = parse_map_macros(&doc.mindmap.macros);
+    if !map_macros.is_empty() {
+        log::info!("macros: loaded {} Map-tier macro(s)", map_macros.len());
+    }
+    registry.extend_with_tier(map_macros, super::MacroSource::Map);
+}
+
 /// Load the user-layer macros. Tier: `MacroSource::User`, assigned
 /// at the call site in `run_native_init::build`.
 ///
@@ -87,6 +135,7 @@ pub fn load_user_macros() -> Vec<Macro> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     /// The bundled `assets/macros/application.json` parses cleanly.
     /// Catches malformed-asset regressions at test time rather than
@@ -94,5 +143,36 @@ mod tests {
     #[test]
     fn app_bundle_parses() {
         let _ = load_app_macros();
+    }
+
+    /// `parse_map_macros` is best-effort: malformed entries log
+    /// `warn!` and skip without breaking the rest of the parse.
+    /// Locks the resilience contract documented in the rustdoc.
+    #[test]
+    fn parse_map_macros_skips_malformed_entries() {
+        let values = vec![
+            json!({
+                "id": "valid",
+                "steps": [{"kind": "Action", "action": "Undo"}]
+            }),
+            json!({
+                "id": "missing-steps"
+                // missing required `steps` field
+            }),
+            json!({
+                "id": "valid-2",
+                "steps": [{"kind": "ConsoleLine", "line": "save"}]
+            }),
+        ];
+        let parsed = parse_map_macros(&values);
+        assert_eq!(parsed.len(), 2, "malformed middle entry should be skipped");
+        assert_eq!(parsed[0].id, "valid");
+        assert_eq!(parsed[1].id, "valid-2");
+    }
+
+    #[test]
+    fn parse_map_macros_empty_input_returns_empty() {
+        let parsed = parse_map_macros(&[]);
+        assert!(parsed.is_empty());
     }
 }

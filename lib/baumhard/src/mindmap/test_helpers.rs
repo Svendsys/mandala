@@ -121,6 +121,7 @@ pub(crate) fn synthetic_map(nodes_vec: Vec<MindNode>, edges: Vec<MindEdge>) -> M
         nodes,
         edges,
         custom_mutations: vec![],
+        macros: vec![],
     }
 }
 

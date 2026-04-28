@@ -134,6 +134,12 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
             user_count
         );
     }
+    // Map-tier macros from the initially-loaded document. The
+    // document-replace path in `execute_console_line` calls the
+    // same helper to refresh the Map tier on `open` / `new`.
+    if let Some(d) = document.as_ref() {
+        crate::application::macros::loader::rebuild_map_macros(&mut macros, d);
+    }
 
     InitState {
         window,

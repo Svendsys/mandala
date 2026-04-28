@@ -81,7 +81,10 @@ pub(in crate::application::app) struct InputHandlerContext<'a> {
     pub picker_hover: &'a mut ColorPickerHoverInteraction,
     /// Resolved user keybinds.
     pub keybinds: &'a mut ResolvedKeybinds,
-    /// User-defined macro registry (Phase 8 scaffolding). Read-only
-    /// in the dispatch path — macros are loaded once at startup.
-    pub macros: &'a MacroRegistry,
+    /// Macro registry (App + User tiers loaded at startup; Map tier
+    /// re-loaded whenever a document is replaced via `open` / `new`).
+    /// Mutable so the document-replace path in
+    /// `execute_console_line` can rebuild the Map tier without
+    /// taking a separate ad-hoc borrow.
+    pub macros: &'a mut MacroRegistry,
 }

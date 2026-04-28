@@ -640,6 +640,7 @@ use baumhard::util::grapheme_chad::count_grapheme_clusters;
             nodes,
             edges: vec![],
             custom_mutations: vec![],
+            macros: vec![],
         };
         // Round-trip through JSON to exercise the finalize hook
         // — `MindMapDocument::from_json_str` calls `finalize`,

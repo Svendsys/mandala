@@ -35,20 +35,21 @@ The full WASM convergence below is still outstanding.
   there's no `~/.config` filesystem in a browser, so the loader
   would need a `?macros=<json>` / `localStorage` shape parallel to
   the keybind loader before shipping.
-- **Map-inline and node-inline macro tiers.** App and User tiers
-  ship; Map / Inline are still deferred. The privilege gate
-  (`MacroSource::allows_console_line` + `allows_action` +
-  `dispatch_macro` fail-closed) is in place, so the remaining work
-  is purely file-reading. Steps:
-  1. Add `MindMap.macros: Vec<Macro>` field on the model (Map tier).
-  2. Add `MindNode.inline_macros: Vec<Macro>` (Inline tier).
-  3. `run_native_init::build` extends the registry walk to insert
-     Map then Inline after User so collisions resolve to the
-     highest tier. The format reference at `format/macros.md` and
-     `MacroSource` ordering already document the precedence.
-  4. Verify the privilege gate empirically — a hostile mindmap
-     with a `ConsoleLine`-bearing macro should be rejected at
-     dispatch.
+- **Node-inline macro tier.** App, User, and Map tiers ship; Inline
+  (per-node) is still deferred. The privilege gate is in place
+  (Map already validates it empirically), so the remaining work is
+  the model field + loader hookup:
+  1. Add `MindNode.inline_macros: Vec<serde_json::Value>` field on
+     the model (same opaque-JSON shape as `MindMap.macros` for the
+     same circular-dep reason).
+  2. Extend `loader::rebuild_map_macros` (or add a sibling
+     `rebuild_inline_macros`) that walks every node and inserts
+     entries at the `MacroSource::Inline` tier — call from the
+     same site as Map-tier rebuild (initial doc load + document-
+     replace path).
+  3. Tests mirroring the Map-tier ones: insert at Inline tier,
+     verify the privilege gate rejects ConsoleLine, verify
+     document-replace re-tiers correctly.
 - **Parameterised console verbs as Actions.** `open <path>`,
   `save-as <path>`, `mutation apply <id>`, kv-shaped
   `border` / `edge` / `color` / `font` / `zoom` / `spacing` setters

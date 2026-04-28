@@ -1284,6 +1284,7 @@ pub(in crate::application::app) fn dispatch_macro(
                         ctx.app_scene,
                         ctx.renderer,
                         ctx.scene_cache,
+                        ctx.macros,
                     );
                     any_ran = true;
                 } else {

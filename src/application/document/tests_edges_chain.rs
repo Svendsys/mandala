@@ -118,6 +118,7 @@ use baumhard::util::grapheme_chad::count_grapheme_clusters;
             nodes,
             edges: Vec::new(),
             custom_mutations: Vec::new(),
+            macros: Vec::new(),
         }
     }
 
