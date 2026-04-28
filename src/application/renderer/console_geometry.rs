@@ -10,19 +10,12 @@
 //! can construct geometries trivially.
 
 /// Pre-layout console data handed from the app event loop to the
-/// renderer every time the console state changes. The renderer turns
-/// it into cosmic-text buffers in `rebuild_console_overlay_buffers`.
-/// Kept as a plain struct (no rendering primitives) so unit tests
-/// can construct one trivially.
+/// renderer.
 ///
 /// Layout shape: a bottom-anchored strip with (bottom → top)
-/// prompt line → completion popup → scrollback region. The
-/// scrollback shows the most recent N output lines; the completion
-/// popup is empty unless the user pressed Tab.
-///
-/// Styling (`font_family`, `font_size`) is threaded in from the
-/// user config. The renderer stays dumb about where those values
-/// came from — it just draws what the geometry says.
+/// prompt line → completion popup → scrollback region.
+/// `font_family`/`font_size` come from user config; the renderer
+/// stays dumb about provenance.
 #[derive(Clone, Debug)]
 pub struct ConsoleOverlayGeometry {
     /// Input buffer text, rendered after the `❯ ` prompt glyph.

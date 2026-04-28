@@ -1,13 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Console overlay buffer + mutator builders. Stable-channel scheme
-//! that mirrors the picker's discipline: every console GlyphArea
-//! sits at a deterministic channel so the §B2 in-place mutator path
-//! can target it across keystrokes. `console_overlay_areas` is the
-//! single source of truth — both the initial-build path
-//! (`build_console_overlay_tree`) and the in-place update path
-//! (`build_console_overlay_mutator`) consume its output so the two
-//! paths cannot drift.
+//! Console overlay buffer + mutator builders. Both paths consume
+//! `console_overlay_areas` so they can't drift. Stable channels per
+//! cell let the §B2 in-place mutator path target each across
+//! keystrokes.
 
 use cosmic_text::FontSystem;
 use glam::Vec2;

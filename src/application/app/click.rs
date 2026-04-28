@@ -1,22 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Click-target handlers for the native event loop. Four free
-//! functions lifted verbatim from `app/mod.rs`:
-//!
-//! - [`handle_click`] — the default left-click path (selection +
-//!   OnClick-trigger firing + fall-through to edge / portal hit
-//!   tests).
-//! - [`rebuild_all_with_mode`] — like `rebuild_all` but overlays
-//!   mode-specific highlights (reparent source / reparent target /
-//!   connect source).
-//! - [`handle_connect_target_click`] — the second click of the
-//!   Connect-mode gesture (Ctrl+D): creates a `cross_link` edge.
-//! - [`handle_reparent_target_click`] — the second click of the
-//!   Reparent-mode gesture (Ctrl+P): moves the source subtree
-//!   under the clicked node.
-//!
-//! WASM doesn't exercise these — they're gated native-only by the
-//! parent module's `#[cfg]` attributes on the mod-declaration.
+//! Click-target handlers for the native event loop: default click,
+//! reparent-target click, connect-target click, plus the
+//! mode-aware variant of `rebuild_all`. WASM is gated out at the
+//! parent module's `#[cfg]`.
 
 #![cfg(not(target_arch = "wasm32"))]
 
