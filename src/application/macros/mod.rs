@@ -23,6 +23,51 @@ use std::collections::HashMap;
 
 use crate::application::keybinds::Action;
 
+/// Tier a macro was loaded from. Mirrors `MutationSource` in
+/// `document/mutations_loader/mod.rs`. Variants are in ascending
+/// precedence: `App` < `User` < `Map` < `Inline`. Higher-tier
+/// macros override lower-tier ones with the same id.
+///
+/// **Privilege model.** [`MacroStep::ConsoleLine`] runs an
+/// arbitrary console verb — including filesystem-touching ones
+/// (`save <path>`, `open <path>`). To prevent a hostile shared
+/// mindmap from doing arbitrary file I/O, only [`MacroSource::User`]
+/// macros are allowed to contain `ConsoleLine` steps. The
+/// dispatcher rejects `ConsoleLine` from `App`, `Map`, and
+/// `Inline` tiers with a `warn!`. Today only the `User` tier
+/// loads macros (`loader::load_user_macros`), so the gate is
+/// dormant — but it must hold before any other tier ships.
+///
+/// Document-mutating step kinds (`Action`, `CustomMutation`) have
+/// no privilege constraint — they can only do what their backing
+/// machinery already permits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum MacroSource {
+    /// Shipped with the binary (placeholder; no app-bundle loader
+    /// today).
+    App,
+    /// Loaded from the user's `macros.json`. Same trust posture as
+    /// `keybinds.json` — the user owns the file.
+    User,
+    /// Declared in the currently-loaded map's macros array
+    /// (placeholder; no inline-on-map loader today).
+    Map,
+    /// Declared on a specific node's inline-macros array
+    /// (placeholder).
+    Inline,
+}
+
+impl MacroSource {
+    /// Whether macros from this source may carry
+    /// `MacroStep::ConsoleLine` steps. Only `User` macros pass —
+    /// app-bundled / map-inline / node-inline macros loaded from
+    /// untrusted sources cannot execute arbitrary console verbs.
+    pub fn allows_console_line(self) -> bool {
+        matches!(self, MacroSource::User)
+    }
+}
+
 /// One step inside a macro. A macro is a sequence of these executed
 /// atomically. Each variant routes through one of the application's
 /// existing dispatch surfaces, so adding a new step kind is a matter
@@ -86,10 +131,11 @@ pub struct Macro {
 }
 
 /// In-memory lookup table. Built once at startup from the loader's
-/// merged slices.
+/// merged slices. Each entry carries its source tier so the
+/// dispatcher can gate privileged step kinds (see [`MacroSource`]).
 #[derive(Debug, Clone, Default)]
 pub struct MacroRegistry {
-    macros: HashMap<String, Macro>,
+    macros: HashMap<String, (Macro, MacroSource)>,
 }
 
 impl MacroRegistry {
@@ -97,15 +143,24 @@ impl MacroRegistry {
         Self::default()
     }
 
-    /// Insert / replace a macro by id. Returns the previous entry if
-    /// any was present — caller decides whether to log the override.
-    pub fn insert(&mut self, m: Macro) -> Option<Macro> {
-        self.macros.insert(m.id.clone(), m)
+    /// Insert / replace a macro by id, tagged with its loader tier.
+    /// Returns the previous entry if any was present — caller decides
+    /// whether to log the override.
+    pub fn insert(&mut self, m: Macro, source: MacroSource) -> Option<Macro> {
+        self.macros
+            .insert(m.id.clone(), (m, source))
+            .map(|(prev, _)| prev)
     }
 
     /// Look up a macro by id.
     pub fn get(&self, id: &str) -> Option<&Macro> {
-        self.macros.get(id)
+        self.macros.get(id).map(|(m, _)| m)
+    }
+
+    /// Look up a macro and its source tier — needed by the dispatcher
+    /// to decide whether `ConsoleLine` steps are allowed.
+    pub fn get_with_source(&self, id: &str) -> Option<(&Macro, MacroSource)> {
+        self.macros.get(id).map(|(m, s)| (m, *s))
     }
 
     /// Whether the registry knows about this id.
@@ -113,8 +168,7 @@ impl MacroRegistry {
         self.macros.contains_key(id)
     }
 
-    /// Number of registered macros. Used by the `mutation list`-
-    /// shaped surface a future `macro list` console verb will share.
+    /// Number of registered macros.
     pub fn len(&self) -> usize {
         self.macros.len()
     }
@@ -124,7 +178,8 @@ impl MacroRegistry {
     }
 
     /// Iterate registered macro ids — used by completion / inspection
-    /// surfaces.
+    /// surfaces. HashMap iteration order is unspecified; sort at
+    /// the call site if a stable display is needed.
     pub fn ids(&self) -> impl Iterator<Item = &str> {
         self.macros.keys().map(|s| s.as_str())
     }
@@ -146,12 +201,14 @@ mod tests {
             }],
         };
         assert!(reg.is_empty());
-        reg.insert(m.clone());
+        reg.insert(m.clone(), MacroSource::User);
         assert_eq!(reg.len(), 1);
         assert!(reg.contains("test"));
         let got = reg.get("test").unwrap();
         assert_eq!(got.id, "test");
         assert_eq!(got.steps.len(), 1);
+        let (_, src) = reg.get_with_source("test").unwrap();
+        assert_eq!(src, MacroSource::User);
     }
 
     #[test]
@@ -171,10 +228,18 @@ mod tests {
                 line: "border on".into(),
             }],
         };
-        reg.insert(m1);
-        let prev = reg.insert(m2);
+        reg.insert(m1, MacroSource::User);
+        let prev = reg.insert(m2, MacroSource::User);
         assert!(prev.is_some());
         assert_eq!(reg.get("x").unwrap().name, "second");
+    }
+
+    #[test]
+    fn macro_source_console_line_gating() {
+        assert!(MacroSource::User.allows_console_line());
+        assert!(!MacroSource::App.allows_console_line());
+        assert!(!MacroSource::Map.allows_console_line());
+        assert!(!MacroSource::Inline.allows_console_line());
     }
 
     #[test]

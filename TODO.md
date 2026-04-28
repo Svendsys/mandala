@@ -36,14 +36,22 @@ The full WASM convergence below is still outstanding.
   would need a `?macros=<json>` / `localStorage` shape parallel to
   the keybind loader before shipping.
 - **App-bundled and inline-on-map macro tiers.** Today only the user
-  tier exists. Adding app-bundled macros (parallel to
-  `assets/mutations/application.json`) is straightforward; adding an
-  inline tier on `MindMap.macros` is the load-bearing one — once map
-  files can carry macros, opening a hostile mindmap would let it run
-  any `ConsoleLine` step (`save /tmp/evil`, `open ~/.bashrc`). The
-  tier expansion **must** ship a `MacroSource` tag and gate
-  `ConsoleLine` at the dispatcher to user-tier only. See
-  CODE_CONVENTIONS.md §3 carve-out.
+  tier exists in the loader. The `MacroSource` tag and the
+  `dispatch_macro` gate that rejects `ConsoleLine` from non-User
+  tiers are already in place — adding the actual app-bundle
+  loader (parallel to `assets/mutations/application.json`) and
+  inline-on-map loader (`MindMap::macros`) just needs the file-
+  reading half. The privilege gate is enforced by
+  `MacroSource::allows_console_line` so a hostile mindmap can't run
+  arbitrary console verbs. Steps:
+  1. Add `assets/macros/application.json` (optional, can be empty).
+  2. `loader::load_app_macros() -> Vec<Macro>` reading from the
+     bundle (compile-time `include_str!`).
+  3. `MindMap.macros: Vec<Macro>` field on the model (Map tier).
+  4. `MindNode.inline_macros: Vec<Macro>` (Inline tier).
+  5. `run_native_init::build` calls each loader, inserting at the
+     right tier so the registry's precedence-by-id picks the
+     highest-tier macro on collision.
 - **Parameterised console verbs as Actions.** `open <path>`,
   `save-as <path>`, `mutation apply <id>`, kv-shaped
   `border` / `edge` / `color` / `font` / `zoom` / `spacing` setters

@@ -42,6 +42,49 @@ pub(super) fn handle_keyboard_input(
     } = ctx;
     let key_name = crate::application::keybinds::key_to_name(&logical_key);
 
+    // Function-local macro that expands to a fresh
+    // `InputHandlerContext` over the destructured locals. Each
+    // expansion moves the locals into the new bundle, so it can
+    // only be used once per branch — but the dispatch sites below
+    // sit in mutually-exclusive `if let Some(a) = action` /
+    // `else` branches, so each branch independently consumes the
+    // locals in its own scope.
+    //
+    // Without this macro, four sites in this file (action dispatch +
+    // macro/custom-mutation fall-through here, plus two more in
+    // `event_mouse_click.rs`) had byte-identical 22-field struct
+    // literals — the duplication was flagged in the architecture
+    // review as a code smell. The macro is local rather than
+    // top-level because it captures the destructured locals by
+    // name; that's deliberate.
+    macro_rules! bundle {
+        () => {
+            InputHandlerContext {
+                document,
+                mindmap_tree,
+                app_scene,
+                renderer,
+                scene_cache,
+                drag_state,
+                app_mode,
+                console_state,
+                console_history,
+                label_edit_state,
+                portal_text_edit_state,
+                text_edit_state,
+                color_picker_state,
+                last_click,
+                hovered_node,
+                cursor_pos,
+                modifiers,
+                cursor_is_hand,
+                picker_hover,
+                keybinds,
+                macros,
+            }
+        };
+    }
+
     // When the console is open, it steals all
     // keyboard input. Character keys insert at the
     // cursor, Tab triggers completion, Up/Down walks
@@ -292,33 +335,7 @@ pub(super) fn handle_keyboard_input(
 
     if let Some(a) = action {
         // Action body lives in `super::dispatch::dispatch_action`.
-        // Rebuild a fresh `InputHandlerContext` from the destructured
-        // locals so the dispatcher can borrow them. The locals still
-        // own their `&mut` references at this point — no field has
-        // been moved out by the modal cascade above.
-        let mut bundle = InputHandlerContext {
-            document,
-            mindmap_tree,
-            app_scene,
-            renderer,
-            scene_cache,
-            drag_state,
-            app_mode,
-            console_state,
-            console_history,
-            label_edit_state,
-            portal_text_edit_state,
-            text_edit_state,
-            color_picker_state,
-            last_click,
-            hovered_node,
-            cursor_pos,
-            modifiers,
-            cursor_is_hand,
-            picker_hover,
-            keybinds,
-            macros,
-        };
+        let mut bundle = bundle!();
         let _ = super::dispatch::dispatch_action(a, &mut bundle, None);
     } else {
         // No built-in action matched — try macros first, then custom
@@ -333,29 +350,7 @@ pub(super) fn handle_keyboard_input(
                     modifiers.alt_key(),
                 )
                 .map(|s| s.to_string());
-            let mut bundle = InputHandlerContext {
-                document,
-                mindmap_tree,
-                app_scene,
-                renderer,
-                scene_cache,
-                drag_state,
-                app_mode,
-                console_state,
-                console_history,
-                label_edit_state,
-                portal_text_edit_state,
-                text_edit_state,
-                color_picker_state,
-                last_click,
-                hovered_node,
-                cursor_pos,
-                modifiers,
-                cursor_is_hand,
-                picker_hover,
-                keybinds,
-                macros,
-            };
+            let mut bundle = bundle!();
             // If a macro is bound but its id isn't in the registry
             // (typo'd config, half-loaded macros file, etc.),
             // `dispatch_macro` returns false. Fall through to the

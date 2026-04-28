@@ -1080,8 +1080,8 @@ pub(in crate::application::app) fn dispatch_macro(
     ctx: &mut InputHandlerContext<'_>,
 ) -> bool {
     use crate::application::macros::{MacroStep, MacroTarget};
-    let mac = match ctx.macros.get(macro_id) {
-        Some(m) => m.clone(),
+    let (mac, source) = match ctx.macros.get_with_source(macro_id) {
+        Some((m, s)) => (m.clone(), s),
         None => {
             log::warn!("dispatch_macro: unknown macro id '{}'", macro_id);
             return false;
@@ -1167,6 +1167,23 @@ pub(in crate::application::app) fn dispatch_macro(
                 }
             }
             MacroStep::ConsoleLine { line } => {
+                // **Privilege gate.** `ConsoleLine` runs an arbitrary
+                // console verb, including filesystem-touching ones.
+                // Only `MacroSource::User` macros may carry it —
+                // app-bundled, map-inline, and node-inline tiers
+                // come from sources the user didn't necessarily
+                // author, so they cannot do file I/O via macros.
+                // Today only the User tier loads, so this gate is
+                // dormant — but it must hold before any other tier
+                // ships. See CODE_CONVENTIONS.md §3 carve-out.
+                if !source.allows_console_line() {
+                    log::warn!(
+                        "macro '{}' (source {:?}): ConsoleLine step rejected — \
+                         only User-tier macros may run console verbs",
+                        macro_id, source
+                    );
+                    continue;
+                }
                 // `execute_console_line` requires a loaded document
                 // (it takes `&mut MindMapDocument`, not `Option`).
                 // Macros fired before any document is loaded — i.e.

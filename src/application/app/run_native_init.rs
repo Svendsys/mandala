@@ -111,7 +111,7 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
     // mutation loader.
     let mut macros = crate::application::macros::MacroRegistry::new();
     for m in crate::application::macros::loader::load_user_macros() {
-        macros.insert(m);
+        macros.insert(m, crate::application::macros::MacroSource::User);
     }
     if !macros.is_empty() {
         log::info!("loaded {} user macro(s)", macros.len());

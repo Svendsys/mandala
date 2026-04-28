@@ -159,10 +159,13 @@ decision, not a drive-by edit.
   **`MacroStep::ConsoleLine` is privileged by design.** Macros loaded
   from `~/.config/mandala/macros.json` can run any console verb
   (filesystem-touching ones included). User-tier macros share trust
-  posture with `keybinds.json`. Any future non-user macro tier
-  (app-bundled, map-inline) MUST gate `ConsoleLine` before shipping
-  — a hostile mindmap with inline ConsoleLine steps would otherwise
-  be an arbitrary-code-execution surface.
+  posture with `keybinds.json`. The dispatcher gates `ConsoleLine`
+  via `MacroSource::allows_console_line` — only `MacroSource::User`
+  passes; `App`, `Map`, and `Inline` tiers are rejected with a
+  `warn!`. Today only the User tier loads, so the gate is dormant,
+  but it MUST hold before any other tier ships — a hostile mindmap
+  with inline ConsoleLine steps would otherwise be an arbitrary-
+  code-execution surface.
 
 ## §4 Cross-platform as first class
 

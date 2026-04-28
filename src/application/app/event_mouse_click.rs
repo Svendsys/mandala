@@ -41,6 +41,39 @@ pub(super) fn handle_mouse_input(
         macros,
     } = ctx;
     let cursor_pos_val = *cursor_pos;
+
+    // Function-local macro to dedupe the `InputHandlerContext`
+    // reconstruction at dispatch sites. See the corresponding macro
+    // in `event_keyboard.rs` for the rationale (post-destructure
+    // bundle rebuilds were duplicated four times across this file
+    // and the keyboard handler).
+    macro_rules! bundle {
+        () => {
+            crate::application::app::input_context::InputHandlerContext {
+                document,
+                mindmap_tree,
+                app_scene,
+                renderer,
+                scene_cache,
+                drag_state,
+                app_mode,
+                console_state,
+                console_history,
+                label_edit_state,
+                portal_text_edit_state,
+                text_edit_state,
+                color_picker_state,
+                last_click,
+                hovered_node,
+                cursor_pos,
+                modifiers,
+                cursor_is_hand,
+                picker_hover,
+                keybinds,
+                macros,
+            }
+        };
+    }
     // The console swallows mouse clicks as a close
     // gesture. Clicking anywhere while open dismisses
     // the console without running a command, mirroring
@@ -125,29 +158,7 @@ pub(super) fn handle_mouse_input(
                     modifiers.alt_key(),
                 );
                 if let Some(a) = action {
-                    let mut bundle = crate::application::app::input_context::InputHandlerContext {
-                        document,
-                        mindmap_tree,
-                        app_scene,
-                        renderer,
-                        scene_cache,
-                        drag_state,
-                        app_mode,
-                        console_state,
-                        console_history,
-                        label_edit_state,
-                        portal_text_edit_state,
-                        text_edit_state,
-                        color_picker_state,
-                        last_click,
-                        hovered_node,
-                        cursor_pos,
-                        modifiers,
-                        cursor_is_hand,
-                        picker_hover,
-                        keybinds,
-                        macros,
-                    };
+                    let mut bundle = bundle!();
                     let _ = super::dispatch::dispatch_action(a, &mut bundle, None);
                 }
             } else {
@@ -287,29 +298,7 @@ pub(super) fn handle_mouse_input(
                             click_hit: click_hit.clone(),
                             canvas_pos,
                         };
-                        let mut bundle = crate::application::app::input_context::InputHandlerContext {
-                            document,
-                            mindmap_tree,
-                            app_scene,
-                            renderer,
-                            scene_cache,
-                            drag_state,
-                            app_mode,
-                            console_state,
-                            console_history,
-                            label_edit_state,
-                            portal_text_edit_state,
-                            text_edit_state,
-                            color_picker_state,
-                            last_click,
-                            hovered_node,
-                            cursor_pos,
-                            modifiers,
-                            cursor_is_hand,
-                            picker_hover,
-                            keybinds,
-                            macros,
-                        };
+                        let mut bundle = bundle!();
                         let _ = super::dispatch::dispatch_action(a, &mut bundle, Some(&dispatch_hit));
                         return;
                     }
