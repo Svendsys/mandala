@@ -127,7 +127,7 @@ pub(in crate::application::app) fn handle_console_key(
 
     // Scrollback navigation. Plain Up/Down stays on history; these
     // are the Shift+Up/Down + PgUp/PgDn + Shift+Home/End shortcuts.
-    if let Some(scroll_action) = action.and_then(map_scroll_action) {
+    if let Some(scroll_action) = action.as_ref().and_then(|a| map_scroll_action(a.clone())) {
         edit::adjust_scroll(console_state, scroll_action);
         after_state_change(
             EditOutcome::Unchanged, console_state, document, app_scene, renderer, keybinds,

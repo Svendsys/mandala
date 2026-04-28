@@ -87,7 +87,7 @@ impl MacroSource {
     /// active. Adding a new privileged `Action` variant requires
     /// updating the denylist below; the `#[non_exhaustive]` marker
     /// on `Action` is the structural reminder.
-    pub fn allows_action(self, action: Action) -> bool {
+    pub fn allows_action(self, action: &Action) -> bool {
         if matches!(self, MacroSource::User) {
             return true;
         }
@@ -429,7 +429,7 @@ mod tests {
             Action::NewDocument,
         ] {
             assert!(
-                MacroSource::User.allows_action(a),
+                MacroSource::User.allows_action(&a),
                 "User tier should allow {:?}",
                 a
             );
@@ -455,7 +455,7 @@ mod tests {
                 Action::NewDocument,
             ] {
                 assert!(
-                    !tier.allows_action(a),
+                    !tier.allows_action(&a),
                     "{:?} tier should reject {:?}",
                     tier,
                     a
@@ -481,7 +481,7 @@ mod tests {
                 Action::Undo,
             ] {
                 assert!(
-                    tier.allows_action(a),
+                    tier.allows_action(&a),
                     "{:?} tier should allow non-destructive {:?}",
                     tier,
                     a
@@ -853,7 +853,7 @@ mod tests {
         // Both tagged Map — should reject ConsoleLine and destructive
         // Actions (the privilege gate).
         assert!(!src_a.allows_console_line());
-        assert!(!src_a.allows_action(Action::SaveDocument));
+        assert!(!src_a.allows_action(&Action::SaveDocument));
     }
 
     #[test]

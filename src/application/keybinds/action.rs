@@ -24,7 +24,11 @@ use super::context::InputContext;
 /// would silently bypass the gate from non-User macro tiers. The
 /// `#[non_exhaustive]` is the structural signal that "review the
 /// gate when extending."
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// Some variants carry payload (e.g. `String` paths, kv-shaped
+/// `(field, value)` tuples) so `Copy` is impossible — payload-bearing
+/// variants are cloned at lookup time. The clone cost is negligible
+/// for short strings and limited to single-key dispatch hot paths.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum Action {
     // ── Document-level (global) ──────────────────────────────────

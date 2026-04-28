@@ -765,7 +765,7 @@ fn test_all_document_defaults_resolve_via_action_for_context() {
     for (action, key, ctrl, shift, alt) in cases {
         assert_eq!(
             r.action_for_context(doc, key, *ctrl, *shift, *alt),
-            Some(*action),
+            Some(action.clone()),
             "expected {:?} for key={:?} ctrl={} shift={} alt={}",
             action, key, ctrl, shift, alt,
         );

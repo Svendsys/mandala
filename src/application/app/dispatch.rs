@@ -1151,7 +1151,7 @@ pub(in crate::application::app) fn dispatch_macro(
                 // `[DeleteSelection, ConsoleLine(rejected),
                 // SaveDocument]` pattern can't sneak its outer steps
                 // past the gate.
-                if !source.allows_action(*action) {
+                if !source.allows_action(action) {
                     log::warn!(
                         "macro '{}' (source {:?}): Action {:?} rejected — \
                          tier may not invoke destructive / I/O Actions; \
@@ -1160,7 +1160,7 @@ pub(in crate::application::app) fn dispatch_macro(
                     );
                     return any_ran;
                 }
-                let outcome = dispatch_action(*action, ctx, None);
+                let outcome = dispatch_action(action.clone(), ctx, None);
                 if matches!(outcome, DispatchOutcome::Handled) {
                     any_ran = true;
                 }
