@@ -58,8 +58,8 @@ pub enum DispatchOutcome {
 
 /// Run an `Action` against the live application context. The body of
 /// every Document-level action lives here; handlers (`event_keyboard`,
-/// `event_mouse_click`, future macro runtime) construct an
-/// `InputHandlerContext` and call this.
+/// `event_mouse_click`, the macro runtime via `dispatch_macro`)
+/// construct an `InputHandlerContext` and call this.
 ///
 /// `hit` carries mouse-event-only payload (what the click hit, where
 /// the cursor was in canvas space). Keyboard / macro callers pass
@@ -569,6 +569,233 @@ pub(in crate::application::app) fn dispatch_action(
             );
             DispatchOutcome::Handled
         }
+        Action::ZoomReset => {
+            // Reset zoom to 1.0; pan stays untouched. Uses the camera's
+            // own SetZoom mutation so clamps in Camera::apply_mutation
+            // run.
+            ctx.renderer.process_decree(
+                crate::application::common::RenderDecree::CameraZoom {
+                    screen_x: ctx.cursor_pos.0 as f32,
+                    screen_y: ctx.cursor_pos.1 as f32,
+                    // Inverse of the current zoom yields a SetZoom-of-1
+                    // through the multiplicative ZoomAt path. Skip
+                    // when zoom is already 1 so floating-point cruft
+                    // doesn't accumulate.
+                    factor: 1.0f32 / ctx.renderer.camera_zoom().max(f32::EPSILON),
+                },
+            );
+            DispatchOutcome::Handled
+        }
+        Action::ZoomFit => {
+            // Fit the viewport to the current tree's bounds. Falls
+            // back to a no-op when no tree is loaded yet.
+            if let Some(tree) = ctx.mindmap_tree.as_ref() {
+                ctx.renderer.fit_camera_to_tree(&tree.tree);
+            }
+            DispatchOutcome::Handled
+        }
+        Action::PanCameraNorth
+        | Action::PanCameraSouth
+        | Action::PanCameraEast
+        | Action::PanCameraWest => {
+            // Keyboard nudge — fixed step in screen pixels, then
+            // converted to a CameraPan decree like the LeftDrag path
+            // emits per cursor move. Step size matches a coarse but
+            // perceptible nudge; users who want finer control bind a
+            // smaller step manually (when the modifier-fallback or a
+            // future per-arm step factor lands).
+            const PAN_STEP_PX: f32 = 50.0;
+            let (dx, dy) = match action {
+                Action::PanCameraNorth => (0.0, -PAN_STEP_PX),
+                Action::PanCameraSouth => (0.0, PAN_STEP_PX),
+                Action::PanCameraEast => (-PAN_STEP_PX, 0.0),
+                Action::PanCameraWest => (PAN_STEP_PX, 0.0),
+                _ => unreachable!(),
+            };
+            ctx.renderer.process_decree(
+                crate::application::common::RenderDecree::CameraPan(dx, dy),
+            );
+            DispatchOutcome::Handled
+        }
+        Action::CenterOnSelection => {
+            // Centre the camera on the centroid of the currently-
+            // selected nodes. Falls back to a no-op when nothing is
+            // selected (or only an edge / portal-marker selection,
+            // which carries no point centroid).
+            if let Some(doc) = ctx.document.as_ref() {
+                let ids: Vec<&str> = doc.selection.selected_ids();
+                if !ids.is_empty() {
+                    let mut sum = glam::Vec2::ZERO;
+                    let mut count = 0u32;
+                    for id in &ids {
+                        if let Some(node) = doc.mindmap.nodes.get(*id) {
+                            sum += glam::Vec2::new(
+                                node.position.x as f32 + node.size.width as f32 * 0.5,
+                                node.position.y as f32 + node.size.height as f32 * 0.5,
+                            );
+                            count += 1;
+                        }
+                    }
+                    if count > 0 {
+                        ctx.renderer.set_camera_center(sum / count as f32);
+                    }
+                }
+            }
+            DispatchOutcome::Handled
+        }
+        Action::JumpToRoot => {
+            // Select the document's first root node and centre on it.
+            // "First" = id-sorted; when multiple roots exist this is
+            // deterministic. No-op when the document is empty.
+            if let Some(doc) = ctx.document.as_mut() {
+                let target = doc.mindmap.root_nodes().first().map(|n| {
+                    (
+                        n.id.clone(),
+                        glam::Vec2::new(
+                            n.position.x as f32 + n.size.width as f32 * 0.5,
+                            n.position.y as f32 + n.size.height as f32 * 0.5,
+                        ),
+                    )
+                });
+                if let Some((id, centre)) = target {
+                    doc.selection = SelectionState::Single(id);
+                    ctx.renderer.set_camera_center(centre);
+                    rebuild_all(
+                        doc,
+                        ctx.mindmap_tree,
+                        ctx.app_scene,
+                        ctx.renderer,
+                        ctx.scene_cache,
+                    );
+                }
+            }
+            DispatchOutcome::Handled
+        }
+
+        // ── Selection Actions (Phase 11 wiring) ───────────────
+        Action::SelectAll => {
+            if let Some(doc) = ctx.document.as_mut() {
+                let all_ids: Vec<String> =
+                    doc.mindmap.nodes.keys().cloned().collect();
+                doc.selection = SelectionState::from_ids(all_ids);
+                rebuild_all(
+                    doc,
+                    ctx.mindmap_tree,
+                    ctx.app_scene,
+                    ctx.renderer,
+                    ctx.scene_cache,
+                );
+            }
+            DispatchOutcome::Handled
+        }
+        Action::DeselectAll => {
+            if let Some(doc) = ctx.document.as_mut() {
+                if !matches!(doc.selection, SelectionState::None) {
+                    doc.selection = SelectionState::None;
+                    rebuild_all(
+                        doc,
+                        ctx.mindmap_tree,
+                        ctx.app_scene,
+                        ctx.renderer,
+                        ctx.scene_cache,
+                    );
+                }
+            }
+            DispatchOutcome::Handled
+        }
+        Action::InvertSelection => {
+            if let Some(doc) = ctx.document.as_mut() {
+                let selected: std::collections::HashSet<String> = doc
+                    .selection
+                    .selected_ids()
+                    .into_iter()
+                    .map(String::from)
+                    .collect();
+                let inverted: Vec<String> = doc
+                    .mindmap
+                    .nodes
+                    .keys()
+                    .filter(|k| !selected.contains(*k))
+                    .cloned()
+                    .collect();
+                doc.selection = SelectionState::from_ids(inverted);
+                rebuild_all(
+                    doc,
+                    ctx.mindmap_tree,
+                    ctx.app_scene,
+                    ctx.renderer,
+                    ctx.scene_cache,
+                );
+            }
+            DispatchOutcome::Handled
+        }
+        Action::SelectParent => {
+            // Walk one step up the hierarchy from a single-node
+            // selection. Multi / edge / unselected: no-op.
+            if let Some(doc) = ctx.document.as_mut() {
+                if let SelectionState::Single(nid) = doc.selection.clone() {
+                    if let Some(parent_id) = doc
+                        .mindmap
+                        .nodes
+                        .get(&nid)
+                        .and_then(|n| n.parent_id.clone())
+                    {
+                        doc.selection = SelectionState::Single(parent_id);
+                        rebuild_all(
+                            doc,
+                            ctx.mindmap_tree,
+                            ctx.app_scene,
+                            ctx.renderer,
+                            ctx.scene_cache,
+                        );
+                    }
+                }
+            }
+            DispatchOutcome::Handled
+        }
+        Action::SelectChild => {
+            // Step into the first child (id-sorted) of the selected
+            // single node.
+            if let Some(doc) = ctx.document.as_mut() {
+                if let SelectionState::Single(nid) = doc.selection.clone() {
+                    let first_child = doc
+                        .mindmap
+                        .children_of(&nid)
+                        .first()
+                        .map(|c| c.id.clone());
+                    if let Some(child_id) = first_child {
+                        doc.selection = SelectionState::Single(child_id);
+                        rebuild_all(
+                            doc,
+                            ctx.mindmap_tree,
+                            ctx.app_scene,
+                            ctx.renderer,
+                            ctx.scene_cache,
+                        );
+                    }
+                }
+            }
+            DispatchOutcome::Handled
+        }
+        Action::SelectNextSibling | Action::SelectPrevSibling => {
+            let forward = matches!(action, Action::SelectNextSibling);
+            if let Some(doc) = ctx.document.as_mut() {
+                if let SelectionState::Single(nid) = doc.selection.clone() {
+                    let new_id = sibling_id(&doc.mindmap, &nid, forward);
+                    if let Some(target) = new_id {
+                        doc.selection = SelectionState::Single(target);
+                        rebuild_all(
+                            doc,
+                            ctx.mindmap_tree,
+                            ctx.app_scene,
+                            ctx.renderer,
+                            ctx.scene_cache,
+                        );
+                    }
+                }
+            }
+            DispatchOutcome::Handled
+        }
 
         // ── TextEdit cursor primitives (Phase 5) ──────────────
         // Each arm mutates `ctx.text_edit_state` in place. The modal
@@ -622,7 +849,7 @@ pub(in crate::application::app) fn dispatch_action(
 /// Pure: only mutates the in-memory buffer + cursor + regions, no
 /// renderer touches. Returns `true` when state changed (caller
 /// refreshes the preview iff this returns true).
-pub(crate) fn apply_text_edit_action(
+pub(in crate::application::app) fn apply_text_edit_action(
     action: Action,
     state: &mut super::TextEditState,
 ) -> bool {
@@ -690,8 +917,18 @@ pub(crate) fn apply_text_edit_action(
             }
         }
         Action::TextEditDeleteWordForward => {
+            // `delete_at_cursor` returns the cursor unchanged
+            // (Delete semantics — buffer collapses leftward into
+            // the cursor). So we cannot drive the loop off the
+            // cursor; instead, count how many graphemes lie between
+            // the cursor and the next word boundary, and delete that
+            // many. Each delete shrinks the buffer by one grapheme;
+            // `target` was captured against the original buffer so
+            // the count is correct.
             let target = word_right(buffer, *cursor);
-            while *cursor < target.min(grapheme_chad::count_grapheme_clusters(buffer)) {
+            let total = grapheme_chad::count_grapheme_clusters(buffer);
+            let to_delete = target.saturating_sub(*cursor).min(total - *cursor);
+            for _ in 0..to_delete {
                 buffer_regions.shrink_regions_after(*cursor, 1);
                 *cursor = delete_at_cursor(buffer, *cursor);
             }
@@ -706,7 +943,7 @@ pub(crate) fn apply_text_edit_action(
 /// `PortalTextEditState` share the same single-line semantics; this
 /// helper is generic over the carrier so the dispatch arms can fan
 /// out into either modal. Returns `true` when state changed.
-pub(crate) fn apply_label_edit_action_to_buffer(
+pub(in crate::application::app) fn apply_label_edit_action_to_buffer(
     action: Action,
     buffer: &mut String,
     cursor: &mut usize,
@@ -749,7 +986,7 @@ pub(crate) fn apply_label_edit_action_to_buffer(
 
 /// Convenience wrapper for the dispatch-table call site that takes
 /// the LabelEditState carrier directly.
-pub(crate) fn apply_label_edit_action(
+pub(in crate::application::app) fn apply_label_edit_action(
     action: Action,
     state: &mut super::LabelEditState,
 ) -> bool {
@@ -760,6 +997,29 @@ pub(crate) fn apply_label_edit_action(
         ..
     } = state else { return false; };
     apply_label_edit_action_to_buffer(action, buffer, cursor_grapheme_pos)
+}
+
+/// Resolve the id of the sibling immediately before / after `nid` in
+/// the parent's id-sorted children list. Roots use the document's
+/// `root_nodes()` ordering. Returns `None` when `nid` has no
+/// neighbour in the requested direction.
+fn sibling_id(
+    map: &baumhard::mindmap::model::MindMap,
+    nid: &str,
+    forward: bool,
+) -> Option<String> {
+    let parent_id = map.nodes.get(nid).and_then(|n| n.parent_id.clone());
+    let siblings: Vec<String> = match parent_id {
+        Some(pid) => map.children_of(&pid).iter().map(|c| c.id.clone()).collect(),
+        None => map.root_nodes().iter().map(|c| c.id.clone()).collect(),
+    };
+    let idx = siblings.iter().position(|id| id == nid)?;
+    let target = if forward {
+        idx.checked_add(1).filter(|&i| i < siblings.len())
+    } else {
+        idx.checked_sub(1)
+    }?;
+    siblings.get(target).cloned()
 }
 
 /// Word-boundary cursor helpers. A "word" is a run of alphanumeric
@@ -847,7 +1107,28 @@ pub(in crate::application::app) fn dispatch_macro(
                             }
                         })
                     }
-                    MacroTarget::NodeId(s) => Some(s.clone()),
+                    MacroTarget::NodeId(s) => {
+                        // Guard against typo'd or stale node ids: if
+                        // the document doesn't have the named node
+                        // we'd silently no-op (collect_affected_node_ids
+                        // returns the literal id, snapshot loop filters
+                        // missing, no mutation lands). Surface the
+                        // problem instead.
+                        if ctx
+                            .document
+                            .as_ref()
+                            .map(|d| d.mindmap.nodes.contains_key(s))
+                            .unwrap_or(false)
+                        {
+                            Some(s.clone())
+                        } else {
+                            log::warn!(
+                                "macro step CustomMutation: node id '{}' not found",
+                                s
+                            );
+                            continue;
+                        }
+                    }
                 };
                 let Some(nid) = nid_opt else {
                     log::debug!(
@@ -886,12 +1167,15 @@ pub(in crate::application::app) fn dispatch_macro(
                 }
             }
             MacroStep::ConsoleLine { line } => {
-                // `execute_console_line` lives behind a private `mod
-                // exec` in console_input — use the dispatch-layer
-                // helper which re-exports it via the parent module
-                // path. (Console verbs that mutate the document are
-                // already exercised by the console at large; this
-                // step kind just feeds them a typed line.)
+                // `execute_console_line` requires a loaded document
+                // (it takes `&mut MindMapDocument`, not `Option`).
+                // Macros fired before any document is loaded — i.e.
+                // a `[ConsoleLine("open path/to/map.json")]` macro
+                // bound to a startup hotkey — silently skip; users
+                // who need the pre-load case should bind the path
+                // through CLI args or the WASM `?map=` query param
+                // rather than a macro. Logged at `warn!` so the
+                // skip is visible.
                 if let Some(doc) = ctx.document.as_mut() {
                     crate::application::app::console_input::exec::execute_console_line(
                         line,
@@ -906,6 +1190,11 @@ pub(in crate::application::app) fn dispatch_macro(
                         ctx.scene_cache,
                     );
                     any_ran = true;
+                } else {
+                    log::warn!(
+                        "macro step ConsoleLine: no document loaded; skipping '{}'",
+                        line
+                    );
                 }
             }
         }

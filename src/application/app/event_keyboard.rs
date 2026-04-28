@@ -356,9 +356,18 @@ pub(super) fn handle_keyboard_input(
                 keybinds,
                 macros,
             };
-            if let Some(id) = macro_id {
-                let _ = super::dispatch::dispatch_macro(&id, &mut bundle);
+            // If a macro is bound but its id isn't in the registry
+            // (typo'd config, half-loaded macros file, etc.),
+            // `dispatch_macro` returns false. Fall through to the
+            // custom-mutation tier so the keystroke still has a
+            // chance to do something — better UX than swallowing
+            // silently.
+            let macro_handled = if let Some(id) = macro_id {
+                super::dispatch::dispatch_macro(&id, &mut bundle)
             } else {
+                false
+            };
+            if !macro_handled {
                 // Custom mutation fall-through (Phase-7 parity:
                 // animation-timing aware, always invokes
                 // `apply_document_actions`).

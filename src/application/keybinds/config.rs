@@ -226,24 +226,32 @@ impl Default for KeybindConfig {
             // can be added in user keybinds.json.
             zoom_in: vec!["WheelUp".into()],
             zoom_out: vec!["WheelDown".into()],
-            zoom_reset: vec![],
-            zoom_fit: vec![],
-            pan_camera_north: vec![],
-            pan_camera_south: vec![],
-            pan_camera_east: vec![],
-            pan_camera_west: vec![],
-            center_on_selection: vec![],
+            zoom_reset: vec!["Ctrl+0".into()],
+            zoom_fit: vec!["Ctrl+1".into()],
+            pan_camera_north: vec!["Alt+ArrowUp".into()],
+            pan_camera_south: vec!["Alt+ArrowDown".into()],
+            pan_camera_east: vec!["Alt+ArrowRight".into()],
+            pan_camera_west: vec!["Alt+ArrowLeft".into()],
+            center_on_selection: vec!["Ctrl+.".into()],
+            // Default unbound — `Home` is consumed by the text editor
+            // when it's open (already routed to TextEditCursorHome),
+            // and binding it at the Document level would shadow that
+            // for users who haven't customised. Users who want a
+            // jump-to-root key bind it themselves.
             jump_to_root: vec![],
 
-            // Selection. All defaults empty; users opt in via
-            // keybinds.json.
-            select_all: vec![],
+            // Selection.
+            select_all: vec!["Ctrl+a".into()],
+            // Default unbound — Esc already cancels modes via
+            // `CancelMode`, and rebinding Esc here would conflict
+            // with the modal-cascade contract. Users opt in by
+            // binding e.g. `Ctrl+Shift+a`.
             deselect_all: vec![],
-            invert_selection: vec![],
-            select_parent: vec![],
-            select_child: vec![],
-            select_next_sibling: vec![],
-            select_prev_sibling: vec![],
+            invert_selection: vec!["Ctrl+Shift+i".into()],
+            select_parent: vec!["Alt+p".into()],
+            select_child: vec!["Alt+c".into()],
+            select_next_sibling: vec!["Alt+j".into()],
+            select_prev_sibling: vec!["Alt+k".into()],
 
             // TextEdit cursor primitives. Bodies live in
             // dispatch::apply_text_edit_action; the editor's modal
@@ -264,6 +272,12 @@ impl Default for KeybindConfig {
             // Default unbound — Enter is literal `\n` in the multi-
             // line node editor. Users who want commit-on-Enter bind
             // it themselves (and lose newline insertion in exchange).
+            // Note: any TextEdit Action bound to Enter (not just
+            // Commit) wins over literal-newline insertion — the
+            // action lookup runs before the literal-character
+            // fallback in `handle_text_edit_key`. So binding
+            // `text_edit_cursor_down: ["Enter"]` to a multi-line
+            // editor would break newline insertion.
             text_edit_commit: vec![],
 
             // LabelEdit cursor primitives. Same routing path as

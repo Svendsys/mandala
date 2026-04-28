@@ -17,10 +17,7 @@ use crate::application::keybinds::{Action, InputContext, ResolvedKeybinds};
 use crate::application::renderer::Renderer;
 
 use super::super::rebuild_all;
-use super::{
-    cursor_to_line_end, cursor_to_line_start, delete_at_cursor, delete_before_cursor,
-    insert_at_cursor, insert_caret, move_cursor_down_line, move_cursor_up_line, TextEditState,
-};
+use super::{insert_at_cursor, insert_caret, TextEditState};
 
 
 /// Open the text editor on the given node. Seeds the buffer (empty if

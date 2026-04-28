@@ -368,6 +368,36 @@ fn test_action_for_gesture_exact_modifier_match_wins_over_fallback() {
     );
 }
 
+// ─── Macro-tier resolution-order tests (Phase 8) ───────────────
+
+#[test]
+fn test_macro_for_returns_bound_id() {
+    let mut bindings = HashMap::new();
+    bindings.insert("Ctrl+G".to_string(), "do-stuff".to_string());
+    let cfg = KeybindConfig {
+        macro_bindings: bindings,
+        ..KeybindConfig::default()
+    };
+    let r = cfg.resolve();
+    assert_eq!(r.macro_for("g", true, false, false), Some("do-stuff"));
+    assert_eq!(r.macro_for("g", false, false, false), None);
+}
+
+#[test]
+fn test_macro_bindings_resolve_skips_invalid_combos() {
+    let mut bindings = HashMap::new();
+    bindings.insert("Ctrl+G".to_string(), "valid".to_string());
+    bindings.insert("Garbage++".to_string(), "would-be-orphan".to_string());
+    let cfg = KeybindConfig {
+        macro_bindings: bindings,
+        ..KeybindConfig::default()
+    };
+    // Resolve survives — invalid combos log and skip; the valid one
+    // still lands.
+    let r = cfg.resolve();
+    assert_eq!(r.macro_for("g", true, false, false), Some("valid"));
+}
+
 #[test]
 fn test_action_for_gesture_returns_none_when_completely_unbound() {
     let cfg = KeybindConfig {

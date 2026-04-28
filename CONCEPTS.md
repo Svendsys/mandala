@@ -2130,8 +2130,26 @@ Some(&DispatchHit { click_hit, canvas_pos }))`.
    `MacroRegistry`, and `dispatch_macro`. Steps fan out to
    `dispatch_action`, `apply_keybind_custom_mutation`, or
    `execute_console_line` depending on `MacroStep` kind, so plugin
-   authors and macro recorders share one runtime path.
+   authors and macro recorders share one runtime path. **Unknown
+   macro id falls through** to the custom-mutation tier, so a
+   typo'd or half-loaded macros file doesn't swallow the keystroke.
 3. `keybinds.custom_mutation_for(...)` — per-node custom mutations.
+
+**Built-in Actions win on collision.** A key combo bound to both
+`Action::Copy` (in `copy: ["Ctrl+C"]`) and a macro on `"Ctrl+C"` in
+`macro_bindings` runs the Action — the macro never gets a chance.
+To override a built-in Action with a macro, first unbind the
+Action's keybind (set `copy: []`) and then bind the macro. Same
+applies for built-in vs. custom-mutation collision.
+
+**`MacroStep::ConsoleLine` privilege.** `ConsoleLine` can run any
+console verb — `save`, `open`, `mutation apply`, kv-shaped style
+setters, etc. Today's only macro source is `~/.config/mandala/
+macros.json`, so trust posture is the same as `keybinds.json`: the
+user owns the file. Future macro tiers (app-bundled, map-inline)
+must restrict ConsoleLine before shipping, otherwise a malicious
+shared mindmap could run arbitrary console verbs (filesystem-
+touching ones included). Tracked in `TODO.md`.
 
 **Dispatch status per gesture.** `DoubleClick`, `MiddleClick`,
 `LeftDrag`, `WheelUp`, `WheelDown` are dispatched through

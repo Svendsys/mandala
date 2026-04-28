@@ -29,7 +29,21 @@ The full WASM convergence below is still outstanding.
   bookkeeping (`AppMode`, `LastClick` shapes) before `dispatch_action`
   can serve both targets. Until that lands, WASM users get the
   off-by-default empty-canvas behaviour but not the full mouse-
-  gesture rebinding surface.
+  gesture rebinding surface. **Macros are also native-only** for the
+  same reason: `MacroRegistry` is built once on `InitState` in
+  `run_native_init::build`, and WASM doesn't construct one. Plus
+  there's no `~/.config` filesystem in a browser, so the loader
+  would need a `?macros=<json>` / `localStorage` shape parallel to
+  the keybind loader before shipping.
+- **App-bundled and inline-on-map macro tiers.** Today only the user
+  tier exists. Adding app-bundled macros (parallel to
+  `assets/mutations/application.json`) is straightforward; adding an
+  inline tier on `MindMap.macros` is the load-bearing one — once map
+  files can carry macros, opening a hostile mindmap would let it run
+  any `ConsoleLine` step (`save /tmp/evil`, `open ~/.bashrc`). The
+  tier expansion **must** ship a `MacroSource` tag and gate
+  `ConsoleLine` at the dispatcher to user-tier only. See
+  CODE_CONVENTIONS.md §3 carve-out.
 - **Parameterised console verbs as Actions.** `open <path>`,
   `save-as <path>`, `mutation apply <id>`, kv-shaped
   `border` / `edge` / `color` / `font` / `zoom` / `spacing` setters

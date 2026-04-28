@@ -156,6 +156,14 @@ decision, not a drive-by edit.
   mutates document state or changes view state — must go through the
   funnel.
 
+  **`MacroStep::ConsoleLine` is privileged by design.** Macros loaded
+  from `~/.config/mandala/macros.json` can run any console verb
+  (filesystem-touching ones included). User-tier macros share trust
+  posture with `keybinds.json`. Any future non-user macro tier
+  (app-bundled, map-inline) MUST gate `ConsoleLine` before shipping
+  — a hostile mindmap with inline ConsoleLine steps would otherwise
+  be an arbitrary-code-execution surface.
+
 ## §4 Cross-platform as first class
 
 Native desktop, browser on desktop, and browser on mobile are three

@@ -52,10 +52,7 @@ use scene_rebuild::{
     update_connection_label_tree, update_connection_tree, update_edge_handle_tree,
     update_portal_tree,
 };
-use text_edit::{
-    close_text_edit, delete_at_cursor, delete_before_cursor, handle_text_edit_key,
-    insert_at_cursor, open_text_edit, TextEditState,
-};
+use text_edit::{close_text_edit, handle_text_edit_key, insert_at_cursor, open_text_edit, TextEditState};
 
 #[cfg(not(target_arch = "wasm32"))]
 use click::{
@@ -128,7 +125,6 @@ use throttled_interaction::ThrottledDrag;
 
 #[cfg(not(target_arch = "wasm32"))]
 use baumhard::mindmap::custom_mutation::{PlatformContext, Trigger};
-use baumhard::util::grapheme_chad;
 
 /// Screen-space click tolerance (in pixels) for edge hit testing. Converted
 /// to canvas units via `Renderer::canvas_per_pixel()` so the click target
@@ -342,89 +338,44 @@ fn click_hit_from_priority(
     }
 }
 
-/// Pure router for the label-edit key loop. Dispatches a winit
-/// `logical_key` against the buffer + grapheme cursor and mutates
-/// both in place through the `grapheme_chad` helpers, returning
-/// `true` iff any state changed.
+/// Pure router for the label-edit *character-input* path. Inserts
+/// printable chars from a `Key::Character` payload into the buffer.
 ///
-/// Mirrors `handle_text_edit_key`'s `Key::Named(NamedKey::*)`-first
-/// dispatch: structural keys (backspace, delete, arrows, home, end)
-/// resolve through the `Key::Named` variant directly, *not* through
-/// the lowercased `key_name` string. Some platforms (notably certain
-/// IME stacks) attach a Unicode-payload to a `Key::Named(Backspace)`
-/// event whose name string then comes back as `None` from
-/// `key_to_name` — the previous string-only match would fall into
-/// the printable-char branch and stamp the payload glyph into the
-/// buffer (the reported "huge pause icon on backspace" symptom).
-/// Matching the `Key` enum first closes that hole.
+/// Originally this also handled structural keys (Backspace, Delete,
+/// arrows, Home, End) directly via `Key::Named` matching, but Phase 5
+/// migrated those to `Action::LabelEdit*` variants that route through
+/// `dispatch::apply_label_edit_action_to_buffer`. The structural-key
+/// arms were stripped here so unbinding `label_edit_*` in
+/// `keybinds.json` actually disables the key — the previous fallback
+/// shadowed user config.
+///
+/// Returns `true` iff a printable character was inserted.
 #[cfg(not(target_arch = "wasm32"))]
 pub(in crate::application::app) fn route_label_edit_key(
     logical_key: &winit::keyboard::Key,
     buffer: &mut String,
     cursor: &mut usize,
 ) -> bool {
-    use winit::keyboard::{Key, NamedKey};
-    match logical_key {
-        Key::Named(NamedKey::Backspace) => {
-            if *cursor > 0 {
-                *cursor = delete_before_cursor(buffer, *cursor);
-                return true;
+    use winit::keyboard::Key;
+    if let Key::Character(c) = logical_key {
+        // `Key::Character` payloads can carry IME / dead-key multi-
+        // char sequences, so iterate. Control chars (and any non-
+        // printing payload winit attaches to a structural key) are
+        // filtered, which mirrors the original guard intent — the
+        // "huge pause icon on backspace" hole is also closed by the
+        // structural-key migration to actions, since Backspace is now
+        // dispatched as `Action::LabelEditDeleteBack` before this
+        // router ever runs.
+        let mut changed = false;
+        for ch in c.as_str().chars() {
+            if !ch.is_control() {
+                *cursor = insert_at_cursor(buffer, *cursor, ch);
+                changed = true;
             }
-            false
         }
-        Key::Named(NamedKey::Delete) => {
-            if *cursor < grapheme_chad::count_grapheme_clusters(buffer) {
-                *cursor = delete_at_cursor(buffer, *cursor);
-                return true;
-            }
-            false
-        }
-        Key::Named(NamedKey::ArrowLeft) => {
-            if *cursor > 0 {
-                *cursor -= 1;
-                return true;
-            }
-            false
-        }
-        Key::Named(NamedKey::ArrowRight) => {
-            if *cursor < grapheme_chad::count_grapheme_clusters(buffer) {
-                *cursor += 1;
-                return true;
-            }
-            false
-        }
-        Key::Named(NamedKey::Home) => {
-            if *cursor != 0 {
-                *cursor = 0;
-                return true;
-            }
-            false
-        }
-        Key::Named(NamedKey::End) => {
-            let end = grapheme_chad::count_grapheme_clusters(buffer);
-            if *cursor != end {
-                *cursor = end;
-                return true;
-            }
-            false
-        }
-        Key::Character(c) => {
-            // Printable character: accept each non-control char.
-            // `Key::Character` payloads can carry IME / dead-key
-            // multi-char sequences, so iterate. Control chars
-            // (and any non-printing payload winit attaches to a
-            // structural key) are filtered.
-            let mut changed = false;
-            for ch in c.as_str().chars() {
-                if !ch.is_control() {
-                    *cursor = insert_at_cursor(buffer, *cursor, ch);
-                    changed = true;
-                }
-            }
-            changed
-        }
-        _ => false,
+        return changed;
     }
+    false
 }
 
 

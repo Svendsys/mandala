@@ -15,7 +15,37 @@
 //! ascending precedence so an inline macro overrides a user macro
 //! overrides an app macro by id.
 //!
-//! See `format/macros.md` for the on-disk format (TODO: not yet written).
+//! On-disk format (`format/macros.md` is not yet written; this
+//! comment is the canonical reference for now):
+//!
+//! ```json
+//! [
+//!   {
+//!     "id": "save-and-zoom-out",
+//!     "name": "Save and Zoom Out",
+//!     "description": "Persist the current map and back off the camera.",
+//!     "steps": [
+//!       { "kind": "Action",       "action": "SaveDocument" },
+//!       { "kind": "Action",       "action": "ZoomOut" }
+//!     ]
+//!   },
+//!   {
+//!     "id": "tag-as-inbox",
+//!     "steps": [
+//!       { "kind": "CustomMutation", "id": "set-tag-inbox" },
+//!       { "kind": "ConsoleLine",    "line": "save" }
+//!     ]
+//!   }
+//! ]
+//! ```
+//!
+//! `Action` step values are the variant names of the `Action` enum
+//! (e.g. `"SaveDocument"`, `"ZoomOut"`, `"SelectAll"`). `CustomMutation`
+//! steps reference an `id` registered in the document's mutation
+//! registry; `target` is optional and defaults to
+//! `"current_selection"` (the alternative is `{"node_id": "..."}`).
+//! `ConsoleLine` runs a typed line through the console parser — any
+//! console verb works, including `save`, `border preset=triple`, etc.
 
 #![cfg(not(target_arch = "wasm32"))]
 
@@ -32,7 +62,7 @@ fn user_macros_path() -> Option<PathBuf> {
             return Some(PathBuf::from(xdg).join("mandala").join("macros.json"));
         }
     }
-    let home = std::env::var("HOME").ok()?;
+    let home = std::env::var("HOME").ok().filter(|s| !s.is_empty())?;
     Some(PathBuf::from(home).join(".config").join("mandala").join("macros.json"))
 }
 

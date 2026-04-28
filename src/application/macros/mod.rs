@@ -201,4 +201,48 @@ mod tests {
             panic!("step 1 should be ConsoleLine");
         }
     }
+
+    /// Locks the on-disk JSON shape for `MacroStep`. Hand-authored
+    /// macro files in `~/.config/mandala/macros.json` use these
+    /// keys; a future serde-derive change that rearranges them
+    /// would silently break user configs.
+    #[test]
+    fn macro_step_action_json_shape_locked() {
+        let step = MacroStep::Action { action: Action::Undo };
+        let json = serde_json::to_string(&step).unwrap();
+        assert_eq!(json, r#"{"kind":"Action","action":"Undo"}"#);
+    }
+
+    #[test]
+    fn macro_step_custom_mutation_default_target_omittable() {
+        // Authors who omit `target` get CurrentSelection by default.
+        let json = r#"{"kind":"CustomMutation","id":"x"}"#;
+        let parsed: MacroStep = serde_json::from_str(json).unwrap();
+        match parsed {
+            MacroStep::CustomMutation { id, target } => {
+                assert_eq!(id, "x");
+                assert!(matches!(target, MacroTarget::CurrentSelection));
+            }
+            _ => panic!("expected CustomMutation"),
+        }
+    }
+
+    #[test]
+    fn macro_step_custom_mutation_node_id_target() {
+        let json = r#"{"kind":"CustomMutation","id":"x","target":{"node_id":"abc"}}"#;
+        let parsed: MacroStep = serde_json::from_str(json).unwrap();
+        match parsed {
+            MacroStep::CustomMutation { target: MacroTarget::NodeId(s), .. } => {
+                assert_eq!(s, "abc");
+            }
+            _ => panic!("expected NodeId target"),
+        }
+    }
+
+    #[test]
+    fn macro_step_console_line_json_shape() {
+        let step = MacroStep::ConsoleLine { line: "save".into() };
+        let json = serde_json::to_string(&step).unwrap();
+        assert_eq!(json, r#"{"kind":"ConsoleLine","line":"save"}"#);
+    }
 }
