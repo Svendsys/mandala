@@ -17,7 +17,7 @@ use super::Violation;
 pub fn check(map: &MindMap) -> Vec<Violation> {
     let mut out = Vec::new();
 
-    for node in map.nodes.values() {
+    for (_loc, node) in map.node_locations() {
         if node.text_runs.is_empty() {
             continue;
         }
@@ -27,38 +27,38 @@ pub fn check(map: &MindMap) -> Vec<Violation> {
 
         for (i, run) in node.text_runs.iter().enumerate() {
             if run.start >= run.end {
-                out.push(Violation {
-                    category: "text_runs",
-                    location: node.id.clone(),
-                    message: format!(
+                out.push(Violation::node(
+                    "text_runs",
+                    node,
+                    format!(
                         "run[{}] has start {} not less than end {}",
                         i, run.start, run.end
                     ),
-                });
+                ));
                 continue;
             }
 
             if run.end > total {
-                out.push(Violation {
-                    category: "text_runs",
-                    location: node.id.clone(),
-                    message: format!(
+                out.push(Violation::node(
+                    "text_runs",
+                    node,
+                    format!(
                         "run[{}] end {} exceeds text length {} (grapheme clusters)",
                         i, run.end, total
                     ),
-                });
+                ));
             }
 
             if let Some(p) = prev_end {
                 if run.start < p {
-                    out.push(Violation {
-                        category: "text_runs",
-                        location: node.id.clone(),
-                        message: format!(
+                    out.push(Violation::node(
+                        "text_runs",
+                        node,
+                        format!(
                             "run[{}] overlaps previous run (start {} < previous end {})",
                             i, run.start, p
                         ),
-                    });
+                    ));
                 }
             }
             prev_end = Some(run.end);

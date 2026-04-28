@@ -12,11 +12,11 @@ pub fn check(map: &MindMap) -> Vec<Violation> {
 
     for (key, node) in &map.nodes {
         if &node.id != key {
-            out.push(Violation {
-                category: "ids",
-                location: key.clone(),
-                message: format!("HashMap key {:?} does not match node.id {:?}", key, node.id),
-            });
+            out.push(Violation::at(
+                "ids",
+                key.clone(),
+                format!("HashMap key {:?} does not match node.id {:?}", key, node.id),
+            ));
         }
 
         let derived = derive_parent_id(&node.id);
@@ -24,34 +24,25 @@ pub fn check(map: &MindMap) -> Vec<Violation> {
             (Some(d), Some(p)) if d == p => {}
             (None, None) => {}
             (Some(d), Some(p)) => {
-                out.push(Violation {
-                    category: "ids",
-                    location: node.id.clone(),
-                    message: format!(
-                        "parent_id {:?} does not match derived parent {:?}",
-                        p, d
-                    ),
-                });
+                out.push(Violation::node(
+                    "ids",
+                    node,
+                    format!("parent_id {:?} does not match derived parent {:?}", p, d),
+                ));
             }
             (None, Some(p)) => {
-                out.push(Violation {
-                    category: "ids",
-                    location: node.id.clone(),
-                    message: format!(
-                        "root-style id has parent_id {:?} (expected null)",
-                        p
-                    ),
-                });
+                out.push(Violation::node(
+                    "ids",
+                    node,
+                    format!("root-style id has parent_id {:?} (expected null)", p),
+                ));
             }
             (Some(d), None) => {
-                out.push(Violation {
-                    category: "ids",
-                    location: node.id.clone(),
-                    message: format!(
-                        "id implies parent {:?} but parent_id is null",
-                        d
-                    ),
-                });
+                out.push(Violation::node(
+                    "ids",
+                    node,
+                    format!("id implies parent {:?} but parent_id is null", d),
+                ));
             }
         }
     }

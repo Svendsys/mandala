@@ -23,13 +23,62 @@ mod zoom_bounds;
 #[cfg(test)]
 mod test_helpers;
 
-use baumhard::mindmap::model::MindMap;
+use baumhard::mindmap::model::{MindMap, MindNode};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Violation {
     pub category: &'static str,
     pub location: String,
     pub message: String,
+}
+
+impl Violation {
+    /// Construct a violation pinned to a node's id-as-location.
+    /// The 12+ per-checker call sites that all wrote
+    /// `Violation { category, location: node.id.clone(),
+    /// message: format!(...) }` collapse to one line.
+    pub fn node(
+        category: &'static str,
+        node: &MindNode,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            category,
+            location: node.id.clone(),
+            message: message.into(),
+        }
+    }
+
+    /// Construct a violation pinned to an edge's `edge[<idx>]`
+    /// location stamp — the canonical format every per-checker
+    /// previously open-coded with `format!("edge[{}]", i)`.
+    pub fn edge(
+        category: &'static str,
+        edge_index: usize,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            category,
+            location: format!("edge[{}]", edge_index),
+            message: message.into(),
+        }
+    }
+
+    /// Construct a violation with an arbitrary location string —
+    /// the escape hatch for checks whose location isn't a node id
+    /// or an edge index (palette names, drifted HashMap keys,
+    /// pre-formatted location strings emitted by inner helpers).
+    pub fn at(
+        category: &'static str,
+        location: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            category,
+            location: location.into(),
+            message: message.into(),
+        }
+    }
 }
 
 impl std::fmt::Display for Violation {
