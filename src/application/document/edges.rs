@@ -388,6 +388,43 @@ impl MindMapDocument {
     /// [`ensure_glyph_connection`] through the free
     /// [`ensure_glyph_connection_inline`] without having to
     /// re-fetch `&mut self`.
+    /// Commit the post-drag state of an edge by pushing a single
+    /// [`UndoAction::EditEdge`] entry carrying the pre-drag
+    /// snapshot, gated by `changed`. The drag threshold path
+    /// (`EdgeHandle`) passes `|_, _| true` because crossing the
+    /// threshold guarantees a state change; the per-frame paths
+    /// (`PortalLabel` inspecting `portal_from`/`portal_to`,
+    /// `EdgeLabel` inspecting `label_config`) pass per-variant
+    /// predicates so an at-rest release that touches no field
+    /// drops no undo entry.
+    ///
+    /// No-op when the edge no longer exists in `mindmap.edges`
+    /// (the throttled drag's snapshot can outlive the edge if a
+    /// concurrent delete removed it). Mirrors the drag-release
+    /// arms in `event_mouse_click.rs::handle_mouse_input`,
+    /// previously open-coded with byte-identical
+    /// `if let Some(idx) = doc.edge_index(&edge_ref) { ... push +
+    /// dirty ... }` scaffolding.
+    pub fn commit_throttled_edge_drag<F>(
+        &mut self,
+        edge_ref: &EdgeRef,
+        original: MindEdge,
+        changed: F,
+    ) where
+        F: FnOnce(&MindEdge, &MindEdge) -> bool,
+    {
+        let idx = match self.edge_index(edge_ref) {
+            Some(i) => i,
+            None => return,
+        };
+        let current = &self.mindmap.edges[idx];
+        if changed(current, &original) {
+            self.undo_stack
+                .push(UndoAction::EditEdge { index: idx, before: original });
+            self.dirty = true;
+        }
+    }
+
     pub(super) fn mutate_edge<F>(&mut self, edge_ref: &EdgeRef, mutate: F) -> bool
     where
         F: FnOnce(&mut MindEdge, &Canvas) -> bool,

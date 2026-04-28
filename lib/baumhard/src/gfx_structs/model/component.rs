@@ -57,15 +57,10 @@ impl MulAssign for GlyphComponent {
         if rhs.font != AppFont::Any {
             self.font = rhs.font;
         }
-        // Colors
-        let mut result = self.color[0].wrapping_mul(rhs.color[0]);
-        self.color[0] = result;
-        result = self.color[1].wrapping_mul(rhs.color[1]);
-        self.color[1] = result;
-        result = self.color[2].wrapping_mul(rhs.color[2]);
-        self.color[2] = result;
-        result = self.color[3].wrapping_mul(rhs.color[3]);
-        self.color[3] = result;
+        // Per-channel wrapping multiply via Color's `*` impl —
+        // shares `Color::channel_apply` with the standalone
+        // wrapping arithmetic so the semantics can't drift.
+        self.color = self.color * rhs.color;
     }
 }
 
@@ -77,14 +72,9 @@ impl AddAssign for GlyphComponent {
         if self.font == AppFont::Any {
             self.font = rhs.font;
         }
-        let mut result = self.color[0].wrapping_add(rhs.color[0]);
-        self.color[0] = result;
-        result = self.color[1].wrapping_add(rhs.color[1]);
-        self.color[1] = result;
-        result = self.color[2].wrapping_add(rhs.color[2]);
-        self.color[2] = result;
-        result = self.color[3].wrapping_add(rhs.color[3]);
-        self.color[3] = result;
+        // Per-channel wrapping add via Color's `+` impl — same
+        // shared `channel_apply` as `mul_assign`.
+        self.color = self.color + rhs.color;
     }
 }
 

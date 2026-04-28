@@ -704,13 +704,9 @@ pub(super) fn handle_mouse_input(
                                 start_handle_pos,
                                 total_delta,
                             );
-                            if let Some(idx) = doc.edge_index(&edge_ref) {
-                                doc.undo_stack.push(UndoAction::EditEdge {
-                                    index: idx,
-                                    before: original,
-                                });
-                                doc.dirty = true;
-                            }
+                            // Crossing the drag threshold guarantees a
+                            // state change, so commit unconditionally.
+                            doc.commit_throttled_edge_drag(&edge_ref, original, |_, _| true);
                             rebuild_all(doc, mindmap_tree, app_scene, renderer, scene_cache);
                         }
                     }
@@ -750,18 +746,9 @@ pub(super) fn handle_mouse_input(
                         // would fold in float-fragile
                         // `control_points`.
                         if let Some(doc) = document.as_mut() {
-                            if let Some(idx) = doc.edge_index(&edge_ref) {
-                                let current = &doc.mindmap.edges[idx];
-                                if current.portal_from != original.portal_from
-                                    || current.portal_to != original.portal_to
-                                {
-                                    doc.undo_stack.push(UndoAction::EditEdge {
-                                        index: idx,
-                                        before: original,
-                                    });
-                                    doc.dirty = true;
-                                }
-                            }
+                            doc.commit_throttled_edge_drag(&edge_ref, original, |c, o| {
+                                c.portal_from != o.portal_from || c.portal_to != o.portal_to
+                            });
                             rebuild_all(doc, mindmap_tree, app_scene, renderer, scene_cache);
                         }
                     }
@@ -790,16 +777,9 @@ pub(super) fn handle_mouse_input(
                         // the pre-drag snapshot, skipping the undo
                         // entry if nothing actually moved.
                         if let Some(doc) = document.as_mut() {
-                            if let Some(idx) = doc.edge_index(&edge_ref) {
-                                let current = &doc.mindmap.edges[idx];
-                                if current.label_config != original.label_config {
-                                    doc.undo_stack.push(UndoAction::EditEdge {
-                                        index: idx,
-                                        before: original,
-                                    });
-                                    doc.dirty = true;
-                                }
-                            }
+                            doc.commit_throttled_edge_drag(&edge_ref, original, |c, o| {
+                                c.label_config != o.label_config
+                            });
                             // Scene-only rebuild: every per-frame
                             // drain already used `rebuild_scene_only`
                             // because node trees are untouched by a
