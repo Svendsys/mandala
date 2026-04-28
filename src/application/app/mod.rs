@@ -150,7 +150,7 @@ const EDGE_HANDLE_HIT_TOLERANCE_PX: f32 = 12.0;
 /// empty-space double-click (create orphan). Two clicks "match" as
 /// a double-click only when they have the same `ClickHit`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum ClickHit {
+pub(crate) enum ClickHit {
     /// No node and no portal marker under the cursor. Empty-canvas
     /// double-click creates a new orphan unless an edge is selected.
     Empty,

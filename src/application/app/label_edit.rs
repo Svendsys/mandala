@@ -167,18 +167,29 @@ pub(in crate::application::app) fn handle_label_edit_key(
         return;
     }
 
-    let Some((buffer, cursor)) = (match label_edit_state {
-        LabelEditState::Open {
-            buffer,
-            cursor_grapheme_pos,
-            ..
-        } => Some((buffer, cursor_grapheme_pos)),
-        LabelEditState::Closed => None,
-    }) else {
-        return;
+    // Action-driven path: cursor / delete primitives route through
+    // `dispatch::apply_label_edit_action`. Falls through to the
+    // legacy `route_label_edit_key` for character input + structural
+    // keys not bound to an Action (the route helper handles
+    // Backspace / Delete / Arrow* / Home / End and printable-char
+    // insertion uniformly).
+    let changed = if let Some(a) = action {
+        crate::application::app::dispatch::apply_label_edit_action(a, label_edit_state)
+    } else {
+        let Some((buffer, cursor)) = (match label_edit_state {
+            LabelEditState::Open {
+                buffer,
+                cursor_grapheme_pos,
+                ..
+            } => Some((buffer, cursor_grapheme_pos)),
+            LabelEditState::Closed => None,
+        }) else {
+            return;
+        };
+        route_label_edit_key(logical_key, buffer, cursor)
     };
 
-    if !route_label_edit_key(logical_key, buffer, cursor) {
+    if !changed {
         return;
     }
 
@@ -420,18 +431,29 @@ pub(in crate::application::app) fn handle_portal_text_edit_key(
         return;
     }
 
-    let Some((buffer, cursor)) = (match state {
-        PortalTextEditState::Open {
-            buffer,
-            cursor_grapheme_pos,
-            ..
-        } => Some((buffer, cursor_grapheme_pos)),
-        PortalTextEditState::Closed => None,
-    }) else {
-        return;
+    // Route through dispatch's buffer-generic helper when an Action
+    // matched (cursor/delete primitives), else fall back to the
+    // legacy character-input router.
+    let changed = {
+        let Some((buffer, cursor)) = (match state {
+            PortalTextEditState::Open {
+                buffer,
+                cursor_grapheme_pos,
+                ..
+            } => Some((buffer, cursor_grapheme_pos)),
+            PortalTextEditState::Closed => None,
+        }) else {
+            return;
+        };
+        if let Some(a) = action {
+            crate::application::app::dispatch::apply_label_edit_action_to_buffer(
+                a, buffer, cursor,
+            )
+        } else {
+            route_label_edit_key(logical_key, buffer, cursor)
+        }
     };
-
-    if !route_label_edit_key(logical_key, buffer, cursor) {
+    if !changed {
         return;
     }
 

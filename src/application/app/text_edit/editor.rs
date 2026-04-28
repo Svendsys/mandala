@@ -345,103 +345,63 @@ pub(in crate::application::app) fn handle_text_edit_key(
     let action = name.and_then(|n| {
         keybinds.action_for_context(InputContext::TextEdit, n, ctrl, shift, alt)
     });
+    // Cancel is the one TextEdit Action that needs the renderer for
+    // its close-and-rebuild path; handled inline. Commit (Phase 5)
+    // also needs the renderer if a user binds it; handled the same
+    // way. Other TextEdit actions (cursor/delete primitives) route
+    // through `dispatch::apply_text_edit_action` which is pure.
     if action == Some(Action::TextEditCancel) {
         close_text_edit(false, doc, text_edit_state, mindmap_tree, app_scene, renderer, scene_cache);
         return;
     }
+    if action == Some(Action::TextEditCommit) {
+        close_text_edit(true, doc, text_edit_state, mindmap_tree, app_scene, renderer, scene_cache);
+        return;
+    }
 
-    let (node_id, buffer, cursor, regions) = match text_edit_state {
-        TextEditState::Open {
-            node_id,
-            buffer,
-            cursor_grapheme_pos,
-            buffer_regions,
-            ..
-        } => (node_id, buffer, cursor_grapheme_pos, buffer_regions),
-        TextEditState::Closed => return,
-    };
-
+    // `enter` and `tab` insert literal characters in the multi-line
+    // node editor unless the user explicitly bound a TextEdit Action
+    // to them. The action lookup above runs first; if it returned
+    // `Some`, we route through `apply_text_edit_action`. If it
+    // returned `None`, fall through to the literal-character path
+    // (which handles `Enter` / `Tab` / printable chars uniformly).
     let mut changed = false;
-    match name {
-        Some("backspace") => {
-            if *cursor > 0 {
-                // Delete grapheme at `cursor - 1`. `shrink_regions_after`
-                // rewrites ranges so per-run color / `AppFont` pins
-                // survive the deletion — a single-char cut never
-                // collapses a straddling run, it just shrinks its end.
-                regions.shrink_regions_after(*cursor - 1, 1);
-                *cursor = delete_before_cursor(buffer, *cursor);
+    if let Some(a) = action {
+        changed = crate::application::app::dispatch::apply_text_edit_action(
+            a,
+            text_edit_state,
+        );
+    } else {
+        // No Action matched — insert literal `\n` for Enter, `\t` for
+        // Tab, or printable chars. Pre-existing behaviour preserved.
+        let (buffer, cursor, regions) = match text_edit_state {
+            TextEditState::Open {
+                buffer,
+                cursor_grapheme_pos,
+                buffer_regions,
+                ..
+            } => (buffer, cursor_grapheme_pos, buffer_regions),
+            TextEditState::Closed => return,
+        };
+        match name {
+            Some("enter") => {
+                regions.insert_regions_at(*cursor, 1);
+                *cursor = insert_at_cursor(buffer, *cursor, '\n');
                 changed = true;
             }
-        }
-        Some("delete") => {
-            if *cursor < grapheme_chad::count_grapheme_clusters(buffer) {
-                regions.shrink_regions_after(*cursor, 1);
-                *cursor = delete_at_cursor(buffer, *cursor);
+            Some("tab") => {
+                regions.insert_regions_at(*cursor, 1);
+                *cursor = insert_at_cursor(buffer, *cursor, '\t');
                 changed = true;
             }
-        }
-        Some("arrowleft") => {
-            if *cursor > 0 {
-                *cursor -= 1;
-                changed = true;
-            }
-        }
-        Some("arrowright") => {
-            if *cursor < grapheme_chad::count_grapheme_clusters(buffer) {
-                *cursor += 1;
-                changed = true;
-            }
-        }
-        Some("arrowup") => {
-            let new_cursor = move_cursor_up_line(buffer, *cursor);
-            if new_cursor != *cursor {
-                *cursor = new_cursor;
-                changed = true;
-            }
-        }
-        Some("arrowdown") => {
-            let new_cursor = move_cursor_down_line(buffer, *cursor);
-            if new_cursor != *cursor {
-                *cursor = new_cursor;
-                changed = true;
-            }
-        }
-        Some("home") => {
-            let new_cursor = cursor_to_line_start(buffer, *cursor);
-            if new_cursor != *cursor {
-                *cursor = new_cursor;
-                changed = true;
-            }
-        }
-        Some("end") => {
-            let new_cursor = cursor_to_line_end(buffer, *cursor);
-            if new_cursor != *cursor {
-                *cursor = new_cursor;
-                changed = true;
-            }
-        }
-        Some("enter") => {
-            regions.insert_regions_at(*cursor, 1);
-            *cursor = insert_at_cursor(buffer, *cursor, '\n');
-            changed = true;
-        }
-        Some("tab") => {
-            regions.insert_regions_at(*cursor, 1);
-            *cursor = insert_at_cursor(buffer, *cursor, '\t');
-            changed = true;
-        }
-        _ => {
-            // Printable character: accept each non-control char.
-            // Mirrors `route_label_edit_key` so IME / dead-key
-            // multi-char payloads insert in order and control
-            // chars are filtered.
-            if let Key::Character(c) = logical_key {
-                for ch in c.as_str().chars() {
-                    if !ch.is_control() {
-                        regions.insert_regions_at(*cursor, 1);
-                        *cursor = insert_at_cursor(buffer, *cursor, ch);
-                        changed = true;
+            _ => {
+                if let Key::Character(c) = logical_key {
+                    for ch in c.as_str().chars() {
+                        if !ch.is_control() {
+                            regions.insert_regions_at(*cursor, 1);
+                            *cursor = insert_at_cursor(buffer, *cursor, ch);
+                            changed = true;
+                        }
                     }
                 }
             }
@@ -451,14 +411,22 @@ pub(in crate::application::app) fn handle_text_edit_key(
     if changed {
         // Text editing only mutates the live tree during typing; the
         // model is untouched until commit (click-outside) or rolled
-        // back on cancel (Esc). We clone node_id + buffer to release
+        // back on cancel (Esc). Clone the relevant fields to release
         // the mutable borrow on `text_edit_state` before calling
-        // `apply_text_edit_to_tree`, which wants its own mutable
-        // borrow on `mindmap_tree`.
+        // `apply_text_edit_to_tree`.
+        let TextEditState::Open {
+            node_id,
+            buffer,
+            cursor_grapheme_pos,
+            buffer_regions,
+            ..
+        } = text_edit_state else {
+            return;
+        };
         let node_id_owned = node_id.clone();
         let buffer_owned = buffer.clone();
-        let regions_owned = regions.clone();
-        let cursor_snapshot = *cursor;
+        let regions_owned = buffer_regions.clone();
+        let cursor_snapshot = *cursor_grapheme_pos;
         apply_text_edit_to_tree(
             &node_id_owned,
             &buffer_owned,

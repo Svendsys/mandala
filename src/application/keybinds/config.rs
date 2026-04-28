@@ -241,32 +241,37 @@ impl Default for KeybindConfig {
             select_next_sibling: vec![],
             select_prev_sibling: vec![],
 
-            // TextEdit cursor primitives. Bodies land in Phase 5,
-            // which sets the natural defaults (ArrowLeft etc.) at
-            // the same time. Until then these ship empty so the
-            // hardcoded path in text_edit/editor.rs continues to
-            // own them.
-            text_edit_cursor_left: vec![],
-            text_edit_cursor_right: vec![],
-            text_edit_cursor_up: vec![],
-            text_edit_cursor_down: vec![],
-            text_edit_cursor_home: vec![],
-            text_edit_cursor_end: vec![],
-            text_edit_word_left: vec![],
-            text_edit_word_right: vec![],
-            text_edit_delete_back: vec![],
-            text_edit_delete_forward: vec![],
-            text_edit_delete_word_back: vec![],
-            text_edit_delete_word_forward: vec![],
+            // TextEdit cursor primitives. Bodies live in
+            // dispatch::apply_text_edit_action; the editor's modal
+            // handler routes through dispatch when a binding matches
+            // and falls back to literal-character insertion otherwise.
+            text_edit_cursor_left: vec!["ArrowLeft".into()],
+            text_edit_cursor_right: vec!["ArrowRight".into()],
+            text_edit_cursor_up: vec!["ArrowUp".into()],
+            text_edit_cursor_down: vec!["ArrowDown".into()],
+            text_edit_cursor_home: vec!["Home".into()],
+            text_edit_cursor_end: vec!["End".into()],
+            text_edit_word_left: vec!["Ctrl+ArrowLeft".into()],
+            text_edit_word_right: vec!["Ctrl+ArrowRight".into()],
+            text_edit_delete_back: vec!["Backspace".into()],
+            text_edit_delete_forward: vec!["Delete".into()],
+            text_edit_delete_word_back: vec!["Ctrl+Backspace".into()],
+            text_edit_delete_word_forward: vec!["Ctrl+Delete".into()],
+            // Default unbound — Enter is literal `\n` in the multi-
+            // line node editor. Users who want commit-on-Enter bind
+            // it themselves (and lose newline insertion in exchange).
             text_edit_commit: vec![],
 
-            // LabelEdit cursor primitives. Bodies land in Phase 5.
-            label_edit_cursor_left: vec![],
-            label_edit_cursor_right: vec![],
-            label_edit_cursor_home: vec![],
-            label_edit_cursor_end: vec![],
-            label_edit_delete_back: vec![],
-            label_edit_delete_forward: vec![],
+            // LabelEdit cursor primitives. Same routing path as
+            // TextEdit but single-line — no Up/Down/Word*. Defaults
+            // mirror what `route_label_edit_key` previously
+            // hardcoded.
+            label_edit_cursor_left: vec!["ArrowLeft".into()],
+            label_edit_cursor_right: vec!["ArrowRight".into()],
+            label_edit_cursor_home: vec!["Home".into()],
+            label_edit_cursor_end: vec!["End".into()],
+            label_edit_delete_back: vec!["Backspace".into()],
+            label_edit_delete_forward: vec!["Delete".into()],
 
             // Console-verb Actions. Bodies land in Phase 6. Defaults
             // empty — these mirror typed console verbs and the user
