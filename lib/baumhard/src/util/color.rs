@@ -108,6 +108,23 @@ pub struct Color {
     pub rgba: Rgba,
 }
 
+impl Color {
+    /// Apply a binary `u8 -> u8` op channel-wise across two
+    /// `Color`s. Single source of truth for the four wrapping
+    /// arithmetic impls (`Add`/`Sub`/`Mul`/`Div`) — each used to
+    /// open-code an identical 4-channel loop differing only in
+    /// the wrapping-method name. Inline; no heap; O(1).
+    #[inline]
+    fn channel_apply(self, rhs: Self, op: fn(u8, u8) -> u8) -> Self {
+        Color::new_u8(&[
+            op(self[0], rhs[0]),
+            op(self[1], rhs[1]),
+            op(self[2], rhs[2]),
+            op(self[3], rhs[3]),
+        ])
+    }
+}
+
 /// Component-wise wrapping division of two [`Color`]s. Uses
 /// `u8::wrapping_div` per channel. Wrapping was chosen over
 /// saturating because colour arithmetic in Baumhard is used for
@@ -119,16 +136,7 @@ impl Div for Color {
     /// Divide each RGBA channel of `self` by the corresponding
     /// channel of `rhs` using wrapping semantics. O(1), no heap.
     fn div(self, rhs: Self) -> Self::Output {
-        let mut result = self[0].wrapping_div(rhs[0]);
-        let mut output = [0; 4];
-        output[0] = result;
-        result = self[1].wrapping_div(rhs[1]);
-        output[1] = result;
-        result = self[2].wrapping_div(rhs[2]);
-        output[2] = result;
-        result = self[3].wrapping_div(rhs[3]);
-        output[3] = result;
-        Color::new_u8(&output)
+        self.channel_apply(rhs, u8::wrapping_div)
     }
 }
 
@@ -144,16 +152,7 @@ impl Mul for Color {
     /// Multiply each RGBA channel of `self` by the corresponding
     /// channel of `rhs` using wrapping semantics. O(1), no heap.
     fn mul(self, rhs: Self) -> Self::Output {
-        let mut result = self[0].wrapping_mul(rhs[0]);
-        let mut output = [0; 4];
-        output[0] = result;
-        result = self[1].wrapping_mul(rhs[1]);
-        output[1] = result;
-        result = self[2].wrapping_mul(rhs[2]);
-        output[2] = result;
-        result = self[3].wrapping_mul(rhs[3]);
-        output[3] = result;
-        Color::new_u8(&output)
+        self.channel_apply(rhs, u8::wrapping_mul)
     }
 }
 
@@ -169,16 +168,7 @@ impl Sub for Color {
     /// Subtract each RGBA channel of `rhs` from the corresponding
     /// channel of `self` using wrapping semantics. O(1), no heap.
     fn sub(self, rhs: Self) -> Self::Output {
-        let mut result = self[0].wrapping_sub(rhs[0]);
-        let mut output = [0; 4];
-        output[0] = result;
-        result = self[1].wrapping_sub(rhs[1]);
-        output[1] = result;
-        result = self[2].wrapping_sub(rhs[2]);
-        output[2] = result;
-        result = self[3].wrapping_sub(rhs[3]);
-        output[3] = result;
-        Color::new_u8(&output)
+        self.channel_apply(rhs, u8::wrapping_sub)
     }
 }
 
@@ -194,16 +184,7 @@ impl Add for Color {
     /// Add each RGBA channel of `rhs` to the corresponding channel
     /// of `self` using wrapping semantics. O(1), no heap.
     fn add(self, rhs: Self) -> Self::Output {
-        let mut result = self[0].wrapping_add(rhs[0]);
-        let mut output = [0; 4];
-        output[0] = result;
-        result = self[1].wrapping_add(rhs[1]);
-        output[1] = result;
-        result = self[2].wrapping_add(rhs[2]);
-        output[2] = result;
-        result = self[3].wrapping_add(rhs[3]);
-        output[3] = result;
-        Color::new_u8(&output)
+        self.channel_apply(rhs, u8::wrapping_add)
     }
 }
 
