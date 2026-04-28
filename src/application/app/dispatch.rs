@@ -20,6 +20,9 @@ use super::{
 };
 use super::scene_rebuild::rebuild_all;
 use super::click::rebuild_all_with_mode;
+use super::color_picker_flow::{
+    close_color_picker_standalone, open_color_picker_standalone,
+};
 use super::console_input::{
     rebuild_console_overlay, save_console_history, save_document_to_bound_path,
 };
@@ -465,6 +468,89 @@ pub(in crate::application::app) fn dispatch_action(
             *ctx.drag_state = DragState::Panning;
             DispatchOutcome::Handled
         }
+        // ── Console-verb Actions ───────────────────────────────
+        Action::OpenColorPicker => {
+            // Mirror `color picker on`: open the standalone palette.
+            if let Some(doc) = ctx.document.as_mut() {
+                open_color_picker_standalone(
+                    doc,
+                    ctx.color_picker_state,
+                    ctx.app_scene,
+                    ctx.renderer,
+                    ctx.scene_cache,
+                );
+            }
+            DispatchOutcome::Handled
+        }
+        Action::CloseColorPicker => {
+            // Mirror `color picker off`.
+            if let Some(doc) = ctx.document.as_mut() {
+                close_color_picker_standalone(
+                    ctx.color_picker_state,
+                    doc,
+                    ctx.mindmap_tree,
+                    ctx.app_scene,
+                    ctx.renderer,
+                    ctx.scene_cache,
+                );
+            }
+            DispatchOutcome::Handled
+        }
+        Action::ToggleFps => {
+            // Snapshot ↔ Off. Mirrors `fps on` / `fps off`.
+            use crate::application::common::FpsDisplayMode;
+            let next = match ctx.renderer.fps_display_mode() {
+                FpsDisplayMode::Snapshot => FpsDisplayMode::Off,
+                _ => FpsDisplayMode::Snapshot,
+            };
+            ctx.renderer.set_fps_display(next);
+            DispatchOutcome::Handled
+        }
+        Action::ToggleFpsDebug => {
+            // Debug ↔ Off. Mirrors `fps debug` / `fps off`.
+            use crate::application::common::FpsDisplayMode;
+            let next = match ctx.renderer.fps_display_mode() {
+                FpsDisplayMode::Debug => FpsDisplayMode::Off,
+                _ => FpsDisplayMode::Debug,
+            };
+            ctx.renderer.set_fps_display(next);
+            DispatchOutcome::Handled
+        }
+        Action::LabelEditOnSelection => {
+            // Mirror `label edit`: open the inline editor on the
+            // currently-selected edge / portal-endpoint.
+            if let Some(doc) = ctx.document.as_mut() {
+                match doc.selection.clone() {
+                    SelectionState::EdgeLabel(s) => {
+                        open_label_edit(
+                            &s.edge_ref,
+                            doc,
+                            ctx.label_edit_state,
+                            ctx.app_scene,
+                            ctx.renderer,
+                        );
+                    }
+                    SelectionState::PortalLabel(s) | SelectionState::PortalText(s) => {
+                        let er = s.edge_ref();
+                        open_portal_text_edit(
+                            &er,
+                            &s.endpoint_node_id,
+                            doc,
+                            ctx.portal_text_edit_state,
+                            ctx.app_scene,
+                            ctx.renderer,
+                        );
+                    }
+                    _ => {
+                        log::debug!(
+                            "LabelEditOnSelection: selection is not an edge / portal endpoint; no-op"
+                        );
+                    }
+                }
+            }
+            DispatchOutcome::Handled
+        }
+
         Action::ZoomIn | Action::ZoomOut => {
             // Step zoom centred on the cursor. Factor mirrors the
             // legacy hardcoded wheel handler (1.1 step) so wheel-bound
