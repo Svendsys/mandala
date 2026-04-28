@@ -124,6 +124,15 @@ decision, not a drive-by edit.
 - **Platform-shared logic reachable without wgpu.** Touch math, gesture
   recognition, viewport math, anything that must behave identically on
   native and WASM lives in functions taking plain values.
+- **Single dispatch funnel.** Every user-driven application-level
+  behaviour is reified as an `Action` and dispatched via
+  `dispatch_action` (`src/application/app/dispatch.rs`). New gestures,
+  new console verbs that mutate state, new navigation keys: variant,
+  default binding, dispatch arm — in that order. No second copy of
+  behaviour in a handler. Mouse handlers synthesize a gesture name
+  through `gesture_key_name(MouseGesture::*)` and feed it through the
+  same `action_for_context` lookup as keyboard input. See
+  CONCEPTS.md §5 "Action dispatch".
 
 ## §4 Cross-platform as first class
 

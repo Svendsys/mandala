@@ -2097,6 +2097,59 @@ mitigations).
 
 ---
 
+### Action dispatch
+
+**Summary.** Every user-driven application-level effect is a variant
+of `enum Action` (`src/application/keybinds/action.rs`) and runs
+through a single `dispatch_action(action, ctx, hit)` funnel
+(`src/application/app/dispatch.rs`). Mouse, keyboard, the future
+macro runtime, and any plugin host all reach the same arms.
+
+**What it's for.** Before this funnel existed, mouse gestures
+(double-click create-orphan, double-click open-editor, middle-click
+pan, wheel zoom) were hardcoded inside event handlers and bypassed
+the keybind system entirely. Users couldn't disable, rebind, or
+replace them without recompiling. The funnel reifies every gesture
+as an Action so one vocabulary covers keys, mouse, macros, and
+plugins.
+
+**Under the hood.** `KeyBind` (`src/application/keybinds/bind.rs`)
+accepts mouse-shaped binding strings —`DoubleClick`, `MiddleClick`,
+`RightClick`, `LeftClick`, `LeftDrag`, `WheelUp`, `WheelDown` —
+alongside keyboard names. Mouse handlers synthesize the gesture's
+canonical name via `gesture_key_name(MouseGesture::*)` and feed it
+through the same `ResolvedKeybinds::action_for_context` lookup as
+keyboard input. Lookup → `Action` → `dispatch_action(action, ctx,
+Some(&DispatchHit { click_hit, canvas_pos }))`.
+
+**Resolution order** (any binding):
+1. `keybinds.action_for_context(...)` — built-in `Action` variants.
+2. `keybinds.macro_for(...)` — user-defined macros (planned; see
+   §8 trajectory).
+3. `keybinds.custom_mutation_for(...)` — per-node custom mutations.
+
+**`LeftClick` / `LeftDrag` reservation.** Both names parse but
+behave specially: a single left-press is consumed by the selection
+state machine *before* dispatch, so binding `LeftClick` fires *after*
+selection updates. `LeftDrag` is the continuous "press + movement
+past threshold on empty canvas" gesture (default `PanCanvas`); the
+arm sets `DragState::Panning` for the press duration.
+
+**Default-off `CreateOrphanNodeAndEdit`.** Empty-canvas double-click
+ships unbound. Users opt back in via:
+
+```json
+{ "create_orphan_node_and_edit": ["DoubleClick"] }
+```
+
+**Custom-mutation parity.** `dispatch_custom_mutation_for_key`
+mirrors the click-trigger path at `click.rs:35-64` byte-for-byte:
+animation-aware (`start_animation` when `timing.duration_ms > 0`),
+always invokes `apply_document_actions`. Closes the silent feature
+gap where keyboard-triggered custom mutations skipped both.
+
+---
+
 ## §6 The authoring surface
 
 Authoring surface concepts are the parts a user actually touches:
