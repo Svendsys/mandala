@@ -17,10 +17,7 @@ use crate::gfx_structs::mutator::GfxMutator;
 use crate::gfx_structs::shape::NodeShape;
 use crate::gfx_structs::tree::Tree;
 use crate::gfx_structs::zoom_visibility::ZoomVisibility;
-use crate::mindmap::border::{
-    build_border_regions, resolve_border_style, BORDER_APPROX_CHAR_WIDTH_FRAC,
-    BORDER_CORNER_OVERLAP_FRAC,
-};
+use crate::mindmap::border::{build_border_regions, resolve_border_style};
 use crate::mindmap::model::MindMap;
 use crate::util::color;
 
@@ -248,111 +245,31 @@ pub fn build_border_mutator_tree_from_nodes(
             .new_node(GfxMutator::new_void(node.parent_channel));
         mt.root.append(parent_node, &mut mt.arena);
 
-        // Recompute the same layout the initial-build path uses.
-        // Split out here because the mutator needs each run's text
-        // / position / bounds as assign deltas, not as appends.
-        let font_size = node.border_style.font_size_pt;
-        let approx_char_width = font_size * BORDER_APPROX_CHAR_WIDTH_FRAC;
-        let char_count =
-            ((node.size_x / approx_char_width) + 2.0).ceil().max(3.0) as usize;
-        let right_corner_x = node.pos_x - approx_char_width
-            + (char_count - 1) as f32 * approx_char_width;
-        let corner_overlap = font_size * BORDER_CORNER_OVERLAP_FRAC;
-        let top_y = node.pos_y - font_size + corner_overlap;
-        let bottom_y = node.pos_y + node.size_y - corner_overlap;
-        let h_width = (char_count as f32 + 1.0) * approx_char_width;
-        let v_width = approx_char_width * 2.0;
-        // `.ceil()` rather than `.round()` so the side columns
-        // always extend at least as far down as the node bottom.
-        // With `.round()`, a node whose `size_y / font_size` rounds
-        // down (e.g. 100/14 = 7.14 → 7 rows = 98 px on a 100 px
-        // node) leaves the last row 2 px short of the bottom row's
-        // corner cell, which renders as a visible gap at BL/BR.
-        let row_count = (node.size_y / font_size).ceil().max(1.0) as usize;
-
-        // Pattern-aware layout: corners + side fill on the
-        // horizontals; vertical sides are one-cluster-per-row
-        // columns of the resolved pattern. See `BorderStyle`'s
-        // `top_text` / `bottom_text` / `left_column_text` /
-        // `right_column_text`.
-        let style = &node.border_style;
-        let top_text = style.top_text(char_count);
-        let bottom_text = style.bottom_text(char_count);
-        let left_text = style.left_column_text(row_count);
-        let right_text = style.right_column_text(row_count);
-
-        // Per-side glyph-index offsets so a palette-cycling
-        // border sweeps continuously around the rectangle in
-        // top → right → bottom → left order. Each offset is the
-        // total cluster count of every preceding side. Vertical
-        // text strings include `'\n'` separators which the
-        // grapheme counter folds into one cluster per visible
-        // glyph, so the indices line up with the per-cluster
-        // regions the renderer attaches.
-        let top_clusters =
-            crate::util::grapheme_chad::count_grapheme_clusters(&top_text);
-        let right_clusters =
-            crate::util::grapheme_chad::count_grapheme_clusters(&right_text);
-        let bottom_clusters =
-            crate::util::grapheme_chad::count_grapheme_clusters(&bottom_text);
-
-        let runs = [
-            (
-                1usize,
-                top_text,
-                font_size,
-                (node.pos_x - approx_char_width, top_y),
-                (h_width, font_size * 1.5),
-                0usize,
-            ),
-            (
-                2usize,
-                bottom_text,
-                font_size,
-                (node.pos_x - approx_char_width, bottom_y),
-                (h_width, font_size * 1.5),
-                top_clusters + right_clusters,
-            ),
-            (
-                3usize,
-                left_text,
-                font_size,
-                (node.pos_x - approx_char_width, node.pos_y),
-                (v_width, node.size_y),
-                top_clusters + right_clusters + bottom_clusters,
-            ),
-            (
-                4usize,
-                right_text,
-                font_size,
-                (right_corner_x, node.pos_y),
-                (v_width, node.size_y),
-                top_clusters,
-            ),
-        ];
-
-        for (channel, text, fs, pos, bounds, palette_offset) in runs {
-            let cluster_count =
-                crate::util::grapheme_chad::count_grapheme_clusters(&text);
+        let specs = crate::mindmap::border::border_run_specs(
+            &node.border_style,
+            (node.pos_x, node.pos_y),
+            (node.size_x, node.size_y),
+        );
+        for spec in specs {
             let regions = build_border_regions(
-                cluster_count,
+                spec.cluster_count,
                 &node.palette_cycle,
                 node.color_rgba,
-                palette_offset,
+                spec.palette_offset,
             );
             let mut area = GlyphArea::new_with_str(
-                &text,
-                fs,
-                fs,
-                Vec2::new(pos.0, pos.1),
-                Vec2::new(bounds.0, bounds.1),
+                &spec.text,
+                spec.font_size_pt,
+                spec.font_size_pt,
+                Vec2::new(spec.position.0, spec.position.1),
+                Vec2::new(spec.bounds.0, spec.bounds.1),
             );
             area.regions = regions;
             area.zoom_visibility = node.zoom_visibility;
             let delta = DeltaGlyphArea::full_assign_from(&area);
             let leaf = mt.arena.new_node(GfxMutator::new(
                 Mutation::AreaDelta(Box::new(delta)),
-                channel,
+                spec.channel,
             ));
             parent_node.append(leaf, &mut mt.arena);
         }
@@ -370,33 +287,11 @@ fn append_border_sub_tree(
     node: &BorderNodeData,
     unique_id: &mut usize,
 ) {
-    let border_style = &node.border_style;
-    let font_size = border_style.font_size_pt;
-    let approx_char_width = font_size * BORDER_APPROX_CHAR_WIDTH_FRAC;
-    let char_count = ((node.size_x / approx_char_width) + 2.0).ceil().max(3.0) as usize;
-    let right_corner_x =
-        node.pos_x - approx_char_width + (char_count - 1) as f32 * approx_char_width;
-    let corner_overlap = font_size * BORDER_CORNER_OVERLAP_FRAC;
-    let top_y = node.pos_y - font_size + corner_overlap;
-    let bottom_y = node.pos_y + node.size_y - corner_overlap;
-    let h_width = (char_count as f32 + 1.0) * approx_char_width;
-    let v_width = approx_char_width * 2.0;
-    // `.ceil()` rather than `.round()` so the side columns always
-    // reach the node bottom — see the matching mutator-path
-    // explanation a few hundred lines up.
-    let row_count = (node.size_y / font_size).ceil().max(1.0) as usize;
-
-    let top_text = border_style.top_text(char_count);
-    let bottom_text = border_style.bottom_text(char_count);
-    let left_text = border_style.left_column_text(row_count);
-    let right_text = border_style.right_column_text(row_count);
-
-    let top_clusters =
-        crate::util::grapheme_chad::count_grapheme_clusters(&top_text);
-    let right_clusters =
-        crate::util::grapheme_chad::count_grapheme_clusters(&right_text);
-    let bottom_clusters =
-        crate::util::grapheme_chad::count_grapheme_clusters(&bottom_text);
+    let specs = crate::mindmap::border::border_run_specs(
+        &node.border_style,
+        (node.pos_x, node.pos_y),
+        (node.size_x, node.size_y),
+    );
 
     // Per-node Void parent — groups the four runs for targeted
     // mutation. The parent's channel is the stable sorted-index
@@ -410,69 +305,29 @@ fn append_border_sub_tree(
     // Stable channels 1..=4 inside each border sub-tree. The
     // per-node Void parent already disambiguates across nodes.
     // Palette offsets sweep top → right → bottom → left around
-    // the rectangle so a colour cycle wraps cleanly.
-    append_border_run(
-        tree,
-        parent_id,
-        1,
-        *unique_id,
-        &top_text,
-        font_size,
-        (node.pos_x - approx_char_width, top_y),
-        (h_width, font_size * 1.5),
-        node.color_rgba,
-        node.zoom_visibility,
-        &node.palette_cycle,
-        0,
-    );
-    *unique_id += 1;
-    append_border_run(
-        tree,
-        parent_id,
-        2,
-        *unique_id,
-        &bottom_text,
-        font_size,
-        (node.pos_x - approx_char_width, bottom_y),
-        (h_width, font_size * 1.5),
-        node.color_rgba,
-        node.zoom_visibility,
-        &node.palette_cycle,
-        top_clusters + right_clusters,
-    );
-    *unique_id += 1;
-    append_border_run(
-        tree,
-        parent_id,
-        3,
-        *unique_id,
-        &left_text,
-        font_size,
-        (node.pos_x - approx_char_width, node.pos_y),
-        (v_width, node.size_y),
-        node.color_rgba,
-        node.zoom_visibility,
-        &node.palette_cycle,
-        top_clusters + right_clusters + bottom_clusters,
-    );
-    *unique_id += 1;
-    append_border_run(
-        tree,
-        parent_id,
-        4,
-        *unique_id,
-        &right_text,
-        font_size,
-        (right_corner_x, node.pos_y),
-        (v_width, node.size_y),
-        node.color_rgba,
-        node.zoom_visibility,
-        &node.palette_cycle,
-        top_clusters,
-    );
-    *unique_id += 1;
+    // the rectangle so a colour cycle wraps cleanly. See
+    // `BorderRunSpec` for the spec contract.
+    for spec in &specs {
+        append_border_run(
+            tree,
+            parent_id,
+            spec.channel,
+            *unique_id,
+            &spec.text,
+            spec.font_size_pt,
+            spec.position,
+            spec.bounds,
+            node.color_rgba,
+            node.zoom_visibility,
+            &node.palette_cycle,
+            spec.palette_offset,
+            spec.cluster_count,
+        );
+        *unique_id += 1;
+    }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn append_border_run(
     tree: &mut Tree<GfxElement, GfxMutator>,
     parent_id: NodeId,
@@ -486,6 +341,7 @@ pub(super) fn append_border_run(
     zoom_visibility: ZoomVisibility,
     palette_cycle: &[[f32; 4]],
     palette_offset: usize,
+    cluster_count: usize,
 ) {
     let mut area = GlyphArea::new_with_str(
         text,
@@ -498,9 +354,8 @@ pub(super) fn append_border_run(
 
     // Per-cluster ColorFontRegions when the user opts into palette
     // cycling, otherwise a single uniform region (matches the
-    // pre-pattern path's cost). Grapheme-aware cluster counts per
-    // §1 — combining marks and ZWJ emoji each occupy one cell.
-    let cluster_count = crate::util::grapheme_chad::count_grapheme_clusters(text);
+    // pre-pattern path's cost). `cluster_count` is pre-computed by
+    // `border_run_specs` so this body never re-walks the string.
     area.regions = build_border_regions(
         cluster_count,
         palette_cycle,

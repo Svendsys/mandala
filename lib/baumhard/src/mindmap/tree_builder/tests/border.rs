@@ -379,13 +379,15 @@ fn append_border_run_region_sized_by_grapheme_cluster_count_not_codepoints() {
     let parent = tree.arena.new_node(GfxElement::new_void_with_id(0, 0));
     tree.root.append(parent, &mut tree.arena);
 
+    // 👨‍👩‍👧 — 5 codepoints joined by ZWJ, 1 grapheme cluster.
+    let text = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
+    let cluster_count = crate::util::grapheme_chad::count_grapheme_clusters(text);
     super::super::border::append_border_run(
         &mut tree,
         parent,
         1,
         1,
-        // 👨‍👩‍👧 — 5 codepoints joined by ZWJ, 1 grapheme cluster.
-        "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}",
+        text,
         12.0,
         (0.0, 0.0),
         (100.0, 20.0),
@@ -393,6 +395,7 @@ fn append_border_run_region_sized_by_grapheme_cluster_count_not_codepoints() {
         crate::gfx_structs::zoom_visibility::ZoomVisibility::unbounded(),
         &[],
         0,
+        cluster_count,
     );
 
     let run = parent.children(&tree.arena).next().unwrap();

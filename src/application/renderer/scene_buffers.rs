@@ -30,7 +30,6 @@ use super::{MindMapTextBuffer, Renderer};
 use baumhard::font::attrs::{rich_text_spans_from_regions, RegionFamilies};
 use baumhard::mindmap::border::build_border_regions;
 use baumhard::util::color::hex_to_rgba_safe;
-use baumhard::util::grapheme_chad::count_grapheme_clusters;
 
 impl Renderer {
     /// Full (non-keyed) border rebuild — wipes the keyed cache and rebuilds
@@ -59,10 +58,6 @@ impl Renderer {
         border_elements: &[BorderElement],
         dirty_node_ids: Option<&std::collections::HashSet<String>>,
     ) {
-        use baumhard::mindmap::border::{
-            BORDER_APPROX_CHAR_WIDTH_FRAC, BORDER_CORNER_OVERLAP_FRAC,
-        };
-
         let mut font_system =
             fonts::acquire_font_system_write("rebuild_border_buffers_keyed");
 
@@ -76,18 +71,11 @@ impl Renderer {
                 .unwrap_or(true);
 
             let font_size = elem.border_style.font_size_pt;
-            let (nx, ny) = elem.node_position;
-            let (nw, nh) = elem.node_size;
-
-            let approx_char_width = font_size * BORDER_APPROX_CHAR_WIDTH_FRAC;
-            let char_count = ((nw / approx_char_width) + 2.0)
-                .ceil()
-                .max(3.0) as usize;
-            let right_corner_x =
-                nx - approx_char_width + (char_count - 1) as f32 * approx_char_width;
-            let corner_overlap = font_size * BORDER_CORNER_OVERLAP_FRAC;
-            let top_y = ny - font_size + corner_overlap;
-            let bottom_y = ny + nh - corner_overlap;
+            let specs = baumhard::mindmap::border::border_run_specs(
+                &elem.border_style,
+                elem.node_position,
+                elem.node_size,
+            );
 
             // Fast path: cached, clean, matching glyph count.
             // Only `.pos` is patched in place — other buffer
@@ -102,15 +90,13 @@ impl Renderer {
             // `existing[i]` here.
             if !is_dirty {
                 if let Some(existing) = self.border_buffers.get_mut(&elem.node_id) {
-                    if existing.len() == 4 {
-                        let expected_h_width = (char_count as f32 + 1.0) * approx_char_width;
-                        if (existing[0].bounds.0 - expected_h_width).abs() < 0.5 {
-                            existing[0].pos = (nx - approx_char_width, top_y);
-                            existing[1].pos = (nx - approx_char_width, bottom_y);
-                            existing[2].pos = (nx - approx_char_width, ny);
-                            existing[3].pos = (right_corner_x, ny);
-                            continue;
+                    if existing.len() == 4
+                        && (existing[0].bounds.0 - specs[0].bounds.0).abs() < 0.5
+                    {
+                        for (i, spec) in specs.iter().enumerate() {
+                            existing[i].pos = spec.position;
                         }
+                        continue;
                     }
                 }
             }
@@ -125,30 +111,6 @@ impl Renderer {
                 &elem.border_style.color,
                 [1.0, 1.0, 1.0, 1.0],
             );
-            let h_width = (char_count as f32 + 1.0) * approx_char_width;
-            let v_width = approx_char_width * 2.0;
-            // `.ceil()` rather than `.round()` so side columns
-            // always reach the node bottom — see the matching
-            // explanation in `tree_builder::border::append_border_sub_tree`.
-            let row_count = (nh / font_size).ceil().max(1.0) as usize;
-
-            // Pattern-aware side text: corners + side fill on the
-            // horizontals; one cluster per line on the verticals.
-            // Routes through `BorderStyle`'s pattern-aware methods
-            // so the renderer paints whatever the per-node config
-            // resolved to (preset / custom corners / patterns).
-            let top_text = elem.border_style.top_text(char_count);
-            let bottom_text = elem.border_style.bottom_text(char_count);
-            let left_text = elem.border_style.left_column_text(row_count);
-            let right_text = elem.border_style.right_column_text(row_count);
-
-            // Per-side palette offsets so the colour cycle wraps
-            // continuously around the rectangle (top → right →
-            // bottom → left). Mirrors the tree builder's offset
-            // math so the two pipelines paint the same colours.
-            let top_clusters = count_grapheme_clusters(&top_text);
-            let right_clusters = count_grapheme_clusters(&right_text);
-            let bottom_clusters = count_grapheme_clusters(&bottom_text);
 
             let zv = elem.zoom_visibility;
             let cycle = elem.palette_cycle.as_slice();
@@ -161,80 +123,51 @@ impl Renderer {
             // `rich_text_spans_from_regions`. When `cycle` is
             // empty `build_border_regions` emits a single uniform
             // region, so the no-palette and palette-cycling paths
-            // collapse to one shape here — no early return.
-            let mut shape_side =
-                |text: &str,
-                 pos: (f32, f32),
-                 bounds: (f32, f32),
-                 palette_offset: usize|
-                 -> MindMapTextBuffer {
-                    let cluster_count = count_grapheme_clusters(text);
-                    let regions = build_border_regions(
-                        cluster_count,
-                        cycle,
-                        fallback_rgba,
-                        palette_offset,
-                    );
-                    let families =
-                        RegionFamilies::resolve(&regions, &mut font_system);
-                    let spans = rich_text_spans_from_regions(
-                        text,
-                        &families,
-                        font_size,
-                        font_size,
-                        None,
-                    );
-                    let mut buf = cosmic_text::Buffer::new(
-                        &mut font_system,
-                        cosmic_text::Metrics::new(font_size, font_size),
-                    );
-                    buf.set_size(
-                        &mut font_system,
-                        Some(bounds.0),
-                        Some(bounds.1),
-                    );
-                    buf.set_rich_text(
-                        &mut font_system,
-                        spans,
-                        &Attrs::new(),
-                        cosmic_text::Shaping::Advanced,
-                        None,
-                    );
-                    buf.shape_until_scroll(&mut font_system, false);
-                    MindMapTextBuffer {
-                        buffer: buf,
-                        pos,
-                        bounds,
-                        zoom_visibility: zv,
-                    }
-                };
+            // collapse to one shape here.
+            let mut shape_spec = |spec: &baumhard::mindmap::border::BorderRunSpec|
+                -> MindMapTextBuffer {
+                let regions = build_border_regions(
+                    spec.cluster_count,
+                    cycle,
+                    fallback_rgba,
+                    spec.palette_offset,
+                );
+                let families =
+                    RegionFamilies::resolve(&regions, &mut font_system);
+                let spans = rich_text_spans_from_regions(
+                    &spec.text,
+                    &families,
+                    font_size,
+                    font_size,
+                    None,
+                );
+                let mut buf = cosmic_text::Buffer::new(
+                    &mut font_system,
+                    cosmic_text::Metrics::new(font_size, font_size),
+                );
+                buf.set_size(
+                    &mut font_system,
+                    Some(spec.bounds.0),
+                    Some(spec.bounds.1),
+                );
+                buf.set_rich_text(
+                    &mut font_system,
+                    spans,
+                    &Attrs::new(),
+                    cosmic_text::Shaping::Advanced,
+                    None,
+                );
+                buf.shape_until_scroll(&mut font_system, false);
+                MindMapTextBuffer {
+                    buffer: buf,
+                    pos: spec.position,
+                    bounds: spec.bounds,
+                    zoom_visibility: zv,
+                }
+            };
 
-            let entry = vec![
-                shape_side(
-                    &top_text,
-                    (nx - approx_char_width, top_y),
-                    (h_width, font_size * 1.5),
-                    0,
-                ),
-                shape_side(
-                    &bottom_text,
-                    (nx - approx_char_width, bottom_y),
-                    (h_width, font_size * 1.5),
-                    top_clusters + right_clusters,
-                ),
-                shape_side(
-                    &left_text,
-                    (nx - approx_char_width, ny),
-                    (v_width, nh),
-                    top_clusters + right_clusters + bottom_clusters,
-                ),
-                shape_side(
-                    &right_text,
-                    (right_corner_x, ny),
-                    (v_width, nh),
-                    top_clusters,
-                ),
-            ];
+            let entry: Vec<MindMapTextBuffer> =
+                specs.iter().map(&mut shape_spec).collect();
             self.border_buffers.insert(elem.node_id.clone(), entry);
         }
 

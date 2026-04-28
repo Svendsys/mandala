@@ -254,10 +254,10 @@ impl MindMapDocument {
     }
 
     /// Write the node's zoom-visibility window. Each of `min` /
-    /// `max` is a [`crate::application::document::ZoomBoundEdit`]:
-    /// `Keep` leaves the side untouched, `Clear` sets it to
-    /// `None` (unbounded), `Set(v)` sets it to `Some(v)`. Returns
-    /// `true` if either side actually changed.
+    /// `max` is an [`OptionEdit<f32>`]: `Keep` leaves the side
+    /// untouched, `Clear` sets it to `None` (unbounded), `Set(v)`
+    /// sets it to `Some(v)`. Returns `true` if either side
+    /// actually changed.
     ///
     /// Inversion (`min > max` after the edit) is rejected as a
     /// no-op with `false`; the console surface catches this first,
