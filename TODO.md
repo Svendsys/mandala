@@ -32,14 +32,6 @@ The full WASM convergence below is still outstanding.
   for new variants. WASM-side macro registry is the highest-value
   next step (Track B) because it unblocks every `Compatible`
   Action a user has bound to a macro id.
-- **Shadow-stacked registry** *(reviewer follow-up)*. Today
-  higher-tier macros DISPLACE lower-tier ones with the same id
-  permanently within the session — so opening a Map-tier macro
-  with the same id as a User-tier macro and then closing the
-  document leaves the User entry gone. Documented in
-  `format/macros.md` with namespacing recommendation, but a
-  proper fix would store entries per-tier and resolve at lookup
-  time. Substantial registry rewrite.
 - **Parameterised console verbs as Actions.** `open <path>`,
   `save-as <path>`, `mutation apply <id>`, kv-shaped
   `border` / `edge` / `color` / `font` / `zoom` / `spacing` setters

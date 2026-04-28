@@ -77,19 +77,24 @@ emits a `warn!` on cross-node Inline collisions, but the only
 robust fix is namespacing: prefix each inline-macro id with the
 owning node's id (e.g. `"3.2.1.save-and-quit"`).
 
-Cross-tier: a higher-tier entry **displaces** a lower-tier entry
-with the same id at registry-insert time — the lower-tier entry
-is removed from the HashMap, not stacked under it. So:
+Cross-tier: a higher-tier entry **shadows** a lower-tier entry
+with the same id — both coexist in their own tier slots, with
+lookup walking high-to-low precedence and returning the first
+hit. Higher tiers take precedence on lookup, but the lower-tier
+entry is preserved underneath:
 
-- Open document A with `Map`-tier `id: "save-and-quit"` shadows the
-  user's `User`-tier `id: "save-and-quit"`.
+- Open document A with `Map`-tier `id: "save-and-quit"`. Lookup
+  returns the Map version while document A is open.
 - Open document B with no `macros` → `clear_tier(Map)` runs,
-  removing the Map entry — but the User entry is **not** restored.
+  removing only the Map slot. The User-tier entry **re-emerges**
+  on the next lookup — shadowing is reversible.
 
-The displacement is permanent within the session. To avoid
-this, Map-tier authors should namespace their ids
-(e.g. `"my-map.save"` rather than bare `"save"`). A future
-shadow-stacked registry could fix this; tracked in `TODO.md`.
+Within-tier last-writer-wins still applies (two entries with
+the same id in the same tier — the second wins). Authors
+should still namespace ids defensively when targeting the
+Inline tier specifically, since cross-node Inline collisions
+have non-deterministic winners (HashMap iteration order); see
+the Inline-tier note above.
 
 ## Privilege model — read this before shipping a non-User loader
 

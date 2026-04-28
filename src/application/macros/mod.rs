@@ -194,12 +194,48 @@ pub struct Macro {
     pub steps: Vec<MacroStep>,
 }
 
+/// Number of `MacroSource` tiers. Lock-stepped with the variant
+/// count of the enum; the registry's per-id slot array is sized
+/// against this constant.
+const TIER_COUNT: usize = 4;
+
+impl MacroSource {
+    /// Index into the per-tier slot array on `MacroRegistry`. Order
+    /// matches the variant declaration so `MacroSource as usize`
+    /// would conceptually agree, but the explicit `match` survives
+    /// future re-ordering and `#[non_exhaustive]` keeps it honest.
+    /// Higher index = higher precedence.
+    pub(super) const fn index(self) -> usize {
+        match self {
+            MacroSource::App => 0,
+            MacroSource::User => 1,
+            MacroSource::Map => 2,
+            MacroSource::Inline => 3,
+        }
+    }
+}
+
 /// In-memory lookup table. Built once at startup from the loader's
-/// merged slices. Each entry carries its source tier so the
-/// dispatcher can gate privileged step kinds (see [`MacroSource`]).
+/// merged slices, then refreshed on every document-replace.
+///
+/// **Shadow-stacked storage.** Each id maps to a per-tier slot
+/// array indexed by [`MacroSource::index`]: `[App, User, Map,
+/// Inline]`. Lookup walks high-to-low precedence; the first
+/// non-None slot wins. Higher-tier entries SHADOW lower-tier ones
+/// rather than displacing them — `clear_tier(Inline)` removes
+/// only the Inline slot, and `get` / `get_with_source` then
+/// resolve to whichever lower-tier entry exists. This fixes the
+/// "displacement is permanent within the session" problem the
+/// reviewers flagged: a User-tier `id="x"` shadowed by a Map-tier
+/// `id="x"` re-emerges naturally when the document is replaced
+/// (which clears the Map tier).
+///
+/// Within-tier collisions (e.g. two entries with `id="x"` in the
+/// same Map-tier `mindmap.macros` array) still last-writer-wins —
+/// only the cross-tier reveal property is new.
 #[derive(Debug, Clone, Default)]
 pub struct MacroRegistry {
-    macros: HashMap<String, (Macro, MacroSource)>,
+    macros: HashMap<String, [Option<Macro>; TIER_COUNT]>,
 }
 
 impl MacroRegistry {
@@ -207,59 +243,109 @@ impl MacroRegistry {
         Self::default()
     }
 
-    /// Insert / replace a macro by id, tagged with its loader tier.
-    /// Returns the previous entry if any was present — caller decides
-    /// whether to log the override.
+    /// Write a macro into the slot for `source`. Returns the
+    /// previous entry AT THE SAME TIER — not the displaced lower-
+    /// tier entry, since lower tiers are no longer displaced.
+    /// Within-tier last-writer-wins; cross-tier coexistence is
+    /// preserved.
     pub fn insert(&mut self, m: Macro, source: MacroSource) -> Option<Macro> {
-        self.macros
-            .insert(m.id.clone(), (m, source))
-            .map(|(prev, _)| prev)
+        let id = m.id.clone();
+        let slots = self
+            .macros
+            .entry(id)
+            .or_insert_with(|| [None, None, None, None]);
+        slots[source.index()].replace(m)
     }
 
-    /// Look up a macro by id.
+    /// Look up the highest-tier macro for `id`. Walks the slot
+    /// array from Inline → Map → User → App and returns the first
+    /// non-None entry.
     pub fn get(&self, id: &str) -> Option<&Macro> {
-        self.macros.get(id).map(|(m, _)| m)
+        let slots = self.macros.get(id)?;
+        for i in (0..TIER_COUNT).rev() {
+            if let Some(m) = &slots[i] {
+                return Some(m);
+            }
+        }
+        None
     }
 
-    /// Look up a macro and its source tier — needed by the dispatcher
-    /// to decide whether `ConsoleLine` steps are allowed.
+    /// Look up the highest-tier macro for `id` and the tier that
+    /// holds it. The dispatcher uses this pair to consult the
+    /// privilege gate (`MacroSource::allows_console_line`,
+    /// `allows_action`). Same walk order as `get`.
     pub fn get_with_source(&self, id: &str) -> Option<(&Macro, MacroSource)> {
-        self.macros.get(id).map(|(m, s)| (m, *s))
+        let slots = self.macros.get(id)?;
+        // Walk tiers high-to-low. The list is hand-written so the
+        // tier→index mapping stays explicit; if a future tier is
+        // added, this list must extend AND `index` above must too.
+        for tier in [
+            MacroSource::Inline,
+            MacroSource::Map,
+            MacroSource::User,
+            MacroSource::App,
+        ] {
+            if let Some(m) = &slots[tier.index()] {
+                return Some((m, tier));
+            }
+        }
+        None
     }
 
-    /// Whether the registry knows about this id.
+    /// Whether any tier slot holds an entry for `id`.
     pub fn contains(&self, id: &str) -> bool {
-        self.macros.contains_key(id)
+        self.macros
+            .get(id)
+            .map_or(false, |slots| slots.iter().any(Option::is_some))
     }
 
-    /// Number of registered macros.
+    /// Number of distinct ids with at least one tier slot occupied.
+    /// An id present at multiple tiers counts once.
     pub fn len(&self) -> usize {
-        self.macros.len()
+        self.macros
+            .values()
+            .filter(|slots| slots.iter().any(Option::is_some))
+            .count()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.macros.is_empty()
+        self.len() == 0
     }
 
-    /// Iterate registered macro ids — used by completion / inspection
-    /// surfaces. HashMap iteration order is unspecified; sort at
-    /// the call site if a stable display is needed.
+    /// Iterate registered macro ids. An id present at multiple
+    /// tiers appears once. HashMap iteration order is unspecified;
+    /// sort at the call site if a stable display is needed.
     pub fn ids(&self) -> impl Iterator<Item = &str> {
-        self.macros.keys().map(|s| s.as_str())
+        self.macros
+            .iter()
+            .filter(|(_, slots)| slots.iter().any(Option::is_some))
+            .map(|(k, _)| k.as_str())
     }
 
-    /// Drop every entry whose tier matches `source`. Used by the
-    /// document-replace path to wipe Map / Inline tiers before the
-    /// new document's macros are loaded — App and User tiers
-    /// (loaded once at startup) survive the swap.
+    /// Clear the slot for `source` across every id. Lower-tier
+    /// entries with the same id survive in their slots —
+    /// `get` / `get_with_source` will resolve them once this tier
+    /// is cleared. Drops the HashMap entry entirely if all four
+    /// slots become None.
+    ///
+    /// This is the load-bearing piece of the shadow-stack design:
+    /// document-replace paths can clear Map + Inline tiers without
+    /// disturbing the App + User tiers loaded at startup, AND the
+    /// previously-shadowed User-tier entries re-emerge naturally
+    /// in subsequent lookups.
     pub fn clear_tier(&mut self, source: MacroSource) {
-        self.macros.retain(|_, (_, src)| *src != source);
+        let idx = source.index();
+        self.macros.retain(|_, slots| {
+            slots[idx] = None;
+            slots.iter().any(Option::is_some)
+        });
     }
 
-    /// Bulk-insert macros at the given tier. Existing entries with
-    /// the same id are displaced — caller is responsible for
-    /// tier-precedence ordering (e.g. App tier inserted before
-    /// User tier so User wins on collision).
+    /// Bulk-insert macros at the given tier. Within-tier id
+    /// collisions follow last-writer-wins (later iterator entries
+    /// override earlier ones). Cross-tier entries at OTHER tiers
+    /// survive in their slots — this is the shadow-stacking
+    /// property.
     pub fn extend_with_tier<I: IntoIterator<Item = Macro>>(
         &mut self,
         macros: I,
@@ -477,7 +563,12 @@ mod tests {
     /// collision. Locks the precedence contract for the highest-
     /// precedence tier — the property load-bearing for the
     /// privilege gate, since Inline is the most-likely-untrusted
-    /// source (per-node in a shared mindmap).
+    /// Inline tier wins on lookup when multiple tiers hold an
+    /// entry for the same id. Critical for the privilege gate —
+    /// Inline-tier macros are denylisted from `ConsoleLine` and
+    /// destructive Actions, so a hostile mindmap shadowing a
+    /// User-tier macro must be picked up at the Inline tier on
+    /// lookup, not the lower User tier.
     #[test]
     fn macro_registry_inline_overrides_user_and_map_by_id() {
         let mut reg = MacroRegistry::new();
@@ -492,18 +583,26 @@ mod tests {
         reg.insert(mk("app"), MacroSource::App);
         reg.insert(mk("user"), MacroSource::User);
         reg.insert(mk("map"), MacroSource::Map);
+        // Inserting Inline does NOT displace Map; both coexist
+        // under the shadow-stack design. `insert` returns the
+        // previous slot at the SAME tier (None here — this is
+        // the first Inline write).
         let prev = reg.insert(mk("inline"), MacroSource::Inline);
-        assert!(prev.is_some(), "Map entry should be displaced");
+        assert!(
+            prev.is_none(),
+            "no prior Inline-tier entry; Map slot should not have been touched"
+        );
+        // Lookup walks high-to-low and finds Inline first.
         let (m, src) = reg.get_with_source("shared").unwrap();
         assert_eq!(m.name, "inline");
         assert_eq!(src, MacroSource::Inline);
     }
 
-    /// Higher-tier macros override lower-tier ones with the same
-    /// id. `run_native_init::build` calls `load_app_macros` then
-    /// `load_user_macros`, so a User entry with the same id as an
-    /// App entry takes the registry slot. Locks the precedence
-    /// contract documented in `format/macros.md`.
+    /// Higher-tier macros SHADOW lower-tier ones with the same id —
+    /// they don't displace. Clearing the higher tier reveals the
+    /// lower-tier entry underneath. The reveal property fixes the
+    /// "displacement is permanent within the session" issue
+    /// reviewers flagged.
     #[test]
     fn macro_registry_user_overrides_app_by_id() {
         let mut reg = MacroRegistry::new();
@@ -523,8 +622,11 @@ mod tests {
         };
         // Insert order matches run_native_init::build: App first.
         reg.insert(app_macro, MacroSource::App);
+        // First write to the User tier — no prior User entry to
+        // return.
         let prev = reg.insert(user_macro, MacroSource::User);
-        assert!(prev.is_some(), "App macro should be displaced");
+        assert!(prev.is_none(), "no prior User-tier entry");
+        // Lookup walks high-to-low → User wins.
         let (m, src) = reg.get_with_source("shared-id").unwrap();
         assert_eq!(m.name, "User version");
         assert_eq!(src, MacroSource::User);
@@ -532,6 +634,17 @@ mod tests {
         // honoured (User can run ConsoleLine / privileged Actions
         // even if an App macro had the same id first).
         assert!(src.allows_console_line());
+
+        // Reveal property: clearing User exposes the App entry
+        // underneath. (The TODO note about displacement-is-
+        // permanent is closed by this test.)
+        reg.clear_tier(MacroSource::User);
+        let (m, src) = reg
+            .get_with_source("shared-id")
+            .expect("App entry must re-emerge");
+        assert_eq!(m.name, "App version");
+        assert_eq!(src, MacroSource::App);
+        assert!(!src.allows_console_line(), "App tier rejects ConsoleLine");
     }
 
     /// `MacroRegistry::get_with_source` returns the loader-pinned
@@ -579,6 +692,108 @@ mod tests {
         assert!(reg.contains("app"));
         assert!(reg.contains("user"));
         assert!(!reg.contains("map"));
+    }
+
+    /// Shadow-stack reveal property — the central new behaviour
+    /// of the per-tier slot design. Clearing a higher tier reveals
+    /// the lower-tier entry underneath instead of leaving the id
+    /// permanently displaced.
+    #[test]
+    fn clear_higher_tier_reveals_lower_tier() {
+        let mut reg = MacroRegistry::new();
+        let mk = |name: &str| Macro {
+            id: "x".into(),
+            name: name.into(),
+            description: String::new(),
+            steps: vec![],
+        };
+        reg.insert(mk("user"), MacroSource::User);
+        reg.insert(mk("map"), MacroSource::Map);
+
+        // Map shadows User on lookup.
+        let (m, src) = reg.get_with_source("x").unwrap();
+        assert_eq!(m.name, "map");
+        assert_eq!(src, MacroSource::Map);
+
+        // Clearing Map reveals User — does not leave "x" gone.
+        reg.clear_tier(MacroSource::Map);
+        let (m, src) = reg
+            .get_with_source("x")
+            .expect("User entry should re-emerge after Map clear");
+        assert_eq!(m.name, "user");
+        assert_eq!(src, MacroSource::User);
+    }
+
+    /// `clear_tier(X)` only zeroes the slot for tier `X` on each
+    /// id. The other tiers' slots survive in place. (The
+    /// `macro_registry_clear_tier_only_drops_matching` test
+    /// above covers the case where each id has only one slot
+    /// occupied; this test covers the case where ids have
+    /// multiple tiers stacked.)
+    #[test]
+    fn clear_tier_removes_only_matching_slot() {
+        let mut reg = MacroRegistry::new();
+        let mk = |id: &str, name: &str| Macro {
+            id: id.into(),
+            name: name.into(),
+            description: String::new(),
+            steps: vec![],
+        };
+        // Stack two tiers on "x" and one tier each on "y" / "z".
+        reg.insert(mk("x", "x.app"), MacroSource::App);
+        reg.insert(mk("x", "x.user"), MacroSource::User);
+        reg.insert(mk("y", "y.user"), MacroSource::User);
+        reg.insert(mk("z", "z.map"), MacroSource::Map);
+
+        reg.clear_tier(MacroSource::User);
+
+        // "x" still has its App entry — id survives, just at a
+        // lower tier.
+        let (m, src) = reg.get_with_source("x").unwrap();
+        assert_eq!(m.name, "x.app");
+        assert_eq!(src, MacroSource::App);
+        // "y" had only User → id evicted entirely.
+        assert!(!reg.contains("y"));
+        // "z" had only Map → unaffected.
+        let (m, src) = reg.get_with_source("z").unwrap();
+        assert_eq!(m.name, "z.map");
+        assert_eq!(src, MacroSource::Map);
+    }
+
+    /// Document-replace cycle: a Map-tier macro shadows a
+    /// User-tier macro in document A; opening document B (which
+    /// has no `mindmap.macros`) clears the Map tier and the
+    /// User-tier macro re-emerges. Locks the load-bearing
+    /// user-visible behaviour change shadow-stacking enables.
+    #[test]
+    fn cross_tier_within_session_round_trip() {
+        let mut reg = MacroRegistry::new();
+        let mk = |source_label: &str| Macro {
+            id: "save-and-quit".into(),
+            name: source_label.into(),
+            description: String::new(),
+            steps: vec![],
+        };
+        // Startup: User tier loaded.
+        reg.insert(mk("user-macro"), MacroSource::User);
+        // Open document A: Map tier shadows User.
+        reg.insert(mk("docA-macro"), MacroSource::Map);
+        assert_eq!(
+            reg.get_with_source("save-and-quit").unwrap().0.name,
+            "docA-macro"
+        );
+
+        // Open document B: replace path runs `clear_tier(Map)`
+        // first, then `extend_with_tier(empty, Map)`.
+        reg.clear_tier(MacroSource::Map);
+        reg.extend_with_tier(Vec::<Macro>::new(), MacroSource::Map);
+
+        // User entry re-emerges.
+        let (m, src) = reg
+            .get_with_source("save-and-quit")
+            .expect("User entry restored");
+        assert_eq!(m.name, "user-macro");
+        assert_eq!(src, MacroSource::User);
     }
 
     /// Within-tier id collisions follow last-writer-wins —
