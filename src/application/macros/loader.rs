@@ -1,57 +1,43 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! User-file macro loader.
+//! Macro loaders for the four-tier registry.
 //!
-//! Native-only. Reads `~/.config/mandala/macros.json` (or the path
-//! pointed at by `$XDG_CONFIG_HOME/mandala/macros.json`) into a
-//! `Vec<Macro>`. Failures log `warn!` and return an empty slice — the
-//! application boots even when the user macro file is malformed,
-//! same resilience posture as the mutation loader.
+//! The format reference is in `format/macros.md`. Each tier has a
+//! pinned `MacroSource`; the registry picks the highest-tier macro
+//! by id when collisions happen. Today only App and User tiers are
+//! wired — Map / Inline (`MindMap::macros` / `MindNode::inline_macros`)
+//! are deferred per `TODO.md`.
 //!
-//! App-bundle macros (parallel to `assets/mutations/application.json`)
-//! and inline-on-map macros (parallel to `MindMap::custom_mutations`)
-//! are not yet implemented; this loader covers the user layer only.
-//! The registry hands out one merged slice; future layers append in
-//! ascending precedence so an inline macro overrides a user macro
-//! overrides an app macro by id.
-//!
-//! On-disk format (`format/macros.md` is not yet written; this
-//! comment is the canonical reference for now):
-//!
-//! ```json
-//! [
-//!   {
-//!     "id": "save-and-zoom-out",
-//!     "name": "Save and Zoom Out",
-//!     "description": "Persist the current map and back off the camera.",
-//!     "steps": [
-//!       { "kind": "Action",       "action": "SaveDocument" },
-//!       { "kind": "Action",       "action": "ZoomOut" }
-//!     ]
-//!   },
-//!   {
-//!     "id": "tag-as-inbox",
-//!     "steps": [
-//!       { "kind": "CustomMutation", "id": "set-tag-inbox" },
-//!       { "kind": "ConsoleLine",    "line": "save" }
-//!     ]
-//!   }
-//! ]
-//! ```
-//!
-//! `Action` step values are the variant names of the `Action` enum
-//! (e.g. `"SaveDocument"`, `"ZoomOut"`, `"SelectAll"`). `CustomMutation`
-//! steps reference an `id` registered in the document's mutation
-//! registry; `target` is optional and defaults to
-//! `"current_selection"` (the alternative is `{"node_id": "..."}`).
-//! `ConsoleLine` runs a typed line through the console parser — any
-//! console verb works, including `save`, `border preset=triple`, etc.
+//! Resilience: app-bundle parses with `expect()` (a malformed bundle
+//! is a startup-time bug, not a user input error). User-tier
+//! parsing failures log `warn!` and fall through to an empty slice
+//! so the application boots even if the user file is broken.
 
 #![cfg(not(target_arch = "wasm32"))]
 
 use std::path::PathBuf;
 
 use super::Macro;
+
+/// Application-bundle JSON, embedded at compile time. Parsed by
+/// [`load_app_macros`]. Empty array today; future shipped macros
+/// land here.
+const APP_MACROS_JSON: &str = include_str!("../../../assets/macros/application.json");
+
+/// Load the application-bundle macros. Tier: `MacroSource::App`,
+/// assigned at the call site in `run_native_init::build`.
+///
+/// Parses with `expect()` — a malformed bundle is a build-time bug.
+/// `format/macros.md` documents the format; the file MUST be a
+/// top-level JSON array of macro objects.
+pub fn load_app_macros() -> Vec<Macro> {
+    let trimmed = APP_MACROS_JSON.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    serde_json::from_str::<Vec<Macro>>(trimmed)
+        .expect("malformed assets/macros/application.json — bundle is invalid")
+}
 
 /// Resolve the user's macros.json path on native: prefer
 /// `$XDG_CONFIG_HOME/mandala/macros.json`, fall back to
@@ -66,9 +52,11 @@ fn user_macros_path() -> Option<PathBuf> {
     Some(PathBuf::from(home).join(".config").join("mandala").join("macros.json"))
 }
 
-/// Load the user-layer macros. Returns an empty `Vec` when the file
-/// is absent or malformed; failures log a warning so users notice but
-/// the app still boots.
+/// Load the user-layer macros. Tier: `MacroSource::User`, assigned
+/// at the call site in `run_native_init::build`.
+///
+/// Returns an empty `Vec` when the file is absent or malformed;
+/// failures log a warning so users notice but the app still boots.
 pub fn load_user_macros() -> Vec<Macro> {
     let path = match user_macros_path() {
         Some(p) => p,
@@ -93,5 +81,18 @@ pub fn load_user_macros() -> Vec<Macro> {
             log::warn!("macros: failed to parse {}: {}", path.display(), e);
             Vec::new()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The bundled `assets/macros/application.json` parses cleanly.
+    /// Catches malformed-asset regressions at test time rather than
+    /// startup `expect()` panics.
+    #[test]
+    fn app_bundle_parses() {
+        let _ = load_app_macros();
     }
 }

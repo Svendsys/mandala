@@ -35,23 +35,20 @@ The full WASM convergence below is still outstanding.
   there's no `~/.config` filesystem in a browser, so the loader
   would need a `?macros=<json>` / `localStorage` shape parallel to
   the keybind loader before shipping.
-- **App-bundled and inline-on-map macro tiers.** Today only the user
-  tier exists in the loader. The `MacroSource` tag and the
-  `dispatch_macro` gate that rejects `ConsoleLine` from non-User
-  tiers are already in place — adding the actual app-bundle
-  loader (parallel to `assets/mutations/application.json`) and
-  inline-on-map loader (`MindMap::macros`) just needs the file-
-  reading half. The privilege gate is enforced by
-  `MacroSource::allows_console_line` so a hostile mindmap can't run
-  arbitrary console verbs. Steps:
-  1. Add `assets/macros/application.json` (optional, can be empty).
-  2. `loader::load_app_macros() -> Vec<Macro>` reading from the
-     bundle (compile-time `include_str!`).
-  3. `MindMap.macros: Vec<Macro>` field on the model (Map tier).
-  4. `MindNode.inline_macros: Vec<Macro>` (Inline tier).
-  5. `run_native_init::build` calls each loader, inserting at the
-     right tier so the registry's precedence-by-id picks the
-     highest-tier macro on collision.
+- **Map-inline and node-inline macro tiers.** App and User tiers
+  ship; Map / Inline are still deferred. The privilege gate
+  (`MacroSource::allows_console_line` + `allows_action` +
+  `dispatch_macro` fail-closed) is in place, so the remaining work
+  is purely file-reading. Steps:
+  1. Add `MindMap.macros: Vec<Macro>` field on the model (Map tier).
+  2. Add `MindNode.inline_macros: Vec<Macro>` (Inline tier).
+  3. `run_native_init::build` extends the registry walk to insert
+     Map then Inline after User so collisions resolve to the
+     highest tier. The format reference at `format/macros.md` and
+     `MacroSource` ordering already document the precedence.
+  4. Verify the privilege gate empirically — a hostile mindmap
+     with a `ConsoleLine`-bearing macro should be rejected at
+     dispatch.
 - **Parameterised console verbs as Actions.** `open <path>`,
   `save-as <path>`, `mutation apply <id>`, kv-shaped
   `border` / `edge` / `color` / `font` / `zoom` / `spacing` setters

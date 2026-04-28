@@ -416,6 +416,41 @@ mod tests {
         assert_eq!(json, r#"{"kind":"ConsoleLine","line":"save"}"#);
     }
 
+    /// Higher-tier macros override lower-tier ones with the same
+    /// id. `run_native_init::build` calls `load_app_macros` then
+    /// `load_user_macros`, so a User entry with the same id as an
+    /// App entry takes the registry slot. Locks the precedence
+    /// contract documented in `format/macros.md`.
+    #[test]
+    fn macro_registry_user_overrides_app_by_id() {
+        let mut reg = MacroRegistry::new();
+        let app_macro = Macro {
+            id: "shared-id".into(),
+            name: "App version".into(),
+            description: String::new(),
+            steps: vec![],
+        };
+        let user_macro = Macro {
+            id: "shared-id".into(),
+            name: "User version".into(),
+            description: String::new(),
+            steps: vec![MacroStep::Action {
+                action: Action::Undo,
+            }],
+        };
+        // Insert order matches run_native_init::build: App first.
+        reg.insert(app_macro, MacroSource::App);
+        let prev = reg.insert(user_macro, MacroSource::User);
+        assert!(prev.is_some(), "App macro should be displaced");
+        let (m, src) = reg.get_with_source("shared-id").unwrap();
+        assert_eq!(m.name, "User version");
+        assert_eq!(src, MacroSource::User);
+        // Critical for the privilege gate: the tier upgrade is
+        // honoured (User can run ConsoleLine / privileged Actions
+        // even if an App macro had the same id first).
+        assert!(src.allows_console_line());
+    }
+
     /// `MacroRegistry::get_with_source` returns the loader-pinned
     /// tier alongside the macro. This is the load-bearing accessor
     /// the dispatcher uses to gate `ConsoleLine` and privileged

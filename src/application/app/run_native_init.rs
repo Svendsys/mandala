@@ -109,12 +109,30 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
     // User-layer macros, loaded once at startup. Failures log a
     // warning and yield an empty registry — same posture as the
     // mutation loader.
+    // Build the macro registry across all wired tiers, in ascending
+    // precedence order. App tier first so the User tier (loaded
+    // second) overrides any colliding ids — matches the format
+    // reference at `format/macros.md`. Map / Inline tiers are
+    // deferred (see `TODO.md`); when they land they'll be inserted
+    // last.
     let mut macros = crate::application::macros::MacroRegistry::new();
+    let mut app_count = 0usize;
+    for m in crate::application::macros::loader::load_app_macros() {
+        macros.insert(m, crate::application::macros::MacroSource::App);
+        app_count += 1;
+    }
+    let mut user_count = 0usize;
     for m in crate::application::macros::loader::load_user_macros() {
         macros.insert(m, crate::application::macros::MacroSource::User);
+        user_count += 1;
     }
-    if !macros.is_empty() {
-        log::info!("loaded {} user macro(s)", macros.len());
+    if app_count > 0 || user_count > 0 {
+        log::info!(
+            "loaded {} macro(s): {} app-tier, {} user-tier",
+            macros.len(),
+            app_count,
+            user_count
+        );
     }
 
     InitState {
