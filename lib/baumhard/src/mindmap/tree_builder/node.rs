@@ -90,10 +90,9 @@ pub(super) fn mindnode_to_glyph_area(
     //
     // The 0.5·fs and 0.5·acw multipliers approximate the per-glyph
     // position of `─` / `│` within the em-square. They're correct
-    // for LiberationSans-style monospace box-drawing, less so for
-    // exotic faces — see the calibration-drift TODO on
-    // `BORDER_CORNER_OVERLAP_FRAC` / `BORDER_APPROX_CHAR_WIDTH_FRAC`
-    // in `border.rs`.
+    // for LiberationSans-style monospace box-drawing; per-face
+    // calibration lives on `BORDER_CORNER_OVERLAP_FRAC` /
+    // `BORDER_APPROX_CHAR_WIDTH_FRAC` in `border.rs`.
     //
     // `EdgePadding::ZERO` when the frame is hidden or the shape
     // isn't a rectangle (the only shape borders attach to today).

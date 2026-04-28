@@ -80,15 +80,10 @@ pub struct CustomMutation {
     /// Whether this mutation persists to the model or is a visual toggle.
     #[serde(default)]
     pub behavior: MutationBehavior,
-    /// **Reserved — not yet consumed by the apply path.** When
-    /// wired (a future session), this will gate mutator application
-    /// per target node: for each node the scope-collected set
-    /// returns, the predicate will be tested against the node's
-    /// GfxElement and only matching nodes receive the mutator's
-    /// effect. Today the field round-trips through serde and is
-    /// preserved on save, but `apply_custom_mutation` never checks
-    /// it. Mutation authors may populate it now for forward
-    /// compatibility; it is effectively a no-op until consumed.
+    /// Reserved gate: when consumed, will filter the scope-collected
+    /// set by matching each node's `GfxElement` against the
+    /// predicate. Today round-trips through serde but
+    /// `apply_custom_mutation` ignores it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub predicate: Option<Predicate>,
     /// Optional canvas/document-level actions that fire alongside the

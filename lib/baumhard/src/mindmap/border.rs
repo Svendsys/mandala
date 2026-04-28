@@ -18,41 +18,19 @@ use crate::util::color::FloatRgba;
 /// Fraction of `font_size` by which a border's top/bottom runs
 /// are pulled inward so their glyph visible extents overlap with
 /// the vertical columns. Empirically chosen for LiberationSans at
-/// typical border font sizes; larger values visibly encroach on
-/// the node content, smaller values leave gaps. Shared by the
-/// renderer and `tree_builder::build_border_tree` so the two
-/// paths can't drift.
-///
-/// **Calibration drift**: this constant is calibrated against
-/// LiberationSans's box-drawing glyph metrics. When the border
-/// uses a different face (per-node `border.font` or canvas
-/// default), the actual ink-bound centre of the corner glyph may
-/// sit at a different fraction of `font_size`, causing visible
-/// shifts at TR / BL / BR (the corners that depend on combining
-/// this offset with the column position). A future revision
-/// should measure the corner glyph's ink bounds through
-/// [`crate::font::fonts::measure_glyph_ink_bounds`] and replace
-/// this constant with a per-face value. TODO: tracked as
-/// follow-up to PR #128 review.
+/// typical border font sizes. Shared by the renderer and
+/// `tree_builder::build_border_tree` so the two paths can't drift.
+/// Per-face calibration uses
+/// [`crate::font::fonts::measure_glyph_ink_bounds`] when the chosen
+/// border face differs from LiberationSans.
 pub const BORDER_CORNER_OVERLAP_FRAC: f32 = 0.35;
 
-/// Multiplier estimating the advance of one border glyph as a
-/// fraction of `font_size`. `0.6` matches LiberationSans box-
-/// drawing characters at typical border sizes; both the renderer's
-/// keyed border-buffer rebuild and the border-tree builder rely on
-/// this to position corner glyphs consistently.
-///
-/// **Calibration drift**: same caveat as
-/// [`BORDER_CORNER_OVERLAP_FRAC`]. The renderer uses this constant
-/// to compute `right_corner_x`, the horizontal position of the
-/// right column and the top/bottom right corner. If the actual
-/// `─` advance under the chosen border face differs from
-/// `0.6 × font_size`, the right corner shifts relative to where
-/// the top/bottom run's last glyph (the corner) actually lands
-/// after shaping. A future revision should measure the per-face
-/// `─` advance through cosmic-text shaping (single-glyph
-/// `Buffer` + `LayoutRun.glyphs[0].w`) and replace this constant
-/// with a per-build measurement.
+/// Multiplier estimating one border-glyph advance as a fraction of
+/// `font_size`. `0.6` matches LiberationSans box-drawing
+/// characters; both the renderer's keyed border-buffer rebuild and
+/// the border-tree builder consult this for corner positioning.
+/// Per-face calibration measures the actual `─` advance via
+/// cosmic-text shaping when the border face differs.
 pub const BORDER_APPROX_CHAR_WIDTH_FRAC: f32 = 0.6;
 
 /// Defines which glyphs to use for rendering a node's border.

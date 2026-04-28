@@ -183,50 +183,6 @@ pub fn tangent_at_t(path: &ConnectionPath, t: f32) -> Vec2 {
     }
 }
 
-/// Project a cursor position onto the closest point of `path` and
-/// return `(t, perpendicular_offset)` — the parameter value of
-/// that closest point plus the signed perpendicular distance from
-/// the path to the cursor at that `t`.
-///
-/// Used by the edge-label drag: as the user drags the label
-/// glyph, each frame projects the cursor onto the edge's path to
-/// derive the new `(position_t, perpendicular_offset)` for
-/// [`crate::mindmap::model::EdgeLabelConfig`].
-///
-/// Algorithm:
-/// - Straight paths: direct point-to-segment projection; `t` is
-///   the clamped scalar projection onto `[0, 1]`.
-/// - Cubic Bezier paths: sample `CLOSEST_POINT_SAMPLES` points
-///   uniformly in `t`, pick the nearest to the cursor, then refine
-///   with `CLOSEST_POINT_NEWTON_ITERS` iterations of Newton's
-///   method on `f(t) = (B(t) - cursor) · B'(t) = 0`. This
-///   converges quadratically near the minimum and handles the
-///   curved case without requiring the arc-length table. The
-///   Newton step is guarded two ways:
-///   1. `denom ≈ 0` breaks out early to avoid a divide that would
-///      send `t` to infinity.
-///   2. After refinement, the Newton result's squared distance is
-///      compared against the sampling sweep's best. If Newton
-///      diverged (seed was better), the sweep's `best_t` is used
-///      instead. Near inflection points where `B''(t)` briefly
-///      dominates `B'(t)·B'(t)` with opposite sign, Newton can
-///      oscillate between endpoints; this fallback keeps the
-///      answer monotone in "closer to cursor".
-///
-/// The returned `perpendicular_offset` is the signed **component
-/// along the path normal** at the returned `t` — `to_cursor ·
-/// normal_at_t(t)`. For a cursor on the curve this is ±0, matching
-/// the Euclidean distance. For a cursor far enough off the
-/// curve that `t` clamped to `0` or `1`, this is only the
-/// perpendicular component at the endpoint — the tangential
-/// component is discarded. That's the right shape for the label-
-/// drag caller (the label sits on the path with a perpendicular
-/// offset; tangential drift past the endpoint just pins `t` at 0
-/// or 1), but callers that need full Euclidean distance from the
-/// path segment should use [`distance_to_path`] instead.
-/// Positive perp matches the normal direction (see `normal_at_t`
-/// for the Y-down orientation note); negative means the cursor is
-/// on the other side.
 // ---- tuning constants for the cubic closest-point search ----
 
 /// Uniform-t sample count for the cubic-Bezier closest-point

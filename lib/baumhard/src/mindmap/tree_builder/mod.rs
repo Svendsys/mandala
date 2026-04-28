@@ -4,20 +4,8 @@
 //! `Tree<GfxElement, GfxMutator>` and exposes per-canvas-role
 //! builders (borders, portals, connections, connection-labels,
 //! edge-handles) that the app crate's scene rebuilders consume.
-//!
-//! Split by role so each file stays focused:
-//! - `node` — `MindNode` → `GlyphArea` projection + the recursive
-//!   child-insertion walker `build_mindmap_tree` drives.
-//! - `border` — framed-node border tree + §B2 mutator-tree builder.
-//! - `portal` — portal-pair markers + §B2 mutator.
-//! - `connection` — glyph-path edges (caps + body glyphs).
-//! - `connection_label` — per-edge label glyphs + hitbox map.
-//! - `edge_handle` — selected-edge handle glyphs (anchors,
-//!   midpoint, control points).
-//!
-//! The `MindMapTree` struct and `build_mindmap_tree` entry point
-//! live in this module; everything else is re-exported from the
-//! sibling files so call-sites keep the pre-split import paths.
+//! `MindMapTree` and `build_mindmap_tree` live here; per-role
+//! builders are re-exported from the sibling files.
 
 use std::collections::HashMap;
 

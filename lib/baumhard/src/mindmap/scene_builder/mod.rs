@@ -4,26 +4,8 @@
 //! of per-element plain-data items (`TextElement`, `BorderElement`,
 //! `ConnectionElement`, `PortalElement`, `ConnectionLabelElement`,
 //! `EdgeHandleElement`) that the renderer walks into cosmic-text
-//! buffers.
-//!
-//! Sharded by role so each file stays focused:
-//! - [`self`] (this file) — element structs, preview wrappers,
-//!   `RenderScene` aggregate, edge-handle glyph constants, the
-//!   public re-export surface.
-//! - `builder` — `build_scene`, `build_scene_with_cache`, and the
-//!   cache-less wrappers. Thin orchestrator; delegates to the
-//!   role modules below.
-//! - `node_pass` — emits `TextElement`s + `BorderElement`s + clip
-//!   AABBs in a single walk over visible nodes.
-//! - `connection` — connection body glyphs (with
-//!   `SceneConnectionCache` fast/slow paths), edge-handle glyphs,
-//!   and the `point_inside_any_node` clip predicate.
-//! - `label` — connection labels with the inline-edit override
-//!   + synthesize-if-empty pass.
-//! - `portal` — two markers per edge with `display_mode = "portal"`.
-//! - `edge_handle` — `build_edge_handles` helper (re-exported
-//!   for external callers that hit-test handles without building
-//!   a full scene).
+//! buffers. Sharded by role so each pass stays focused; this file
+//! owns the element structs and the `RenderScene` aggregate.
 
 use crate::mindmap::border::BorderStyle;
 use crate::mindmap::model::TextRun;

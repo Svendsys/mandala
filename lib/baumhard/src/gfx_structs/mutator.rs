@@ -1,16 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! `GfxMutator` — the top-level mutator variant that rides one node
-//! of a `MutatorTree<GfxMutator>`. The four variants cover single-
-//! target mutations (`Single`), padded alignment slots (`Void`),
-//! control-flow loops (`Instruction` + its
-//! [`Predicate`](crate::gfx_structs::predicate::Predicate) condition),
-//! and batched field updates against one target (`Macro`). This
-//! module also defines the `Mutation` payload enum that `Single`
-//! and `Macro` carry, the `Instruction` control-flow enum that
-//! `Instruction` nodes carry, and the `GlyphTreeEvent` /
-//! `GlyphTreeEventInstance` types that the walker threads through
-//! the tree as a side channel during `apply_to`.
+//! of a `MutatorTree<GfxMutator>`, plus the `Mutation` payload,
+//! `Instruction` control-flow directive, and the `GlyphTreeEvent`
+//! side channel that the walker threads through `apply_to`.
 
 use crate::core::primitives::Applicable;
 use crate::gfx_structs::area::{DeltaGlyphArea, GlyphArea, GlyphAreaCommand};
@@ -45,73 +38,35 @@ pub enum Instruction {
    /// targeting that sidesteps channel semantics entirely, see
    /// [`Instruction::MapChildren`].
    RepeatWhile(Predicate),
-   /// Rotate every descendant that satisfies the predicate around the
-   /// pivot element's position by the given degrees. The `f32` is the
-   /// rotation angle in degrees; the [`Predicate`] selects which
-   /// descendants participate. Currently a stub in the tree walker
-   /// (no-op); the variant exists so the mutator language can be
-   /// extended without breaking serialised trees.
+   /// Rotate every predicate-matching descendant around the pivot
+   /// element's position by `f32` degrees. **Stub**: the tree walker
+   /// currently no-ops this; the slot exists so adding the
+   /// implementation later doesn't break serialised trees.
    RotateWhile(f32, Predicate),
    /// Descend the target tree using per-node subtree AABBs to find
-   /// the deepest node whose own AABB contains the given point.
-   /// Prunes branches whose subtree AABB does not contain the point.
-   /// When the target node is found, the instruction's attached
-   /// mutation (typically a [`Mutation::Event`] carrying a
-   /// [`MouseEventData`]) is applied to it. If no node contains the
-   /// point, the instruction is a no-op.
+   /// the deepest node whose own AABB contains the given point,
+   /// pruning branches whose subtree AABB does not. Applies the
+   /// attached mutation (typically a [`Mutation::Event`] carrying
+   /// [`MouseEventData`]) to that node; no-op if no node contains.
    ///
-   /// This is the tree-walker counterpart of
-   /// [`Tree::descendant_at`](crate::gfx_structs::tree::Tree::descendant_at):
-   /// where `descendant_at` returns a `NodeId`, `SpatialDescend`
-   /// delivers a mutation to the hit node through the mutator
-   /// pipeline.
+   /// Bypasses channel alignment — like [`MapChildren`] but routing
+   /// on spatial hit-test rather than sibling position. Tree-walker
+   /// counterpart of [`Tree::descendant_at`](crate::gfx_structs::tree::Tree::descendant_at).
    ///
-   /// Unlike [`RepeatWhile`](Instruction::RepeatWhile), spatial
-   /// descent bypasses channel alignment — the mutation is delivered
-   /// to whichever node the point lands on, regardless of its
-   /// channel. This is intentional: spatial routing targets the
-   /// visually correct node, not a structurally aligned one.
-   /// [`MapChildren`](Instruction::MapChildren) is the other
-   /// channel-bypassing variant — distinguished by pairing strictly
-   /// on sibling position rather than spatial hit-test.
-   ///
-   /// Costs: O(branching_factor × depth) when subtrees are spatially
-   /// disjoint; O(n) worst case with fully overlapping subtrees.
+   /// Cost: O(branching × depth) for spatially disjoint subtrees,
+   /// O(n) worst case with fully overlapping subtrees.
    SpatialDescend(OrderedVec2),
-   /// Pair the mutator-node's direct children with the target-node's
-   /// direct children **strictly by sibling position** (zip), ignoring
-   /// channels on the paired children. For each pair up to
-   /// `min(mutator_children_len, target_children_len)`, the walker
-   /// recursively dispatches via
-   /// [`walk_tree_from`](crate::gfx_structs::tree_walker::walk_tree_from).
-   /// Excess children on either side are silently skipped (one
-   /// `debug!` line at termination).
+   /// Pair mutator children with target children **by sibling
+   /// position** (zip), ignoring channels on the paired children.
+   /// The opt-in alternative to [`RepeatWhile`]'s channel-broadcast
+   /// semantics, used when each child needs a distinct mutation
+   /// (per-index layout). Excess children on either side are
+   /// dropped with one `debug!` at termination. The attached
+   /// `mutation` field is applied to the current target before the
+   /// body runs, same as [`RepeatWhile`]. Composes with the AST
+   /// `Repeat` wrapper for runtime-count expansion.
    ///
-   /// When to reach for this variant: the default channel-align path
-   /// (via `tree_walker::align_child_walks` — private — see also
-   /// [`RepeatWhile`](Instruction::RepeatWhile)) treats the
-   /// `channel` field as a broadcast-group tag — one mutator on
-   /// channel N hits every target child on channel N. That's correct
-   /// for groups but wrong for per-index targeting where each child
-   /// needs a distinct mutation (e.g. laying out the `i`-th child at
-   /// position `i`). `MapChildren` is the opt-in alternative that
-   /// pairs strictly on sibling position, independent of channel.
-   ///
-   /// The instruction's own attached `mutation` field (non-`None`) is
-   /// applied to the current target via the standard pre-dispatch at
-   /// the top of
-   /// [`walk_tree_from`](crate::gfx_structs::tree_walker::walk_tree_from)
-   /// — same precedent as [`RepeatWhile`](Instruction::RepeatWhile).
-   ///
-   /// Composes with the AST-level `Repeat` wrapper for runtime-count
-   /// expansion: `Instruction(MapChildren) { children: [Repeat { ... }] }`
-   /// expands at build time into N concrete Single children, which
-   /// `MapChildren` then zips against N target children. This is the
-   /// declarative path size-aware layouts (flower-like arrangements,
-   /// cascading trees) use when a `SectionContext` impl supplies
-   /// per-index field values.
-   ///
-   /// Cost: O(min(mutator_children_len, target_children_len)), no
+   /// Cost: O(min(mutator_children, target_children)); no
    /// allocation inside the zip.
    MapChildren,
 }
@@ -154,8 +109,6 @@ pub struct GlyphTreeEventInstance {
 }
 
 impl GlyphTreeEventInstance {
-   /// Create a new event instance with the given type and timestamp.
-   /// No allocation; all fields are stack-sized.
    pub fn new(event_type: GlyphTreeEvent, event_time_millis: usize) -> Self {
       GlyphTreeEventInstance {
          event_type,
@@ -182,8 +135,6 @@ pub struct MouseEventData {
 }
 
 impl MouseEventData {
-    /// Create a new payload from raw `f32` coordinates.
-    /// O(1), no allocation.
     pub fn new(x: f32, y: f32) -> Self {
         Self {
             x: OrderedFloat(x),
@@ -212,8 +163,6 @@ pub enum GlyphTreeEvent {
    /// A mutation has been performed
    /// This allows EventSubscribers respond to mutations
    MutationEvent,
-   // The recipient must call the provided function with its info
-   //CallbackEvent(Box<dyn Fn(GlyphNodeInfo)>), impl only if needed
    /// This is used for testing mainly
    NoopEvent(usize),
 }
@@ -325,14 +274,12 @@ impl Mutation {
    /// fields, or O(1) for commands and events.
    pub fn apply_to(&self, target: &mut GfxElement) {
       match self {
-         // If this is an event, skip everything else and apply it
          Event(event) => {
             target.accept_event(event);
             return;
          }
          _ => {}
       }
-      // Otherwise apply normally
       match target {
          GfxElement::GlyphArea { glyph_area, .. } => {
             self.apply_to_area(glyph_area);

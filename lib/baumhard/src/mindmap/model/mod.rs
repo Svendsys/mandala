@@ -1,32 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Mindmap data model — the types the loader deserializes from
-//! `.mindmap.json` and the document layer mutates. Split across four
-//! leaf modules so each concern stays skimmable:
-//!
-//! - `canvas` — `Canvas`: the per-map rendering context.
-//! - `node` — `MindNode` and everything that travels with it
-//!   (`NodeStyle`, `GlyphBorderConfig`, `ColorSchema`, ...).
-//! - `edge` — `MindEdge`, `GlyphConnectionConfig`, `ControlPoint`,
-//!   plus portal-mode helpers (portals are now a `display_mode` on
-//!   edges rather than a separate entity).
-//! - `palette` — named colour palettes referenced by nodes'
-//!   `color_schema.palette` field.
-//!
-//! This module owns the top-level `MindMap` struct plus its impl
-//! (root / ancestry / descendant queries), and the model-level tests.
+//! Mindmap data model — what the loader deserializes from
+//! `.mindmap.json` and the document layer mutates. This module
+//! owns the top-level `MindMap` struct plus its tree-shape queries
+//! (root / ancestry / descendants).
 
-/// `Canvas` — per-map rendering context: background, default
-/// border/connection styles, theme variables.
 pub mod canvas;
-/// `MindEdge`, `ControlPoint`, `GlyphConnectionConfig`, plus
-/// portal-mode edge helpers (portals are a `display_mode` on edges).
 pub mod edge;
-/// `MindNode` and its travelling-companion structs (position,
-/// size, text runs, node style, layout, colour schema, border).
 pub mod node;
-/// Named colour palettes referenced by nodes' `color_schema.palette`
-/// field.
 pub mod palette;
 
 pub use canvas::Canvas;
@@ -95,36 +76,15 @@ impl MindMap {
         }
     }
 
-    /// Yield every node paired with its canonical "location string"
-    /// (the node's id) for downstream diagnostic emission. The
-    /// location-string contract is part of the data-model surface —
-    /// validators (loader-time and `maptool verify`) format
-    /// violations as `(category, location, message)` triples and
-    /// every node-keyed violation needs the same stamp.
-    ///
-    /// Iteration order: HashMap-iteration order. Non-deterministic
-    /// across runs; consumers that need a stable order sort the
-    /// emitted violations on their end (the verifier already does).
-    ///
-    /// Cost: one `String` clone per node for the location stamp.
-    /// Equivalent to the hand-rolled `for node in map.nodes.values()
-    /// { ... node.id.clone() ... }` shape every per-checker
-    /// previously open-coded.
+    /// Every node paired with its canonical location stamp (the
+    /// node's id). HashMap iteration order; consumers that need
+    /// stability sort downstream. Cost: one `String` clone per node.
     pub fn node_locations(&self) -> impl Iterator<Item = (String, &MindNode)> {
         self.nodes.values().map(|n| (n.id.clone(), n))
     }
 
-    /// Yield every edge paired with its canonical `"edge[<idx>]"`
-    /// location string. The bracket-index format is part of the
-    /// data-model surface — the maptool `verify` violations and any
-    /// future loader-time validators emit the same stamp so a user
-    /// can grep across both.
-    ///
-    /// Iteration order: edge-vector order, stable across calls
-    /// against the same `MindMap`.
-    ///
-    /// Cost: one `format!` allocation per edge (`"edge[0]"`,
-    /// `"edge[1]"`, ...).
+    /// Every edge paired with its `"edge[<idx>]"` location stamp,
+    /// in edge-vector order. Cost: one `format!` per edge.
     pub fn edge_locations(&self) -> impl Iterator<Item = (String, &MindEdge)> {
         self.edges
             .iter()
