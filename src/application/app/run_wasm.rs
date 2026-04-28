@@ -392,68 +392,90 @@ app.event_loop.run(move |event, _window_target| {
                     input.modifiers.alt_key(),
                 )
             });
-            match action {
-                Some(Action::Undo) => {
-                    if input.document.undo() {
-                        // Mirror native: positions restored in place invalidate
-                        // cached connection samples.
-                        input.scene_cache.clear();
-                        rebuild_all(&input.document, &mut input.mindmap_tree, &mut input.app_scene, renderer, &mut input.scene_cache);
-                    }
-                }
-                Some(Action::CreateOrphanNode) => {
-                    let canvas_pos = renderer.screen_to_canvas(
-                        input.cursor_pos.0 as f32,
-                        input.cursor_pos.1 as f32,
+            // WASM dispatch ladder. The structure mirrors native's
+            // `dispatch_action`, but without the shared funnel —
+            // Track A in WASM_CONVERGENCE.md is the path to fold
+            // these arms into `dispatch::dispatch_action`. Until
+            // then, the `Action::wasm_compatibility()` API is the
+            // single source of truth for what works in the browser:
+            // a `NativeOnly` Action takes the catch-all `_ =>` arm
+            // below with a debug log, no special-casing per
+            // variant. Adding a new Action variant requires
+            // classifying it via `wasm_compatibility` (forced by
+            // the `#[non_exhaustive]` enum + exhaustive match in
+            // `action.rs`), and only the `Compatible` ones need an
+            // arm here.
+            //
+            // CancelMode is the lone exception — it's `NativeOnly`
+            // because it touches `AppMode`, but on WASM (which has
+            // no AppMode) the keystroke still has a meaningful
+            // side-effect: clearing `last_click` so a post-Esc
+            // click isn't retroactively paired with a pre-Esc one.
+            // Handled separately, before the compatibility filter.
+            if matches!(action, Some(Action::CancelMode)) {
+                input.last_click = None;
+            } else if let Some(a) = action {
+                use crate::application::keybinds::WasmCompatibility;
+                if a.wasm_compatibility() == WasmCompatibility::NativeOnly {
+                    log::debug!(
+                        "WASM: action {:?} is NativeOnly; deferred (see WASM_CONVERGENCE.md)",
+                        a
                     );
-                    input.document.create_orphan_and_select(canvas_pos);
-                    rebuild_all(&input.document, &mut input.mindmap_tree, &mut input.app_scene, renderer, &mut input.scene_cache);
-                }
-                Some(Action::OrphanSelection) => {
-                    if input.document.apply_orphan_selection_with_undo() {
-                        rebuild_all(&input.document, &mut input.mindmap_tree, &mut input.app_scene, renderer, &mut input.scene_cache);
+                } else {
+                    match a {
+                        Action::Undo => {
+                            if input.document.undo() {
+                                // Mirror native: positions restored in place invalidate
+                                // cached connection samples.
+                                input.scene_cache.clear();
+                                rebuild_all(&input.document, &mut input.mindmap_tree, &mut input.app_scene, renderer, &mut input.scene_cache);
+                            }
+                        }
+                        Action::CreateOrphanNode => {
+                            let canvas_pos = renderer.screen_to_canvas(
+                                input.cursor_pos.0 as f32,
+                                input.cursor_pos.1 as f32,
+                            );
+                            input.document.create_orphan_and_select(canvas_pos);
+                            rebuild_all(&input.document, &mut input.mindmap_tree, &mut input.app_scene, renderer, &mut input.scene_cache);
+                        }
+                        Action::OrphanSelection => {
+                            if input.document.apply_orphan_selection_with_undo() {
+                                rebuild_all(&input.document, &mut input.mindmap_tree, &mut input.app_scene, renderer, &mut input.scene_cache);
+                            }
+                        }
+                        Action::DeleteSelection => {
+                            if input.document.apply_delete_selection() {
+                                rebuild_all(&input.document, &mut input.mindmap_tree, &mut input.app_scene, renderer, &mut input.scene_cache);
+                            }
+                        }
+                        a @ (Action::EditSelection | Action::EditSelectionClean) => {
+                            let clean = matches!(a, Action::EditSelectionClean);
+                            if let SelectionState::Single(id) = &input.document.selection {
+                                let nid = id.clone();
+                                open_text_edit(
+                                    &nid, clean,
+                                    &mut input.document,
+                                    &mut input.text_edit_state,
+                                    &mut input.mindmap_tree,
+                                    &mut input.app_scene,
+                                    renderer,
+                                );
+                                suppress_for_events.set(input.text_edit_state.is_open());
+                            }
+                        }
+                        // Other Compatible Actions don't have WASM
+                        // arms yet — Track A in WASM_CONVERGENCE.md
+                        // is the path to add them by routing
+                        // through `dispatch::dispatch_action`.
+                        a => {
+                            log::debug!(
+                                "WASM: action {:?} is Compatible but no WASM arm yet (Track A pending)",
+                                a
+                            );
+                        }
                     }
                 }
-                Some(Action::DeleteSelection) => {
-                    if input.document.apply_delete_selection() {
-                        rebuild_all(&input.document, &mut input.mindmap_tree, &mut input.app_scene, renderer, &mut input.scene_cache);
-                    }
-                }
-                Some(a @ (Action::EditSelection | Action::EditSelectionClean)) => {
-                    let clean = matches!(a, Action::EditSelectionClean);
-                    if let SelectionState::Single(id) = &input.document.selection {
-                        let nid = id.clone();
-                        open_text_edit(
-                            &nid, clean,
-                            &mut input.document,
-                            &mut input.text_edit_state,
-                            &mut input.mindmap_tree,
-                            &mut input.app_scene,
-                            renderer,
-                        );
-                        suppress_for_events.set(input.text_edit_state.is_open());
-                    }
-                }
-                Some(Action::CancelMode) => {
-                    // No AppMode on WASM yet; clear any pending click
-                    // so a post-Esc click isn't retroactively paired
-                    // with a pre-Esc click.
-                    input.last_click = None;
-                }
-                Some(a @ (Action::EnterReparentMode | Action::EnterConnectMode)) => {
-                    // AppMode state is still native-only; these
-                    // actions are deferred on WASM (would require
-                    // de-gating AppMode, hovered_node, and the
-                    // reparent/connect click handlers).
-                    log::debug!("WASM: mode-based action {:?} deferred", a);
-                }
-                Some(a) => {
-                    // Actions whose backing surface is native-only
-                    // (console, filesystem-backed save). On WASM
-                    // they're acknowledged in the log and ignored.
-                    log::debug!("WASM: action {:?} not supported", a);
-                }
-                None => {}
             }
         }
 

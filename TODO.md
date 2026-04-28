@@ -21,35 +21,25 @@ Phase 9 is partially done: WASM's empty-canvas double-click now also
 honours the `CreateOrphanNodeAndEdit` opt-in gate (matches native).
 The full WASM convergence below is still outstanding.
 
-- **Phase 9 — full WASM convergence.** `run_wasm.rs` still has its own
-  partial copy of the keyboard `match action` block at lines 385-457
-  and its own ClickHit-routing block at 523-635. WASM uses a
-  different `InputState` struct from native's `InputHandlerContext`
-  so unifying them needs a small refactor of the WASM input
-  bookkeeping (`AppMode`, `LastClick` shapes) before `dispatch_action`
-  can serve both targets. Until that lands, WASM users get the
-  off-by-default empty-canvas behaviour but not the full mouse-
-  gesture rebinding surface. **Macros are also native-only** for the
-  same reason: `MacroRegistry` is built once on `InitState` in
-  `run_native_init::build`, and WASM doesn't construct one. Plus
-  there's no `~/.config` filesystem in a browser, so the loader
-  would need a `?macros=<json>` / `localStorage` shape parallel to
-  the keybind loader before shipping.
-- **Node-inline macro tier.** App, User, and Map tiers ship; Inline
-  (per-node) is still deferred. The privilege gate is in place
-  (Map already validates it empirically), so the remaining work is
-  the model field + loader hookup:
-  1. Add `MindNode.inline_macros: Vec<serde_json::Value>` field on
-     the model (same opaque-JSON shape as `MindMap.macros` for the
-     same circular-dep reason).
-  2. Extend `loader::rebuild_map_macros` (or add a sibling
-     `rebuild_inline_macros`) that walks every node and inserts
-     entries at the `MacroSource::Inline` tier — call from the
-     same site as Map-tier rebuild (initial doc load + document-
-     replace path).
-  3. Tests mirroring the Map-tier ones: insert at Inline tier,
-     verify the privilege gate rejects ConsoleLine, verify
-     document-replace re-tiers correctly.
+- **WASM convergence — full porting.** The foundation is in place:
+  `Action::wasm_compatibility()` classifies every variant as
+  `Compatible` or `NativeOnly`, the WASM keyboard handler filters on
+  the classification, and `WASM_CONVERGENCE.md` documents the
+  three porting tracks (port a NativeOnly Action, port the macro
+  registry, unify the bundle/context type). Pick a track and walk
+  it. The doc has the step-by-step recipe; the
+  `Action::wasm_compatibility` rustdoc has the classification rules
+  for new variants. WASM-side macro registry is the highest-value
+  next step (Track B) because it unblocks every `Compatible`
+  Action a user has bound to a macro id.
+- **Shadow-stacked registry** *(reviewer follow-up)*. Today
+  higher-tier macros DISPLACE lower-tier ones with the same id
+  permanently within the session — so opening a Map-tier macro
+  with the same id as a User-tier macro and then closing the
+  document leaves the User entry gone. Documented in
+  `format/macros.md` with namespacing recommendation, but a
+  proper fix would store entries per-tier and resolve at lookup
+  time. Substantial registry rewrite.
 - **Parameterised console verbs as Actions.** `open <path>`,
   `save-as <path>`, `mutation apply <id>`, kv-shaped
   `border` / `edge` / `color` / `font` / `zoom` / `spacing` setters

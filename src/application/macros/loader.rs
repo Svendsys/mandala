@@ -96,8 +96,8 @@ pub fn parse_map_macros(values: &[serde_json::Value]) -> Vec<Macro> {
 /// 1. `run_native_init::build` after the initial document load.
 /// 2. `execute_console_line` when `replace_document` swaps the
 ///    document via `open` / `new`.
-/// 3. *(future)* the WASM document-load path when Phase-9
-///    convergence lands.
+/// 3. *(future)* the WASM document-load path when Track A in
+///    `WASM_CONVERGENCE.md` lands.
 pub fn rebuild_map_macros(
     registry: &mut super::MacroRegistry,
     doc: &crate::application::document::MindMapDocument,
@@ -108,6 +108,59 @@ pub fn rebuild_map_macros(
         log::info!("macros: loaded {} Map-tier macro(s)", map_macros.len());
     }
     registry.extend_with_tier(map_macros, super::MacroSource::Map);
+}
+
+/// Walk every node's `inline_macros` and parse them into typed
+/// `Macro`s. Per-entry parse failures log `warn!` and skip — same
+/// resilience posture as `parse_map_macros`. Tier assignment
+/// (`MacroSource::Inline`) happens at the call site.
+///
+/// Inline macros are scoped to the node they live on, but the
+/// registry is flat (id-keyed). Authors should namespace inline
+/// macro ids to avoid collisions across nodes — `format/macros.md`
+/// covers this and recommends `node-id.action` patterns.
+pub fn parse_inline_macros(
+    doc: &crate::application::document::MindMapDocument,
+) -> Vec<super::Macro> {
+    let mut out = Vec::new();
+    for (node_id, node) in &doc.mindmap.nodes {
+        for (idx, v) in node.inline_macros.iter().enumerate() {
+            match serde_json::from_value::<super::Macro>(v.clone()) {
+                Ok(m) => out.push(m),
+                Err(e) => {
+                    let id_hint = v
+                        .get("id")
+                        .and_then(|s| s.as_str())
+                        .unwrap_or("<no id>");
+                    log::warn!(
+                        "macros: Inline-tier entry on node '{}' [{}] (id={}) failed to parse: {} (skipping)",
+                        node_id, idx, id_hint, e
+                    );
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Refresh the registry's `Inline` tier from every node's
+/// `inline_macros` field. Called from the same two sites as
+/// `rebuild_map_macros` so the two tiers stay coherent across
+/// document loads. Inline tier is the highest precedence — it
+/// overrides Map, User, and App on id collisions.
+pub fn rebuild_inline_macros(
+    registry: &mut super::MacroRegistry,
+    doc: &crate::application::document::MindMapDocument,
+) {
+    registry.clear_tier(super::MacroSource::Inline);
+    let inline_macros = parse_inline_macros(doc);
+    if !inline_macros.is_empty() {
+        log::info!(
+            "macros: loaded {} Inline-tier macro(s)",
+            inline_macros.len()
+        );
+    }
+    registry.extend_with_tier(inline_macros, super::MacroSource::Inline);
 }
 
 /// Load the user-layer macros. Tier: `MacroSource::User`, assigned
@@ -183,6 +236,61 @@ mod tests {
     #[test]
     fn parse_map_macros_empty_input_returns_empty() {
         let parsed = parse_map_macros(&[]);
+        assert!(parsed.is_empty());
+    }
+
+    /// `parse_inline_macros` walks every node's `inline_macros`
+    /// and returns a flat list. Per-entry parse failures log
+    /// `warn!` and skip without breaking the rest of the parse —
+    /// same resilience contract as `parse_map_macros`.
+    #[test]
+    fn parse_inline_macros_walks_all_nodes_and_skips_malformed() {
+        use crate::application::document::tests_common::load_test_doc;
+        let mut doc = load_test_doc();
+
+        // Pick the first two nodes and stuff inline_macros onto
+        // them — one valid, one malformed, one valid.
+        let mut node_ids: Vec<String> =
+            doc.mindmap.nodes.keys().cloned().collect();
+        node_ids.sort(); // deterministic ordering for the test
+        let n0 = node_ids[0].clone();
+        let n1 = node_ids[1].clone();
+
+        if let Some(node) = doc.mindmap.nodes.get_mut(&n0) {
+            node.inline_macros = vec![
+                json!({
+                    "id": "node0-action",
+                    "steps": [{"kind": "Action", "action": "Undo"}]
+                }),
+                json!({
+                    "id": "node0-malformed"
+                    // missing required `steps`
+                }),
+            ];
+        }
+        if let Some(node) = doc.mindmap.nodes.get_mut(&n1) {
+            node.inline_macros = vec![json!({
+                "id": "node1-action",
+                "steps": [{"kind": "Action", "action": "ZoomReset"}]
+            })];
+        }
+
+        let parsed = parse_inline_macros(&doc);
+        // Two valid entries (one from each node), one malformed
+        // skipped.
+        assert_eq!(parsed.len(), 2);
+        let ids: std::collections::HashSet<&str> =
+            parsed.iter().map(|m| m.id.as_str()).collect();
+        assert!(ids.contains("node0-action"));
+        assert!(ids.contains("node1-action"));
+        assert!(!ids.contains("node0-malformed"));
+    }
+
+    #[test]
+    fn parse_inline_macros_empty_when_no_node_has_macros() {
+        use crate::application::document::tests_common::load_test_doc;
+        let doc = load_test_doc();
+        let parsed = parse_inline_macros(&doc);
         assert!(parsed.is_empty());
     }
 }

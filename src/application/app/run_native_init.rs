@@ -134,11 +134,14 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
             user_count
         );
     }
-    // Map-tier macros from the initially-loaded document. The
-    // document-replace path in `execute_console_line` calls the
-    // same helper to refresh the Map tier on `open` / `new`.
+    // Map and Inline tier macros from the initially-loaded
+    // document. The document-replace path in `execute_console_line`
+    // calls the same helpers to refresh both tiers on `open` /
+    // `new`. Inline tier is loaded after Map so its higher
+    // precedence wins on id collision.
     if let Some(d) = document.as_ref() {
         crate::application::macros::loader::rebuild_map_macros(&mut macros, d);
+        crate::application::macros::loader::rebuild_inline_macros(&mut macros, d);
     }
 
     InitState {

@@ -268,6 +268,7 @@ fn make_node(id: String, parent_id: Option<String>, x: f64, y: f64, depth: usize
         channel: 0,
         trigger_bindings: Vec::new(),
         inline_mutations: Vec::new(),
+        inline_macros: Vec::new(),
         min_zoom_to_render: None,
         max_zoom_to_render: None,
     }

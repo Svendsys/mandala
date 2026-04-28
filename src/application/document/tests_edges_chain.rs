@@ -99,6 +99,7 @@ use baumhard::util::grapheme_chad::count_grapheme_clusters;
             channel: 0,
             trigger_bindings: Vec::new(),
             inline_mutations: Vec::new(),
+            inline_macros: Vec::new(),
             min_zoom_to_render: None,
             max_zoom_to_render: None,
         };

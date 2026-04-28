@@ -96,6 +96,7 @@ pub(crate) fn synthetic_node_full(
         channel: 0,
         trigger_bindings: vec![],
         inline_mutations: vec![],
+        inline_macros: Vec::new(),
         min_zoom_to_render: None,
         max_zoom_to_render: None,
     }

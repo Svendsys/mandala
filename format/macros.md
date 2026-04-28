@@ -40,12 +40,16 @@ precedence (later writers override earlier ones with the same `id`):
    `MacroSource::User`.
 3. **Map-inline** — `MindMap.macros` on the loaded document
    (initial load + every `open` / `new` console verb). On WASM
-   this tier is also not yet wired — opening a `.mindmap.json`
+   this tier is not yet wired — opening a `.mindmap.json`
    in the browser silently ignores its `macros` array. Tier:
    `MacroSource::Map`.
-4. **Node-inline** *(planned, not yet wired)* — `MindNode.inline_macros`
-   on individual nodes. Tier: `MacroSource::Inline`. The field name
-   is provisional.
+4. **Node-inline** — `MindNode.inline_macros` on individual nodes.
+   Loaded alongside Map tier (same trigger sites). Highest
+   precedence — overrides Map / User / App on id collisions.
+   Authors should namespace ids (e.g. `"node-id.action"`) to
+   avoid collisions across nodes since the registry is
+   id-keyed flat. Tier: `MacroSource::Inline`. WASM also not
+   yet wired.
 
 The `MacroSource` tier is **loader-pinned** — assigned at the
 loader call site, never read from the on-disk content. A user

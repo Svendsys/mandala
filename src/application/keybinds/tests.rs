@@ -260,6 +260,134 @@ fn test_gesture_key_name_matches_parser_token() {
     }
 }
 
+// ─── WASM-compatibility classification (locks the API surface) ──
+
+#[test]
+fn test_wasm_compatibility_navigation_actions_are_compatible() {
+    // Navigation / view-state Actions only touch the renderer +
+    // document, both of which exist on both targets. If a contributor
+    // ever flips one of these to `NativeOnly`, this test fails and
+    // the WASM port loses functionality silently.
+    use crate::application::keybinds::WasmCompatibility::Compatible;
+    for a in [
+        Action::ZoomIn,
+        Action::ZoomOut,
+        Action::ZoomReset,
+        Action::ZoomFit,
+        Action::PanCameraNorth,
+        Action::PanCameraSouth,
+        Action::PanCameraEast,
+        Action::PanCameraWest,
+        Action::JumpToRoot,
+        Action::CenterOnSelection,
+        Action::ToggleFps,
+        Action::ToggleFpsDebug,
+    ] {
+        assert_eq!(a.wasm_compatibility(), Compatible, "{:?} should be Compatible", a);
+    }
+}
+
+#[test]
+fn test_wasm_compatibility_selection_actions_are_compatible() {
+    use crate::application::keybinds::WasmCompatibility::Compatible;
+    for a in [
+        Action::SelectAll,
+        Action::DeselectAll,
+        Action::InvertSelection,
+        Action::SelectParent,
+        Action::SelectChild,
+        Action::SelectNextSibling,
+        Action::SelectPrevSibling,
+    ] {
+        assert_eq!(a.wasm_compatibility(), Compatible, "{:?} should be Compatible", a);
+    }
+}
+
+#[test]
+fn test_wasm_compatibility_console_modals_are_native_only() {
+    use crate::application::keybinds::WasmCompatibility::NativeOnly;
+    // A representative sample — the full list lives in
+    // action.rs::wasm_compatibility. The test pins the contract:
+    // these Actions touch native-only `console_state`, so flipping
+    // them to Compatible without porting the modal would crash WASM.
+    for a in [
+        Action::OpenConsole,
+        Action::ConsoleClose,
+        Action::ConsoleSubmit,
+        Action::ConsoleHistoryUp,
+        Action::ConsoleHistoryDown,
+        Action::ConsoleScrollUp,
+    ] {
+        assert_eq!(a.wasm_compatibility(), NativeOnly, "{:?} should be NativeOnly", a);
+    }
+}
+
+#[test]
+fn test_wasm_compatibility_modal_actions_are_native_only() {
+    use crate::application::keybinds::WasmCompatibility::NativeOnly;
+    for a in [
+        Action::EnterReparentMode,
+        Action::EnterConnectMode,
+        Action::CancelMode,
+        Action::PickerCancel,
+        Action::PickerCommit,
+        Action::LabelEditCancel,
+        Action::LabelEditCommit,
+        Action::LabelEditOnSelection,
+        Action::OpenColorPicker,
+        Action::CloseColorPicker,
+        Action::SaveDocument,
+        Action::PanCanvas,
+        Action::NewDocument,
+    ] {
+        assert_eq!(a.wasm_compatibility(), NativeOnly, "{:?} should be NativeOnly", a);
+    }
+}
+
+#[test]
+fn test_wasm_compatibility_text_edit_primitives_are_compatible() {
+    // text_edit_state exists on both targets, so the cursor /
+    // delete primitives all work in the browser today.
+    use crate::application::keybinds::WasmCompatibility::Compatible;
+    for a in [
+        Action::TextEditCancel,
+        Action::TextEditCommit,
+        Action::TextEditCursorLeft,
+        Action::TextEditCursorRight,
+        Action::TextEditCursorUp,
+        Action::TextEditCursorDown,
+        Action::TextEditCursorHome,
+        Action::TextEditCursorEnd,
+        Action::TextEditWordLeft,
+        Action::TextEditWordRight,
+        Action::TextEditDeleteBack,
+        Action::TextEditDeleteForward,
+        Action::TextEditDeleteWordBack,
+        Action::TextEditDeleteWordForward,
+    ] {
+        assert_eq!(a.wasm_compatibility(), Compatible, "{:?} should be Compatible", a);
+    }
+}
+
+#[test]
+fn test_wasm_compatibility_label_edit_primitives_are_native_only() {
+    // The inline label / portal-text editors only exist on native.
+    // (The node text editor is shared and tested above as
+    // Compatible.) When WASM gains the inline label editor, flip
+    // these to Compatible.
+    use crate::application::keybinds::WasmCompatibility::NativeOnly;
+    for a in [
+        Action::LabelEditCursorLeft,
+        Action::LabelEditCursorRight,
+        Action::LabelEditCursorHome,
+        Action::LabelEditCursorEnd,
+        Action::LabelEditDeleteBack,
+        Action::LabelEditDeleteForward,
+    ] {
+        assert_eq!(a.wasm_compatibility(), NativeOnly, "{:?} should be NativeOnly", a);
+    }
+}
+
 // ─── Mouse-gesture default-binding regression guards ───────────
 // These tests pin the user-facing contract for mouse-gesture
 // defaults. A future contributor flipping a default array (or

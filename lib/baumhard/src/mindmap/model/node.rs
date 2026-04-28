@@ -69,6 +69,19 @@ pub struct MindNode {
     /// Inline custom mutations defined on this node (not shared with other nodes).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inline_mutations: Vec<CustomMutation>,
+    /// Per-node macro definitions, opaque to baumhard. Loaded into
+    /// the application-side `MacroRegistry` at the `Inline` tier
+    /// (highest precedence — overrides Map / User / App on
+    /// id collision). Stored as untyped JSON values for the same
+    /// reason as `MindMap.macros`: the typed `Macro` lives in the
+    /// application crate.
+    ///
+    /// Privilege model: Inline-tier macros — same as Map-tier —
+    /// cannot run `ConsoleLine` or destructive Actions. The
+    /// privilege gate is enforced at dispatch time in the
+    /// application's `dispatch_macro`. See `format/macros.md`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inline_macros: Vec<serde_json::Value>,
     /// Lower bound on `camera.zoom` at which this node (and its
     /// glyph border, which inherits from the node) renders.
     /// `None` = unbounded below. Mirrors the

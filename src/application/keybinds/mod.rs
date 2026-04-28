@@ -23,7 +23,7 @@ mod platform_web;
 #[cfg(test)]
 mod tests;
 
-pub use action::Action;
+pub use action::{Action, WasmCompatibility};
 // Public surface; the lint can't see in-crate test consumers without --tests.
 #[allow(unused_imports)]
 pub use bind::{gesture_key_name, key_to_name, normalize_key_name, KeyBind, MouseGesture};

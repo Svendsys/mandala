@@ -85,6 +85,7 @@ Complete field reference for every type in `.mindmap.json`.
 | `channel` | integer | Mutation channel — see [channels.md](./channels.md); defaults to 0 |
 | `trigger_bindings` | array | Event→mutation bindings attached to this node |
 | `inline_mutations` | array | Node-local custom mutation definitions |
+| `inline_macros` | array | Node-local macro definitions (`Inline` privilege tier — highest precedence). Same opaque-JSON shape and privilege model as `MindMap.macros`. Full reference: [`macros.md`](./macros.md). |
 | `min_zoom_to_render` | number\|null | Lower bound on `camera.zoom` at which this node (and its glyph border) renders — see [zoom-bounds.md](./zoom-bounds.md). Inclusive; absent / `null` = unbounded below |
 | `max_zoom_to_render` | number\|null | Upper bound on `camera.zoom` at which this node renders. Inclusive; absent / `null` = unbounded above |
 
