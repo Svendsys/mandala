@@ -412,12 +412,5 @@ fn stage_corner_or_err(
 }
 
 fn parse_pt(key: &str, value: &str) -> Result<f32, String> {
-    match value.parse::<f32>() {
-        Ok(pt) if pt.is_finite() && pt > 0.0 => Ok(pt),
-        Ok(pt) => Err(format!(
-            "{}='{}' must be positive and finite; got {}",
-            key, value, pt
-        )),
-        Err(_) => Err(format!("{}='{}' is not a number", key, value)),
-    }
+    crate::application::console::helpers::parse_finite_pt(key, value)
 }

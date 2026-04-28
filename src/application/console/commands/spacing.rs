@@ -6,6 +6,7 @@
 
 use super::Command;
 use crate::application::console::completion::{prefix_filter, Completion, CompletionContext, CompletionState};
+use crate::application::console::helpers::require_edge_or_portal;
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::edge_selected;
 use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
@@ -45,9 +46,9 @@ fn complete_spacing(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Compl
 }
 
 fn execute_spacing(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
-    let er = match eff.document.selection.selected_edge_or_portal_edge() {
-        Some(e) => e,
-        None => return ExecResult::err("no edge selected"),
+    let er = match require_edge_or_portal(eff) {
+        Ok(e) => e,
+        Err(r) => return r,
     };
     let v = match args.kv("value") {
         Some(v) => v,

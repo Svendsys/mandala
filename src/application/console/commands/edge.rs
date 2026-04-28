@@ -25,6 +25,9 @@
 use super::Command;
 use crate::application::console::completion::{prefix_filter, Completion, CompletionContext, CompletionState};
 use crate::application::console::constants::{EDGE_TYPE_CROSS_LINK, EDGE_TYPE_PARENT_CHILD};
+use crate::application::console::helpers::{
+    collect_kvs_or_usage, require_edge_or_portal, ApplyTally,
+};
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::edge_or_portal_label_selected;
 use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
@@ -87,15 +90,13 @@ fn complete_edge(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completi
 }
 
 fn execute_edge(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
-    let kvs: Vec<(String, String)> = args
-        .kvs()
-        .map(|(k, v)| (k.to_string(), v.to_string()))
-        .collect();
-    if kvs.is_empty() {
-        return ExecResult::err(
-            "usage: edge type=<...>   |   edge display_mode=<...>   |   edge reset=<straight|curve|style|position>",
-        );
-    }
+    let kvs = match collect_kvs_or_usage(
+        args,
+        "usage: edge type=<...>   |   edge display_mode=<...>   |   edge reset=<straight|curve|style|position>",
+    ) {
+        Ok(k) => k,
+        Err(r) => return r,
+    };
 
     // All kv operations target the currently-selected edge. A
     // portal-label selection resolves to its owning edge, so
@@ -104,70 +105,49 @@ fn execute_edge(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     // ability to un-portal an edge they just put into portal
     // mode (the click-to-select path only yields `PortalLabel`
     // once an edge is in portal mode).
-    let er = match eff.document.selection.selected_edge_or_portal_edge() {
-        Some(e) => e,
-        None => return ExecResult::err("no edge selected"),
+    let er = match require_edge_or_portal(eff) {
+        Ok(e) => e,
+        Err(r) => return r,
     };
 
-    let mut messages: Vec<String> = Vec::new();
-    let mut any_applied = false;
+    let mut tally = ApplyTally::new();
 
     for (k, v) in kvs {
         match k.as_str() {
             "type" => {
                 if !EDGE_TYPES.iter().any(|t| *t == v) {
-                    messages.push(format!(
+                    tally.note_error(format!(
                         "type '{}' must be cross_link or parent_child",
                         v
                     ));
                     continue;
                 }
                 let changed = eff.document.set_edge_type(&er, &v);
-                if changed {
-                    any_applied = true;
-                } else {
-                    messages.push(format!("edge already of type {}", v));
-                }
+                tally.note(changed, || format!("edge already of type {}", v));
             }
             "display_mode" => {
                 if !DISPLAY_MODES.iter().any(|m| *m == v) {
-                    messages.push(format!(
+                    tally.note_error(format!(
                         "display_mode '{}' must be line or portal",
                         v
                     ));
                     continue;
                 }
                 let changed = eff.document.set_edge_display_mode(&er, &v);
-                if changed {
-                    any_applied = true;
-                } else {
-                    messages.push(format!("edge already rendering as {}", v));
-                }
+                tally.note(changed, || format!("edge already rendering as {}", v));
             }
             "reset" => match v.as_str() {
                 "straight" => {
                     let changed = eff.document.reset_edge_to_straight(&er);
-                    if changed {
-                        any_applied = true;
-                    } else {
-                        messages.push("connection already straight".into());
-                    }
+                    tally.note(changed, || "connection already straight".into());
                 }
                 "curve" => {
                     let changed = eff.document.curve_straight_edge(&er);
-                    if changed {
-                        any_applied = true;
-                    } else {
-                        messages.push("connection already curved".into());
-                    }
+                    tally.note(changed, || "connection already curved".into());
                 }
                 "style" => {
                     let changed = eff.document.reset_edge_style_to_default(&er);
-                    if changed {
-                        any_applied = true;
-                    } else {
-                        messages.push("no style override to reset".into());
-                    }
+                    tally.note(changed, || "no style override to reset".into());
                 }
                 "position" => {
                     // Scope depends on the selection:
@@ -191,27 +171,17 @@ fn execute_edge(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                     let changed = eff
                         .document
                         .reset_edge_position(&er, endpoint.as_deref());
-                    if changed {
-                        any_applied = true;
-                    } else {
-                        messages.push("position already at default".into());
-                    }
+                    tally.note(changed, || "position already at default".into());
                 }
                 other => {
-                    messages.push(format!(
+                    tally.note_error(format!(
                         "reset '{}' must be straight, curve, style, or position",
                         other
                     ));
                 }
             },
-            other => messages.push(format!("unknown key '{}'", other)),
+            other => tally.note_error(format!("unknown key '{}'", other)),
         }
     }
-    if !messages.is_empty() {
-        if !any_applied {
-            return ExecResult::err(messages.join("; "));
-        }
-        return ExecResult::lines(messages);
-    }
-    ExecResult::ok_msg("edge applied")
+    tally.finalize("edge")
 }

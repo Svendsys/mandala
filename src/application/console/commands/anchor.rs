@@ -8,6 +8,9 @@
 
 use super::Command;
 use crate::application::console::completion::{prefix_filter, Completion, CompletionContext, CompletionState};
+use crate::application::console::helpers::{
+    collect_kvs_or_usage, require_edge_or_portal, ApplyTally,
+};
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::edge_selected;
 use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
@@ -53,45 +56,31 @@ fn side_value(name: &str) -> Option<&str> {
 }
 
 fn execute_anchor(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
-    let er = match eff.document.selection.selected_edge_or_portal_edge() {
-        Some(e) => e,
-        None => return ExecResult::err("no edge selected"),
+    let er = match require_edge_or_portal(eff) {
+        Ok(e) => e,
+        Err(r) => return r,
     };
-    let kvs: Vec<(String, String)> = args
-        .kvs()
-        .map(|(k, v)| (k.to_string(), v.to_string()))
-        .collect();
-    if kvs.is_empty() {
-        return ExecResult::err("usage: anchor from=<side> to=<side>");
-    }
+    let kvs = match collect_kvs_or_usage(args, "usage: anchor from=<side> to=<side>") {
+        Ok(k) => k,
+        Err(r) => return r,
+    };
 
-    let mut messages: Vec<String> = Vec::new();
-    let mut any_applied = false;
+    let mut tally = ApplyTally::new();
     for (k, v) in kvs {
         let is_from = match k.as_str() {
             "from" => true,
             "to" => false,
             other => {
-                messages.push(format!("unknown key '{}'", other));
+                tally.note_error(format!("unknown key '{}'", other));
                 continue;
             }
         };
         let Some(val) = side_value(&v) else {
-            messages.push(format!("'{}': expected auto|top|right|bottom|left", v));
+            tally.note_error(format!("'{}': expected auto|top|right|bottom|left", v));
             continue;
         };
         let changed = eff.document.set_edge_anchor(&er, is_from, val);
-        if changed {
-            any_applied = true;
-        } else {
-            messages.push(format!("{} already {}", k, v));
-        }
+        tally.note(changed, || format!("{} already {}", k, v));
     }
-    if !messages.is_empty() {
-        if !any_applied {
-            return ExecResult::err(messages.join("; "));
-        }
-        return ExecResult::lines(messages);
-    }
-    ExecResult::ok_msg("anchor applied")
+    tally.finalize("anchor")
 }

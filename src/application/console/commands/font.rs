@@ -194,17 +194,7 @@ fn font_family_completions(partial: &str) -> Vec<Completion> {
 /// Parse a kv value as a positive finite f32. Returns an
 /// `ExecResult::Err` for non-numbers, NaN, infinity, or ≤ 0.
 fn parse_pt(key: &str, value: &str) -> Result<f32, ExecResult> {
-    match value.parse::<f32>() {
-        Ok(pt) if pt.is_finite() && pt > 0.0 => Ok(pt),
-        Ok(pt) => Err(ExecResult::err(format!(
-            "{}='{}' must be positive and finite; got {}",
-            key, value, pt
-        ))),
-        Err(_) => Err(ExecResult::err(format!(
-            "{}='{}' is not a number",
-            key, value
-        ))),
-    }
+    crate::application::console::helpers::parse_finite_pt(key, value).map_err(ExecResult::err)
 }
 
 fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
