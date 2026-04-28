@@ -1513,3 +1513,171 @@ fn write_endpoint_field<T, S>(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::document::defaults::{
+        default_orphan_node, default_parent_child_edge,
+    };
+    use baumhard::mindmap::model::MindMap;
+    use glam::Vec2;
+    use std::collections::{HashMap, HashSet};
+
+    fn doc_with_edge() -> (MindMapDocument, EdgeRef) {
+        let mut doc = MindMapDocument {
+            mindmap: MindMap::new_blank("t"),
+            file_path: None,
+            dirty: false,
+            selection: super::super::SelectionState::None,
+            undo_stack: Vec::new(),
+            mutation_registry: HashMap::new(),
+            mutation_sources: HashMap::new(),
+            mutation_handlers: HashMap::new(),
+            active_toggles: HashSet::new(),
+            label_edit_preview: None,
+            portal_text_edit_preview: None,
+            color_picker_preview: None,
+            active_animations: Vec::new(),
+        };
+        doc.mindmap.nodes.insert(
+            "0".to_string(),
+            default_orphan_node("0", Vec2::ZERO),
+        );
+        doc.mindmap.nodes.insert(
+            "1".to_string(),
+            default_orphan_node("1", Vec2::ZERO),
+        );
+        let edge = default_parent_child_edge("0", "1");
+        let er = EdgeRef::new(&edge.from_id, &edge.to_id, &edge.edge_type);
+        doc.mindmap.edges.push(edge);
+        (doc, er)
+    }
+
+    /// `mutate_edge` returning `false` from the closure rolls
+    /// back any in-place fork via `ensure_glyph_connection_inline`
+    /// — the live model returns to the pre-closure state, no
+    /// `EditEdge` undo entry is pushed, and `dirty` stays where
+    /// it was. Critical for the no-op contract every per-field
+    /// setter (`set_edge_color`, `set_edge_cap_start`, ...) routes
+    /// through.
+    #[test]
+    fn mutate_edge_rolls_back_fork_on_false_return() {
+        let (mut doc, er) = doc_with_edge();
+        // Pre-condition: this edge has no glyph_connection.
+        assert!(doc.mindmap.edges[0].glyph_connection.is_none());
+        doc.dirty = false;
+
+        let returned = doc.mutate_edge(&er, |edge, canvas| {
+            // Force a fork — but then return false.
+            let _cfg = ensure_glyph_connection_inline(edge, canvas);
+            false
+        });
+
+        assert!(!returned);
+        // Fork must have rolled back.
+        assert!(
+            doc.mindmap.edges[0].glyph_connection.is_none(),
+            "the fork survived a false-return rollback"
+        );
+        assert!(doc.undo_stack.is_empty(), "no undo entry on false-return");
+        assert!(!doc.dirty, "dirty stays unset on false-return");
+    }
+
+    /// On a `true` return, `mutate_edge` pushes one `EditEdge`
+    /// undo entry carrying the *pre-fork* state, sets `dirty`,
+    /// and leaves the closure's mutations in place. Locks the
+    /// other half of the contract.
+    #[test]
+    fn mutate_edge_pushes_undo_with_pre_fork_state_on_true() {
+        let (mut doc, er) = doc_with_edge();
+        assert!(doc.mindmap.edges[0].glyph_connection.is_none());
+        doc.dirty = false;
+
+        let returned = doc.mutate_edge(&er, |edge, canvas| {
+            ensure_glyph_connection_inline(edge, canvas).body =
+                "X".to_string();
+            true
+        });
+
+        assert!(returned);
+        assert_eq!(
+            doc.mindmap.edges[0].glyph_connection.as_ref().unwrap().body,
+            "X"
+        );
+        assert!(doc.dirty);
+        assert_eq!(doc.undo_stack.len(), 1);
+        match &doc.undo_stack[0] {
+            UndoAction::EditEdge { before, .. } => {
+                assert!(
+                    before.glyph_connection.is_none(),
+                    "undo snapshot must carry the pre-fork None"
+                );
+            }
+            other => panic!("expected EditEdge, got {:?}", other),
+        }
+    }
+
+    /// `option_f32_eps_eq` treats values within `EPSILON` as
+    /// equal, including the `(None, None)` and `(Some, Some)`
+    /// cases. The `(None, Some)` and `(Some, None)` mismatches
+    /// are not equal.
+    #[test]
+    fn option_f32_eps_eq_treats_epsilon_as_equal() {
+        assert!(option_f32_eps_eq(None, None));
+        assert!(option_f32_eps_eq(Some(1.0), Some(1.0)));
+        assert!(option_f32_eps_eq(
+            Some(1.0),
+            Some(1.0 + f32::EPSILON / 2.0),
+        ));
+        assert!(!option_f32_eps_eq(None, Some(0.0)));
+        assert!(!option_f32_eps_eq(Some(0.0), None));
+        assert!(!option_f32_eps_eq(Some(1.0), Some(2.0)));
+    }
+
+    /// `write_endpoint_field` scrubs the slot back to `None` when
+    /// a `None` write would leave the state entirely default —
+    /// the "no undo droppings on unchanged selections" contract.
+    #[test]
+    fn write_endpoint_field_scrubs_default_state_on_clear() {
+        // Seed a slot with one field set.
+        let mut slot: Option<PortalEndpointState> = Some(PortalEndpointState {
+            color: Some("#ff0000".to_string()),
+            ..Default::default()
+        });
+        // Clearing the only set field should scrub the slot back to None.
+        write_endpoint_field(&mut slot, None::<String>, |s, v| s.color = v);
+        assert!(slot.is_none(), "scrub did not collapse to None");
+    }
+
+    /// When the slot has *other* fields set, scrubbing one field
+    /// to `None` keeps the slot alive — only the all-default
+    /// state collapses.
+    #[test]
+    fn write_endpoint_field_keeps_slot_when_other_fields_remain() {
+        let mut slot: Option<PortalEndpointState> = Some(PortalEndpointState {
+            color: Some("#ff0000".to_string()),
+            text: Some("annotation".to_string()),
+            ..Default::default()
+        });
+        write_endpoint_field(&mut slot, None::<String>, |s, v| s.color = v);
+        assert!(slot.is_some(), "slot scrubbed despite remaining fields");
+        let s = slot.unwrap();
+        assert!(s.color.is_none());
+        assert_eq!(s.text.as_deref(), Some("annotation"));
+    }
+
+    /// Writing `Some(value)` lazily forks a default slot when
+    /// none was set yet — the sibling "lazy install" contract.
+    #[test]
+    fn write_endpoint_field_lazily_forks_default_slot() {
+        let mut slot: Option<PortalEndpointState> = None;
+        write_endpoint_field(
+            &mut slot,
+            Some("#abcdef".to_string()),
+            |s, v| s.color = v,
+        );
+        assert!(slot.is_some());
+        assert_eq!(slot.unwrap().color.as_deref(), Some("#abcdef"));
+    }
+}

@@ -242,3 +242,76 @@ impl Renderer {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rustc_hash::FxHashMap;
+
+    /// Closed-interval semantics: a click landing exactly on
+    /// `min` or `max` *hits*. The four hit-test bodies all
+    /// previously open-coded the `>=` / `<=` predicate; locking
+    /// the boundary here prevents a future open-vs-closed drift.
+    #[test]
+    fn aabb_contains_is_closed_interval_on_both_bounds() {
+        let min = Vec2::new(10.0, 20.0);
+        let max = Vec2::new(30.0, 50.0);
+        // Strictly inside.
+        assert!(aabb_contains(Vec2::new(15.0, 30.0), min, max));
+        // Exactly on the min corner.
+        assert!(aabb_contains(min, min, max));
+        // Exactly on the max corner.
+        assert!(aabb_contains(max, min, max));
+        // Exactly on each edge midpoint.
+        assert!(aabb_contains(Vec2::new(min.x, 30.0), min, max));
+        assert!(aabb_contains(Vec2::new(max.x, 30.0), min, max));
+        assert!(aabb_contains(Vec2::new(20.0, min.y), min, max));
+        assert!(aabb_contains(Vec2::new(20.0, max.y), min, max));
+        // Outside on every side.
+        assert!(!aabb_contains(Vec2::new(min.x - 0.01, 30.0), min, max));
+        assert!(!aabb_contains(Vec2::new(max.x + 0.01, 30.0), min, max));
+        assert!(!aabb_contains(Vec2::new(20.0, min.y - 0.01), min, max));
+        assert!(!aabb_contains(Vec2::new(20.0, max.y + 0.01), min, max));
+    }
+
+    /// Empty map yields `None` — the no-match base case every
+    /// hit-test caller relies on for the "no element under the
+    /// cursor" branch.
+    #[test]
+    fn find_first_aabb_hit_empty_map_yields_none() {
+        let map: FxHashMap<EdgeKey, (Vec2, Vec2)> = FxHashMap::default();
+        assert!(find_first_aabb_hit(&map, Vec2::new(5.0, 5.0)).is_none());
+    }
+
+    /// Cursor outside every entry yields `None`. Locks the
+    /// "linear scan returns None when no AABB contains the
+    /// point" contract.
+    #[test]
+    fn find_first_aabb_hit_no_match_yields_none() {
+        let mut map: FxHashMap<EdgeKey, (Vec2, Vec2)> = FxHashMap::default();
+        map.insert(
+            EdgeKey::new("a", "b", "cross_link"),
+            (Vec2::new(0.0, 0.0), Vec2::new(10.0, 10.0)),
+        );
+        map.insert(
+            EdgeKey::new("c", "d", "cross_link"),
+            (Vec2::new(20.0, 20.0), Vec2::new(30.0, 30.0)),
+        );
+        assert!(find_first_aabb_hit(&map, Vec2::new(15.0, 15.0)).is_none());
+    }
+
+    /// A point strictly inside one entry returns that entry's
+    /// key. (Iteration order over `FxHashMap` is unspecified, so
+    /// we don't assert which entry wins on overlap — that's by
+    /// design and matches the pre-refactor behavior.)
+    #[test]
+    fn find_first_aabb_hit_returns_a_containing_key() {
+        let mut map: FxHashMap<EdgeKey, (Vec2, Vec2)> = FxHashMap::default();
+        let key_a = EdgeKey::new("a", "b", "cross_link");
+        let key_c = EdgeKey::new("c", "d", "cross_link");
+        map.insert(key_a.clone(), (Vec2::new(0.0, 0.0), Vec2::new(10.0, 10.0)));
+        map.insert(key_c.clone(), (Vec2::new(20.0, 20.0), Vec2::new(30.0, 30.0)));
+        let hit = find_first_aabb_hit(&map, Vec2::new(5.0, 5.0));
+        assert_eq!(hit, Some(key_a));
+    }
+}

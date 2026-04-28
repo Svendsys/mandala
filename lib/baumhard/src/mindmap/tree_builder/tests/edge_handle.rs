@@ -74,6 +74,11 @@ fn edge_handle_mutator_round_trip_matches_full_rebuild() {
         assert_eq!(a_area.position, e_area.position);
         assert_eq!(a_area.render_bounds, e_area.render_bounds);
         assert_eq!(a_area.regions, e_area.regions);
+        // §B2: zoom-visibility must round-trip too. Pre-Commit-A
+        // the edge_handle mutator silently dropped this field,
+        // resetting authored zoom windows to Default on every
+        // in-place rebuild. Lock that invariant here.
+        assert_eq!(a_area.zoom_visibility, e_area.zoom_visibility);
     }
 }
 
