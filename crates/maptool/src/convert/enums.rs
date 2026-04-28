@@ -21,10 +21,7 @@ pub fn convert_enums(root: &mut Value) {
 }
 
 fn convert_node_enums(root: &mut Value) {
-    let nodes = match root.get_mut("nodes").and_then(|v| v.as_object_mut()) {
-        Some(obj) => obj,
-        None => return,
-    };
+    let Some(nodes) = super::nodes_obj_mut(root) else { return };
     for node in nodes.values_mut() {
         convert_layout(node);
         convert_shape(node);
@@ -82,10 +79,7 @@ fn convert_shape(node: &mut Value) {
 }
 
 fn convert_edge_enums(root: &mut Value) {
-    let edges = match root.get_mut("edges").and_then(|v| v.as_array_mut()) {
-        Some(arr) => arr,
-        None => return,
-    };
+    let Some(edges) = super::edges_arr_mut(root) else { return };
     for edge in edges.iter_mut() {
         let obj = match edge.as_object_mut() {
             Some(o) => o,

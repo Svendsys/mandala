@@ -24,6 +24,29 @@ pub use portals::convert_portals;
 use serde_json::Value;
 use std::path::Path;
 
+/// Drill into `root.nodes` as a mutable JSON object, returning
+/// `None` when the field is missing or wrong-typed (the
+/// "silently no-op" posture the per-pass cleanups rely on —
+/// they treat absent/wrong-typed sections as already-clean).
+/// Single source of truth for the prelude every convert sub-pass
+/// previously hand-rolled.
+fn nodes_obj_mut(root: &mut Value) -> Option<&mut serde_json::Map<String, Value>> {
+    root.get_mut("nodes").and_then(|v| v.as_object_mut())
+}
+
+/// Drill into `root.edges` as a mutable JSON array. Sibling of
+/// [`nodes_obj_mut`] for the legacy edge-array shape.
+fn edges_arr_mut(root: &mut Value) -> Option<&mut Vec<Value>> {
+    root.get_mut("edges").and_then(|v| v.as_array_mut())
+}
+
+/// Drill into `root.portals` as a mutable JSON array. Used only
+/// by the legacy-format passes — current-format files reject
+/// `portals[]` at the loader.
+fn portals_arr_mut(root: &mut Value) -> Option<&mut Vec<Value>> {
+    root.get_mut("portals").and_then(|v| v.as_array_mut())
+}
+
 /// Read a legacy `.mindmap.json`, convert it to the current format, and
 /// write the result to `output_path`.
 pub fn convert_legacy(input_path: &Path, output_path: &Path) -> Result<(), String> {
