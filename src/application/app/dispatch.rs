@@ -570,18 +570,21 @@ pub(in crate::application::app) fn dispatch_action(
             DispatchOutcome::Handled
         }
         Action::ZoomReset => {
-            // Reset zoom to 1.0; pan stays untouched. Uses the camera's
-            // own SetZoom mutation so clamps in Camera::apply_mutation
-            // run.
+            // Reset zoom to 1.0 anchored at the screen centre (NOT
+            // the cursor). A cursor-anchored zoom emits a `ZoomAt`
+            // decree whose canvas-position formula shifts the camera
+            // when the focus is off-centre — so a Ctrl+0 with the
+            // cursor in the corner would scoot the view by 200+ px
+            // instead of cleanly resetting in place. Computing the
+            // factor inverse against current zoom keeps the
+            // multiplicative ZoomAt path; using screen-centre as
+            // the focus cancels the position shift algebraically.
+            let zoom = ctx.renderer.camera_zoom().max(f32::EPSILON);
             ctx.renderer.process_decree(
                 crate::application::common::RenderDecree::CameraZoom {
-                    screen_x: ctx.cursor_pos.0 as f32,
-                    screen_y: ctx.cursor_pos.1 as f32,
-                    // Inverse of the current zoom yields a SetZoom-of-1
-                    // through the multiplicative ZoomAt path. Skip
-                    // when zoom is already 1 so floating-point cruft
-                    // doesn't accumulate.
-                    factor: 1.0f32 / ctx.renderer.camera_zoom().max(f32::EPSILON),
+                    screen_x: ctx.renderer.surface_width() as f32 * 0.5,
+                    screen_y: ctx.renderer.surface_height() as f32 * 0.5,
+                    factor: 1.0f32 / zoom,
                 },
             );
             DispatchOutcome::Handled
@@ -674,9 +677,18 @@ pub(in crate::application::app) fn dispatch_action(
 
         // ── Selection Actions (Phase 11 wiring) ───────────────
         Action::SelectAll => {
+            // Only visible nodes — selecting hidden-by-fold descendants
+            // would let a follow-up `DeleteSelection` silently nuke
+            // subtrees the user can't see. Mirrors the click hit-test's
+            // policy of skipping folded subtrees.
             if let Some(doc) = ctx.document.as_mut() {
-                let all_ids: Vec<String> =
-                    doc.mindmap.nodes.keys().cloned().collect();
+                let all_ids: Vec<String> = doc
+                    .mindmap
+                    .nodes
+                    .values()
+                    .filter(|n| !doc.mindmap.is_hidden_by_fold(n))
+                    .map(|n| n.id.clone())
+                    .collect();
                 doc.selection = SelectionState::from_ids(all_ids);
                 rebuild_all(
                     doc,
@@ -704,28 +716,45 @@ pub(in crate::application::app) fn dispatch_action(
             DispatchOutcome::Handled
         }
         Action::InvertSelection => {
+            // Only inverts node selections (None / Single / Multi).
+            // Edge / EdgeLabel / Portal* selections are preserved
+            // — inverting them would otherwise collapse to "select
+            // every visible node" because their `selected_ids()` is
+            // empty, which is unintuitive. Hidden-by-fold nodes are
+            // filtered for the same reason as SelectAll above.
             if let Some(doc) = ctx.document.as_mut() {
-                let selected: std::collections::HashSet<String> = doc
-                    .selection
-                    .selected_ids()
-                    .into_iter()
-                    .map(String::from)
-                    .collect();
-                let inverted: Vec<String> = doc
-                    .mindmap
-                    .nodes
-                    .keys()
-                    .filter(|k| !selected.contains(*k))
-                    .cloned()
-                    .collect();
-                doc.selection = SelectionState::from_ids(inverted);
-                rebuild_all(
-                    doc,
-                    ctx.mindmap_tree,
-                    ctx.app_scene,
-                    ctx.renderer,
-                    ctx.scene_cache,
+                let invertable = matches!(
+                    doc.selection,
+                    SelectionState::None
+                        | SelectionState::Single(_)
+                        | SelectionState::Multi(_)
                 );
+                if invertable {
+                    let selected: std::collections::HashSet<String> = doc
+                        .selection
+                        .selected_ids()
+                        .into_iter()
+                        .map(String::from)
+                        .collect();
+                    let inverted: Vec<String> = doc
+                        .mindmap
+                        .nodes
+                        .values()
+                        .filter(|n| {
+                            !selected.contains(&n.id)
+                                && !doc.mindmap.is_hidden_by_fold(n)
+                        })
+                        .map(|n| n.id.clone())
+                        .collect();
+                    doc.selection = SelectionState::from_ids(inverted);
+                    rebuild_all(
+                        doc,
+                        ctx.mindmap_tree,
+                        ctx.app_scene,
+                        ctx.renderer,
+                        ctx.scene_cache,
+                    );
+                }
             }
             DispatchOutcome::Handled
         }
@@ -754,14 +783,17 @@ pub(in crate::application::app) fn dispatch_action(
             DispatchOutcome::Handled
         }
         Action::SelectChild => {
-            // Step into the first child (id-sorted) of the selected
-            // single node.
+            // Step into the first visible child (id-sorted) of the
+            // selected single node. Skipping hidden children avoids
+            // jumping the keyboard cursor into a folded subtree the
+            // user can't see — mirrors the fold-aware click hit-test.
             if let Some(doc) = ctx.document.as_mut() {
                 if let SelectionState::Single(nid) = doc.selection.clone() {
                     let first_child = doc
                         .mindmap
                         .children_of(&nid)
-                        .first()
+                        .into_iter()
+                        .find(|c| !doc.mindmap.is_hidden_by_fold(c))
                         .map(|c| c.id.clone());
                     if let Some(child_id) = first_child {
                         doc.selection = SelectionState::Single(child_id);
@@ -1000,26 +1032,47 @@ pub(in crate::application::app) fn apply_label_edit_action(
 }
 
 /// Resolve the id of the sibling immediately before / after `nid` in
-/// the parent's id-sorted children list. Roots use the document's
-/// `root_nodes()` ordering. Returns `None` when `nid` has no
-/// neighbour in the requested direction.
+/// the parent's children list (sorted by `id_sort_key` — Dewey-decimal
+/// trailing-segment order, not lexicographic). Roots use the
+/// document's `root_nodes()` ordering. Hidden-by-fold siblings are
+/// skipped so keyboard navigation stays on visible nodes only.
+/// Returns `None` when `nid` has no visible neighbour in the
+/// requested direction.
 fn sibling_id(
     map: &baumhard::mindmap::model::MindMap,
     nid: &str,
     forward: bool,
 ) -> Option<String> {
     let parent_id = map.nodes.get(nid).and_then(|n| n.parent_id.clone());
-    let siblings: Vec<String> = match parent_id {
-        Some(pid) => map.children_of(&pid).iter().map(|c| c.id.clone()).collect(),
-        None => map.root_nodes().iter().map(|c| c.id.clone()).collect(),
+    // Build the sibling list with both id and hidden-state so the
+    // walk past `nid` can skip folded entries efficiently.
+    let siblings: Vec<(String, bool)> = match parent_id {
+        Some(pid) => map
+            .children_of(&pid)
+            .iter()
+            .map(|c| (c.id.clone(), map.is_hidden_by_fold(c)))
+            .collect(),
+        None => map
+            .root_nodes()
+            .iter()
+            .map(|c| (c.id.clone(), map.is_hidden_by_fold(c)))
+            .collect(),
     };
-    let idx = siblings.iter().position(|id| id == nid)?;
-    let target = if forward {
-        idx.checked_add(1).filter(|&i| i < siblings.len())
+    let idx = siblings.iter().position(|(id, _)| id == nid)?;
+    if forward {
+        siblings
+            .iter()
+            .skip(idx + 1)
+            .find(|(_, hidden)| !*hidden)
+            .map(|(id, _)| id.clone())
     } else {
-        idx.checked_sub(1)
-    }?;
-    siblings.get(target).cloned()
+        siblings
+            .iter()
+            .take(idx)
+            .rev()
+            .find(|(_, hidden)| !*hidden)
+            .map(|(id, _)| id.clone())
+    }
 }
 
 /// Word-boundary cursor helpers. A "word" is a run of alphanumeric
@@ -1091,6 +1144,22 @@ pub(in crate::application::app) fn dispatch_macro(
     for step in &mac.steps {
         match step {
             MacroStep::Action { action } => {
+                // Privilege gate symmetric with `ConsoleLine` below.
+                // Non-User tiers cannot fire destructive / clipboard /
+                // I/O Actions. Fail-closed: a rejected privileged
+                // step aborts the rest of the macro so a
+                // `[DeleteSelection, ConsoleLine(rejected),
+                // SaveDocument]` pattern can't sneak its outer steps
+                // past the gate.
+                if !source.allows_action(*action) {
+                    log::warn!(
+                        "macro '{}' (source {:?}): Action {:?} rejected — \
+                         tier may not invoke destructive / I/O Actions; \
+                         aborting remaining steps",
+                        macro_id, source, action
+                    );
+                    return any_ran;
+                }
                 let outcome = dispatch_action(*action, ctx, None);
                 if matches!(outcome, DispatchOutcome::Handled) {
                     any_ran = true;
@@ -1177,12 +1246,22 @@ pub(in crate::application::app) fn dispatch_macro(
                 // dormant — but it must hold before any other tier
                 // ships. See CODE_CONVENTIONS.md §3 carve-out.
                 if !source.allows_console_line() {
+                    // Fail-closed: a tier that's not allowed to run
+                    // console verbs aborts the rest of the macro.
+                    // `continue` would let post-gate Action steps
+                    // still run, which combined with destructive
+                    // Actions could leave the user in an unexpected
+                    // state (e.g. `[DeleteSelection,
+                    // ConsoleLine(rejected), SaveDocument]` would
+                    // persist the post-delete state without the
+                    // user's consent).
                     log::warn!(
                         "macro '{}' (source {:?}): ConsoleLine step rejected — \
-                         only User-tier macros may run console verbs",
+                         only User-tier macros may run console verbs; \
+                         aborting remaining steps",
                         macro_id, source
                     );
-                    continue;
+                    return any_ran;
                 }
                 // `execute_console_line` requires a loaded document
                 // (it takes `&mut MindMapDocument`, not `Option`).

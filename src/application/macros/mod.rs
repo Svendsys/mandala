@@ -66,6 +66,42 @@ impl MacroSource {
     pub fn allows_console_line(self) -> bool {
         matches!(self, MacroSource::User)
     }
+
+    /// Whether macros from this source may invoke the given Action
+    /// via a `MacroStep::Action`. Symmetric with
+    /// [`allows_console_line`]: only `User`-tier macros can fire
+    /// the destructive / I/O / clipboard-touching Actions, since
+    /// other tiers may load from untrusted sources (a hostile
+    /// `.mindmap.json` could otherwise bind `Action::SaveDocument`
+    /// to a hotkey and overwrite the user's file the next time
+    /// they press the bound key).
+    ///
+    /// Today only the `User` tier loads, so the gate is dormant —
+    /// but it MUST hold before app-bundle / map-inline / node-inline
+    /// tiers ship. See CODE_CONVENTIONS.md §3 carve-out.
+    pub fn allows_action(self, action: Action) -> bool {
+        if matches!(self, MacroSource::User) {
+            return true;
+        }
+        // Block destructive / persistent / clipboard / document-
+        // lifecycle Actions for non-User tiers. The closed list
+        // makes the gate explicit; new Actions default to "allowed"
+        // because they are typically navigation / view-state shaped.
+        // Adding a new Action that deserves blocking goes here.
+        let blocked = matches!(
+            action,
+            Action::SaveDocument
+                | Action::DeleteSelection
+                | Action::OrphanSelection
+                | Action::CreateOrphanNode
+                | Action::CreateOrphanNodeAndEdit
+                | Action::Copy
+                | Action::Cut
+                | Action::Paste
+                | Action::NewDocument
+        );
+        !blocked
+    }
 }
 
 /// One step inside a macro. A macro is a sequence of these executed
@@ -243,6 +279,75 @@ mod tests {
     }
 
     #[test]
+    fn macro_source_allows_action_gates_destructive_actions_for_non_user() {
+        // User passes everything.
+        for a in [
+            Action::SaveDocument,
+            Action::DeleteSelection,
+            Action::Cut,
+            Action::Paste,
+            Action::Copy,
+            Action::OrphanSelection,
+            Action::CreateOrphanNode,
+            Action::CreateOrphanNodeAndEdit,
+            Action::NewDocument,
+        ] {
+            assert!(
+                MacroSource::User.allows_action(a),
+                "User tier should allow {:?}",
+                a
+            );
+        }
+        // Non-User tiers reject all of the above.
+        for tier in [MacroSource::App, MacroSource::Map, MacroSource::Inline] {
+            for a in [
+                Action::SaveDocument,
+                Action::DeleteSelection,
+                Action::Cut,
+                Action::Paste,
+                Action::Copy,
+                Action::OrphanSelection,
+                Action::CreateOrphanNode,
+                Action::CreateOrphanNodeAndEdit,
+                Action::NewDocument,
+            ] {
+                assert!(
+                    !tier.allows_action(a),
+                    "{:?} tier should reject {:?}",
+                    tier,
+                    a
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn macro_source_allows_action_passes_navigation_for_non_user() {
+        // Non-User tiers may still invoke navigation / view-state
+        // Actions — they don't touch the filesystem or destroy data.
+        for tier in [MacroSource::App, MacroSource::Map, MacroSource::Inline] {
+            for a in [
+                Action::ZoomIn,
+                Action::ZoomOut,
+                Action::ZoomReset,
+                Action::ZoomFit,
+                Action::SelectAll,
+                Action::DeselectAll,
+                Action::CenterOnSelection,
+                Action::JumpToRoot,
+                Action::Undo,
+            ] {
+                assert!(
+                    tier.allows_action(a),
+                    "{:?} tier should allow non-destructive {:?}",
+                    tier,
+                    a
+                );
+            }
+        }
+    }
+
+    #[test]
     fn macro_step_serde_round_trip() {
         let steps = vec![
             MacroStep::Action {
@@ -309,5 +414,29 @@ mod tests {
         let step = MacroStep::ConsoleLine { line: "save".into() };
         let json = serde_json::to_string(&step).unwrap();
         assert_eq!(json, r#"{"kind":"ConsoleLine","line":"save"}"#);
+    }
+
+    /// `MacroRegistry::get_with_source` returns the loader-pinned
+    /// tier alongside the macro. This is the load-bearing accessor
+    /// the dispatcher uses to gate `ConsoleLine` and privileged
+    /// `Action` steps. Without it, a future caller that uses bare
+    /// `get` would silently bypass the gate.
+    #[test]
+    fn macro_registry_get_with_source_returns_pinned_tier() {
+        let mut reg = MacroRegistry::new();
+        let map_macro = Macro {
+            id: "hostile".into(),
+            name: "From a hostile mindmap".into(),
+            description: String::new(),
+            steps: vec![MacroStep::ConsoleLine {
+                line: "save /tmp/evil".into(),
+            }],
+        };
+        reg.insert(map_macro, MacroSource::Map);
+        let (m, src) = reg.get_with_source("hostile").unwrap();
+        assert_eq!(src, MacroSource::Map);
+        // The dispatcher looks at this exact pair to decide gating.
+        assert!(!src.allows_console_line());
+        assert!(matches!(&m.steps[0], MacroStep::ConsoleLine { .. }));
     }
 }

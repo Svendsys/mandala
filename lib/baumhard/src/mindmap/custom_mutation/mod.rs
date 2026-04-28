@@ -131,7 +131,20 @@ impl CustomMutation {
 /// An action that operates on the map/document state rather than any
 /// specific tree node. Delivered alongside node mutations via the same
 /// `CustomMutation` carrier so a single trigger can do both at once.
+///
+/// **Privilege model.** `MacroStep::CustomMutation` (in
+/// `crate::application::macros`) can carry these from any macro tier,
+/// including non-User tiers shipped from untrusted sources. Today
+/// every variant is a pure in-memory canvas-theme write, which is
+/// safe to expose. **Any new variant that performs file I/O, network
+/// access, arbitrary content load, or cross-process side effects MUST
+/// be gated at the `dispatch_macro` site** (parallel to the
+/// `MacroSource::allows_console_line` gate) to prevent a hostile
+/// shared mindmap from invoking it. Marked `#[non_exhaustive]` so
+/// adding such a variant outside this crate is impossible — review
+/// the privilege model when extending.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
 pub enum DocumentAction {
     /// Copy a named preset from `canvas.theme_variants` into the live
     /// `canvas.theme_variables`. Silently ignored if the variant does

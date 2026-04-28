@@ -181,6 +181,17 @@ impl MindMapDocument {
                         }
                     }
                 }
+                // `DocumentAction` is `#[non_exhaustive]` so future
+                // variants can be added without breaking dependents.
+                // Any new variant that performs file I/O, network
+                // access, or arbitrary content load MUST be gated
+                // at the macro-dispatcher site — see
+                // `MacroSource::allows_console_line` and
+                // `lib/baumhard/src/mindmap/custom_mutation/mod.rs`
+                // doc-comment on `DocumentAction`.
+                _ => {
+                    log::warn!("apply_document_actions: unknown DocumentAction variant; skipping");
+                }
             }
         }
         if changed {

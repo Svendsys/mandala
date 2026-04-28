@@ -42,14 +42,19 @@ pub(super) fn handle_mouse_input(
     } = ctx;
     let cursor_pos_val = *cursor_pos;
 
-    // Function-local macro to dedupe the `InputHandlerContext`
-    // reconstruction at dispatch sites. See the corresponding macro
-    // in `event_keyboard.rs` for the rationale (post-destructure
-    // bundle rebuilds were duplicated four times across this file
-    // and the keyboard handler).
+    // Function-local `bundle!()` macro identical to the one in
+    // `event_keyboard.rs`. See the FIELD COUNT comment in
+    // `app/mod.rs` and the macro's rustdoc there for the drift /
+    // rename / move-once invariants. Each expansion moves the
+    // destructured locals into the new struct; the two call sites
+    // below are in mutually-exclusive `match button` arms so each
+    // arm consumes them independently.
+    //
+    // **Rename hazard.** If you rename a local in the destructure
+    // above, rename it in this macro body too.
     macro_rules! bundle {
         () => {
-            crate::application::app::input_context::InputHandlerContext {
+            InputHandlerContext {
                 document,
                 mindmap_tree,
                 app_scene,

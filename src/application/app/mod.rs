@@ -45,6 +45,20 @@ mod throttled_interaction;
 #[cfg(target_arch = "wasm32")]
 mod run_wasm;
 
+// FIELD COUNT: `InputHandlerContext` has 21 fields. The drift surface
+// is four sites that must move together when adding a new field:
+//   1. The struct in `app/input_context.rs`.
+//   2. The `InitState::input_context()` builder in `run_native.rs`.
+//   3. The destructure pattern in `event_keyboard.rs::handle_keyboard_input`.
+//   4. The `bundle!()` macro body in BOTH `event_keyboard.rs` AND
+//      `event_mouse_click.rs` (and the parallel destructure in the
+//      mouse handler too — total 5 sites in practice).
+// The compiler catches missing fields in struct literals, but does
+// NOT catch identifier drift between the destructure pattern and the
+// macro body — a renamed local in the destructure breaks `bundle!()`
+// with errors that point at the macro expansion, not the rename.
+// Keep the destructure identifiers identical to the field names.
+
 // Cross-platform imports.
 use scene_rebuild::{
     flush_canvas_scene_buffers, rebuild_after_selection_change, rebuild_all,

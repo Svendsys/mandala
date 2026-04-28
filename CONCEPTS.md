@@ -2142,14 +2142,31 @@ To override a built-in Action with a macro, first unbind the
 Action's keybind (set `copy: []`) and then bind the macro. Same
 applies for built-in vs. custom-mutation collision.
 
-**`MacroStep::ConsoleLine` privilege.** `ConsoleLine` can run any
-console verb — `save`, `open`, `mutation apply`, kv-shaped style
-setters, etc. Today's only macro source is `~/.config/mandala/
-macros.json`, so trust posture is the same as `keybinds.json`: the
-user owns the file. Future macro tiers (app-bundled, map-inline)
-must restrict ConsoleLine before shipping, otherwise a malicious
-shared mindmap could run arbitrary console verbs (filesystem-
-touching ones included). Tracked in `TODO.md`.
+**Macro privilege model.** Macros are tagged with their loader
+tier via `MacroSource { App | User | Map | Inline }`. The
+dispatcher gates two surfaces on the tier:
+- **`MacroStep::ConsoleLine`** runs an arbitrary console verb
+  (`save`, `open`, `mutation apply`, etc.) — User-tier-only via
+  `MacroSource::allows_console_line`.
+- **Destructive / I/O `Action` variants** (`SaveDocument`,
+  `DeleteSelection`, `Cut`, `Paste`, `Copy`, `OrphanSelection`,
+  `CreateOrphanNode`, `CreateOrphanNodeAndEdit`, `NewDocument`)
+  are User-tier-only via `MacroSource::allows_action`.
+
+Privilege rejections **fail-closed** — the dispatcher aborts the
+rest of the macro so a `[DeleteSelection, ConsoleLine(rejected),
+SaveDocument]` pattern can't sneak its outer steps past the
+ConsoleLine gate. Honest mistakes (unbound action, no document)
+keep the existing best-effort `continue` semantic.
+
+`DocumentAction` (carried by `MacroStep::CustomMutation`) is
+`#[non_exhaustive]` — adding a variant that does I/O requires a
+parallel dispatcher gate.
+
+Today's only macro source is `~/.config/mandala/macros.json`
+(User), so trust posture matches `keybinds.json`. Future tiers
+(app-bundled, map-inline, node-inline) inherit the gate
+automatically and don't expose new attack surfaces.
 
 **Dispatch status per gesture.** `DoubleClick`, `MiddleClick`,
 `LeftDrag`, `WheelUp`, `WheelDown` are dispatched through

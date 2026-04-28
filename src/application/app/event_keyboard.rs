@@ -42,21 +42,22 @@ pub(super) fn handle_keyboard_input(
     } = ctx;
     let key_name = crate::application::keybinds::key_to_name(&logical_key);
 
-    // Function-local macro that expands to a fresh
-    // `InputHandlerContext` over the destructured locals. Each
-    // expansion moves the locals into the new bundle, so it can
-    // only be used once per branch — but the dispatch sites below
-    // sit in mutually-exclusive `if let Some(a) = action` /
-    // `else` branches, so each branch independently consumes the
-    // locals in its own scope.
+    // Function-local macro — `macro_rules!` cannot easily share state
+    // across modules when its expansion needs to capture caller-side
+    // locals, so the same body lives here and in `event_mouse_click`.
+    // See the FIELD COUNT comment in `app/mod.rs` for the drift
+    // invariants.
     //
-    // Without this macro, four sites in this file (action dispatch +
-    // macro/custom-mutation fall-through here, plus two more in
-    // `event_mouse_click.rs`) had byte-identical 22-field struct
-    // literals — the duplication was flagged in the architecture
-    // review as a code smell. The macro is local rather than
-    // top-level because it captures the destructured locals by
-    // name; that's deliberate.
+    // Each `bundle!()` expansion MOVES the destructured locals into
+    // the new struct — so it can only be used once per execution
+    // path. The two callsites below sit in mutually-exclusive
+    // `if let Some(a) = action` / `else` branches, so each branch
+    // independently consumes the locals.
+    //
+    // **Rename hazard.** If you rename a local in the destructure
+    // above, you MUST rename it in this macro body too — the
+    // compiler error will point at the macro expansion, not the
+    // rename.
     macro_rules! bundle {
         () => {
             InputHandlerContext {
