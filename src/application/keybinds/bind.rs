@@ -3,6 +3,14 @@
 //! `KeyBind` parser/matcher and the two `winit::Key` ↔ binding-string
 //! shims (`normalize_key_name`, `key_to_name`). Pure data — no
 //! platform-specific concerns.
+//!
+//! Mouse gestures share this same parser. A binding string like
+//! `"DoubleClick"` or `"Shift+MiddleClick"` parses into the same
+//! [`KeyBind`] struct as a keyboard binding, with the gesture's
+//! canonical lowercase name in the `key` field. Mouse handlers
+//! synthesize the same name via [`gesture_key_name`] before calling
+//! `ResolvedKeybinds::action_for_context`, so the lookup table is
+//! universal across input devices.
 
 use winit::keyboard::Key;
 
@@ -15,6 +23,71 @@ pub struct KeyBind {
     pub ctrl: bool,
     pub shift: bool,
     pub alt: bool,
+}
+
+/// User-driven mouse gestures that participate in the keybind lookup.
+///
+/// Each variant has a canonical binding-string form ([`gesture_key_name`])
+/// that mouse handlers feed through `KeyBind::matches` exactly the way
+/// keyboard names go through it. `LeftClick` and `LeftDrag` share the
+/// reservation caveat: a single left-press is consumed by the selection
+/// state machine *before* dispatch, so a binding on `LeftClick` fires
+/// *after* selection updates. `LeftDrag` is the continuous "press +
+/// movement past threshold on empty canvas" gesture used by `PanCanvas`;
+/// the dispatcher enters the bound mode on press and exits on release.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MouseGesture {
+    /// Single left-button press. Selection runs first — bind for
+    /// post-selection effects only.
+    LeftClick,
+    /// Left-button held down + cursor movement past the drag threshold,
+    /// only when the press landed on empty canvas. Continuous: the bound
+    /// action's body runs for the duration of the press.
+    LeftDrag,
+    /// Two left-button presses within the double-click time + distance
+    /// window with matching `ClickHit`.
+    DoubleClick,
+    /// Single middle-button press.
+    MiddleClick,
+    /// Single right-button press.
+    RightClick,
+    /// One mouse-wheel tick upward (zoom-in by convention).
+    WheelUp,
+    /// One mouse-wheel tick downward (zoom-out by convention).
+    WheelDown,
+}
+
+/// Canonical lowercase binding-string token for a [`MouseGesture`].
+/// The same token `KeyBind::parse` produces from `"DoubleClick"`,
+/// `"MiddleClick"`, etc. Mouse handlers feed this directly into
+/// `ResolvedKeybinds::action_for_context`.
+pub fn gesture_key_name(g: MouseGesture) -> &'static str {
+    match g {
+        MouseGesture::LeftClick => "leftclick",
+        MouseGesture::LeftDrag => "leftdrag",
+        MouseGesture::DoubleClick => "doubleclick",
+        MouseGesture::MiddleClick => "middleclick",
+        MouseGesture::RightClick => "rightclick",
+        MouseGesture::WheelUp => "wheelup",
+        MouseGesture::WheelDown => "wheeldown",
+    }
+}
+
+/// PascalCase emit form for a recognised gesture token. Used by
+/// `to_binding_string` so a parsed-then-emitted gesture round-trips
+/// to its canonical capitalisation rather than the lowercased
+/// internal form.
+fn gesture_emit_form(lower: &str) -> Option<&'static str> {
+    match lower {
+        "leftclick" => Some("LeftClick"),
+        "leftdrag" => Some("LeftDrag"),
+        "doubleclick" => Some("DoubleClick"),
+        "middleclick" => Some("MiddleClick"),
+        "rightclick" => Some("RightClick"),
+        "wheelup" => Some("WheelUp"),
+        "wheeldown" => Some("WheelDown"),
+        _ => None,
+    }
 }
 
 impl KeyBind {
@@ -76,7 +149,12 @@ impl KeyBind {
         if self.alt {
             parts.push("Alt");
         }
-        let key_display = self.key.clone();
+        // Recognised mouse gestures emit in PascalCase so a parsed-
+        // then-emitted binding string round-trips to its canonical
+        // form. Other keys emit lowercase as stored.
+        let key_display: String = gesture_emit_form(&self.key)
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| self.key.clone());
         let joined = parts.join("+");
         if joined.is_empty() {
             key_display

@@ -15,6 +15,8 @@ mod color_picker_flow;
 #[cfg(not(target_arch = "wasm32"))]
 mod console_input;
 #[cfg(not(target_arch = "wasm32"))]
+mod dispatch;
+#[cfg(not(target_arch = "wasm32"))]
 mod drain_frame;
 #[cfg(not(target_arch = "wasm32"))]
 mod edge_drag;
@@ -67,8 +69,7 @@ use color_picker_flow::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 use console_input::{
-    handle_console_key, load_console_history, rebuild_console_overlay, save_console_history,
-    save_document_to_bound_path,
+    handle_console_key, load_console_history, save_console_history,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use edge_drag::apply_edge_handle_drag;
@@ -120,7 +121,7 @@ use crate::application::document::{
     UndoAction,
     HIGHLIGHT_COLOR, REPARENT_SOURCE_COLOR, REPARENT_TARGET_COLOR,
 };
-use crate::application::keybinds::{Action, ResolvedKeybinds};
+use crate::application::keybinds::ResolvedKeybinds;
 use crate::application::renderer::Renderer;
 #[cfg(not(target_arch = "wasm32"))]
 use throttled_interaction::ThrottledDrag;

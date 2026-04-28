@@ -45,6 +45,15 @@ impl ResolvedKeybinds {
         }
     }
 
+    /// Return `true` if the action has at least one binding in the
+    /// resolved table. Used by the dispatcher to gate "off-by-default"
+    /// gesture sub-actions: the empty-canvas branch of
+    /// `DoubleClickActivate` only fires `CreateOrphanNodeAndEdit` when
+    /// the user has enabled it via any binding.
+    pub fn has_any_binding_for(&self, action: Action) -> bool {
+        self.binds.iter().any(|(a, _)| *a == action)
+    }
+
     /// Return the action bound to the given key event, if any. The caller
     /// passes the normalized key name (see `normalize_key_name`) and the
     /// current modifier state. Searches all actions regardless of context —

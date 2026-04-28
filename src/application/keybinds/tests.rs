@@ -193,6 +193,74 @@ fn test_keybind_string_round_trip_through_parse() {
 }
 
 #[test]
+fn test_keybind_parse_mouse_gestures() {
+    let cases = &[
+        ("DoubleClick", "doubleclick"),
+        ("MiddleClick", "middleclick"),
+        ("RightClick", "rightclick"),
+        ("LeftDrag", "leftdrag"),
+        ("LeftClick", "leftclick"),
+        ("WheelUp", "wheelup"),
+        ("WheelDown", "wheeldown"),
+    ];
+    for (input, expected_key) in cases {
+        let k = KeyBind::parse(input).unwrap();
+        assert_eq!(k.key, *expected_key, "parse('{}')", input);
+        assert!(!k.ctrl && !k.shift && !k.alt);
+    }
+}
+
+#[test]
+fn test_keybind_parse_modified_mouse_gestures() {
+    let k = KeyBind::parse("Shift+DoubleClick").unwrap();
+    assert_eq!(k.key, "doubleclick");
+    assert!(k.shift);
+    assert!(!k.ctrl && !k.alt);
+
+    let k = KeyBind::parse("Ctrl+WheelUp").unwrap();
+    assert_eq!(k.key, "wheelup");
+    assert!(k.ctrl);
+}
+
+#[test]
+fn test_keybind_mouse_gesture_round_trip_pascal_case() {
+    let cases = &[
+        "DoubleClick",
+        "MiddleClick",
+        "Shift+DoubleClick",
+        "Ctrl+WheelUp",
+        "Ctrl+Shift+LeftDrag",
+    ];
+    for c in cases {
+        let parsed = KeyBind::parse(c).unwrap();
+        let rendered = parsed.to_binding_string();
+        assert_eq!(rendered, *c, "round-trip emit form for '{}'", c);
+        let reparsed = KeyBind::parse(&rendered).unwrap();
+        assert_eq!(parsed, reparsed);
+    }
+}
+
+#[test]
+fn test_gesture_key_name_matches_parser_token() {
+    // Every MouseGesture's canonical name must round-trip through
+    // KeyBind::parse to a binding with the matching key field.
+    let gestures = [
+        MouseGesture::LeftClick,
+        MouseGesture::LeftDrag,
+        MouseGesture::DoubleClick,
+        MouseGesture::MiddleClick,
+        MouseGesture::RightClick,
+        MouseGesture::WheelUp,
+        MouseGesture::WheelDown,
+    ];
+    for g in gestures {
+        let name = gesture_key_name(g);
+        let bind = KeyBind::parse(name).unwrap();
+        assert_eq!(bind.key, name);
+    }
+}
+
+#[test]
 fn test_default_console_font_size_is_16() {
     let cfg = KeybindConfig::default();
     assert!((cfg.console_font_size - 16.0).abs() < f32::EPSILON);

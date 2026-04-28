@@ -122,6 +122,133 @@ pub enum Action {
     // ── Text Editor ──────────────────────────────────────────────
     /// Cancel the inline text editor (discard changes).
     TextEditCancel,
+
+    // ─────────────────────────────────────────────────────────────
+    // ── Mouse-gesture Actions (Document context) ────────────────
+    // The mouse handler synthesizes the gesture's canonical key
+    // name (see `bind::gesture_key_name`) and feeds it through the
+    // same `action_for_context` lookup as keyboard input. Every
+    // gesture below can be bound to a key, and every keyboard
+    // binding below can be bound to a gesture.
+    // ─────────────────────────────────────────────────────────────
+    /// Default-bound to `DoubleClick`. Dispatches by what the click hit:
+    /// `Node` → open text editor, `PortalMarker`/`PortalText` → pan to
+    /// partner endpoint, `EdgeLabel` → open inline label editor,
+    /// `Empty` → fire `CreateOrphanNodeAndEdit` if it's bound (default
+    /// off — the gesture is intentionally unbound for empty-canvas
+    /// double-clicks).
+    DoubleClickActivate,
+    /// Create an unattached node at the cursor and immediately open
+    /// its text editor with an empty buffer. Sibling of `CreateOrphanNode`
+    /// which only creates and selects (no editor). Default unbound.
+    CreateOrphanNodeAndEdit,
+    /// Continuous left-button drag on empty canvas → camera pan.
+    /// Default-bound to `LeftDrag` and `MiddleClick`. The dispatcher
+    /// enters `DragState::Panning` on press and exits on release.
+    PanCanvas,
+    /// Click outside an open editor → commit the editor's buffer.
+    /// Mouse handler dispatches when the release lands outside the
+    /// edited target's AABB.
+    CommitOrCloseEditor,
+
+    // ── Navigation / camera (Document context) ──────────────────
+    /// Zoom the camera in by one step. Default-bound to `WheelUp`.
+    ZoomIn,
+    /// Zoom the camera out by one step. Default-bound to `WheelDown`.
+    ZoomOut,
+    /// Reset the camera zoom to 1.0.
+    ZoomReset,
+    /// Fit the entire mindmap tree to the viewport.
+    ZoomFit,
+    /// Pan the camera north (up) by one step.
+    PanCameraNorth,
+    /// Pan the camera south (down) by one step.
+    PanCameraSouth,
+    /// Pan the camera east (right) by one step.
+    PanCameraEast,
+    /// Pan the camera west (left) by one step.
+    PanCameraWest,
+    /// Center the camera on the centroid of the current selection.
+    CenterOnSelection,
+    /// Jump the camera + selection to the document's root node.
+    JumpToRoot,
+
+    // ── Selection (Document context) ────────────────────────────
+    /// Select every node in the document.
+    SelectAll,
+    /// Clear the current selection.
+    DeselectAll,
+    /// Invert the current selection (selected ↔ unselected).
+    InvertSelection,
+    /// Select the parent of the currently-selected single node.
+    SelectParent,
+    /// Select the first child of the currently-selected single node.
+    SelectChild,
+    /// Select the next sibling of the currently-selected single node.
+    SelectNextSibling,
+    /// Select the previous sibling of the currently-selected single node.
+    SelectPrevSibling,
+
+    // ── TextEdit cursor primitives (TextEdit context) ───────────
+    /// Move cursor one grapheme left.
+    TextEditCursorLeft,
+    /// Move cursor one grapheme right.
+    TextEditCursorRight,
+    /// Move cursor one visual line up.
+    TextEditCursorUp,
+    /// Move cursor one visual line down.
+    TextEditCursorDown,
+    /// Jump cursor to the start of the current line.
+    TextEditCursorHome,
+    /// Jump cursor to the end of the current line.
+    TextEditCursorEnd,
+    /// Move cursor one word left.
+    TextEditWordLeft,
+    /// Move cursor one word right.
+    TextEditWordRight,
+    /// Delete the grapheme before the cursor.
+    TextEditDeleteBack,
+    /// Delete the grapheme at / after the cursor.
+    TextEditDeleteForward,
+    /// Delete from cursor back to the start of the current word.
+    TextEditDeleteWordBack,
+    /// Delete from cursor forward through the current word.
+    TextEditDeleteWordForward,
+    /// Commit the editor's buffer to the model and close. Default unbound
+    /// (Enter is literal in the multi-line node editor).
+    TextEditCommit,
+
+    // ── LabelEdit cursor primitives (LabelEdit context) ─────────
+    /// Move cursor one grapheme left in the label/portal-text editor.
+    LabelEditCursorLeft,
+    /// Move cursor one grapheme right.
+    LabelEditCursorRight,
+    /// Jump cursor to the start of the buffer.
+    LabelEditCursorHome,
+    /// Jump cursor to the end of the buffer.
+    LabelEditCursorEnd,
+    /// Delete the grapheme before the cursor.
+    LabelEditDeleteBack,
+    /// Delete the grapheme at / after the cursor.
+    LabelEditDeleteForward,
+
+    // ── Console-verb Actions (Document context) ─────────────────
+    /// Open the glyph-wheel color picker as a standalone palette.
+    /// Mirrors `color picker on`.
+    OpenColorPicker,
+    /// Close the glyph-wheel color picker. Mirrors `color picker off`.
+    CloseColorPicker,
+    /// Open the inline label editor on the currently-selected edge.
+    /// Mirrors `label edit`.
+    LabelEditOnSelection,
+    /// Toggle the FPS overlay on/off. Mirrors `fps on` ↔ `fps off`.
+    ToggleFps,
+    /// Toggle the FPS overlay's debug variant. Mirrors `fps debug` ↔
+    /// `fps off`.
+    ToggleFpsDebug,
+    /// Replace the current document with a fresh blank one. Mirrors
+    /// `new` (no path).
+    NewDocument,
 }
 
 impl Action {
@@ -164,10 +291,32 @@ impl Action {
             | Action::PickerNudgeValUp => InputContext::ColorPicker,
 
             Action::LabelEditCancel
-            | Action::LabelEditCommit => InputContext::LabelEdit,
+            | Action::LabelEditCommit
+            | Action::LabelEditCursorLeft
+            | Action::LabelEditCursorRight
+            | Action::LabelEditCursorHome
+            | Action::LabelEditCursorEnd
+            | Action::LabelEditDeleteBack
+            | Action::LabelEditDeleteForward => InputContext::LabelEdit,
 
-            Action::TextEditCancel => InputContext::TextEdit,
+            Action::TextEditCancel
+            | Action::TextEditCursorLeft
+            | Action::TextEditCursorRight
+            | Action::TextEditCursorUp
+            | Action::TextEditCursorDown
+            | Action::TextEditCursorHome
+            | Action::TextEditCursorEnd
+            | Action::TextEditWordLeft
+            | Action::TextEditWordRight
+            | Action::TextEditDeleteBack
+            | Action::TextEditDeleteForward
+            | Action::TextEditDeleteWordBack
+            | Action::TextEditDeleteWordForward
+            | Action::TextEditCommit => InputContext::TextEdit,
 
+            // All Document-context Actions — built-ins, mouse gestures,
+            // navigation, selection, and console-verb Actions — fall
+            // through to the catch-all.
             _ => InputContext::Document,
         }
     }

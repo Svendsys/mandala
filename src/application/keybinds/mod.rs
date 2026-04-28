@@ -26,7 +26,7 @@ mod tests;
 pub use action::Action;
 // Public surface; the lint can't see in-crate test consumers without --tests.
 #[allow(unused_imports)]
-pub use bind::{key_to_name, normalize_key_name, KeyBind};
+pub use bind::{gesture_key_name, key_to_name, normalize_key_name, KeyBind, MouseGesture};
 pub use config::KeybindConfig;
 pub use context::InputContext;
 pub use resolved::ResolvedKeybinds;

@@ -77,6 +77,64 @@ pub struct KeybindConfig {
     // ── Text Editor ──────────────────────────────────────────────
     pub text_edit_cancel: Vec<String>,
 
+    // ── Mouse-gesture Actions ────────────────────────────────────
+    pub double_click_activate: Vec<String>,
+    pub create_orphan_node_and_edit: Vec<String>,
+    pub pan_canvas: Vec<String>,
+    pub commit_or_close_editor: Vec<String>,
+
+    // ── Navigation / camera ──────────────────────────────────────
+    pub zoom_in: Vec<String>,
+    pub zoom_out: Vec<String>,
+    pub zoom_reset: Vec<String>,
+    pub zoom_fit: Vec<String>,
+    pub pan_camera_north: Vec<String>,
+    pub pan_camera_south: Vec<String>,
+    pub pan_camera_east: Vec<String>,
+    pub pan_camera_west: Vec<String>,
+    pub center_on_selection: Vec<String>,
+    pub jump_to_root: Vec<String>,
+
+    // ── Selection ────────────────────────────────────────────────
+    pub select_all: Vec<String>,
+    pub deselect_all: Vec<String>,
+    pub invert_selection: Vec<String>,
+    pub select_parent: Vec<String>,
+    pub select_child: Vec<String>,
+    pub select_next_sibling: Vec<String>,
+    pub select_prev_sibling: Vec<String>,
+
+    // ── TextEdit cursor primitives ──────────────────────────────
+    pub text_edit_cursor_left: Vec<String>,
+    pub text_edit_cursor_right: Vec<String>,
+    pub text_edit_cursor_up: Vec<String>,
+    pub text_edit_cursor_down: Vec<String>,
+    pub text_edit_cursor_home: Vec<String>,
+    pub text_edit_cursor_end: Vec<String>,
+    pub text_edit_word_left: Vec<String>,
+    pub text_edit_word_right: Vec<String>,
+    pub text_edit_delete_back: Vec<String>,
+    pub text_edit_delete_forward: Vec<String>,
+    pub text_edit_delete_word_back: Vec<String>,
+    pub text_edit_delete_word_forward: Vec<String>,
+    pub text_edit_commit: Vec<String>,
+
+    // ── LabelEdit cursor primitives ─────────────────────────────
+    pub label_edit_cursor_left: Vec<String>,
+    pub label_edit_cursor_right: Vec<String>,
+    pub label_edit_cursor_home: Vec<String>,
+    pub label_edit_cursor_end: Vec<String>,
+    pub label_edit_delete_back: Vec<String>,
+    pub label_edit_delete_forward: Vec<String>,
+
+    // ── Console-verb Actions ────────────────────────────────────
+    pub open_color_picker: Vec<String>,
+    pub close_color_picker: Vec<String>,
+    pub label_edit_on_selection: Vec<String>,
+    pub toggle_fps: Vec<String>,
+    pub toggle_fps_debug: Vec<String>,
+    pub new_document: Vec<String>,
+
     // ── Style / metadata ─────────────────────────────────────────
     /// Font family name for the console overlay.
     pub console_font: String,
@@ -146,6 +204,79 @@ impl Default for KeybindConfig {
 
             // Text Editor
             text_edit_cancel: vec!["Escape".into()],
+
+            // Mouse-gesture Actions. Bodies for these arms land in
+            // Phase 4. Defaults that the user explicitly approved are
+            // set here; the rest ship empty until their arm is wired.
+            //
+            // `create_orphan_node_and_edit` is intentionally `vec![]` —
+            // the user found the empty-canvas double-click annoying;
+            // it's now opt-in.
+            double_click_activate: vec!["DoubleClick".into()],
+            create_orphan_node_and_edit: vec![],
+            pan_canvas: vec!["LeftDrag".into(), "MiddleClick".into()],
+            commit_or_close_editor: vec![],
+
+            // Navigation / camera. `ZoomIn`/`ZoomOut` default to mouse
+            // wheel per user request; key shortcuts (e.g. Ctrl++/Ctrl+-)
+            // can be added in user keybinds.json.
+            zoom_in: vec!["WheelUp".into()],
+            zoom_out: vec!["WheelDown".into()],
+            zoom_reset: vec![],
+            zoom_fit: vec![],
+            pan_camera_north: vec![],
+            pan_camera_south: vec![],
+            pan_camera_east: vec![],
+            pan_camera_west: vec![],
+            center_on_selection: vec![],
+            jump_to_root: vec![],
+
+            // Selection. All defaults empty; users opt in via
+            // keybinds.json.
+            select_all: vec![],
+            deselect_all: vec![],
+            invert_selection: vec![],
+            select_parent: vec![],
+            select_child: vec![],
+            select_next_sibling: vec![],
+            select_prev_sibling: vec![],
+
+            // TextEdit cursor primitives. Bodies land in Phase 5,
+            // which sets the natural defaults (ArrowLeft etc.) at
+            // the same time. Until then these ship empty so the
+            // hardcoded path in text_edit/editor.rs continues to
+            // own them.
+            text_edit_cursor_left: vec![],
+            text_edit_cursor_right: vec![],
+            text_edit_cursor_up: vec![],
+            text_edit_cursor_down: vec![],
+            text_edit_cursor_home: vec![],
+            text_edit_cursor_end: vec![],
+            text_edit_word_left: vec![],
+            text_edit_word_right: vec![],
+            text_edit_delete_back: vec![],
+            text_edit_delete_forward: vec![],
+            text_edit_delete_word_back: vec![],
+            text_edit_delete_word_forward: vec![],
+            text_edit_commit: vec![],
+
+            // LabelEdit cursor primitives. Bodies land in Phase 5.
+            label_edit_cursor_left: vec![],
+            label_edit_cursor_right: vec![],
+            label_edit_cursor_home: vec![],
+            label_edit_cursor_end: vec![],
+            label_edit_delete_back: vec![],
+            label_edit_delete_forward: vec![],
+
+            // Console-verb Actions. Bodies land in Phase 6. Defaults
+            // empty — these mirror typed console verbs and the user
+            // opts in by binding a key.
+            open_color_picker: vec![],
+            close_color_picker: vec![],
+            label_edit_on_selection: vec![],
+            toggle_fps: vec![],
+            toggle_fps_debug: vec![],
+            new_document: vec![],
 
             // Style / metadata
             console_font: String::new(),
@@ -221,6 +352,58 @@ impl KeybindConfig {
             (Action::LabelEditCommit, &self.label_edit_commit),
             // Text Editor
             (Action::TextEditCancel, &self.text_edit_cancel),
+            // Mouse-gesture Actions
+            (Action::DoubleClickActivate, &self.double_click_activate),
+            (Action::CreateOrphanNodeAndEdit, &self.create_orphan_node_and_edit),
+            (Action::PanCanvas, &self.pan_canvas),
+            (Action::CommitOrCloseEditor, &self.commit_or_close_editor),
+            // Navigation / camera
+            (Action::ZoomIn, &self.zoom_in),
+            (Action::ZoomOut, &self.zoom_out),
+            (Action::ZoomReset, &self.zoom_reset),
+            (Action::ZoomFit, &self.zoom_fit),
+            (Action::PanCameraNorth, &self.pan_camera_north),
+            (Action::PanCameraSouth, &self.pan_camera_south),
+            (Action::PanCameraEast, &self.pan_camera_east),
+            (Action::PanCameraWest, &self.pan_camera_west),
+            (Action::CenterOnSelection, &self.center_on_selection),
+            (Action::JumpToRoot, &self.jump_to_root),
+            // Selection
+            (Action::SelectAll, &self.select_all),
+            (Action::DeselectAll, &self.deselect_all),
+            (Action::InvertSelection, &self.invert_selection),
+            (Action::SelectParent, &self.select_parent),
+            (Action::SelectChild, &self.select_child),
+            (Action::SelectNextSibling, &self.select_next_sibling),
+            (Action::SelectPrevSibling, &self.select_prev_sibling),
+            // TextEdit cursor primitives
+            (Action::TextEditCursorLeft, &self.text_edit_cursor_left),
+            (Action::TextEditCursorRight, &self.text_edit_cursor_right),
+            (Action::TextEditCursorUp, &self.text_edit_cursor_up),
+            (Action::TextEditCursorDown, &self.text_edit_cursor_down),
+            (Action::TextEditCursorHome, &self.text_edit_cursor_home),
+            (Action::TextEditCursorEnd, &self.text_edit_cursor_end),
+            (Action::TextEditWordLeft, &self.text_edit_word_left),
+            (Action::TextEditWordRight, &self.text_edit_word_right),
+            (Action::TextEditDeleteBack, &self.text_edit_delete_back),
+            (Action::TextEditDeleteForward, &self.text_edit_delete_forward),
+            (Action::TextEditDeleteWordBack, &self.text_edit_delete_word_back),
+            (Action::TextEditDeleteWordForward, &self.text_edit_delete_word_forward),
+            (Action::TextEditCommit, &self.text_edit_commit),
+            // LabelEdit cursor primitives
+            (Action::LabelEditCursorLeft, &self.label_edit_cursor_left),
+            (Action::LabelEditCursorRight, &self.label_edit_cursor_right),
+            (Action::LabelEditCursorHome, &self.label_edit_cursor_home),
+            (Action::LabelEditCursorEnd, &self.label_edit_cursor_end),
+            (Action::LabelEditDeleteBack, &self.label_edit_delete_back),
+            (Action::LabelEditDeleteForward, &self.label_edit_delete_forward),
+            // Console-verb Actions
+            (Action::OpenColorPicker, &self.open_color_picker),
+            (Action::CloseColorPicker, &self.close_color_picker),
+            (Action::LabelEditOnSelection, &self.label_edit_on_selection),
+            (Action::ToggleFps, &self.toggle_fps),
+            (Action::ToggleFpsDebug, &self.toggle_fps_debug),
+            (Action::NewDocument, &self.new_document),
         ];
         for (action, strings) in sets {
             for s in *strings {

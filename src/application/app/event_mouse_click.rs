@@ -35,10 +35,11 @@ pub(super) fn handle_mouse_input(
         hovered_node,
         cursor_pos,
         modifiers,
+        cursor_is_hand,
         picker_hover,
-        ..
+        keybinds,
     } = ctx;
-    let cursor_pos = *cursor_pos;
+    let cursor_pos_val = *cursor_pos;
     // The console swallows mouse clicks as a close
     // gesture. Clicking anywhere while open dismisses
     // the console without running a command, mirroring
@@ -75,7 +76,7 @@ pub(super) fn handle_mouse_input(
         let consumed = if state == ElementState::Pressed {
             if let Some(doc) = document.as_mut() {
                 handle_color_picker_click(
-                    cursor_pos,
+                    cursor_pos_val,
                     button,
                     color_picker_state,
                     doc,
@@ -114,7 +115,7 @@ pub(super) fn handle_mouse_input(
             if matches!(app_mode, AppMode::Reparent { .. }) {
                 if state == ElementState::Released {
                     handle_reparent_target_click(
-                        cursor_pos,
+                        cursor_pos_val,
                         app_mode,
                         hovered_node,
                         document,
@@ -132,7 +133,7 @@ pub(super) fn handle_mouse_input(
             } else if matches!(app_mode, AppMode::Connect { .. }) {
                 if state == ElementState::Released {
                     handle_connect_target_click(
-                        cursor_pos,
+                        cursor_pos_val,
                         app_mode,
                         hovered_node,
                         document,
@@ -214,156 +215,64 @@ pub(super) fn handle_mouse_input(
                 let is_dblclick = !already_editing_same_target
                     && last_click
                         .as_ref()
-                        .map(|prev| is_double_click(prev, now, cursor_pos, &click_hit))
+                        .map(|prev| is_double_click(prev, now, cursor_pos_val, &click_hit))
                         .unwrap_or(false);
                 if is_dblclick {
                     *last_click = None;
-                    match &click_hit {
-                        ClickHit::Node(node_id) => {
-                            if let Some(doc) = document.as_mut() {
-                                let nid = node_id.clone();
-                                doc.selection = SelectionState::Single(nid.clone());
-                                // rebuild_all first so the selection
-                                // highlight color regions are
-                                // applied to the tree. open_text_edit's
-                                // subsequent apply_text_edit_to_tree
-                                // only touches the Text field of the
-                                // target node's GlyphArea (via
-                                // DeltaGlyphArea's selective field
-                                // application) so the highlight
-                                // regions survive untouched.
-                                rebuild_all(doc, mindmap_tree, app_scene, renderer, scene_cache);
-                                open_text_edit(
-                                    &nid,
-                                    false,
-                                    doc,
-                                    text_edit_state,
-                                    mindmap_tree,
-                                    app_scene,
-                                    renderer,
-                                );
-                            }
-                            return;
-                        }
-                        ClickHit::PortalMarker { edge, endpoint }
-                        | ClickHit::PortalText { edge, endpoint } => {
-                            // Portal double-click: pan the camera to
-                            // the node "on the other side" of the
-                            // portal-mode edge. Works identically
-                            // for an icon or text double-click —
-                            // both share the same endpoint identity
-                            // and the same "jump to partner" intent.
-                            // The hit endpoint is the node this
-                            // marker sits above; the opposite
-                            // endpoint is the navigation target.
-                            let other_id = if *endpoint == edge.from_id {
-                                edge.to_id.clone()
-                            } else {
-                                edge.from_id.clone()
-                            };
-                            if let Some(doc) = document.as_ref() {
-                                if let Some(node) = doc.mindmap.nodes.get(&other_id) {
-                                    let target = glam::Vec2::new(
-                                        node.position.x as f32
-                                            + node.size.width as f32 * 0.5,
-                                        node.position.y as f32
-                                            + node.size.height as f32 * 0.5,
-                                    );
-                                    renderer.set_camera_center(target);
-                                }
-                            }
-                            if let Some(doc) = document.as_mut() {
-                                // Keep the edge selected after the
-                                // jump so the user can cmd+. to
-                                // jump back (via undo on the
-                                // camera) or edit the portal
-                                // in-place via the console.
-                                doc.selection = SelectionState::Edge(
-                                    crate::application::document::EdgeRef::new(
-                                        &edge.from_id,
-                                        &edge.to_id,
-                                        &edge.edge_type,
-                                    ),
-                                );
-                                rebuild_all(doc, mindmap_tree, app_scene, renderer, scene_cache);
-                            }
-                            return;
-                        }
-                        ClickHit::EdgeLabel(edge_key) => {
-                            // Double-click on an edge label opens
-                            // the inline label editor — the "click
-                            // to select, dbl-click to edit" idiom
-                            // the `Node` variant already follows.
-                            // Commit the EdgeLabel selection first
-                            // so the editor opens against the
-                            // authoritative selection state.
-                            if let Some(doc) = document.as_mut() {
-                                let er = crate::application::document::EdgeRef::new(
-                                    edge_key.from_id.as_str(),
-                                    edge_key.to_id.as_str(),
-                                    edge_key.edge_type.as_str(),
-                                );
-                                let prev = doc.selection.clone();
-                                doc.selection = SelectionState::EdgeLabel(
-                                    crate::application::document::EdgeLabelSel::new(er.clone()),
-                                );
-                                // Selection-change rebuild picks the
-                                // right granularity — scene-only when
-                                // both prev and new are edge-adjacent,
-                                // full rebuild when transitioning from
-                                // a node selection so the old node
-                                // highlight clears. `open_label_edit`
-                                // below will trigger any further
-                                // buffer updates it needs.
-                                rebuild_after_selection_change(
-                                    &prev,
-                                    doc,
-                                    mindmap_tree,
-                                    app_scene,
-                                    renderer,
-                                    scene_cache,
-                                );
-                                open_label_edit(
-                                    &er,
-                                    doc,
-                                    label_edit_state,
-                                    app_scene,
-                                    renderer,
-                                );
-                            }
-                            return;
-                        }
-                        ClickHit::Empty => {
-                            // Empty space: only create an orphan if
-                            // no edge was selected (otherwise the
-                            // user was probably aiming at the
-                            // selected edge).
-                            let allow_create = document
-                                .as_ref()
-                                .map(|d| !matches!(d.selection, SelectionState::Edge(_)))
-                                .unwrap_or(false);
-                            if allow_create {
-                                if let Some(doc) = document.as_mut() {
-                                    let new_id = doc.create_orphan_and_select(canvas_pos);
-                                    rebuild_all(doc, mindmap_tree, app_scene, renderer, scene_cache);
-                                    open_text_edit(
-                                        &new_id,
-                                        true,
-                                        doc,
-                                        text_edit_state,
-                                        mindmap_tree,
-                                        app_scene,
-                                        renderer,
-                                    );
-                                }
-                                return;
-                            }
-                        }
+                    // Look up which Action (if any) the user has bound
+                    // to `DoubleClick`. Default is `DoubleClickActivate`
+                    // which routes by `ClickHit`; `Empty` only fires
+                    // `CreateOrphanNodeAndEdit` when the user has
+                    // explicitly bound that Action somewhere
+                    // (off-by-default per user request).
+                    let dblclick_name = crate::application::keybinds::gesture_key_name(
+                        crate::application::keybinds::MouseGesture::DoubleClick,
+                    );
+                    let action = keybinds.action_for_context(
+                        crate::application::keybinds::InputContext::Document,
+                        dblclick_name,
+                        modifiers.control_key(),
+                        modifiers.shift_key(),
+                        modifiers.alt_key(),
+                    );
+                    if let Some(a) = action {
+                        let dispatch_hit = super::dispatch::DispatchHit {
+                            click_hit: click_hit.clone(),
+                            canvas_pos,
+                        };
+                        let mut bundle = crate::application::app::input_context::InputHandlerContext {
+                            document,
+                            mindmap_tree,
+                            app_scene,
+                            renderer,
+                            scene_cache,
+                            drag_state,
+                            app_mode,
+                            console_state,
+                            console_history,
+                            label_edit_state,
+                            portal_text_edit_state,
+                            text_edit_state,
+                            color_picker_state,
+                            last_click,
+                            hovered_node,
+                            cursor_pos,
+                            modifiers,
+                            cursor_is_hand,
+                            picker_hover,
+                            keybinds,
+                        };
+                        let _ = super::dispatch::dispatch_action(a, &mut bundle, Some(&dispatch_hit));
+                        return;
                     }
+                    // No Action bound to DoubleClick: silently no-op.
+                    // (The double-click consumed `last_click`; we don't
+                    // fall through to the single-click selection path.)
+                    return;
                 }
                 *last_click = Some(LastClick {
                     time: now,
-                    screen_pos: cursor_pos,
+                    screen_pos: cursor_pos_val,
                     hit: click_hit,
                 });
 
@@ -413,7 +322,7 @@ pub(super) fn handle_mouse_input(
                 // gives portal-label / edge-handle drag higher
                 // precedence when multiple hits overlap.
                 *drag_state = DragState::Pending {
-                    start_pos: cursor_pos,
+                    start_pos: cursor_pos_val,
                     hit_node,
                     hit_edge_handle,
                     hit_portal_label,
@@ -614,7 +523,7 @@ pub(super) fn handle_mouse_input(
                         if !entered_label_select {
                             handle_click(
                                 hit_node,
-                                cursor_pos,
+                                cursor_pos_val,
                                 modifiers.shift_key(),
                                 document,
                                 mindmap_tree,
