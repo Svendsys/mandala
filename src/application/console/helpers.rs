@@ -70,7 +70,15 @@ pub fn collect_kvs_or_usage(
 /// they don't speak.
 #[derive(Default)]
 pub struct ApplyTally {
+    /// Per-arg explanations the kv loop produced — both
+    /// `note(false, msg)` no-op messages and `note_error(msg)`
+    /// hard-error messages land here. `finalize` joins these
+    /// (or emits as `Lines`) when the tally has any content.
     pub messages: Vec<String>,
+    /// `true` once any kv produced a real model change. Used
+    /// by `finalize` to decide between `Err(joined messages)`
+    /// (nothing applied) and `Lines(messages)` (mixed
+    /// messages with at least one applied).
     pub any_applied: bool,
 }
 
@@ -138,5 +146,113 @@ pub fn parse_finite_pt(key: &str, value: &str) -> Result<f32, String> {
             key, value, n
         )),
         Err(_) => Err(format!("{}='{}' is not a number", key, value)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Positive finite values pass through; the error wording
+    /// for unparseable / non-positive / non-finite is locked so
+    /// the unified path doesn't drift from the pre-merge
+    /// per-verb wording.
+    #[test]
+    fn parse_finite_pt_accepts_positive_finite() {
+        assert_eq!(parse_finite_pt("size", "12.5").unwrap(), 12.5);
+        assert_eq!(parse_finite_pt("min", "0.001").unwrap(), 0.001);
+    }
+
+    #[test]
+    fn parse_finite_pt_rejects_zero_negative_nan_inf() {
+        assert!(parse_finite_pt("size", "0").is_err());
+        assert!(parse_finite_pt("size", "-1.0").is_err());
+        assert!(parse_finite_pt("size", "NaN").is_err());
+        assert!(parse_finite_pt("size", "inf").is_err());
+    }
+
+    #[test]
+    fn parse_finite_pt_rejects_unparseable_with_named_key() {
+        let err = parse_finite_pt("max", "not-a-number").unwrap_err();
+        assert!(err.contains("max"), "error must name the kv key: {}", err);
+        assert!(err.contains("not-a-number"));
+        assert!(err.contains("is not a number"));
+    }
+
+    #[test]
+    fn parse_finite_pt_rejects_negative_with_full_wording() {
+        let err = parse_finite_pt("padding", "-3").unwrap_err();
+        assert!(err.contains("padding"));
+        assert!(err.contains("-3"));
+        assert!(err.contains("must be positive and finite"));
+    }
+
+    /// `ApplyTally::note(true, msg_fn)` flips `any_applied`
+    /// and does not invoke the message thunk. `note(false,
+    /// msg_fn)` invokes the thunk and pushes the message.
+    #[test]
+    fn apply_tally_note_routes_by_applied_flag() {
+        let mut tally = ApplyTally::new();
+        tally.note(true, || panic!("must not run on success"));
+        assert!(tally.any_applied);
+        assert!(tally.messages.is_empty());
+
+        tally.note(false, || "no-op msg".to_string());
+        assert_eq!(tally.messages, vec!["no-op msg".to_string()]);
+        assert!(tally.any_applied, "earlier success preserved");
+    }
+
+    /// `note_error` is unconditional — bad input lands
+    /// regardless of `any_applied`.
+    #[test]
+    fn apply_tally_note_error_is_unconditional() {
+        let mut tally = ApplyTally::new();
+        tally.note_error("bad key".to_string());
+        assert_eq!(tally.messages, vec!["bad key".to_string()]);
+        assert!(!tally.any_applied);
+    }
+
+    /// `finalize` partitions the three output shapes:
+    /// - clean success → `Ok("<verb> applied")`
+    /// - mixed (any_applied + messages) → `Lines(messages)`
+    /// - all-failed (messages without any_applied) →
+    ///   `Err(joined messages)`
+    #[test]
+    fn apply_tally_finalize_clean_success_emits_verb_applied() {
+        let mut tally = ApplyTally::new();
+        tally.note(true, || unreachable!());
+        match tally.finalize("anchor") {
+            ExecResult::Ok(s) => assert_eq!(s, "anchor applied"),
+            other => panic!("expected Ok, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn apply_tally_finalize_all_failed_emits_err_joined() {
+        let mut tally = ApplyTally::new();
+        tally.note_error("bad-1".to_string());
+        tally.note_error("bad-2".to_string());
+        match tally.finalize("anchor") {
+            ExecResult::Err(s) => {
+                assert!(s.contains("bad-1"));
+                assert!(s.contains("bad-2"));
+                assert!(s.contains("; "));
+            }
+            other => panic!("expected Err, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn apply_tally_finalize_mixed_emits_lines() {
+        let mut tally = ApplyTally::new();
+        tally.note(true, || unreachable!());
+        tally.note(false, || "from already foo".to_string());
+        match tally.finalize("anchor") {
+            ExecResult::Lines(lines) => {
+                assert_eq!(lines.len(), 1);
+                assert!(lines[0].text.contains("from already foo"));
+            }
+            other => panic!("expected Lines, got {:?}", other),
+        }
     }
 }

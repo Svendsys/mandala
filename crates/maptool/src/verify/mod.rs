@@ -100,3 +100,50 @@ pub fn verify(map: &MindMap) -> Vec<Violation> {
     out.extend(zoom_bounds::check(map));
     out
 }
+
+#[cfg(test)]
+mod constructor_tests {
+    use super::*;
+    use crate::verify::test_helpers::node;
+
+    /// `Violation::node` stamps the node's id into `location`
+    /// and threads `category` and `message` straight through.
+    /// Locks the contract every per-checker now relies on.
+    #[test]
+    fn violation_node_uses_node_id_as_location() {
+        let n = node("0.3.1", None);
+        let v = Violation::node("test_cat", &n, "boom");
+        assert_eq!(v.category, "test_cat");
+        assert_eq!(v.location, "0.3.1");
+        assert_eq!(v.message, "boom");
+    }
+
+    /// `Violation::edge` formats `"edge[<idx>]"` — the bracket
+    /// stamp every per-checker previously open-coded.
+    #[test]
+    fn violation_edge_uses_bracket_index_stamp() {
+        let v = Violation::edge("test_cat", 7, "boom");
+        assert_eq!(v.category, "test_cat");
+        assert_eq!(v.location, "edge[7]");
+        assert_eq!(v.message, "boom");
+    }
+
+    /// `Violation::at` is the escape hatch — passes the
+    /// supplied location through verbatim.
+    #[test]
+    fn violation_at_passes_location_through() {
+        let v = Violation::at("test_cat", "palette[coral]", "boom");
+        assert_eq!(v.category, "test_cat");
+        assert_eq!(v.location, "palette[coral]");
+        assert_eq!(v.message, "boom");
+    }
+
+    /// `Display` formats as `<category> @ <location>: <message>`.
+    /// Pinned because any drift from this format would silently
+    /// break downstream verify-output parsing.
+    #[test]
+    fn violation_display_format_is_stable() {
+        let v = Violation::edge("references", 0, "from_id missing");
+        assert_eq!(format!("{}", v), "references @ edge[0]: from_id missing");
+    }
+}

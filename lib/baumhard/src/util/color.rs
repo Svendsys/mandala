@@ -574,4 +574,61 @@ mod tests {
             assert!(!c.is_ascii_uppercase());
         }
     }
+
+    /// `Color + Color` wraps modulo 256 per channel — the
+    /// procedural-palette use case the wrapping policy exists
+    /// for. Locks the contract against any future drift to
+    /// saturating semantics.
+    #[test]
+    fn color_add_wraps_per_channel_modulo_256() {
+        let a = Color::new_u8(&[200, 100, 50, 255]);
+        let b = Color::new_u8(&[100, 200, 50, 1]);
+        let r = a + b;
+        // 200+100=300 → 44, 100+200=300 → 44, 50+50=100, 255+1=256 → 0.
+        assert_eq!(r[0], 44);
+        assert_eq!(r[1], 44);
+        assert_eq!(r[2], 100);
+        assert_eq!(r[3], 0);
+    }
+
+    /// `Color - Color` underflow wraps modulo 256.
+    #[test]
+    fn color_sub_wraps_underflow_modulo_256() {
+        let a = Color::new_u8(&[10, 0, 100, 255]);
+        let b = Color::new_u8(&[20, 1, 100, 0]);
+        let r = a - b;
+        // 10-20=-10 → 246, 0-1=-1 → 255, 100-100=0, 255-0=255.
+        assert_eq!(r[0], 246);
+        assert_eq!(r[1], 255);
+        assert_eq!(r[2], 0);
+        assert_eq!(r[3], 255);
+    }
+
+    /// `Color * Color` overflow wraps modulo 256.
+    #[test]
+    fn color_mul_wraps_overflow_modulo_256() {
+        let a = Color::new_u8(&[16, 4, 0, 255]);
+        let b = Color::new_u8(&[16, 64, 200, 1]);
+        let r = a * b;
+        // 16*16=256 → 0, 4*64=256 → 0, 0*200=0, 255*1=255.
+        assert_eq!(r[0], 0);
+        assert_eq!(r[1], 0);
+        assert_eq!(r[2], 0);
+        assert_eq!(r[3], 255);
+    }
+
+    /// `Color / Color` uses `u8::wrapping_div`. Division by
+    /// zero panics in `wrapping_div` on debug builds and
+    /// returns `0` in release; this test exercises only the
+    /// non-zero divisor path that consumers actually use.
+    #[test]
+    fn color_div_per_channel() {
+        let a = Color::new_u8(&[200, 100, 50, 255]);
+        let b = Color::new_u8(&[2, 4, 5, 255]);
+        let r = a / b;
+        assert_eq!(r[0], 100);
+        assert_eq!(r[1], 25);
+        assert_eq!(r[2], 10);
+        assert_eq!(r[3], 1);
+    }
 }

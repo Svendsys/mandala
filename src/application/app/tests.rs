@@ -356,3 +356,70 @@ mod drag_helper_tests {
             "release flush must change state for edge-label drag");
     }
 }
+
+// -----------------------------------------------------------------
+// `click_hit_from_priority` — the pure ladder behind
+// `compute_click_hit`. The cascade gating in `compute_click_hit`
+// already guarantees lower-priority hits are `None` when a
+// higher-priority one matches; these tests exercise the ladder
+// directly to lock the priority contract regardless.
+// -----------------------------------------------------------------
+
+#[cfg(test)]
+mod click_hit_priority_tests {
+    use super::*;
+    use baumhard::mindmap::scene_cache::EdgeKey;
+
+    fn ek() -> EdgeKey {
+        EdgeKey::new("a", "b", "cross_link")
+    }
+
+    #[test]
+    fn click_hit_priority_node_wins_over_all_others() {
+        let hit = click_hit_from_priority(
+            &Some("node-x".to_string()),
+            &Some((ek(), "n1".to_string())),
+            &Some((ek(), "n2".to_string())),
+            &Some(ek()),
+        );
+        assert_eq!(hit, ClickHit::Node("node-x".to_string()));
+    }
+
+    #[test]
+    fn click_hit_priority_portal_text_wins_over_icon_and_label() {
+        let hit = click_hit_from_priority(
+            &None,
+            &Some((ek(), "n1".to_string())),
+            &Some((ek(), "n2".to_string())),
+            &Some(ek()),
+        );
+        if let ClickHit::PortalText { endpoint, .. } = hit {
+            assert_eq!(endpoint, "n1");
+        } else {
+            panic!("expected PortalText, got {:?}", hit);
+        }
+    }
+
+    #[test]
+    fn click_hit_priority_portal_icon_wins_over_edge_label() {
+        let hit = click_hit_from_priority(
+            &None,
+            &None,
+            &Some((ek(), "n2".to_string())),
+            &Some(ek()),
+        );
+        assert!(matches!(hit, ClickHit::PortalMarker { .. }));
+    }
+
+    #[test]
+    fn click_hit_priority_edge_label_wins_when_alone() {
+        let hit = click_hit_from_priority(&None, &None, &None, &Some(ek()));
+        assert!(matches!(hit, ClickHit::EdgeLabel(_)));
+    }
+
+    #[test]
+    fn click_hit_priority_all_none_yields_empty() {
+        let hit = click_hit_from_priority(&None, &None, &None, &None);
+        assert_eq!(hit, ClickHit::Empty);
+    }
+}

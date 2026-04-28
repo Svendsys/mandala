@@ -158,7 +158,7 @@ const EDGE_HANDLE_HIT_TOLERANCE_PX: f32 = 12.0;
 /// empty-space double-click (create orphan). Two clicks "match" as
 /// a double-click only when they have the same `ClickHit`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum ClickHit {
+pub(super) enum ClickHit {
     /// No node and no portal marker under the cursor. Empty-canvas
     /// double-click creates a new orphan unless an edge is selected.
     Empty,
@@ -298,23 +298,12 @@ pub(super) fn compute_click_hit(
         None
     };
 
-    let click_hit: ClickHit = if let Some(id) = &hit_node {
-        ClickHit::Node(id.clone())
-    } else if let Some((key, ep)) = &portal_text_hit {
-        ClickHit::PortalText {
-            edge: key.clone(),
-            endpoint: ep.clone(),
-        }
-    } else if let Some((key, ep)) = &portal_icon_hit {
-        ClickHit::PortalMarker {
-            edge: key.clone(),
-            endpoint: ep.clone(),
-        }
-    } else if let Some(key) = &edge_label_hit {
-        ClickHit::EdgeLabel(key.clone())
-    } else {
-        ClickHit::Empty
-    };
+    let click_hit = click_hit_from_priority(
+        &hit_node,
+        &portal_text_hit,
+        &portal_icon_hit,
+        &edge_label_hit,
+    );
 
     ClickHitParts {
         click_hit,
@@ -322,6 +311,42 @@ pub(super) fn compute_click_hit(
         portal_text_hit,
         portal_icon_hit,
         edge_label_hit,
+    }
+}
+
+/// Pure priority-ladder for `ClickHit` construction. Given the
+/// four already-resolved hit options, returns the highest-priority
+/// `ClickHit` variant that's `Some`. Priority order: node beats
+/// portal-text beats portal-icon beats edge-label beats empty.
+///
+/// Separated from [`compute_click_hit`] so the priority contract
+/// can be unit-tested without a `Renderer`. The cascade gating
+/// inside `compute_click_hit` already guarantees that at most one
+/// of the lower-priority options is `Some` at a time, but this
+/// ladder remains correct when callers pass overlapping hits — the
+/// ladder is the canonical tie-breaker.
+fn click_hit_from_priority(
+    hit_node: &Option<String>,
+    portal_text_hit: &Option<(baumhard::mindmap::scene_cache::EdgeKey, String)>,
+    portal_icon_hit: &Option<(baumhard::mindmap::scene_cache::EdgeKey, String)>,
+    edge_label_hit: &Option<baumhard::mindmap::scene_cache::EdgeKey>,
+) -> ClickHit {
+    if let Some(id) = hit_node {
+        ClickHit::Node(id.clone())
+    } else if let Some((key, ep)) = portal_text_hit {
+        ClickHit::PortalText {
+            edge: key.clone(),
+            endpoint: ep.clone(),
+        }
+    } else if let Some((key, ep)) = portal_icon_hit {
+        ClickHit::PortalMarker {
+            edge: key.clone(),
+            endpoint: ep.clone(),
+        }
+    } else if let Some(key) = edge_label_hit {
+        ClickHit::EdgeLabel(key.clone())
+    } else {
+        ClickHit::Empty
     }
 }
 

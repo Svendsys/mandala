@@ -112,7 +112,8 @@ pub fn build_edge_handle_tree(
 /// sequence (per [`edge_handle_identity_sequence`]) updates each
 /// handle's variable fields in place.
 ///
-/// Variable fields covered: see [`DeltaGlyphArea::full_assign_from`]
+/// Variable fields covered: see
+/// [`crate::gfx_structs::area::DeltaGlyphArea::full_assign_from`]
 /// — text, position, bounds, scale, line_height, regions, outline,
 /// and zoom_visibility. The `Assign` operation overwrites whichever
 /// changed — same shape as the picker / portal mutators so any shift

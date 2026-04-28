@@ -106,6 +106,53 @@ pub(in crate::application) fn two_testament_node_ids(doc: &MindMapDocument) -> (
     (a, b)
 }
 
+/// Build a fresh blank `MindMapDocument` carrying a single
+/// orphan node `"0"` at the origin. Lighter than
+/// [`load_test_doc`] for tests that just need a writable doc
+/// with at least one selectable node — no testament JSON
+/// parse, no font-system contention. Lifted from byte-
+/// identical helpers that previously sat inline in
+/// `zoom_bounds.rs` and `edges.rs` test modules.
+pub(in crate::application) fn doc_with_one_orphan_node() -> MindMapDocument {
+    use std::collections::{HashMap, HashSet};
+    let mut doc = MindMapDocument {
+        mindmap: MindMap::new_blank("t"),
+        file_path: None,
+        dirty: false,
+        selection: super::SelectionState::None,
+        undo_stack: Vec::new(),
+        mutation_registry: HashMap::new(),
+        mutation_sources: HashMap::new(),
+        mutation_handlers: HashMap::new(),
+        active_toggles: HashSet::new(),
+        label_edit_preview: None,
+        portal_text_edit_preview: None,
+        color_picker_preview: None,
+        active_animations: Vec::new(),
+    };
+    let node = super::defaults::default_orphan_node("0", glam::Vec2::ZERO);
+    doc.mindmap.nodes.insert("0".to_string(), node);
+    doc
+}
+
+/// Build a fresh `MindMapDocument` carrying two orphan nodes
+/// (`"0"` and `"1"`) plus a default parent_child edge between
+/// them. Returns the doc paired with an [`super::EdgeRef`]
+/// pointing at the edge so callers don't have to reconstruct
+/// the triple. The shape every drag / undo / mutate-edge unit
+/// test wanted.
+pub(in crate::application) fn doc_with_one_edge() -> (MindMapDocument, super::EdgeRef) {
+    let mut doc = doc_with_one_orphan_node();
+    doc.mindmap.nodes.insert(
+        "1".to_string(),
+        super::defaults::default_orphan_node("1", glam::Vec2::ZERO),
+    );
+    let edge = super::defaults::default_parent_child_edge("0", "1");
+    let er = super::EdgeRef::new(&edge.from_id, &edge.to_id, &edge.edge_type);
+    doc.mindmap.edges.push(edge);
+    (doc, er)
+}
+
 /// Pick the first visible edge and return its EdgeRef + a guaranteed
 /// on-path sample point. Used by hit-test edge tests.
 pub(super) fn pick_test_edge(doc: &MindMapDocument) -> (super::EdgeRef, glam::Vec2) {

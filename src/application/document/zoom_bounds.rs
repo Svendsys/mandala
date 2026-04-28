@@ -139,47 +139,13 @@ impl MindMapDocument {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::document::defaults::{
-        default_orphan_node, default_parent_child_edge,
+    use crate::application::document::tests_common::{
+        doc_with_one_edge as doc_with_edge,
+        doc_with_one_orphan_node as doc_with_node,
     };
-    use baumhard::mindmap::model::MindMap;
-    use glam::Vec2;
-    use std::collections::{HashMap, HashSet};
-
-    fn doc_with_node() -> MindMapDocument {
-        let mut doc = MindMapDocument {
-            mindmap: MindMap::new_blank("t"),
-            file_path: None,
-            dirty: false,
-            selection: super::super::SelectionState::None,
-            undo_stack: Vec::new(),
-            mutation_registry: HashMap::new(),
-            mutation_sources: HashMap::new(),
-            mutation_handlers: HashMap::new(),
-            active_toggles: HashSet::new(),
-            label_edit_preview: None,
-            portal_text_edit_preview: None,
-            color_picker_preview: None,
-            active_animations: Vec::new(),
-        };
-        let node = default_orphan_node("0", Vec2::ZERO);
-        doc.mindmap.nodes.insert("0".to_string(), node);
-        doc
-    }
-
-    fn doc_with_edge() -> (MindMapDocument, EdgeRef) {
-        let mut doc = doc_with_node();
-        doc.mindmap
-            .nodes
-            .insert("1".to_string(), default_orphan_node("1", Vec2::ZERO));
-        let edge = default_parent_child_edge("0", "1");
-        let er = EdgeRef::new(&edge.from_id, &edge.to_id, &edge.edge_type);
-        doc.mindmap.edges.push(edge);
-        (doc, er)
-    }
 
     #[test]
-    fn zoom_bound_edit_apply_is_keep_clear_set() {
+    fn option_edit_apply_is_keep_clear_set() {
         assert_eq!(OptionEdit::<f32>::Keep.apply(Some(1.0)), Some(1.0));
         assert_eq!(OptionEdit::<f32>::Keep.apply(None), None);
         assert_eq!(OptionEdit::<f32>::Clear.apply(Some(1.0)), None);

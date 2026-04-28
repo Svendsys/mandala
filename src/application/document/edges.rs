@@ -1554,42 +1554,7 @@ fn write_endpoint_field<T, S>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::document::defaults::{
-        default_orphan_node, default_parent_child_edge,
-    };
-    use baumhard::mindmap::model::MindMap;
-    use glam::Vec2;
-    use std::collections::{HashMap, HashSet};
-
-    fn doc_with_edge() -> (MindMapDocument, EdgeRef) {
-        let mut doc = MindMapDocument {
-            mindmap: MindMap::new_blank("t"),
-            file_path: None,
-            dirty: false,
-            selection: super::super::SelectionState::None,
-            undo_stack: Vec::new(),
-            mutation_registry: HashMap::new(),
-            mutation_sources: HashMap::new(),
-            mutation_handlers: HashMap::new(),
-            active_toggles: HashSet::new(),
-            label_edit_preview: None,
-            portal_text_edit_preview: None,
-            color_picker_preview: None,
-            active_animations: Vec::new(),
-        };
-        doc.mindmap.nodes.insert(
-            "0".to_string(),
-            default_orphan_node("0", Vec2::ZERO),
-        );
-        doc.mindmap.nodes.insert(
-            "1".to_string(),
-            default_orphan_node("1", Vec2::ZERO),
-        );
-        let edge = default_parent_child_edge("0", "1");
-        let er = EdgeRef::new(&edge.from_id, &edge.to_id, &edge.edge_type);
-        doc.mindmap.edges.push(edge);
-        (doc, er)
-    }
+    use crate::application::document::tests_common::doc_with_one_edge as doc_with_edge;
 
     /// `mutate_edge` returning `false` from the closure rolls
     /// back any in-place fork via `ensure_glyph_connection_inline`
@@ -1653,6 +1618,72 @@ mod tests {
             }
             other => panic!("expected EditEdge, got {:?}", other),
         }
+    }
+
+    /// `commit_throttled_edge_drag` with a `|_, _| true`
+    /// predicate (the EdgeHandle release path) pushes one
+    /// `EditEdge` undo entry carrying the supplied `original`
+    /// snapshot, regardless of whether the live edge changed.
+    /// The drag-threshold contract (every reaching release is
+    /// post-mutation, so always commit).
+    #[test]
+    fn commit_throttled_edge_drag_always_commits_on_true_predicate() {
+        let (mut doc, er) = doc_with_edge();
+        doc.dirty = false;
+        let original = doc.mindmap.edges[0].clone();
+        doc.commit_throttled_edge_drag(&er, original, |_, _| true);
+        assert!(doc.dirty, "true-predicate must mark dirty");
+        assert_eq!(doc.undo_stack.len(), 1);
+        assert!(matches!(
+            &doc.undo_stack[0],
+            UndoAction::EditEdge { .. }
+        ));
+    }
+
+    /// A `false` predicate skips the undo push and dirty flag
+    /// — the per-frame paths' "no field changed" no-op.
+    #[test]
+    fn commit_throttled_edge_drag_skips_on_false_predicate() {
+        let (mut doc, er) = doc_with_edge();
+        doc.dirty = false;
+        let original = doc.mindmap.edges[0].clone();
+        doc.commit_throttled_edge_drag(&er, original, |_, _| false);
+        assert!(!doc.dirty);
+        assert!(doc.undo_stack.is_empty());
+    }
+
+    /// Predicate runs against the *current* edge state (may
+    /// differ from `original`). Verifies the closure receives
+    /// the live edge as its first arg and the snapshot as the
+    /// second.
+    #[test]
+    fn commit_throttled_edge_drag_predicate_sees_current_and_original() {
+        let (mut doc, er) = doc_with_edge();
+        let original = doc.mindmap.edges[0].clone();
+        // Mutate the live edge's color so current != original.
+        doc.mindmap.edges[0].color = "#abcdef".to_string();
+        let mut saw_current_color: Option<String> = None;
+        let mut saw_original_color: Option<String> = None;
+        doc.commit_throttled_edge_drag(&er, original, |current, original| {
+            saw_current_color = Some(current.color.clone());
+            saw_original_color = Some(original.color.clone());
+            true
+        });
+        assert_eq!(saw_current_color.as_deref(), Some("#abcdef"));
+        assert_ne!(saw_current_color, saw_original_color);
+    }
+
+    /// No-op when the edge_ref doesn't resolve — the snapshot
+    /// can outlive the edge if a concurrent delete fires.
+    #[test]
+    fn commit_throttled_edge_drag_noop_when_edge_missing() {
+        let (mut doc, _er) = doc_with_edge();
+        let stale_er = EdgeRef::new("nope-from", "nope-to", "cross_link");
+        let original = doc.mindmap.edges[0].clone();
+        doc.dirty = false;
+        doc.commit_throttled_edge_drag(&stale_er, original, |_, _| true);
+        assert!(!doc.dirty);
+        assert!(doc.undo_stack.is_empty());
     }
 
     /// `option_f32_eps_eq` treats values within `EPSILON` as
