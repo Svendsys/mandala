@@ -1,16 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Structural invariant verification for `.mindmap.json` files.
-//!
-//! Verification is a boundary check, not a best-effort parse: a file
-//! either satisfies every named invariant the format guarantees or it
-//! doesn't, and each violation is reported as a specific, named
-//! property (tree shape, Dewey-ID consistency, edge references, palette
-//! references, named-enum membership, text-run bounds) rather than a
-//! free-form error message. That separation is what makes `verify` safe
-//! to run as a gate: the loader can be permissive about missing or
-//! defaulted fields, and everything load-tolerant-but-structurally-
-//! invalid still surfaces here.
+//! Structural invariants for `.mindmap.json`: tree shape, Dewey IDs,
+//! edge references, palette references, named enums, text-run
+//! bounds, zoom-bound ordering. Each check returns `Vec<Violation>`;
+//! `verify()` runs them all.
 
 mod enums;
 mod ids;
@@ -33,10 +26,7 @@ pub struct Violation {
 }
 
 impl Violation {
-    /// Construct a violation pinned to a node's id-as-location.
-    /// The 12+ per-checker call sites that all wrote
-    /// `Violation { category, location: node.id.clone(),
-    /// message: format!(...) }` collapse to one line.
+    /// Violation at a node's id.
     pub fn node(
         category: &'static str,
         node: &MindNode,
@@ -49,9 +39,7 @@ impl Violation {
         }
     }
 
-    /// Construct a violation pinned to an edge's `edge[<idx>]`
-    /// location stamp — the canonical format every per-checker
-    /// previously open-coded with `format!("edge[{}]", i)`.
+    /// Violation at `edge[<idx>]`.
     pub fn edge(
         category: &'static str,
         edge_index: usize,
@@ -64,10 +52,7 @@ impl Violation {
         }
     }
 
-    /// Construct a violation with an arbitrary location string —
-    /// the escape hatch for checks whose location isn't a node id
-    /// or an edge index (palette names, drifted HashMap keys,
-    /// pre-formatted location strings emitted by inner helpers).
+    /// Violation at an arbitrary location (palette names, etc).
     pub fn at(
         category: &'static str,
         location: impl Into<String>,
@@ -106,9 +91,6 @@ mod constructor_tests {
     use super::*;
     use crate::verify::test_helpers::node;
 
-    /// `Violation::node` stamps the node's id into `location`
-    /// and threads `category` and `message` straight through.
-    /// Locks the contract every per-checker now relies on.
     #[test]
     fn violation_node_uses_node_id_as_location() {
         let n = node("0.3.1", None);
@@ -118,8 +100,6 @@ mod constructor_tests {
         assert_eq!(v.message, "boom");
     }
 
-    /// `Violation::edge` formats `"edge[<idx>]"` — the bracket
-    /// stamp every per-checker previously open-coded.
     #[test]
     fn violation_edge_uses_bracket_index_stamp() {
         let v = Violation::edge("test_cat", 7, "boom");
@@ -128,8 +108,6 @@ mod constructor_tests {
         assert_eq!(v.message, "boom");
     }
 
-    /// `Violation::at` is the escape hatch — passes the
-    /// supplied location through verbatim.
     #[test]
     fn violation_at_passes_location_through() {
         let v = Violation::at("test_cat", "palette[coral]", "boom");

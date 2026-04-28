@@ -1,17 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Edge-label drag math: given a cursor position in canvas
-//! space, project it onto the selected edge's connection path
-//! and write the resulting `(position_t, perpendicular_offset)`
-//! into the edge's `label_config`. Used by the per-frame drain
-//! loop and once more at release to commit the final position.
-//!
-//! Mirrors the shape of [`super::portal_label_drag`]: one free
-//! function, no per-frame allocation, direct-field writes so
-//! the undo stack isn't flooded with per-frame `EditEdge`
-//! entries. The event-loop commit (mouse-up in
-//! `event_mouse_click.rs`) pushes one `UndoAction::EditEdge`
-//! with the pre-drag snapshot.
+//! Edge-label drag math: project a canvas-space cursor onto the
+//! selected edge's path and write `(position_t,
+//! perpendicular_offset)` into the edge's `label_config`. Per-frame;
+//! commit lands a single `UndoAction::EditEdge` at release.
 
 #![cfg(not(target_arch = "wasm32"))]
 

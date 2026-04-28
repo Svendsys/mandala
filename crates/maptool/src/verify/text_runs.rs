@@ -1,13 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Text-run invariants: ordered, non-overlapping, within text bounds.
-//!
-//! `start` and `end` are measured in **grapheme clusters** — what
-//! users see as one character — matching how `ColorFontRegions`
-//! interprets them in the tree builder and the cosmic-text bridges
-//! in `baumhard::font::attrs`. See `lib/baumhard/CONVENTIONS.md §B1`,
-//! `CONCEPTS.md`'s `Range` entry, and `format/text-runs.md` for the
-//! shared unit contract.
+//! Text-run invariants: ordered, non-overlapping, within text
+//! bounds. `start`/`end` are grapheme clusters (see
+//! `format/text-runs.md`).
 
 use baumhard::mindmap::model::MindMap;
 use baumhard::util::grapheme_chad::count_grapheme_clusters;
@@ -140,14 +135,8 @@ mod tests {
         assert!(v.iter().any(|x| x.category == "text_runs" && x.message.contains("not less than")));
     }
 
-    /// `text_runs` ranges are grapheme-cluster indices, not Unicode
-    /// code points. Verifier must measure against the grapheme count;
-    /// a region covering one ZWJ-joined emoji family
-    /// (`👨‍👩‍👧` — five codepoints, one cluster) at `[0, 1)` is
-    /// **valid** and must not raise an "exceeds text length" violation.
-    /// Pre-`dc5661a`, the verifier used `chars().count()` and would
-    /// have measured 5, so any range > 1 wouldn't have flagged either —
-    /// the test here is the positive case the new contract specifies.
+    /// ZWJ family at `[0,1)` is one grapheme cluster — must not flag
+    /// "exceeds text length". Locks the grapheme-cluster contract.
     #[test]
     fn zwj_emoji_grapheme_range_passes() {
         let mut map = MindMap::new_blank("t");

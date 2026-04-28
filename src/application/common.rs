@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use std::time::Duration;
-// `web_time::Instant` is a drop-in for `std::time::Instant` that works
-// on wasm32: native re-exports `std`, wasm maps to `performance.now()`.
-// Without this swap `PollTimer::new` / `StopWatch::new_start` panic on
-// wasm with "time not implemented on this platform".
+// `web_time` maps to `performance.now()` on wasm32; without this swap
+// `Instant::now()` panics with "time not implemented on this platform".
 use web_time::Instant;
 
 #[derive(Copy, Clone, Eq, Hash, PartialEq)]
@@ -34,10 +32,6 @@ pub enum RenderDecree {
 }
 
 /// Which FPS readout the renderer should display, if any.
-/// `Snapshot` matches the legacy behavior: one frame's interval,
-/// sampled every ~200 frames, held on screen in between.
-/// `Debug` maintains a rolling average of the last ~200 frame
-/// intervals and updates every frame for diagnostic use.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum FpsDisplayMode {
     Off,

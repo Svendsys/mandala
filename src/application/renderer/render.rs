@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Frame rendering — the `Renderer::render()` body plus its
-//! geometry / vertex helpers. Lifted verbatim from
-//! `renderer/mod.rs` so the per-frame hot path has its own file
-//! and isn't interleaved with buffer rebuilds / hit tests / setup.
+//! Frame rendering: the `Renderer::render()` body and its geometry
+//! / vertex helpers.
 
 use glam::Vec2;
 use glyphon::{TextArea, TextBounds};

@@ -99,7 +99,6 @@ fn do_subtree_drag_slow_path(
     );
 }
 
-// We run all tests as benchmarks also, because the tests provides a good coverage of potential flows
 fn criterion_benchmark(c: &mut Criterion) {
     // glyph_model //
     c.bench_function("matrix_place_in_1", |b| b.iter(|| matrix_place_in_1()));
@@ -392,26 +391,10 @@ fn criterion_benchmark(c: &mut Criterion) {
     // primes //
     c.bench_function("primes", |b| b.iter(|| do_primes()));
 
-    // subtree-drag drain — translate path vs. slow path, at two
-    // zoom levels.
-    //
-    // Warmed once per bench case (outside the iter closure) so the
-    // first-frame cold miss doesn't dominate the translate-path
-    // sample. Each iter simulates one drag drain: fold every node
-    // into `offsets` with a shared delta, call the scene builder.
-    // The delta is rotated every iter so the translate math runs
-    // on non-zero shifts.
-    //
-    // The `slow_path` variant clears the cache before every iter,
-    // forcing the slow path on every edge. The ratio between
-    // translate and slow, especially at high zoom where the
-    // `max_font_size_pt` clamp inflates per-edge sample count, is
-    // the headline number the translate path buys on a 60 Hz drag.
+    // subtree-drag drain at zoom 1 and 30. Caches are warmed outside
+    // `iter()` so the first-frame cold miss doesn't dominate the sample.
     let bench_map = load_testament_map();
     let dragged_ids: Vec<String> = bench_map.nodes.keys().cloned().collect();
-    // Zoom = 1.0: default config doesn't hit the clamp, so sample
-    // count per edge is modest and the win is proportionally
-    // smaller (dominated by non-sampling work).
     let mut translate_cache_1 = SceneConnectionCache::new();
     do_subtree_drag_translate_path(&bench_map, &mut translate_cache_1, &dragged_ids, 0.0, 0.0, 1.0);
     let mut slow_cache_1 = SceneConnectionCache::new();
@@ -433,10 +416,6 @@ fn criterion_benchmark(c: &mut Criterion) {
             do_subtree_drag_slow_path(&bench_map, &mut slow_cache_1, &dragged_ids, dx, dy, 1.0);
         })
     });
-    // Zoom = 30.0: the `font_size * zoom` target has hit the max
-    // clamp at default config, so effective_spacing shrinks and
-    // per-edge sample count scales up — the regime the user's
-    // "zoom-in drag feels laggy" symptom lives in.
     let mut translate_cache_30 = SceneConnectionCache::new();
     do_subtree_drag_translate_path(&bench_map, &mut translate_cache_30, &dragged_ids, 0.0, 0.0, 30.0);
     let mut slow_cache_30 = SceneConnectionCache::new();

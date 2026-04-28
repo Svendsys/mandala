@@ -93,14 +93,9 @@ fn main() -> ExitCode {
     }
 }
 
-/// Deviation from `CODE_CONVENTIONS.md §4` ("no custom error types"):
-/// a CLI binary genuinely needs to map distinct failure modes to
-/// distinct exit codes. The app-crate rule assumes an interactive/GPU
-/// posture where panicking at startup and logging at runtime is fine;
-/// that doesn't translate to a tool that's supposed to be scriptable.
-/// This enum is kept deliberately tiny — three string variants, no
-/// `impl Error`, no `From` chains, no `thiserror` — so it stays a
-/// dispatch table for exit codes rather than a growing taxonomy.
+/// CLI exit-code dispatch. Distinct failure modes need distinct exit
+/// codes; §9's "no custom error types" rule targets the interactive
+/// app posture, not a scriptable tool.
 #[derive(Debug)]
 enum CliError {
     Usage(String),
@@ -250,24 +245,19 @@ fn load_map(path: &str) -> Result<MindMap, CliError> {
     load_from_file(Path::new(path)).map_err(CliError::Io)
 }
 
-/// Return the node's text, or None if no node has that ID.
 fn show_node<'a>(map: &'a MindMap, node_id: &str) -> Option<&'a str> {
     map.nodes.get(node_id).map(|n| n.text.as_str())
 }
 
-/// Parsed form of the `grep` subcommand's positional arguments.
-/// Borrowed from the caller's `&[String]` slice — no allocations.
+/// Parsed positional args for `grep`.
 struct GrepArgs<'a> {
     map_path: &'a str,
     pattern: &'a str,
     case_insensitive: bool,
 }
 
-/// Parse the args that follow `grep` on the command line. `-i` is
-/// recognised anywhere in the arg list (not just immediately after
-/// `grep`), and anything that isn't `-i` is treated as a positional
-/// in its declared order. Users who legitimately need to match a
-/// literal `-i` can escape it in the regex (e.g. `\-i`).
+/// Parse args after `grep`. `-i` is position-independent; everything
+/// else is positional in declared order.
 fn parse_grep_args(args: &[String]) -> Result<GrepArgs<'_>, CliError> {
     let mut case_insensitive = false;
     let mut positional: Vec<&str> = Vec::new();
@@ -292,10 +282,8 @@ fn parse_grep_args(args: &[String]) -> Result<GrepArgs<'_>, CliError> {
     })
 }
 
-/// Compile a user-supplied pattern into a regex. Returns a plain
-/// message on failure so the caller can prefix it with a subcommand
-/// name (`grep: invalid regex ...`) without this helper knowing
-/// which command invoked it.
+/// Compile `pattern` into a regex. The error message is unprefixed —
+/// callers add the subcommand name.
 fn build_regex(pattern: &str, case_insensitive: bool) -> Result<Regex, String> {
     RegexBuilder::new(pattern)
         .case_insensitive(case_insensitive)
@@ -303,16 +291,10 @@ fn build_regex(pattern: &str, case_insensitive: bool) -> Result<Regex, String> {
         .map_err(|e| format!("invalid regex {pattern:?}: {e}"))
 }
 
-/// Return every `(id, line)` pair where `line` is a line of a node's
-/// `text` or `notes` that matches `regex`. A single node can produce
-/// several entries if more than one of its lines matches (grep-style).
-///
-/// Results are sorted by node ID. IDs that parse as `u64` are
-/// compared numerically (so `"97982720"` sorts before `"352207208"`
-/// even though lexicographically it wouldn't); IDs that don't parse
-/// fall back to lexicographic order. The sort is stable, so within a
-/// node lines keep their natural order: `text` lines first, in
-/// order, then `notes` lines, in order.
+/// Return `(id, line)` for every line of `text` or `notes` matching
+/// `regex`. Sort: numeric-id-first when both parse as `u64`,
+/// lexicographic otherwise; stable, so `text` lines precede `notes`
+/// lines for a single node.
 fn grep_nodes<'a>(map: &'a MindMap, regex: &Regex) -> Vec<(&'a str, &'a str)> {
     let mut out: Vec<(&'a str, &'a str)> = Vec::new();
     for node in map.nodes.values() {
@@ -365,14 +347,8 @@ fn parse_apply_args(args: &[String]) -> Result<ApplyArgs<'_>, CliError> {
             "-i" => case_insensitive = true,
             "--notes" => target_notes = true,
             "--dry-run" => dry_run = true,
-            // Reject unknown long flags explicitly rather than silently
-            // treating them as positional args — catches typos like
-            // `--dry-runn` that would otherwise be swallowed as the
-            // map path or pattern. Short flags and dash-leading
-            // patterns (e.g. a regex like `^-foo`) are still accepted
-            // so the `-i` habit doesn't accidentally lock out useful
-            // input; users with truly `--`-leading patterns can quote
-            // or escape them.
+            // Reject unknown `--` flags so typos like `--dry-runn` don't
+            // get silently swallowed as a positional arg.
             other if other.starts_with("--") => {
                 return Err(CliError::Usage(format!(
                     "apply: unknown flag: {other}"
@@ -409,11 +385,8 @@ fn parse_apply_args(args: &[String]) -> Result<ApplyArgs<'_>, CliError> {
     })
 }
 
-/// Return the sorted IDs of every node whose *target field* has at
-/// least one line matching `regex`. Target field is `node.text` by
-/// default, or `node.notes` when `target_notes` is true. Sort order
-/// matches `grep_nodes`: numeric IDs compared as `u64`, others
-/// lexicographic.
+/// Sorted IDs of nodes whose `notes` (when `target_notes`) or `text`
+/// has any line matching `regex`. Sort matches `grep_nodes`.
 fn select_nodes(map: &MindMap, regex: &Regex, target_notes: bool) -> Vec<String> {
     let mut ids: Vec<String> = map
         .nodes
@@ -474,24 +447,11 @@ fn apply_command(
     Ok(changed)
 }
 
-/// Spawn `cmd` with `cmd_args`, write `input` to its stdin on a
-/// background thread, and return its stdout as a `String`. One
-/// trailing newline (`\n` or `\r\n`) is stripped so POSIX text tools
-/// that always append a newline don't inflate the node's text on every
-/// apply. A non-zero exit status becomes `CliError::Subprocess` with
-/// stderr folded into the message.
-///
-/// The stdin write runs on its own thread because the OS pipe buffer
-/// is finite (~64 KiB on Linux). If we wrote inline and input exceeded
-/// the buffer, the child could block on writing its own stdout —
-/// waiting for us to drain it — while we'd be blocked writing stdin,
-/// deadlocking both sides. `wait_with_output` already drains stdout
-/// and stderr concurrently; the writer thread closes the loop on
-/// stdin.
-///
-/// EPIPE on the stdin side (child exited or closed stdin early) is
-/// swallowed so the child's real exit status — not "broken pipe" —
-/// surfaces as the error.
+/// Spawn `cmd cmd_args`, pipe `input` to its stdin from a writer
+/// thread (so payloads larger than the pipe buffer don't deadlock),
+/// and return stdout. Strips one trailing `\n` or `\r\n`. Non-zero
+/// exit becomes `CliError::Subprocess(stderr)`; EPIPE on stdin is
+/// swallowed so the child's real status surfaces.
 fn run_pipe(cmd: &str, cmd_args: &[String], input: &str) -> Result<String, CliError> {
     let mut child = Command::new(cmd)
         .args(cmd_args)
@@ -551,22 +511,10 @@ fn run_pipe(cmd: &str, cmd_args: &[String], input: &str) -> Result<String, CliEr
     Ok(out)
 }
 
-/// Serialize `map` back to `path` using pretty JSON, with node-ID
-/// ordering stable across runs and the write itself atomic.
-///
-/// MindMap.nodes is a `HashMap<String, MindNode>`; serialising it
-/// directly iterates in HashMap's randomised order, so git-tracked
-/// maps would see their nodes reshuffled on every apply. Routing
-/// through `serde_json::Value` fixes that: with the default
-/// (non-`preserve_order`) build of serde_json, `serde_json::Map` is a
-/// `BTreeMap<String, Value>`, which sorts keys lexicographically. The
-/// output is therefore deterministic for a given in-memory map.
-///
-/// The write goes through a sibling temp file that is then renamed
-/// into place. Rename is atomic on POSIX (same filesystem), so a kill
-/// or power loss mid-write leaves the original file intact instead of
-/// truncated. The temp file name includes the PID so concurrent
-/// maptool invocations on the same map don't collide.
+/// Serialise `map` to `path` deterministically and atomically. Goes
+/// through `serde_json::Value` so the default-build `BTreeMap`
+/// orders nodes lexicographically (HashMap iteration is randomised).
+/// Write is atomic (temp + rename) — see `write_atomic`.
 fn save_map(path: &Path, map: &MindMap) -> Result<(), CliError> {
     let value = serde_json::to_value(map)
         .map_err(|e| CliError::Io(format!("failed to serialise map: {e}")))?;
@@ -575,9 +523,8 @@ fn save_map(path: &Path, map: &MindMap) -> Result<(), CliError> {
     write_atomic(path, &json)
 }
 
-/// Write `contents` to `path` atomically via a sibling temp file +
-/// rename. On rename failure the temp file is best-effort cleaned up
-/// so a subsequent run isn't confused by an orphaned `.tmp`.
+/// Write `contents` to `path` via temp + rename; cleans up the
+/// temp file on rename failure.
 fn write_atomic(path: &Path, contents: &str) -> Result<(), CliError> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     let file_name = path
@@ -685,9 +632,7 @@ mod tests {
 
     #[test]
     fn grep_invalid_regex_message() {
-        // Unclosed bracket is a syntax error; build_regex returns a
-        // bare message without the "grep:" prefix (that's added by
-        // the caller in the grep subcommand).
+        // build_regex returns the message unprefixed (caller adds "grep:").
         let err = build_regex("[unclosed", false).unwrap_err();
         assert!(err.contains("invalid regex"), "got: {err}");
         assert!(!err.starts_with("grep:"), "build_regex must not hardcode subcommand prefix");
@@ -869,12 +814,8 @@ mod tests {
 
     // --- apply: fixture + tmpfile helpers ---------------------------
     //
-    // The apply tests use a small hand-crafted map (tests/fixtures/
-    // apply_test.mindmap.json) instead of testament, so the assertions
-    // can name every node by ID without being coupled to the real map's
-    // content. End-to-end tests that actually save the map copy the
-    // fixture to a unique tmp path per test so parallel test runs don't
-    // stomp on each other.
+    // Apply tests use a hand-crafted fixture so assertions can name
+    // every node by ID. `TmpMap` copies it per-test for parallel safety.
 
     fn apply_fixture_path() -> PathBuf {
         let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -1377,12 +1318,8 @@ mod tests {
 
     #[test]
     fn run_pipe_handles_input_larger_than_pipe_buffer() {
-        // Linux's default pipe buffer is 16 pages (~64 KiB). Piping
-        // 256 KiB through `cat` — which reads stdin and writes to
-        // stdout before closing — would deadlock a sync writer: the
-        // child blocks waiting for its stdout to drain, we block
-        // waiting to write more stdin. The writer thread keeps both
-        // sides moving.
+        // 256 KiB > pipe buffer; deadlocks a sync writer, fine for the
+        // threaded one.
         let big = "x".repeat(256 * 1024);
         let out = run_pipe("cat", &[], &big).unwrap();
         assert_eq!(out.len(), big.len());

@@ -1,16 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Dewey-decimal ID assignment for legacy maps.
-//!
-//! miMind identified nodes with opaque integer IDs and relied on a
-//! separate `index` field to encode sibling order. The current format
-//! encodes tree position directly in the ID (`"0.1.2"` is the third
-//! child of the second child of the first root), which is what makes
-//! `derive_parent_id`, stable sort order, and diff-friendly output
-//! possible. The walk visits parents before children (so child IDs
-//! have a parent ID to extend) and returns the old→new mapping so
-//! references elsewhere in the file — edge endpoints, portals,
-//! parent_id — can be rewritten in a second pass.
+//! Assign Dewey-decimal IDs to legacy maps. Walk visits parents
+//! before children; returns the old→new map for a follow-up
+//! reference-rewrite pass.
 
 use serde_json::Value;
 use std::collections::HashMap;

@@ -6,34 +6,17 @@
 //! `FONT_SYSTEM`; `attrs` translates `ColorFontRegions` into
 //! cosmic-text `AttrsList`s.
 
-/// Cosmic-text `AttrsList` construction — bridges baumhard's
-/// `ColorFontRegions` into the attribute form the renderer passes
-/// to `Editor::insert_string`.
 pub mod attrs;
-/// Compiled-in font table, shared `FONT_SYSTEM`, cosmic-text
-/// editor factories, and the `measure_glyph_ink_bounds` /
-/// `measure_text_block_unbounded` text-measurement primitives.
 pub mod fonts;
-/// Test bodies exposed through the `pub mod tests;` pattern so
-/// `benches/test_bench.rs` can reuse the `do_*()` function bodies as
-/// micro-benchmarks. See §B8.
 pub mod tests;
 
-/// Packed-RGBA colour value (`u32` internally) in the shape
-/// cosmic-text expects when building `Attrs`. Re-exported from
-/// `cosmic_text::Color` so consumers outside the renderer can
-/// reach a single blessed type without importing `cosmic_text`
-/// directly (§1 keeps cosmic-text out of the app crate except
-/// through the `baumhard::font` seam). Construct with
-/// [`Color::rgba`].
+/// Packed-RGBA colour, re-exported from `cosmic_text::Color` so
+/// callers outside the renderer reach the cosmic-text type
+/// without importing `cosmic_text` directly (§1).
 pub use cosmic_text::Color;
 
-
-/// Glyph-rasterization cache that `measure_glyph_ink_bounds` fills
-/// in on demand. Owned by the caller (one per picker-open pass, not
-/// one per glyph) so repeated measurements against the same glyphs
-/// share rasterization work. Re-exported from `cosmic_text::SwashCache`
-/// alongside [`Color`] so the app crate can construct one without
-/// importing `cosmic_text` directly.
+/// Glyph-rasterization cache, re-exported from
+/// `cosmic_text::SwashCache`. Owned by the caller — one per
+/// measurement pass — so repeated calls share rasterization work.
 pub use cosmic_text::SwashCache;
 

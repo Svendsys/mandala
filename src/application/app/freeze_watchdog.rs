@@ -1,41 +1,14 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Native-only main-loop watchdog. A background thread wakes
-//! periodically and checks whether the main thread has pinged its
-//! liveness atomic recently; if the main thread has been silent
-//! longer than [`FREEZE_THRESHOLD`], the watchdog prints a
-//! diagnostic banner and aborts the process.
+//! Native main-loop watchdog. A background thread polls a liveness
+//! atomic that the main loop pings every frame; if the main thread
+//! has been silent longer than [`FREEZE_THRESHOLD`], the watchdog
+//! prints a banner and aborts so the OS can produce a core dump.
 //!
-//! # Why it earns its keep
-//!
-//! Mandala is single-threaded by design (see `CLAUDE.md`'s
-//! "Architectural shape" section). That invariant covers app state
-//! — the model, the tree, the scene, the renderer — but it does not
-//! protect against the app's main thread becoming permanently
-//! blocked: a same-thread re-entrant `std::sync::RwLock` acquire
-//! hangs forever, `surface.get_current_texture()` can block on some
-//! wgpu backends under driver or compositor stalls, and a future
-//! loop bug with no termination guard would do the same. Without a
-//! watchdog, all of these present to the user as "the app froze"
-//! with no stack trace, no log line, nothing actionable.
-//!
-//! The watchdog is deliberately minimal. It owns a single
-//! [`AtomicU64`] holding the last ping's ms-since-start timestamp;
-//! the main loop writes this atomic at the top of every
-//! `AboutToWait` drain. The watchdog thread only ever *reads* that
-//! atomic — it never touches any app state — so the single-threaded
-//! invariant for app logic is preserved.
-//!
-//! # Not on WASM
-//!
-//! WASM builds do not get an equivalent in this pass. Browser tabs
-//! surface their own "page unresponsive" dialog after a similar
-//! threshold, and the JS event-loop machinery differs enough that a
-//! Worker-based liveness check warrants its own design. The freeze
-//! class this module diagnoses is also native-heavier: `RwLock`
-//! deadlocks on wasm32 are caught earlier because the runtime is
-//! cooperative, and the GPU path is mediated by the browser. See
-//! `CLAUDE.md`'s "Dual-target status" for the parity note.
+//! The class of freeze this catches is native-heavier (RwLock
+//! re-entry, GPU stalls, runaway loops); browsers surface their own
+//! page-unresponsive dialog, so WASM has no equivalent yet. See
+//! `CLAUDE.md` "Dual-target status".
 
 #![cfg(not(target_arch = "wasm32"))]
 

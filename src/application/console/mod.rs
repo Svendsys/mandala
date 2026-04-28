@@ -10,29 +10,10 @@
 //! (`anchor` / `body` / `cap` / `spacing` / `edge` / `portal`) call
 //! their own `MindMapDocument` setters directly.
 //!
-//! Completion is contextual and prefix-matched only — no fuzzy
-//! scoring and no Tab-to-cycle. The popup recomputes on every
-//! keystroke, `↑`/`↓` move the highlight (falling back to command
-//! history when the popup is empty), `Tab` accepts the highlighted
-//! row, `Esc` dismisses the popup first and closes the console on a
-//! second press.
-//!
-//! Visuals live in [`visuals`] — palette, glyphs, and scrollback
-//! dimming constants. The renderer composes the border from
-//! `baumhard::mindmap::border::BorderGlyphSet::box_drawing_rounded`
-//! and clips content through
-//! `baumhard::util::grapheme_chad::truncate_to_display_width` so
-//! wide-char input never drifts past the right edge.
-//!
-//! Module layout:
-//!
-//! - [`parser`] — `tokenize`, `parse`, `Args` (incl. `kvs()` / `kv()`).
-//! - [`predicates`] — applicability helpers (selection-shape queries).
-//! - [`traits`] — `ColorValue`, the capability traits, `TargetView`,
-//!   and the `apply_kvs` dispatcher.
-//! - [`commands`] — the `COMMANDS` slice and per-command exec logic.
-//! - [`completion`] — contextual completion engine.
-//! - [`visuals`] — palette and glyph constants.
+//! Completion is contextual and prefix-matched. The popup recomputes
+//! on every keystroke; `↑`/`↓` move the highlight (falling back to
+//! command history when the popup is empty), `Tab` accepts the
+//! highlighted row, `Esc` dismisses the popup, then the console.
 
 use crate::application::color_picker::ColorTarget;
 use crate::application::common::FpsDisplayMode;

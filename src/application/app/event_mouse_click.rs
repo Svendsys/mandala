@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Mouse-input event handler extracted from the native event loop in
-//! [`super::run_native`]. Routes left / middle / right button press
-//! and release through selection, click, double-click detection, drag
-//! start, and drag end (MovingNode, DraggingEdgeHandle, SelectingRect).
+//! Mouse-input dispatch. Left/middle/right + Pressed/Released routed
+//! through selection, double-click, drag start/end, and the
+//! console / color-picker steals.
 
 #![cfg(not(target_arch = "wasm32"))]
 
@@ -11,11 +10,8 @@ use super::input_context::InputHandlerContext;
 use super::throttled_interaction::ThrottledDrag;
 use super::*;
 
-/// Dispatch a `WindowEvent::MouseInput` event. Event payload
-/// (`state`, `button`) stays as direct arguments; all persistent
-/// app state arrives through [`InputHandlerContext`] instead of the
-/// twenty-ref tuple this function used to carry. See that type's
-/// header for the rationale.
+/// Dispatch a `WindowEvent::MouseInput`. Persistent state arrives
+/// via [`InputHandlerContext`].
 pub(super) fn handle_mouse_input(
     state: ElementState,
     button: MouseButton,

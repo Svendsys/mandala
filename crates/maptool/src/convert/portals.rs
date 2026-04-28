@@ -1,24 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Legacy `portals` → portal-mode edges migration. Reads a pre-refactor
-//! `.mindmap.json` that still has a top-level `portals` array and
-//! rewrites each entry as an edge with `display_mode = "portal"`.
-//! The loader rejects files that still carry `portals`, so this is
-//! the one-way door users with unmigrated maps walk through.
-//!
-//! Round-trip guarantee: every `PortalPair` field survives the
-//! migration —
-//! - `endpoint_a` / `endpoint_b` → `from_id` / `to_id`
-//! - `glyph` → `glyph_connection.body`
-//! - `color` → `edge.color` (the marker reads this when no
-//!   `glyph_connection.color` override is set)
-//! - `font` / `font_size_pt` → `glyph_connection.{font, font_size_pt}`
-//!
-//! The portal `label` is dropped — post-refactor portals identify
-//! themselves by `(from_id, to_id, edge_type)` like any other edge,
-//! so the auto-assigned column-letter label has no role. Users who
-//! relied on the label for visual identification were reading the
-//! marker glyph, which carries over unchanged.
+//! Migrate the legacy top-level `portals` array to edges with
+//! `display_mode = "portal"`. Field map:
+//!   `endpoint_a`/`endpoint_b` → `from_id`/`to_id`
+//!   `glyph`                   → `glyph_connection.body`
+//!   `color`                   → `edge.color`
+//!   `font`/`font_size_pt`     → `glyph_connection.{font,font_size_pt}`
+//! `label` is dropped (post-refactor portals identify by edge tuple).
 
 use serde_json::{json, Value};
 use std::path::Path;
@@ -136,13 +124,9 @@ pub fn convert_portals(input_path: &Path, output_path: &Path) -> Result<(), Stri
     Ok(())
 }
 
-/// Write `contents` to `path` atomically via a sibling temp file +
-/// rename. Mirrors the helper in `main.rs` but returns `String`
-/// errors to match this module's `Result<(), String>` API. Rename is
-/// atomic on POSIX within the same filesystem, so a kill mid-write
-/// leaves the original file intact instead of truncated — the
-/// property `convert --portals` needs to support safe in-place
-/// migration (input == output).
+/// Atomic temp-file + rename write; `String` errors to match the
+/// module's `Result<(), String>` API. Lets `convert_portals` support
+/// safe in-place migration (input == output).
 fn write_atomic(path: &Path, contents: &str) -> Result<(), String> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     let file_name = path

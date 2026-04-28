@@ -1,13 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Font-size derivation for the picker layout — steps 1–3 of the
-//! canonical sizing formula: recover per-script advance ratios,
-//! compute `wheel_side_in_fonts`, back-solve font_size from the
-//! target wheel-diameter fraction.
-//!
-//! Extracted from `compute.rs` so the size-derivation math can be
-//! read (and later unit-tested) in isolation from the per-cell
-//! position work.
+//! Font-size derivation for the picker layout: recover per-script
+//! advance ratios, compute `wheel_side_in_fonts`, back-solve
+//! font_size from the target wheel-diameter fraction.
 
 use std::f32::consts::TAU;
 
@@ -15,9 +10,7 @@ use super::geometry::ColorPickerOverlayGeometry;
 use super::glyph_tables::{CROSSHAIR_CENTER_CELL, HUE_SLOT_COUNT};
 use crate::application::widgets::color_picker_widget::GeometrySpec;
 
-/// Everything `compute_positions` needs from the sizing pass. One
-/// struct so the orchestrator in `compute.rs` threads a single value,
-/// not nine.
+/// Sizing-pass output threaded into `compute_positions`.
 pub(super) struct Sizing {
     pub(super) font_size: f32,
     pub(super) ring_font_size: f32,
@@ -30,9 +23,6 @@ pub(super) struct Sizing {
     pub(super) cell_advance: f32,
 }
 
-/// Derive every size-level value from the viewport + geometry +
-/// spec. No per-cell positions — those come after, in
-/// `compute_positions`.
 pub(super) fn derive_sizing(
     geometry: &ColorPickerOverlayGeometry,
     g: &GeometrySpec,
@@ -41,7 +31,7 @@ pub(super) fn derive_sizing(
 ) -> Sizing {
     let ring_scale = g.hue_ring_font_scale;
 
-    // Step 1: dimensionless advance ratios. The renderer measures
+    // dimensionless advance ratios. The renderer measures
     // `max_cell_advance` at `measurement_font_size` and
     // `max_ring_advance` at `measurement_font_size * ring_scale`,
     // so the per-font ratios are extracted symmetrically. Fall
@@ -65,7 +55,7 @@ pub(super) fn derive_sizing(
     let preview_clearance_per_font = g.preview_size_scale * 0.5 + g.bar_to_preview_padding_scale;
     let cell_factor = cell_factor.max(preview_clearance_per_font);
 
-    // Step 2: wheel_side_in_fonts.
+    // wheel_side_in_fonts.
     let inner_per_font = CROSSHAIR_CENTER_CELL as f32 * cell_factor;
     let bar_pad_per_font = ring_scale * g.bar_to_ring_padding_scale;
     let crosshair_ring_per_font = inner_per_font + bar_pad_per_font;
@@ -73,9 +63,8 @@ pub(super) fn derive_sizing(
     let ring_r_per_font = crosshair_ring_per_font.max(glyph_ring_per_font);
     let wheel_side_in_fonts = 2.0 * (ring_r_per_font + ring_scale * 0.5 + 1.0);
 
-    // Step 3: derive font_size from desired widget size, then clamp
-    // for width / height fit. See file-level doc in compute.rs for
-    // the full reasoning on the clamp chain.
+    // Derive font_size from desired widget size, then clamp for
+    // width / height fit.
     let short = screen_w.min(screen_h).max(1.0);
     let target_side = short * g.target_frac * geometry.size_scale.max(0.01);
     let font_from_target = target_side / wheel_side_in_fonts.max(1.0);
@@ -89,7 +78,7 @@ pub(super) fn derive_sizing(
     let char_width = font_size * 0.6;
     let ring_font_size = font_size * ring_scale;
 
-    // Step 4: re-derive every dimension at the chosen font_size.
+    // Re-derive every dimension at the chosen font_size.
     let cell_advance = (cell_factor * font_size).max(char_width);
     let ring_advance = (ring_factor * ring_font_size).max(ring_font_size * 0.6);
     let inner_extent = CROSSHAIR_CENTER_CELL as f32 * cell_advance;

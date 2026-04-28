@@ -1,58 +1,18 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Unified shell for continuous, high-frequency-input-driven
-//! mutations.
+//! mutations. `ThrottledInteraction::drive` packages the
+//! has-pending → should-drain → record-duration dance so each
+//! consumer supplies only `has_pending`, `throttle`, `drain`, and
+//! (optionally) `reset`.
 //!
-//! # Why this module exists
+//! Scope: drags and hover effects that fire a flood of cursor
+//! events. One-shots and self-gated paths stay on their existing
+//! call paths.
 //!
-//! [`MutationFrequencyThrottle`] ships the *adaptive throttle* logic
-//! as a clean primitive. Every per-component drain site, though,
-//! used to glue it into place by hand: check pending state, call
-//! `should_drain()`, record `Instant::now()`, run the body, reset
-//! the pending state, call `record_work_duration()`. Five call
-//! sites, six lines of boilerplate each, and any new throttled
-//! component had to remember to replicate the exact six-step
-//! dance — or silently skip the throttle entirely, inheriting
-//! nothing from the machinery beside it.
-//!
-//! [`ThrottledInteraction`] captures that dance as the default
-//! [`ThrottledInteraction::drive`] method. An implementor supplies
-//! only its [`has_pending`](ThrottledInteraction::has_pending),
-//! [`throttle`](ThrottledInteraction::throttle),
-//! [`drain`](ThrottledInteraction::drain), and
-//! [`reset`](ThrottledInteraction::reset); the shell is shared,
-//! tested once, and picks up every new consumer for free.
-//!
-//! # Scope
-//!
-//! This seam covers **continuous interactive mutations driven by
-//! high-rate input** — drags of every kind, hover effects, any
-//! future gesture that fires a flood of cursor events and must
-//! coalesce them into at-most-one commit per frame. One-shots
-//! (console commands, `apply_custom_mutation`) and paths already
-//! gated by their own dirty flags (camera-geometry rebuild,
-//! animation tick) stay on their existing call paths and are
-//! documented as such in [`super::drain_frame`].
-//!
-//! # Governing invariant
-//!
-//! [`ThrottledInteraction::drive`] preserves the responsiveness
-//! invariant of [`MutationFrequencyThrottle`] verbatim: input is
-//! accepted on every tick (event handlers keep writing to
-//! `pending_delta` / `pending_cursor` / `dirty` flags unconditionally),
-//! and the throttle gates only the *application* of mutations. The
-//! `has_pending()`-before-`should_drain()` ordering is load-bearing:
-//! calling `should_drain()` on an idle interaction would advance
-//! the skip counter on a throttle that has no work, pushing the
-//! first real drain out of cadence.
-//!
-//! The ordering predicate lives on
-//! [`ThrottledInteraction::should_perform_drain`], independent of
-//! the `DrainContext` and the GPU resources it transitively reaches.
-//! `drive` is a thin wrapper around that predicate plus the timing
-//! envelope, which lets per-implementor tests exercise the
-//! ordering against real interaction values without standing up a
-//! renderer (see §T8).
+//! The has-pending check before should_drain is load-bearing —
+//! advancing the skip counter on an idle interaction would push
+//! the first real drain out of cadence.
 
 #![cfg(not(target_arch = "wasm32"))]
 

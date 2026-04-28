@@ -24,29 +24,6 @@
 //!
 //! Pure-function layout (`compute_color_picker_layout`) and hit-testing
 //! (`hit_test_picker`) are extracted so unit tests don't need a GPU.
-//!
-//! WASM status: this module compiles on wasm32 (it's pure Rust + data
-//! types, no native-only deps), but the `open_*` / `handle_*` entry
-//! points in `app.rs` are gated behind `#[cfg(not(target_arch =
-//! "wasm32"))]` like the palette and label-edit modals. Picker keyboard
-//! / mouse dispatch for WASM is deferred as part of the broader WASM
-//! input gap named in `CLAUDE.md`'s Dual-target status section.
-//!
-//! Split between files:
-//! - [`glyph_tables`] — constants, JSON-backed glyph accessors,
-//!   HSV↔cell helpers, `picker_channel`.
-//! - [`targets`] — `NodeColorAxis` / `ColorTarget` / `PickerHandle` /
-//!   `TargetKind`, `current_color_at`, `current_hsv_at`.
-//! - [`state`] — `PickerMode`, `PickerGesture`, `ColorPickerState`,
-//!   `FlashKind`, `request_error_flash`.
-//! - [`geometry`] — `ColorPickerOverlayGeometry` (the pre-render
-//!   plain-data struct handed to the renderer).
-//! - [`layout`] — `ColorPickerLayout` (pure-function layout output).
-//! - [`compute`] / [`compute_sizing`] / [`compute_positions`] — the
-//!   three-stage `compute_color_picker_layout` pipeline.
-//! - [`clipboard`] — `HandlesCopy` / `HandlesPaste` / `HandlesCut`
-//!   implementations on `ColorPickerState`.
-//! - [`hit`] — `PickerHit`, `hit_test_picker`.
 
 mod clipboard;
 mod compute;

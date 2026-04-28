@@ -44,88 +44,46 @@ pub trait HasLabel {
     fn set_label(&mut self, s: Option<String>) -> Outcome;
 }
 
-/// Target supports receiving a color from the **standalone color
-/// wheel** (the `color picker on` persistent palette). The wheel
-/// doesn't pick an axis — it pushes one color at the selection and
-/// asks each component type to decide which channel that color
-/// belongs on. Nodes take it on `Bg`; edges take it on their single
-/// color field (routed through `set_border_color`, which is the same
-/// sink as `set_text_color` for edges). Portals haven't been ported
-/// to Baumhard yet — they return `NotApplicable` today and will
-/// switch to their fill channel once the port lands.
-///
-/// Separate trait from `HasBgColor` / `HasTextColor` / `HasBorderColor`
-/// by design: the `Has*` axis traits answer "can you accept a color
-/// on channel X?"; `AcceptsWheelColor` answers the narrower question
-/// "if someone hands you one color without specifying a channel,
-/// where does it go?". The default-channel choice belongs with the
-/// component implementation, not with every caller.
+/// Target accepts a single channel-less colour from the standalone
+/// wheel. Each variant decides which channel the color lands on
+/// (nodes → `Bg`; edges → their single colour field). Distinct from
+/// the `Has*` axis traits, which answer "accept a colour on channel
+/// X?" — this answers "where does an unspecified-channel colour go?".
 pub trait AcceptsWheelColor {
     fn apply_wheel_color(&mut self, c: ColorValue) -> Outcome;
 }
 
-/// Target supports being told "use this font family" — the
-/// channel-less companion of [`AcceptsWheelColor`]. The console's
-/// `font set <name>` verb pushes one family-name choice at the
-/// selection and asks each component type to decide which channel
-/// the font choice belongs on.
+/// Target accepts a channel-less font-family choice — companion of
+/// [`AcceptsWheelColor`]. Per-variant routing: Node writes every
+/// `TextRun.font`; Edge / PortalLabel route through
+/// `glyph_connection.font`; EdgeLabel and PortalText return
+/// `NotApplicable` (they inherit the edge body's font today).
 ///
-/// Per-variant routing:
-/// - **Node** writes every `TextRun.font` (the node has no
-///   per-channel font split today).
-/// - **Edge** writes `glyph_connection.font`.
-/// - **PortalLabel** routes through the edge's `glyph_connection.font`
-///   — the icon shares the edge body's font, same routing
-///   `font size=` already uses for portal-icon selections.
-/// - **EdgeLabel** and **PortalText** return
-///   [`Outcome::NotApplicable`]. Their config structs do not yet
-///   carry a `font_family` slot of their own; today they inherit
-///   the edge body's font. A future commit can add per-channel
-///   slots when the graphical font picker calls for it.
-///
-/// `family` is `Some(name)` to pin a specific family or `None` to
-/// clear the override (channel falls back to its data-model
-/// default). `name` is the family-name string the data model
-/// stores, as listed by `baumhard::font::fonts::loaded_families_iter`.
-/// Validation — "is this a loaded font?" — is the caller's job:
-/// the console verb rejects unknown families upstream with a
-/// helpful message before the trait runs. Callers that bypass that
-/// check (programmatic apply_to_targets users) will land an
-/// unknown family in the data model, which the renderer's attrs
-/// builder degrades to monospace with a `warn!`.
+/// `family = Some(name)` pins; `None` clears. The console verb rejects
+/// unknown families upstream; programmatic callers that skip that
+/// check will land an unknown family that the renderer degrades to
+/// monospace with a `warn!`.
 pub trait AcceptsFontFamily {
     fn set_font_family(&mut self, family: Option<&str>) -> Outcome;
 }
 
-/// Target supports producing a text representation when the user
-/// copies (Ctrl+C). The trait method is a pure data transformation —
-/// it reads the component's state and returns what should go on the
-/// clipboard. The caller (event loop) handles system clipboard I/O.
-///
-/// Components that don't support copy return
-/// `ClipboardContent::NotApplicable`. Components that support it but
-/// have nothing to give right now return `ClipboardContent::Empty`.
+/// Target produces clipboard text on Ctrl+C. Pure read — the event
+/// loop handles system I/O. Variants without copy return
+/// `NotApplicable`; variants with copy but nothing to give return
+/// `Empty`.
 pub trait HandlesCopy {
     fn clipboard_copy(&self) -> ClipboardContent;
 }
 
-/// Target supports accepting text from the clipboard when the user
-/// pastes (Ctrl+V). Returns `Outcome` — the same result type the
-/// existing capability traits use — so the dispatcher can aggregate
-/// paste results the same way it aggregates color or font results.
-///
-/// The `content` parameter is the string read from the system
-/// clipboard by the event loop before the trait call. The trait
-/// method decides how to integrate it (parse a hex color, set node
-/// text, etc.) and reports the result.
+/// Target accepts clipboard text on Ctrl+V. `content` is the string
+/// read from the system clipboard.
 pub trait HandlesPaste {
     fn clipboard_paste(&mut self, content: &str) -> Outcome;
 }
 
-/// Target supports producing a text representation *and* clearing or
-/// resetting its source state when the user cuts (Ctrl+X). For
-/// components where "clearing" doesn't apply (e.g. a color picker
-/// always shows a color), cut may behave identically to copy.
+/// Target produces clipboard text on Ctrl+X and clears its source.
+/// For components where "clearing" doesn't apply, cut may behave
+/// identically to copy.
 pub trait HandlesCut {
     fn clipboard_cut(&mut self) -> ClipboardContent;
 }

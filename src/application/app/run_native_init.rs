@@ -1,15 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Native event-loop first-run initialisation. Lifted out of
-//! [`super::run_native::run`] so that the handler struct lives in
-//! `run_native.rs` without being drowned by ~150 lines of setup.
-//!
-//! Called once from
-//! [`super::run_native::NativeApp::resumed`][super::run_native::NativeApp]
-//! the first time winit fires the resumed callback (i.e. the first
-//! time there's an `ActiveEventLoop` to create a window against).
-//! Subsequent resume events are guarded against by the `is_none()`
-//! check in `resumed`.
+//! First-run initialisation for the native event loop. Called once
+//! from [`super::run_native::NativeApp::resumed`].
 
 #![cfg(not(target_arch = "wasm32"))]
 
@@ -18,17 +10,10 @@ use super::*;
 
 use baumhard::mindmap::tree_builder::MindMapTree;
 
-/// Build the fully-initialised [`InitState`] around a freshly-
-/// created `Window`. Performs: GPU surface + renderer init,
-/// mindmap load (best-effort; on failure the document stays
-/// `None` and the canvas renders an empty scene), mutation-
-/// registry wiring, theme / clear-color resolve, initial scene +
-/// border + portal tree build, camera fit-to-tree, and finally
-/// `StartRender`. All the state that used to live as locals in
-/// the old `run_native::run` preamble now rides back out in the
-/// returned struct.
+/// Build the fully-initialised [`InitState`] around a freshly-created
+/// `Window`. Mindmap load is best-effort (on failure the document
+/// stays `None` and the canvas renders empty).
 pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
-    // Single-threaded architecture: the handler owns the Renderer directly.
     baumhard::font::fonts::init();
 
     // Hand wgpu the owned `Arc<Window>` rather than pre-snapshotting

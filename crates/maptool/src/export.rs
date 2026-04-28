@@ -1,13 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Markdown export for mindmap files.
-//!
-//! Walks the node tree starting at the roots and emits a plain
-//! Markdown document where each node's first line of `text` becomes a
-//! heading (`#`, `##`, ...) and every other field (notes, runs, style,
-//! edges) is ignored. Empty-text nodes are treated as transparent:
-//! their children surface at the same heading depth, so if the roots
-//! have no text the first-text generation becomes the `#` level.
+//! Markdown export: node text → headings by tree depth, everything
+//! else ignored. Empty-text nodes are transparent.
 
 use baumhard::mindmap::model::{id_sort_key, MindMap, MindNode};
 use std::collections::HashMap;
@@ -104,9 +98,7 @@ mod tests {
         path
     }
 
-    /// Build a minimal `MindNode` with the given id/parent/text.
-    /// All the style/layout/position fields are filled with throwaway
-    /// defaults — the export code never reads them.
+    /// Minimal `MindNode`; non-text fields are throwaway defaults.
     fn make_node(id: &str, parent_id: Option<&str>, text: &str) -> MindNode {
         MindNode {
             id: id.to_string(),
@@ -238,10 +230,7 @@ mod tests {
 
     #[test]
     fn test_export_sibling_order_matches_index() {
-        // Sibling order comes from `id_sort_key` — the last
-        // Dewey-decimal segment. Ids are inserted out of sort order
-        // below; the walk must emit them in numeric-tail order (1, 2,
-        // 3) regardless of HashMap iteration.
+        // Insert out of order; emission must follow `id_sort_key`.
         let map = make_map(vec![
             make_node("0", None, "Root"),
             make_node("0.3", Some("0"), "Late"),

@@ -75,15 +75,10 @@ fn hue_ring_colors() -> &'static [CellColor; HUE_SLOT_COUNT] {
     })
 }
 
-/// Two-axis HSV bit-pattern key for the per-table caches. `sat_colors`
-/// is `hsv_to_rgb(hue, sat_cell_to_value(i), val)` — independent of
-/// `geometry.sat`, so its key is `(hue, val)`. `val_colors` mirrors
-/// the shape: `hsv_to_rgb(hue, sat, val_cell_to_value(i))`, keyed by
-/// `(hue, sat)`. Splitting the key lets a single-axis scrub — the
-/// user drags only the sat slider, say — hit the table that doesn't
-/// depend on that axis and skip its rebuild entirely. Bit-exact
-/// comparison means NaN fails to match itself (forcing a rebuild
-/// rather than a corrupt read).
+/// Bit-pattern key for the axis-split caches. `sat_colors` doesn't
+/// depend on `geometry.sat`, so its key is `(hue, val)`; `val_colors`
+/// is keyed `(hue, sat)`. Splitting lets a single-axis scrub hit one
+/// cache and skip the other.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct AxisKey(u32, u32);
 
@@ -100,18 +95,11 @@ struct ValCache {
 }
 
 thread_local! {
-    /// Per-thread sat-bar base-color cache keyed by `(hue, val)`. The
-    /// app is single-threaded so this is effectively global; `RefCell`
-    /// borrows are short and mutually exclusive (one dynamic apply
-    /// at a time). Stays live for the process lifetime so open/close
-    /// cycles keep hitting the cache when the relevant axes haven't
-    /// moved.
+    /// Sat-bar base-colour cache keyed by `(hue, val)`. Persistent
+    /// across picker open/close cycles.
     static SAT_CACHE: RefCell<Option<SatCache>> = const { RefCell::new(None) };
 
-    /// Per-thread val-bar base-color cache keyed by `(hue, sat)`.
-    /// Same shape as `SAT_CACHE`; split so a user scrubbing only the
-    /// sat axis leaves this table's key unchanged and the rebuild
-    /// skips.
+    /// Val-bar base-colour cache keyed by `(hue, sat)`.
     static VAL_CACHE: RefCell<Option<ValCache>> = const { RefCell::new(None) };
 }
 

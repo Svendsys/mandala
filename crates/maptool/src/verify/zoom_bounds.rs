@@ -222,16 +222,8 @@ mod tests {
         assert!(v.iter().all(|x| x.message.contains("is not finite")));
     }
 
-    /// `EdgeLabelConfig.min_zoom_to_render = NaN` is flagged
-    /// with the `label_config.` field prefix, not the bare
-    /// pair — proves the nested-config branch reaches the
-    /// same `check_pair` helper. Without this test, a
-    /// regression that silently skipped the `edge.label_config`
-    /// / `edge.portal_from` / `edge.portal_to` branches would
-    /// let authored NaN bounds on those sub-configs slip past
-    /// load-time validation into the runtime `contains` guard
-    /// — correct end result but a missed signal at the
-    /// boundary.
+    /// Nested `EdgeLabelConfig` reaches the same `check_pair`; NaN is
+    /// flagged with the `label_config.` prefix.
     #[test]
     fn non_finite_on_label_config_flagged() {
         use baumhard::mindmap::model::EdgeLabelConfig;
@@ -250,10 +242,8 @@ mod tests {
         assert!(v[0].message.contains("is not finite"));
     }
 
-    /// `PortalEndpointState.max_zoom_to_render = +Inf` on
-    /// `portal_from` is flagged with the `portal_from.`
-    /// prefix. Symmetric coverage for the
-    /// per-portal-endpoint cascade input.
+    /// `+Inf` on `portal_from` is flagged with the `portal_from.`
+    /// prefix.
     #[test]
     fn non_finite_on_portal_from_flagged() {
         use baumhard::mindmap::model::PortalEndpointState;
@@ -272,9 +262,8 @@ mod tests {
         assert!(v[0].message.contains("is not finite"));
     }
 
-    /// `portal_to` path — a closed band with `min > max` on
-    /// the endpoint fires the inversion check with the
-    /// `portal_to.` prefix. Covers the third nested branch.
+    /// Inversion (`min > max`) on `portal_to` is flagged with the
+    /// `portal_to.` prefix.
     #[test]
     fn portal_to_inversion_flagged_with_prefix() {
         use baumhard::mindmap::model::PortalEndpointState;

@@ -1,21 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Portal label drag math: given a cursor position in canvas
-//! space, snap it to the nearest point on the owning node's
-//! border and write both the resulting `border_t` (slide along
-//! the perimeter) and a signed perpendicular offset (slide away
-//! from the border along its outward normal) into the edge's
-//! per-endpoint state. Used by the per-frame drain loop and
-//! once more at release to commit the final position.
-//!
-//! Mirrors the shape of [`super::edge_drag`]: one free function,
-//! no per-frame allocation, mutating through
-//! [`MindMapDocument`] setters so undo / dirty bookkeeping is
-//! consistent with every other edge edit. The drain path does
-//! **not** push undo per frame — the event-loop commit
-//! (mouse-up in `event_mouse_click.rs`) pushes one
-//! `UndoAction::EditEdge` with the pre-drag snapshot, matching
-//! how `DraggingEdgeHandle` handles commits.
+//! Portal-label drag math: project a canvas-space cursor onto its
+//! owning node's border and write `(border_t, perpendicular_offset)`
+//! onto the edge's per-endpoint state. The drain doesn't push undo
+//! per frame; the event-loop commit at mouse-up pushes one
+//! `UndoAction::EditEdge` with the pre-drag snapshot.
 
 #![cfg(not(target_arch = "wasm32"))]
 

@@ -1,12 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Inline node text editor — module root.
-//!
-//! Holds [`TextEditState`] + the grapheme-aware cursor / buffer
-//! helpers that both the editor and [`super::label_edit`] consume.
-//! The editor lifecycle itself (open / close / apply / handle_key
-//! / revert) lives in [`editor`]; cursor-math unit tests live in
-//! the `tests` submodule.
+//! Inline node text editor: state, grapheme-aware cursor helpers
+//! shared with [`super::label_edit`]. Lifecycle in [`editor`].
 
 use baumhard::util::grapheme_chad;
 

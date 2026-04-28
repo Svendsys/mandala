@@ -1,27 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! App-layer scene host — bridges the application and
+//! App-layer scene host bridging the application and
 //! [`baumhard::gfx_structs::scene::Scene`].
 //!
-//! `AppScene` owns a Baumhard [`Scene`] plus a small amount of
-//! app-specific bookkeeping: named slots for the overlay components
-//! (console and color picker) that are migrating to tree-based
-//! rendering, plus the insertion-order layer integers the renderer
-//! uses to composite them.
-//!
-//! # Why a separate type
-//!
-//! `baumhard::Scene` itself is a generic container — it knows trees,
-//! layers, and offsets, and nothing else. Mandala's app has fixed
-//! roles ("the console", "the color picker") and needs to look
-//! those up by identity, not by slab key. `AppScene` encodes that
-//! identity as an [`OverlayRole`] enum.
-//!
-//! The mindmap tree itself is **not** registered here yet — it
-//! still lives next to the event loop (see `app.rs: mindmap_tree`)
-//! and is consumed directly by the renderer. That's the last
-//! migration step and the cleanest to defer until the overlays
-//! are proven working in the new shape.
+//! `AppScene` owns Baumhard `Scene` sub-scenes plus role-keyed slots
+//! for the canvas trees (borders, connections, portals, edge handles,
+//! connection labels) and the screen-space overlays (console, color
+//! picker). Each role's tree is registered/unregistered or updated in
+//! place via §B2 mutator dispatch driven by a structural signature.
 
 use std::collections::HashMap;
 
@@ -35,8 +21,6 @@ use indextree::NodeId;
 /// The fixed **screen-space** overlay components that the app's
 /// `AppScene` can host. Overlay trees are drawn without the camera
 /// transform at `scale = 1.0` (see the renderer's palette pass).
-///
-/// Extend this enum when a new screen-space overlay lands.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub enum OverlayRole {
     /// Command-line overlay. Registered when the console opens,
@@ -141,22 +125,10 @@ pub mod layers {
     pub const CONSOLE: i32 = 200;
 }
 
-/// App-facing scene owning every tree-rendered component.
-///
-/// Internally splits into two sub-scenes by coordinate space:
-///
-/// - `canvas` — camera-transformed trees (mindmap, borders,
-///   connections, portals). Draw order inside this scene is
-///   `CanvasRole`-layered; draw order *across* all components is:
-///   canvas first, then overlay on top.
-/// - `overlay` — screen-space trees (console, color picker). At
-///   `scale = 1.0`, no camera transform.
-///
-/// The split exists because the renderer uses different pipelines
-/// for the two spaces; lumping them into one sub-scene would mean
-/// tagging every tree with its coordinate space and branching on
-/// that at every render step. Two scenes make the invariant
-/// structural.
+/// App-facing scene owning every tree-rendered component, split by
+/// coordinate space: canvas-space (camera-transformed) and
+/// overlay (screen-space, scale = 1.0). The renderer uses different
+/// pipelines for each.
 pub struct AppScene {
     canvas: Scene,
     overlay: Scene,
