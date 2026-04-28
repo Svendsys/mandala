@@ -4,35 +4,32 @@
 
 # Deferred work from configurable-canvas-actions branch
 
-The dispatch funnel and the user-visible mouse-gesture rebinding
-(double-click, wheel zoom, middle-click pan, left-drag pan, custom-
-mutation parity, 5 console-verb Actions) are wired and shipping.
-Remaining phases from
-`/root/.claude/plans/memoized-meandering-toucan.md` are scaffolded
-but not yet wired into their modal handlers:
+Wired and shipping after the review-fix cycle:
+- Dispatch funnel (Phases 1, 4)
+- Mouse-gesture rebinding via extended KeyBind grammar (Phase 2) with
+  modifier-fallback so Ctrl+Wheel etc. still work
+- All ~46 Action variants (Phase 3) — most have functioning bodies
+  after Phases 5/6
+- 5 console-verb Actions (Phase 6)
+- Custom-mutation keybind parity with the click path (Phase 7)
+- TextEdit / LabelEdit cursor primitives (Phase 5)
+- Macro scaffolding with user-layer JSON loader (Phase 8)
+- Documentation (Phase 10) — CONCEPTS.md §5 "Action dispatch",
+  CODE_CONVENTIONS.md §3 "Single dispatch funnel" with carve-outs
 
-- **Phase 5 — TextEdit / LabelEdit cursor primitives.** The 13
-  TextEdit + 6 LabelEdit cursor/delete Action variants exist in
-  `Action` and resolve through `KeybindConfig`, but the modal
-  handlers (`text_edit/editor.rs`, `label_edit.rs`) still own their
-  hardcoded `Key::Named(NamedKey::ArrowLeft)` ladders. Wiring is
-  mechanical — switch each ladder to
-  `keybinds.action_for_context(InputContext::TextEdit/LabelEdit, ...)`
-  + dispatch through `dispatch_action`. Each arm body is 2-3 lines
-  wrapping the existing helpers in `text_edit/mod.rs` and
-  `mod.rs:route_label_edit_key`.
-- **Phase 8 — Macro scaffolding.** `Macro`, `MacroStep`,
-  `MacroRegistry`, JSON loader, `dispatch_macro`, and a
-  `macro_bindings: HashMap<String, String>` field on `KeybindConfig`.
-  Modelled on the custom-mutation loader at
-  `src/application/document/mutations_loader/`.
-- **Phase 9 — WASM convergence.** `run_wasm.rs` still has its own
+Phase 9 is partially done: WASM's empty-canvas double-click now also
+honours the `CreateOrphanNodeAndEdit` opt-in gate (matches native).
+The full WASM convergence below is still outstanding.
+
+- **Phase 9 — full WASM convergence.** `run_wasm.rs` still has its own
   partial copy of the keyboard `match action` block at lines 385-457
-  and its own double-click ladder at 523-635. WASM uses a different
-  `InputState` struct from native's `InputHandlerContext` so
-  unifying them needs a small refactor of the WASM input
-  bookkeeping (`AppMode`, `LastClick` shapes) before
-  `dispatch_action` can serve both targets.
+  and its own ClickHit-routing block at 523-635. WASM uses a
+  different `InputState` struct from native's `InputHandlerContext`
+  so unifying them needs a small refactor of the WASM input
+  bookkeeping (`AppMode`, `LastClick` shapes) before `dispatch_action`
+  can serve both targets. Until that lands, WASM users get the
+  off-by-default empty-canvas behaviour but not the full mouse-
+  gesture rebinding surface.
 - **Parameterised console verbs as Actions.** `open <path>`,
   `save-as <path>`, `mutation apply <id>`, kv-shaped
   `border` / `edge` / `color` / `font` / `zoom` / `spacing` setters

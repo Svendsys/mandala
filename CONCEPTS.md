@@ -2124,8 +2124,13 @@ Some(&DispatchHit { click_hit, canvas_pos }))`.
 
 **Resolution order** (any binding):
 1. `keybinds.action_for_context(...)` — built-in `Action` variants.
-2. `keybinds.macro_for(...)` — user-defined macros (planned; see
-   §8 trajectory).
+2. `keybinds.macro_for(...)` — user-defined macros, loaded from
+   `~/.config/mandala/macros.json` on native. See
+   `crate::application::macros` for `Macro`, `MacroStep`,
+   `MacroRegistry`, and `dispatch_macro`. Steps fan out to
+   `dispatch_action`, `apply_keybind_custom_mutation`, or
+   `execute_console_line` depending on `MacroStep` kind, so plugin
+   authors and macro recorders share one runtime path.
 3. `keybinds.custom_mutation_for(...)` — per-node custom mutations.
 
 **Dispatch status per gesture.** `DoubleClick`, `MiddleClick`,

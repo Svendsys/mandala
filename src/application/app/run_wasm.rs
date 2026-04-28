@@ -616,9 +616,17 @@ app.event_loop.run(move |event, _window_target| {
                             }
                         }
                         ClickHit::Empty => {
+                            // Match native: empty-canvas double-click is
+                            // a no-op unless the user has explicitly
+                            // bound `CreateOrphanNodeAndEdit`. Default
+                            // ships unbound — addresses the user's
+                            // "annoying" complaint on the WASM target
+                            // too.
                             let allow_create = !matches!(
                                 input.document.selection,
                                 SelectionState::Edge(_)
+                            ) && keybinds.has_any_binding_for(
+                                crate::application::keybinds::Action::CreateOrphanNodeAndEdit,
                             );
                             if allow_create {
                                 let new_id = input.document.create_orphan_and_select(canvas_pos);
