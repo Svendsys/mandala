@@ -154,9 +154,6 @@ pub(super) fn handle_mouse_input(
                     cursor_pos.0 as f32,
                     cursor_pos.1 as f32,
                 );
-                let hit_node = mindmap_tree.as_mut().and_then(|tree| {
-                    hit_test(canvas_pos, tree)
-                });
 
                 // Double-click detection. If this press within the
                 // double-click window matches the previous one (same
@@ -173,56 +170,14 @@ pub(super) fn handle_mouse_input(
                 // press fall through; the corresponding release
                 // will be swallowed as click-inside.
                 let now = now_ms();
-                // Resolve the "what was hit" used by double-click
-                // detection. Node hits beat portal hits (a node
-                // under a portal marker is the more common target).
-                // Portal sub-parts are resolved in priority order:
-                // text first, then icon — the two AABBs don't
-                // overlap in practice but the ordering keeps the
-                // routing deterministic if geometry ever places
-                // them adjacent.
-                let portal_text_hit = if hit_node.is_none() {
-                    renderer.hit_test_portal_text(canvas_pos)
-                } else {
-                    None
-                };
-                let portal_icon_hit =
-                    if hit_node.is_none() && portal_text_hit.is_none() {
-                        renderer.hit_test_portal(canvas_pos)
-                    } else {
-                        None
-                    };
-                // Edge-label hit only when no node / portal sub-part
-                // has claimed the click. Edge labels sit along the
-                // connection path; placing them behind the portal
-                // check keeps the portal's "floating over a node"
-                // behaviour correct even if a label happens to
-                // overlap.
-                let edge_label_hit = if hit_node.is_none()
-                    && portal_text_hit.is_none()
-                    && portal_icon_hit.is_none()
-                {
-                    renderer.hit_test_any_edge_label(canvas_pos)
-                } else {
-                    None
-                };
-                let click_hit: ClickHit = if let Some(id) = &hit_node {
-                    ClickHit::Node(id.clone())
-                } else if let Some((key, ep)) = &portal_text_hit {
-                    ClickHit::PortalText {
-                        edge: key.clone(),
-                        endpoint: ep.clone(),
-                    }
-                } else if let Some((key, ep)) = &portal_icon_hit {
-                    ClickHit::PortalMarker {
-                        edge: key.clone(),
-                        endpoint: ep.clone(),
-                    }
-                } else if let Some(key) = &edge_label_hit {
-                    ClickHit::EdgeLabel(key.clone())
-                } else {
-                    ClickHit::Empty
-                };
+                let parts = super::compute_click_hit(canvas_pos, mindmap_tree.as_mut(), renderer);
+                let super::ClickHitParts {
+                    click_hit,
+                    hit_node,
+                    portal_text_hit,
+                    portal_icon_hit,
+                    edge_label_hit,
+                } = parts;
                 // Suppress the double-click → open-editor gesture when
                 // an editor is already open on the click's target. The
                 // three editor states are mutually exclusive by

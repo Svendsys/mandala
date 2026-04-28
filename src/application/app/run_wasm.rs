@@ -498,65 +498,32 @@ app.event_loop.run(move |event, _window_target| {
                     }
                 };
 
-                // Hit test against nodes
-                let hit_node: Option<String> = input.mindmap_tree
-                    .as_mut()
-                    .and_then(|tree| {
-                        crate::application::document::hit_test(canvas_pos, tree)
-                    });
-
-                // Double-click detection
+                // Hit test against nodes + portal sub-parts + edge
+                // labels. Cross-platform helper — the priority chain
+                // is byte-identical to native (`compute_click_hit`
+                // in `app/mod.rs`), so the previously-duplicated
+                // hit-routing block now lives in one place.
                 let now = now_ms();
+                let parts = {
+                    let renderer_borrow = renderer_for_events.borrow();
+                    let Some(renderer) = renderer_borrow.as_ref() else { return; };
+                    super::compute_click_hit(
+                        canvas_pos,
+                        input.mindmap_tree.as_mut(),
+                        renderer,
+                    )
+                };
+                let super::ClickHitParts {
+                    click_hit,
+                    hit_node,
+                    portal_text_hit,
+                    portal_icon_hit,
+                    edge_label_hit,
+                } = parts;
                 let already_editing_same_target = input.text_edit_state
                     .node_id()
                     .map(|id| hit_node.as_deref() == Some(id))
                     .unwrap_or(false);
-                // WASM mirrors the native dispatch: build a ClickHit
-                // that covers node / portal-marker / empty, and
-                // route double-click on a portal marker to a camera
-                // jump. The portal hit test runs only when the node
-                // hit test misses, same as native.
-                let (portal_text_hit, portal_icon_hit, edge_label_hit) =
-                    if hit_node.is_none() {
-                        let renderer_borrow = renderer_for_events.borrow();
-                        let t = renderer_borrow
-                            .as_ref()
-                            .and_then(|r| r.hit_test_portal_text(canvas_pos));
-                        let i = if t.is_none() {
-                            renderer_borrow
-                                .as_ref()
-                                .and_then(|r| r.hit_test_portal(canvas_pos))
-                        } else {
-                            None
-                        };
-                        let l = if t.is_none() && i.is_none() {
-                            renderer_borrow
-                                .as_ref()
-                                .and_then(|r| r.hit_test_any_edge_label(canvas_pos))
-                        } else {
-                            None
-                        };
-                        (t, i, l)
-                    } else {
-                        (None, None, None)
-                    };
-                let click_hit: ClickHit = if let Some(id) = &hit_node {
-                    ClickHit::Node(id.clone())
-                } else if let Some((key, ep)) = &portal_text_hit {
-                    ClickHit::PortalText {
-                        edge: key.clone(),
-                        endpoint: ep.clone(),
-                    }
-                } else if let Some((key, ep)) = &portal_icon_hit {
-                    ClickHit::PortalMarker {
-                        edge: key.clone(),
-                        endpoint: ep.clone(),
-                    }
-                } else if let Some(key) = &edge_label_hit {
-                    ClickHit::EdgeLabel(key.clone())
-                } else {
-                    ClickHit::Empty
-                };
                 let is_dblclick = !already_editing_same_target
                     && input.last_click
                         .as_ref()
