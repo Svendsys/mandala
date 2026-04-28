@@ -6,8 +6,8 @@
 //! `PortalEndpointState`.
 //!
 //! The setters share a common posture: each takes a pair of
-//! [`ZoomBoundEdit`] values (one for `min`, one for `max`), so the
-//! console — which can receive `zoom min=1.5`,
+//! [`OptionEdit<f32>`] values (one for `min`, one for `max`), so
+//! the console — which can receive `zoom min=1.5`,
 //! `zoom max=unset`, or both together — maps cleanly onto one
 //! atomic call. Each returns `true` when the value actually
 //! changed so callers can report "no-op" vs. "changed" without
@@ -21,55 +21,20 @@
 
 use log::warn;
 
-use super::nodes::validate_zoom_pair;
+use super::nodes::{validate_zoom_pair, OptionEdit};
 use super::{EdgeRef, MindMapDocument};
-
-/// One console-argument's worth of edit to a single zoom bound.
-/// The console parses a keyword argument and folds it into a
-/// value of this type:
-///
-/// - omitted entirely → [`ZoomBoundEdit::Keep`] (leave the side alone)
-/// - `min=unset` → [`ZoomBoundEdit::Clear`] (write `None`)
-/// - `min=1.5` → [`ZoomBoundEdit::Set`] with the parsed value
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum ZoomBoundEdit {
-    /// User did not pass this side. Preserve the existing value.
-    Keep,
-    /// User passed `<side>=unset` / `<side>=`. Write `None`.
-    Clear,
-    /// User passed `<side>=<value>`. Write `Some(value)`.
-    Set(f32),
-}
-
-impl ZoomBoundEdit {
-    /// Apply this edit to a current `Option<f32>` bound, yielding
-    /// the new value. Pure, O(1).
-    pub fn apply(self, current: Option<f32>) -> Option<f32> {
-        match self {
-            ZoomBoundEdit::Keep => current,
-            ZoomBoundEdit::Clear => None,
-            ZoomBoundEdit::Set(v) => Some(v),
-        }
-    }
-
-    /// Whether this edit asks for any change at all. Setters
-    /// short-circuit when both sides are `Keep`.
-    pub fn is_noop(&self) -> bool {
-        matches!(self, ZoomBoundEdit::Keep)
-    }
-}
 
 impl MindMapDocument {
     /// Write the edge's top-level zoom-visibility window. The
     /// full edge is snapshotted into the undo stack via
     /// [`UndoAction::EditEdge`]. Returns `true` when either side
     /// changed. Rejects non-finite or inverted pairs as a
-    /// no-op. See [`ZoomBoundEdit`] for per-side semantics.
+    /// no-op. See [`OptionEdit<f32>`] for per-side semantics.
     pub fn set_edge_zoom_visibility(
         &mut self,
         edge_ref: &EdgeRef,
-        min: ZoomBoundEdit,
-        max: ZoomBoundEdit,
+        min: OptionEdit<f32>,
+        max: OptionEdit<f32>,
     ) -> bool {
         self.mutate_edge(edge_ref, |edge, _canvas| {
             let new_min = min.apply(edge.min_zoom_to_render);
@@ -99,8 +64,8 @@ impl MindMapDocument {
     pub fn set_edge_label_zoom_visibility(
         &mut self,
         edge_ref: &EdgeRef,
-        min: ZoomBoundEdit,
-        max: ZoomBoundEdit,
+        min: OptionEdit<f32>,
+        max: OptionEdit<f32>,
     ) -> bool {
         self.mutate_edge(edge_ref, |edge, _canvas| {
             let (cur_min, cur_max) = edge
@@ -137,8 +102,8 @@ impl MindMapDocument {
         &mut self,
         edge_ref: &EdgeRef,
         endpoint_node_id: &str,
-        min: ZoomBoundEdit,
-        max: ZoomBoundEdit,
+        min: OptionEdit<f32>,
+        max: OptionEdit<f32>,
     ) -> bool {
         self.mutate_edge(edge_ref, |edge, _canvas| {
             let is_from = endpoint_node_id == edge.from_id;
@@ -215,11 +180,11 @@ mod tests {
 
     #[test]
     fn zoom_bound_edit_apply_is_keep_clear_set() {
-        assert_eq!(ZoomBoundEdit::Keep.apply(Some(1.0)), Some(1.0));
-        assert_eq!(ZoomBoundEdit::Keep.apply(None), None);
-        assert_eq!(ZoomBoundEdit::Clear.apply(Some(1.0)), None);
-        assert_eq!(ZoomBoundEdit::Set(2.0).apply(Some(1.0)), Some(2.0));
-        assert_eq!(ZoomBoundEdit::Set(2.0).apply(None), Some(2.0));
+        assert_eq!(OptionEdit::<f32>::Keep.apply(Some(1.0)), Some(1.0));
+        assert_eq!(OptionEdit::<f32>::Keep.apply(None), None);
+        assert_eq!(OptionEdit::<f32>::Clear.apply(Some(1.0)), None);
+        assert_eq!(OptionEdit::Set(2.0_f32).apply(Some(1.0)), Some(2.0));
+        assert_eq!(OptionEdit::Set(2.0_f32).apply(None), Some(2.0));
     }
 
     #[test]
@@ -227,8 +192,8 @@ mod tests {
         let mut doc = doc_with_node();
         let changed = doc.set_node_zoom_visibility(
             "0",
-            ZoomBoundEdit::Set(0.5),
-            ZoomBoundEdit::Set(2.0),
+            OptionEdit::Set(0.5),
+            OptionEdit::Set(2.0),
         );
         assert!(changed);
         let node = doc.mindmap.nodes.get("0").unwrap();
@@ -242,13 +207,13 @@ mod tests {
         // Seed with a bound then only edit the other side.
         doc.set_node_zoom_visibility(
             "0",
-            ZoomBoundEdit::Set(0.5),
-            ZoomBoundEdit::Set(2.0),
+            OptionEdit::Set(0.5),
+            OptionEdit::Set(2.0),
         );
         let changed = doc.set_node_zoom_visibility(
             "0",
-            ZoomBoundEdit::Keep,
-            ZoomBoundEdit::Set(3.0),
+            OptionEdit::Keep,
+            OptionEdit::Set(3.0),
         );
         assert!(changed);
         let node = doc.mindmap.nodes.get("0").unwrap();
@@ -261,13 +226,13 @@ mod tests {
         let mut doc = doc_with_node();
         doc.set_node_zoom_visibility(
             "0",
-            ZoomBoundEdit::Set(0.5),
-            ZoomBoundEdit::Set(2.0),
+            OptionEdit::Set(0.5),
+            OptionEdit::Set(2.0),
         );
         let changed = doc.set_node_zoom_visibility(
             "0",
-            ZoomBoundEdit::Clear,
-            ZoomBoundEdit::Clear,
+            OptionEdit::Clear,
+            OptionEdit::Clear,
         );
         assert!(changed);
         let node = doc.mindmap.nodes.get("0").unwrap();
@@ -280,8 +245,8 @@ mod tests {
         let mut doc = doc_with_node();
         let changed = doc.set_node_zoom_visibility(
             "0",
-            ZoomBoundEdit::Set(3.0),
-            ZoomBoundEdit::Set(1.0),
+            OptionEdit::Set(3.0),
+            OptionEdit::Set(1.0),
         );
         assert!(!changed, "inverted pair must be rejected as no-op");
         let node = doc.mindmap.nodes.get("0").unwrap();
@@ -294,13 +259,13 @@ mod tests {
         let mut doc = doc_with_node();
         assert!(!doc.set_node_zoom_visibility(
             "0",
-            ZoomBoundEdit::Set(f32::NAN),
-            ZoomBoundEdit::Keep,
+            OptionEdit::Set(f32::NAN),
+            OptionEdit::Keep,
         ));
         assert!(!doc.set_node_zoom_visibility(
             "0",
-            ZoomBoundEdit::Keep,
-            ZoomBoundEdit::Set(f32::INFINITY),
+            OptionEdit::Keep,
+            OptionEdit::Set(f32::INFINITY),
         ));
     }
 
@@ -309,13 +274,13 @@ mod tests {
         let mut doc = doc_with_node();
         doc.set_node_zoom_visibility(
             "0",
-            ZoomBoundEdit::Set(0.5),
-            ZoomBoundEdit::Set(2.0),
+            OptionEdit::Set(0.5),
+            OptionEdit::Set(2.0),
         );
         doc.set_node_zoom_visibility(
             "0",
-            ZoomBoundEdit::Set(1.0),
-            ZoomBoundEdit::Set(3.0),
+            OptionEdit::Set(1.0),
+            OptionEdit::Set(3.0),
         );
         assert!(doc.undo());
         let node = doc.mindmap.nodes.get("0").unwrap();
@@ -328,8 +293,8 @@ mod tests {
         let (mut doc, er) = doc_with_edge();
         doc.set_edge_zoom_visibility(
             &er,
-            ZoomBoundEdit::Set(0.5),
-            ZoomBoundEdit::Set(2.0),
+            OptionEdit::Set(0.5),
+            OptionEdit::Set(2.0),
         );
         let before_idx = doc
             .mindmap
@@ -350,8 +315,8 @@ mod tests {
         assert!(doc.mindmap.edges[0].label_config.is_none());
         let changed = doc.set_edge_label_zoom_visibility(
             &er,
-            ZoomBoundEdit::Set(1.5),
-            ZoomBoundEdit::Keep,
+            OptionEdit::Set(1.5),
+            OptionEdit::Keep,
         );
         assert!(changed);
         let cfg = doc.mindmap.edges[0]
@@ -368,8 +333,8 @@ mod tests {
         assert!(doc.set_portal_endpoint_zoom_visibility(
             &er,
             "0",
-            ZoomBoundEdit::Set(1.0),
-            ZoomBoundEdit::Set(4.0),
+            OptionEdit::Set(1.0),
+            OptionEdit::Set(4.0),
         ));
         let e = &doc.mindmap.edges[0];
         assert!(e.portal_from.as_ref().is_some());
@@ -385,8 +350,8 @@ mod tests {
         assert!(!doc.set_portal_endpoint_zoom_visibility(
             &er,
             "not_an_endpoint",
-            ZoomBoundEdit::Set(1.0),
-            ZoomBoundEdit::Keep,
+            OptionEdit::Set(1.0),
+            OptionEdit::Keep,
         ));
     }
 
@@ -395,8 +360,8 @@ mod tests {
         let mut doc = doc_with_node();
         let changed = doc.set_node_zoom_visibility(
             "0",
-            ZoomBoundEdit::Keep,
-            ZoomBoundEdit::Keep,
+            OptionEdit::Keep,
+            OptionEdit::Keep,
         );
         assert!(!changed);
         assert!(doc.undo_stack.is_empty(), "no-op must not push undo");

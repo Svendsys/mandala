@@ -177,14 +177,14 @@ use baumhard::util::grapheme_chad::count_grapheme_clusters;
     /// behaviour entanglement.
     #[test]
     fn test_default_border_config_first_edit_materialises_light_preset() {
-        use crate::application::document::{BorderConfigEdits, BorderFieldEdit};
+        use crate::application::document::{BorderConfigEdits, OptionEdit};
         let mut doc = load_test_doc();
         let nid = first_testament_node_id(&doc);
         // Strip any pre-existing per-node border so we exercise the
         // `get_or_insert_with(default_glyph_border_config)` path.
         doc.mindmap.nodes.get_mut(&nid).unwrap().style.border = None;
         let mut edits = BorderConfigEdits::default();
-        edits.padding = BorderFieldEdit::Set(8.0);
+        edits.padding = OptionEdit::Set(8.0);
         let outcome = doc.set_node_border_config(&nid, edits);
         assert!(outcome.changed);
         let cfg = doc

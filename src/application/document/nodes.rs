@@ -268,8 +268,8 @@ impl MindMapDocument {
     pub fn set_node_zoom_visibility(
         &mut self,
         node_id: &str,
-        min: super::ZoomBoundEdit,
-        max: super::ZoomBoundEdit,
+        min: OptionEdit<f32>,
+        max: OptionEdit<f32>,
     ) -> bool {
         let node = match self.mindmap.nodes.get(node_id) {
             Some(n) => n,
@@ -298,20 +298,23 @@ impl MindMapDocument {
     }
 }
 
-/// One field of a [`baumhard::mindmap::model::GlyphBorderConfig`]
-/// edit. The three variants distinguish "leave alone" from
-/// "explicitly clear an existing override" from "set to a
-/// concrete value" — the same triple-state pattern
-/// [`super::ZoomBoundEdit`] uses for the same reason: the console
-/// verb's `palette=off` / `font=off` shapes need a way to ask the
-/// model to drop a previous override, distinct from "the user
-/// didn't mention this field at all".
+/// Triple-state edit on an `Option<T>` field. The three variants
+/// distinguish "leave alone" from "explicitly clear an existing
+/// override" from "set to a concrete value". Used by the
+/// `BorderConfigEdits` bundle (every per-field slot is one of these)
+/// and by the zoom-visibility setters (where a console line like
+/// `zoom min=1.5 max=unset` translates each kv into an
+/// `OptionEdit<f32>` so a single setter call handles both sides
+/// atomically). The shared shape is what makes the console verbs'
+/// `palette=off` / `font=off` / `min=unset` syntax possible —
+/// without `Clear`, callers couldn't distinguish "the user didn't
+/// mention this field" from "the user wants this field cleared".
 ///
 /// `Keep` is the default so [`BorderConfigEdits`]'s
-/// `#[derive(Default)]` builds the no-op edit set, and the
-/// console verb only fills in the keys the user actually typed.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub enum BorderFieldEdit<T> {
+/// `#[derive(Default)]` builds the no-op edit set, and the console
+/// verb only fills in the keys the user actually typed.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum OptionEdit<T> {
     /// No edit — leave the model field at its current value.
     #[default]
     Keep,
@@ -322,12 +325,20 @@ pub enum BorderFieldEdit<T> {
     Set(T),
 }
 
-impl<T: Clone> BorderFieldEdit<T> {
-    fn apply_option(&self, current: Option<T>) -> Option<T> {
+impl<T: Clone> OptionEdit<T> {
+    /// Fold this edit against `current`, yielding the new
+    /// `Option<T>` value. Pure, O(1). The single canonical
+    /// implementation of the Keep/Clear/Set semantics — every
+    /// consumer (`zoom_bounds` setters today, future
+    /// border-config writes when the bespoke
+    /// `apply_option_edit` / `apply_value_set` helpers fold in)
+    /// goes through this method instead of re-matching the
+    /// three variants.
+    pub fn apply(self, current: Option<T>) -> Option<T> {
         match self {
-            BorderFieldEdit::Keep => current,
-            BorderFieldEdit::Clear => None,
-            BorderFieldEdit::Set(v) => Some(v.clone()),
+            OptionEdit::Keep => current,
+            OptionEdit::Clear => None,
+            OptionEdit::Set(v) => Some(v),
         }
     }
 }
@@ -346,21 +357,21 @@ impl<T: Clone> BorderFieldEdit<T> {
 /// can't ship a parse-error string.
 #[derive(Clone, Debug, Default)]
 pub struct BorderConfigEdits {
-    pub preset: BorderFieldEdit<String>,
-    pub font: BorderFieldEdit<String>,
-    pub font_size_pt: BorderFieldEdit<f32>,
-    pub color: BorderFieldEdit<String>,
-    pub padding: BorderFieldEdit<f32>,
-    pub color_palette: BorderFieldEdit<String>,
-    pub color_palette_field: BorderFieldEdit<PaletteField>,
-    pub side_top: BorderFieldEdit<String>,
-    pub side_bottom: BorderFieldEdit<String>,
-    pub side_left: BorderFieldEdit<String>,
-    pub side_right: BorderFieldEdit<String>,
-    pub corner_top_left: BorderFieldEdit<String>,
-    pub corner_top_right: BorderFieldEdit<String>,
-    pub corner_bottom_left: BorderFieldEdit<String>,
-    pub corner_bottom_right: BorderFieldEdit<String>,
+    pub preset: OptionEdit<String>,
+    pub font: OptionEdit<String>,
+    pub font_size_pt: OptionEdit<f32>,
+    pub color: OptionEdit<String>,
+    pub padding: OptionEdit<f32>,
+    pub color_palette: OptionEdit<String>,
+    pub color_palette_field: OptionEdit<PaletteField>,
+    pub side_top: OptionEdit<String>,
+    pub side_bottom: OptionEdit<String>,
+    pub side_left: OptionEdit<String>,
+    pub side_right: OptionEdit<String>,
+    pub corner_top_left: OptionEdit<String>,
+    pub corner_top_right: OptionEdit<String>,
+    pub corner_bottom_left: OptionEdit<String>,
+    pub corner_bottom_right: OptionEdit<String>,
     /// `Some(true)` switches `style.show_frame` on, `Some(false)`
     /// off, `None` leaves it untouched. Kept on this struct (vs.
     /// a separate setter) so a single command can both flip the
@@ -389,7 +400,7 @@ impl BorderConfigEdits {
             BorderSide::Left => &mut self.side_left,
             BorderSide::Right => &mut self.side_right,
         };
-        *slot = BorderFieldEdit::Set(pattern.to_string());
+        *slot = OptionEdit::Set(pattern.to_string());
         Ok(())
     }
 }
@@ -435,7 +446,7 @@ impl MindMapDocument {
     /// override entirely (the node falls back to the canvas
     /// default), ignoring every other field.
     ///
-    /// Otherwise: every field with `BorderFieldEdit::Set(v)` is
+    /// Otherwise: every field with `OptionEdit::Set(v)` is
     /// written; `Clear` removes an existing override; `Keep`
     /// leaves the field untouched. Side-pattern strings are
     /// trusted to have been validated upstream
@@ -564,7 +575,7 @@ fn apply_border_edits(
     outcome: &mut BorderEditOutcome,
 ) -> bool {
     let mut changed = false;
-    if let BorderFieldEdit::Set(p) = &edits.preset {
+    if let OptionEdit::Set(p) = &edits.preset {
         outcome.requested_preset = Some(p.clone());
     }
     if let Some(v) = edits.visible {
@@ -592,7 +603,7 @@ fn apply_border_edits(
         changed = true;
     }
 
-    if let BorderFieldEdit::Set(p) = &edits.preset {
+    if let OptionEdit::Set(p) = &edits.preset {
         if cfg.preset != *p {
             cfg.preset = p.clone();
             changed = true;
@@ -637,9 +648,9 @@ fn apply_border_edits(
     changed
 }
 
-fn apply_string_set(edit: &BorderFieldEdit<String>, slot: &mut String) -> bool {
+fn apply_string_set(edit: &OptionEdit<String>, slot: &mut String) -> bool {
     match edit {
-        BorderFieldEdit::Set(v) => {
+        OptionEdit::Set(v) => {
             if slot != v {
                 *slot = v.clone();
                 true
@@ -651,7 +662,7 @@ fn apply_string_set(edit: &BorderFieldEdit<String>, slot: &mut String) -> bool {
     }
 }
 
-/// Apply a `BorderFieldEdit<T>` to an `Option<U>` slot, with `to_target`
+/// Apply a `OptionEdit<T>` to an `Option<U>` slot, with `to_target`
 /// projecting `T → U` for the value-write path. Returns `true` when the
 /// slot actually changed. The four `font / color / color_palette /
 /// color_palette_field` arms in `apply_border_edits` were structurally
@@ -661,7 +672,7 @@ fn apply_string_set(edit: &BorderFieldEdit<String>, slot: &mut String) -> bool {
 /// slot from a `PaletteField` enum, so the projection isn't always
 /// `clone()`.
 fn apply_option_edit<T, U>(
-    edit: &BorderFieldEdit<T>,
+    edit: &OptionEdit<T>,
     slot: &mut Option<U>,
     to_target: impl FnOnce(&T) -> U,
 ) -> bool
@@ -669,33 +680,33 @@ where
     U: PartialEq,
 {
     match edit {
-        BorderFieldEdit::Set(v) => {
+        OptionEdit::Set(v) => {
             let new = to_target(v);
             if slot.as_ref() != Some(&new) {
                 *slot = Some(new);
                 return true;
             }
         }
-        BorderFieldEdit::Clear => {
+        OptionEdit::Clear => {
             if slot.is_some() {
                 *slot = None;
                 return true;
             }
         }
-        BorderFieldEdit::Keep => {}
+        OptionEdit::Keep => {}
     }
     false
 }
 
-/// Apply a `BorderFieldEdit<T>` to a non-optional `T` slot — the
+/// Apply a `OptionEdit<T>` to a non-optional `T` slot — the
 /// `Set`-only path used for `font_size_pt` and `padding` (their
 /// underlying type stores a hardcoded default rather than `Option`,
 /// so `Clear` is a no-op for them).
-fn apply_value_set<T>(edit: &BorderFieldEdit<T>, slot: &mut T) -> bool
+fn apply_value_set<T>(edit: &OptionEdit<T>, slot: &mut T) -> bool
 where
     T: PartialEq + Clone,
 {
-    if let BorderFieldEdit::Set(v) = edit {
+    if let OptionEdit::Set(v) = edit {
         if slot != v {
             *slot = v.clone();
             return true;
@@ -705,25 +716,25 @@ where
 }
 
 fn edits_touch_cfg_field(edits: &BorderConfigEdits) -> bool {
-    !matches!(edits.preset, BorderFieldEdit::Keep)
-        || !matches!(edits.font, BorderFieldEdit::Keep)
-        || !matches!(edits.font_size_pt, BorderFieldEdit::Keep)
-        || !matches!(edits.color, BorderFieldEdit::Keep)
-        || !matches!(edits.padding, BorderFieldEdit::Keep)
-        || !matches!(edits.color_palette, BorderFieldEdit::Keep)
-        || !matches!(edits.color_palette_field, BorderFieldEdit::Keep)
+    !matches!(edits.preset, OptionEdit::Keep)
+        || !matches!(edits.font, OptionEdit::Keep)
+        || !matches!(edits.font_size_pt, OptionEdit::Keep)
+        || !matches!(edits.color, OptionEdit::Keep)
+        || !matches!(edits.padding, OptionEdit::Keep)
+        || !matches!(edits.color_palette, OptionEdit::Keep)
+        || !matches!(edits.color_palette_field, OptionEdit::Keep)
         || edits_touch_glyphs(edits)
 }
 
 fn edits_touch_glyphs(edits: &BorderConfigEdits) -> bool {
-    matches!(edits.side_top, BorderFieldEdit::Set(_))
-        || matches!(edits.side_bottom, BorderFieldEdit::Set(_))
-        || matches!(edits.side_left, BorderFieldEdit::Set(_))
-        || matches!(edits.side_right, BorderFieldEdit::Set(_))
-        || matches!(edits.corner_top_left, BorderFieldEdit::Set(_))
-        || matches!(edits.corner_top_right, BorderFieldEdit::Set(_))
-        || matches!(edits.corner_bottom_left, BorderFieldEdit::Set(_))
-        || matches!(edits.corner_bottom_right, BorderFieldEdit::Set(_))
+    matches!(edits.side_top, OptionEdit::Set(_))
+        || matches!(edits.side_bottom, OptionEdit::Set(_))
+        || matches!(edits.side_left, OptionEdit::Set(_))
+        || matches!(edits.side_right, OptionEdit::Set(_))
+        || matches!(edits.corner_top_left, OptionEdit::Set(_))
+        || matches!(edits.corner_top_right, OptionEdit::Set(_))
+        || matches!(edits.corner_bottom_left, OptionEdit::Set(_))
+        || matches!(edits.corner_bottom_right, OptionEdit::Set(_))
 }
 
 fn preset_is_custom(s: &str) -> bool {
@@ -835,7 +846,7 @@ mod tests {
             .with_side_pattern(BorderSide::Top, "a)b")
             .expect_err("unmatched ')' must error");
         assert!(err.contains("top:"), "missing prefix: {}", err);
-        assert!(matches!(edits.side_top, BorderFieldEdit::Keep));
+        assert!(matches!(edits.side_top, OptionEdit::Keep));
     }
 
     /// Setting a side pattern auto-promotes the preset to
@@ -848,7 +859,7 @@ mod tests {
         let mut doc = fixture_doc();
         let id = first_node_id(&doc);
         let mut edits = BorderConfigEdits::default();
-        edits.preset = BorderFieldEdit::Set("heavy".into());
+        edits.preset = OptionEdit::Set("heavy".into());
         edits.with_side_pattern(BorderSide::Top, "###(*)###")
             .expect("pattern parses");
         let outcome = doc.set_node_border_config(&id, edits);
@@ -888,7 +899,7 @@ mod tests {
             .border
             .clone();
         let mut edits = BorderConfigEdits::default();
-        edits.preset = BorderFieldEdit::Set("double".into());
+        edits.preset = OptionEdit::Set("double".into());
         let outcome = doc.set_node_border_config(&id, edits);
         assert!(outcome.changed);
         // Sanity: the edit landed.

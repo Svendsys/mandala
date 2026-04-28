@@ -40,7 +40,7 @@ use crate::application::console::parser::Args;
 use crate::application::console::traits::ColorValue;
 use crate::application::console::{ConsoleEffects, ExecResult};
 use crate::application::document::{
-    BorderConfigEdits, BorderEditOutcome, BorderFieldEdit, BorderSide, SelectionState,
+    BorderConfigEdits, BorderEditOutcome, OptionEdit, BorderSide, SelectionState,
 };
 
 use super::show::execute_border_show;
@@ -141,7 +141,7 @@ fn apply_edits(eff: &mut ConsoleEffects, edits: BorderConfigEdits) -> ExecResult
     // user knows what `preset=custom` is asking for.
     let bare_custom = matches!(
         edits.preset,
-        BorderFieldEdit::Set(ref s) if s.eq_ignore_ascii_case("custom")
+        OptionEdit::Set(ref s) if s.eq_ignore_ascii_case("custom")
     ) && !edits_has_glyph_field(&edits);
     let mut changed = 0usize;
     let mut auto_promoted: Option<String> = None;
@@ -198,14 +198,14 @@ fn apply_edits(eff: &mut ConsoleEffects, edits: BorderConfigEdits) -> ExecResult
 /// override — the fields that make `preset=custom` actually
 /// distinguishable from `rounded`.
 fn edits_has_glyph_field(edits: &BorderConfigEdits) -> bool {
-    !matches!(edits.side_top, BorderFieldEdit::Keep)
-        || !matches!(edits.side_bottom, BorderFieldEdit::Keep)
-        || !matches!(edits.side_left, BorderFieldEdit::Keep)
-        || !matches!(edits.side_right, BorderFieldEdit::Keep)
-        || !matches!(edits.corner_top_left, BorderFieldEdit::Keep)
-        || !matches!(edits.corner_top_right, BorderFieldEdit::Keep)
-        || !matches!(edits.corner_bottom_left, BorderFieldEdit::Keep)
-        || !matches!(edits.corner_bottom_right, BorderFieldEdit::Keep)
+    !matches!(edits.side_top, OptionEdit::Keep)
+        || !matches!(edits.side_bottom, OptionEdit::Keep)
+        || !matches!(edits.side_left, OptionEdit::Keep)
+        || !matches!(edits.side_right, OptionEdit::Keep)
+        || !matches!(edits.corner_top_left, OptionEdit::Keep)
+        || !matches!(edits.corner_top_right, OptionEdit::Keep)
+        || !matches!(edits.corner_bottom_left, OptionEdit::Keep)
+        || !matches!(edits.corner_bottom_right, OptionEdit::Keep)
 }
 
 /// Multi-line orientation for users who set `preset=custom` without
@@ -287,13 +287,13 @@ fn stage_preset(edits: &mut BorderConfigEdits, value: &str) -> Result<(), String
             super::PRESETS.join(" | ")
         ));
     }
-    edits.preset = BorderFieldEdit::Set(v);
+    edits.preset = OptionEdit::Set(v);
     Ok(())
 }
 
 fn stage_font(edits: &mut BorderConfigEdits, value: &str) -> Result<(), String> {
     if value == "off" || value.is_empty() {
-        edits.font = BorderFieldEdit::Clear;
+        edits.font = OptionEdit::Clear;
         return Ok(());
     }
     if baumhard::font::fonts::app_font_by_family(value).is_none() {
@@ -302,13 +302,13 @@ fn stage_font(edits: &mut BorderConfigEdits, value: &str) -> Result<(), String> 
             value
         ));
     }
-    edits.font = BorderFieldEdit::Set(value.to_string());
+    edits.font = OptionEdit::Set(value.to_string());
     Ok(())
 }
 
 fn stage_size(edits: &mut BorderConfigEdits, value: &str) -> Result<(), String> {
     let pt = parse_pt("size", value)?;
-    edits.font_size_pt = BorderFieldEdit::Set(pt);
+    edits.font_size_pt = OptionEdit::Set(pt);
     Ok(())
 }
 
@@ -317,7 +317,7 @@ fn stage_padding(
     value: &str,
 ) -> Result<(), String> {
     let pt = parse_pt("padding", value)?;
-    edits.padding = BorderFieldEdit::Set(pt);
+    edits.padding = OptionEdit::Set(pt);
     Ok(())
 }
 
@@ -325,8 +325,8 @@ fn stage_color(edits: &mut BorderConfigEdits, value: &str) -> Result<(), String>
     let cv =
         ColorValue::parse(value).map_err(|e| format!("color: {}", e))?;
     edits.color = match cv {
-        ColorValue::Reset => BorderFieldEdit::Clear,
-        other => BorderFieldEdit::Set(
+        ColorValue::Reset => OptionEdit::Clear,
+        other => OptionEdit::Set(
             other
                 .as_model_string()
                 .ok_or_else(|| "color: unexpected reset variant".to_string())?,
@@ -340,10 +340,10 @@ fn stage_palette(
     value: &str,
 ) -> Result<(), String> {
     if value.eq_ignore_ascii_case("off") || value.is_empty() {
-        edits.color_palette = BorderFieldEdit::Clear;
+        edits.color_palette = OptionEdit::Clear;
         return Ok(());
     }
-    edits.color_palette = BorderFieldEdit::Set(value.to_string());
+    edits.color_palette = OptionEdit::Set(value.to_string());
     Ok(())
 }
 
@@ -352,7 +352,7 @@ fn stage_field(
     value: &str,
 ) -> Result<(), String> {
     if value.eq_ignore_ascii_case("off") || value.is_empty() {
-        edits.color_palette_field = BorderFieldEdit::Clear;
+        edits.color_palette_field = OptionEdit::Clear;
         return Ok(());
     }
     let lower = value.to_ascii_lowercase();
@@ -369,12 +369,12 @@ fn stage_field(
             ));
         }
     };
-    edits.color_palette_field = BorderFieldEdit::Set(parsed);
+    edits.color_palette_field = OptionEdit::Set(parsed);
     Ok(())
 }
 
 fn stage_corner_or_err(
-    slot: &mut BorderFieldEdit<String>,
+    slot: &mut OptionEdit<String>,
     label: &str,
     value: &str,
 ) -> Result<(), String> {
@@ -407,7 +407,7 @@ fn stage_corner_or_err(
     if collapsed.is_empty() {
         return Err(format!("{}: empty corner glyph", label));
     }
-    *slot = BorderFieldEdit::Set(collapsed);
+    *slot = OptionEdit::Set(collapsed);
     Ok(())
 }
 
