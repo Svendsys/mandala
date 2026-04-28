@@ -457,3 +457,202 @@ fn test_insert_caret_after_emoji() {
     let out = insert_caret("ab🍕cd", 3);
     assert_eq!(out, "ab🍕|cd");
 }
+
+// -----------------------------------------------------------------
+// Word-boundary cursor primitives. New surface added when
+// `apply_text_edit_action` moved cross-platform — emoji / ZWJ
+// awareness is non-obvious for word jumps and deserves its own
+// regression coverage (CODE_CONVENTIONS §B2/§B3).
+// -----------------------------------------------------------------
+
+#[test]
+fn test_word_left_from_end_of_single_word() {
+    assert_eq!(word_left("hello", 5), 0);
+}
+
+#[test]
+fn test_word_left_from_zero_is_noop() {
+    assert_eq!(word_left("hello", 0), 0);
+}
+
+#[test]
+fn test_word_left_skips_punctuation_then_word() {
+    // Cursor at end of "hello,"; first walks left through the
+    // comma, then through "hello".
+    assert_eq!(word_left("hello,", 6), 0);
+}
+
+#[test]
+fn test_word_left_through_two_words() {
+    // "hello world" with cursor at end. One word_left lands at
+    // start of "world" (after walking the space).
+    assert_eq!(word_left("hello world", 11), 6);
+}
+
+#[test]
+fn test_word_right_from_zero_to_first_word_end() {
+    assert_eq!(word_right("hello", 0), 5);
+}
+
+#[test]
+fn test_word_right_skips_leading_punctuation() {
+    // Cursor at 0 of ",hello"; first skips the comma then walks
+    // the word.
+    assert_eq!(word_right(",hello", 0), 6);
+}
+
+#[test]
+fn test_word_right_at_end_is_noop() {
+    let s = "hello";
+    assert_eq!(word_right(s, 5), 5);
+}
+
+#[test]
+fn test_word_left_treats_emoji_as_non_word() {
+    // 🍕 is_alphanumeric() == false, so it's treated as
+    // word-boundary punctuation. Cursor after the emoji walks
+    // through the emoji + the space and lands at start of
+    // "hello".
+    let s = "hello 🍕 world";
+    let total = unicode_segmentation::UnicodeSegmentation::graphemes(s, true).count();
+    // Walk from end: skip "world", land on " 🍕 ".
+    let after_world_start = word_left(s, total);
+    // "world" starts at grapheme index 8 (h-e-l-l-o-space-pizza-space-w...).
+    assert_eq!(after_world_start, 8);
+}
+
+// -----------------------------------------------------------------
+// `apply_text_edit_action` — pure dispatcher, called from every
+// TextEdit keystroke. Cross-platform per the §2 module-boundary
+// gating; tests run on native (cfg(test)).
+// -----------------------------------------------------------------
+
+fn make_open_state(buffer: &str, cursor: usize) -> TextEditState {
+    TextEditState::Open {
+        node_id: "n-test".to_string(),
+        buffer: buffer.to_string(),
+        cursor_grapheme_pos: cursor,
+        buffer_regions: baumhard::core::primitives::ColorFontRegions::new_empty(),
+        original_text: String::new(),
+        original_regions: baumhard::core::primitives::ColorFontRegions::new_empty(),
+    }
+}
+
+fn cursor_of(state: &TextEditState) -> usize {
+    match state {
+        TextEditState::Open { cursor_grapheme_pos, .. } => *cursor_grapheme_pos,
+        TextEditState::Closed => panic!("expected Open"),
+    }
+}
+
+fn buffer_of(state: &TextEditState) -> &str {
+    match state {
+        TextEditState::Open { buffer, .. } => buffer,
+        TextEditState::Closed => panic!("expected Open"),
+    }
+}
+
+#[test]
+fn test_apply_text_edit_cursor_left() {
+    use crate::application::keybinds::Action;
+    let mut s = make_open_state("hello", 3);
+    let changed = apply_text_edit_action(Action::TextEditCursorLeft, &mut s);
+    assert!(changed);
+    assert_eq!(cursor_of(&s), 2);
+}
+
+#[test]
+fn test_apply_text_edit_cursor_left_at_start_is_noop() {
+    use crate::application::keybinds::Action;
+    let mut s = make_open_state("hello", 0);
+    let changed = apply_text_edit_action(Action::TextEditCursorLeft, &mut s);
+    assert!(!changed);
+    assert_eq!(cursor_of(&s), 0);
+}
+
+#[test]
+fn test_apply_text_edit_cursor_right_at_end_is_noop() {
+    use crate::application::keybinds::Action;
+    let mut s = make_open_state("hi", 2);
+    let changed = apply_text_edit_action(Action::TextEditCursorRight, &mut s);
+    assert!(!changed);
+    assert_eq!(cursor_of(&s), 2);
+}
+
+#[test]
+fn test_apply_text_edit_word_left() {
+    use crate::application::keybinds::Action;
+    let mut s = make_open_state("foo bar", 7);
+    let changed = apply_text_edit_action(Action::TextEditWordLeft, &mut s);
+    assert!(changed);
+    assert_eq!(cursor_of(&s), 4);
+}
+
+#[test]
+fn test_apply_text_edit_word_right() {
+    use crate::application::keybinds::Action;
+    let mut s = make_open_state("foo bar", 0);
+    let changed = apply_text_edit_action(Action::TextEditWordRight, &mut s);
+    assert!(changed);
+    assert_eq!(cursor_of(&s), 3);
+}
+
+#[test]
+fn test_apply_text_edit_delete_back() {
+    use crate::application::keybinds::Action;
+    let mut s = make_open_state("abcd", 3);
+    let changed = apply_text_edit_action(Action::TextEditDeleteBack, &mut s);
+    assert!(changed);
+    assert_eq!(buffer_of(&s), "abd");
+    assert_eq!(cursor_of(&s), 2);
+}
+
+#[test]
+fn test_apply_text_edit_delete_word_back() {
+    use crate::application::keybinds::Action;
+    let mut s = make_open_state("foo bar", 7);
+    let changed = apply_text_edit_action(Action::TextEditDeleteWordBack, &mut s);
+    assert!(changed);
+    assert_eq!(buffer_of(&s), "foo ");
+    assert_eq!(cursor_of(&s), 4);
+}
+
+#[test]
+fn test_apply_text_edit_delete_word_forward() {
+    use crate::application::keybinds::Action;
+    let mut s = make_open_state("foo bar", 4);
+    let changed = apply_text_edit_action(Action::TextEditDeleteWordForward, &mut s);
+    assert!(changed);
+    assert_eq!(buffer_of(&s), "foo ");
+    assert_eq!(cursor_of(&s), 4);
+}
+
+#[test]
+fn test_apply_text_edit_on_closed_state_returns_false() {
+    use crate::application::keybinds::Action;
+    let mut s = TextEditState::Closed;
+    let changed = apply_text_edit_action(Action::TextEditCursorLeft, &mut s);
+    assert!(!changed);
+}
+
+#[test]
+fn test_apply_text_edit_unrelated_action_is_noop() {
+    use crate::application::keybinds::Action;
+    let mut s = make_open_state("hello", 3);
+    // `Action::Undo` doesn't belong to TextEdit context — the
+    // function silently returns without mutating state.
+    let changed = apply_text_edit_action(Action::Undo, &mut s);
+    assert!(!changed);
+    assert_eq!(buffer_of(&s), "hello");
+    assert_eq!(cursor_of(&s), 3);
+}
+
+#[test]
+fn test_apply_text_edit_cursor_home_end() {
+    use crate::application::keybinds::Action;
+    let mut s = make_open_state("ab\ncd\nef", 4);
+    let _ = apply_text_edit_action(Action::TextEditCursorHome, &mut s);
+    assert_eq!(cursor_of(&s), 3); // start of "cd"
+    let _ = apply_text_edit_action(Action::TextEditCursorEnd, &mut s);
+    assert_eq!(cursor_of(&s), 5); // end of "cd"
+}

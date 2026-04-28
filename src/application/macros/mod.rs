@@ -477,6 +477,103 @@ mod tests {
         }
     }
 
+    /// Pure-logic test for the fail-closed step-iteration contract
+    /// in `dispatch_macro`: walking a macro's steps stops at the
+    /// first rejected step. The dispatcher itself is renderer-
+    /// touching and can't run under unit tests
+    /// (TEST_CONVENTIONS §T8); this test simulates the per-step
+    /// policy decision so the load-bearing security claim
+    /// ("fail-closed: a rejected privileged step aborts the rest
+    /// of the macro") has a runtime regression check.
+    fn step_allowed(step: &MacroStep, src: MacroSource) -> bool {
+        match step {
+            MacroStep::Action { action } => src.allows_action(action),
+            MacroStep::ConsoleLine { .. } => src.allows_console_line(),
+            // CustomMutation has no per-step privilege gate today
+            // (registry presence is the implicit gate). Treat as
+            // always-allowed for the iteration test.
+            MacroStep::CustomMutation { .. } => true,
+        }
+    }
+
+    fn run_until_rejected<'a>(steps: &'a [MacroStep], src: MacroSource) -> &'a [MacroStep] {
+        let mut executed = 0;
+        for s in steps {
+            if !step_allowed(s, src) {
+                break;
+            }
+            executed += 1;
+        }
+        &steps[..executed]
+    }
+
+    #[test]
+    fn dispatch_macro_fail_closed_aborts_on_first_reject() {
+        // Map-tier macro: Undo (allowed) → ConsoleLine (rejected) →
+        // SaveDocument (would also reject). Iteration must stop at
+        // ConsoleLine; SaveDocument never gets a chance to run even
+        // though it would have been rejected on its own.
+        let steps = vec![
+            MacroStep::Action { action: Action::Undo },
+            MacroStep::ConsoleLine {
+                line: "save /tmp/evil".into(),
+            },
+            MacroStep::Action {
+                action: Action::SaveDocument,
+            },
+        ];
+        let executed = run_until_rejected(&steps, MacroSource::Map);
+        assert_eq!(executed.len(), 1);
+        assert!(matches!(
+            &executed[0],
+            MacroStep::Action { action } if matches!(action, Action::Undo)
+        ));
+    }
+
+    #[test]
+    fn dispatch_macro_fail_closed_first_step_rejected() {
+        // First step rejected → no steps execute.
+        let steps = vec![
+            MacroStep::Action {
+                action: Action::SaveDocument,
+            },
+            MacroStep::Action { action: Action::Undo },
+        ];
+        let executed = run_until_rejected(&steps, MacroSource::Map);
+        assert!(executed.is_empty());
+    }
+
+    #[test]
+    fn dispatch_macro_user_tier_passes_destructive_steps() {
+        // User-authored macros pass everything — User is trusted by
+        // construction (the user wrote the file).
+        let steps = vec![
+            MacroStep::Action {
+                action: Action::SaveDocument,
+            },
+            MacroStep::ConsoleLine {
+                line: "save".into(),
+            },
+            MacroStep::Action {
+                action: Action::DeleteSelection,
+            },
+        ];
+        let executed = run_until_rejected(&steps, MacroSource::User);
+        assert_eq!(executed.len(), 3);
+    }
+
+    #[test]
+    fn dispatch_macro_inline_tier_rejects_label_edit_on_selection() {
+        // Regression test for the LabelEditOnSelection denylist gap
+        // closed in batch 1: Inline-tier macro with this Action gets
+        // rejected on the first step.
+        let steps = vec![MacroStep::Action {
+            action: Action::LabelEditOnSelection,
+        }];
+        let executed = run_until_rejected(&steps, MacroSource::Inline);
+        assert!(executed.is_empty());
+    }
+
     #[test]
     fn macro_step_serde_round_trip() {
         let steps = vec![
