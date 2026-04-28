@@ -288,6 +288,153 @@ pub enum Action {
 }
 
 impl Action {
+    /// Whether this action mutates persistent state (filesystem,
+    /// document model that bypasses the undo stack, clipboard) or
+    /// reaches an editor modal that can mutate model state on
+    /// commit. Consulted by `MacroSource::allows_action` so non-
+    /// User macro tiers (App / Map / Inline — including hostile
+    /// `.mindmap.json` content) cannot fire destructive Actions.
+    ///
+    /// **The match is exhaustive**, and `Action` is
+    /// `#[non_exhaustive]`. Adding a new variant forces the
+    /// compiler to surface this method — that's the structural
+    /// reminder that every new Action gets a privilege-gate
+    /// review. A bare denylist `matches!(action, ...)` defaults
+    /// to "allowed" and silently widens the attack surface; this
+    /// classifier defaults to "you must decide."
+    ///
+    /// Classification rule:
+    /// - **Destructive** (returns `true`): touches filesystem,
+    ///   reaches an editor modal that mutates model state on
+    ///   commit, touches the clipboard, or replaces the document.
+    /// - **Non-destructive** (returns `false`): pure navigation /
+    ///   selection / view-state / zoom / undo / fold. Recoverable
+    ///   via undo or has no document side-effect at all.
+    pub fn is_destructive(&self) -> bool {
+        match self {
+            // Filesystem / document lifecycle.
+            Action::SaveDocument
+            | Action::NewDocument
+            // Direct destructive mutators.
+            | Action::DeleteSelection
+            | Action::OrphanSelection
+            | Action::CreateOrphanNode
+            | Action::CreateOrphanNodeAndEdit
+            // Clipboard surface (Copy is read-only on the
+            // document side, but reads private content into the
+            // shared OS buffer — a surveillance vector for
+            // hostile macros, so still gated).
+            | Action::Copy
+            | Action::Cut
+            | Action::Paste
+            // Mixed-branch Actions whose dispatch arms reach
+            // inline editor opens (`open_label_edit` /
+            // `open_portal_text_edit` / `open_text_edit`); a
+            // hostile macro firing one of these while a
+            // sensitive selection is active forces the user
+            // into an editor that may overwrite content on
+            // commit.
+            | Action::DoubleClickActivate
+            | Action::EditSelection
+            | Action::EditSelectionClean
+            | Action::LabelEditOnSelection => true,
+
+            // Pure navigation / selection / view-state / undo —
+            // either has no document side-effect or is
+            // round-tripable via the undo stack.
+            Action::Undo
+            | Action::EnterReparentMode
+            | Action::EnterConnectMode
+            | Action::CancelMode
+            | Action::OpenConsole
+            | Action::PanCanvas
+            | Action::ZoomIn
+            | Action::ZoomOut
+            | Action::ZoomReset
+            | Action::ZoomFit
+            | Action::PanCameraNorth
+            | Action::PanCameraSouth
+            | Action::PanCameraEast
+            | Action::PanCameraWest
+            | Action::CenterOnSelection
+            | Action::JumpToRoot
+            | Action::SelectAll
+            | Action::DeselectAll
+            | Action::InvertSelection
+            | Action::SelectParent
+            | Action::SelectChild
+            | Action::SelectNextSibling
+            | Action::SelectPrevSibling
+            | Action::OpenColorPicker
+            | Action::CloseColorPicker
+            | Action::ToggleFps
+            | Action::ToggleFpsDebug => false,
+
+            // Modal-context Actions (Console / Picker / TextEdit /
+            // LabelEdit / DoubleClickActivate's `Empty`-hit branch
+            // gating). These either don't mutate model state
+            // (cursor / cancel / scroll / commit-to-tree-only) or
+            // are gated by the modal handler being open in the
+            // first place — a non-User macro firing them outside
+            // their modal is a no-op. Treated as non-destructive
+            // for gate purposes.
+            Action::ConsoleClose
+            | Action::ConsoleSubmit
+            | Action::ConsoleTabComplete
+            | Action::ConsoleHistoryUp
+            | Action::ConsoleHistoryDown
+            | Action::ConsoleCursorLeft
+            | Action::ConsoleCursorRight
+            | Action::ConsoleCursorHome
+            | Action::ConsoleCursorEnd
+            | Action::ConsoleDeleteBack
+            | Action::ConsoleDeleteForward
+            | Action::ConsoleInsertSpace
+            | Action::ConsoleClearLine
+            | Action::ConsoleJumpStart
+            | Action::ConsoleJumpEnd
+            | Action::ConsoleKillToStart
+            | Action::ConsoleKillWord
+            | Action::ConsoleScrollUp
+            | Action::ConsoleScrollDown
+            | Action::ConsoleScrollPageUp
+            | Action::ConsoleScrollPageDown
+            | Action::ConsoleScrollEnd
+            | Action::ConsoleScrollHome
+            | Action::PickerCancel
+            | Action::PickerCommit
+            | Action::PickerNudgeHueDown
+            | Action::PickerNudgeHueUp
+            | Action::PickerNudgeSatDown
+            | Action::PickerNudgeSatUp
+            | Action::PickerNudgeValDown
+            | Action::PickerNudgeValUp
+            | Action::LabelEditCancel
+            | Action::LabelEditCommit
+            | Action::LabelEditCursorLeft
+            | Action::LabelEditCursorRight
+            | Action::LabelEditCursorHome
+            | Action::LabelEditCursorEnd
+            | Action::LabelEditDeleteBack
+            | Action::LabelEditDeleteForward
+            | Action::TextEditCancel
+            | Action::TextEditCursorLeft
+            | Action::TextEditCursorRight
+            | Action::TextEditCursorUp
+            | Action::TextEditCursorDown
+            | Action::TextEditCursorHome
+            | Action::TextEditCursorEnd
+            | Action::TextEditWordLeft
+            | Action::TextEditWordRight
+            | Action::TextEditDeleteBack
+            | Action::TextEditDeleteForward
+            | Action::TextEditDeleteWordBack
+            | Action::TextEditDeleteWordForward
+            | Action::TextEditCommit
+            | Action::CommitOrCloseEditor => false,
+        }
+    }
+
     /// The input context this action belongs to. Used by the
     /// contextual resolver to filter which actions are eligible
     /// in a given modal state.
@@ -350,10 +497,55 @@ impl Action {
             | Action::TextEditDeleteWordForward
             | Action::TextEditCommit => InputContext::TextEdit,
 
-            // All Document-context Actions — built-ins, mouse gestures,
-            // navigation, selection, and console-verb Actions — fall
-            // through to the catch-all.
-            _ => InputContext::Document,
+            // Document-context Actions — built-ins, mouse gestures,
+            // navigation, selection, and console-verb Actions.
+            // Spelled out exhaustively (no `_` catch-all) so that
+            // adding a new variant to the `#[non_exhaustive]`
+            // `Action` enum forces a compile error here, rather
+            // than silently defaulting the new variant to Document
+            // context. Forcing-function discipline matches what
+            // `wasm_compatibility` and `is_destructive` use.
+            Action::Undo
+            | Action::EnterReparentMode
+            | Action::EnterConnectMode
+            | Action::DeleteSelection
+            | Action::CancelMode
+            | Action::CreateOrphanNode
+            | Action::OrphanSelection
+            | Action::EditSelection
+            | Action::EditSelectionClean
+            | Action::OpenConsole
+            | Action::SaveDocument
+            | Action::Copy
+            | Action::Paste
+            | Action::Cut
+            | Action::DoubleClickActivate
+            | Action::CreateOrphanNodeAndEdit
+            | Action::PanCanvas
+            | Action::CommitOrCloseEditor
+            | Action::ZoomIn
+            | Action::ZoomOut
+            | Action::ZoomReset
+            | Action::ZoomFit
+            | Action::PanCameraNorth
+            | Action::PanCameraSouth
+            | Action::PanCameraEast
+            | Action::PanCameraWest
+            | Action::CenterOnSelection
+            | Action::JumpToRoot
+            | Action::SelectAll
+            | Action::DeselectAll
+            | Action::InvertSelection
+            | Action::SelectParent
+            | Action::SelectChild
+            | Action::SelectNextSibling
+            | Action::SelectPrevSibling
+            | Action::OpenColorPicker
+            | Action::CloseColorPicker
+            | Action::LabelEditOnSelection
+            | Action::ToggleFps
+            | Action::ToggleFpsDebug
+            | Action::NewDocument => InputContext::Document,
         }
     }
 

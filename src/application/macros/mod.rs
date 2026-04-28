@@ -84,62 +84,21 @@ impl MacroSource {
     /// they press the bound key).
     ///
     /// All four tiers load today on native; the gate is fully
-    /// active. Adding a new privileged `Action` variant requires
-    /// updating the denylist below by hand — the denylist is
-    /// open by default, so a missing entry silently bypasses the
-    /// gate rather than raising a compile error. The structural
-    /// reminder lives on the `Action::wasm_compatibility` exhaustive
-    /// match, which `#[non_exhaustive]` *does* enforce; that match
-    /// is the forcing function for "review every new variant
-    /// against the cross-cutting policy concerns" — including
-    /// whether the variant belongs on this denylist.
+    /// active. The structural backstop is `Action::is_destructive`
+    /// — an exhaustive `match` over `Action` that the compiler
+    /// enforces. A new variant added to the `#[non_exhaustive]`
+    /// `Action` enum cannot land without an explicit
+    /// destructive / non-destructive classification, so this gate
+    /// cannot silently widen on future variants. (The previous
+    /// shape was a hand-maintained `matches!` denylist that
+    /// defaulted new variants to "allowed" — a missing entry
+    /// silently bypassed the gate. A real `LabelEditOnSelection`
+    /// gap surfaced from that pattern.)
     pub fn allows_action(self, action: &Action) -> bool {
         if matches!(self, MacroSource::User) {
             return true;
         }
-        // Block destructive / persistent / clipboard / document-
-        // lifecycle Actions for non-User tiers. The closed list
-        // makes the gate explicit; new Actions default to "allowed"
-        // because they are typically navigation / view-state shaped.
-        // Adding a new Action that deserves blocking goes here.
-        //
-        // `DoubleClickActivate` is blocked because its `Empty`-hit
-        // branch synthesises an orphan-create gesture (which
-        // bypasses the direct `CreateOrphanNodeAndEdit` block).
-        // Today macros never carry a `DispatchHit` so the empty
-        // branch is unreachable from a macro — but this is a
-        // forward-compat block for any future contributor who
-        // synthesises a hit for macro-triggered double-click.
-        //
-        // `EditSelection` / `EditSelectionClean` are blocked
-        // because their `EdgeLabel` / `PortalText` / `PortalLabel`
-        // selection branches open inline editors that mutate the
-        // model on commit. A hostile macro firing
-        // `EditSelectionClean` while an edge label is selected
-        // would erase the label's content via the empty buffer
-        // open. The Compatible Node-only branch alone isn't
-        // worth the gate exception.
-        let blocked = matches!(
-            action,
-            Action::SaveDocument
-                | Action::DeleteSelection
-                | Action::OrphanSelection
-                | Action::CreateOrphanNode
-                | Action::CreateOrphanNodeAndEdit
-                | Action::DoubleClickActivate
-                | Action::EditSelection
-                | Action::EditSelectionClean
-                // Reaches `open_label_edit` / `open_portal_text_edit` —
-                // the same dispatch surface that gates `EditSelection`.
-                // Omitting this was a privilege-denylist gap caught in
-                // post-PR review.
-                | Action::LabelEditOnSelection
-                | Action::Copy
-                | Action::Cut
-                | Action::Paste
-                | Action::NewDocument
-        );
-        !blocked
+        !action.is_destructive()
     }
 }
 
@@ -147,8 +106,14 @@ impl MacroSource {
 /// atomically. Each variant routes through one of the application's
 /// existing dispatch surfaces, so adding a new step kind is a matter
 /// of forwarding to the relevant dispatcher — no new behaviour.
+///
+/// `#[non_exhaustive]` because new step kinds need to be reviewed
+/// against the privilege gate (do they need a tier check like
+/// `ConsoleLine` does?) and the `dispatch_macro` body's per-step
+/// loop. Mirrors `Action`'s `#[non_exhaustive]` discipline.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind")]
+#[non_exhaustive]
 pub enum MacroStep {
     /// Run a built-in `Action` against the current `InputHandlerContext`.
     /// The dispatcher routes through `dispatch_action` exactly as if
@@ -178,8 +143,13 @@ pub enum MacroStep {
 /// click-trigger path; `NodeId` lets a macro target a specific node
 /// regardless of selection state (useful for "open the inbox" style
 /// shortcuts).
+///
+/// `#[non_exhaustive]` because new target shapes (e.g. "all
+/// selected nodes", "current document root") need to be reviewed
+/// against the dispatcher's per-target resolution loop.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum MacroTarget {
     /// Use whichever node is currently selected (must be a single
     /// selection — multi-selection or edge selections cause the step

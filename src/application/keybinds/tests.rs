@@ -497,6 +497,66 @@ fn test_wasm_compatibility_classifies_every_variant_explicitly() {
             "{:?} returned an unexpected classification {:?}",
             a, c
         );
+        // Co-pin `is_destructive` against the same variant set so
+        // adding a new `Action` forces the privilege classification
+        // to land alongside the WASM classification. Both methods
+        // are exhaustive over `Action`, so the compiler enforces
+        // the missing-arm shape; this loop pins the *value* (every
+        // variant should classify either way without panicking)
+        // and keeps the destructive set discoverable as a list.
+        let _ = a.is_destructive();
+    }
+}
+
+/// Lock the `is_destructive` set for the privilege gate. Every
+/// `Action` variant in the list above resolves to `true` (gated
+/// from non-User macro tiers) or `false` (allowed). Adding a new
+/// variant flips the test to "missing classification" only if
+/// the variant is also missing from `all_variants` — but the
+/// exhaustive match in `Action::is_destructive` is the
+/// load-bearing structural check. This test pins the *contents*
+/// of the destructive set so a change to which variants are
+/// considered destructive shows up as a diff.
+#[test]
+fn test_is_destructive_destructive_set_is_pinned() {
+    let destructive: &[Action] = &[
+        Action::SaveDocument,
+        Action::NewDocument,
+        Action::DeleteSelection,
+        Action::OrphanSelection,
+        Action::CreateOrphanNode,
+        Action::CreateOrphanNodeAndEdit,
+        Action::Copy,
+        Action::Cut,
+        Action::Paste,
+        Action::DoubleClickActivate,
+        Action::EditSelection,
+        Action::EditSelectionClean,
+        Action::LabelEditOnSelection,
+    ];
+    for a in destructive {
+        assert!(
+            a.is_destructive(),
+            "{:?} expected to be destructive (privilege-gated for non-User tiers)",
+            a
+        );
+    }
+
+    // Spot-check a few non-destructive to lock the inverse — the
+    // exhaustive match in `is_destructive` itself is the
+    // structural completeness check.
+    for a in [
+        Action::Undo,
+        Action::ZoomIn,
+        Action::SelectAll,
+        Action::TextEditCursorLeft,
+        Action::OpenColorPicker,
+    ] {
+        assert!(
+            !a.is_destructive(),
+            "{:?} expected to be non-destructive",
+            a
+        );
     }
 }
 
