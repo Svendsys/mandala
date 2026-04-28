@@ -608,12 +608,21 @@ pub(in crate::application::app) fn dispatch_action(
             // smaller step manually (when the modifier-fallback or a
             // future per-arm step factor lands).
             const PAN_STEP_PX: f32 = 50.0;
+            // Outer pattern guarantees one of the four — but the inner
+            // `match action` has to be exhaustive over `Action`, and
+            // `Action` is `#[non_exhaustive]`. Default to (0,0) so the
+            // catch-all is a safe no-op rather than a panic in an
+            // interactive path (CODE_CONVENTIONS §9). If a future
+            // contributor extends the outer pattern, they need to
+            // remember to extend this match too — the no-op fallback
+            // is loud enough on a manual smoke-test (key does
+            // nothing) to surface the omission.
             let (dx, dy) = match action {
                 Action::PanCameraNorth => (0.0, -PAN_STEP_PX),
                 Action::PanCameraSouth => (0.0, PAN_STEP_PX),
                 Action::PanCameraEast => (-PAN_STEP_PX, 0.0),
                 Action::PanCameraWest => (PAN_STEP_PX, 0.0),
-                _ => unreachable!(),
+                _ => (0.0, 0.0),
             };
             ctx.renderer.process_decree(
                 crate::application::common::RenderDecree::CameraPan(dx, dy),

@@ -129,6 +129,11 @@ impl MacroSource {
                 | Action::DoubleClickActivate
                 | Action::EditSelection
                 | Action::EditSelectionClean
+                // Reaches `open_label_edit` / `open_portal_text_edit` —
+                // the same dispatch surface that gates `EditSelection`.
+                // Omitting this was a privilege-denylist gap caught in
+                // post-PR review.
+                | Action::LabelEditOnSelection
                 | Action::Copy
                 | Action::Cut
                 | Action::Paste
@@ -452,13 +457,18 @@ mod tests {
                 Action::OrphanSelection,
                 Action::CreateOrphanNode,
                 Action::CreateOrphanNodeAndEdit,
-                // Mixed-branch destructive Actions — added to the
-                // denylist after the WASM reviewer flagged that
-                // their dispatch arms reach editor modals that
-                // mutate model state on commit.
+                // Mixed-branch destructive Actions — their dispatch
+                // arms reach editor modals that mutate model state
+                // on commit.
                 Action::DoubleClickActivate,
                 Action::EditSelection,
                 Action::EditSelectionClean,
+                // Same dispatch surface (`open_label_edit` /
+                // `open_portal_text_edit`) as `EditSelection` — a
+                // hostile macro firing this with an edge label /
+                // portal selection forces the user into an inline
+                // editor over selected content.
+                Action::LabelEditOnSelection,
                 Action::NewDocument,
             ] {
                 assert!(
