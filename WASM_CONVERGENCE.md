@@ -29,16 +29,24 @@ and [`src/application/app/run_wasm.rs`](./src/application/app/run_wasm.rs).
 **WASM** (`src/application/app/run_wasm.rs`) has:
 - Its own `WasmInputState` struct with 9 fields (a strict subset of
   the native context).
-- An inline `match action { ... }` block for keyboard input that
-  hardcodes which Actions it knows how to handle.
+- An inline `match action { ... }` block for keyboard input. Most
+  Compatible arms are now thin calls into the shared
+  `cross_dispatch` helper module (Track A landed); the arms still
+  inline-bodied here are `Undo`, `CreateOrphanNode`,
+  `OrphanSelection`, `DeleteSelection`, and the Single-selection
+  branch of `EditSelection*`.
 - An inline `match &click_hit { ... }` ladder for double-click —
   not routed through `dispatch_action`.
 - No `MacroRegistry`. Macros silently no-op in the browser.
 - No `dispatch_action`, `dispatch_macro`, `dispatch_custom_mutation_for_key`.
 
-The asymmetry is the **convergence gap**: the same Action variant
-behaves differently across targets, and adding a new variant
-requires touching both files.
+The asymmetry is shrinking — Track A has folded camera, selection,
+FPS, and the 20 parametric Compatible arms into shared helpers in
+`src/application/app/cross_dispatch.rs`. Both dispatchers call the
+same per-action functions, so adding a new Compatible variant now
+requires writing the body once (in `cross_dispatch`), then a thin
+call from each side. Tracks B (macro registry) and C (full
+context-type unification) remain.
 
 ## The convergence target
 
@@ -63,33 +71,40 @@ spells out the rules in detail.
 
 ## Three porting tracks
 
-The tracks have soft dependencies. **Track C is the prerequisite
-for Track A landing through `dispatch_action`** — the native
-`dispatch_action` takes `&mut InputHandlerContext` (21 native-only
-fields). Until a shared context type exists, individual Action
-ports under Track A must add inline arms to `run_wasm.rs` rather
-than route through the unified dispatcher. **Track B (the macro
+The tracks have soft dependencies. **Track A.3 (partial Track C)
+is now the recommended path** for any new Compatible Action: lift
+the body into `src/application/app/cross_dispatch.rs` once, then
+both dispatchers call the same helper. **Track B (the macro
 registry) can land independently of A and C** — the registry's
 data and resolver are self-contained — but does require the
 prerequisite step 0 below.
 
-### Track A — port a NativeOnly Action
+### Track A — port an Action to WASM
 
-When you want a specific feature in the browser. Pick an Action
-classified `NativeOnly` (e.g. `Action::OpenConsole`).
+When you want a specific feature in the browser, or you've added
+a new Compatible variant and need to wire it through both
+dispatchers. **Three paths**, in order of preference:
 
-**Two paths today, depending on Track C's status:**
-
-- **Path A1 (Track C not yet landed — current state).** Port the
-  Action by adding an inline arm to `run_wasm.rs` that touches
-  WASM-shaped state. The dispatch logic is duplicated between
-  native (`dispatch.rs`) and WASM (`run_wasm.rs`) until Track C
-  consolidates. This is what `run_wasm.rs`'s existing arms (Undo,
-  CreateOrphanNode, OrphanSelection, DeleteSelection,
-  EditSelection-Single-only) do today.
-- **Path A2 (Track C landed).** Route the Action through
-  `dispatch_action` once both targets share a context type. This
-  is the cleaner endpoint.
+- **Path A.3 — partial Track C (preferred for Compatible Actions).**
+  Add a per-action helper to `cross_dispatch.rs` that takes the
+  typed payload + a `RebuildContext`. Both dispatchers call the
+  same function — no mirror tax. This is what every camera /
+  selection / FPS / parametric Compatible arm does today (see
+  the `apply_zoom_step`, `apply_select_all`, `apply_set_color_axis`
+  shapes for templates). A new Compatible Action variant reaches
+  WASM in one helper + one fan-out arm extension on each side.
+- **Path A.1 — inline mirror arms.** For Compatible Actions whose
+  bodies need state only one side has, OR for NativeOnly Actions
+  you want partial WASM coverage of, add an inline arm to
+  `run_wasm.rs` that touches WASM-shaped state. Dispatch logic
+  duplicates until Track C consolidates. The existing
+  `Action::Undo`, `CreateOrphanNode`, `OrphanSelection`,
+  `DeleteSelection`, and `EditSelection*`-Single arms in
+  `run_wasm.rs` are A.1-shape today (Track A.3 lift would unblock
+  most of them).
+- **Path A.2 — full Track C.** Once both targets share a context
+  type, route through `dispatch_action` directly. Cleanest
+  endpoint, biggest refactor.
 
 **Steps for Path A1:**
 
