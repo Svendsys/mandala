@@ -58,6 +58,27 @@ pub enum DispatchOutcome {
     Unhandled,
 }
 
+/// Quote a free-form string (typically a filesystem path) so the
+/// console parser sees it as a single token. Wraps with `"..."`
+/// unconditionally and escapes both `\` (→ `\\`) and `"` (→ `\"`)
+/// so Windows-style paths and embedded quotes round-trip cleanly
+/// through `parser::tokenize`'s quoted-string handling. Order
+/// matters: backslash MUST be escaped before quote, otherwise a
+/// path ending in `\` produces an unterminated quoted token.
+/// Used by the parametric filesystem Action arms.
+fn quote_console_arg(s: &str) -> String {
+    let mut escaped = String::with_capacity(s.len() + 2);
+    escaped.push('"');
+    for ch in s.chars() {
+        if ch == '\\' || ch == '"' {
+            escaped.push('\\');
+        }
+        escaped.push(ch);
+    }
+    escaped.push('"');
+    escaped
+}
+
 /// Run an `Action` against the live application context. The body of
 /// every Document-level action lives here; handlers (`event_keyboard`,
 /// `event_mouse_click`, the macro runtime via `dispatch_macro`)
@@ -97,19 +118,8 @@ pub(in crate::application::app) fn dispatch_action(
         }
         Action::Undo => {
             if let Some(doc) = ctx.document.as_mut() {
-                if doc.has_active_animations() {
-                    doc.fast_forward_animations(ctx.mindmap_tree.as_mut());
-                }
-                if doc.undo() {
-                    ctx.scene_cache.clear();
-                    rebuild_all(
-                        doc,
-                        ctx.mindmap_tree,
-                        ctx.app_scene,
-                        ctx.renderer,
-                        ctx.scene_cache,
-                    );
-                }
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
+                super::cross_dispatch::apply_undo(&mut rc);
             }
             DispatchOutcome::Handled
         }
@@ -180,84 +190,69 @@ pub(in crate::application::app) fn dispatch_action(
         }
         Action::DeleteSelection => {
             if let Some(doc) = ctx.document.as_mut() {
-                if doc.apply_delete_selection() {
-                    rebuild_all(
-                        doc,
-                        ctx.mindmap_tree,
-                        ctx.app_scene,
-                        ctx.renderer,
-                        ctx.scene_cache,
-                    );
-                }
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
+                super::cross_dispatch::apply_delete_selection(&mut rc);
             }
             DispatchOutcome::Handled
         }
         Action::CreateOrphanNode => {
+            // Cursor position is screen-space; convert before
+            // entering the cross-platform helper so the helper's
+            // signature stays renderer-agnostic.
+            let canvas_pos = ctx
+                .renderer
+                .screen_to_canvas(ctx.cursor_pos.0 as f32, ctx.cursor_pos.1 as f32);
             if let Some(doc) = ctx.document.as_mut() {
-                let canvas_pos = ctx
-                    .renderer
-                    .screen_to_canvas(ctx.cursor_pos.0 as f32, ctx.cursor_pos.1 as f32);
-                doc.create_orphan_and_select(canvas_pos);
-                rebuild_all(
-                    doc,
-                    ctx.mindmap_tree,
-                    ctx.app_scene,
-                    ctx.renderer,
-                    ctx.scene_cache,
-                );
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
+                super::cross_dispatch::apply_create_orphan_node(canvas_pos, &mut rc);
             }
             DispatchOutcome::Handled
         }
         Action::OrphanSelection => {
             if let Some(doc) = ctx.document.as_mut() {
-                if doc.apply_orphan_selection_with_undo() {
-                    rebuild_all(
-                        doc,
-                        ctx.mindmap_tree,
-                        ctx.app_scene,
-                        ctx.renderer,
-                        ctx.scene_cache,
-                    );
-                }
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
+                super::cross_dispatch::apply_orphan_selection(&mut rc);
             }
             DispatchOutcome::Handled
         }
         Action::EditSelection | Action::EditSelectionClean => {
             let clean = matches!(action, Action::EditSelectionClean);
             if let Some(doc) = ctx.document.as_mut() {
-                match doc.selection.clone() {
-                    SelectionState::Single(id) => {
-                        open_text_edit(
-                            &id,
-                            clean,
-                            doc,
-                            ctx.text_edit_state,
-                            ctx.mindmap_tree,
-                            ctx.app_scene,
-                            ctx.renderer,
-                        );
+                // Single branch is Compatible — route through the
+                // shared cross_dispatch helper. EdgeLabel + Portal
+                // branches are NativeOnly and stay inline.
+                let single_handled = {
+                    let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
+                    super::cross_dispatch::apply_open_text_edit_on_single(
+                        clean,
+                        &mut rc,
+                        ctx.text_edit_state,
+                    )
+                };
+                if !single_handled {
+                    match doc.selection.clone() {
+                        SelectionState::PortalLabel(s) | SelectionState::PortalText(s) => {
+                            let er = s.edge_ref();
+                            open_portal_text_edit(
+                                &er,
+                                &s.endpoint_node_id,
+                                doc,
+                                ctx.portal_text_edit_state,
+                                ctx.app_scene,
+                                ctx.renderer,
+                            );
+                        }
+                        SelectionState::EdgeLabel(s) => {
+                            open_label_edit(
+                                &s.edge_ref,
+                                doc,
+                                ctx.label_edit_state,
+                                ctx.app_scene,
+                                ctx.renderer,
+                            );
+                        }
+                        _ => {}
                     }
-                    SelectionState::PortalLabel(s) | SelectionState::PortalText(s) => {
-                        let er = s.edge_ref();
-                        open_portal_text_edit(
-                            &er,
-                            &s.endpoint_node_id,
-                            doc,
-                            ctx.portal_text_edit_state,
-                            ctx.app_scene,
-                            ctx.renderer,
-                        );
-                    }
-                    SelectionState::EdgeLabel(s) => {
-                        open_label_edit(
-                            &s.edge_ref,
-                            doc,
-                            ctx.label_edit_state,
-                            ctx.app_scene,
-                            ctx.renderer,
-                        );
-                    }
-                    _ => {}
                 }
             }
             DispatchOutcome::Handled
@@ -500,23 +495,11 @@ pub(in crate::application::app) fn dispatch_action(
             DispatchOutcome::Handled
         }
         Action::ToggleFps => {
-            // Snapshot ↔ Off. Mirrors `fps on` / `fps off`.
-            use crate::application::common::FpsDisplayMode;
-            let next = match ctx.renderer.fps_display_mode() {
-                FpsDisplayMode::Snapshot => FpsDisplayMode::Off,
-                _ => FpsDisplayMode::Snapshot,
-            };
-            ctx.renderer.set_fps_display(next);
+            super::cross_dispatch::apply_toggle_fps(ctx.renderer);
             DispatchOutcome::Handled
         }
         Action::ToggleFpsDebug => {
-            // Debug ↔ Off. Mirrors `fps debug` / `fps off`.
-            use crate::application::common::FpsDisplayMode;
-            let next = match ctx.renderer.fps_display_mode() {
-                FpsDisplayMode::Debug => FpsDisplayMode::Off,
-                _ => FpsDisplayMode::Debug,
-            };
-            ctx.renderer.set_fps_display(next);
+            super::cross_dispatch::apply_toggle_fps_debug(ctx.renderer);
             DispatchOutcome::Handled
         }
         Action::LabelEditOnSelection => {
@@ -555,287 +538,99 @@ pub(in crate::application::app) fn dispatch_action(
         }
 
         Action::ZoomIn | Action::ZoomOut => {
-            // Step zoom centred on the cursor. Factor mirrors the
-            // legacy hardcoded wheel handler (1.1 step) so wheel-bound
-            // ZoomIn/ZoomOut behave identically to today's wheel zoom.
-            let factor = if matches!(action, Action::ZoomIn) {
-                1.1f32
-            } else {
-                1.0f32 / 1.1f32
+            use super::cross_dispatch::ZoomDir;
+            let dir = match action {
+                Action::ZoomIn => ZoomDir::In,
+                Action::ZoomOut => ZoomDir::Out,
+                // Safe-fallback for `#[non_exhaustive]` Action: a
+                // future variant added to the outer or-pattern
+                // without updating the inner match would otherwise
+                // panic in an interactive path.
+                _ => {
+                    log::error!("Zoom fan-out missed inner-match variant: {:?}", action);
+                    return DispatchOutcome::Handled;
+                }
             };
-            ctx.renderer.process_decree(
-                crate::application::common::RenderDecree::CameraZoom {
-                    screen_x: ctx.cursor_pos.0 as f32,
-                    screen_y: ctx.cursor_pos.1 as f32,
-                    factor,
-                },
-            );
+            super::cross_dispatch::apply_zoom_step(dir, *ctx.cursor_pos, ctx.renderer);
             DispatchOutcome::Handled
         }
         Action::ZoomReset => {
-            // Reset zoom to 1.0 anchored at the screen centre (NOT
-            // the cursor). A cursor-anchored zoom emits a `ZoomAt`
-            // decree whose canvas-position formula shifts the camera
-            // when the focus is off-centre — so a Ctrl+0 with the
-            // cursor in the corner would scoot the view by 200+ px
-            // instead of cleanly resetting in place. Computing the
-            // factor inverse against current zoom keeps the
-            // multiplicative ZoomAt path; using screen-centre as
-            // the focus cancels the position shift algebraically.
-            let zoom = ctx.renderer.camera_zoom().max(f32::EPSILON);
-            ctx.renderer.process_decree(
-                crate::application::common::RenderDecree::CameraZoom {
-                    screen_x: ctx.renderer.surface_width() as f32 * 0.5,
-                    screen_y: ctx.renderer.surface_height() as f32 * 0.5,
-                    factor: 1.0f32 / zoom,
-                },
-            );
+            super::cross_dispatch::apply_zoom_reset(ctx.renderer);
             DispatchOutcome::Handled
         }
         Action::ZoomFit => {
-            // Fit the viewport to the current tree's bounds. Falls
-            // back to a no-op when no tree is loaded yet.
-            if let Some(tree) = ctx.mindmap_tree.as_ref() {
-                ctx.renderer.fit_camera_to_tree(&tree.tree);
-            }
+            super::cross_dispatch::apply_zoom_fit(ctx.mindmap_tree, ctx.renderer);
             DispatchOutcome::Handled
         }
         Action::PanCameraNorth
         | Action::PanCameraSouth
         | Action::PanCameraEast
         | Action::PanCameraWest => {
-            // Keyboard nudge — fixed step in screen pixels, then
-            // converted to a CameraPan decree like the LeftDrag path
-            // emits per cursor move. Step size matches a coarse but
-            // perceptible nudge; users who want finer control bind a
-            // smaller step manually (when the modifier-fallback or a
-            // future per-arm step factor lands).
-            const PAN_STEP_PX: f32 = 50.0;
-            // Outer pattern guarantees one of the four — but the inner
-            // `match action` has to be exhaustive over `Action`, and
-            // `Action` is `#[non_exhaustive]`. Default to (0,0) so the
-            // catch-all is a safe no-op rather than a panic in an
-            // interactive path (CODE_CONVENTIONS §9). If a future
-            // contributor extends the outer pattern, they need to
-            // remember to extend this match too — the no-op fallback
-            // is loud enough on a manual smoke-test (key does
-            // nothing) to surface the omission.
-            let (dx, dy) = match action {
-                Action::PanCameraNorth => (0.0, -PAN_STEP_PX),
-                Action::PanCameraSouth => (0.0, PAN_STEP_PX),
-                Action::PanCameraEast => (-PAN_STEP_PX, 0.0),
-                Action::PanCameraWest => (PAN_STEP_PX, 0.0),
-                _ => (0.0, 0.0),
+            use super::cross_dispatch::PanDir;
+            let dir = match action {
+                Action::PanCameraNorth => PanDir::North,
+                Action::PanCameraSouth => PanDir::South,
+                Action::PanCameraEast => PanDir::East,
+                Action::PanCameraWest => PanDir::West,
+                _ => {
+                    log::error!(
+                        "PanCamera fan-out missed inner-match variant: {:?}",
+                        action,
+                    );
+                    return DispatchOutcome::Handled;
+                }
             };
-            ctx.renderer.process_decree(
-                crate::application::common::RenderDecree::CameraPan(dx, dy),
-            );
+            super::cross_dispatch::apply_pan_camera(dir, ctx.renderer);
             DispatchOutcome::Handled
         }
         Action::CenterOnSelection => {
-            // Centre the camera on the centroid of the currently-
-            // selected nodes. Falls back to a no-op when nothing is
-            // selected (or only an edge / portal-marker selection,
-            // which carries no point centroid).
             if let Some(doc) = ctx.document.as_ref() {
-                let ids: Vec<&str> = doc.selection.selected_ids();
-                if !ids.is_empty() {
-                    let mut sum = glam::Vec2::ZERO;
-                    let mut count = 0u32;
-                    for id in &ids {
-                        if let Some(node) = doc.mindmap.nodes.get(*id) {
-                            sum += glam::Vec2::new(
-                                node.position.x as f32 + node.size.width as f32 * 0.5,
-                                node.position.y as f32 + node.size.height as f32 * 0.5,
-                            );
-                            count += 1;
-                        }
-                    }
-                    if count > 0 {
-                        ctx.renderer.set_camera_center(sum / count as f32);
-                    }
-                }
+                super::cross_dispatch::apply_center_on_selection(doc, ctx.renderer);
             }
             DispatchOutcome::Handled
         }
         Action::JumpToRoot => {
-            // Select the document's first root node and centre on it.
-            // "First" = id-sorted; when multiple roots exist this is
-            // deterministic. No-op when the document is empty.
             if let Some(doc) = ctx.document.as_mut() {
-                let target = doc.mindmap.root_nodes().first().map(|n| {
-                    (
-                        n.id.clone(),
-                        glam::Vec2::new(
-                            n.position.x as f32 + n.size.width as f32 * 0.5,
-                            n.position.y as f32 + n.size.height as f32 * 0.5,
-                        ),
-                    )
-                });
-                if let Some((id, centre)) = target {
-                    doc.selection = SelectionState::Single(id);
-                    ctx.renderer.set_camera_center(centre);
-                    rebuild_all(
-                        doc,
-                        ctx.mindmap_tree,
-                        ctx.app_scene,
-                        ctx.renderer,
-                        ctx.scene_cache,
-                    );
-                }
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
+                super::cross_dispatch::apply_jump_to_root(&mut rc);
             }
             DispatchOutcome::Handled
         }
 
         // ── Selection Actions ────────────────────────────────
-        Action::SelectAll => {
-            // Only visible nodes — selecting hidden-by-fold descendants
-            // would let a follow-up `DeleteSelection` silently nuke
-            // subtrees the user can't see. Mirrors the click hit-test's
-            // policy of skipping folded subtrees.
+        Action::SelectAll
+        | Action::DeselectAll
+        | Action::InvertSelection
+        | Action::SelectParent
+        | Action::SelectChild
+        | Action::SelectNextSibling
+        | Action::SelectPrevSibling => {
             if let Some(doc) = ctx.document.as_mut() {
-                let all_ids: Vec<String> = doc
-                    .mindmap
-                    .nodes
-                    .values()
-                    .filter(|n| !doc.mindmap.is_hidden_by_fold(n))
-                    .map(|n| n.id.clone())
-                    .collect();
-                doc.selection = SelectionState::from_ids(all_ids);
-                rebuild_all(
-                    doc,
-                    ctx.mindmap_tree,
-                    ctx.app_scene,
-                    ctx.renderer,
-                    ctx.scene_cache,
-                );
-            }
-            DispatchOutcome::Handled
-        }
-        Action::DeselectAll => {
-            if let Some(doc) = ctx.document.as_mut() {
-                if !matches!(doc.selection, SelectionState::None) {
-                    doc.selection = SelectionState::None;
-                    rebuild_all(
-                        doc,
-                        ctx.mindmap_tree,
-                        ctx.app_scene,
-                        ctx.renderer,
-                        ctx.scene_cache,
-                    );
-                }
-            }
-            DispatchOutcome::Handled
-        }
-        Action::InvertSelection => {
-            // Only inverts node selections (None / Single / Multi).
-            // Edge / EdgeLabel / Portal* selections are preserved
-            // — inverting them would otherwise collapse to "select
-            // every visible node" because their `selected_ids()` is
-            // empty, which is unintuitive. Hidden-by-fold nodes are
-            // filtered for the same reason as SelectAll above.
-            if let Some(doc) = ctx.document.as_mut() {
-                let invertable = matches!(
-                    doc.selection,
-                    SelectionState::None
-                        | SelectionState::Single(_)
-                        | SelectionState::Multi(_)
-                );
-                if invertable {
-                    let selected: std::collections::HashSet<String> = doc
-                        .selection
-                        .selected_ids()
-                        .into_iter()
-                        .map(String::from)
-                        .collect();
-                    let inverted: Vec<String> = doc
-                        .mindmap
-                        .nodes
-                        .values()
-                        .filter(|n| {
-                            !selected.contains(&n.id)
-                                && !doc.mindmap.is_hidden_by_fold(n)
-                        })
-                        .map(|n| n.id.clone())
-                        .collect();
-                    doc.selection = SelectionState::from_ids(inverted);
-                    rebuild_all(
-                        doc,
-                        ctx.mindmap_tree,
-                        ctx.app_scene,
-                        ctx.renderer,
-                        ctx.scene_cache,
-                    );
-                }
-            }
-            DispatchOutcome::Handled
-        }
-        Action::SelectParent => {
-            // Walk one step up the hierarchy from a single-node
-            // selection. Multi / edge / unselected: no-op.
-            if let Some(doc) = ctx.document.as_mut() {
-                if let SelectionState::Single(nid) = doc.selection.clone() {
-                    if let Some(parent_id) = doc
-                        .mindmap
-                        .nodes
-                        .get(&nid)
-                        .and_then(|n| n.parent_id.clone())
-                    {
-                        doc.selection = SelectionState::Single(parent_id);
-                        rebuild_all(
-                            doc,
-                            ctx.mindmap_tree,
-                            ctx.app_scene,
-                            ctx.renderer,
-                            ctx.scene_cache,
-                        );
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
+                match action {
+                    Action::SelectAll => super::cross_dispatch::apply_select_all(&mut rc),
+                    Action::DeselectAll => super::cross_dispatch::apply_deselect_all(&mut rc),
+                    Action::InvertSelection => {
+                        super::cross_dispatch::apply_invert_selection(&mut rc)
                     }
-                }
-            }
-            DispatchOutcome::Handled
-        }
-        Action::SelectChild => {
-            // Step into the first visible child (id-sorted) of the
-            // selected single node. Skipping hidden children avoids
-            // jumping the keyboard cursor into a folded subtree the
-            // user can't see — mirrors the fold-aware click hit-test.
-            if let Some(doc) = ctx.document.as_mut() {
-                if let SelectionState::Single(nid) = doc.selection.clone() {
-                    let first_child = doc
-                        .mindmap
-                        .children_of(&nid)
-                        .into_iter()
-                        .find(|c| !doc.mindmap.is_hidden_by_fold(c))
-                        .map(|c| c.id.clone());
-                    if let Some(child_id) = first_child {
-                        doc.selection = SelectionState::Single(child_id);
-                        rebuild_all(
-                            doc,
-                            ctx.mindmap_tree,
-                            ctx.app_scene,
-                            ctx.renderer,
-                            ctx.scene_cache,
-                        );
+                    Action::SelectParent => {
+                        super::cross_dispatch::apply_select_parent(&mut rc)
                     }
-                }
-            }
-            DispatchOutcome::Handled
-        }
-        Action::SelectNextSibling | Action::SelectPrevSibling => {
-            let forward = matches!(action, Action::SelectNextSibling);
-            if let Some(doc) = ctx.document.as_mut() {
-                if let SelectionState::Single(nid) = doc.selection.clone() {
-                    let new_id = sibling_id(&doc.mindmap, &nid, forward);
-                    if let Some(target) = new_id {
-                        doc.selection = SelectionState::Single(target);
-                        rebuild_all(
-                            doc,
-                            ctx.mindmap_tree,
-                            ctx.app_scene,
-                            ctx.renderer,
-                            ctx.scene_cache,
-                        );
+                    Action::SelectChild => super::cross_dispatch::apply_select_child(&mut rc),
+                    Action::SelectNextSibling => {
+                        super::cross_dispatch::apply_select_sibling(true, &mut rc)
                     }
+                    Action::SelectPrevSibling => {
+                        super::cross_dispatch::apply_select_sibling(false, &mut rc)
+                    }
+                    // Outer pattern guarantees one of the seven, but
+                    // `Action` is `#[non_exhaustive]`. Safe-fallback
+                    // log + no-op per CODE_CONVENTIONS §9 for
+                    // interactive paths.
+                    _ => log::error!(
+                        "Selection fan-out missed inner-match variant: {:?}",
+                        action,
+                    ),
                 }
             }
             DispatchOutcome::Handled
@@ -875,6 +670,222 @@ pub(in crate::application::app) fn dispatch_action(
         | Action::LabelEditDeleteBack
         | Action::LabelEditDeleteForward => {
             apply_label_edit_action(action, ctx.label_edit_state);
+            DispatchOutcome::Handled
+        }
+
+        // ── Parametric console-verb Actions ────────────────────
+        // Each routes through the verb's `pub(crate) apply_*` core
+        // — single source of truth with the typed console verb.
+        // On a successful change, trigger a full scene rebuild
+        // mirroring the verb dispatcher's post-execute drain.
+        Action::SetEdgeAnchor { ref from, ref to } => {
+            if let Some(doc) = ctx.document.as_mut() {
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
+                super::cross_dispatch::apply_set_edge_anchor(from, to, &mut rc);
+            }
+            DispatchOutcome::Handled
+        }
+        Action::SetEdgeBodyGlyph(ref preset) => {
+            if let Some(doc) = ctx.document.as_mut() {
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
+                super::cross_dispatch::apply_set_edge_body_glyph(preset, &mut rc);
+            }
+            DispatchOutcome::Handled
+        }
+        Action::SetBorderField { ref field, ref value } => {
+            if let Some(doc) = ctx.document.as_mut() {
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
+                super::cross_dispatch::apply_set_border_field(field, value, &mut rc);
+            }
+            DispatchOutcome::Handled
+        }
+        Action::SetEdgeCap { ref from, ref to } => {
+            if let Some(doc) = ctx.document.as_mut() {
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
+                super::cross_dispatch::apply_set_edge_cap(from, to, &mut rc);
+            }
+            DispatchOutcome::Handled
+        }
+        Action::SetColorBg(ref value)
+        | Action::SetColorText(ref value)
+        | Action::SetColorBorder(ref value) => {
+            use super::cross_dispatch::ColorAxis;
+            let axis = match action {
+                Action::SetColorBg(_) => ColorAxis::Bg,
+                Action::SetColorText(_) => ColorAxis::Text,
+                Action::SetColorBorder(_) => ColorAxis::Border,
+                _ => {
+                    log::error!(
+                        "SetColor* fan-out missed inner-match variant: {:?}",
+                        action,
+                    );
+                    return DispatchOutcome::Handled;
+                }
+            };
+            if let Some(doc) = ctx.document.as_mut() {
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
+                super::cross_dispatch::apply_set_color_axis(axis, value, &mut rc);
+            }
+            DispatchOutcome::Handled
+        }
+        Action::SetEdgeType(ref value) => {
+            if let Some(doc) = ctx.document.as_mut() {
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
+                super::cross_dispatch::apply_set_edge_type(value, &mut rc);
+            }
+            DispatchOutcome::Handled
+        }
+        Action::SetEdgeDisplayMode(ref value) => {
+            if let Some(doc) = ctx.document.as_mut() {
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
+                super::cross_dispatch::apply_set_edge_display_mode(value, &mut rc);
+            }
+            DispatchOutcome::Handled
+        }
+        Action::ResetEdge(ref kind) => {
+            if let Some(doc) = ctx.document.as_mut() {
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
+                super::cross_dispatch::apply_reset_edge(kind, &mut rc);
+            }
+            DispatchOutcome::Handled
+        }
+        Action::SetFontFamily(ref family) => {
+            if let Some(doc) = ctx.document.as_mut() {
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
+                super::cross_dispatch::apply_set_font_family(family, &mut rc);
+            }
+            DispatchOutcome::Handled
+        }
+        Action::SetFontSize(ref pt)
+        | Action::SetFontMin(ref pt)
+        | Action::SetFontMax(ref pt) => {
+            use super::cross_dispatch::FontSlot;
+            let slot = match action {
+                Action::SetFontSize(_) => FontSlot::Size,
+                Action::SetFontMin(_) => FontSlot::Min,
+                Action::SetFontMax(_) => FontSlot::Max,
+                _ => {
+                    log::error!(
+                        "SetFont* fan-out missed inner-match variant: {:?}",
+                        action,
+                    );
+                    return DispatchOutcome::Handled;
+                }
+            };
+            // Best-effort parse; non-finite / non-positive silently
+            // no-op (the verb path surfaces typed errors).
+            let parsed = match pt.parse::<f32>() {
+                Ok(v) if v.is_finite() && v > 0.0 => v,
+                _ => {
+                    log::warn!("SetFont{:?}: invalid '{}'", slot, pt);
+                    return DispatchOutcome::Handled;
+                }
+            };
+            if let Some(doc) = ctx.document.as_mut() {
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
+                super::cross_dispatch::apply_set_font_kv(slot, parsed, &mut rc);
+            }
+            DispatchOutcome::Handled
+        }
+        Action::SetEdgeLabelText(ref text) => {
+            if let Some(doc) = ctx.document.as_mut() {
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
+                super::cross_dispatch::apply_set_edge_label_text(text, &mut rc);
+            }
+            DispatchOutcome::Handled
+        }
+        Action::SetEdgeLabelPosition(ref position) => {
+            if let Some(doc) = ctx.document.as_mut() {
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
+                super::cross_dispatch::apply_set_edge_label_position(position, &mut rc);
+            }
+            DispatchOutcome::Handled
+        }
+        Action::SetSpacing(ref input) => {
+            if let Some(doc) = ctx.document.as_mut() {
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
+                super::cross_dispatch::apply_set_spacing(input, &mut rc);
+            }
+            DispatchOutcome::Handled
+        }
+        Action::SetZoomMin(ref payload) | Action::SetZoomMax(ref payload) => {
+            use crate::application::document::OptionEdit;
+            let parsed = match crate::application::console::commands::zoom::parse_zoom_payload(payload) {
+                Some(e) => e,
+                None => {
+                    log::warn!(
+                        "set_zoom_*: invalid zoom payload '{}' — must be a positive finite float or 'unset'",
+                        payload,
+                    );
+                    return DispatchOutcome::Handled;
+                }
+            };
+            let (min, max) = match action {
+                Action::SetZoomMin(_) => (parsed, OptionEdit::Keep),
+                Action::SetZoomMax(_) => (OptionEdit::Keep, parsed),
+                _ => {
+                    log::error!(
+                        "SetZoom* fan-out missed inner-match variant: {:?}",
+                        action,
+                    );
+                    return DispatchOutcome::Handled;
+                }
+            };
+            if let Some(doc) = ctx.document.as_mut() {
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
+                super::cross_dispatch::apply_set_zoom_window(min, max, &mut rc);
+            }
+            DispatchOutcome::Handled
+        }
+        Action::ClearZoom => {
+            if let Some(doc) = ctx.document.as_mut() {
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
+                super::cross_dispatch::apply_clear_zoom(&mut rc);
+            }
+            DispatchOutcome::Handled
+        }
+        // ── Filesystem variants (NativeOnly) ────────────────────
+        // Dispatch arms route through `execute_console_line` so the
+        // existing `replace_document` / `dirty` / `file_path`
+        // plumbing on `ConsoleEffects` is reused. The whole module
+        // is already `cfg(not(target_arch = "wasm32"))`, so no
+        // additional cfg gate is needed.
+        Action::OpenDocument(ref path)
+        | Action::SaveDocumentAs(ref path)
+        | Action::NewDocumentAt(ref path) => {
+            let verb = match action {
+                Action::OpenDocument(_) => "open",
+                Action::SaveDocumentAs(_) => "save",
+                Action::NewDocumentAt(_) => "new",
+                _ => {
+                    log::error!(
+                        "fs-variant fan-out missed inner-match variant: {:?}",
+                        action,
+                    );
+                    return DispatchOutcome::Handled;
+                }
+            };
+            let line = format!("{} {}", verb, quote_console_arg(path));
+            if let Some(doc) = ctx.document.as_mut() {
+                crate::application::app::console_input::exec::execute_console_line(
+                    &line,
+                    ctx.console_state,
+                    ctx.label_edit_state,
+                    ctx.portal_text_edit_state,
+                    ctx.color_picker_state,
+                    doc,
+                    ctx.mindmap_tree,
+                    ctx.app_scene,
+                    ctx.renderer,
+                    ctx.scene_cache,
+                    ctx.macros,
+                );
+            } else {
+                log::warn!(
+                    "{}: no document loaded; skipping '{}'",
+                    verb, line
+                );
+            }
             DispatchOutcome::Handled
         }
 
@@ -957,49 +968,8 @@ pub(in crate::application::app) fn apply_label_edit_action(
     apply_label_edit_action_to_buffer(action, buffer, cursor_grapheme_pos)
 }
 
-/// Resolve the id of the sibling immediately before / after `nid` in
-/// the parent's children list (sorted by `id_sort_key` — Dewey-decimal
-/// trailing-segment order, not lexicographic). Roots use the
-/// document's `root_nodes()` ordering. Hidden-by-fold siblings are
-/// skipped so keyboard navigation stays on visible nodes only.
-/// Returns `None` when `nid` has no visible neighbour in the
-/// requested direction.
-fn sibling_id(
-    map: &baumhard::mindmap::model::MindMap,
-    nid: &str,
-    forward: bool,
-) -> Option<String> {
-    let parent_id = map.nodes.get(nid).and_then(|n| n.parent_id.clone());
-    // Build the sibling list with both id and hidden-state so the
-    // walk past `nid` can skip folded entries efficiently.
-    let siblings: Vec<(String, bool)> = match parent_id {
-        Some(pid) => map
-            .children_of(&pid)
-            .iter()
-            .map(|c| (c.id.clone(), map.is_hidden_by_fold(c)))
-            .collect(),
-        None => map
-            .root_nodes()
-            .iter()
-            .map(|c| (c.id.clone(), map.is_hidden_by_fold(c)))
-            .collect(),
-    };
-    let idx = siblings.iter().position(|(id, _)| id == nid)?;
-    if forward {
-        siblings
-            .iter()
-            .skip(idx + 1)
-            .find(|(_, hidden)| !*hidden)
-            .map(|(id, _)| id.clone())
-    } else {
-        siblings
-            .iter()
-            .take(idx)
-            .rev()
-            .find(|(_, hidden)| !*hidden)
-            .map(|(id, _)| id.clone())
-    }
-}
+// `sibling_id` lifted to `cross_dispatch.rs` so the WASM dispatcher
+// can reach the same fold-aware navigation logic.
 
 /// Run a macro by id against the current `InputHandlerContext`.
 /// Iterates the macro's steps in order, forwarding each through the
@@ -1321,5 +1291,50 @@ mod tests {
     fn dispatch_action_module_compiles() {
         // Smoke test: the module's public surface is reachable.
         // Replaced by per-arm tests in later phases.
+    }
+
+    #[test]
+    fn quote_console_arg_wraps_plain_path_in_double_quotes() {
+        assert_eq!(super::quote_console_arg("/tmp/x.json"), "\"/tmp/x.json\"");
+    }
+
+    #[test]
+    fn quote_console_arg_handles_paths_with_spaces() {
+        // Embedded whitespace is the whole reason quoting exists —
+        // the tokenizer would otherwise split the path into multiple
+        // positionals.
+        assert_eq!(
+            super::quote_console_arg("/tmp/some dir/x.json"),
+            "\"/tmp/some dir/x.json\"",
+        );
+    }
+
+    #[test]
+    fn quote_console_arg_escapes_embedded_double_quotes() {
+        // A literal `"` inside the path becomes `\"` so the
+        // tokenizer doesn't terminate the quoted token early.
+        assert_eq!(
+            super::quote_console_arg(r#"/tmp/he said "hi"/x.json"#),
+            r#""/tmp/he said \"hi\"/x.json""#,
+        );
+    }
+
+    #[test]
+    fn quote_console_arg_escapes_backslashes_for_windows_paths() {
+        // Windows path: every `\` becomes `\\` so the tokenizer
+        // doesn't consume the next char as part of an escape, and
+        // a path ending in `\` doesn't unterminate the quote.
+        assert_eq!(
+            super::quote_console_arg(r"C:\Users\foo\map.json"),
+            r#""C:\\Users\\foo\\map.json""#,
+        );
+    }
+
+    #[test]
+    fn quote_console_arg_handles_path_ending_in_backslash() {
+        // Pre-fix this would produce `"C:\\foo\"` — an unterminated
+        // quoted token. With the backslash escape it produces
+        // `"C:\\foo\\"` which round-trips cleanly.
+        assert_eq!(super::quote_console_arg(r"C:\foo\"), r#""C:\\foo\\""#);
     }
 }

@@ -26,8 +26,14 @@ use super::context::InputContext;
 /// gate when extending."
 /// Some variants carry payload (e.g. `String` paths, kv-shaped
 /// `(field, value)` tuples) so `Copy` is impossible — payload-bearing
-/// variants are cloned at lookup time. The clone cost is negligible
-/// for short strings and limited to single-key dispatch hot paths.
+/// variants are cloned at lookup time in
+/// [`super::resolved::ResolvedKeybinds::action_for_context`]. Each
+/// keypress allocates one short string per `String`-payload variant
+/// (two for `SetEdgeAnchor` / `SetEdgeCap` / `SetBorderField`). For
+/// the typical interactive cadence (≤10 keypresses/sec) the cost is
+/// inconsequential; for a synthetic load of macros firing thousands
+/// of `Action`s/sec, switch the lookup to return `&Action` and clone
+/// at the dispatch boundary, or wrap payload strings in `Arc<str>`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum Action {
@@ -272,6 +278,102 @@ pub enum Action {
     /// Replace the current document with a fresh blank one. Mirrors
     /// `new` (no path).
     NewDocument,
+
+    // ── Parametric console-verb Actions (Document context) ──────
+    // Each wraps a parameterised console verb so the user can bind
+    // the verb directly without authoring a macro. Free-form
+    // `String` payloads are parsed at dispatch time; bad values
+    // emit a warn-log and the dispatch returns `Handled` (no
+    // scrollback — Action arms have no scrollback surface).
+    /// Mirror `anchor from=<side> to=<side>` on the selected edge.
+    /// Sides: `auto|top|right|bottom|left`. Single-edge selection.
+    SetEdgeAnchor {
+        from: String,
+        to: String,
+    },
+    /// Mirror `body glyph=<dot|dash|double|wave|chain>` on the
+    /// selected edge.
+    SetEdgeBodyGlyph(String),
+    /// Mirror `border <field>=<value>` on the selected node(s).
+    /// Single kv per binding (multi-kv border edits stay
+    /// console-only). Field names: `preset|font|size|color|palette|
+    /// field|padding|top|bottom|left|right|tl|tr|bl|br`.
+    SetBorderField {
+        field: String,
+        value: String,
+    },
+    /// Mirror `cap from=<arrow|circle|diamond|none> to=<...>` on the
+    /// selected edge.
+    SetEdgeCap {
+        from: String,
+        to: String,
+    },
+    /// Mirror `color bg=<color>` on the current selection.
+    SetColorBg(String),
+    /// Mirror `color text=<color>` on the current selection.
+    SetColorText(String),
+    /// Mirror `color border=<color>` on the current selection.
+    SetColorBorder(String),
+    /// Mirror `edge type=<cross_link|parent_child>` on the selected
+    /// edge.
+    SetEdgeType(String),
+    /// Mirror `edge display_mode=<line|portal>` on the selected edge.
+    SetEdgeDisplayMode(String),
+    /// Mirror `edge reset=<straight|curve|style|position>` on the
+    /// selected edge.
+    ResetEdge(String),
+    /// Mirror `font set <family>` on the current selection. Unknown
+    /// family names silently no-op (the verb path surfaces a typed
+    /// error; the Action arm has no scrollback).
+    SetFontFamily(String),
+    /// Mirror `font size=<pt>` on the current selection. Payload is
+    /// the raw `pt` string parsed at dispatch time; non-finite or
+    /// non-positive values silently no-op.
+    SetFontSize(String),
+    /// Mirror `font min=<pt>`. Selection-aware: applicable to
+    /// edge / edge-label / portal-text channels; nodes have no
+    /// screen-space clamp and no-op silently.
+    SetFontMin(String),
+    /// Mirror `font max=<pt>`. Same selection rules as
+    /// `SetFontMin`.
+    SetFontMax(String),
+    /// Mirror `label text=<text>` on the selected edge / portal
+    /// label. Empty payload clears the label.
+    SetEdgeLabelText(String),
+    /// Mirror `label position=<start|middle|end>` on the selected
+    /// line-mode edge. Portal selections silently no-op (they use
+    /// the `position_t=<f32>` shape, not named anchors).
+    SetEdgeLabelPosition(String),
+    /// Mirror `spacing value=<tight|normal|wide|<float>>` on the
+    /// selected edge.
+    SetSpacing(String),
+    /// Mirror `zoom min=<zoom|unset>` on the current selection.
+    /// Payload is `"unset"`, `""`, or a positive finite float
+    /// string. Inverted bounds (`min > max`) silently no-op.
+    SetZoomMin(String),
+    /// Mirror `zoom max=<zoom|unset>` on the current selection.
+    /// Same payload shape as `SetZoomMin`.
+    SetZoomMax(String),
+    /// Mirror `zoom clear` — drop both `min_zoom_to_render` and
+    /// `max_zoom_to_render` on the current selection. Unit
+    /// variant — no payload.
+    ClearZoom,
+    /// Mirror `open <path>` — replace the current document with the
+    /// one loaded from `path`. **NativeOnly** + **destructive**:
+    /// touches the filesystem. Denylisted for non-User macro tiers
+    /// — a hostile mindmap must not be able to load arbitrary
+    /// content as the active document.
+    OpenDocument(String),
+    /// Mirror `save <path>` — write the current document to `path`
+    /// and rebind. **NativeOnly** + **destructive**: writes to the
+    /// filesystem; a hostile macro could overwrite arbitrary files.
+    /// Denylisted for non-User macro tiers.
+    SaveDocumentAs(String),
+    /// Mirror `new <path>` — start a fresh document and bind it to
+    /// `path` (writes a blank file there immediately). **NativeOnly**
+    /// + **destructive**: writes to the filesystem. Denylisted for
+    /// non-User macro tiers.
+    NewDocumentAt(String),
 }
 
 impl Action {
@@ -302,6 +404,9 @@ impl Action {
             // Filesystem / document lifecycle.
             Action::SaveDocument
             | Action::NewDocument
+            | Action::OpenDocument(_)
+            | Action::SaveDocumentAs(_)
+            | Action::NewDocumentAt(_)
             // Direct destructive mutators.
             | Action::DeleteSelection
             | Action::OrphanSelection
@@ -355,7 +460,32 @@ impl Action {
             | Action::OpenColorPicker
             | Action::CloseColorPicker
             | Action::ToggleFps
-            | Action::ToggleFpsDebug => false,
+            | Action::ToggleFpsDebug
+            // Parametric console-verb mutators are recoverable via
+            // undo (same trust posture as the existing
+            // configurable-* Actions). Filesystem-touching parametric
+            // variants will land in a later commit and DO classify as
+            // destructive.
+            | Action::SetEdgeAnchor { .. }
+            | Action::SetEdgeBodyGlyph(_)
+            | Action::SetBorderField { .. }
+            | Action::SetEdgeCap { .. }
+            | Action::SetColorBg(_)
+            | Action::SetColorText(_)
+            | Action::SetColorBorder(_)
+            | Action::SetEdgeType(_)
+            | Action::SetEdgeDisplayMode(_)
+            | Action::ResetEdge(_)
+            | Action::SetFontFamily(_)
+            | Action::SetFontSize(_)
+            | Action::SetFontMin(_)
+            | Action::SetFontMax(_)
+            | Action::SetEdgeLabelText(_)
+            | Action::SetEdgeLabelPosition(_)
+            | Action::SetSpacing(_)
+            | Action::SetZoomMin(_)
+            | Action::SetZoomMax(_)
+            | Action::ClearZoom => false,
 
             // Modal-context Actions (Console / Picker / TextEdit /
             // LabelEdit / DoubleClickActivate's `Empty`-hit branch
@@ -530,7 +660,30 @@ impl Action {
             | Action::LabelEditOnSelection
             | Action::ToggleFps
             | Action::ToggleFpsDebug
-            | Action::NewDocument => InputContext::Document,
+            | Action::NewDocument
+            | Action::SetEdgeAnchor { .. }
+            | Action::SetEdgeBodyGlyph(_)
+            | Action::SetBorderField { .. }
+            | Action::SetEdgeCap { .. }
+            | Action::SetColorBg(_)
+            | Action::SetColorText(_)
+            | Action::SetColorBorder(_)
+            | Action::SetEdgeType(_)
+            | Action::SetEdgeDisplayMode(_)
+            | Action::ResetEdge(_)
+            | Action::SetFontFamily(_)
+            | Action::SetFontSize(_)
+            | Action::SetFontMin(_)
+            | Action::SetFontMax(_)
+            | Action::SetEdgeLabelText(_)
+            | Action::SetEdgeLabelPosition(_)
+            | Action::SetSpacing(_)
+            | Action::SetZoomMin(_)
+            | Action::SetZoomMax(_)
+            | Action::ClearZoom
+            | Action::OpenDocument(_)
+            | Action::SaveDocumentAs(_)
+            | Action::NewDocumentAt(_) => InputContext::Document,
         }
     }
 
@@ -599,7 +752,29 @@ impl Action {
             | Action::SelectNextSibling
             | Action::SelectPrevSibling
             | Action::JumpToRoot
-            | Action::CenterOnSelection => WasmCompatibility::Compatible,
+            | Action::CenterOnSelection
+            // Parametric mutators that touch only `MindMapDocument`
+            // setters — Compatible by classification rule.
+            | Action::SetEdgeAnchor { .. }
+            | Action::SetEdgeBodyGlyph(_)
+            | Action::SetBorderField { .. }
+            | Action::SetEdgeCap { .. }
+            | Action::SetColorBg(_)
+            | Action::SetColorText(_)
+            | Action::SetColorBorder(_)
+            | Action::SetEdgeType(_)
+            | Action::SetEdgeDisplayMode(_)
+            | Action::ResetEdge(_)
+            | Action::SetFontFamily(_)
+            | Action::SetFontSize(_)
+            | Action::SetFontMin(_)
+            | Action::SetFontMax(_)
+            | Action::SetEdgeLabelText(_)
+            | Action::SetEdgeLabelPosition(_)
+            | Action::SetSpacing(_)
+            | Action::SetZoomMin(_)
+            | Action::SetZoomMax(_)
+            | Action::ClearZoom => WasmCompatibility::Compatible,
 
             // ── Renderer-only — works on both targets ─────────
             Action::ZoomIn
@@ -716,6 +891,14 @@ impl Action {
             Action::SaveDocument => WasmCompatibility::NativeOnly,
             Action::PanCanvas => WasmCompatibility::NativeOnly,
             Action::NewDocument => WasmCompatibility::NativeOnly,
+            // Parametric filesystem variants — same NativeOnly
+            // posture as their unit-variant siblings; the dispatch
+            // arms are cfg-gated and the body uses
+            // `execute_console_line` which on WASM is itself
+            // NativeOnly.
+            Action::OpenDocument(_) => WasmCompatibility::NativeOnly,
+            Action::SaveDocumentAs(_) => WasmCompatibility::NativeOnly,
+            Action::NewDocumentAt(_) => WasmCompatibility::NativeOnly,
         }
     }
 }

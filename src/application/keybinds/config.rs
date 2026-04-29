@@ -11,6 +11,26 @@ use super::action::Action;
 use super::bind::KeyBind;
 use super::resolved::ResolvedKeybinds;
 
+/// One binding for a parametric Action — a key combo plus the
+/// positional payload args the resolve step feeds into the
+/// variant's payload. Free-form `String` args; typed validation
+/// happens in the dispatch arm (parse failures emit a warn-log and
+/// the dispatch returns `Handled` as a best-effort no-op — Action
+/// arms have no scrollback surface).
+///
+/// Args are positional rather than keyed so the same shape covers
+/// single-payload (1 arg, e.g. `set_edge_body_glyph(["dash"])`),
+/// from/to (2 args, e.g. `set_edge_anchor(["top", "auto"])`), and
+/// field/value (2 args) variants. Per-variant arg counts are
+/// documented next to each `Action` definition; a binding with the
+/// wrong count emits a warn-log and is skipped.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParametricBinding {
+    pub combo: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+}
+
 /// The raw, user-editable config. Every field is a list of binding strings
 /// so users can assign multiple keys to the same action (e.g. Ctrl+Z and
 /// the Undo key both mapped to `Undo`). Fields default via serde so a
@@ -133,6 +153,39 @@ pub struct KeybindConfig {
     pub toggle_fps: Vec<String>,
     pub toggle_fps_debug: Vec<String>,
     pub new_document: Vec<String>,
+
+    // ── Parametric console-verb Actions ─────────────────────────
+    // Each field is a list of `ParametricBinding`s. Args are
+    // positional; per-variant shape is documented on the matching
+    // `Action` variant. Defaults are empty — users opt in by adding
+    // a binding to their `keybinds.json`.
+    pub set_edge_anchor: Vec<ParametricBinding>,
+    pub set_edge_body_glyph: Vec<ParametricBinding>,
+    pub set_border_field: Vec<ParametricBinding>,
+    pub set_edge_cap: Vec<ParametricBinding>,
+    pub set_color_bg: Vec<ParametricBinding>,
+    pub set_color_text: Vec<ParametricBinding>,
+    pub set_color_border: Vec<ParametricBinding>,
+    pub set_edge_type: Vec<ParametricBinding>,
+    pub set_edge_display_mode: Vec<ParametricBinding>,
+    pub reset_edge: Vec<ParametricBinding>,
+    pub set_font_family: Vec<ParametricBinding>,
+    pub set_font_size: Vec<ParametricBinding>,
+    pub set_font_min: Vec<ParametricBinding>,
+    pub set_font_max: Vec<ParametricBinding>,
+    pub set_edge_label_text: Vec<ParametricBinding>,
+    pub set_edge_label_position: Vec<ParametricBinding>,
+    pub set_spacing: Vec<ParametricBinding>,
+    pub set_zoom_min: Vec<ParametricBinding>,
+    pub set_zoom_max: Vec<ParametricBinding>,
+    /// Unit variant — `args` is ignored, only `combo` matters.
+    pub clear_zoom: Vec<ParametricBinding>,
+    /// Filesystem-touching parametric variants — NativeOnly +
+    /// denylisted from non-User macro tiers (see
+    /// `MacroSource::allows_action`).
+    pub open_document: Vec<ParametricBinding>,
+    pub save_document_as: Vec<ParametricBinding>,
+    pub new_document_at: Vec<ParametricBinding>,
 
     // ── Style / metadata ─────────────────────────────────────────
     /// Font family name for the console overlay.
@@ -296,6 +349,33 @@ impl Default for KeybindConfig {
             toggle_fps_debug: vec![],
             new_document: vec![],
 
+            // Parametric console-verb Actions. Defaults empty — users
+            // opt in via `keybinds.json` because there's no universal
+            // sensible default for `from=top to=bottom`-style payloads.
+            set_edge_anchor: vec![],
+            set_edge_body_glyph: vec![],
+            set_border_field: vec![],
+            set_edge_cap: vec![],
+            set_color_bg: vec![],
+            set_color_text: vec![],
+            set_color_border: vec![],
+            set_edge_type: vec![],
+            set_edge_display_mode: vec![],
+            reset_edge: vec![],
+            set_font_family: vec![],
+            set_font_size: vec![],
+            set_font_min: vec![],
+            set_font_max: vec![],
+            set_edge_label_text: vec![],
+            set_edge_label_position: vec![],
+            set_spacing: vec![],
+            set_zoom_min: vec![],
+            set_zoom_max: vec![],
+            clear_zoom: vec![],
+            open_document: vec![],
+            save_document_as: vec![],
+            new_document_at: vec![],
+
             // Style / metadata
             console_font: String::new(),
             console_font_size: 16.0,
@@ -431,6 +511,259 @@ impl KeybindConfig {
                 }
             }
         }
+
+        // Parametric bindings: each variant carries its own payload
+        // shape, so each `push_parametric` call passes a builder
+        // closure that picks the args apart and constructs the
+        // `Action`. Wrong arg counts emit a warn-log and are skipped
+        // — never panic on a user-config typo.
+        push_parametric(
+            &mut binds,
+            "set_edge_anchor",
+            2,
+            &self.set_edge_anchor,
+            |args| match args {
+                [from, to] => Some(Action::SetEdgeAnchor {
+                    from: from.clone(),
+                    to: to.clone(),
+                }),
+                _ => None,
+            },
+        );
+        push_parametric(
+            &mut binds,
+            "set_edge_body_glyph",
+            1,
+            &self.set_edge_body_glyph,
+            |args| match args {
+                [glyph] => Some(Action::SetEdgeBodyGlyph(glyph.clone())),
+                _ => None,
+            },
+        );
+        push_parametric(
+            &mut binds,
+            "set_border_field",
+            2,
+            &self.set_border_field,
+            |args| match args {
+                [field, value] => Some(Action::SetBorderField {
+                    field: field.clone(),
+                    value: value.clone(),
+                }),
+                _ => None,
+            },
+        );
+        push_parametric(
+            &mut binds,
+            "set_edge_cap",
+            2,
+            &self.set_edge_cap,
+            |args| match args {
+                [from, to] => Some(Action::SetEdgeCap {
+                    from: from.clone(),
+                    to: to.clone(),
+                }),
+                _ => None,
+            },
+        );
+        // Color axes — three sibling parametric variants.
+        push_parametric(
+            &mut binds,
+            "set_color_bg",
+            1,
+            &self.set_color_bg,
+            |args| match args {
+                [color] => Some(Action::SetColorBg(color.clone())),
+                _ => None,
+            },
+        );
+        push_parametric(
+            &mut binds,
+            "set_color_text",
+            1,
+            &self.set_color_text,
+            |args| match args {
+                [color] => Some(Action::SetColorText(color.clone())),
+                _ => None,
+            },
+        );
+        push_parametric(
+            &mut binds,
+            "set_color_border",
+            1,
+            &self.set_color_border,
+            |args| match args {
+                [color] => Some(Action::SetColorBorder(color.clone())),
+                _ => None,
+            },
+        );
+        // Edge structural — type / display_mode / reset.
+        push_parametric(
+            &mut binds,
+            "set_edge_type",
+            1,
+            &self.set_edge_type,
+            |args| match args {
+                [t] => Some(Action::SetEdgeType(t.clone())),
+                _ => None,
+            },
+        );
+        push_parametric(
+            &mut binds,
+            "set_edge_display_mode",
+            1,
+            &self.set_edge_display_mode,
+            |args| match args {
+                [m] => Some(Action::SetEdgeDisplayMode(m.clone())),
+                _ => None,
+            },
+        );
+        push_parametric(
+            &mut binds,
+            "reset_edge",
+            1,
+            &self.reset_edge,
+            |args| match args {
+                [kind] => Some(Action::ResetEdge(kind.clone())),
+                _ => None,
+            },
+        );
+        // Font family / size / clamps + label + spacing.
+        push_parametric(
+            &mut binds,
+            "set_font_family",
+            1,
+            &self.set_font_family,
+            |args| match args {
+                [family] => Some(Action::SetFontFamily(family.clone())),
+                _ => None,
+            },
+        );
+        push_parametric(
+            &mut binds,
+            "set_font_size",
+            1,
+            &self.set_font_size,
+            |args| match args {
+                [pt] => Some(Action::SetFontSize(pt.clone())),
+                _ => None,
+            },
+        );
+        push_parametric(
+            &mut binds,
+            "set_font_min",
+            1,
+            &self.set_font_min,
+            |args| match args {
+                [pt] => Some(Action::SetFontMin(pt.clone())),
+                _ => None,
+            },
+        );
+        push_parametric(
+            &mut binds,
+            "set_font_max",
+            1,
+            &self.set_font_max,
+            |args| match args {
+                [pt] => Some(Action::SetFontMax(pt.clone())),
+                _ => None,
+            },
+        );
+        push_parametric(
+            &mut binds,
+            "set_edge_label_text",
+            1,
+            &self.set_edge_label_text,
+            |args| match args {
+                [text] => Some(Action::SetEdgeLabelText(text.clone())),
+                _ => None,
+            },
+        );
+        push_parametric(
+            &mut binds,
+            "set_edge_label_position",
+            1,
+            &self.set_edge_label_position,
+            |args| match args {
+                [pos] => Some(Action::SetEdgeLabelPosition(pos.clone())),
+                _ => None,
+            },
+        );
+        push_parametric(
+            &mut binds,
+            "set_spacing",
+            1,
+            &self.set_spacing,
+            |args| match args {
+                [v] => Some(Action::SetSpacing(v.clone())),
+                _ => None,
+            },
+        );
+        // Zoom-visibility window: min / max take a single arg
+        // each; `clear_zoom` is a unit variant so an empty `args`
+        // is the only valid shape.
+        push_parametric(
+            &mut binds,
+            "set_zoom_min",
+            1,
+            &self.set_zoom_min,
+            |args| match args {
+                [v] => Some(Action::SetZoomMin(v.clone())),
+                _ => None,
+            },
+        );
+        push_parametric(
+            &mut binds,
+            "set_zoom_max",
+            1,
+            &self.set_zoom_max,
+            |args| match args {
+                [v] => Some(Action::SetZoomMax(v.clone())),
+                _ => None,
+            },
+        );
+        push_parametric(
+            &mut binds,
+            "clear_zoom",
+            0,
+            &self.clear_zoom,
+            |args| match args {
+                [] => Some(Action::ClearZoom),
+                _ => None,
+            },
+        );
+        // Filesystem variants — NativeOnly + privilege-gated.
+        push_parametric(
+            &mut binds,
+            "open_document",
+            1,
+            &self.open_document,
+            |args| match args {
+                [path] => Some(Action::OpenDocument(path.clone())),
+                _ => None,
+            },
+        );
+        push_parametric(
+            &mut binds,
+            "save_document_as",
+            1,
+            &self.save_document_as,
+            |args| match args {
+                [path] => Some(Action::SaveDocumentAs(path.clone())),
+                _ => None,
+            },
+        );
+        push_parametric(
+            &mut binds,
+            "new_document_at",
+            1,
+            &self.new_document_at,
+            |args| match args {
+                [path] => Some(Action::NewDocumentAt(path.clone())),
+                _ => None,
+            },
+        );
+
         let mut custom_binds: Vec<(KeyBind, String)> = Vec::new();
         for (combo, mutation_id) in &self.custom_mutation_bindings {
             match KeyBind::parse(combo) {
@@ -459,5 +792,42 @@ impl KeybindConfig {
             self.console_font.clone(),
             self.console_font_size.max(4.0),
         )
+    }
+}
+
+/// Resolve every binding for one parametric variant. The builder
+/// closure picks the `Action` apart from the positional args; a
+/// `None` return means "wrong arg count for this variant" — the
+/// binding is logged and skipped (never panic on a user-config typo).
+///
+/// `expected_arity` is the count the builder closure expects (used
+/// only to make the warn-log self-explanatory: a user typo'ing a
+/// binding sees the verb name AND the arg count their config should
+/// have used). Passing the right value here is mechanical — it has
+/// to match the closure's accepted arm; mismatches just produce a
+/// slightly less helpful warn message.
+fn push_parametric<F>(
+    binds: &mut Vec<(Action, KeyBind)>,
+    name: &str,
+    expected_arity: usize,
+    bindings: &[ParametricBinding],
+    build: F,
+) where
+    F: Fn(&[String]) -> Option<Action>,
+{
+    for binding in bindings {
+        match KeyBind::parse(&binding.combo) {
+            Ok(k) => match build(&binding.args) {
+                Some(action) => binds.push((action, k)),
+                None => warn!(
+                    "skipping {} binding '{}': wrong args (got {}, expected {})",
+                    name,
+                    binding.combo,
+                    binding.args.len(),
+                    expected_arity,
+                ),
+            },
+            Err(e) => warn!("skipping invalid keybind '{}': {}", binding.combo, e),
+        }
     }
 }

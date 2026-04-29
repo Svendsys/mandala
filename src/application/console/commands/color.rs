@@ -218,6 +218,40 @@ fn execute_color(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     finalize_report(report, "color")
 }
 
+/// Mutation core: apply a single color axis (`bg|text|border`) to
+/// the current selection. Both the kv-form `color` console verb
+/// (which dispatches multiple kvs at once via `apply_kvs`) and the
+/// parametric `Action::SetColor*` Action arms route through the
+/// same trait dispatch — this helper is the single-kv wrapper.
+///
+/// Returns `true` when at least one target actually changed; `false`
+/// otherwise (no selection, invalid color string, every target was
+/// already at the requested color, or the axis isn't applicable to
+/// the selection kind). The Action arm uses the bool to decide
+/// whether to trigger a scene rebuild; the verb keeps its full
+/// per-pair outcome reporting.
+#[must_use = "the bool gates the scene rebuild — drop it explicitly with `let _ = …` if you don't care"]
+pub(crate) fn apply_color_axis_to_selection(
+    doc: &mut crate::application::document::MindMapDocument,
+    axis: &str,
+    value: &str,
+) -> bool {
+    let kvs = vec![(axis.to_string(), value.to_string())];
+    let report = apply_kvs(doc, &kvs, |view, key, value| {
+        let color = match ColorValue::parse(value) {
+            Ok(c) => c,
+            Err(msg) => return Some(Outcome::Invalid(msg)),
+        };
+        match key {
+            "bg" => Some(view.set_bg_color(color)),
+            "text" => Some(view.set_text_color(color)),
+            "border" => Some(view.set_border_color(color)),
+            _ => None,
+        }
+    });
+    report.any_applied
+}
+
 /// Common report-to-ExecResult conversion used by every
 /// trait-dispatched command.
 pub(super) fn finalize_report(
@@ -234,5 +268,50 @@ pub(super) fn finalize_report(
         ExecResult::ok_msg(format!("{} applied", verb))
     } else {
         ExecResult::ok_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::document::tests_common::{first_testament_node_id, load_test_doc};
+
+    #[test]
+    fn apply_color_axis_writes_bg_to_node() {
+        let mut doc = load_test_doc();
+        let id = first_testament_node_id(&doc);
+        doc.selection = SelectionState::Single(id.clone());
+        let changed = apply_color_axis_to_selection(&mut doc, "bg", "#fafafa");
+        assert!(changed);
+        let style = &doc.mindmap.nodes.get(&id).unwrap().style;
+        assert_eq!(style.background_color, "#fafafa");
+    }
+
+    #[test]
+    fn apply_color_axis_returns_false_with_no_selection() {
+        let mut doc = load_test_doc();
+        // Default selection is None — nothing to target.
+        assert!(!apply_color_axis_to_selection(&mut doc, "bg", "#fafafa"));
+    }
+
+    #[test]
+    fn apply_color_axis_returns_false_for_invalid_color() {
+        let mut doc = load_test_doc();
+        let id = first_testament_node_id(&doc);
+        doc.selection = SelectionState::Single(id.clone());
+        // ColorValue::parse rejects this; the trait dispatcher
+        // reports `Invalid` per target. `any_applied` stays false.
+        assert!(!apply_color_axis_to_selection(&mut doc, "bg", "definitely-not-a-color"));
+    }
+
+    #[test]
+    fn apply_color_axis_returns_false_for_unknown_axis() {
+        let mut doc = load_test_doc();
+        let id = first_testament_node_id(&doc);
+        doc.selection = SelectionState::Single(id.clone());
+        // The closure returns None for unknown keys; the dispatcher
+        // surfaces "unknown key" as a message and `any_applied`
+        // stays false.
+        assert!(!apply_color_axis_to_selection(&mut doc, "bogus_axis", "#fafafa"));
     }
 }

@@ -2343,6 +2343,36 @@ based on which modal is open. Native config: hardcoded defaults
 param + `localStorage`. Partial configs merge via serde
 `default` attributes.
 
+**Parametric Actions.** A subset of variants carries payload
+(`String` paths, `(field, value)` tuples, etc.) — these wrap
+parameterised console verbs so a user can bind e.g. `Ctrl+B` →
+`SetBorderField { field: "preset", value: "rounded" }` directly
+in `keybinds.json` without authoring a macro. Bindings use a
+sibling `ParametricBinding` shape:
+
+```jsonc
+{
+  "set_border_field": [
+    { "combo": "Ctrl+B", "args": ["preset", "rounded"] }
+  ],
+  "set_color_bg": [
+    { "combo": "Ctrl+1", "args": ["#fafafa"] }
+  ],
+  "clear_zoom": [
+    { "combo": "Shift+F12", "args": [] }
+  ]
+}
+```
+
+Each variant documents its arg shape on the `Action` definition;
+wrong arg counts emit a warn-log and are skipped (never panic).
+The dispatch arms call `pub(crate)` mutation cores extracted
+from each console verb, so the same setter path runs whether
+the user types the verb or fires the bound key. Filesystem
+variants (`OpenDocument`, `SaveDocumentAs`, `NewDocumentAt`) are
+`NativeOnly` and denylisted from non-User macro tiers per the
+privilege gate.
+
 ### Clipboard
 
 **Summary.** Cross-platform copy / cut / paste, with native

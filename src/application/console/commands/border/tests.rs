@@ -442,3 +442,57 @@ fn border_reset_clears_per_node_override() {
         "border reset must drop the per-node override"
     );
 }
+
+// ─────────────────────────────────────────────────────────────────
+// Mutation core: `apply_border_field_to_selection`. Same setter path
+// the verb uses — these tests pin the single-kv shape the parametric
+// `Action::SetBorderField` Action arm calls.
+// ─────────────────────────────────────────────────────────────────
+
+#[test]
+fn apply_border_field_writes_preset() {
+    let mut doc = fixture_doc();
+    let id = first_node_id(&doc);
+    doc.selection = SelectionState::Single(id.clone());
+    let changed = super::apply_border_field_to_selection(&mut doc, "preset", "heavy");
+    assert!(changed);
+    let cfg = doc
+        .mindmap
+        .nodes
+        .get(&id)
+        .unwrap()
+        .style
+        .border
+        .as_ref()
+        .expect("preset write should leave a border config");
+    assert_eq!(cfg.preset, "heavy");
+}
+
+#[test]
+fn apply_border_field_returns_false_with_no_selection() {
+    let mut doc = fixture_doc();
+    // Default selection is None — borders are node-only.
+    assert!(!super::apply_border_field_to_selection(&mut doc, "preset", "heavy"));
+}
+
+#[test]
+fn apply_border_field_returns_false_on_invalid_value() {
+    let mut doc = fixture_doc();
+    let id = first_node_id(&doc);
+    doc.selection = SelectionState::Single(id.clone());
+    // `stage_kv` rejects unknown presets — the core silently no-ops
+    // (Action arm warns upstream; verb path surfaces the typed err).
+    assert!(!super::apply_border_field_to_selection(&mut doc, "preset", "totally-invalid"));
+}
+
+#[test]
+fn apply_border_field_returns_false_for_edge_selection() {
+    let mut doc = fixture_doc();
+    let e = doc.mindmap.edges.first().expect("testament edges").clone();
+    doc.selection = SelectionState::Edge(crate::application::document::EdgeRef::new(
+        &e.from_id, &e.to_id, &e.edge_type,
+    ));
+    // Edge-adjacent selections are not applicable to borders — the
+    // core's selection resolver returns Err, the core returns false.
+    assert!(!super::apply_border_field_to_selection(&mut doc, "preset", "heavy"));
+}

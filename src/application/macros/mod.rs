@@ -409,6 +409,12 @@ mod tests {
             Action::CreateOrphanNode,
             Action::CreateOrphanNodeAndEdit,
             Action::NewDocument,
+            // Parametric filesystem variants — User tier passes
+            // them; non-User tiers reject (asserted in the next
+            // block).
+            Action::OpenDocument("/tmp/x.mindmap.json".into()),
+            Action::SaveDocumentAs("/tmp/x.mindmap.json".into()),
+            Action::NewDocumentAt("/tmp/x.mindmap.json".into()),
         ] {
             assert!(
                 MacroSource::User.allows_action(&a),
@@ -440,6 +446,14 @@ mod tests {
                 // editor over selected content.
                 Action::LabelEditOnSelection,
                 Action::NewDocument,
+                // Parametric filesystem variants — denylisted for
+                // non-User tiers. A hostile inline macro must not be
+                // able to overwrite arbitrary files, replace the
+                // active document with attacker content, or write
+                // out a blank doc on top of an existing path.
+                Action::OpenDocument("/tmp/x.mindmap.json".into()),
+                Action::SaveDocumentAs("/tmp/x.mindmap.json".into()),
+                Action::NewDocumentAt("/tmp/x.mindmap.json".into()),
             ] {
                 assert!(
                     !tier.allows_action(&a),

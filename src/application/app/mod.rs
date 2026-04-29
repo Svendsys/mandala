@@ -6,6 +6,12 @@ use std::sync::Arc;
 mod scene_rebuild;
 mod text_edit;
 
+// Cross-platform — Action arm bodies that touch only state shared
+// between native and WASM. Both `dispatch::dispatch_action` and
+// `run_wasm`'s inline match call into here. See
+// `WASM_CONVERGENCE.md` "partial Track C" for the rationale.
+mod cross_dispatch;
+
 // Native-only — interactive modal state machines absent on WASM.
 // See CLAUDE.md "Dual-target status".
 #[cfg(not(target_arch = "wasm32"))]

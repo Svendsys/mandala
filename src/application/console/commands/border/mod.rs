@@ -34,6 +34,7 @@ mod tests;
 
 pub use complete::complete_border;
 pub use execute::execute_border;
+pub(crate) use execute::apply_border_field_to_selection;
 
 /// kv keys recognised on the kv-form path.
 pub const KEYS: &[&str] = &[

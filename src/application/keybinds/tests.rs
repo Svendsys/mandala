@@ -481,6 +481,39 @@ fn test_wasm_compatibility_classifies_every_variant_explicitly() {
         Action::ToggleFps,
         Action::ToggleFpsDebug,
         Action::NewDocument,
+        // Parametric console verbs
+        Action::SetEdgeAnchor {
+            from: "top".into(),
+            to: "auto".into(),
+        },
+        Action::SetEdgeBodyGlyph("dash".into()),
+        Action::SetBorderField {
+            field: "preset".into(),
+            value: "rounded".into(),
+        },
+        Action::SetEdgeCap {
+            from: "arrow".into(),
+            to: "none".into(),
+        },
+        Action::SetColorBg("#fafafa".into()),
+        Action::SetColorText("accent".into()),
+        Action::SetColorBorder("#000000".into()),
+        Action::SetEdgeType("cross_link".into()),
+        Action::SetEdgeDisplayMode("portal".into()),
+        Action::ResetEdge("style".into()),
+        Action::SetFontFamily("Norse".into()),
+        Action::SetFontSize("14".into()),
+        Action::SetFontMin("10".into()),
+        Action::SetFontMax("32".into()),
+        Action::SetEdgeLabelText("hi".into()),
+        Action::SetEdgeLabelPosition("middle".into()),
+        Action::SetSpacing("normal".into()),
+        Action::SetZoomMin("0.5".into()),
+        Action::SetZoomMax("2.0".into()),
+        Action::ClearZoom,
+        Action::OpenDocument("/tmp/test.mindmap.json".into()),
+        Action::SaveDocumentAs("/tmp/test.mindmap.json".into()),
+        Action::NewDocumentAt("/tmp/test.mindmap.json".into()),
     ];
     for a in all_variants {
         let c = a.wasm_compatibility();
@@ -525,6 +558,11 @@ fn test_is_destructive_destructive_set_is_pinned() {
         Action::EditSelection,
         Action::EditSelectionClean,
         Action::LabelEditOnSelection,
+        // Parametric filesystem variants — destructive +
+        // privilege-gated (denylisted from non-User macro tiers).
+        Action::OpenDocument("/tmp/test.mindmap.json".into()),
+        Action::SaveDocumentAs("/tmp/test.mindmap.json".into()),
+        Action::NewDocumentAt("/tmp/test.mindmap.json".into()),
     ];
     for a in destructive {
         assert!(
@@ -543,6 +581,38 @@ fn test_is_destructive_destructive_set_is_pinned() {
         Action::SelectAll,
         Action::TextEditCursorLeft,
         Action::OpenColorPicker,
+        // Parametric mutators are recoverable via undo, so they
+        // ride the non-destructive lane (same trust posture as
+        // the existing configurable-* Actions).
+        Action::SetEdgeAnchor {
+            from: "top".into(),
+            to: "auto".into(),
+        },
+        Action::SetEdgeBodyGlyph("dash".into()),
+        Action::SetBorderField {
+            field: "preset".into(),
+            value: "rounded".into(),
+        },
+        Action::SetEdgeCap {
+            from: "arrow".into(),
+            to: "none".into(),
+        },
+        Action::SetColorBg("#fafafa".into()),
+        Action::SetColorText("accent".into()),
+        Action::SetColorBorder("#000000".into()),
+        Action::SetEdgeType("cross_link".into()),
+        Action::SetEdgeDisplayMode("portal".into()),
+        Action::ResetEdge("style".into()),
+        Action::SetFontFamily("Norse".into()),
+        Action::SetFontSize("14".into()),
+        Action::SetFontMin("10".into()),
+        Action::SetFontMax("32".into()),
+        Action::SetEdgeLabelText("hi".into()),
+        Action::SetEdgeLabelPosition("middle".into()),
+        Action::SetSpacing("normal".into()),
+        Action::SetZoomMin("0.5".into()),
+        Action::SetZoomMax("2.0".into()),
+        Action::ClearZoom,
     ] {
         assert!(
             !a.is_destructive(),
@@ -1197,5 +1267,366 @@ fn test_json_roundtrip_all_contexts() {
     assert_eq!(
         resolved.action_for_context(InputContext::TextEdit, "escape", false, false, false),
         Some(Action::TextEditCancel),
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Parametric bindings (`ParametricBinding`)
+// ─────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_parametric_set_edge_anchor_resolves_with_two_args() {
+    let cfg = KeybindConfig {
+        set_edge_anchor: vec![ParametricBinding {
+            combo: "Ctrl+Shift+a".into(),
+            args: vec!["top".into(), "auto".into()],
+        }],
+        ..KeybindConfig::default()
+    };
+    let resolved = cfg.resolve();
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "a", true, true, false),
+        Some(Action::SetEdgeAnchor {
+            from: "top".into(),
+            to: "auto".into(),
+        }),
+    );
+}
+
+#[test]
+fn test_parametric_set_edge_body_glyph_resolves_with_one_arg() {
+    let cfg = KeybindConfig {
+        set_edge_body_glyph: vec![ParametricBinding {
+            combo: "Ctrl+b".into(),
+            args: vec!["dash".into()],
+        }],
+        ..KeybindConfig::default()
+    };
+    let resolved = cfg.resolve();
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "b", true, false, false),
+        Some(Action::SetEdgeBodyGlyph("dash".into())),
+    );
+}
+
+#[test]
+fn test_parametric_wrong_arg_count_is_skipped() {
+    // A 1-arg binding for a 2-arg variant — the build closure
+    // returns None, the warn-log fires, no Action lands in the
+    // resolved table. Crucially: not a panic, so a user-config
+    // typo never crashes the app.
+    //
+    // The combo (Ctrl+F8) intentionally avoids the default-bound
+    // chords so the assertion is about "no parametric Action got
+    // built", not "the default got shadowed."
+    let cfg = KeybindConfig {
+        set_edge_anchor: vec![ParametricBinding {
+            combo: "Ctrl+F8".into(),
+            args: vec!["top".into()], // missing the `to` arg
+        }],
+        ..KeybindConfig::default()
+    };
+    let resolved = cfg.resolve();
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f8", true, false, false),
+        None,
+    );
+}
+
+#[test]
+fn test_parametric_binding_round_trips_through_json() {
+    let cfg = KeybindConfig {
+        set_edge_anchor: vec![ParametricBinding {
+            combo: "Ctrl+Shift+a".into(),
+            args: vec!["top".into(), "auto".into()],
+        }],
+        set_edge_body_glyph: vec![ParametricBinding {
+            combo: "Ctrl+b".into(),
+            args: vec!["dash".into()],
+        }],
+        ..KeybindConfig::default()
+    };
+    let json = serde_json::to_string(&cfg).unwrap();
+    let parsed = KeybindConfig::from_json(&json).unwrap();
+    assert_eq!(parsed.set_edge_anchor, cfg.set_edge_anchor);
+    assert_eq!(parsed.set_edge_body_glyph, cfg.set_edge_body_glyph);
+}
+
+#[test]
+fn test_parametric_set_border_field_resolves_with_two_args() {
+    let cfg = KeybindConfig {
+        set_border_field: vec![ParametricBinding {
+            combo: "Ctrl+Shift+b".into(),
+            args: vec!["preset".into(), "rounded".into()],
+        }],
+        ..KeybindConfig::default()
+    };
+    let resolved = cfg.resolve();
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "b", true, true, false),
+        Some(Action::SetBorderField {
+            field: "preset".into(),
+            value: "rounded".into(),
+        }),
+    );
+}
+
+#[test]
+fn test_parametric_color_axes_resolve() {
+    let cfg = KeybindConfig {
+        set_color_bg: vec![ParametricBinding {
+            combo: "F1".into(),
+            args: vec!["#fafafa".into()],
+        }],
+        set_color_text: vec![ParametricBinding {
+            combo: "F2".into(),
+            args: vec!["accent".into()],
+        }],
+        set_color_border: vec![ParametricBinding {
+            combo: "F3".into(),
+            args: vec!["#000000".into()],
+        }],
+        ..KeybindConfig::default()
+    };
+    let resolved = cfg.resolve();
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f1", false, false, false),
+        Some(Action::SetColorBg("#fafafa".into())),
+    );
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f2", false, false, false),
+        Some(Action::SetColorText("accent".into())),
+    );
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f3", false, false, false),
+        Some(Action::SetColorBorder("#000000".into())),
+    );
+}
+
+#[test]
+fn test_parametric_edge_structural_resolve() {
+    let cfg = KeybindConfig {
+        set_edge_type: vec![ParametricBinding {
+            combo: "F4".into(),
+            args: vec!["cross_link".into()],
+        }],
+        set_edge_display_mode: vec![ParametricBinding {
+            combo: "F5".into(),
+            args: vec!["portal".into()],
+        }],
+        reset_edge: vec![ParametricBinding {
+            combo: "F6".into(),
+            args: vec!["style".into()],
+        }],
+        ..KeybindConfig::default()
+    };
+    let resolved = cfg.resolve();
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f4", false, false, false),
+        Some(Action::SetEdgeType("cross_link".into())),
+    );
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f5", false, false, false),
+        Some(Action::SetEdgeDisplayMode("portal".into())),
+    );
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f6", false, false, false),
+        Some(Action::ResetEdge("style".into())),
+    );
+}
+
+#[test]
+fn test_parametric_font_family_size_resolve() {
+    let cfg = KeybindConfig {
+        set_font_family: vec![ParametricBinding {
+            combo: "F7".into(),
+            args: vec!["Norse".into()],
+        }],
+        set_font_size: vec![ParametricBinding {
+            combo: "F8".into(),
+            args: vec!["14".into()],
+        }],
+        set_font_min: vec![ParametricBinding {
+            combo: "Ctrl+F8".into(),
+            args: vec!["10".into()],
+        }],
+        set_font_max: vec![ParametricBinding {
+            combo: "Shift+F8".into(),
+            args: vec!["32".into()],
+        }],
+        ..KeybindConfig::default()
+    };
+    let resolved = cfg.resolve();
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f7", false, false, false),
+        Some(Action::SetFontFamily("Norse".into())),
+    );
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f8", false, false, false),
+        Some(Action::SetFontSize("14".into())),
+    );
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f8", true, false, false),
+        Some(Action::SetFontMin("10".into())),
+    );
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f8", false, true, false),
+        Some(Action::SetFontMax("32".into())),
+    );
+}
+
+#[test]
+fn test_parametric_label_text_position_resolve() {
+    let cfg = KeybindConfig {
+        set_edge_label_text: vec![ParametricBinding {
+            combo: "F9".into(),
+            args: vec!["hello".into()],
+        }],
+        set_edge_label_position: vec![ParametricBinding {
+            combo: "F10".into(),
+            args: vec!["middle".into()],
+        }],
+        set_spacing: vec![ParametricBinding {
+            combo: "F11".into(),
+            args: vec!["wide".into()],
+        }],
+        ..KeybindConfig::default()
+    };
+    let resolved = cfg.resolve();
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f9", false, false, false),
+        Some(Action::SetEdgeLabelText("hello".into())),
+    );
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f10", false, false, false),
+        Some(Action::SetEdgeLabelPosition("middle".into())),
+    );
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f11", false, false, false),
+        Some(Action::SetSpacing("wide".into())),
+    );
+}
+
+#[test]
+fn test_parametric_zoom_resolve_set_and_clear() {
+    let cfg = KeybindConfig {
+        set_zoom_min: vec![ParametricBinding {
+            combo: "F12".into(),
+            args: vec!["0.5".into()],
+        }],
+        set_zoom_max: vec![ParametricBinding {
+            combo: "Ctrl+F12".into(),
+            args: vec!["2.0".into()],
+        }],
+        clear_zoom: vec![ParametricBinding {
+            combo: "Shift+F12".into(),
+            args: vec![],
+        }],
+        ..KeybindConfig::default()
+    };
+    let resolved = cfg.resolve();
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f12", false, false, false),
+        Some(Action::SetZoomMin("0.5".into())),
+    );
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f12", true, false, false),
+        Some(Action::SetZoomMax("2.0".into())),
+    );
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f12", false, true, false),
+        Some(Action::ClearZoom),
+    );
+}
+
+#[test]
+fn test_parametric_filesystem_variants_resolve() {
+    let cfg = KeybindConfig {
+        open_document: vec![ParametricBinding {
+            combo: "Ctrl+F1".into(),
+            args: vec!["/tmp/test.mindmap.json".into()],
+        }],
+        save_document_as: vec![ParametricBinding {
+            combo: "Ctrl+F2".into(),
+            args: vec!["/tmp/save.mindmap.json".into()],
+        }],
+        new_document_at: vec![ParametricBinding {
+            combo: "Ctrl+F3".into(),
+            args: vec!["/tmp/new.mindmap.json".into()],
+        }],
+        ..KeybindConfig::default()
+    };
+    let resolved = cfg.resolve();
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f1", true, false, false),
+        Some(Action::OpenDocument("/tmp/test.mindmap.json".into())),
+    );
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f2", true, false, false),
+        Some(Action::SaveDocumentAs("/tmp/save.mindmap.json".into())),
+    );
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f3", true, false, false),
+        Some(Action::NewDocumentAt("/tmp/new.mindmap.json".into())),
+    );
+}
+
+#[test]
+fn test_parametric_clear_zoom_with_extra_args_is_skipped() {
+    // ClearZoom is a unit variant — the builder closure rejects any
+    // non-empty args slice. Confirms the unit-variant shape works
+    // through the same `push_parametric` plumbing as payload variants.
+    let cfg = KeybindConfig {
+        clear_zoom: vec![ParametricBinding {
+            combo: "Shift+F12".into(),
+            args: vec!["unexpected".into()],
+        }],
+        ..KeybindConfig::default()
+    };
+    let resolved = cfg.resolve();
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f12", false, true, false),
+        None,
+    );
+}
+
+#[test]
+fn test_parametric_set_edge_cap_resolves_with_two_args() {
+    let cfg = KeybindConfig {
+        set_edge_cap: vec![ParametricBinding {
+            combo: "Ctrl+Shift+c".into(),
+            args: vec!["arrow".into(), "none".into()],
+        }],
+        ..KeybindConfig::default()
+    };
+    let resolved = cfg.resolve();
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "c", true, true, false),
+        Some(Action::SetEdgeCap {
+            from: "arrow".into(),
+            to: "none".into(),
+        }),
+    );
+}
+
+#[test]
+fn test_parametric_binding_user_partial_config_only_overrides_listed_field() {
+    // Confirm the `#[serde(default)]` shape works: a partial JSON
+    // with only the parametric field set leaves every other binding
+    // at its default.
+    let json = r#"{
+        "set_edge_body_glyph": [
+            { "combo": "Ctrl+b", "args": ["dash"] }
+        ]
+    }"#;
+    let cfg = KeybindConfig::from_json(json).unwrap();
+    let resolved = cfg.resolve();
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "b", true, false, false),
+        Some(Action::SetEdgeBodyGlyph("dash".into())),
+    );
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "z", true, false, false),
+        Some(Action::Undo),
     );
 }
