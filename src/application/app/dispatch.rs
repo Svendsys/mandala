@@ -576,134 +576,40 @@ pub(in crate::application::app) fn dispatch_action(
         }
 
         Action::ZoomIn | Action::ZoomOut => {
-            // Step zoom centred on the cursor. Factor mirrors the
-            // legacy hardcoded wheel handler (1.1 step) so wheel-bound
-            // ZoomIn/ZoomOut behave identically to today's wheel zoom.
-            let factor = if matches!(action, Action::ZoomIn) {
-                1.1f32
-            } else {
-                1.0f32 / 1.1f32
-            };
-            ctx.renderer.process_decree(
-                crate::application::common::RenderDecree::CameraZoom {
-                    screen_x: ctx.cursor_pos.0 as f32,
-                    screen_y: ctx.cursor_pos.1 as f32,
-                    factor,
-                },
-            );
+            super::cross_dispatch::apply_zoom_step(&action, *ctx.cursor_pos, ctx.renderer);
             DispatchOutcome::Handled
         }
         Action::ZoomReset => {
-            // Reset zoom to 1.0 anchored at the screen centre (NOT
-            // the cursor). A cursor-anchored zoom emits a `ZoomAt`
-            // decree whose canvas-position formula shifts the camera
-            // when the focus is off-centre — so a Ctrl+0 with the
-            // cursor in the corner would scoot the view by 200+ px
-            // instead of cleanly resetting in place. Computing the
-            // factor inverse against current zoom keeps the
-            // multiplicative ZoomAt path; using screen-centre as
-            // the focus cancels the position shift algebraically.
-            let zoom = ctx.renderer.camera_zoom().max(f32::EPSILON);
-            ctx.renderer.process_decree(
-                crate::application::common::RenderDecree::CameraZoom {
-                    screen_x: ctx.renderer.surface_width() as f32 * 0.5,
-                    screen_y: ctx.renderer.surface_height() as f32 * 0.5,
-                    factor: 1.0f32 / zoom,
-                },
-            );
+            super::cross_dispatch::apply_zoom_reset(ctx.renderer);
             DispatchOutcome::Handled
         }
         Action::ZoomFit => {
-            // Fit the viewport to the current tree's bounds. Falls
-            // back to a no-op when no tree is loaded yet.
-            if let Some(tree) = ctx.mindmap_tree.as_ref() {
-                ctx.renderer.fit_camera_to_tree(&tree.tree);
-            }
+            super::cross_dispatch::apply_zoom_fit(ctx.mindmap_tree, ctx.renderer);
             DispatchOutcome::Handled
         }
         Action::PanCameraNorth
         | Action::PanCameraSouth
         | Action::PanCameraEast
         | Action::PanCameraWest => {
-            // Keyboard nudge — fixed step in screen pixels, then
-            // converted to a CameraPan decree like the LeftDrag path
-            // emits per cursor move. Step size matches a coarse but
-            // perceptible nudge; users who want finer control bind a
-            // smaller step manually (when the modifier-fallback or a
-            // future per-arm step factor lands).
-            const PAN_STEP_PX: f32 = 50.0;
-            // Outer pattern guarantees one of the four — but the inner
-            // `match action` has to be exhaustive over `Action`, and
-            // `Action` is `#[non_exhaustive]`. Default to (0,0) so the
-            // catch-all is a safe no-op rather than a panic in an
-            // interactive path (CODE_CONVENTIONS §9). If a future
-            // contributor extends the outer pattern, they need to
-            // remember to extend this match too — the no-op fallback
-            // is loud enough on a manual smoke-test (key does
-            // nothing) to surface the omission.
-            let (dx, dy) = match action {
-                Action::PanCameraNorth => (0.0, -PAN_STEP_PX),
-                Action::PanCameraSouth => (0.0, PAN_STEP_PX),
-                Action::PanCameraEast => (-PAN_STEP_PX, 0.0),
-                Action::PanCameraWest => (PAN_STEP_PX, 0.0),
-                _ => (0.0, 0.0),
-            };
-            ctx.renderer.process_decree(
-                crate::application::common::RenderDecree::CameraPan(dx, dy),
-            );
+            super::cross_dispatch::apply_pan_camera(&action, ctx.renderer);
             DispatchOutcome::Handled
         }
         Action::CenterOnSelection => {
-            // Centre the camera on the centroid of the currently-
-            // selected nodes. Falls back to a no-op when nothing is
-            // selected (or only an edge / portal-marker selection,
-            // which carries no point centroid).
             if let Some(doc) = ctx.document.as_ref() {
-                let ids: Vec<&str> = doc.selection.selected_ids();
-                if !ids.is_empty() {
-                    let mut sum = glam::Vec2::ZERO;
-                    let mut count = 0u32;
-                    for id in &ids {
-                        if let Some(node) = doc.mindmap.nodes.get(*id) {
-                            sum += glam::Vec2::new(
-                                node.position.x as f32 + node.size.width as f32 * 0.5,
-                                node.position.y as f32 + node.size.height as f32 * 0.5,
-                            );
-                            count += 1;
-                        }
-                    }
-                    if count > 0 {
-                        ctx.renderer.set_camera_center(sum / count as f32);
-                    }
-                }
+                super::cross_dispatch::apply_center_on_selection(doc, ctx.renderer);
             }
             DispatchOutcome::Handled
         }
         Action::JumpToRoot => {
-            // Select the document's first root node and centre on it.
-            // "First" = id-sorted; when multiple roots exist this is
-            // deterministic. No-op when the document is empty.
             if let Some(doc) = ctx.document.as_mut() {
-                let target = doc.mindmap.root_nodes().first().map(|n| {
-                    (
-                        n.id.clone(),
-                        glam::Vec2::new(
-                            n.position.x as f32 + n.size.width as f32 * 0.5,
-                            n.position.y as f32 + n.size.height as f32 * 0.5,
-                        ),
-                    )
-                });
-                if let Some((id, centre)) = target {
-                    doc.selection = SelectionState::Single(id);
-                    ctx.renderer.set_camera_center(centre);
-                    rebuild_all(
-                        doc,
-                        ctx.mindmap_tree,
-                        ctx.app_scene,
-                        ctx.renderer,
-                        ctx.scene_cache,
-                    );
-                }
+                let mut rc = super::cross_dispatch::RebuildContext {
+                    document: doc,
+                    mindmap_tree: ctx.mindmap_tree,
+                    app_scene: ctx.app_scene,
+                    renderer: ctx.renderer,
+                    scene_cache: ctx.scene_cache,
+                };
+                super::cross_dispatch::apply_jump_to_root(&mut rc);
             }
             DispatchOutcome::Handled
         }

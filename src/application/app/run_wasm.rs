@@ -480,6 +480,47 @@ app.event_loop.run(move |event, _window_target| {
                                         rebuild_all(&input.document, &mut input.mindmap_tree, &mut input.app_scene, renderer, &mut input.scene_cache);
                                     }
                                 }
+                                // ── Camera / zoom — Track A.1 ──────
+                                // Bodies live in `cross_dispatch.rs`;
+                                // both dispatchers call the same helper.
+                                // See `WASM_CONVERGENCE.md` "partial
+                                // Track C".
+                                a @ (Action::ZoomIn | Action::ZoomOut) => {
+                                    super::cross_dispatch::apply_zoom_step(
+                                        &a, input.cursor_pos, renderer,
+                                    );
+                                }
+                                Action::ZoomReset => {
+                                    super::cross_dispatch::apply_zoom_reset(renderer);
+                                }
+                                Action::ZoomFit => {
+                                    super::cross_dispatch::apply_zoom_fit(
+                                        &input.mindmap_tree, renderer,
+                                    );
+                                }
+                                a @ (Action::PanCameraNorth
+                                    | Action::PanCameraSouth
+                                    | Action::PanCameraEast
+                                    | Action::PanCameraWest) => {
+                                    super::cross_dispatch::apply_pan_camera(
+                                        &a, renderer,
+                                    );
+                                }
+                                Action::CenterOnSelection => {
+                                    super::cross_dispatch::apply_center_on_selection(
+                                        &input.document, renderer,
+                                    );
+                                }
+                                Action::JumpToRoot => {
+                                    let mut rc = super::cross_dispatch::RebuildContext {
+                                        document: &mut input.document,
+                                        mindmap_tree: &mut input.mindmap_tree,
+                                        app_scene: &mut input.app_scene,
+                                        renderer,
+                                        scene_cache: &mut input.scene_cache,
+                                    };
+                                    super::cross_dispatch::apply_jump_to_root(&mut rc);
+                                }
                                 // Other Compatible Actions don't have WASM
                                 // arms yet — Track A in WASM_CONVERGENCE.md
                                 // is the path to add them by routing
