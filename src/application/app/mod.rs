@@ -12,6 +12,13 @@ mod text_edit;
 // `WASM_CONVERGENCE.md` "partial Track C" for the rationale.
 mod cross_dispatch;
 
+// Cross-platform — `dispatch_macro` step loop + privilege gate,
+// abstracted over `MacroDispatchTarget`. Native and WASM each
+// provide an impl that wraps their respective context type.
+// Lifted from `dispatch.rs::dispatch_macro` to single-source the
+// privilege gate. See `WASM_CONVERGENCE.md` Track B.
+mod dispatch_macro_core;
+
 // Native-only — interactive modal state machines absent on WASM.
 // See CLAUDE.md "Dual-target status".
 #[cfg(not(target_arch = "wasm32"))]

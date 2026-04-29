@@ -990,171 +990,113 @@ pub(in crate::application::app) fn dispatch_macro(
     macro_id: &str,
     ctx: &mut InputHandlerContext<'_>,
 ) -> bool {
-    use crate::application::macros::{MacroStep, MacroTarget};
-    let (mac, source) = match ctx.macros.get_with_source(macro_id) {
-        Some((m, s)) => (m.clone(), s),
-        None => {
-            log::warn!("dispatch_macro: unknown macro id '{}'", macro_id);
+    // Body lifted to `dispatch_macro_core` (cross-platform); this
+    // shim wraps `ctx` in a `NativeMacroDispatchTarget` so the
+    // native dispatch chain calls the same step loop the WASM
+    // dispatcher uses. The privilege gate is single-sourced there.
+    let mut target = NativeMacroDispatchTarget { ctx };
+    super::dispatch_macro_core::dispatch_macro(macro_id, &mut target)
+}
+
+/// Native impl of [`super::dispatch_macro_core::MacroDispatchTarget`].
+/// Wraps `&mut InputHandlerContext` and forwards each operation to
+/// the existing native helpers (`dispatch_action`,
+/// `apply_keybind_custom_mutation`, `execute_console_line`).
+struct NativeMacroDispatchTarget<'a, 'b> {
+    ctx: &'a mut InputHandlerContext<'b>,
+}
+
+impl<'a, 'b> super::dispatch_macro_core::MacroDispatchTarget for NativeMacroDispatchTarget<'a, 'b> {
+    fn registry(&self) -> &crate::application::macros::MacroRegistry {
+        self.ctx.macros
+    }
+
+    fn dispatch_action(&mut self, action: Action) -> DispatchOutcome {
+        super::dispatch::dispatch_action(action, self.ctx, None)
+    }
+
+    fn apply_custom_mutation(&mut self, id: &str, node_id: &str) -> bool {
+        // Lookup mutation, apply via the existing
+        // `apply_keybind_custom_mutation` helper, rebuild scene if
+        // applied. Mirrors the `MacroStep::CustomMutation` body
+        // pre-Commit-3 (lines 1067-1094 of the prior dispatch.rs).
+        let cm = self
+            .ctx
+            .document
+            .as_ref()
+            .and_then(|d| d.mutation_registry.get(id).cloned());
+        let Some(cm) = cm else {
+            log::warn!("macro step: unknown custom-mutation id '{}'", id);
             return false;
-        }
-    };
-    let mut any_ran = false;
-    for step in &mac.steps {
-        match step {
-            MacroStep::Action { action } => {
-                // Privilege gate symmetric with `ConsoleLine` below.
-                // Non-User tiers cannot fire destructive / clipboard /
-                // I/O Actions. Fail-closed: a rejected privileged
-                // step aborts the rest of the macro so a
-                // `[DeleteSelection, ConsoleLine(rejected),
-                // SaveDocument]` pattern can't sneak its outer steps
-                // past the gate.
-                if !source.allows_action(action) {
-                    log::warn!(
-                        "macro '{}' (source {:?}): Action {:?} rejected — \
-                         tier may not invoke destructive / I/O Actions; \
-                         aborting remaining steps",
-                        macro_id, source, action
-                    );
-                    return any_ran;
-                }
-                let outcome = dispatch_action(action.clone(), ctx, None);
-                if matches!(outcome, DispatchOutcome::Handled) {
-                    any_ran = true;
-                }
-            }
-            MacroStep::CustomMutation { id, target } => {
-                let nid_opt: Option<String> = match target {
-                    MacroTarget::CurrentSelection => {
-                        ctx.document.as_ref().and_then(|d| {
-                            if let SelectionState::Single(nid) = &d.selection {
-                                Some(nid.clone())
-                            } else {
-                                None
-                            }
-                        })
-                    }
-                    MacroTarget::NodeId(s) => {
-                        // Guard against typo'd or stale node ids: if
-                        // the document doesn't have the named node
-                        // we'd silently no-op (collect_affected_node_ids
-                        // returns the literal id, snapshot loop filters
-                        // missing, no mutation lands). Surface the
-                        // problem instead.
-                        if ctx
-                            .document
-                            .as_ref()
-                            .map(|d| d.mindmap.nodes.contains_key(s))
-                            .unwrap_or(false)
-                        {
-                            Some(s.clone())
-                        } else {
-                            log::warn!(
-                                "macro step CustomMutation: node id '{}' not found",
-                                s
-                            );
-                            continue;
-                        }
-                    }
-                };
-                let Some(nid) = nid_opt else {
-                    log::debug!(
-                        "macro step CustomMutation: no resolvable target; skipping id={}",
-                        id
-                    );
-                    continue;
-                };
-                let cm = ctx
-                    .document
-                    .as_ref()
-                    .and_then(|d| d.mutation_registry.get(id).cloned());
-                let Some(cm) = cm else {
-                    log::warn!("macro step: unknown custom-mutation id '{}'", id);
-                    continue;
-                };
-                if let Some(doc) = ctx.document.as_mut() {
-                    let now = super::now_ms() as u64;
-                    if apply_keybind_custom_mutation(
-                        doc,
-                        ctx.mindmap_tree,
-                        ctx.scene_cache,
-                        &cm,
-                        &nid,
-                        now,
-                    ) {
-                        any_ran = true;
-                        rebuild_all(
-                            doc,
-                            ctx.mindmap_tree,
-                            ctx.app_scene,
-                            ctx.renderer,
-                            ctx.scene_cache,
-                        );
-                    }
-                }
-            }
-            MacroStep::ConsoleLine { line } => {
-                // **Privilege gate.** `ConsoleLine` runs an arbitrary
-                // console verb, including filesystem-touching ones.
-                // Only `MacroSource::User` macros may carry it —
-                // app-bundled, map-inline, and node-inline tiers
-                // come from sources the user didn't necessarily
-                // author, so they cannot do file I/O via macros.
-                // Gate is active: App and Map tiers load today;
-                // Inline is the only deferred tier. See
-                // CODE_CONVENTIONS.md §3 carve-out.
-                if !source.allows_console_line() {
-                    // Fail-closed: a tier that's not allowed to run
-                    // console verbs aborts the rest of the macro.
-                    // `continue` would let post-gate Action steps
-                    // still run, which combined with destructive
-                    // Actions could leave the user in an unexpected
-                    // state (e.g. `[DeleteSelection,
-                    // ConsoleLine(rejected), SaveDocument]` would
-                    // persist the post-delete state without the
-                    // user's consent).
-                    log::warn!(
-                        "macro '{}' (source {:?}): ConsoleLine step rejected — \
-                         only User-tier macros may run console verbs; \
-                         aborting remaining steps",
-                        macro_id, source
-                    );
-                    return any_ran;
-                }
-                // `execute_console_line` requires a loaded document
-                // (it takes `&mut MindMapDocument`, not `Option`).
-                // Macros fired before any document is loaded — i.e.
-                // a `[ConsoleLine("open path/to/map.json")]` macro
-                // bound to a startup hotkey — silently skip; users
-                // who need the pre-load case should bind the path
-                // through CLI args or the WASM `?map=` query param
-                // rather than a macro. Logged at `warn!` so the
-                // skip is visible.
-                if let Some(doc) = ctx.document.as_mut() {
-                    crate::application::app::console_input::exec::execute_console_line(
-                        line,
-                        ctx.console_state,
-                        ctx.label_edit_state,
-                        ctx.portal_text_edit_state,
-                        ctx.color_picker_state,
-                        doc,
-                        ctx.mindmap_tree,
-                        ctx.app_scene,
-                        ctx.renderer,
-                        ctx.scene_cache,
-                        ctx.macros,
-                    );
-                    any_ran = true;
-                } else {
-                    log::warn!(
-                        "macro step ConsoleLine: no document loaded; skipping '{}'",
-                        line
-                    );
-                }
-            }
+        };
+        let Some(doc) = self.ctx.document.as_mut() else {
+            return false;
+        };
+        let now = super::now_ms() as u64;
+        if apply_keybind_custom_mutation(
+            doc,
+            self.ctx.mindmap_tree,
+            self.ctx.scene_cache,
+            &cm,
+            node_id,
+            now,
+        ) {
+            rebuild_all(
+                doc,
+                self.ctx.mindmap_tree,
+                self.ctx.app_scene,
+                self.ctx.renderer,
+                self.ctx.scene_cache,
+            );
+            true
+        } else {
+            false
         }
     }
-    any_ran
+
+    fn execute_console_line(&mut self, line: &str) {
+        // `execute_console_line` requires a loaded document (takes
+        // `&mut MindMapDocument`, not `Option`). Macros fired before
+        // any document is loaded silently skip.
+        if let Some(doc) = self.ctx.document.as_mut() {
+            crate::application::app::console_input::exec::execute_console_line(
+                line,
+                self.ctx.console_state,
+                self.ctx.label_edit_state,
+                self.ctx.portal_text_edit_state,
+                self.ctx.color_picker_state,
+                doc,
+                self.ctx.mindmap_tree,
+                self.ctx.app_scene,
+                self.ctx.renderer,
+                self.ctx.scene_cache,
+                self.ctx.macros,
+            );
+        } else {
+            log::warn!(
+                "macro step ConsoleLine: no document loaded; skipping '{}'",
+                line,
+            );
+        }
+    }
+
+    fn current_selection_node_id(&self) -> Option<String> {
+        self.ctx.document.as_ref().and_then(|d| {
+            if let SelectionState::Single(nid) = &d.selection {
+                Some(nid.clone())
+            } else {
+                None
+            }
+        })
+    }
+
+    fn has_node(&self, node_id: &str) -> bool {
+        self.ctx
+            .document
+            .as_ref()
+            .map(|d| d.mindmap.nodes.contains_key(node_id))
+            .unwrap_or(false)
+    }
 }
 
 /// Pure inner helper for the keybind-triggered custom-mutation path.
