@@ -11,6 +11,26 @@ use super::action::Action;
 use super::bind::KeyBind;
 use super::resolved::ResolvedKeybinds;
 
+/// One binding for a parametric Action — a key combo plus the
+/// positional payload args the resolve step feeds into the
+/// variant's payload. Free-form `String` args; typed validation
+/// happens in the dispatch arm (parse failures emit a warn-log and
+/// the dispatch returns `Handled` as a best-effort no-op — Action
+/// arms have no scrollback surface).
+///
+/// Args are positional rather than keyed so the same shape covers
+/// single-payload (1 arg, e.g. `set_edge_body_glyph(["dash"])`),
+/// from/to (2 args, e.g. `set_edge_anchor(["top", "auto"])`), and
+/// field/value (2 args) variants. Per-variant arg counts are
+/// documented next to each `Action` definition; a binding with the
+/// wrong count emits a warn-log and is skipped.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParametricBinding {
+    pub combo: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+}
+
 /// The raw, user-editable config. Every field is a list of binding strings
 /// so users can assign multiple keys to the same action (e.g. Ctrl+Z and
 /// the Undo key both mapped to `Undo`). Fields default via serde so a
@@ -133,6 +153,14 @@ pub struct KeybindConfig {
     pub toggle_fps: Vec<String>,
     pub toggle_fps_debug: Vec<String>,
     pub new_document: Vec<String>,
+
+    // ── Parametric console-verb Actions ─────────────────────────
+    // Each field is a list of `ParametricBinding`s. Args are
+    // positional; per-variant shape is documented on the matching
+    // `Action` variant. Defaults are empty — users opt in by adding
+    // a binding to their `keybinds.json`.
+    pub set_edge_anchor: Vec<ParametricBinding>,
+    pub set_edge_body_glyph: Vec<ParametricBinding>,
 
     // ── Style / metadata ─────────────────────────────────────────
     /// Font family name for the console overlay.
@@ -296,6 +324,12 @@ impl Default for KeybindConfig {
             toggle_fps_debug: vec![],
             new_document: vec![],
 
+            // Parametric console-verb Actions. Defaults empty — users
+            // opt in via `keybinds.json` because there's no universal
+            // sensible default for `from=top to=bottom`-style payloads.
+            set_edge_anchor: vec![],
+            set_edge_body_glyph: vec![],
+
             // Style / metadata
             console_font: String::new(),
             console_font_size: 16.0,
@@ -431,6 +465,34 @@ impl KeybindConfig {
                 }
             }
         }
+
+        // Parametric bindings: each variant carries its own payload
+        // shape, so each `push_parametric` call passes a builder
+        // closure that picks the args apart and constructs the
+        // `Action`. Wrong arg counts emit a warn-log and are skipped
+        // — never panic on a user-config typo.
+        push_parametric(
+            &mut binds,
+            "set_edge_anchor",
+            &self.set_edge_anchor,
+            |args| match args {
+                [from, to] => Some(Action::SetEdgeAnchor {
+                    from: from.clone(),
+                    to: to.clone(),
+                }),
+                _ => None,
+            },
+        );
+        push_parametric(
+            &mut binds,
+            "set_edge_body_glyph",
+            &self.set_edge_body_glyph,
+            |args| match args {
+                [glyph] => Some(Action::SetEdgeBodyGlyph(glyph.clone())),
+                _ => None,
+            },
+        );
+
         let mut custom_binds: Vec<(KeyBind, String)> = Vec::new();
         for (combo, mutation_id) in &self.custom_mutation_bindings {
             match KeyBind::parse(combo) {
@@ -459,5 +521,33 @@ impl KeybindConfig {
             self.console_font.clone(),
             self.console_font_size.max(4.0),
         )
+    }
+}
+
+/// Resolve every binding for one parametric variant. The builder
+/// closure picks the `Action` apart from the positional args; a
+/// `None` return means "wrong arg count for this variant" — the
+/// binding is logged and skipped (never panic on a user-config typo).
+fn push_parametric<F>(
+    binds: &mut Vec<(Action, KeyBind)>,
+    name: &str,
+    bindings: &[ParametricBinding],
+    build: F,
+) where
+    F: Fn(&[String]) -> Option<Action>,
+{
+    for binding in bindings {
+        match KeyBind::parse(&binding.combo) {
+            Ok(k) => match build(&binding.args) {
+                Some(action) => binds.push((action, k)),
+                None => warn!(
+                    "skipping {} binding '{}': wrong args (got {})",
+                    name,
+                    binding.combo,
+                    binding.args.len(),
+                ),
+            },
+            Err(e) => warn!("skipping invalid keybind '{}': {}", binding.combo, e),
+        }
     }
 }

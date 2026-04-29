@@ -878,6 +878,51 @@ pub(in crate::application::app) fn dispatch_action(
             DispatchOutcome::Handled
         }
 
+        // ── Parametric console-verb Actions ────────────────────
+        // Each routes through the verb's `pub(crate) apply_*` core
+        // — single source of truth with the typed console verb.
+        // On a successful change, trigger a full scene rebuild
+        // mirroring the verb dispatcher's post-execute drain.
+        Action::SetEdgeAnchor { ref from, ref to } => {
+            if let Some(doc) = ctx.document.as_mut() {
+                let changed = crate::application::console::commands::anchor::apply_anchor_to_selection(
+                    doc,
+                    Some(from.as_str()),
+                    Some(to.as_str()),
+                );
+                if changed {
+                    ctx.scene_cache.clear();
+                    rebuild_all(
+                        doc,
+                        ctx.mindmap_tree,
+                        ctx.app_scene,
+                        ctx.renderer,
+                        ctx.scene_cache,
+                    );
+                }
+            }
+            DispatchOutcome::Handled
+        }
+        Action::SetEdgeBodyGlyph(ref preset) => {
+            if let Some(doc) = ctx.document.as_mut() {
+                let changed = crate::application::console::commands::body::apply_body_glyph_to_selection(
+                    doc,
+                    preset,
+                );
+                if changed {
+                    ctx.scene_cache.clear();
+                    rebuild_all(
+                        doc,
+                        ctx.mindmap_tree,
+                        ctx.app_scene,
+                        ctx.renderer,
+                        ctx.scene_cache,
+                    );
+                }
+            }
+            DispatchOutcome::Handled
+        }
+
         // Console / Picker / LabelEdit / TextEdit modal-context actions
         // not handled above (e.g. cancel/commit) are dispatched by their
         // respective modal handlers. Falling through to `Unhandled`

@@ -481,6 +481,12 @@ fn test_wasm_compatibility_classifies_every_variant_explicitly() {
         Action::ToggleFps,
         Action::ToggleFpsDebug,
         Action::NewDocument,
+        // Parametric console verbs
+        Action::SetEdgeAnchor {
+            from: "top".into(),
+            to: "auto".into(),
+        },
+        Action::SetEdgeBodyGlyph("dash".into()),
     ];
     for a in all_variants {
         let c = a.wasm_compatibility();
@@ -543,6 +549,14 @@ fn test_is_destructive_destructive_set_is_pinned() {
         Action::SelectAll,
         Action::TextEditCursorLeft,
         Action::OpenColorPicker,
+        // Parametric mutators are recoverable via undo, so they
+        // ride the non-destructive lane (same trust posture as
+        // the existing configurable-* Actions).
+        Action::SetEdgeAnchor {
+            from: "top".into(),
+            to: "auto".into(),
+        },
+        Action::SetEdgeBodyGlyph("dash".into()),
     ] {
         assert!(
             !a.is_destructive(),
@@ -1197,5 +1211,109 @@ fn test_json_roundtrip_all_contexts() {
     assert_eq!(
         resolved.action_for_context(InputContext::TextEdit, "escape", false, false, false),
         Some(Action::TextEditCancel),
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Parametric bindings (`ParametricBinding`)
+// ─────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_parametric_set_edge_anchor_resolves_with_two_args() {
+    let cfg = KeybindConfig {
+        set_edge_anchor: vec![ParametricBinding {
+            combo: "Ctrl+Shift+a".into(),
+            args: vec!["top".into(), "auto".into()],
+        }],
+        ..KeybindConfig::default()
+    };
+    let resolved = cfg.resolve();
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "a", true, true, false),
+        Some(Action::SetEdgeAnchor {
+            from: "top".into(),
+            to: "auto".into(),
+        }),
+    );
+}
+
+#[test]
+fn test_parametric_set_edge_body_glyph_resolves_with_one_arg() {
+    let cfg = KeybindConfig {
+        set_edge_body_glyph: vec![ParametricBinding {
+            combo: "Ctrl+b".into(),
+            args: vec!["dash".into()],
+        }],
+        ..KeybindConfig::default()
+    };
+    let resolved = cfg.resolve();
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "b", true, false, false),
+        Some(Action::SetEdgeBodyGlyph("dash".into())),
+    );
+}
+
+#[test]
+fn test_parametric_wrong_arg_count_is_skipped() {
+    // A 1-arg binding for a 2-arg variant — the build closure
+    // returns None, the warn-log fires, no Action lands in the
+    // resolved table. Crucially: not a panic, so a user-config
+    // typo never crashes the app.
+    //
+    // The combo (Ctrl+F8) intentionally avoids the default-bound
+    // chords so the assertion is about "no parametric Action got
+    // built", not "the default got shadowed."
+    let cfg = KeybindConfig {
+        set_edge_anchor: vec![ParametricBinding {
+            combo: "Ctrl+F8".into(),
+            args: vec!["top".into()], // missing the `to` arg
+        }],
+        ..KeybindConfig::default()
+    };
+    let resolved = cfg.resolve();
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f8", true, false, false),
+        None,
+    );
+}
+
+#[test]
+fn test_parametric_binding_round_trips_through_json() {
+    let cfg = KeybindConfig {
+        set_edge_anchor: vec![ParametricBinding {
+            combo: "Ctrl+Shift+a".into(),
+            args: vec!["top".into(), "auto".into()],
+        }],
+        set_edge_body_glyph: vec![ParametricBinding {
+            combo: "Ctrl+b".into(),
+            args: vec!["dash".into()],
+        }],
+        ..KeybindConfig::default()
+    };
+    let json = serde_json::to_string(&cfg).unwrap();
+    let parsed = KeybindConfig::from_json(&json).unwrap();
+    assert_eq!(parsed.set_edge_anchor, cfg.set_edge_anchor);
+    assert_eq!(parsed.set_edge_body_glyph, cfg.set_edge_body_glyph);
+}
+
+#[test]
+fn test_parametric_binding_user_partial_config_only_overrides_listed_field() {
+    // Confirm the `#[serde(default)]` shape works: a partial JSON
+    // with only the parametric field set leaves every other binding
+    // at its default.
+    let json = r#"{
+        "set_edge_body_glyph": [
+            { "combo": "Ctrl+b", "args": ["dash"] }
+        ]
+    }"#;
+    let cfg = KeybindConfig::from_json(json).unwrap();
+    let resolved = cfg.resolve();
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "b", true, false, false),
+        Some(Action::SetEdgeBodyGlyph("dash".into())),
+    );
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "z", true, false, false),
+        Some(Action::Undo),
     );
 }

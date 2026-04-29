@@ -272,6 +272,22 @@ pub enum Action {
     /// Replace the current document with a fresh blank one. Mirrors
     /// `new` (no path).
     NewDocument,
+
+    // ── Parametric console-verb Actions (Document context) ──────
+    // Each wraps a parameterised console verb so the user can bind
+    // the verb directly without authoring a macro. Free-form
+    // `String` payloads are parsed at dispatch time; bad values
+    // emit a warn-log and the dispatch returns `Handled` (no
+    // scrollback — Action arms have no scrollback surface).
+    /// Mirror `anchor from=<side> to=<side>` on the selected edge.
+    /// Sides: `auto|top|right|bottom|left`. Single-edge selection.
+    SetEdgeAnchor {
+        from: String,
+        to: String,
+    },
+    /// Mirror `body glyph=<dot|dash|double|wave|chain>` on the
+    /// selected edge.
+    SetEdgeBodyGlyph(String),
 }
 
 impl Action {
@@ -355,7 +371,14 @@ impl Action {
             | Action::OpenColorPicker
             | Action::CloseColorPicker
             | Action::ToggleFps
-            | Action::ToggleFpsDebug => false,
+            | Action::ToggleFpsDebug
+            // Parametric console-verb mutators are recoverable via
+            // undo (same trust posture as the existing
+            // configurable-* Actions). Filesystem-touching parametric
+            // variants will land in a later commit and DO classify as
+            // destructive.
+            | Action::SetEdgeAnchor { .. }
+            | Action::SetEdgeBodyGlyph(_) => false,
 
             // Modal-context Actions (Console / Picker / TextEdit /
             // LabelEdit / DoubleClickActivate's `Empty`-hit branch
@@ -530,7 +553,9 @@ impl Action {
             | Action::LabelEditOnSelection
             | Action::ToggleFps
             | Action::ToggleFpsDebug
-            | Action::NewDocument => InputContext::Document,
+            | Action::NewDocument
+            | Action::SetEdgeAnchor { .. }
+            | Action::SetEdgeBodyGlyph(_) => InputContext::Document,
         }
     }
 
@@ -599,7 +624,11 @@ impl Action {
             | Action::SelectNextSibling
             | Action::SelectPrevSibling
             | Action::JumpToRoot
-            | Action::CenterOnSelection => WasmCompatibility::Compatible,
+            | Action::CenterOnSelection
+            // Parametric mutators that touch only `MindMapDocument`
+            // setters — Compatible by classification rule.
+            | Action::SetEdgeAnchor { .. }
+            | Action::SetEdgeBodyGlyph(_) => WasmCompatibility::Compatible,
 
             // ── Renderer-only — works on both targets ─────────
             Action::ZoomIn

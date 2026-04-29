@@ -36,6 +36,12 @@ pub use action::WasmCompatibility;
 #[allow(unused_imports)]
 pub use bind::{gesture_key_name, key_to_name, normalize_key_name, KeyBind, MouseGesture};
 pub use config::KeybindConfig;
+// `ParametricBinding` is consumed by tests and by users authoring
+// `keybinds.json` files (the JSON schema is the public surface);
+// no in-binary native consumer pulls it in via `mandala::application::keybinds::ParametricBinding`,
+// hence the lint exemption.
+#[allow(unused_imports)]
+pub use config::ParametricBinding;
 pub use context::InputContext;
 pub use resolved::ResolvedKeybinds;
 
