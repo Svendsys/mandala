@@ -75,6 +75,13 @@ pub(super) struct WasmInputState {
     /// work for unchanged edges. Threaded into every rebuild
     /// helper the same way native does.
     pub scene_cache: baumhard::mindmap::scene_cache::SceneConnectionCache,
+    /// Macro registry. Mirrors native's `InputHandlerContext::macros`
+    /// — App + User tiers loaded at startup; Map + Inline tiers
+    /// refreshed by `loader::rebuild_document_macros` whenever a
+    /// document is loaded. Consulted by the keyboard handler's
+    /// Action → Macro → CustomMutation fall-through (Track B
+    /// Commit 5 wires the dispatch path).
+    pub macros: crate::application::macros::MacroRegistry,
 }
 
 /// Run the browser event loop against `app`.
@@ -274,6 +281,36 @@ wasm_bindgen_futures::spawn_local(async move {
     *renderer_for_init.borrow_mut() = Some(renderer);
 
     if let Some(doc) = doc_opt {
+        // Build the macro registry — App + User tiers from the
+        // bundled JSON / `?macros=` / localStorage; Map + Inline
+        // tiers from the just-loaded document. Mirrors
+        // `run_native_init.rs:117-142` precedence and logging
+        // shape so cross-target log triage stays uniform.
+        let mut macros = crate::application::macros::MacroRegistry::new();
+        let mut app_count = 0usize;
+        for m in crate::application::macros::loader::load_app_macros() {
+            macros.insert(m, crate::application::macros::MacroSource::App);
+            app_count += 1;
+        }
+        let mut user_count = 0usize;
+        for m in crate::application::macros::loader::load_user_macros() {
+            macros.insert(m, crate::application::macros::MacroSource::User);
+            user_count += 1;
+        }
+        if app_count > 0 || user_count > 0 {
+            log::info!(
+                "loaded {} macro(s): {} app-tier, {} user-tier",
+                macros.len(),
+                app_count,
+                user_count,
+            );
+        }
+        // Document-derived tiers — Map first, then Inline. The
+        // shared `rebuild_document_macros` helper enforces the
+        // ordering so it can't drift between the native and WASM
+        // load sites.
+        crate::application::macros::loader::rebuild_document_macros(&mut macros, &doc);
+
         *input_for_init.borrow_mut() = Some(WasmInputState {
             document: doc,
             mindmap_tree: tree_opt,
@@ -284,6 +321,7 @@ wasm_bindgen_futures::spawn_local(async move {
             modifiers: winit::keyboard::ModifiersState::empty(),
             app_scene: crate::application::scene_host::AppScene::new(),
             scene_cache: baumhard::mindmap::scene_cache::SceneConnectionCache::new(),
+            macros,
         });
     }
 

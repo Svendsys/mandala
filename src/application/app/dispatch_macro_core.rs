@@ -23,7 +23,7 @@
 use crate::application::keybinds::Action;
 use crate::application::macros::MacroRegistry;
 
-use super::dispatch::DispatchOutcome;
+use super::cross_dispatch::DispatchOutcome;
 
 /// Per-target operations the cross-platform [`dispatch_macro`]
 /// step loop calls. Each implementor wraps a context type

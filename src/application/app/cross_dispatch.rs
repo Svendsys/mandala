@@ -26,6 +26,27 @@
 use crate::application::common::RenderDecree;
 use crate::application::document::{MindMapDocument, SelectionState};
 use crate::application::renderer::Renderer;
+
+/// Outcome of a `dispatch_action` call. The two variants let
+/// callers branch on whether the dispatcher recognized and ran
+/// the action — used by the keyboard handler to decide whether
+/// to fall through to macro / custom-mutation lookup, and by the
+/// mouse handler to decide whether the gesture consumed the
+/// event.
+///
+/// Lives in `cross_dispatch` rather than `dispatch` because
+/// `dispatch.rs` is `#[cfg(not(target_arch = "wasm32"))]`-gated
+/// but the macro dispatch trait `MacroDispatchTarget` needs to
+/// return `DispatchOutcome` from both targets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::application::app) enum DispatchOutcome {
+    /// The action was recognized and its body ran.
+    Handled,
+    /// The action's variant has no body in the current dispatcher
+    /// (e.g. context-mismatched, or scaffolded ahead of its arm).
+    /// Caller may fall through to lower-priority resolution.
+    Unhandled,
+}
 use crate::application::scene_host::AppScene;
 use baumhard::mindmap::scene_cache::SceneConnectionCache;
 use baumhard::mindmap::tree_builder::MindMapTree;

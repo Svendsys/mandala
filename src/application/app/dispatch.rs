@@ -43,20 +43,10 @@ pub struct DispatchHit {
     pub canvas_pos: Vec2,
 }
 
-/// Outcome of a `dispatch_action` call. The two non-`Handled` variants
-/// let callers branch on whether the dispatcher recognized and ran the
-/// action — used by the keyboard handler to decide whether to fall
-/// through to custom-mutation lookup, and by the mouse handler to
-/// decide whether the gesture consumed the event.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DispatchOutcome {
-    /// The action was recognized and its body ran.
-    Handled,
-    /// The action's variant has no body in the current dispatcher
-    /// (e.g. context-mismatched, or scaffolded ahead of its arm).
-    /// Caller may fall through to lower-priority resolution.
-    Unhandled,
-}
+// `DispatchOutcome` lives in `cross_dispatch` so the cross-platform
+// `dispatch_macro_core::MacroDispatchTarget` trait can return it
+// from both targets' impls. Re-imported here for the dispatch arms.
+pub(in crate::application::app) use super::cross_dispatch::DispatchOutcome;
 
 /// Quote a free-form string (typically a filesystem path) so the
 /// console parser sees it as a single token. Wraps with `"..."`
