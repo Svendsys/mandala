@@ -180,6 +180,12 @@ pub struct KeybindConfig {
     pub set_zoom_max: Vec<ParametricBinding>,
     /// Unit variant — `args` is ignored, only `combo` matters.
     pub clear_zoom: Vec<ParametricBinding>,
+    /// Filesystem-touching parametric variants — NativeOnly +
+    /// denylisted from non-User macro tiers (see
+    /// `MacroSource::allows_action`).
+    pub open_document: Vec<ParametricBinding>,
+    pub save_document_as: Vec<ParametricBinding>,
+    pub new_document_at: Vec<ParametricBinding>,
 
     // ── Style / metadata ─────────────────────────────────────────
     /// Font family name for the console overlay.
@@ -366,6 +372,9 @@ impl Default for KeybindConfig {
             set_zoom_min: vec![],
             set_zoom_max: vec![],
             clear_zoom: vec![],
+            open_document: vec![],
+            save_document_as: vec![],
+            new_document_at: vec![],
 
             // Style / metadata
             console_font: String::new(),
@@ -700,6 +709,34 @@ impl KeybindConfig {
             &self.clear_zoom,
             |args| match args {
                 [] => Some(Action::ClearZoom),
+                _ => None,
+            },
+        );
+        // Filesystem variants — NativeOnly + privilege-gated.
+        push_parametric(
+            &mut binds,
+            "open_document",
+            &self.open_document,
+            |args| match args {
+                [path] => Some(Action::OpenDocument(path.clone())),
+                _ => None,
+            },
+        );
+        push_parametric(
+            &mut binds,
+            "save_document_as",
+            &self.save_document_as,
+            |args| match args {
+                [path] => Some(Action::SaveDocumentAs(path.clone())),
+                _ => None,
+            },
+        );
+        push_parametric(
+            &mut binds,
+            "new_document_at",
+            &self.new_document_at,
+            |args| match args {
+                [path] => Some(Action::NewDocumentAt(path.clone())),
                 _ => None,
             },
         );

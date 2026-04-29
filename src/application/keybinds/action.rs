@@ -352,6 +352,22 @@ pub enum Action {
     /// `max_zoom_to_render` on the current selection. Unit
     /// variant — no payload.
     ClearZoom,
+    /// Mirror `open <path>` — replace the current document with the
+    /// one loaded from `path`. **NativeOnly** + **destructive**:
+    /// touches the filesystem. Denylisted for non-User macro tiers
+    /// — a hostile mindmap must not be able to load arbitrary
+    /// content as the active document.
+    OpenDocument(String),
+    /// Mirror `save <path>` — write the current document to `path`
+    /// and rebind. **NativeOnly** + **destructive**: writes to the
+    /// filesystem; a hostile macro could overwrite arbitrary files.
+    /// Denylisted for non-User macro tiers.
+    SaveDocumentAs(String),
+    /// Mirror `new <path>` — start a fresh document and bind it to
+    /// `path` (writes a blank file there immediately). **NativeOnly**
+    /// + **destructive**: writes to the filesystem. Denylisted for
+    /// non-User macro tiers.
+    NewDocumentAt(String),
 }
 
 impl Action {
@@ -382,6 +398,9 @@ impl Action {
             // Filesystem / document lifecycle.
             Action::SaveDocument
             | Action::NewDocument
+            | Action::OpenDocument(_)
+            | Action::SaveDocumentAs(_)
+            | Action::NewDocumentAt(_)
             // Direct destructive mutators.
             | Action::DeleteSelection
             | Action::OrphanSelection
@@ -655,7 +674,10 @@ impl Action {
             | Action::SetSpacing(_)
             | Action::SetZoomMin(_)
             | Action::SetZoomMax(_)
-            | Action::ClearZoom => InputContext::Document,
+            | Action::ClearZoom
+            | Action::OpenDocument(_)
+            | Action::SaveDocumentAs(_)
+            | Action::NewDocumentAt(_) => InputContext::Document,
         }
     }
 
@@ -863,6 +885,14 @@ impl Action {
             Action::SaveDocument => WasmCompatibility::NativeOnly,
             Action::PanCanvas => WasmCompatibility::NativeOnly,
             Action::NewDocument => WasmCompatibility::NativeOnly,
+            // Parametric filesystem variants — same NativeOnly
+            // posture as their unit-variant siblings; the dispatch
+            // arms are cfg-gated and the body uses
+            // `execute_console_line` which on WASM is itself
+            // NativeOnly.
+            Action::OpenDocument(_) => WasmCompatibility::NativeOnly,
+            Action::SaveDocumentAs(_) => WasmCompatibility::NativeOnly,
+            Action::NewDocumentAt(_) => WasmCompatibility::NativeOnly,
         }
     }
 }

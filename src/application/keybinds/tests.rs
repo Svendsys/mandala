@@ -511,6 +511,9 @@ fn test_wasm_compatibility_classifies_every_variant_explicitly() {
         Action::SetZoomMin("0.5".into()),
         Action::SetZoomMax("2.0".into()),
         Action::ClearZoom,
+        Action::OpenDocument("/tmp/test.mindmap.json".into()),
+        Action::SaveDocumentAs("/tmp/test.mindmap.json".into()),
+        Action::NewDocumentAt("/tmp/test.mindmap.json".into()),
     ];
     for a in all_variants {
         let c = a.wasm_compatibility();
@@ -555,6 +558,11 @@ fn test_is_destructive_destructive_set_is_pinned() {
         Action::EditSelection,
         Action::EditSelectionClean,
         Action::LabelEditOnSelection,
+        // Parametric filesystem variants — destructive +
+        // privilege-gated (denylisted from non-User macro tiers).
+        Action::OpenDocument("/tmp/test.mindmap.json".into()),
+        Action::SaveDocumentAs("/tmp/test.mindmap.json".into()),
+        Action::NewDocumentAt("/tmp/test.mindmap.json".into()),
     ];
     for a in destructive {
         assert!(
@@ -1512,6 +1520,38 @@ fn test_parametric_zoom_resolve_set_and_clear() {
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "f12", false, true, false),
         Some(Action::ClearZoom),
+    );
+}
+
+#[test]
+fn test_parametric_filesystem_variants_resolve() {
+    let cfg = KeybindConfig {
+        open_document: vec![ParametricBinding {
+            combo: "Ctrl+F1".into(),
+            args: vec!["/tmp/test.mindmap.json".into()],
+        }],
+        save_document_as: vec![ParametricBinding {
+            combo: "Ctrl+F2".into(),
+            args: vec!["/tmp/save.mindmap.json".into()],
+        }],
+        new_document_at: vec![ParametricBinding {
+            combo: "Ctrl+F3".into(),
+            args: vec!["/tmp/new.mindmap.json".into()],
+        }],
+        ..KeybindConfig::default()
+    };
+    let resolved = cfg.resolve();
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f1", true, false, false),
+        Some(Action::OpenDocument("/tmp/test.mindmap.json".into())),
+    );
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f2", true, false, false),
+        Some(Action::SaveDocumentAs("/tmp/save.mindmap.json".into())),
+    );
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f3", true, false, false),
+        Some(Action::NewDocumentAt("/tmp/new.mindmap.json".into())),
     );
 }
 

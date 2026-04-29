@@ -58,6 +58,25 @@ pub enum DispatchOutcome {
     Unhandled,
 }
 
+/// Quote a free-form string (typically a filesystem path) so the
+/// console parser sees it as a single token. Wraps with `"..."`
+/// unconditionally and escapes any embedded `"` with a leading
+/// backslash, matching the tokenizer's quoted-string acceptance
+/// shape. Used by the parametric filesystem Action arms when
+/// synthesizing the console command line they delegate to.
+fn quote_console_arg(s: &str) -> String {
+    let mut escaped = String::with_capacity(s.len() + 2);
+    escaped.push('"');
+    for ch in s.chars() {
+        if ch == '"' {
+            escaped.push('\\');
+        }
+        escaped.push(ch);
+    }
+    escaped.push('"');
+    escaped
+}
+
 /// Run an `Action` against the live application context. The body of
 /// every Document-level action lives here; handlers (`event_keyboard`,
 /// `event_mouse_click`, the macro runtime via `dispatch_macro`)
@@ -1226,6 +1245,44 @@ pub(in crate::application::app) fn dispatch_action(
             }
             DispatchOutcome::Handled
         }
+        // ── Filesystem variants (NativeOnly) ────────────────────
+        // Dispatch arms route through `execute_console_line` so the
+        // existing `replace_document` / `dirty` / `file_path`
+        // plumbing on `ConsoleEffects` is reused. The whole module
+        // is already `cfg(not(target_arch = "wasm32"))`, so no
+        // additional cfg gate is needed.
+        Action::OpenDocument(ref path)
+        | Action::SaveDocumentAs(ref path)
+        | Action::NewDocumentAt(ref path) => {
+            let verb = match action {
+                Action::OpenDocument(_) => "open",
+                Action::SaveDocumentAs(_) => "save",
+                Action::NewDocumentAt(_) => "new",
+                _ => unreachable!("outer pattern guarantees a fs variant"),
+            };
+            let line = format!("{} {}", verb, quote_console_arg(path));
+            if let Some(doc) = ctx.document.as_mut() {
+                crate::application::app::console_input::exec::execute_console_line(
+                    &line,
+                    ctx.console_state,
+                    ctx.label_edit_state,
+                    ctx.portal_text_edit_state,
+                    ctx.color_picker_state,
+                    doc,
+                    ctx.mindmap_tree,
+                    ctx.app_scene,
+                    ctx.renderer,
+                    ctx.scene_cache,
+                    ctx.macros,
+                );
+            } else {
+                log::warn!(
+                    "{}: no document loaded; skipping '{}'",
+                    verb, line
+                );
+            }
+            DispatchOutcome::Handled
+        }
 
         // Console / Picker / LabelEdit / TextEdit modal-context actions
         // not handled above (e.g. cancel/commit) are dispatched by their
@@ -1670,5 +1727,31 @@ mod tests {
     fn dispatch_action_module_compiles() {
         // Smoke test: the module's public surface is reachable.
         // Replaced by per-arm tests in later phases.
+    }
+
+    #[test]
+    fn quote_console_arg_wraps_plain_path_in_double_quotes() {
+        assert_eq!(super::quote_console_arg("/tmp/x.json"), "\"/tmp/x.json\"");
+    }
+
+    #[test]
+    fn quote_console_arg_handles_paths_with_spaces() {
+        // Embedded whitespace is the whole reason quoting exists —
+        // the tokenizer would otherwise split the path into multiple
+        // positionals.
+        assert_eq!(
+            super::quote_console_arg("/tmp/some dir/x.json"),
+            "\"/tmp/some dir/x.json\"",
+        );
+    }
+
+    #[test]
+    fn quote_console_arg_escapes_embedded_double_quotes() {
+        // A literal `"` inside the path becomes `\"` so the
+        // tokenizer doesn't terminate the quoted token early.
+        assert_eq!(
+            super::quote_console_arg(r#"/tmp/he said "hi"/x.json"#),
+            r#""/tmp/he said \"hi\"/x.json""#,
+        );
     }
 }
