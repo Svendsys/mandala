@@ -7,7 +7,500 @@
 #![cfg(target_arch = "wasm32")]
 
 use super::*;
+use crate::application::document::MindMapDocument;
 use crate::application::keybinds::Action;
+use baumhard::mindmap::tree_builder::MindMapTree;
+
+/// Pending left-click awaiting a release. `None` on init and after
+/// release consumed; `Empty` after a click-down on empty canvas;
+/// `Node(id)` after a click-down on a node. Full drag machine
+/// (pan, move, reparent, connect) deferred to a later
+/// WASM-parity session.
+///
+/// Module-level (not closure-local) so helpers in sibling modules
+/// can take `&WasmInputState` parameters that include the field.
+pub(super) enum PendingClick {
+    None,
+    Empty,
+    Node(String),
+    /// Cursor landed on a portal **icon** at mouse-down. Committed
+    /// at mouse-up into a `SelectionState::PortalLabel`. Carries
+    /// both the owning-edge key and the endpoint id the marker
+    /// belongs to, matching the native click dispatch surface.
+    PortalMarker {
+        edge_key: baumhard::mindmap::scene_cache::EdgeKey,
+        endpoint_node_id: String,
+    },
+    /// Cursor landed on a portal **text** at mouse-down.
+    /// Committed at mouse-up into a `SelectionState::PortalText`.
+    /// Shares the identity shape with `PortalMarker`; only the
+    /// mouse-up selection routing differs.
+    PortalText {
+        edge_key: baumhard::mindmap::scene_cache::EdgeKey,
+        endpoint_node_id: String,
+    },
+    /// Cursor landed on a line-mode edge's label AABB at
+    /// mouse-down. Committed at mouse-up into
+    /// `SelectionState::EdgeLabel` so per-label color / font /
+    /// copy operations target the label instead of the edge
+    /// body. Double-click is handled inline by the press-time
+    /// dispatcher — WASM doesn't open the inline editor modal
+    /// yet so the dbl-click branch falls back to the same
+    /// selection commit for parity with single click.
+    EdgeLabel(baumhard::mindmap::scene_cache::EdgeKey),
+}
+
+/// Shared state between the WASM rAF render loop and the winit
+/// event loop. Mirrors native's `InputHandlerContext` for the 9
+/// fields both targets share. Promoted to module-level (was
+/// closure-local in `run`) so the `cross_dispatch` /
+/// `dispatch_macro_core` helpers can take `&mut WasmInputState`
+/// directly — closure-local types aren't reachable from sibling
+/// modules.
+pub(super) struct WasmInputState {
+    pub document: MindMapDocument,
+    pub mindmap_tree: Option<MindMapTree>,
+    pub text_edit_state: TextEditState,
+    pub last_click: Option<LastClick>,
+    pub cursor_pos: (f64, f64),
+    pub pending_click: PendingClick,
+    pub modifiers: winit::keyboard::ModifiersState,
+    /// Mirror of native's `app_scene` so the canvas-scene tree
+    /// path (borders, eventually connections / portals) works
+    /// identically on WASM. Threaded into every
+    /// `rebuild_all` / `rebuild_scene_only` call below.
+    pub app_scene: crate::application::scene_host::AppScene,
+    /// Mirror of native's `scene_cache` so the cache-aware
+    /// `build_scene_with_cache` entry point skips `sample_path`
+    /// work for unchanged edges. Threaded into every rebuild
+    /// helper the same way native does.
+    pub scene_cache: baumhard::mindmap::scene_cache::SceneConnectionCache,
+    /// Macro registry. Mirrors native's `InputHandlerContext::macros`
+    /// — App + User tiers loaded at startup; Map + Inline tiers
+    /// refreshed by `loader::rebuild_document_macros` whenever a
+    /// document is loaded. Consulted by the keyboard handler's
+    /// Action → Macro → CustomMutation fall-through.
+    pub macros: crate::application::macros::MacroRegistry,
+}
+
+/// Dispatch a single Action on WASM. Handles the pre-filtered
+/// NativeOnly Actions (`CancelMode`, `EditSelection*`-Single) and
+/// every Compatible variant by routing through the matching
+/// `cross_dispatch` helper. Returns `Handled` when the body fired,
+/// `Unhandled` when the Action's WASM arm doesn't exist (NativeOnly
+/// without a pre-filter slice, or Compatible-but-not-yet-wired
+/// like `Copy`/`Cut`/`Paste` whose backends are stubbed).
+///
+/// Both the keyboard handler and the [`WasmMacroDispatchTarget`]
+/// trait impl call this so the inner action ladder is a single
+/// source of truth — pre-Track-B the body lived inline in the
+/// keyboard `match action.as_ref()` block.
+pub(super) fn dispatch_compatible_action_wasm(
+    action: &Action,
+    input: &mut WasmInputState,
+    renderer: &mut Renderer,
+) -> super::cross_dispatch::DispatchOutcome {
+    use crate::application::document::OptionEdit;
+    use crate::application::keybinds::WasmCompatibility;
+    use super::cross_dispatch::DispatchOutcome;
+
+    // Pre-filter NativeOnly Actions whose dispatch arm has a
+    // WASM-relevant slice.
+    //
+    // `CancelMode`: clears `last_click` so a post-Esc click isn't
+    // retroactively paired with a pre-Esc one. The AppMode side
+    // doesn't exist on WASM.
+    //
+    // `EditSelection`/`Clean`: classified `NativeOnly` because the
+    // EdgeLabel + Portal branches open inline editors that don't
+    // exist on WASM. The Single branch is Compatible — handled
+    // here so the user-press AND macro-fired paths both work.
+    match action {
+        Action::CancelMode => {
+            input.last_click = None;
+            return DispatchOutcome::Handled;
+        }
+        Action::EditSelection | Action::EditSelectionClean => {
+            let clean = matches!(action, Action::EditSelectionClean);
+            let mut rc = super::cross_dispatch::RebuildContext {
+                document: &mut input.document,
+                mindmap_tree: &mut input.mindmap_tree,
+                app_scene: &mut input.app_scene,
+                renderer,
+                scene_cache: &mut input.scene_cache,
+            };
+            let _ = super::cross_dispatch::apply_open_text_edit_on_single(
+                clean,
+                &mut rc,
+                &mut input.text_edit_state,
+            );
+            return DispatchOutcome::Handled;
+        }
+        _ => {}
+    }
+
+    if action.wasm_compatibility() == WasmCompatibility::NativeOnly {
+        log::debug!(
+            "WASM: action {:?} is NativeOnly; deferred (see WASM_CONVERGENCE.md)",
+            action,
+        );
+        return DispatchOutcome::Unhandled;
+    }
+
+    match action {
+        // ── Document-lifecycle — cross_dispatch ──
+        Action::Undo => {
+            let mut rc = super::cross_dispatch::RebuildContext {
+                document: &mut input.document,
+                mindmap_tree: &mut input.mindmap_tree,
+                app_scene: &mut input.app_scene,
+                renderer,
+                scene_cache: &mut input.scene_cache,
+            };
+            super::cross_dispatch::apply_undo(&mut rc);
+        }
+        Action::CreateOrphanNode => {
+            let canvas_pos = renderer.screen_to_canvas(
+                input.cursor_pos.0 as f32,
+                input.cursor_pos.1 as f32,
+            );
+            let mut rc = super::cross_dispatch::RebuildContext {
+                document: &mut input.document,
+                mindmap_tree: &mut input.mindmap_tree,
+                app_scene: &mut input.app_scene,
+                renderer,
+                scene_cache: &mut input.scene_cache,
+            };
+            super::cross_dispatch::apply_create_orphan_node(canvas_pos, &mut rc);
+        }
+        Action::OrphanSelection => {
+            let mut rc = super::cross_dispatch::RebuildContext {
+                document: &mut input.document,
+                mindmap_tree: &mut input.mindmap_tree,
+                app_scene: &mut input.app_scene,
+                renderer,
+                scene_cache: &mut input.scene_cache,
+            };
+            super::cross_dispatch::apply_orphan_selection(&mut rc);
+        }
+        Action::DeleteSelection => {
+            let mut rc = super::cross_dispatch::RebuildContext {
+                document: &mut input.document,
+                mindmap_tree: &mut input.mindmap_tree,
+                app_scene: &mut input.app_scene,
+                renderer,
+                scene_cache: &mut input.scene_cache,
+            };
+            super::cross_dispatch::apply_delete_selection(&mut rc);
+        }
+        // ── Camera / zoom — Track A.1 ──
+        Action::ZoomIn => {
+            super::cross_dispatch::apply_zoom_step(
+                super::cross_dispatch::ZoomDir::In,
+                input.cursor_pos,
+                renderer,
+            );
+        }
+        Action::ZoomOut => {
+            super::cross_dispatch::apply_zoom_step(
+                super::cross_dispatch::ZoomDir::Out,
+                input.cursor_pos,
+                renderer,
+            );
+        }
+        Action::ZoomReset => super::cross_dispatch::apply_zoom_reset(renderer),
+        Action::ZoomFit => {
+            super::cross_dispatch::apply_zoom_fit(&input.mindmap_tree, renderer);
+        }
+        Action::PanCameraNorth => super::cross_dispatch::apply_pan_camera(
+            super::cross_dispatch::PanDir::North,
+            renderer,
+        ),
+        Action::PanCameraSouth => super::cross_dispatch::apply_pan_camera(
+            super::cross_dispatch::PanDir::South,
+            renderer,
+        ),
+        Action::PanCameraEast => super::cross_dispatch::apply_pan_camera(
+            super::cross_dispatch::PanDir::East,
+            renderer,
+        ),
+        Action::PanCameraWest => super::cross_dispatch::apply_pan_camera(
+            super::cross_dispatch::PanDir::West,
+            renderer,
+        ),
+        Action::CenterOnSelection => {
+            super::cross_dispatch::apply_center_on_selection(&input.document, renderer);
+        }
+        Action::JumpToRoot => {
+            let mut rc = super::cross_dispatch::RebuildContext {
+                document: &mut input.document,
+                mindmap_tree: &mut input.mindmap_tree,
+                app_scene: &mut input.app_scene,
+                renderer,
+                scene_cache: &mut input.scene_cache,
+            };
+            super::cross_dispatch::apply_jump_to_root(&mut rc);
+        }
+        // ── FPS overlay — Track A.1 ──
+        Action::ToggleFps => super::cross_dispatch::apply_toggle_fps(renderer),
+        Action::ToggleFpsDebug => super::cross_dispatch::apply_toggle_fps_debug(renderer),
+        // ── Selection — Track A.1 ──
+        Action::SelectAll
+        | Action::DeselectAll
+        | Action::InvertSelection
+        | Action::SelectParent
+        | Action::SelectChild
+        | Action::SelectNextSibling
+        | Action::SelectPrevSibling => {
+            let mut rc = super::cross_dispatch::RebuildContext {
+                document: &mut input.document,
+                mindmap_tree: &mut input.mindmap_tree,
+                app_scene: &mut input.app_scene,
+                renderer,
+                scene_cache: &mut input.scene_cache,
+            };
+            match action {
+                Action::SelectAll => super::cross_dispatch::apply_select_all(&mut rc),
+                Action::DeselectAll => super::cross_dispatch::apply_deselect_all(&mut rc),
+                Action::InvertSelection => {
+                    super::cross_dispatch::apply_invert_selection(&mut rc)
+                }
+                Action::SelectParent => super::cross_dispatch::apply_select_parent(&mut rc),
+                Action::SelectChild => super::cross_dispatch::apply_select_child(&mut rc),
+                Action::SelectNextSibling => {
+                    super::cross_dispatch::apply_select_sibling(true, &mut rc)
+                }
+                Action::SelectPrevSibling => {
+                    super::cross_dispatch::apply_select_sibling(false, &mut rc)
+                }
+                _ => log::error!("WASM: selection fan-out missed inner-match: {:?}", action),
+            }
+        }
+        // ── Parametric Compatible Actions — Track A.2 ──
+        Action::SetEdgeAnchor { .. }
+        | Action::SetEdgeBodyGlyph(_)
+        | Action::SetBorderField { .. }
+        | Action::SetEdgeCap { .. }
+        | Action::SetColorBg(_)
+        | Action::SetColorText(_)
+        | Action::SetColorBorder(_)
+        | Action::SetEdgeType(_)
+        | Action::SetEdgeDisplayMode(_)
+        | Action::ResetEdge(_)
+        | Action::SetFontFamily(_)
+        | Action::SetFontSize(_)
+        | Action::SetFontMin(_)
+        | Action::SetFontMax(_)
+        | Action::SetEdgeLabelText(_)
+        | Action::SetEdgeLabelPosition(_)
+        | Action::SetSpacing(_)
+        | Action::SetZoomMin(_)
+        | Action::SetZoomMax(_)
+        | Action::ClearZoom => {
+            let mut rc = super::cross_dispatch::RebuildContext {
+                document: &mut input.document,
+                mindmap_tree: &mut input.mindmap_tree,
+                app_scene: &mut input.app_scene,
+                renderer,
+                scene_cache: &mut input.scene_cache,
+            };
+            match action {
+                Action::SetEdgeAnchor { from, to } => {
+                    super::cross_dispatch::apply_set_edge_anchor(from, to, &mut rc)
+                }
+                Action::SetEdgeBodyGlyph(p) => {
+                    super::cross_dispatch::apply_set_edge_body_glyph(p, &mut rc)
+                }
+                Action::SetBorderField { field, value } => {
+                    super::cross_dispatch::apply_set_border_field(field, value, &mut rc)
+                }
+                Action::SetEdgeCap { from, to } => {
+                    super::cross_dispatch::apply_set_edge_cap(from, to, &mut rc)
+                }
+                Action::SetColorBg(v) => super::cross_dispatch::apply_set_color_axis(
+                    super::cross_dispatch::ColorAxis::Bg,
+                    v,
+                    &mut rc,
+                ),
+                Action::SetColorText(v) => super::cross_dispatch::apply_set_color_axis(
+                    super::cross_dispatch::ColorAxis::Text,
+                    v,
+                    &mut rc,
+                ),
+                Action::SetColorBorder(v) => super::cross_dispatch::apply_set_color_axis(
+                    super::cross_dispatch::ColorAxis::Border,
+                    v,
+                    &mut rc,
+                ),
+                Action::SetEdgeType(v) => {
+                    super::cross_dispatch::apply_set_edge_type(v, &mut rc)
+                }
+                Action::SetEdgeDisplayMode(v) => {
+                    super::cross_dispatch::apply_set_edge_display_mode(v, &mut rc)
+                }
+                Action::ResetEdge(k) => super::cross_dispatch::apply_reset_edge(k, &mut rc),
+                Action::SetFontFamily(f) => {
+                    super::cross_dispatch::apply_set_font_family(f, &mut rc)
+                }
+                Action::SetFontSize(pt) | Action::SetFontMin(pt) | Action::SetFontMax(pt) => {
+                    use super::cross_dispatch::FontSlot;
+                    let slot = match action {
+                        Action::SetFontSize(_) => FontSlot::Size,
+                        Action::SetFontMin(_) => FontSlot::Min,
+                        Action::SetFontMax(_) => FontSlot::Max,
+                        _ => return DispatchOutcome::Handled,
+                    };
+                    let parsed = match pt.parse::<f32>() {
+                        Ok(v) if v.is_finite() && v > 0.0 => v,
+                        _ => {
+                            log::warn!("SetFont{:?}: invalid '{}'", slot, pt);
+                            return DispatchOutcome::Handled;
+                        }
+                    };
+                    super::cross_dispatch::apply_set_font_kv(slot, parsed, &mut rc);
+                }
+                Action::SetEdgeLabelText(t) => {
+                    super::cross_dispatch::apply_set_edge_label_text(t, &mut rc)
+                }
+                Action::SetEdgeLabelPosition(p) => {
+                    super::cross_dispatch::apply_set_edge_label_position(p, &mut rc)
+                }
+                Action::SetSpacing(i) => super::cross_dispatch::apply_set_spacing(i, &mut rc),
+                Action::SetZoomMin(payload) | Action::SetZoomMax(payload) => {
+                    let parsed = match crate::application::console::commands::zoom::parse_zoom_payload(payload) {
+                        Some(e) => e,
+                        None => {
+                            log::warn!("set_zoom_*: invalid '{}'", payload);
+                            return DispatchOutcome::Handled;
+                        }
+                    };
+                    let (min, max) = match action {
+                        Action::SetZoomMin(_) => (parsed, OptionEdit::Keep),
+                        Action::SetZoomMax(_) => (OptionEdit::Keep, parsed),
+                        _ => return DispatchOutcome::Handled,
+                    };
+                    super::cross_dispatch::apply_set_zoom_window(min, max, &mut rc);
+                }
+                Action::ClearZoom => super::cross_dispatch::apply_clear_zoom(&mut rc),
+                _ => log::error!("WASM: parametric fan-out missed: {:?}", action),
+            }
+        }
+        // Catch-all for Compatible variants without a WASM arm
+        // wired yet. Today this includes `Copy` / `Cut` / `Paste`
+        // (clipboard backends are cfg-stubbed on WASM —
+        // `clipboard.rs` log+no-ops) plus any future Compatible
+        // variant added to `Action` and classified per
+        // `wasm_compatibility()` but not yet routed above. The
+        // catch-all returns `Unhandled` so a macro caller's
+        // `any_ran` flag doesn't bump on the no-op path.
+        a => {
+            log::debug!(
+                "WASM: action {:?} is Compatible but no WASM arm yet (Track A pending)",
+                a,
+            );
+            return DispatchOutcome::Unhandled;
+        }
+    }
+    DispatchOutcome::Handled
+}
+
+/// WASM impl of `MacroDispatchTarget`. Wraps `&mut WasmInputState`
+/// + `&mut Renderer` and forwards each operation to the same
+/// helpers the keyboard handler uses. Privilege gating happens in
+/// `dispatch_macro_core::dispatch_macro` (single-source contract).
+struct WasmMacroDispatchTarget<'a> {
+    input: &'a mut WasmInputState,
+    renderer: &'a mut Renderer,
+}
+
+impl<'a> super::dispatch_macro_core::MacroDispatchTarget for WasmMacroDispatchTarget<'a> {
+    fn registry(&self) -> &crate::application::macros::MacroRegistry {
+        &self.input.macros
+    }
+
+    fn dispatch_action(&mut self, action: Action) -> super::cross_dispatch::DispatchOutcome {
+        dispatch_compatible_action_wasm(&action, self.input, self.renderer)
+    }
+
+    fn apply_custom_mutation(&mut self, id: &str, node_id: &str) -> bool {
+        let cm = self
+            .input
+            .document
+            .mutation_registry
+            .get(id)
+            .cloned();
+        let Some(cm) = cm else {
+            log::warn!("macro step: unknown custom-mutation id '{}'", id);
+            return false;
+        };
+        let now = super::now_ms() as u64;
+        let applied = super::cross_dispatch::apply_keybind_custom_mutation(
+            &mut self.input.document,
+            &mut self.input.mindmap_tree,
+            &mut self.input.scene_cache,
+            &cm,
+            node_id,
+            now,
+        );
+        if applied {
+            // Match native pre-Track-B: rebuild via plain
+            // `rebuild_all` (no extra `scene_cache.clear()`).
+            // `apply_keybind_custom_mutation` already cleared the
+            // cache on the non-animated branch; the animated
+            // branch deliberately leaves it for the animation
+            // envelope to invalidate. Going through
+            // `rebuild_after_geometry_change` here would clear
+            // again on non-animated and add an unwanted clear on
+            // animated.
+            super::scene_rebuild::rebuild_all(
+                &self.input.document,
+                &mut self.input.mindmap_tree,
+                &mut self.input.app_scene,
+                self.renderer,
+                &mut self.input.scene_cache,
+            );
+            true
+        } else {
+            false
+        }
+    }
+
+    fn execute_console_line(&mut self, line: &str) -> bool {
+        // WASM has no `execute_console_line` runtime
+        // (`console_input` is `cfg(not(target_arch = "wasm32"))`).
+        // The privilege gate already rejects ConsoleLine from
+        // non-User tiers above this; User-tier ConsoleLine on WASM
+        // logs warn + skips per `format/macros.md` §
+        // ConsoleLine on WASM. The macro continues to the next
+        // step — fail-soft, matching the User-tier "step failed"
+        // posture native uses for unknown CustomMutation ids.
+        //
+        // Returns `false` so the macro's `any_ran` flag doesn't
+        // bump on the no-op path — a `[ConsoleLine]`-only macro
+        // on WASM correctly reports "didn't fire" so the keystroke
+        // isn't artificially consumed. Mirrors native's pre-doc-
+        // load posture (false return on the warn arm).
+        log::warn!(
+            "macros: ConsoleLine step '{}' has no console runtime on WASM; skipping",
+            line,
+        );
+        false
+    }
+
+    fn current_selection_node_id(&self) -> Option<String> {
+        if let crate::application::document::SelectionState::Single(nid) =
+            &self.input.document.selection
+        {
+            Some(nid.clone())
+        } else {
+            None
+        }
+    }
+
+    fn has_node(&self, node_id: &str) -> bool {
+        self.input.document.mindmap.nodes.contains_key(node_id)
+    }
+}
 
 /// Run the browser event loop against `app`.
 pub(super) fn run(mut app: Application) {
@@ -100,60 +593,10 @@ let mindmap_path = {
 // Shared state between the rAF render loop and the winit event
 // loop. Two RefCells so input handlers can borrow InputState
 // and Renderer simultaneously without conflict.
-/// Pending left-click awaiting a release. `None` on init and after
-/// release consumed; `Empty` after a click-down on empty canvas;
-/// `Node(id)` after a click-down on a node. Full drag machine
-/// (pan, move, reparent, connect) deferred to a later
-/// WASM-parity session.
-enum PendingClick {
-    None,
-    Empty,
-    Node(String),
-    /// Cursor landed on a portal **icon** at mouse-down. Committed
-    /// at mouse-up into a `SelectionState::PortalLabel`. Carries
-    /// both the owning-edge key and the endpoint id the marker
-    /// belongs to, matching the native click dispatch surface.
-    PortalMarker {
-        edge_key: baumhard::mindmap::scene_cache::EdgeKey,
-        endpoint_node_id: String,
-    },
-    /// Cursor landed on a portal **text** at mouse-down.
-    /// Committed at mouse-up into a `SelectionState::PortalText`.
-    /// Shares the identity shape with `PortalMarker`; only the
-    /// mouse-up selection routing differs.
-    PortalText {
-        edge_key: baumhard::mindmap::scene_cache::EdgeKey,
-        endpoint_node_id: String,
-    },
-    /// Cursor landed on a line-mode edge's label AABB at
-    /// mouse-down. Committed at mouse-up into
-    /// `SelectionState::EdgeLabel` so per-label color / font /
-    /// copy operations target the label instead of the edge
-    /// body. Double-click is handled inline by the press-time
-    /// dispatcher — WASM doesn't open the inline editor modal
-    /// yet so the dbl-click branch falls back to the same
-    /// selection commit for parity with single click.
-    EdgeLabel(baumhard::mindmap::scene_cache::EdgeKey),
-}
-struct WasmInputState {
-    document: MindMapDocument,
-    mindmap_tree: Option<MindMapTree>,
-    text_edit_state: TextEditState,
-    last_click: Option<LastClick>,
-    cursor_pos: (f64, f64),
-    pending_click: PendingClick,
-    modifiers: winit::keyboard::ModifiersState,
-    /// Mirror of native's `app_scene` so the canvas-scene
-    /// tree path (borders, eventually connections/portals)
-    /// works identically on WASM. Threaded into every
-    /// `rebuild_all` / `rebuild_scene_only` call below.
-    app_scene: crate::application::scene_host::AppScene,
-    /// Mirror of native's `scene_cache` so the cache-aware
-    /// `build_scene_with_cache` entry point skips `sample_path`
-    /// work for unchanged edges. Threaded into every rebuild
-    /// helper the same way native does.
-    scene_cache: baumhard::mindmap::scene_cache::SceneConnectionCache,
-}
+// `WasmInputState` and `PendingClick` are now declared at module
+// scope (above `fn run`) so cross-platform helpers can take them
+// by `&mut`. Construction of the actual instance happens later in
+// `spawn_local`.
 
 let renderer_rc: Rc<RefCell<Option<Renderer>>> = Rc::new(RefCell::new(None));
 let input_rc: Rc<RefCell<Option<WasmInputState>>> = Rc::new(RefCell::new(None));
@@ -256,6 +699,36 @@ wasm_bindgen_futures::spawn_local(async move {
     *renderer_for_init.borrow_mut() = Some(renderer);
 
     if let Some(doc) = doc_opt {
+        // Build the macro registry — App + User tiers from the
+        // bundled JSON / `?macros=` / localStorage; Map + Inline
+        // tiers from the just-loaded document. Mirrors
+        // `run_native_init.rs:117-142` precedence and logging
+        // shape so cross-target log triage stays uniform.
+        let mut macros = crate::application::macros::MacroRegistry::new();
+        let mut app_count = 0usize;
+        for m in crate::application::macros::loader::load_app_macros() {
+            macros.insert(m, crate::application::macros::MacroSource::App);
+            app_count += 1;
+        }
+        let mut user_count = 0usize;
+        for m in crate::application::macros::loader::load_user_macros() {
+            macros.insert(m, crate::application::macros::MacroSource::User);
+            user_count += 1;
+        }
+        if app_count > 0 || user_count > 0 {
+            log::info!(
+                "loaded {} macro(s): {} app-tier, {} user-tier",
+                macros.len(),
+                app_count,
+                user_count,
+            );
+        }
+        // Document-derived tiers — Map first, then Inline. The
+        // shared `rebuild_document_macros` helper enforces the
+        // ordering so it can't drift between the native and WASM
+        // load sites.
+        crate::application::macros::loader::rebuild_document_macros(&mut macros, &doc);
+
         *input_for_init.borrow_mut() = Some(WasmInputState {
             document: doc,
             mindmap_tree: tree_opt,
@@ -266,6 +739,7 @@ wasm_bindgen_futures::spawn_local(async move {
             modifiers: winit::keyboard::ModifiersState::empty(),
             app_scene: crate::application::scene_host::AppScene::new(),
             scene_cache: baumhard::mindmap::scene_cache::SceneConnectionCache::new(),
+            macros,
         });
     }
 
@@ -393,427 +867,60 @@ app.event_loop.run(move |event, _window_target| {
                     input.modifiers.alt_key(),
                 )
             });
-            // WASM dispatch ladder. The structure mirrors native's
-            // `dispatch_action`, but without the shared funnel —
-            // Track A in WASM_CONVERGENCE.md is the path to fold
-            // these arms into `dispatch::dispatch_action`. Until
-            // then, the `Action::wasm_compatibility()` API is the
-            // single source of truth for what works in the browser:
-            // a `NativeOnly` Action takes the catch-all `_ =>` arm
-            // below with a debug log, no special-casing per
-            // variant. Adding a new Action variant requires
-            // classifying it via `wasm_compatibility` (forced by
-            // the `#[non_exhaustive]` enum + exhaustive match in
-            // `action.rs`), and only the `Compatible` ones need an
-            // arm here.
+            // WASM dispatch ladder. Action body is in
+            // `dispatch_compatible_action_wasm` (above this fn
+            // in `run_wasm.rs`); both the keyboard path here and
+            // the `WasmMacroDispatchTarget` impl call the same
+            // body so a new Compatible variant flows to both
+            // entry points without drift.
             //
-            // Pre-filter exceptions for `NativeOnly` Actions whose
-            // dispatch arm is mostly native-state but has a useful
-            // WASM-relevant slice. Each is handled here BEFORE the
-            // compatibility filter swallows the keystroke.
-            //
-            // `CancelMode`: clears `last_click` so a post-Esc click
-            // isn't retroactively paired with a pre-Esc one. The
-            // AppMode side of the arm doesn't exist on WASM.
-            //
-            // `EditSelection` / `EditSelectionClean`: classified
-            // `NativeOnly` because the EdgeLabel and Portal branches
-            // open inline editors that don't exist on WASM. The
-            // `Single` selection branch is Compatible — handled
-            // here so the doubled-up "open node text editor on
-            // selected node" gesture works on both targets. (This
-            // matches what `WASM_CONVERGENCE.md`'s Track A1 cites
-            // as a working example. Without this pre-filter the
-            // arm below was dead code.)
-            match action.as_ref() {
-                Some(Action::CancelMode) => {
-                    input.last_click = None;
+            // After the action lookup completes, fall through to
+            // macro lookup — the same Action → Macro →
+            // CustomMutation chain native uses (`event_keyboard.rs`).
+            if let Some(a) = action.clone() {
+                // Pin "did the user just trigger an EditSelection?"
+                // before the dispatch — `suppress_for_events` is
+                // ONLY updated for that pair (pre-Track-B, the
+                // suppress call lived inside the EditSelection
+                // pre-filter arm). Other Compatible Actions don't
+                // touch suppress.
+                let was_edit_selection =
+                    matches!(a, Action::EditSelection | Action::EditSelectionClean);
+                let outcome = dispatch_compatible_action_wasm(&a, input, renderer);
+                if was_edit_selection
+                    && matches!(outcome, super::cross_dispatch::DispatchOutcome::Handled)
+                {
+                    // Mirror pre-Track-B `set(is_open())`: flip
+                    // suppress to whatever the modal state ended
+                    // up at — true if the editor opened, false if
+                    // it didn't (e.g. selection wasn't Single).
+                    // Pre-Track-B always-set semantics; not just
+                    // a one-way `set(true)`.
+                    suppress_for_events.set(input.text_edit_state.is_open());
                 }
-                Some(a @ (Action::EditSelection | Action::EditSelectionClean)) => {
-                    // EditSelection's Single branch is Compatible
-                    // and routes through `cross_dispatch`; the
-                    // EdgeLabel / Portal branches don't exist on
-                    // WASM (NativeOnly modal editors).
-                    let clean = matches!(a, Action::EditSelectionClean);
-                    let opened = {
-                        let mut rc = super::cross_dispatch::RebuildContext {
-                            document: &mut input.document,
-                            mindmap_tree: &mut input.mindmap_tree,
-                            app_scene: &mut input.app_scene,
-                            renderer,
-                            scene_cache: &mut input.scene_cache,
-                        };
-                        super::cross_dispatch::apply_open_text_edit_on_single(
-                            clean,
-                            &mut rc,
-                            &mut input.text_edit_state,
-                        )
+            } else {
+                // No built-in Action bound to this combo — fall
+                // through to macro lookup. Mirrors native's
+                // `event_keyboard.rs` chain: Action → Macro →
+                // (CustomMutation tier on native; macros only on
+                // WASM today). Privilege gate runs inside
+                // `dispatch_macro_core::dispatch_macro` so a
+                // hostile Map / Inline tier macro can't slip
+                // destructive Actions or ConsoleLine past.
+                if let Some(macro_id) = key_name.as_deref().and_then(|k| {
+                    keybinds.macro_for(
+                        k,
+                        input.modifiers.control_key(),
+                        input.modifiers.shift_key(),
+                        input.modifiers.alt_key(),
+                    )
+                }) {
+                    let macro_id = macro_id.to_string();
+                    let mut target = WasmMacroDispatchTarget {
+                        input,
+                        renderer,
                     };
-                    if opened {
-                        suppress_for_events.set(input.text_edit_state.is_open());
-                    }
-                }
-                _ => {
-                    if let Some(a) = action {
-                        use crate::application::keybinds::WasmCompatibility;
-                        if a.wasm_compatibility() == WasmCompatibility::NativeOnly {
-                            log::debug!(
-                                "WASM: action {:?} is NativeOnly; deferred (see WASM_CONVERGENCE.md)",
-                                a
-                            );
-                        } else {
-                            match a {
-                                // ── Document-lifecycle — cross_dispatch ──
-                                // Bodies live in `cross_dispatch.rs`; both
-                                // dispatchers route through the same helper
-                                // so e.g. WASM gains the
-                                // `fast_forward_animations` step that pre-
-                                // Track-A only native `Action::Undo` did.
-                                Action::Undo => {
-                                    let mut rc = super::cross_dispatch::RebuildContext {
-                                        document: &mut input.document,
-                                        mindmap_tree: &mut input.mindmap_tree,
-                                        app_scene: &mut input.app_scene,
-                                        renderer,
-                                        scene_cache: &mut input.scene_cache,
-                                    };
-                                    super::cross_dispatch::apply_undo(&mut rc);
-                                }
-                                Action::CreateOrphanNode => {
-                                    let canvas_pos = renderer.screen_to_canvas(
-                                        input.cursor_pos.0 as f32,
-                                        input.cursor_pos.1 as f32,
-                                    );
-                                    let mut rc = super::cross_dispatch::RebuildContext {
-                                        document: &mut input.document,
-                                        mindmap_tree: &mut input.mindmap_tree,
-                                        app_scene: &mut input.app_scene,
-                                        renderer,
-                                        scene_cache: &mut input.scene_cache,
-                                    };
-                                    super::cross_dispatch::apply_create_orphan_node(
-                                        canvas_pos, &mut rc,
-                                    );
-                                }
-                                Action::OrphanSelection => {
-                                    let mut rc = super::cross_dispatch::RebuildContext {
-                                        document: &mut input.document,
-                                        mindmap_tree: &mut input.mindmap_tree,
-                                        app_scene: &mut input.app_scene,
-                                        renderer,
-                                        scene_cache: &mut input.scene_cache,
-                                    };
-                                    super::cross_dispatch::apply_orphan_selection(&mut rc);
-                                }
-                                Action::DeleteSelection => {
-                                    let mut rc = super::cross_dispatch::RebuildContext {
-                                        document: &mut input.document,
-                                        mindmap_tree: &mut input.mindmap_tree,
-                                        app_scene: &mut input.app_scene,
-                                        renderer,
-                                        scene_cache: &mut input.scene_cache,
-                                    };
-                                    super::cross_dispatch::apply_delete_selection(&mut rc);
-                                }
-                                // ── Camera / zoom — Track A.1 ──────
-                                // Bodies live in `cross_dispatch.rs`;
-                                // both dispatchers call the same helper.
-                                // See `WASM_CONVERGENCE.md` "partial
-                                // Track C".
-                                Action::ZoomIn => {
-                                    super::cross_dispatch::apply_zoom_step(
-                                        super::cross_dispatch::ZoomDir::In,
-                                        input.cursor_pos,
-                                        renderer,
-                                    );
-                                }
-                                Action::ZoomOut => {
-                                    super::cross_dispatch::apply_zoom_step(
-                                        super::cross_dispatch::ZoomDir::Out,
-                                        input.cursor_pos,
-                                        renderer,
-                                    );
-                                }
-                                Action::ZoomReset => {
-                                    super::cross_dispatch::apply_zoom_reset(renderer);
-                                }
-                                Action::ZoomFit => {
-                                    super::cross_dispatch::apply_zoom_fit(
-                                        &input.mindmap_tree, renderer,
-                                    );
-                                }
-                                Action::PanCameraNorth => {
-                                    super::cross_dispatch::apply_pan_camera(
-                                        super::cross_dispatch::PanDir::North,
-                                        renderer,
-                                    );
-                                }
-                                Action::PanCameraSouth => {
-                                    super::cross_dispatch::apply_pan_camera(
-                                        super::cross_dispatch::PanDir::South,
-                                        renderer,
-                                    );
-                                }
-                                Action::PanCameraEast => {
-                                    super::cross_dispatch::apply_pan_camera(
-                                        super::cross_dispatch::PanDir::East,
-                                        renderer,
-                                    );
-                                }
-                                Action::PanCameraWest => {
-                                    super::cross_dispatch::apply_pan_camera(
-                                        super::cross_dispatch::PanDir::West,
-                                        renderer,
-                                    );
-                                }
-                                Action::CenterOnSelection => {
-                                    super::cross_dispatch::apply_center_on_selection(
-                                        &input.document, renderer,
-                                    );
-                                }
-                                Action::JumpToRoot => {
-                                    let mut rc = super::cross_dispatch::RebuildContext {
-                                        document: &mut input.document,
-                                        mindmap_tree: &mut input.mindmap_tree,
-                                        app_scene: &mut input.app_scene,
-                                        renderer,
-                                        scene_cache: &mut input.scene_cache,
-                                    };
-                                    super::cross_dispatch::apply_jump_to_root(&mut rc);
-                                }
-                                // ── FPS overlay — Track A.1 ────────
-                                Action::ToggleFps => {
-                                    super::cross_dispatch::apply_toggle_fps(renderer);
-                                }
-                                Action::ToggleFpsDebug => {
-                                    super::cross_dispatch::apply_toggle_fps_debug(renderer);
-                                }
-                                // ── Selection — Track A.1 ──────────
-                                // Same `cross_dispatch` helpers the
-                                // native dispatcher calls.
-                                a @ (Action::SelectAll
-                                    | Action::DeselectAll
-                                    | Action::InvertSelection
-                                    | Action::SelectParent
-                                    | Action::SelectChild
-                                    | Action::SelectNextSibling
-                                    | Action::SelectPrevSibling) => {
-                                    let mut rc = super::cross_dispatch::RebuildContext {
-                                        document: &mut input.document,
-                                        mindmap_tree: &mut input.mindmap_tree,
-                                        app_scene: &mut input.app_scene,
-                                        renderer,
-                                        scene_cache: &mut input.scene_cache,
-                                    };
-                                    match a {
-                                        Action::SelectAll => {
-                                            super::cross_dispatch::apply_select_all(&mut rc)
-                                        }
-                                        Action::DeselectAll => {
-                                            super::cross_dispatch::apply_deselect_all(&mut rc)
-                                        }
-                                        Action::InvertSelection => {
-                                            super::cross_dispatch::apply_invert_selection(
-                                                &mut rc,
-                                            )
-                                        }
-                                        Action::SelectParent => {
-                                            super::cross_dispatch::apply_select_parent(&mut rc)
-                                        }
-                                        Action::SelectChild => {
-                                            super::cross_dispatch::apply_select_child(&mut rc)
-                                        }
-                                        Action::SelectNextSibling => {
-                                            super::cross_dispatch::apply_select_sibling(
-                                                true, &mut rc,
-                                            )
-                                        }
-                                        Action::SelectPrevSibling => {
-                                            super::cross_dispatch::apply_select_sibling(
-                                                false, &mut rc,
-                                            )
-                                        }
-                                        _ => log::error!(
-                                            "WASM: selection fan-out missed inner-match: {:?}",
-                                            a,
-                                        ),
-                                    }
-                                }
-                                // ── Parametric Compatible Actions —
-                                //    Track A.2. Bodies live in
-                                //    `cross_dispatch.rs`; same per-action
-                                //    helper the native dispatcher calls.
-                                a @ (Action::SetEdgeAnchor { .. }
-                                    | Action::SetEdgeBodyGlyph(_)
-                                    | Action::SetBorderField { .. }
-                                    | Action::SetEdgeCap { .. }
-                                    | Action::SetColorBg(_)
-                                    | Action::SetColorText(_)
-                                    | Action::SetColorBorder(_)
-                                    | Action::SetEdgeType(_)
-                                    | Action::SetEdgeDisplayMode(_)
-                                    | Action::ResetEdge(_)
-                                    | Action::SetFontFamily(_)
-                                    | Action::SetFontSize(_)
-                                    | Action::SetFontMin(_)
-                                    | Action::SetFontMax(_)
-                                    | Action::SetEdgeLabelText(_)
-                                    | Action::SetEdgeLabelPosition(_)
-                                    | Action::SetSpacing(_)
-                                    | Action::SetZoomMin(_)
-                                    | Action::SetZoomMax(_)
-                                    | Action::ClearZoom) => {
-                                    use crate::application::document::OptionEdit;
-                                    let mut rc = super::cross_dispatch::RebuildContext {
-                                        document: &mut input.document,
-                                        mindmap_tree: &mut input.mindmap_tree,
-                                        app_scene: &mut input.app_scene,
-                                        renderer,
-                                        scene_cache: &mut input.scene_cache,
-                                    };
-                                    match &a {
-                                        Action::SetEdgeAnchor { from, to } => {
-                                            super::cross_dispatch::apply_set_edge_anchor(
-                                                from, to, &mut rc,
-                                            )
-                                        }
-                                        Action::SetEdgeBodyGlyph(p) => {
-                                            super::cross_dispatch::apply_set_edge_body_glyph(
-                                                p, &mut rc,
-                                            )
-                                        }
-                                        Action::SetBorderField { field, value } => {
-                                            super::cross_dispatch::apply_set_border_field(
-                                                field, value, &mut rc,
-                                            )
-                                        }
-                                        Action::SetEdgeCap { from, to } => {
-                                            super::cross_dispatch::apply_set_edge_cap(
-                                                from, to, &mut rc,
-                                            )
-                                        }
-                                        Action::SetColorBg(v) => {
-                                            super::cross_dispatch::apply_set_color_axis(
-                                                super::cross_dispatch::ColorAxis::Bg,
-                                                v,
-                                                &mut rc,
-                                            )
-                                        }
-                                        Action::SetColorText(v) => {
-                                            super::cross_dispatch::apply_set_color_axis(
-                                                super::cross_dispatch::ColorAxis::Text,
-                                                v,
-                                                &mut rc,
-                                            )
-                                        }
-                                        Action::SetColorBorder(v) => {
-                                            super::cross_dispatch::apply_set_color_axis(
-                                                super::cross_dispatch::ColorAxis::Border,
-                                                v,
-                                                &mut rc,
-                                            )
-                                        }
-                                        Action::SetEdgeType(v) => {
-                                            super::cross_dispatch::apply_set_edge_type(
-                                                v, &mut rc,
-                                            )
-                                        }
-                                        Action::SetEdgeDisplayMode(v) => {
-                                            super::cross_dispatch::apply_set_edge_display_mode(
-                                                v, &mut rc,
-                                            )
-                                        }
-                                        Action::ResetEdge(k) => {
-                                            super::cross_dispatch::apply_reset_edge(
-                                                k, &mut rc,
-                                            )
-                                        }
-                                        Action::SetFontFamily(f) => {
-                                            super::cross_dispatch::apply_set_font_family(
-                                                f, &mut rc,
-                                            )
-                                        }
-                                        Action::SetFontSize(pt)
-                                        | Action::SetFontMin(pt)
-                                        | Action::SetFontMax(pt) => {
-                                            use super::cross_dispatch::FontSlot;
-                                            let slot = match &a {
-                                                Action::SetFontSize(_) => FontSlot::Size,
-                                                Action::SetFontMin(_) => FontSlot::Min,
-                                                Action::SetFontMax(_) => FontSlot::Max,
-                                                _ => return,
-                                            };
-                                            let parsed = match pt.parse::<f32>() {
-                                                Ok(v) if v.is_finite() && v > 0.0 => v,
-                                                _ => {
-                                                    log::warn!(
-                                                        "SetFont{:?}: invalid '{}'",
-                                                        slot, pt,
-                                                    );
-                                                    return;
-                                                }
-                                            };
-                                            super::cross_dispatch::apply_set_font_kv(
-                                                slot, parsed, &mut rc,
-                                            );
-                                        }
-                                        Action::SetEdgeLabelText(t) => {
-                                            super::cross_dispatch::apply_set_edge_label_text(
-                                                t, &mut rc,
-                                            )
-                                        }
-                                        Action::SetEdgeLabelPosition(p) => {
-                                            super::cross_dispatch::apply_set_edge_label_position(
-                                                p, &mut rc,
-                                            )
-                                        }
-                                        Action::SetSpacing(i) => {
-                                            super::cross_dispatch::apply_set_spacing(
-                                                i, &mut rc,
-                                            )
-                                        }
-                                        Action::SetZoomMin(payload)
-                                        | Action::SetZoomMax(payload) => {
-                                            let parsed = match crate::application::console::commands::zoom::parse_zoom_payload(payload) {
-                                                Some(e) => e,
-                                                None => {
-                                                    log::warn!(
-                                                        "set_zoom_*: invalid '{}'",
-                                                        payload,
-                                                    );
-                                                    return;
-                                                }
-                                            };
-                                            let (min, max) = match &a {
-                                                Action::SetZoomMin(_) => (parsed, OptionEdit::Keep),
-                                                Action::SetZoomMax(_) => (OptionEdit::Keep, parsed),
-                                                _ => return,
-                                            };
-                                            super::cross_dispatch::apply_set_zoom_window(
-                                                min, max, &mut rc,
-                                            );
-                                        }
-                                        Action::ClearZoom => {
-                                            super::cross_dispatch::apply_clear_zoom(&mut rc)
-                                        }
-                                        _ => log::error!(
-                                            "WASM: parametric fan-out missed: {:?}",
-                                            a,
-                                        ),
-                                    }
-                                }
-                                // Remaining Compatible Actions (Copy /
-                                // Cut / Paste — clipboard stubs) don't
-                                // need a WASM arm yet.
-                                a => {
-                                    log::debug!(
-                                        "WASM: action {:?} is Compatible but no WASM arm yet (Track A pending)",
-                                        a
-                                    );
-                                }
-                            }
-                        }
-                    }
+                    let _ = super::dispatch_macro_core::dispatch_macro(&macro_id, &mut target);
                 }
             }
         }
