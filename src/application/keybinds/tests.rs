@@ -495,6 +495,12 @@ fn test_wasm_compatibility_classifies_every_variant_explicitly() {
             from: "arrow".into(),
             to: "none".into(),
         },
+        Action::SetColorBg("#fafafa".into()),
+        Action::SetColorText("accent".into()),
+        Action::SetColorBorder("#000000".into()),
+        Action::SetEdgeType("cross_link".into()),
+        Action::SetEdgeDisplayMode("portal".into()),
+        Action::ResetEdge("style".into()),
     ];
     for a in all_variants {
         let c = a.wasm_compatibility();
@@ -573,6 +579,12 @@ fn test_is_destructive_destructive_set_is_pinned() {
             from: "arrow".into(),
             to: "none".into(),
         },
+        Action::SetColorBg("#fafafa".into()),
+        Action::SetColorText("accent".into()),
+        Action::SetColorBorder("#000000".into()),
+        Action::SetEdgeType("cross_link".into()),
+        Action::SetEdgeDisplayMode("portal".into()),
+        Action::ResetEdge("style".into()),
     ] {
         assert!(
             !a.is_destructive(),
@@ -1328,6 +1340,70 @@ fn test_parametric_set_border_field_resolves_with_two_args() {
             field: "preset".into(),
             value: "rounded".into(),
         }),
+    );
+}
+
+#[test]
+fn test_parametric_color_axes_resolve() {
+    let cfg = KeybindConfig {
+        set_color_bg: vec![ParametricBinding {
+            combo: "F1".into(),
+            args: vec!["#fafafa".into()],
+        }],
+        set_color_text: vec![ParametricBinding {
+            combo: "F2".into(),
+            args: vec!["accent".into()],
+        }],
+        set_color_border: vec![ParametricBinding {
+            combo: "F3".into(),
+            args: vec!["#000000".into()],
+        }],
+        ..KeybindConfig::default()
+    };
+    let resolved = cfg.resolve();
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f1", false, false, false),
+        Some(Action::SetColorBg("#fafafa".into())),
+    );
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f2", false, false, false),
+        Some(Action::SetColorText("accent".into())),
+    );
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f3", false, false, false),
+        Some(Action::SetColorBorder("#000000".into())),
+    );
+}
+
+#[test]
+fn test_parametric_edge_structural_resolve() {
+    let cfg = KeybindConfig {
+        set_edge_type: vec![ParametricBinding {
+            combo: "F4".into(),
+            args: vec!["cross_link".into()],
+        }],
+        set_edge_display_mode: vec![ParametricBinding {
+            combo: "F5".into(),
+            args: vec!["portal".into()],
+        }],
+        reset_edge: vec![ParametricBinding {
+            combo: "F6".into(),
+            args: vec!["style".into()],
+        }],
+        ..KeybindConfig::default()
+    };
+    let resolved = cfg.resolve();
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f4", false, false, false),
+        Some(Action::SetEdgeType("cross_link".into())),
+    );
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f5", false, false, false),
+        Some(Action::SetEdgeDisplayMode("portal".into())),
+    );
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f6", false, false, false),
+        Some(Action::ResetEdge("style".into())),
     );
 }
 

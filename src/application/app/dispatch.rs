@@ -962,6 +962,89 @@ pub(in crate::application::app) fn dispatch_action(
             }
             DispatchOutcome::Handled
         }
+        Action::SetColorBg(ref value)
+        | Action::SetColorText(ref value)
+        | Action::SetColorBorder(ref value) => {
+            // Outer pattern guarantees one of three; inner match
+            // picks the axis name. Same shape as the
+            // PanCameraNorth/South/East/West fan-out.
+            let axis: &str = match action {
+                Action::SetColorBg(_) => "bg",
+                Action::SetColorText(_) => "text",
+                Action::SetColorBorder(_) => "border",
+                _ => unreachable!("outer pattern guarantees a SetColor* variant"),
+            };
+            if let Some(doc) = ctx.document.as_mut() {
+                let changed = crate::application::console::commands::color::apply_color_axis_to_selection(
+                    doc, axis, value,
+                );
+                if changed {
+                    ctx.scene_cache.clear();
+                    rebuild_all(
+                        doc,
+                        ctx.mindmap_tree,
+                        ctx.app_scene,
+                        ctx.renderer,
+                        ctx.scene_cache,
+                    );
+                }
+            }
+            DispatchOutcome::Handled
+        }
+        Action::SetEdgeType(ref value) => {
+            if let Some(doc) = ctx.document.as_mut() {
+                let changed = crate::application::console::commands::edge::apply_edge_type_to_selection(
+                    doc, value,
+                );
+                if changed {
+                    ctx.scene_cache.clear();
+                    rebuild_all(
+                        doc,
+                        ctx.mindmap_tree,
+                        ctx.app_scene,
+                        ctx.renderer,
+                        ctx.scene_cache,
+                    );
+                }
+            }
+            DispatchOutcome::Handled
+        }
+        Action::SetEdgeDisplayMode(ref value) => {
+            if let Some(doc) = ctx.document.as_mut() {
+                let changed = crate::application::console::commands::edge::apply_edge_display_mode_to_selection(
+                    doc, value,
+                );
+                if changed {
+                    ctx.scene_cache.clear();
+                    rebuild_all(
+                        doc,
+                        ctx.mindmap_tree,
+                        ctx.app_scene,
+                        ctx.renderer,
+                        ctx.scene_cache,
+                    );
+                }
+            }
+            DispatchOutcome::Handled
+        }
+        Action::ResetEdge(ref kind) => {
+            if let Some(doc) = ctx.document.as_mut() {
+                let changed = crate::application::console::commands::edge::apply_edge_reset_to_selection(
+                    doc, kind,
+                );
+                if changed {
+                    ctx.scene_cache.clear();
+                    rebuild_all(
+                        doc,
+                        ctx.mindmap_tree,
+                        ctx.app_scene,
+                        ctx.renderer,
+                        ctx.scene_cache,
+                    );
+                }
+            }
+            DispatchOutcome::Handled
+        }
 
         // Console / Picker / LabelEdit / TextEdit modal-context actions
         // not handled above (e.g. cancel/commit) are dispatched by their

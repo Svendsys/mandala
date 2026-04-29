@@ -302,6 +302,20 @@ pub enum Action {
         from: String,
         to: String,
     },
+    /// Mirror `color bg=<color>` on the current selection.
+    SetColorBg(String),
+    /// Mirror `color text=<color>` on the current selection.
+    SetColorText(String),
+    /// Mirror `color border=<color>` on the current selection.
+    SetColorBorder(String),
+    /// Mirror `edge type=<cross_link|parent_child>` on the selected
+    /// edge.
+    SetEdgeType(String),
+    /// Mirror `edge display_mode=<line|portal>` on the selected edge.
+    SetEdgeDisplayMode(String),
+    /// Mirror `edge reset=<straight|curve|style|position>` on the
+    /// selected edge.
+    ResetEdge(String),
 }
 
 impl Action {
@@ -394,7 +408,13 @@ impl Action {
             | Action::SetEdgeAnchor { .. }
             | Action::SetEdgeBodyGlyph(_)
             | Action::SetBorderField { .. }
-            | Action::SetEdgeCap { .. } => false,
+            | Action::SetEdgeCap { .. }
+            | Action::SetColorBg(_)
+            | Action::SetColorText(_)
+            | Action::SetColorBorder(_)
+            | Action::SetEdgeType(_)
+            | Action::SetEdgeDisplayMode(_)
+            | Action::ResetEdge(_) => false,
 
             // Modal-context Actions (Console / Picker / TextEdit /
             // LabelEdit / DoubleClickActivate's `Empty`-hit branch
@@ -573,7 +593,13 @@ impl Action {
             | Action::SetEdgeAnchor { .. }
             | Action::SetEdgeBodyGlyph(_)
             | Action::SetBorderField { .. }
-            | Action::SetEdgeCap { .. } => InputContext::Document,
+            | Action::SetEdgeCap { .. }
+            | Action::SetColorBg(_)
+            | Action::SetColorText(_)
+            | Action::SetColorBorder(_)
+            | Action::SetEdgeType(_)
+            | Action::SetEdgeDisplayMode(_)
+            | Action::ResetEdge(_) => InputContext::Document,
         }
     }
 
@@ -648,7 +674,13 @@ impl Action {
             | Action::SetEdgeAnchor { .. }
             | Action::SetEdgeBodyGlyph(_)
             | Action::SetBorderField { .. }
-            | Action::SetEdgeCap { .. } => WasmCompatibility::Compatible,
+            | Action::SetEdgeCap { .. }
+            | Action::SetColorBg(_)
+            | Action::SetColorText(_)
+            | Action::SetColorBorder(_)
+            | Action::SetEdgeType(_)
+            | Action::SetEdgeDisplayMode(_)
+            | Action::ResetEdge(_) => WasmCompatibility::Compatible,
 
             // ── Renderer-only — works on both targets ─────────
             Action::ZoomIn

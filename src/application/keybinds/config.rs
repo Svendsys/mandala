@@ -163,6 +163,12 @@ pub struct KeybindConfig {
     pub set_edge_body_glyph: Vec<ParametricBinding>,
     pub set_border_field: Vec<ParametricBinding>,
     pub set_edge_cap: Vec<ParametricBinding>,
+    pub set_color_bg: Vec<ParametricBinding>,
+    pub set_color_text: Vec<ParametricBinding>,
+    pub set_color_border: Vec<ParametricBinding>,
+    pub set_edge_type: Vec<ParametricBinding>,
+    pub set_edge_display_mode: Vec<ParametricBinding>,
+    pub reset_edge: Vec<ParametricBinding>,
 
     // ── Style / metadata ─────────────────────────────────────────
     /// Font family name for the console overlay.
@@ -333,6 +339,12 @@ impl Default for KeybindConfig {
             set_edge_body_glyph: vec![],
             set_border_field: vec![],
             set_edge_cap: vec![],
+            set_color_bg: vec![],
+            set_color_text: vec![],
+            set_color_border: vec![],
+            set_edge_type: vec![],
+            set_edge_display_mode: vec![],
+            reset_edge: vec![],
 
             // Style / metadata
             console_font: String::new(),
@@ -517,6 +529,62 @@ impl KeybindConfig {
                     from: from.clone(),
                     to: to.clone(),
                 }),
+                _ => None,
+            },
+        );
+        // Color axes — three sibling parametric variants.
+        push_parametric(
+            &mut binds,
+            "set_color_bg",
+            &self.set_color_bg,
+            |args| match args {
+                [color] => Some(Action::SetColorBg(color.clone())),
+                _ => None,
+            },
+        );
+        push_parametric(
+            &mut binds,
+            "set_color_text",
+            &self.set_color_text,
+            |args| match args {
+                [color] => Some(Action::SetColorText(color.clone())),
+                _ => None,
+            },
+        );
+        push_parametric(
+            &mut binds,
+            "set_color_border",
+            &self.set_color_border,
+            |args| match args {
+                [color] => Some(Action::SetColorBorder(color.clone())),
+                _ => None,
+            },
+        );
+        // Edge structural — type / display_mode / reset.
+        push_parametric(
+            &mut binds,
+            "set_edge_type",
+            &self.set_edge_type,
+            |args| match args {
+                [t] => Some(Action::SetEdgeType(t.clone())),
+                _ => None,
+            },
+        );
+        push_parametric(
+            &mut binds,
+            "set_edge_display_mode",
+            &self.set_edge_display_mode,
+            |args| match args {
+                [m] => Some(Action::SetEdgeDisplayMode(m.clone())),
+                _ => None,
+            },
+        );
+        push_parametric(
+            &mut binds,
+            "reset_edge",
+            &self.reset_edge,
+            |args| match args {
+                [kind] => Some(Action::ResetEdge(kind.clone())),
                 _ => None,
             },
         );
