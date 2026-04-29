@@ -430,17 +430,26 @@ app.event_loop.run(move |event, _window_target| {
                     input.last_click = None;
                 }
                 Some(a @ (Action::EditSelection | Action::EditSelectionClean)) => {
+                    // EditSelection's Single branch is Compatible
+                    // and routes through `cross_dispatch`; the
+                    // EdgeLabel / Portal branches don't exist on
+                    // WASM (NativeOnly modal editors).
                     let clean = matches!(a, Action::EditSelectionClean);
-                    if let SelectionState::Single(id) = &input.document.selection {
-                        let nid = id.clone();
-                        open_text_edit(
-                            &nid, clean,
-                            &mut input.document,
-                            &mut input.text_edit_state,
-                            &mut input.mindmap_tree,
-                            &mut input.app_scene,
+                    let opened = {
+                        let mut rc = super::cross_dispatch::RebuildContext {
+                            document: &mut input.document,
+                            mindmap_tree: &mut input.mindmap_tree,
+                            app_scene: &mut input.app_scene,
                             renderer,
-                        );
+                            scene_cache: &mut input.scene_cache,
+                        };
+                        super::cross_dispatch::apply_open_text_edit_on_single(
+                            clean,
+                            &mut rc,
+                            &mut input.text_edit_state,
+                        )
+                    };
+                    if opened {
                         suppress_for_events.set(input.text_edit_state.is_open());
                     }
                 }

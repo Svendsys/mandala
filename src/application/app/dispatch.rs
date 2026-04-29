@@ -218,39 +218,41 @@ pub(in crate::application::app) fn dispatch_action(
         Action::EditSelection | Action::EditSelectionClean => {
             let clean = matches!(action, Action::EditSelectionClean);
             if let Some(doc) = ctx.document.as_mut() {
-                match doc.selection.clone() {
-                    SelectionState::Single(id) => {
-                        open_text_edit(
-                            &id,
-                            clean,
-                            doc,
-                            ctx.text_edit_state,
-                            ctx.mindmap_tree,
-                            ctx.app_scene,
-                            ctx.renderer,
-                        );
+                // Single branch is Compatible — route through the
+                // shared cross_dispatch helper. EdgeLabel + Portal
+                // branches are NativeOnly and stay inline.
+                let single_handled = {
+                    let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
+                    super::cross_dispatch::apply_open_text_edit_on_single(
+                        clean,
+                        &mut rc,
+                        ctx.text_edit_state,
+                    )
+                };
+                if !single_handled {
+                    match doc.selection.clone() {
+                        SelectionState::PortalLabel(s) | SelectionState::PortalText(s) => {
+                            let er = s.edge_ref();
+                            open_portal_text_edit(
+                                &er,
+                                &s.endpoint_node_id,
+                                doc,
+                                ctx.portal_text_edit_state,
+                                ctx.app_scene,
+                                ctx.renderer,
+                            );
+                        }
+                        SelectionState::EdgeLabel(s) => {
+                            open_label_edit(
+                                &s.edge_ref,
+                                doc,
+                                ctx.label_edit_state,
+                                ctx.app_scene,
+                                ctx.renderer,
+                            );
+                        }
+                        _ => {}
                     }
-                    SelectionState::PortalLabel(s) | SelectionState::PortalText(s) => {
-                        let er = s.edge_ref();
-                        open_portal_text_edit(
-                            &er,
-                            &s.endpoint_node_id,
-                            doc,
-                            ctx.portal_text_edit_state,
-                            ctx.app_scene,
-                            ctx.renderer,
-                        );
-                    }
-                    SelectionState::EdgeLabel(s) => {
-                        open_label_edit(
-                            &s.edge_ref,
-                            doc,
-                            ctx.label_edit_state,
-                            ctx.app_scene,
-                            ctx.renderer,
-                        );
-                    }
-                    _ => {}
                 }
             }
             DispatchOutcome::Handled
