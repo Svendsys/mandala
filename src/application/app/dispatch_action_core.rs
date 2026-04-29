@@ -201,7 +201,15 @@ pub(in crate::application::app) fn dispatch_compatible(
                     Action::SelectPrevSibling => {
                         super::cross_dispatch::apply_select_sibling(false, &mut rc)
                     }
-                    _ => unreachable!("selection fan-out outer match exhaustive"),
+                    // Safe fallback — outer match should be exhaustive but
+                    // a future Action variant added to the outer cluster
+                    // without a corresponding inner arm would panic via
+                    // unreachable! Replace with log+no-op per
+                    // CODE_CONVENTIONS §9 (interactive paths fail-safe).
+                    _ => log::error!(
+                        "dispatch_compatible: selection fan-out missed inner-match: {:?}",
+                        action,
+                    ),
                 }
             }
         }
@@ -237,7 +245,13 @@ pub(in crate::application::app) fn dispatch_compatible(
                 Action::SetColorBg(_) => super::cross_dispatch::ColorAxis::Bg,
                 Action::SetColorText(_) => super::cross_dispatch::ColorAxis::Text,
                 Action::SetColorBorder(_) => super::cross_dispatch::ColorAxis::Border,
-                _ => unreachable!("color axis fan-out exhaustive"),
+                _ => {
+                    log::error!(
+                        "dispatch_compatible: color axis fan-out missed inner-match: {:?}",
+                        action,
+                    );
+                    return DispatchOutcome::Handled;
+                }
             };
             if let Some(doc) = core.document.as_deref_mut() {
                 let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
@@ -273,7 +287,13 @@ pub(in crate::application::app) fn dispatch_compatible(
                 Action::SetFontSize(_) => super::cross_dispatch::FontSlot::Size,
                 Action::SetFontMin(_) => super::cross_dispatch::FontSlot::Min,
                 Action::SetFontMax(_) => super::cross_dispatch::FontSlot::Max,
-                _ => unreachable!("font slot fan-out exhaustive"),
+                _ => {
+                    log::error!(
+                        "dispatch_compatible: font slot fan-out missed inner-match: {:?}",
+                        action,
+                    );
+                    return DispatchOutcome::Handled;
+                }
             };
             let parsed = match pt.parse::<f32>() {
                 Ok(v) if v.is_finite() && v > 0.0 => v,
@@ -318,7 +338,13 @@ pub(in crate::application::app) fn dispatch_compatible(
             let (min, max) = match action {
                 Action::SetZoomMin(_) => (parsed, OptionEdit::Keep),
                 Action::SetZoomMax(_) => (OptionEdit::Keep, parsed),
-                _ => unreachable!("zoom min/max fan-out exhaustive"),
+                _ => {
+                    log::error!(
+                        "dispatch_compatible: zoom min/max fan-out missed inner-match: {:?}",
+                        action,
+                    );
+                    return DispatchOutcome::Handled;
+                }
             };
             if let Some(doc) = core.document.as_deref_mut() {
                 let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);

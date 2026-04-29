@@ -137,8 +137,33 @@ impl<'a> super::dispatch_macro_core::MacroDispatchTarget for WasmMacroDispatchTa
         // `dispatch_compatible_action_wasm` shim; that shim is
         // deleted and both the keyboard handler and this trait
         // impl reach `dispatch_action_core::dispatch_compatible`.
-        let mut core = self.input.input_context_core(self.renderer, self.keybinds);
-        super::dispatch_action_core::dispatch_compatible(&action, &mut core)
+        use super::cross_dispatch::DispatchOutcome;
+        let outcome = {
+            let mut core = self.input.input_context_core(self.renderer, self.keybinds);
+            super::dispatch_action_core::dispatch_compatible(&action, &mut core)
+        };
+        // Mixed-branch lift: `dispatch_compatible` returns `Unhandled`
+        // for `CancelMode` (always) and `EditSelection*` on non-Single
+        // selections so native's caller can run the residual native-
+        // only slice (AppMode clearing, EdgeLabel/Portal editor open).
+        // WASM has no such residual — the cross-platform slice IS the
+        // totality of what we can do — so lift Unhandled→Handled here
+        // so the macro loop's `any_ran` flag bumps correctly. Pre-
+        // Track-C the WASM-only `dispatch_compatible_action_wasm`
+        // returned `Handled` for both arms unconditionally; this
+        // restores that contract for the macro-target path.
+        if matches!(outcome, DispatchOutcome::Unhandled)
+            && matches!(
+                action,
+                Action::CancelMode
+                    | Action::EditSelection
+                    | Action::EditSelectionClean
+            )
+        {
+            DispatchOutcome::Handled
+        } else {
+            outcome
+        }
     }
 
     fn apply_custom_mutation(&mut self, id: &str, node_id: &str) -> bool {
@@ -606,19 +631,20 @@ app.event_loop.run(move |event, _window_target| {
                 // touch suppress.
                 let was_edit_selection =
                     matches!(a, Action::EditSelection | Action::EditSelectionClean);
-                let outcome = {
+                let _ = {
                     let mut core = input.input_context_core(renderer, &keybinds);
                     super::dispatch_action_core::dispatch_compatible(&a, &mut core)
                 };
-                if was_edit_selection
-                    && matches!(outcome, super::cross_dispatch::DispatchOutcome::Handled)
-                {
+                if was_edit_selection {
                     // Mirror pre-Track-B `set(is_open())`: flip
                     // suppress to whatever the modal state ended
                     // up at — true if the editor opened, false if
                     // it didn't (e.g. selection wasn't Single).
-                    // Pre-Track-B always-set semantics; not just
-                    // a one-way `set(true)`.
+                    // Always-set, NOT gated on dispatch outcome.
+                    // Track-C-Commit-3 incorrectly gated on
+                    // `Handled` which left suppress stuck-true on a
+                    // non-Single EditSelection (Unhandled outcome);
+                    // restored here per the design reviewer's flag.
                     suppress_for_events.set(input.text_edit_state.is_open());
                 }
             } else {
