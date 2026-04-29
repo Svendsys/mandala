@@ -35,17 +35,24 @@ Shipped on this branch:
 
 ## Outstanding
 
-- **WASM convergence — full funnel.** Every Compatible Action
-  now routes through the shared `cross_dispatch` helpers,
-  including the Single branch of the mixed-branch
-  `EditSelection*` Actions. **Track B shipped** — the 4-tier
-  `MacroRegistry` runs on WASM, key bindings to macro ids fire
-  via the same Action → Macro chain native uses, and the
-  privilege gate is single-sourced through a trait-driven
-  `dispatch_macro_core`. The remaining gap is structural:
-  `WasmInputState` is still a separate type from native's
-  `InputHandlerContext`. Track C (full context-type
-  unification) collapses the structural gap.
+- ~~**WASM convergence — full funnel.**~~ **Track C shipped**
+  — both targets now dispatch every Compatible Action through
+  the same cross-platform `dispatch_action_core::dispatch_compatible`
+  function. WASM-only `dispatch_compatible_action_wasm` shim
+  deleted (-320 LoC). `InputContextCore` (cross-platform 11
+  fields) + `NativeContextExt` (native-only 10 fields) split via
+  `InputHandlerContext::split_borrow` on native; WASM builds a
+  core directly via `WasmInputState::input_context_core`. Mixed-
+  branch arms (`CancelMode`, `EditSelection*`) run their
+  cross-platform slice in the unified dispatcher and return
+  `Unhandled` so native fall-through can run the residual
+  AppMode / EdgeLabel / Portal native-only branches.
+- **Native dead-arm cleanup**: the Compatible arms in
+  `dispatch.rs::dispatch_action`'s match (Undo, ZoomIn, etc.)
+  are now unreachable — the cross-platform dispatcher handles
+  them first via the delegation shim. Left in place this branch
+  for behaviour-preservation safety; a focused follow-up can
+  delete them and shrink the file.
 - ~~**WASM Compatible Actions need arms.**~~ **Track A largely
   shipped.** A new `cross_dispatch` module (partial Track C) holds
   the Action arm bodies that touch only state shared between
