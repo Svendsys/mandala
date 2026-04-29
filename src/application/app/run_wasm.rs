@@ -7,7 +7,75 @@
 #![cfg(target_arch = "wasm32")]
 
 use super::*;
+use crate::application::document::MindMapDocument;
 use crate::application::keybinds::Action;
+use baumhard::mindmap::tree_builder::MindMapTree;
+
+/// Pending left-click awaiting a release. `None` on init and after
+/// release consumed; `Empty` after a click-down on empty canvas;
+/// `Node(id)` after a click-down on a node. Full drag machine
+/// (pan, move, reparent, connect) deferred to a later
+/// WASM-parity session.
+///
+/// Module-level (not closure-local) so helpers in sibling modules
+/// can take `&WasmInputState` parameters that include the field.
+pub(super) enum PendingClick {
+    None,
+    Empty,
+    Node(String),
+    /// Cursor landed on a portal **icon** at mouse-down. Committed
+    /// at mouse-up into a `SelectionState::PortalLabel`. Carries
+    /// both the owning-edge key and the endpoint id the marker
+    /// belongs to, matching the native click dispatch surface.
+    PortalMarker {
+        edge_key: baumhard::mindmap::scene_cache::EdgeKey,
+        endpoint_node_id: String,
+    },
+    /// Cursor landed on a portal **text** at mouse-down.
+    /// Committed at mouse-up into a `SelectionState::PortalText`.
+    /// Shares the identity shape with `PortalMarker`; only the
+    /// mouse-up selection routing differs.
+    PortalText {
+        edge_key: baumhard::mindmap::scene_cache::EdgeKey,
+        endpoint_node_id: String,
+    },
+    /// Cursor landed on a line-mode edge's label AABB at
+    /// mouse-down. Committed at mouse-up into
+    /// `SelectionState::EdgeLabel` so per-label color / font /
+    /// copy operations target the label instead of the edge
+    /// body. Double-click is handled inline by the press-time
+    /// dispatcher — WASM doesn't open the inline editor modal
+    /// yet so the dbl-click branch falls back to the same
+    /// selection commit for parity with single click.
+    EdgeLabel(baumhard::mindmap::scene_cache::EdgeKey),
+}
+
+/// Shared state between the WASM rAF render loop and the winit
+/// event loop. Mirrors native's `InputHandlerContext` for the 9
+/// fields both targets share. Promoted to module-level (was
+/// closure-local in `run`) so the `cross_dispatch` /
+/// `dispatch_macro_core` helpers can take `&mut WasmInputState`
+/// directly — closure-local types aren't reachable from sibling
+/// modules.
+pub(super) struct WasmInputState {
+    pub document: MindMapDocument,
+    pub mindmap_tree: Option<MindMapTree>,
+    pub text_edit_state: TextEditState,
+    pub last_click: Option<LastClick>,
+    pub cursor_pos: (f64, f64),
+    pub pending_click: PendingClick,
+    pub modifiers: winit::keyboard::ModifiersState,
+    /// Mirror of native's `app_scene` so the canvas-scene tree
+    /// path (borders, eventually connections / portals) works
+    /// identically on WASM. Threaded into every
+    /// `rebuild_all` / `rebuild_scene_only` call below.
+    pub app_scene: crate::application::scene_host::AppScene,
+    /// Mirror of native's `scene_cache` so the cache-aware
+    /// `build_scene_with_cache` entry point skips `sample_path`
+    /// work for unchanged edges. Threaded into every rebuild
+    /// helper the same way native does.
+    pub scene_cache: baumhard::mindmap::scene_cache::SceneConnectionCache,
+}
 
 /// Run the browser event loop against `app`.
 pub(super) fn run(mut app: Application) {
@@ -100,60 +168,10 @@ let mindmap_path = {
 // Shared state between the rAF render loop and the winit event
 // loop. Two RefCells so input handlers can borrow InputState
 // and Renderer simultaneously without conflict.
-/// Pending left-click awaiting a release. `None` on init and after
-/// release consumed; `Empty` after a click-down on empty canvas;
-/// `Node(id)` after a click-down on a node. Full drag machine
-/// (pan, move, reparent, connect) deferred to a later
-/// WASM-parity session.
-enum PendingClick {
-    None,
-    Empty,
-    Node(String),
-    /// Cursor landed on a portal **icon** at mouse-down. Committed
-    /// at mouse-up into a `SelectionState::PortalLabel`. Carries
-    /// both the owning-edge key and the endpoint id the marker
-    /// belongs to, matching the native click dispatch surface.
-    PortalMarker {
-        edge_key: baumhard::mindmap::scene_cache::EdgeKey,
-        endpoint_node_id: String,
-    },
-    /// Cursor landed on a portal **text** at mouse-down.
-    /// Committed at mouse-up into a `SelectionState::PortalText`.
-    /// Shares the identity shape with `PortalMarker`; only the
-    /// mouse-up selection routing differs.
-    PortalText {
-        edge_key: baumhard::mindmap::scene_cache::EdgeKey,
-        endpoint_node_id: String,
-    },
-    /// Cursor landed on a line-mode edge's label AABB at
-    /// mouse-down. Committed at mouse-up into
-    /// `SelectionState::EdgeLabel` so per-label color / font /
-    /// copy operations target the label instead of the edge
-    /// body. Double-click is handled inline by the press-time
-    /// dispatcher — WASM doesn't open the inline editor modal
-    /// yet so the dbl-click branch falls back to the same
-    /// selection commit for parity with single click.
-    EdgeLabel(baumhard::mindmap::scene_cache::EdgeKey),
-}
-struct WasmInputState {
-    document: MindMapDocument,
-    mindmap_tree: Option<MindMapTree>,
-    text_edit_state: TextEditState,
-    last_click: Option<LastClick>,
-    cursor_pos: (f64, f64),
-    pending_click: PendingClick,
-    modifiers: winit::keyboard::ModifiersState,
-    /// Mirror of native's `app_scene` so the canvas-scene
-    /// tree path (borders, eventually connections/portals)
-    /// works identically on WASM. Threaded into every
-    /// `rebuild_all` / `rebuild_scene_only` call below.
-    app_scene: crate::application::scene_host::AppScene,
-    /// Mirror of native's `scene_cache` so the cache-aware
-    /// `build_scene_with_cache` entry point skips `sample_path`
-    /// work for unchanged edges. Threaded into every rebuild
-    /// helper the same way native does.
-    scene_cache: baumhard::mindmap::scene_cache::SceneConnectionCache,
-}
+// `WasmInputState` and `PendingClick` are now declared at module
+// scope (above `fn run`) so cross-platform helpers can take them
+// by `&mut`. Construction of the actual instance happens later in
+// `spawn_local`.
 
 let renderer_rc: Rc<RefCell<Option<Renderer>>> = Rc::new(RefCell::new(None));
 let input_rc: Rc<RefCell<Option<WasmInputState>>> = Rc::new(RefCell::new(None));
