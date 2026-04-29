@@ -201,19 +201,21 @@ fn execute_label(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
 
     if let Some((_, value)) = position_kv {
         match target.as_ref() {
-            Some(TargetKind::LineEdge(er)) => {
-                let t = match value.as_str() {
-                    "start" => 0.0,
-                    "middle" => 0.5,
-                    "end" => 1.0,
-                    other => {
-                        return ExecResult::err(format!(
-                            "position '{}' must be start|middle|end",
-                            other
-                        ))
-                    }
-                };
-                let changed = eff.document.set_edge_label_position(er, t);
+            Some(TargetKind::LineEdge(_)) => {
+                // Pre-validate so a bad anchor name surfaces as a
+                // typed error (the parametric Action arm silently
+                // no-ops on bad input via the same parse helper).
+                if parse_label_position_anchor(&value).is_none() {
+                    return ExecResult::err(format!(
+                        "position '{}' must be start|middle|end",
+                        value
+                    ));
+                }
+                // Route through the mutation core — same setter
+                // path the parametric `Action::SetEdgeLabelPosition`
+                // arm uses.
+                let changed =
+                    apply_label_position_to_selection(eff.document, &value);
                 any_applied |= changed;
                 if !changed {
                     messages.push(format!("position already {}", value));
@@ -399,6 +401,19 @@ pub(crate) fn apply_label_text_to_selection(doc: &mut MindMapDocument, text: &st
     }
 }
 
+/// Resolve a named position anchor (`start|middle|end`) to its
+/// `position_t` value in `[0.0, 1.0]`. Shared between the verb's
+/// typed-error path (which surfaces `Err` on a bad name) and the
+/// parametric Action arm's silent-no-op path.
+pub(crate) fn parse_label_position_anchor(name: &str) -> Option<f32> {
+    match name {
+        "start" => Some(0.0),
+        "middle" => Some(0.5),
+        "end" => Some(1.0),
+        _ => None,
+    }
+}
+
 /// Mutation core: apply `position=<start|middle|end>` to the
 /// currently-selected line-mode edge. Portal selections (which use
 /// the `position_t=<f32 in [0,4)>` shape) are not applicable and
@@ -408,11 +423,8 @@ pub(crate) fn apply_label_position_to_selection(
     doc: &mut MindMapDocument,
     position: &str,
 ) -> bool {
-    let t = match position {
-        "start" => 0.0,
-        "middle" => 0.5,
-        "end" => 1.0,
-        _ => return false,
+    let Some(t) = parse_label_position_anchor(position) else {
+        return false;
     };
     let er = match doc.selection.clone() {
         SelectionState::Edge(er) => er,

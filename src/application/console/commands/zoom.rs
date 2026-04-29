@@ -162,54 +162,37 @@ fn execute_zoom(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     }
 
     let doc = &mut eff.document;
-    match doc.selection.clone() {
-        SelectionState::Single(id) => {
-            finalize("node", doc.set_node_zoom_visibility(&id, min_edit, max_edit))
-        }
-        SelectionState::Multi(ids) => {
-            let mut changed = 0usize;
-            for id in &ids {
-                if doc.set_node_zoom_visibility(id, min_edit, max_edit) {
-                    changed += 1;
-                }
-            }
-            if changed == 0 {
-                ExecResult::ok_msg("zoom: no change")
-            } else {
-                ExecResult::ok_msg(format!("zoom: applied to {changed} node(s)"))
+
+    // Multi takes a count for the "applied to N node(s)" message,
+    // so it stays inline here (the bool-returning core can't
+    // surface a count). Every other selection variant routes
+    // through the core — single source of truth with the
+    // parametric Action arms.
+    if let SelectionState::Multi(ids) = doc.selection.clone() {
+        let mut changed = 0usize;
+        for id in &ids {
+            if doc.set_node_zoom_visibility(id, min_edit, max_edit) {
+                changed += 1;
             }
         }
-        SelectionState::Edge(er) => {
-            finalize("edge", doc.set_edge_zoom_visibility(&er, min_edit, max_edit))
-        }
-        SelectionState::EdgeLabel(s) => {
-            finalize(
-                "edge label",
-                doc.set_edge_label_zoom_visibility(&s.edge_ref, min_edit, max_edit),
-            )
-        }
-        SelectionState::PortalLabel(s) => {
-            // Portal icon routes to the owning edge's top-level
-            // pair (same sink as `Edge`). Mirrors the `font`
-            // command's portal-label posture.
-            finalize(
-                "portal label",
-                doc.set_edge_zoom_visibility(&s.edge_ref(), min_edit, max_edit),
-            )
-        }
-        SelectionState::PortalText(s) => {
-            finalize(
-                "portal text",
-                doc.set_portal_endpoint_zoom_visibility(
-                    &s.edge_ref(),
-                    &s.endpoint_node_id,
-                    min_edit,
-                    max_edit,
-                ),
-            )
-        }
-        SelectionState::None => ExecResult::err("zoom: no selection"),
+        return if changed == 0 {
+            ExecResult::ok_msg("zoom: no change")
+        } else {
+            ExecResult::ok_msg(format!("zoom: applied to {changed} node(s)"))
+        };
     }
+
+    let kind: &str = match &doc.selection {
+        SelectionState::Single(_) => "node",
+        SelectionState::Edge(_) => "edge",
+        SelectionState::EdgeLabel(_) => "edge label",
+        SelectionState::PortalLabel(_) => "portal label",
+        SelectionState::PortalText(_) => "portal text",
+        SelectionState::None => return ExecResult::err("zoom: no selection"),
+        SelectionState::Multi(_) => unreachable!("Multi handled above"),
+    };
+    let changed = apply_zoom_to_selection(doc, min_edit, max_edit);
+    finalize(kind, changed)
 }
 
 fn finalize(kind: &str, changed: bool) -> ExecResult {

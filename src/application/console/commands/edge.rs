@@ -111,6 +111,12 @@ fn execute_edge(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         Err(r) => return r,
     };
 
+    // Bind `_er` to silence the unused warning — the per-kv path
+    // resolves the edge through the mutation cores now. The
+    // `require_edge_or_portal` call above is still load-bearing
+    // for the typed "no edge selected" error.
+    let _ = er;
+
     let mut tally = ApplyTally::new();
 
     for (k, v) in kvs {
@@ -123,7 +129,9 @@ fn execute_edge(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                     ));
                     continue;
                 }
-                let changed = eff.document.set_edge_type(&er, &v);
+                // Route through the mutation core — same setter
+                // path the parametric `Action::SetEdgeType` arm uses.
+                let changed = apply_edge_type_to_selection(eff.document, &v);
                 tally.note(changed, || format!("edge already of type {}", v));
             }
             "display_mode" => {
@@ -134,45 +142,22 @@ fn execute_edge(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                     ));
                     continue;
                 }
-                let changed = eff.document.set_edge_display_mode(&er, &v);
+                let changed =
+                    apply_edge_display_mode_to_selection(eff.document, &v);
                 tally.note(changed, || format!("edge already rendering as {}", v));
             }
             "reset" => match v.as_str() {
-                "straight" => {
-                    let changed = eff.document.reset_edge_to_straight(&er);
-                    tally.note(changed, || "connection already straight".into());
-                }
-                "curve" => {
-                    let changed = eff.document.curve_straight_edge(&er);
-                    tally.note(changed, || "connection already curved".into());
-                }
-                "style" => {
-                    let changed = eff.document.reset_edge_style_to_default(&er);
-                    tally.note(changed, || "no style override to reset".into());
-                }
-                "position" => {
-                    // Scope depends on the selection:
-                    // - Edge / EdgeLabel: whole edge (anchors → auto
-                    //   + label position clear on line mode, both
-                    //   portal endpoints on portal mode).
-                    // - PortalLabel / PortalText: just the chosen
-                    //   endpoint (leaves the other side alone).
-                    // The document method ignores the endpoint arg
-                    // for line-mode edges, so selections that collapse
-                    // to a line-mode edge always get the whole-edge
-                    // behaviour regardless of shape.
-                    use crate::application::document::SelectionState;
-                    let endpoint: Option<String> = match &eff.document.selection {
-                        SelectionState::PortalLabel(s)
-                        | SelectionState::PortalText(s) => {
-                            Some(s.endpoint_node_id.clone())
-                        }
-                        _ => None,
+                kind @ ("straight" | "curve" | "style" | "position") => {
+                    let changed = apply_edge_reset_to_selection(eff.document, kind);
+                    let already_msg: &str = match kind {
+                        "straight" => "connection already straight",
+                        "curve" => "connection already curved",
+                        "style" => "no style override to reset",
+                        "position" => "position already at default",
+                        _ => unreachable!("outer guard restricts to 4 kinds"),
                     };
-                    let changed = eff
-                        .document
-                        .reset_edge_position(&er, endpoint.as_deref());
-                    tally.note(changed, || "position already at default".into());
+                    let already_msg = already_msg.to_string();
+                    tally.note(changed, || already_msg);
                 }
                 other => {
                     tally.note_error(format!(
