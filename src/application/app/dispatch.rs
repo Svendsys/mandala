@@ -1166,6 +1166,66 @@ pub(in crate::application::app) fn dispatch_action(
             }
             DispatchOutcome::Handled
         }
+        Action::SetZoomMin(ref payload) | Action::SetZoomMax(ref payload) => {
+            use crate::application::document::OptionEdit;
+            let parsed = match crate::application::console::commands::zoom::parse_zoom_payload(payload) {
+                Some(e) => e,
+                None => {
+                    log::warn!(
+                        "{}: invalid zoom payload '{}' — must be a positive finite float or 'unset'",
+                        match action {
+                            Action::SetZoomMin(_) => "set_zoom_min",
+                            Action::SetZoomMax(_) => "set_zoom_max",
+                            _ => "set_zoom_*",
+                        },
+                        payload,
+                    );
+                    return DispatchOutcome::Handled;
+                }
+            };
+            let (min, max) = match action {
+                Action::SetZoomMin(_) => (parsed, OptionEdit::Keep),
+                Action::SetZoomMax(_) => (OptionEdit::Keep, parsed),
+                _ => unreachable!("outer pattern guarantees a SetZoomMin/Max variant"),
+            };
+            if let Some(doc) = ctx.document.as_mut() {
+                let changed = crate::application::console::commands::zoom::apply_zoom_to_selection(
+                    doc, min, max,
+                );
+                if changed {
+                    ctx.scene_cache.clear();
+                    rebuild_all(
+                        doc,
+                        ctx.mindmap_tree,
+                        ctx.app_scene,
+                        ctx.renderer,
+                        ctx.scene_cache,
+                    );
+                }
+            }
+            DispatchOutcome::Handled
+        }
+        Action::ClearZoom => {
+            use crate::application::document::OptionEdit;
+            if let Some(doc) = ctx.document.as_mut() {
+                let changed = crate::application::console::commands::zoom::apply_zoom_to_selection(
+                    doc,
+                    OptionEdit::Clear,
+                    OptionEdit::Clear,
+                );
+                if changed {
+                    ctx.scene_cache.clear();
+                    rebuild_all(
+                        doc,
+                        ctx.mindmap_tree,
+                        ctx.app_scene,
+                        ctx.renderer,
+                        ctx.scene_cache,
+                    );
+                }
+            }
+            DispatchOutcome::Handled
+        }
 
         // Console / Picker / LabelEdit / TextEdit modal-context actions
         // not handled above (e.g. cancel/commit) are dispatched by their

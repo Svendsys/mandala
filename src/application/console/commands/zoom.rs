@@ -24,7 +24,7 @@ use crate::application::console::completion::{prefix_filter, Completion, Complet
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
 use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
-use crate::application::document::{OptionEdit, SelectionState};
+use crate::application::document::{MindMapDocument, OptionEdit, SelectionState};
 
 pub const KEYS: &[&str] = &["min", "max"];
 pub const VERBS: &[&str] = &["clear"];
@@ -220,6 +220,64 @@ fn finalize(kind: &str, changed: bool) -> ExecResult {
     }
 }
 
+/// Parse a parametric Action's payload string into an
+/// [`OptionEdit<f32>`]. Returns `None` for malformed values; the
+/// Action arm warn-logs and proceeds. Mirrors `parse_bound` on the
+/// verb side but without the `ExecResult` wrapping.
+pub(crate) fn parse_zoom_payload(value: &str) -> Option<OptionEdit<f32>> {
+    if value.is_empty() || value.eq_ignore_ascii_case("unset") {
+        return Some(OptionEdit::Clear);
+    }
+    match value.parse::<f32>() {
+        Ok(v) if v.is_finite() && v > 0.0 => Some(OptionEdit::Set(v)),
+        _ => None,
+    }
+}
+
+/// Mutation core: apply a zoom-visibility edit pair to the current
+/// selection. Selection-aware in the same way the verb is — node /
+/// multi-node / edge / edge-label / portal-label / portal-text each
+/// route to their own setter. Returns `true` when at least one
+/// target actually changed.
+pub(crate) fn apply_zoom_to_selection(
+    doc: &mut MindMapDocument,
+    min: OptionEdit<f32>,
+    max: OptionEdit<f32>,
+) -> bool {
+    if matches!(min, OptionEdit::Keep) && matches!(max, OptionEdit::Keep) {
+        return false;
+    }
+    // Reject inverted explicit bounds — the Action surface has no
+    // scrollback, so we silently no-op rather than write half the
+    // edit and surprise the user.
+    if let (OptionEdit::Set(lo), OptionEdit::Set(hi)) = (min, max) {
+        if lo > hi {
+            return false;
+        }
+    }
+    match doc.selection.clone() {
+        SelectionState::Single(id) => doc.set_node_zoom_visibility(&id, min, max),
+        SelectionState::Multi(ids) => {
+            let mut changed = false;
+            for id in &ids {
+                changed |= doc.set_node_zoom_visibility(id, min, max);
+            }
+            changed
+        }
+        SelectionState::Edge(er) => doc.set_edge_zoom_visibility(&er, min, max),
+        SelectionState::EdgeLabel(s) => {
+            doc.set_edge_label_zoom_visibility(&s.edge_ref, min, max)
+        }
+        SelectionState::PortalLabel(s) => {
+            doc.set_edge_zoom_visibility(&s.edge_ref(), min, max)
+        }
+        SelectionState::PortalText(s) => {
+            doc.set_portal_endpoint_zoom_visibility(&s.edge_ref(), &s.endpoint_node_id, min, max)
+        }
+        SelectionState::None => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -267,5 +325,94 @@ mod tests {
     #[test]
     fn parse_bound_rejects_garbage() {
         assert!(parse_bound("min", "potato").is_err());
+    }
+
+    // Mutation-core tests for the parametric Action arms ─────────
+    use crate::application::document::tests_common::{first_testament_node_id, load_test_doc};
+
+    #[test]
+    fn parse_zoom_payload_unset_is_clear() {
+        assert_eq!(parse_zoom_payload("unset"), Some(OptionEdit::Clear));
+        assert_eq!(parse_zoom_payload(""), Some(OptionEdit::Clear));
+    }
+
+    #[test]
+    fn parse_zoom_payload_finite_positive_is_set() {
+        assert_eq!(parse_zoom_payload("0.5"), Some(OptionEdit::Set(0.5)));
+        assert_eq!(parse_zoom_payload("2.0"), Some(OptionEdit::Set(2.0)));
+    }
+
+    #[test]
+    fn parse_zoom_payload_rejects_non_finite_and_non_positive() {
+        assert_eq!(parse_zoom_payload("0"), None);
+        assert_eq!(parse_zoom_payload("-1"), None);
+        assert_eq!(parse_zoom_payload("NaN"), None);
+        assert_eq!(parse_zoom_payload("inf"), None);
+        assert_eq!(parse_zoom_payload("garbage"), None);
+    }
+
+    #[test]
+    fn apply_zoom_to_selection_writes_min_on_node() {
+        let mut doc = load_test_doc();
+        let id = first_testament_node_id(&doc);
+        doc.selection = SelectionState::Single(id.clone());
+        let changed = apply_zoom_to_selection(
+            &mut doc,
+            OptionEdit::Set(0.5),
+            OptionEdit::Keep,
+        );
+        assert!(changed);
+        assert_eq!(
+            doc.mindmap.nodes.get(&id).unwrap().min_zoom_to_render,
+            Some(0.5),
+        );
+    }
+
+    #[test]
+    fn apply_zoom_to_selection_keep_keep_is_noop() {
+        let mut doc = load_test_doc();
+        let id = first_testament_node_id(&doc);
+        doc.selection = SelectionState::Single(id);
+        assert!(!apply_zoom_to_selection(
+            &mut doc,
+            OptionEdit::Keep,
+            OptionEdit::Keep,
+        ));
+    }
+
+    #[test]
+    fn apply_zoom_to_selection_inverted_bounds_silent_no_op() {
+        let mut doc = load_test_doc();
+        let id = first_testament_node_id(&doc);
+        doc.selection = SelectionState::Single(id);
+        // min=2.0, max=0.5 — inverted; the core silently no-ops
+        // (Action arm has no scrollback to surface a typed error).
+        assert!(!apply_zoom_to_selection(
+            &mut doc,
+            OptionEdit::Set(2.0),
+            OptionEdit::Set(0.5),
+        ));
+    }
+
+    #[test]
+    fn apply_zoom_to_selection_clear_drops_overrides() {
+        let mut doc = load_test_doc();
+        let id = first_testament_node_id(&doc);
+        doc.selection = SelectionState::Single(id.clone());
+        // Set first so clear has something to drop.
+        let _ = apply_zoom_to_selection(
+            &mut doc,
+            OptionEdit::Set(0.5),
+            OptionEdit::Set(2.0),
+        );
+        let cleared = apply_zoom_to_selection(
+            &mut doc,
+            OptionEdit::Clear,
+            OptionEdit::Clear,
+        );
+        assert!(cleared);
+        let node = doc.mindmap.nodes.get(&id).unwrap();
+        assert!(node.min_zoom_to_render.is_none());
+        assert!(node.max_zoom_to_render.is_none());
     }
 }

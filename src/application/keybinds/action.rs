@@ -341,6 +341,17 @@ pub enum Action {
     /// Mirror `spacing value=<tight|normal|wide|<float>>` on the
     /// selected edge.
     SetSpacing(String),
+    /// Mirror `zoom min=<zoom|unset>` on the current selection.
+    /// Payload is `"unset"`, `""`, or a positive finite float
+    /// string. Inverted bounds (`min > max`) silently no-op.
+    SetZoomMin(String),
+    /// Mirror `zoom max=<zoom|unset>` on the current selection.
+    /// Same payload shape as `SetZoomMin`.
+    SetZoomMax(String),
+    /// Mirror `zoom clear` — drop both `min_zoom_to_render` and
+    /// `max_zoom_to_render` on the current selection. Unit
+    /// variant — no payload.
+    ClearZoom,
 }
 
 impl Action {
@@ -446,7 +457,10 @@ impl Action {
             | Action::SetFontMax(_)
             | Action::SetEdgeLabelText(_)
             | Action::SetEdgeLabelPosition(_)
-            | Action::SetSpacing(_) => false,
+            | Action::SetSpacing(_)
+            | Action::SetZoomMin(_)
+            | Action::SetZoomMax(_)
+            | Action::ClearZoom => false,
 
             // Modal-context Actions (Console / Picker / TextEdit /
             // LabelEdit / DoubleClickActivate's `Empty`-hit branch
@@ -638,7 +652,10 @@ impl Action {
             | Action::SetFontMax(_)
             | Action::SetEdgeLabelText(_)
             | Action::SetEdgeLabelPosition(_)
-            | Action::SetSpacing(_) => InputContext::Document,
+            | Action::SetSpacing(_)
+            | Action::SetZoomMin(_)
+            | Action::SetZoomMax(_)
+            | Action::ClearZoom => InputContext::Document,
         }
     }
 
@@ -726,7 +743,10 @@ impl Action {
             | Action::SetFontMax(_)
             | Action::SetEdgeLabelText(_)
             | Action::SetEdgeLabelPosition(_)
-            | Action::SetSpacing(_) => WasmCompatibility::Compatible,
+            | Action::SetSpacing(_)
+            | Action::SetZoomMin(_)
+            | Action::SetZoomMax(_)
+            | Action::ClearZoom => WasmCompatibility::Compatible,
 
             // ── Renderer-only — works on both targets ─────────
             Action::ZoomIn

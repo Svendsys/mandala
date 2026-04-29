@@ -508,6 +508,9 @@ fn test_wasm_compatibility_classifies_every_variant_explicitly() {
         Action::SetEdgeLabelText("hi".into()),
         Action::SetEdgeLabelPosition("middle".into()),
         Action::SetSpacing("normal".into()),
+        Action::SetZoomMin("0.5".into()),
+        Action::SetZoomMax("2.0".into()),
+        Action::ClearZoom,
     ];
     for a in all_variants {
         let c = a.wasm_compatibility();
@@ -599,6 +602,9 @@ fn test_is_destructive_destructive_set_is_pinned() {
         Action::SetEdgeLabelText("hi".into()),
         Action::SetEdgeLabelPosition("middle".into()),
         Action::SetSpacing("normal".into()),
+        Action::SetZoomMin("0.5".into()),
+        Action::SetZoomMax("2.0".into()),
+        Action::ClearZoom,
     ] {
         assert!(
             !a.is_destructive(),
@@ -1474,6 +1480,57 @@ fn test_parametric_label_text_position_resolve() {
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "f11", false, false, false),
         Some(Action::SetSpacing("wide".into())),
+    );
+}
+
+#[test]
+fn test_parametric_zoom_resolve_set_and_clear() {
+    let cfg = KeybindConfig {
+        set_zoom_min: vec![ParametricBinding {
+            combo: "F12".into(),
+            args: vec!["0.5".into()],
+        }],
+        set_zoom_max: vec![ParametricBinding {
+            combo: "Ctrl+F12".into(),
+            args: vec!["2.0".into()],
+        }],
+        clear_zoom: vec![ParametricBinding {
+            combo: "Shift+F12".into(),
+            args: vec![],
+        }],
+        ..KeybindConfig::default()
+    };
+    let resolved = cfg.resolve();
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f12", false, false, false),
+        Some(Action::SetZoomMin("0.5".into())),
+    );
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f12", true, false, false),
+        Some(Action::SetZoomMax("2.0".into())),
+    );
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f12", false, true, false),
+        Some(Action::ClearZoom),
+    );
+}
+
+#[test]
+fn test_parametric_clear_zoom_with_extra_args_is_skipped() {
+    // ClearZoom is a unit variant — the builder closure rejects any
+    // non-empty args slice. Confirms the unit-variant shape works
+    // through the same `push_parametric` plumbing as payload variants.
+    let cfg = KeybindConfig {
+        clear_zoom: vec![ParametricBinding {
+            combo: "Shift+F12".into(),
+            args: vec!["unexpected".into()],
+        }],
+        ..KeybindConfig::default()
+    };
+    let resolved = cfg.resolve();
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f12", false, true, false),
+        None,
     );
 }
 

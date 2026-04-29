@@ -176,6 +176,10 @@ pub struct KeybindConfig {
     pub set_edge_label_text: Vec<ParametricBinding>,
     pub set_edge_label_position: Vec<ParametricBinding>,
     pub set_spacing: Vec<ParametricBinding>,
+    pub set_zoom_min: Vec<ParametricBinding>,
+    pub set_zoom_max: Vec<ParametricBinding>,
+    /// Unit variant — `args` is ignored, only `combo` matters.
+    pub clear_zoom: Vec<ParametricBinding>,
 
     // ── Style / metadata ─────────────────────────────────────────
     /// Font family name for the console overlay.
@@ -359,6 +363,9 @@ impl Default for KeybindConfig {
             set_edge_label_text: vec![],
             set_edge_label_position: vec![],
             set_spacing: vec![],
+            set_zoom_min: vec![],
+            set_zoom_max: vec![],
+            clear_zoom: vec![],
 
             // Style / metadata
             console_font: String::new(),
@@ -663,6 +670,36 @@ impl KeybindConfig {
             &self.set_spacing,
             |args| match args {
                 [v] => Some(Action::SetSpacing(v.clone())),
+                _ => None,
+            },
+        );
+        // Zoom-visibility window: min / max take a single arg
+        // each; `clear_zoom` is a unit variant so an empty `args`
+        // is the only valid shape.
+        push_parametric(
+            &mut binds,
+            "set_zoom_min",
+            &self.set_zoom_min,
+            |args| match args {
+                [v] => Some(Action::SetZoomMin(v.clone())),
+                _ => None,
+            },
+        );
+        push_parametric(
+            &mut binds,
+            "set_zoom_max",
+            &self.set_zoom_max,
+            |args| match args {
+                [v] => Some(Action::SetZoomMax(v.clone())),
+                _ => None,
+            },
+        );
+        push_parametric(
+            &mut binds,
+            "clear_zoom",
+            &self.clear_zoom,
+            |args| match args {
+                [] => Some(Action::ClearZoom),
                 _ => None,
             },
         );
