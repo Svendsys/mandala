@@ -103,6 +103,78 @@ fn make_test_mutation(id: &str, scope: TS) -> CM {
         assert!(!doc.dirty);
     }
 
+    /// Phase-7 parity regression: the keybind-side custom-mutation
+    /// path previously skipped both `apply_document_actions` and the
+    /// animation `timing` envelope. After the fix, the keybind path
+    /// runs through `dispatch::apply_keybind_custom_mutation` which
+    /// goes through both. This test pins the parity contract by
+    /// calling the helper directly (no renderer needed) and asserting
+    /// the document-actions side-effect lands.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn test_apply_keybind_custom_mutation_runs_document_actions() {
+        use crate::application::app::dispatch::apply_keybind_custom_mutation;
+        use baumhard::mindmap::scene_cache::SceneConnectionCache;
+        use baumhard::mindmap::tree_builder::build_mindmap_tree;
+
+        let mut doc = load_test_doc();
+        let nid = first_testament_node_id(&doc);
+        let mut scene_cache = SceneConnectionCache::default();
+        let cm = make_set_bg_doc_mutation("#bada55");
+
+        // Without a tree the non-animated branch can't apply.
+        let mut no_tree: Option<baumhard::mindmap::tree_builder::MindMapTree> = None;
+        let applied = apply_keybind_custom_mutation(
+            &mut doc, &mut no_tree, &mut scene_cache, &cm, &nid, 0,
+        );
+        assert!(!applied, "no tree + no animation: nothing to apply");
+
+        // Build a tree so the non-animated branch can run.
+        let mut tree = Some(build_mindmap_tree(&doc.mindmap));
+        let applied = apply_keybind_custom_mutation(
+            &mut doc, &mut tree, &mut scene_cache, &cm, &nid, 0,
+        );
+        assert!(applied, "with a tree, non-animated mutation must apply");
+        // The load-bearing assertion: document actions ran.
+        assert_eq!(
+            doc.mindmap.canvas.theme_variables.get("--bg"),
+            Some(&"#bada55".to_string()),
+            "Phase-7 parity: apply_document_actions must run on the keybind path"
+        );
+    }
+
+    /// Phase-7 parity regression for the animation branch. When a
+    /// custom mutation has `timing.duration_ms > 0`, the keybind path
+    /// must call `start_animation` (not the immediate apply).
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn test_apply_keybind_custom_mutation_with_timing_starts_animation() {
+        use crate::application::app::dispatch::apply_keybind_custom_mutation;
+        use baumhard::mindmap::scene_cache::SceneConnectionCache;
+
+        let mut doc = load_test_doc();
+        let nid = first_testament_node_id(&doc);
+        let mut tree = None;
+        let mut scene_cache = SceneConnectionCache::default();
+        let mut cm = TestNudgeMutation::new("animated-nudge", TS::SelfOnly)
+            .magnitude(10.0)
+            .build();
+        cm.timing = Some(AnimationTiming {
+            duration_ms: 200,
+            ..AnimationTiming::default()
+        });
+
+        assert!(!doc.has_active_animations());
+        let applied = apply_keybind_custom_mutation(
+            &mut doc, &mut tree, &mut scene_cache, &cm, &nid, 0,
+        );
+        assert!(applied, "animated branch must succeed even without a tree");
+        assert!(
+            doc.has_active_animations(),
+            "Phase-7 parity: timing.duration_ms > 0 must call start_animation"
+        );
+    }
+
     #[test]
     fn test_mutation_registry_empty_for_existing_map() {
         let doc = load_test_doc();

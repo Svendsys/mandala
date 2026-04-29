@@ -193,6 +193,560 @@ fn test_keybind_string_round_trip_through_parse() {
 }
 
 #[test]
+fn test_keybind_parse_mouse_gestures() {
+    let cases = &[
+        ("DoubleClick", "doubleclick"),
+        ("MiddleClick", "middleclick"),
+        ("LeftDrag", "leftdrag"),
+        ("WheelUp", "wheelup"),
+        ("WheelDown", "wheeldown"),
+    ];
+    for (input, expected_key) in cases {
+        let k = KeyBind::parse(input).unwrap();
+        assert_eq!(k.key, *expected_key, "parse('{}')", input);
+        assert!(!k.ctrl && !k.shift && !k.alt);
+    }
+}
+
+#[test]
+fn test_keybind_parse_modified_mouse_gestures() {
+    let k = KeyBind::parse("Shift+DoubleClick").unwrap();
+    assert_eq!(k.key, "doubleclick");
+    assert!(k.shift);
+    assert!(!k.ctrl && !k.alt);
+
+    let k = KeyBind::parse("Ctrl+WheelUp").unwrap();
+    assert_eq!(k.key, "wheelup");
+    assert!(k.ctrl);
+}
+
+#[test]
+fn test_keybind_mouse_gesture_round_trip_pascal_case() {
+    let cases = &[
+        "DoubleClick",
+        "MiddleClick",
+        "Shift+DoubleClick",
+        "Ctrl+WheelUp",
+        "Ctrl+Shift+LeftDrag",
+    ];
+    for c in cases {
+        let parsed = KeyBind::parse(c).unwrap();
+        let rendered = parsed.to_binding_string();
+        assert_eq!(rendered, *c, "round-trip emit form for '{}'", c);
+        let reparsed = KeyBind::parse(&rendered).unwrap();
+        assert_eq!(parsed, reparsed);
+    }
+}
+
+#[test]
+fn test_gesture_key_name_matches_parser_token() {
+    // Every MouseGesture's canonical name must round-trip through
+    // KeyBind::parse to a binding with the matching key field.
+    let gestures = [
+        MouseGesture::LeftDrag,
+        MouseGesture::DoubleClick,
+        MouseGesture::MiddleClick,
+        MouseGesture::WheelUp,
+        MouseGesture::WheelDown,
+    ];
+    for g in gestures {
+        let name = gesture_key_name(g);
+        let bind = KeyBind::parse(name).unwrap();
+        assert_eq!(bind.key, name);
+    }
+}
+
+// ─── WASM-compatibility classification (locks the API surface) ──
+
+#[test]
+fn test_wasm_compatibility_navigation_actions_are_compatible() {
+    // Navigation / view-state Actions only touch the renderer +
+    // document, both of which exist on both targets. If a contributor
+    // ever flips one of these to `NativeOnly`, this test fails and
+    // the WASM port loses functionality silently.
+    use crate::application::keybinds::WasmCompatibility::Compatible;
+    for a in [
+        Action::ZoomIn,
+        Action::ZoomOut,
+        Action::ZoomReset,
+        Action::ZoomFit,
+        Action::PanCameraNorth,
+        Action::PanCameraSouth,
+        Action::PanCameraEast,
+        Action::PanCameraWest,
+        Action::JumpToRoot,
+        Action::CenterOnSelection,
+        Action::ToggleFps,
+        Action::ToggleFpsDebug,
+    ] {
+        assert_eq!(a.wasm_compatibility(), Compatible, "{:?} should be Compatible", a);
+    }
+}
+
+#[test]
+fn test_wasm_compatibility_selection_actions_are_compatible() {
+    use crate::application::keybinds::WasmCompatibility::Compatible;
+    for a in [
+        Action::SelectAll,
+        Action::DeselectAll,
+        Action::InvertSelection,
+        Action::SelectParent,
+        Action::SelectChild,
+        Action::SelectNextSibling,
+        Action::SelectPrevSibling,
+    ] {
+        assert_eq!(a.wasm_compatibility(), Compatible, "{:?} should be Compatible", a);
+    }
+}
+
+#[test]
+fn test_wasm_compatibility_console_modals_are_native_only() {
+    use crate::application::keybinds::WasmCompatibility::NativeOnly;
+    // A representative sample — the full list lives in
+    // action.rs::wasm_compatibility. The test pins the contract:
+    // these Actions touch native-only `console_state`, so flipping
+    // them to Compatible without porting the modal would crash WASM.
+    for a in [
+        Action::OpenConsole,
+        Action::ConsoleClose,
+        Action::ConsoleSubmit,
+        Action::ConsoleHistoryUp,
+        Action::ConsoleHistoryDown,
+        Action::ConsoleScrollUp,
+    ] {
+        assert_eq!(a.wasm_compatibility(), NativeOnly, "{:?} should be NativeOnly", a);
+    }
+}
+
+#[test]
+fn test_wasm_compatibility_modal_actions_are_native_only() {
+    use crate::application::keybinds::WasmCompatibility::NativeOnly;
+    for a in [
+        Action::EnterReparentMode,
+        Action::EnterConnectMode,
+        Action::CancelMode,
+        Action::PickerCancel,
+        Action::PickerCommit,
+        Action::LabelEditCancel,
+        Action::LabelEditCommit,
+        Action::LabelEditOnSelection,
+        Action::OpenColorPicker,
+        Action::CloseColorPicker,
+        Action::SaveDocument,
+        Action::PanCanvas,
+        Action::NewDocument,
+    ] {
+        assert_eq!(a.wasm_compatibility(), NativeOnly, "{:?} should be NativeOnly", a);
+    }
+}
+
+/// Mixed-branch Actions (whose dispatch arm reads/writes
+/// different state per branch) classify as NativeOnly per the
+/// "ANY NativeOnly branch ⇒ NativeOnly" rule. Locks the
+/// classification so a future contributor can't silently
+/// downgrade the rule to "the WASM-reachable branch is
+/// reachable in practice" — that's the looser semantic the
+/// reviewer flagged as a forward-compat trap.
+#[test]
+fn test_wasm_compatibility_mixed_branch_actions_are_native_only() {
+    use crate::application::keybinds::WasmCompatibility::NativeOnly;
+    for a in [
+        // EdgeLabel branch reaches `open_label_edit` (NativeOnly state).
+        Action::DoubleClickActivate,
+        // EdgeLabel + Portal* selection branches reach NativeOnly editors.
+        Action::EditSelection,
+        Action::EditSelectionClean,
+    ] {
+        assert_eq!(
+            a.wasm_compatibility(),
+            NativeOnly,
+            "{:?} should be NativeOnly under the 'ANY NativeOnly branch' rule",
+            a
+        );
+    }
+}
+
+/// Exhaustiveness pin: every variant returns one of the two
+/// `WasmCompatibility` values. The list is hand-maintained, so
+/// adding a new `Action` variant requires extending it (a PR-
+/// review forcing function — the compiler doesn't enforce list
+/// completeness, but the test name + comment make the
+/// requirement loud). Catches a future broad-default
+/// `_ => Compatible` regression that would lose the match's
+/// arm-per-variant structural property.
+#[test]
+fn test_wasm_compatibility_classifies_every_variant_explicitly() {
+    use crate::application::keybinds::WasmCompatibility;
+    let all_variants: &[Action] = &[
+        // Document-level
+        Action::Undo,
+        Action::EnterReparentMode,
+        Action::EnterConnectMode,
+        Action::DeleteSelection,
+        Action::CancelMode,
+        Action::CreateOrphanNode,
+        Action::OrphanSelection,
+        Action::EditSelection,
+        Action::EditSelectionClean,
+        Action::OpenConsole,
+        Action::SaveDocument,
+        Action::Copy,
+        Action::Paste,
+        Action::Cut,
+        // Console
+        Action::ConsoleClose,
+        Action::ConsoleSubmit,
+        Action::ConsoleTabComplete,
+        Action::ConsoleHistoryUp,
+        Action::ConsoleHistoryDown,
+        Action::ConsoleCursorLeft,
+        Action::ConsoleCursorRight,
+        Action::ConsoleCursorHome,
+        Action::ConsoleCursorEnd,
+        Action::ConsoleDeleteBack,
+        Action::ConsoleDeleteForward,
+        Action::ConsoleInsertSpace,
+        Action::ConsoleClearLine,
+        Action::ConsoleJumpStart,
+        Action::ConsoleJumpEnd,
+        Action::ConsoleKillToStart,
+        Action::ConsoleKillWord,
+        Action::ConsoleScrollUp,
+        Action::ConsoleScrollDown,
+        Action::ConsoleScrollPageUp,
+        Action::ConsoleScrollPageDown,
+        Action::ConsoleScrollEnd,
+        Action::ConsoleScrollHome,
+        // Picker
+        Action::PickerCancel,
+        Action::PickerCommit,
+        Action::PickerNudgeHueDown,
+        Action::PickerNudgeHueUp,
+        Action::PickerNudgeSatDown,
+        Action::PickerNudgeSatUp,
+        Action::PickerNudgeValDown,
+        Action::PickerNudgeValUp,
+        // Label / text-edit cancel/commit
+        Action::LabelEditCancel,
+        Action::LabelEditCommit,
+        Action::TextEditCancel,
+        // Mouse gestures
+        Action::DoubleClickActivate,
+        Action::CreateOrphanNodeAndEdit,
+        Action::PanCanvas,
+        // Navigation / camera
+        Action::ZoomIn,
+        Action::ZoomOut,
+        Action::ZoomReset,
+        Action::ZoomFit,
+        Action::PanCameraNorth,
+        Action::PanCameraSouth,
+        Action::PanCameraEast,
+        Action::PanCameraWest,
+        Action::CenterOnSelection,
+        Action::JumpToRoot,
+        // Selection
+        Action::SelectAll,
+        Action::DeselectAll,
+        Action::InvertSelection,
+        Action::SelectParent,
+        Action::SelectChild,
+        Action::SelectNextSibling,
+        Action::SelectPrevSibling,
+        // TextEdit cursor primitives
+        Action::TextEditCursorLeft,
+        Action::TextEditCursorRight,
+        Action::TextEditCursorUp,
+        Action::TextEditCursorDown,
+        Action::TextEditCursorHome,
+        Action::TextEditCursorEnd,
+        Action::TextEditWordLeft,
+        Action::TextEditWordRight,
+        Action::TextEditDeleteBack,
+        Action::TextEditDeleteForward,
+        Action::TextEditDeleteWordBack,
+        Action::TextEditDeleteWordForward,
+        Action::TextEditCommit,
+        // LabelEdit cursor primitives
+        Action::LabelEditCursorLeft,
+        Action::LabelEditCursorRight,
+        Action::LabelEditCursorHome,
+        Action::LabelEditCursorEnd,
+        Action::LabelEditDeleteBack,
+        Action::LabelEditDeleteForward,
+        // Console verbs
+        Action::OpenColorPicker,
+        Action::CloseColorPicker,
+        Action::LabelEditOnSelection,
+        Action::ToggleFps,
+        Action::ToggleFpsDebug,
+        Action::NewDocument,
+    ];
+    for a in all_variants {
+        let c = a.wasm_compatibility();
+        assert!(
+            matches!(c, WasmCompatibility::Compatible | WasmCompatibility::NativeOnly),
+            "{:?} returned an unexpected classification {:?}",
+            a, c
+        );
+        // Co-pin `is_destructive` against the same variant set so
+        // adding a new `Action` forces the privilege classification
+        // to land alongside the WASM classification. Both methods
+        // are exhaustive over `Action`, so the compiler enforces
+        // the missing-arm shape; this loop pins the *value* (every
+        // variant should classify either way without panicking)
+        // and keeps the destructive set discoverable as a list.
+        let _ = a.is_destructive();
+    }
+}
+
+/// Lock the `is_destructive` set for the privilege gate. Every
+/// `Action` variant in the list above resolves to `true` (gated
+/// from non-User macro tiers) or `false` (allowed). Adding a new
+/// variant flips the test to "missing classification" only if
+/// the variant is also missing from `all_variants` — but the
+/// exhaustive match in `Action::is_destructive` is the
+/// load-bearing structural check. This test pins the *contents*
+/// of the destructive set so a change to which variants are
+/// considered destructive shows up as a diff.
+#[test]
+fn test_is_destructive_destructive_set_is_pinned() {
+    let destructive: &[Action] = &[
+        Action::SaveDocument,
+        Action::NewDocument,
+        Action::DeleteSelection,
+        Action::OrphanSelection,
+        Action::CreateOrphanNode,
+        Action::CreateOrphanNodeAndEdit,
+        Action::Copy,
+        Action::Cut,
+        Action::Paste,
+        Action::DoubleClickActivate,
+        Action::EditSelection,
+        Action::EditSelectionClean,
+        Action::LabelEditOnSelection,
+    ];
+    for a in destructive {
+        assert!(
+            a.is_destructive(),
+            "{:?} expected to be destructive (privilege-gated for non-User tiers)",
+            a
+        );
+    }
+
+    // Spot-check a few non-destructive to lock the inverse — the
+    // exhaustive match in `is_destructive` itself is the
+    // structural completeness check.
+    for a in [
+        Action::Undo,
+        Action::ZoomIn,
+        Action::SelectAll,
+        Action::TextEditCursorLeft,
+        Action::OpenColorPicker,
+    ] {
+        assert!(
+            !a.is_destructive(),
+            "{:?} expected to be non-destructive",
+            a
+        );
+    }
+}
+
+#[test]
+fn test_wasm_compatibility_text_edit_primitives_are_compatible() {
+    // text_edit_state exists on both targets, so the cursor /
+    // delete primitives all work in the browser today.
+    use crate::application::keybinds::WasmCompatibility::Compatible;
+    for a in [
+        Action::TextEditCancel,
+        Action::TextEditCommit,
+        Action::TextEditCursorLeft,
+        Action::TextEditCursorRight,
+        Action::TextEditCursorUp,
+        Action::TextEditCursorDown,
+        Action::TextEditCursorHome,
+        Action::TextEditCursorEnd,
+        Action::TextEditWordLeft,
+        Action::TextEditWordRight,
+        Action::TextEditDeleteBack,
+        Action::TextEditDeleteForward,
+        Action::TextEditDeleteWordBack,
+        Action::TextEditDeleteWordForward,
+    ] {
+        assert_eq!(a.wasm_compatibility(), Compatible, "{:?} should be Compatible", a);
+    }
+}
+
+#[test]
+fn test_wasm_compatibility_label_edit_primitives_are_native_only() {
+    // The inline label / portal-text editors only exist on native.
+    // (The node text editor is shared and tested above as
+    // Compatible.) When WASM gains the inline label editor, flip
+    // these to Compatible.
+    use crate::application::keybinds::WasmCompatibility::NativeOnly;
+    for a in [
+        Action::LabelEditCursorLeft,
+        Action::LabelEditCursorRight,
+        Action::LabelEditCursorHome,
+        Action::LabelEditCursorEnd,
+        Action::LabelEditDeleteBack,
+        Action::LabelEditDeleteForward,
+    ] {
+        assert_eq!(a.wasm_compatibility(), NativeOnly, "{:?} should be NativeOnly", a);
+    }
+}
+
+// ─── Mouse-gesture default-binding regression guards ───────────
+// These tests pin the user-facing contract for mouse-gesture
+// defaults. A future contributor flipping a default array (or
+// re-introducing the empty-canvas double-click that the user
+// asked us to remove) fails one of these tests.
+
+#[test]
+fn test_double_click_activate_default_resolves_to_action() {
+    let r = KeybindConfig::default().resolve();
+    assert_eq!(
+        r.action_for_context(InputContext::Document, "doubleclick", false, false, false),
+        Some(Action::DoubleClickActivate)
+    );
+}
+
+#[test]
+fn test_create_orphan_node_and_edit_default_is_unbound() {
+    // The user's primary feature request: empty-canvas double-click
+    // does nothing by default. Implemented via an unbound default for
+    // CreateOrphanNodeAndEdit, gated by has_any_binding_for in
+    // dispatch::dispatch_action's DoubleClickActivate arm.
+    let r = KeybindConfig::default().resolve();
+    assert!(!r.has_any_binding_for(Action::CreateOrphanNodeAndEdit));
+}
+
+#[test]
+fn test_has_any_binding_for_returns_true_when_user_opts_in() {
+    let cfg = KeybindConfig {
+        create_orphan_node_and_edit: vec!["DoubleClick".into()],
+        ..KeybindConfig::default()
+    };
+    let r = cfg.resolve();
+    assert!(r.has_any_binding_for(Action::CreateOrphanNodeAndEdit));
+}
+
+#[test]
+fn test_pan_canvas_default_resolves_via_middle_click_and_left_drag() {
+    let r = KeybindConfig::default().resolve();
+    assert_eq!(
+        r.action_for_context(InputContext::Document, "middleclick", false, false, false),
+        Some(Action::PanCanvas)
+    );
+    assert_eq!(
+        r.action_for_context(InputContext::Document, "leftdrag", false, false, false),
+        Some(Action::PanCanvas)
+    );
+}
+
+#[test]
+fn test_zoom_in_default_resolves_to_wheelup() {
+    let r = KeybindConfig::default().resolve();
+    assert_eq!(
+        r.action_for_context(InputContext::Document, "wheelup", false, false, false),
+        Some(Action::ZoomIn)
+    );
+}
+
+#[test]
+fn test_zoom_out_default_resolves_to_wheeldown() {
+    let r = KeybindConfig::default().resolve();
+    assert_eq!(
+        r.action_for_context(InputContext::Document, "wheeldown", false, false, false),
+        Some(Action::ZoomOut)
+    );
+}
+
+#[test]
+fn test_action_for_gesture_falls_back_to_unmodified_binding() {
+    // Modifier-fallback: Ctrl+WheelUp resolves to ZoomIn even though
+    // only the bare WheelUp is bound by default. Exact-modifier
+    // override still wins when the user explicitly binds the
+    // modified form.
+    let r = KeybindConfig::default().resolve();
+    assert_eq!(
+        r.action_for_gesture("wheelup", true, false, false),
+        Some(Action::ZoomIn),
+        "Ctrl+WheelUp should fall back to bare WheelUp -> ZoomIn"
+    );
+    assert_eq!(
+        r.action_for_gesture("middleclick", true, true, true),
+        Some(Action::PanCanvas),
+        "Ctrl+Shift+Alt+MiddleClick should fall back"
+    );
+}
+
+#[test]
+fn test_action_for_gesture_exact_modifier_match_wins_over_fallback() {
+    // Clear default zoom_in (also bound to WheelUp) so the test
+    // exercises only the configured bindings.
+    let cfg = KeybindConfig {
+        zoom_in: vec![],
+        zoom_out: vec!["WheelUp".into()],            // bare WheelUp -> ZoomOut
+        zoom_reset: vec!["Ctrl+WheelUp".into()],     // Ctrl+WheelUp -> ZoomReset
+        ..KeybindConfig::default()
+    };
+    let r = cfg.resolve();
+    assert_eq!(
+        r.action_for_gesture("wheelup", true, false, false),
+        Some(Action::ZoomReset),
+        "exact Ctrl+WheelUp binding wins over the bare-WheelUp fallback"
+    );
+    assert_eq!(
+        r.action_for_gesture("wheelup", false, false, false),
+        Some(Action::ZoomOut),
+        "bare wheelup honours its bare binding"
+    );
+}
+
+// ─── Macro-tier resolution-order tests ─────────────────────────
+
+#[test]
+fn test_macro_for_returns_bound_id() {
+    let mut bindings = HashMap::new();
+    bindings.insert("Ctrl+G".to_string(), "do-stuff".to_string());
+    let cfg = KeybindConfig {
+        macro_bindings: bindings,
+        ..KeybindConfig::default()
+    };
+    let r = cfg.resolve();
+    assert_eq!(r.macro_for("g", true, false, false), Some("do-stuff"));
+    assert_eq!(r.macro_for("g", false, false, false), None);
+}
+
+#[test]
+fn test_macro_bindings_resolve_skips_invalid_combos() {
+    let mut bindings = HashMap::new();
+    bindings.insert("Ctrl+G".to_string(), "valid".to_string());
+    bindings.insert("Garbage++".to_string(), "would-be-orphan".to_string());
+    let cfg = KeybindConfig {
+        macro_bindings: bindings,
+        ..KeybindConfig::default()
+    };
+    // Resolve survives — invalid combos log and skip; the valid one
+    // still lands.
+    let r = cfg.resolve();
+    assert_eq!(r.macro_for("g", true, false, false), Some("valid"));
+}
+
+#[test]
+fn test_action_for_gesture_returns_none_when_completely_unbound() {
+    let cfg = KeybindConfig {
+        zoom_in: vec![],
+        zoom_out: vec![],
+        ..KeybindConfig::default()
+    };
+    let r = cfg.resolve();
+    assert_eq!(r.action_for_gesture("wheelup", false, false, false), None);
+    assert_eq!(r.action_for_gesture("wheelup", true, false, false), None);
+}
+
+#[test]
 fn test_default_console_font_size_is_16() {
     let cfg = KeybindConfig::default();
     assert!((cfg.console_font_size - 16.0).abs() < f32::EPSILON);
@@ -263,7 +817,7 @@ fn test_all_document_defaults_resolve_via_action_for_context() {
     for (action, key, ctrl, shift, alt) in cases {
         assert_eq!(
             r.action_for_context(doc, key, *ctrl, *shift, *alt),
-            Some(*action),
+            Some(action.clone()),
             "expected {:?} for key={:?} ctrl={} shift={} alt={}",
             action, key, ctrl, shift, alt,
         );

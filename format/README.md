@@ -28,6 +28,8 @@ Each of these documents one decision, with the reasoning:
 - [`mutations.md`](./mutations.md) — `CustomMutation` carrier,
   four-source loader, the `mutation` console verb, and the contexts
   taxonomy
+- [`macros.md`](./macros.md) — `Macro` carrier, four-source loader,
+  privilege gates, and the threat model for non-User tiers
 
 ## Tools
 

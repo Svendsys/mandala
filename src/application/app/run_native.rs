@@ -126,6 +126,10 @@ pub(super) struct InitState {
     /// `ThrottledDrag` variant.
     pub(super) picker_hover: super::throttled_interaction::ColorPickerHoverInteraction,
     pub(super) keybinds: ResolvedKeybinds,
+    /// User-defined macro registry. Loaded once at startup
+    /// (`run_native_init::build`) from `~/.config/mandala/macros.json`;
+    /// queried at dispatch time via `keybinds.macro_for(...)`.
+    pub(super) macros: crate::application::macros::MacroRegistry,
 }
 
 impl InitState {
@@ -155,6 +159,7 @@ impl InitState {
             cursor_is_hand: &mut self.cursor_is_hand,
             picker_hover: &mut self.picker_hover,
             keybinds: &mut self.keybinds,
+            macros: &mut self.macros,
         }
     }
 
@@ -206,7 +211,8 @@ impl InitState {
                 event: WindowEvent::MouseInput { state, button, .. },
                 ..
             } => {
-                event_mouse_click::handle_mouse_input(state, button, self.input_context());
+                let mut ctx = self.input_context();
+                event_mouse_click::handle_mouse_input(state, button, &mut ctx);
             }
             Event::WindowEvent {
                 event: WindowEvent::MouseWheel { delta, .. },
@@ -250,12 +256,40 @@ impl InitState {
                         }
                     }
                 } else {
-                    let factor = if scroll_y > 0.0 { 1.1 } else { 1.0 / 1.1 };
-                    self.renderer.process_decree(RenderDecree::CameraZoom {
-                        screen_x: self.cursor_pos.0 as f32,
-                        screen_y: self.cursor_pos.1 as f32,
-                        factor: factor as f32,
-                    });
+                    // Wheel zoom is routed through `dispatch_action` so
+                    // users can rebind `WheelUp` / `WheelDown` to any
+                    // Action (or unbind them entirely). Defaults bind
+                    // both to `ZoomIn` / `ZoomOut`. If the user
+                    // explicitly clears the bindings, wheel events are
+                    // silently ignored.
+                    let gesture_name = if scroll_y > 0.0 {
+                        crate::application::keybinds::gesture_key_name(
+                            crate::application::keybinds::MouseGesture::WheelUp,
+                        )
+                    } else {
+                        crate::application::keybinds::gesture_key_name(
+                            crate::application::keybinds::MouseGesture::WheelDown,
+                        )
+                    };
+                    // `action_for_gesture` falls back to the unmodified
+                    // binding when no exact-modifier match exists, so
+                    // `Ctrl+Wheel` keeps zooming even though only
+                    // `WheelUp` / `WheelDown` are bound in defaults —
+                    // pre-branch behaviour was modifier-agnostic and
+                    // we preserve it here without forcing every user
+                    // to enumerate modifier permutations.
+                    let action = self.keybinds.action_for_gesture(
+                        gesture_name,
+                        self.modifiers.control_key(),
+                        self.modifiers.shift_key(),
+                        self.modifiers.alt_key(),
+                    );
+                    if let Some(a) = action {
+                        let mut bundle = self.input_context();
+                        let _ = crate::application::app::dispatch::dispatch_action(
+                            a, &mut bundle, None,
+                        );
+                    }
                 }
             }
             Event::WindowEvent {
@@ -263,10 +297,11 @@ impl InitState {
                 ..
             } => {
                 let window = self.window.clone();
+                let mut ctx = self.input_context();
                 event_cursor_moved::handle_cursor_moved(
                     position,
                     window.as_ref(),
-                    self.input_context(),
+                    &mut ctx,
                 );
             }
             //// KEYBOARD ////
@@ -289,10 +324,11 @@ impl InitState {
                     },
                 ..
             } => {
+                let mut ctx = self.input_context();
                 event_keyboard::handle_keyboard_input(
                     logical_key,
                     event_loop,
-                    self.input_context(),
+                    &mut ctx,
                 );
             }
             Event::AboutToWait => self.drain_frame(),

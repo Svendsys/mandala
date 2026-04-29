@@ -39,6 +39,7 @@ pub(in crate::application::app) fn execute_console_line(
     app_scene: &mut crate::application::scene_host::AppScene,
     renderer: &mut Renderer,
     scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
+    macros: &mut crate::application::macros::MacroRegistry,
 ) {
     if line.trim().is_empty() {
         return;
@@ -95,6 +96,12 @@ pub(in crate::application::app) fn execute_console_line(
         *label_edit_state = LabelEditState::Closed;
         *portal_text_edit_state = PortalTextEditState::Closed;
         *color_picker_state = ColorPickerState::Closed;
+        // Rebuild the document-derived tiers (Map + Inline). App
+        // and User tiers loaded at startup are untouched. The
+        // single-entry helper enforces Map-then-Inline ordering
+        // (Inline is highest precedence) so the two-call ordering
+        // can't drift between this site and `run_native_init::build`.
+        crate::application::macros::loader::rebuild_document_macros(macros, doc);
     }
 
     // `fps on` / `fps off` — forward to the renderer. The decree bus

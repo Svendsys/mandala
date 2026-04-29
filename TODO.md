@@ -2,3 +2,75 @@
 
  - Nothing right now
 
+# Deferred work from configurable-canvas-actions branch
+
+Shipped on this branch:
+- Dispatch funnel: `dispatch_action`, `dispatch_macro`,
+  `dispatch_custom_mutation_for_key`. Native dispatch goes through
+  the funnel; mouse and keyboard handlers feed into it via gesture-
+  name lookup.
+- Mouse-gesture rebinding via extended `KeyBind` grammar with
+  modifier-fallback for `Ctrl+Wheel` etc.
+- ~70 `Action` variants with bodies for navigation (zoom, pan,
+  fit, jump-to-root, center-on-selection), selection
+  (`SelectAll/DeselectAll/Invert`, `SelectParent/Child/Sibling*`),
+  TextEdit / LabelEdit cursor primitives, and several no-arg
+  console verbs (`OpenColorPicker`, `ToggleFps`, `ToggleFpsDebug`,
+  `LabelEditOnSelection`, `NewDocument`).
+- Custom-mutation keybind parity with the click-trigger path
+  (animation-aware, `apply_document_actions` envelope).
+- Macro scaffolding: four-tier registry (App / User / Map / Inline),
+  shadow-stacked storage so higher tiers reveal lower tiers when
+  cleared, fail-closed privilege gate, JSON loader.
+- Privilege gate is structurally enforced: `Action::is_destructive`
+  is an exhaustive match the compiler enforces against
+  `#[non_exhaustive]` `Action`. New variants cannot land without an
+  explicit destructive / non-destructive classification.
+- Cross-platform `apply_text_edit_action` and the cursor / word
+  primitives moved to `text_edit/mod.rs` so the WASM editor can
+  reach them through `text_edit::` directly.
+- WASM keyboard handler honours empty-canvas double-click opt-in
+  gate; `EditSelection` / `EditSelectionClean` Single-selection
+  branch fires on WASM through a pre-filter exception.
+
+## Outstanding
+
+- **WASM convergence — full funnel.** Today WASM has its own inline
+  Action match in `run_wasm.rs` for `Undo`, `CreateOrphanNode`,
+  `OrphanSelection`, `DeleteSelection`, `EditSelection*`, plus
+  inline `DoubleClickActivate` routing. The "single funnel" claim
+  holds on native; WASM is a parallel path that Tracks A and B in
+  `WASM_CONVERGENCE.md` are designed to fold. WASM-side macro
+  registry (Track B) is the highest-value next step.
+- **WASM Compatible Actions need arms.** ~15 Action variants
+  classified `Compatible` (`ZoomIn/Out/Reset/Fit`, `PanCamera*`,
+  `CenterOnSelection`, `JumpToRoot`, `SelectAll/DeselectAll/Invert`,
+  `SelectParent/Child/Sibling*`, `Copy/Cut/Paste`, `ToggleFps/Debug`)
+  log "Compatible but no WASM arm yet" when fired today. Wire-up is
+  ~6 lines per arm — Track A in `WASM_CONVERGENCE.md`.
+- **Parameterised console verbs as Actions.** `open <path>`,
+  `save-as <path>`, `mutation apply <id>`, kv-shaped `border` /
+  `edge` / `color` / `font` / `zoom` / `spacing` setters
+  intentionally stay console-only today. Per-verb Action variants
+  with payload (the user-approved approach) require flipping
+  `Action: Copy → Clone` (already done) and adding a
+  `ParametricBinding { combo, args }` shape to `KeybindConfig`
+  per family. Per-family commits remain.
+- **Reparent / Connect target-click handlers bypass the funnel.**
+  `event_mouse_click.rs` calls `handle_reparent_target_click` /
+  `handle_connect_target_click` directly. Both push undo entries
+  but aren't `Action` variants — they should be.
+- **Modal commit/cancel inline in modal handlers.** `text_edit`,
+  `label_edit`, `portal_text_edit` each have their own commit /
+  cancel branches in their modal handler bodies; only `TextEdit`
+  Cancel routes through the funnel. Folding the rest is a §3
+  cleanup.
+- **Console-verb Action bodies inline in `console_input/dispatch.rs`.**
+  Every `Action::Console*` variant is matched and run inline at
+  the console handler; none reach `dispatch_action`. Either route
+  through the funnel or document the carve-out clearly.
+- **`word_left` / `word_right` belong in baumhard.**
+  `text_edit/mod.rs` houses these primitives today, but per
+  CODE_CONVENTIONS §B3 text primitives extend
+  `lib/baumhard/src/util/grapheme_chad.rs`. Cross-crate move +
+  bench per §B3.

@@ -16,6 +16,7 @@ use crate::application::color_picker::ColorPickerState;
 use crate::application::console::ConsoleState;
 use crate::application::document::MindMapDocument;
 use crate::application::keybinds::ResolvedKeybinds;
+use crate::application::macros::MacroRegistry;
 use crate::application::renderer::Renderer;
 use crate::application::scene_host::AppScene;
 
@@ -80,4 +81,10 @@ pub(in crate::application::app) struct InputHandlerContext<'a> {
     pub picker_hover: &'a mut ColorPickerHoverInteraction,
     /// Resolved user keybinds.
     pub keybinds: &'a mut ResolvedKeybinds,
+    /// Macro registry (App + User tiers loaded at startup; Map tier
+    /// re-loaded whenever a document is replaced via `open` / `new`).
+    /// Mutable so the document-replace path in
+    /// `execute_console_line` can rebuild the Map tier without
+    /// taking a separate ad-hoc borrow.
+    pub macros: &'a mut MacroRegistry,
 }

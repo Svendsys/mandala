@@ -22,6 +22,11 @@ pub struct ResolvedKeybinds {
     /// bound to both a built-in action and a custom mutation
     /// resolves to the built-in action (action_for runs first).
     custom_binds: Vec<(KeyBind, String)>,
+    /// Parsed `(KeyBind, macro_id)` pairs from
+    /// `KeybindConfig::macro_bindings`. Resolved BEFORE custom
+    /// mutations and AFTER built-in actions, so a key bound to both
+    /// a macro and a custom mutation runs the macro.
+    macro_binds: Vec<(KeyBind, String)>,
     /// Console font family. Empty means "use cosmic-text default".
     pub console_font: String,
     /// Console overlay font size in pixels.
@@ -34,15 +39,60 @@ impl ResolvedKeybinds {
     pub(super) fn new(
         binds: Vec<(Action, KeyBind)>,
         custom_binds: Vec<(KeyBind, String)>,
+        macro_binds: Vec<(KeyBind, String)>,
         console_font: String,
         console_font_size: f32,
     ) -> Self {
         Self {
             binds,
             custom_binds,
+            macro_binds,
             console_font,
             console_font_size,
         }
+    }
+
+    /// Resolve a mouse gesture to an action with modifier-fallback
+    /// semantics. Tries the exact `(key, ctrl, shift, alt)` binding
+    /// first; if no match, falls back to the unmodified `(key, false,
+    /// false, false)` binding.
+    ///
+    /// Mouse gestures use this instead of `action_for_context` because
+    /// modifiers on mouse gestures are typically decorations rather
+    /// than distinct bindings — pre-branch behaviour was that
+    /// `Ctrl+Wheel` zoomed exactly the same as a bare `Wheel`. Strict
+    /// modifier matching would silently break that. Users who *do*
+    /// want a modified gesture to mean something different just bind
+    /// the modified form explicitly; the exact-match check above
+    /// honours it.
+    ///
+    /// Always resolves in the `Document` context — the modal-steal
+    /// cascade in `event_keyboard.rs` returns before any mouse
+    /// handler runs, so mouse gestures only ever fire in Document
+    /// context today.
+    pub fn action_for_gesture(
+        &self,
+        key: &str,
+        ctrl: bool,
+        shift: bool,
+        alt: bool,
+    ) -> Option<Action> {
+        if let Some(a) = self.action_for_context(InputContext::Document, key, ctrl, shift, alt) {
+            return Some(a);
+        }
+        if ctrl || shift || alt {
+            return self.action_for_context(InputContext::Document, key, false, false, false);
+        }
+        None
+    }
+
+    /// Return `true` if the action has at least one binding in the
+    /// resolved table. Used by the dispatcher to gate "off-by-default"
+    /// gesture sub-actions: the empty-canvas branch of
+    /// `DoubleClickActivate` only fires `CreateOrphanNodeAndEdit` when
+    /// the user has enabled it via any binding.
+    pub fn has_any_binding_for(&self, action: Action) -> bool {
+        self.binds.iter().any(|(a, _)| *a == action)
     }
 
     /// Return the action bound to the given key event, if any. The caller
@@ -52,7 +102,7 @@ impl ResolvedKeybinds {
     pub fn action_for(&self, key: &str, ctrl: bool, shift: bool, alt: bool) -> Option<Action> {
         for (action, bind) in &self.binds {
             if bind.matches(key, ctrl, shift, alt) {
-                return Some(*action);
+                return Some(action.clone());
             }
         }
         None
@@ -72,15 +122,36 @@ impl ResolvedKeybinds {
     ) -> Option<Action> {
         for (action, bind) in &self.binds {
             if bind.matches(key, ctrl, shift, alt) && action.context() == context {
-                return Some(*action);
+                return Some(action.clone());
             }
         }
         if context.falls_through() {
             let parent = context.parent();
             for (action, bind) in &self.binds {
                 if bind.matches(key, ctrl, shift, alt) && action.context() == parent {
-                    return Some(*action);
+                    return Some(action.clone());
                 }
+            }
+        }
+        None
+    }
+
+    /// Return the macro id bound to the given key event, if any.
+    /// Resolved AFTER built-in `action_for` and BEFORE
+    /// `custom_mutation_for` — macros override custom mutations on
+    /// the same combo, so a user replacing a single-mutation
+    /// shortcut with a multi-step macro just adds the macro entry
+    /// without un-binding the mutation.
+    pub fn macro_for(
+        &self,
+        key: &str,
+        ctrl: bool,
+        shift: bool,
+        alt: bool,
+    ) -> Option<&str> {
+        for (bind, id) in &self.macro_binds {
+            if bind.matches(key, ctrl, shift, alt) {
+                return Some(id.as_str());
             }
         }
         None

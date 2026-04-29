@@ -50,6 +50,7 @@ pub(in crate::application::app) fn handle_console_key(
     renderer: &mut Renderer,
     scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
     keybinds: &mut ResolvedKeybinds,
+    macros: &mut crate::application::macros::MacroRegistry,
 ) {
     let Some(name) = key_name.as_deref() else {
         return;
@@ -88,6 +89,7 @@ pub(in crate::application::app) fn handle_console_key(
             renderer,
             scene_cache,
             keybinds,
+            macros,
         });
         return;
     }
@@ -125,7 +127,7 @@ pub(in crate::application::app) fn handle_console_key(
 
     // Scrollback navigation. Plain Up/Down stays on history; these
     // are the Shift+Up/Down + PgUp/PgDn + Shift+Home/End shortcuts.
-    if let Some(scroll_action) = action.and_then(map_scroll_action) {
+    if let Some(scroll_action) = action.as_ref().and_then(|a| map_scroll_action(a.clone())) {
         edit::adjust_scroll(console_state, scroll_action);
         after_state_change(
             EditOutcome::Unchanged, console_state, document, app_scene, renderer, keybinds,
@@ -218,6 +220,7 @@ struct SubmitLineContext<'a> {
     renderer: &'a mut Renderer,
     scene_cache: &'a mut baumhard::mindmap::scene_cache::SceneConnectionCache,
     keybinds: &'a ResolvedKeybinds,
+    macros: &'a mut crate::application::macros::MacroRegistry,
 }
 
 /// Take the current input line, append to history + scrollback,
@@ -236,6 +239,7 @@ fn submit_line(ctx: SubmitLineContext<'_>) {
         renderer,
         scene_cache,
         keybinds,
+        macros,
     } = ctx;
     let line = match console_state {
         ConsoleState::Open { input, .. } => std::mem::take(input),
@@ -290,6 +294,7 @@ fn submit_line(ctx: SubmitLineContext<'_>) {
                 app_scene,
                 renderer,
                 scene_cache,
+                macros,
             );
         }
     }

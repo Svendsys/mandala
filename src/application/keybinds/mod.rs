@@ -24,9 +24,17 @@ mod platform_web;
 mod tests;
 
 pub use action::Action;
+// `WasmCompatibility` is consumed by `run_wasm.rs` (wasm32-only) and
+// the test suite. On a native non-test build no caller pulls it in,
+// hence the `unused_import` warning the lint would otherwise raise.
+// Kept on the public surface so the wasm32 + test paths can find it
+// uniformly; the allow reflects "no native production consumer today",
+// not "spurious lint."
+#[allow(unused_imports)]
+pub use action::WasmCompatibility;
 // Public surface; the lint can't see in-crate test consumers without --tests.
 #[allow(unused_imports)]
-pub use bind::{key_to_name, normalize_key_name, KeyBind};
+pub use bind::{gesture_key_name, key_to_name, normalize_key_name, KeyBind, MouseGesture};
 pub use config::KeybindConfig;
 pub use context::InputContext;
 pub use resolved::ResolvedKeybinds;

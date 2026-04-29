@@ -2097,6 +2097,118 @@ mitigations).
 
 ---
 
+### Action dispatch
+
+**Summary.** Every user-driven application-level effect is a variant
+of `enum Action` (`src/application/keybinds/action.rs`) and runs
+through a single `dispatch_action(action, ctx, hit)` funnel
+(`src/application/app/dispatch.rs`). Mouse, keyboard, the future
+macro runtime, and any plugin host all reach the same arms.
+
+**What it's for.** Before this funnel existed, mouse gestures
+(double-click create-orphan, double-click open-editor, middle-click
+pan, wheel zoom) were hardcoded inside event handlers and bypassed
+the keybind system entirely. Users couldn't disable, rebind, or
+replace them without recompiling. The funnel reifies every gesture
+as an Action so one vocabulary covers keys, mouse, macros, and
+plugins.
+
+**Under the hood.** `KeyBind` (`src/application/keybinds/bind.rs`)
+accepts mouse-shaped binding strings —`DoubleClick`, `MiddleClick`,
+`RightClick`, `LeftClick`, `LeftDrag`, `WheelUp`, `WheelDown` —
+alongside keyboard names. Mouse handlers synthesize the gesture's
+canonical name via `gesture_key_name(MouseGesture::*)` and feed it
+through the same `ResolvedKeybinds::action_for_context` lookup as
+keyboard input. Lookup → `Action` → `dispatch_action(action, ctx,
+Some(&DispatchHit { click_hit, canvas_pos }))`.
+
+**Resolution order** (any binding):
+1. `keybinds.action_for_context(...)` — built-in `Action` variants.
+2. `keybinds.macro_for(...)` — user-defined macros, loaded from
+   `~/.config/mandala/macros.json` on native. See
+   `crate::application::macros` for `Macro`, `MacroStep`,
+   `MacroRegistry`, and `dispatch_macro`. Steps fan out to
+   `dispatch_action`, `apply_keybind_custom_mutation`, or
+   `execute_console_line` depending on `MacroStep` kind, so plugin
+   authors and macro recorders share one runtime path. **Unknown
+   macro id falls through** to the custom-mutation tier, so a
+   typo'd or half-loaded macros file doesn't swallow the keystroke.
+3. `keybinds.custom_mutation_for(...)` — per-node custom mutations.
+
+**Built-in Actions win on collision.** A key combo bound to both
+`Action::Copy` (in `copy: ["Ctrl+C"]`) and a macro on `"Ctrl+C"` in
+`macro_bindings` runs the Action — the macro never gets a chance.
+To override a built-in Action with a macro, first unbind the
+Action's keybind (set `copy: []`) and then bind the macro. Same
+applies for built-in vs. custom-mutation collision.
+
+**Macro privilege model.** Macros are tagged with their loader
+tier via `MacroSource { App | User | Map | Inline }`. The
+dispatcher gates two surfaces on the tier:
+- **`MacroStep::ConsoleLine`** runs an arbitrary console verb
+  (`save`, `open`, `mutation apply`, etc.) — User-tier-only via
+  `MacroSource::allows_console_line`.
+- **Destructive / I/O `Action` variants** (`SaveDocument`,
+  `DeleteSelection`, `Cut`, `Paste`, `Copy`, `OrphanSelection`,
+  `CreateOrphanNode`, `CreateOrphanNodeAndEdit`, `NewDocument`)
+  are User-tier-only via `MacroSource::allows_action`.
+
+Privilege rejections **fail-closed** — the dispatcher aborts the
+rest of the macro so a `[DeleteSelection, ConsoleLine(rejected),
+SaveDocument]` pattern can't sneak its outer steps past the
+ConsoleLine gate. Honest mistakes (unbound action, no document)
+keep the existing best-effort `continue` semantic.
+
+`DocumentAction` (carried by `MacroStep::CustomMutation`) is
+`#[non_exhaustive]` — adding a variant that does I/O requires a
+parallel dispatcher gate.
+
+Today's only macro source is `~/.config/mandala/macros.json`
+(User), so trust posture matches `keybinds.json`. Future tiers
+(app-bundled, map-inline, node-inline) inherit the gate
+automatically and don't expose new attack surfaces.
+
+**Dispatch status per gesture.** `DoubleClick`, `MiddleClick`,
+`LeftDrag`, `WheelUp`, `WheelDown` are dispatched through
+`dispatch_action` from their respective handlers. `LeftClick` and
+`RightClick` are reserved tokens — the parser accepts them so user
+configs don't fail validation, but no handler currently looks up
+an Action for them. A single left-press is already consumed by the
+selection state machine; wiring `LeftClick` would need a clear
+post-selection dispatch point. `RightClick` has no non-color-picker
+dispatch site at all.
+
+**`LeftDrag`** is the continuous "press + movement past threshold
+on empty canvas" gesture (default `PanCanvas`). The arm sets
+`DragState::Panning` for the press duration; the per-frame pan
+delta stays inline in `event_cursor_moved.rs` because per-cursor-
+move state is legitimately not a discrete-action concern.
+
+**Modifier-fallback for mouse gestures.** Mouse handlers resolve
+through `ResolvedKeybinds::action_for_gesture`, which tries the
+exact `(key, ctrl, shift, alt)` binding first and falls back to
+the unmodified `(key, false, false, false)` binding if no exact
+match exists. Modifiers on mouse gestures are typically decorations,
+not distinct bindings — pre-branch `Ctrl+Wheel` zoomed exactly the
+same as a bare `Wheel`, and the fallback preserves that. Users who
+*do* want `Shift+DoubleClick` to mean something different just
+bind it explicitly.
+
+**Default-off `CreateOrphanNodeAndEdit`.** Empty-canvas double-click
+ships unbound. Users opt back in via:
+
+```json
+{ "create_orphan_node_and_edit": ["DoubleClick"] }
+```
+
+**Custom-mutation parity.** `dispatch_custom_mutation_for_key`
+mirrors the click-trigger path at `click.rs:35-64` byte-for-byte:
+animation-aware (`start_animation` when `timing.duration_ms > 0`),
+always invokes `apply_document_actions`. Closes the silent feature
+gap where keyboard-triggered custom mutations skipped both.
+
+---
+
 ## §6 The authoring surface
 
 Authoring surface concepts are the parts a user actually touches:

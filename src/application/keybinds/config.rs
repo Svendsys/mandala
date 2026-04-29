@@ -77,6 +77,63 @@ pub struct KeybindConfig {
     // ── Text Editor ──────────────────────────────────────────────
     pub text_edit_cancel: Vec<String>,
 
+    // ── Mouse-gesture Actions ────────────────────────────────────
+    pub double_click_activate: Vec<String>,
+    pub create_orphan_node_and_edit: Vec<String>,
+    pub pan_canvas: Vec<String>,
+
+    // ── Navigation / camera ──────────────────────────────────────
+    pub zoom_in: Vec<String>,
+    pub zoom_out: Vec<String>,
+    pub zoom_reset: Vec<String>,
+    pub zoom_fit: Vec<String>,
+    pub pan_camera_north: Vec<String>,
+    pub pan_camera_south: Vec<String>,
+    pub pan_camera_east: Vec<String>,
+    pub pan_camera_west: Vec<String>,
+    pub center_on_selection: Vec<String>,
+    pub jump_to_root: Vec<String>,
+
+    // ── Selection ────────────────────────────────────────────────
+    pub select_all: Vec<String>,
+    pub deselect_all: Vec<String>,
+    pub invert_selection: Vec<String>,
+    pub select_parent: Vec<String>,
+    pub select_child: Vec<String>,
+    pub select_next_sibling: Vec<String>,
+    pub select_prev_sibling: Vec<String>,
+
+    // ── TextEdit cursor primitives ──────────────────────────────
+    pub text_edit_cursor_left: Vec<String>,
+    pub text_edit_cursor_right: Vec<String>,
+    pub text_edit_cursor_up: Vec<String>,
+    pub text_edit_cursor_down: Vec<String>,
+    pub text_edit_cursor_home: Vec<String>,
+    pub text_edit_cursor_end: Vec<String>,
+    pub text_edit_word_left: Vec<String>,
+    pub text_edit_word_right: Vec<String>,
+    pub text_edit_delete_back: Vec<String>,
+    pub text_edit_delete_forward: Vec<String>,
+    pub text_edit_delete_word_back: Vec<String>,
+    pub text_edit_delete_word_forward: Vec<String>,
+    pub text_edit_commit: Vec<String>,
+
+    // ── LabelEdit cursor primitives ─────────────────────────────
+    pub label_edit_cursor_left: Vec<String>,
+    pub label_edit_cursor_right: Vec<String>,
+    pub label_edit_cursor_home: Vec<String>,
+    pub label_edit_cursor_end: Vec<String>,
+    pub label_edit_delete_back: Vec<String>,
+    pub label_edit_delete_forward: Vec<String>,
+
+    // ── Console-verb Actions ────────────────────────────────────
+    pub open_color_picker: Vec<String>,
+    pub close_color_picker: Vec<String>,
+    pub label_edit_on_selection: Vec<String>,
+    pub toggle_fps: Vec<String>,
+    pub toggle_fps_debug: Vec<String>,
+    pub new_document: Vec<String>,
+
     // ── Style / metadata ─────────────────────────────────────────
     /// Font family name for the console overlay.
     pub console_font: String,
@@ -84,6 +141,10 @@ pub struct KeybindConfig {
     pub console_font_size: f32,
     /// Map of key combo → custom mutation id.
     pub custom_mutation_bindings: HashMap<String, String>,
+    /// Map of key combo → macro id. Macros are resolved AFTER built-in
+    /// `Action`s and BEFORE custom mutations, so a key bound to both a
+    /// macro and a custom mutation fires the macro.
+    pub macro_bindings: HashMap<String, String>,
 }
 
 impl Default for KeybindConfig {
@@ -147,10 +208,99 @@ impl Default for KeybindConfig {
             // Text Editor
             text_edit_cancel: vec!["Escape".into()],
 
+            // Mouse-gesture Actions. `create_orphan_node_and_edit`
+            // is intentionally `vec![]` —
+            // the user found the empty-canvas double-click annoying;
+            // it's now opt-in.
+            double_click_activate: vec!["DoubleClick".into()],
+            create_orphan_node_and_edit: vec![],
+            pan_canvas: vec!["LeftDrag".into(), "MiddleClick".into()],
+
+            // Navigation / camera. `ZoomIn`/`ZoomOut` default to mouse
+            // wheel per user request; key shortcuts (e.g. Ctrl++/Ctrl+-)
+            // can be added in user keybinds.json.
+            zoom_in: vec!["WheelUp".into()],
+            zoom_out: vec!["WheelDown".into()],
+            zoom_reset: vec!["Ctrl+0".into()],
+            zoom_fit: vec!["Ctrl+1".into()],
+            pan_camera_north: vec!["Alt+ArrowUp".into()],
+            pan_camera_south: vec!["Alt+ArrowDown".into()],
+            pan_camera_east: vec!["Alt+ArrowRight".into()],
+            pan_camera_west: vec!["Alt+ArrowLeft".into()],
+            center_on_selection: vec!["Ctrl+.".into()],
+            // Default unbound — `Home` is consumed by the text editor
+            // when it's open (already routed to TextEditCursorHome),
+            // and binding it at the Document level would shadow that
+            // for users who haven't customised. Users who want a
+            // jump-to-root key bind it themselves.
+            jump_to_root: vec![],
+
+            // Selection.
+            select_all: vec!["Ctrl+a".into()],
+            // Default unbound — Esc already cancels modes via
+            // `CancelMode`, and rebinding Esc here would conflict
+            // with the modal-cascade contract. Users opt in by
+            // binding e.g. `Ctrl+Shift+a`.
+            deselect_all: vec![],
+            invert_selection: vec!["Ctrl+Shift+i".into()],
+            select_parent: vec!["Alt+p".into()],
+            select_child: vec!["Alt+c".into()],
+            select_next_sibling: vec!["Alt+j".into()],
+            select_prev_sibling: vec!["Alt+k".into()],
+
+            // TextEdit cursor primitives. Bodies live in
+            // dispatch::apply_text_edit_action; the editor's modal
+            // handler routes through dispatch when a binding matches
+            // and falls back to literal-character insertion otherwise.
+            text_edit_cursor_left: vec!["ArrowLeft".into()],
+            text_edit_cursor_right: vec!["ArrowRight".into()],
+            text_edit_cursor_up: vec!["ArrowUp".into()],
+            text_edit_cursor_down: vec!["ArrowDown".into()],
+            text_edit_cursor_home: vec!["Home".into()],
+            text_edit_cursor_end: vec!["End".into()],
+            text_edit_word_left: vec!["Ctrl+ArrowLeft".into()],
+            text_edit_word_right: vec!["Ctrl+ArrowRight".into()],
+            text_edit_delete_back: vec!["Backspace".into()],
+            text_edit_delete_forward: vec!["Delete".into()],
+            text_edit_delete_word_back: vec!["Ctrl+Backspace".into()],
+            text_edit_delete_word_forward: vec!["Ctrl+Delete".into()],
+            // Default unbound — Enter is literal `\n` in the multi-
+            // line node editor. Users who want commit-on-Enter bind
+            // it themselves (and lose newline insertion in exchange).
+            // Note: any TextEdit Action bound to Enter (not just
+            // Commit) wins over literal-newline insertion — the
+            // action lookup runs before the literal-character
+            // fallback in `handle_text_edit_key`. So binding
+            // `text_edit_cursor_down: ["Enter"]` to a multi-line
+            // editor would break newline insertion.
+            text_edit_commit: vec![],
+
+            // LabelEdit cursor primitives. Same routing path as
+            // TextEdit but single-line — no Up/Down/Word*. Defaults
+            // mirror what `route_label_edit_key` previously
+            // hardcoded.
+            label_edit_cursor_left: vec!["ArrowLeft".into()],
+            label_edit_cursor_right: vec!["ArrowRight".into()],
+            label_edit_cursor_home: vec!["Home".into()],
+            label_edit_cursor_end: vec!["End".into()],
+            label_edit_delete_back: vec!["Backspace".into()],
+            label_edit_delete_forward: vec!["Delete".into()],
+
+            // Console-verb Actions. Defaults empty — these mirror
+            // typed console verbs and the user opts in by binding
+            // a key.
+            open_color_picker: vec![],
+            close_color_picker: vec![],
+            label_edit_on_selection: vec![],
+            toggle_fps: vec![],
+            toggle_fps_debug: vec![],
+            new_document: vec![],
+
             // Style / metadata
             console_font: String::new(),
             console_font_size: 16.0,
             custom_mutation_bindings: HashMap::new(),
+            macro_bindings: HashMap::new(),
         }
     }
 }
@@ -221,11 +371,62 @@ impl KeybindConfig {
             (Action::LabelEditCommit, &self.label_edit_commit),
             // Text Editor
             (Action::TextEditCancel, &self.text_edit_cancel),
+            // Mouse-gesture Actions
+            (Action::DoubleClickActivate, &self.double_click_activate),
+            (Action::CreateOrphanNodeAndEdit, &self.create_orphan_node_and_edit),
+            (Action::PanCanvas, &self.pan_canvas),
+            // Navigation / camera
+            (Action::ZoomIn, &self.zoom_in),
+            (Action::ZoomOut, &self.zoom_out),
+            (Action::ZoomReset, &self.zoom_reset),
+            (Action::ZoomFit, &self.zoom_fit),
+            (Action::PanCameraNorth, &self.pan_camera_north),
+            (Action::PanCameraSouth, &self.pan_camera_south),
+            (Action::PanCameraEast, &self.pan_camera_east),
+            (Action::PanCameraWest, &self.pan_camera_west),
+            (Action::CenterOnSelection, &self.center_on_selection),
+            (Action::JumpToRoot, &self.jump_to_root),
+            // Selection
+            (Action::SelectAll, &self.select_all),
+            (Action::DeselectAll, &self.deselect_all),
+            (Action::InvertSelection, &self.invert_selection),
+            (Action::SelectParent, &self.select_parent),
+            (Action::SelectChild, &self.select_child),
+            (Action::SelectNextSibling, &self.select_next_sibling),
+            (Action::SelectPrevSibling, &self.select_prev_sibling),
+            // TextEdit cursor primitives
+            (Action::TextEditCursorLeft, &self.text_edit_cursor_left),
+            (Action::TextEditCursorRight, &self.text_edit_cursor_right),
+            (Action::TextEditCursorUp, &self.text_edit_cursor_up),
+            (Action::TextEditCursorDown, &self.text_edit_cursor_down),
+            (Action::TextEditCursorHome, &self.text_edit_cursor_home),
+            (Action::TextEditCursorEnd, &self.text_edit_cursor_end),
+            (Action::TextEditWordLeft, &self.text_edit_word_left),
+            (Action::TextEditWordRight, &self.text_edit_word_right),
+            (Action::TextEditDeleteBack, &self.text_edit_delete_back),
+            (Action::TextEditDeleteForward, &self.text_edit_delete_forward),
+            (Action::TextEditDeleteWordBack, &self.text_edit_delete_word_back),
+            (Action::TextEditDeleteWordForward, &self.text_edit_delete_word_forward),
+            (Action::TextEditCommit, &self.text_edit_commit),
+            // LabelEdit cursor primitives
+            (Action::LabelEditCursorLeft, &self.label_edit_cursor_left),
+            (Action::LabelEditCursorRight, &self.label_edit_cursor_right),
+            (Action::LabelEditCursorHome, &self.label_edit_cursor_home),
+            (Action::LabelEditCursorEnd, &self.label_edit_cursor_end),
+            (Action::LabelEditDeleteBack, &self.label_edit_delete_back),
+            (Action::LabelEditDeleteForward, &self.label_edit_delete_forward),
+            // Console-verb Actions
+            (Action::OpenColorPicker, &self.open_color_picker),
+            (Action::CloseColorPicker, &self.close_color_picker),
+            (Action::LabelEditOnSelection, &self.label_edit_on_selection),
+            (Action::ToggleFps, &self.toggle_fps),
+            (Action::ToggleFpsDebug, &self.toggle_fps_debug),
+            (Action::NewDocument, &self.new_document),
         ];
         for (action, strings) in sets {
             for s in *strings {
                 match KeyBind::parse(s) {
-                    Ok(k) => binds.push((*action, k)),
+                    Ok(k) => binds.push((action.clone(), k)),
                     Err(e) => warn!("skipping invalid keybind '{}': {}", s, e),
                 }
             }
@@ -240,10 +441,21 @@ impl KeybindConfig {
                 ),
             }
         }
+        let mut macro_binds: Vec<(KeyBind, String)> = Vec::new();
+        for (combo, macro_id) in &self.macro_bindings {
+            match KeyBind::parse(combo) {
+                Ok(k) => macro_binds.push((k, macro_id.clone())),
+                Err(e) => warn!(
+                    "skipping invalid macro_binding '{}': {}",
+                    combo, e
+                ),
+            }
+        }
 
         ResolvedKeybinds::new(
             binds,
             custom_binds,
+            macro_binds,
             self.console_font.clone(),
             self.console_font_size.max(4.0),
         )

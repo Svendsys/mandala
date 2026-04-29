@@ -124,6 +124,69 @@ decision, not a drive-by edit.
 - **Platform-shared logic reachable without wgpu.** Touch math, gesture
   recognition, viewport math, anything that must behave identically on
   native and WASM lives in functions taking plain values.
+- **Single dispatch funnel.** Every user-driven application-level
+  behaviour is reified as an `Action` and dispatched via
+  `dispatch_action` (`src/application/app/dispatch.rs`). New gestures,
+  new console verbs that mutate state, new navigation keys: variant,
+  default binding, dispatch arm — in that order. No second copy of
+  Action body logic in a handler. Mouse handlers synthesize a gesture
+  name through `gesture_key_name(MouseGesture::*)` and feed it through
+  `action_for_gesture` (mouse — modifier-fallback) or
+  `action_for_context` (keyboard — exact). See CONCEPTS.md §5 "Action
+  dispatch".
+
+  **Carve-outs that legitimately stay outside the funnel:**
+  - **Modal steals.** When console / color-picker / label-edit /
+    portal-text-edit / text-edit modals are open, their handlers
+    consume the event before the funnel runs. Modals own the literal
+    `winit::Key` payload (character insertion, IME sequences) which
+    `Action` discards.
+  - **Pre-funnel state-machine bookkeeping.** Selection updates on
+    single-click, drag-state cleanup on release, double-click time +
+    distance + hit detection, and the `last_click` tracker run
+    before the funnel. They're not user-named effects; they're
+    machinery the funnel rests on.
+  - **Per-frame continuous-gesture state.** A drag's per-cursor-move
+    delta (e.g. `RenderDecree::CameraPan(dx, dy)` in `event_cursor_moved`)
+    legitimately stays inline. The funnel covers the discrete entry
+    + exit (the press → `Action::PanCanvas`); the per-frame body
+    is not a discrete-action concern.
+
+  Anything else — a new gesture or a new console-verb behaviour that
+  mutates document state or changes view state — must go through the
+  funnel.
+
+  **Macro-tier privilege gates are mandatory before non-User tiers
+  ship.** Macros loaded from `~/.config/mandala/macros.json` share
+  trust posture with `keybinds.json` — the user owns the file. The
+  dispatcher gates two things on `MacroSource`:
+  - `MacroStep::ConsoleLine` runs an arbitrary console verb, so it's
+    User-tier-only via `MacroSource::allows_console_line`.
+  - Destructive / I/O / clipboard `Action` variants
+    (`SaveDocument`, `DeleteSelection`, `Cut`, `Paste`, `Copy`,
+    `OrphanSelection`, `CreateOrphanNode`, `CreateOrphanNodeAndEdit`,
+    `NewDocument`) are User-tier-only via
+    `MacroSource::allows_action`.
+  Privilege rejections **fail-closed** — the rest of the macro
+  aborts so a `[DeleteSelection, ConsoleLine(rejected),
+  SaveDocument]` pattern can't sneak its outer steps past the gate.
+  Today only the User tier loads, so the gates are dormant; they
+  MUST hold before app-bundle / map-inline / node-inline tiers
+  ship.
+
+  `DocumentAction` (carried by `MacroStep::CustomMutation`) is
+  `#[non_exhaustive]`. Today every variant is a pure in-memory
+  canvas-theme write, safe to expose. **Any new variant that
+  performs file I/O, network access, arbitrary content load, or
+  cross-process side effects MUST add a parallel gate at the
+  `dispatch_macro` site** (look up the existing `allows_*` pattern
+  on `MacroSource` and extend it).
+
+  Source-tier assignment is loader-pinned. Each loader call site
+  hardcodes the tier; nothing in the on-disk format can affect it.
+  Future loaders MUST keep this invariant — only `include_str!` /
+  `include_bytes!` content can be tagged `App`; user-modifiable
+  paths (XDG data dirs etc.) tag as `User` or below.
 
 ## §4 Cross-platform as first class
 

@@ -3,6 +3,14 @@
 //! `KeyBind` parser/matcher and the two `winit::Key` ↔ binding-string
 //! shims (`normalize_key_name`, `key_to_name`). Pure data — no
 //! platform-specific concerns.
+//!
+//! Mouse gestures share this same parser. A binding string like
+//! `"DoubleClick"` or `"Shift+MiddleClick"` parses into the same
+//! [`KeyBind`] struct as a keyboard binding, with the gesture's
+//! canonical lowercase name in the `key` field. Mouse handlers
+//! synthesize the same name via [`gesture_key_name`] before calling
+//! `ResolvedKeybinds::action_for_context`, so the lookup table is
+//! universal across input devices.
 
 use winit::keyboard::Key;
 
@@ -15,6 +23,82 @@ pub struct KeyBind {
     pub ctrl: bool,
     pub shift: bool,
     pub alt: bool,
+}
+
+/// User-driven mouse gestures that participate in the keybind lookup.
+///
+/// Each variant has a canonical binding-string form ([`MouseGesture::tokens`])
+/// that mouse handlers feed through `KeyBind::matches` exactly the way
+/// keyboard names go through it.
+///
+/// `LeftClick` and `RightClick` were previously reserved-but-not-
+/// dispatched; per CODE_CONVENTIONS §5 (no half-features) they were
+/// removed. A future commit that adds a real dispatch site can
+/// reintroduce the variant in the same patch as its body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MouseGesture {
+    /// Left-button held down + cursor movement past the drag threshold,
+    /// only when the press landed on empty canvas. Continuous: the bound
+    /// action's body runs for the duration of the press. Dispatched
+    /// from `event_cursor_moved` for `Action::PanCanvas` only.
+    LeftDrag,
+    /// Two left-button presses within the double-click time + distance
+    /// window with matching `ClickHit`. Dispatched.
+    DoubleClick,
+    /// Single middle-button press. Dispatched.
+    MiddleClick,
+    /// One mouse-wheel tick upward (zoom-in by convention). Dispatched
+    /// when the console isn't open.
+    WheelUp,
+    /// One mouse-wheel tick downward (zoom-out by convention). Same.
+    WheelDown,
+}
+
+impl MouseGesture {
+    /// `(lowercase token, pascal-case token)` for this gesture.
+    /// Single source of truth — the `match` is exhaustive over
+    /// `MouseGesture`, so the compiler enforces that adding a new
+    /// gesture variant updates both forms in lockstep.
+    pub fn tokens(self) -> (&'static str, &'static str) {
+        match self {
+            MouseGesture::LeftDrag => ("leftdrag", "LeftDrag"),
+            MouseGesture::DoubleClick => ("doubleclick", "DoubleClick"),
+            MouseGesture::MiddleClick => ("middleclick", "MiddleClick"),
+            MouseGesture::WheelUp => ("wheelup", "WheelUp"),
+            MouseGesture::WheelDown => ("wheeldown", "WheelDown"),
+        }
+    }
+
+    /// Iterator over every gesture variant. Used by `gesture_emit_form`
+    /// and tests to walk the canonical set without hand-listing.
+    fn all() -> impl Iterator<Item = MouseGesture> {
+        [
+            MouseGesture::LeftDrag,
+            MouseGesture::DoubleClick,
+            MouseGesture::MiddleClick,
+            MouseGesture::WheelUp,
+            MouseGesture::WheelDown,
+        ]
+        .into_iter()
+    }
+}
+
+/// Canonical lowercase binding-string token for a [`MouseGesture`].
+/// The same token `KeyBind::parse` produces from `"DoubleClick"`,
+/// `"MiddleClick"`, etc. Mouse handlers feed this directly into
+/// `ResolvedKeybinds::action_for_context`.
+pub fn gesture_key_name(g: MouseGesture) -> &'static str {
+    g.tokens().0
+}
+
+/// PascalCase emit form for a recognised gesture token. Used by
+/// `to_binding_string` so a parsed-then-emitted gesture round-trips
+/// to its canonical capitalisation rather than the lowercased
+/// internal form.
+fn gesture_emit_form(lower: &str) -> Option<&'static str> {
+    MouseGesture::all()
+        .find(|g| g.tokens().0 == lower)
+        .map(|g| g.tokens().1)
 }
 
 impl KeyBind {
@@ -76,7 +160,12 @@ impl KeyBind {
         if self.alt {
             parts.push("Alt");
         }
-        let key_display = self.key.clone();
+        // Recognised mouse gestures emit in PascalCase so a parsed-
+        // then-emitted binding string round-trips to its canonical
+        // form. Other keys emit lowercase as stored.
+        let key_display: String = gesture_emit_form(&self.key)
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| self.key.clone());
         let joined = parts.join("+");
         if joined.is_empty() {
             key_display

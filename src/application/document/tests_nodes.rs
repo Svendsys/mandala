@@ -622,6 +622,7 @@ use baumhard::util::grapheme_chad::count_grapheme_clusters;
                 channel: 0,
                 trigger_bindings: vec![],
                 inline_mutations: vec![],
+                inline_macros: Vec::new(),
                 min_zoom_to_render: None,
                 max_zoom_to_render: None,
             },
@@ -640,6 +641,7 @@ use baumhard::util::grapheme_chad::count_grapheme_clusters;
             nodes,
             edges: vec![],
             custom_mutations: vec![],
+            macros: vec![],
         };
         // Round-trip through JSON to exercise the finalize hook
         // — `MindMapDocument::from_json_str` calls `finalize`,

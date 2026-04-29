@@ -709,6 +709,12 @@ impl Renderer {
         self.process_decree(RenderDecree::SetFpsDisplay(mode));
     }
 
+    /// Current FPS readout mode. Used by `ToggleFps` / `ToggleFpsDebug`
+    /// dispatch arms to compute the next state.
+    pub fn fps_display_mode(&self) -> FpsDisplayMode {
+        self.fps_display_mode
+    }
+
     /// Returns and resets the connection geometry-dirty flag. Called by
     /// the event loop once per frame; a `true` return means the zoom
     /// changed, so the document-side scene cache must be flushed before

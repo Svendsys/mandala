@@ -106,6 +106,41 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
     // to on every Enter; written back on close.
     let console_history: Vec<String> = load_console_history();
 
+    // Build the macro registry across all four tiers, in ascending
+    // precedence order: App < User at startup; Map < Inline are
+    // refreshed via `rebuild_document_macros` whenever a document
+    // loads. Higher-tier ids shadow lower-tier ones; clearing a
+    // higher tier reveals what's underneath. See
+    // `format/macros.md` for the threat model and the SOURCE-OF-
+    // TRUTH list of places that must move together when the order
+    // changes.
+    let mut macros = crate::application::macros::MacroRegistry::new();
+    let mut app_count = 0usize;
+    for m in crate::application::macros::loader::load_app_macros() {
+        macros.insert(m, crate::application::macros::MacroSource::App);
+        app_count += 1;
+    }
+    let mut user_count = 0usize;
+    for m in crate::application::macros::loader::load_user_macros() {
+        macros.insert(m, crate::application::macros::MacroSource::User);
+        user_count += 1;
+    }
+    if app_count > 0 || user_count > 0 {
+        log::info!(
+            "loaded {} macro(s): {} app-tier, {} user-tier",
+            macros.len(),
+            app_count,
+            user_count
+        );
+    }
+    // Document-derived macro tiers (Map + Inline). The
+    // `rebuild_document_macros` helper is the single entry point
+    // shared with the document-replace path in `execute_console_line`
+    // so the Map-then-Inline ordering can't drift between sites.
+    if let Some(d) = document.as_ref() {
+        crate::application::macros::loader::rebuild_document_macros(&mut macros, d);
+    }
+
     InitState {
         window,
         renderer,
@@ -137,5 +172,6 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
         // struct on entry (see `event_cursor_moved`).
         picker_hover: super::throttled_interaction::ColorPickerHoverInteraction::new(),
         keybinds,
+        macros,
     }
 }
