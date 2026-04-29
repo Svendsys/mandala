@@ -590,13 +590,7 @@ pub(in crate::application::app) fn dispatch_action(
         }
         Action::JumpToRoot => {
             if let Some(doc) = ctx.document.as_mut() {
-                let mut rc = super::cross_dispatch::RebuildContext {
-                    document: doc,
-                    mindmap_tree: ctx.mindmap_tree,
-                    app_scene: ctx.app_scene,
-                    renderer: ctx.renderer,
-                    scene_cache: ctx.scene_cache,
-                };
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
                 super::cross_dispatch::apply_jump_to_root(&mut rc);
             }
             DispatchOutcome::Handled
@@ -611,13 +605,7 @@ pub(in crate::application::app) fn dispatch_action(
         | Action::SelectNextSibling
         | Action::SelectPrevSibling => {
             if let Some(doc) = ctx.document.as_mut() {
-                let mut rc = super::cross_dispatch::RebuildContext {
-                    document: doc,
-                    mindmap_tree: ctx.mindmap_tree,
-                    app_scene: ctx.app_scene,
-                    renderer: ctx.renderer,
-                    scene_cache: ctx.scene_cache,
-                };
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
                 match action {
                     Action::SelectAll => super::cross_dispatch::apply_select_all(&mut rc),
                     Action::DeselectAll => super::cross_dispatch::apply_deselect_all(&mut rc),
@@ -691,52 +679,28 @@ pub(in crate::application::app) fn dispatch_action(
         // mirroring the verb dispatcher's post-execute drain.
         Action::SetEdgeAnchor { ref from, ref to } => {
             if let Some(doc) = ctx.document.as_mut() {
-                let mut rc = super::cross_dispatch::RebuildContext {
-                    document: doc,
-                    mindmap_tree: ctx.mindmap_tree,
-                    app_scene: ctx.app_scene,
-                    renderer: ctx.renderer,
-                    scene_cache: ctx.scene_cache,
-                };
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
                 super::cross_dispatch::apply_set_edge_anchor(from, to, &mut rc);
             }
             DispatchOutcome::Handled
         }
         Action::SetEdgeBodyGlyph(ref preset) => {
             if let Some(doc) = ctx.document.as_mut() {
-                let mut rc = super::cross_dispatch::RebuildContext {
-                    document: doc,
-                    mindmap_tree: ctx.mindmap_tree,
-                    app_scene: ctx.app_scene,
-                    renderer: ctx.renderer,
-                    scene_cache: ctx.scene_cache,
-                };
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
                 super::cross_dispatch::apply_set_edge_body_glyph(preset, &mut rc);
             }
             DispatchOutcome::Handled
         }
         Action::SetBorderField { ref field, ref value } => {
             if let Some(doc) = ctx.document.as_mut() {
-                let mut rc = super::cross_dispatch::RebuildContext {
-                    document: doc,
-                    mindmap_tree: ctx.mindmap_tree,
-                    app_scene: ctx.app_scene,
-                    renderer: ctx.renderer,
-                    scene_cache: ctx.scene_cache,
-                };
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
                 super::cross_dispatch::apply_set_border_field(field, value, &mut rc);
             }
             DispatchOutcome::Handled
         }
         Action::SetEdgeCap { ref from, ref to } => {
             if let Some(doc) = ctx.document.as_mut() {
-                let mut rc = super::cross_dispatch::RebuildContext {
-                    document: doc,
-                    mindmap_tree: ctx.mindmap_tree,
-                    app_scene: ctx.app_scene,
-                    renderer: ctx.renderer,
-                    scene_cache: ctx.scene_cache,
-                };
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
                 super::cross_dispatch::apply_set_edge_cap(from, to, &mut rc);
             }
             DispatchOutcome::Handled
@@ -760,65 +724,35 @@ pub(in crate::application::app) fn dispatch_action(
                 }
             };
             if let Some(doc) = ctx.document.as_mut() {
-                let mut rc = super::cross_dispatch::RebuildContext {
-                    document: doc,
-                    mindmap_tree: ctx.mindmap_tree,
-                    app_scene: ctx.app_scene,
-                    renderer: ctx.renderer,
-                    scene_cache: ctx.scene_cache,
-                };
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
                 super::cross_dispatch::apply_set_color_axis(axis, value, &mut rc);
             }
             DispatchOutcome::Handled
         }
         Action::SetEdgeType(ref value) => {
             if let Some(doc) = ctx.document.as_mut() {
-                let mut rc = super::cross_dispatch::RebuildContext {
-                    document: doc,
-                    mindmap_tree: ctx.mindmap_tree,
-                    app_scene: ctx.app_scene,
-                    renderer: ctx.renderer,
-                    scene_cache: ctx.scene_cache,
-                };
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
                 super::cross_dispatch::apply_set_edge_type(value, &mut rc);
             }
             DispatchOutcome::Handled
         }
         Action::SetEdgeDisplayMode(ref value) => {
             if let Some(doc) = ctx.document.as_mut() {
-                let mut rc = super::cross_dispatch::RebuildContext {
-                    document: doc,
-                    mindmap_tree: ctx.mindmap_tree,
-                    app_scene: ctx.app_scene,
-                    renderer: ctx.renderer,
-                    scene_cache: ctx.scene_cache,
-                };
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
                 super::cross_dispatch::apply_set_edge_display_mode(value, &mut rc);
             }
             DispatchOutcome::Handled
         }
         Action::ResetEdge(ref kind) => {
             if let Some(doc) = ctx.document.as_mut() {
-                let mut rc = super::cross_dispatch::RebuildContext {
-                    document: doc,
-                    mindmap_tree: ctx.mindmap_tree,
-                    app_scene: ctx.app_scene,
-                    renderer: ctx.renderer,
-                    scene_cache: ctx.scene_cache,
-                };
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
                 super::cross_dispatch::apply_reset_edge(kind, &mut rc);
             }
             DispatchOutcome::Handled
         }
         Action::SetFontFamily(ref family) => {
             if let Some(doc) = ctx.document.as_mut() {
-                let mut rc = super::cross_dispatch::RebuildContext {
-                    document: doc,
-                    mindmap_tree: ctx.mindmap_tree,
-                    app_scene: ctx.app_scene,
-                    renderer: ctx.renderer,
-                    scene_cache: ctx.scene_cache,
-                };
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
                 super::cross_dispatch::apply_set_font_family(family, &mut rc);
             }
             DispatchOutcome::Handled
@@ -854,52 +788,28 @@ pub(in crate::application::app) fn dispatch_action(
                 }
             };
             if let Some(doc) = ctx.document.as_mut() {
-                let mut rc = super::cross_dispatch::RebuildContext {
-                    document: doc,
-                    mindmap_tree: ctx.mindmap_tree,
-                    app_scene: ctx.app_scene,
-                    renderer: ctx.renderer,
-                    scene_cache: ctx.scene_cache,
-                };
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
                 super::cross_dispatch::apply_set_font_kv(which, parsed, &mut rc);
             }
             DispatchOutcome::Handled
         }
         Action::SetEdgeLabelText(ref text) => {
             if let Some(doc) = ctx.document.as_mut() {
-                let mut rc = super::cross_dispatch::RebuildContext {
-                    document: doc,
-                    mindmap_tree: ctx.mindmap_tree,
-                    app_scene: ctx.app_scene,
-                    renderer: ctx.renderer,
-                    scene_cache: ctx.scene_cache,
-                };
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
                 super::cross_dispatch::apply_set_edge_label_text(text, &mut rc);
             }
             DispatchOutcome::Handled
         }
         Action::SetEdgeLabelPosition(ref position) => {
             if let Some(doc) = ctx.document.as_mut() {
-                let mut rc = super::cross_dispatch::RebuildContext {
-                    document: doc,
-                    mindmap_tree: ctx.mindmap_tree,
-                    app_scene: ctx.app_scene,
-                    renderer: ctx.renderer,
-                    scene_cache: ctx.scene_cache,
-                };
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
                 super::cross_dispatch::apply_set_edge_label_position(position, &mut rc);
             }
             DispatchOutcome::Handled
         }
         Action::SetSpacing(ref input) => {
             if let Some(doc) = ctx.document.as_mut() {
-                let mut rc = super::cross_dispatch::RebuildContext {
-                    document: doc,
-                    mindmap_tree: ctx.mindmap_tree,
-                    app_scene: ctx.app_scene,
-                    renderer: ctx.renderer,
-                    scene_cache: ctx.scene_cache,
-                };
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
                 super::cross_dispatch::apply_set_spacing(input, &mut rc);
             }
             DispatchOutcome::Handled
@@ -928,26 +838,14 @@ pub(in crate::application::app) fn dispatch_action(
                 }
             };
             if let Some(doc) = ctx.document.as_mut() {
-                let mut rc = super::cross_dispatch::RebuildContext {
-                    document: doc,
-                    mindmap_tree: ctx.mindmap_tree,
-                    app_scene: ctx.app_scene,
-                    renderer: ctx.renderer,
-                    scene_cache: ctx.scene_cache,
-                };
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
                 super::cross_dispatch::apply_set_zoom_window(min, max, &mut rc);
             }
             DispatchOutcome::Handled
         }
         Action::ClearZoom => {
             if let Some(doc) = ctx.document.as_mut() {
-                let mut rc = super::cross_dispatch::RebuildContext {
-                    document: doc,
-                    mindmap_tree: ctx.mindmap_tree,
-                    app_scene: ctx.app_scene,
-                    renderer: ctx.renderer,
-                    scene_cache: ctx.scene_cache,
-                };
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
                 super::cross_dispatch::apply_clear_zoom(&mut rc);
             }
             DispatchOutcome::Handled

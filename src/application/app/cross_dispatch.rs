@@ -47,11 +47,19 @@ pub(in crate::application::app) struct RebuildContext<'a> {
 }
 
 impl<'a> RebuildContext<'a> {
-    /// Trigger the same scene-rebuild path the native dispatcher
-    /// uses after a document mutation. Clears the connection
-    /// sample cache and rebuilds tree + app-scene + renderer
-    /// buffers.
-    pub fn rebuild_after_doc_change(&mut self) {
+    /// Trigger a full scene rebuild after a **geometry-changing**
+    /// document mutation (border / color / font / spacing / edge
+    /// type / etc.). Clears the connection sample cache because
+    /// edge geometry may have shifted, then rebuilds tree +
+    /// app-scene + renderer buffers.
+    ///
+    /// Use [`Self::rebuild_after_selection_change`] instead when
+    /// the only thing that changed is `doc.selection`. Selection
+    /// changes don't move edges, so the cached `sample_path`
+    /// samples remain valid; clearing the cache forces a
+    /// thousand-edge re-sample on every keyboard navigation
+    /// keystroke for nothing.
+    pub fn rebuild_after_geometry_change(&mut self) {
         self.scene_cache.clear();
         rebuild_all(
             self.document,
@@ -61,7 +69,50 @@ impl<'a> RebuildContext<'a> {
             self.scene_cache,
         );
     }
+
+    /// Trigger a scene rebuild after a **selection-only** mutation
+    /// (`SelectAll`, `JumpToRoot`, `SelectParent`, etc.). Skips
+    /// the connection-sample cache clear because edge geometry
+    /// hasn't changed — the cache stays valid and per-edge
+    /// `sample_path` work is reused on the rebuild. Saves a
+    /// noticeable amount of work on dense maps where every key
+    /// nav would otherwise force a full re-sample.
+    pub fn rebuild_after_selection_change(&mut self) {
+        rebuild_all(
+            self.document,
+            self.mindmap_tree,
+            self.app_scene,
+            self.renderer,
+            self.scene_cache,
+        );
+    }
 }
+
+// ── RebuildContext construction macro ───────────────────────────
+
+/// Build a [`RebuildContext`] from a context-like struct (native
+/// [`super::input_context::InputHandlerContext`] or WASM
+/// `WasmInputState`) plus an already-unwrapped
+/// `&mut MindMapDocument`. Expands inline so the borrow-checker
+/// accepts the disjoint per-field borrows; a `fn rebuild_ctx(&mut
+/// self, doc)` builder would conflict with the active `doc` borrow
+/// the caller's `if let Some(doc) = ctx.document.as_mut()` already
+/// holds (re-borrowing `*ctx` while `doc` is live).
+///
+/// Both dispatchers compress the 6-line struct literal at every
+/// rebuilding arm into a single `rebuild_ctx!(ctx, doc)` call.
+macro_rules! rebuild_ctx {
+    ($ctx:expr, $doc:expr) => {
+        $crate::application::app::cross_dispatch::RebuildContext {
+            document: $doc,
+            mindmap_tree: $ctx.mindmap_tree,
+            app_scene: $ctx.app_scene,
+            renderer: $ctx.renderer,
+            scene_cache: $ctx.scene_cache,
+        }
+    };
+}
+pub(in crate::application::app) use rebuild_ctx;
 
 // ── Generic apply-then-rebuild ──────────────────────────────────
 
@@ -83,7 +134,7 @@ pub(in crate::application::app) fn apply_with_rebuild<F>(
     F: FnOnce(&mut MindMapDocument) -> bool,
 {
     if apply(rc.document) {
-        rc.rebuild_after_doc_change();
+        rc.rebuild_after_geometry_change();
     }
 }
 
@@ -402,14 +453,14 @@ pub(in crate::application::app) fn apply_select_all(rc: &mut RebuildContext<'_>)
         .map(|n| n.id.clone())
         .collect();
     rc.document.selection = SelectionState::from_ids(all_ids);
-    rc.rebuild_after_doc_change();
+    rc.rebuild_after_selection_change();
 }
 
 /// Clear the selection. No-op when nothing was selected.
 pub(in crate::application::app) fn apply_deselect_all(rc: &mut RebuildContext<'_>) {
     if !matches!(rc.document.selection, SelectionState::None) {
         rc.document.selection = SelectionState::None;
-        rc.rebuild_after_doc_change();
+        rc.rebuild_after_selection_change();
     }
 }
 
@@ -446,7 +497,7 @@ pub(in crate::application::app) fn apply_invert_selection(rc: &mut RebuildContex
         .map(|n| n.id.clone())
         .collect();
     rc.document.selection = SelectionState::from_ids(inverted);
-    rc.rebuild_after_doc_change();
+    rc.rebuild_after_selection_change();
 }
 
 /// Walk one step up the hierarchy from a single-node selection.
@@ -461,7 +512,7 @@ pub(in crate::application::app) fn apply_select_parent(rc: &mut RebuildContext<'
             .and_then(|n| n.parent_id.clone())
         {
             rc.document.selection = SelectionState::Single(parent_id);
-            rc.rebuild_after_doc_change();
+            rc.rebuild_after_selection_change();
         }
     }
 }
@@ -481,7 +532,7 @@ pub(in crate::application::app) fn apply_select_child(rc: &mut RebuildContext<'_
             .map(|c| c.id.clone());
         if let Some(child_id) = first_child {
             rc.document.selection = SelectionState::Single(child_id);
-            rc.rebuild_after_doc_change();
+            rc.rebuild_after_selection_change();
         }
     }
 }
@@ -498,7 +549,7 @@ pub(in crate::application::app) fn apply_select_sibling(
     if let SelectionState::Single(nid) = rc.document.selection.clone() {
         if let Some(target) = sibling_id(&rc.document.mindmap, &nid, forward) {
             rc.document.selection = SelectionState::Single(target);
-            rc.rebuild_after_doc_change();
+            rc.rebuild_after_selection_change();
         }
     }
 }
@@ -558,6 +609,6 @@ pub(in crate::application::app) fn apply_jump_to_root(rc: &mut RebuildContext<'_
     if let Some((id, centre)) = target {
         rc.document.selection = SelectionState::Single(id);
         rc.renderer.set_camera_center(centre);
-        rc.rebuild_after_doc_change();
+        rc.rebuild_after_selection_change();
     }
 }
