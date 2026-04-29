@@ -38,12 +38,14 @@ Shipped on this branch:
 - **WASM convergence — full funnel.** Every Compatible Action
   now routes through the shared `cross_dispatch` helpers,
   including the Single branch of the mixed-branch
-  `EditSelection*` Actions. The remaining gap is structural
-  rather than per-arm: WASM still has its own `WasmInputState`
-  struct + closure-driven event loop in `run_wasm.rs`, distinct
-  from native's `InputHandlerContext` + `dispatch_action`.
-  Tracks B (macro registry on WASM) and C (full context-type
-  unification) collapse the structural gap.
+  `EditSelection*` Actions. **Track B shipped** — the 4-tier
+  `MacroRegistry` runs on WASM, key bindings to macro ids fire
+  via the same Action → Macro chain native uses, and the
+  privilege gate is single-sourced through a trait-driven
+  `dispatch_macro_core`. The remaining gap is structural:
+  `WasmInputState` is still a separate type from native's
+  `InputHandlerContext`. Track C (full context-type
+  unification) collapses the structural gap.
 - ~~**WASM Compatible Actions need arms.**~~ **Track A largely
   shipped.** A new `cross_dispatch` module (partial Track C) holds
   the Action arm bodies that touch only state shared between

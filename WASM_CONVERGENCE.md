@@ -137,61 +137,85 @@ dispatchers. **Three paths**, in order of preference:
 5. Remove the inline arm from `run_wasm.rs` (if it exists from
    a prior Path A1 port).
 
-### Track B — port the macro registry
+### Track B — port the macro registry — **SHIPPED**
 
-WASM currently has no `MacroRegistry`. Once it does, every macro
-whose Action steps are already `Compatible` works in the browser.
+Track B landed in 6 commits. WASM now has a 4-tier `MacroRegistry`
+populated at startup, and key bindings to macro ids fire through
+the same Action → Macro chain native uses.
 
-**Step 0 — prerequisite: lift the cfg gate.**
-`src/application/macros/loader.rs` is `#![cfg(not(target_arch =
-"wasm32"))]`-gated at module level (line 16), and
-`src/application/macros/mod.rs:18` only declares `pub mod loader`
-under the same cfg. Today no part of the loader compiles on WASM.
-Audit each function for `std::fs` / native-only API usage:
+**Architecture summary:**
 
-| Function | Status | Action |
-|---|---|---|
-| `load_app_macros` | `include_str!`-based, pure | move out from under the cfg |
-| `parse_map_macros` | pure | same |
-| `rebuild_map_macros` | pure (calls `parse_map_macros` + registry methods) | same |
-| `parse_inline_macros` | pure | same |
-| `rebuild_inline_macros` | pure | same |
-| `load_user_macros` | reads `~/.config/...` via `std::fs` | keeps the cfg gate (or grows a WASM-side sibling) |
+- **Loader directory** at `src/application/macros/loader/` —
+  `mod.rs` holds the portable functions (`load_app_macros`,
+  `parse_user_macros_json`, `parse_map_macros`,
+  `rebuild_map_macros`, `parse_inline_macros`,
+  `rebuild_inline_macros`, `rebuild_document_macros`).
+  `platform_desktop.rs` keeps the `std::fs` reader for the
+  XDG path. `platform_web.rs` reads `?macros=<urlencoded-json>`
+  > `localStorage["mandala_macros"]` > empty. Cfg-routed
+  `pub use` at the top of `mod.rs` exposes a single
+  `loader::load_user_macros()` symbol on both targets.
 
-The cleanest shape: split `loader.rs` into a portable file
-(everything except `load_user_macros`) and a `cfg`-gated
-`platform_desktop.rs` for the native filesystem reader, parallel
-to `keybinds/platform_desktop.rs` and the mutations loader. Then
-add `platform_web.rs` for WASM's `?macros=` / `localStorage`
-loader.
+- **`WasmInputState` promoted to module-level** in
+  `run_wasm.rs` (was closure-local inside `pub(super) fn run`).
+  Adds a `macros: MacroRegistry` field. Built at the same
+  spawn_local init site as the document — App + User from
+  loader, Map + Inline from `rebuild_document_macros`. Mirrors
+  `run_native_init.rs:117-142` shape so cross-target log
+  triage stays uniform.
 
-**Once Step 0 is done:**
+- **`dispatch_macro` extracted** to
+  `src/application/app/dispatch_macro_core.rs` (cross-platform,
+  no cfg). Step loop + privilege gate are abstracted over a
+  `MacroDispatchTarget` trait so native and WASM share the
+  body byte-for-byte. **Re-implementing the loop on either
+  target is forbidden** — see Track-D below for why this is
+  the threat-model defence. Native impl is
+  `dispatch::NativeMacroDispatchTarget` wrapping
+  `&mut InputHandlerContext`; WASM impl is
+  `run_wasm::WasmMacroDispatchTarget` wrapping
+  `&mut WasmInputState + &mut Renderer`.
 
-1. Decide where the user-tier loader reads from on WASM. There's
-   no `~/.config/mandala/macros.json` in a browser; the natural
-   shape parallels the keybind loader: `?macros=<json>` query
-   param, or `localStorage["mandala_macros"]`. See
-   `src/application/keybinds/platform_web.rs` for the existing
-   pattern.
-2. Add `loader::platform_web::load_user_macros()` parallel to
-   the native loader.
-3. Reuse `loader::load_app_macros()` — `include_str!`-based.
-4. Reuse `loader::rebuild_map_macros` and
-   `loader::rebuild_inline_macros` — both pure once the cfg gate
-   is lifted.
-5. Add `macros: MacroRegistry` to `WasmInputState`. Note that
-   `WasmInputState` is currently a closure-local struct inside
-   `run_wasm::run` (`run_wasm.rs:138-156`); promote it to a
-   module-level struct first so dispatch helpers can take a
-   reference cleanly. Build the registry at startup in
-   `run_wasm::run`.
-6. When the document loads (and re-loads via `?map=`), call
-   `rebuild_map_macros(macros, doc)` and
-   `rebuild_inline_macros(macros, doc)`.
-7. Dispatch macros after the WASM keyboard handler's
-   `Action::is_some()` branch. See `event_keyboard.rs:347-378`
-   for the native chain (Action → Macro → CustomMutation).
-8. **Do not skip the privilege gate.** See Track-D below.
+- **WASM keyboard fall-through** at the keyboard handler:
+  after `keybinds.action_for_context` returns `None`,
+  `keybinds.macro_for(...)` is consulted; on hit
+  `dispatch_macro_core::dispatch_macro` runs the macro through
+  the trait impl. Mirrors native's `event_keyboard.rs:271-310`
+  Action → Macro → (CustomMutation tier on native; macros only
+  on WASM today).
+
+- **`apply_keybind_custom_mutation` lifted** from `dispatch.rs`
+  (cfg-gated) to `cross_dispatch.rs` so the WASM macro target
+  can reach the same animation-aware apply +
+  `apply_document_actions` envelope native uses. Re-exported
+  from `dispatch.rs` for the existing
+  `document/tests_mutations` import.
+
+- **`MacroStep::ConsoleLine` on WASM** — User-tier logs
+  `warn!` and skips (the macro continues with the next step).
+  No console runtime exists in the browser; fail-closed-abort
+  would surprise users copy-pasting their `macros.json` from
+  desktop into `?macros=`. Non-User tiers still
+  fail-closed-abort identically to native — the privilege gate
+  rejects ConsoleLine from `App` / `Map` / `Inline` tiers
+  before this method is called. See `format/macros.md`
+  § "ConsoleLine on WASM".
+
+**User-facing invocation on WASM:**
+```text
+http://localhost:8080/?map=path&keybinds={"macro_bindings":{"Ctrl+G":"my-macro"}}&macros=[{"id":"my-macro","steps":[{"kind":"Action","action":"ZoomIn"},{"kind":"Action","action":"ZoomIn"}]}]
+```
+
+**Test coverage:**
+- 9 mock-target tests in `dispatch_macro_core::tests` exercise
+  the privilege gate at the actual loop body (not just the
+  per-step simulator).
+- `loader::tests` covers `parse_user_macros_json` (the shared
+  parsing seam both targets call) — pinned malformed-returns-err,
+  empty-input, valid-array round-trip.
+- WASM-side wiring has no headless test harness
+  (`TEST_CONVENTIONS.md §T9`); manual smoke via `trunk serve`
+  with the URL form above.
 
 ### Track C — unify the context type
 

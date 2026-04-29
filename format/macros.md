@@ -37,23 +37,22 @@ precedence (later writers override earlier ones with the same `id`):
 1. **Application bundle** — `assets/macros/application.json`,
    compiled into the binary via `include_str!`. Lowest precedence so
    users can customise anything shipped by the app. Tier:
-   `MacroSource::App`.
+   `MacroSource::App`. Cross-platform (native + WASM).
 2. **User file** — `$XDG_CONFIG_HOME/mandala/macros.json` on native
-   (falls back to `$HOME/.config/mandala/macros.json`). On WASM the
-   user tier is not yet wired (deferred — see `TODO.md`). Tier:
+   (falls back to `$HOME/.config/mandala/macros.json`). On WASM,
+   `?macros=<urlencoded-json>` query param > `localStorage` under
+   the `mandala_macros` key > empty. Both targets parse through
+   the shared `loader::parse_user_macros_json`. Tier:
    `MacroSource::User`.
-3. **Map-inline** — `MindMap.macros` on the loaded document
-   (initial load + every `open` / `new` console verb). On WASM
-   this tier is not yet wired — opening a `.mindmap.json`
-   in the browser silently ignores its `macros` array. Tier:
-   `MacroSource::Map`.
+3. **Map-inline** — `MindMap.macros` on the loaded document.
+   Refreshed at initial load on both targets, plus every `open` /
+   `new` console verb on native. Tier: `MacroSource::Map`.
 4. **Node-inline** — `MindNode.inline_macros` on individual nodes.
    Loaded alongside Map tier (same trigger sites). Highest
    precedence — overrides Map / User / App on id collisions.
    Authors should namespace ids (e.g. `"node-id.action"`) to
    avoid collisions across nodes since the registry is
-   id-keyed flat. Tier: `MacroSource::Inline`. WASM also not
-   yet wired.
+   id-keyed flat. Tier: `MacroSource::Inline`. Cross-platform.
 
 The `MacroSource` tier is **loader-pinned** — assigned at the
 loader call site, never read from the on-disk content. A user
@@ -250,6 +249,24 @@ macro.
 A non-User-tier macro that contains `ConsoleLine` steps will be
 **rejected entirely** (fail-closed); the dispatcher logs a `warn!`
 and aborts the macro after the first rejected step.
+
+##### ConsoleLine on WASM
+
+WASM has no console runtime — the `console_input` module is
+`#[cfg(not(target_arch = "wasm32"))]`-gated, so there's no
+`execute_console_line` to call. **User-tier ConsoleLine steps on
+WASM log `warn!` and skip; the macro continues with the next
+step** (fail-soft, NOT abort). This matches the User-tier "step
+failed" posture used elsewhere (e.g. unknown CustomMutation id),
+and prevents a copy-pasted-from-desktop macro shaped
+`[Action::ZoomIn, ConsoleLine("save"), Action::ZoomIn]` from
+fail-closed-aborting at step 2 and never running step 3.
+
+The privilege gate above is unchanged — non-User tiers
+(`App` / `Map` / `Inline`) still fail-closed-abort the macro on
+the FIRST ConsoleLine encounter, identical to native. Only the
+User-tier branch differs in *what* execution looks like
+(log-skip on WASM, real exec on native).
 
 ## Resolution order at dispatch
 
