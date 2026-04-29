@@ -194,6 +194,41 @@ fn apply_edits(eff: &mut ConsoleEffects, edits: BorderConfigEdits) -> ExecResult
     }
 }
 
+/// Mutation core: apply a single `field=value` edit to every node
+/// in the current selection. Both the kv-form `border` console verb
+/// (which stages multiple kvs at once) and the parametric
+/// `Action::SetBorderField` (single kv per binding) route through
+/// the underlying `set_node_border_config` setter — this helper is
+/// the single-kv wrapper the Action arm calls.
+///
+/// Returns `true` when at least one node actually changed; `false`
+/// when no node selection exists, the field/value pair fails to
+/// stage, or every selected node was already at the requested
+/// value. The Action arm uses the bool to decide whether to trigger
+/// a scene rebuild.
+pub(crate) fn apply_border_field_to_selection(
+    doc: &mut crate::application::document::MindMapDocument,
+    field: &str,
+    value: &str,
+) -> bool {
+    let mut edits = BorderConfigEdits::default();
+    if stage_kv(&mut edits, field, value).is_err() {
+        return false;
+    }
+    let ids = match nodes_in_selection(&doc.selection) {
+        Ok(ids) => ids,
+        Err(_) => return false,
+    };
+    let mut changed = false;
+    for id in &ids {
+        let outcome = doc.set_node_border_config(id, edits.clone());
+        if outcome.changed {
+            changed = true;
+        }
+    }
+    changed
+}
+
 /// `true` iff the staged edits include any side-pattern or corner
 /// override — the fields that make `preset=custom` actually
 /// distinguishable from `rounded`.
@@ -223,7 +258,7 @@ fn custom_preset_hint() -> String {
 /// `ExecResult::Err` describing why it can't apply (no selection /
 /// non-node selection). Edge-adjacent selections surface a single
 /// "not applicable" line — borders are node-only.
-fn nodes_in_selection(sel: &SelectionState) -> Result<Vec<String>, ExecResult> {
+pub(crate) fn nodes_in_selection(sel: &SelectionState) -> Result<Vec<String>, ExecResult> {
     match sel {
         SelectionState::Single(id) => Ok(vec![id.clone()]),
         SelectionState::Multi(ids) => Ok(ids.clone()),
@@ -249,7 +284,7 @@ fn nodes_in_selection(sel: &SelectionState) -> Result<Vec<String>, ExecResult> {
 /// `edits`. Returns the same error string the user sees in the
 /// console — kept verbatim so `border top="a)"` reports the parser
 /// output ("unmatched ')'…") with a `top: ` prefix.
-fn stage_kv(
+pub(crate) fn stage_kv(
     edits: &mut BorderConfigEdits,
     key: &str,
     value: &str,

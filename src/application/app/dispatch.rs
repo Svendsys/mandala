@@ -922,6 +922,46 @@ pub(in crate::application::app) fn dispatch_action(
             }
             DispatchOutcome::Handled
         }
+        Action::SetBorderField { ref field, ref value } => {
+            if let Some(doc) = ctx.document.as_mut() {
+                let changed = crate::application::console::commands::border::apply_border_field_to_selection(
+                    doc,
+                    field,
+                    value,
+                );
+                if changed {
+                    ctx.scene_cache.clear();
+                    rebuild_all(
+                        doc,
+                        ctx.mindmap_tree,
+                        ctx.app_scene,
+                        ctx.renderer,
+                        ctx.scene_cache,
+                    );
+                }
+            }
+            DispatchOutcome::Handled
+        }
+        Action::SetEdgeCap { ref from, ref to } => {
+            if let Some(doc) = ctx.document.as_mut() {
+                let changed = crate::application::console::commands::cap::apply_cap_to_selection(
+                    doc,
+                    Some(from.as_str()),
+                    Some(to.as_str()),
+                );
+                if changed {
+                    ctx.scene_cache.clear();
+                    rebuild_all(
+                        doc,
+                        ctx.mindmap_tree,
+                        ctx.app_scene,
+                        ctx.renderer,
+                        ctx.scene_cache,
+                    );
+                }
+            }
+            DispatchOutcome::Handled
+        }
 
         // Console / Picker / LabelEdit / TextEdit modal-context actions
         // not handled above (e.g. cancel/commit) are dispatched by their

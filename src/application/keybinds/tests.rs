@@ -487,6 +487,14 @@ fn test_wasm_compatibility_classifies_every_variant_explicitly() {
             to: "auto".into(),
         },
         Action::SetEdgeBodyGlyph("dash".into()),
+        Action::SetBorderField {
+            field: "preset".into(),
+            value: "rounded".into(),
+        },
+        Action::SetEdgeCap {
+            from: "arrow".into(),
+            to: "none".into(),
+        },
     ];
     for a in all_variants {
         let c = a.wasm_compatibility();
@@ -557,6 +565,14 @@ fn test_is_destructive_destructive_set_is_pinned() {
             to: "auto".into(),
         },
         Action::SetEdgeBodyGlyph("dash".into()),
+        Action::SetBorderField {
+            field: "preset".into(),
+            value: "rounded".into(),
+        },
+        Action::SetEdgeCap {
+            from: "arrow".into(),
+            to: "none".into(),
+        },
     ] {
         assert!(
             !a.is_destructive(),
@@ -1294,6 +1310,44 @@ fn test_parametric_binding_round_trips_through_json() {
     let parsed = KeybindConfig::from_json(&json).unwrap();
     assert_eq!(parsed.set_edge_anchor, cfg.set_edge_anchor);
     assert_eq!(parsed.set_edge_body_glyph, cfg.set_edge_body_glyph);
+}
+
+#[test]
+fn test_parametric_set_border_field_resolves_with_two_args() {
+    let cfg = KeybindConfig {
+        set_border_field: vec![ParametricBinding {
+            combo: "Ctrl+Shift+b".into(),
+            args: vec!["preset".into(), "rounded".into()],
+        }],
+        ..KeybindConfig::default()
+    };
+    let resolved = cfg.resolve();
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "b", true, true, false),
+        Some(Action::SetBorderField {
+            field: "preset".into(),
+            value: "rounded".into(),
+        }),
+    );
+}
+
+#[test]
+fn test_parametric_set_edge_cap_resolves_with_two_args() {
+    let cfg = KeybindConfig {
+        set_edge_cap: vec![ParametricBinding {
+            combo: "Ctrl+Shift+c".into(),
+            args: vec!["arrow".into(), "none".into()],
+        }],
+        ..KeybindConfig::default()
+    };
+    let resolved = cfg.resolve();
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "c", true, true, false),
+        Some(Action::SetEdgeCap {
+            from: "arrow".into(),
+            to: "none".into(),
+        }),
+    );
 }
 
 #[test]

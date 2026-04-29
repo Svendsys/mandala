@@ -288,6 +288,20 @@ pub enum Action {
     /// Mirror `body glyph=<dot|dash|double|wave|chain>` on the
     /// selected edge.
     SetEdgeBodyGlyph(String),
+    /// Mirror `border <field>=<value>` on the selected node(s).
+    /// Single kv per binding (multi-kv border edits stay
+    /// console-only). Field names: `preset|font|size|color|palette|
+    /// field|padding|top|bottom|left|right|tl|tr|bl|br`.
+    SetBorderField {
+        field: String,
+        value: String,
+    },
+    /// Mirror `cap from=<arrow|circle|diamond|none> to=<...>` on the
+    /// selected edge.
+    SetEdgeCap {
+        from: String,
+        to: String,
+    },
 }
 
 impl Action {
@@ -378,7 +392,9 @@ impl Action {
             // variants will land in a later commit and DO classify as
             // destructive.
             | Action::SetEdgeAnchor { .. }
-            | Action::SetEdgeBodyGlyph(_) => false,
+            | Action::SetEdgeBodyGlyph(_)
+            | Action::SetBorderField { .. }
+            | Action::SetEdgeCap { .. } => false,
 
             // Modal-context Actions (Console / Picker / TextEdit /
             // LabelEdit / DoubleClickActivate's `Empty`-hit branch
@@ -555,7 +571,9 @@ impl Action {
             | Action::ToggleFpsDebug
             | Action::NewDocument
             | Action::SetEdgeAnchor { .. }
-            | Action::SetEdgeBodyGlyph(_) => InputContext::Document,
+            | Action::SetEdgeBodyGlyph(_)
+            | Action::SetBorderField { .. }
+            | Action::SetEdgeCap { .. } => InputContext::Document,
         }
     }
 
@@ -628,7 +646,9 @@ impl Action {
             // Parametric mutators that touch only `MindMapDocument`
             // setters — Compatible by classification rule.
             | Action::SetEdgeAnchor { .. }
-            | Action::SetEdgeBodyGlyph(_) => WasmCompatibility::Compatible,
+            | Action::SetEdgeBodyGlyph(_)
+            | Action::SetBorderField { .. }
+            | Action::SetEdgeCap { .. } => WasmCompatibility::Compatible,
 
             // ── Renderer-only — works on both targets ─────────
             Action::ZoomIn

@@ -161,6 +161,8 @@ pub struct KeybindConfig {
     // a binding to their `keybinds.json`.
     pub set_edge_anchor: Vec<ParametricBinding>,
     pub set_edge_body_glyph: Vec<ParametricBinding>,
+    pub set_border_field: Vec<ParametricBinding>,
+    pub set_edge_cap: Vec<ParametricBinding>,
 
     // ── Style / metadata ─────────────────────────────────────────
     /// Font family name for the console overlay.
@@ -329,6 +331,8 @@ impl Default for KeybindConfig {
             // sensible default for `from=top to=bottom`-style payloads.
             set_edge_anchor: vec![],
             set_edge_body_glyph: vec![],
+            set_border_field: vec![],
+            set_edge_cap: vec![],
 
             // Style / metadata
             console_font: String::new(),
@@ -489,6 +493,30 @@ impl KeybindConfig {
             &self.set_edge_body_glyph,
             |args| match args {
                 [glyph] => Some(Action::SetEdgeBodyGlyph(glyph.clone())),
+                _ => None,
+            },
+        );
+        push_parametric(
+            &mut binds,
+            "set_border_field",
+            &self.set_border_field,
+            |args| match args {
+                [field, value] => Some(Action::SetBorderField {
+                    field: field.clone(),
+                    value: value.clone(),
+                }),
+                _ => None,
+            },
+        );
+        push_parametric(
+            &mut binds,
+            "set_edge_cap",
+            &self.set_edge_cap,
+            |args| match args {
+                [from, to] => Some(Action::SetEdgeCap {
+                    from: from.clone(),
+                    to: to.clone(),
+                }),
                 _ => None,
             },
         );

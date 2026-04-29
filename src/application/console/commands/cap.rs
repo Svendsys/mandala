@@ -11,6 +11,7 @@ use crate::application::console::helpers::{
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::edge_selected;
 use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
+use crate::application::document::MindMapDocument;
 
 pub const KEYS: &[&str] = &["from", "to"];
 pub const NAMES: &[&str] = &["arrow", "circle", "diamond", "none"];
@@ -45,7 +46,7 @@ fn complete_cap(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completio
     }
 }
 
-fn resolve_cap(endpoint_from: bool, name: &str) -> Option<Option<&'static str>> {
+pub(crate) fn resolve_cap(endpoint_from: bool, name: &str) -> Option<Option<&'static str>> {
     match (endpoint_from, name) {
         (_, "none") => Some(None),
         (_, "circle") => Some(Some("\u{25CF}")),
@@ -54,6 +55,34 @@ fn resolve_cap(endpoint_from: bool, name: &str) -> Option<Option<&'static str>> 
         (false, "arrow") => Some(Some("\u{25B6}")),
         _ => None,
     }
+}
+
+/// Mutation core: apply cap-glyph changes to the currently-selected
+/// edge. Both the `cap` console verb and the parametric
+/// `Action::SetEdgeCap` route through this helper. Invalid preset
+/// names silently no-op the corresponding slot — the verb path
+/// surfaces typed errors via `ApplyTally`; the Action path warns
+/// upstream and returns `Handled` (no scrollback surface).
+pub(crate) fn apply_cap_to_selection(
+    doc: &mut MindMapDocument,
+    from: Option<&str>,
+    to: Option<&str>,
+) -> bool {
+    let Some(er) = doc.selection.selected_edge_or_portal_edge() else {
+        return false;
+    };
+    let mut changed = false;
+    if let Some(v) = from {
+        if let Some(glyph) = resolve_cap(true, v) {
+            changed |= doc.set_edge_cap_start(&er, glyph);
+        }
+    }
+    if let Some(v) = to {
+        if let Some(glyph) = resolve_cap(false, v) {
+            changed |= doc.set_edge_cap_end(&er, glyph);
+        }
+    }
+    changed
 }
 
 fn execute_cap(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
@@ -88,4 +117,59 @@ fn execute_cap(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         tally.note(changed, || format!("cap {} already {}", k, v));
     }
     tally.finalize("cap")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::document::tests_common::load_test_doc;
+    use crate::application::document::{EdgeLabelSel, EdgeRef, SelectionState};
+
+    fn doc_with_first_edge_selected() -> MindMapDocument {
+        let mut doc = load_test_doc();
+        let e = doc.mindmap.edges.first().expect("testament edges");
+        let er = EdgeRef::new(&e.from_id, &e.to_id, &e.edge_type);
+        doc.selection = SelectionState::EdgeLabel(EdgeLabelSel::new(er));
+        doc
+    }
+
+    #[test]
+    fn resolve_cap_picks_directional_arrow_glyph() {
+        // `arrow` is direction-sensitive: from-side arrow is
+        // ◀ (U+25C0), to-side arrow is ▶ (U+25B6).
+        assert_eq!(resolve_cap(true, "arrow"), Some(Some("\u{25C0}")));
+        assert_eq!(resolve_cap(false, "arrow"), Some(Some("\u{25B6}")));
+        // `none` clears the cap (Some(None) — Some-wraps the
+        // unset answer).
+        assert_eq!(resolve_cap(true, "none"), Some(None));
+        // Unknown name returns None (the outer Option = "no answer").
+        assert_eq!(resolve_cap(true, "totally-invalid"), None);
+    }
+
+    #[test]
+    fn apply_cap_to_selection_writes_both_ends() {
+        let mut doc = doc_with_first_edge_selected();
+        let _ = apply_cap_to_selection(&mut doc, Some("circle"), Some("diamond"));
+        let cfg = doc.mindmap.edges[0]
+            .glyph_connection
+            .as_ref()
+            .expect("body-glyph fork should leave a cfg");
+        assert_eq!(cfg.cap_start.as_deref(), Some("\u{25CF}"));
+        assert_eq!(cfg.cap_end.as_deref(), Some("\u{25C6}"));
+    }
+
+    #[test]
+    fn apply_cap_to_selection_returns_false_with_no_selection() {
+        let mut doc = load_test_doc();
+        assert!(!apply_cap_to_selection(&mut doc, Some("arrow"), Some("none")));
+    }
+
+    #[test]
+    fn apply_cap_to_selection_silently_skips_invalid_name() {
+        let mut doc = doc_with_first_edge_selected();
+        let original = doc.mindmap.edges[0].glyph_connection.clone();
+        // Invalid `from` value — core silently no-ops the bad slot.
+        assert!(!apply_cap_to_selection(&mut doc, Some("nonsense"), None));
+        assert_eq!(doc.mindmap.edges[0].glyph_connection, original);
+    }
 }
