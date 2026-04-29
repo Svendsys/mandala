@@ -73,28 +73,45 @@ pub(crate) fn apply_anchor_to_selection(
     from: Option<&str>,
     to: Option<&str>,
 ) -> bool {
-    let Some(er) = doc.selection.selected_edge_or_portal_edge() else {
-        return false;
-    };
     let mut changed = false;
     if let Some(v) = from {
         if let Some(side) = side_value(v) {
-            changed |= doc.set_edge_anchor(&er, true, side);
+            changed |= apply_anchor_slot_to_selection(doc, true, side);
         }
     }
     if let Some(v) = to {
         if let Some(side) = side_value(v) {
-            changed |= doc.set_edge_anchor(&er, false, side);
+            changed |= apply_anchor_slot_to_selection(doc, false, side);
         }
     }
     changed
 }
 
-fn execute_anchor(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
-    let er = match require_edge_or_portal(eff) {
-        Ok(e) => e,
-        Err(r) => return r,
+/// Single-slot mutation core: write one anchor side
+/// (`is_from`-decided) to the currently-selected edge. Pre-validated
+/// `side` is required (the verb path validates per-kv with typed
+/// errors; the bundle path goes through
+/// [`apply_anchor_to_selection`] which validates internally and
+/// silently no-ops on bad input). Returns `true` on a real change.
+#[must_use = "the bool gates the scene rebuild — drop it explicitly with `let _ = …` if you don't care"]
+pub(crate) fn apply_anchor_slot_to_selection(
+    doc: &mut MindMapDocument,
+    is_from: bool,
+    side: &str,
+) -> bool {
+    let Some(er) = doc.selection.selected_edge_or_portal_edge() else {
+        return false;
     };
+    doc.set_edge_anchor(&er, is_from, side)
+}
+
+fn execute_anchor(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
+    // Pre-check the selection so a non-edge selection surfaces a
+    // typed error instead of "no change". The mutation core
+    // re-resolves the edge per call (cheap match on selection).
+    if let Err(r) = require_edge_or_portal(eff) {
+        return r;
+    }
     let kvs = match collect_kvs_or_usage(args, "usage: anchor from=<side> to=<side>") {
         Ok(k) => k,
         Err(r) => return r,
@@ -114,7 +131,10 @@ fn execute_anchor(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             tally.note_error(format!("'{}': expected auto|top|right|bottom|left", v));
             continue;
         };
-        let changed = eff.document.set_edge_anchor(&er, is_from, val);
+        // Route through the mutation core — same setter path the
+        // parametric `Action::SetEdgeAnchor` uses. The verb keeps
+        // the per-kv tally so each side reports its own outcome.
+        let changed = apply_anchor_slot_to_selection(eff.document, is_from, val);
         tally.note(changed, || format!("{} already {}", k, v));
     }
     tally.finalize("anchor")

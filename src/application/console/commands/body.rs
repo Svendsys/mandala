@@ -85,25 +85,25 @@ fn execute_body(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     // Accept a portal-label selection too: the same `body` glyph
     // drives the portal marker symbol, so `body glyph=…` on a
     // portal label retargets the owning edge.
-    let er = match require_edge_or_portal(eff) {
-        Ok(e) => e,
-        Err(r) => return r,
-    };
+    if let Err(r) = require_edge_or_portal(eff) {
+        return r;
+    }
     let name = match args.kv("glyph") {
         Some(n) => n.to_ascii_lowercase(),
         None => return ExecResult::err("usage: body glyph=<dot|dash|double|wave|chain>"),
     };
-    let glyph = match glyph_for_preset(&name) {
-        Some(g) => g,
-        None => {
-            return ExecResult::err(format!(
-                "glyph '{}' must be one of dot|dash|double|wave|chain",
-                name
-            ))
-        }
-    };
-    let changed = eff.document.set_edge_body_glyph(&er, glyph);
-    if changed {
+    if glyph_for_preset(&name).is_none() {
+        return ExecResult::err(format!(
+            "glyph '{}' must be one of dot|dash|double|wave|chain",
+            name
+        ));
+    }
+    // Route through the mutation core — same setter, single
+    // source of truth with the parametric `Action::SetEdgeBodyGlyph`
+    // arm. The verb keeps the typed pre-validation (so a bad
+    // preset surfaces as `Err`, not a silent no-op the way the
+    // Action arm intentionally does).
+    if apply_body_glyph_to_selection(eff.document, &name) {
         ExecResult::ok_msg(format!("body glyph set to {}", name))
     } else {
         ExecResult::ok_msg(format!("body glyph already {}", name))

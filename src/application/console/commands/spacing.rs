@@ -47,29 +47,22 @@ fn complete_spacing(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Compl
 }
 
 fn execute_spacing(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
-    let er = match require_edge_or_portal(eff) {
-        Ok(e) => e,
-        Err(r) => return r,
-    };
+    if let Err(r) = require_edge_or_portal(eff) {
+        return r;
+    }
     let v = match args.kv("value") {
         Some(v) => v,
         None => return ExecResult::err("usage: spacing value=<tight|normal|wide | <float>>"),
     };
-    let value = if let Some((_, preset)) = PRESETS.iter().find(|(n, _)| *n == v) {
-        *preset
-    } else {
-        match v.parse::<f32>() {
-            Ok(x) => x,
-            Err(_) => {
-                return ExecResult::err(format!(
-                    "'{}' must be a preset (tight|normal|wide) or a float",
-                    v
-                ))
-            }
-        }
-    };
-    let changed = eff.document.set_edge_spacing(&er, value);
-    if changed {
+    if resolve_spacing_value(v).is_none() {
+        return ExecResult::err(format!(
+            "'{}' must be a preset (tight|normal|wide) or a float",
+            v
+        ));
+    }
+    // Route through the mutation core — same setter, single
+    // source of truth with the parametric `Action::SetSpacing` arm.
+    if apply_spacing_to_selection(eff.document, v) {
         ExecResult::ok_msg(format!("spacing set to {}", v))
     } else {
         ExecResult::ok_msg(format!("spacing already {}", v))

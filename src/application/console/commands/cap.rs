@@ -69,28 +69,44 @@ pub(crate) fn apply_cap_to_selection(
     from: Option<&str>,
     to: Option<&str>,
 ) -> bool {
-    let Some(er) = doc.selection.selected_edge_or_portal_edge() else {
-        return false;
-    };
     let mut changed = false;
     if let Some(v) = from {
-        if let Some(glyph) = resolve_cap(true, v) {
-            changed |= doc.set_edge_cap_start(&er, glyph);
-        }
+        changed |= apply_cap_slot_to_selection(doc, true, v);
     }
     if let Some(v) = to {
-        if let Some(glyph) = resolve_cap(false, v) {
-            changed |= doc.set_edge_cap_end(&er, glyph);
-        }
+        changed |= apply_cap_slot_to_selection(doc, false, v);
     }
     changed
 }
 
-fn execute_cap(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
-    let er = match require_edge_or_portal(eff) {
-        Ok(e) => e,
-        Err(r) => return r,
+/// Single-slot mutation core: write one cap glyph
+/// (`is_from`-decided) to the currently-selected edge. `name` is
+/// the user-facing preset (`arrow|circle|diamond|none`); invalid
+/// names silently no-op (the verb pre-validates with typed errors;
+/// the parametric Action arm warn-logs upstream).
+#[must_use = "the bool gates the scene rebuild — drop it explicitly with `let _ = …` if you don't care"]
+pub(crate) fn apply_cap_slot_to_selection(
+    doc: &mut MindMapDocument,
+    is_from: bool,
+    name: &str,
+) -> bool {
+    let Some(er) = doc.selection.selected_edge_or_portal_edge() else {
+        return false;
     };
+    let Some(glyph) = resolve_cap(is_from, name) else {
+        return false;
+    };
+    if is_from {
+        doc.set_edge_cap_start(&er, glyph)
+    } else {
+        doc.set_edge_cap_end(&er, glyph)
+    }
+}
+
+fn execute_cap(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
+    if let Err(r) = require_edge_or_portal(eff) {
+        return r;
+    }
     let kvs = match collect_kvs_or_usage(args, "usage: cap from=<name> to=<name>") {
         Ok(k) => k,
         Err(r) => return r,
@@ -106,15 +122,13 @@ fn execute_cap(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                 continue;
             }
         };
-        let Some(glyph) = resolve_cap(is_from, &v) else {
+        // Pre-validate the preset so the verb surfaces a typed
+        // error; only then route through the slot core.
+        if resolve_cap(is_from, &v).is_none() {
             tally.note_error(format!("'{}': expected arrow|circle|diamond|none", v));
             continue;
-        };
-        let changed = if is_from {
-            eff.document.set_edge_cap_start(&er, glyph)
-        } else {
-            eff.document.set_edge_cap_end(&er, glyph)
-        };
+        }
+        let changed = apply_cap_slot_to_selection(eff.document, is_from, &v);
         tally.note(changed, || format!("cap {} already {}", k, v));
     }
     tally.finalize("cap")
