@@ -1089,41 +1089,12 @@ impl<'a, 'b> super::dispatch_macro_core::MacroDispatchTarget for NativeMacroDisp
     }
 }
 
-/// Pure inner helper for the keybind-triggered custom-mutation path.
-/// Runs the same animation-aware apply + always-`apply_document_actions`
-/// sequence the click-trigger path at `click.rs:35-64` uses, but
-/// without touching the renderer. Returns `true` when the mutation
-/// was applied.
-///
-/// Factored out so unit tests can lock the Phase-7 parity contract
-/// (no `apply_document_actions` skipping, no missed animation
-/// envelope) without needing a wgpu renderer per `TEST_CONVENTIONS.md
-/// §T8`. The caller is responsible for the post-apply scene rebuild.
-///
-/// `pub(crate)` because the parity tests in
-/// `crate::application::document::tests_mutations` import it.
-pub(crate) fn apply_keybind_custom_mutation(
-    doc: &mut crate::application::document::MindMapDocument,
-    mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
-    scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
-    cm: &baumhard::mindmap::custom_mutation::CustomMutation,
-    node_id: &str,
-    now_ms: u64,
-) -> bool {
-    if cm.timing.as_ref().is_some_and(|t| t.duration_ms > 0) {
-        doc.start_animation(cm, node_id, now_ms);
-    } else if let Some(tree) = mindmap_tree.as_mut() {
-        doc.apply_custom_mutation(cm, node_id, Some(tree));
-        scene_cache.clear();
-    } else {
-        // No tree available and no animation requested — nothing to apply.
-        return false;
-    }
-    // Phase-7 parity: always invoke document actions, regardless of
-    // whether the mutation animated or applied directly.
-    doc.apply_document_actions(cm);
-    true
-}
+// `apply_keybind_custom_mutation` lifted to `cross_dispatch` (Track B
+// Commit 5) so the WASM macro dispatch path can reach it. Re-exported
+// here so the existing test import at
+// `crate::application::app::dispatch::apply_keybind_custom_mutation`
+// (in `document/tests_mutations.rs:116`) still resolves.
+pub(crate) use super::cross_dispatch::apply_keybind_custom_mutation;
 
 /// Resolve a custom-mutation key binding and apply it through the same
 /// path the click-trigger handler at `click.rs:35-64` uses: animation-

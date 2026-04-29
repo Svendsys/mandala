@@ -27,6 +27,46 @@ use crate::application::common::RenderDecree;
 use crate::application::document::{MindMapDocument, SelectionState};
 use crate::application::renderer::Renderer;
 
+/// Pure inner helper for the keybind-triggered custom-mutation path.
+/// Runs the same animation-aware apply + always-`apply_document_actions`
+/// sequence the click-trigger path at `click.rs:35-64` uses, but
+/// without touching the renderer. Returns `true` when the mutation
+/// was applied.
+///
+/// Cross-platform: takes only `MindMapDocument`, `Option<MindMapTree>`,
+/// `SceneConnectionCache`, `CustomMutation`, `node_id`, `now_ms`.
+/// The caller is responsible for the post-apply scene rebuild
+/// (`rebuild_after_geometry_change` for both targets). Lifted from
+/// `dispatch.rs` (native-gated) for Track B so the WASM macro
+/// dispatch path can reach the same animation-envelope contract
+/// native uses.
+///
+/// `pub(crate)` because the parity tests in
+/// `crate::application::document::tests_mutations` import it
+/// (via the back-compat re-export in `super::dispatch`).
+pub(crate) fn apply_keybind_custom_mutation(
+    doc: &mut crate::application::document::MindMapDocument,
+    mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
+    scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
+    cm: &baumhard::mindmap::custom_mutation::CustomMutation,
+    node_id: &str,
+    now_ms: u64,
+) -> bool {
+    if cm.timing.as_ref().is_some_and(|t| t.duration_ms > 0) {
+        doc.start_animation(cm, node_id, now_ms);
+    } else if let Some(tree) = mindmap_tree.as_mut() {
+        doc.apply_custom_mutation(cm, node_id, Some(tree));
+        scene_cache.clear();
+    } else {
+        // No tree available and no animation requested — nothing to apply.
+        return false;
+    }
+    // Phase-7 parity: always invoke document actions, regardless of
+    // whether the mutation animated or applied directly.
+    doc.apply_document_actions(cm);
+    true
+}
+
 /// Outcome of a `dispatch_action` call. The two variants let
 /// callers branch on whether the dispatcher recognized and ran
 /// the action — used by the keyboard handler to decide whether
