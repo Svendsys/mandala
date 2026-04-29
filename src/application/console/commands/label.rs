@@ -501,5 +501,26 @@ mod tests {
         let mut doc = load_test_doc();
         assert!(!apply_label_position_to_selection(&mut doc, "middle"));
     }
+
+    #[test]
+    fn apply_label_position_returns_false_for_node_selection() {
+        // L1 — label position-anchor is line-edge-only; node and
+        // portal selections no-op (the named-anchor concept doesn't
+        // translate to portal endpoints, which use position_t).
+        let mut doc = load_test_doc();
+        let id = doc.mindmap.nodes.keys().next().unwrap().clone();
+        doc.selection = SelectionState::Single(id);
+        assert!(!apply_label_position_to_selection(&mut doc, "middle"));
+    }
+
+    #[test]
+    fn apply_label_text_returns_false_for_node_selection() {
+        // L1 — label text is edge / portal-only; a node selection
+        // no-ops (the core's match has no Single arm).
+        let mut doc = load_test_doc();
+        let id = doc.mindmap.nodes.keys().next().unwrap().clone();
+        doc.selection = SelectionState::Single(id);
+        assert!(!apply_label_text_to_selection(&mut doc, "hi"));
+    }
 }
 

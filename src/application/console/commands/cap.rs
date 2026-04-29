@@ -187,4 +187,13 @@ mod tests {
         assert!(!apply_cap_to_selection(&mut doc, Some("nonsense"), None));
         assert_eq!(doc.mindmap.edges[0].glyph_connection, original);
     }
+
+    #[test]
+    fn apply_cap_to_selection_returns_false_for_node_selection() {
+        // L1 — cap is edge-only; a node selection no-ops.
+        let mut doc = load_test_doc();
+        let id = doc.mindmap.nodes.keys().next().unwrap().clone();
+        doc.selection = SelectionState::Single(id);
+        assert!(!apply_cap_to_selection(&mut doc, Some("arrow"), Some("none")));
+    }
 }

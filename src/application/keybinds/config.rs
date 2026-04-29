@@ -520,6 +520,7 @@ impl KeybindConfig {
         push_parametric(
             &mut binds,
             "set_edge_anchor",
+            2,
             &self.set_edge_anchor,
             |args| match args {
                 [from, to] => Some(Action::SetEdgeAnchor {
@@ -532,6 +533,7 @@ impl KeybindConfig {
         push_parametric(
             &mut binds,
             "set_edge_body_glyph",
+            1,
             &self.set_edge_body_glyph,
             |args| match args {
                 [glyph] => Some(Action::SetEdgeBodyGlyph(glyph.clone())),
@@ -541,6 +543,7 @@ impl KeybindConfig {
         push_parametric(
             &mut binds,
             "set_border_field",
+            2,
             &self.set_border_field,
             |args| match args {
                 [field, value] => Some(Action::SetBorderField {
@@ -553,6 +556,7 @@ impl KeybindConfig {
         push_parametric(
             &mut binds,
             "set_edge_cap",
+            2,
             &self.set_edge_cap,
             |args| match args {
                 [from, to] => Some(Action::SetEdgeCap {
@@ -566,6 +570,7 @@ impl KeybindConfig {
         push_parametric(
             &mut binds,
             "set_color_bg",
+            1,
             &self.set_color_bg,
             |args| match args {
                 [color] => Some(Action::SetColorBg(color.clone())),
@@ -575,6 +580,7 @@ impl KeybindConfig {
         push_parametric(
             &mut binds,
             "set_color_text",
+            1,
             &self.set_color_text,
             |args| match args {
                 [color] => Some(Action::SetColorText(color.clone())),
@@ -584,6 +590,7 @@ impl KeybindConfig {
         push_parametric(
             &mut binds,
             "set_color_border",
+            1,
             &self.set_color_border,
             |args| match args {
                 [color] => Some(Action::SetColorBorder(color.clone())),
@@ -594,6 +601,7 @@ impl KeybindConfig {
         push_parametric(
             &mut binds,
             "set_edge_type",
+            1,
             &self.set_edge_type,
             |args| match args {
                 [t] => Some(Action::SetEdgeType(t.clone())),
@@ -603,6 +611,7 @@ impl KeybindConfig {
         push_parametric(
             &mut binds,
             "set_edge_display_mode",
+            1,
             &self.set_edge_display_mode,
             |args| match args {
                 [m] => Some(Action::SetEdgeDisplayMode(m.clone())),
@@ -612,6 +621,7 @@ impl KeybindConfig {
         push_parametric(
             &mut binds,
             "reset_edge",
+            1,
             &self.reset_edge,
             |args| match args {
                 [kind] => Some(Action::ResetEdge(kind.clone())),
@@ -622,6 +632,7 @@ impl KeybindConfig {
         push_parametric(
             &mut binds,
             "set_font_family",
+            1,
             &self.set_font_family,
             |args| match args {
                 [family] => Some(Action::SetFontFamily(family.clone())),
@@ -631,6 +642,7 @@ impl KeybindConfig {
         push_parametric(
             &mut binds,
             "set_font_size",
+            1,
             &self.set_font_size,
             |args| match args {
                 [pt] => Some(Action::SetFontSize(pt.clone())),
@@ -640,6 +652,7 @@ impl KeybindConfig {
         push_parametric(
             &mut binds,
             "set_font_min",
+            1,
             &self.set_font_min,
             |args| match args {
                 [pt] => Some(Action::SetFontMin(pt.clone())),
@@ -649,6 +662,7 @@ impl KeybindConfig {
         push_parametric(
             &mut binds,
             "set_font_max",
+            1,
             &self.set_font_max,
             |args| match args {
                 [pt] => Some(Action::SetFontMax(pt.clone())),
@@ -658,6 +672,7 @@ impl KeybindConfig {
         push_parametric(
             &mut binds,
             "set_edge_label_text",
+            1,
             &self.set_edge_label_text,
             |args| match args {
                 [text] => Some(Action::SetEdgeLabelText(text.clone())),
@@ -667,6 +682,7 @@ impl KeybindConfig {
         push_parametric(
             &mut binds,
             "set_edge_label_position",
+            1,
             &self.set_edge_label_position,
             |args| match args {
                 [pos] => Some(Action::SetEdgeLabelPosition(pos.clone())),
@@ -676,6 +692,7 @@ impl KeybindConfig {
         push_parametric(
             &mut binds,
             "set_spacing",
+            1,
             &self.set_spacing,
             |args| match args {
                 [v] => Some(Action::SetSpacing(v.clone())),
@@ -688,6 +705,7 @@ impl KeybindConfig {
         push_parametric(
             &mut binds,
             "set_zoom_min",
+            1,
             &self.set_zoom_min,
             |args| match args {
                 [v] => Some(Action::SetZoomMin(v.clone())),
@@ -697,6 +715,7 @@ impl KeybindConfig {
         push_parametric(
             &mut binds,
             "set_zoom_max",
+            1,
             &self.set_zoom_max,
             |args| match args {
                 [v] => Some(Action::SetZoomMax(v.clone())),
@@ -706,6 +725,7 @@ impl KeybindConfig {
         push_parametric(
             &mut binds,
             "clear_zoom",
+            0,
             &self.clear_zoom,
             |args| match args {
                 [] => Some(Action::ClearZoom),
@@ -716,6 +736,7 @@ impl KeybindConfig {
         push_parametric(
             &mut binds,
             "open_document",
+            1,
             &self.open_document,
             |args| match args {
                 [path] => Some(Action::OpenDocument(path.clone())),
@@ -725,6 +746,7 @@ impl KeybindConfig {
         push_parametric(
             &mut binds,
             "save_document_as",
+            1,
             &self.save_document_as,
             |args| match args {
                 [path] => Some(Action::SaveDocumentAs(path.clone())),
@@ -734,6 +756,7 @@ impl KeybindConfig {
         push_parametric(
             &mut binds,
             "new_document_at",
+            1,
             &self.new_document_at,
             |args| match args {
                 [path] => Some(Action::NewDocumentAt(path.clone())),
@@ -776,9 +799,17 @@ impl KeybindConfig {
 /// closure picks the `Action` apart from the positional args; a
 /// `None` return means "wrong arg count for this variant" — the
 /// binding is logged and skipped (never panic on a user-config typo).
+///
+/// `expected_arity` is the count the builder closure expects (used
+/// only to make the warn-log self-explanatory: a user typo'ing a
+/// binding sees the verb name AND the arg count their config should
+/// have used). Passing the right value here is mechanical — it has
+/// to match the closure's accepted arm; mismatches just produce a
+/// slightly less helpful warn message.
 fn push_parametric<F>(
     binds: &mut Vec<(Action, KeyBind)>,
     name: &str,
+    expected_arity: usize,
     bindings: &[ParametricBinding],
     build: F,
 ) where
@@ -789,10 +820,11 @@ fn push_parametric<F>(
             Ok(k) => match build(&binding.args) {
                 Some(action) => binds.push((action, k)),
                 None => warn!(
-                    "skipping {} binding '{}': wrong args (got {})",
+                    "skipping {} binding '{}': wrong args (got {}, expected {})",
                     name,
                     binding.combo,
                     binding.args.len(),
+                    expected_arity,
                 ),
             },
             Err(e) => warn!("skipping invalid keybind '{}': {}", binding.combo, e),

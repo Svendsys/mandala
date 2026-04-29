@@ -26,8 +26,14 @@ use super::context::InputContext;
 /// gate when extending."
 /// Some variants carry payload (e.g. `String` paths, kv-shaped
 /// `(field, value)` tuples) so `Copy` is impossible — payload-bearing
-/// variants are cloned at lookup time. The clone cost is negligible
-/// for short strings and limited to single-key dispatch hot paths.
+/// variants are cloned at lookup time in
+/// [`super::resolved::ResolvedKeybinds::action_for_context`]. Each
+/// keypress allocates one short string per `String`-payload variant
+/// (two for `SetEdgeAnchor` / `SetEdgeCap` / `SetBorderField`). For
+/// the typical interactive cadence (≤10 keypresses/sec) the cost is
+/// inconsequential; for a synthetic load of macros firing thousands
+/// of `Action`s/sec, switch the lookup to return `&Action` and clone
+/// at the dispatch boundary, or wrap payload strings in `Arc<str>`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum Action {

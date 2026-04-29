@@ -330,4 +330,16 @@ mod tests {
         let mut doc = doc_with_first_edge_selected();
         assert!(!apply_edge_reset_to_selection(&mut doc, "obviously-bogus"));
     }
+
+    #[test]
+    fn apply_edge_cores_return_false_for_node_selection() {
+        // L1 — edge cores are edge-only; a node selection no-ops
+        // across all three (type / display_mode / reset).
+        let mut doc = load_test_doc();
+        let id = doc.mindmap.nodes.keys().next().unwrap().clone();
+        doc.selection = SelectionState::Single(id);
+        assert!(!apply_edge_type_to_selection(&mut doc, EDGE_TYPE_CROSS_LINK));
+        assert!(!apply_edge_display_mode_to_selection(&mut doc, "portal"));
+        assert!(!apply_edge_reset_to_selection(&mut doc, "straight"));
+    }
 }

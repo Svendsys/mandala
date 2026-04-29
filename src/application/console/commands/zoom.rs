@@ -233,8 +233,10 @@ pub(crate) fn apply_zoom_to_selection(
     }
     // Reject inverted explicit bounds — the Action surface has no
     // scrollback, so we silently no-op rather than write half the
-    // edit and surprise the user.
-    if let (OptionEdit::Set(lo), OptionEdit::Set(hi)) = (min, max) {
+    // edit and surprise the user. Destructure by reference so this
+    // doesn't depend on `OptionEdit<T>: Copy` (true today for f32,
+    // future-proof against a non-Copy T).
+    if let (OptionEdit::Set(lo), OptionEdit::Set(hi)) = (&min, &max) {
         if lo > hi {
             return false;
         }
@@ -398,5 +400,18 @@ mod tests {
         let node = doc.mindmap.nodes.get(&id).unwrap();
         assert!(node.min_zoom_to_render.is_none());
         assert!(node.max_zoom_to_render.is_none());
+    }
+
+    #[test]
+    fn apply_zoom_to_selection_no_op_with_no_selection() {
+        // L3 from the WASM/tests review: the SelectionState::None
+        // arm of `apply_zoom_to_selection` was uncovered.
+        let mut doc = load_test_doc();
+        // Default selection is None — no target.
+        assert!(!apply_zoom_to_selection(
+            &mut doc,
+            OptionEdit::Set(0.5),
+            OptionEdit::Keep,
+        ));
     }
 }

@@ -184,4 +184,21 @@ mod tests {
         assert!(!changed);
         assert_eq!(doc.mindmap.edges[0].anchor_from, original_from);
     }
+
+    #[test]
+    fn apply_anchor_to_selection_returns_false_for_node_selection() {
+        // L1 — selection-mismatch coverage. Anchor is edge-only;
+        // a node selection should silently no-op (the helper's
+        // `selected_edge_or_portal_edge` returns None for nodes).
+        let mut doc = load_test_doc();
+        let id = doc
+            .mindmap
+            .nodes
+            .keys()
+            .next()
+            .expect("testament has nodes")
+            .clone();
+        doc.selection = SelectionState::Single(id);
+        assert!(!apply_anchor_to_selection(&mut doc, Some("top"), None));
+    }
 }

@@ -171,4 +171,13 @@ mod tests {
         let _ = apply_body_glyph_to_selection(&mut doc, "DASH");
         assert_eq!(body_of_first_edge(&doc), Some("\u{2500}".to_string()));
     }
+
+    #[test]
+    fn apply_body_glyph_to_selection_returns_false_for_node_selection() {
+        // L1 — body glyph is edge-only; a node selection no-ops.
+        let mut doc = load_test_doc();
+        let id = doc.mindmap.nodes.keys().next().unwrap().clone();
+        doc.selection = SelectionState::Single(id);
+        assert!(!apply_body_glyph_to_selection(&mut doc, "dash"));
+    }
 }
