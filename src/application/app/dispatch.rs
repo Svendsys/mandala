@@ -1045,6 +1045,127 @@ pub(in crate::application::app) fn dispatch_action(
             }
             DispatchOutcome::Handled
         }
+        Action::SetFontFamily(ref family) => {
+            if let Some(doc) = ctx.document.as_mut() {
+                let changed = crate::application::console::commands::font::apply_font_family_to_selection(
+                    doc, family,
+                );
+                if changed {
+                    ctx.scene_cache.clear();
+                    rebuild_all(
+                        doc,
+                        ctx.mindmap_tree,
+                        ctx.app_scene,
+                        ctx.renderer,
+                        ctx.scene_cache,
+                    );
+                }
+            }
+            DispatchOutcome::Handled
+        }
+        Action::SetFontSize(ref pt)
+        | Action::SetFontMin(ref pt)
+        | Action::SetFontMax(ref pt) => {
+            // Outer pattern guarantees one of three; inner match
+            // picks the slot name. Same fan-out shape as the color
+            // axes / pan camera directions.
+            let which: &str = match action {
+                Action::SetFontSize(_) => "size",
+                Action::SetFontMin(_) => "min",
+                Action::SetFontMax(_) => "max",
+                _ => unreachable!("outer pattern guarantees a SetFontSize/Min/Max variant"),
+            };
+            // Best-effort parse; non-finite / non-positive silently
+            // no-op (the verb path surfaces typed errors). The Action
+            // arm has no scrollback so a parse failure is logged.
+            let parsed = match pt.parse::<f32>() {
+                Ok(v) if v.is_finite() && v > 0.0 => v,
+                _ => {
+                    log::warn!(
+                        "{}: invalid font {} value '{}' — must be a finite positive float",
+                        match action {
+                            Action::SetFontSize(_) => "set_font_size",
+                            Action::SetFontMin(_) => "set_font_min",
+                            Action::SetFontMax(_) => "set_font_max",
+                            _ => "set_font_*",
+                        },
+                        which,
+                        pt,
+                    );
+                    return DispatchOutcome::Handled;
+                }
+            };
+            if let Some(doc) = ctx.document.as_mut() {
+                let changed = crate::application::console::commands::font::apply_font_kv_to_selection(
+                    doc, which, parsed,
+                );
+                if changed {
+                    ctx.scene_cache.clear();
+                    rebuild_all(
+                        doc,
+                        ctx.mindmap_tree,
+                        ctx.app_scene,
+                        ctx.renderer,
+                        ctx.scene_cache,
+                    );
+                }
+            }
+            DispatchOutcome::Handled
+        }
+        Action::SetEdgeLabelText(ref text) => {
+            if let Some(doc) = ctx.document.as_mut() {
+                let changed = crate::application::console::commands::label::apply_label_text_to_selection(
+                    doc, text,
+                );
+                if changed {
+                    ctx.scene_cache.clear();
+                    rebuild_all(
+                        doc,
+                        ctx.mindmap_tree,
+                        ctx.app_scene,
+                        ctx.renderer,
+                        ctx.scene_cache,
+                    );
+                }
+            }
+            DispatchOutcome::Handled
+        }
+        Action::SetEdgeLabelPosition(ref position) => {
+            if let Some(doc) = ctx.document.as_mut() {
+                let changed = crate::application::console::commands::label::apply_label_position_to_selection(
+                    doc, position,
+                );
+                if changed {
+                    ctx.scene_cache.clear();
+                    rebuild_all(
+                        doc,
+                        ctx.mindmap_tree,
+                        ctx.app_scene,
+                        ctx.renderer,
+                        ctx.scene_cache,
+                    );
+                }
+            }
+            DispatchOutcome::Handled
+        }
+        Action::SetSpacing(ref input) => {
+            if let Some(doc) = ctx.document.as_mut() {
+                let changed = crate::application::console::commands::spacing::apply_spacing_to_selection(
+                    doc, input,
+                );
+                if changed {
+                    ctx.scene_cache.clear();
+                    rebuild_all(
+                        doc,
+                        ctx.mindmap_tree,
+                        ctx.app_scene,
+                        ctx.renderer,
+                        ctx.scene_cache,
+                    );
+                }
+            }
+            DispatchOutcome::Handled
+        }
 
         // Console / Picker / LabelEdit / TextEdit modal-context actions
         // not handled above (e.g. cancel/commit) are dispatched by their

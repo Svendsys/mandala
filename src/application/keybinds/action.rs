@@ -316,6 +316,31 @@ pub enum Action {
     /// Mirror `edge reset=<straight|curve|style|position>` on the
     /// selected edge.
     ResetEdge(String),
+    /// Mirror `font set <family>` on the current selection. Unknown
+    /// family names silently no-op (the verb path surfaces a typed
+    /// error; the Action arm has no scrollback).
+    SetFontFamily(String),
+    /// Mirror `font size=<pt>` on the current selection. Payload is
+    /// the raw `pt` string parsed at dispatch time; non-finite or
+    /// non-positive values silently no-op.
+    SetFontSize(String),
+    /// Mirror `font min=<pt>`. Selection-aware: applicable to
+    /// edge / edge-label / portal-text channels; nodes have no
+    /// screen-space clamp and no-op silently.
+    SetFontMin(String),
+    /// Mirror `font max=<pt>`. Same selection rules as
+    /// `SetFontMin`.
+    SetFontMax(String),
+    /// Mirror `label text=<text>` on the selected edge / portal
+    /// label. Empty payload clears the label.
+    SetEdgeLabelText(String),
+    /// Mirror `label position=<start|middle|end>` on the selected
+    /// line-mode edge. Portal selections silently no-op (they use
+    /// the `position_t=<f32>` shape, not named anchors).
+    SetEdgeLabelPosition(String),
+    /// Mirror `spacing value=<tight|normal|wide|<float>>` on the
+    /// selected edge.
+    SetSpacing(String),
 }
 
 impl Action {
@@ -414,7 +439,14 @@ impl Action {
             | Action::SetColorBorder(_)
             | Action::SetEdgeType(_)
             | Action::SetEdgeDisplayMode(_)
-            | Action::ResetEdge(_) => false,
+            | Action::ResetEdge(_)
+            | Action::SetFontFamily(_)
+            | Action::SetFontSize(_)
+            | Action::SetFontMin(_)
+            | Action::SetFontMax(_)
+            | Action::SetEdgeLabelText(_)
+            | Action::SetEdgeLabelPosition(_)
+            | Action::SetSpacing(_) => false,
 
             // Modal-context Actions (Console / Picker / TextEdit /
             // LabelEdit / DoubleClickActivate's `Empty`-hit branch
@@ -599,7 +631,14 @@ impl Action {
             | Action::SetColorBorder(_)
             | Action::SetEdgeType(_)
             | Action::SetEdgeDisplayMode(_)
-            | Action::ResetEdge(_) => InputContext::Document,
+            | Action::ResetEdge(_)
+            | Action::SetFontFamily(_)
+            | Action::SetFontSize(_)
+            | Action::SetFontMin(_)
+            | Action::SetFontMax(_)
+            | Action::SetEdgeLabelText(_)
+            | Action::SetEdgeLabelPosition(_)
+            | Action::SetSpacing(_) => InputContext::Document,
         }
     }
 
@@ -680,7 +719,14 @@ impl Action {
             | Action::SetColorBorder(_)
             | Action::SetEdgeType(_)
             | Action::SetEdgeDisplayMode(_)
-            | Action::ResetEdge(_) => WasmCompatibility::Compatible,
+            | Action::ResetEdge(_)
+            | Action::SetFontFamily(_)
+            | Action::SetFontSize(_)
+            | Action::SetFontMin(_)
+            | Action::SetFontMax(_)
+            | Action::SetEdgeLabelText(_)
+            | Action::SetEdgeLabelPosition(_)
+            | Action::SetSpacing(_) => WasmCompatibility::Compatible,
 
             // ── Renderer-only — works on both targets ─────────
             Action::ZoomIn

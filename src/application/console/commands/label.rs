@@ -16,7 +16,7 @@ use crate::application::console::parser::Args;
 use crate::application::console::predicates::edge_or_portal_label_selected;
 use crate::application::console::traits::{apply_kvs, HasLabel};
 use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
-use crate::application::document::SelectionState;
+use crate::application::document::{MindMapDocument, SelectionState};
 
 pub const VERBS: &[&str] = &["edit", "clear"];
 pub const KEYS: &[&str] = &["text", "position", "position_t", "perpendicular"];
@@ -375,6 +375,117 @@ fn execute_label(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         ExecResult::ok_msg("label applied")
     } else {
         ExecResult::ok_empty()
+    }
+}
+
+/// Mutation core: write `text` to the current edge / portal label.
+/// Returns `true` when the label changed. Empty `text` clears the
+/// label (mirrors `label clear`).
+pub(crate) fn apply_label_text_to_selection(doc: &mut MindMapDocument, text: &str) -> bool {
+    let payload = if text.is_empty() {
+        None
+    } else {
+        Some(text.to_string())
+    };
+    match doc.selection.clone() {
+        SelectionState::Edge(er) => doc.set_edge_label(&er, payload),
+        SelectionState::EdgeLabel(s) => doc.set_edge_label(&s.edge_ref, payload),
+        SelectionState::PortalLabel(s) | SelectionState::PortalText(s) => {
+            let er = s.edge_ref();
+            doc.set_portal_label_text(&er, &s.endpoint_node_id, payload)
+        }
+        _ => false,
+    }
+}
+
+/// Mutation core: apply `position=<start|middle|end>` to the
+/// currently-selected line-mode edge. Portal selections (which use
+/// the `position_t=<f32 in [0,4)>` shape) are not applicable and
+/// silently no-op. Returns `true` on a real change.
+pub(crate) fn apply_label_position_to_selection(
+    doc: &mut MindMapDocument,
+    position: &str,
+) -> bool {
+    let t = match position {
+        "start" => 0.0,
+        "middle" => 0.5,
+        "end" => 1.0,
+        _ => return false,
+    };
+    let er = match doc.selection.clone() {
+        SelectionState::Edge(er) => er,
+        SelectionState::EdgeLabel(s) => s.edge_ref.clone(),
+        // Portal selections route through `position_t=` instead;
+        // the named-anchor concept doesn't translate.
+        _ => return false,
+    };
+    doc.set_edge_label_position(&er, t)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::document::tests_common::load_test_doc;
+    use crate::application::document::{EdgeLabelSel, EdgeRef};
+
+    fn doc_with_first_edge_selected() -> MindMapDocument {
+        let mut doc = load_test_doc();
+        let e = doc.mindmap.edges.first().expect("testament edges");
+        let er = EdgeRef::new(&e.from_id, &e.to_id, &e.edge_type);
+        doc.selection = SelectionState::EdgeLabel(EdgeLabelSel::new(er));
+        doc
+    }
+
+    #[test]
+    fn apply_label_text_writes_label() {
+        let mut doc = doc_with_first_edge_selected();
+        let _ = apply_label_text_to_selection(&mut doc, "hello");
+        // The label text lives on `edge.label` (Option<String>),
+        // not in EdgeLabelConfig (that struct holds geometry only).
+        let er = doc.selection.selected_edge_or_portal_edge().unwrap();
+        let idx = doc.edge_index(&er).unwrap();
+        assert_eq!(doc.mindmap.edges[idx].label.as_deref(), Some("hello"));
+    }
+
+    #[test]
+    fn apply_label_text_with_empty_clears() {
+        let mut doc = doc_with_first_edge_selected();
+        let _ = apply_label_text_to_selection(&mut doc, "hello");
+        let _ = apply_label_text_to_selection(&mut doc, "");
+        let er = doc.selection.selected_edge_or_portal_edge().unwrap();
+        let idx = doc.edge_index(&er).unwrap();
+        // Empty text normalises to `None` per `set_edge_label` semantics.
+        assert!(doc.mindmap.edges[idx].label.is_none());
+    }
+
+    #[test]
+    fn apply_label_position_writes_t_for_named_anchor() {
+        let mut doc = doc_with_first_edge_selected();
+        // First place the label at "start", then move it to "end" —
+        // at least one of the two must produce a real change.
+        let a = apply_label_position_to_selection(&mut doc, "start");
+        let b = apply_label_position_to_selection(&mut doc, "end");
+        assert!(a || b);
+        let er = doc.selection.selected_edge_or_portal_edge().unwrap();
+        let idx = doc.edge_index(&er).unwrap();
+        let t = doc.mindmap.edges[idx]
+            .label_config
+            .as_ref()
+            .and_then(|c| c.position_t)
+            .expect("position write should set position_t");
+        assert!((t - 1.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn apply_label_position_returns_false_for_unknown_anchor() {
+        let mut doc = doc_with_first_edge_selected();
+        assert!(!apply_label_position_to_selection(&mut doc, "totally-bogus"));
+    }
+
+    #[test]
+    fn apply_label_position_returns_false_with_no_selection() {
+        let mut doc = load_test_doc();
+        assert!(!apply_label_position_to_selection(&mut doc, "middle"));
     }
 }
 

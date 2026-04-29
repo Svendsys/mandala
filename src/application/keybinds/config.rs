@@ -169,6 +169,13 @@ pub struct KeybindConfig {
     pub set_edge_type: Vec<ParametricBinding>,
     pub set_edge_display_mode: Vec<ParametricBinding>,
     pub reset_edge: Vec<ParametricBinding>,
+    pub set_font_family: Vec<ParametricBinding>,
+    pub set_font_size: Vec<ParametricBinding>,
+    pub set_font_min: Vec<ParametricBinding>,
+    pub set_font_max: Vec<ParametricBinding>,
+    pub set_edge_label_text: Vec<ParametricBinding>,
+    pub set_edge_label_position: Vec<ParametricBinding>,
+    pub set_spacing: Vec<ParametricBinding>,
 
     // ── Style / metadata ─────────────────────────────────────────
     /// Font family name for the console overlay.
@@ -345,6 +352,13 @@ impl Default for KeybindConfig {
             set_edge_type: vec![],
             set_edge_display_mode: vec![],
             reset_edge: vec![],
+            set_font_family: vec![],
+            set_font_size: vec![],
+            set_font_min: vec![],
+            set_font_max: vec![],
+            set_edge_label_text: vec![],
+            set_edge_label_position: vec![],
+            set_spacing: vec![],
 
             // Style / metadata
             console_font: String::new(),
@@ -585,6 +599,70 @@ impl KeybindConfig {
             &self.reset_edge,
             |args| match args {
                 [kind] => Some(Action::ResetEdge(kind.clone())),
+                _ => None,
+            },
+        );
+        // Font family / size / clamps + label + spacing.
+        push_parametric(
+            &mut binds,
+            "set_font_family",
+            &self.set_font_family,
+            |args| match args {
+                [family] => Some(Action::SetFontFamily(family.clone())),
+                _ => None,
+            },
+        );
+        push_parametric(
+            &mut binds,
+            "set_font_size",
+            &self.set_font_size,
+            |args| match args {
+                [pt] => Some(Action::SetFontSize(pt.clone())),
+                _ => None,
+            },
+        );
+        push_parametric(
+            &mut binds,
+            "set_font_min",
+            &self.set_font_min,
+            |args| match args {
+                [pt] => Some(Action::SetFontMin(pt.clone())),
+                _ => None,
+            },
+        );
+        push_parametric(
+            &mut binds,
+            "set_font_max",
+            &self.set_font_max,
+            |args| match args {
+                [pt] => Some(Action::SetFontMax(pt.clone())),
+                _ => None,
+            },
+        );
+        push_parametric(
+            &mut binds,
+            "set_edge_label_text",
+            &self.set_edge_label_text,
+            |args| match args {
+                [text] => Some(Action::SetEdgeLabelText(text.clone())),
+                _ => None,
+            },
+        );
+        push_parametric(
+            &mut binds,
+            "set_edge_label_position",
+            &self.set_edge_label_position,
+            |args| match args {
+                [pos] => Some(Action::SetEdgeLabelPosition(pos.clone())),
+                _ => None,
+            },
+        );
+        push_parametric(
+            &mut binds,
+            "set_spacing",
+            &self.set_spacing,
+            |args| match args {
+                [v] => Some(Action::SetSpacing(v.clone())),
                 _ => None,
             },
         );

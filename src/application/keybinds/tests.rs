@@ -501,6 +501,13 @@ fn test_wasm_compatibility_classifies_every_variant_explicitly() {
         Action::SetEdgeType("cross_link".into()),
         Action::SetEdgeDisplayMode("portal".into()),
         Action::ResetEdge("style".into()),
+        Action::SetFontFamily("Norse".into()),
+        Action::SetFontSize("14".into()),
+        Action::SetFontMin("10".into()),
+        Action::SetFontMax("32".into()),
+        Action::SetEdgeLabelText("hi".into()),
+        Action::SetEdgeLabelPosition("middle".into()),
+        Action::SetSpacing("normal".into()),
     ];
     for a in all_variants {
         let c = a.wasm_compatibility();
@@ -585,6 +592,13 @@ fn test_is_destructive_destructive_set_is_pinned() {
         Action::SetEdgeType("cross_link".into()),
         Action::SetEdgeDisplayMode("portal".into()),
         Action::ResetEdge("style".into()),
+        Action::SetFontFamily("Norse".into()),
+        Action::SetFontSize("14".into()),
+        Action::SetFontMin("10".into()),
+        Action::SetFontMax("32".into()),
+        Action::SetEdgeLabelText("hi".into()),
+        Action::SetEdgeLabelPosition("middle".into()),
+        Action::SetSpacing("normal".into()),
     ] {
         assert!(
             !a.is_destructive(),
@@ -1404,6 +1418,62 @@ fn test_parametric_edge_structural_resolve() {
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "f6", false, false, false),
         Some(Action::ResetEdge("style".into())),
+    );
+}
+
+#[test]
+fn test_parametric_font_family_size_resolve() {
+    let cfg = KeybindConfig {
+        set_font_family: vec![ParametricBinding {
+            combo: "F7".into(),
+            args: vec!["Norse".into()],
+        }],
+        set_font_size: vec![ParametricBinding {
+            combo: "F8".into(),
+            args: vec!["14".into()],
+        }],
+        ..KeybindConfig::default()
+    };
+    let resolved = cfg.resolve();
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f7", false, false, false),
+        Some(Action::SetFontFamily("Norse".into())),
+    );
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f8", false, false, false),
+        Some(Action::SetFontSize("14".into())),
+    );
+}
+
+#[test]
+fn test_parametric_label_text_position_resolve() {
+    let cfg = KeybindConfig {
+        set_edge_label_text: vec![ParametricBinding {
+            combo: "F9".into(),
+            args: vec!["hello".into()],
+        }],
+        set_edge_label_position: vec![ParametricBinding {
+            combo: "F10".into(),
+            args: vec!["middle".into()],
+        }],
+        set_spacing: vec![ParametricBinding {
+            combo: "F11".into(),
+            args: vec!["wide".into()],
+        }],
+        ..KeybindConfig::default()
+    };
+    let resolved = cfg.resolve();
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f9", false, false, false),
+        Some(Action::SetEdgeLabelText("hello".into())),
+    );
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f10", false, false, false),
+        Some(Action::SetEdgeLabelPosition("middle".into())),
+    );
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f11", false, false, false),
+        Some(Action::SetSpacing("wide".into())),
     );
 }
 

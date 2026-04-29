@@ -408,6 +408,79 @@ fn execute_font_set(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     }
 }
 
+/// Mutation core: pin the font family on the current selection.
+/// Returns `true` when at least one target actually changed; `false`
+/// for unknown families, no selection, or no-op writes. The Action
+/// arm uses the bool to gate the scene rebuild; the verb keeps its
+/// per-target reporting.
+pub(crate) fn apply_font_family_to_selection(
+    doc: &mut crate::application::document::MindMapDocument,
+    family: &str,
+) -> bool {
+    if family.is_empty() {
+        return false;
+    }
+    if baumhard::font::fonts::app_font_by_family(family).is_none() {
+        return false;
+    }
+    let report = apply_to_targets(doc, |view| view.set_font_family(Some(family)));
+    report.any_applied
+}
+
+/// Mutation core: apply a font-size / min / max kv (one at a time)
+/// to the current selection. `which` selects the slot
+/// (`"size" | "min" | "max"`); mirrors the verb's per-channel
+/// dispatch but only for one slot. Returns `true` on a real change.
+pub(crate) fn apply_font_kv_to_selection(
+    doc: &mut crate::application::document::MindMapDocument,
+    which: &str,
+    pt: f32,
+) -> bool {
+    if !pt.is_finite() || pt <= 0.0 {
+        return false;
+    }
+    let (size, min, max) = match which {
+        "size" => (Some(pt), None, None),
+        "min" => (None, Some(pt), None),
+        "max" => (None, None, Some(pt)),
+        _ => return false,
+    };
+    match doc.selection.clone() {
+        SelectionState::Single(id) => {
+            // Nodes only accept `size`; `min` / `max` are
+            // NotApplicable. Mirror the verb's behaviour.
+            if size.is_some() {
+                doc.set_node_font_size(&id, pt)
+            } else {
+                false
+            }
+        }
+        SelectionState::Multi(ids) => {
+            if size.is_none() {
+                return false;
+            }
+            let mut changed = false;
+            for id in &ids {
+                changed |= doc.set_node_font_size(id, pt);
+            }
+            changed
+        }
+        SelectionState::Edge(er) => doc.set_edge_font(&er, size, min, max),
+        SelectionState::EdgeLabel(s) => doc.set_edge_label_font(&s.edge_ref, size, min, max),
+        SelectionState::PortalLabel(s) => {
+            doc.set_edge_font(&s.edge_ref(), size, min, max)
+        }
+        SelectionState::PortalText(s) => doc.set_portal_text_font(
+            &s.edge_ref(),
+            &s.endpoint_node_id,
+            size,
+            min,
+            max,
+        ),
+        SelectionState::None => false,
+    }
+}
+
 /// `font list` — emit one scrollback line per loaded family, each
 /// pinned to render in its own face (so a long list is a
 /// font-by-font preview). Streams from `loaded_families_iter` so
