@@ -63,6 +63,30 @@ impl<'a> RebuildContext<'a> {
     }
 }
 
+// ── FPS overlay ─────────────────────────────────────────────────
+
+/// Toggle the FPS overlay between `Snapshot` and `Off`. Mirrors
+/// `fps on` / `fps off`.
+pub(in crate::application::app) fn apply_toggle_fps(renderer: &mut Renderer) {
+    use crate::application::common::FpsDisplayMode;
+    let next = match renderer.fps_display_mode() {
+        FpsDisplayMode::Snapshot => FpsDisplayMode::Off,
+        _ => FpsDisplayMode::Snapshot,
+    };
+    renderer.set_fps_display(next);
+}
+
+/// Toggle the FPS overlay between `Debug` and `Off`. Mirrors
+/// `fps debug` / `fps off`.
+pub(in crate::application::app) fn apply_toggle_fps_debug(renderer: &mut Renderer) {
+    use crate::application::common::FpsDisplayMode;
+    let next = match renderer.fps_display_mode() {
+        FpsDisplayMode::Debug => FpsDisplayMode::Off,
+        _ => FpsDisplayMode::Debug,
+    };
+    renderer.set_fps_display(next);
+}
+
 // ── Camera / zoom ───────────────────────────────────────────────
 
 /// Step zoom toward `(screen_x, screen_y)` (typically the cursor).
@@ -155,6 +179,163 @@ pub(in crate::application::app) fn apply_center_on_selection(
     }
     if count > 0 {
         renderer.set_camera_center(sum / count as f32);
+    }
+}
+
+// ── Selection ───────────────────────────────────────────────────
+
+/// Select every visible node — hidden-by-fold descendants are
+/// excluded so a follow-up `DeleteSelection` can't silently nuke
+/// subtrees the user can't see. Mirrors the click hit-test's
+/// fold-aware policy.
+pub(in crate::application::app) fn apply_select_all(rc: &mut RebuildContext<'_>) {
+    let all_ids: Vec<String> = rc
+        .document
+        .mindmap
+        .nodes
+        .values()
+        .filter(|n| !rc.document.mindmap.is_hidden_by_fold(n))
+        .map(|n| n.id.clone())
+        .collect();
+    rc.document.selection = SelectionState::from_ids(all_ids);
+    rc.rebuild_after_doc_change();
+}
+
+/// Clear the selection. No-op when nothing was selected.
+pub(in crate::application::app) fn apply_deselect_all(rc: &mut RebuildContext<'_>) {
+    if !matches!(rc.document.selection, SelectionState::None) {
+        rc.document.selection = SelectionState::None;
+        rc.rebuild_after_doc_change();
+    }
+}
+
+/// Invert the current node selection. Edge / EdgeLabel / Portal*
+/// selections are preserved (their `selected_ids()` is empty, so
+/// inverting would collapse to "select every visible node" —
+/// unintuitive). Hidden-by-fold nodes are filtered for the same
+/// reason as `apply_select_all`.
+pub(in crate::application::app) fn apply_invert_selection(rc: &mut RebuildContext<'_>) {
+    let invertable = matches!(
+        rc.document.selection,
+        SelectionState::None
+            | SelectionState::Single(_)
+            | SelectionState::Multi(_)
+    );
+    if !invertable {
+        return;
+    }
+    let selected: std::collections::HashSet<String> = rc
+        .document
+        .selection
+        .selected_ids()
+        .into_iter()
+        .map(String::from)
+        .collect();
+    let inverted: Vec<String> = rc
+        .document
+        .mindmap
+        .nodes
+        .values()
+        .filter(|n| {
+            !selected.contains(&n.id) && !rc.document.mindmap.is_hidden_by_fold(n)
+        })
+        .map(|n| n.id.clone())
+        .collect();
+    rc.document.selection = SelectionState::from_ids(inverted);
+    rc.rebuild_after_doc_change();
+}
+
+/// Walk one step up the hierarchy from a single-node selection.
+/// Multi / edge / unselected: no-op.
+pub(in crate::application::app) fn apply_select_parent(rc: &mut RebuildContext<'_>) {
+    if let SelectionState::Single(nid) = rc.document.selection.clone() {
+        if let Some(parent_id) = rc
+            .document
+            .mindmap
+            .nodes
+            .get(&nid)
+            .and_then(|n| n.parent_id.clone())
+        {
+            rc.document.selection = SelectionState::Single(parent_id);
+            rc.rebuild_after_doc_change();
+        }
+    }
+}
+
+/// Step into the first visible child (id-sorted) of the selected
+/// single node. Folded children are skipped — keyboard navigation
+/// shouldn't jump into a subtree the user can't see; mirrors the
+/// fold-aware click hit-test policy.
+pub(in crate::application::app) fn apply_select_child(rc: &mut RebuildContext<'_>) {
+    if let SelectionState::Single(nid) = rc.document.selection.clone() {
+        let first_child = rc
+            .document
+            .mindmap
+            .children_of(&nid)
+            .into_iter()
+            .find(|c| !rc.document.mindmap.is_hidden_by_fold(c))
+            .map(|c| c.id.clone());
+        if let Some(child_id) = first_child {
+            rc.document.selection = SelectionState::Single(child_id);
+            rc.rebuild_after_doc_change();
+        }
+    }
+}
+
+/// Step to the next or previous visible sibling of the selected
+/// single node. `forward = true` walks toward the next sibling;
+/// `false` walks back. No-op when the selection isn't a single
+/// node, or when no visible neighbour exists in the requested
+/// direction.
+pub(in crate::application::app) fn apply_select_sibling(
+    forward: bool,
+    rc: &mut RebuildContext<'_>,
+) {
+    if let SelectionState::Single(nid) = rc.document.selection.clone() {
+        if let Some(target) = sibling_id(&rc.document.mindmap, &nid, forward) {
+            rc.document.selection = SelectionState::Single(target);
+            rc.rebuild_after_doc_change();
+        }
+    }
+}
+
+/// Find the next or previous visible sibling of `nid` under the
+/// same parent (or among root nodes when `nid` is a root). Skips
+/// folded entries so keyboard navigation matches the fold-aware
+/// click hit-test. Returns `None` when `nid` has no visible
+/// neighbour in the requested direction.
+fn sibling_id(
+    map: &baumhard::mindmap::model::MindMap,
+    nid: &str,
+    forward: bool,
+) -> Option<String> {
+    let parent_id = map.nodes.get(nid).and_then(|n| n.parent_id.clone());
+    let siblings: Vec<(String, bool)> = match parent_id {
+        Some(pid) => map
+            .children_of(&pid)
+            .iter()
+            .map(|c| (c.id.clone(), map.is_hidden_by_fold(c)))
+            .collect(),
+        None => map
+            .root_nodes()
+            .iter()
+            .map(|c| (c.id.clone(), map.is_hidden_by_fold(c)))
+            .collect(),
+    };
+    let idx = siblings.iter().position(|(id, _)| id == nid)?;
+    if forward {
+        siblings
+            .iter()
+            .skip(idx + 1)
+            .find(|(_, hidden)| !*hidden)
+            .map(|(id, _)| id.clone())
+    } else {
+        siblings
+            .iter()
+            .take(idx)
+            .rev()
+            .find(|(_, hidden)| !*hidden)
+            .map(|(id, _)| id.clone())
     }
 }
 

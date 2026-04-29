@@ -521,6 +521,64 @@ app.event_loop.run(move |event, _window_target| {
                                     };
                                     super::cross_dispatch::apply_jump_to_root(&mut rc);
                                 }
+                                // ── FPS overlay — Track A.1 ────────
+                                Action::ToggleFps => {
+                                    super::cross_dispatch::apply_toggle_fps(renderer);
+                                }
+                                Action::ToggleFpsDebug => {
+                                    super::cross_dispatch::apply_toggle_fps_debug(renderer);
+                                }
+                                // ── Selection — Track A.1 ──────────
+                                // Same `cross_dispatch` helpers the
+                                // native dispatcher calls.
+                                a @ (Action::SelectAll
+                                    | Action::DeselectAll
+                                    | Action::InvertSelection
+                                    | Action::SelectParent
+                                    | Action::SelectChild
+                                    | Action::SelectNextSibling
+                                    | Action::SelectPrevSibling) => {
+                                    let mut rc = super::cross_dispatch::RebuildContext {
+                                        document: &mut input.document,
+                                        mindmap_tree: &mut input.mindmap_tree,
+                                        app_scene: &mut input.app_scene,
+                                        renderer,
+                                        scene_cache: &mut input.scene_cache,
+                                    };
+                                    match a {
+                                        Action::SelectAll => {
+                                            super::cross_dispatch::apply_select_all(&mut rc)
+                                        }
+                                        Action::DeselectAll => {
+                                            super::cross_dispatch::apply_deselect_all(&mut rc)
+                                        }
+                                        Action::InvertSelection => {
+                                            super::cross_dispatch::apply_invert_selection(
+                                                &mut rc,
+                                            )
+                                        }
+                                        Action::SelectParent => {
+                                            super::cross_dispatch::apply_select_parent(&mut rc)
+                                        }
+                                        Action::SelectChild => {
+                                            super::cross_dispatch::apply_select_child(&mut rc)
+                                        }
+                                        Action::SelectNextSibling => {
+                                            super::cross_dispatch::apply_select_sibling(
+                                                true, &mut rc,
+                                            )
+                                        }
+                                        Action::SelectPrevSibling => {
+                                            super::cross_dispatch::apply_select_sibling(
+                                                false, &mut rc,
+                                            )
+                                        }
+                                        _ => log::error!(
+                                            "WASM: selection fan-out missed inner-match: {:?}",
+                                            a,
+                                        ),
+                                    }
+                                }
                                 // Other Compatible Actions don't have WASM
                                 // arms yet — Track A in WASM_CONVERGENCE.md
                                 // is the path to add them by routing

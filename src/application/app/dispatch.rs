@@ -521,23 +521,11 @@ pub(in crate::application::app) fn dispatch_action(
             DispatchOutcome::Handled
         }
         Action::ToggleFps => {
-            // Snapshot ↔ Off. Mirrors `fps on` / `fps off`.
-            use crate::application::common::FpsDisplayMode;
-            let next = match ctx.renderer.fps_display_mode() {
-                FpsDisplayMode::Snapshot => FpsDisplayMode::Off,
-                _ => FpsDisplayMode::Snapshot,
-            };
-            ctx.renderer.set_fps_display(next);
+            super::cross_dispatch::apply_toggle_fps(ctx.renderer);
             DispatchOutcome::Handled
         }
         Action::ToggleFpsDebug => {
-            // Debug ↔ Off. Mirrors `fps debug` / `fps off`.
-            use crate::application::common::FpsDisplayMode;
-            let next = match ctx.renderer.fps_display_mode() {
-                FpsDisplayMode::Debug => FpsDisplayMode::Off,
-                _ => FpsDisplayMode::Debug,
-            };
-            ctx.renderer.set_fps_display(next);
+            super::cross_dispatch::apply_toggle_fps_debug(ctx.renderer);
             DispatchOutcome::Handled
         }
         Action::LabelEditOnSelection => {
@@ -615,154 +603,45 @@ pub(in crate::application::app) fn dispatch_action(
         }
 
         // ── Selection Actions ────────────────────────────────
-        Action::SelectAll => {
-            // Only visible nodes — selecting hidden-by-fold descendants
-            // would let a follow-up `DeleteSelection` silently nuke
-            // subtrees the user can't see. Mirrors the click hit-test's
-            // policy of skipping folded subtrees.
+        Action::SelectAll
+        | Action::DeselectAll
+        | Action::InvertSelection
+        | Action::SelectParent
+        | Action::SelectChild
+        | Action::SelectNextSibling
+        | Action::SelectPrevSibling => {
             if let Some(doc) = ctx.document.as_mut() {
-                let all_ids: Vec<String> = doc
-                    .mindmap
-                    .nodes
-                    .values()
-                    .filter(|n| !doc.mindmap.is_hidden_by_fold(n))
-                    .map(|n| n.id.clone())
-                    .collect();
-                doc.selection = SelectionState::from_ids(all_ids);
-                rebuild_all(
-                    doc,
-                    ctx.mindmap_tree,
-                    ctx.app_scene,
-                    ctx.renderer,
-                    ctx.scene_cache,
-                );
-            }
-            DispatchOutcome::Handled
-        }
-        Action::DeselectAll => {
-            if let Some(doc) = ctx.document.as_mut() {
-                if !matches!(doc.selection, SelectionState::None) {
-                    doc.selection = SelectionState::None;
-                    rebuild_all(
-                        doc,
-                        ctx.mindmap_tree,
-                        ctx.app_scene,
-                        ctx.renderer,
-                        ctx.scene_cache,
-                    );
-                }
-            }
-            DispatchOutcome::Handled
-        }
-        Action::InvertSelection => {
-            // Only inverts node selections (None / Single / Multi).
-            // Edge / EdgeLabel / Portal* selections are preserved
-            // — inverting them would otherwise collapse to "select
-            // every visible node" because their `selected_ids()` is
-            // empty, which is unintuitive. Hidden-by-fold nodes are
-            // filtered for the same reason as SelectAll above.
-            if let Some(doc) = ctx.document.as_mut() {
-                let invertable = matches!(
-                    doc.selection,
-                    SelectionState::None
-                        | SelectionState::Single(_)
-                        | SelectionState::Multi(_)
-                );
-                if invertable {
-                    let selected: std::collections::HashSet<String> = doc
-                        .selection
-                        .selected_ids()
-                        .into_iter()
-                        .map(String::from)
-                        .collect();
-                    let inverted: Vec<String> = doc
-                        .mindmap
-                        .nodes
-                        .values()
-                        .filter(|n| {
-                            !selected.contains(&n.id)
-                                && !doc.mindmap.is_hidden_by_fold(n)
-                        })
-                        .map(|n| n.id.clone())
-                        .collect();
-                    doc.selection = SelectionState::from_ids(inverted);
-                    rebuild_all(
-                        doc,
-                        ctx.mindmap_tree,
-                        ctx.app_scene,
-                        ctx.renderer,
-                        ctx.scene_cache,
-                    );
-                }
-            }
-            DispatchOutcome::Handled
-        }
-        Action::SelectParent => {
-            // Walk one step up the hierarchy from a single-node
-            // selection. Multi / edge / unselected: no-op.
-            if let Some(doc) = ctx.document.as_mut() {
-                if let SelectionState::Single(nid) = doc.selection.clone() {
-                    if let Some(parent_id) = doc
-                        .mindmap
-                        .nodes
-                        .get(&nid)
-                        .and_then(|n| n.parent_id.clone())
-                    {
-                        doc.selection = SelectionState::Single(parent_id);
-                        rebuild_all(
-                            doc,
-                            ctx.mindmap_tree,
-                            ctx.app_scene,
-                            ctx.renderer,
-                            ctx.scene_cache,
-                        );
+                let mut rc = super::cross_dispatch::RebuildContext {
+                    document: doc,
+                    mindmap_tree: ctx.mindmap_tree,
+                    app_scene: ctx.app_scene,
+                    renderer: ctx.renderer,
+                    scene_cache: ctx.scene_cache,
+                };
+                match action {
+                    Action::SelectAll => super::cross_dispatch::apply_select_all(&mut rc),
+                    Action::DeselectAll => super::cross_dispatch::apply_deselect_all(&mut rc),
+                    Action::InvertSelection => {
+                        super::cross_dispatch::apply_invert_selection(&mut rc)
                     }
-                }
-            }
-            DispatchOutcome::Handled
-        }
-        Action::SelectChild => {
-            // Step into the first visible child (id-sorted) of the
-            // selected single node. Skipping hidden children avoids
-            // jumping the keyboard cursor into a folded subtree the
-            // user can't see — mirrors the fold-aware click hit-test.
-            if let Some(doc) = ctx.document.as_mut() {
-                if let SelectionState::Single(nid) = doc.selection.clone() {
-                    let first_child = doc
-                        .mindmap
-                        .children_of(&nid)
-                        .into_iter()
-                        .find(|c| !doc.mindmap.is_hidden_by_fold(c))
-                        .map(|c| c.id.clone());
-                    if let Some(child_id) = first_child {
-                        doc.selection = SelectionState::Single(child_id);
-                        rebuild_all(
-                            doc,
-                            ctx.mindmap_tree,
-                            ctx.app_scene,
-                            ctx.renderer,
-                            ctx.scene_cache,
-                        );
+                    Action::SelectParent => {
+                        super::cross_dispatch::apply_select_parent(&mut rc)
                     }
-                }
-            }
-            DispatchOutcome::Handled
-        }
-        Action::SelectNextSibling | Action::SelectPrevSibling => {
-            let forward = matches!(action, Action::SelectNextSibling);
-            if let Some(doc) = ctx.document.as_mut() {
-                if let SelectionState::Single(nid) = doc.selection.clone() {
-                    let new_id = sibling_id(&doc.mindmap, &nid, forward);
-                    if let Some(target) = new_id {
-                        doc.selection = SelectionState::Single(target);
-                        rebuild_all(
-                            doc,
-                            ctx.mindmap_tree,
-                            ctx.app_scene,
-                            ctx.renderer,
-                            ctx.scene_cache,
-                        );
+                    Action::SelectChild => super::cross_dispatch::apply_select_child(&mut rc),
+                    Action::SelectNextSibling => {
+                        super::cross_dispatch::apply_select_sibling(true, &mut rc)
                     }
+                    Action::SelectPrevSibling => {
+                        super::cross_dispatch::apply_select_sibling(false, &mut rc)
+                    }
+                    // Outer pattern guarantees one of the seven, but
+                    // `Action` is `#[non_exhaustive]`. Safe-fallback
+                    // log + no-op per CODE_CONVENTIONS §9 for
+                    // interactive paths.
+                    _ => log::error!(
+                        "Selection fan-out missed inner-match variant: {:?}",
+                        action,
+                    ),
                 }
             }
             DispatchOutcome::Handled
@@ -1302,49 +1181,8 @@ pub(in crate::application::app) fn apply_label_edit_action(
     apply_label_edit_action_to_buffer(action, buffer, cursor_grapheme_pos)
 }
 
-/// Resolve the id of the sibling immediately before / after `nid` in
-/// the parent's children list (sorted by `id_sort_key` — Dewey-decimal
-/// trailing-segment order, not lexicographic). Roots use the
-/// document's `root_nodes()` ordering. Hidden-by-fold siblings are
-/// skipped so keyboard navigation stays on visible nodes only.
-/// Returns `None` when `nid` has no visible neighbour in the
-/// requested direction.
-fn sibling_id(
-    map: &baumhard::mindmap::model::MindMap,
-    nid: &str,
-    forward: bool,
-) -> Option<String> {
-    let parent_id = map.nodes.get(nid).and_then(|n| n.parent_id.clone());
-    // Build the sibling list with both id and hidden-state so the
-    // walk past `nid` can skip folded entries efficiently.
-    let siblings: Vec<(String, bool)> = match parent_id {
-        Some(pid) => map
-            .children_of(&pid)
-            .iter()
-            .map(|c| (c.id.clone(), map.is_hidden_by_fold(c)))
-            .collect(),
-        None => map
-            .root_nodes()
-            .iter()
-            .map(|c| (c.id.clone(), map.is_hidden_by_fold(c)))
-            .collect(),
-    };
-    let idx = siblings.iter().position(|(id, _)| id == nid)?;
-    if forward {
-        siblings
-            .iter()
-            .skip(idx + 1)
-            .find(|(_, hidden)| !*hidden)
-            .map(|(id, _)| id.clone())
-    } else {
-        siblings
-            .iter()
-            .take(idx)
-            .rev()
-            .find(|(_, hidden)| !*hidden)
-            .map(|(id, _)| id.clone())
-    }
-}
+// `sibling_id` lifted to `cross_dispatch.rs` so the WASM dispatcher
+// can reach the same fold-aware navigation logic.
 
 /// Run a macro by id against the current `InputHandlerContext`.
 /// Iterates the macro's steps in order, forwarding each through the
