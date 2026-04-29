@@ -137,6 +137,52 @@ pub(in crate::application::app) fn apply_with_rebuild<F>(
     }
 }
 
+// ── Document-lifecycle helpers ──────────────────────────────────
+
+/// Walk the undo stack one step back. If an animation is in flight
+/// when undo fires, fast-forward it first so the undo lands on a
+/// settled scene state rather than mid-transition (otherwise the
+/// undo'd write competes with the still-running animation envelope).
+/// Both dispatchers route through this so the fast-forward
+/// behaviour is platform-uniform — pre-Track-A WASM skipped it.
+pub(in crate::application::app) fn apply_undo(rc: &mut RebuildContext<'_>) {
+    if rc.document.has_active_animations() {
+        rc.document.fast_forward_animations(rc.mindmap_tree.as_mut());
+    }
+    if rc.document.undo() {
+        rc.rebuild_after_geometry_change();
+    }
+}
+
+/// Create a new orphan node at the given canvas-space position
+/// and select it. Triggers a geometry-change rebuild because the
+/// new node may shift connection routes / introduce new edges.
+pub(in crate::application::app) fn apply_create_orphan_node(
+    canvas_pos: glam::Vec2,
+    rc: &mut RebuildContext<'_>,
+) {
+    rc.document.create_orphan_and_select(canvas_pos);
+    rc.rebuild_after_geometry_change();
+}
+
+/// Detach every currently-selected node from its parent. No-op
+/// when nothing is selected or every selected node was already a
+/// root.
+pub(in crate::application::app) fn apply_orphan_selection(rc: &mut RebuildContext<'_>) {
+    if rc.document.apply_orphan_selection_with_undo() {
+        rc.rebuild_after_geometry_change();
+    }
+}
+
+/// Delete the current selection. Pre-flight checks (selection
+/// non-empty, deletable) live in the document method; this helper
+/// just gates the rebuild.
+pub(in crate::application::app) fn apply_delete_selection(rc: &mut RebuildContext<'_>) {
+    if rc.document.apply_delete_selection() {
+        rc.rebuild_after_geometry_change();
+    }
+}
+
 // ── Parametric Action arms (Compatible) ─────────────────────────
 //
 // Each thin wrapper takes the typed payload + a `RebuildContext`

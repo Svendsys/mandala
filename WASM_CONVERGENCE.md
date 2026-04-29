@@ -29,12 +29,16 @@ and [`src/application/app/run_wasm.rs`](./src/application/app/run_wasm.rs).
 **WASM** (`src/application/app/run_wasm.rs`) has:
 - Its own `WasmInputState` struct with 9 fields (a strict subset of
   the native context).
-- An inline `match action { ... }` block for keyboard input. Most
-  Compatible arms are now thin calls into the shared
-  `cross_dispatch` helper module (Track A landed); the arms still
-  inline-bodied here are `Undo`, `CreateOrphanNode`,
-  `OrphanSelection`, `DeleteSelection`, and the Single-selection
-  branch of `EditSelection*`.
+- An inline `match action { ... }` block for keyboard input. Every
+  Compatible arm is now a thin call into the shared
+  `cross_dispatch` helper module — including Undo (which gains
+  the native-only `fast_forward_animations` step it was missing
+  pre-Track-A), CreateOrphanNode, OrphanSelection,
+  DeleteSelection. The only inline-bodied arm left is
+  `EditSelection*` (a NativeOnly Action whose Single-selection
+  branch is Compatible; the branching routes through `cross_dispatch`
+  for Single-only and falls through to NativeOnly defer for the
+  EdgeLabel / Portal branches).
 - An inline `match &click_hit { ... }` ladder for double-click —
   not routed through `dispatch_action`.
 - No `MacroRegistry`. Macros silently no-op in the browser.

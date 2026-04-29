@@ -454,31 +454,57 @@ app.event_loop.run(move |event, _window_target| {
                             );
                         } else {
                             match a {
+                                // ── Document-lifecycle — cross_dispatch ──
+                                // Bodies live in `cross_dispatch.rs`; both
+                                // dispatchers route through the same helper
+                                // so e.g. WASM gains the
+                                // `fast_forward_animations` step that pre-
+                                // Track-A only native `Action::Undo` did.
                                 Action::Undo => {
-                                    if input.document.undo() {
-                                        // Mirror native: positions restored in place invalidate
-                                        // cached connection samples.
-                                        input.scene_cache.clear();
-                                        rebuild_all(&input.document, &mut input.mindmap_tree, &mut input.app_scene, renderer, &mut input.scene_cache);
-                                    }
+                                    let mut rc = super::cross_dispatch::RebuildContext {
+                                        document: &mut input.document,
+                                        mindmap_tree: &mut input.mindmap_tree,
+                                        app_scene: &mut input.app_scene,
+                                        renderer,
+                                        scene_cache: &mut input.scene_cache,
+                                    };
+                                    super::cross_dispatch::apply_undo(&mut rc);
                                 }
                                 Action::CreateOrphanNode => {
                                     let canvas_pos = renderer.screen_to_canvas(
                                         input.cursor_pos.0 as f32,
                                         input.cursor_pos.1 as f32,
                                     );
-                                    input.document.create_orphan_and_select(canvas_pos);
-                                    rebuild_all(&input.document, &mut input.mindmap_tree, &mut input.app_scene, renderer, &mut input.scene_cache);
+                                    let mut rc = super::cross_dispatch::RebuildContext {
+                                        document: &mut input.document,
+                                        mindmap_tree: &mut input.mindmap_tree,
+                                        app_scene: &mut input.app_scene,
+                                        renderer,
+                                        scene_cache: &mut input.scene_cache,
+                                    };
+                                    super::cross_dispatch::apply_create_orphan_node(
+                                        canvas_pos, &mut rc,
+                                    );
                                 }
                                 Action::OrphanSelection => {
-                                    if input.document.apply_orphan_selection_with_undo() {
-                                        rebuild_all(&input.document, &mut input.mindmap_tree, &mut input.app_scene, renderer, &mut input.scene_cache);
-                                    }
+                                    let mut rc = super::cross_dispatch::RebuildContext {
+                                        document: &mut input.document,
+                                        mindmap_tree: &mut input.mindmap_tree,
+                                        app_scene: &mut input.app_scene,
+                                        renderer,
+                                        scene_cache: &mut input.scene_cache,
+                                    };
+                                    super::cross_dispatch::apply_orphan_selection(&mut rc);
                                 }
                                 Action::DeleteSelection => {
-                                    if input.document.apply_delete_selection() {
-                                        rebuild_all(&input.document, &mut input.mindmap_tree, &mut input.app_scene, renderer, &mut input.scene_cache);
-                                    }
+                                    let mut rc = super::cross_dispatch::RebuildContext {
+                                        document: &mut input.document,
+                                        mindmap_tree: &mut input.mindmap_tree,
+                                        app_scene: &mut input.app_scene,
+                                        renderer,
+                                        scene_cache: &mut input.scene_cache,
+                                    };
+                                    super::cross_dispatch::apply_delete_selection(&mut rc);
                                 }
                                 // ── Camera / zoom — Track A.1 ──────
                                 // Bodies live in `cross_dispatch.rs`;

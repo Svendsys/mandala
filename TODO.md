@@ -35,12 +35,13 @@ Shipped on this branch:
 
 ## Outstanding
 
-- **WASM convergence — full funnel.** WASM still has its own inline
-  Action match in `run_wasm.rs` for `Undo`, `CreateOrphanNode`,
-  `OrphanSelection`, `DeleteSelection`, and `EditSelection*` (the
-  Single-selection branch). These four arms are the last
-  duplicated bodies; Tracks B (macro registry on WASM) and C
-  (full context-type unification) are the remaining steps.
+- **WASM convergence — full funnel.** WASM's keyboard handler
+  still has the inline `match a { ... }` block for
+  `EditSelection*` (the Single-selection branch — a NativeOnly
+  Action with one Compatible branch). Every other Compatible
+  Action now routes through the shared `cross_dispatch` helpers.
+  Tracks B (macro registry on WASM) and C (full context-type
+  unification) are the remaining steps.
 - ~~**WASM Compatible Actions need arms.**~~ **Track A largely
   shipped.** A new `cross_dispatch` module (partial Track C) holds
   the Action arm bodies that touch only state shared between

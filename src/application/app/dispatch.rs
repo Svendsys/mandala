@@ -118,19 +118,8 @@ pub(in crate::application::app) fn dispatch_action(
         }
         Action::Undo => {
             if let Some(doc) = ctx.document.as_mut() {
-                if doc.has_active_animations() {
-                    doc.fast_forward_animations(ctx.mindmap_tree.as_mut());
-                }
-                if doc.undo() {
-                    ctx.scene_cache.clear();
-                    rebuild_all(
-                        doc,
-                        ctx.mindmap_tree,
-                        ctx.app_scene,
-                        ctx.renderer,
-                        ctx.scene_cache,
-                    );
-                }
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
+                super::cross_dispatch::apply_undo(&mut rc);
             }
             DispatchOutcome::Handled
         }
@@ -201,45 +190,28 @@ pub(in crate::application::app) fn dispatch_action(
         }
         Action::DeleteSelection => {
             if let Some(doc) = ctx.document.as_mut() {
-                if doc.apply_delete_selection() {
-                    rebuild_all(
-                        doc,
-                        ctx.mindmap_tree,
-                        ctx.app_scene,
-                        ctx.renderer,
-                        ctx.scene_cache,
-                    );
-                }
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
+                super::cross_dispatch::apply_delete_selection(&mut rc);
             }
             DispatchOutcome::Handled
         }
         Action::CreateOrphanNode => {
+            // Cursor position is screen-space; convert before
+            // entering the cross-platform helper so the helper's
+            // signature stays renderer-agnostic.
+            let canvas_pos = ctx
+                .renderer
+                .screen_to_canvas(ctx.cursor_pos.0 as f32, ctx.cursor_pos.1 as f32);
             if let Some(doc) = ctx.document.as_mut() {
-                let canvas_pos = ctx
-                    .renderer
-                    .screen_to_canvas(ctx.cursor_pos.0 as f32, ctx.cursor_pos.1 as f32);
-                doc.create_orphan_and_select(canvas_pos);
-                rebuild_all(
-                    doc,
-                    ctx.mindmap_tree,
-                    ctx.app_scene,
-                    ctx.renderer,
-                    ctx.scene_cache,
-                );
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
+                super::cross_dispatch::apply_create_orphan_node(canvas_pos, &mut rc);
             }
             DispatchOutcome::Handled
         }
         Action::OrphanSelection => {
             if let Some(doc) = ctx.document.as_mut() {
-                if doc.apply_orphan_selection_with_undo() {
-                    rebuild_all(
-                        doc,
-                        ctx.mindmap_tree,
-                        ctx.app_scene,
-                        ctx.renderer,
-                        ctx.scene_cache,
-                    );
-                }
+                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
+                super::cross_dispatch::apply_orphan_selection(&mut rc);
             }
             DispatchOutcome::Handled
         }
