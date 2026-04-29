@@ -55,10 +55,12 @@ use super::{LastClick, TextEditState};
 /// happy under the borrow checker.
 pub(in crate::application::app) struct InputContextCore<'a> {
     /// The loaded mindmap document, or `None` before the first
-    /// successful load. `Option` shape preserved across both
-    /// targets so the unwrap pattern in `RebuildContext` builders
-    /// stays uniform.
-    pub document: &'a mut Option<MindMapDocument>,
+    /// successful load. Shape `Option<&mut _>` (rather than `&mut
+    /// Option<_>`) so both targets can construct without ownership
+    /// shuffles: native passes `ctx.document.as_mut()`; WASM
+    /// passes `Some(&mut input.document)` even though
+    /// `WasmInputState` owns the document by value.
+    pub document: Option<&'a mut MindMapDocument>,
     /// Baumhard tree projection of the document. Rebuilt /
     /// mutated in lockstep with `document`.
     pub mindmap_tree: &'a mut Option<baumhard::mindmap::tree_builder::MindMapTree>,

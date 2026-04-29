@@ -66,7 +66,7 @@ pub(in crate::application::app) fn dispatch_compatible(
             // EdgeLabel + Portal branches are native-only; on
             // false return, caller's fall-through tries them.
             let clean = matches!(action, Action::EditSelectionClean);
-            let opened = if let Some(doc) = core.document.as_mut() {
+            let opened = if let Some(doc) = core.document.as_deref_mut() {
                 let mut rc = super::cross_dispatch::RebuildContext {
                     document: doc,
                     mindmap_tree: core.mindmap_tree,
@@ -103,19 +103,19 @@ pub(in crate::application::app) fn dispatch_compatible(
     match action {
         // ── Document-lifecycle ─────────────────────────────────
         Action::Undo => {
-            if let Some(doc) = core.document.as_mut() {
+            if let Some(doc) = core.document.as_deref_mut() {
                 let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
                 super::cross_dispatch::apply_undo(&mut rc);
             }
         }
         Action::DeleteSelection => {
-            if let Some(doc) = core.document.as_mut() {
+            if let Some(doc) = core.document.as_deref_mut() {
                 let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
                 super::cross_dispatch::apply_delete_selection(&mut rc);
             }
         }
         Action::OrphanSelection => {
-            if let Some(doc) = core.document.as_mut() {
+            if let Some(doc) = core.document.as_deref_mut() {
                 let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
                 super::cross_dispatch::apply_orphan_selection(&mut rc);
             }
@@ -125,7 +125,7 @@ pub(in crate::application::app) fn dispatch_compatible(
                 core.cursor_pos.0 as f32,
                 core.cursor_pos.1 as f32,
             );
-            if let Some(doc) = core.document.as_mut() {
+            if let Some(doc) = core.document.as_deref_mut() {
                 let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
                 super::cross_dispatch::apply_create_orphan_node(canvas_pos, &mut rc);
             }
@@ -160,12 +160,12 @@ pub(in crate::application::app) fn dispatch_compatible(
             core.renderer,
         ),
         Action::CenterOnSelection => {
-            if let Some(doc) = core.document.as_ref() {
+            if let Some(doc) = core.document.as_deref() {
                 super::cross_dispatch::apply_center_on_selection(doc, core.renderer);
             }
         }
         Action::JumpToRoot => {
-            if let Some(doc) = core.document.as_mut() {
+            if let Some(doc) = core.document.as_deref_mut() {
                 let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
                 super::cross_dispatch::apply_jump_to_root(&mut rc);
             }
@@ -181,7 +181,7 @@ pub(in crate::application::app) fn dispatch_compatible(
         | Action::SelectChild
         | Action::SelectNextSibling
         | Action::SelectPrevSibling => {
-            if let Some(doc) = core.document.as_mut() {
+            if let Some(doc) = core.document.as_deref_mut() {
                 let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
                 match action {
                     Action::SelectAll => super::cross_dispatch::apply_select_all(&mut rc),
@@ -207,25 +207,25 @@ pub(in crate::application::app) fn dispatch_compatible(
         }
         // ── Parametric mutators ────────────────────────────────
         Action::SetEdgeAnchor { from, to } => {
-            if let Some(doc) = core.document.as_mut() {
+            if let Some(doc) = core.document.as_deref_mut() {
                 let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
                 super::cross_dispatch::apply_set_edge_anchor(from, to, &mut rc);
             }
         }
         Action::SetEdgeBodyGlyph(preset) => {
-            if let Some(doc) = core.document.as_mut() {
+            if let Some(doc) = core.document.as_deref_mut() {
                 let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
                 super::cross_dispatch::apply_set_edge_body_glyph(preset, &mut rc);
             }
         }
         Action::SetBorderField { field, value } => {
-            if let Some(doc) = core.document.as_mut() {
+            if let Some(doc) = core.document.as_deref_mut() {
                 let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
                 super::cross_dispatch::apply_set_border_field(field, value, &mut rc);
             }
         }
         Action::SetEdgeCap { from, to } => {
-            if let Some(doc) = core.document.as_mut() {
+            if let Some(doc) = core.document.as_deref_mut() {
                 let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
                 super::cross_dispatch::apply_set_edge_cap(from, to, &mut rc);
             }
@@ -239,31 +239,31 @@ pub(in crate::application::app) fn dispatch_compatible(
                 Action::SetColorBorder(_) => super::cross_dispatch::ColorAxis::Border,
                 _ => unreachable!("color axis fan-out exhaustive"),
             };
-            if let Some(doc) = core.document.as_mut() {
+            if let Some(doc) = core.document.as_deref_mut() {
                 let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
                 super::cross_dispatch::apply_set_color_axis(axis, value, &mut rc);
             }
         }
         Action::SetEdgeType(value) => {
-            if let Some(doc) = core.document.as_mut() {
+            if let Some(doc) = core.document.as_deref_mut() {
                 let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
                 super::cross_dispatch::apply_set_edge_type(value, &mut rc);
             }
         }
         Action::SetEdgeDisplayMode(value) => {
-            if let Some(doc) = core.document.as_mut() {
+            if let Some(doc) = core.document.as_deref_mut() {
                 let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
                 super::cross_dispatch::apply_set_edge_display_mode(value, &mut rc);
             }
         }
         Action::ResetEdge(kind) => {
-            if let Some(doc) = core.document.as_mut() {
+            if let Some(doc) = core.document.as_deref_mut() {
                 let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
                 super::cross_dispatch::apply_reset_edge(kind, &mut rc);
             }
         }
         Action::SetFontFamily(family) => {
-            if let Some(doc) = core.document.as_mut() {
+            if let Some(doc) = core.document.as_deref_mut() {
                 let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
                 super::cross_dispatch::apply_set_font_family(family, &mut rc);
             }
@@ -282,25 +282,25 @@ pub(in crate::application::app) fn dispatch_compatible(
                     return DispatchOutcome::Handled;
                 }
             };
-            if let Some(doc) = core.document.as_mut() {
+            if let Some(doc) = core.document.as_deref_mut() {
                 let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
                 super::cross_dispatch::apply_set_font_kv(slot, parsed, &mut rc);
             }
         }
         Action::SetEdgeLabelText(text) => {
-            if let Some(doc) = core.document.as_mut() {
+            if let Some(doc) = core.document.as_deref_mut() {
                 let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
                 super::cross_dispatch::apply_set_edge_label_text(text, &mut rc);
             }
         }
         Action::SetEdgeLabelPosition(pos) => {
-            if let Some(doc) = core.document.as_mut() {
+            if let Some(doc) = core.document.as_deref_mut() {
                 let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
                 super::cross_dispatch::apply_set_edge_label_position(pos, &mut rc);
             }
         }
         Action::SetSpacing(i) => {
-            if let Some(doc) = core.document.as_mut() {
+            if let Some(doc) = core.document.as_deref_mut() {
                 let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
                 super::cross_dispatch::apply_set_spacing(i, &mut rc);
             }
@@ -320,13 +320,13 @@ pub(in crate::application::app) fn dispatch_compatible(
                 Action::SetZoomMax(_) => (OptionEdit::Keep, parsed),
                 _ => unreachable!("zoom min/max fan-out exhaustive"),
             };
-            if let Some(doc) = core.document.as_mut() {
+            if let Some(doc) = core.document.as_deref_mut() {
                 let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
                 super::cross_dispatch::apply_set_zoom_window(min, max, &mut rc);
             }
         }
         Action::ClearZoom => {
-            if let Some(doc) = core.document.as_mut() {
+            if let Some(doc) = core.document.as_deref_mut() {
                 let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
                 super::cross_dispatch::apply_clear_zoom(&mut rc);
             }

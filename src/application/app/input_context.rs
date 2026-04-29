@@ -110,7 +110,7 @@ impl<'a> InputHandlerContext<'a> {
     ) {
         (
             super::input_context_core::InputContextCore {
-                document: &mut *self.document,
+                document: self.document.as_mut(),
                 mindmap_tree: &mut *self.mindmap_tree,
                 app_scene: &mut *self.app_scene,
                 renderer: &mut *self.renderer,
