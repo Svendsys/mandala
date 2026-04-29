@@ -60,15 +60,17 @@ pub enum DispatchOutcome {
 
 /// Quote a free-form string (typically a filesystem path) so the
 /// console parser sees it as a single token. Wraps with `"..."`
-/// unconditionally and escapes any embedded `"` with a leading
-/// backslash, matching the tokenizer's quoted-string acceptance
-/// shape. Used by the parametric filesystem Action arms when
-/// synthesizing the console command line they delegate to.
+/// unconditionally and escapes both `\` (→ `\\`) and `"` (→ `\"`)
+/// so Windows-style paths and embedded quotes round-trip cleanly
+/// through `parser::tokenize`'s quoted-string handling. Order
+/// matters: backslash MUST be escaped before quote, otherwise a
+/// path ending in `\` produces an unterminated quoted token.
+/// Used by the parametric filesystem Action arms.
 fn quote_console_arg(s: &str) -> String {
     let mut escaped = String::with_capacity(s.len() + 2);
     escaped.push('"');
     for ch in s.chars() {
-        if ch == '"' {
+        if ch == '\\' || ch == '"' {
             escaped.push('\\');
         }
         escaped.push(ch);
@@ -987,11 +989,24 @@ pub(in crate::application::app) fn dispatch_action(
             // Outer pattern guarantees one of three; inner match
             // picks the axis name. Same shape as the
             // PanCameraNorth/South/East/West fan-out.
+            // Outer or-pattern is exhaustive over the inner match
+            // today, but `Action` is `#[non_exhaustive]` — a future
+            // variant added to the outer pattern without updating
+            // the inner one would otherwise panic in the
+            // interactive path. Mirror the safe-fallback shape the
+            // PanCamera arm uses: log + return Handled instead of
+            // crashing.
             let axis: &str = match action {
                 Action::SetColorBg(_) => "bg",
                 Action::SetColorText(_) => "text",
                 Action::SetColorBorder(_) => "border",
-                _ => unreachable!("outer pattern guarantees a SetColor* variant"),
+                _ => {
+                    log::error!(
+                        "SetColor* fan-out missed inner-match variant: {:?}",
+                        action,
+                    );
+                    return DispatchOutcome::Handled;
+                }
             };
             if let Some(doc) = ctx.document.as_mut() {
                 let changed = crate::application::console::commands::color::apply_color_axis_to_selection(
@@ -1092,7 +1107,13 @@ pub(in crate::application::app) fn dispatch_action(
                 Action::SetFontSize(_) => "size",
                 Action::SetFontMin(_) => "min",
                 Action::SetFontMax(_) => "max",
-                _ => unreachable!("outer pattern guarantees a SetFontSize/Min/Max variant"),
+                _ => {
+                    log::error!(
+                        "SetFont* fan-out missed inner-match variant: {:?}",
+                        action,
+                    );
+                    return DispatchOutcome::Handled;
+                }
             };
             // Best-effort parse; non-finite / non-positive silently
             // no-op (the verb path surfaces typed errors). The Action
@@ -1205,7 +1226,13 @@ pub(in crate::application::app) fn dispatch_action(
             let (min, max) = match action {
                 Action::SetZoomMin(_) => (parsed, OptionEdit::Keep),
                 Action::SetZoomMax(_) => (OptionEdit::Keep, parsed),
-                _ => unreachable!("outer pattern guarantees a SetZoomMin/Max variant"),
+                _ => {
+                    log::error!(
+                        "SetZoom* fan-out missed inner-match variant: {:?}",
+                        action,
+                    );
+                    return DispatchOutcome::Handled;
+                }
             };
             if let Some(doc) = ctx.document.as_mut() {
                 let changed = crate::application::console::commands::zoom::apply_zoom_to_selection(
@@ -1258,7 +1285,13 @@ pub(in crate::application::app) fn dispatch_action(
                 Action::OpenDocument(_) => "open",
                 Action::SaveDocumentAs(_) => "save",
                 Action::NewDocumentAt(_) => "new",
-                _ => unreachable!("outer pattern guarantees a fs variant"),
+                _ => {
+                    log::error!(
+                        "fs-variant fan-out missed inner-match variant: {:?}",
+                        action,
+                    );
+                    return DispatchOutcome::Handled;
+                }
             };
             let line = format!("{} {}", verb, quote_console_arg(path));
             if let Some(doc) = ctx.document.as_mut() {
@@ -1753,5 +1786,24 @@ mod tests {
             super::quote_console_arg(r#"/tmp/he said "hi"/x.json"#),
             r#""/tmp/he said \"hi\"/x.json""#,
         );
+    }
+
+    #[test]
+    fn quote_console_arg_escapes_backslashes_for_windows_paths() {
+        // Windows path: every `\` becomes `\\` so the tokenizer
+        // doesn't consume the next char as part of an escape, and
+        // a path ending in `\` doesn't unterminate the quote.
+        assert_eq!(
+            super::quote_console_arg(r"C:\Users\foo\map.json"),
+            r#""C:\\Users\\foo\\map.json""#,
+        );
+    }
+
+    #[test]
+    fn quote_console_arg_handles_path_ending_in_backslash() {
+        // Pre-fix this would produce `"C:\\foo\"` — an unterminated
+        // quoted token. With the backslash escape it produces
+        // `"C:\\foo\\"` which round-trips cleanly.
+        assert_eq!(super::quote_console_arg(r"C:\foo\"), r#""C:\\foo\\""#);
     }
 }

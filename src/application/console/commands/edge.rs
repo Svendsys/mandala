@@ -189,6 +189,7 @@ fn execute_edge(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
 
 /// Mutation core: apply a single `edge type=...` value to the
 /// currently-selected edge. Returns `true` when the type changed.
+#[must_use = "the bool gates the scene rebuild — drop it explicitly with `let _ = …` if you don't care"]
 pub(crate) fn apply_edge_type_to_selection(
     doc: &mut MindMapDocument,
     edge_type: &str,
@@ -205,6 +206,7 @@ pub(crate) fn apply_edge_type_to_selection(
 /// Mutation core: apply a single `edge display_mode=...` value
 /// (`line|portal`) to the currently-selected edge. Returns `true`
 /// when the mode changed.
+#[must_use = "the bool gates the scene rebuild — drop it explicitly with `let _ = …` if you don't care"]
 pub(crate) fn apply_edge_display_mode_to_selection(
     doc: &mut MindMapDocument,
     mode: &str,
@@ -221,6 +223,7 @@ pub(crate) fn apply_edge_display_mode_to_selection(
 /// Mutation core: apply a single `edge reset=<kind>` to the
 /// currently-selected edge. Kind: `straight|curve|style|position`.
 /// Returns `true` when the reset produced a change.
+#[must_use = "the bool gates the scene rebuild — drop it explicitly with `let _ = …` if you don't care"]
 pub(crate) fn apply_edge_reset_to_selection(
     doc: &mut MindMapDocument,
     kind: &str,

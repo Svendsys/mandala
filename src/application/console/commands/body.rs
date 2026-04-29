@@ -67,6 +67,7 @@ pub(crate) fn glyph_for_preset(name: &str) -> Option<&'static str> {
 /// `true` when the glyph actually changed; `false` when no edge is
 /// selected, the preset name is invalid, or the glyph already
 /// matches.
+#[must_use = "the bool gates the scene rebuild — drop it explicitly with `let _ = …` if you don't care"]
 pub(crate) fn apply_body_glyph_to_selection(
     doc: &mut MindMapDocument,
     preset: &str,

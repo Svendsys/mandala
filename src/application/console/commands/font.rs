@@ -413,6 +413,7 @@ fn execute_font_set(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
 /// for unknown families, no selection, or no-op writes. The Action
 /// arm uses the bool to gate the scene rebuild; the verb keeps its
 /// per-target reporting.
+#[must_use = "the bool gates the scene rebuild — drop it explicitly with `let _ = …` if you don't care"]
 pub(crate) fn apply_font_family_to_selection(
     doc: &mut crate::application::document::MindMapDocument,
     family: &str,
@@ -431,6 +432,7 @@ pub(crate) fn apply_font_family_to_selection(
 /// to the current selection. `which` selects the slot
 /// (`"size" | "min" | "max"`); mirrors the verb's per-channel
 /// dispatch but only for one slot. Returns `true` on a real change.
+#[must_use = "the bool gates the scene rebuild — drop it explicitly with `let _ = …` if you don't care"]
 pub(crate) fn apply_font_kv_to_selection(
     doc: &mut crate::application::document::MindMapDocument,
     which: &str,
@@ -828,5 +830,115 @@ mod tests {
             },
             cand.text,
         );
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Mutation-core tests for the parametric Action arms. These
+    // exercise the `apply_*` cores directly (no console plumbing),
+    // pinning the contract dispatch.rs::Action::SetFontFamily /
+    // SetFontSize / SetFontMin / SetFontMax depend on.
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn apply_font_family_to_selection_writes_to_node_runs() {
+        let family = first_loaded_family();
+        let mut doc = fixture_doc();
+        doc.selection = SelectionState::Single("0".into());
+        assert!(super::apply_font_family_to_selection(&mut doc, &family));
+        for run in &doc.mindmap.nodes.get("0").unwrap().text_runs {
+            assert_eq!(run.font, family);
+        }
+    }
+
+    #[test]
+    fn apply_font_family_rejects_unknown_family() {
+        let mut doc = fixture_doc();
+        doc.selection = SelectionState::Single("0".into());
+        // No-op + bool false: validates upfront against the loaded
+        // family list before reaching the trait dispatcher.
+        assert!(!super::apply_font_family_to_selection(
+            &mut doc,
+            "DefinitelyNotAFontFamilyXYZ",
+        ));
+    }
+
+    #[test]
+    fn apply_font_family_returns_false_with_no_selection() {
+        let family = first_loaded_family();
+        let mut doc = fixture_doc();
+        doc.selection = SelectionState::None;
+        assert!(!super::apply_font_family_to_selection(&mut doc, &family));
+    }
+
+    #[test]
+    fn apply_font_family_returns_false_for_empty_string() {
+        let mut doc = fixture_doc();
+        doc.selection = SelectionState::Single("0".into());
+        assert!(!super::apply_font_family_to_selection(&mut doc, ""));
+    }
+
+    #[test]
+    fn apply_font_kv_size_writes_to_node() {
+        let mut doc = fixture_doc();
+        doc.selection = SelectionState::Single("0".into());
+        assert!(super::apply_font_kv_to_selection(&mut doc, "size", 18.0));
+        // `set_node_font_size` rounds the f32 and writes
+        // `text_runs[i].size_pt` (u32) on every run.
+        let node = doc.mindmap.nodes.get("0").unwrap();
+        assert!(!node.text_runs.is_empty());
+        for run in &node.text_runs {
+            assert_eq!(run.size_pt, 18);
+        }
+    }
+
+    #[test]
+    fn apply_font_kv_min_or_max_on_node_is_no_op() {
+        let mut doc = fixture_doc();
+        doc.selection = SelectionState::Single("0".into());
+        // Nodes have no screen-space clamp — the core falls into
+        // the `size.is_some() == false` guard and returns false.
+        assert!(!super::apply_font_kv_to_selection(&mut doc, "min", 10.0));
+        assert!(!super::apply_font_kv_to_selection(&mut doc, "max", 32.0));
+    }
+
+    #[test]
+    fn apply_font_kv_size_writes_to_edge_glyph_connection() {
+        let mut doc = fixture_doc();
+        let edge = doc.mindmap.edges.first().expect("testament edges").clone();
+        let er = EdgeRef::new(&edge.from_id, &edge.to_id, &edge.edge_type);
+        doc.selection = SelectionState::Edge(er.clone());
+        assert!(super::apply_font_kv_to_selection(&mut doc, "size", 14.0));
+        let idx = doc.edge_index(&er).unwrap();
+        let cfg = doc.mindmap.edges[idx]
+            .glyph_connection
+            .as_ref()
+            .expect("size write forks glyph_connection");
+        assert!((cfg.font_size_pt - 14.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn apply_font_kv_returns_false_for_invalid_pt() {
+        let mut doc = fixture_doc();
+        doc.selection = SelectionState::Single("0".into());
+        // NaN, infinite, zero, negative — all rejected upfront.
+        assert!(!super::apply_font_kv_to_selection(&mut doc, "size", f32::NAN));
+        assert!(!super::apply_font_kv_to_selection(&mut doc, "size", f32::INFINITY));
+        assert!(!super::apply_font_kv_to_selection(&mut doc, "size", 0.0));
+        assert!(!super::apply_font_kv_to_selection(&mut doc, "size", -1.0));
+    }
+
+    #[test]
+    fn apply_font_kv_returns_false_for_unknown_which() {
+        let mut doc = fixture_doc();
+        doc.selection = SelectionState::Single("0".into());
+        // Unknown slot name — neither size, min, nor max — rejected.
+        assert!(!super::apply_font_kv_to_selection(&mut doc, "bogus_slot", 14.0));
+    }
+
+    #[test]
+    fn apply_font_kv_returns_false_with_no_selection() {
+        let mut doc = fixture_doc();
+        doc.selection = SelectionState::None;
+        assert!(!super::apply_font_kv_to_selection(&mut doc, "size", 14.0));
     }
 }

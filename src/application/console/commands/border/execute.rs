@@ -206,6 +206,7 @@ fn apply_edits(eff: &mut ConsoleEffects, edits: BorderConfigEdits) -> ExecResult
 /// stage, or every selected node was already at the requested
 /// value. The Action arm uses the bool to decide whether to trigger
 /// a scene rebuild.
+#[must_use = "the bool gates the scene rebuild — drop it explicitly with `let _ = …` if you don't care"]
 pub(crate) fn apply_border_field_to_selection(
     doc: &mut crate::application::document::MindMapDocument,
     field: &str,

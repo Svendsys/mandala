@@ -67,6 +67,7 @@ pub(crate) fn side_value(name: &str) -> Option<&str> {
 /// already at target). The Action arm uses the bool to decide
 /// whether to trigger a scene rebuild; the verb uses it for tally /
 /// scrollback messaging.
+#[must_use = "the bool gates the scene rebuild — drop it explicitly with `let _ = …` if you don't care"]
 pub(crate) fn apply_anchor_to_selection(
     doc: &mut MindMapDocument,
     from: Option<&str>,

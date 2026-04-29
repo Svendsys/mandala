@@ -87,6 +87,7 @@ pub(crate) fn resolve_spacing_value(input: &str) -> Option<f32> {
 
 /// Mutation core: apply a spacing value (preset name or finite float)
 /// to the selected edge. Returns `true` when the value changed.
+#[must_use = "the bool gates the scene rebuild — drop it explicitly with `let _ = …` if you don't care"]
 pub(crate) fn apply_spacing_to_selection(doc: &mut MindMapDocument, input: &str) -> bool {
     let Some(er) = doc.selection.selected_edge_or_portal_edge() else {
         return false;

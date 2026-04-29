@@ -63,6 +63,7 @@ pub(crate) fn resolve_cap(endpoint_from: bool, name: &str) -> Option<Option<&'st
 /// names silently no-op the corresponding slot — the verb path
 /// surfaces typed errors via `ApplyTally`; the Action path warns
 /// upstream and returns `Handled` (no scrollback surface).
+#[must_use = "the bool gates the scene rebuild — drop it explicitly with `let _ = …` if you don't care"]
 pub(crate) fn apply_cap_to_selection(
     doc: &mut MindMapDocument,
     from: Option<&str>,

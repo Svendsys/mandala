@@ -1446,6 +1446,14 @@ fn test_parametric_font_family_size_resolve() {
             combo: "F8".into(),
             args: vec!["14".into()],
         }],
+        set_font_min: vec![ParametricBinding {
+            combo: "Ctrl+F8".into(),
+            args: vec!["10".into()],
+        }],
+        set_font_max: vec![ParametricBinding {
+            combo: "Shift+F8".into(),
+            args: vec!["32".into()],
+        }],
         ..KeybindConfig::default()
     };
     let resolved = cfg.resolve();
@@ -1456,6 +1464,14 @@ fn test_parametric_font_family_size_resolve() {
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "f8", false, false, false),
         Some(Action::SetFontSize("14".into())),
+    );
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f8", true, false, false),
+        Some(Action::SetFontMin("10".into())),
+    );
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f8", false, true, false),
+        Some(Action::SetFontMax("32".into())),
     );
 }
 

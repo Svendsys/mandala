@@ -381,6 +381,7 @@ fn execute_label(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
 /// Mutation core: write `text` to the current edge / portal label.
 /// Returns `true` when the label changed. Empty `text` clears the
 /// label (mirrors `label clear`).
+#[must_use = "the bool gates the scene rebuild — drop it explicitly with `let _ = …` if you don't care"]
 pub(crate) fn apply_label_text_to_selection(doc: &mut MindMapDocument, text: &str) -> bool {
     let payload = if text.is_empty() {
         None
@@ -402,6 +403,7 @@ pub(crate) fn apply_label_text_to_selection(doc: &mut MindMapDocument, text: &st
 /// currently-selected line-mode edge. Portal selections (which use
 /// the `position_t=<f32 in [0,4)>` shape) are not applicable and
 /// silently no-op. Returns `true` on a real change.
+#[must_use = "the bool gates the scene rebuild — drop it explicitly with `let _ = …` if you don't care"]
 pub(crate) fn apply_label_position_to_selection(
     doc: &mut MindMapDocument,
     position: &str,

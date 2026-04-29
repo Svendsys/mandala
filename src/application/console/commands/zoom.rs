@@ -239,6 +239,7 @@ pub(crate) fn parse_zoom_payload(value: &str) -> Option<OptionEdit<f32>> {
 /// multi-node / edge / edge-label / portal-label / portal-text each
 /// route to their own setter. Returns `true` when at least one
 /// target actually changed.
+#[must_use = "the bool gates the scene rebuild — drop it explicitly with `let _ = …` if you don't care"]
 pub(crate) fn apply_zoom_to_selection(
     doc: &mut MindMapDocument,
     min: OptionEdit<f32>,

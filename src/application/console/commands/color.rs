@@ -230,6 +230,7 @@ fn execute_color(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
 /// the selection kind). The Action arm uses the bool to decide
 /// whether to trigger a scene rebuild; the verb keeps its full
 /// per-pair outcome reporting.
+#[must_use = "the bool gates the scene rebuild — drop it explicitly with `let _ = …` if you don't care"]
 pub(crate) fn apply_color_axis_to_selection(
     doc: &mut crate::application::document::MindMapDocument,
     axis: &str,
