@@ -88,3 +88,52 @@ pub(in crate::application::app) struct InputHandlerContext<'a> {
     /// taking a separate ad-hoc borrow.
     pub macros: &'a mut MacroRegistry,
 }
+
+impl<'a> InputHandlerContext<'a> {
+    /// Decompose into the cross-platform [`InputContextCore`] +
+    /// native-only [`NativeContextExt`] pair the unified
+    /// `dispatch_action` expects after Track C lands. Each returned
+    /// view re-borrows from `self` so the original
+    /// `InputHandlerContext` is borrowed as `&mut` for the
+    /// duration; the views are dropped before the dispatcher
+    /// returns. WASM constructs an `InputContextCore` directly via
+    /// `WasmInputState::input_context_core` and passes `None` for
+    /// the extension.
+    ///
+    /// `'s` is shorter than `'a` — the views borrow from `self`,
+    /// not from the original outer borrow source.
+    pub fn split_borrow<'s>(
+        &'s mut self,
+    ) -> (
+        super::input_context_core::InputContextCore<'s>,
+        super::input_context_core::NativeContextExt<'s>,
+    ) {
+        (
+            super::input_context_core::InputContextCore {
+                document: &mut *self.document,
+                mindmap_tree: &mut *self.mindmap_tree,
+                app_scene: &mut *self.app_scene,
+                renderer: &mut *self.renderer,
+                scene_cache: &mut *self.scene_cache,
+                text_edit_state: &mut *self.text_edit_state,
+                last_click: &mut *self.last_click,
+                cursor_pos: &mut *self.cursor_pos,
+                modifiers: &*self.modifiers,
+                keybinds: &*self.keybinds,
+                macros: &mut *self.macros,
+            },
+            super::input_context_core::NativeContextExt {
+                drag_state: &mut *self.drag_state,
+                app_mode: &mut *self.app_mode,
+                console_state: &mut *self.console_state,
+                console_history: &mut *self.console_history,
+                label_edit_state: &mut *self.label_edit_state,
+                portal_text_edit_state: &mut *self.portal_text_edit_state,
+                color_picker_state: &mut *self.color_picker_state,
+                hovered_node: &mut *self.hovered_node,
+                cursor_is_hand: &mut *self.cursor_is_hand,
+                picker_hover: &mut *self.picker_hover,
+            },
+        )
+    }
+}
