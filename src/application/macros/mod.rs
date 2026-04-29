@@ -15,7 +15,6 @@
 //! via the `macro_bindings: HashMap<String, String>` field on
 //! `KeybindConfig`.
 
-#[cfg(not(target_arch = "wasm32"))]
 pub mod loader;
 
 use serde::{Deserialize, Serialize};

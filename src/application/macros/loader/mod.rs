@@ -4,12 +4,19 @@
 //!
 //! The format reference is in `format/macros.md`. Each tier has a
 //! pinned `MacroSource`; the registry picks the highest-tier macro
-//! by id when collisions happen. All four tiers ship on native:
-//! App (`assets/macros/application.json`), User
-//! (`~/.config/mandala/macros.json`), Map (`MindMap::macros`),
-//! Inline (`MindNode::inline_macros`). On WASM only the parsing
-//! helpers compile today — see `WASM_CONVERGENCE.md` Track B for
-//! the porting path.
+//! by id when collisions happen. All four tiers ship on both native
+//! and WASM after Track B (`WASM_CONVERGENCE.md`):
+//! - **App** — `assets/macros/application.json`, embedded with
+//!   `include_str!`. Cross-platform.
+//! - **User** — `~/.config/mandala/macros.json` on native;
+//!   `?macros=<urlencoded-json>` query param > `localStorage`
+//!   under `mandala_macros` on WASM. Routed via the
+//!   [`platform_desktop`] / [`platform_web`] sibling modules.
+//! - **Map** — declared in the currently-loaded `.mindmap.json`'s
+//!   `mindmap.macros` array; refreshed on every document load.
+//!   Cross-platform.
+//! - **Inline** — declared on a specific node's `inline_macros`
+//!   array; refreshed alongside Map. Cross-platform.
 //!
 //! Resilience: app-bundle parses with `expect()` (a malformed bundle
 //! is a startup-time bug, not a user input error). Other tiers'
@@ -17,19 +24,26 @@
 //! / skipped entry so the application boots even if user input is
 //! broken.
 
-#![cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_arch = "wasm32"))]
+pub mod platform_desktop;
+#[cfg(target_arch = "wasm32")]
+pub mod platform_web;
 
-use std::path::PathBuf;
+#[cfg(not(target_arch = "wasm32"))]
+pub use platform_desktop::load_user_macros;
+#[cfg(target_arch = "wasm32")]
+pub use platform_web::load_user_macros;
 
 use super::Macro;
 
 /// Application-bundle JSON, embedded at compile time. Parsed by
 /// [`load_app_macros`]. Empty array today; future shipped macros
 /// land here.
-const APP_MACROS_JSON: &str = include_str!("../../../assets/macros/application.json");
+const APP_MACROS_JSON: &str = include_str!("../../../../assets/macros/application.json");
 
 /// Load the application-bundle macros. Tier: `MacroSource::App`,
-/// assigned at the call site in `run_native_init::build`.
+/// assigned at the call site in `run_native_init::build` and the
+/// WASM init block.
 ///
 /// Parses with `expect()` — a malformed bundle is a build-time bug.
 /// `format/macros.md` documents the format; the file MUST be a
@@ -43,17 +57,17 @@ pub fn load_app_macros() -> Vec<Macro> {
         .expect("malformed assets/macros/application.json — bundle is invalid")
 }
 
-/// Resolve the user's macros.json path on native: prefer
-/// `$XDG_CONFIG_HOME/mandala/macros.json`, fall back to
-/// `~/.config/mandala/macros.json`.
-fn user_macros_path() -> Option<PathBuf> {
-    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-        if !xdg.is_empty() {
-            return Some(PathBuf::from(xdg).join("mandala").join("macros.json"));
-        }
+/// Parse a free-form JSON `Vec<Macro>` payload. Used by both
+/// targets' user-tier loaders (the native `platform_desktop` after
+/// `read_to_string`; the WASM `platform_web` after the query /
+/// localStorage fetch). Returns `Err(String)` so the platform
+/// layer can `warn!` consistently.
+pub fn parse_user_macros_json(source: &str) -> Result<Vec<Macro>, String> {
+    if source.trim().is_empty() {
+        return Ok(Vec::new());
     }
-    let home = std::env::var("HOME").ok().filter(|s| !s.is_empty())?;
-    Some(PathBuf::from(home).join(".config").join("mandala").join("macros.json"))
+    serde_json::from_str::<Vec<Macro>>(source)
+        .map_err(|e| format!("malformed user macros JSON: {}", e))
 }
 
 /// Parse Map-tier macros out of a loaded document's
@@ -206,37 +220,11 @@ pub fn rebuild_document_macros(
     rebuild_inline_macros(registry, doc);
 }
 
-/// Load the user-layer macros. Tier: `MacroSource::User`, assigned
-/// at the call site in `run_native_init::build`.
-///
-/// Returns an empty `Vec` when the file is absent or malformed;
-/// failures log a warning so users notice but the app still boots.
-pub fn load_user_macros() -> Vec<Macro> {
-    let path = match user_macros_path() {
-        Some(p) => p,
-        None => {
-            log::debug!("macros: no HOME / XDG_CONFIG_HOME; user macro file disabled");
-            return Vec::new();
-        }
-    };
-    if !path.exists() {
-        return Vec::new();
-    }
-    let text = match std::fs::read_to_string(&path) {
-        Ok(t) => t,
-        Err(e) => {
-            log::warn!("macros: failed to read {}: {}", path.display(), e);
-            return Vec::new();
-        }
-    };
-    match serde_json::from_str::<Vec<Macro>>(&text) {
-        Ok(v) => v,
-        Err(e) => {
-            log::warn!("macros: failed to parse {}: {}", path.display(), e);
-            Vec::new()
-        }
-    }
-}
+/// `load_user_macros` lives in the cfg-routed sibling modules
+/// [`platform_desktop`] and [`platform_web`]; the platform-routed
+/// `pub use` at the top of this file picks the right one for the
+/// current target. Both expose the same `pub fn load_user_macros()
+/// -> Vec<Macro>` signature.
 
 #[cfg(test)]
 mod tests {
@@ -335,5 +323,44 @@ mod tests {
         let doc = load_test_doc();
         let parsed = parse_inline_macros(&doc);
         assert!(parsed.is_empty());
+    }
+
+    /// `parse_user_macros_json` is the cross-platform parsing seam
+    /// the WASM `platform_web::load_user_macros` and the native
+    /// `platform_desktop::load_user_macros` both call. Pin its
+    /// contract here so the WASM path (which has no headless test
+    /// harness — see `TEST_CONVENTIONS.md §T9`) is at least
+    /// indirectly covered.
+    #[test]
+    fn parse_user_macros_json_empty_input_returns_empty() {
+        assert!(parse_user_macros_json("").unwrap().is_empty());
+        assert!(parse_user_macros_json("   ").unwrap().is_empty());
+    }
+
+    #[test]
+    fn parse_user_macros_json_array_round_trips() {
+        let source = r#"[
+            {"id": "u1", "steps": [{"kind": "Action", "action": "Undo"}]},
+            {"id": "u2", "steps": [{"kind": "ConsoleLine", "line": "save"}]}
+        ]"#;
+        let parsed = parse_user_macros_json(source).unwrap();
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].id, "u1");
+        assert_eq!(parsed[1].id, "u2");
+    }
+
+    #[test]
+    fn parse_user_macros_json_malformed_returns_err_not_panic() {
+        // User-tier loader on both targets logs the err and falls
+        // back to empty rather than panicking; pin the err-not-panic
+        // contract here.
+        let result = parse_user_macros_json("definitely { not } json");
+        assert!(result.is_err());
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("malformed user macros JSON"),
+            "expected canonical err prefix, got: {}",
+            msg
+        );
     }
 }
