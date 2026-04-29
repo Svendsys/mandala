@@ -485,9 +485,18 @@ app.event_loop.run(move |event, _window_target| {
                                 // both dispatchers call the same helper.
                                 // See `WASM_CONVERGENCE.md` "partial
                                 // Track C".
-                                a @ (Action::ZoomIn | Action::ZoomOut) => {
+                                Action::ZoomIn => {
                                     super::cross_dispatch::apply_zoom_step(
-                                        &a, input.cursor_pos, renderer,
+                                        super::cross_dispatch::ZoomDir::In,
+                                        input.cursor_pos,
+                                        renderer,
+                                    );
+                                }
+                                Action::ZoomOut => {
+                                    super::cross_dispatch::apply_zoom_step(
+                                        super::cross_dispatch::ZoomDir::Out,
+                                        input.cursor_pos,
+                                        renderer,
                                     );
                                 }
                                 Action::ZoomReset => {
@@ -498,12 +507,28 @@ app.event_loop.run(move |event, _window_target| {
                                         &input.mindmap_tree, renderer,
                                     );
                                 }
-                                a @ (Action::PanCameraNorth
-                                    | Action::PanCameraSouth
-                                    | Action::PanCameraEast
-                                    | Action::PanCameraWest) => {
+                                Action::PanCameraNorth => {
                                     super::cross_dispatch::apply_pan_camera(
-                                        &a, renderer,
+                                        super::cross_dispatch::PanDir::North,
+                                        renderer,
+                                    );
+                                }
+                                Action::PanCameraSouth => {
+                                    super::cross_dispatch::apply_pan_camera(
+                                        super::cross_dispatch::PanDir::South,
+                                        renderer,
+                                    );
+                                }
+                                Action::PanCameraEast => {
+                                    super::cross_dispatch::apply_pan_camera(
+                                        super::cross_dispatch::PanDir::East,
+                                        renderer,
+                                    );
+                                }
+                                Action::PanCameraWest => {
+                                    super::cross_dispatch::apply_pan_camera(
+                                        super::cross_dispatch::PanDir::West,
+                                        renderer,
                                     );
                                 }
                                 Action::CenterOnSelection => {
@@ -634,17 +659,23 @@ app.event_loop.run(move |event, _window_target| {
                                         }
                                         Action::SetColorBg(v) => {
                                             super::cross_dispatch::apply_set_color_axis(
-                                                "bg", v, &mut rc,
+                                                super::cross_dispatch::ColorAxis::Bg,
+                                                v,
+                                                &mut rc,
                                             )
                                         }
                                         Action::SetColorText(v) => {
                                             super::cross_dispatch::apply_set_color_axis(
-                                                "text", v, &mut rc,
+                                                super::cross_dispatch::ColorAxis::Text,
+                                                v,
+                                                &mut rc,
                                             )
                                         }
                                         Action::SetColorBorder(v) => {
                                             super::cross_dispatch::apply_set_color_axis(
-                                                "border", v, &mut rc,
+                                                super::cross_dispatch::ColorAxis::Border,
+                                                v,
+                                                &mut rc,
                                             )
                                         }
                                         Action::SetEdgeType(v) => {
@@ -670,24 +701,25 @@ app.event_loop.run(move |event, _window_target| {
                                         Action::SetFontSize(pt)
                                         | Action::SetFontMin(pt)
                                         | Action::SetFontMax(pt) => {
-                                            let which = match &a {
-                                                Action::SetFontSize(_) => "size",
-                                                Action::SetFontMin(_) => "min",
-                                                Action::SetFontMax(_) => "max",
+                                            use super::cross_dispatch::FontSlot;
+                                            let slot = match &a {
+                                                Action::SetFontSize(_) => FontSlot::Size,
+                                                Action::SetFontMin(_) => FontSlot::Min,
+                                                Action::SetFontMax(_) => FontSlot::Max,
                                                 _ => return,
                                             };
                                             let parsed = match pt.parse::<f32>() {
                                                 Ok(v) if v.is_finite() && v > 0.0 => v,
                                                 _ => {
                                                     log::warn!(
-                                                        "set_font_{}: invalid '{}'",
-                                                        which, pt,
+                                                        "SetFont{:?}: invalid '{}'",
+                                                        slot, pt,
                                                     );
                                                     return;
                                                 }
                                             };
                                             super::cross_dispatch::apply_set_font_kv(
-                                                which, parsed, &mut rc,
+                                                slot, parsed, &mut rc,
                                             );
                                         }
                                         Action::SetEdgeLabelText(t) => {

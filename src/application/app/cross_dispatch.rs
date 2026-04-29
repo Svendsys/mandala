@@ -25,7 +25,6 @@
 
 use crate::application::common::RenderDecree;
 use crate::application::document::{MindMapDocument, SelectionState};
-use crate::application::keybinds::Action;
 use crate::application::renderer::Renderer;
 use crate::application::scene_host::AppScene;
 use baumhard::mindmap::scene_cache::SceneConnectionCache;
@@ -203,17 +202,41 @@ pub(in crate::application::app) fn apply_set_edge_cap(
     });
 }
 
-/// `axis` is `"bg" | "text" | "border"` (the kv key the verb
-/// accepts); the dispatcher fan-out (SetColorBg/Text/Border)
-/// picks it.
+/// Which color axis a `SetColor*` Action targets. Sibling of
+/// [`ZoomDir`] / [`PanDir`] — keeps the dispatcher fan-out typed
+/// rather than stringly. Maps to the verb's `bg|text|border` kv
+/// key at the boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::application::app) enum ColorAxis {
+    Bg,
+    Text,
+    Border,
+}
+
+impl ColorAxis {
+    /// The kv-key string the underlying verb-core accepts. Kept
+    /// at the boundary so `apply_color_axis_to_selection` (which
+    /// re-uses the verb's `apply_kvs` trait dispatch) doesn't need
+    /// to grow a typed surface.
+    fn as_kv_key(self) -> &'static str {
+        match self {
+            ColorAxis::Bg => "bg",
+            ColorAxis::Text => "text",
+            ColorAxis::Border => "border",
+        }
+    }
+}
+
 pub(in crate::application::app) fn apply_set_color_axis(
-    axis: &str,
+    axis: ColorAxis,
     value: &str,
     rc: &mut RebuildContext<'_>,
 ) {
     apply_with_rebuild(rc, |doc| {
         crate::application::console::commands::color::apply_color_axis_to_selection(
-            doc, axis, value,
+            doc,
+            axis.as_kv_key(),
+            value,
         )
     });
 }
@@ -256,15 +279,39 @@ pub(in crate::application::app) fn apply_set_font_family(
     });
 }
 
-/// `which` is `"size" | "min" | "max"`; the dispatcher fan-out
-/// (SetFontSize/Min/Max) picks it. `pt` is already-parsed.
+/// Which font slot a `SetFontSize|Min|Max` Action targets. Sibling
+/// of [`ColorAxis`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::application::app) enum FontSlot {
+    Size,
+    Min,
+    Max,
+}
+
+impl FontSlot {
+    fn as_kv_key(self) -> &'static str {
+        match self {
+            FontSlot::Size => "size",
+            FontSlot::Min => "min",
+            FontSlot::Max => "max",
+        }
+    }
+}
+
+/// `pt` is already-parsed (the dispatcher's caller is responsible
+/// for parsing the user-facing `String` payload — invalid floats
+/// emit a warn-log and skip the helper call entirely).
 pub(in crate::application::app) fn apply_set_font_kv(
-    which: &str,
+    slot: FontSlot,
     pt: f32,
     rc: &mut RebuildContext<'_>,
 ) {
     apply_with_rebuild(rc, |doc| {
-        crate::application::console::commands::font::apply_font_kv_to_selection(doc, which, pt)
+        crate::application::console::commands::font::apply_font_kv_to_selection(
+            doc,
+            slot.as_kv_key(),
+            pt,
+        )
     });
 }
 
@@ -344,18 +391,26 @@ pub(in crate::application::app) fn apply_toggle_fps_debug(renderer: &mut Rendere
 
 // ── Camera / zoom ───────────────────────────────────────────────
 
+/// Direction of a single keyboard / wheel zoom step. Typed so
+/// callers don't have to pass `&Action` and the helper doesn't
+/// have to re-match it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::application::app) enum ZoomDir {
+    In,
+    Out,
+}
+
 /// Step zoom toward `(screen_x, screen_y)` (typically the cursor).
 /// The factor mirrors the legacy hardcoded wheel handler (1.1×) so
 /// wheel-bound `ZoomIn`/`ZoomOut` behave identically across targets.
 pub(in crate::application::app) fn apply_zoom_step(
-    action: &Action,
+    dir: ZoomDir,
     cursor_pos: (f64, f64),
     renderer: &mut Renderer,
 ) {
-    let factor = match action {
-        Action::ZoomIn => 1.1f32,
-        Action::ZoomOut => 1.0f32 / 1.1f32,
-        _ => return,
+    let factor = match dir {
+        ZoomDir::In => 1.1f32,
+        ZoomDir::Out => 1.0f32 / 1.1f32,
     };
     renderer.process_decree(RenderDecree::CameraZoom {
         screen_x: cursor_pos.0 as f32,
@@ -392,20 +447,31 @@ pub(in crate::application::app) fn apply_zoom_fit(
     }
 }
 
+/// Direction of a single keyboard pan nudge. Typed so callers
+/// don't have to pass `&Action` and the helper doesn't have to
+/// re-match it. Geographic compass names mirror the
+/// `Action::PanCamera*` variants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::application::app) enum PanDir {
+    North,
+    South,
+    East,
+    West,
+}
+
 /// Keyboard nudge — fixed step in screen pixels, then converted
 /// to a `CameraPan` decree like the LeftDrag path emits per cursor
 /// move. Step size matches a coarse but perceptible nudge.
 pub(in crate::application::app) fn apply_pan_camera(
-    action: &Action,
+    dir: PanDir,
     renderer: &mut Renderer,
 ) {
     const PAN_STEP_PX: f32 = 50.0;
-    let (dx, dy) = match action {
-        Action::PanCameraNorth => (0.0, -PAN_STEP_PX),
-        Action::PanCameraSouth => (0.0, PAN_STEP_PX),
-        Action::PanCameraEast => (-PAN_STEP_PX, 0.0),
-        Action::PanCameraWest => (PAN_STEP_PX, 0.0),
-        _ => return,
+    let (dx, dy) = match dir {
+        PanDir::North => (0.0, -PAN_STEP_PX),
+        PanDir::South => (0.0, PAN_STEP_PX),
+        PanDir::East => (-PAN_STEP_PX, 0.0),
+        PanDir::West => (PAN_STEP_PX, 0.0),
     };
     renderer.process_decree(RenderDecree::CameraPan(dx, dy));
 }

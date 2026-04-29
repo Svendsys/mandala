@@ -564,7 +564,20 @@ pub(in crate::application::app) fn dispatch_action(
         }
 
         Action::ZoomIn | Action::ZoomOut => {
-            super::cross_dispatch::apply_zoom_step(&action, *ctx.cursor_pos, ctx.renderer);
+            use super::cross_dispatch::ZoomDir;
+            let dir = match action {
+                Action::ZoomIn => ZoomDir::In,
+                Action::ZoomOut => ZoomDir::Out,
+                // Safe-fallback for `#[non_exhaustive]` Action: a
+                // future variant added to the outer or-pattern
+                // without updating the inner match would otherwise
+                // panic in an interactive path.
+                _ => {
+                    log::error!("Zoom fan-out missed inner-match variant: {:?}", action);
+                    return DispatchOutcome::Handled;
+                }
+            };
+            super::cross_dispatch::apply_zoom_step(dir, *ctx.cursor_pos, ctx.renderer);
             DispatchOutcome::Handled
         }
         Action::ZoomReset => {
@@ -579,7 +592,21 @@ pub(in crate::application::app) fn dispatch_action(
         | Action::PanCameraSouth
         | Action::PanCameraEast
         | Action::PanCameraWest => {
-            super::cross_dispatch::apply_pan_camera(&action, ctx.renderer);
+            use super::cross_dispatch::PanDir;
+            let dir = match action {
+                Action::PanCameraNorth => PanDir::North,
+                Action::PanCameraSouth => PanDir::South,
+                Action::PanCameraEast => PanDir::East,
+                Action::PanCameraWest => PanDir::West,
+                _ => {
+                    log::error!(
+                        "PanCamera fan-out missed inner-match variant: {:?}",
+                        action,
+                    );
+                    return DispatchOutcome::Handled;
+                }
+            };
+            super::cross_dispatch::apply_pan_camera(dir, ctx.renderer);
             DispatchOutcome::Handled
         }
         Action::CenterOnSelection => {
@@ -708,13 +735,11 @@ pub(in crate::application::app) fn dispatch_action(
         Action::SetColorBg(ref value)
         | Action::SetColorText(ref value)
         | Action::SetColorBorder(ref value) => {
-            // Outer pattern guarantees one of three; inner match
-            // picks the axis. Safe-fallback for `#[non_exhaustive]`:
-            // log + return Handled (mirrors `apply_pan_camera`).
-            let axis: &str = match action {
-                Action::SetColorBg(_) => "bg",
-                Action::SetColorText(_) => "text",
-                Action::SetColorBorder(_) => "border",
+            use super::cross_dispatch::ColorAxis;
+            let axis = match action {
+                Action::SetColorBg(_) => ColorAxis::Bg,
+                Action::SetColorText(_) => ColorAxis::Text,
+                Action::SetColorBorder(_) => ColorAxis::Border,
                 _ => {
                     log::error!(
                         "SetColor* fan-out missed inner-match variant: {:?}",
@@ -760,13 +785,11 @@ pub(in crate::application::app) fn dispatch_action(
         Action::SetFontSize(ref pt)
         | Action::SetFontMin(ref pt)
         | Action::SetFontMax(ref pt) => {
-            // Outer pattern guarantees one of three; inner match
-            // picks the slot name (same fan-out shape as
-            // SetColor* / PanCamera*).
-            let which: &str = match action {
-                Action::SetFontSize(_) => "size",
-                Action::SetFontMin(_) => "min",
-                Action::SetFontMax(_) => "max",
+            use super::cross_dispatch::FontSlot;
+            let slot = match action {
+                Action::SetFontSize(_) => FontSlot::Size,
+                Action::SetFontMin(_) => FontSlot::Min,
+                Action::SetFontMax(_) => FontSlot::Max,
                 _ => {
                     log::error!(
                         "SetFont* fan-out missed inner-match variant: {:?}",
@@ -780,16 +803,13 @@ pub(in crate::application::app) fn dispatch_action(
             let parsed = match pt.parse::<f32>() {
                 Ok(v) if v.is_finite() && v > 0.0 => v,
                 _ => {
-                    log::warn!(
-                        "set_font_{}: invalid '{}' — must be a finite positive float",
-                        which, pt,
-                    );
+                    log::warn!("SetFont{:?}: invalid '{}'", slot, pt);
                     return DispatchOutcome::Handled;
                 }
             };
             if let Some(doc) = ctx.document.as_mut() {
                 let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
-                super::cross_dispatch::apply_set_font_kv(which, parsed, &mut rc);
+                super::cross_dispatch::apply_set_font_kv(slot, parsed, &mut rc);
             }
             DispatchOutcome::Handled
         }
