@@ -579,10 +579,165 @@ app.event_loop.run(move |event, _window_target| {
                                         ),
                                     }
                                 }
-                                // Other Compatible Actions don't have WASM
-                                // arms yet — Track A in WASM_CONVERGENCE.md
-                                // is the path to add them by routing
-                                // through `dispatch::dispatch_action`.
+                                // ── Parametric Compatible Actions —
+                                //    Track A.2. Bodies live in
+                                //    `cross_dispatch.rs`; same per-action
+                                //    helper the native dispatcher calls.
+                                a @ (Action::SetEdgeAnchor { .. }
+                                    | Action::SetEdgeBodyGlyph(_)
+                                    | Action::SetBorderField { .. }
+                                    | Action::SetEdgeCap { .. }
+                                    | Action::SetColorBg(_)
+                                    | Action::SetColorText(_)
+                                    | Action::SetColorBorder(_)
+                                    | Action::SetEdgeType(_)
+                                    | Action::SetEdgeDisplayMode(_)
+                                    | Action::ResetEdge(_)
+                                    | Action::SetFontFamily(_)
+                                    | Action::SetFontSize(_)
+                                    | Action::SetFontMin(_)
+                                    | Action::SetFontMax(_)
+                                    | Action::SetEdgeLabelText(_)
+                                    | Action::SetEdgeLabelPosition(_)
+                                    | Action::SetSpacing(_)
+                                    | Action::SetZoomMin(_)
+                                    | Action::SetZoomMax(_)
+                                    | Action::ClearZoom) => {
+                                    use crate::application::document::OptionEdit;
+                                    let mut rc = super::cross_dispatch::RebuildContext {
+                                        document: &mut input.document,
+                                        mindmap_tree: &mut input.mindmap_tree,
+                                        app_scene: &mut input.app_scene,
+                                        renderer,
+                                        scene_cache: &mut input.scene_cache,
+                                    };
+                                    match &a {
+                                        Action::SetEdgeAnchor { from, to } => {
+                                            super::cross_dispatch::apply_set_edge_anchor(
+                                                from, to, &mut rc,
+                                            )
+                                        }
+                                        Action::SetEdgeBodyGlyph(p) => {
+                                            super::cross_dispatch::apply_set_edge_body_glyph(
+                                                p, &mut rc,
+                                            )
+                                        }
+                                        Action::SetBorderField { field, value } => {
+                                            super::cross_dispatch::apply_set_border_field(
+                                                field, value, &mut rc,
+                                            )
+                                        }
+                                        Action::SetEdgeCap { from, to } => {
+                                            super::cross_dispatch::apply_set_edge_cap(
+                                                from, to, &mut rc,
+                                            )
+                                        }
+                                        Action::SetColorBg(v) => {
+                                            super::cross_dispatch::apply_set_color_axis(
+                                                "bg", v, &mut rc,
+                                            )
+                                        }
+                                        Action::SetColorText(v) => {
+                                            super::cross_dispatch::apply_set_color_axis(
+                                                "text", v, &mut rc,
+                                            )
+                                        }
+                                        Action::SetColorBorder(v) => {
+                                            super::cross_dispatch::apply_set_color_axis(
+                                                "border", v, &mut rc,
+                                            )
+                                        }
+                                        Action::SetEdgeType(v) => {
+                                            super::cross_dispatch::apply_set_edge_type(
+                                                v, &mut rc,
+                                            )
+                                        }
+                                        Action::SetEdgeDisplayMode(v) => {
+                                            super::cross_dispatch::apply_set_edge_display_mode(
+                                                v, &mut rc,
+                                            )
+                                        }
+                                        Action::ResetEdge(k) => {
+                                            super::cross_dispatch::apply_reset_edge(
+                                                k, &mut rc,
+                                            )
+                                        }
+                                        Action::SetFontFamily(f) => {
+                                            super::cross_dispatch::apply_set_font_family(
+                                                f, &mut rc,
+                                            )
+                                        }
+                                        Action::SetFontSize(pt)
+                                        | Action::SetFontMin(pt)
+                                        | Action::SetFontMax(pt) => {
+                                            let which = match &a {
+                                                Action::SetFontSize(_) => "size",
+                                                Action::SetFontMin(_) => "min",
+                                                Action::SetFontMax(_) => "max",
+                                                _ => return,
+                                            };
+                                            let parsed = match pt.parse::<f32>() {
+                                                Ok(v) if v.is_finite() && v > 0.0 => v,
+                                                _ => {
+                                                    log::warn!(
+                                                        "set_font_{}: invalid '{}'",
+                                                        which, pt,
+                                                    );
+                                                    return;
+                                                }
+                                            };
+                                            super::cross_dispatch::apply_set_font_kv(
+                                                which, parsed, &mut rc,
+                                            );
+                                        }
+                                        Action::SetEdgeLabelText(t) => {
+                                            super::cross_dispatch::apply_set_edge_label_text(
+                                                t, &mut rc,
+                                            )
+                                        }
+                                        Action::SetEdgeLabelPosition(p) => {
+                                            super::cross_dispatch::apply_set_edge_label_position(
+                                                p, &mut rc,
+                                            )
+                                        }
+                                        Action::SetSpacing(i) => {
+                                            super::cross_dispatch::apply_set_spacing(
+                                                i, &mut rc,
+                                            )
+                                        }
+                                        Action::SetZoomMin(payload)
+                                        | Action::SetZoomMax(payload) => {
+                                            let parsed = match crate::application::console::commands::zoom::parse_zoom_payload(payload) {
+                                                Some(e) => e,
+                                                None => {
+                                                    log::warn!(
+                                                        "set_zoom_*: invalid '{}'",
+                                                        payload,
+                                                    );
+                                                    return;
+                                                }
+                                            };
+                                            let (min, max) = match &a {
+                                                Action::SetZoomMin(_) => (parsed, OptionEdit::Keep),
+                                                Action::SetZoomMax(_) => (OptionEdit::Keep, parsed),
+                                                _ => return,
+                                            };
+                                            super::cross_dispatch::apply_set_zoom_window(
+                                                min, max, &mut rc,
+                                            );
+                                        }
+                                        Action::ClearZoom => {
+                                            super::cross_dispatch::apply_clear_zoom(&mut rc)
+                                        }
+                                        _ => log::error!(
+                                            "WASM: parametric fan-out missed: {:?}",
+                                            a,
+                                        ),
+                                    }
+                                }
+                                // Remaining Compatible Actions (Copy /
+                                // Cut / Paste — clipboard stubs) don't
+                                // need a WASM arm yet.
                                 a => {
                                     log::debug!(
                                         "WASM: action {:?} is Compatible but no WASM arm yet (Track A pending)",

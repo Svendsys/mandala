@@ -691,80 +691,53 @@ pub(in crate::application::app) fn dispatch_action(
         // mirroring the verb dispatcher's post-execute drain.
         Action::SetEdgeAnchor { ref from, ref to } => {
             if let Some(doc) = ctx.document.as_mut() {
-                let changed = crate::application::console::commands::anchor::apply_anchor_to_selection(
-                    doc,
-                    Some(from.as_str()),
-                    Some(to.as_str()),
-                );
-                if changed {
-                    ctx.scene_cache.clear();
-                    rebuild_all(
-                        doc,
-                        ctx.mindmap_tree,
-                        ctx.app_scene,
-                        ctx.renderer,
-                        ctx.scene_cache,
-                    );
-                }
+                let mut rc = super::cross_dispatch::RebuildContext {
+                    document: doc,
+                    mindmap_tree: ctx.mindmap_tree,
+                    app_scene: ctx.app_scene,
+                    renderer: ctx.renderer,
+                    scene_cache: ctx.scene_cache,
+                };
+                super::cross_dispatch::apply_set_edge_anchor(from, to, &mut rc);
             }
             DispatchOutcome::Handled
         }
         Action::SetEdgeBodyGlyph(ref preset) => {
             if let Some(doc) = ctx.document.as_mut() {
-                let changed = crate::application::console::commands::body::apply_body_glyph_to_selection(
-                    doc,
-                    preset,
-                );
-                if changed {
-                    ctx.scene_cache.clear();
-                    rebuild_all(
-                        doc,
-                        ctx.mindmap_tree,
-                        ctx.app_scene,
-                        ctx.renderer,
-                        ctx.scene_cache,
-                    );
-                }
+                let mut rc = super::cross_dispatch::RebuildContext {
+                    document: doc,
+                    mindmap_tree: ctx.mindmap_tree,
+                    app_scene: ctx.app_scene,
+                    renderer: ctx.renderer,
+                    scene_cache: ctx.scene_cache,
+                };
+                super::cross_dispatch::apply_set_edge_body_glyph(preset, &mut rc);
             }
             DispatchOutcome::Handled
         }
         Action::SetBorderField { ref field, ref value } => {
             if let Some(doc) = ctx.document.as_mut() {
-                let changed = crate::application::console::commands::border::apply_border_field_to_selection(
-                    doc,
-                    field,
-                    value,
-                );
-                if changed {
-                    ctx.scene_cache.clear();
-                    rebuild_all(
-                        doc,
-                        ctx.mindmap_tree,
-                        ctx.app_scene,
-                        ctx.renderer,
-                        ctx.scene_cache,
-                    );
-                }
+                let mut rc = super::cross_dispatch::RebuildContext {
+                    document: doc,
+                    mindmap_tree: ctx.mindmap_tree,
+                    app_scene: ctx.app_scene,
+                    renderer: ctx.renderer,
+                    scene_cache: ctx.scene_cache,
+                };
+                super::cross_dispatch::apply_set_border_field(field, value, &mut rc);
             }
             DispatchOutcome::Handled
         }
         Action::SetEdgeCap { ref from, ref to } => {
             if let Some(doc) = ctx.document.as_mut() {
-                let changed = crate::application::console::commands::cap::apply_cap_to_selection(
-                    doc,
-                    Some(from.as_str()),
-                    Some(to.as_str()),
-                );
-                if changed {
-                    ctx.scene_cache.clear();
-                    rebuild_all(
-                        doc,
-                        ctx.mindmap_tree,
-                        ctx.app_scene,
-                        ctx.renderer,
-                        ctx.scene_cache,
-                    );
-                }
+                let mut rc = super::cross_dispatch::RebuildContext {
+                    document: doc,
+                    mindmap_tree: ctx.mindmap_tree,
+                    app_scene: ctx.app_scene,
+                    renderer: ctx.renderer,
+                    scene_cache: ctx.scene_cache,
+                };
+                super::cross_dispatch::apply_set_edge_cap(from, to, &mut rc);
             }
             DispatchOutcome::Handled
         }
@@ -772,15 +745,8 @@ pub(in crate::application::app) fn dispatch_action(
         | Action::SetColorText(ref value)
         | Action::SetColorBorder(ref value) => {
             // Outer pattern guarantees one of three; inner match
-            // picks the axis name. Same shape as the
-            // PanCameraNorth/South/East/West fan-out.
-            // Outer or-pattern is exhaustive over the inner match
-            // today, but `Action` is `#[non_exhaustive]` — a future
-            // variant added to the outer pattern without updating
-            // the inner one would otherwise panic in the
-            // interactive path. Mirror the safe-fallback shape the
-            // PanCamera arm uses: log + return Handled instead of
-            // crashing.
+            // picks the axis. Safe-fallback for `#[non_exhaustive]`:
+            // log + return Handled (mirrors `apply_pan_camera`).
             let axis: &str = match action {
                 Action::SetColorBg(_) => "bg",
                 Action::SetColorText(_) => "text",
@@ -794,91 +760,66 @@ pub(in crate::application::app) fn dispatch_action(
                 }
             };
             if let Some(doc) = ctx.document.as_mut() {
-                let changed = crate::application::console::commands::color::apply_color_axis_to_selection(
-                    doc, axis, value,
-                );
-                if changed {
-                    ctx.scene_cache.clear();
-                    rebuild_all(
-                        doc,
-                        ctx.mindmap_tree,
-                        ctx.app_scene,
-                        ctx.renderer,
-                        ctx.scene_cache,
-                    );
-                }
+                let mut rc = super::cross_dispatch::RebuildContext {
+                    document: doc,
+                    mindmap_tree: ctx.mindmap_tree,
+                    app_scene: ctx.app_scene,
+                    renderer: ctx.renderer,
+                    scene_cache: ctx.scene_cache,
+                };
+                super::cross_dispatch::apply_set_color_axis(axis, value, &mut rc);
             }
             DispatchOutcome::Handled
         }
         Action::SetEdgeType(ref value) => {
             if let Some(doc) = ctx.document.as_mut() {
-                let changed = crate::application::console::commands::edge::apply_edge_type_to_selection(
-                    doc, value,
-                );
-                if changed {
-                    ctx.scene_cache.clear();
-                    rebuild_all(
-                        doc,
-                        ctx.mindmap_tree,
-                        ctx.app_scene,
-                        ctx.renderer,
-                        ctx.scene_cache,
-                    );
-                }
+                let mut rc = super::cross_dispatch::RebuildContext {
+                    document: doc,
+                    mindmap_tree: ctx.mindmap_tree,
+                    app_scene: ctx.app_scene,
+                    renderer: ctx.renderer,
+                    scene_cache: ctx.scene_cache,
+                };
+                super::cross_dispatch::apply_set_edge_type(value, &mut rc);
             }
             DispatchOutcome::Handled
         }
         Action::SetEdgeDisplayMode(ref value) => {
             if let Some(doc) = ctx.document.as_mut() {
-                let changed = crate::application::console::commands::edge::apply_edge_display_mode_to_selection(
-                    doc, value,
-                );
-                if changed {
-                    ctx.scene_cache.clear();
-                    rebuild_all(
-                        doc,
-                        ctx.mindmap_tree,
-                        ctx.app_scene,
-                        ctx.renderer,
-                        ctx.scene_cache,
-                    );
-                }
+                let mut rc = super::cross_dispatch::RebuildContext {
+                    document: doc,
+                    mindmap_tree: ctx.mindmap_tree,
+                    app_scene: ctx.app_scene,
+                    renderer: ctx.renderer,
+                    scene_cache: ctx.scene_cache,
+                };
+                super::cross_dispatch::apply_set_edge_display_mode(value, &mut rc);
             }
             DispatchOutcome::Handled
         }
         Action::ResetEdge(ref kind) => {
             if let Some(doc) = ctx.document.as_mut() {
-                let changed = crate::application::console::commands::edge::apply_edge_reset_to_selection(
-                    doc, kind,
-                );
-                if changed {
-                    ctx.scene_cache.clear();
-                    rebuild_all(
-                        doc,
-                        ctx.mindmap_tree,
-                        ctx.app_scene,
-                        ctx.renderer,
-                        ctx.scene_cache,
-                    );
-                }
+                let mut rc = super::cross_dispatch::RebuildContext {
+                    document: doc,
+                    mindmap_tree: ctx.mindmap_tree,
+                    app_scene: ctx.app_scene,
+                    renderer: ctx.renderer,
+                    scene_cache: ctx.scene_cache,
+                };
+                super::cross_dispatch::apply_reset_edge(kind, &mut rc);
             }
             DispatchOutcome::Handled
         }
         Action::SetFontFamily(ref family) => {
             if let Some(doc) = ctx.document.as_mut() {
-                let changed = crate::application::console::commands::font::apply_font_family_to_selection(
-                    doc, family,
-                );
-                if changed {
-                    ctx.scene_cache.clear();
-                    rebuild_all(
-                        doc,
-                        ctx.mindmap_tree,
-                        ctx.app_scene,
-                        ctx.renderer,
-                        ctx.scene_cache,
-                    );
-                }
+                let mut rc = super::cross_dispatch::RebuildContext {
+                    document: doc,
+                    mindmap_tree: ctx.mindmap_tree,
+                    app_scene: ctx.app_scene,
+                    renderer: ctx.renderer,
+                    scene_cache: ctx.scene_cache,
+                };
+                super::cross_dispatch::apply_set_font_family(family, &mut rc);
             }
             DispatchOutcome::Handled
         }
@@ -886,8 +827,8 @@ pub(in crate::application::app) fn dispatch_action(
         | Action::SetFontMin(ref pt)
         | Action::SetFontMax(ref pt) => {
             // Outer pattern guarantees one of three; inner match
-            // picks the slot name. Same fan-out shape as the color
-            // axes / pan camera directions.
+            // picks the slot name (same fan-out shape as
+            // SetColor* / PanCamera*).
             let which: &str = match action {
                 Action::SetFontSize(_) => "size",
                 Action::SetFontMin(_) => "min",
@@ -901,93 +842,65 @@ pub(in crate::application::app) fn dispatch_action(
                 }
             };
             // Best-effort parse; non-finite / non-positive silently
-            // no-op (the verb path surfaces typed errors). The Action
-            // arm has no scrollback so a parse failure is logged.
+            // no-op (the verb path surfaces typed errors).
             let parsed = match pt.parse::<f32>() {
                 Ok(v) if v.is_finite() && v > 0.0 => v,
                 _ => {
                     log::warn!(
-                        "{}: invalid font {} value '{}' — must be a finite positive float",
-                        match action {
-                            Action::SetFontSize(_) => "set_font_size",
-                            Action::SetFontMin(_) => "set_font_min",
-                            Action::SetFontMax(_) => "set_font_max",
-                            _ => "set_font_*",
-                        },
-                        which,
-                        pt,
+                        "set_font_{}: invalid '{}' — must be a finite positive float",
+                        which, pt,
                     );
                     return DispatchOutcome::Handled;
                 }
             };
             if let Some(doc) = ctx.document.as_mut() {
-                let changed = crate::application::console::commands::font::apply_font_kv_to_selection(
-                    doc, which, parsed,
-                );
-                if changed {
-                    ctx.scene_cache.clear();
-                    rebuild_all(
-                        doc,
-                        ctx.mindmap_tree,
-                        ctx.app_scene,
-                        ctx.renderer,
-                        ctx.scene_cache,
-                    );
-                }
+                let mut rc = super::cross_dispatch::RebuildContext {
+                    document: doc,
+                    mindmap_tree: ctx.mindmap_tree,
+                    app_scene: ctx.app_scene,
+                    renderer: ctx.renderer,
+                    scene_cache: ctx.scene_cache,
+                };
+                super::cross_dispatch::apply_set_font_kv(which, parsed, &mut rc);
             }
             DispatchOutcome::Handled
         }
         Action::SetEdgeLabelText(ref text) => {
             if let Some(doc) = ctx.document.as_mut() {
-                let changed = crate::application::console::commands::label::apply_label_text_to_selection(
-                    doc, text,
-                );
-                if changed {
-                    ctx.scene_cache.clear();
-                    rebuild_all(
-                        doc,
-                        ctx.mindmap_tree,
-                        ctx.app_scene,
-                        ctx.renderer,
-                        ctx.scene_cache,
-                    );
-                }
+                let mut rc = super::cross_dispatch::RebuildContext {
+                    document: doc,
+                    mindmap_tree: ctx.mindmap_tree,
+                    app_scene: ctx.app_scene,
+                    renderer: ctx.renderer,
+                    scene_cache: ctx.scene_cache,
+                };
+                super::cross_dispatch::apply_set_edge_label_text(text, &mut rc);
             }
             DispatchOutcome::Handled
         }
         Action::SetEdgeLabelPosition(ref position) => {
             if let Some(doc) = ctx.document.as_mut() {
-                let changed = crate::application::console::commands::label::apply_label_position_to_selection(
-                    doc, position,
-                );
-                if changed {
-                    ctx.scene_cache.clear();
-                    rebuild_all(
-                        doc,
-                        ctx.mindmap_tree,
-                        ctx.app_scene,
-                        ctx.renderer,
-                        ctx.scene_cache,
-                    );
-                }
+                let mut rc = super::cross_dispatch::RebuildContext {
+                    document: doc,
+                    mindmap_tree: ctx.mindmap_tree,
+                    app_scene: ctx.app_scene,
+                    renderer: ctx.renderer,
+                    scene_cache: ctx.scene_cache,
+                };
+                super::cross_dispatch::apply_set_edge_label_position(position, &mut rc);
             }
             DispatchOutcome::Handled
         }
         Action::SetSpacing(ref input) => {
             if let Some(doc) = ctx.document.as_mut() {
-                let changed = crate::application::console::commands::spacing::apply_spacing_to_selection(
-                    doc, input,
-                );
-                if changed {
-                    ctx.scene_cache.clear();
-                    rebuild_all(
-                        doc,
-                        ctx.mindmap_tree,
-                        ctx.app_scene,
-                        ctx.renderer,
-                        ctx.scene_cache,
-                    );
-                }
+                let mut rc = super::cross_dispatch::RebuildContext {
+                    document: doc,
+                    mindmap_tree: ctx.mindmap_tree,
+                    app_scene: ctx.app_scene,
+                    renderer: ctx.renderer,
+                    scene_cache: ctx.scene_cache,
+                };
+                super::cross_dispatch::apply_set_spacing(input, &mut rc);
             }
             DispatchOutcome::Handled
         }
@@ -997,12 +910,7 @@ pub(in crate::application::app) fn dispatch_action(
                 Some(e) => e,
                 None => {
                     log::warn!(
-                        "{}: invalid zoom payload '{}' — must be a positive finite float or 'unset'",
-                        match action {
-                            Action::SetZoomMin(_) => "set_zoom_min",
-                            Action::SetZoomMax(_) => "set_zoom_max",
-                            _ => "set_zoom_*",
-                        },
+                        "set_zoom_*: invalid zoom payload '{}' — must be a positive finite float or 'unset'",
                         payload,
                     );
                     return DispatchOutcome::Handled;
@@ -1020,40 +928,27 @@ pub(in crate::application::app) fn dispatch_action(
                 }
             };
             if let Some(doc) = ctx.document.as_mut() {
-                let changed = crate::application::console::commands::zoom::apply_zoom_to_selection(
-                    doc, min, max,
-                );
-                if changed {
-                    ctx.scene_cache.clear();
-                    rebuild_all(
-                        doc,
-                        ctx.mindmap_tree,
-                        ctx.app_scene,
-                        ctx.renderer,
-                        ctx.scene_cache,
-                    );
-                }
+                let mut rc = super::cross_dispatch::RebuildContext {
+                    document: doc,
+                    mindmap_tree: ctx.mindmap_tree,
+                    app_scene: ctx.app_scene,
+                    renderer: ctx.renderer,
+                    scene_cache: ctx.scene_cache,
+                };
+                super::cross_dispatch::apply_set_zoom_window(min, max, &mut rc);
             }
             DispatchOutcome::Handled
         }
         Action::ClearZoom => {
-            use crate::application::document::OptionEdit;
             if let Some(doc) = ctx.document.as_mut() {
-                let changed = crate::application::console::commands::zoom::apply_zoom_to_selection(
-                    doc,
-                    OptionEdit::Clear,
-                    OptionEdit::Clear,
-                );
-                if changed {
-                    ctx.scene_cache.clear();
-                    rebuild_all(
-                        doc,
-                        ctx.mindmap_tree,
-                        ctx.app_scene,
-                        ctx.renderer,
-                        ctx.scene_cache,
-                    );
-                }
+                let mut rc = super::cross_dispatch::RebuildContext {
+                    document: doc,
+                    mindmap_tree: ctx.mindmap_tree,
+                    app_scene: ctx.app_scene,
+                    renderer: ctx.renderer,
+                    scene_cache: ctx.scene_cache,
+                };
+                super::cross_dispatch::apply_clear_zoom(&mut rc);
             }
             DispatchOutcome::Handled
         }

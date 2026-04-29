@@ -63,6 +63,210 @@ impl<'a> RebuildContext<'a> {
     }
 }
 
+// ── Generic apply-then-rebuild ──────────────────────────────────
+
+/// Run `apply` against the document and trigger a scene rebuild
+/// when it returns `true`. Wraps the canonical "call mutation
+/// core, conditionally rebuild" shape every parametric `Action`
+/// arm uses so both dispatchers can express it as a one-liner.
+///
+/// Same arm shape as e.g.
+/// ```text
+/// apply_with_rebuild(&mut rc, |doc|
+///     apply_anchor_to_selection(doc, Some(from), Some(to))
+/// );
+/// ```
+pub(in crate::application::app) fn apply_with_rebuild<F>(
+    rc: &mut RebuildContext<'_>,
+    apply: F,
+) where
+    F: FnOnce(&mut MindMapDocument) -> bool,
+{
+    if apply(rc.document) {
+        rc.rebuild_after_doc_change();
+    }
+}
+
+// ── Parametric Action arms (Compatible) ─────────────────────────
+//
+// Each thin wrapper takes the typed payload + a `RebuildContext`
+// and delegates to the matching mutation core in
+// `console/commands/`. The "call core, conditionally rebuild"
+// shape every arm uses is centralised in `apply_with_rebuild`
+// above. The dispatch arm body in either dispatcher shrinks to
+// the wrapper call.
+//
+// Bodies for these arms are cross-platform — they touch only
+// `MindMapDocument` setters, which exist on both targets. The 3
+// filesystem variants (`OpenDocument` / `SaveDocumentAs` /
+// `NewDocumentAt`) are NativeOnly and don't appear here; their
+// arms stay in `dispatch.rs` and route through
+// `execute_console_line` for the file I/O plumbing.
+
+pub(in crate::application::app) fn apply_set_edge_anchor(
+    from: &str,
+    to: &str,
+    rc: &mut RebuildContext<'_>,
+) {
+    apply_with_rebuild(rc, |doc| {
+        crate::application::console::commands::anchor::apply_anchor_to_selection(
+            doc,
+            Some(from),
+            Some(to),
+        )
+    });
+}
+
+pub(in crate::application::app) fn apply_set_edge_body_glyph(
+    preset: &str,
+    rc: &mut RebuildContext<'_>,
+) {
+    apply_with_rebuild(rc, |doc| {
+        crate::application::console::commands::body::apply_body_glyph_to_selection(doc, preset)
+    });
+}
+
+pub(in crate::application::app) fn apply_set_border_field(
+    field: &str,
+    value: &str,
+    rc: &mut RebuildContext<'_>,
+) {
+    apply_with_rebuild(rc, |doc| {
+        crate::application::console::commands::border::apply_border_field_to_selection(
+            doc, field, value,
+        )
+    });
+}
+
+pub(in crate::application::app) fn apply_set_edge_cap(
+    from: &str,
+    to: &str,
+    rc: &mut RebuildContext<'_>,
+) {
+    apply_with_rebuild(rc, |doc| {
+        crate::application::console::commands::cap::apply_cap_to_selection(
+            doc,
+            Some(from),
+            Some(to),
+        )
+    });
+}
+
+/// `axis` is `"bg" | "text" | "border"` (the kv key the verb
+/// accepts); the dispatcher fan-out (SetColorBg/Text/Border)
+/// picks it.
+pub(in crate::application::app) fn apply_set_color_axis(
+    axis: &str,
+    value: &str,
+    rc: &mut RebuildContext<'_>,
+) {
+    apply_with_rebuild(rc, |doc| {
+        crate::application::console::commands::color::apply_color_axis_to_selection(
+            doc, axis, value,
+        )
+    });
+}
+
+pub(in crate::application::app) fn apply_set_edge_type(
+    edge_type: &str,
+    rc: &mut RebuildContext<'_>,
+) {
+    apply_with_rebuild(rc, |doc| {
+        crate::application::console::commands::edge::apply_edge_type_to_selection(doc, edge_type)
+    });
+}
+
+pub(in crate::application::app) fn apply_set_edge_display_mode(
+    mode: &str,
+    rc: &mut RebuildContext<'_>,
+) {
+    apply_with_rebuild(rc, |doc| {
+        crate::application::console::commands::edge::apply_edge_display_mode_to_selection(
+            doc, mode,
+        )
+    });
+}
+
+pub(in crate::application::app) fn apply_reset_edge(
+    kind: &str,
+    rc: &mut RebuildContext<'_>,
+) {
+    apply_with_rebuild(rc, |doc| {
+        crate::application::console::commands::edge::apply_edge_reset_to_selection(doc, kind)
+    });
+}
+
+pub(in crate::application::app) fn apply_set_font_family(
+    family: &str,
+    rc: &mut RebuildContext<'_>,
+) {
+    apply_with_rebuild(rc, |doc| {
+        crate::application::console::commands::font::apply_font_family_to_selection(doc, family)
+    });
+}
+
+/// `which` is `"size" | "min" | "max"`; the dispatcher fan-out
+/// (SetFontSize/Min/Max) picks it. `pt` is already-parsed.
+pub(in crate::application::app) fn apply_set_font_kv(
+    which: &str,
+    pt: f32,
+    rc: &mut RebuildContext<'_>,
+) {
+    apply_with_rebuild(rc, |doc| {
+        crate::application::console::commands::font::apply_font_kv_to_selection(doc, which, pt)
+    });
+}
+
+pub(in crate::application::app) fn apply_set_edge_label_text(
+    text: &str,
+    rc: &mut RebuildContext<'_>,
+) {
+    apply_with_rebuild(rc, |doc| {
+        crate::application::console::commands::label::apply_label_text_to_selection(doc, text)
+    });
+}
+
+pub(in crate::application::app) fn apply_set_edge_label_position(
+    position: &str,
+    rc: &mut RebuildContext<'_>,
+) {
+    apply_with_rebuild(rc, |doc| {
+        crate::application::console::commands::label::apply_label_position_to_selection(
+            doc, position,
+        )
+    });
+}
+
+pub(in crate::application::app) fn apply_set_spacing(
+    input: &str,
+    rc: &mut RebuildContext<'_>,
+) {
+    apply_with_rebuild(rc, |doc| {
+        crate::application::console::commands::spacing::apply_spacing_to_selection(doc, input)
+    });
+}
+
+pub(in crate::application::app) fn apply_set_zoom_window(
+    min: crate::application::document::OptionEdit<f32>,
+    max: crate::application::document::OptionEdit<f32>,
+    rc: &mut RebuildContext<'_>,
+) {
+    apply_with_rebuild(rc, |doc| {
+        crate::application::console::commands::zoom::apply_zoom_to_selection(doc, min, max)
+    });
+}
+
+pub(in crate::application::app) fn apply_clear_zoom(rc: &mut RebuildContext<'_>) {
+    use crate::application::document::OptionEdit;
+    apply_with_rebuild(rc, |doc| {
+        crate::application::console::commands::zoom::apply_zoom_to_selection(
+            doc,
+            OptionEdit::Clear,
+            OptionEdit::Clear,
+        )
+    });
+}
+
 // ── FPS overlay ─────────────────────────────────────────────────
 
 /// Toggle the FPS overlay between `Snapshot` and `Off`. Mirrors

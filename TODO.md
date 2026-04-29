@@ -35,19 +35,21 @@ Shipped on this branch:
 
 ## Outstanding
 
-- **WASM convergence — full funnel.** Today WASM has its own inline
+- **WASM convergence — full funnel.** WASM still has its own inline
   Action match in `run_wasm.rs` for `Undo`, `CreateOrphanNode`,
-  `OrphanSelection`, `DeleteSelection`, `EditSelection*`, plus
-  inline `DoubleClickActivate` routing. The "single funnel" claim
-  holds on native; WASM is a parallel path that Tracks A and B in
-  `WASM_CONVERGENCE.md` are designed to fold. WASM-side macro
-  registry (Track B) is the highest-value next step.
-- **WASM Compatible Actions need arms.** ~15 Action variants
-  classified `Compatible` (`ZoomIn/Out/Reset/Fit`, `PanCamera*`,
-  `CenterOnSelection`, `JumpToRoot`, `SelectAll/DeselectAll/Invert`,
-  `SelectParent/Child/Sibling*`, `Copy/Cut/Paste`, `ToggleFps/Debug`)
-  log "Compatible but no WASM arm yet" when fired today. Wire-up is
-  ~6 lines per arm — Track A in `WASM_CONVERGENCE.md`.
+  `OrphanSelection`, `DeleteSelection`, and `EditSelection*` (the
+  Single-selection branch). These four arms are the last
+  duplicated bodies; Tracks B (macro registry on WASM) and C
+  (full context-type unification) are the remaining steps.
+- ~~**WASM Compatible Actions need arms.**~~ **Track A largely
+  shipped.** A new `cross_dispatch` module (partial Track C) holds
+  the Action arm bodies that touch only state shared between
+  native and WASM; both dispatchers call the same per-action
+  helpers. Wired across two batches: A.1 (camera + selection +
+  FPS — 16 arms) and A.2 (parametric — 20 arms). Copy/Cut/Paste
+  remain WASM-side no-ops via the cfg-stubbed `clipboard` module
+  — wiring those will become meaningful when async web-clipboard
+  integration lands.
 - ~~**Parameterised console verbs as Actions.**~~ **Shipped.**
   23 parametric Action variants now span anchor / body / border /
   cap / color / edge / font / label / spacing / zoom / filesystem.
