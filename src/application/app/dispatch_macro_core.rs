@@ -55,11 +55,17 @@ pub(in crate::application::app) trait MacroDispatchTarget {
     /// Execute a free-form console line. Reaches the loop ONLY
     /// after the privilege gate (`MacroSource::allows_console_line`)
     /// approved the step — non-User tiers fail-closed-abort the
-    /// macro before this method is called. Native runs through
-    /// `execute_console_line`; WASM logs `warn!` and skips because
-    /// no console runtime exists in the browser
-    /// (`format/macros.md` § ConsoleLine on WASM).
-    fn execute_console_line(&mut self, line: &str);
+    /// macro before this method is called.
+    ///
+    /// Returns `true` when the line actually ran (the macro's
+    /// `any_ran` flag bumps), `false` on a soft-skip path that
+    /// looks like execution but didn't change document state — e.g.
+    /// no document loaded on native, or the WASM no-console-runtime
+    /// log path. Pinning `any_ran` to actual execution preserves
+    /// pre-Track-B native semantics (a `[ConsoleLine("open foo")]`
+    /// macro fired before any document loads doesn't consume the
+    /// keystroke event).
+    fn execute_console_line(&mut self, line: &str) -> bool;
 
     /// Resolve `MacroTarget::CurrentSelection` to a Single-node id.
     /// Returns `None` when the selection is multi / edge / portal
@@ -176,8 +182,9 @@ pub(in crate::application::app) fn dispatch_macro<T: MacroDispatchTarget>(
                     );
                     return any_ran;
                 }
-                target.execute_console_line(line);
-                any_ran = true;
+                if target.execute_console_line(line) {
+                    any_ran = true;
+                }
             }
         }
     }
@@ -207,6 +214,7 @@ mod tests {
         known_nodes: Vec<String>,
         action_outcome: DispatchOutcome,
         custom_mutation_applied: bool,
+        console_line_executed: bool,
     }
 
     impl MockTarget {
@@ -218,6 +226,7 @@ mod tests {
                 known_nodes: vec!["n1".into(), "sel".into()],
                 action_outcome: DispatchOutcome::Handled,
                 custom_mutation_applied: true,
+                console_line_executed: true,
             }
         }
     }
@@ -234,8 +243,9 @@ mod tests {
             self.calls.push(format!("custom:{}@{}", id, node_id));
             self.custom_mutation_applied
         }
-        fn execute_console_line(&mut self, line: &str) {
+        fn execute_console_line(&mut self, line: &str) -> bool {
             self.calls.push(format!("console:{}", line));
+            self.console_line_executed
         }
         fn current_selection_node_id(&self) -> Option<String> {
             self.current_selection.clone()
@@ -406,6 +416,68 @@ mod tests {
         // any_ran stays false because Outcome wasn't Handled.
         assert!(!dispatch_macro("u5", &mut t));
         assert_eq!(t.calls, vec!["action:Undo".to_string()]);
+    }
+
+    #[test]
+    fn user_tier_console_line_bumps_any_ran_when_executed() {
+        // Test from parity reviewer: pin `any_ran=true` semantics
+        // when ConsoleLine actually executes (the line fires).
+        let m = macro_with_steps(
+            "u_console",
+            vec![MacroStep::ConsoleLine {
+                line: "fps on".into(),
+            }],
+        );
+        let mut t = MockTarget::new(registry_with(vec![(m, MacroSource::User)]));
+        t.console_line_executed = true;
+        // any_ran=true because the console line "ran" (mock
+        // returned true).
+        assert!(dispatch_macro("u_console", &mut t));
+        assert_eq!(t.calls, vec!["console:fps on".to_string()]);
+    }
+
+    #[test]
+    fn user_tier_console_line_skip_does_not_bump_any_ran() {
+        // Test from parity reviewer: when `execute_console_line`
+        // returns false (e.g. no document loaded on native, or
+        // WASM no-console-runtime soft-skip), `any_ran` stays
+        // false. Pre-Track-B native preserved this through an
+        // inline `if let Some(doc)` guard; the trait extraction
+        // moves the guard into the impl + return-bool contract.
+        let m = macro_with_steps(
+            "u_console_skip",
+            vec![MacroStep::ConsoleLine {
+                line: "save".into(),
+            }],
+        );
+        let mut t = MockTarget::new(registry_with(vec![(m, MacroSource::User)]));
+        t.console_line_executed = false;
+        // The mock recorded the call, but the macro returns false
+        // because the only step's "execution" was a soft-skip.
+        assert!(!dispatch_macro("u_console_skip", &mut t));
+        assert_eq!(t.calls, vec!["console:save".to_string()]);
+    }
+
+    #[test]
+    fn custom_mutation_returns_false_does_not_bump_any_ran() {
+        // Test from parity reviewer: when `apply_custom_mutation`
+        // returns false (e.g. unknown mutation id, or document
+        // setter rejected the apply), `any_ran` stays false for
+        // that step. The macro overall still returns false if no
+        // other step succeeded.
+        let m = macro_with_steps(
+            "u_cm_failed",
+            vec![MacroStep::CustomMutation {
+                id: "unknown".into(),
+                target: MacroTarget::CurrentSelection,
+            }],
+        );
+        let mut t = MockTarget::new(registry_with(vec![(m, MacroSource::User)]));
+        t.custom_mutation_applied = false;
+        assert!(!dispatch_macro("u_cm_failed", &mut t));
+        // The mock recorded the call (apply was attempted) — only
+        // the bool return signals the rebuild gate / any_ran flag.
+        assert_eq!(t.calls, vec!["custom:unknown@sel".to_string()]);
     }
 
     #[test]

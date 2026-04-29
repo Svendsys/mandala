@@ -1044,30 +1044,34 @@ impl<'a, 'b> super::dispatch_macro_core::MacroDispatchTarget for NativeMacroDisp
         }
     }
 
-    fn execute_console_line(&mut self, line: &str) {
+    fn execute_console_line(&mut self, line: &str) -> bool {
         // `execute_console_line` requires a loaded document (takes
         // `&mut MindMapDocument`, not `Option`). Macros fired before
-        // any document is loaded silently skip.
-        if let Some(doc) = self.ctx.document.as_mut() {
-            crate::application::app::console_input::exec::execute_console_line(
-                line,
-                self.ctx.console_state,
-                self.ctx.label_edit_state,
-                self.ctx.portal_text_edit_state,
-                self.ctx.color_picker_state,
-                doc,
-                self.ctx.mindmap_tree,
-                self.ctx.app_scene,
-                self.ctx.renderer,
-                self.ctx.scene_cache,
-                self.ctx.macros,
-            );
-        } else {
+        // any document is loaded silently skip and return false so
+        // the macro's `any_ran` doesn't bump on the no-op path —
+        // matches pre-Track-B behaviour where the warn arm left
+        // `any_ran` unchanged.
+        let Some(doc) = self.ctx.document.as_mut() else {
             log::warn!(
                 "macro step ConsoleLine: no document loaded; skipping '{}'",
                 line,
             );
-        }
+            return false;
+        };
+        crate::application::app::console_input::exec::execute_console_line(
+            line,
+            self.ctx.console_state,
+            self.ctx.label_edit_state,
+            self.ctx.portal_text_edit_state,
+            self.ctx.color_picker_state,
+            doc,
+            self.ctx.mindmap_tree,
+            self.ctx.app_scene,
+            self.ctx.renderer,
+            self.ctx.scene_cache,
+            self.ctx.macros,
+        );
+        true
     }
 
     fn current_selection_node_id(&self) -> Option<String> {

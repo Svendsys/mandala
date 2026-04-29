@@ -385,8 +385,14 @@ pub(super) fn dispatch_compatible_action_wasm(
                 _ => log::error!("WASM: parametric fan-out missed: {:?}", action),
             }
         }
-        // Compatible-but-not-wired (Copy / Cut / Paste — clipboard
-        // stubs). Return Unhandled so a macro caller can decide.
+        // Catch-all for Compatible variants without a WASM arm
+        // wired yet. Today this includes `Copy` / `Cut` / `Paste`
+        // (clipboard backends are cfg-stubbed on WASM —
+        // `clipboard.rs` log+no-ops) plus any future Compatible
+        // variant added to `Action` and classified per
+        // `wasm_compatibility()` but not yet routed above. The
+        // catch-all returns `Unhandled` so a macro caller's
+        // `any_ran` flag doesn't bump on the no-op path.
         a => {
             log::debug!(
                 "WASM: action {:?} is Compatible but no WASM arm yet (Track A pending)",
@@ -437,21 +443,29 @@ impl<'a> super::dispatch_macro_core::MacroDispatchTarget for WasmMacroDispatchTa
             now,
         );
         if applied {
-            let mut rc = super::cross_dispatch::RebuildContext {
-                document: &mut self.input.document,
-                mindmap_tree: &mut self.input.mindmap_tree,
-                app_scene: &mut self.input.app_scene,
-                renderer: self.renderer,
-                scene_cache: &mut self.input.scene_cache,
-            };
-            rc.rebuild_after_geometry_change();
+            // Match native pre-Track-B: rebuild via plain
+            // `rebuild_all` (no extra `scene_cache.clear()`).
+            // `apply_keybind_custom_mutation` already cleared the
+            // cache on the non-animated branch; the animated
+            // branch deliberately leaves it for the animation
+            // envelope to invalidate. Going through
+            // `rebuild_after_geometry_change` here would clear
+            // again on non-animated and add an unwanted clear on
+            // animated.
+            super::scene_rebuild::rebuild_all(
+                &self.input.document,
+                &mut self.input.mindmap_tree,
+                &mut self.input.app_scene,
+                self.renderer,
+                &mut self.input.scene_cache,
+            );
             true
         } else {
             false
         }
     }
 
-    fn execute_console_line(&mut self, line: &str) {
+    fn execute_console_line(&mut self, line: &str) -> bool {
         // WASM has no `execute_console_line` runtime
         // (`console_input` is `cfg(not(target_arch = "wasm32"))`).
         // The privilege gate already rejects ConsoleLine from
@@ -460,10 +474,17 @@ impl<'a> super::dispatch_macro_core::MacroDispatchTarget for WasmMacroDispatchTa
         // ConsoleLine on WASM. The macro continues to the next
         // step — fail-soft, matching the User-tier "step failed"
         // posture native uses for unknown CustomMutation ids.
+        //
+        // Returns `false` so the macro's `any_ran` flag doesn't
+        // bump on the no-op path — a `[ConsoleLine]`-only macro
+        // on WASM correctly reports "didn't fire" so the keystroke
+        // isn't artificially consumed. Mirrors native's pre-doc-
+        // load posture (false return on the warn arm).
         log::warn!(
             "macros: ConsoleLine step '{}' has no console runtime on WASM; skipping",
             line,
         );
+        false
     }
 
     fn current_selection_node_id(&self) -> Option<String> {
@@ -857,17 +878,25 @@ app.event_loop.run(move |event, _window_target| {
             // macro lookup — the same Action → Macro →
             // CustomMutation chain native uses (`event_keyboard.rs`).
             if let Some(a) = action.clone() {
+                // Pin "did the user just trigger an EditSelection?"
+                // before the dispatch — `suppress_for_events` is
+                // ONLY updated for that pair (pre-Track-B, the
+                // suppress call lived inside the EditSelection
+                // pre-filter arm). Other Compatible Actions don't
+                // touch suppress.
+                let was_edit_selection =
+                    matches!(a, Action::EditSelection | Action::EditSelectionClean);
                 let outcome = dispatch_compatible_action_wasm(&a, input, renderer);
-                // EditSelection*-Single opens the inline node
-                // text editor, which the keyboard handler needs
-                // to flag in `suppress_for_events` so the trailing
-                // KeyUp doesn't leak into the just-opened editor.
-                // The outcome doesn't carry "did the editor open"
-                // directly — check the modal state.
-                if matches!(outcome, super::cross_dispatch::DispatchOutcome::Handled)
-                    && input.text_edit_state.is_open()
+                if was_edit_selection
+                    && matches!(outcome, super::cross_dispatch::DispatchOutcome::Handled)
                 {
-                    suppress_for_events.set(true);
+                    // Mirror pre-Track-B `set(is_open())`: flip
+                    // suppress to whatever the modal state ended
+                    // up at — true if the editor opened, false if
+                    // it didn't (e.g. selection wasn't Single).
+                    // Pre-Track-B always-set semantics; not just
+                    // a one-way `set(true)`.
+                    suppress_for_events.set(input.text_edit_state.is_open());
                 }
             } else {
                 // No built-in Action bound to this combo — fall
