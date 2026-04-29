@@ -245,6 +245,27 @@ it's the threat-model defence and must be single-sourced. A
 forked enforcement copy would silently drift when a future
 contributor adds an Action to the denylist (`mod.rs:91-114`).
 
+## Parametric verb actions
+
+A subset of the parametric Action variants
+(`Set<Concept>Field`-shaped — e.g. `SetBorderField`, `SetColorBg`,
+`SetEdgeAnchor`, `SetSpacing`, `SetZoomMin`, `ClearZoom`,
+`SetFontFamily`, `SetEdgeLabelText`, …) ride the same Track A
+classification rules as their no-arg siblings: 20 variants are
+`Compatible` because their bodies only touch
+`MindMapDocument` setters, and 3 variants
+(`OpenDocument`, `SaveDocumentAs`, `NewDocumentAt`) are
+`NativeOnly` because they reach the filesystem via
+`execute_console_line` → `loader::save_to_file` /
+`MindMapDocument::load`.
+
+The `Compatible` parametric arms are usable on WASM today
+*through* `dispatch_action`; once Track A or Track C lands the
+WASM-side dispatch funnel, no per-variant porting work is
+required for them. The 3 fs variants stay deferred until WASM
+gains a filesystem story (file-system-access API, IndexedDB
+overlay, …) — tracked in TODO.md.
+
 ## What's deferred today (and tracked in TODO.md)
 
 - Full `dispatch_action` callable from WASM. Track A or C.
@@ -256,6 +277,9 @@ contributor adds an Action to the denylist (`mod.rs:91-114`).
 - `DragState` / continuous-drag gestures (`PanCanvas`) on WASM.
   Track A — note that WASM has its own `pending_click` mechanism
   that may serve as the basis.
+- Filesystem on WASM (`OpenDocument` / `SaveDocumentAs` /
+  `NewDocumentAt` parametric Action variants stay `NativeOnly`
+  pending a chosen storage strategy).
 
 ## Smoke-testing the boundary
 

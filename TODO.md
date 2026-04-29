@@ -48,14 +48,18 @@ Shipped on this branch:
   `SelectParent/Child/Sibling*`, `Copy/Cut/Paste`, `ToggleFps/Debug`)
   log "Compatible but no WASM arm yet" when fired today. Wire-up is
   ~6 lines per arm — Track A in `WASM_CONVERGENCE.md`.
-- **Parameterised console verbs as Actions.** `open <path>`,
-  `save-as <path>`, `mutation apply <id>`, kv-shaped `border` /
-  `edge` / `color` / `font` / `zoom` / `spacing` setters
-  intentionally stay console-only today. Per-verb Action variants
-  with payload (the user-approved approach) require flipping
-  `Action: Copy → Clone` (already done) and adding a
-  `ParametricBinding { combo, args }` shape to `KeybindConfig`
-  per family. Per-family commits remain.
+- ~~**Parameterised console verbs as Actions.**~~ **Shipped.**
+  23 parametric Action variants now span anchor / body / border /
+  cap / color / edge / font / label / spacing / zoom / filesystem.
+  `ParametricBinding { combo, args }` is the binding shape;
+  per-variant resolve closures pick payloads apart; mutation
+  cores extracted from each verb file are reused by both the
+  verb path (with scrollback) and the Action arm (no scrollback).
+  Filesystem variants (`OpenDocument`, `SaveDocumentAs`,
+  `NewDocumentAt`) are NativeOnly + denylisted from non-User
+  macro tiers per the privilege gate. `mutation apply <id>`
+  stays console-only — already covered by
+  `custom_mutation_bindings`.
 - **Reparent / Connect target-click handlers bypass the funnel.**
   `event_mouse_click.rs` calls `handle_reparent_target_click` /
   `handle_connect_target_click` directly. Both push undo entries
