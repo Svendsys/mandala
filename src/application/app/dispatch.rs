@@ -86,6 +86,25 @@ pub(in crate::application::app) fn dispatch_action(
     ctx: &mut InputHandlerContext<'_>,
     hit: Option<&DispatchHit>,
 ) -> DispatchOutcome {
+    // Track C: try the cross-platform dispatcher first. Compatible
+    // arms (Document-lifecycle, camera/zoom, FPS, selection nav,
+    // parametric mutators) and the cross-platform slice of
+    // mixed-branch arms (CancelMode's `last_click` clear,
+    // EditSelection*-Single open) all run from there. Returning
+    // `Handled` short-circuits this match; returning `Unhandled`
+    // means the cross-platform dispatcher saw the variant but
+    // didn't fully own it — the native arm below runs to cover
+    // the residual NativeOnly slice.
+    //
+    // The split-borrow scope is bounded so `ctx` is freely
+    // accessible again for the native-only arms below.
+    let cross_outcome = {
+        let (mut core, _ext) = ctx.split_borrow();
+        super::dispatch_action_core::dispatch_compatible(&action, &mut core)
+    };
+    if matches!(cross_outcome, DispatchOutcome::Handled) {
+        return cross_outcome;
+    }
     match action {
         Action::OpenConsole => {
             if ctx.console_state.is_open() {
