@@ -341,9 +341,7 @@ pub(super) fn handle_cursor_moved(
                     // here without explicit handling.
                     let leftdrag_pans = ctx.keybinds
                         .action_for_gesture(
-                            crate::application::keybinds::gesture_key_name(
-                                crate::application::keybinds::MouseGesture::LeftDrag,
-                            ),
+                            crate::application::keybinds::MouseGesture::LeftDrag.key_name(),
                             ctx.modifiers.control_key(),
                             ctx.modifiers.shift_key(),
                             ctx.modifiers.alt_key(),

@@ -263,13 +263,9 @@ impl InitState {
                     // explicitly clears the bindings, wheel events are
                     // silently ignored.
                     let gesture_name = if scroll_y > 0.0 {
-                        crate::application::keybinds::gesture_key_name(
-                            crate::application::keybinds::MouseGesture::WheelUp,
-                        )
+                        crate::application::keybinds::MouseGesture::WheelUp.key_name()
                     } else {
-                        crate::application::keybinds::gesture_key_name(
-                            crate::application::keybinds::MouseGesture::WheelDown,
-                        )
+                        crate::application::keybinds::MouseGesture::WheelDown.key_name()
                     };
                     // `action_for_gesture` falls back to the unmodified
                     // binding when no exact-modifier match exists, so

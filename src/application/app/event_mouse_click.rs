@@ -90,9 +90,7 @@ pub(super) fn handle_mouse_input(
                 // drag state below — mirrors today's behaviour where
                 // any drag's release goes to None regardless of which
                 // gesture started it.
-                let name = crate::application::keybinds::gesture_key_name(
-                    crate::application::keybinds::MouseGesture::MiddleClick,
-                );
+                let name = crate::application::keybinds::MouseGesture::MiddleClick.key_name();
                 // Modifier-fallback: Ctrl+MiddleClick matches the bare
                 // MiddleClick binding when no exact-modifier match
                 // exists. Preserves pre-branch modifier-agnostic
@@ -243,9 +241,7 @@ pub(super) fn handle_mouse_input(
                     // `CreateOrphanNodeAndEdit` when the user has
                     // explicitly bound that Action somewhere
                     // (off-by-default per user request).
-                    let dblclick_name = crate::application::keybinds::gesture_key_name(
-                        crate::application::keybinds::MouseGesture::DoubleClick,
-                    );
+                    let dblclick_name = crate::application::keybinds::MouseGesture::DoubleClick.key_name();
                     // Modifier-fallback so Shift+DoubleClick still
                     // activates the bare DoubleClick binding when no
                     // explicit Shift+DoubleClick binding exists.

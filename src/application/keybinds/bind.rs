@@ -35,7 +35,7 @@ pub struct KeyBind {
 /// dispatched; per CODE_CONVENTIONS §5 (no half-features) they were
 /// removed. A future commit that adds a real dispatch site can
 /// reintroduce the variant in the same patch as its body.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum_macros::EnumIter)]
 pub enum MouseGesture {
     /// Left-button held down + cursor movement past the drag threshold,
     /// only when the press landed on empty canvas. Continuous: the bound
@@ -69,26 +69,13 @@ impl MouseGesture {
         }
     }
 
-    /// Iterator over every gesture variant. Used by `gesture_emit_form`
-    /// and tests to walk the canonical set without hand-listing.
-    fn all() -> impl Iterator<Item = MouseGesture> {
-        [
-            MouseGesture::LeftDrag,
-            MouseGesture::DoubleClick,
-            MouseGesture::MiddleClick,
-            MouseGesture::WheelUp,
-            MouseGesture::WheelDown,
-        ]
-        .into_iter()
+    /// Canonical lowercase binding-string token for this gesture.
+    /// The same token `KeyBind::parse` produces from `"DoubleClick"`,
+    /// `"MiddleClick"`, etc. Mouse handlers feed this directly into
+    /// `ResolvedKeybinds::action_for_context`.
+    pub fn key_name(self) -> &'static str {
+        self.tokens().0
     }
-}
-
-/// Canonical lowercase binding-string token for a [`MouseGesture`].
-/// The same token `KeyBind::parse` produces from `"DoubleClick"`,
-/// `"MiddleClick"`, etc. Mouse handlers feed this directly into
-/// `ResolvedKeybinds::action_for_context`.
-pub fn gesture_key_name(g: MouseGesture) -> &'static str {
-    g.tokens().0
 }
 
 /// PascalCase emit form for a recognised gesture token. Used by
@@ -96,7 +83,8 @@ pub fn gesture_key_name(g: MouseGesture) -> &'static str {
 /// to its canonical capitalisation rather than the lowercased
 /// internal form.
 fn gesture_emit_form(lower: &str) -> Option<&'static str> {
-    MouseGesture::all()
+    use strum::IntoEnumIterator;
+    MouseGesture::iter()
         .find(|g| g.tokens().0 == lower)
         .map(|g| g.tokens().1)
 }

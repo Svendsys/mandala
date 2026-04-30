@@ -47,7 +47,7 @@ pub use action::{ColorAxis, FontSlot, ZoomBound};
 pub use action::WasmCompatibility;
 // Public surface; the lint can't see in-crate test consumers without --tests.
 #[allow(unused_imports)]
-pub use bind::{gesture_key_name, key_to_name, normalize_key_name, KeyBind, MouseGesture};
+pub use bind::{key_to_name, normalize_key_name, KeyBind, MouseGesture};
 pub use config::KeybindConfig;
 // `ParametricBinding` is consumed by tests and by users authoring
 // `keybinds.json` files (the JSON schema is the public surface);

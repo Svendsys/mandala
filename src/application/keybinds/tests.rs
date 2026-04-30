@@ -242,15 +242,9 @@ fn test_keybind_mouse_gesture_round_trip_pascal_case() {
 fn test_gesture_key_name_matches_parser_token() {
     // Every MouseGesture's canonical name must round-trip through
     // KeyBind::parse to a binding with the matching key field.
-    let gestures = [
-        MouseGesture::LeftDrag,
-        MouseGesture::DoubleClick,
-        MouseGesture::MiddleClick,
-        MouseGesture::WheelUp,
-        MouseGesture::WheelDown,
-    ];
-    for g in gestures {
-        let name = gesture_key_name(g);
+    use strum::IntoEnumIterator;
+    for g in MouseGesture::iter() {
+        let name = g.key_name();
         let bind = KeyBind::parse(name).unwrap();
         assert_eq!(bind.key, name);
     }
