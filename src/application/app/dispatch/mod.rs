@@ -46,7 +46,7 @@ pub(in crate::application::app) use native::{
 // `super::dispatch::*` form.
 pub(in crate::application::app) use cross_dispatch::DispatchOutcome;
 // `pub(crate)` so `tests_mutations` (in `document/`) and the
-// WASM run loop (`run_wasm.rs`) can both reach it through this
+// WASM run loop (`run_wasm/mod.rs`) can both reach it through this
 // canonical re-export. Native sub-modules (`native.rs`) also call
 // here rather than the sibling path so the surface stays
 // uniform across targets.

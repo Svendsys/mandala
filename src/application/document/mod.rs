@@ -52,7 +52,7 @@ mod tests_reparent;
 mod tests_selection;
 
 // Cross-platform: consumers (`scene_rebuild.rs`, `event_mouse_click.rs`,
-// `run_wasm.rs`, `scene_host.rs`) compile on both targets.
+// `run_wasm/`, `scene_host.rs`) compile on both targets.
 pub use hit_test::{apply_tree_highlights, hit_test, point_in_node_aabb};
 // Native-only: consumed by drag handlers, the click router, and
 // rect-select drain — none reachable on WASM today.

@@ -14,7 +14,7 @@
 //! only the shared subset live here; native-only arms stay in
 //! [`super::native`].
 //!
-//! This is the partial-Track-C path documented in
+//! This is the Track-C path documented in
 //! `WASM_CONVERGENCE.md`: incrementally lift arm bodies as they
 //! turn out to need only cross-platform state, without waiting
 //! for a full context-type unification. Each migration removes

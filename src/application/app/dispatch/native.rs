@@ -728,8 +728,9 @@ pub(in crate::application::app) fn apply_label_edit_action(
     apply_label_edit_action_to_buffer(action, buffer, cursor_grapheme_pos)
 }
 
-// `sibling_id` lifted to `dispatch/cross_dispatch.rs` so the WASM dispatcher
-// can reach the same fold-aware navigation logic.
+// `sibling_id` lifted to `dispatch/cross_dispatch/selection/mod.rs`
+// so the WASM dispatcher can reach the same fold-aware navigation
+// logic.
 
 /// Run a macro by id against the current `InputHandlerContext`.
 /// Iterates the macro's steps in order, forwarding each through the
@@ -749,7 +750,7 @@ pub(in crate::application::app) fn apply_label_edit_action(
 pub(in crate::application::app) fn dispatch_macro(macro_id: &str, ctx: &mut InputHandlerContext<'_>) -> bool {
     // Body lifted to `dispatch_macro_core` (cross-platform); this
     // shim wraps `ctx` in a `NativeMacroDispatchTarget` so the
-    // native dispatch chain calls the same step loop the WASM
+    // native dispatch funnel calls the same step loop the WASM
     // dispatcher uses. The privilege gate is single-sourced there.
     let mut target = NativeMacroDispatchTarget { ctx };
     super::macro_core::dispatch_macro(macro_id, &mut target)

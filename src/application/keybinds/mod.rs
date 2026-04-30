@@ -37,7 +37,7 @@ pub use action::ActionKind;
 // `keybinds::action`.
 #[allow(unused_imports)]
 pub use action::{ColorAxis, FontSlot, ZoomBound};
-// `WasmCompatibility` is consumed by `run_wasm.rs` (wasm32-only) and
+// `WasmCompatibility` is consumed by `run_wasm/` (wasm32-only) and
 // the test suite. On a native non-test build no caller pulls it in,
 // hence the `unused_import` warning the lint would otherwise raise.
 // Kept on the public surface so the wasm32 + test paths can find it

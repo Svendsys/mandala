@@ -589,9 +589,10 @@ pub enum Action {
 /// [`Action::wasm_compatibility`] method classifies each variant
 /// based on which target's machinery it requires.
 ///
-/// **Where this matters.** `run_wasm.rs`'s keyboard / mouse paths
-/// filter on this so a key bound to e.g. `Action::OpenConsole`
-/// silently no-ops in the browser instead of triggering a panic
+/// **Where this matters.** `run_wasm/event_keyboard.rs` and
+/// `run_wasm/event_mouse_click.rs` filter on this so a key
+/// bound to e.g. `Action::OpenConsole` silently no-ops in the
+/// browser instead of triggering a panic
 /// at the dispatch site. As WASM gains its own version of the
 /// missing modals (see `WASM_CONVERGENCE.md`), variants migrate
 /// from `NativeOnly` to `Compatible` one at a time.

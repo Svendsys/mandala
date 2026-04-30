@@ -185,7 +185,7 @@ fn test_set_node_border_color_writes_frame_color() {
 }
 
 /// First-edit materialization of `node.style.border` uses
-/// `default_glyph_border_config()` (private to `nodes.rs`).
+/// `default_glyph_border_config()` (private to `nodes/border.rs`).
 /// Pin the resulting `preset` to `"light"` so a regression to
 /// `"rounded"` — the previous default — surfaces here. The
 /// trigger is any kv edit that *touches a config field*; we
