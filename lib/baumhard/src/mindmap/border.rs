@@ -665,32 +665,56 @@ pub fn resolve_border_style(
 /// sides are overridden downstream by the `glyphs` payload, so the
 /// fallback only shows through when the user picked custom but
 /// supplied no glyph fields.
+///
+/// Reachable per tree rebuild (`tree_builder/border.rs:111`),
+/// which §9 puts in interactive territory — no panic site. The
+/// fallback is statically known to exist because [`PRESET_TABLE`]
+/// is `const &[…; 4]` (non-empty by construction).
 pub fn preset_glyph_set(preset: &str) -> BorderGlyphSet {
     let name = preset.to_ascii_lowercase();
-    // "custom" is in `BORDER_PRESETS` but absent from the glyph
-    // table — it signals "user-supplied glyphs override these
-    // defaults," with the per-side fallback to `light`.
-    let row = PRESET_TABLE.iter().find(|(n, _)| *n == name).or_else(|| {
-        if name != "custom" {
-            log::warn!("border preset '{}' unknown; using 'light'", preset);
-        }
-        PRESET_TABLE.first()
-    });
-    BorderGlyphSet::from_glyphs(row.expect("PRESET_TABLE non-empty").1)
+    let row = PRESET_TABLE
+        .iter()
+        .find(|(n, _)| *n == name)
+        .unwrap_or_else(|| {
+            // "custom" is in `BORDER_PRESETS` but absent from the
+            // glyph table — it signals "user-supplied glyphs
+            // override these defaults," with the per-side fallback
+            // to `light`. Anything else gets a warn-log.
+            if name != CUSTOM_PRESET_NAME {
+                log::warn!("border preset '{}' unknown; using 'light'", preset);
+            }
+            &PRESET_TABLE[0]
+        });
+    BorderGlyphSet::from_glyphs(row.1)
 }
 
-/// The five preset names accepted by the schema's
-/// `GlyphBorderConfig.preset` field. Surfaced for the console's
-/// `border preset=` completion. Derived from [`PRESET_TABLE`] plus
-/// the bare `"custom"` sentinel (which has no glyph row of its own
-/// — see [`preset_glyph_set`]'s rationale).
-pub const BORDER_PRESETS: &[&str] = &[
-    PRESET_TABLE[0].0,
-    PRESET_TABLE[1].0,
-    PRESET_TABLE[2].0,
-    PRESET_TABLE[3].0,
-    "custom",
-];
+/// Sentinel preset name for "user-supplied glyphs override these
+/// defaults." Has no row in [`PRESET_TABLE`]; the per-side
+/// fallback in [`preset_glyph_set`] is `light`. Repeated literal
+/// `"custom"` checks reach for this to keep the meaning single-
+/// sourced.
+pub const CUSTOM_PRESET_NAME: &str = "custom";
+
+/// Every preset name accepted by the schema's
+/// `GlyphBorderConfig.preset` field — the four typed glyph rows
+/// in [`PRESET_TABLE`] plus the [`CUSTOM_PRESET_NAME`] sentinel.
+/// Surfaced for the console's `border preset=` completion.
+///
+/// Derived from `PRESET_TABLE`'s row-index → name extraction at
+/// const-fn time so adding a fifth glyph row to `PRESET_TABLE`
+/// only requires extending the table — `BORDER_PRESETS` rebuilds
+/// automatically.
+pub const BORDER_PRESETS: &[&str] = &{
+    const N: usize = PRESET_TABLE.len();
+    let mut out: [&str; N + 1] = [""; N + 1];
+    let mut i = 0;
+    while i < N {
+        out[i] = PRESET_TABLE[i].0;
+        i += 1;
+    }
+    out[N] = CUSTOM_PRESET_NAME;
+    out
+};
 
 fn corners_and_patterns_from_custom(
     g: &CustomBorderGlyphs,

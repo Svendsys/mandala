@@ -141,12 +141,22 @@ impl MindNode {
     /// conversion at the model boundary so call sites can drop the
     /// `Vec2::new(node.position.x as f32, node.position.y as f32)`
     /// boilerplate.
+    ///
+    /// **Costs.** Two f64→f32 narrowing casts. No allocation
+    /// (`glam::Vec2` is `#[repr(C)] [f32; 2]`). Lossy past ~16M
+    /// canvas pixels — beyond f32's 24-bit integer-precise range —
+    /// but well clear of any realistic mindmap canvas size.
+    /// Inlinable; the optimiser folds construction-then-`.x`/`.y`
+    /// access into bare register loads.
     pub fn pos_vec2(&self) -> Vec2 {
         Vec2::new(self.position.x as f32, self.position.y as f32)
     }
 
     /// Width/height of the node's AABB in canvas space, as a
     /// `glam::Vec2`. Sibling of [`Self::pos_vec2`].
+    ///
+    /// **Costs.** Same as [`Self::pos_vec2`] — two f64→f32 casts,
+    /// no allocation, optimiser-foldable.
     pub fn size_vec2(&self) -> Vec2 {
         Vec2::new(self.size.width as f32, self.size.height as f32)
     }
@@ -154,6 +164,14 @@ impl MindNode {
     /// Center of the node's AABB in canvas space — `pos + size / 2`.
     /// Used by edge-anchor and connection-routing math that needs
     /// the node's geometric centre rather than its top-left corner.
+    ///
+    /// **Costs.** Four f64→f32 casts (two from each helper) plus a
+    /// componentwise `Vec2 * f32` and `Vec2 + Vec2`. With glam's
+    /// SIMD path enabled the multiply-and-add is two SSE/NEON ops.
+    /// Per-frame call sites typically hit this once per visible
+    /// edge endpoint; if a profile implicates this hot, add a
+    /// `do_*()` benchmark in `lib/baumhard/benches/test_bench.rs`
+    /// alongside the existing geometry benches.
     pub fn center_vec2(&self) -> Vec2 {
         self.pos_vec2() + self.size_vec2() * 0.5
     }
