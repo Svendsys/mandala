@@ -40,11 +40,11 @@ pub enum InputMode {
     MappedToInstruction,
 }
 
-/// Renderer-side command queue entry. Event loop pushes one of
-/// these per per-frame intent that the renderer should react to;
-/// the renderer drains them at frame start. Everything that
-/// changes GPU state without changing document state goes through
-/// here so the model/view boundary (§3) stays clean.
+/// Renderer-side command queue entry. Event loop pushes one
+/// per per-frame intent the renderer should react to; the
+/// renderer drains them at frame start. Everything that
+/// changes GPU state without changing document state goes
+/// through here so the model/view boundary (§3) stays clean.
 ///
 /// Variants:
 /// - `Noop` — default sentinel; never actually queued by the

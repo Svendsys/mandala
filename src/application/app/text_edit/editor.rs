@@ -315,8 +315,8 @@ pub(in crate::application::app) fn apply_text_edit_to_tree(
 /// route a keystroke to the open node text editor. All
 /// keys are stolen from normal keybind dispatch — Tab and Enter
 /// produce literal characters, Esc cancels, arrows/Home/End navigate,
-/// Backspace/Delete delete, and printable chars are inserted at the
-/// cursor. Every successful mutation is pushed through
+/// Backspace and Delete remove a grapheme, and printable chars
+/// insert at the cursor. Every successful mutation is pushed through
 /// `apply_text_edit_to_tree` so the tree and renderer stay in sync.
 pub(in crate::application::app) fn handle_text_edit_key(
     key_name: &Option<String>,
