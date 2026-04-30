@@ -65,7 +65,7 @@ struct NativeApp {
     /// Freeze watchdog — ticked at the top of every `AboutToWait`
     /// drain and also on every window event, so a frame that
     /// hangs mid-drain or mid-event produces a diagnostic abort
-    /// after [`super::freeze_watchdog::FREEZE_THRESHOLD`].
+    /// after `freeze_watchdog::FREEZE_THRESHOLD`.
     watchdog: FreezeWatchdog,
 }
 
@@ -329,9 +329,9 @@ impl InitState {
 
     /// Per-frame drain: drive the active throttled drag (if any)
     /// and the always-live picker-hover interaction through the
-    /// unified [`ThrottledInteraction::drive`] shell, then the
-    /// non-throttled drains (rect-select overlay, camera
-    /// rebuild, animation tick), then one render frame.
+    /// unified [`super::throttled_interaction::ThrottledInteraction::drive`]
+    /// shell, then the non-throttled drains (rect-select overlay,
+    /// camera rebuild, animation tick), then one render frame.
     fn drain_frame(&mut self) {
         use super::throttled_interaction::{DrainContext, ThrottledInteraction};
 

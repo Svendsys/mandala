@@ -31,8 +31,8 @@
 //!   selection variant decides which channel the family lands on
 //!   (nodes → every `TextRun.font`, edges + portal icons →
 //!   `glyph_connection.font`); edge labels and portal text return
-//!   `NotApplicable` and surface a clear "not applicable to <kind>"
-//!   message.
+//!   `NotApplicable` and surface a clear "not applicable to
+//!   `<kind>`" message.
 //! - `font list` — emit one scrollback line per loaded family,
 //!   each rendered in its own face. Sorted alphabetically.
 

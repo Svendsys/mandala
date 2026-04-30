@@ -13,8 +13,10 @@
 //!
 //! This module owns the outer loader (app + user slices produced in
 //! `load_app_and_user`), the app-bundle parser ([`builtin`]), and the
-//! platform-split user-file readers ([`platform_desktop`] /
-//! [`platform_web`]).
+//! platform-split user-file readers (`platform_desktop` /
+//! `platform_web`). The two readers are cfg-gated to their target
+//! and cargo doc would warn under "unresolved link" for the inactive
+//! one if they were intra-doc links.
 //!
 //! Resilience posture (§7): every layer is best-effort. Failures log
 //! `warn!` and fall through to the next source; the app never crashes

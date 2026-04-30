@@ -4,7 +4,7 @@
 //!
 //! Selection-aware (per `font` / `color`): operates on the current
 //! [`SelectionState::Single`] / [`SelectionState::Multi`].
-//! Edge-adjacent selections surface a "not applicable to <kind>"
+//! Edge-adjacent selections surface a "not applicable to `<kind>`"
 //! message — borders are node-only.
 //!
 //! ## Verbs

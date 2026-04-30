@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! First-run initialisation for the native event loop. Called once
-//! from [`super::run_native::NativeApp::resumed`].
+//! from `super::run_native::NativeApp::resumed`.
 
 #![cfg(not(target_arch = "wasm32"))]
 

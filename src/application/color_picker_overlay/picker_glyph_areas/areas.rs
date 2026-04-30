@@ -100,7 +100,7 @@ impl PickerAreas {
     /// Resolve a `(section, index) → &GlyphArea` lookup. Panics if
     /// the section wasn't populated (the spec / builder disagree
     /// on what sections exist) or the requested index was deliberately
-    /// skipped (e.g. the crosshair centre slot at sat_bar[8]) —
+    /// skipped (e.g. the crosshair centre slot at `sat_bar[8]`) —
     /// the picker apply path treats both as a programming error
     /// rather than a recoverable state.
     pub(super) fn area(&self, section: &str, index: usize) -> &GlyphArea {

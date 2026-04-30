@@ -112,7 +112,7 @@ pub(in crate::application::app) trait ThrottledInteraction {
     fn drain(&mut self, ctx: DrainContext<'_>);
 
     /// End-of-interaction cleanup. Called from
-    /// [`super::super::event_mouse_click`] on drag release (and
+    /// `super::event_mouse_click` on drag release (and
     /// the picker-close path for the hover variant) before the
     /// owning enum transitions away. The default resets only the
     /// throttle — pending state is expected to be empty already

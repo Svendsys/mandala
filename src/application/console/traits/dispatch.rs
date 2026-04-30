@@ -105,7 +105,7 @@ where
 ///
 /// `op` is invoked once per [`TargetView`] in the selection;
 /// returning [`Outcome::NotApplicable`] from every target surfaces a
-/// "not applicable to <kind>" message, exactly like
+/// "not applicable to `<kind>`" message, exactly like
 /// [`apply_kvs`]. Returning [`Outcome::Invalid`] from a single target
 /// surfaces that message verbatim — the caller is expected to have
 /// validated the input upstream so an `Invalid` here is a

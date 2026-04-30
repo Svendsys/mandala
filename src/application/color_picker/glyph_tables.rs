@@ -96,8 +96,8 @@ pub fn hue_ring_font_scale() -> f32 {
 // cache a leaked `&'static [&'static str]` so the existing
 // `[&str]`-shaped call-sites keep working unchanged.
 
-/// Cached `&'static [&'static str]` derived from a Vec<String> in the
-/// spec. The spec is itself cached; leaking the per-glyph strings
+/// Cached `&'static [&'static str]` derived from a `Vec<String>` in
+/// the spec. The spec is itself cached; leaking the per-glyph strings
 /// costs one allocation per glyph per process, which is trivial
 /// (~32 glyphs total) and avoids spreading `String` ownership
 /// through the render hot path.

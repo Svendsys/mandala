@@ -9,7 +9,7 @@
 //! threat-model defence and must be single-sourced.
 //!
 //! - **Native** impl lives in
-//!   [`super::dispatch::NativeMacroDispatchTarget`] wrapping
+//!   `super::dispatch::NativeMacroDispatchTarget` wrapping
 //!   `&mut InputHandlerContext`.
 //! - **WASM** impl lives in
 //!   `super::run_wasm::WasmMacroDispatchTarget` wrapping
