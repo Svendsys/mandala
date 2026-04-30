@@ -236,6 +236,9 @@ it. This is the single strongest rule in the document.
 - **Avoid duplicating logic.** Identical logic copy / pasted throughout the codebase
   becomes a nightmare to maintain. If a function is needed in two or more places, the answer
   is never to copy it, but to use a single function called in two or more places.
+- **We do drive-by refactors and fixes.** There are always a million excuses as to why cleaning up something should be postponed. But the quality of our codebase is priority #1, so whenever something not-ideal is spotted we ADDRESS it. It doesn't matter if we get mixed pull requests.
+- **Always explicitly look for opportunities to improve the quality of existing code.**
+- **Never accept "good enough". No one has asked you for "good enough".**
 
 ## §6 Modular design by default
 
@@ -275,9 +278,6 @@ industrial cost/benefit reasoning. This is not license for speculation.
   design principle when the product is a creative-expression tool. A
   hard-to-support use case is a constraint on the design, not a reason
   to pretend it does not exist.
-- **Three similar lines beats a premature abstraction.** Extract a
-  helper when a pattern repeats three times *and* the repetition
-  obscures intent. Two occurrences is a coincidence.
 
 ## §8 Documentation discipline
 
@@ -351,8 +351,3 @@ Workspace-level commitment:
   outside an explicit `cfg` guard must build for
   `wasm32-unknown-unknown` before commit.
 - **Commit messages explain *why*, not what the diff shows.**
-
-## §13 Complete ownership
-- **We do drive-by refactors and fixes.** There are always a million excuses as to why cleaning up something should be postponed. But the quality of our codebase is priority #1, so whenever something not-ideal is spotted we ADDRESS it. It doesn't matter if we get mixed pull requests.
-- **Always explicitly look for opportunities to improve the quality of existing code.**
-- **Never accept "good enough". No one has asked you for "good enough".**
