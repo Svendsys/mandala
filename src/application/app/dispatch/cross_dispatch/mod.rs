@@ -33,10 +33,12 @@
 //!   reset edits and edge-label text / position edits.
 //! - [`style`]: border / color / font / spacing edits applied to
 //!   the current selection.
-//! - [`view`]: zoom-window edits on the selection plus the
-//!   renderer-side FPS overlay toggles.
-//! - [`camera`]: keyboard zoom step / reset / fit-to-tree, pan
-//!   nudges, centre-on-selection, jump-to-root.
+//! - [`fps`]: renderer-side FPS overlay toggles (no document
+//!   mutation).
+//! - [`camera`]: every zoom-related arm (camera-state zoom
+//!   step / reset / fit-to-tree + per-element zoom-visibility
+//!   window edits), pan nudges, centre-on-selection, and
+//!   jump-to-root.
 //! - [`selection`]: selection-changing arms (`SelectAll`,
 //!   `DeselectAll`, `InvertSelection`, `SelectParent`,
 //!   `SelectChild`, `SelectNext/PrevSibling`) + their pure-doc
@@ -62,7 +64,7 @@ mod edges;
 mod lifecycle;
 mod selection;
 mod style;
-mod view;
+mod fps;
 
 // Re-exports so the existing `super::cross_dispatch::apply_*`
 // import surface (used by `action_core.rs`, `native.rs`, the
@@ -73,7 +75,7 @@ pub(in crate::application::app) use edges::*;
 pub(in crate::application::app) use lifecycle::*;
 pub(in crate::application::app) use selection::*;
 pub(in crate::application::app) use style::*;
-pub(in crate::application::app) use view::*;
+pub(in crate::application::app) use fps::*;
 
 /// Pure inner helper for the keybind-triggered custom-mutation path.
 /// Runs the same animation-aware apply + always-`apply_document_actions`

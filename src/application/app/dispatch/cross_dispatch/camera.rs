@@ -1,20 +1,28 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Camera / zoom apply_* helpers — keyboard-driven zoom step,
-//! reset, fit-to-tree, pan nudges, centre-on-selection, and
-//! jump-to-root. The first four are renderer-only (no document
-//! mutation, no rebuild). `apply_center_on_selection` reads the
-//! document but doesn't mutate. `apply_jump_to_root` is the lone
-//! arm that touches both selection and camera, so it routes
-//! through the selection-rebuild envelope.
+//! Camera + zoom apply_* helpers — every arm whose effect lands
+//! on camera state (renderer-side) or zoom-visibility metadata
+//! (document-side). Two thematic groups:
+//!
+//! 1. **Camera-state arms** (renderer-only, no document
+//!    mutation): `apply_zoom_step`, `apply_zoom_reset`,
+//!    `apply_zoom_fit`, `apply_pan_camera`,
+//!    `apply_center_on_selection` (reads doc, doesn't mutate).
+//! 2. **Zoom-visibility arms** (document mutations gated by the
+//!    rebuild envelope): `apply_set_zoom_window`,
+//!    `apply_clear_zoom`.
+//!
+//! `apply_jump_to_root` is the cross-bucket arm — it touches
+//! both selection and camera, so it routes through
+//! `rebuild_after_selection_change`.
 
 use crate::application::common::RenderDecree;
-use crate::application::document::MindMapDocument;
+use crate::application::document::{MindMapDocument, OptionEdit};
 use crate::application::renderer::Renderer;
 use baumhard::mindmap::tree_builder::MindMapTree;
 
 use super::selection::jump_to_root_in;
-use super::RebuildContext;
+use super::{apply_with_rebuild, RebuildContext};
 
 /// Direction of a single keyboard / wheel zoom step. Typed so
 /// callers don't have to pass `&Action` and the helper doesn't
@@ -132,4 +140,40 @@ pub(in crate::application::app) fn apply_jump_to_root(rc: &mut RebuildContext<'_
         rc.renderer.set_camera_center(centre);
         rc.rebuild_after_selection_change();
     }
+}
+
+/// Set the per-element zoom-visibility window (`min_zoom_to_render`,
+/// `max_zoom_to_render`) on every node / edge / portal in the
+/// current selection. Either bound may be `OptionEdit::Set` (write
+/// the value), `OptionEdit::Clear` (drop the bound entirely), or
+/// `OptionEdit::Keep` (no-op). Document mutation → full rebuild
+/// via `apply_with_rebuild`.
+///
+/// This is a *document* zoom edit (per-element visibility window
+/// stored on the model), not a *camera* zoom (`apply_zoom_step` /
+/// `_reset` / `_fit`). Both share this file because the user-
+/// facing concept "zoom" covers both — but they touch different
+/// state and only this one runs through the rebuild envelope.
+pub(in crate::application::app) fn apply_set_zoom_window(
+    min: OptionEdit<f32>,
+    max: OptionEdit<f32>,
+    rc: &mut RebuildContext<'_>,
+) {
+    apply_with_rebuild(rc, |doc| {
+        crate::application::console::commands::zoom::apply_zoom_to_selection(doc, min, max)
+    });
+}
+
+/// Clear both zoom-visibility bounds on every element in the
+/// current selection (equivalent to `apply_set_zoom_window` with
+/// `OptionEdit::Clear` on both axes). Document mutation → full
+/// rebuild via `apply_with_rebuild`.
+pub(in crate::application::app) fn apply_clear_zoom(rc: &mut RebuildContext<'_>) {
+    apply_with_rebuild(rc, |doc| {
+        crate::application::console::commands::zoom::apply_zoom_to_selection(
+            doc,
+            OptionEdit::Clear,
+            OptionEdit::Clear,
+        )
+    });
 }
