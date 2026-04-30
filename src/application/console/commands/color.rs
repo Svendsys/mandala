@@ -14,7 +14,9 @@
 
 use super::Command;
 use crate::application::color_picker::{ColorTarget, NodeColorAxis};
-use crate::application::console::completion::{prefix_filter, Completion, CompletionContext, CompletionState};
+use crate::application::console::completion::{
+    kv_key_completions_with_hints, prefix_filter, Completion, CompletionContext, CompletionState,
+};
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
 use crate::application::console::traits::{
@@ -40,7 +42,7 @@ pub const COMMAND: Command = Command {
 fn complete_color(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completion> {
     match &state.context {
         CompletionContext::Token { index } => {
-            let mut out = kv_key_completions(state.partial);
+            let mut out = kv_key_completions_with_hints(KEYS, state.partial, kv_hint);
             // At token 0 the bare verbs — `pick` plus the axis
             // positionals `bg` / `text` / `border` — also hand off
             // to the glyph-wheel picker. Suggest them alongside the
@@ -63,24 +65,12 @@ fn complete_color(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Complet
     }
 }
 
-fn kv_key_completions(partial: &str) -> Vec<Completion> {
-    KEYS.iter()
-        .filter(|k| k.starts_with(partial))
-        .map(|k| Completion {
-            text: format!("{}=", k),
-            display: format!("{}=", k),
-            hint: Some(kv_hint(k).to_string()),
-            font_family: None,
-        })
-        .collect()
-}
-
-fn kv_hint(key: &str) -> &'static str {
+fn kv_hint(key: &str) -> Option<&'static str> {
     match key {
-        "bg" => "fill / background color",
-        "text" => "text / label color",
-        "border" => "frame / line color",
-        _ => "",
+        "bg" => Some("fill / background color"),
+        "text" => Some("text / label color"),
+        "border" => Some("frame / line color"),
+        _ => None,
     }
 }
 
