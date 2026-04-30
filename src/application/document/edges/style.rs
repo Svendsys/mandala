@@ -192,6 +192,15 @@ impl MindMapDocument {
     /// clamped into `[min_font_size_pt, max_font_size_pt]`. Returns
     /// `true` if the clamp yielded a different value from the current
     /// (i.e. we're not already pinned at the relevant bound).
+    ///
+    /// **No-op tolerance.** The change-detection compares
+    /// pre/post via `almost_equal` (1e-5). A `delta_pt` smaller
+    /// than that magnitude (e.g. `1e-6`) silently no-ops — the
+    /// stored value is f32 and sub-1e-5 deltas don't survive
+    /// the clamp's float arithmetic anyway, so the no-op
+    /// preserves the model's "bit-exact equality after
+    /// round-trip" property. User-facing verbs should validate
+    /// reasonable delta magnitudes upstream.
     pub fn set_edge_font_size_step(&mut self, edge_ref: &EdgeRef, delta_pt: f32) -> bool {
         self.mutate_edge(edge_ref, |edge, canvas| {
             let cfg = ensure_glyph_connection_inline(edge, canvas);

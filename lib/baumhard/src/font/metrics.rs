@@ -40,12 +40,22 @@ pub const MONOSPACE_ADVANCE_RATIO: f32 = 0.6;
 /// **Cost.** O(1); no allocation, no font-system access. Safe to
 /// call from per-frame layout paths.
 ///
+/// **NaN / non-finite inputs.** Returns NaN / ±∞ unchanged —
+/// this is a multiplicative shape, not a sanitiser. Every
+/// in-tree caller pre-clamps its `font_size_pt` to a finite
+/// positive value (via [`is_positive_finite`] at the parse
+/// boundary, or [`f32::clamp`] inside `effective_font_size_pt`).
+/// New callers MUST do the same; threading NaN through layout
+/// math propagates into every downstream pixel.
+///
 /// **Forward-compat (§B10).** See the note on
 /// [`MONOSPACE_ADVANCE_RATIO`] — this helper inherits the same
 /// "single-face calibration" caveat. Per-face calibration will
 /// belong to the plugin font-metrics API when it lands; treat
 /// this `pub` exposure as in-tree scaffolding, not a plugin
 /// contract.
+///
+/// [`is_positive_finite`]: crate::util::geometry::is_positive_finite
 #[inline]
 pub fn monospace_advance(font_size_pt: f32) -> f32 {
     font_size_pt * MONOSPACE_ADVANCE_RATIO

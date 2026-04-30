@@ -295,12 +295,32 @@ struct WasmApp {
     /// Shared with the rAF render loop set up in [`run`]. `None`
     /// until the async `Renderer::new` future inside `spawn_local`
     /// resolves.
+    ///
+    /// **Re-borrow contract.** Any code path that's already
+    /// holding `self.renderer.borrow*()` (per-arm methods do this
+    /// at the top of their body) must NOT call back into a
+    /// dispatch path that re-clones this `Rc` and re-borrows it —
+    /// `RefCell` defers the conflict to runtime panic. Today no
+    /// such re-entry exists (cross_dispatch arms see only the
+    /// `RebuildContext` projection, not the outer `Rc`); future
+    /// arms wiring `WasmInputState`-internal Rc handles must
+    /// keep this contract.
     renderer: Rc<RefCell<Option<Renderer>>>,
     /// Shared with the rAF render loop. `None` until the document
     /// fetch + tree build inside `spawn_local` completes.
+    ///
+    /// Same re-borrow contract as [`Self::renderer`] applies.
     input: Rc<RefCell<Option<WasmInputState>>>,
     /// Shared with the canvas keydown listener so the editor's
     /// open / close transitions can flip its `preventDefault` flag.
+    ///
+    /// **`Cell`, not `RefCell`** — load-bearing. Several per-arm
+    /// methods call `self.suppress_keys.set(...)` while
+    /// `self.input.borrow_mut()` is still live; if the type were
+    /// `Rc<RefCell<bool>>` those calls would have to drop the
+    /// input borrow first to avoid the runtime borrow conflict.
+    /// `Cell::set` doesn't take a borrow so the two operations
+    /// can interleave freely. Don't change the type.
     suppress_keys: Rc<Cell<bool>>,
     /// Resolved keybind table — built once in [`run`] from
     /// `Options::keybind_config`, read on every key event.
@@ -360,6 +380,29 @@ impl WasmApp {
                 ..
             } => self.handle_mouse_input(state),
             WindowEvent::MouseWheel { delta, .. } => self.handle_mouse_wheel(delta),
+            // Catch-all for winit `WindowEvent` variants WASM
+            // doesn't yet route. The notable un-wired ones:
+            //
+            // - `WindowEvent::Touch` — primary mobile-browser
+            //   input. Wiring this requires an event_touch.rs
+            //   sibling + the gesture-recognizer state machine
+            //   that native already has. Mobile budget is
+            //   binding (CODE_CONVENTIONS §4); landing this
+            //   is on the named trajectory.
+            // - `WindowEvent::Ime` — IME composition strings.
+            //   Required for non-Latin text editing inside the
+            //   inline node-text editor. Modal-handler-side
+            //   work; the dispatch funnel doesn't see literal
+            //   IME payloads (§3 carve-out for `winit::Key`).
+            // - `WindowEvent::Focused`, `CursorEntered` /
+            //   `CursorLeft` — informational; could drive a
+            //   "canvas inactive" overlay in the future.
+            //
+            // Drop silently rather than log because winit fires
+            // every variant on every event tick; a log would
+            // burn 60Hz × variants. When any of the above gets
+            // wired, lift the corresponding match arm out of
+            // this catch-all into a dedicated handle_* method.
             _ => {}
         }
     }
