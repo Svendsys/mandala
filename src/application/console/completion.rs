@@ -229,16 +229,13 @@ fn is_kv_token(t: &str) -> bool {
     }
 }
 
-/// If the partial token looks like `"key=valuePart"`, split into
-/// `(key, valuePart)`. The `=` must not be at position 0 — a token
-/// starting with `=` stays a positional (escape hatch for literal
-/// values that happen to start with `=`).
+/// Owned-`String` wrapper around [`super::parser::split_kv`] for
+/// cursor-time partial-token splitting. The completion state is
+/// built from owned strings (the borrow scope outlives this call),
+/// so we `.to_string()` at the boundary rather than threading the
+/// borrow through `CompletionContext::KvValue`.
 fn split_kv_at_cursor(partial: &str) -> Option<(String, String)> {
-    let eq = partial.find('=')?;
-    if eq == 0 {
-        return None;
-    }
-    Some((partial[..eq].to_string(), partial[eq + 1..].to_string()))
+    super::parser::split_kv(partial).map(|(k, v)| (k.to_string(), v.to_string()))
 }
 
 #[cfg(test)]
