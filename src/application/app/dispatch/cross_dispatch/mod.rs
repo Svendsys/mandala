@@ -61,10 +61,10 @@ use super::super::scene_rebuild::rebuild_all;
 
 mod camera;
 mod edges;
+mod fps;
 mod lifecycle;
 mod selection;
 mod style;
-mod fps;
 
 // Re-exports so the existing `super::cross_dispatch::apply_*`
 // import surface (used by `action_core.rs`, `native.rs`, the
@@ -72,10 +72,10 @@ mod fps;
 // working unchanged.
 pub(in crate::application::app) use camera::*;
 pub(in crate::application::app) use edges::*;
+pub(in crate::application::app) use fps::*;
 pub(in crate::application::app) use lifecycle::*;
 pub(in crate::application::app) use selection::*;
 pub(in crate::application::app) use style::*;
-pub(in crate::application::app) use fps::*;
 
 /// Pure inner helper for the keybind-triggered custom-mutation path.
 /// Runs the same animation-aware apply + always-`apply_document_actions`
@@ -232,10 +232,8 @@ pub(in crate::application::app) use rebuild_ctx;
 ///     apply_anchor_to_selection(doc, Some(from), Some(to))
 /// );
 /// ```
-pub(in crate::application::app) fn apply_with_rebuild<F>(
-    rc: &mut RebuildContext<'_>,
-    apply: F,
-) where
+pub(in crate::application::app) fn apply_with_rebuild<F>(rc: &mut RebuildContext<'_>, apply: F)
+where
     F: FnOnce(&mut MindMapDocument) -> bool,
 {
     if apply(rc.document) {

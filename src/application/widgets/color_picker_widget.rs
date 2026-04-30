@@ -210,9 +210,7 @@ mod tests {
             ("hex", 600, 1, &[]),
         ];
         assert_eq!(children.len(), expected.len());
-        for (child, (exp_section, exp_base, exp_count, exp_skip)) in
-            children.iter().zip(expected.iter())
-        {
+        for (child, (exp_section, exp_base, exp_count, exp_skip)) in children.iter().zip(expected.iter()) {
             let MutatorNode::Repeat {
                 section,
                 channel_base,

@@ -7,8 +7,12 @@ use baumhard::mindmap::model::MindMap;
 use super::Violation;
 
 const SHAPES: &[&str] = &[
-    "rectangle", "rounded_rectangle", "ellipse", "diamond",
-    "parallelogram", "hexagon",
+    "rectangle",
+    "rounded_rectangle",
+    "ellipse",
+    "diamond",
+    "parallelogram",
+    "hexagon",
 ];
 const LAYOUT_TYPES: &[&str] = &["map", "tree", "outline"];
 const DIRECTIONS: &[&str] = &["auto", "up", "down", "left", "right", "balanced"];
@@ -22,8 +26,20 @@ pub fn check(map: &MindMap) -> Vec<Violation> {
 
     for (loc, node) in map.node_locations() {
         check_value(&mut out, &loc, "style.shape", &node.style.shape, SHAPES);
-        check_value(&mut out, &loc, "layout.type", &node.layout.layout_type, LAYOUT_TYPES);
-        check_value(&mut out, &loc, "layout.direction", &node.layout.direction, DIRECTIONS);
+        check_value(
+            &mut out,
+            &loc,
+            "layout.type",
+            &node.layout.layout_type,
+            LAYOUT_TYPES,
+        );
+        check_value(
+            &mut out,
+            &loc,
+            "layout.direction",
+            &node.layout.direction,
+            DIRECTIONS,
+        );
     }
 
     for (loc, edge) in map.edge_locations() {
@@ -39,13 +55,7 @@ pub fn check(map: &MindMap) -> Vec<Violation> {
     out
 }
 
-fn check_value(
-    out: &mut Vec<Violation>,
-    location: &str,
-    field: &str,
-    value: &str,
-    allowed: &[&str],
-) {
+fn check_value(out: &mut Vec<Violation>, location: &str, field: &str, value: &str, allowed: &[&str]) {
     if !allowed.contains(&value) {
         out.push(Violation::at(
             "enums",
@@ -74,7 +84,9 @@ mod tests {
         n.style.shape = "oblong".into();
         map.nodes.insert("0".into(), n);
         let v = check(&map);
-        assert!(v.iter().any(|x| x.category == "enums" && x.message.contains("oblong")));
+        assert!(v
+            .iter()
+            .any(|x| x.category == "enums" && x.message.contains("oblong")));
     }
 
     #[test]
@@ -86,7 +98,9 @@ mod tests {
         e.anchor_from = "diagonal".into();
         map.edges.push(e);
         let v = check(&map);
-        assert!(v.iter().any(|x| x.category == "enums" && x.message.contains("diagonal")));
+        assert!(v
+            .iter()
+            .any(|x| x.category == "enums" && x.message.contains("diagonal")));
     }
 
     #[test]

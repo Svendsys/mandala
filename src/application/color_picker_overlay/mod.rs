@@ -86,4 +86,3 @@ pub(crate) fn build_dynamic_mutator(
 ) -> MutatorTree<GfxMutator> {
     picker_glyph_areas::build_color_picker_overlay_dynamic_mutator(geometry, layout)
 }
-

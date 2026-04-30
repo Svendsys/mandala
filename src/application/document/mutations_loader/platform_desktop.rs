@@ -65,8 +65,7 @@ fn read_and_parse(path: &Path) -> Result<Vec<CustomMutation>, String> {
         Ok(_) => {}
         Err(e) => return Err(format!("stat {}: {}", path.display(), e)),
     }
-    let src = std::fs::read_to_string(path)
-        .map_err(|e| format!("read {}: {}", path.display(), e))?;
+    let src = std::fs::read_to_string(path).map_err(|e| format!("read {}: {}", path.display(), e))?;
     super::parse_mutations_json(&src)
 }
 

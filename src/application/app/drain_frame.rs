@@ -14,12 +14,11 @@ use glam::Vec2;
 
 use super::now_ms;
 use super::scene_rebuild::{
-    flush_canvas_scene_buffers, rebuild_all, update_connection_label_tree,
-    update_connection_tree, update_edge_handle_tree, update_portal_tree,
+    flush_canvas_scene_buffers, rebuild_all, update_connection_label_tree, update_connection_tree,
+    update_edge_handle_tree, update_portal_tree,
 };
 use crate::application::document::{
-    apply_tree_highlights, rect_select, MindMapDocument, SelectionState,
-    HIGHLIGHT_COLOR,
+    apply_tree_highlights, rect_select, MindMapDocument, SelectionState, HIGHLIGHT_COLOR,
 };
 use crate::application::renderer::Renderer;
 
@@ -85,19 +84,10 @@ pub(super) fn drain_camera_geometry_rebuild(
             // also catch this, but clearing explicitly here keeps
             // the ordering readable next to the rebuild.
             scene_cache.clear();
-            let scene = doc.build_scene_with_cache(
-                &HashMap::new(),
-                scene_cache,
-                renderer.camera_zoom(),
-            );
+            let scene = doc.build_scene_with_cache(&HashMap::new(), scene_cache, renderer.camera_zoom());
             update_connection_tree(&scene, app_scene);
             update_connection_label_tree(&scene, app_scene, renderer);
-            update_portal_tree(
-                doc,
-                &HashMap::new(),
-                app_scene,
-                renderer,
-            );
+            update_portal_tree(doc, &HashMap::new(), app_scene, renderer);
             // Edge handles (if an edge is selected) must
             // also follow camera changes -- scroll-wheel
             // zoom with a selected edge used to leave

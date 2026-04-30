@@ -17,8 +17,7 @@ fn test_build_tree_scale_1000_node_chain() {
     // Every chain node is reachable via the node_map.
     for i in 0..1000 {
         let id = format!("c{}", i);
-        assert!(result.node_map.contains_key(&id),
-            "missing node {}", id);
+        assert!(result.node_map.contains_key(&id), "missing node {}", id);
     }
 }
 

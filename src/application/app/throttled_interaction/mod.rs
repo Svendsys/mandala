@@ -76,9 +76,7 @@ impl ThrottledDrag {
     /// dispatcher can call [`ThrottledInteraction::drive`] without
     /// naming each kind. One match arm per variant; the drain
     /// dispatcher itself stays shapeless.
-    pub(in crate::application::app) fn as_dyn_mut(
-        &mut self,
-    ) -> &mut dyn ThrottledInteraction {
+    pub(in crate::application::app) fn as_dyn_mut(&mut self) -> &mut dyn ThrottledInteraction {
         match self {
             Self::MovingNode(i) => i,
             Self::EdgeHandle(i) => i,
@@ -152,7 +150,9 @@ pub(in crate::application::app) trait ThrottledInteraction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::app::throttled_interaction::test_utils::{drive_throttle_over_budget, fixture_edge};
+    use crate::application::app::throttled_interaction::test_utils::{
+        drive_throttle_over_budget, fixture_edge,
+    };
     use crate::application::document::EdgeRef;
     use baumhard::mindmap::scene_builder::EdgeHandleKind;
     use glam::Vec2;
@@ -194,10 +194,7 @@ mod tests {
 
     #[test]
     fn test_as_dyn_mut_routes_to_edge_label() {
-        let mut inner = EdgeLabelInteraction::new(
-            EdgeRef::new("a", "b", "parent_child"),
-            fixture_edge(),
-        );
+        let mut inner = EdgeLabelInteraction::new(EdgeRef::new("a", "b", "parent_child"), fixture_edge());
         inner.pending_cursor = Some(Vec2::new(5.0, 5.0));
         let mut drag = ThrottledDrag::EdgeLabel(inner);
         assert!(drag.as_dyn_mut().has_pending());

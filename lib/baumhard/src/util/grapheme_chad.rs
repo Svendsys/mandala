@@ -16,9 +16,7 @@ use unicode_segmentation::UnicodeSegmentation;
 /// land on a UTF-8 char boundary; passing a mid-codepoint byte panics
 /// like any other `String` slice. O(n) on the search distance.
 pub(crate) fn slice_to_newline(s: &str, byte_index: usize) -> &str {
-    let end_byte_index = s[byte_index..]
-        .find('\n')
-        .map_or(s.len(), |i| byte_index + i);
+    let end_byte_index = s[byte_index..].find('\n').map_or(s.len(), |i| byte_index + i);
 
     &s[byte_index..end_byte_index]
 }
@@ -345,7 +343,8 @@ pub fn scalar_display_width(c: char) -> usize {
         || cp == 0x200B                       // Zero Width Space
         || cp == 0x200C                       // Zero Width Non-Joiner
         || cp == 0x200D                       // Zero Width Joiner
-        || cp == 0xFEFF                       // BOM / Zero Width No-Break Space
+        || cp == 0xFEFF
+    // BOM / Zero Width No-Break Space
     {
         return 0;
     }
@@ -362,7 +361,8 @@ pub fn scalar_display_width(c: char) -> usize {
         || (0xFF00..=0xFF60).contains(&cp)     // Fullwidth Forms (pre-halfwidth)
         || (0xFFE0..=0xFFE6).contains(&cp)     // Fullwidth signs
         || (0x20000..=0x2FFFD).contains(&cp)   // CJK Extensions B–F, Compat Supplement
-        || (0x30000..=0x3FFFD).contains(&cp)   // CJK Extension G+
+        || (0x30000..=0x3FFFD).contains(&cp)
+    // CJK Extension G+
     {
         return 2;
     }
@@ -523,6 +523,4 @@ fn grapheme_is_word(g: &str) -> bool {
 }
 
 #[cfg(test)]
-mod test {
-
-}
+mod test {}

@@ -56,9 +56,7 @@ pub fn picker_channel(section: &str, index: usize) -> usize {
         impl SectionContext for NoCtx {}
         let mut out = Vec::new();
         iter_section_channels(&load_spec().mutator_spec, &NoCtx, &mut out);
-        out.into_iter()
-            .map(|(s, i, c)| ((s, i), c))
-            .collect()
+        out.into_iter().map(|(s, i, c)| ((s, i), c)).collect()
     });
     *map.get(&(section.to_string(), index))
         .unwrap_or_else(|| panic!("picker_channel: unknown section/index ({section:?}, {index})"))
@@ -150,9 +148,7 @@ pub fn arm_right_glyphs() -> &'static [&'static str] {
 /// Central preview glyph — doubles as the commit button on the ࿕.
 pub fn center_preview_glyph() -> &'static str {
     static CACHE: OnceLock<&'static str> = OnceLock::new();
-    CACHE.get_or_init(|| {
-        Box::leak(load_spec().center_preview_glyph.clone().into_boxed_str())
-    })
+    CACHE.get_or_init(|| Box::leak(load_spec().center_preview_glyph.clone().into_boxed_str()))
 }
 
 /// Explicit font family the renderer should pin when shaping

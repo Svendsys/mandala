@@ -98,9 +98,7 @@ fn legacy_theme_demo_map_round_trips_through_canonical_save() {
     use crate::mindmap::loader::{load_from_file, save_to_file};
     use std::path::PathBuf;
 
-    let repo_root: PathBuf = [env!("CARGO_MANIFEST_DIR"), "..", ".."]
-        .iter()
-        .collect();
+    let repo_root: PathBuf = [env!("CARGO_MANIFEST_DIR"), "..", ".."].iter().collect();
     let src_path = repo_root.join("maps").join("theme_demo.mindmap.json");
     // Some test runners may not have access to the full repo tree
     // (e.g. crate-scoped cargo test); skip gracefully rather than
@@ -116,16 +114,12 @@ fn legacy_theme_demo_map_round_trips_through_canonical_save() {
     );
 
     // Save to a temp file using the canonical on-save path.
-    let tmp_path = std::env::temp_dir()
-        .join("mandala_test_theme_demo_roundtrip.mindmap.json");
+    let tmp_path = std::env::temp_dir().join("mandala_test_theme_demo_roundtrip.mindmap.json");
     save_to_file(&tmp_path, &original).expect("save_to_file succeeds");
 
     // Reload and compare field-by-field on every custom_mutation.
     let reloaded = load_from_file(&tmp_path).expect("canonical reloads");
-    assert_eq!(
-        reloaded.custom_mutations.len(),
-        original.custom_mutations.len()
-    );
+    assert_eq!(reloaded.custom_mutations.len(), original.custom_mutations.len());
     for (before, after) in original
         .custom_mutations
         .iter()

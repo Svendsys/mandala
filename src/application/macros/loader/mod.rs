@@ -66,8 +66,7 @@ pub fn parse_user_macros_json(source: &str) -> Result<Vec<Macro>, String> {
     if source.trim().is_empty() {
         return Ok(Vec::new());
     }
-    serde_json::from_str::<Vec<Macro>>(source)
-        .map_err(|e| format!("malformed user macros JSON: {}", e))
+    serde_json::from_str::<Vec<Macro>>(source).map_err(|e| format!("malformed user macros JSON: {}", e))
 }
 
 /// Parse Map-tier macros out of a loaded document's
@@ -93,13 +92,12 @@ pub fn parse_map_macros(values: &[serde_json::Value]) -> Vec<Macro> {
                 // better diagnostic than "entry [3]" alone. The id
                 // may be missing entirely on a malformed entry; fall
                 // back to a placeholder.
-                let id_hint = v
-                    .get("id")
-                    .and_then(|s| s.as_str())
-                    .unwrap_or("<no id>");
+                let id_hint = v.get("id").and_then(|s| s.as_str()).unwrap_or("<no id>");
                 log::warn!(
                     "macros: Map-tier entry [{}] (id={}) failed to parse: {} (skipping)",
-                    idx, id_hint, e
+                    idx,
+                    id_hint,
+                    e
                 );
             }
         }
@@ -137,9 +135,7 @@ pub fn rebuild_map_macros(
 /// registry is flat (id-keyed). Authors should namespace inline
 /// macro ids to avoid collisions across nodes — `format/macros.md`
 /// covers this and recommends `node-id.action` patterns.
-pub fn parse_inline_macros(
-    doc: &crate::application::document::MindMapDocument,
-) -> Vec<super::Macro> {
+pub fn parse_inline_macros(doc: &crate::application::document::MindMapDocument) -> Vec<super::Macro> {
     let mut out = Vec::new();
     // Cross-node id collisions inside the Inline tier are
     // non-deterministic — `MindMap.nodes` is a HashMap, so the
@@ -147,8 +143,7 @@ pub fn parse_inline_macros(
     // id duplicated across nodes depends on hash randomization.
     // Warn at parse time so authors notice and namespace their
     // ids (e.g. `<node-id>.action`).
-    let mut seen: std::collections::HashMap<String, String> =
-        std::collections::HashMap::new();
+    let mut seen: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     for (node_id, node) in &doc.mindmap.nodes {
         for (idx, v) in node.inline_macros.iter().enumerate() {
             match serde_json::from_value::<super::Macro>(v.clone()) {
@@ -160,20 +155,23 @@ pub fn parse_inline_macros(
                                  '{}' and '{}'; HashMap iteration order is \
                                  non-deterministic so the winner varies per process \
                                  start. Namespace your ids (e.g. '<node-id>.{}').",
-                                m.id, prev_node, node_id, m.id
+                                m.id,
+                                prev_node,
+                                node_id,
+                                m.id
                             );
                         }
                     }
                     out.push(m);
                 }
                 Err(e) => {
-                    let id_hint = v
-                        .get("id")
-                        .and_then(|s| s.as_str())
-                        .unwrap_or("<no id>");
+                    let id_hint = v.get("id").and_then(|s| s.as_str()).unwrap_or("<no id>");
                     log::warn!(
                         "macros: Inline-tier entry on node '{}' [{}] (id={}) failed to parse: {} (skipping)",
-                        node_id, idx, id_hint, e
+                        node_id,
+                        idx,
+                        id_hint,
+                        e
                     );
                 }
             }
@@ -194,10 +192,7 @@ pub fn rebuild_inline_macros(
     registry.clear_tier(super::MacroSource::Inline);
     let inline_macros = parse_inline_macros(doc);
     if !inline_macros.is_empty() {
-        log::info!(
-            "macros: loaded {} Inline-tier macro(s)",
-            inline_macros.len()
-        );
+        log::info!("macros: loaded {} Inline-tier macro(s)", inline_macros.len());
     }
     registry.extend_with_tier(inline_macros, super::MacroSource::Inline);
 }
@@ -281,8 +276,7 @@ mod tests {
 
         // Pick the first two nodes and stuff inline_macros onto
         // them — one valid, one malformed, one valid.
-        let mut node_ids: Vec<String> =
-            doc.mindmap.nodes.keys().cloned().collect();
+        let mut node_ids: Vec<String> = doc.mindmap.nodes.keys().cloned().collect();
         node_ids.sort(); // deterministic ordering for the test
         let n0 = node_ids[0].clone();
         let n1 = node_ids[1].clone();
@@ -310,8 +304,7 @@ mod tests {
         // Two valid entries (one from each node), one malformed
         // skipped.
         assert_eq!(parsed.len(), 2);
-        let ids: std::collections::HashSet<&str> =
-            parsed.iter().map(|m| m.id.as_str()).collect();
+        let ids: std::collections::HashSet<&str> = parsed.iter().map(|m| m.id.as_str()).collect();
         assert!(ids.contains("node0-action"));
         assert!(ids.contains("node1-action"));
         assert!(!ids.contains("node0-malformed"));

@@ -55,7 +55,10 @@ fn test_cap_kv_from_arrow_sets_left_triangle() {
     let er = select_first_edge(&mut doc);
     let _ = run("cap from=arrow", &mut doc);
     let updated = doc.mindmap.edges.iter().find(|e| er.matches(e)).unwrap();
-    let cap = updated.glyph_connection.as_ref().and_then(|c| c.cap_start.as_deref());
+    let cap = updated
+        .glyph_connection
+        .as_ref()
+        .and_then(|c| c.cap_start.as_deref());
     assert_eq!(cap, Some("\u{25C0}"));
 }
 
@@ -65,7 +68,10 @@ fn test_cap_kv_to_arrow_sets_right_triangle() {
     let er = select_first_edge(&mut doc);
     let _ = run("cap to=arrow", &mut doc);
     let updated = doc.mindmap.edges.iter().find(|e| er.matches(e)).unwrap();
-    let cap = updated.glyph_connection.as_ref().and_then(|c| c.cap_end.as_deref());
+    let cap = updated
+        .glyph_connection
+        .as_ref()
+        .and_then(|c| c.cap_end.as_deref());
     assert_eq!(cap, Some("\u{25B6}"));
 }
 
@@ -314,17 +320,11 @@ fn test_edge_reset_position_portal_label_selection_clears_only_that_endpoint() {
     doc.set_portal_label_border_t(&er, &to_id, Some(3.25));
     // Select the `from` endpoint's icon so the reset only affects
     // that side.
-    let edge_key = baumhard::mindmap::scene_cache::EdgeKey::new(
-        &er.from_id,
-        &er.to_id,
-        &er.edge_type,
-    );
-    doc.selection = SelectionState::PortalLabel(
-        crate::application::document::PortalLabelSel {
-            edge_key,
-            endpoint_node_id: from_id.clone(),
-        },
-    );
+    let edge_key = baumhard::mindmap::scene_cache::EdgeKey::new(&er.from_id, &er.to_id, &er.edge_type);
+    doc.selection = SelectionState::PortalLabel(crate::application::document::PortalLabelSel {
+        edge_key,
+        endpoint_node_id: from_id.clone(),
+    });
     doc.undo_stack.clear();
 
     let _ = run("edge reset=position", &mut doc);
@@ -377,7 +377,11 @@ fn test_font_kv_size_min_max_atomic_on_edge() {
     assert!(matches!(result, ExecResult::Ok(_)));
     let updated = doc.mindmap.edges.iter().find(|e| er.matches(e)).unwrap();
     let cfg = updated.glyph_connection.as_ref().unwrap();
-    assert!((cfg.max_font_size_pt - 10.0).abs() < 0.01, "max={}", cfg.max_font_size_pt);
+    assert!(
+        (cfg.max_font_size_pt - 10.0).abs() < 0.01,
+        "max={}",
+        cfg.max_font_size_pt
+    );
     assert!(
         (cfg.font_size_pt - 10.0).abs() < 0.01,
         "size should clamp to new max; got {}",
@@ -405,7 +409,11 @@ fn test_font_kv_min_alone_narrows_edge_clamp() {
     let _ = run("font min=20", &mut doc);
     let updated = doc.mindmap.edges.iter().find(|e| er.matches(e)).unwrap();
     let cfg = updated.glyph_connection.as_ref().unwrap();
-    assert!((cfg.min_font_size_pt - 20.0).abs() < 0.01, "min={}", cfg.min_font_size_pt);
+    assert!(
+        (cfg.min_font_size_pt - 20.0).abs() < 0.01,
+        "min={}",
+        cfg.min_font_size_pt
+    );
     // Size wasn't in the kvs, so it shouldn't have moved.
     assert!(
         (cfg.font_size_pt - size_before).abs() < 0.01,
@@ -467,10 +475,7 @@ fn test_label_perpendicular_writes_label_config() {
     let _ = run("label perpendicular=12.5", &mut doc);
     let updated = doc.mindmap.edges.iter().find(|e| er.matches(e)).unwrap();
     assert_eq!(
-        updated
-            .label_config
-            .as_ref()
-            .and_then(|c| c.perpendicular_offset),
+        updated.label_config.as_ref().and_then(|c| c.perpendicular_offset),
         Some(12.5)
     );
     // Clear it back.
@@ -497,17 +502,11 @@ fn test_label_position_t_writes_portal_border_t_on_portal_label_selection() {
     doc.set_edge_display_mode(&er, "portal");
     let edge = doc.mindmap.edges.iter().find(|e| er.matches(e)).unwrap();
     let endpoint = edge.from_id.clone();
-    let edge_key = baumhard::mindmap::scene_cache::EdgeKey::new(
-        &edge.from_id,
-        &edge.to_id,
-        &edge.edge_type,
-    );
-    doc.selection = SelectionState::PortalLabel(
-        crate::application::document::PortalLabelSel {
-            edge_key,
-            endpoint_node_id: endpoint.clone(),
-        },
-    );
+    let edge_key = baumhard::mindmap::scene_cache::EdgeKey::new(&edge.from_id, &edge.to_id, &edge.edge_type);
+    doc.selection = SelectionState::PortalLabel(crate::application::document::PortalLabelSel {
+        edge_key,
+        endpoint_node_id: endpoint.clone(),
+    });
     let _ = run("label position_t=2.5", &mut doc);
     let updated = doc.mindmap.edges.iter().find(|e| er.matches(e)).unwrap();
     let pf = updated.portal_from.as_ref().expect("portal_from installed");
@@ -525,17 +524,11 @@ fn test_label_perpendicular_writes_portal_offset_on_portal_text_selection() {
     doc.set_edge_display_mode(&er, "portal");
     let edge = doc.mindmap.edges.iter().find(|e| er.matches(e)).unwrap();
     let endpoint = edge.to_id.clone();
-    let edge_key = baumhard::mindmap::scene_cache::EdgeKey::new(
-        &edge.from_id,
-        &edge.to_id,
-        &edge.edge_type,
-    );
-    doc.selection = SelectionState::PortalText(
-        crate::application::document::PortalLabelSel {
-            edge_key,
-            endpoint_node_id: endpoint,
-        },
-    );
+    let edge_key = baumhard::mindmap::scene_cache::EdgeKey::new(&edge.from_id, &edge.to_id, &edge.edge_type);
+    doc.selection = SelectionState::PortalText(crate::application::document::PortalLabelSel {
+        edge_key,
+        endpoint_node_id: endpoint,
+    });
     let _ = run("label perpendicular=18.5", &mut doc);
     let updated = doc.mindmap.edges.iter().find(|e| er.matches(e)).unwrap();
     let pt = updated.portal_to.as_ref().expect("portal_to installed");
@@ -595,7 +588,11 @@ fn test_edge_type_parent_child_updates_edge() {
         .unwrap()
         .edge_type
         .clone();
-    let target = if current == "parent_child" { "cross_link" } else { "parent_child" };
+    let target = if current == "parent_child" {
+        "cross_link"
+    } else {
+        "parent_child"
+    };
     let _ = run(&format!("edge type={}", target), &mut doc);
     // `set_edge_type` renames the edge identity, so we can't find it
     // by the old er anymore — just assert at least one edge has the

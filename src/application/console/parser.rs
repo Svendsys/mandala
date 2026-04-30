@@ -130,10 +130,7 @@ impl<'a> Args<'a> {
 
     /// Iterator over positional tokens — skips kv tokens.
     pub fn positionals(&self) -> impl Iterator<Item = &str> {
-        self.tokens
-            .iter()
-            .filter(|t| !is_kv_token(t))
-            .map(|s| s.as_str())
+        self.tokens.iter().filter(|t| !is_kv_token(t)).map(|s| s.as_str())
     }
 
     /// Iterator over `(key, value)` pairs. A kv token splits on the
@@ -251,8 +248,12 @@ mod tests {
 
     #[test]
     fn test_args_positional_skips_kv_tokens() {
-        let toks: Vec<String> =
-            vec!["bg=#123".into(), "my-id".into(), "text=accent".into(), "extra".into()];
+        let toks: Vec<String> = vec![
+            "bg=#123".into(),
+            "my-id".into(),
+            "text=accent".into(),
+            "extra".into(),
+        ];
         let args = Args::new(&toks);
         assert_eq!(args.positional(0), Some("my-id"));
         assert_eq!(args.positional(1), Some("extra"));

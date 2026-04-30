@@ -156,12 +156,7 @@ impl GlyphMatrix {
     /// O(total painted graphemes + existing text size) — the walk
     /// over source components is linear, but each
     /// `replace_graphemes_until_newline` call is O(line length).
-    pub fn place_in(
-        &self,
-        string: &mut String,
-        regions: &mut ColorFontRegions,
-        offset: (usize, usize),
-    ) {
+    pub fn place_in(&self, string: &mut String, regions: &mut ColorFontRegions, offset: (usize, usize)) {
         // Ensure that there's enough lines present in the string
         let num_lines = count_number_lines(&string);
         let needed_lines = self.matrix.len() + offset.1;
@@ -174,8 +169,7 @@ impl GlyphMatrix {
             let graph_line_start_index: usize;
             {
                 // If there's an x-offset, then we also need to ensure that each line is at least the length of that;
-                let target_line_grapheme_range =
-                    find_nth_line_grapheme_range(string, line_num + offset.1);
+                let target_line_grapheme_range = find_nth_line_grapheme_range(string, line_num + offset.1);
                 if let Some(line_graph_range) = target_line_grapheme_range {
                     let target_line_len = line_graph_range.1 - line_graph_range.0;
                     graph_line_start_index = line_graph_range.0;
@@ -195,8 +189,7 @@ impl GlyphMatrix {
             // not yet implemented.
             let mut comp_head = graph_line_start_index + offset.0;
             for component in line.line.iter() {
-                let region_shift =
-                    replace_graphemes_until_newline(string, comp_head, &component.text);
+                let region_shift = replace_graphemes_until_newline(string, comp_head, &component.text);
                 if let Some(t) = region_shift {
                     regions.shift_regions_after(t.0, t.1);
                 }

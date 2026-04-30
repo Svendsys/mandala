@@ -66,10 +66,7 @@ fn picker_dynamic_mutator_composes_on_layout_built_tree() {
         // Static fields come from the layout phase — verify they're
         // still the layout-correct values.
         assert_eq!(a_got.position, a_exp.position, "position on ch {c_got}");
-        assert_eq!(
-            a_got.render_bounds, a_exp.render_bounds,
-            "bounds on ch {c_got}"
-        );
+        assert_eq!(a_got.render_bounds, a_exp.render_bounds, "bounds on ch {c_got}");
         assert_eq!(a_got.outline, a_exp.outline, "outline on ch {c_got}");
     }
 }

@@ -43,9 +43,7 @@ fn load_font_sources() -> FxHashMap<AppFont, Source> {
 /// plus one `load_font_source` call per entry in [`FONT_SOURCES`].
 fn load_fonts() -> FxHashMap<AppFont, TinyVec<[ID; 8]>> {
     debug!("Waiting for font-system write lock");
-    let mut font_system = FONT_SYSTEM
-        .write()
-        .expect("Failed to retrieve font system lock");
+    let mut font_system = FONT_SYSTEM.write().expect("Failed to retrieve font system lock");
     let mut compiled_font_id_map = FxHashMap::default();
     do_for_all_sources(|x, source| {
         let font_id = font_system.db_mut().load_font_source(source.clone());

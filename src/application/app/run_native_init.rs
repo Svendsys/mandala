@@ -17,8 +17,8 @@ use super::console_input::load_console_history;
 use super::label_edit::{LabelEditState, PortalTextEditState};
 use super::run_native::InitState;
 use super::scene_rebuild::{
-    flush_canvas_scene_buffers, update_border_tree_static,
-    update_connection_label_tree, update_connection_tree, update_portal_tree,
+    flush_canvas_scene_buffers, update_border_tree_static, update_connection_label_tree,
+    update_connection_tree, update_portal_tree,
 };
 use super::text_edit::TextEditState;
 use super::{AppMode, DragState, Options};
@@ -80,10 +80,7 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
             // `"var(--bg)"` works, then hand off to the renderer as
             // the render-pass clear color.
             let vars = &doc.mindmap.canvas.theme_variables;
-            let resolved_bg = baumhard::util::color::resolve_var(
-                &doc.mindmap.canvas.background_color,
-                vars,
-            );
+            let resolved_bg = baumhard::util::color::resolve_var(&doc.mindmap.canvas.background_color, vars);
             renderer.set_clear_color_from_hex(resolved_bg);
 
             // Nodes: build Baumhard tree from MindMap hierarchy.

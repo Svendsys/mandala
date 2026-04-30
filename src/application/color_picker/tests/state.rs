@@ -3,9 +3,7 @@
 //! Picker state / channel invariants: strictly-ascending channels,
 //! dynamic-apply short-circuit key equality, resize gesture math.
 
-use crate::application::color_picker::{
-    picker_channel, HUE_SLOT_COUNT, SAT_CELL_COUNT, VAL_CELL_COUNT,
-};
+use crate::application::color_picker::{picker_channel, HUE_SLOT_COUNT, SAT_CELL_COUNT, VAL_CELL_COUNT};
 use crate::application::widgets::color_picker_widget::load_spec;
 
 /// Picker channels must be strictly ascending in tree-insertion
@@ -86,16 +84,16 @@ fn resize_gesture_scale_math_is_multiplicative() {
     let anchor_radius: f32 = 100.0;
     let anchor_scale: f32 = 1.0;
     let r_double = anchor_radius * 2.0;
-    let new_double = (anchor_scale * (r_double / anchor_radius))
-        .clamp(geom.resize_scale_min, geom.resize_scale_max);
+    let new_double =
+        (anchor_scale * (r_double / anchor_radius)).clamp(geom.resize_scale_min, geom.resize_scale_max);
     assert!(new_double > anchor_scale);
     assert!(new_double <= geom.resize_scale_max);
     let r_half = anchor_radius * 0.5;
-    let new_half = (anchor_scale * (r_half / anchor_radius))
-        .clamp(geom.resize_scale_min, geom.resize_scale_max);
+    let new_half =
+        (anchor_scale * (r_half / anchor_radius)).clamp(geom.resize_scale_min, geom.resize_scale_max);
     assert!(new_half < anchor_scale);
     assert!(new_half >= geom.resize_scale_min);
-    let new_same = (anchor_scale * (anchor_radius / anchor_radius))
-        .clamp(geom.resize_scale_min, geom.resize_scale_max);
+    let new_same =
+        (anchor_scale * (anchor_radius / anchor_radius)).clamp(geom.resize_scale_min, geom.resize_scale_max);
     assert!((new_same - anchor_scale).abs() < 1e-6);
 }

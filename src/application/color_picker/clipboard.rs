@@ -9,9 +9,7 @@
 use baumhard::util::color::{hex_to_hsv_safe, hsv_to_hex};
 
 use super::state::ColorPickerState;
-use crate::application::console::traits::{
-    ClipboardContent, HandlesCopy, HandlesCut, HandlesPaste, Outcome,
-};
+use crate::application::console::traits::{ClipboardContent, HandlesCopy, HandlesCut, HandlesPaste, Outcome};
 
 impl HandlesCopy for ColorPickerState {
     fn clipboard_copy(&self) -> ClipboardContent {
@@ -42,9 +40,8 @@ impl HandlesPaste for ColorPickerState {
             return Outcome::Invalid(format!("not a hex color: {}", trimmed));
         };
 
-        let changed = hue_deg.to_bits() != h.to_bits()
-            || sat.to_bits() != s.to_bits()
-            || val.to_bits() != v.to_bits();
+        let changed =
+            hue_deg.to_bits() != h.to_bits() || sat.to_bits() != s.to_bits() || val.to_bits() != v.to_bits();
 
         *hue_deg = h;
         *sat = s;

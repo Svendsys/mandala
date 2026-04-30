@@ -23,10 +23,7 @@ pub(super) fn ensure_glyph_connection_inline<'a>(
     canvas: &Canvas,
 ) -> &'a mut GlyphConnectionConfig {
     if edge.glyph_connection.is_none() {
-        let seed = canvas
-            .default_connection
-            .clone()
-            .unwrap_or_default();
+        let seed = canvas.default_connection.clone().unwrap_or_default();
         edge.glyph_connection = Some(seed);
     }
     edge.glyph_connection.as_mut().expect("just installed")
@@ -58,11 +55,8 @@ pub(super) fn ensure_label_config_inline(edge: &mut MindEdge) -> &mut EdgeLabelC
 /// before invoking — this helper unconditionally writes. Pairs
 /// with [`MindMapDocument::mutate_edge`]: the closure does
 /// `current == new_val? false : { write_endpoint_field(...); true }`.
-pub(super) fn write_endpoint_field<T, S>(
-    slot: &mut Option<PortalEndpointState>,
-    value: Option<T>,
-    setter: S,
-) where
+pub(super) fn write_endpoint_field<T, S>(slot: &mut Option<PortalEndpointState>, value: Option<T>, setter: S)
+where
     S: FnOnce(&mut PortalEndpointState, Option<T>),
 {
     match value {
@@ -120,11 +114,7 @@ mod tests {
     #[test]
     fn write_endpoint_field_lazily_forks_default_slot() {
         let mut slot: Option<PortalEndpointState> = None;
-        write_endpoint_field(
-            &mut slot,
-            Some("#abcdef".to_string()),
-            |s, v| s.color = v,
-        );
+        write_endpoint_field(&mut slot, Some("#abcdef".to_string()), |s, v| s.color = v);
         assert!(slot.is_some());
         assert_eq!(slot.unwrap().color.as_deref(), Some("#abcdef"));
     }

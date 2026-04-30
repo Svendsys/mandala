@@ -3,9 +3,7 @@
 //! Command and delta mutators for `GlyphArea` — the two `Applicable`
 //! implementations that the tree walker dispatches through.
 
-use crate::core::primitives::{
-    Applicable, ApplyOperation, ColorFontRegions, Range,
-};
+use crate::core::primitives::{Applicable, ApplyOperation, ColorFontRegions, Range};
 use crate::font::fonts::AppFont;
 use crate::gfx_structs::shape::NodeShape;
 use crate::util::color::FloatRgba;
@@ -136,9 +134,7 @@ impl GlyphAreaCommand {
             GlyphAreaCommand::SetBounds(_, _) => GlyphAreaCommandType::SetBounds,
             GlyphAreaCommand::SetRegionFont(_, _) => GlyphAreaCommandType::SetRegionFont,
             GlyphAreaCommand::SetRegionColor(_, _) => GlyphAreaCommandType::SetRegionColor,
-            GlyphAreaCommand::DeleteColorFontRegion(_) => {
-                GlyphAreaCommandType::DeleteColorFontRegion
-            }
+            GlyphAreaCommand::DeleteColorFontRegion(_) => GlyphAreaCommandType::DeleteColorFontRegion,
             GlyphAreaCommand::ChangeRegionRange { .. } => GlyphAreaCommandType::ChangeRegionRange,
         }
     }
@@ -372,9 +368,7 @@ impl DeltaGlyphArea {
     /// explicitly clears the outline" (returns `Some(None)`); the
     /// latter is how a mutator removes a previously-set halo.
     pub fn outline(&self) -> Option<Option<OutlineStyle>> {
-        if let Some(GlyphAreaField::Outline(outline)) =
-            self.fields.get(&GlyphAreaFieldType::Outline)
-        {
+        if let Some(GlyphAreaField::Outline(outline)) = self.fields.get(&GlyphAreaFieldType::Outline) {
             Some(*outline)
         } else {
             None
@@ -386,9 +380,7 @@ impl DeltaGlyphArea {
     /// `shape` field alone; `Some(shape)` means it replaces (under
     /// Assign/Add) or resets-to-rectangle (under Subtract). O(1).
     pub fn shape(&self) -> Option<NodeShape> {
-        if let Some(GlyphAreaField::Shape(shape)) =
-            self.fields.get(&GlyphAreaFieldType::Shape)
-        {
+        if let Some(GlyphAreaField::Shape(shape)) = self.fields.get(&GlyphAreaFieldType::Shape) {
             Some(*shape)
         } else {
             None
@@ -414,10 +406,10 @@ impl DeltaGlyphArea {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::primitives::ColorFontRegions;
     use crate::gfx_structs::area::GlyphArea;
     use crate::gfx_structs::shape::NodeShape;
     use crate::gfx_structs::zoom_visibility::ZoomVisibility;
-    use crate::core::primitives::ColorFontRegions;
     use glam::Vec2;
 
     /// `full_assign_from` emits exactly the nine fields the
@@ -428,13 +420,7 @@ mod tests {
     /// §B2`.
     #[test]
     fn full_assign_from_emits_all_nine_fields() {
-        let area = GlyphArea::new_with_str(
-            "test",
-            12.0,
-            12.0,
-            Vec2::new(1.0, 2.0),
-            Vec2::new(100.0, 50.0),
-        );
+        let area = GlyphArea::new_with_str("test", 12.0, 12.0, Vec2::new(1.0, 2.0), Vec2::new(100.0, 50.0));
         let delta = DeltaGlyphArea::full_assign_from(&area);
         assert!(delta.fields.contains_key(&GlyphAreaFieldType::Text));
         assert!(delta.fields.contains_key(&GlyphAreaFieldType::Position));
@@ -509,5 +495,4 @@ mod tests {
         delta.apply_to(&mut target);
         assert_eq!(target.zoom_visibility, source.zoom_visibility);
     }
-
 }

@@ -33,4 +33,3 @@ pub use cosmic_text::Color;
 /// `cosmic_text::SwashCache`. Owned by the caller — one per
 /// measurement pass — so repeated calls share rasterization work.
 pub use cosmic_text::SwashCache;
-

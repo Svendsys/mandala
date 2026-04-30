@@ -13,11 +13,9 @@ use crate::application::document::MindMapDocument;
 use crate::application::keybinds::{InputContext, ResolvedKeybinds};
 use crate::application::renderer::Renderer;
 
-use super::scene_rebuild::{
-    rebuild_all, update_connection_label_tree, update_portal_tree,
-};
-use super::text_edit::insert_caret;
 use super::route_label_edit_key;
+use super::scene_rebuild::{rebuild_all, update_connection_label_tree, update_portal_tree};
+use super::text_edit::insert_caret;
 
 // (`update_portal_tree` imported above is used by the portal-text
 // editor; the line-mode label editor deliberately does NOT touch
@@ -156,9 +154,7 @@ pub(in crate::application::app) fn handle_label_edit_key(
     _scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
 ) {
     let name = key_name.as_deref();
-    let action = name.and_then(|n| {
-        keybinds.action_for_context(InputContext::LabelEdit, n, ctrl, shift, alt)
-    });
+    let action = name.and_then(|n| keybinds.action_for_context(InputContext::LabelEdit, n, ctrl, shift, alt));
     // `LabelEditCommit` / `LabelEditCancel` are funneled via the
     // keyboard handler's pre-filter (`event_keyboard.rs:85-103`).
     // This handler reaches only the literal-Key character + cursor
@@ -228,7 +224,12 @@ pub(in crate::application::app) fn close_label_edit(
     scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
 ) {
     let (edge_ref, buffer, original) = match std::mem::replace(label_edit_state, LabelEditState::Closed) {
-        LabelEditState::Open { edge_ref, buffer, original, .. } => (edge_ref, buffer, original),
+        LabelEditState::Open {
+            edge_ref,
+            buffer,
+            original,
+            ..
+        } => (edge_ref, buffer, original),
         LabelEditState::Closed => return,
     };
     doc.label_edit_preview = None;
@@ -343,8 +344,7 @@ pub(in crate::application::app) fn open_portal_text_edit(
         return;
     }
     let original =
-        baumhard::mindmap::model::portal_endpoint_state(edge, endpoint_node_id)
-            .and_then(|s| s.text.clone());
+        baumhard::mindmap::model::portal_endpoint_state(edge, endpoint_node_id).and_then(|s| s.text.clone());
     let buffer = original.clone().unwrap_or_default();
     let cursor_grapheme_pos = grapheme_chad::count_grapheme_clusters(&buffer);
     *state = PortalTextEditState::Open {
@@ -385,9 +385,7 @@ pub(in crate::application::app) fn handle_portal_text_edit_key(
     scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
 ) {
     let name = key_name.as_deref();
-    let action = name.and_then(|n| {
-        keybinds.action_for_context(InputContext::LabelEdit, n, ctrl, shift, alt)
-    });
+    let action = name.and_then(|n| keybinds.action_for_context(InputContext::LabelEdit, n, ctrl, shift, alt));
 
     // If the edge disappeared or flipped out of portal mode
     // while the editor was open (e.g. an Undo popped the edge,
@@ -408,8 +406,7 @@ pub(in crate::application::app) fn handle_portal_text_edit_key(
             .find(|e| edge_ref.matches(e))
             .map(|e| {
                 baumhard::mindmap::model::is_portal_edge(e)
-                    && (endpoint_node_id == &e.from_id
-                        || endpoint_node_id == &e.to_id)
+                    && (endpoint_node_id == &e.from_id || endpoint_node_id == &e.to_id)
             })
             .unwrap_or(false),
         PortalTextEditState::Closed => return,
@@ -441,9 +438,7 @@ pub(in crate::application::app) fn handle_portal_text_edit_key(
             return;
         };
         if let Some(a) = action {
-            crate::application::app::dispatch::apply_label_edit_action_to_buffer(
-                a, buffer, cursor,
-            )
+            crate::application::app::dispatch::apply_label_edit_action_to_buffer(a, buffer, cursor)
         } else {
             route_label_edit_key(logical_key, buffer, cursor)
         }
@@ -532,11 +527,7 @@ mod tests {
     fn test_label_edit_backspace_deletes_grapheme_before_cursor() {
         let mut buf = String::from("café");
         let mut cursor = 4;
-        let changed = apply_label_edit_action_to_buffer(
-            Action::LabelEditDeleteBack,
-            &mut buf,
-            &mut cursor,
-        );
+        let changed = apply_label_edit_action_to_buffer(Action::LabelEditDeleteBack, &mut buf, &mut cursor);
         assert!(changed);
         assert_eq!(buf, "caf");
         assert_eq!(cursor, 3);
@@ -546,11 +537,7 @@ mod tests {
     fn test_label_edit_backspace_at_zero_is_noop() {
         let mut buf = String::from("abc");
         let mut cursor = 0;
-        let changed = apply_label_edit_action_to_buffer(
-            Action::LabelEditDeleteBack,
-            &mut buf,
-            &mut cursor,
-        );
+        let changed = apply_label_edit_action_to_buffer(Action::LabelEditDeleteBack, &mut buf, &mut cursor);
         assert!(!changed);
         assert_eq!(buf, "abc");
         assert_eq!(cursor, 0);
@@ -560,11 +547,8 @@ mod tests {
     fn test_label_edit_delete_at_end_is_noop() {
         let mut buf = String::from("abc");
         let mut cursor = 3;
-        let changed = apply_label_edit_action_to_buffer(
-            Action::LabelEditDeleteForward,
-            &mut buf,
-            &mut cursor,
-        );
+        let changed =
+            apply_label_edit_action_to_buffer(Action::LabelEditDeleteForward, &mut buf, &mut cursor);
         assert!(!changed);
         assert_eq!(buf, "abc");
         assert_eq!(cursor, 3);
@@ -574,11 +558,8 @@ mod tests {
     fn test_label_edit_delete_removes_grapheme_at_cursor() {
         let mut buf = String::from("abc");
         let mut cursor = 1;
-        let changed = apply_label_edit_action_to_buffer(
-            Action::LabelEditDeleteForward,
-            &mut buf,
-            &mut cursor,
-        );
+        let changed =
+            apply_label_edit_action_to_buffer(Action::LabelEditDeleteForward, &mut buf, &mut cursor);
         assert!(changed);
         assert_eq!(buf, "ac");
         assert_eq!(cursor, 1);
@@ -700,20 +681,12 @@ mod tests {
         use winit::keyboard::NamedKey;
         let mut buf = String::from("abc");
         let mut cursor = 3;
-        let changed = route_label_edit_key(
-            &Key::Named(NamedKey::Backspace),
-            &mut buf,
-            &mut cursor,
-        );
+        let changed = route_label_edit_key(&Key::Named(NamedKey::Backspace), &mut buf, &mut cursor);
         assert!(!changed);
         assert_eq!(buf, "abc");
         assert_eq!(cursor, 3);
 
-        let changed = route_label_edit_key(
-            &Key::Named(NamedKey::Delete),
-            &mut buf,
-            &mut cursor,
-        );
+        let changed = route_label_edit_key(&Key::Named(NamedKey::Delete), &mut buf, &mut cursor);
         assert!(!changed);
         assert_eq!(buf, "abc");
         assert_eq!(cursor, 3);
@@ -727,14 +700,9 @@ mod tests {
         use winit::keyboard::NamedKey;
         let mut buf = String::from("abc");
         let mut cursor = 1;
-        let changed = route_label_edit_key(
-            &Key::Named(NamedKey::Shift),
-            &mut buf,
-            &mut cursor,
-        );
+        let changed = route_label_edit_key(&Key::Named(NamedKey::Shift), &mut buf, &mut cursor);
         assert!(!changed);
         assert_eq!(buf, "abc");
         assert_eq!(cursor, 1);
     }
 }
-

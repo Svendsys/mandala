@@ -15,9 +15,7 @@ use crate::gfx_structs::mutator::Mutation;
 use crate::gfx_structs::predicate::Predicate;
 use crate::mutator_builder::MutatorNode;
 
-use super::{
-    scope, CustomMutation, DocumentAction, MutationBehavior, TargetScope,
-};
+use super::{scope, CustomMutation, DocumentAction, MutationBehavior, TargetScope};
 
 /// Accepts both the new `mutator`-bearing form and the legacy
 /// `mutations` + `target_scope` pair. `mutator` takes precedence
@@ -64,9 +62,7 @@ impl From<CustomMutationIn> for CustomMutation {
                     | TargetScope::Parent
                     | TargetScope::Siblings => scope::self_only(v.mutations),
                     TargetScope::Descendants => scope::descendants(v.mutations),
-                    TargetScope::SelfAndDescendants => {
-                        scope::self_and_descendants(v.mutations)
-                    }
+                    TargetScope::SelfAndDescendants => scope::self_and_descendants(v.mutations),
                 })
             }
         });

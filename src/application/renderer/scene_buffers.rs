@@ -45,8 +45,7 @@ impl Renderer {
         border_elements: &[BorderElement],
         dirty_node_ids: Option<&std::collections::HashSet<String>>,
     ) {
-        let mut font_system =
-            fonts::acquire_font_system_write("rebuild_border_buffers_keyed");
+        let mut font_system = fonts::acquire_font_system_write("rebuild_border_buffers_keyed");
 
         let mut seen: std::collections::HashSet<String> =
             std::collections::HashSet::with_capacity(border_elements.len());
@@ -77,9 +76,7 @@ impl Renderer {
             // `existing[i]` here.
             if !is_dirty {
                 if let Some(existing) = self.border_buffers.get_mut(&elem.node_id) {
-                    if existing.len() == 4
-                        && (existing[0].bounds.0 - specs[0].bounds.0).abs() < 0.5
-                    {
+                    if existing.len() == 4 && (existing[0].bounds.0 - specs[0].bounds.0).abs() < 0.5 {
                         for (i, spec) in specs.iter().enumerate() {
                             existing[i].pos = spec.position;
                         }
@@ -94,10 +91,7 @@ impl Renderer {
             // path the tree walker uses
             // (`tree_walker.rs:89,158`); see CODE_CONVENTIONS §1
             // and the banner at the top of this file.
-            let fallback_rgba = hex_to_rgba_safe(
-                &elem.border_style.color,
-                [1.0, 1.0, 1.0, 1.0],
-            );
+            let fallback_rgba = hex_to_rgba_safe(&elem.border_style.color, [1.0, 1.0, 1.0, 1.0]);
 
             let zv = elem.zoom_visibility;
             let cycle = elem.palette_cycle.as_slice();
@@ -111,32 +105,16 @@ impl Renderer {
             // empty `build_border_regions` emits a single uniform
             // region, so the no-palette and palette-cycling paths
             // collapse to one shape here.
-            let mut shape_spec = |spec: &baumhard::mindmap::border::BorderRunSpec|
-                -> MindMapTextBuffer {
-                let regions = build_border_regions(
-                    spec.cluster_count,
-                    cycle,
-                    fallback_rgba,
-                    spec.palette_offset,
-                );
-                let families =
-                    RegionFamilies::resolve(&regions, &mut font_system);
-                let spans = rich_text_spans_from_regions(
-                    &spec.text,
-                    &families,
-                    font_size,
-                    font_size,
-                    None,
-                );
+            let mut shape_spec = |spec: &baumhard::mindmap::border::BorderRunSpec| -> MindMapTextBuffer {
+                let regions =
+                    build_border_regions(spec.cluster_count, cycle, fallback_rgba, spec.palette_offset);
+                let families = RegionFamilies::resolve(&regions, &mut font_system);
+                let spans = rich_text_spans_from_regions(&spec.text, &families, font_size, font_size, None);
                 let mut buf = cosmic_text::Buffer::new(
                     &mut font_system,
                     cosmic_text::Metrics::new(font_size, font_size),
                 );
-                buf.set_size(
-                    &mut font_system,
-                    Some(spec.bounds.0),
-                    Some(spec.bounds.1),
-                );
+                buf.set_size(&mut font_system, Some(spec.bounds.0), Some(spec.bounds.1));
                 buf.set_rich_text(
                     &mut font_system,
                     spans,
@@ -153,8 +131,7 @@ impl Renderer {
                 }
             };
 
-            let entry: Vec<MindMapTextBuffer> =
-                specs.iter().map(&mut shape_spec).collect();
+            let entry: Vec<MindMapTextBuffer> = specs.iter().map(&mut shape_spec).collect();
             self.border_buffers.insert(elem.node_id.clone(), entry);
         }
 
@@ -172,14 +149,16 @@ impl Renderer {
         if handles.is_empty() {
             return;
         }
-        let mut font_system =
-            fonts::acquire_font_system_write("rebuild_edge_handle_buffers");
+        let mut font_system = fonts::acquire_font_system_write("rebuild_edge_handle_buffers");
         for handle in handles {
-            let cosmic_color = hex_to_cosmic_color(&handle.color)
-                .unwrap_or(cosmic_text::Color::rgba(0, 229, 255, 255));
+            let cosmic_color =
+                hex_to_cosmic_color(&handle.color).unwrap_or(cosmic_text::Color::rgba(0, 229, 255, 255));
             let attrs = Attrs::new()
                 .color(cosmic_color)
-                .metrics(cosmic_text::Metrics::new(handle.font_size_pt, handle.font_size_pt));
+                .metrics(cosmic_text::Metrics::new(
+                    handle.font_size_pt,
+                    handle.font_size_pt,
+                ));
 
             let half_w = handle.font_size_pt * 0.3;
             let half_h = handle.font_size_pt * 0.5;
@@ -196,7 +175,6 @@ impl Renderer {
             ));
         }
     }
-
 
     /// Rebuild the per-edge label buffers from a freshly computed
     /// scene. Labels are ≤ 1 per edge and rebuilt every scene build
@@ -221,12 +199,11 @@ impl Renderer {
         if label_elements.is_empty() {
             return;
         }
-        let mut font_system =
-            fonts::acquire_font_system_write("rebuild_connection_label_buffers");
+        let mut font_system = fonts::acquire_font_system_write("rebuild_connection_label_buffers");
 
         for elem in label_elements {
-            let cosmic_color = hex_to_cosmic_color(&elem.color)
-                .unwrap_or(cosmic_text::Color::rgba(235, 235, 235, 255));
+            let cosmic_color =
+                hex_to_cosmic_color(&elem.color).unwrap_or(cosmic_text::Color::rgba(235, 235, 235, 255));
             let attrs = Attrs::new()
                 .color(cosmic_color)
                 .metrics(cosmic_text::Metrics::new(elem.font_size_pt, elem.font_size_pt));
@@ -244,10 +221,7 @@ impl Renderer {
                 .insert(elem.edge_key.clone(), buffer);
 
             let min = Vec2::new(elem.position.0, elem.position.1);
-            let max = Vec2::new(
-                elem.position.0 + elem.bounds.0,
-                elem.position.1 + elem.bounds.1,
-            );
+            let max = Vec2::new(elem.position.0 + elem.bounds.0, elem.position.1 + elem.bounds.1);
             self.connection_label_hitboxes
                 .insert(elem.edge_key.clone(), (min, max));
         }
@@ -257,8 +231,7 @@ impl Renderer {
     /// Coordinates are in canvas space.
     pub fn rebuild_selection_rect_overlay(&mut self, min: Vec2, max: Vec2) {
         self.overlay_buffers.clear();
-        let mut font_system =
-            fonts::acquire_font_system_write("rebuild_selection_rect_overlay");
+        let mut font_system = fonts::acquire_font_system_write("rebuild_selection_rect_overlay");
 
         let font_size: f32 = 14.0;
         let approx_char_width = monospace_advance(font_size);
@@ -275,14 +248,20 @@ impl Renderer {
         let char_count = (w / approx_char_width).max(1.0) as usize;
         let top_text = format!("\u{256D}{}\u{256E}", "\u{2504}".repeat(char_count));
         self.overlay_buffers.push(create_border_buffer(
-            &mut font_system, &top_text, &attrs, font_size,
+            &mut font_system,
+            &top_text,
+            &attrs,
+            font_size,
             (min.x - approx_char_width, min.y - font_size),
             (h_width, font_size * 1.5),
         ));
 
         let bottom_text = format!("\u{2570}{}\u{256F}", "\u{2504}".repeat(char_count));
         self.overlay_buffers.push(create_border_buffer(
-            &mut font_system, &bottom_text, &attrs, font_size,
+            &mut font_system,
+            &bottom_text,
+            &attrs,
+            font_size,
             (min.x - approx_char_width, max.y),
             (h_width, font_size * 1.5),
         ));
@@ -290,14 +269,20 @@ impl Renderer {
         let row_count = (h / font_size).max(1.0) as usize;
         let left_text: String = std::iter::repeat_n("\u{2506}\n", row_count).collect();
         self.overlay_buffers.push(create_border_buffer(
-            &mut font_system, &left_text, &attrs, font_size,
+            &mut font_system,
+            &left_text,
+            &attrs,
+            font_size,
             (min.x - approx_char_width, min.y),
             (v_width, h),
         ));
 
         let right_text: String = std::iter::repeat_n("\u{2506}\n", row_count).collect();
         self.overlay_buffers.push(create_border_buffer(
-            &mut font_system, &right_text, &attrs, font_size,
+            &mut font_system,
+            &right_text,
+            &attrs,
+            font_size,
             (max.x, min.y),
             (v_width, h),
         ));

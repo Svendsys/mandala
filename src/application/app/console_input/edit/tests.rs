@@ -279,7 +279,12 @@ fn dismiss_popup_returns_false_when_empty() {
 fn dismiss_popup_clears_completions_when_present() {
     use crate::application::console::completion::Completion;
     let mut s = open_with("", 0);
-    if let ConsoleState::Open { completions, completion_idx, .. } = &mut s {
+    if let ConsoleState::Open {
+        completions,
+        completion_idx,
+        ..
+    } = &mut s
+    {
         completions.push(Completion {
             text: "help".into(),
             display: "help".into(),
@@ -289,7 +294,12 @@ fn dismiss_popup_clears_completions_when_present() {
         *completion_idx = Some(0);
     }
     assert!(dismiss_popup(&mut s));
-    if let ConsoleState::Open { completions, completion_idx, .. } = &s {
+    if let ConsoleState::Open {
+        completions,
+        completion_idx,
+        ..
+    } = &s
+    {
         assert!(completions.is_empty());
         assert_eq!(*completion_idx, None);
     }

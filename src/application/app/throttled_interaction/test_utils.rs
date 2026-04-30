@@ -126,7 +126,8 @@ macro_rules! trait_default_tests_for_throttled_interaction {
                     saw_skip = true;
                 }
                 // Keep n stable while probing cadence.
-                i.throttle().record_work_duration(::std::time::Duration::from_micros(50_000));
+                i.throttle()
+                    .record_work_duration(::std::time::Duration::from_micros(50_000));
                 ($set_pending)(&mut i);
             }
             assert!(saw_skip, "expected at least one skipped drain at n > 1");

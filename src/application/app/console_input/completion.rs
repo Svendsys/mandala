@@ -53,7 +53,12 @@ pub(super) fn recompute_console_completions(
 /// to history navigation.
 #[cfg(not(target_arch = "wasm32"))]
 pub(in crate::application::app) fn nav_popup(console_state: &mut ConsoleState, step: i32) -> bool {
-    if let ConsoleState::Open { completions, completion_idx, .. } = console_state {
+    if let ConsoleState::Open {
+        completions,
+        completion_idx,
+        ..
+    } = console_state
+    {
         if completions.is_empty() {
             return false;
         }
@@ -123,8 +128,7 @@ pub(in crate::application::app) fn accept_console_completion(console_state: &mut
 
     // Delete graphemes from replace_from..cursor, then insert the
     // candidate text at replace_from.
-    let replace_from_byte =
-        find_byte_index_of_grapheme(input, replace_from).unwrap_or(input.len());
+    let replace_from_byte = find_byte_index_of_grapheme(input, replace_from).unwrap_or(input.len());
     input.replace_range(replace_from_byte..cursor_byte, &cand.text);
     *cursor = replace_from + count_grapheme_clusters(&cand.text);
 
@@ -136,8 +140,7 @@ pub(in crate::application::app) fn accept_console_completion(console_state: &mut
     // ending in `=`) also gets no space — the value comes next.
     let wants_trailing_space = !is_kv_value_replace && !cand.text.ends_with('=');
     if wants_trailing_space {
-        let cursor_byte_after =
-            find_byte_index_of_grapheme(input, *cursor).unwrap_or(input.len());
+        let cursor_byte_after = find_byte_index_of_grapheme(input, *cursor).unwrap_or(input.len());
         let next_is_ws = input[cursor_byte_after..]
             .chars()
             .next()

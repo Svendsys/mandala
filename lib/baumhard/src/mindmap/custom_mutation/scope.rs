@@ -24,9 +24,7 @@
 
 use crate::gfx_structs::mutator::Mutation;
 use crate::gfx_structs::predicate::Predicate;
-use crate::mutator_builder::{
-    InstructionSpec, MutationListSrc, MutationSrc, MutatorNode,
-};
+use crate::mutator_builder::{InstructionSpec, MutationListSrc, MutationSrc, MutatorNode};
 
 /// Build a MutatorNode that applies `mutations` only to the
 /// anchor node.

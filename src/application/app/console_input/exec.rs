@@ -12,12 +12,9 @@ use crate::application::document::MindMapDocument;
 use crate::application::renderer::Renderer;
 
 use super::super::color_picker_flow::{
-    close_color_picker_standalone, open_color_picker_contextual,
-    open_color_picker_standalone,
+    close_color_picker_standalone, open_color_picker_contextual, open_color_picker_standalone,
 };
-use super::super::label_edit::{
-    open_label_edit, open_portal_text_edit, LabelEditState, PortalTextEditState,
-};
+use super::super::label_edit::{open_label_edit, open_portal_text_edit, LabelEditState, PortalTextEditState};
 use super::super::scene_rebuild::rebuild_all;
 use super::{push_scrollback_error, push_scrollback_output, push_scrollback_output_in_font};
 
@@ -49,10 +46,7 @@ pub(in crate::application::app) fn execute_console_line(
         ParseResult::Ok { cmd, args } => (cmd, args),
         ParseResult::Empty => return,
         ParseResult::Unknown(ref head) => {
-            push_scrollback_error(
-                console_state,
-                format!("unknown command: {}", head),
-            );
+            push_scrollback_error(console_state, format!("unknown command: {}", head));
             return;
         }
     };
@@ -78,11 +72,7 @@ pub(in crate::application::app) fn execute_console_line(
         ExecResult::Err(s) => push_scrollback_error(console_state, s),
         ExecResult::Lines(lines) => {
             for line in lines {
-                push_scrollback_output_in_font(
-                    console_state,
-                    line.text,
-                    line.font_family,
-                );
+                push_scrollback_output_in_font(console_state, line.text, line.font_family);
             }
         }
     }
@@ -122,14 +112,7 @@ pub(in crate::application::app) fn execute_console_line(
         *console_state = ConsoleState::Closed;
         renderer.rebuild_console_overlay_buffers(app_scene, None);
     } else if let Some((er, endpoint)) = portal_text_edit_req {
-        open_portal_text_edit(
-            &er,
-            &endpoint,
-            doc,
-            portal_text_edit_state,
-            app_scene,
-            renderer,
-        );
+        open_portal_text_edit(&er, &endpoint, doc, portal_text_edit_state, app_scene, renderer);
         *console_state = ConsoleState::Closed;
         renderer.rebuild_console_overlay_buffers(app_scene, None);
     } else if let Some(target) = color_picker_req {
@@ -176,10 +159,7 @@ pub(in crate::application::app) fn save_document_to_bound_path(
             return;
         }
     };
-    match baumhard::mindmap::loader::save_to_file(
-        std::path::Path::new(&path),
-        &doc.mindmap,
-    ) {
+    match baumhard::mindmap::loader::save_to_file(std::path::Path::new(&path), &doc.mindmap) {
         Ok(()) => {
             doc.dirty = false;
             let msg = format!("saved to {}", path);

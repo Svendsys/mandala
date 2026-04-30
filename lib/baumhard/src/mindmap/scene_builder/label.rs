@@ -106,8 +106,7 @@ pub(super) fn build_label_elements(
         let anchor = apply_perpendicular_offset(&path, t, anchor_on_path, perp);
 
         let config = GlyphConnectionConfig::resolved_for(edge, &map.canvas);
-        let font_size_pt =
-            EdgeLabelConfig::effective_font_size_pt(label_cfg, edge, &map.canvas, camera_zoom);
+        let font_size_pt = EdgeLabelConfig::effective_font_size_pt(label_cfg, edge, &map.canvas, camera_zoom);
         // Color cascade, highest priority first:
         //   1. Edge-label selection highlight — cyan tint so the
         //      user sees which label carries focus. Wins over
@@ -120,8 +119,7 @@ pub(super) fn build_label_elements(
         //      `glyph_connection.color` → `edge.color`.
         // `resolve_var` runs after selection so a preview value
         // like `var(--accent)` still theme-resolves correctly.
-        let is_selected = selected_edge_label
-            .map_or(false, |key| *key == edge_key);
+        let is_selected = selected_edge_label.map_or(false, |key| *key == edge_key);
         let raw_color: &str = if is_selected {
             SELECTION_HIGHLIGHT_HEX
         } else {
@@ -183,13 +181,11 @@ pub(super) fn build_label_elements(
                 .iter()
                 .find(|e| e.visible && EdgeKey::from_edge(e) == *target_key)
             {
-                if let (Some(from_node), Some(to_node)) = (
-                    map.nodes.get(&edge.from_id),
-                    map.nodes.get(&edge.to_id),
-                ) {
+                if let (Some(from_node), Some(to_node)) =
+                    (map.nodes.get(&edge.from_id), map.nodes.get(&edge.to_id))
+                {
                     if !map.is_hidden_by_fold(from_node) && !map.is_hidden_by_fold(to_node) {
-                        let (fox, foy) =
-                            offsets.get(&from_node.id).copied().unwrap_or((0.0, 0.0));
+                        let (fox, foy) = offsets.get(&from_node.id).copied().unwrap_or((0.0, 0.0));
                         let (tox, toy) = offsets.get(&to_node.id).copied().unwrap_or((0.0, 0.0));
                         let from_pos = from_node.pos_vec2() + Vec2::new(fox, foy);
                         let from_size = from_node.size_vec2();
@@ -239,8 +235,7 @@ pub(super) fn build_label_elements(
                         let grapheme_count = count_grapheme_clusters(&rendered) as f32;
                         let bounds_w = (grapheme_count * font_size_pt * 0.6).max(font_size_pt);
                         let bounds_h = font_size_pt * 1.3;
-                        let top_left =
-                            (anchor.x - bounds_w * 0.5, anchor.y - bounds_h * 0.5);
+                        let top_left = (anchor.x - bounds_w * 0.5, anchor.y - bounds_h * 0.5);
                         connection_label_elements.push(ConnectionLabelElement {
                             edge_key: target_key.clone(),
                             text: rendered,
@@ -269,12 +264,7 @@ pub(super) fn build_label_elements(
 /// direction, a negative one reverses. Zero is an early-out so
 /// labels with no `perpendicular_offset` skip the tangent
 /// computation entirely.
-fn apply_perpendicular_offset(
-    path: &connection::ConnectionPath,
-    t: f32,
-    anchor: Vec2,
-    perp: f32,
-) -> Vec2 {
+fn apply_perpendicular_offset(path: &connection::ConnectionPath, t: f32, anchor: Vec2, perp: f32) -> Vec2 {
     if almost_equal(perp, 0.0) {
         return anchor;
     }

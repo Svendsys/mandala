@@ -85,8 +85,7 @@ pub(super) fn derive_sizing(
     let font_clamped = font_from_target.clamp(g.font_min, g.font_max);
     let max_font_for_h = (screen_h / (wheel_side_in_fonts + 12.0)).max(1.0);
     let chip_width_in_fonts: f32 = 32.0;
-    let max_font_for_w =
-        (screen_w / (wheel_side_in_fonts + 2.0).max(chip_width_in_fonts)).max(1.0);
+    let max_font_for_w = (screen_w / (wheel_side_in_fonts + 2.0).max(chip_width_in_fonts)).max(1.0);
     let font_size = font_clamped.min(max_font_for_h).min(max_font_for_w).max(1.0);
 
     let char_width = monospace_advance(font_size);
@@ -108,10 +107,7 @@ pub(super) fn derive_sizing(
     let side_from_ring = (ring_outer + font_size) * 2.0;
     let max_side_for_w = (screen_w - font_size * 2.0).max(0.0);
     let max_side_for_h = (screen_h - font_size * 12.0).max(0.0);
-    let side = side_from_ring
-        .min(max_side_for_w)
-        .min(max_side_for_h)
-        .max(0.0);
+    let side = side_from_ring.min(max_side_for_w).min(max_side_for_h).max(0.0);
     let outer_radius = (side * 0.5 - font_size).max(0.0);
     let ring_r = (outer_radius - ring_font_size * 0.5).max(0.0);
 

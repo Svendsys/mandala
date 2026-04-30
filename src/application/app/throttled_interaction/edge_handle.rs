@@ -100,11 +100,7 @@ impl ThrottledInteraction for EdgeHandleInteraction {
             scene_cache.invalidate_edge(&edge_key);
 
             let offsets: HashMap<String, (f32, f32)> = HashMap::new();
-            let scene = doc.build_scene_with_cache(
-                &offsets,
-                scene_cache,
-                renderer.camera_zoom(),
-            );
+            let scene = doc.build_scene_with_cache(&offsets, scene_cache, renderer.camera_zoom());
             update_connection_tree(&scene, app_scene);
             update_edge_handle_tree(&scene, app_scene);
             update_connection_label_tree(&scene, app_scene, renderer);
@@ -119,7 +115,9 @@ impl ThrottledInteraction for EdgeHandleInteraction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::app::throttled_interaction::test_utils::{drive_throttle_over_budget, fixture_edge};
+    use crate::application::app::throttled_interaction::test_utils::{
+        drive_throttle_over_budget, fixture_edge,
+    };
     use baumhard::mindmap::scene_builder::EdgeHandleKind;
 
     fn fixture_interaction() -> EdgeHandleInteraction {

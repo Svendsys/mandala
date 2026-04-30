@@ -23,11 +23,11 @@
 //! on this command.
 
 use super::Command;
-use crate::application::console::completion::{prefix_filter, Completion, CompletionContext, CompletionState, kv_key_completions};
-use crate::application::console::constants::{EDGE_TYPE_CROSS_LINK, EDGE_TYPE_PARENT_CHILD};
-use crate::application::console::helpers::{
-    collect_kvs_or_usage, require_edge_or_portal, ApplyTally,
+use crate::application::console::completion::{
+    kv_key_completions, prefix_filter, Completion, CompletionContext, CompletionState,
 };
+use crate::application::console::constants::{EDGE_TYPE_CROSS_LINK, EDGE_TYPE_PARENT_CHILD};
+use crate::application::console::helpers::{collect_kvs_or_usage, require_edge_or_portal, ApplyTally};
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::edge_or_portal_label_selected;
 use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
@@ -68,12 +68,8 @@ pub const COMMAND: Command = Command {
 fn complete_edge(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completion> {
     match &state.context {
         CompletionContext::Token { .. } => kv_key_completions(KEYS, state.partial),
-        CompletionContext::KvValue { key } if key == "type" => {
-            prefix_filter(EDGE_TYPES, state.partial)
-        }
-        CompletionContext::KvValue { key } if key == "reset" => {
-            prefix_filter(RESETS, state.partial)
-        }
+        CompletionContext::KvValue { key } if key == "type" => prefix_filter(EDGE_TYPES, state.partial),
+        CompletionContext::KvValue { key } if key == "reset" => prefix_filter(RESETS, state.partial),
         CompletionContext::KvValue { key } if key == "display_mode" => {
             prefix_filter(DISPLAY_MODES, state.partial)
         }
@@ -114,10 +110,7 @@ fn execute_edge(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         match k.as_str() {
             "type" => {
                 if !EDGE_TYPES.iter().any(|t| *t == v) {
-                    tally.note_error(format!(
-                        "type '{}' must be cross_link or parent_child",
-                        v
-                    ));
+                    tally.note_error(format!("type '{}' must be cross_link or parent_child", v));
                     continue;
                 }
                 // Route through the mutation core — same setter
@@ -127,14 +120,10 @@ fn execute_edge(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             }
             "display_mode" => {
                 if !DISPLAY_MODES.iter().any(|m| *m == v) {
-                    tally.note_error(format!(
-                        "display_mode '{}' must be line or portal",
-                        v
-                    ));
+                    tally.note_error(format!("display_mode '{}' must be line or portal", v));
                     continue;
                 }
-                let changed =
-                    apply_edge_display_mode_to_selection(eff.document, &v);
+                let changed = apply_edge_display_mode_to_selection(eff.document, &v);
                 tally.note(changed, || format!("edge already rendering as {}", v));
             }
             "reset" => match v.as_str() {
@@ -166,10 +155,7 @@ fn execute_edge(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
 /// Mutation core: apply a single `edge type=...` value to the
 /// currently-selected edge. Returns `true` when the type changed.
 #[must_use = "the bool gates the scene rebuild — drop it explicitly with `let _ = …` if you don't care"]
-pub(crate) fn apply_edge_type_to_selection(
-    doc: &mut MindMapDocument,
-    edge_type: &str,
-) -> bool {
+pub(crate) fn apply_edge_type_to_selection(doc: &mut MindMapDocument, edge_type: &str) -> bool {
     let Some(er) = doc.selection.selected_edge_or_portal_edge() else {
         return false;
     };
@@ -183,10 +169,7 @@ pub(crate) fn apply_edge_type_to_selection(
 /// (`line|portal`) to the currently-selected edge. Returns `true`
 /// when the mode changed.
 #[must_use = "the bool gates the scene rebuild — drop it explicitly with `let _ = …` if you don't care"]
-pub(crate) fn apply_edge_display_mode_to_selection(
-    doc: &mut MindMapDocument,
-    mode: &str,
-) -> bool {
+pub(crate) fn apply_edge_display_mode_to_selection(doc: &mut MindMapDocument, mode: &str) -> bool {
     let Some(er) = doc.selection.selected_edge_or_portal_edge() else {
         return false;
     };
@@ -200,10 +183,7 @@ pub(crate) fn apply_edge_display_mode_to_selection(
 /// currently-selected edge. Kind: `straight|curve|style|position`.
 /// Returns `true` when the reset produced a change.
 #[must_use = "the bool gates the scene rebuild — drop it explicitly with `let _ = …` if you don't care"]
-pub(crate) fn apply_edge_reset_to_selection(
-    doc: &mut MindMapDocument,
-    kind: &str,
-) -> bool {
+pub(crate) fn apply_edge_reset_to_selection(doc: &mut MindMapDocument, kind: &str) -> bool {
     let Some(er) = doc.selection.selected_edge_or_portal_edge() else {
         return false;
     };

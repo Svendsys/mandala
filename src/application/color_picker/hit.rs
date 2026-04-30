@@ -58,10 +58,7 @@ pub fn hit_test_picker(layout: &ColorPickerLayout, x: f32, y: f32) -> PickerHit 
     // inside `contains_local` and reports `Outside`.
     let r = layout.outer_radius;
     let bounds = Vec2::new(2.0 * r, 2.0 * r);
-    let local = Vec2::new(
-        x - (layout.center.0 - r),
-        y - (layout.center.1 - r),
-    );
+    let local = Vec2::new(x - (layout.center.0 - r), y - (layout.center.1 - r));
     if !NodeShape::Ellipse.contains_local(local, bounds) {
         return PickerHit::Outside;
     }

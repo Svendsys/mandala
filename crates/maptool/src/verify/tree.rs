@@ -59,7 +59,9 @@ mod tests {
         let mut map = MindMap::new_blank("t");
         map.nodes.insert("0".into(), node("0", Some("ghost")));
         let v = check(&map);
-        assert!(v.iter().any(|x| x.category == "tree" && x.message.contains("ghost")));
+        assert!(v
+            .iter()
+            .any(|x| x.category == "tree" && x.message.contains("ghost")));
     }
 
     #[test]
@@ -69,7 +71,9 @@ mod tests {
         map.nodes.insert("a".into(), node("a", Some("b")));
         map.nodes.insert("b".into(), node("b", Some("a")));
         let v = check(&map);
-        assert!(v.iter().any(|x| x.category == "tree" && x.message.contains("cycle")));
+        assert!(v
+            .iter()
+            .any(|x| x.category == "tree" && x.message.contains("cycle")));
     }
 
     #[test]

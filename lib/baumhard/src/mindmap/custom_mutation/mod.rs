@@ -107,9 +107,7 @@ impl CustomMutation {
     /// hits both `map.node` and `map.tree` entries.
     pub fn matches_context(&self, query: &str) -> bool {
         let dotted = format!("{}.", query);
-        self.contexts
-            .iter()
-            .any(|c| c == query || c.starts_with(&dotted))
+        self.contexts.iter().any(|c| c == query || c.starts_with(&dotted))
     }
 
     /// `true` when the mutation should be hidden from user-facing
@@ -117,8 +115,7 @@ impl CustomMutation {
     /// `contexts` set is treated as internal so mutations shipped
     /// by internal app code without declaring contexts stay hidden.
     pub fn is_internal(&self) -> bool {
-        self.contexts.is_empty()
-            || self.contexts.iter().any(|c| c == contexts::INTERNAL)
+        self.contexts.is_empty() || self.contexts.iter().any(|c| c == contexts::INTERNAL)
     }
 
     /// `true` when the mutation targets a mindmap — the default
@@ -251,9 +248,7 @@ pub fn apply_mutations_to_element(
 /// and-apply-per-target semantics while the richer `mutator_builder`
 /// walker path is phased in for size-aware mutations in a separate
 /// session.
-pub fn flat_mutations(
-    mutator: &MutatorNode,
-) -> Option<Vec<crate::gfx_structs::mutator::Mutation>> {
+pub fn flat_mutations(mutator: &MutatorNode) -> Option<Vec<crate::gfx_structs::mutator::Mutation>> {
     use crate::mutator_builder::{MutationListSrc, MutatorNode as N};
     match mutator {
         N::Macro {
@@ -339,12 +334,8 @@ impl TargetScope {
     /// mutator pairs at apply time.
     pub fn covers_reach(&self, reach: MutatorReach) -> bool {
         match self {
-            TargetScope::SelfOnly | TargetScope::Parent => {
-                reach == MutatorReach::SelfOnly
-            }
-            TargetScope::Children | TargetScope::Siblings => {
-                reach <= MutatorReach::Children
-            }
+            TargetScope::SelfOnly | TargetScope::Parent => reach == MutatorReach::SelfOnly,
+            TargetScope::Children | TargetScope::Siblings => reach <= MutatorReach::Children,
             TargetScope::Descendants | TargetScope::SelfAndDescendants => true,
         }
     }

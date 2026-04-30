@@ -60,10 +60,7 @@ pub struct BorderNodeData {
 ///
 /// Skips hidden-by-fold and `show_frame = false` nodes, mirroring
 /// the filter in `scene_builder::build_scene`.
-pub fn border_node_data(
-    map: &MindMap,
-    offsets: &HashMap<String, (f32, f32)>,
-) -> Vec<BorderNodeData> {
+pub fn border_node_data(map: &MindMap, offsets: &HashMap<String, (f32, f32)>) -> Vec<BorderNodeData> {
     let vars = &map.canvas.theme_variables;
     let mut sorted_ids: Vec<&String> = map.nodes.keys().collect();
     sorted_ids.sort();
@@ -114,11 +111,8 @@ pub fn border_node_data(
             frame_color_hex,
         );
         let color_rgba = color::hex_to_rgba_safe(&border_style.color, [1.0, 1.0, 1.0, 1.0]);
-        let palette_cycle = crate::mindmap::border::resolve_palette_cycle(
-            &map.palettes,
-            &border_style,
-            color_rgba,
-        );
+        let palette_cycle =
+            crate::mindmap::border::resolve_palette_cycle(&map.palettes, &border_style, color_rgba);
 
         let pos = node.pos_vec2();
         let size = node.size_vec2();
@@ -138,7 +132,6 @@ pub fn border_node_data(
     }
     out
 }
-
 
 /// Identity sequence for a slice of [`BorderNodeData`] — the
 /// sorted sequence of `node_id`s in tree-insertion order. Two
@@ -199,11 +192,7 @@ pub fn build_border_tree_from_nodes(nodes: &[BorderNodeData]) -> Tree<GfxElement
     let mut tree: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed();
     let mut unique_id: usize = 1;
     for node in nodes {
-        append_border_sub_tree(
-            &mut tree,
-            node,
-            &mut unique_id,
-        );
+        append_border_sub_tree(&mut tree, node, &mut unique_id);
     }
     tree
 }
@@ -242,9 +231,7 @@ pub fn build_border_mutator_tree_from_nodes(
 
     let mut mt: MutatorTree<GfxMutator> = MutatorTree::new_with(GfxMutator::new_void(0));
     for node in nodes {
-        let parent_node = mt
-            .arena
-            .new_node(GfxMutator::new_void(node.parent_channel));
+        let parent_node = mt.arena.new_node(GfxMutator::new_void(node.parent_channel));
         mt.root.append(parent_node, &mut mt.arena);
 
         let specs = crate::mindmap::border::border_run_specs(
@@ -358,12 +345,7 @@ pub(super) fn append_border_run(
     // cycling, otherwise a single uniform region (matches the
     // pre-pattern path's cost). `cluster_count` is pre-computed by
     // `border_run_specs` so this body never re-walks the string.
-    area.regions = build_border_regions(
-        cluster_count,
-        palette_cycle,
-        color_rgba,
-        palette_offset,
-    );
+    area.regions = build_border_regions(cluster_count, palette_cycle, color_rgba, palette_offset);
 
     let element = GfxElement::new_area_non_indexed_with_id(area, channel, unique_id);
     let node = tree.arena.new_node(element);

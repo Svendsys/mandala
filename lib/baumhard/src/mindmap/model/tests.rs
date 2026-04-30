@@ -21,7 +21,11 @@ fn test_all_descendants() {
     let descendants = map.all_descendants("0");
     // Every direct child should appear in descendants
     for child in &children {
-        assert!(descendants.contains(&child.id), "Child {} missing from descendants", child.id);
+        assert!(
+            descendants.contains(&child.id),
+            "Child {} missing from descendants",
+            child.id
+        );
     }
     // Descendants should be >= children (includes grandchildren etc.)
     assert!(descendants.len() >= children.len());
@@ -33,7 +37,9 @@ fn test_all_descendants_leaf_node() {
     let map = loader::load_from_file(&path).unwrap();
 
     // Find a leaf node (no children)
-    let leaf = map.nodes.values()
+    let leaf = map
+        .nodes
+        .values()
         .find(|n| map.children_of(&n.id).is_empty())
         .expect("Should have at least one leaf node");
 
@@ -117,8 +123,8 @@ const EFFECTIVE_FONT_EPSILON: f32 = 1.0e-4;
 #[test]
 fn effective_font_size_unity_zoom_returns_base() {
     let cfg = GlyphConnectionConfig::default(); // 12 / 8 / 24
-    // At zoom = 1.0 the base 12 is inside [8, 24], so screen size
-    // = 12 and canvas size = 12 / 1 = 12.
+                                                // At zoom = 1.0 the base 12 is inside [8, 24], so screen size
+                                                // = 12 and canvas size = 12 / 1 = 12.
     assert!(
         (cfg.effective_font_size_pt(1.0) - 12.0).abs() < EFFECTIVE_FONT_EPSILON,
         "expected 12.0 at zoom 1.0, got {}",
@@ -272,10 +278,7 @@ fn label_config_perpendicular_offset_only_round_trips() {
         back.label_config.as_ref().and_then(|c| c.perpendicular_offset),
         Some(-8.5)
     );
-    assert_eq!(
-        back.label_config.as_ref().and_then(|c| c.position_t),
-        None
-    );
+    assert_eq!(back.label_config.as_ref().and_then(|c| c.position_t), None);
 }
 
 #[test]
@@ -298,21 +301,11 @@ fn effective_font_size_pt_partial_clamp_inheritance() {
         min_font_size_pt: Some(30.0),
         ..Default::default()
     };
-    let got = EdgeLabelConfig::effective_font_size_pt(
-        Some(&cfg_min_only),
-        &edge,
-        &canvas,
-        1.0,
-    );
+    let got = EdgeLabelConfig::effective_font_size_pt(Some(&cfg_min_only), &edge, &canvas, 1.0);
     assert!((got - 40.0).abs() < 1.0e-4);
     // At zoom 0.5, target 20 → pinned at own min 30 → canvas
     // size = 30 / 0.5 = 60.
-    let got_zoomed = EdgeLabelConfig::effective_font_size_pt(
-        Some(&cfg_min_only),
-        &edge,
-        &canvas,
-        0.5,
-    );
+    let got_zoomed = EdgeLabelConfig::effective_font_size_pt(Some(&cfg_min_only), &edge, &canvas, 0.5);
     assert!((got_zoomed - 60.0).abs() < 1.0e-4);
 
     // Own `max = 24` only, size inherits body × factor (22).
@@ -323,22 +316,12 @@ fn effective_font_size_pt_partial_clamp_inheritance() {
         max_font_size_pt: Some(24.0),
         ..Default::default()
     };
-    let got_max_1 = EdgeLabelConfig::effective_font_size_pt(
-        Some(&cfg_max_only),
-        &edge,
-        &canvas,
-        1.0,
-    );
+    let got_max_1 = EdgeLabelConfig::effective_font_size_pt(Some(&cfg_max_only), &edge, &canvas, 1.0);
     assert!(
         (got_max_1 - 22.0).abs() < 1.0e-4,
         "expected 22 (body × 1.1), got {got_max_1}"
     );
-    let got_max_2 = EdgeLabelConfig::effective_font_size_pt(
-        Some(&cfg_max_only),
-        &edge,
-        &canvas,
-        2.0,
-    );
+    let got_max_2 = EdgeLabelConfig::effective_font_size_pt(Some(&cfg_max_only), &edge, &canvas, 2.0);
     assert!(
         (got_max_2 - 12.0).abs() < 1.0e-4,
         "expected 12 (own max pinned), got {got_max_2}"
@@ -362,10 +345,7 @@ fn label_config_partial_fields_round_trip() {
     assert!(!json.contains("perpendicular_offset"));
     assert!(!json.contains("font_size_pt"));
     let back: MindEdge = serde_json::from_str(&json).unwrap();
-    assert_eq!(
-        back.label_config.as_ref().and_then(|c| c.position_t),
-        Some(0.75)
-    );
+    assert_eq!(back.label_config.as_ref().and_then(|c| c.position_t), Some(0.75));
 }
 
 #[test]
@@ -697,10 +677,7 @@ fn node_locations_yields_every_node_with_id_stamp() {
         Vec::new(),
     );
 
-    let locations: Vec<(String, String)> = map
-        .node_locations()
-        .map(|(loc, n)| (loc, n.id.clone()))
-        .collect();
+    let locations: Vec<(String, String)> = map.node_locations().map(|(loc, n)| (loc, n.id.clone())).collect();
     assert_eq!(locations.len(), 3);
     // Location stamp must equal the node's id for every yield.
     for (loc, id) in &locations {
@@ -708,8 +685,7 @@ fn node_locations_yields_every_node_with_id_stamp() {
     }
     // All three node ids appear; HashMap iteration order is
     // unspecified, so check via set membership.
-    let ids: std::collections::HashSet<&str> =
-        locations.iter().map(|(_, id)| id.as_str()).collect();
+    let ids: std::collections::HashSet<&str> = locations.iter().map(|(_, id)| id.as_str()).collect();
     assert!(ids.contains("0"));
     assert!(ids.contains("0.0"));
     assert!(ids.contains("0.1"));
@@ -736,10 +712,7 @@ fn edge_locations_uses_bracket_index_stamp() {
         ],
     );
 
-    let stamps: Vec<String> = map
-        .edge_locations()
-        .map(|(loc, _e)| loc)
-        .collect();
+    let stamps: Vec<String> = map.edge_locations().map(|(loc, _e)| loc).collect();
     assert_eq!(stamps, vec!["edge[0]", "edge[1]", "edge[2]"]);
 }
 

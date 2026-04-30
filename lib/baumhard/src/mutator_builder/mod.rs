@@ -23,8 +23,6 @@ pub mod tests;
 // `MutationListSrc` / `InstructionSpec`) on the named trajectory
 // (§7 seam preservation).
 #[allow(unused_imports)]
-pub use ast::{
-    CellField, ChannelSrc, CountSrc, InstructionSpec, MutationListSrc, MutationSrc, MutatorNode,
-};
+pub use ast::{CellField, ChannelSrc, CountSrc, InstructionSpec, MutationListSrc, MutationSrc, MutatorNode};
 pub use build::{build, iter_section_channels};
 pub use context::SectionContext;

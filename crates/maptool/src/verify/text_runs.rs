@@ -25,10 +25,7 @@ pub fn check(map: &MindMap) -> Vec<Violation> {
                 out.push(Violation::node(
                     "text_runs",
                     node,
-                    format!(
-                        "run[{}] has start {} not less than end {}",
-                        i, run.start, run.end
-                    ),
+                    format!("run[{}] has start {} not less than end {}", i, run.start, run.end),
                 ));
                 continue;
             }
@@ -110,7 +107,9 @@ mod tests {
         n.text_runs = vec![run(0, 5), run(3, 8)];
         map.nodes.insert("0".into(), n);
         let v = check(&map);
-        assert!(v.iter().any(|x| x.category == "text_runs" && x.message.contains("overlap")));
+        assert!(v
+            .iter()
+            .any(|x| x.category == "text_runs" && x.message.contains("overlap")));
     }
 
     #[test]
@@ -121,7 +120,9 @@ mod tests {
         n.text_runs = vec![run(0, 100)];
         map.nodes.insert("0".into(), n);
         let v = check(&map);
-        assert!(v.iter().any(|x| x.category == "text_runs" && x.message.contains("exceeds")));
+        assert!(v
+            .iter()
+            .any(|x| x.category == "text_runs" && x.message.contains("exceeds")));
     }
 
     #[test]
@@ -132,7 +133,9 @@ mod tests {
         n.text_runs = vec![run(3, 3)];
         map.nodes.insert("0".into(), n);
         let v = check(&map);
-        assert!(v.iter().any(|x| x.category == "text_runs" && x.message.contains("not less than")));
+        assert!(v
+            .iter()
+            .any(|x| x.category == "text_runs" && x.message.contains("not less than")));
     }
 
     /// ZWJ family at `[0,1)` is one grapheme cluster — must not flag

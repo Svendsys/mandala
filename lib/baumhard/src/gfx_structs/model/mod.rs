@@ -28,6 +28,5 @@ pub use glyph_model::GlyphModel;
 pub use line::GlyphLine;
 pub use matrix::GlyphMatrix;
 pub use mutator::{
-    DeltaGlyphModel, GlyphModelCommand, GlyphModelCommandType, GlyphModelField,
-    GlyphModelFieldType,
+    DeltaGlyphModel, GlyphModelCommand, GlyphModelCommandType, GlyphModelField, GlyphModelFieldType,
 };

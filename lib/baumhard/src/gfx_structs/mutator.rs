@@ -27,48 +27,48 @@ use strum_macros::Display;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum Instruction {
-   /// Recursively apply the child mutator nodes of this instruction
-   /// on every target descendant for which `Predicate` returns true.
-   /// When the predicate fails on a node the branch terminates and
-   /// the walker resumes with the default terminator. O(n) in the
-   /// number of descendants tested.
-   ///
-   /// Aligns mutator children to target children by **channel** (via
-   /// `tree_walker::align_child_walks`, private). For per-index
-   /// targeting that sidesteps channel semantics entirely, see
-   /// [`Instruction::MapChildren`].
-   RepeatWhile(Predicate),
-   /// Rotate every predicate-matching descendant around the pivot
-   /// element's position by `f32` degrees. **Stub**: the tree walker
-   /// currently no-ops this; the slot exists so adding the
-   /// implementation later doesn't break serialised trees.
-   RotateWhile(f32, Predicate),
-   /// Descend the target tree using per-node subtree AABBs to find
-   /// the deepest node whose own AABB contains the given point,
-   /// pruning branches whose subtree AABB does not. Applies the
-   /// attached mutation (typically a [`Mutation::Event`] carrying
-   /// [`MouseEventData`]) to that node; no-op if no node contains.
-   ///
-   /// Bypasses channel alignment — like [`MapChildren`] but routing
-   /// on spatial hit-test rather than sibling position. Tree-walker
-   /// counterpart of [`Tree::descendant_at`](crate::gfx_structs::tree::Tree::descendant_at).
-   ///
-   /// Cost: O(branching × depth) for spatially disjoint subtrees,
-   /// O(n) worst case with fully overlapping subtrees.
-   SpatialDescend(OrderedVec2),
-   /// Pair mutator children with target children **by sibling
-   /// position** (zip), ignoring channels on the paired children.
-   /// The opt-in alternative to [`RepeatWhile`]'s channel-broadcast
-   /// semantics, used when each child needs a distinct mutation
-   /// (per-index layout). Excess children on either side are
-   /// dropped with one `debug!` at termination. The attached
-   /// `mutation` field is applied to the current target before the
-   /// body runs, same as [`RepeatWhile`]. Composes with the AST
-   /// `Repeat` wrapper for runtime-count expansion.
-   ///
-   /// Cost: O(min(mutator_children, target_children)); no
-   /// allocation inside the zip.
-   MapChildren,
+    /// Recursively apply the child mutator nodes of this instruction
+    /// on every target descendant for which `Predicate` returns true.
+    /// When the predicate fails on a node the branch terminates and
+    /// the walker resumes with the default terminator. O(n) in the
+    /// number of descendants tested.
+    ///
+    /// Aligns mutator children to target children by **channel** (via
+    /// `tree_walker::align_child_walks`, private). For per-index
+    /// targeting that sidesteps channel semantics entirely, see
+    /// [`Instruction::MapChildren`].
+    RepeatWhile(Predicate),
+    /// Rotate every predicate-matching descendant around the pivot
+    /// element's position by `f32` degrees. **Stub**: the tree walker
+    /// currently no-ops this; the slot exists so adding the
+    /// implementation later doesn't break serialised trees.
+    RotateWhile(f32, Predicate),
+    /// Descend the target tree using per-node subtree AABBs to find
+    /// the deepest node whose own AABB contains the given point,
+    /// pruning branches whose subtree AABB does not. Applies the
+    /// attached mutation (typically a [`Mutation::Event`] carrying
+    /// [`MouseEventData`]) to that node; no-op if no node contains.
+    ///
+    /// Bypasses channel alignment — like [`MapChildren`] but routing
+    /// on spatial hit-test rather than sibling position. Tree-walker
+    /// counterpart of [`Tree::descendant_at`](crate::gfx_structs::tree::Tree::descendant_at).
+    ///
+    /// Cost: O(branching × depth) for spatially disjoint subtrees,
+    /// O(n) worst case with fully overlapping subtrees.
+    SpatialDescend(OrderedVec2),
+    /// Pair mutator children with target children **by sibling
+    /// position** (zip), ignoring channels on the paired children.
+    /// The opt-in alternative to [`RepeatWhile`]'s channel-broadcast
+    /// semantics, used when each child needs a distinct mutation
+    /// (per-index layout). Excess children on either side are
+    /// dropped with one `debug!` at termination. The attached
+    /// `mutation` field is applied to the current target before the
+    /// body runs, same as [`RepeatWhile`]. Composes with the AST
+    /// `Repeat` wrapper for runtime-count expansion.
+    ///
+    /// Cost: O(min(mutator_children, target_children)); no
+    /// allocation inside the zip.
+    MapChildren,
 }
 
 /// Discriminant returned by [`GfxMutator::get_type`] for fast
@@ -76,16 +76,16 @@ pub enum Instruction {
 /// cost — `Copy` and comparison is a single-byte test.
 #[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum MutatorType {
-   /// A single field-level mutation.
-   Single,
-   /// A batch of mutations applied to the same target element.
-   Macro,
-   /// A placeholder node that occupies a tree position without
-   /// carrying a mutation — used to align channels.
-   Void,
-   /// A control-flow node whose [`Instruction`] governs child
-   /// traversal.
-   Instruction,
+    /// A single field-level mutation.
+    Single,
+    /// A batch of mutations applied to the same target element.
+    Macro,
+    /// A placeholder node that occupies a tree position without
+    /// carrying a mutation — used to align channels.
+    Void,
+    /// A control-flow node whose [`Instruction`] governs child
+    /// traversal.
+    Instruction,
 }
 
 /// A timestamped occurrence of a [`GlyphTreeEvent`] delivered to a
@@ -99,23 +99,23 @@ pub enum MutatorType {
 /// no arena walk.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GlyphTreeEventInstance {
-   /// The kind of event being delivered.
-   pub event_type: GlyphTreeEvent,
-   /// Milliseconds since application launch — used to order and
-   /// deduplicate event sequences. Wraps after ~50 days; callers
-   /// that sequence events across long sessions should account for
-   /// rollover.
-   pub event_time_millis: usize,
+    /// The kind of event being delivered.
+    pub event_type: GlyphTreeEvent,
+    /// Milliseconds since application launch — used to order and
+    /// deduplicate event sequences. Wraps after ~50 days; callers
+    /// that sequence events across long sessions should account for
+    /// rollover.
+    pub event_time_millis: usize,
 }
 
 impl GlyphTreeEventInstance {
-   /// Construct an event instance. O(1), no allocation.
-   pub fn new(event_type: GlyphTreeEvent, event_time_millis: usize) -> Self {
-      GlyphTreeEventInstance {
-         event_type,
-         event_time_millis,
-      }
-   }
+    /// Construct an event instance. O(1), no allocation.
+    pub fn new(event_type: GlyphTreeEvent, event_time_millis: usize) -> Self {
+        GlyphTreeEventInstance {
+            event_type,
+            event_time_millis,
+        }
+    }
 }
 
 /// Payload carried by [`GlyphTreeEvent::MouseEvent`]. Contains the
@@ -152,39 +152,39 @@ impl MouseEventData {
 /// one `usize`).
 #[derive(Clone, Debug, Serialize, Deserialize, Display, Eq, PartialEq)]
 pub enum GlyphTreeEvent {
-   /// Keyboard input events
-   KeyboardEvent,
-   /// Mouse input events with canvas-space coordinates.
-   MouseEvent(MouseEventData),
-   /// Events that are defined by the software application
-   AppEvent,
-   /// The recipient should start preparing to shut down now
-   CloseEvent,
-   /// The recipient will be terminated any time
-   KillEvent,
-   /// A mutation has been performed
-   /// This allows EventSubscribers respond to mutations
-   MutationEvent,
-   /// This is used for testing mainly
-   NoopEvent(usize),
+    /// Keyboard input events
+    KeyboardEvent,
+    /// Mouse input events with canvas-space coordinates.
+    MouseEvent(MouseEventData),
+    /// Events that are defined by the software application
+    AppEvent,
+    /// The recipient should start preparing to shut down now
+    CloseEvent,
+    /// The recipient will be terminated any time
+    KillEvent,
+    /// A mutation has been performed
+    /// This allows EventSubscribers respond to mutations
+    MutationEvent,
+    /// This is used for testing mainly
+    NoopEvent(usize),
 }
 
 /// Discriminant returned by [`Mutation::get_type`] for lightweight
 /// variant inspection without destructuring. `Copy` — no heap cost.
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum MutationType {
-   /// Field-level delta targeting a [`GlyphArea`].
-   AreaDelta,
-   /// Imperative command targeting a [`GlyphArea`].
-   AreaCommand,
-   /// Field-level delta targeting a [`GlyphModel`].
-   ModelDelta,
-   /// Imperative command targeting a [`GlyphModel`].
-   ModelCommand,
-   /// An event delivered to subscribers.
-   Event,
-   /// The no-op sentinel.
-   None,
+    /// Field-level delta targeting a [`GlyphArea`].
+    AreaDelta,
+    /// Imperative command targeting a [`GlyphArea`].
+    AreaCommand,
+    /// Field-level delta targeting a [`GlyphModel`].
+    ModelDelta,
+    /// Imperative command targeting a [`GlyphModel`].
+    ModelCommand,
+    /// An event delivered to subscribers.
+    Event,
+    /// The no-op sentinel.
+    None,
 }
 
 /// A single atomic change that can be applied to a [`GfxElement`].
@@ -197,159 +197,163 @@ pub enum MutationType {
 /// (one pointer + discriminant) regardless of inner payload.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Mutation {
-   /// A field-level delta applied to a [`GlyphArea`]. The
-   /// [`DeltaGlyphArea`] may add, assign, or subtract from one or
-   /// more area fields depending on its
-   /// [`ApplyOperation`](crate::core::primitives::ApplyOperation).
-   /// Cost: O(k) in the number of fields in the delta.
-   AreaDelta(Box<DeltaGlyphArea>),
-   /// An imperative command applied to a [`GlyphArea`] (nudge,
-   /// move-to, pop-text, font resize, etc.). Each
-   /// [`GlyphAreaCommand`] variant encodes both the operation and
-   /// its parameter. Cost: O(1) per command.
-   AreaCommand(Box<GlyphAreaCommand>),
-   /// A field-level delta applied to a [`GlyphModel`]. Semantics
-   /// mirror [`AreaDelta`](Mutation::AreaDelta) but target model
-   /// fields (glyph matrix, layer, position).
-   ModelDelta(Box<DeltaGlyphModel>),
-   /// An imperative command applied to a [`GlyphModel`] (nudge,
-   /// rotate, insert line, etc.). Mirrors
-   /// [`AreaCommand`](Mutation::AreaCommand) for model elements.
-   ModelCommand(Box<GlyphModelCommand>),
-   /// Delivers a [`GlyphTreeEventInstance`] to the target element's
-   /// event subscribers. Does not modify element data directly;
-   /// subscribers may enqueue further mutations in response.
-   Event(GlyphTreeEventInstance),
-   /// A no-op mutation. Applying it leaves the target unchanged.
-   /// Useful as a default or placeholder in mutator trees where a
-   /// node must exist for structural alignment but carries no work.
-   None,
+    /// A field-level delta applied to a [`GlyphArea`]. The
+    /// [`DeltaGlyphArea`] may add, assign, or subtract from one or
+    /// more area fields depending on its
+    /// [`ApplyOperation`](crate::core::primitives::ApplyOperation).
+    /// Cost: O(k) in the number of fields in the delta.
+    AreaDelta(Box<DeltaGlyphArea>),
+    /// An imperative command applied to a [`GlyphArea`] (nudge,
+    /// move-to, pop-text, font resize, etc.). Each
+    /// [`GlyphAreaCommand`] variant encodes both the operation and
+    /// its parameter. Cost: O(1) per command.
+    AreaCommand(Box<GlyphAreaCommand>),
+    /// A field-level delta applied to a [`GlyphModel`]. Semantics
+    /// mirror [`AreaDelta`](Mutation::AreaDelta) but target model
+    /// fields (glyph matrix, layer, position).
+    ModelDelta(Box<DeltaGlyphModel>),
+    /// An imperative command applied to a [`GlyphModel`] (nudge,
+    /// rotate, insert line, etc.). Mirrors
+    /// [`AreaCommand`](Mutation::AreaCommand) for model elements.
+    ModelCommand(Box<GlyphModelCommand>),
+    /// Delivers a [`GlyphTreeEventInstance`] to the target element's
+    /// event subscribers. Does not modify element data directly;
+    /// subscribers may enqueue further mutations in response.
+    Event(GlyphTreeEventInstance),
+    /// A no-op mutation. Applying it leaves the target unchanged.
+    /// Useful as a default or placeholder in mutator trees where a
+    /// node must exist for structural alignment but carries no work.
+    None,
 }
 
 impl AsRef<Mutation> for Mutation {
-   fn as_ref(&self) -> &Mutation {
-      self
-   }
+    fn as_ref(&self) -> &Mutation {
+        self
+    }
 }
 
 impl Mutation {
-   /// Wrap a [`DeltaGlyphArea`] into a boxed `Mutation::AreaDelta`.
-   /// One heap allocation for the box.
-   pub fn area_delta(area_delta: DeltaGlyphArea) -> Self {
-      AreaDelta(Box::new(area_delta))
-   }
+    /// Wrap a [`DeltaGlyphArea`] into a boxed `Mutation::AreaDelta`.
+    /// One heap allocation for the box.
+    pub fn area_delta(area_delta: DeltaGlyphArea) -> Self {
+        AreaDelta(Box::new(area_delta))
+    }
 
-   /// Wrap a [`GlyphAreaCommand`] into a boxed `Mutation::AreaCommand`.
-   /// One heap allocation for the box.
-   pub fn area_command(area_command: GlyphAreaCommand) -> Self {
-      AreaCommand(Box::new(area_command))
-   }
+    /// Wrap a [`GlyphAreaCommand`] into a boxed `Mutation::AreaCommand`.
+    /// One heap allocation for the box.
+    pub fn area_command(area_command: GlyphAreaCommand) -> Self {
+        AreaCommand(Box::new(area_command))
+    }
 
-   /// Wrap a [`DeltaGlyphModel`] into a boxed `Mutation::ModelDelta`.
-   /// One heap allocation for the box.
-   pub fn model_delta(model_delta: DeltaGlyphModel) -> Self {
-      ModelDelta(Box::new(model_delta))
-   }
+    /// Wrap a [`DeltaGlyphModel`] into a boxed `Mutation::ModelDelta`.
+    /// One heap allocation for the box.
+    pub fn model_delta(model_delta: DeltaGlyphModel) -> Self {
+        ModelDelta(Box::new(model_delta))
+    }
 
-   /// Wrap a [`GlyphModelCommand`] into a boxed `Mutation::ModelCommand`.
-   /// One heap allocation for the box.
-   pub fn model_command(model_command: GlyphModelCommand) -> Self {
-      ModelCommand(Box::new(model_command))
-   }
+    /// Wrap a [`GlyphModelCommand`] into a boxed `Mutation::ModelCommand`.
+    /// One heap allocation for the box.
+    pub fn model_command(model_command: GlyphModelCommand) -> Self {
+        ModelCommand(Box::new(model_command))
+    }
 
-   /// Return a `Mutation::None` — the no-op sentinel. No allocation.
-   pub fn none() -> Self {
-      Mutation::None
-   }
+    /// Return a `Mutation::None` — the no-op sentinel. No allocation.
+    pub fn none() -> Self {
+        Mutation::None
+    }
 
-   /// Returns `true` when this mutation carries actual work (i.e. is
-   /// not `Mutation::None`). O(1).
-   pub fn is_some(&self) -> bool {
-      !self.is_none()
-   }
+    /// Returns `true` when this mutation carries actual work (i.e. is
+    /// not `Mutation::None`). O(1).
+    pub fn is_some(&self) -> bool {
+        !self.is_none()
+    }
 
-   /// Apply this mutation to the given [`GfxElement`]. Events are
-   /// dispatched to the element's subscribers; field mutations are
-   /// routed to the matching element type (area or model). Applying
-   /// to a `Void` element or a type mismatch is a silent no-op
-   /// (logged at debug level). Cost: O(k) in the number of delta
-   /// fields, or O(1) for commands and events.
-   pub fn apply_to(&self, target: &mut GfxElement) {
-      match self {
-         Event(event) => {
-            target.accept_event(event);
-            return;
-         }
-         _ => {}
-      }
-      match target {
-         GfxElement::GlyphArea { glyph_area, .. } => {
-            self.apply_to_area(glyph_area);
-         }
-         GfxElement::GlyphModel { glyph_model, .. } => {
-            self.apply_to_model(glyph_model);
-         }
-         GfxElement::Void { .. } => {}
-      }
-   }
+    /// Apply this mutation to the given [`GfxElement`]. Events are
+    /// dispatched to the element's subscribers; field mutations are
+    /// routed to the matching element type (area or model). Applying
+    /// to a `Void` element or a type mismatch is a silent no-op
+    /// (logged at debug level). Cost: O(k) in the number of delta
+    /// fields, or O(1) for commands and events.
+    pub fn apply_to(&self, target: &mut GfxElement) {
+        match self {
+            Event(event) => {
+                target.accept_event(event);
+                return;
+            }
+            _ => {}
+        }
+        match target {
+            GfxElement::GlyphArea { glyph_area, .. } => {
+                self.apply_to_area(glyph_area);
+            }
+            GfxElement::GlyphModel { glyph_model, .. } => {
+                self.apply_to_model(glyph_model);
+            }
+            GfxElement::Void { .. } => {}
+        }
+    }
 
-   /// Return the [`MutationType`] discriminant for this mutation.
-   /// O(1), no allocation.
-   pub fn get_type(&self) -> MutationType {
-      match self {
-         AreaDelta(_) => MutationType::AreaDelta,
-         AreaCommand(_) => MutationType::AreaCommand,
-         ModelDelta(_) => MutationType::ModelDelta,
-         ModelCommand(_) => MutationType::ModelCommand,
-         Event(_) => MutationType::Event,
-         Mutation::None => MutationType::None,
-      }
-   }
+    /// Return the [`MutationType`] discriminant for this mutation.
+    /// O(1), no allocation.
+    pub fn get_type(&self) -> MutationType {
+        match self {
+            AreaDelta(_) => MutationType::AreaDelta,
+            AreaCommand(_) => MutationType::AreaCommand,
+            ModelDelta(_) => MutationType::ModelDelta,
+            ModelCommand(_) => MutationType::ModelCommand,
+            Event(_) => MutationType::Event,
+            Mutation::None => MutationType::None,
+        }
+    }
 
-   /// Apply this mutation directly to a [`GlyphArea`]. Panics if
-   /// called with a `Mutation::Event` (events go through
-   /// [`apply_to`](Mutation::apply_to) on a full element, not
-   /// directly to an area). A model variant or event is silently
-   /// ignored (debug-logged). Cost: O(k) for deltas, O(1) for
-   /// commands.
-   pub fn apply_to_area(&self, area: &mut GlyphArea) {
-      match self {
-         AreaDelta(mutation) => mutation.apply_to(area),
-         AreaCommand(mutation) => mutation.apply_to(area),
-         ModelDelta(_) | ModelCommand(_) => {
-            debug!("Tried to apply a model mutation to an area, ignoring.")
-         }
-         Mutation::None => {}
-         Event(_) => {
-            debug!("Event applied directly to GlyphArea — use Mutation::apply_to on a GfxElement instead.");
-         }
-      }
-   }
+    /// Apply this mutation directly to a [`GlyphArea`]. Panics if
+    /// called with a `Mutation::Event` (events go through
+    /// [`apply_to`](Mutation::apply_to) on a full element, not
+    /// directly to an area). A model variant or event is silently
+    /// ignored (debug-logged). Cost: O(k) for deltas, O(1) for
+    /// commands.
+    pub fn apply_to_area(&self, area: &mut GlyphArea) {
+        match self {
+            AreaDelta(mutation) => mutation.apply_to(area),
+            AreaCommand(mutation) => mutation.apply_to(area),
+            ModelDelta(_) | ModelCommand(_) => {
+                debug!("Tried to apply a model mutation to an area, ignoring.")
+            }
+            Mutation::None => {}
+            Event(_) => {
+                debug!(
+                    "Event applied directly to GlyphArea — use Mutation::apply_to on a GfxElement instead."
+                );
+            }
+        }
+    }
 
-   /// Apply this mutation directly to a [`GlyphModel`]. An area
-   /// variant or event is silently ignored (debug-logged). Cost:
-   /// O(k) for deltas, O(1) for commands.
-   pub fn apply_to_model(&self, model: &mut GlyphModel) {
-      match self {
-         ModelDelta(mutation) => mutation.apply_to(model),
-         ModelCommand(mutation) => mutation.apply_to(model),
-         AreaDelta(_) | AreaCommand(_) => {
-            debug!("Tried to apply an area mutation to a model, ignoring.");
-         }
-         Mutation::None => {}
-         Event(_) => {
-            debug!("Event applied directly to GlyphModel — use Mutation::apply_to on a GfxElement instead.");
-         }
-      }
-   }
+    /// Apply this mutation directly to a [`GlyphModel`]. An area
+    /// variant or event is silently ignored (debug-logged). Cost:
+    /// O(k) for deltas, O(1) for commands.
+    pub fn apply_to_model(&self, model: &mut GlyphModel) {
+        match self {
+            ModelDelta(mutation) => mutation.apply_to(model),
+            ModelCommand(mutation) => mutation.apply_to(model),
+            AreaDelta(_) | AreaCommand(_) => {
+                debug!("Tried to apply an area mutation to a model, ignoring.");
+            }
+            Mutation::None => {}
+            Event(_) => {
+                debug!(
+                    "Event applied directly to GlyphModel — use Mutation::apply_to on a GfxElement instead."
+                );
+            }
+        }
+    }
 
-   /// Returns `true` when this is the `Mutation::None` no-op. O(1).
-   pub fn is_none(&self) -> bool {
-      match self {
-         Mutation::None => true,
-         _ => false,
-      }
-   }
+    /// Returns `true` when this is the `Mutation::None` no-op. O(1).
+    pub fn is_none(&self) -> bool {
+        match self {
+            Mutation::None => true,
+            _ => false,
+        }
+    }
 }
 
 /// A node in a [`MutatorTree`](crate::gfx_structs::tree::MutatorTree).
@@ -367,127 +371,127 @@ impl Mutation {
 /// where k is the number of inner mutations.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum GfxMutator {
-   /// A single mutation targeting the element at the matching channel.
-   Single {
-      /// The mutation payload to apply.
-      mutation: Mutation,
-      /// Channel index for walker alignment.
-      channel: usize,
-   },
-   /// A placeholder node that occupies a position in the mutator
-   /// tree without carrying any mutation. Used to preserve channel
-   /// alignment when sibling mutators must skip certain target
-   /// positions.
-   Void {
-      /// Channel index for walker alignment.
-      channel: usize,
-   },
-   /// A control-flow node: the [`Instruction`] governs how the
-   /// walker processes this node's children against the target tree
-   /// (e.g. repeat-while, rotate-while). The optional `mutation`
-   /// field is applied to the matched target before the instruction
-   /// body runs.
-   Instruction {
-      /// The control-flow directive.
-      instruction: Instruction,
-      /// Channel index for walker alignment.
-      channel: usize,
-      /// An optional direct mutation applied before the instruction
-      /// body. `Mutation::None` when unused.
-      mutation: Mutation,
-   },
-   /// A batch of mutations applied to the same target element in
-   /// sequence. No ordering guarantee beyond iteration order of the
-   /// `Vec`. Useful for combining several field changes into one
-   /// tree node.
-   Macro {
-      /// Channel index for walker alignment.
-      channel: usize,
-      /// The mutations to apply, in order.
-      mutations: Vec<Mutation>,
-   },
+    /// A single mutation targeting the element at the matching channel.
+    Single {
+        /// The mutation payload to apply.
+        mutation: Mutation,
+        /// Channel index for walker alignment.
+        channel: usize,
+    },
+    /// A placeholder node that occupies a position in the mutator
+    /// tree without carrying any mutation. Used to preserve channel
+    /// alignment when sibling mutators must skip certain target
+    /// positions.
+    Void {
+        /// Channel index for walker alignment.
+        channel: usize,
+    },
+    /// A control-flow node: the [`Instruction`] governs how the
+    /// walker processes this node's children against the target tree
+    /// (e.g. repeat-while, rotate-while). The optional `mutation`
+    /// field is applied to the matched target before the instruction
+    /// body runs.
+    Instruction {
+        /// The control-flow directive.
+        instruction: Instruction,
+        /// Channel index for walker alignment.
+        channel: usize,
+        /// An optional direct mutation applied before the instruction
+        /// body. `Mutation::None` when unused.
+        mutation: Mutation,
+    },
+    /// A batch of mutations applied to the same target element in
+    /// sequence. No ordering guarantee beyond iteration order of the
+    /// `Vec`. Useful for combining several field changes into one
+    /// tree node.
+    Macro {
+        /// Channel index for walker alignment.
+        channel: usize,
+        /// The mutations to apply, in order.
+        mutations: Vec<Mutation>,
+    },
 }
 
 impl GfxMutator {
-   /// Create a `Single` mutator on the given channel. One
-   /// allocation (the inner `Mutation` may box its payload).
-   pub fn new(mutation: Mutation, channel: usize) -> GfxMutator {
-      GfxMutator::Single { mutation, channel }
-   }
+    /// Create a `Single` mutator on the given channel. One
+    /// allocation (the inner `Mutation` may box its payload).
+    pub fn new(mutation: Mutation, channel: usize) -> GfxMutator {
+        GfxMutator::Single { mutation, channel }
+    }
 
-   /// Create a `Macro` mutator carrying multiple mutations on the
-   /// given channel. The `Vec` is moved, not cloned.
-   pub fn new_macro(commands: Vec<Mutation>, channel: usize) -> GfxMutator {
-      GfxMutator::Macro {
-         channel,
-         mutations: commands,
-      }
-   }
+    /// Create a `Macro` mutator carrying multiple mutations on the
+    /// given channel. The `Vec` is moved, not cloned.
+    pub fn new_macro(commands: Vec<Mutation>, channel: usize) -> GfxMutator {
+        GfxMutator::Macro {
+            channel,
+            mutations: commands,
+        }
+    }
 
-   /// Create a `Void` placeholder on the given channel. No payload,
-   /// no allocation.
-   pub fn new_void(channel: usize) -> GfxMutator {
-      GfxMutator::Void { channel }
-   }
+    /// Create a `Void` placeholder on the given channel. No payload,
+    /// no allocation.
+    pub fn new_void(channel: usize) -> GfxMutator {
+        GfxMutator::Void { channel }
+    }
 
-   /// Create an `Instruction` mutator with channel 0 and no direct
-   /// mutation (`Mutation::None`). The instruction type governs
-   /// child traversal during the tree walk.
-   pub fn new_instruction(instruction_type: Instruction) -> GfxMutator {
-      GfxMutator::Instruction {
-         instruction: instruction_type,
-         channel: 0,
-         mutation: Mutation::None,
-      }
-   }
+    /// Create an `Instruction` mutator with channel 0 and no direct
+    /// mutation (`Mutation::None`). The instruction type governs
+    /// child traversal during the tree walk.
+    pub fn new_instruction(instruction_type: Instruction) -> GfxMutator {
+        GfxMutator::Instruction {
+            instruction: instruction_type,
+            channel: 0,
+            mutation: Mutation::None,
+        }
+    }
 
-   /// Return the [`MutatorType`] discriminant without destructuring.
-   /// O(1), no allocation.
-   pub fn get_type(&self) -> MutatorType {
-      match self {
-         GfxMutator::Single { .. } => MutatorType::Single,
-         GfxMutator::Void { .. } => MutatorType::Void,
-         GfxMutator::Instruction { .. } => MutatorType::Instruction,
-         GfxMutator::Macro { .. } => MutatorType::Macro,
-      }
-   }
+    /// Return the [`MutatorType`] discriminant without destructuring.
+    /// O(1), no allocation.
+    pub fn get_type(&self) -> MutatorType {
+        match self {
+            GfxMutator::Single { .. } => MutatorType::Single,
+            GfxMutator::Void { .. } => MutatorType::Void,
+            GfxMutator::Instruction { .. } => MutatorType::Instruction,
+            GfxMutator::Macro { .. } => MutatorType::Macro,
+        }
+    }
 
-   /// Test whether this mutator is of the given [`MutatorType`].
-   /// O(1), no allocation.
-   pub fn is(&self, mutator_type: MutatorType) -> bool {
-      self.get_type() == mutator_type
-   }
+    /// Test whether this mutator is of the given [`MutatorType`].
+    /// O(1), no allocation.
+    pub fn is(&self, mutator_type: MutatorType) -> bool {
+        self.get_type() == mutator_type
+    }
 }
 
 impl BranchChannel for GfxMutator {
-   fn channel(&self) -> usize {
-      match self {
-         GfxMutator::Single { channel, .. } => *channel,
-         GfxMutator::Void { channel, .. } => *channel,
-         GfxMutator::Instruction { channel, .. } => *channel,
-         GfxMutator::Macro { channel, .. } => *channel,
-      }
-   }
+    fn channel(&self) -> usize {
+        match self {
+            GfxMutator::Single { channel, .. } => *channel,
+            GfxMutator::Void { channel, .. } => *channel,
+            GfxMutator::Instruction { channel, .. } => *channel,
+            GfxMutator::Macro { channel, .. } => *channel,
+        }
+    }
 }
 
 impl Applicable<GfxElement> for GfxMutator {
-   fn apply_to(&self, target: &mut GfxElement) {
-      match self {
-         GfxMutator::Single { mutation, .. } | GfxMutator::Instruction { mutation, .. } => {
-            mutation.apply_to(target);
-         }
-         GfxMutator::Macro { mutations, .. } => {
-            for command in mutations {
-               command.apply_to(target);
+    fn apply_to(&self, target: &mut GfxElement) {
+        match self {
+            GfxMutator::Single { mutation, .. } | GfxMutator::Instruction { mutation, .. } => {
+                mutation.apply_to(target);
             }
-         }
-         _ => {}
-      }
-   }
+            GfxMutator::Macro { mutations, .. } => {
+                for command in mutations {
+                    command.apply_to(target);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 impl TreeNode for GfxMutator {
-   fn void() -> Self {
-      Self::new_void(0)
-   }
+    fn void() -> Self {
+        Self::new_void(0)
+    }
 }

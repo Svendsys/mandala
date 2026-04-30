@@ -9,9 +9,7 @@
 //! per-node config may differ but a single readout is cleaner
 //! than four-up).
 
-use baumhard::mindmap::border::{
-    resolve_border_style, BORDER_APPROX_CHAR_WIDTH_FRAC,
-};
+use baumhard::mindmap::border::{resolve_border_style, BORDER_APPROX_CHAR_WIDTH_FRAC};
 use baumhard::mindmap::border_pattern::SidePattern;
 use baumhard::mindmap::model::MindNode;
 
@@ -19,10 +17,7 @@ use crate::application::console::parser::Args;
 use crate::application::console::{ConsoleEffects, ExecResult, OutputLine};
 use crate::application::document::SelectionState;
 
-pub fn execute_border_show(
-    _args: &Args,
-    eff: &mut ConsoleEffects,
-) -> ExecResult {
+pub fn execute_border_show(_args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     let id = match first_selected_node_id(&eff.document.selection) {
         Ok(id) => id,
         Err(msg) => return ExecResult::err(msg),
@@ -53,23 +48,17 @@ fn first_selected_node_id(sel: &SelectionState) -> Result<String, String> {
 fn format_border_readout(
     node: &MindNode,
     canvas_default: Option<&baumhard::mindmap::model::GlyphBorderConfig>,
-    palettes: &std::collections::HashMap<
-        String,
-        baumhard::mindmap::model::Palette,
-    >,
+    palettes: &std::collections::HashMap<String, baumhard::mindmap::model::Palette>,
 ) -> Vec<OutputLine> {
     let style = resolve_border_style(
         node.style.border.as_ref(),
         canvas_default,
         &node.style.frame_color,
     );
-    let approx_char_width =
-        style.font_size_pt * BORDER_APPROX_CHAR_WIDTH_FRAC;
+    let approx_char_width = style.font_size_pt * BORDER_APPROX_CHAR_WIDTH_FRAC;
     let size = node.size_vec2();
     let char_count = ((size.x / approx_char_width) + 2.0).ceil().max(3.0) as usize;
-    let row_count = (size.y / style.font_size_pt)
-        .round()
-        .max(1.0) as usize;
+    let row_count = (size.y / style.font_size_pt).round().max(1.0) as usize;
 
     let preset_name = node
         .style
@@ -117,33 +106,42 @@ fn format_border_readout(
         .map(|c| c.padding)
         .or_else(|| canvas_default.map(|c| c.padding))
         .unwrap_or(4.0);
-    lines.push(OutputLine::plain(format!(
-        "padding: {} px",
-        resolved_padding
-    )));
+    lines.push(OutputLine::plain(format!("padding: {} px", resolved_padding)));
     lines.push(OutputLine::plain(format!(
         "size:    {}×{} px ({} cluster cols, {} rows)",
-        node.size.width as i64,
-        node.size.height as i64,
-        char_count,
-        row_count
+        node.size.width as i64, node.size.height as i64, char_count, row_count
     )));
 
     let side_face = face.clone();
-    lines.push(side_line("top:    ", &style.side_patterns.top, char_count, &side_face));
-    lines.push(side_line("bottom: ", &style.side_patterns.bottom, char_count, &side_face));
-    lines.push(side_line("left:   ", &style.side_patterns.left, row_count, &side_face));
-    lines.push(side_line("right:  ", &style.side_patterns.right, row_count, &side_face));
+    lines.push(side_line(
+        "top:    ",
+        &style.side_patterns.top,
+        char_count,
+        &side_face,
+    ));
+    lines.push(side_line(
+        "bottom: ",
+        &style.side_patterns.bottom,
+        char_count,
+        &side_face,
+    ));
+    lines.push(side_line(
+        "left:   ",
+        &style.side_patterns.left,
+        row_count,
+        &side_face,
+    ));
+    lines.push(side_line(
+        "right:  ",
+        &style.side_patterns.right,
+        row_count,
+        &side_face,
+    ));
     lines.push(corner_line(&style, &face));
     lines
 }
 
-fn side_line(
-    label: &str,
-    pattern: &SidePattern,
-    width: usize,
-    face: &Option<String>,
-) -> OutputLine {
+fn side_line(label: &str, pattern: &SidePattern, width: usize, face: &Option<String>) -> OutputLine {
     let rendered = pattern.render(width).text;
     let text = format!("{}{}", label, rendered);
     match face {
@@ -152,10 +150,7 @@ fn side_line(
     }
 }
 
-fn corner_line(
-    style: &baumhard::mindmap::border::BorderStyle,
-    face: &Option<String>,
-) -> OutputLine {
+fn corner_line(style: &baumhard::mindmap::border::BorderStyle, face: &Option<String>) -> OutputLine {
     let text = format!(
         "corners: tl={}  tr={}  bl={}  br={}",
         style.corners.top_left,

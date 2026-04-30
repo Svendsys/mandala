@@ -34,9 +34,7 @@ fn selected_edge_narrow_accessor_rejects_sub_part_variants() {
     assert!(SelectionState::PortalLabel(portal_sel())
         .selected_edge()
         .is_none());
-    assert!(SelectionState::PortalText(portal_sel())
-        .selected_edge()
-        .is_none());
+    assert!(SelectionState::PortalText(portal_sel()).selected_edge().is_none());
 }
 
 #[test]
@@ -113,7 +111,9 @@ fn selected_portal_endpoint_covers_icon_and_text_only() {
     assert!(SelectionState::PortalText(portal_sel())
         .selected_portal_endpoint()
         .is_some());
-    assert!(SelectionState::Edge(edge_ref()).selected_portal_endpoint().is_none());
+    assert!(SelectionState::Edge(edge_ref())
+        .selected_portal_endpoint()
+        .is_none());
     assert!(SelectionState::EdgeLabel(EdgeLabelSel::new(edge_ref()))
         .selected_portal_endpoint()
         .is_none());

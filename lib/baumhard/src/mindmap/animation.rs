@@ -187,12 +187,7 @@ mod tests {
     /// at the start or end of a transition.
     #[test]
     fn test_easing_endpoints_are_exact() {
-        for easing in [
-            Easing::Linear,
-            Easing::EaseIn,
-            Easing::EaseOut,
-            Easing::EaseInOut,
-        ] {
+        for easing in [Easing::Linear, Easing::EaseIn, Easing::EaseOut, Easing::EaseInOut] {
             assert_eq!(easing.evaluate(0.0), 0.0, "{easing:?} at 0");
             assert_eq!(easing.evaluate(1.0), 1.0, "{easing:?} at 1");
         }
@@ -220,12 +215,7 @@ mod tests {
     /// extrapolated overshoot.
     #[test]
     fn test_easing_evaluate_clamps_overshoot() {
-        for easing in [
-            Easing::Linear,
-            Easing::EaseIn,
-            Easing::EaseOut,
-            Easing::EaseInOut,
-        ] {
+        for easing in [Easing::Linear, Easing::EaseIn, Easing::EaseOut, Easing::EaseInOut] {
             assert_eq!(easing.evaluate(1.5), 1.0);
             assert_eq!(easing.evaluate(-0.3), 0.0);
         }
@@ -238,7 +228,10 @@ mod tests {
     fn test_lerp_midpoint_is_arithmetic_mean() {
         assert_eq!(lerp_f32(0.0, 10.0, 0.5), 5.0);
         assert_eq!(lerp_f32(-4.0, 4.0, 0.5), 0.0);
-        assert_eq!(lerp_vec2(Vec2::ZERO, Vec2::new(8.0, 6.0), 0.5), Vec2::new(4.0, 3.0));
+        assert_eq!(
+            lerp_vec2(Vec2::ZERO, Vec2::new(8.0, 6.0), 0.5),
+            Vec2::new(4.0, 3.0)
+        );
         let mid_color = lerp_color([0.0, 0.0, 0.0, 0.0], [1.0, 0.5, 0.25, 1.0], 0.5);
         assert_eq!(mid_color, [0.5, 0.25, 0.125, 0.5]);
     }

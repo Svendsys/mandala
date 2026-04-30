@@ -10,7 +10,6 @@ use super::undo_action::UndoAction;
 use super::MindMapDocument;
 
 impl MindMapDocument {
-
     /// Undo the last action. Returns true if something was undone.
     pub fn undo(&mut self) -> bool {
         if let Some(action) = self.undo_stack.pop() {
@@ -68,19 +67,31 @@ impl MindMapDocument {
                         self.selection = SelectionState::None;
                     }
                 }
-                UndoAction::EditNodeText { node_id, before_text, before_runs } => {
+                UndoAction::EditNodeText {
+                    node_id,
+                    before_text,
+                    before_runs,
+                } => {
                     if let Some(node) = self.mindmap.nodes.get_mut(&node_id) {
                         node.text = before_text;
                         node.text_runs = before_runs;
                     }
                 }
-                UndoAction::EditNodeStyle { node_id, before_style, before_runs } => {
+                UndoAction::EditNodeStyle {
+                    node_id,
+                    before_style,
+                    before_runs,
+                } => {
                     if let Some(node) = self.mindmap.nodes.get_mut(&node_id) {
                         node.style = before_style;
                         node.text_runs = before_runs;
                     }
                 }
-                UndoAction::EditNodeZoom { node_id, before_min, before_max } => {
+                UndoAction::EditNodeZoom {
+                    node_id,
+                    before_min,
+                    before_max,
+                } => {
                     if let Some(node) = self.mindmap.nodes.get_mut(&node_id) {
                         node.min_zoom_to_render = before_min;
                         node.max_zoom_to_render = before_max;
@@ -89,7 +100,11 @@ impl MindMapDocument {
                 UndoAction::CanvasSnapshot { canvas } => {
                     self.mindmap.canvas = canvas;
                 }
-                UndoAction::DeleteNode { node, removed_edges, orphaned_children } => {
+                UndoAction::DeleteNode {
+                    node,
+                    removed_edges,
+                    orphaned_children,
+                } => {
                     let restored_id = node.id.clone();
                     self.mindmap.nodes.insert(restored_id.clone(), node);
                     for (idx, edge) in removed_edges {
@@ -112,5 +127,4 @@ impl MindMapDocument {
             false
         }
     }
-
 }

@@ -40,10 +40,7 @@ fn assign_children(
 
 /// Return old IDs of nodes whose parent_id matches `parent`, sorted by
 /// ascending index.
-fn sorted_children_of(
-    nodes: &serde_json::Map<String, Value>,
-    parent: Option<&str>,
-) -> Vec<String> {
+fn sorted_children_of(nodes: &serde_json::Map<String, Value>, parent: Option<&str>) -> Vec<String> {
     let mut children: Vec<(&str, i64)> = nodes
         .iter()
         .filter(|(_, node)| {
@@ -87,10 +84,7 @@ fn rewrite_nodes(root: &mut Value, id_map: &HashMap<String, String>) {
             if let Some(pid_val) = obj.get("parent_id") {
                 if let Some(old_pid) = pid_val.as_str() {
                     if let Some(new_pid) = id_map.get(old_pid) {
-                        obj.insert(
-                            "parent_id".to_string(),
-                            Value::String(new_pid.clone()),
-                        );
+                        obj.insert("parent_id".to_string(), Value::String(new_pid.clone()));
                     }
                 }
             }

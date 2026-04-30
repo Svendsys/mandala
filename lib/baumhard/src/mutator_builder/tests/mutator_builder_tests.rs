@@ -6,9 +6,7 @@
 
 use crate::core::primitives::{ApplyOperation, ColorFontRegions};
 use crate::gfx_structs::area::GlyphArea;
-use crate::mutator_builder::{
-    CellField, ChannelSrc, MutationSrc, MutatorNode, SectionContext,
-};
+use crate::mutator_builder::{CellField, ChannelSrc, MutationSrc, MutatorNode, SectionContext};
 use glam::Vec2;
 use std::collections::HashMap;
 
@@ -18,9 +16,7 @@ use std::collections::HashMap;
 #[cfg(test)]
 use crate::gfx_structs::tree::BranchChannel;
 #[cfg(test)]
-use crate::mutator_builder::{
-    build, iter_section_channels, CountSrc, InstructionSpec, MutationListSrc,
-};
+use crate::mutator_builder::{build, iter_section_channels, CountSrc, InstructionSpec, MutationListSrc};
 
 /// Stub context: yields one pre-built `GlyphArea` per index, and
 /// honours runtime-count queries out of a `HashMap`. Per-section
@@ -38,13 +34,8 @@ impl StubCtx {
         let mut areas = Vec::with_capacity(n);
         for i in 0..n {
             let text = format!("cell_{}", i);
-            let mut a = GlyphArea::new_with_str(
-                &text,
-                10.0,
-                12.0,
-                Vec2::new(i as f32, 0.0),
-                Vec2::new(20.0, 30.0),
-            );
+            let mut a =
+                GlyphArea::new_with_str(&text, 10.0, 12.0, Vec2::new(i as f32, 0.0), Vec2::new(20.0, 30.0));
             a.regions = ColorFontRegions::single_span(
                 crate::util::grapheme_chad::count_grapheme_clusters(&text),
                 None,
@@ -243,7 +234,6 @@ fn repeat_runtime_count_consults_context() {
 use crate::gfx_structs::mutator::{GfxMutator, Instruction, Mutation, MutatorType};
 #[cfg(test)]
 use crate::gfx_structs::predicate::Predicate;
-
 
 /// Tree rooted at a `Void` with no children produces an empty root.
 #[test]
@@ -621,7 +611,10 @@ fn json_instruction_spec_map_children_materializes_correctly() {
         }
     }"#;
     let node: MutatorNode = serde_json::from_str(src).expect("parse MutatorNode");
-    let MutatorNode::Instruction { channel, instruction, .. } = node else {
+    let MutatorNode::Instruction {
+        channel, instruction, ..
+    } = node
+    else {
         panic!("expected Instruction");
     };
     assert_eq!(channel, 3);

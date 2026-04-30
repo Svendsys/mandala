@@ -35,11 +35,7 @@ pub struct DispatchReport {
 ///   result of the trait call on this target
 /// - `None` — the key is not recognized at all (e.g. `font bogus=1`);
 ///   the dispatcher reports it once (not once per target)
-pub fn apply_kvs<F>(
-    doc: &mut MindMapDocument,
-    kvs: &[(String, String)],
-    mut applier: F,
-) -> DispatchReport
+pub fn apply_kvs<F>(doc: &mut MindMapDocument, kvs: &[(String, String)], mut applier: F) -> DispatchReport
 where
     F: FnMut(&mut TargetView, &str, &str) -> Option<Outcome>,
 {
@@ -180,10 +176,7 @@ fn aggregate_single_op(tally: OutcomeTally, targets: &[TargetId]) -> DispatchRep
             any_pair_succeeded = true;
             messages.push("already set".into());
         } else if tally.not_applicable == targets.len() {
-            messages.push(format!(
-                "not applicable to {}",
-                targets_kind_label(targets),
-            ));
+            messages.push(format!("not applicable to {}", targets_kind_label(targets),));
         }
     } else {
         any_pair_succeeded = true;

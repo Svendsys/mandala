@@ -25,14 +25,8 @@ pub fn test_shape_from_style_string_known_names() {
 }
 
 pub fn do_shape_from_style_string_known_names() {
-    assert_eq!(
-        NodeShape::from_style_string("rectangle"),
-        NodeShape::Rectangle
-    );
-    assert_eq!(
-        NodeShape::from_style_string("Rectangle"),
-        NodeShape::Rectangle
-    );
+    assert_eq!(NodeShape::from_style_string("rectangle"), NodeShape::Rectangle);
+    assert_eq!(NodeShape::from_style_string("Rectangle"), NodeShape::Rectangle);
     assert_eq!(NodeShape::from_style_string("ellipse"), NodeShape::Ellipse);
     assert_eq!(NodeShape::from_style_string("ELLIPSE"), NodeShape::Ellipse);
     // "circle" is accepted as a convenience alias for the
@@ -52,14 +46,8 @@ pub fn test_shape_from_style_string_empty_and_unknown_fall_back_to_rectangle() {
 
 pub fn do_shape_from_style_string_empty_and_unknown_fall_back_to_rectangle() {
     assert_eq!(NodeShape::from_style_string(""), NodeShape::Rectangle);
-    assert_eq!(
-        NodeShape::from_style_string("diamond"),
-        NodeShape::Rectangle
-    );
-    assert_eq!(
-        NodeShape::from_style_string("zigzag"),
-        NodeShape::Rectangle
-    );
+    assert_eq!(NodeShape::from_style_string("diamond"), NodeShape::Rectangle);
+    assert_eq!(NodeShape::from_style_string("zigzag"), NodeShape::Rectangle);
 }
 
 /// Rectangle `contains_local` matches the classic inclusive-AABB

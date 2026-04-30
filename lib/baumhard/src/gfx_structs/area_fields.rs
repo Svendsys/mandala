@@ -223,10 +223,7 @@ impl Add for GlyphAreaField {
                 }
                 GlyphAreaField::Bounds(this) => {
                     if let GlyphAreaField::Bounds(other) = rhs {
-                        return GlyphAreaField::Bounds(OrderedVec2::new(
-                            this.x + other.x,
-                            this.y + other.y,
-                        ));
+                        return GlyphAreaField::Bounds(OrderedVec2::new(this.x + other.x, this.y + other.y));
                     }
                 }
                 GlyphAreaField::ColorFontRegions(regions) => {

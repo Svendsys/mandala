@@ -233,10 +233,8 @@ pub fn portal_pair_data(
                 endpoint_state,
                 style.font_size_pt,
             );
-            let icon_color_rgba =
-                color::hex_to_rgba_safe(&style.color, [0.92, 0.92, 0.92, 1.0]);
-            let text_color_rgba =
-                color::hex_to_rgba_safe(&text_style.color, [0.92, 0.92, 0.92, 1.0]);
+            let icon_color_rgba = color::hex_to_rgba_safe(&style.color, [0.92, 0.92, 0.92, 1.0]);
+            let text_color_rgba = color::hex_to_rgba_safe(&text_style.color, [0.92, 0.92, 0.92, 1.0]);
 
             // Inline edit preview wins over the committed `text`
             // so the user sees their buffer live. Empty string
@@ -244,12 +242,8 @@ pub fn portal_pair_data(
             // the slot is always emitted so the mutator-tree
             // channel layout stays stable frame-to-frame.
             let text_string = match portal_text_edit {
-                Some(p) if *p.edge_key == edge_key && p.endpoint_node_id == owner.id => {
-                    p.buffer.to_string()
-                }
-                _ => endpoint_state
-                    .and_then(|s| s.text.clone())
-                    .unwrap_or_default(),
+                Some(p) if *p.edge_key == edge_key && p.endpoint_node_id == owner.id => p.buffer.to_string(),
+                _ => endpoint_state.and_then(|s| s.text.clone()).unwrap_or_default(),
             };
             let text_layout = layout_portal_text(
                 icon_layout,
@@ -277,10 +271,8 @@ pub fn portal_pair_data(
                 icon_layout.bounds,
             );
             icon_area.zoom_visibility = endpoint_zoom_window;
-            let icon_clusters =
-                crate::util::grapheme_chad::count_grapheme_clusters(&style.glyph);
-            icon_area.regions =
-                ColorFontRegions::single_span(icon_clusters, Some(icon_color_rgba), None);
+            let icon_clusters = crate::util::grapheme_chad::count_grapheme_clusters(&style.glyph);
+            icon_area.regions = ColorFontRegions::single_span(icon_clusters, Some(icon_color_rgba), None);
 
             let mut text_area = GlyphArea::new_with_str(
                 &text_string,
@@ -290,10 +282,8 @@ pub fn portal_pair_data(
                 text_layout.bounds,
             );
             text_area.zoom_visibility = endpoint_zoom_window;
-            let text_clusters =
-                crate::util::grapheme_chad::count_grapheme_clusters(&text_string);
-            text_area.regions =
-                ColorFontRegions::single_span(text_clusters, Some(text_color_rgba), None);
+            let text_clusters = crate::util::grapheme_chad::count_grapheme_clusters(&text_string);
+            text_area.regions = ColorFontRegions::single_span(text_clusters, Some(text_color_rgba), None);
 
             // Two hitboxes — one per clickable sub-part. The icon
             // hitbox always exists; the text hitbox exists only
@@ -303,17 +293,11 @@ pub fn portal_pair_data(
             // accept clicks: a text-less portal would otherwise
             // grow a phantom ~30×65 px hot zone next to the icon
             // at default font size.
-            let icon_hitbox = (
-                icon_layout.top_left,
-                icon_layout.top_left + icon_layout.bounds,
-            );
+            let icon_hitbox = (icon_layout.top_left, icon_layout.top_left + icon_layout.bounds);
             let text_hitbox = if text_string.is_empty() {
                 None
             } else {
-                Some((
-                    text_layout.top_left,
-                    text_layout.top_left + text_layout.bounds,
-                ))
+                Some((text_layout.top_left, text_layout.top_left + text_layout.bounds))
             };
 
             EndpointAreas {
@@ -380,19 +364,17 @@ pub fn build_portal_tree_from_pairs(pairs: &[PortalPairData]) -> PortalTree {
     let mut unique_id: usize = 1;
 
     for pair in pairs {
-        let pair_root = tree.arena.new_node(GfxElement::new_void_with_id(
-            pair.pair_channel,
-            unique_id,
-        ));
+        let pair_root = tree
+            .arena
+            .new_node(GfxElement::new_void_with_id(pair.pair_channel, unique_id));
         unique_id += 1;
         tree.root.append(pair_root, &mut tree.arena);
 
         for (endpoint_idx, ep) in pair.endpoints.iter().enumerate() {
             let endpoint_channel = endpoint_idx + 1;
-            let endpoint_void = tree.arena.new_node(GfxElement::new_void_with_id(
-                endpoint_channel,
-                unique_id,
-            ));
+            let endpoint_void = tree
+                .arena
+                .new_node(GfxElement::new_void_with_id(endpoint_channel, unique_id));
             unique_id += 1;
             pair_root.append(endpoint_void, &mut tree.arena);
 
@@ -483,10 +465,9 @@ pub fn build_portal_mutator_tree_from_pairs(pairs: &[PortalPairData]) -> PortalM
 
             for (slot, area) in [(ICON_SLOT, &ep.icon), (TEXT_SLOT, &ep.text)] {
                 let delta = DeltaGlyphArea::full_assign_from(area);
-                let leaf = mt.arena.new_node(GfxMutator::new(
-                    Mutation::AreaDelta(Box::new(delta)),
-                    slot,
-                ));
+                let leaf = mt
+                    .arena
+                    .new_node(GfxMutator::new(Mutation::AreaDelta(Box::new(delta)), slot));
                 endpoint_void.append(leaf, &mut mt.arena);
             }
 

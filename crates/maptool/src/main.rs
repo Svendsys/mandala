@@ -129,10 +129,7 @@ fn run(args: &[String]) -> Result<(), CliError> {
             let map = load_map(parsed.map_path)?;
             let matches = grep_nodes(&map, &regex);
             if matches.is_empty() {
-                return Err(CliError::NotFound(format!(
-                    "no matches for: {}",
-                    parsed.pattern
-                )));
+                return Err(CliError::NotFound(format!("no matches for: {}", parsed.pattern)));
             }
             for (id, line) in matches {
                 println!("{id}: {line}");
@@ -151,13 +148,7 @@ fn run(args: &[String]) -> Result<(), CliError> {
                     parsed.pattern
                 )));
             }
-            let changed = apply_command(
-                &mut map,
-                &ids,
-                parsed.target_notes,
-                parsed.cmd,
-                parsed.cmd_args,
-            )?;
+            let changed = apply_command(&mut map, &ids, parsed.target_notes, parsed.cmd, parsed.cmd_args)?;
             if parsed.dry_run {
                 eprintln!("dry-run: would modify {} node(s):", changed.len());
                 for id in &changed {
@@ -180,38 +171,33 @@ fn run(args: &[String]) -> Result<(), CliError> {
                     print!("{markdown}");
                     Ok(())
                 }
-                Some(path) => fs::write(Path::new(path), &markdown).map_err(|e| {
-                    CliError::Io(format!("failed to write {path}: {e}"))
-                }),
+                Some(path) => fs::write(Path::new(path), &markdown)
+                    .map_err(|e| CliError::Io(format!("failed to write {path}: {e}"))),
             }
         }
-        "convert" => {
-            match args.get(1).map(|s| s.as_str()) {
-                Some("--legacy") => {
-                    let input = args.get(2).ok_or_else(|| {
-                        CliError::Usage("convert: missing <in.json>".into())
-                    })?;
-                    let output = args.get(3).ok_or_else(|| {
-                        CliError::Usage("convert: missing <out.json>".into())
-                    })?;
-                    convert::convert_legacy(Path::new(input), Path::new(output))
-                        .map_err(CliError::Io)
-                }
-                Some("--portals") => {
-                    let input = args.get(2).ok_or_else(|| {
-                        CliError::Usage("convert: missing <in.json>".into())
-                    })?;
-                    let output = args.get(3).ok_or_else(|| {
-                        CliError::Usage("convert: missing <out.json>".into())
-                    })?;
-                    convert::convert_portals(Path::new(input), Path::new(output))
-                        .map_err(CliError::Io)
-                }
-                _ => Err(CliError::Usage(
-                    "convert: expected --legacy or --portals flag".into(),
-                )),
+        "convert" => match args.get(1).map(|s| s.as_str()) {
+            Some("--legacy") => {
+                let input = args
+                    .get(2)
+                    .ok_or_else(|| CliError::Usage("convert: missing <in.json>".into()))?;
+                let output = args
+                    .get(3)
+                    .ok_or_else(|| CliError::Usage("convert: missing <out.json>".into()))?;
+                convert::convert_legacy(Path::new(input), Path::new(output)).map_err(CliError::Io)
             }
-        }
+            Some("--portals") => {
+                let input = args
+                    .get(2)
+                    .ok_or_else(|| CliError::Usage("convert: missing <in.json>".into()))?;
+                let output = args
+                    .get(3)
+                    .ok_or_else(|| CliError::Usage("convert: missing <out.json>".into()))?;
+                convert::convert_portals(Path::new(input), Path::new(output)).map_err(CliError::Io)
+            }
+            _ => Err(CliError::Usage(
+                "convert: expected --legacy or --portals flag".into(),
+            )),
+        },
         "verify" => {
             let map_path = args
                 .get(1)
@@ -350,9 +336,7 @@ fn parse_apply_args(args: &[String]) -> Result<ApplyArgs<'_>, CliError> {
             // Reject unknown `--` flags so typos like `--dry-runn` don't
             // get silently swallowed as a positional arg.
             other if other.starts_with("--") => {
-                return Err(CliError::Usage(format!(
-                    "apply: unknown flag: {other}"
-                )));
+                return Err(CliError::Usage(format!("apply: unknown flag: {other}")));
             }
             other => positional.push(other),
         }
@@ -365,9 +349,8 @@ fn parse_apply_args(args: &[String]) -> Result<ApplyArgs<'_>, CliError> {
         .get(1)
         .copied()
         .ok_or_else(|| CliError::Usage("apply: missing <pattern>".into()))?;
-    let sep_at = sep_at.ok_or_else(|| {
-        CliError::Usage("apply: missing `--` separator before command".into())
-    })?;
+    let sep_at =
+        sep_at.ok_or_else(|| CliError::Usage("apply: missing `--` separator before command".into()))?;
     let tail = &args[sep_at + 1..];
     let cmd = tail
         .first()
@@ -499,9 +482,8 @@ fn run_pipe(cmd: &str, cmd_args: &[String], input: &str) -> Result<String, CliEr
             stderr.trim()
         )));
     }
-    let mut out = String::from_utf8(output.stdout).map_err(|e| {
-        CliError::Subprocess(format!("`{cmd}` produced non-UTF-8 output: {e}"))
-    })?;
+    let mut out = String::from_utf8(output.stdout)
+        .map_err(|e| CliError::Subprocess(format!("`{cmd}` produced non-UTF-8 output: {e}")))?;
     if out.ends_with('\n') {
         out.pop();
         if out.ends_with('\r') {
@@ -516,8 +498,8 @@ fn run_pipe(cmd: &str, cmd_args: &[String], input: &str) -> Result<String, CliEr
 /// orders nodes lexicographically (HashMap iteration is randomised).
 /// Write is atomic (temp + rename) — see `write_atomic`.
 fn save_map(path: &Path, map: &MindMap) -> Result<(), CliError> {
-    let value = serde_json::to_value(map)
-        .map_err(|e| CliError::Io(format!("failed to serialise map: {e}")))?;
+    let value =
+        serde_json::to_value(map).map_err(|e| CliError::Io(format!("failed to serialise map: {e}")))?;
     let json = serde_json::to_string_pretty(&value)
         .map_err(|e| CliError::Io(format!("failed to render map JSON: {e}")))?;
     write_atomic(path, &json)
@@ -531,17 +513,9 @@ fn write_atomic(path: &Path, contents: &str) -> Result<(), CliError> {
         .file_name()
         .ok_or_else(|| CliError::Io(format!("invalid path: {}", path.display())))?
         .to_string_lossy();
-    let tmp_path = dir.join(format!(
-        ".{}.maptool.{}.tmp",
-        file_name,
-        std::process::id()
-    ));
-    fs::write(&tmp_path, contents).map_err(|e| {
-        CliError::Io(format!(
-            "failed to write {}: {e}",
-            tmp_path.display()
-        ))
-    })?;
+    let tmp_path = dir.join(format!(".{}.maptool.{}.tmp", file_name, std::process::id()));
+    fs::write(&tmp_path, contents)
+        .map_err(|e| CliError::Io(format!("failed to write {}: {e}", tmp_path.display())))?;
     fs::rename(&tmp_path, path).map_err(|e| {
         let _ = fs::remove_file(&tmp_path);
         CliError::Io(format!(
@@ -635,7 +609,10 @@ mod tests {
         // build_regex returns the message unprefixed (caller adds "grep:").
         let err = build_regex("[unclosed", false).unwrap_err();
         assert!(err.contains("invalid regex"), "got: {err}");
-        assert!(!err.starts_with("grep:"), "build_regex must not hardcode subcommand prefix");
+        assert!(
+            !err.starts_with("grep:"),
+            "build_regex must not hardcode subcommand prefix"
+        );
     }
 
     #[test]
@@ -644,10 +621,7 @@ mod tests {
         // node in testament contains this token, and it isn't in
         // any node's text — so finding it proves notes are searched.
         let mut map = testament();
-        map.nodes
-            .get_mut("0")
-            .unwrap()
-            .notes = "SENTINEL_ZXCVBNM_12345".into();
+        map.nodes.get_mut("0").unwrap().notes = "SENTINEL_ZXCVBNM_12345".into();
 
         let hits = grep_nodes(&map, &rx("SENTINEL_ZXCVBNM_12345", false));
         assert_eq!(hits.len(), 1);
@@ -908,24 +882,14 @@ mod tests {
     #[test]
     fn run_pipe_strips_one_trailing_newline() {
         // `cat; echo` emits the input followed by one extra newline.
-        let out = run_pipe(
-            "sh",
-            &["-c".into(), "cat; echo".into()],
-            "abc",
-        )
-        .unwrap();
+        let out = run_pipe("sh", &["-c".into(), "cat; echo".into()], "abc").unwrap();
         assert_eq!(out, "abc", "exactly one trailing newline should be stripped");
     }
 
     #[test]
     fn run_pipe_strips_only_one_newline() {
         // Two `echo`s emit two trailing newlines; only one is stripped.
-        let out = run_pipe(
-            "sh",
-            &["-c".into(), "cat; echo; echo".into()],
-            "abc",
-        )
-        .unwrap();
+        let out = run_pipe("sh", &["-c".into(), "cat; echo; echo".into()], "abc").unwrap();
         assert_eq!(out, "abc\n");
     }
 
@@ -958,8 +922,7 @@ mod tests {
     fn apply_command_text_updates_and_clears_runs() {
         let mut map = apply_fixture();
         let ids = vec!["0".to_string(), "0.2".to_string()];
-        let changed =
-            apply_command(&mut map, &ids, false, "tr", &["a-z".into(), "A-Z".into()]).unwrap();
+        let changed = apply_command(&mut map, &ids, false, "tr", &["a-z".into(), "A-Z".into()]).unwrap();
         assert_eq!(changed, vec!["0".to_string(), "0.2".to_string()]);
         assert_eq!(map.nodes["0"].text, "HELLO WORLD");
         assert!(
@@ -982,8 +945,7 @@ mod tests {
         let before_start = map.nodes["0.0"].text_runs[0].start;
         let before_end = map.nodes["0.0"].text_runs[0].end;
         let ids = vec!["0.0".to_string()];
-        let changed =
-            apply_command(&mut map, &ids, true, "tr", &["a-z".into(), "A-Z".into()]).unwrap();
+        let changed = apply_command(&mut map, &ids, true, "tr", &["a-z".into(), "A-Z".into()]).unwrap();
         assert_eq!(changed, vec!["0.0".to_string()]);
         assert_eq!(map.nodes["0.0"].notes, "SECRET NOTES_TOKEN HERE");
         assert_eq!(map.nodes["0.0"].text, original_text, "text untouched");
@@ -999,10 +961,7 @@ mod tests {
         // `cat` returns input verbatim; n3's text has no trailing newline,
         // so strip-one is a no-op and the value is unchanged.
         let changed = apply_command(&mut map, &ids, false, "cat", &[]).unwrap();
-        assert!(
-            changed.is_empty(),
-            "expected no change, got: {changed:?}"
-        );
+        assert!(changed.is_empty(), "expected no change, got: {changed:?}");
         assert_eq!(map.nodes["0.1"].text, "unchanged");
     }
 
@@ -1122,10 +1081,7 @@ mod tests {
             other => panic!("expected Subprocess, got {other:?}"),
         }
         let after = std::fs::read(tmp.path()).unwrap();
-        assert_eq!(
-            before, after,
-            "file must be unchanged when any subprocess fails"
-        );
+        assert_eq!(before, after, "file must be unchanged when any subprocess fails");
     }
 
     // --- parse_apply_args -------------------------------------------
@@ -1145,9 +1101,7 @@ mod tests {
 
     #[test]
     fn parse_apply_args_flags_scattered_before_separator() {
-        let args = as_strings(&[
-            "-i", "map.json", "--notes", "--dry-run", "pat", "--", "cmd",
-        ]);
+        let args = as_strings(&["-i", "map.json", "--notes", "--dry-run", "pat", "--", "cmd"]);
         let p = parse_apply_args(&args).unwrap();
         assert_eq!(p.map_path, "map.json");
         assert_eq!(p.pattern, "pat");
@@ -1202,13 +1156,7 @@ mod tests {
 
     #[test]
     fn run_apply_invalid_regex_is_usage_error() {
-        let args = as_strings(&[
-            "apply",
-            "__does_not_exist.json",
-            "[unclosed",
-            "--",
-            "cat",
-        ]);
+        let args = as_strings(&["apply", "__does_not_exist.json", "[unclosed", "--", "cat"]);
         match run(&args) {
             Err(CliError::Usage(msg)) => assert!(msg.starts_with("apply: invalid regex")),
             other => panic!("expected apply: invalid regex usage error, got {other:?}"),
@@ -1290,7 +1238,11 @@ mod tests {
             let reloaded = &back.nodes[id];
             assert_eq!(reloaded.text, original.text, "{id}: text");
             assert_eq!(reloaded.notes, original.notes, "{id}: notes");
-            assert_eq!(reloaded.text_runs.len(), original.text_runs.len(), "{id}: runs len");
+            assert_eq!(
+                reloaded.text_runs.len(),
+                original.text_runs.len(),
+                "{id}: runs len"
+            );
         }
     }
 

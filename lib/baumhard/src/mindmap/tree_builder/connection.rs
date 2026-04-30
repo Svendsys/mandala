@@ -75,8 +75,7 @@ fn connection_edge_layout(
 
     let edge_zoom_window = elem.zoom_visibility;
     let mk_area = |text: &str, pos: Vec2| -> GlyphArea {
-        let mut area =
-            GlyphArea::new_with_str(text, font_size, font_size, pos, glyph_bounds);
+        let mut area = GlyphArea::new_with_str(text, font_size, font_size, pos, glyph_bounds);
         area.zoom_visibility = edge_zoom_window;
         let cluster_count = crate::util::grapheme_chad::count_grapheme_clusters(text);
         area.regions = ColorFontRegions::single_span(cluster_count, Some(color_rgba), None);
@@ -180,13 +179,11 @@ pub fn build_connection_mutator_tree(
 
         for (channel, area) in children {
             let delta = DeltaGlyphArea::full_assign_from(&area);
-            let leaf = mt.arena.new_node(GfxMutator::new(
-                Mutation::AreaDelta(Box::new(delta)),
-                channel,
-            ));
+            let leaf = mt
+                .arena
+                .new_node(GfxMutator::new(Mutation::AreaDelta(Box::new(delta)), channel));
             edge_node.append(leaf, &mut mt.arena);
         }
     }
     mt
 }
-

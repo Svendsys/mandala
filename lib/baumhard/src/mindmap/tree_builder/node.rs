@@ -15,9 +15,7 @@ use crate::gfx_structs::element::GfxElement;
 use crate::gfx_structs::mutator::GfxMutator;
 use crate::gfx_structs::shape::NodeShape;
 use crate::gfx_structs::tree::Tree;
-use crate::mindmap::border::{
-    resolve_border_style, BORDER_APPROX_CHAR_WIDTH_FRAC,
-};
+use crate::mindmap::border::{resolve_border_style, BORDER_APPROX_CHAR_WIDTH_FRAC};
 use crate::mindmap::model::{MindMap, MindNode};
 use crate::util::color;
 
@@ -36,11 +34,7 @@ pub(super) fn mindnode_to_glyph_area(
     vars: &HashMap<String, String>,
     canvas_default_border: Option<&crate::mindmap::model::GlyphBorderConfig>,
 ) -> GlyphArea {
-    let scale = node
-        .text_runs
-        .first()
-        .map(|r| r.size_pt as f32)
-        .unwrap_or(14.0);
+    let scale = node.text_runs.first().map(|r| r.size_pt as f32).unwrap_or(14.0);
     let line_height = scale * 1.2;
     let position = node.pos_vec2();
     let bounds = node.size_vec2();
@@ -95,9 +89,7 @@ pub(super) fn mindnode_to_glyph_area(
     //
     // `EdgePadding::ZERO` when the frame is hidden or the shape
     // isn't a rectangle (the only shape borders attach to today).
-    if node.style.show_frame
-        && NodeShape::from_style_string(&node.style.shape) == NodeShape::Rectangle
-    {
+    if node.style.show_frame && NodeShape::from_style_string(&node.style.shape) == NodeShape::Rectangle {
         let frame_color_resolved = color::resolve_var(&node.style.frame_color, vars);
         let border_style = resolve_border_style(
             node.style.border.as_ref(),

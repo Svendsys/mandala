@@ -7,8 +7,8 @@
 
 use super::fixtures::sample_geometry;
 use crate::application::color_picker::{
-    compute_color_picker_layout, PickerHit, CROSSHAIR_CENTER_CELL, HUE_SLOT_COUNT,
-    SAT_CELL_COUNT, VAL_CELL_COUNT,
+    compute_color_picker_layout, PickerHit, CROSSHAIR_CENTER_CELL, HUE_SLOT_COUNT, SAT_CELL_COUNT,
+    VAL_CELL_COUNT,
 };
 use crate::application::widgets::color_picker_widget::load_spec;
 
@@ -144,10 +144,7 @@ fn center_override_translates_all_positions() {
     let mut g = sample_geometry();
     let baseline = compute_color_picker_layout(&g, screen_w, screen_h);
     let offset = (200.0_f32, -80.0_f32);
-    g.center_override = Some((
-        screen_w * 0.5 + offset.0,
-        screen_h * 0.5 + offset.1,
-    ));
+    g.center_override = Some((screen_w * 0.5 + offset.0, screen_h * 0.5 + offset.1));
     let shifted = compute_color_picker_layout(&g, screen_w, screen_h);
     assert!((shifted.center.0 - baseline.center.0 - offset.0).abs() < 1e-3);
     assert!((shifted.center.1 - baseline.center.1 - offset.1).abs() < 1e-3);
@@ -186,10 +183,14 @@ fn layout_backdrop_fits_inside_small_window() {
         let (left, top, bw, bh) = layout.backdrop;
         assert!(left >= 0.0, "backdrop left underflows on {w}x{h}");
         assert!(top >= 0.0, "backdrop top underflows on {w}x{h}");
-        assert!(left + bw <= w + 0.5,
-            "backdrop right overflows on {w}x{h}: left={left} bw={bw} w={w}");
-        assert!(top + bh <= h + 0.5,
-            "backdrop bottom overflows on {w}x{h}: top={top} bh={bh} h={h}");
+        assert!(
+            left + bw <= w + 0.5,
+            "backdrop right overflows on {w}x{h}: left={left} bw={bw} w={w}"
+        );
+        assert!(
+            top + bh <= h + 0.5,
+            "backdrop bottom overflows on {w}x{h}: top={top} bh={bh} h={h}"
+        );
     }
 }
 
@@ -202,10 +203,16 @@ fn layout_preview_centered_on_wheel_center() {
     let (px, py) = layout.preview_pos;
     let cx = px + layout.preview_size * 0.5;
     let cy = py + layout.preview_size * 0.5;
-    assert!((cx - layout.center.0).abs() < 1.0,
-        "preview x center {cx} differs from wheel center {}", layout.center.0);
-    assert!((cy - layout.center.1).abs() < 1.0,
-        "preview y center {cy} differs from wheel center {}", layout.center.1);
+    assert!(
+        (cx - layout.center.0).abs() < 1.0,
+        "preview x center {cx} differs from wheel center {}",
+        layout.center.0
+    );
+    assert!(
+        (cy - layout.center.1).abs() < 1.0,
+        "preview y center {cy} differs from wheel center {}",
+        layout.center.1
+    );
 }
 
 /// Regression guard for the "࿕ overlaps the first arm letter" bug.
@@ -219,10 +226,22 @@ fn layout_keeps_preview_clear_of_adjacent_arm_cells() {
 
     let center = layout.center;
     let neighbours = [
-        ("val[CENTER - 1]", layout.val_cell_positions[CROSSHAIR_CENTER_CELL - 1]),
-        ("val[CENTER + 1]", layout.val_cell_positions[CROSSHAIR_CENTER_CELL + 1]),
-        ("sat[CENTER - 1]", layout.sat_cell_positions[CROSSHAIR_CENTER_CELL - 1]),
-        ("sat[CENTER + 1]", layout.sat_cell_positions[CROSSHAIR_CENTER_CELL + 1]),
+        (
+            "val[CENTER - 1]",
+            layout.val_cell_positions[CROSSHAIR_CENTER_CELL - 1],
+        ),
+        (
+            "val[CENTER + 1]",
+            layout.val_cell_positions[CROSSHAIR_CENTER_CELL + 1],
+        ),
+        (
+            "sat[CENTER - 1]",
+            layout.sat_cell_positions[CROSSHAIR_CENTER_CELL - 1],
+        ),
+        (
+            "sat[CENTER + 1]",
+            layout.sat_cell_positions[CROSSHAIR_CENTER_CELL + 1],
+        ),
     ];
     let slack = 0.5;
     for (label, (px, py)) in neighbours {

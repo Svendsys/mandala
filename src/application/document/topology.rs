@@ -103,11 +103,14 @@ impl MindMapDocument {
         // Update edge references.
         for edge in &mut self.mindmap.edges {
             for (old, new) in &renames {
-                if edge.from_id == *old { edge.from_id = new.clone(); }
-                if edge.to_id == *old { edge.to_id = new.clone(); }
+                if edge.from_id == *old {
+                    edge.from_id = new.clone();
+                }
+                if edge.to_id == *old {
+                    edge.to_id = new.clone();
+                }
             }
         }
-
     }
 
     /// Create a new unattached (orphan) node at the given canvas position.
@@ -127,7 +130,9 @@ impl MindMapDocument {
     /// Create an orphan node, push undo, select it, mark dirty.
     pub fn create_orphan_and_select(&mut self, canvas_pos: Vec2) -> String {
         let new_id = self.apply_create_orphan_node(canvas_pos);
-        self.undo_stack.push(UndoAction::CreateNode { node_id: new_id.clone() });
+        self.undo_stack.push(UndoAction::CreateNode {
+            node_id: new_id.clone(),
+        });
         self.selection = SelectionState::Single(new_id.clone());
         self.dirty = true;
         new_id
@@ -135,8 +140,12 @@ impl MindMapDocument {
 
     /// Orphan every selected node with undo support.
     pub fn apply_orphan_selection_with_undo(&mut self) -> bool {
-        let sel: Vec<String> = self.selection
-            .selected_ids().iter().map(|s| s.to_string()).collect();
+        let sel: Vec<String> = self
+            .selection
+            .selected_ids()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         if sel.is_empty() {
             return false;
         }
@@ -238,24 +247,18 @@ impl MindMapDocument {
     }
 
     /// Create a default-styled cross_link edge between two nodes.
-    pub fn create_cross_link_edge(
-        &mut self,
-        source_id: &str,
-        target_id: &str,
-    ) -> Option<usize> {
+    pub fn create_cross_link_edge(&mut self, source_id: &str, target_id: &str) -> Option<usize> {
         if source_id == target_id {
             return None;
         }
-        if !self.mindmap.nodes.contains_key(source_id)
-            || !self.mindmap.nodes.contains_key(target_id)
-        {
+        if !self.mindmap.nodes.contains_key(source_id) || !self.mindmap.nodes.contains_key(target_id) {
             return None;
         }
-        let exists = self.mindmap.edges.iter().any(|e| {
-            e.edge_type == "cross_link"
-                && e.from_id == source_id
-                && e.to_id == target_id
-        });
+        let exists = self
+            .mindmap
+            .edges
+            .iter()
+            .any(|e| e.edge_type == "cross_link" && e.from_id == source_id && e.to_id == target_id);
         if exists {
             return None;
         }
@@ -292,7 +295,13 @@ impl MindMapDocument {
     }
 
     /// Move multiple root nodes at once, with subtree deduplication.
-    pub fn apply_move_multiple(&mut self, node_ids: &[String], dx: f64, dy: f64, individual: bool) -> Vec<(String, Position)> {
+    pub fn apply_move_multiple(
+        &mut self,
+        node_ids: &[String],
+        dx: f64,
+        dy: f64,
+        individual: bool,
+    ) -> Vec<(String, Position)> {
         if individual {
             let mut undo_data = Vec::new();
             for nid in node_ids {
@@ -312,27 +321,29 @@ impl MindMapDocument {
     /// descendant of any other node in the list.
     pub(super) fn dedup_subtree_roots(&self, node_ids: &[String]) -> Vec<String> {
         let id_set: std::collections::HashSet<&str> = node_ids.iter().map(|s| s.as_str()).collect();
-        node_ids.iter().filter(|id| {
-            let mut current = self.mindmap.nodes.get(id.as_str())
-                .and_then(|n| n.parent_id.as_deref());
-            while let Some(pid) = current {
-                if id_set.contains(pid) {
-                    return false;
-                }
-                current = self.mindmap.nodes.get(pid)
+        node_ids
+            .iter()
+            .filter(|id| {
+                let mut current = self
+                    .mindmap
+                    .nodes
+                    .get(id.as_str())
                     .and_then(|n| n.parent_id.as_deref());
-            }
-            true
-        }).cloned().collect()
+                while let Some(pid) = current {
+                    if id_set.contains(pid) {
+                        return false;
+                    }
+                    current = self.mindmap.nodes.get(pid).and_then(|n| n.parent_id.as_deref());
+                }
+                true
+            })
+            .cloned()
+            .collect()
     }
 
     /// Reparent a set of nodes under `new_parent_id` (None = promote to root).
     /// Updates `parent_id` and parent_child edges. Returns undo data.
-    pub fn apply_reparent(
-        &mut self,
-        node_ids: &[String],
-        new_parent_id: Option<&str>,
-    ) -> ReparentUndoData {
+    pub fn apply_reparent(&mut self, node_ids: &[String], new_parent_id: Option<&str>) -> ReparentUndoData {
         let old_edges = self.mindmap.edges.clone();
 
         let mut entries: Vec<(String, Option<String>)> = Vec::new();
@@ -353,9 +364,11 @@ impl MindMapDocument {
             node.parent_id = new_parent_id.map(|s| s.to_string());
 
             // Update parent_child edges
-            let old_edge_pos = self.mindmap.edges.iter().position(|e| {
-                e.edge_type == "parent_child" && e.to_id == *source_id
-            });
+            let old_edge_pos = self
+                .mindmap
+                .edges
+                .iter()
+                .position(|e| e.edge_type == "parent_child" && e.to_id == *source_id);
             match (old_edge_pos, new_parent_id) {
                 (Some(idx), Some(new_parent)) => {
                     self.mindmap.edges[idx].from_id = new_parent.to_string();
@@ -365,9 +378,9 @@ impl MindMapDocument {
                     self.mindmap.edges.remove(idx);
                 }
                 (None, Some(new_parent)) => {
-                    self.mindmap.edges.push(default_parent_child_edge(
-                        new_parent, source_id,
-                    ));
+                    self.mindmap
+                        .edges
+                        .push(default_parent_child_edge(new_parent, source_id));
                 }
                 (None, None) => {}
             }

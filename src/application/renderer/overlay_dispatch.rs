@@ -48,11 +48,8 @@ impl Renderer {
             return;
         };
 
-        let layout = compute_console_frame_layout(
-            geometry,
-            self.config.width as f32,
-            self.config.height as f32,
-        );
+        let layout =
+            compute_console_frame_layout(geometry, self.config.width as f32, self.config.height as f32);
         self.console_backdrop = Some(layout.backdrop_rect());
         let signature = console_overlay_signature(&layout);
 
@@ -91,7 +88,6 @@ impl Renderer {
         }
         self.rebuild_overlay_scene_buffers(app_scene);
     }
-
 
     /// Build the picker's overlay tree from `geometry`, register
     /// it under [`OverlayRole::ColorPicker`](crate::application::scene_host::OverlayRole),

@@ -57,11 +57,7 @@ pub fn point_in_node_aabb(canvas_pos: Vec2, node_id: &str, tree: &MindMapTree) -
             let y = area.position.y.0;
             let w = area.render_bounds.x.0;
             let h = area.render_bounds.y.0;
-            if canvas_pos.x < x
-                || canvas_pos.x > x + w
-                || canvas_pos.y < y
-                || canvas_pos.y > y + h
-            {
+            if canvas_pos.x < x || canvas_pos.x > x + w || canvas_pos.y < y || canvas_pos.y > y + h {
                 return false;
             }
             let local = Vec2::new(canvas_pos.x - x, canvas_pos.y - y);
@@ -101,8 +97,12 @@ pub fn hit_test_edge(canvas_pos: Vec2, map: &MindMap, tolerance: f32) -> Option<
         let to_size = to_node.size_vec2();
 
         let path = connection::build_connection_path(
-            from_pos, from_size, &edge.anchor_from,
-            to_pos, to_size, &edge.anchor_to,
+            from_pos,
+            from_size,
+            &edge.anchor_from,
+            to_pos,
+            to_size,
+            &edge.anchor_to,
             &edge.control_points,
         );
         let dist = connection::distance_to_path(canvas_pos, &path);
@@ -110,10 +110,7 @@ pub fn hit_test_edge(canvas_pos: Vec2, map: &MindMap, tolerance: f32) -> Option<
             continue;
         }
         if best.as_ref().map_or(true, |(_, best_dist)| dist < *best_dist) {
-            best = Some((
-                EdgeRef::new(&edge.from_id, &edge.to_id, &edge.edge_type),
-                dist,
-            ));
+            best = Some((EdgeRef::new(&edge.from_id, &edge.to_id, &edge.edge_type), dist));
         }
     }
     best.map(|(e, _)| e)
@@ -245,7 +242,8 @@ pub fn apply_drag_delta(tree: &mut MindMapTree, node_id: &str, dx: f32, dy: f32,
 pub fn apply_drag_delta_and_collect_patches(
     tree: &mut MindMapTree,
     node_id: &str,
-    dx: f32, dy: f32,
+    dx: f32,
+    dy: f32,
     include_descendants: bool,
     patches: &mut Vec<(usize, (f32, f32))>,
 ) {
@@ -273,7 +271,8 @@ pub fn apply_drag_delta_and_collect_patches(
 fn apply_delta_recursive(
     arena: &mut indextree::Arena<baumhard::gfx_structs::element::GfxElement>,
     node_id: indextree::NodeId,
-    dx: f32, dy: f32,
+    dx: f32,
+    dy: f32,
 ) {
     // Move this node.
     if let Some(node) = arena.get_mut(node_id) {
@@ -294,7 +293,8 @@ fn apply_delta_recursive(
 fn collect_patches_recursive(
     arena: &mut indextree::Arena<baumhard::gfx_structs::element::GfxElement>,
     node_id: indextree::NodeId,
-    dx: f32, dy: f32,
+    dx: f32,
+    dy: f32,
     patches: &mut Vec<(usize, (f32, f32))>,
 ) {
     // Move this node and collect patch.

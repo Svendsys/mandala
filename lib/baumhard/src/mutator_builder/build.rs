@@ -18,10 +18,7 @@ use super::context::SectionContext;
 ///
 /// Cost: O(nodes) in the expanded tree, plus one `SectionContext`
 /// call per runtime-sourced field / count / mutation.
-pub fn build<C: SectionContext + ?Sized>(
-    node: &MutatorNode,
-    ctx: &C,
-) -> MutatorTree<GfxMutator> {
+pub fn build<C: SectionContext + ?Sized>(node: &MutatorNode, ctx: &C) -> MutatorTree<GfxMutator> {
     if let MutatorNode::Repeat { .. } = node {
         panic!("Repeat can only appear as a child, not as a tree root");
     }
@@ -123,9 +120,7 @@ fn materialize_node<C: SectionContext + ?Sized>(
             channel, mutations, ..
         } => match mutations {
             MutationListSrc::Literal(list) => GfxMutator::new_macro(list.clone(), *channel),
-            MutationListSrc::Runtime(label) => {
-                GfxMutator::new_macro(ctx.mutation_list(label), *channel)
-            }
+            MutationListSrc::Runtime(label) => GfxMutator::new_macro(ctx.mutation_list(label), *channel),
         },
         MutatorNode::Instruction {
             channel,

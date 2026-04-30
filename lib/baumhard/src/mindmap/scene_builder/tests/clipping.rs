@@ -27,12 +27,16 @@ fn test_scene_clips_connection_glyphs_inside_node() {
     // No body glyph position should fall strictly inside C's AABB.
     for &(x, y) in &conn.glyph_positions {
         let inside_c = x > 180.5 && x < 239.5 && y > 0.5 && y < 39.5;
-        assert!(!inside_c,
+        assert!(
+            !inside_c,
             "glyph at ({}, {}) should have been clipped by blocker C",
-            x, y);
+            x, y
+        );
     }
-    assert!(!conn.glyph_positions.is_empty(),
-        "some glyphs should remain outside the blocker");
+    assert!(
+        !conn.glyph_positions.is_empty(),
+        "some glyphs should remain outside the blocker"
+    );
 }
 
 #[test]
@@ -65,16 +69,19 @@ fn test_scene_clips_connection_glyphs_in_frame_area() {
     let min_y = 0.0 - border_font + 0.5;
     let max_y = 40.0 + border_font - 0.5;
     for &(x, y) in &conn.glyph_positions {
-        let inside_expanded_c =
-            x > min_x && x < max_x && y > min_y && y < max_y;
-        assert!(!inside_expanded_c,
+        let inside_expanded_c = x > min_x && x < max_x && y > min_y && y < max_y;
+        assert!(
+            !inside_expanded_c,
             "glyph at ({}, {}) should have been clipped by framed C's expanded AABB",
-            x, y);
+            x, y
+        );
     }
     // Body glyphs should still render in the space between A, C's
     // expanded clip box, and B.
-    assert!(!conn.glyph_positions.is_empty(),
-        "connection between A and B should still have visible body glyphs outside C's frame");
+    assert!(
+        !conn.glyph_positions.is_empty(),
+        "connection between A and B should still have visible body glyphs outside C's frame"
+    );
 }
 
 #[test]
@@ -103,10 +110,14 @@ fn test_scene_caps_survive_for_unframed_endpoints() {
     );
     let scene = build_scene(&map, 1.0);
     let conn = &scene.connection_elements[0];
-    assert!(conn.cap_start.is_some(),
-        "cap_start should survive for unframed source");
-    assert!(conn.cap_end.is_some(),
-        "cap_end should survive for unframed target");
+    assert!(
+        conn.cap_start.is_some(),
+        "cap_start should survive for unframed source"
+    );
+    assert!(
+        conn.cap_end.is_some(),
+        "cap_end should survive for unframed target"
+    );
 }
 
 #[test]
@@ -137,11 +148,15 @@ fn test_scene_caps_clipped_for_framed_endpoints() {
     let scene = build_scene(&map, 1.0);
     let conn = &scene.connection_elements[0];
     // Source is unframed — cap_start still shows at A's right edge.
-    assert!(conn.cap_start.is_some(),
-        "cap_start should survive for unframed source");
+    assert!(
+        conn.cap_start.is_some(),
+        "cap_start should survive for unframed source"
+    );
     // Target is framed — cap_end falls inside the expanded clip AABB.
-    assert!(conn.cap_end.is_none(),
-        "cap_end should be clipped when target has a visible frame");
+    assert!(
+        conn.cap_end.is_none(),
+        "cap_end should be clipped when target has a visible frame"
+    );
 }
 
 // --- Connection-cache integration tests -----------------------------

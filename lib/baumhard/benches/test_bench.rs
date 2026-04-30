@@ -3,6 +3,8 @@
 use baumhard::core::tests::primitives_tests::*;
 use baumhard::font::tests::attrs_tests::*;
 use baumhard::font::tests::fonts_tests::*;
+use baumhard::font::tests::hex_tests::*;
+use baumhard::font::tests::metrics_tests::*;
 use baumhard::gfx_structs::tests::area_tests::*;
 use baumhard::gfx_structs::tests::model_tests::*;
 use baumhard::gfx_structs::tests::mutator_tests::*;
@@ -12,8 +14,6 @@ use baumhard::gfx_structs::tests::region_rect_tests::*;
 use baumhard::gfx_structs::tests::scene_tests::*;
 use baumhard::gfx_structs::tests::shape_tests::*;
 use baumhard::gfx_structs::tests::tree_tests::*;
-use baumhard::font::tests::hex_tests::*;
-use baumhard::font::tests::metrics_tests::*;
 use baumhard::gfx_structs::tests::tree_walker_tests::*;
 use baumhard::gfx_structs::tests::zoom_visibility_tests::*;
 use baumhard::util::tests::arena_utils_tests::*;
@@ -28,9 +28,7 @@ use std::path::PathBuf;
 
 use baumhard::mindmap::loader;
 use baumhard::mindmap::model::MindMap;
-use baumhard::mindmap::scene_builder::{
-    build_scene_with_cache, SceneSelectionContext,
-};
+use baumhard::mindmap::scene_builder::{build_scene_with_cache, SceneSelectionContext};
 use baumhard::mindmap::scene_cache::SceneConnectionCache;
 
 /// Load the testament fixture for the drag-drain benchmark. Panics
@@ -135,56 +133,131 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("overriding_insert_12", |b| b.iter(|| overriding_insert_12()));
     c.bench_function("overriding_insert_13", |b| b.iter(|| overriding_insert_13()));
     // glyph_area //
-    c.bench_function("outline_default_is_none", |b| b.iter(|| do_outline_default_is_none()));
-    c.bench_function("outline_assign_round_trip", |b| b.iter(|| do_outline_assign_round_trip()));
-    c.bench_function("outline_subtract_clears", |b| b.iter(|| do_outline_subtract_clears()));
+    c.bench_function("outline_default_is_none", |b| {
+        b.iter(|| do_outline_default_is_none())
+    });
+    c.bench_function("outline_assign_round_trip", |b| {
+        b.iter(|| do_outline_assign_round_trip())
+    });
+    c.bench_function("outline_subtract_clears", |b| {
+        b.iter(|| do_outline_subtract_clears())
+    });
     c.bench_function("outline_changes_hash", |b| b.iter(|| do_outline_changes_hash()));
-    c.bench_function("outline_field_add_picks_rhs", |b| b.iter(|| do_outline_field_add_picks_rhs()));
-    c.bench_function("shape_default_is_rectangle", |b| b.iter(|| do_shape_default_is_rectangle()));
-    c.bench_function("shape_assign_round_trip", |b| b.iter(|| do_shape_assign_round_trip()));
-    c.bench_function("shape_subtract_resets_to_rectangle", |b| b.iter(|| do_shape_subtract_resets_to_rectangle()));
+    c.bench_function("outline_field_add_picks_rhs", |b| {
+        b.iter(|| do_outline_field_add_picks_rhs())
+    });
+    c.bench_function("shape_default_is_rectangle", |b| {
+        b.iter(|| do_shape_default_is_rectangle())
+    });
+    c.bench_function("shape_assign_round_trip", |b| {
+        b.iter(|| do_shape_assign_round_trip())
+    });
+    c.bench_function("shape_subtract_resets_to_rectangle", |b| {
+        b.iter(|| do_shape_subtract_resets_to_rectangle())
+    });
     c.bench_function("shape_changes_hash", |b| b.iter(|| do_shape_changes_hash()));
-    c.bench_function("shape_field_add_picks_rhs", |b| b.iter(|| do_shape_field_add_picks_rhs()));
+    c.bench_function("shape_field_add_picks_rhs", |b| {
+        b.iter(|| do_shape_field_add_picks_rhs())
+    });
     // zoom_visibility //
-    c.bench_function("zoom_visibility_default_is_unbounded", |b| b.iter(|| do_default_is_unbounded()));
-    c.bench_function("zoom_visibility_unbounded_contains_full_camera_range", |b| b.iter(|| do_unbounded_contains_full_camera_range()));
-    c.bench_function("zoom_visibility_min_only_is_inclusive", |b| b.iter(|| do_min_only_is_inclusive()));
-    c.bench_function("zoom_visibility_max_only_is_inclusive", |b| b.iter(|| do_max_only_is_inclusive()));
-    c.bench_function("zoom_visibility_closed_window_renders_inside_band", |b| b.iter(|| do_closed_window_renders_inside_band()));
-    c.bench_function("zoom_visibility_single_point_band_is_inclusive", |b| b.iter(|| do_single_point_band_is_inclusive()));
-    c.bench_function("zoom_visibility_inverted_band_never_contains", |b| b.iter(|| do_inverted_band_never_contains()));
-    c.bench_function("zoom_visibility_nan_zoom_never_contains", |b| b.iter(|| do_nan_zoom_never_contains()));
-    c.bench_function("zoom_visibility_try_new_enforces_invariants", |b| b.iter(|| do_try_new_enforces_invariants()));
-    c.bench_function("zoom_visibility_assign_round_trip", |b| b.iter(|| do_zoom_visibility_assign_round_trip()));
-    c.bench_function("zoom_visibility_subtract_resets_to_unbounded", |b| b.iter(|| do_zoom_visibility_subtract_resets_to_unbounded()));
-    c.bench_function("zoom_visibility_field_add_picks_rhs", |b| b.iter(|| do_zoom_visibility_field_add_picks_rhs()));
-    c.bench_function("zoom_visibility_changes_hash", |b| b.iter(|| do_zoom_visibility_changes_hash()));
-    c.bench_function("zoom_visibility_default_is_skipped_in_json", |b| b.iter(|| do_zoom_visibility_default_is_skipped_in_json()));
+    c.bench_function("zoom_visibility_default_is_unbounded", |b| {
+        b.iter(|| do_default_is_unbounded())
+    });
+    c.bench_function("zoom_visibility_unbounded_contains_full_camera_range", |b| {
+        b.iter(|| do_unbounded_contains_full_camera_range())
+    });
+    c.bench_function("zoom_visibility_min_only_is_inclusive", |b| {
+        b.iter(|| do_min_only_is_inclusive())
+    });
+    c.bench_function("zoom_visibility_max_only_is_inclusive", |b| {
+        b.iter(|| do_max_only_is_inclusive())
+    });
+    c.bench_function("zoom_visibility_closed_window_renders_inside_band", |b| {
+        b.iter(|| do_closed_window_renders_inside_band())
+    });
+    c.bench_function("zoom_visibility_single_point_band_is_inclusive", |b| {
+        b.iter(|| do_single_point_band_is_inclusive())
+    });
+    c.bench_function("zoom_visibility_inverted_band_never_contains", |b| {
+        b.iter(|| do_inverted_band_never_contains())
+    });
+    c.bench_function("zoom_visibility_nan_zoom_never_contains", |b| {
+        b.iter(|| do_nan_zoom_never_contains())
+    });
+    c.bench_function("zoom_visibility_try_new_enforces_invariants", |b| {
+        b.iter(|| do_try_new_enforces_invariants())
+    });
+    c.bench_function("zoom_visibility_assign_round_trip", |b| {
+        b.iter(|| do_zoom_visibility_assign_round_trip())
+    });
+    c.bench_function("zoom_visibility_subtract_resets_to_unbounded", |b| {
+        b.iter(|| do_zoom_visibility_subtract_resets_to_unbounded())
+    });
+    c.bench_function("zoom_visibility_field_add_picks_rhs", |b| {
+        b.iter(|| do_zoom_visibility_field_add_picks_rhs())
+    });
+    c.bench_function("zoom_visibility_changes_hash", |b| {
+        b.iter(|| do_zoom_visibility_changes_hash())
+    });
+    c.bench_function("zoom_visibility_default_is_skipped_in_json", |b| {
+        b.iter(|| do_zoom_visibility_default_is_skipped_in_json())
+    });
     // shape math (point-in-shape / shape-vs-AABB) //
-    c.bench_function("shape_from_style_string_known_names", |b| b.iter(|| do_shape_from_style_string_known_names()));
-    c.bench_function("shape_from_style_string_empty_and_unknown_fall_back_to_rectangle", |b| b.iter(|| do_shape_from_style_string_empty_and_unknown_fall_back_to_rectangle()));
-    c.bench_function("shape_rectangle_contains_local", |b| b.iter(|| do_shape_rectangle_contains_local()));
-    c.bench_function("shape_ellipse_contains_centre_and_rim", |b| b.iter(|| do_shape_ellipse_contains_centre_and_rim()));
-    c.bench_function("shape_ellipse_rejects_aabb_corners", |b| b.iter(|| do_shape_ellipse_rejects_aabb_corners()));
-    c.bench_function("shape_ellipse_handles_stretched_conic", |b| b.iter(|| do_shape_ellipse_handles_stretched_conic()));
-    c.bench_function("shape_degenerate_bounds_never_hit", |b| b.iter(|| do_shape_degenerate_bounds_never_hit()));
-    c.bench_function("shape_ellipse_intersects_aabb_fully_inside", |b| b.iter(|| do_shape_ellipse_intersects_aabb_fully_inside()));
-    c.bench_function("shape_ellipse_intersects_aabb_corner_only", |b| b.iter(|| do_shape_ellipse_intersects_aabb_corner_only()));
-    c.bench_function("shape_ellipse_intersects_aabb_straddling_rim", |b| b.iter(|| do_shape_ellipse_intersects_aabb_straddling_rim()));
-    c.bench_function("shape_ellipse_intersects_aabb_fully_outside", |b| b.iter(|| do_shape_ellipse_intersects_aabb_fully_outside()));
-    c.bench_function("shape_shader_ids_are_stable", |b| b.iter(|| do_shape_shader_ids_are_stable()));
+    c.bench_function("shape_from_style_string_known_names", |b| {
+        b.iter(|| do_shape_from_style_string_known_names())
+    });
+    c.bench_function(
+        "shape_from_style_string_empty_and_unknown_fall_back_to_rectangle",
+        |b| b.iter(|| do_shape_from_style_string_empty_and_unknown_fall_back_to_rectangle()),
+    );
+    c.bench_function("shape_rectangle_contains_local", |b| {
+        b.iter(|| do_shape_rectangle_contains_local())
+    });
+    c.bench_function("shape_ellipse_contains_centre_and_rim", |b| {
+        b.iter(|| do_shape_ellipse_contains_centre_and_rim())
+    });
+    c.bench_function("shape_ellipse_rejects_aabb_corners", |b| {
+        b.iter(|| do_shape_ellipse_rejects_aabb_corners())
+    });
+    c.bench_function("shape_ellipse_handles_stretched_conic", |b| {
+        b.iter(|| do_shape_ellipse_handles_stretched_conic())
+    });
+    c.bench_function("shape_degenerate_bounds_never_hit", |b| {
+        b.iter(|| do_shape_degenerate_bounds_never_hit())
+    });
+    c.bench_function("shape_ellipse_intersects_aabb_fully_inside", |b| {
+        b.iter(|| do_shape_ellipse_intersects_aabb_fully_inside())
+    });
+    c.bench_function("shape_ellipse_intersects_aabb_corner_only", |b| {
+        b.iter(|| do_shape_ellipse_intersects_aabb_corner_only())
+    });
+    c.bench_function("shape_ellipse_intersects_aabb_straddling_rim", |b| {
+        b.iter(|| do_shape_ellipse_intersects_aabb_straddling_rim())
+    });
+    c.bench_function("shape_ellipse_intersects_aabb_fully_outside", |b| {
+        b.iter(|| do_shape_ellipse_intersects_aabb_fully_outside())
+    });
+    c.bench_function("shape_shader_ids_are_stable", |b| {
+        b.iter(|| do_shape_shader_ids_are_stable())
+    });
     // glyph_tree //
     c.bench_function("basics_solo_mutation", |b| b.iter(|| basics_solo_mutation()));
     c.bench_function("model_block_commands", |b| b.iter(|| model_block_commands()));
     c.bench_function("area_block_commands", |b| b.iter(|| area_block_commands()));
     c.bench_function("complex_tree_mutation", |b| b.iter(|| complex_tree_mutation()));
     c.bench_function("simple_tree_mutation", |b| b.iter(|| simple_tree_mutation()));
-    c.bench_function("repeat_while_skip_while", |b| b.iter(|| repeat_while_skip_while()));
+    c.bench_function("repeat_while_skip_while", |b| {
+        b.iter(|| repeat_while_skip_while())
+    });
     c.bench_function("repeat_while_without_children_is_noop", |b| {
         b.iter(|| repeat_while_without_children_is_noop())
     });
-    c.bench_function("event_propagation_complex", |b| b.iter(|| event_propagation_complex_symmetric()));
-    c.bench_function("event_propagation_simple", |b| b.iter(|| event_propagation_simple()));
+    c.bench_function("event_propagation_complex", |b| {
+        b.iter(|| event_propagation_complex_symmetric())
+    });
+    c.bench_function("event_propagation_simple", |b| {
+        b.iter(|| event_propagation_simple())
+    });
     c.bench_function("mutator_macro_applies_all_mutations_in_order", |b| {
         b.iter(|| do_mutator_macro_applies_all_mutations_in_order())
     });
@@ -198,36 +271,68 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter(|| do_mutator_void_preserves_channel_alignment_in_tree_walk())
     });
     // regions //
-    c.bench_function("region_params_new_sunny_day", |b| b.iter(|| do_region_params_new_sunny_day()));
-    c.bench_function("region_indexer_initialise", |b| b.iter(|| do_region_indexer_initialize()));
-    c.bench_function("region_indexer_insert_and_remove", |b| b.iter(|| do_region_indexer_insert_and_remove()));
-    c.bench_function("region_params_non_divisor_target", |b| b.iter(|| do_region_params_non_divisor_target()));
-    c.bench_function("region_params_pixel_to_region", |b| b.iter(|| do_region_params_pixel_to_region()));
-    c.bench_function("region_params_region_to_pixel", |b| b.iter(|| do_region_params_region_to_pixel()));
-    c.bench_function("region_rect_exhaustive_4x4_grid", |b| b.iter(|| do_rect_exhaustive_4x4_grid()));
+    c.bench_function("region_params_new_sunny_day", |b| {
+        b.iter(|| do_region_params_new_sunny_day())
+    });
+    c.bench_function("region_indexer_initialise", |b| {
+        b.iter(|| do_region_indexer_initialize())
+    });
+    c.bench_function("region_indexer_insert_and_remove", |b| {
+        b.iter(|| do_region_indexer_insert_and_remove())
+    });
+    c.bench_function("region_params_non_divisor_target", |b| {
+        b.iter(|| do_region_params_non_divisor_target())
+    });
+    c.bench_function("region_params_pixel_to_region", |b| {
+        b.iter(|| do_region_params_pixel_to_region())
+    });
+    c.bench_function("region_params_region_to_pixel", |b| {
+        b.iter(|| do_region_params_region_to_pixel())
+    });
+    c.bench_function("region_rect_exhaustive_4x4_grid", |b| {
+        b.iter(|| do_rect_exhaustive_4x4_grid())
+    });
     // grapheme_chad //
     c.bench_function("slice_to_newline", |b| b.iter(|| do_slice_to_newline()));
     c.bench_function("split_graphemes", |b| b.iter(|| do_split_graphemes()));
-    c.bench_function("find_byte_index_of_grapheme", |b| b.iter(|| do_find_byte_index_of_grapheme()));
-    c.bench_function("replace_graphemes_until_newline", |b| b.iter(|| do_replace_graphemes_until_newline()));
-    c.bench_function("count_grapheme_clusters", |b| b.iter(|| do_count_grapheme_clusters()));
-    c.bench_function("find_nth_line_byte_indices", |b| b.iter(|| do_find_nth_line_byte_indices()));
-    c.bench_function("find_nth_line_grapheme_indices", |b| b.iter(|| do_find_nth_line_grapheme_indices()));
+    c.bench_function("find_byte_index_of_grapheme", |b| {
+        b.iter(|| do_find_byte_index_of_grapheme())
+    });
+    c.bench_function("replace_graphemes_until_newline", |b| {
+        b.iter(|| do_replace_graphemes_until_newline())
+    });
+    c.bench_function("count_grapheme_clusters", |b| {
+        b.iter(|| do_count_grapheme_clusters())
+    });
+    c.bench_function("find_nth_line_byte_indices", |b| {
+        b.iter(|| do_find_nth_line_byte_indices())
+    });
+    c.bench_function("find_nth_line_grapheme_indices", |b| {
+        b.iter(|| do_find_nth_line_grapheme_indices())
+    });
     c.bench_function("remove_prefix_unicode", |b| b.iter(|| do_remove_prefix_unicode()));
     c.bench_function("insert_new_lines", |b| b.iter(|| do_insert_new_lines()));
     c.bench_function("push_spaces", |b| b.iter(|| do_push_spaces()));
     c.bench_function("count_number_of_lines", |b| b.iter(|| do_count_number_of_lines()));
     c.bench_function("truncate_unicode", |b| b.iter(|| do_truncate_unicode()));
-    c.bench_function("insert_str_at_grapheme", |b| b.iter(|| do_insert_str_at_grapheme()));
+    c.bench_function("insert_str_at_grapheme", |b| {
+        b.iter(|| do_insert_str_at_grapheme())
+    });
     c.bench_function("delete_grapheme_at", |b| b.iter(|| do_delete_grapheme_at()));
-    c.bench_function("grapheme_display_width", |b| b.iter(|| do_grapheme_display_width()));
-    c.bench_function("truncate_to_display_width", |b| b.iter(|| do_truncate_to_display_width()));
+    c.bench_function("grapheme_display_width", |b| {
+        b.iter(|| do_grapheme_display_width())
+    });
+    c.bench_function("truncate_to_display_width", |b| {
+        b.iter(|| do_truncate_to_display_width())
+    });
     c.bench_function("word_left", |b| b.iter(|| do_word_left()));
     c.bench_function("word_right", |b| b.iter(|| do_word_right()));
     // geometry //
     c.bench_function("90_deg_rotation", |b| b.iter(|| do_90_deg_rotation()));
     c.bench_function("180_deg_rotation", |b| b.iter(|| do_180_deg_rotation()));
-    c.bench_function("non_origin_pivot_rotation", |b| b.iter(|| do_non_origin_pivot_rotation()));
+    c.bench_function("non_origin_pivot_rotation", |b| {
+        b.iter(|| do_non_origin_pivot_rotation())
+    });
     c.bench_function("0_deg_rotation", |b| b.iter(|| do_0_deg_rotation()));
     c.bench_function("pixel_functions", |b| b.iter(|| do_pixel_functions()));
     c.bench_function("almost_equal", |b| b.iter(|| do_almost_equal()));
@@ -253,10 +358,16 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter(|| do_from_hex_garbage_falls_back_to_black())
     });
     c.bench_function("rgba_hex_macros", |b| b.iter(|| do_rgba_hex_macros()));
-    c.bench_function("hex_to_rgba_three_digit", |b| b.iter(|| do_hex_to_rgba_three_digit()));
-    c.bench_function("hex_to_rgba_four_digit", |b| b.iter(|| do_hex_to_rgba_four_digit()));
+    c.bench_function("hex_to_rgba_three_digit", |b| {
+        b.iter(|| do_hex_to_rgba_three_digit())
+    });
+    c.bench_function("hex_to_rgba_four_digit", |b| {
+        b.iter(|| do_hex_to_rgba_four_digit())
+    });
     c.bench_function("hex_to_rgba_six_digit", |b| b.iter(|| do_hex_to_rgba_six_digit()));
-    c.bench_function("hex_to_rgba_eight_digit", |b| b.iter(|| do_hex_to_rgba_eight_digit()));
+    c.bench_function("hex_to_rgba_eight_digit", |b| {
+        b.iter(|| do_hex_to_rgba_eight_digit())
+    });
     c.bench_function("hex_to_rgba_rejects_invalid_length", |b| {
         b.iter(|| do_hex_to_rgba_rejects_invalid_length())
     });
@@ -340,9 +451,10 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("measure_text_block_unbounded_single_line_nonzero", |b| {
         b.iter(|| do_measure_text_block_unbounded_single_line_nonzero())
     });
-    c.bench_function("measure_text_block_unbounded_multiline_width_is_widest_line", |b| {
-        b.iter(|| do_measure_text_block_unbounded_multiline_width_is_widest_line())
-    });
+    c.bench_function(
+        "measure_text_block_unbounded_multiline_width_is_widest_line",
+        |b| b.iter(|| do_measure_text_block_unbounded_multiline_width_is_widest_line()),
+    );
     c.bench_function("measure_text_block_unbounded_width_scales_with_font_size", |b| {
         b.iter(|| do_measure_text_block_unbounded_width_scales_with_font_size())
     });
@@ -359,12 +471,14 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("attrs_list_pins_family_name_when_region_carries_app_font", |b| {
         b.iter(|| do_attrs_list_pins_family_name_when_region_carries_app_font())
     });
-    c.bench_function("attrs_list_falls_back_to_monospace_when_region_has_no_font", |b| {
-        b.iter(|| do_attrs_list_falls_back_to_monospace_when_region_has_no_font())
-    });
-    c.bench_function("rich_text_spans_empty_regions_yield_single_whole_text_span", |b| {
-        b.iter(|| do_rich_text_spans_empty_regions_yield_single_whole_text_span())
-    });
+    c.bench_function(
+        "attrs_list_falls_back_to_monospace_when_region_has_no_font",
+        |b| b.iter(|| do_attrs_list_falls_back_to_monospace_when_region_has_no_font()),
+    );
+    c.bench_function(
+        "rich_text_spans_empty_regions_yield_single_whole_text_span",
+        |b| b.iter(|| do_rich_text_spans_empty_regions_yield_single_whole_text_span()),
+    );
     c.bench_function("rich_text_spans_two_regions_slice_text_per_range", |b| {
         b.iter(|| do_rich_text_spans_two_regions_slice_text_per_range())
     });
@@ -374,9 +488,10 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("rich_text_spans_color_override_recolors_every_span", |b| {
         b.iter(|| do_rich_text_spans_color_override_recolors_every_span())
     });
-    c.bench_function("rich_text_spans_color_override_applies_to_uncolored_region", |b| {
-        b.iter(|| do_rich_text_spans_color_override_applies_to_uncolored_region())
-    });
+    c.bench_function(
+        "rich_text_spans_color_override_applies_to_uncolored_region",
+        |b| b.iter(|| do_rich_text_spans_color_override_applies_to_uncolored_region()),
+    );
     c.bench_function("rich_text_spans_color_override_drops_zero_width_regions", |b| {
         b.iter(|| do_rich_text_spans_color_override_drops_zero_width_regions())
     });
@@ -409,14 +524,30 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter(|| do_loaded_families_iter_matches_owned_list())
     });
     // scene + hit-test //
-    c.bench_function("descendant_at_hits_single_area", |b| b.iter(|| do_descendant_at_hits_single_area()));
-    c.bench_function("descendant_at_prefers_smallest", |b| b.iter(|| do_descendant_at_prefers_smallest()));
-    c.bench_function("descendant_near_grants_slack", |b| b.iter(|| do_descendant_near_grants_slack()));
-    c.bench_function("descendants_aabb", |b| b.iter(|| do_descendants_aabb_covers_all_areas()));
-    c.bench_function("descendants_aabb_invalidated_by_mutator", |b| b.iter(|| do_descendants_aabb_cache_invalidated_by_mutator()));
-    c.bench_function("scene_component_at", |b| b.iter(|| do_scene_insert_and_component_at()));
-    c.bench_function("scene_layer_order_hit_priority", |b| b.iter(|| do_scene_layer_order_controls_hit_priority()));
-    c.bench_function("scene_offset_hit_test", |b| b.iter(|| do_scene_offset_is_applied_to_hit_test()));
+    c.bench_function("descendant_at_hits_single_area", |b| {
+        b.iter(|| do_descendant_at_hits_single_area())
+    });
+    c.bench_function("descendant_at_prefers_smallest", |b| {
+        b.iter(|| do_descendant_at_prefers_smallest())
+    });
+    c.bench_function("descendant_near_grants_slack", |b| {
+        b.iter(|| do_descendant_near_grants_slack())
+    });
+    c.bench_function("descendants_aabb", |b| {
+        b.iter(|| do_descendants_aabb_covers_all_areas())
+    });
+    c.bench_function("descendants_aabb_invalidated_by_mutator", |b| {
+        b.iter(|| do_descendants_aabb_cache_invalidated_by_mutator())
+    });
+    c.bench_function("scene_component_at", |b| {
+        b.iter(|| do_scene_insert_and_component_at())
+    });
+    c.bench_function("scene_layer_order_hit_priority", |b| {
+        b.iter(|| do_scene_layer_order_controls_hit_priority())
+    });
+    c.bench_function("scene_offset_hit_test", |b| {
+        b.iter(|| do_scene_offset_is_applied_to_hit_test())
+    });
     // arena_utils //
     c.bench_function("arena_utils_clone", |b| b.iter(|| do_clone()));
     // primes //

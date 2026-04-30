@@ -108,10 +108,7 @@ pub fn border_outward_normal(t: f32) -> Vec2 {
 /// marker placement so a broken map still renders something
 /// recognizable.
 pub fn default_border_t(owner_pos: Vec2, owner_size: Vec2, partner_center: Vec2) -> f32 {
-    let owner_center = Vec2::new(
-        owner_pos.x + owner_size.x * 0.5,
-        owner_pos.y + owner_size.y * 0.5,
-    );
+    let owner_center = Vec2::new(owner_pos.x + owner_size.x * 0.5, owner_pos.y + owner_size.y * 0.5);
     let dir = partner_center - owner_center;
     if dir.length_squared() < f32::EPSILON {
         return 1.0;
@@ -187,8 +184,16 @@ pub fn nearest_border_t(node_pos: Vec2, node_size: Vec2, point: Vec2) -> f32 {
     // Guarded division — a zero-size node (shouldn't happen in
     // practice, but not checked at type level) would divide by
     // zero. Treat that as `t = 0.0` rather than NaN.
-    let width = if node_size.x.abs() < f32::EPSILON { 1.0 } else { node_size.x };
-    let height = if node_size.y.abs() < f32::EPSILON { 1.0 } else { node_size.y };
+    let width = if node_size.x.abs() < f32::EPSILON {
+        1.0
+    } else {
+        node_size.x
+    };
+    let height = if node_size.y.abs() < f32::EPSILON {
+        1.0
+    } else {
+        node_size.y
+    };
     if best == d_top {
         ((top.x - min.x) / width).clamp(0.0, 1.0 - f32::EPSILON)
     } else if best == d_right {

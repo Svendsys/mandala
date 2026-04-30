@@ -29,8 +29,7 @@ pub(in crate::application::color_picker_overlay::picker_glyph_areas) fn build(
 ) {
     let hover_scale = spec.geometry.hover_scale;
     let cell_font_size = layout.cell_font_size;
-    let cell_box_w =
-        (layout.cell_advance * spec.geometry.cell_box_scale).max(cell_font_size * 1.5);
+    let cell_box_w = (layout.cell_advance * spec.geometry.cell_box_scale).max(cell_font_size * 1.5);
 
     let current_sat_cell = (geometry.sat * (SAT_CELL_COUNT as f32 - 1.0))
         .round()

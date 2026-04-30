@@ -24,9 +24,9 @@ impl super::WasmApp {
 
         let mut input_borrow = self.input.borrow_mut();
         let mut renderer_borrow = self.renderer.borrow_mut();
-        let (Some(input), Some(renderer)) =
-            (input_borrow.as_mut(), renderer_borrow.as_mut())
-        else { return; };
+        let (Some(input), Some(renderer)) = (input_borrow.as_mut(), renderer_borrow.as_mut()) else {
+            return;
+        };
 
         // Editor keyboard-steal: if open, route all keys
         // to the editor so hotkeys don't collide with typed text.
@@ -45,14 +45,9 @@ impl super::WasmApp {
                     input.modifiers.alt_key(),
                 )
             });
-            if let Some(modal_action @ (Action::TextEditCommit | Action::TextEditCancel)) =
-                &action
-            {
+            if let Some(modal_action @ (Action::TextEditCommit | Action::TextEditCancel)) = &action {
                 let mut core = input.input_context_core(renderer, &self.keybinds);
-                let _ = dispatch::action_core::dispatch_compatible(
-                    modal_action,
-                    &mut core,
-                );
+                let _ = dispatch::action_core::dispatch_compatible(modal_action, &mut core);
                 self.suppress_keys.set(input.text_edit_state.is_open());
                 return;
             }
@@ -102,8 +97,7 @@ impl super::WasmApp {
             // suppress call lived inside the EditSelection
             // pre-filter arm). Other Compatible Actions don't
             // touch suppress.
-            let was_edit_selection =
-                matches!(a, Action::EditSelection | Action::EditSelectionClean);
+            let was_edit_selection = matches!(a, Action::EditSelection | Action::EditSelectionClean);
             let _ = {
                 let mut core = input.input_context_core(renderer, &self.keybinds);
                 dispatch::action_core::dispatch_compatible(&a, &mut core)

@@ -118,10 +118,7 @@ impl NodeShape {
         }
         match self {
             NodeShape::Rectangle => {
-                local.x >= 0.0
-                    && local.x <= bounds.x
-                    && local.y >= 0.0
-                    && local.y <= bounds.y
+                local.x >= 0.0 && local.x <= bounds.x && local.y >= 0.0 && local.y <= bounds.y
             }
             NodeShape::Ellipse => {
                 // Normalised coordinates in [-1, 1] relative to the
@@ -194,4 +191,3 @@ impl NodeShape {
 // criterion bench harness at `lib/baumhard/benches/test_bench.rs`
 // can reuse each `do_*()` body as a micro-benchmark — see
 // TEST_CONVENTIONS.md §T2.2.
-

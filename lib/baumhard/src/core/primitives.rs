@@ -168,11 +168,8 @@ impl ColorFontRegions {
             return Self::new_empty();
         }
         let mut out = Self::new_empty();
-        out.regions.insert(ColorFontRegion::new(
-            Range::new(0, cluster_count),
-            font,
-            color,
-        ));
+        out.regions
+            .insert(ColorFontRegion::new(Range::new(0, cluster_count), font, color));
         out
     }
 
@@ -473,11 +470,7 @@ impl ApplyOperation {
     /// Apply this operation to `lhs`, using `rhs` as the delta. `T`
     /// must support all four arithmetic assigns so every variant is
     /// expressible against a single generic bound.
-    pub fn apply<T: AddAssign<T> + MulAssign<T> + SubAssign<T> + Default>(
-        &self,
-        lhs: &mut T,
-        rhs: T,
-    ) {
+    pub fn apply<T: AddAssign<T> + MulAssign<T> + SubAssign<T> + Default>(&self, lhs: &mut T, rhs: T) {
         match self {
             ApplyOperation::Add => *lhs += rhs,
             ApplyOperation::Assign => *lhs = rhs,
@@ -690,9 +683,7 @@ impl Default for Anchor {
     /// scene builder repositions them.
     fn default() -> Self {
         Anchor::new(
-            AnchorTarget::Parent {
-                generation_offset: 0,
-            },
+            AnchorTarget::Parent { generation_offset: 0 },
             AnchorPoint::Center(0),
             AnchorPoint::Center(0),
         )

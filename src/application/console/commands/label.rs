@@ -13,7 +13,9 @@
 use baumhard::util::geometry::pretty_inequal;
 
 use super::Command;
-use crate::application::console::completion::{prefix_filter, Completion, CompletionContext, CompletionState, kv_key_completions};
+use crate::application::console::completion::{
+    kv_key_completions, prefix_filter, Completion, CompletionContext, CompletionState,
+};
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::edge_or_portal_label_selected;
 use crate::application::console::traits::{apply_kvs, HasLabel};
@@ -56,9 +58,7 @@ fn complete_label(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Complet
             out
         }
         CompletionContext::Token { .. } => kv_key_completions(KEYS, state.partial),
-        CompletionContext::KvValue { key } if key == "position" => {
-            prefix_filter(POSITIONS, state.partial)
-        }
+        CompletionContext::KvValue { key } if key == "position" => prefix_filter(POSITIONS, state.partial),
         _ => Vec::new(),
     }
 }
@@ -82,37 +82,34 @@ fn execute_label(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                     return ExecResult::ok_empty();
                 }
                 SelectionState::PortalLabel(s) => {
-                    eff.open_portal_text_edit =
-                        Some((s.edge_ref(), s.endpoint_node_id.clone()));
+                    eff.open_portal_text_edit = Some((s.edge_ref(), s.endpoint_node_id.clone()));
                     eff.close_console = true;
                     return ExecResult::ok_empty();
                 }
                 _ => return ExecResult::err("no edge selected"),
             }
         }
-        Some("clear") => {
-            match &eff.document.selection {
-                SelectionState::Edge(e) => {
-                    let changed = eff.document.set_edge_label(&e.clone(), None);
-                    return if changed {
-                        ExecResult::ok_msg("label cleared")
-                    } else {
-                        ExecResult::ok_msg("label already empty")
-                    };
-                }
-                SelectionState::PortalLabel(s) => {
-                    let er = s.edge_ref();
-                    let ep = s.endpoint_node_id.clone();
-                    let changed = eff.document.set_portal_label_text(&er, &ep, None);
-                    return if changed {
-                        ExecResult::ok_msg("portal label text cleared")
-                    } else {
-                        ExecResult::ok_msg("portal label text already empty")
-                    };
-                }
-                _ => return ExecResult::err("no edge selected"),
+        Some("clear") => match &eff.document.selection {
+            SelectionState::Edge(e) => {
+                let changed = eff.document.set_edge_label(&e.clone(), None);
+                return if changed {
+                    ExecResult::ok_msg("label cleared")
+                } else {
+                    ExecResult::ok_msg("label already empty")
+                };
             }
-        }
+            SelectionState::PortalLabel(s) => {
+                let er = s.edge_ref();
+                let ep = s.endpoint_node_id.clone();
+                let changed = eff.document.set_portal_label_text(&er, &ep, None);
+                return if changed {
+                    ExecResult::ok_msg("portal label text cleared")
+                } else {
+                    ExecResult::ok_msg("portal label text already empty")
+                };
+            }
+            _ => return ExecResult::err("no edge selected"),
+        },
         Some(other) => {
             return ExecResult::err(format!(
                 "unknown label verb '{}'; use kv form (text=... position=...) or 'edit' / 'clear'",
@@ -122,10 +119,7 @@ fn execute_label(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         None => {}
     }
 
-    let kvs: Vec<(String, String)> = args
-        .kvs()
-        .map(|(k, v)| (k.to_string(), v.to_string()))
-        .collect();
+    let kvs: Vec<(String, String)> = args.kvs().map(|(k, v)| (k.to_string(), v.to_string())).collect();
     if kvs.is_empty() {
         return ExecResult::err("usage: label text=\"<text>\" [position=<start|middle|end>]");
     }
@@ -137,10 +131,7 @@ fn execute_label(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     // field concept.
     let position_kv = kvs.iter().find(|(k, _)| k == "position").cloned();
     let position_t_kv = kvs.iter().find(|(k, _)| k == "position_t").cloned();
-    let perpendicular_kv = kvs
-        .iter()
-        .find(|(k, _)| k == "perpendicular")
-        .cloned();
+    let perpendicular_kv = kvs.iter().find(|(k, _)| k == "perpendicular").cloned();
     let trait_kvs: Vec<(String, String)> = kvs
         .iter()
         .filter(|(k, _)| !matches!(k.as_str(), "position" | "position_t" | "perpendicular"))
@@ -183,12 +174,10 @@ fn execute_label(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     let target: Option<TargetKind> = match &eff.document.selection {
         SelectionState::Edge(er) => Some(TargetKind::LineEdge(er.clone())),
         SelectionState::EdgeLabel(s) => Some(TargetKind::LineEdge(s.edge_ref.clone())),
-        SelectionState::PortalLabel(s) | SelectionState::PortalText(s) => {
-            Some(TargetKind::PortalEndpoint {
-                edge_ref: s.edge_ref(),
-                endpoint_node_id: s.endpoint_node_id.clone(),
-            })
-        }
+        SelectionState::PortalLabel(s) | SelectionState::PortalText(s) => Some(TargetKind::PortalEndpoint {
+            edge_ref: s.edge_ref(),
+            endpoint_node_id: s.endpoint_node_id.clone(),
+        }),
         _ => None,
     };
 
@@ -199,16 +188,12 @@ fn execute_label(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                 // typed error (the parametric Action arm silently
                 // no-ops on bad input via the same parse helper).
                 if parse_label_position_anchor(&value).is_none() {
-                    return ExecResult::err(format!(
-                        "position '{}' must be start|middle|end",
-                        value
-                    ));
+                    return ExecResult::err(format!("position '{}' must be start|middle|end", value));
                 }
                 // Route through the mutation core — same setter
                 // path the parametric `Action::SetEdgeLabelPosition`
                 // arm uses.
-                let changed =
-                    apply_label_position_to_selection(eff.document, &value);
+                let changed = apply_label_position_to_selection(eff.document, &value);
                 any_applied |= changed;
                 if !changed {
                     messages.push(format!("position already {}", value));
@@ -237,30 +222,16 @@ fn execute_label(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                     // differs from what they typed.
                     let clamped = t.clamp(0.0, 1.0);
                     if pretty_inequal(t, clamped) {
-                        messages.push(format!(
-                            "position_t {} clamped to {}",
-                            value, clamped
-                        ));
+                        messages.push(format!("position_t {} clamped to {}", value, clamped));
                     }
                     let changed = eff.document.set_edge_label_position(er, t);
                     any_applied |= changed;
                     if !changed {
-                        messages
-                            .push(format!("position_t already ≈ {:.4}", clamped));
+                        messages.push(format!("position_t already ≈ {:.4}", clamped));
                     }
                 }
-                Ok(_) => {
-                    return ExecResult::err(format!(
-                        "position_t '{}' must be finite",
-                        value
-                    ))
-                }
-                Err(_) => {
-                    return ExecResult::err(format!(
-                        "position_t '{}' is not a number",
-                        value
-                    ))
-                }
+                Ok(_) => return ExecResult::err(format!("position_t '{}' must be finite", value)),
+                Err(_) => return ExecResult::err(format!("position_t '{}' is not a number", value)),
             },
             Some(TargetKind::PortalEndpoint {
                 edge_ref,
@@ -271,39 +242,20 @@ fn execute_label(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                     // the setter; echo that wrap when the user's
                     // value falls outside the canonical range so
                     // the stored value isn't silently shifted.
-                    let wrapped =
-                        baumhard::mindmap::portal_geometry::wrap_border_t(t);
+                    let wrapped = baumhard::mindmap::portal_geometry::wrap_border_t(t);
                     if pretty_inequal(t, wrapped) {
-                        messages.push(format!(
-                            "position_t {} wrapped to {:.4}",
-                            value, wrapped
-                        ));
+                        messages.push(format!("position_t {} wrapped to {:.4}", value, wrapped));
                     }
-                    let changed = eff.document.set_portal_label_border_t(
-                        edge_ref,
-                        endpoint_node_id,
-                        Some(t),
-                    );
+                    let changed = eff
+                        .document
+                        .set_portal_label_border_t(edge_ref, endpoint_node_id, Some(t));
                     any_applied |= changed;
                     if !changed {
-                        messages.push(format!(
-                            "position_t already ≈ {:.4}",
-                            wrapped
-                        ));
+                        messages.push(format!("position_t already ≈ {:.4}", wrapped));
                     }
                 }
-                Ok(_) => {
-                    return ExecResult::err(format!(
-                        "position_t '{}' must be finite",
-                        value
-                    ))
-                }
-                Err(_) => {
-                    return ExecResult::err(format!(
-                        "position_t '{}' is not a number",
-                        value
-                    ))
-                }
+                Ok(_) => return ExecResult::err(format!("position_t '{}' must be finite", value)),
+                Err(_) => return ExecResult::err(format!("position_t '{}' is not a number", value)),
             },
             None => messages.push("position_t: not applicable to selection".into()),
         }
@@ -318,25 +270,13 @@ fn execute_label(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         } else {
             match value.parse::<f32>() {
                 Ok(v) if v.is_finite() => Some(v),
-                Ok(_) => {
-                    return ExecResult::err(format!(
-                        "perpendicular '{}' must be finite",
-                        value
-                    ))
-                }
-                Err(_) => {
-                    return ExecResult::err(format!(
-                        "perpendicular '{}' is not a number",
-                        value
-                    ))
-                }
+                Ok(_) => return ExecResult::err(format!("perpendicular '{}' must be finite", value)),
+                Err(_) => return ExecResult::err(format!("perpendicular '{}' is not a number", value)),
             }
         };
         match target.as_ref() {
             Some(TargetKind::LineEdge(er)) => {
-                let changed = eff
-                    .document
-                    .set_edge_label_perpendicular_offset(er, offset);
+                let changed = eff.document.set_edge_label_perpendicular_offset(er, offset);
                 any_applied |= changed;
                 if !changed {
                     messages.push("perpendicular already applied".into());
@@ -346,11 +286,9 @@ fn execute_label(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                 edge_ref,
                 endpoint_node_id,
             }) => {
-                let changed = eff.document.set_portal_label_perpendicular_offset(
-                    edge_ref,
-                    endpoint_node_id,
-                    offset,
-                );
+                let changed =
+                    eff.document
+                        .set_portal_label_perpendicular_offset(edge_ref, endpoint_node_id, offset);
                 any_applied |= changed;
                 if !changed {
                     messages.push("perpendicular already applied".into());
@@ -412,10 +350,7 @@ pub(crate) fn parse_label_position_anchor(name: &str) -> Option<f32> {
 /// the `position_t=<f32 in [0,4)>` shape) are not applicable and
 /// silently no-op. Returns `true` on a real change.
 #[must_use = "the bool gates the scene rebuild — drop it explicitly with `let _ = …` if you don't care"]
-pub(crate) fn apply_label_position_to_selection(
-    doc: &mut MindMapDocument,
-    position: &str,
-) -> bool {
+pub(crate) fn apply_label_position_to_selection(doc: &mut MindMapDocument, position: &str) -> bool {
     let Some(t) = parse_label_position_anchor(position) else {
         return false;
     };
@@ -516,4 +451,3 @@ mod tests {
         assert!(!apply_label_text_to_selection(&mut doc, "hi"));
     }
 }
-

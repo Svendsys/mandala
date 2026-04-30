@@ -1,0 +1,22 @@
+edition = "2021"
+
+# The codebase has consciously evolved a denser style than stock
+# rustfmt for two specific shapes: compact
+# `let Some(x) = .. else { return };` on one line, and the
+# 100-110 col warn!/format! strings that don't easily wrap
+# without losing readability. This config captures those choices
+# minimally without over-fitting to every other dense layout.
+
+# Bump the ceiling slightly so warn! / format! strings around
+# 100-108 cols don't churn. Stock 100 was hitting the codebase
+# routinely.
+max_width = 110
+
+# Allow `let Some(x) = .. else { return };` on a single line up
+# to the full max_width budget. The codebase uses this compact
+# form pervasively in the dispatch funnel and event handlers;
+# stock rustfmt's default of 50 would expand every one of them
+# to a 3-line block. rustfmt emits an informational warning
+# when this equals max_width, but the clamp behaviour matches
+# our intent — accept the noise.
+single_line_let_else_max_width = 110

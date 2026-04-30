@@ -279,11 +279,7 @@ impl AppScene {
     /// for incremental updates per §B1 of the baumhard
     /// conventions — the upcoming connection / border drag
     /// shaping cache will land through this.
-    pub fn apply_canvas_mutator(
-        &mut self,
-        role: CanvasRole,
-        mutator: &MutatorTree<GfxMutator>,
-    ) {
+    pub fn apply_canvas_mutator(&mut self, role: CanvasRole, mutator: &MutatorTree<GfxMutator>) {
         if let Some(id) = self.canvas_id(role) {
             self.canvas.apply_mutator(id, mutator);
         }
@@ -378,11 +374,7 @@ impl AppScene {
     /// role. Path of choice for hover updates per §B1; the
     /// upcoming color-picker mutator-only hover path lands
     /// through this.
-    pub fn apply_overlay_mutator(
-        &mut self,
-        role: OverlayRole,
-        mutator: &MutatorTree<GfxMutator>,
-    ) {
+    pub fn apply_overlay_mutator(&mut self, role: OverlayRole, mutator: &MutatorTree<GfxMutator>) {
         if let Some(id) = self.overlay_id(role) {
             self.overlay.apply_mutator(id, mutator);
         }

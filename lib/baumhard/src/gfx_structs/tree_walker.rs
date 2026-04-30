@@ -29,48 +29,49 @@ use log::{debug, warn};
 /// inside the walker; not a stable public API but `pub` so mutator
 /// authors can substitute custom terminators when extending the
 /// walker.
-pub const DEFAULT_TERMINATOR: fn(&mut Tree<GfxElement, GfxMutator>, &MutatorTree<GfxMutator>, NodeId, NodeId) =
-    |gfx_tree: &mut Tree<GfxElement, GfxMutator>,
+pub const DEFAULT_TERMINATOR: fn(
+    &mut Tree<GfxElement, GfxMutator>,
+    &MutatorTree<GfxMutator>,
+    NodeId,
+    NodeId,
+) = |gfx_tree: &mut Tree<GfxElement, GfxMutator>,
      mutator_tree: &MutatorTree<GfxMutator>,
      target_id: NodeId,
      mutator_id: NodeId| {
-        // When a conditional loop terminates, we need to resume the normal walk
-        // Both the mutator and the target will be in the exact position where
-        // The predicate failed, so the target has not been mutated (yet)
-        // But the mutator is one step behind
-        debug!("The Terminator has received a mission.");
-        let mutator = get_mutator(&mutator_tree.arena, mutator_id);
-        let target = get_target(&mut gfx_tree.arena, target_id);
-        let t_chan = target.get().channel();
-        let mut option_next_mutator_id = mutator.first_child();
-        loop {
-            if option_next_mutator_id.is_some() {
-                let next_mutator_id = option_next_mutator_id.unwrap();
-                let next_mutator = get_mutator(&mutator_tree.arena, next_mutator_id);
-                if next_mutator.get().channel() == t_chan {
-                    debug!("Next mutator matches the target, starting walk..");
-                    walk_tree_from(gfx_tree, mutator_tree, target_id, next_mutator_id);
-                } else if next_mutator.get().channel() > t_chan {
-                    debug!("Next mutator channel is higher than target channel, ending branch..");
-                    break;
-                }
-                debug!("Trying next mutator sibling...");
-                option_next_mutator_id = next_mutator.next_sibling();
-            } else {
-                debug!("No more mutators, ending branch..");
+    // When a conditional loop terminates, we need to resume the normal walk
+    // Both the mutator and the target will be in the exact position where
+    // The predicate failed, so the target has not been mutated (yet)
+    // But the mutator is one step behind
+    debug!("The Terminator has received a mission.");
+    let mutator = get_mutator(&mutator_tree.arena, mutator_id);
+    let target = get_target(&mut gfx_tree.arena, target_id);
+    let t_chan = target.get().channel();
+    let mut option_next_mutator_id = mutator.first_child();
+    loop {
+        if option_next_mutator_id.is_some() {
+            let next_mutator_id = option_next_mutator_id.unwrap();
+            let next_mutator = get_mutator(&mutator_tree.arena, next_mutator_id);
+            if next_mutator.get().channel() == t_chan {
+                debug!("Next mutator matches the target, starting walk..");
+                walk_tree_from(gfx_tree, mutator_tree, target_id, next_mutator_id);
+            } else if next_mutator.get().channel() > t_chan {
+                debug!("Next mutator channel is higher than target channel, ending branch..");
                 break;
             }
+            debug!("Trying next mutator sibling...");
+            option_next_mutator_id = next_mutator.next_sibling();
+        } else {
+            debug!("No more mutators, ending branch..");
+            break;
         }
-    };
+    }
+};
 
 /// Walk the entire `mutator_tree` against the `gfx_tree`, starting
 /// from both roots. Convenience wrapper around [`walk_tree_from`];
 /// cost is O(matching pairs) — see that function for the full
 /// analysis.
-pub fn walk_tree(
-    gfx_tree: &mut Tree<GfxElement, GfxMutator>,
-    mutator_tree: &MutatorTree<GfxMutator>,
-) {
+pub fn walk_tree(gfx_tree: &mut Tree<GfxElement, GfxMutator>, mutator_tree: &MutatorTree<GfxMutator>) {
     walk_tree_from(gfx_tree, mutator_tree, gfx_tree.root, mutator_tree.root)
 }
 
@@ -140,9 +141,7 @@ fn process_instruction_node(
             // mutation application. The caller treats a no-op as
             // success.
             let Some(current_mutator_child_id) = mutator.first_child() else {
-                warn!(
-                    "RepeatWhile instruction node has no children, skipping branch"
-                );
+                warn!("RepeatWhile instruction node has no children, skipping branch");
                 return;
             };
             let Some(current_target_child_id) = target.first_child() else {
@@ -295,7 +294,9 @@ fn align_child_walks(
                         walk_tree_from(gfx_tree, mutator_tree, target_child_id, mutator_child_id);
                         debug!("Applied mutation-walk on child node, checking next sibling...");
                     } else if t_chan > m_chan {
-                        debug!("Target channel is higher than mutator channel, breaking out of mutator loop.");
+                        debug!(
+                            "Target channel is higher than mutator channel, breaking out of mutator loop."
+                        );
                         break;
                     } else {
                         option_target_child_id = target_child.next_sibling();
@@ -366,10 +367,7 @@ fn zip_map_children(
             .arena
             .get(mutator_child_id)
             .and_then(|n| n.next_sibling());
-        let next_target = gfx_tree
-            .arena
-            .get(target_child_id)
-            .and_then(|n| n.next_sibling());
+        let next_target = gfx_tree.arena.get(target_child_id).and_then(|n| n.next_sibling());
 
         // Force-apply the mutator to its paired target, then capture
         // the instruction (if the mutator is an Instruction) so the
@@ -409,12 +407,7 @@ fn zip_map_children(
                 // Single / Macro / Void: descend via channel-based
                 // align at the next level down. A user who wants the
                 // deeper level to also zip nests MapChildren inside.
-                align_child_walks(
-                    gfx_tree,
-                    mutator_tree,
-                    target_child_id,
-                    mutator_child_id,
-                );
+                align_child_walks(gfx_tree, mutator_tree, target_child_id, mutator_child_id);
             }
         }
 
@@ -503,14 +496,7 @@ fn apply_repeat_while_to_children(
             let head_id = head.unwrap();
             let current = get_target(&mut gfx_tree.arena, head_id);
             head = current.next_sibling();
-            repeat_while(
-                gfx_tree,
-                mutator_tree,
-                head_id,
-                mutator_id,
-                condition,
-                terminator,
-            );
+            repeat_while(gfx_tree, mutator_tree, head_id, mutator_id, condition, terminator);
         } else {
             break;
         }
@@ -595,9 +581,7 @@ fn spatial_descend_recurse(
 
         // Prune: skip if subtree AABB doesn't contain point.
         if let Some((st_min, st_max)) = element.subtree_aabb() {
-            if point.x < st_min.x || point.x > st_max.x
-                || point.y < st_min.y || point.y > st_max.y
-            {
+            if point.x < st_min.x || point.x > st_max.x || point.y < st_min.y || point.y > st_max.y {
                 continue;
             }
         } else {
@@ -608,9 +592,12 @@ fn spatial_descend_recurse(
         if let Some(area) = element.glyph_area() {
             let pos = area.position.to_vec2();
             let bounds = area.render_bounds.to_vec2();
-            if bounds.x > 0.0 && bounds.y > 0.0
-                && point.x >= pos.x && point.x <= pos.x + bounds.x
-                && point.y >= pos.y && point.y <= pos.y + bounds.y
+            if bounds.x > 0.0
+                && bounds.y > 0.0
+                && point.x >= pos.x
+                && point.x <= pos.x + bounds.x
+                && point.y >= pos.y
+                && point.y <= pos.y + bounds.y
             {
                 let size = bounds.x * bounds.y;
                 match *best {

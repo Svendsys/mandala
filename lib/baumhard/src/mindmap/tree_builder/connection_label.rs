@@ -52,13 +52,7 @@ fn connection_label_layout(
     let pos = Vec2::new(elem.position.0, elem.position.1);
     let bounds = Vec2::new(elem.bounds.0, elem.bounds.1);
 
-    let mut area = GlyphArea::new_with_str(
-        &elem.text,
-        elem.font_size_pt,
-        elem.font_size_pt,
-        pos,
-        bounds,
-    );
+    let mut area = GlyphArea::new_with_str(&elem.text, elem.font_size_pt, elem.font_size_pt, pos, bounds);
     area.zoom_visibility = elem.zoom_visibility;
     let cluster_count = crate::util::grapheme_chad::count_grapheme_clusters(&elem.text);
     area.regions = ColorFontRegions::single_span(cluster_count, Some(color_rgba), None);
@@ -78,14 +72,12 @@ pub fn build_connection_label_tree(
     elements: &[crate::mindmap::scene_builder::ConnectionLabelElement],
 ) -> ConnectionLabelTree {
     let mut tree: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed();
-    let mut hitboxes: HashMap<crate::mindmap::scene_cache::EdgeKey, (Vec2, Vec2)> =
-        HashMap::new();
+    let mut hitboxes: HashMap<crate::mindmap::scene_cache::EdgeKey, (Vec2, Vec2)> = HashMap::new();
     let mut unique_id: usize = 1;
 
     for (idx, elem) in elements.iter().enumerate() {
         let (channel, area, hb_min, hb_max) = connection_label_layout(idx + 1, elem);
-        let element_node =
-            GfxElement::new_area_non_indexed_with_id(area, channel, unique_id);
+        let element_node = GfxElement::new_area_non_indexed_with_id(area, channel, unique_id);
         unique_id += 1;
         let leaf = tree.arena.new_node(element_node);
         tree.root.append(leaf, &mut tree.arena);
@@ -122,8 +114,7 @@ pub fn build_connection_label_mutator_tree(
     use crate::gfx_structs::tree::MutatorTree;
 
     let mut mt: MutatorTree<GfxMutator> = MutatorTree::new_with(GfxMutator::new_void(0));
-    let mut hitboxes: HashMap<crate::mindmap::scene_cache::EdgeKey, (Vec2, Vec2)> =
-        HashMap::new();
+    let mut hitboxes: HashMap<crate::mindmap::scene_cache::EdgeKey, (Vec2, Vec2)> = HashMap::new();
 
     for (idx, elem) in elements.iter().enumerate() {
         let (channel, area, hb_min, hb_max) = connection_label_layout(idx + 1, elem);
@@ -135,6 +126,8 @@ pub fn build_connection_label_mutator_tree(
         hitboxes.insert(elem.edge_key.clone(), (hb_min, hb_max));
     }
 
-    ConnectionLabelMutator { mutator: mt, hitboxes }
+    ConnectionLabelMutator {
+        mutator: mt,
+        hitboxes,
+    }
 }
-

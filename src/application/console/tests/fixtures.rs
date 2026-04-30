@@ -19,11 +19,10 @@ use crate::application::document::{EdgeRef, MindMapDocument, SelectionState};
 // same path that surfaces `run`. `load_test_doc` stays narrower
 // because the per-command modules already pull it through
 // `document::tests_common::load_test_doc as fixture_doc` directly.
-pub(in crate::application::console) use crate::application::document::tests_common::{
-    first_testament_node_id as first_node_id,
-    two_testament_node_ids,
-};
 pub(super) use crate::application::document::tests_common::load_test_doc;
+pub(in crate::application::console) use crate::application::document::tests_common::{
+    first_testament_node_id as first_node_id, two_testament_node_ids,
+};
 
 /// Collapse a slice of `OutputLine` values into one `\n`-joined
 /// `String`. Used by the substring assertions across the console
@@ -53,10 +52,7 @@ pub(in crate::application::console) fn assert_exec_ok(result: ExecResult) {
 /// Assert `result` is `ExecResult::Err(_)` whose message contains
 /// `needle`. Surfaces both halves of the assertion in the panic
 /// message so a substring drift doesn't print just `false`.
-pub(in crate::application::console) fn assert_exec_err_contains(
-    result: ExecResult,
-    needle: &str,
-) {
+pub(in crate::application::console) fn assert_exec_err_contains(result: ExecResult, needle: &str) {
     match result {
         ExecResult::Err(s) => assert!(
             s.contains(needle),

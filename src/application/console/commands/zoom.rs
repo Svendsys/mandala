@@ -22,7 +22,9 @@
 use baumhard::util::geometry::is_positive_finite;
 
 use super::Command;
-use crate::application::console::completion::{prefix_filter, Completion, CompletionContext, CompletionState, kv_key_completions};
+use crate::application::console::completion::{
+    kv_key_completions, prefix_filter, Completion, CompletionContext, CompletionState,
+};
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
 use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
@@ -41,8 +43,17 @@ pub const COMMAND: Command = Command {
     summary: "Gate the selection's rendering on camera zoom level",
     usage: "zoom [min=<zoom|unset>] [max=<zoom|unset>]   |   zoom clear",
     tags: &[
-        "zoom", "visibility", "presence", "render", "min", "max",
-        "clamp", "unset", "clear", "layer", "lod",
+        "zoom",
+        "visibility",
+        "presence",
+        "render",
+        "min",
+        "max",
+        "clamp",
+        "unset",
+        "clear",
+        "layer",
+        "lod",
     ],
     applicable: always,
     complete: complete_zoom,
@@ -131,9 +142,7 @@ fn execute_zoom(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                 }
             }
             if !saw_any {
-                return ExecResult::err(
-                    "usage: zoom [min=<zoom|unset>] [max=<zoom|unset>]   |   zoom clear",
-                );
+                return ExecResult::err("usage: zoom [min=<zoom|unset>] [max=<zoom|unset>]   |   zoom clear");
             }
             (min, max)
         }
@@ -148,9 +157,7 @@ fn execute_zoom(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     // setter's inverted-bounds guard. Mirrors the `font` command.
     if let (OptionEdit::Set(lo), OptionEdit::Set(hi)) = (min_edit, max_edit) {
         if lo > hi {
-            return ExecResult::err(format!(
-                "zoom: min={lo} > max={hi} (inverted bounds)"
-            ));
+            return ExecResult::err(format!("zoom: min={lo} > max={hi} (inverted bounds)"));
         }
     }
 
@@ -244,12 +251,8 @@ pub(crate) fn apply_zoom_to_selection(
             changed
         }
         SelectionState::Edge(er) => doc.set_edge_zoom_visibility(&er, min, max),
-        SelectionState::EdgeLabel(s) => {
-            doc.set_edge_label_zoom_visibility(&s.edge_ref, min, max)
-        }
-        SelectionState::PortalLabel(s) => {
-            doc.set_edge_zoom_visibility(&s.edge_ref(), min, max)
-        }
+        SelectionState::EdgeLabel(s) => doc.set_edge_label_zoom_visibility(&s.edge_ref, min, max),
+        SelectionState::PortalLabel(s) => doc.set_edge_zoom_visibility(&s.edge_ref(), min, max),
         SelectionState::PortalText(s) => {
             doc.set_portal_endpoint_zoom_visibility(&s.edge_ref(), &s.endpoint_node_id, min, max)
         }
@@ -263,14 +266,8 @@ mod tests {
 
     #[test]
     fn parse_bound_unset_is_clear() {
-        assert_eq!(
-            parse_bound("min", "unset").expect("parses"),
-            OptionEdit::Clear
-        );
-        assert_eq!(
-            parse_bound("min", "").expect("parses"),
-            OptionEdit::Clear
-        );
+        assert_eq!(parse_bound("min", "unset").expect("parses"), OptionEdit::Clear);
+        assert_eq!(parse_bound("min", "").expect("parses"), OptionEdit::Clear);
         assert_eq!(
             parse_bound("min", "UNSET").expect("case-insensitive"),
             OptionEdit::Clear
@@ -279,14 +276,8 @@ mod tests {
 
     #[test]
     fn parse_bound_numeric_is_set() {
-        assert_eq!(
-            parse_bound("min", "1.5").expect("parses"),
-            OptionEdit::Set(1.5)
-        );
-        assert_eq!(
-            parse_bound("max", "0.05").expect("parses"),
-            OptionEdit::Set(0.05)
-        );
+        assert_eq!(parse_bound("min", "1.5").expect("parses"), OptionEdit::Set(1.5));
+        assert_eq!(parse_bound("max", "0.05").expect("parses"), OptionEdit::Set(0.05));
     }
 
     #[test]
@@ -335,16 +326,9 @@ mod tests {
         let mut doc = load_test_doc();
         let id = first_testament_node_id(&doc);
         doc.selection = SelectionState::Single(id.clone());
-        let changed = apply_zoom_to_selection(
-            &mut doc,
-            OptionEdit::Set(0.5),
-            OptionEdit::Keep,
-        );
+        let changed = apply_zoom_to_selection(&mut doc, OptionEdit::Set(0.5), OptionEdit::Keep);
         assert!(changed);
-        assert_eq!(
-            doc.mindmap.nodes.get(&id).unwrap().min_zoom_to_render,
-            Some(0.5),
-        );
+        assert_eq!(doc.mindmap.nodes.get(&id).unwrap().min_zoom_to_render, Some(0.5),);
     }
 
     #[test]
@@ -379,16 +363,8 @@ mod tests {
         let id = first_testament_node_id(&doc);
         doc.selection = SelectionState::Single(id.clone());
         // Set first so clear has something to drop.
-        let _ = apply_zoom_to_selection(
-            &mut doc,
-            OptionEdit::Set(0.5),
-            OptionEdit::Set(2.0),
-        );
-        let cleared = apply_zoom_to_selection(
-            &mut doc,
-            OptionEdit::Clear,
-            OptionEdit::Clear,
-        );
+        let _ = apply_zoom_to_selection(&mut doc, OptionEdit::Set(0.5), OptionEdit::Set(2.0));
+        let cleared = apply_zoom_to_selection(&mut doc, OptionEdit::Clear, OptionEdit::Clear);
         assert!(cleared);
         let node = doc.mindmap.nodes.get(&id).unwrap();
         assert!(node.min_zoom_to_render.is_none());

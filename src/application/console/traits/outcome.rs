@@ -20,7 +20,11 @@ pub enum Outcome {
 
 impl Outcome {
     pub fn applied(changed: bool) -> Self {
-        if changed { Outcome::Applied } else { Outcome::Unchanged }
+        if changed {
+            Outcome::Applied
+        } else {
+            Outcome::Unchanged
+        }
     }
 }
 

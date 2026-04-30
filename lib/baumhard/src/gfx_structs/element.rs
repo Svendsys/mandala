@@ -142,11 +142,7 @@ impl GfxElement {
     ///
     /// Cost: one heap allocation (`Box<GlyphArea>`). Flags and
     /// subscribers start empty.
-    pub fn new_area_non_indexed_with_id(
-        section: GlyphArea,
-        channel: usize,
-        unique_id: usize,
-    ) -> GfxElement {
+    pub fn new_area_non_indexed_with_id(section: GlyphArea, channel: usize, unique_id: usize) -> GfxElement {
         GfxElement::GlyphArea {
             glyph_area: Box::new(section),
             flags: Default::default(),
@@ -197,11 +193,7 @@ impl GfxElement {
     ///
     /// Cost: one heap allocation (`Box<GlyphModel>`). Flags and
     /// subscribers start empty.
-    pub fn new_model_non_indexed_with_id(
-        model: GlyphModel,
-        channel: usize,
-        unique_id: usize,
-    ) -> Self {
+    pub fn new_model_non_indexed_with_id(model: GlyphModel, channel: usize, unique_id: usize) -> Self {
         GfxElement::GlyphModel {
             glyph_model: Box::new(model),
             flags: Default::default(),
@@ -304,8 +296,7 @@ impl GfxElement {
     pub fn glyph_area_mut(&mut self) -> Option<&mut GlyphArea> {
         match self {
             GfxElement::GlyphArea {
-                glyph_area: section,
-                ..
+                glyph_area: section, ..
             } => Some(section.as_mut()),
             GfxElement::Void { .. } => None,
             GfxElement::GlyphModel { .. } => None,
@@ -319,8 +310,7 @@ impl GfxElement {
     pub fn glyph_area(&self) -> Option<&GlyphArea> {
         match self {
             GfxElement::GlyphArea {
-                glyph_area: section,
-                ..
+                glyph_area: section, ..
             } => Some(section),
             GfxElement::Void { .. } => None,
             GfxElement::GlyphModel { .. } => None,
@@ -371,8 +361,7 @@ impl GfxElement {
     pub fn position(&self) -> Vec2 {
         match self {
             GfxElement::GlyphArea {
-                glyph_area: section,
-                ..
+                glyph_area: section, ..
             } => section.position.to_vec2(),
             GfxElement::Void { .. } => Vec2::NAN,
             GfxElement::GlyphModel { glyph_model, .. } => glyph_model.position.to_vec2(),
@@ -389,10 +378,9 @@ impl GfxElement {
     /// O(1) region lookup (hash map).
     pub fn color_at_region(&self, range: Range) -> Option<FloatRgba> {
         match self {
-            GfxElement::GlyphArea { glyph_area, .. } => glyph_area
-                .regions
-                .get(range)
-                .and_then(|region| region.color),
+            GfxElement::GlyphArea { glyph_area, .. } => {
+                glyph_area.regions.get(range).and_then(|region| region.color)
+            }
             GfxElement::GlyphModel { .. } => None,
             GfxElement::Void { .. } => None,
         }
@@ -415,8 +403,7 @@ impl GfxElement {
                 // Nothing needs doing
             }
             GfxElement::GlyphModel {
-                ref mut glyph_model,
-                ..
+                ref mut glyph_model, ..
             } => {
                 glyph_model.position = OrderedVec2::from_vec2(position);
             }
@@ -515,13 +502,26 @@ impl Flaggable for GfxElement {
 impl Debug for GfxElement {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            GfxElement::GlyphArea { channel, unique_id, glyph_area, .. } => {
-                write!(f, "GlyphArea(id={}, ch={}, text={:?})", unique_id, channel, glyph_area.text)
+            GfxElement::GlyphArea {
+                channel,
+                unique_id,
+                glyph_area,
+                ..
+            } => {
+                write!(
+                    f,
+                    "GlyphArea(id={}, ch={}, text={:?})",
+                    unique_id, channel, glyph_area.text
+                )
             }
-            GfxElement::GlyphModel { channel, unique_id, .. } => {
+            GfxElement::GlyphModel {
+                channel, unique_id, ..
+            } => {
                 write!(f, "GlyphModel(id={}, ch={})", unique_id, channel)
             }
-            GfxElement::Void { channel, unique_id, .. } => {
+            GfxElement::Void {
+                channel, unique_id, ..
+            } => {
                 write!(f, "Void(id={}, ch={})", unique_id, channel)
             }
         }
@@ -534,10 +534,9 @@ impl PartialEq for GfxElement {
         // payload directly — no `get_type()` + `unwrap()` dance, and
         // no mixed-variant unwrap panic is reachable by construction.
         match (self, other) {
-            (
-                GfxElement::GlyphArea { glyph_area: a, .. },
-                GfxElement::GlyphArea { glyph_area: b, .. },
-            ) => a == b,
+            (GfxElement::GlyphArea { glyph_area: a, .. }, GfxElement::GlyphArea { glyph_area: b, .. }) => {
+                a == b
+            }
             (
                 GfxElement::GlyphModel { glyph_model: a, .. },
                 GfxElement::GlyphModel { glyph_model: b, .. },
@@ -563,16 +562,12 @@ impl Clone for GfxElement {
                     self.unique_id(),
                 )
             }
-            GfxElement::GlyphModel { glyph_model, .. } => {
-                GfxElement::new_model_non_indexed_with_id(
-                    (**glyph_model).clone(),
-                    self.channel(),
-                    self.unique_id(),
-                )
-            }
-            GfxElement::Void { .. } => {
-                GfxElement::new_void_with_id(self.channel(), self.unique_id())
-            }
+            GfxElement::GlyphModel { glyph_model, .. } => GfxElement::new_model_non_indexed_with_id(
+                (**glyph_model).clone(),
+                self.channel(),
+                self.unique_id(),
+            ),
+            GfxElement::Void { .. } => GfxElement::new_void_with_id(self.channel(), self.unique_id()),
         };
         *output.subscribers_mut() = self.subscribers_as_ref().clone();
         output
@@ -583,10 +578,7 @@ impl TreeEventConsumer for GfxElement {
     fn accept_event(&mut self, event: &GlyphTreeEventInstance) {
         let subscribers = self.subscribers_as_ref().clone();
         for sub in subscribers {
-            sub.lock()
-                .expect("Failed to acquire lock for EventSubscriber")(
-                self, event.clone()
-            );
+            sub.lock().expect("Failed to acquire lock for EventSubscriber")(self, event.clone());
         }
     }
 }

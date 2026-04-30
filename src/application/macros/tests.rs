@@ -25,9 +25,7 @@ fn macro_registry_insert_and_get() {
         id: "test".into(),
         name: "Test".into(),
         description: String::new(),
-        steps: vec![MacroStep::Action {
-            action: Action::Undo,
-        }],
+        steps: vec![MacroStep::Action { action: Action::Undo }],
     };
     assert!(reg.is_empty());
     reg.insert(m.clone(), MacroSource::User);
@@ -130,12 +128,7 @@ fn macro_source_allows_action_gates_destructive_actions_for_non_user() {
             Action::SaveDocumentAs("/tmp/x.mindmap.json".into()),
             Action::NewDocumentAt("/tmp/x.mindmap.json".into()),
         ] {
-            assert!(
-                !tier.allows_action(&a),
-                "{:?} tier should reject {:?}",
-                tier,
-                a
-            );
+            assert!(!tier.allows_action(&a), "{:?} tier should reject {:?}", tier, a);
         }
     }
 }
@@ -240,9 +233,7 @@ fn dispatch_macro_user_tier_passes_destructive_steps() {
         MacroStep::Action {
             action: Action::SaveDocument,
         },
-        MacroStep::ConsoleLine {
-            line: "save".into(),
-        },
+        MacroStep::ConsoleLine { line: "save".into() },
         MacroStep::Action {
             action: Action::DeleteSelection,
         },
@@ -266,9 +257,7 @@ fn dispatch_macro_inline_tier_rejects_label_edit_on_selection() {
 #[test]
 fn macro_step_serde_round_trip() {
     let steps = vec![
-        MacroStep::Action {
-            action: Action::Undo,
-        },
+        MacroStep::Action { action: Action::Undo },
         MacroStep::ConsoleLine {
             line: "fps on".into(),
         },
@@ -318,7 +307,10 @@ fn macro_step_custom_mutation_node_id_target() {
     let json = r#"{"kind":"CustomMutation","id":"x","target":{"node_id":"abc"}}"#;
     let parsed: MacroStep = serde_json::from_str(json).unwrap();
     match parsed {
-        MacroStep::CustomMutation { target: MacroTarget::NodeId(s), .. } => {
+        MacroStep::CustomMutation {
+            target: MacroTarget::NodeId(s),
+            ..
+        } => {
             assert_eq!(s, "abc");
         }
         _ => panic!("expected NodeId target"),
@@ -389,9 +381,7 @@ fn macro_registry_user_overrides_app_by_id() {
         id: "shared-id".into(),
         name: "User version".into(),
         description: String::new(),
-        steps: vec![MacroStep::Action {
-            action: Action::Undo,
-        }],
+        steps: vec![MacroStep::Action { action: Action::Undo }],
     };
     // Insert order matches run_native_init::build: App first.
     reg.insert(app_macro, MacroSource::App);
@@ -583,10 +573,7 @@ fn cross_tier_within_session_round_trip() {
     reg.insert(mk("user-macro"), MacroSource::User);
     // Open document A: Map tier shadows User.
     reg.insert(mk("docA-macro"), MacroSource::Map);
-    assert_eq!(
-        reg.get_with_source("save-and-quit").unwrap().0.name,
-        "docA-macro"
-    );
+    assert_eq!(reg.get_with_source("save-and-quit").unwrap().0.name, "docA-macro");
 
     // Open document B: replace path runs `clear_tier(Map)`
     // first, then `extend_with_tier(empty, Map)`.
@@ -594,9 +581,7 @@ fn cross_tier_within_session_round_trip() {
     reg.extend_with_tier(Vec::<Macro>::new(), MacroSource::Map);
 
     // User entry re-emerges.
-    let (m, src) = reg
-        .get_with_source("save-and-quit")
-        .expect("User entry restored");
+    let (m, src) = reg.get_with_source("save-and-quit").expect("User entry restored");
     assert_eq!(m.name, "user-macro");
     assert_eq!(src, MacroSource::User);
 }

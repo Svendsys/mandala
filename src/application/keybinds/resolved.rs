@@ -70,13 +70,7 @@ impl ResolvedKeybinds {
     /// cascade in `event_keyboard.rs` returns before any mouse
     /// handler runs, so mouse gestures only ever fire in Document
     /// context today.
-    pub fn action_for_gesture(
-        &self,
-        key: &str,
-        ctrl: bool,
-        shift: bool,
-        alt: bool,
-    ) -> Option<Action> {
+    pub fn action_for_gesture(&self, key: &str, ctrl: bool, shift: bool, alt: bool) -> Option<Action> {
         if let Some(a) = self.action_for_context(InputContext::Document, key, ctrl, shift, alt) {
             return Some(a);
         }
@@ -142,13 +136,7 @@ impl ResolvedKeybinds {
     /// the same combo, so a user replacing a single-mutation
     /// shortcut with a multi-step macro just adds the macro entry
     /// without un-binding the mutation.
-    pub fn macro_for(
-        &self,
-        key: &str,
-        ctrl: bool,
-        shift: bool,
-        alt: bool,
-    ) -> Option<&str> {
+    pub fn macro_for(&self, key: &str, ctrl: bool, shift: bool, alt: bool) -> Option<&str> {
         for (bind, id) in &self.macro_binds {
             if bind.matches(key, ctrl, shift, alt) {
                 return Some(id.as_str());
@@ -160,13 +148,7 @@ impl ResolvedKeybinds {
     /// Return the custom-mutation id bound to the given key event,
     /// if any. Called after `action_for` returns `None` — built-in
     /// actions win on a collision.
-    pub fn custom_mutation_for(
-        &self,
-        key: &str,
-        ctrl: bool,
-        shift: bool,
-        alt: bool,
-    ) -> Option<&str> {
+    pub fn custom_mutation_for(&self, key: &str, ctrl: bool, shift: bool, alt: bool) -> Option<&str> {
         for (bind, id) in &self.custom_binds {
             if bind.matches(key, ctrl, shift, alt) {
                 return Some(id.as_str());
@@ -201,10 +183,7 @@ impl ResolvedKeybinds {
 
     /// Remove the custom-mutation binding for the given combo.
     /// Returns the removed mutation id, if one was bound.
-    pub fn remove_custom_mutation_binding(
-        &mut self,
-        combo_string: &str,
-    ) -> Result<Option<String>, String> {
+    pub fn remove_custom_mutation_binding(&mut self, combo_string: &str) -> Result<Option<String>, String> {
         let bind = KeyBind::parse(combo_string)?;
         let mut prev = None;
         self.custom_binds.retain(|(b, id)| {

@@ -27,11 +27,7 @@ pub struct Violation {
 
 impl Violation {
     /// Violation at a node's id.
-    pub fn node(
-        category: &'static str,
-        node: &MindNode,
-        message: impl Into<String>,
-    ) -> Self {
+    pub fn node(category: &'static str, node: &MindNode, message: impl Into<String>) -> Self {
         Self {
             category,
             location: node.id.clone(),
@@ -40,11 +36,7 @@ impl Violation {
     }
 
     /// Violation at `edge[<idx>]`.
-    pub fn edge(
-        category: &'static str,
-        edge_index: usize,
-        message: impl Into<String>,
-    ) -> Self {
+    pub fn edge(category: &'static str, edge_index: usize, message: impl Into<String>) -> Self {
         Self {
             category,
             location: format!("edge[{}]", edge_index),
@@ -53,11 +45,7 @@ impl Violation {
     }
 
     /// Violation at an arbitrary location (palette names, etc).
-    pub fn at(
-        category: &'static str,
-        location: impl Into<String>,
-        message: impl Into<String>,
-    ) -> Self {
+    pub fn at(category: &'static str, location: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             category,
             location: location.into(),

@@ -34,13 +34,11 @@ fn sample_console_geometry() -> ConsoleOverlayGeometry {
                 font_family: None,
             },
         ],
-        completions: vec![
-            ConsoleOverlayCompletion {
-                text: "top".to_string(),
-                hint: None,
-                font_family: None,
-            },
-        ],
+        completions: vec![ConsoleOverlayCompletion {
+            text: "top".to_string(),
+            hint: None,
+            font_family: None,
+        }],
         selected_completion: Some(0),
         font_family: String::new(),
         font_size: 16.0,
@@ -194,7 +192,7 @@ fn test_console_border_uses_rounded_corners() {
     assert_eq!(*top_chars.last().unwrap(), '\u{256E}'); // ╮
     assert_eq!(bot_chars[0], '\u{2570}'); // ╰
     assert_eq!(*bot_chars.last().unwrap(), '\u{256F}'); // ╯
-    // Middle chars of the top border are `─`.
+                                                        // Middle chars of the top border are `─`.
     for c in &top_chars[1..top_chars.len() - 1] {
         assert_eq!(*c, '\u{2500}');
     }
@@ -256,8 +254,8 @@ fn test_console_prompt_y_sits_below_scrollback_and_completions() {
     let layout = compute_console_frame_layout(&g, 1920.0, 1080.0);
 
     let content_top = layout.top + layout.font_size + layout.inner_padding;
-    let last_completion_end = content_top
-        + layout.row_height * (layout.scrollback_rows + layout.completion_rows) as f32;
+    let last_completion_end =
+        content_top + layout.row_height * (layout.scrollback_rows + layout.completion_rows) as f32;
     assert!(
         layout.prompt_y() >= last_completion_end - 0.01,
         "prompt_y {} overlaps last completion row ending at {}",
@@ -335,21 +333,18 @@ fn console_mutator_round_trips_to_fresh_build() {
     assert_eq!(layout_a.completion_rows, layout_b.completion_rows);
 
     let mut tree = {
-        let mut fs =
-            baumhard::font::fonts::acquire_font_system_write("renderer::tests (overlay tree)");
+        let mut fs = baumhard::font::fonts::acquire_font_system_write("renderer::tests (overlay tree)");
         build_console_overlay_tree(&g_a, &layout_a, &mut fs)
     };
     let mutator = {
-        let mut fs =
-            baumhard::font::fonts::acquire_font_system_write("renderer::tests (overlay mutator)");
+        let mut fs = baumhard::font::fonts::acquire_font_system_write("renderer::tests (overlay mutator)");
         build_console_overlay_mutator(&g_b, &layout_b, &mut fs)
     };
     mutator.apply_to(&mut tree);
 
     let expected = {
-        let mut fs = baumhard::font::fonts::acquire_font_system_write(
-            "renderer::tests (overlay areas expected)",
-        );
+        let mut fs =
+            baumhard::font::fonts::acquire_font_system_write("renderer::tests (overlay areas expected)");
         console_overlay_areas(&g_b, &layout_b, &mut fs)
     };
 
@@ -455,9 +450,7 @@ fn console_overlay_areas_degrades_when_scrollback_shorter_than_layout_rows() {
     g.scrollback.clear();
 
     let areas = {
-        let mut fs = baumhard::font::fonts::acquire_font_system_write(
-            "renderer::tests (scrollback degrade)",
-        );
+        let mut fs = baumhard::font::fonts::acquire_font_system_write("renderer::tests (scrollback degrade)");
         console_overlay_areas(&g, &layout, &mut fs)
     };
     // Survival check: we got here without aborting. Every slot the
@@ -490,9 +483,7 @@ fn console_overlay_areas_degrades_when_completions_shorter_than_layout_rows() {
     g.selected_completion = None;
 
     let areas = {
-        let mut fs = baumhard::font::fonts::acquire_font_system_write(
-            "renderer::tests (completion degrade)",
-        );
+        let mut fs = baumhard::font::fonts::acquire_font_system_write("renderer::tests (completion degrade)");
         console_overlay_areas(&g, &layout, &mut fs)
     };
     assert!(!areas.is_empty(), "non-completion slots still render");
@@ -517,15 +508,9 @@ fn clamp_surface_size_is_identity_below_limit() {
 #[test]
 fn clamp_surface_size_caps_only_the_oversized_axis() {
     // Width over, height fine.
-    assert_eq!(
-        clamp_surface_size_to_gpu_limit(10_000, 4096, 8192),
-        (8192, 4096)
-    );
+    assert_eq!(clamp_surface_size_to_gpu_limit(10_000, 4096, 8192), (8192, 4096));
     // Height over, width fine.
-    assert_eq!(
-        clamp_surface_size_to_gpu_limit(4096, 10_000, 8192),
-        (4096, 8192)
-    );
+    assert_eq!(clamp_surface_size_to_gpu_limit(4096, 10_000, 8192), (4096, 8192));
     // Both over — both pinned.
     assert_eq!(
         clamp_surface_size_to_gpu_limit(10_000, 12_000, 8192),
@@ -566,7 +551,10 @@ fn background_rect_culled_when_zoom_outside_window() {
         size: Vec2::new(100.0, 100.0),
         color: [64, 64, 64, 255],
         shape_id: NodeShape::Rectangle.shader_id(),
-        zoom_visibility: ZoomVisibility { min: Some(1.0), max: Some(2.0) },
+        zoom_visibility: ZoomVisibility {
+            min: Some(1.0),
+            max: Some(2.0),
+        },
     };
 
     // Inside the window: visible.
@@ -604,7 +592,10 @@ fn background_rect_with_unbounded_window_renders_at_every_zoom() {
 
     for z in [0.05_f32, 0.5, 1.0, 2.5, 5.0] {
         camera.zoom = z;
-        assert!(rect.visible_at(&camera), "unbounded window must render at zoom {z}");
+        assert!(
+            rect.visible_at(&camera),
+            "unbounded window must render at zoom {z}"
+        );
     }
 }
 
@@ -627,9 +618,15 @@ fn background_rect_off_viewport_still_culled_with_matching_zoom() {
         size: Vec2::new(100.0, 100.0),
         color: [64, 64, 64, 255],
         shape_id: NodeShape::Rectangle.shader_id(),
-        zoom_visibility: ZoomVisibility { min: Some(1.0), max: Some(2.0) },
+        zoom_visibility: ZoomVisibility {
+            min: Some(1.0),
+            max: Some(2.0),
+        },
     };
-    assert!(!rect.visible_at(&camera), "off-viewport rect must be culled regardless of zoom window");
+    assert!(
+        !rect.visible_at(&camera),
+        "off-viewport rect must be culled regardless of zoom window"
+    );
 }
 
 // --- FrameIntervalRing --------------------------------------------------
@@ -682,8 +679,7 @@ fn frame_interval_ring_wrap_drops_oldest_sample() {
     // Ring is exactly full; sentinel + (FPS_WINDOW - 1) * 1000 in the
     // window. Average:
     //   (999_999 + 199 * 1000) / 200 = (999_999 + 199_000) / 200 = 5994
-    let expected_with_sentinel = (sentinel + 1_000u128 * (FPS_WINDOW as u128 - 1))
-        / FPS_WINDOW as u128;
+    let expected_with_sentinel = (sentinel + 1_000u128 * (FPS_WINDOW as u128 - 1)) / FPS_WINDOW as u128;
     assert_eq!(ring.avg_micros(), Some(expected_with_sentinel));
 
     // Push one more — the sentinel falls out of the window, and the

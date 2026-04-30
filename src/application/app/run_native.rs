@@ -10,9 +10,7 @@ use std::sync::Arc;
 
 use baumhard::mindmap::tree_builder::MindMapTree;
 use winit::application::ApplicationHandler;
-use winit::event::{
-    ElementState, Event, KeyEvent, MouseScrollDelta, StartCause, WindowEvent,
-};
+use winit::event::{ElementState, Event, KeyEvent, MouseScrollDelta, StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::ModifiersState;
 use winit::window::{Window, WindowId};
@@ -24,8 +22,8 @@ use super::label_edit::{LabelEditState, PortalTextEditState};
 use super::run_native_init;
 use super::text_edit::TextEditState;
 use super::{
-    drain_frame, event_cursor_moved, event_keyboard, event_mouse_click, AppMode,
-    Application, DragState, LastClick, Options,
+    drain_frame, event_cursor_moved, event_keyboard, event_mouse_click, AppMode, Application, DragState,
+    LastClick, Options,
 };
 use crate::application::common::RenderDecree;
 use crate::application::console::ConsoleState;
@@ -91,12 +89,7 @@ impl ApplicationHandler for NativeApp {
         self.watchdog.tick();
     }
 
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        window_id: WindowId,
-        event: WindowEvent,
-    ) {
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId, event: WindowEvent) {
         self.watchdog.tick();
         if let Some(init) = self.init.as_mut() {
             init.handle_event(event_loop, Event::WindowEvent { window_id, event });
@@ -185,11 +178,7 @@ impl InitState {
     /// and [`super::event_keyboard`]; this method handles the
     /// smaller arms (resize, close, wheel, modifiers) inline and
     /// delegates the larger ones.
-    pub(super) fn handle_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        event: winit::event::Event<()>,
-    ) {
+    pub(super) fn handle_event(&mut self, event_loop: &ActiveEventLoop, event: winit::event::Event<()>) {
         match event {
             //// WINDOW SPECIFIC ////
             Event::WindowEvent {
@@ -245,18 +234,17 @@ impl InitState {
                 // deltas accumulate via `accumulate_wheel_lines` so
                 // sub-line-per-tick scrolls don't round to zero.
                 if self.console_state.is_open() {
-                    let lines = if let crate::application::console::ConsoleState::Open {
-                        wheel_accum,
-                        ..
-                    } = &mut self.console_state
-                    {
-                        crate::application::app::console_input::accumulate_wheel_lines(
-                            wheel_accum,
-                            scroll_y as f32,
-                        )
-                    } else {
-                        0
-                    };
+                    let lines =
+                        if let crate::application::console::ConsoleState::Open { wheel_accum, .. } =
+                            &mut self.console_state
+                        {
+                            crate::application::app::console_input::accumulate_wheel_lines(
+                                wheel_accum,
+                                scroll_y as f32,
+                            )
+                        } else {
+                            0
+                        };
                     if lines != 0 {
                         crate::application::app::console_input::scroll_console_by_lines(
                             &mut self.console_state,
@@ -299,9 +287,7 @@ impl InitState {
                     );
                     if let Some(a) = action {
                         let mut bundle = self.input_context();
-                        let _ = crate::application::app::dispatch::dispatch_action(
-                            a, &mut bundle, None,
-                        );
+                        let _ = crate::application::app::dispatch::dispatch_action(a, &mut bundle, None);
                     }
                 }
             }
@@ -311,11 +297,7 @@ impl InitState {
             } => {
                 let window = self.window.clone();
                 let mut ctx = self.input_context();
-                event_cursor_moved::handle_cursor_moved(
-                    position,
-                    window.as_ref(),
-                    &mut ctx,
-                );
+                event_cursor_moved::handle_cursor_moved(position, window.as_ref(), &mut ctx);
             }
             //// KEYBOARD ////
             Event::WindowEvent {
@@ -338,11 +320,7 @@ impl InitState {
                 ..
             } => {
                 let mut ctx = self.input_context();
-                event_keyboard::handle_keyboard_input(
-                    logical_key,
-                    event_loop,
-                    &mut ctx,
-                );
+                event_keyboard::handle_keyboard_input(logical_key, event_loop, &mut ctx);
             }
             Event::AboutToWait => self.drain_frame(),
             _ => {}

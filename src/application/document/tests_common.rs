@@ -53,10 +53,8 @@ static CACHED_TESTAMENT_MAP: OnceLock<MindMap> = OnceLock::new();
 /// in `tests_nodes.rs`) build their own synthetic fixture and
 /// route through `MindMapDocument::from_json_str`.
 pub(crate) fn load_test_doc() -> MindMapDocument {
-    let map = CACHED_TESTAMENT_MAP.get_or_init(|| {
-        loader::load_from_file(&test_map_path())
-            .expect("testament map parses")
-    });
+    let map = CACHED_TESTAMENT_MAP
+        .get_or_init(|| loader::load_from_file(&test_map_path()).expect("testament map parses"));
     MindMapDocument::from_finalized_mindmap(map.clone(), None)
 }
 
@@ -156,7 +154,10 @@ pub(in crate::application) fn doc_with_one_edge() -> (MindMapDocument, super::Ed
 /// Pick the first visible edge and return its EdgeRef + a guaranteed
 /// on-path sample point. Used by hit-test edge tests.
 pub(super) fn pick_test_edge(doc: &MindMapDocument) -> (super::EdgeRef, glam::Vec2) {
-    let edge = doc.mindmap.edges.iter()
+    let edge = doc
+        .mindmap
+        .edges
+        .iter()
         .find(|e| e.visible)
         .expect("testament map has visible edges");
     let from = doc.mindmap.nodes.get(&edge.from_id).unwrap();
@@ -166,8 +167,12 @@ pub(super) fn pick_test_edge(doc: &MindMapDocument) -> (super::EdgeRef, glam::Ve
     let to_pos = to.pos_vec2();
     let to_size = to.size_vec2();
     let path = baumhard::mindmap::connection::build_connection_path(
-        from_pos, from_size, &edge.anchor_from,
-        to_pos, to_size, &edge.anchor_to,
+        from_pos,
+        from_size,
+        &edge.anchor_from,
+        to_pos,
+        to_size,
+        &edge.anchor_to,
         &edge.control_points,
     );
     let samples = baumhard::mindmap::connection::sample_path(&path, 4.0);

@@ -86,26 +86,16 @@ pub fn build_edge_handles(
         }
         1 => {
             // Quadratic Bezier (stored as 1 CP offset from from_center).
-            let cp0 = from_center
-                + Vec2::new(
-                    edge.control_points[0].x as f32,
-                    edge.control_points[0].y as f32,
-                );
+            let cp0 =
+                from_center + Vec2::new(edge.control_points[0].x as f32, edge.control_points[0].y as f32);
             handles.push(make(EdgeHandleKind::ControlPoint(0), cp0));
         }
         _ => {
             // Cubic Bezier (stored as 2 CPs: cp[0] from from_center,
             // cp[1] from to_center).
-            let cp0 = from_center
-                + Vec2::new(
-                    edge.control_points[0].x as f32,
-                    edge.control_points[0].y as f32,
-                );
-            let cp1 = to_center
-                + Vec2::new(
-                    edge.control_points[1].x as f32,
-                    edge.control_points[1].y as f32,
-                );
+            let cp0 =
+                from_center + Vec2::new(edge.control_points[0].x as f32, edge.control_points[0].y as f32);
+            let cp1 = to_center + Vec2::new(edge.control_points[1].x as f32, edge.control_points[1].y as f32);
             handles.push(make(EdgeHandleKind::ControlPoint(0), cp0));
             handles.push(make(EdgeHandleKind::ControlPoint(1), cp1));
         }

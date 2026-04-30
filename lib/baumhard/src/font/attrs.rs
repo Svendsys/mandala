@@ -94,10 +94,9 @@ pub fn attrs_list_from_regions(
             Some(ref name) => attrs.family(Family::Name(name.as_str())),
             None => attrs.family(Family::Monospace),
         };
-        let start = grapheme_chad::find_byte_index_of_grapheme(text, region.range.start)
-            .unwrap_or(text.len());
-        let end = grapheme_chad::find_byte_index_of_grapheme(text, region.range.end)
-            .unwrap_or(text.len());
+        let start =
+            grapheme_chad::find_byte_index_of_grapheme(text, region.range.start).unwrap_or(text.len());
+        let end = grapheme_chad::find_byte_index_of_grapheme(text, region.range.end).unwrap_or(text.len());
         if start >= end {
             continue;
         }
@@ -237,7 +236,7 @@ pub fn rich_text_spans_from_regions<'a>(
         }
         return vec![(text, attrs)];
     }
-        families
+    families
         .regions
         .iter()
         .zip(families.names.iter())
@@ -250,10 +249,10 @@ pub fn rich_text_spans_from_regions<'a>(
             // be a malformed input — by construction this never
             // happens, since every fresh producer counts via
             // `count_grapheme_clusters`.
-            let start = grapheme_chad::find_byte_index_of_grapheme(text, region.range.start)
-                .unwrap_or(text.len());
-            let end = grapheme_chad::find_byte_index_of_grapheme(text, region.range.end)
-                .unwrap_or(text.len());
+            let start =
+                grapheme_chad::find_byte_index_of_grapheme(text, region.range.start).unwrap_or(text.len());
+            let end =
+                grapheme_chad::find_byte_index_of_grapheme(text, region.range.end).unwrap_or(text.len());
             if start >= end {
                 return None;
             }

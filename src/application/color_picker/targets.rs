@@ -108,10 +108,7 @@ impl ColorTarget {
 /// HSV at open time and to read the effective color for the
 /// preview after a chip action. Returns `None` if the index / id
 /// no longer resolves.
-pub fn current_color_at(
-    doc: &MindMapDocument,
-    handle: &PickerHandle,
-) -> Option<String> {
+pub fn current_color_at(doc: &MindMapDocument, handle: &PickerHandle) -> Option<String> {
     match handle {
         PickerHandle::Edge(index) => {
             let e = doc.mindmap.edges.get(*index)?;
@@ -137,10 +134,7 @@ pub fn current_color_at(
 /// parse it into HSV for seeding the picker state. Falls back to
 /// `(0.0, 0.0, 0.5)` (mid-gray) on any failure so the picker always
 /// opens with a sensible default.
-pub fn current_hsv_at(
-    doc: &MindMapDocument,
-    handle: &PickerHandle,
-) -> (f32, f32, f32) {
+pub fn current_hsv_at(doc: &MindMapDocument, handle: &PickerHandle) -> (f32, f32, f32) {
     let raw = match current_color_at(doc, handle) {
         Some(s) => s,
         None => return (0.0, 0.0, 0.5),

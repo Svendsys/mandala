@@ -36,8 +36,7 @@ impl ColorValue {
         let t = s.trim();
         if let Some(rest) = t.strip_prefix('#') {
             // Shape-check: 3 / 4 / 6 / 8 hex digits.
-            let valid = matches!(rest.len(), 3 | 4 | 6 | 8)
-                && rest.chars().all(|c| c.is_ascii_hexdigit());
+            let valid = matches!(rest.len(), 3 | 4 | 6 | 8) && rest.chars().all(|c| c.is_ascii_hexdigit());
             if !valid {
                 return Err(format!("invalid hex color: '{}'", s));
             }

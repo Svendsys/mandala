@@ -29,12 +29,7 @@ pub(in crate::application::app) fn apply_edge_label_drag(
     edge_ref: &EdgeRef,
     cursor_canvas: Vec2,
 ) -> bool {
-    let Some(idx) = doc
-        .mindmap
-        .edges
-        .iter()
-        .position(|e| edge_ref.matches(e))
-    else {
+    let Some(idx) = doc.mindmap.edges.iter().position(|e| edge_ref.matches(e)) else {
         return false;
     };
 
@@ -58,8 +53,7 @@ pub(in crate::application::app) fn apply_edge_label_drag(
             return false;
         };
         let from_pos = from_node.pos_vec2();
-        let from_size =
-            from_node.size_vec2();
+        let from_size = from_node.size_vec2();
         let to_pos = to_node.pos_vec2();
         let to_size = to_node.size_vec2();
         connection::build_connection_path(
@@ -81,9 +75,7 @@ pub(in crate::application::app) fn apply_edge_label_drag(
     // `EditEdge` at release (same discipline as the portal-
     // label and edge-handle drags).
     let edge = &mut doc.mindmap.edges[idx];
-    let cfg = edge
-        .label_config
-        .get_or_insert_with(EdgeLabelConfig::default);
+    let cfg = edge.label_config.get_or_insert_with(EdgeLabelConfig::default);
     use baumhard::util::geometry::pretty_inequal;
     let existing_t = cfg.position_t.unwrap_or(0.5);
     let existing_perp = cfg.perpendicular_offset.unwrap_or(0.0);

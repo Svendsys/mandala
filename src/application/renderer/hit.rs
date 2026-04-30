@@ -19,10 +19,7 @@ fn aabb_contains(pos: Vec2, min: Vec2, max: Vec2) -> bool {
 }
 
 /// First key in `map` whose AABB contains `pos`; linear scan.
-fn find_first_aabb_hit<K: Clone + Hash + Eq>(
-    map: &FxHashMap<K, (Vec2, Vec2)>,
-    pos: Vec2,
-) -> Option<K> {
+fn find_first_aabb_hit<K: Clone + Hash + Eq>(map: &FxHashMap<K, (Vec2, Vec2)>, pos: Vec2) -> Option<K> {
     for (key, (min, max)) in map {
         if aabb_contains(pos, *min, *max) {
             return Some(key.clone());
@@ -32,7 +29,6 @@ fn find_first_aabb_hit<K: Clone + Hash + Eq>(
 }
 
 impl Renderer {
-
     /// Fit the camera to show a RenderScene's content.
     pub fn fit_camera_to_scene(&mut self, scene: &RenderScene) {
         if scene.text_elements.is_empty() {
@@ -50,25 +46,19 @@ impl Renderer {
             max_x = max_x.max(x + w);
             max_y = max_y.max(y + h);
         }
-        self.camera.apply_mutation(
-            &baumhard::gfx_structs::camera::CameraMutation::FitToBounds {
+        self.camera
+            .apply_mutation(&baumhard::gfx_structs::camera::CameraMutation::FitToBounds {
                 min: Vec2::new(min_x, min_y),
                 max: Vec2::new(max_x, max_y),
                 padding_fraction: 0.05,
-            },
-        );
+            });
     }
-
 
     /// AABB hit test against the rendered label hitboxes. Returns
     /// true when `canvas_pos` falls inside the hitbox of the given
     /// edge's label. Used by the app to dispatch inline click-to-edit
     /// when a selected edge's label is clicked.
-    pub fn hit_test_edge_label(
-        &self,
-        canvas_pos: Vec2,
-        edge_key: &EdgeKey,
-    ) -> bool {
+    pub fn hit_test_edge_label(&self, canvas_pos: Vec2, edge_key: &EdgeKey) -> bool {
         self.connection_label_hitboxes
             .get(edge_key)
             .is_some_and(|(min, max)| aabb_contains(canvas_pos, *min, *max))
@@ -162,9 +152,10 @@ impl Renderer {
     /// edge. Pure pan — no dirty flag raised; the shader transform
     /// plus render-time `visible_at` handle the new view.
     pub fn set_camera_center(&mut self, target: Vec2) {
-        self.camera.apply_mutation(
-            &baumhard::gfx_structs::camera::CameraMutation::SetPosition { canvas_pos: target },
-        );
+        self.camera
+            .apply_mutation(&baumhard::gfx_structs::camera::CameraMutation::SetPosition {
+                canvas_pos: target,
+            });
     }
 
     /// Fit the camera to show a Baumhard tree's content.
@@ -195,13 +186,12 @@ impl Renderer {
             found_any = true;
         }
         if found_any {
-            self.camera.apply_mutation(
-                &baumhard::gfx_structs::camera::CameraMutation::FitToBounds {
+            self.camera
+                .apply_mutation(&baumhard::gfx_structs::camera::CameraMutation::FitToBounds {
                     min: Vec2::new(min_x, min_y),
                     max: Vec2::new(max_x, max_y),
                     padding_fraction: 0.05,
-                },
-            );
+                });
             // The fit typically changes both pan and zoom. Today this
             // is only called from `load_mindmap`, which follows up
             // with a full connection rebuild against the new zoom —
@@ -212,7 +202,6 @@ impl Renderer {
             self.connection_geometry_dirty = true;
         }
     }
-
 
     pub fn screen_to_canvas(&self, screen_x: f32, screen_y: f32) -> Vec2 {
         self.camera.screen_to_canvas(Vec2::new(screen_x, screen_y))

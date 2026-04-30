@@ -12,11 +12,10 @@ use baumhard::mindmap::custom_mutation::{PlatformContext, Trigger};
 use super::scene_rebuild::{rebuild_all, rebuild_scene_only};
 use super::{now_ms, AppMode, EDGE_HIT_TOLERANCE_PX};
 use crate::application::document::{
-    apply_tree_highlights, hit_test_edge, MindMapDocument, SelectionState,
-    HIGHLIGHT_COLOR, REPARENT_SOURCE_COLOR, REPARENT_TARGET_COLOR,
+    apply_tree_highlights, hit_test_edge, MindMapDocument, SelectionState, HIGHLIGHT_COLOR,
+    REPARENT_SOURCE_COLOR, REPARENT_TARGET_COLOR,
 };
 use crate::application::renderer::Renderer;
-
 
 /// Handle a click event: update selection, rebuild tree with highlight.
 /// When the node hit test misses, falls through to edge hit testing so
@@ -46,9 +45,7 @@ pub(super) fn handle_click(
     // into the tree via `apply_custom_mutation`, which owns the
     // model-sync + undo-push for Persistent behavior.
     if let Some(id) = hit.as_ref() {
-        let triggered = doc.find_triggered_mutations(
-            id, &Trigger::OnClick, &PlatformContext::Desktop,
-        );
+        let triggered = doc.find_triggered_mutations(id, &Trigger::OnClick, &PlatformContext::Desktop);
         if !triggered.is_empty() {
             // `find_triggered_mutations` returned cloned CustomMutations so
             // we can iterate without holding an immutable borrow on doc.
@@ -122,33 +119,23 @@ pub(super) fn handle_click(
             // that endpoint's state; double-click is handled
             // separately by the event loop and pans the camera
             // to the opposite endpoint.
-            let canvas_pos = renderer.screen_to_canvas(
-                cursor_pos.0 as f32, cursor_pos.1 as f32,
-            );
+            let canvas_pos = renderer.screen_to_canvas(cursor_pos.0 as f32, cursor_pos.1 as f32);
             // Portal sub-part precedence: text first, icon next.
             // Text and icon AABBs don't overlap in practice (text
             // sits beside the icon along the border normal), so
             // only one of these hits at a time — the ordering
             // keeps routing deterministic even if future layout
             // changes make them adjacent.
-            if let Some((edge_key, endpoint)) =
-                renderer.hit_test_portal_text(canvas_pos)
-            {
-                doc.selection = SelectionState::PortalText(
-                    crate::application::document::PortalLabelSel {
-                        edge_key,
-                        endpoint_node_id: endpoint,
-                    },
-                );
-            } else if let Some((edge_key, endpoint)) =
-                renderer.hit_test_portal(canvas_pos)
-            {
-                doc.selection = SelectionState::PortalLabel(
-                    crate::application::document::PortalLabelSel {
-                        edge_key,
-                        endpoint_node_id: endpoint,
-                    },
-                );
+            if let Some((edge_key, endpoint)) = renderer.hit_test_portal_text(canvas_pos) {
+                doc.selection = SelectionState::PortalText(crate::application::document::PortalLabelSel {
+                    edge_key,
+                    endpoint_node_id: endpoint,
+                });
+            } else if let Some((edge_key, endpoint)) = renderer.hit_test_portal(canvas_pos) {
+                doc.selection = SelectionState::PortalLabel(crate::application::document::PortalLabelSel {
+                    edge_key,
+                    endpoint_node_id: endpoint,
+                });
             } else {
                 let tolerance = EDGE_HIT_TOLERANCE_PX * renderer.canvas_per_pixel();
                 let edge_hit = hit_test_edge(canvas_pos, &doc.mindmap, tolerance);

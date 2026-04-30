@@ -62,7 +62,9 @@ mod tests {
         map.nodes.insert("0".into(), node("0", None));
         map.edges.push(edge("0", "ghost"));
         let v = check(&map);
-        assert!(v.iter().any(|x| x.category == "references" && x.message.contains("to_id")));
+        assert!(v
+            .iter()
+            .any(|x| x.category == "references" && x.message.contains("to_id")));
     }
 
     /// A portal-mode edge with a dangling endpoint is flagged the same
@@ -76,6 +78,8 @@ mod tests {
         e.display_mode = Some(baumhard::mindmap::model::DISPLAY_MODE_PORTAL.to_string());
         map.edges.push(e);
         let v = check(&map);
-        assert!(v.iter().any(|x| x.category == "references" && x.message.contains("to_id")));
+        assert!(v
+            .iter()
+            .any(|x| x.category == "references" && x.message.contains("to_id")));
     }
 }

@@ -120,11 +120,7 @@ pub(in crate::application) fn default_cross_link_edge(from_id: &str, to_id: &str
 /// carries the chosen marker glyph. Callers rotate `glyph_preset_index`
 /// through `PORTAL_GLYPH_PRESETS.len()` to pick distinct glyphs per
 /// portal without forcing the user to choose up front.
-pub(super) fn default_portal_edge(
-    from_id: &str,
-    to_id: &str,
-    glyph: &str,
-) -> MindEdge {
+pub(super) fn default_portal_edge(from_id: &str, to_id: &str, glyph: &str) -> MindEdge {
     use baumhard::mindmap::model::{GlyphConnectionConfig, DISPLAY_MODE_PORTAL};
     MindEdge {
         from_id: from_id.to_string(),

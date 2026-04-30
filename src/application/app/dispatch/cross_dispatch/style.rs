@@ -18,9 +18,7 @@ pub(in crate::application::app) fn apply_set_border_field(
     rc: &mut RebuildContext<'_>,
 ) {
     apply_with_rebuild(rc, |doc| {
-        crate::application::console::commands::border::apply_border_field_to_selection(
-            doc, field, value,
-        )
+        crate::application::console::commands::border::apply_border_field_to_selection(doc, field, value)
     });
 }
 
@@ -34,11 +32,7 @@ pub(in crate::application::app) fn apply_set_color_axis(
     rc: &mut RebuildContext<'_>,
 ) {
     apply_with_rebuild(rc, |doc| {
-        crate::application::console::commands::color::apply_color_axis_to_selection(
-            doc,
-            axis.into(),
-            value,
-        )
+        crate::application::console::commands::color::apply_color_axis_to_selection(doc, axis.into(), value)
     });
 }
 
@@ -48,10 +42,7 @@ pub(in crate::application::app) fn apply_set_color_axis(
 /// surfaces as a `false` from the helper and the rebuild is
 /// skipped. Geometry change (per-glyph advance shifts) → full
 /// rebuild.
-pub(in crate::application::app) fn apply_set_font_family(
-    family: &str,
-    rc: &mut RebuildContext<'_>,
-) {
+pub(in crate::application::app) fn apply_set_font_family(family: &str, rc: &mut RebuildContext<'_>) {
     apply_with_rebuild(rc, |doc| {
         crate::application::console::commands::font::apply_font_family_to_selection(doc, family)
     });
@@ -69,11 +60,7 @@ pub(in crate::application::app) fn apply_set_font_kv(
     rc: &mut RebuildContext<'_>,
 ) {
     apply_with_rebuild(rc, |doc| {
-        crate::application::console::commands::font::apply_font_kv_to_selection(
-            doc,
-            slot.into(),
-            pt,
-        )
+        crate::application::console::commands::font::apply_font_kv_to_selection(doc, slot.into(), pt)
     });
 }
 
@@ -82,10 +69,7 @@ pub(in crate::application::app) fn apply_set_font_kv(
 /// the unparsed `input` string. Mutation core handles parsing +
 /// the same is_positive_finite gating every spacing-accepting
 /// verb uses. Geometry change → full rebuild.
-pub(in crate::application::app) fn apply_set_spacing(
-    input: &str,
-    rc: &mut RebuildContext<'_>,
-) {
+pub(in crate::application::app) fn apply_set_spacing(input: &str, rc: &mut RebuildContext<'_>) {
     apply_with_rebuild(rc, |doc| {
         crate::application::console::commands::spacing::apply_spacing_to_selection(doc, input)
     });

@@ -141,8 +141,9 @@ impl MindMapDocument {
         }
 
         if !snapshots.is_empty() {
-            self.undo_stack
-                .push(UndoAction::CustomMutation { node_snapshots: snapshots });
+            self.undo_stack.push(UndoAction::CustomMutation {
+                node_snapshots: snapshots,
+            });
             self.dirty = true;
         }
     }
@@ -175,8 +176,7 @@ impl MindMapDocument {
                     for (k, v) in map {
                         let existing = self.mindmap.canvas.theme_variables.get(k);
                         if existing.map(|s| s != v).unwrap_or(true) {
-                            self.mindmap.canvas.theme_variables
-                                .insert(k.clone(), v.clone());
+                            self.mindmap.canvas.theme_variables.insert(k.clone(), v.clone());
                             changed = true;
                         }
                     }
@@ -195,7 +195,8 @@ impl MindMapDocument {
             }
         }
         if changed {
-            self.undo_stack.push(UndoAction::CanvasSnapshot { canvas: snapshot });
+            self.undo_stack
+                .push(UndoAction::CanvasSnapshot { canvas: snapshot });
             self.dirty = true;
         }
         changed
@@ -210,12 +211,7 @@ impl MindMapDocument {
     /// flat list (runtime-hole-bearing, size-aware) are skipped at this
     /// layer; a later session wires the richer `mutator_builder::build`
     /// path for those.
-    fn apply_to_tree(
-        &self,
-        custom: &CustomMutation,
-        node_id: &str,
-        tree: &mut MindMapTree,
-    ) {
+    fn apply_to_tree(&self, custom: &CustomMutation, node_id: &str, tree: &mut MindMapTree) {
         let Some(mutator) = custom.mutator.as_ref() else { return };
         let Some(mutations) = flat_mutations(mutator) else { return };
         let affected = self.collect_affected_node_ids(node_id, &custom.target_scope);
@@ -232,31 +228,39 @@ impl MindMapDocument {
     pub(super) fn collect_affected_node_ids(&self, node_id: &str, scope: &TargetScope) -> Vec<String> {
         match scope {
             TargetScope::SelfOnly => vec![node_id.to_string()],
-            TargetScope::Children => {
-                self.mindmap.children_of(node_id).iter().map(|n| n.id.clone()).collect()
-            }
+            TargetScope::Children => self
+                .mindmap
+                .children_of(node_id)
+                .iter()
+                .map(|n| n.id.clone())
+                .collect(),
             TargetScope::Descendants => self.mindmap.all_descendants(node_id),
             TargetScope::SelfAndDescendants => {
                 let mut ids = vec![node_id.to_string()];
                 ids.extend(self.mindmap.all_descendants(node_id));
                 ids
             }
-            TargetScope::Parent => {
-                self.mindmap.nodes.get(node_id)
-                    .and_then(|n| n.parent_id.clone())
-                    .into_iter().collect()
-            }
-            TargetScope::Siblings => {
-                self.mindmap.nodes.get(node_id)
-                    .and_then(|n| n.parent_id.as_deref())
-                    .map(|pid| {
-                        self.mindmap.children_of(pid).iter()
-                            .filter(|n| n.id != node_id)
-                            .map(|n| n.id.clone())
-                            .collect()
-                    })
-                    .unwrap_or_default()
-            }
+            TargetScope::Parent => self
+                .mindmap
+                .nodes
+                .get(node_id)
+                .and_then(|n| n.parent_id.clone())
+                .into_iter()
+                .collect(),
+            TargetScope::Siblings => self
+                .mindmap
+                .nodes
+                .get(node_id)
+                .and_then(|n| n.parent_id.as_deref())
+                .map(|pid| {
+                    self.mindmap
+                        .children_of(pid)
+                        .iter()
+                        .filter(|n| n.id != node_id)
+                        .map(|n| n.id.clone())
+                        .collect()
+                })
+                .unwrap_or_default(),
         }
     }
 

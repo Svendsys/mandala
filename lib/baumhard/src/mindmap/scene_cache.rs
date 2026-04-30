@@ -204,19 +204,13 @@ impl SceneConnectionCache {
             .entry(key.from_id.clone())
             .or_default()
             .push(key.clone());
-        self.by_node
-            .entry(key.to_id.clone())
-            .or_default()
-            .push(key);
+        self.by_node.entry(key.to_id.clone()).or_default().push(key);
     }
 
     /// Which edges touch the given node? Used by the drag drain to mark
     /// dirty edges.
     pub fn edges_touching(&self, node_id: &str) -> &[EdgeKey] {
-        self.by_node
-            .get(node_id)
-            .map(|v| v.as_slice())
-            .unwrap_or(&[])
+        self.by_node.get(node_id).map(|v| v.as_slice()).unwrap_or(&[])
     }
 
     /// Drop a single edge (key-direct invalidation). Keeps the reverse
@@ -336,8 +330,7 @@ mod tests {
         cache.insert(k2.clone(), mk_entry("#222"));
         cache.insert(k3.clone(), mk_entry("#333"));
 
-        let touching: std::collections::HashSet<&EdgeKey> =
-            cache.edges_touching("hub").iter().collect();
+        let touching: std::collections::HashSet<&EdgeKey> = cache.edges_touching("hub").iter().collect();
         assert_eq!(touching.len(), 3);
         assert!(touching.contains(&k1));
         assert!(touching.contains(&k2));

@@ -33,12 +33,7 @@ macro_rules! rgba {
 #[macro_export]
 macro_rules! rgb {
     ([$r:expr, $g:expr, $b:expr]) => {{
-        [
-            ($r as f32) / 255.0,
-            ($g as f32) / 255.0,
-            ($b as f32) / 255.0,
-            1.0,
-        ]
+        [($r as f32) / 255.0, ($g as f32) / 255.0, ($b as f32) / 255.0, 1.0]
     }};
 }
 
@@ -205,17 +200,13 @@ impl Index<usize> for Color {
 impl Color {
     /// Opaque black (`[0, 0, 0, 255]`). O(1), no heap.
     pub fn black() -> Self {
-        Color {
-            rgba: [0, 0, 0, 255],
-        }
+        Color { rgba: [0, 0, 0, 255] }
     }
 
     /// Fully transparent black (`[0, 0, 0, 0]`) — the "no fill"
     /// sentinel. O(1), no heap.
     pub fn invisible() -> Self {
-        Color {
-            rgba: [0, 0, 0, 0],
-        }
+        Color { rgba: [0, 0, 0, 0] }
     }
 
     /// Opaque white (`[255, 255, 255, 255]`). O(1), no heap.
@@ -267,7 +258,10 @@ mod tests {
     use std::collections::HashMap;
 
     fn vars(entries: &[(&str, &str)]) -> HashMap<String, String> {
-        entries.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        entries
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     #[test]
@@ -305,10 +299,7 @@ mod tests {
     fn resolve_var_single_level_no_recursion() {
         // A variable whose value is itself a var(...) reference is NOT
         // dereferenced further in v1 — returned verbatim.
-        let v = vars(&[
-            ("--primary", "var(--secondary)"),
-            ("--secondary", "#abcdef"),
-        ]);
+        let v = vars(&[("--primary", "var(--secondary)"), ("--secondary", "#abcdef")]);
         assert_eq!(resolve_var("var(--primary)", &v), "var(--secondary)");
     }
 
@@ -381,8 +372,7 @@ mod tests {
         ];
         for bad in &pathological {
             let got = hex_to_rgba_safe(bad, fb);
-            assert_eq!(got, fb,
-                "malformed input {:?} should return fallback", bad);
+            assert_eq!(got, fb, "malformed input {:?} should return fallback", bad);
         }
     }
 
@@ -443,18 +433,23 @@ mod tests {
         }
         // Hit case — known variable.
         let got = resolve_var("var(--k500)", &map);
-        assert!(got.starts_with('#'),
-            "expected hex value, got {:?}", got);
+        assert!(got.starts_with('#'), "expected hex value, got {:?}", got);
         // Miss case — pointer-equal slice returned (zero-copy).
         let raw = "not-a-var-reference";
         let out = resolve_var(raw, &map);
-        assert_eq!(out.as_ptr(), raw.as_ptr(),
-            "passthrough should be zero-copy (same pointer)");
+        assert_eq!(
+            out.as_ptr(),
+            raw.as_ptr(),
+            "passthrough should be zero-copy (same pointer)"
+        );
         // Unknown var reference passes through as the original slice.
         let unknown = "var(--no-such-key)";
         let out_unknown = resolve_var(unknown, &map);
-        assert_eq!(out_unknown.as_ptr(), unknown.as_ptr(),
-            "unknown var() should pass through zero-copy");
+        assert_eq!(
+            out_unknown.as_ptr(),
+            unknown.as_ptr(),
+            "unknown var() should pass through zero-copy"
+        );
     }
 
     /// An unknown `var(--x)` reference must return the raw string, NOT
@@ -539,13 +534,16 @@ mod tests {
             let got_hsv = hex_to_hsv_safe(hex).unwrap();
             // Hue only meaningful when saturation > 0
             if expected_hsv.1 > 0.0 {
-                assert!((got_hsv.0 - expected_hsv.0).abs() < 1e-2,
-                    "hue for {} expected {}, got {}", hex, expected_hsv.0, got_hsv.0);
+                assert!(
+                    (got_hsv.0 - expected_hsv.0).abs() < 1e-2,
+                    "hue for {} expected {}, got {}",
+                    hex,
+                    expected_hsv.0,
+                    got_hsv.0
+                );
             }
-            assert!((got_hsv.1 - expected_hsv.1).abs() < 1e-3,
-                "sat for {}", hex);
-            assert!((got_hsv.2 - expected_hsv.2).abs() < 1e-3,
-                "val for {}", hex);
+            assert!((got_hsv.1 - expected_hsv.1).abs() < 1e-3, "sat for {}", hex);
+            assert!((got_hsv.2 - expected_hsv.2).abs() < 1e-3, "val for {}", hex);
             // Round-trip through hsv_to_hex.
             let back = hsv_to_hex(got_hsv.0, got_hsv.1, got_hsv.2);
             assert_eq!(back, *hex, "round-trip mismatch for {}", hex);

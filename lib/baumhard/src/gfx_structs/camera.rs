@@ -74,7 +74,11 @@ pub enum CameraMutation {
     /// existing [`Camera2D::fit_to_bounds`] imperative call —
     /// expressed as a mutation so every camera change has one
     /// dispatch point.
-    FitToBounds { min: Vec2, max: Vec2, padding_fraction: f32 },
+    FitToBounds {
+        min: Vec2,
+        max: Vec2,
+        padding_fraction: f32,
+    },
 }
 
 impl Camera2D {
@@ -176,10 +180,7 @@ impl Camera2D {
     pub fn apply_mutation(&mut self, mutation: &CameraMutation) {
         match *mutation {
             CameraMutation::Pan { screen_delta } => self.pan(screen_delta),
-            CameraMutation::ZoomAt {
-                screen_focus,
-                factor,
-            } => self.zoom_at(screen_focus, factor),
+            CameraMutation::ZoomAt { screen_focus, factor } => self.zoom_at(screen_focus, factor),
             CameraMutation::ZoomCenter { factor } => self.zoom_center(factor),
             CameraMutation::SetPosition { canvas_pos } => {
                 self.position = canvas_pos;
@@ -361,7 +362,9 @@ mod tests {
         cam.zoom = 2.5;
         let initial_zoom = cam.zoom;
         let initial_viewport = cam.viewport_size;
-        cam.apply_mutation(&CameraMutation::Pan { screen_delta: Vec2::new(15.0, -22.5) });
+        cam.apply_mutation(&CameraMutation::Pan {
+            screen_delta: Vec2::new(15.0, -22.5),
+        });
         assert_eq!(cam.zoom, initial_zoom);
         assert_eq!(cam.viewport_size, initial_viewport);
     }

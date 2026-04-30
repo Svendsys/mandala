@@ -12,13 +12,13 @@ pub mod palette;
 
 pub use canvas::Canvas;
 pub use edge::{
-    is_portal_edge, portal_endpoint_state, portal_endpoint_state_mut, ControlPoint,
-    EdgeLabelConfig, GlyphConnectionConfig, MindEdge, PortalEndpointState,
-    DEFAULT_LABEL_SIZE_FACTOR, DISPLAY_MODE_LINE, DISPLAY_MODE_PORTAL, PORTAL_GLYPH_PRESETS,
+    is_portal_edge, portal_endpoint_state, portal_endpoint_state_mut, ControlPoint, EdgeLabelConfig,
+    GlyphConnectionConfig, MindEdge, PortalEndpointState, DEFAULT_LABEL_SIZE_FACTOR, DISPLAY_MODE_LINE,
+    DISPLAY_MODE_PORTAL, PORTAL_GLYPH_PRESETS,
 };
 pub use node::{
-    ColorGroup, ColorSchema, CustomBorderGlyphs, GlyphBorderConfig, MindNode, NodeLayout,
-    NodeStyle, Position, Size, TextRun,
+    ColorGroup, ColorSchema, CustomBorderGlyphs, GlyphBorderConfig, MindNode, NodeLayout, NodeStyle,
+    Position, Size, TextRun,
 };
 pub use palette::Palette;
 
@@ -110,16 +110,16 @@ impl MindMap {
 
     /// Returns root nodes (nodes with no parent), sorted by ID segment.
     pub fn root_nodes(&self) -> Vec<&MindNode> {
-        let mut roots: Vec<&MindNode> = self.nodes.values()
-            .filter(|n| n.parent_id.is_none())
-            .collect();
+        let mut roots: Vec<&MindNode> = self.nodes.values().filter(|n| n.parent_id.is_none()).collect();
         roots.sort_by_key(|n| id_sort_key(&n.id));
         roots
     }
 
     /// Returns children of a given node, sorted by ID segment.
     pub fn children_of(&self, parent_id: &str) -> Vec<&MindNode> {
-        let mut children: Vec<&MindNode> = self.nodes.values()
+        let mut children: Vec<&MindNode> = self
+            .nodes
+            .values()
             .filter(|n| n.parent_id.as_deref() == Some(parent_id))
             .collect();
         children.sort_by_key(|n| id_sort_key(&n.id));
@@ -192,7 +192,8 @@ impl MindMap {
 /// Extract the last segment of a Dewey-decimal ID as a numeric sort key.
 /// `"1.2.3"` → `3`, `"0"` → `0`. Falls back to 0 for non-numeric IDs.
 pub fn id_sort_key(id: &str) -> usize {
-    id.rsplit('.').next()
+    id.rsplit('.')
+        .next()
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(0)
 }

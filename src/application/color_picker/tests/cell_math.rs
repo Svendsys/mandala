@@ -4,8 +4,7 @@
 //! wrap-around and rounding), sat/val cell ↔ [0,1] endpoints.
 
 use crate::application::color_picker::{
-    hue_slot_to_degrees, sat_cell_to_value, val_cell_to_value, HUE_SLOT_COUNT,
-    SAT_CELL_COUNT, VAL_CELL_COUNT,
+    hue_slot_to_degrees, sat_cell_to_value, val_cell_to_value, HUE_SLOT_COUNT, SAT_CELL_COUNT, VAL_CELL_COUNT,
 };
 
 // `degrees_to_hue_slot` is private to the color_picker module — reach
@@ -55,11 +54,11 @@ fn degrees_to_hue_slot_quantizes_to_nearest() {
         let deg = d as f32;
         let slot = degrees_to_hue_slot(deg);
         let canonical = hue_slot_to_degrees(slot);
-        let diff = ((deg - canonical).rem_euclid(360.0)).min(
-            (canonical - deg).rem_euclid(360.0),
+        let diff = ((deg - canonical).rem_euclid(360.0)).min((canonical - deg).rem_euclid(360.0));
+        assert!(
+            diff <= 7.5 + 1e-4,
+            "deg {deg} → slot {slot} (canonical {canonical}°) distance {diff} > 7.5"
         );
-        assert!(diff <= 7.5 + 1e-4,
-            "deg {deg} → slot {slot} (canonical {canonical}°) distance {diff} > 7.5");
     }
 }
 

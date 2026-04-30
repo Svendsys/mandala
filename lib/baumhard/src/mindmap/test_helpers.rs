@@ -25,8 +25,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::mindmap::model::{
-    Canvas, GlyphConnectionConfig, MindEdge, MindMap, MindNode, NodeLayout, NodeStyle,
-    Position, Size, DISPLAY_MODE_PORTAL,
+    Canvas, GlyphConnectionConfig, MindEdge, MindMap, MindNode, NodeLayout, NodeStyle, Position, Size,
+    DISPLAY_MODE_PORTAL,
 };
 
 /// Path to the canonical `maps/testament.mindmap.json` fixture
@@ -133,12 +133,7 @@ pub(crate) fn synthetic_map(nodes_vec: Vec<MindNode>, edges: Vec<MindEdge>) -> M
 /// Cost: ~7 `String` heap allocations (endpoints, anchors, plus
 /// the static-defaulted edge_type / color / line_style). Empty
 /// `Vec` for `control_points`. Trivial.
-pub(crate) fn synthetic_edge(
-    from: &str,
-    to: &str,
-    anchor_from: &str,
-    anchor_to: &str,
-) -> MindEdge {
+pub(crate) fn synthetic_edge(from: &str, to: &str, anchor_from: &str, anchor_to: &str) -> MindEdge {
     MindEdge {
         from_id: from.to_string(),
         to_id: to.to_string(),

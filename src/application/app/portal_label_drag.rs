@@ -10,9 +10,7 @@
 
 use glam::Vec2;
 
-use baumhard::mindmap::portal_geometry::{
-    border_outward_normal, border_point_at, nearest_border_t,
-};
+use baumhard::mindmap::portal_geometry::{border_outward_normal, border_point_at, nearest_border_t};
 
 use crate::application::document::{EdgeRef, MindMapDocument};
 
@@ -64,9 +62,7 @@ pub(in crate::application::app) fn apply_portal_label_drag(
     // us via a click hit-test, so a missing node here means the
     // node was deleted between click and drag.
     let Some(node) = doc.mindmap.nodes.get(endpoint_node_id) else {
-        log::warn!(
-            "apply_portal_label_drag: endpoint node {endpoint_node_id} disappeared mid-drag"
-        );
+        log::warn!("apply_portal_label_drag: endpoint node {endpoint_node_id} disappeared mid-drag");
         return false;
     };
     let node_pos = node.pos_vec2();
@@ -77,12 +73,7 @@ pub(in crate::application::app) fn apply_portal_label_drag(
     // because that setter pushes an `EditEdge` per call. The
     // per-frame drain would flood the undo stack; we snapshot
     // once at drag start and push a single `EditEdge` at release.
-    let Some(idx) = doc
-        .mindmap
-        .edges
-        .iter()
-        .position(|e| edge_ref.matches(e))
-    else {
+    let Some(idx) = doc.mindmap.edges.iter().position(|e| edge_ref.matches(e)) else {
         return false;
     };
     let edge = &mut doc.mindmap.edges[idx];
@@ -127,16 +118,9 @@ mod tests {
         // the right edge (t in [1, 2), outward normal +x), so the
         // perpendicular is ~100 (distance from right edge at x=100
         // to cursor at x=200).
-        let (_t, perp) = project_cursor_to_portal_params(
-            POS,
-            SIZE,
-            Vec2::new(200.0, 25.0),
-        );
+        let (_t, perp) = project_cursor_to_portal_params(POS, SIZE, Vec2::new(200.0, 25.0));
         let perp = perp.expect("cursor > ε outside must produce Some");
-        assert!(
-            (perp - 100.0).abs() < 1.0,
-            "expected ~100 outward, got {perp}"
-        );
+        assert!((perp - 100.0).abs() < 1.0, "expected ~100 outward, got {perp}");
     }
 
     #[test]
@@ -144,11 +128,7 @@ mod tests {
         // Cursor exactly on the right border (x = node_right).
         // Perpendicular magnitude is 0, which sits inside the
         // snap epsilon and must produce `None`.
-        let (_t, perp) = project_cursor_to_portal_params(
-            POS,
-            SIZE,
-            Vec2::new(100.0, 25.0),
-        );
+        let (_t, perp) = project_cursor_to_portal_params(POS, SIZE, Vec2::new(100.0, 25.0));
         assert!(perp.is_none(), "on-border must snap to None, got {perp:?}");
     }
 
@@ -163,11 +143,7 @@ mod tests {
         // "drag pulled back past the border" branch produces a
         // negative offset rather than flipping to the opposite
         // side's outward normal.
-        let (t, perp) = project_cursor_to_portal_params(
-            POS,
-            SIZE,
-            Vec2::new(95.0, 25.0),
-        );
+        let (t, perp) = project_cursor_to_portal_params(POS, SIZE, Vec2::new(95.0, 25.0));
         assert!(
             (1.0..2.0).contains(&t),
             "cursor must project onto the right edge (t in [1, 2)), got t={t}"
@@ -218,15 +194,9 @@ mod tests {
         ];
         for c in cases {
             let (t, perp) = project_cursor_to_portal_params(POS, SIZE, c.cursor);
-            assert!(
-                c.t_range.contains(&t),
-                "{}: t={t} not in {:?}",
-                c.name,
-                c.t_range
-            );
-            let perp = perp.unwrap_or_else(|| {
-                panic!("{}: perpendicular must be Some outside snap epsilon", c.name)
-            });
+            assert!(c.t_range.contains(&t), "{}: t={t} not in {:?}", c.name, c.t_range);
+            let perp =
+                perp.unwrap_or_else(|| panic!("{}: perpendicular must be Some outside snap epsilon", c.name));
             assert!(
                 (perp - c.expected_perp).abs() < 0.5,
                 "{}: expected ~{} but got {perp}",
@@ -239,18 +209,12 @@ mod tests {
     #[test]
     fn test_perpendicular_snap_epsilon_boundary() {
         // Just outside the epsilon — must store `Some`.
-        let (_t, perp) = project_cursor_to_portal_params(
-            POS,
-            SIZE,
-            Vec2::new(100.0 + PERP_SNAP_EPSILON + 0.01, 25.0),
-        );
+        let (_t, perp) =
+            project_cursor_to_portal_params(POS, SIZE, Vec2::new(100.0 + PERP_SNAP_EPSILON + 0.01, 25.0));
         assert!(perp.is_some(), "just past epsilon must round to Some");
         // Just inside the epsilon — must snap to None.
-        let (_t, perp) = project_cursor_to_portal_params(
-            POS,
-            SIZE,
-            Vec2::new(100.0 + PERP_SNAP_EPSILON * 0.5, 25.0),
-        );
+        let (_t, perp) =
+            project_cursor_to_portal_params(POS, SIZE, Vec2::new(100.0 + PERP_SNAP_EPSILON * 0.5, 25.0));
         assert!(perp.is_none(), "within epsilon must snap to None");
     }
 }

@@ -15,14 +15,11 @@ use super::color_picker_flow::handle_color_picker_mouse_move;
 use super::input_context::InputHandlerContext;
 use super::scene_rebuild::{rebuild_after_selection_change, rebuild_all};
 use super::throttled_interaction::{
-    EdgeHandleInteraction, EdgeLabelInteraction, MovingNodeInteraction,
-    PortalLabelInteraction, ThrottledDrag,
+    EdgeHandleInteraction, EdgeLabelInteraction, MovingNodeInteraction, PortalLabelInteraction, ThrottledDrag,
 };
 use super::{AppMode, DragState};
 use crate::application::common::RenderDecree;
-use crate::application::document::{
-    apply_tree_highlights, hit_test, SelectionState, HIGHLIGHT_COLOR,
-};
+use crate::application::document::{apply_tree_highlights, hit_test, SelectionState, HIGHLIGHT_COLOR};
 
 pub(super) fn handle_cursor_moved(
     position: PhysicalPosition<f64>,
@@ -56,8 +53,9 @@ pub(super) fn handle_cursor_moved(
     // target highlight. Skip the regular drag-state handling.
     if matches!(*ctx.app_mode, AppMode::Reparent { .. } | AppMode::Connect { .. }) {
         let new_hover = ctx.mindmap_tree.as_mut().and_then(|tree| {
-            let canvas_pos =
-                ctx.renderer.screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
+            let canvas_pos = ctx
+                .renderer
+                .screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
             hit_test(canvas_pos, tree)
         });
         if new_hover != *ctx.hovered_node {
@@ -83,8 +81,9 @@ pub(super) fn handle_cursor_moved(
     if matches!(*ctx.drag_state, DragState::None) {
         let over_button = match (ctx.document.as_ref(), ctx.mindmap_tree.as_mut()) {
             (Some(doc), Some(tree)) => {
-                let canvas_pos =
-                    ctx.renderer.screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
+                let canvas_pos = ctx
+                    .renderer
+                    .screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
                 hit_test(canvas_pos, tree)
                     .and_then(|id| doc.mindmap.nodes.get(&id))
                     .map(|n| !n.trigger_bindings.is_empty())
@@ -106,15 +105,19 @@ pub(super) fn handle_cursor_moved(
         DragState::Panning => {
             let dx = cursor_pos_val.0 - prev_pos.0;
             let dy = cursor_pos_val.1 - prev_pos.1;
-            ctx.renderer.process_decree(RenderDecree::CameraPan(dx as f32, dy as f32));
+            ctx.renderer
+                .process_decree(RenderDecree::CameraPan(dx as f32, dy as f32));
         }
         DragState::Throttled(ThrottledDrag::MovingNode(i)) => {
             // Convert screen delta to canvas delta and accumulate.
             // Actual mutation + rebuild happens in AboutToWait
             // behind the shared `ThrottledInteraction::drive` gate.
-            let old_canvas = ctx.renderer.screen_to_canvas(prev_pos.0 as f32, prev_pos.1 as f32);
-            let new_canvas =
-                ctx.renderer.screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
+            let old_canvas = ctx
+                .renderer
+                .screen_to_canvas(prev_pos.0 as f32, prev_pos.1 as f32);
+            let new_canvas = ctx
+                .renderer
+                .screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
             let delta = new_canvas - old_canvas;
 
             i.total_delta += delta;
@@ -124,9 +127,12 @@ pub(super) fn handle_cursor_moved(
             // Same accumulation pattern as `MovingNode` — actual
             // edge mutation + buffer rebuild happens in
             // `AboutToWait` behind the adaptive throttle.
-            let old_canvas = ctx.renderer.screen_to_canvas(prev_pos.0 as f32, prev_pos.1 as f32);
-            let new_canvas =
-                ctx.renderer.screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
+            let old_canvas = ctx
+                .renderer
+                .screen_to_canvas(prev_pos.0 as f32, prev_pos.1 as f32);
+            let new_canvas = ctx
+                .renderer
+                .screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
             let delta = new_canvas - old_canvas;
 
             i.total_delta += delta;
@@ -137,16 +143,18 @@ pub(super) fn handle_cursor_moved(
             // `EdgeLabelInteraction::drain` projects it onto the
             // edge path at consume time, so intermediate cursors
             // carry no information the projection needs.
-            let cursor_canvas =
-                ctx.renderer.screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
+            let cursor_canvas = ctx
+                .renderer
+                .screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
             i.pending_cursor = Some(cursor_canvas);
         }
         DragState::Throttled(ThrottledDrag::PortalLabel(i)) => {
             // Overwrite discipline, same as `EdgeLabel` —
             // `PortalLabelInteraction::drain` snaps to the node
             // border at consume time.
-            let cursor_canvas =
-                ctx.renderer.screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
+            let cursor_canvas = ctx
+                .renderer
+                .screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
             i.pending_cursor = Some(cursor_canvas);
         }
         DragState::Pending {
@@ -180,17 +188,11 @@ pub(super) fn handle_cursor_moved(
                             &edge_key.to_id,
                             &edge_key.edge_type,
                         );
-                        if let Some(original) = doc
-                            .mindmap
-                            .edges
-                            .iter()
-                            .find(|e| edge_ref.matches(e))
-                            .cloned()
+                        if let Some(original) =
+                            doc.mindmap.edges.iter().find(|e| edge_ref.matches(e)).cloned()
                         {
                             doc.selection = SelectionState::EdgeLabel(
-                                crate::application::document::EdgeLabelSel::new(
-                                    edge_ref.clone(),
-                                ),
+                                crate::application::document::EdgeLabelSel::new(edge_ref.clone()),
                             );
                             let prev = doc.selection.clone();
                             ctx.scene_cache.clear();
@@ -225,24 +227,24 @@ pub(super) fn handle_cursor_moved(
                             &edge_key.to_id,
                             &edge_key.edge_type,
                         );
-                        let original = doc
-                            .mindmap
-                            .edges
-                            .iter()
-                            .find(|e| edge_ref.matches(e))
-                            .cloned();
+                        let original = doc.mindmap.edges.iter().find(|e| edge_ref.matches(e)).cloned();
                         if let Some(original) = original {
-                            doc.selection = SelectionState::PortalLabel(
-                                crate::application::document::PortalLabelSel {
+                            doc.selection =
+                                SelectionState::PortalLabel(crate::application::document::PortalLabelSel {
                                     edge_key,
                                     endpoint_node_id: endpoint.clone(),
-                                },
-                            );
+                                });
                             ctx.scene_cache.clear();
                             *ctx.drag_state = DragState::Throttled(ThrottledDrag::PortalLabel(
                                 PortalLabelInteraction::new(edge_ref, endpoint, original),
                             ));
-                            rebuild_all(doc, ctx.mindmap_tree, ctx.app_scene, ctx.renderer, ctx.scene_cache);
+                            rebuild_all(
+                                doc,
+                                ctx.mindmap_tree,
+                                ctx.app_scene,
+                                ctx.renderer,
+                                ctx.scene_cache,
+                            );
                             return;
                         }
                     }
@@ -252,27 +254,19 @@ pub(super) fn handle_cursor_moved(
                     // position so the drain loop can do
                     // absolute-positioning math.
                     if let Some(doc) = ctx.document.as_mut() {
-                        if let Some(original) = doc
-                            .mindmap
-                            .edges
-                            .iter()
-                            .find(|e| edge_ref.matches(e))
-                            .cloned()
+                        if let Some(original) =
+                            doc.mindmap.edges.iter().find(|e| edge_ref.matches(e)).cloned()
                         {
-                            let canvas_pos =
-                                ctx.renderer.screen_to_canvas(start_pos.0 as f32, start_pos.1 as f32);
+                            let canvas_pos = ctx
+                                .renderer
+                                .screen_to_canvas(start_pos.0 as f32, start_pos.1 as f32);
                             let start_handle_pos = doc
                                 .hit_test_edge_handle(canvas_pos, &edge_ref, f32::INFINITY)
                                 .map(|(_, p)| p)
                                 .unwrap_or(canvas_pos);
                             ctx.scene_cache.clear();
                             *ctx.drag_state = DragState::Throttled(ThrottledDrag::EdgeHandle(
-                                EdgeHandleInteraction::new(
-                                    edge_ref,
-                                    handle_kind,
-                                    original,
-                                    start_handle_pos,
-                                ),
+                                EdgeHandleInteraction::new(edge_ref, handle_kind, original, start_handle_pos),
                             ));
                             return;
                         }
@@ -325,9 +319,11 @@ pub(super) fn handle_cursor_moved(
                     ));
                 } else if ctx.modifiers.shift_key() {
                     // Shift+drag on empty space: rubber-band selection
-                    let start_canvas =
-                        ctx.renderer.screen_to_canvas(start_pos.0 as f32, start_pos.1 as f32);
-                    let current_canvas = ctx.renderer
+                    let start_canvas = ctx
+                        .renderer
+                        .screen_to_canvas(start_pos.0 as f32, start_pos.1 as f32);
+                    let current_canvas = ctx
+                        .renderer
                         .screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
                     *ctx.drag_state = DragState::SelectingRect {
                         start_canvas,
@@ -347,28 +343,26 @@ pub(super) fn handle_cursor_moved(
                     // `PanCanvas` is dispatched via this shortcut;
                     // future Actions bound to `LeftDrag` won't fire
                     // here without explicit handling.
-                    let leftdrag_pans = ctx.keybinds
-                        .action_for_gesture(
-                            crate::application::keybinds::MouseGesture::LeftDrag.key_name(),
-                            ctx.modifiers.control_key(),
-                            ctx.modifiers.shift_key(),
-                            ctx.modifiers.alt_key(),
-                        )
-                        == Some(crate::application::keybinds::Action::PanCanvas);
+                    let leftdrag_pans = ctx.keybinds.action_for_gesture(
+                        crate::application::keybinds::MouseGesture::LeftDrag.key_name(),
+                        ctx.modifiers.control_key(),
+                        ctx.modifiers.shift_key(),
+                        ctx.modifiers.alt_key(),
+                    ) == Some(crate::application::keybinds::Action::PanCanvas);
                     if leftdrag_pans {
                         *ctx.drag_state = DragState::Panning;
                         let dx = cursor_pos_val.0 - prev_pos.0;
                         let dy = cursor_pos_val.1 - prev_pos.1;
-                        ctx.renderer.process_decree(RenderDecree::CameraPan(dx as f32, dy as f32));
+                        ctx.renderer
+                            .process_decree(RenderDecree::CameraPan(dx as f32, dy as f32));
                     }
                 }
             }
         }
-        DragState::SelectingRect {
-            current_canvas, ..
-        } => {
-            *current_canvas =
-                ctx.renderer.screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
+        DragState::SelectingRect { current_canvas, .. } => {
+            *current_canvas = ctx
+                .renderer
+                .screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
         }
         DragState::None => {}
     }

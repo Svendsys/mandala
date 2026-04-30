@@ -227,9 +227,7 @@ pub enum InstructionSpec {
 impl InstructionSpec {
     pub(super) fn into_instruction(self) -> Instruction {
         match self {
-            InstructionSpec::RepeatWhileAlwaysTrue => {
-                Instruction::RepeatWhile(Predicate::always_true())
-            }
+            InstructionSpec::RepeatWhileAlwaysTrue => Instruction::RepeatWhile(Predicate::always_true()),
             InstructionSpec::RepeatWhile(p) => Instruction::RepeatWhile(p),
             InstructionSpec::RotateWhile(a, p) => Instruction::RotateWhile(a, p),
             InstructionSpec::SpatialDescend(point) => Instruction::SpatialDescend(point),

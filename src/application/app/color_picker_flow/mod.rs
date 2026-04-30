@@ -6,11 +6,11 @@
 //! `pub(in crate::application::app)` — `console_input` calls the
 //! lifecycle entries, the event loop calls the rest.
 
+mod click;
 mod commit;
 mod geometry;
 mod key;
 mod mouse;
-mod click;
 mod open;
 mod rebuild;
 

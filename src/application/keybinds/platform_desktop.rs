@@ -35,8 +35,7 @@ impl KeybindConfig {
             Ok(_) => {}
             Err(e) => return Err(format!("stat {}: {}", path.display(), e)),
         }
-        let json = std::fs::read_to_string(path)
-            .map_err(|e| format!("read {}: {}", path.display(), e))?;
+        let json = std::fs::read_to_string(path).map_err(|e| format!("read {}: {}", path.display(), e))?;
         Self::from_json(&json)
     }
 

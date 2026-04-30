@@ -14,9 +14,7 @@ use crate::application::common::RenderDecree;
 impl super::WasmApp {
     pub(super) fn handle_resized(&mut self, size: PhysicalSize<u32>) {
         if let Some(renderer) = self.renderer.borrow_mut().as_mut() {
-            renderer.process_decree(
-                RenderDecree::SetSurfaceSize(size.width, size.height),
-            );
+            renderer.process_decree(RenderDecree::SetSurfaceSize(size.width, size.height));
         }
     }
 }

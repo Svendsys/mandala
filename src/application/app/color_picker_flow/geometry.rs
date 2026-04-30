@@ -34,10 +34,7 @@
 pub(in crate::application::app) fn compute_picker_geometry(
     state: &mut crate::application::color_picker::ColorPickerState,
     surface_size: (f32, f32),
-) -> Option<(
-    crate::application::color_picker::ColorPickerOverlayGeometry,
-    bool,
-)> {
+) -> Option<(crate::application::color_picker::ColorPickerOverlayGeometry, bool)> {
     use crate::application::color_picker::{
         compute_color_picker_layout, ColorPickerOverlayGeometry, ColorPickerState,
     };
@@ -89,32 +86,30 @@ pub(in crate::application::app) fn compute_picker_geometry(
             preview_ink_offset,
             ..
         } => {
-            let (eff_hue, eff_sat, eff_val) =
-                hover_preview.unwrap_or((*hue_deg, *sat, *val));
+            let (eff_hue, eff_sat, eff_val) = hover_preview.unwrap_or((*hue_deg, *sat, *val));
             (
-            match mode {
-                crate::application::color_picker::PickerMode::Contextual { handle } => {
-                    handle.label()
-                }
-                crate::application::color_picker::PickerMode::Standalone => "",
-            },
-            eff_hue,
-            eff_sat,
-            eff_val,
-            *last_cursor_pos,
-            *max_cell_advance,
-            *max_ring_advance,
-            *measurement_font_size,
-            *size_scale,
-            layout.as_ref().map(|l| l.backdrop),
-            *center_override,
-            *hovered_hit,
-            *arm_top_ink_offsets,
-            *arm_bottom_ink_offsets,
-            *arm_left_ink_offsets,
-            *arm_right_ink_offsets,
-            *preview_ink_offset,
-        )},
+                match mode {
+                    crate::application::color_picker::PickerMode::Contextual { handle } => handle.label(),
+                    crate::application::color_picker::PickerMode::Standalone => "",
+                },
+                eff_hue,
+                eff_sat,
+                eff_val,
+                *last_cursor_pos,
+                *max_cell_advance,
+                *max_ring_advance,
+                *measurement_font_size,
+                *size_scale,
+                layout.as_ref().map(|l| l.backdrop),
+                *center_override,
+                *hovered_hit,
+                *arm_top_ink_offsets,
+                *arm_bottom_ink_offsets,
+                *arm_left_ink_offsets,
+                *arm_right_ink_offsets,
+                *preview_ink_offset,
+            )
+        }
     };
 
     // Hex readout is visible when the cursor is inside the backdrop
@@ -132,9 +127,7 @@ pub(in crate::application::app) fn compute_picker_geometry(
     // hex showing; it appears on the first hover rebuild after the
     // cursor enters the window.
     let hex_visible = match (last_cursor_pos, cached_backdrop) {
-        (Some((cx, cy)), Some((bl, bt, bw, bh))) => {
-            cx >= bl && cx <= bl + bw && cy >= bt && cy <= bt + bh
-        }
+        (Some((cx, cy)), Some((bl, bt, bw, bh))) => cx >= bl && cx <= bl + bw && cy >= bt && cy <= bt + bh,
         _ => false,
     };
 

@@ -29,12 +29,7 @@ use crate::gfx_structs::tests::fixtures::{append_area, mk_area};
 /// Assert the canvas position of the node at `id`. Replaces the pair of
 /// `assert_eq!(... .position().x, ...)` / `.position().y` lines that the
 /// original tests sprinkled after every mutation.
-fn assert_pos(
-    model: &Tree<GfxElement, GfxMutator>,
-    id: NodeId,
-    expected_x: f32,
-    expected_y: f32,
-) {
+fn assert_pos(model: &Tree<GfxElement, GfxMutator>, id: NodeId, expected_x: f32, expected_y: f32) {
     let pos = model.arena.get(id).unwrap().get().position();
     assert_eq!(
         (pos.x, pos.y),
@@ -46,92 +41,91 @@ fn assert_pos(
 
 #[test]
 pub fn test_repeat_while_skip_while() {
-   repeat_while_skip_while();
+    repeat_while_skip_while();
 }
 
 pub fn repeat_while_skip_while() {
-   // This is necessary to initialize lazy statics
-   fonts::init();
+    // This is necessary to initialize lazy statics
+    fonts::init();
 
-   // Build a 16-node "human figure" target tree. All nodes live on channel 0;
-   // only position and unique_id distinguish them. The shape is:
-   //     root(50,50) → head → neck → torso → { shoulders², thighs² }
-   //     shoulder → upper_arm → lower_arm (mirrored left/right)
-   //     thigh   → knee     → lower_leg  (mirrored left/right)
-   let mut mutator: MutatorTree<GfxMutator> = MutatorTree::new();
-   let mut model: Tree<GfxElement, GfxMutator> =
-      Tree::new_non_indexed_with(mk_area(50.0, 50.0, 0, 0));
-   let root = model.root;
+    // Build a 16-node "human figure" target tree. All nodes live on channel 0;
+    // only position and unique_id distinguish them. The shape is:
+    //     root(50,50) → head → neck → torso → { shoulders², thighs² }
+    //     shoulder → upper_arm → lower_arm (mirrored left/right)
+    //     thigh   → knee     → lower_leg  (mirrored left/right)
+    let mut mutator: MutatorTree<GfxMutator> = MutatorTree::new();
+    let mut model: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed_with(mk_area(50.0, 50.0, 0, 0));
+    let root = model.root;
 
-   let head = append_area(&mut model, root, 100.0, 100.0, 0, 1);
-   let neck = append_area(&mut model, head, 100.0, 110.0, 0, 2);
-   let torso = append_area(&mut model, neck, 100.0, 120.0, 0, 3);
+    let head = append_area(&mut model, root, 100.0, 100.0, 0, 1);
+    let neck = append_area(&mut model, head, 100.0, 110.0, 0, 2);
+    let torso = append_area(&mut model, neck, 100.0, 120.0, 0, 3);
 
-   // Arms (left first, matching the original test's sibling order).
-   let l_shoulder = append_area(&mut model, torso, 90.0, 120.0, 0, 4);
-   let r_shoulder = append_area(&mut model, torso, 110.0, 120.0, 0, 5);
-   let l_upper_arm = append_area(&mut model, l_shoulder, 90.0, 130.0, 0, 6);
-   let r_upper_arm = append_area(&mut model, r_shoulder, 110.0, 130.0, 0, 7);
-   let l_lower_arm = append_area(&mut model, l_upper_arm, 90.0, 140.0, 0, 8);
-   let r_lower_arm = append_area(&mut model, r_upper_arm, 110.0, 140.0, 0, 9);
+    // Arms (left first, matching the original test's sibling order).
+    let l_shoulder = append_area(&mut model, torso, 90.0, 120.0, 0, 4);
+    let r_shoulder = append_area(&mut model, torso, 110.0, 120.0, 0, 5);
+    let l_upper_arm = append_area(&mut model, l_shoulder, 90.0, 130.0, 0, 6);
+    let r_upper_arm = append_area(&mut model, r_shoulder, 110.0, 130.0, 0, 7);
+    let l_lower_arm = append_area(&mut model, l_upper_arm, 90.0, 140.0, 0, 8);
+    let r_lower_arm = append_area(&mut model, r_upper_arm, 110.0, 140.0, 0, 9);
 
-   // Legs.
-   let l_thigh = append_area(&mut model, torso, 95.0, 130.0, 0, 10);
-   let r_thigh = append_area(&mut model, torso, 105.0, 130.0, 0, 11);
-   let l_knee = append_area(&mut model, l_thigh, 95.0, 140.0, 0, 12);
-   let r_knee = append_area(&mut model, r_thigh, 105.0, 140.0, 0, 13);
-   let l_lower_leg = append_area(&mut model, l_knee, 95.0, 150.0, 0, 14);
-   let r_lower_leg = append_area(&mut model, r_knee, 105.0, 150.0, 0, 15);
+    // Legs.
+    let l_thigh = append_area(&mut model, torso, 95.0, 130.0, 0, 10);
+    let r_thigh = append_area(&mut model, torso, 105.0, 130.0, 0, 11);
+    let l_knee = append_area(&mut model, l_thigh, 95.0, 140.0, 0, 12);
+    let r_knee = append_area(&mut model, r_thigh, 105.0, 140.0, 0, 13);
+    let l_lower_leg = append_area(&mut model, l_knee, 95.0, 150.0, 0, 14);
+    let r_lower_leg = append_area(&mut model, r_knee, 105.0, 150.0, 0, 15);
 
-   // Build the mutator:
-   //   instruction(RepeatWhile(pos != (105,150)))
-   //     └─ void(ch 0)  ← the per-node mutator (applies nothing while walking)
-   //         └─ single(NudgeDown 10)  ← the "after" mutator, fired by the
-   //                                    DEFAULT_TERMINATOR on the node whose
-   //                                    position equals (105, 150)
-   //
-   // So the walk visits every descendant applying nothing, until it reaches
-   // r_lower_leg — the one node whose position matches (105, 150) and so
-   // fails the predicate. The terminator then applies NudgeDown(10) to
-   // r_lower_leg, moving it to (105, 160). Every other node stays put.
-   let mut predicate = Predicate::new();
-   predicate.fields.push((
-      GfxElementField::GlyphArea(GlyphAreaField::Position(OrderedVec2::new_f32(105.0, 150.0))),
-      Comparator::not_equals(),
-   ));
-   let instruction_node_id = mutator.arena.new_node(GfxMutator::Instruction {
-      instruction: RepeatWhile(predicate),
-      channel: 0,
-      mutation: Mutation::None,
-   });
-   let void_node = mutator.arena.new_node(GfxMutator::new_void(0));
-   let applicable_node = mutator.arena.new_node(GfxMutator::Single {
-      mutation: Mutation::AreaCommand(Box::new(GlyphAreaCommand::NudgeDown(10.0))),
-      channel: 0,
-   });
-   mutator.root.append(instruction_node_id, &mut mutator.arena);
-   instruction_node_id.append(void_node, &mut mutator.arena);
-   void_node.append(applicable_node, &mut mutator.arena);
+    // Build the mutator:
+    //   instruction(RepeatWhile(pos != (105,150)))
+    //     └─ void(ch 0)  ← the per-node mutator (applies nothing while walking)
+    //         └─ single(NudgeDown 10)  ← the "after" mutator, fired by the
+    //                                    DEFAULT_TERMINATOR on the node whose
+    //                                    position equals (105, 150)
+    //
+    // So the walk visits every descendant applying nothing, until it reaches
+    // r_lower_leg — the one node whose position matches (105, 150) and so
+    // fails the predicate. The terminator then applies NudgeDown(10) to
+    // r_lower_leg, moving it to (105, 160). Every other node stays put.
+    let mut predicate = Predicate::new();
+    predicate.fields.push((
+        GfxElementField::GlyphArea(GlyphAreaField::Position(OrderedVec2::new_f32(105.0, 150.0))),
+        Comparator::not_equals(),
+    ));
+    let instruction_node_id = mutator.arena.new_node(GfxMutator::Instruction {
+        instruction: RepeatWhile(predicate),
+        channel: 0,
+        mutation: Mutation::None,
+    });
+    let void_node = mutator.arena.new_node(GfxMutator::new_void(0));
+    let applicable_node = mutator.arena.new_node(GfxMutator::Single {
+        mutation: Mutation::AreaCommand(Box::new(GlyphAreaCommand::NudgeDown(10.0))),
+        channel: 0,
+    });
+    mutator.root.append(instruction_node_id, &mut mutator.arena);
+    instruction_node_id.append(void_node, &mut mutator.arena);
+    void_node.append(applicable_node, &mut mutator.arena);
 
-   walk_tree(&mut model, &mutator);
+    walk_tree(&mut model, &mutator);
 
-   // The predicate-terminated node got the NudgeDown; everything else is
-   // identical to its construction position.
-   assert_pos(&model, r_lower_leg, 105.0, 160.0);
-   assert_pos(&model, l_lower_leg, 95.0, 150.0);
-   assert_pos(&model, l_knee, 95.0, 140.0);
-   assert_pos(&model, l_thigh, 95.0, 130.0);
-   assert_pos(&model, r_knee, 105.0, 140.0);
-   assert_pos(&model, r_thigh, 105.0, 130.0);
-   assert_pos(&model, l_lower_arm, 90.0, 140.0);
-   assert_pos(&model, l_upper_arm, 90.0, 130.0);
-   assert_pos(&model, l_shoulder, 90.0, 120.0);
-   assert_pos(&model, r_lower_arm, 110.0, 140.0);
-   assert_pos(&model, r_upper_arm, 110.0, 130.0);
-   assert_pos(&model, r_shoulder, 110.0, 120.0);
-   assert_pos(&model, torso, 100.0, 120.0);
-   assert_pos(&model, neck, 100.0, 110.0);
-   assert_pos(&model, head, 100.0, 100.0);
+    // The predicate-terminated node got the NudgeDown; everything else is
+    // identical to its construction position.
+    assert_pos(&model, r_lower_leg, 105.0, 160.0);
+    assert_pos(&model, l_lower_leg, 95.0, 150.0);
+    assert_pos(&model, l_knee, 95.0, 140.0);
+    assert_pos(&model, l_thigh, 95.0, 130.0);
+    assert_pos(&model, r_knee, 105.0, 140.0);
+    assert_pos(&model, r_thigh, 105.0, 130.0);
+    assert_pos(&model, l_lower_arm, 90.0, 140.0);
+    assert_pos(&model, l_upper_arm, 90.0, 130.0);
+    assert_pos(&model, l_shoulder, 90.0, 120.0);
+    assert_pos(&model, r_lower_arm, 110.0, 140.0);
+    assert_pos(&model, r_upper_arm, 110.0, 130.0);
+    assert_pos(&model, r_shoulder, 110.0, 120.0);
+    assert_pos(&model, torso, 100.0, 120.0);
+    assert_pos(&model, neck, 100.0, 110.0);
+    assert_pos(&model, head, 100.0, 100.0);
 }
 
 // ===========================================================================
@@ -169,8 +163,7 @@ pub fn macro_applies_all_mutations_in_order() {
     fonts::init();
     // One Macro mutator, two mutations inside, one target. Both mutations
     // must reach the target — this is the observable contract of Macro.
-    let mut model: Tree<GfxElement, GfxMutator> =
-        Tree::new_non_indexed_with(mk_area(0.0, 0.0, 0, 0));
+    let mut model: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed_with(mk_area(0.0, 0.0, 0, 0));
     let root = model.root;
     let target = append_area(&mut model, root, 100.0, 100.0, 0, 1);
 
@@ -200,8 +193,7 @@ pub fn macro_with_empty_mutations_is_noop() {
     // A Macro wrapping an empty Vec must not corrupt the target. Guards the
     // edge case of a caller that built up a Vec<Mutation> and flushed it
     // before any mutation was pushed.
-    let mut model: Tree<GfxElement, GfxMutator> =
-        Tree::new_non_indexed_with(mk_area(0.0, 0.0, 0, 0));
+    let mut model: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed_with(mk_area(0.0, 0.0, 0, 0));
     let root = model.root;
     let target = append_area(&mut model, root, 100.0, 100.0, 0, 1);
 
@@ -225,8 +217,7 @@ pub fn mutation_none_is_noop() {
     // `apply_to_area` and `apply_to_model` must match it to their no-op
     // arm, otherwise tree-level mutators carrying None would panic the
     // walker at `Event(_) => panic!()`.
-    let mut model: Tree<GfxElement, GfxMutator> =
-        Tree::new_non_indexed_with(mk_area(0.0, 0.0, 0, 0));
+    let mut model: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed_with(mk_area(0.0, 0.0, 0, 0));
     let root = model.root;
     let target = append_area(&mut model, root, 42.0, 42.0, 0, 1);
 
@@ -251,8 +242,7 @@ pub fn single_mutator_channel_filter_in_align_child_walks() {
     // under-tested branches of the align_child_walks inner loop:
     //   * c0 (t_chan < m_chan): "skip this target, advance"
     //   * c2 (t_chan > m_chan): "break inner loop"
-    let mut model: Tree<GfxElement, GfxMutator> =
-        Tree::new_non_indexed_with(mk_area(0.0, 0.0, 0, 0));
+    let mut model: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed_with(mk_area(0.0, 0.0, 0, 0));
     let root = model.root;
     let c0 = append_area(&mut model, root, 100.0, 100.0, 0, 1);
     let c1 = append_area(&mut model, root, 200.0, 200.0, 1, 2);
@@ -284,16 +274,13 @@ pub fn direct_walk_at_mismatched_channels_is_noop() {
     // (it only dispatches walk_tree_from for matching channel pairs).
     // We trigger it by starting walk_tree on a non-void Single root
     // mutator whose channel doesn't match the target root.
-    let mut model: Tree<GfxElement, GfxMutator> =
-        Tree::new_non_indexed_with(mk_area(50.0, 50.0, 0, 0));
+    let mut model: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed_with(mk_area(50.0, 50.0, 0, 0));
     let root = model.root;
 
-    let mutator: MutatorTree<GfxMutator> = MutatorTree::new_with(
-        GfxMutator::new(
-            Mutation::AreaCommand(Box::new(GlyphAreaCommand::NudgeDown(99.0))),
-            5, // mismatched with root (ch 0)
-        ),
-    );
+    let mutator: MutatorTree<GfxMutator> = MutatorTree::new_with(GfxMutator::new(
+        Mutation::AreaCommand(Box::new(GlyphAreaCommand::NudgeDown(99.0))),
+        5, // mismatched with root (ch 0)
+    ));
     walk_tree(&mut model, &mutator);
 
     assert_pos(&model, root, 50.0, 50.0);
@@ -313,8 +300,7 @@ pub fn deep_chain_walk_reaches_every_node() {
     // real-world mindmap load.
     const DEPTH: usize = 300;
 
-    let mut model: Tree<GfxElement, GfxMutator> =
-        Tree::new_non_indexed_with(mk_area(0.0, 0.0, 0, 0));
+    let mut model: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed_with(mk_area(0.0, 0.0, 0, 0));
     let mut parent = model.root;
     let mut target_chain: Vec<NodeId> = Vec::with_capacity(DEPTH);
     for i in 0..DEPTH {
@@ -356,8 +342,7 @@ pub fn wide_fan_out_applies_to_all_matching_siblings() {
     // this is the star-topology hot path in the mindmap data model.
     const WIDTH: usize = 200;
 
-    let mut model: Tree<GfxElement, GfxMutator> =
-        Tree::new_non_indexed_with(mk_area(0.0, 0.0, 0, 0));
+    let mut model: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed_with(mk_area(0.0, 0.0, 0, 0));
     let root = model.root;
     let mut kids: Vec<NodeId> = Vec::with_capacity(WIDTH);
     for i in 0..WIDTH {
@@ -389,8 +374,7 @@ pub fn applying_same_delta_twice_accumulates() {
     // Pinning this down protects against a future "dedupe identical
     // mutations" optimisation that would silently change semantics of
     // repeated nudges (which the drag path emits on purpose every frame).
-    let mut model: Tree<GfxElement, GfxMutator> =
-        Tree::new_non_indexed_with(mk_area(0.0, 0.0, 0, 0));
+    let mut model: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed_with(mk_area(0.0, 0.0, 0, 0));
     let root = model.root;
     let target = append_area(&mut model, root, 0.0, 0.0, 0, 1);
 
@@ -420,8 +404,7 @@ pub fn mutation_is_deterministic_across_tree_clones() {
     // thread-locals, or iteration-order nondeterminism. Guards against a
     // regression that (for example) started walking siblings in arena
     // order instead of linked-list order.
-    let mut base: Tree<GfxElement, GfxMutator> =
-        Tree::new_non_indexed_with(mk_area(0.0, 0.0, 0, 0));
+    let mut base: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed_with(mk_area(0.0, 0.0, 0, 0));
     let base_root = base.root;
     let a = append_area(&mut base, base_root, 1.0, 2.0, 0, 1);
     let b = append_area(&mut base, a, 3.0, 4.0, 0, 2);
@@ -484,8 +467,7 @@ pub fn test_repeat_while_without_children_is_noop() {
 /// warning and skips the branch, leaving the target tree unchanged.
 pub fn repeat_while_without_children_is_noop() {
     fonts::init();
-    let mut model: Tree<GfxElement, GfxMutator> =
-        Tree::new_non_indexed_with(mk_area(0.0, 0.0, 0, 0));
+    let mut model: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed_with(mk_area(0.0, 0.0, 0, 0));
     let root = model.root;
     let target = append_area(&mut model, root, 100.0, 100.0, 0, 1);
 

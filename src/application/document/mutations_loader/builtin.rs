@@ -16,14 +16,12 @@ use baumhard::mindmap::custom_mutation::CustomMutation;
 /// Raw JSON of the application mutation bundle. `include_str!` so the
 /// bytes ship in the binary (works identically on native and WASM —
 /// no `fs::read` on the browser side).
-const APP_MUTATIONS_JSON: &str =
-    include_str!("../../../../assets/mutations/application.json");
+const APP_MUTATIONS_JSON: &str = include_str!("../../../../assets/mutations/application.json");
 
 /// Parse the bundled mutations once per process. A failure here means
 /// the repo's JSON is broken and merits a build-time fix.
 pub fn load_app() -> Vec<CustomMutation> {
-    super::parse_mutations_json(APP_MUTATIONS_JSON)
-        .expect("application.json must parse at startup")
+    super::parse_mutations_json(APP_MUTATIONS_JSON).expect("application.json must parse at startup")
 }
 
 #[cfg(test)]

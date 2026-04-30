@@ -18,7 +18,9 @@ fn test_rect_origin_4x4_block() {
 pub fn do_rect_origin_4x4_block() {
     let params = RegionParams::new(10, (1000, 1000));
     assert_eq!(
-        params.calculate_regions_intersected_by_rectangle((0, 0), (399, 399)).unwrap(),
+        params
+            .calculate_regions_intersected_by_rectangle((0, 0), (399, 399))
+            .unwrap(),
         vec![0, 1, 2, 3, 10, 11, 12, 13, 20, 21, 22, 23, 30, 31, 32, 33]
     );
 }
@@ -31,7 +33,9 @@ fn test_rect_origin_4x5_block() {
 pub fn do_rect_origin_4x5_block() {
     let params = RegionParams::new(10, (1000, 1000));
     assert_eq!(
-        params.calculate_regions_intersected_by_rectangle((0, 0), (399, 400)).unwrap(),
+        params
+            .calculate_regions_intersected_by_rectangle((0, 0), (399, 400))
+            .unwrap(),
         vec![0, 1, 2, 3, 10, 11, 12, 13, 20, 21, 22, 23, 30, 31, 32, 33, 40, 41, 42, 43]
     );
 }
@@ -44,7 +48,9 @@ fn test_rect_origin_5x4_block() {
 pub fn do_rect_origin_5x4_block() {
     let params = RegionParams::new(10, (1000, 1000));
     assert_eq!(
-        params.calculate_regions_intersected_by_rectangle((0, 0), (400, 399)).unwrap(),
+        params
+            .calculate_regions_intersected_by_rectangle((0, 0), (400, 399))
+            .unwrap(),
         vec![0, 1, 2, 3, 4, 10, 11, 12, 13, 14, 20, 21, 22, 23, 24, 30, 31, 32, 33, 34]
     );
 }
@@ -57,7 +63,9 @@ fn test_rect_origin_3x2_block() {
 pub fn do_rect_origin_3x2_block() {
     let params = RegionParams::new(10, (1000, 1000));
     assert_eq!(
-        params.calculate_regions_intersected_by_rectangle((0, 0), (299, 199)).unwrap(),
+        params
+            .calculate_regions_intersected_by_rectangle((0, 0), (299, 199))
+            .unwrap(),
         vec![0, 1, 2, 10, 11, 12]
     );
 }
@@ -72,11 +80,15 @@ fn test_rect_single_cell() {
 pub fn do_rect_single_cell() {
     let params = RegionParams::new(10, (1000, 1000));
     assert_eq!(
-        params.calculate_regions_intersected_by_rectangle((0, 0), (99, 99)).unwrap(),
+        params
+            .calculate_regions_intersected_by_rectangle((0, 0), (99, 99))
+            .unwrap(),
         vec![0]
     );
     assert_eq!(
-        params.calculate_regions_intersected_by_rectangle((99, 99), (99, 99)).unwrap(),
+        params
+            .calculate_regions_intersected_by_rectangle((99, 99), (99, 99))
+            .unwrap(),
         vec![0]
     );
 }
@@ -90,19 +102,27 @@ fn test_rect_single_pixel_each_corner() {
 pub fn do_rect_single_pixel_each_corner() {
     let params = RegionParams::new(10, (1000, 1000));
     assert_eq!(
-        params.calculate_regions_intersected_by_rectangle((0, 0), (0, 0)).unwrap(),
+        params
+            .calculate_regions_intersected_by_rectangle((0, 0), (0, 0))
+            .unwrap(),
         vec![0]
     );
     assert_eq!(
-        params.calculate_regions_intersected_by_rectangle((999, 0), (999, 0)).unwrap(),
+        params
+            .calculate_regions_intersected_by_rectangle((999, 0), (999, 0))
+            .unwrap(),
         vec![9]
     );
     assert_eq!(
-        params.calculate_regions_intersected_by_rectangle((0, 999), (0, 999)).unwrap(),
+        params
+            .calculate_regions_intersected_by_rectangle((0, 999), (0, 999))
+            .unwrap(),
         vec![90]
     );
     assert_eq!(
-        params.calculate_regions_intersected_by_rectangle((999, 999), (999, 999)).unwrap(),
+        params
+            .calculate_regions_intersected_by_rectangle((999, 999), (999, 999))
+            .unwrap(),
         vec![99]
     );
 }
@@ -115,7 +135,9 @@ fn test_rect_single_pixel_center() {
 pub fn do_rect_single_pixel_center() {
     let params = RegionParams::new(10, (1000, 1000));
     assert_eq!(
-        params.calculate_regions_intersected_by_rectangle((500, 500), (500, 500)).unwrap(),
+        params
+            .calculate_regions_intersected_by_rectangle((500, 500), (500, 500))
+            .unwrap(),
         vec![55]
     );
 }
@@ -130,7 +152,9 @@ fn test_rect_full_width_single_row() {
 pub fn do_rect_full_width_single_row() {
     let params = RegionParams::new(10, (1000, 1000));
     assert_eq!(
-        params.calculate_regions_intersected_by_rectangle((0, 0), (999, 99)).unwrap(),
+        params
+            .calculate_regions_intersected_by_rectangle((0, 0), (999, 99))
+            .unwrap(),
         vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
     );
 }
@@ -143,7 +167,9 @@ fn test_rect_full_height_single_column() {
 pub fn do_rect_full_height_single_column() {
     let params = RegionParams::new(10, (1000, 1000));
     assert_eq!(
-        params.calculate_regions_intersected_by_rectangle((0, 0), (99, 999)).unwrap(),
+        params
+            .calculate_regions_intersected_by_rectangle((0, 0), (99, 999))
+            .unwrap(),
         vec![0, 10, 20, 30, 40, 50, 60, 70, 80, 90]
     );
 }
@@ -203,15 +229,21 @@ fn test_rect_offset_single_row() {
 pub fn do_rect_offset_single_row() {
     let params = RegionParams::new(10, (1000, 1000));
     assert_eq!(
-        params.calculate_regions_intersected_by_rectangle((100, 99), (200, 99)).unwrap(),
+        params
+            .calculate_regions_intersected_by_rectangle((100, 99), (200, 99))
+            .unwrap(),
         vec![1, 2]
     );
     assert_eq!(
-        params.calculate_regions_intersected_by_rectangle((100, 100), (200, 100)).unwrap(),
+        params
+            .calculate_regions_intersected_by_rectangle((100, 100), (200, 100))
+            .unwrap(),
         vec![11, 12]
     );
     assert_eq!(
-        params.calculate_regions_intersected_by_rectangle((300, 200), (599, 299)).unwrap(),
+        params
+            .calculate_regions_intersected_by_rectangle((300, 200), (599, 299))
+            .unwrap(),
         vec![23, 24, 25]
     );
 }
@@ -225,7 +257,9 @@ fn test_rect_offset_multi_row() {
 pub fn do_rect_offset_multi_row() {
     let params = RegionParams::new(10, (1000, 1000));
     assert_eq!(
-        params.calculate_regions_intersected_by_rectangle((300, 400), (499, 599)).unwrap(),
+        params
+            .calculate_regions_intersected_by_rectangle((300, 400), (499, 599))
+            .unwrap(),
         vec![43, 44, 53, 54]
     );
 }
@@ -238,7 +272,9 @@ fn test_rect_offset_last_column_multi_row() {
 pub fn do_rect_offset_last_column_multi_row() {
     let params = RegionParams::new(10, (1000, 1000));
     assert_eq!(
-        params.calculate_regions_intersected_by_rectangle((800, 0), (999, 199)).unwrap(),
+        params
+            .calculate_regions_intersected_by_rectangle((800, 0), (999, 199))
+            .unwrap(),
         vec![8, 9, 18, 19]
     );
 }
@@ -252,7 +288,9 @@ pub fn do_rect_center_3x3() {
     let params = RegionParams::new(10, (1000, 1000));
     // Columns 3-5, rows 3-5 = 9 regions.
     assert_eq!(
-        params.calculate_regions_intersected_by_rectangle((300, 300), (599, 599)).unwrap(),
+        params
+            .calculate_regions_intersected_by_rectangle((300, 300), (599, 599))
+            .unwrap(),
         vec![33, 34, 35, 43, 44, 45, 53, 54, 55]
     );
 }
@@ -265,7 +303,9 @@ fn test_rect_bottom_right_2x2() {
 pub fn do_rect_bottom_right_2x2() {
     let params = RegionParams::new(10, (1000, 1000));
     assert_eq!(
-        params.calculate_regions_intersected_by_rectangle((800, 800), (999, 999)).unwrap(),
+        params
+            .calculate_regions_intersected_by_rectangle((800, 800), (999, 999))
+            .unwrap(),
         vec![88, 89, 98, 99]
     );
 }
@@ -284,19 +324,25 @@ pub fn do_rect_asymmetric_grid() {
 
     // Single cell at col 2, row 3.
     assert_eq!(
-        params.calculate_regions_intersected_by_rectangle((384, 324), (575, 431)).unwrap(),
+        params
+            .calculate_regions_intersected_by_rectangle((384, 324), (575, 431))
+            .unwrap(),
         vec![32]
     );
 
     // 2x2 block crossing cell boundaries: cols 2-3, rows 3-4.
     assert_eq!(
-        params.calculate_regions_intersected_by_rectangle((384, 324), (576, 432)).unwrap(),
+        params
+            .calculate_regions_intersected_by_rectangle((384, 324), (576, 432))
+            .unwrap(),
         vec![32, 33, 42, 43]
     );
 
     // Full width, one row.
     assert_eq!(
-        params.calculate_regions_intersected_by_rectangle((0, 0), (1919, 107)).unwrap(),
+        params
+            .calculate_regions_intersected_by_rectangle((0, 0), (1919, 107))
+            .unwrap(),
         vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
     );
 
@@ -318,7 +364,9 @@ pub fn do_rect_start_after_end() {
     let params = RegionParams::new(10, (1000, 1000));
     assert_eq!(
         params.calculate_regions_intersected_by_rectangle((100, 100), (99, 99)),
-        Err(RegionError::InvalidParameters("Start position is higher than end position"))
+        Err(RegionError::InvalidParameters(
+            "Start position is higher than end position"
+        ))
     );
 }
 
@@ -331,7 +379,9 @@ pub fn do_rect_start_out_of_bounds() {
     let params = RegionParams::new(10, (1000, 1000));
     assert_eq!(
         params.calculate_regions_intersected_by_rectangle((1000, 1000), (2000, 2000)),
-        Err(RegionError::InvalidParameters("Start position is out of resolution bounds"))
+        Err(RegionError::InvalidParameters(
+            "Start position is out of resolution bounds"
+        ))
     );
 }
 
@@ -344,7 +394,9 @@ pub fn do_rect_end_out_of_bounds() {
     let params = RegionParams::new(10, (1000, 1000));
     assert_eq!(
         params.calculate_regions_intersected_by_rectangle((999, 999), (2000, 2000)),
-        Err(RegionError::InvalidParameters("End position is out of resolution bounds"))
+        Err(RegionError::InvalidParameters(
+            "End position is out of resolution bounds"
+        ))
     );
 }
 
@@ -373,16 +425,15 @@ pub fn do_rect_exhaustive_4x4_grid() {
                     let mut expected = std::collections::BTreeSet::new();
                     for y in sy..=ey {
                         for x in sx..=ex {
-                            expected.insert(
-                                params.calculate_region_from_pixel((x, y)).unwrap()
-                            );
+                            expected.insert(params.calculate_region_from_pixel((x, y)).unwrap());
                         }
                     }
                     let expected_vec: Vec<usize> = expected.into_iter().collect();
 
                     assert_eq!(
                         result, expected_vec,
-                        "rect ({},{})-({},{}) mismatch", sx, sy, ex, ey
+                        "rect ({},{})-({},{}) mismatch",
+                        sx, sy, ex, ey
                     );
                 }
             }

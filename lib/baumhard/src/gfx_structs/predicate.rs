@@ -140,13 +140,19 @@ impl Predicate {
     /// Create an empty predicate that matches nothing (no fields, no
     /// `always_match`). O(1), one empty `Vec` allocation.
     pub fn new() -> Self {
-        Predicate { fields: vec![], always_match: false }
+        Predicate {
+            fields: vec![],
+            always_match: false,
+        }
     }
 
     /// Create a predicate that matches every element unconditionally.
     /// O(1), one empty `Vec` allocation.
     pub fn always_true() -> Self {
-        Predicate { fields: vec![], always_match: true }
+        Predicate {
+            fields: vec![],
+            always_match: true,
+        }
     }
 
     /// Test whether `element` satisfies this predicate.
@@ -248,7 +254,7 @@ impl Predicate {
                         };
                     }
                     GlyphAreaField::Outline(_) => {} // Halo state isn't a predicate axis.
-                    GlyphAreaField::Shape(_) => {} // Shape isn't a predicate axis.
+                    GlyphAreaField::Shape(_) => {}   // Shape isn't a predicate axis.
                     GlyphAreaField::ZoomVisibility(_) => {} // Zoom window isn't a predicate axis.
                     GlyphAreaField::Operation(_) => {}
                 },
@@ -271,9 +277,7 @@ impl Predicate {
                     if let Some(target) = target_range.copied() {
                         return match comparator {
                             Equals(negation) => match color_font_region_field {
-                                ColorFontRegionField::Range(range) => {
-                                    (*range == target.range) != *negation
-                                }
+                                ColorFontRegionField::Range(range) => (*range == target.range) != *negation,
                                 ColorFontRegionField::Font(font) => {
                                     if let Some(target_font) = target.font {
                                         (*font == target_font) != *negation
@@ -299,9 +303,7 @@ impl Predicate {
                                 }
                             },
                             GreaterThan(negation) => match color_font_region_field {
-                                ColorFontRegionField::Range(range) => {
-                                    (target.range > *range) != *negation
-                                }
+                                ColorFontRegionField::Range(range) => (target.range > *range) != *negation,
                                 // Only `Range` has an ordering; font / color /
                                 // this are opaque.
                                 _ => {
@@ -313,9 +315,7 @@ impl Predicate {
                                 }
                             },
                             LessThan(negation) => match color_font_region_field {
-                                ColorFontRegionField::Range(range) => {
-                                    (target.range < *range) != *negation
-                                }
+                                ColorFontRegionField::Range(range) => (target.range < *range) != *negation,
                                 _ => {
                                     log::warn!(
                                         "predicate: LessThan on non-Range ColorFontRegionField {:?} — treating as non-match",
@@ -327,12 +327,8 @@ impl Predicate {
                             Exists(negation) => {
                                 return match color_font_region_field {
                                     ColorFontRegionField::Range(_) => !negation,
-                                    ColorFontRegionField::Font(_) => {
-                                        target.font.is_some() != *negation
-                                    }
-                                    ColorFontRegionField::Color(_) => {
-                                        target.color.is_some() != *negation
-                                    }
+                                    ColorFontRegionField::Font(_) => target.font.is_some() != *negation,
+                                    ColorFontRegionField::Color(_) => target.color.is_some() != *negation,
                                     ColorFontRegionField::This => !negation,
                                 }
                             }
@@ -351,13 +347,10 @@ impl Predicate {
                     if let Some(target_model) = element.glyph_model() {
                         return match comparator {
                             Equals(negation) => match model_field {
-                                GlyphMatrix(matrix) => {
-                                    (*matrix == target_model.glyph_matrix) != *negation
-                                }
+                                GlyphMatrix(matrix) => (*matrix == target_model.glyph_matrix) != *negation,
                                 GlyphLine(line_num, line) => {
                                     // maybe she's born with it, maybe it's
-                                    if let Some(our_line) = target_model.glyph_matrix.get(*line_num)
-                                    {
+                                    if let Some(our_line) = target_model.glyph_matrix.get(*line_num) {
                                         (our_line == line) != *negation
                                     } else {
                                         false
@@ -392,64 +385,50 @@ impl Predicate {
                                     }
                                     GlyphLine(line_num, line) => {
                                         // maybe she's born with it, maybe it's
-                                        if let Some(our_line) =
-                                            target_model.glyph_matrix.get(*line_num)
-                                        {
+                                        if let Some(our_line) = target_model.glyph_matrix.get(*line_num) {
                                             (our_line.length() > line.length()) != *negation
                                         } else {
                                             false
                                         }
                                     }
                                     GlyphLines(lines) => {
-                                        (lines.len() > target_model.glyph_matrix.matrix.len())
-                                            != *negation
+                                        (lines.len() > target_model.glyph_matrix.matrix.len()) != *negation
                                     }
                                     Layer(layer) => (*layer > target_model.layer) != *negation,
                                     GlyphModelField::Position(vec) => {
-                                        (target_model
-                                            .position
-                                            .to_vec2()
-                                            .distance(Vec2::new(0.0, 0.0))
+                                        (target_model.position.to_vec2().distance(Vec2::new(0.0, 0.0))
                                             > vec.to_vec2().distance(Vec2::new(0.0, 0.0)))
                                             != *negation
                                     }
                                     GlyphModelField::Operation(_) => false,
                                 }
                             }
-                            LessThan(negation) => {
-                                match model_field {
-                                    GlyphMatrix(_) => {
-                                        log::warn!(
+                            LessThan(negation) => match model_field {
+                                GlyphMatrix(_) => {
+                                    log::warn!(
                                             "predicate: LessThan on GlyphMatrix (structured payload) — use GlyphLines for count ordering",
                                         );
+                                    false
+                                }
+                                GlyphLine(line_num, line) => {
+                                    if let Some(our_line) = target_model.glyph_matrix.get(*line_num) {
+                                        (our_line.length() < line.length()) != *negation
+                                    } else {
                                         false
                                     }
-                                    GlyphLine(line_num, line) => {
-                                        if let Some(our_line) =
-                                            target_model.glyph_matrix.get(*line_num)
-                                        {
-                                            (our_line.length() < line.length()) != *negation
-                                        } else {
-                                            false
-                                        }
-                                    }
-                                    GlyphLines(lines) => {
-                                        (lines.len() < target_model.glyph_matrix.matrix.len())
-                                            != *negation
-                                    }
-
-                                    Layer(layer) => *layer < target_model.layer,
-                                    GlyphModelField::Position(vec) => {
-                                        (target_model
-                                            .position
-                                            .to_vec2()
-                                            .distance(Vec2::new(0.0, 0.0))
-                                            < vec.to_vec2().distance(Vec2::new(0.0, 0.0)))
-                                            != *negation
-                                    }
-                                    GlyphModelField::Operation(_) => false,
                                 }
-                            }
+                                GlyphLines(lines) => {
+                                    (lines.len() < target_model.glyph_matrix.matrix.len()) != *negation
+                                }
+
+                                Layer(layer) => *layer < target_model.layer,
+                                GlyphModelField::Position(vec) => {
+                                    (target_model.position.to_vec2().distance(Vec2::new(0.0, 0.0))
+                                        < vec.to_vec2().distance(Vec2::new(0.0, 0.0)))
+                                        != *negation
+                                }
+                                GlyphModelField::Operation(_) => false,
+                            },
                             Exists(negation) => !negation,
                         };
                     }

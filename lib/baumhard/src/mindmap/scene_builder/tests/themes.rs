@@ -8,10 +8,7 @@ use super::fixtures::*;
 #[test]
 fn test_scene_background_resolves_theme_variable() {
     use std::collections::HashMap;
-    let mut map = synthetic_map(
-        vec![synthetic_node("a", 0.0, 0.0, 40.0, 40.0, false)],
-        vec![],
-    );
+    let mut map = synthetic_map(vec![synthetic_node("a", 0.0, 0.0, 40.0, 40.0, false)], vec![]);
     map.canvas.background_color = "var(--bg)".into();
     let mut vars = HashMap::new();
     vars.insert("--bg".into(), "#123456".into());
@@ -24,10 +21,7 @@ fn test_scene_background_resolves_theme_variable() {
 #[test]
 fn test_scene_frame_color_resolves_theme_variable() {
     use std::collections::HashMap;
-    let mut map = synthetic_map(
-        vec![themed_node("a", "#000", "var(--frame)", "#fff")],
-        vec![],
-    );
+    let mut map = synthetic_map(vec![themed_node("a", "#000", "var(--frame)", "#fff")], vec![]);
     let mut vars = HashMap::new();
     vars.insert("--frame".into(), "#abcdef".into());
     map.canvas.theme_variables = vars;
@@ -61,10 +55,7 @@ fn test_scene_connection_color_resolves_theme_variable() {
 
 #[test]
 fn test_scene_missing_variable_passes_through_raw() {
-    let mut map = synthetic_map(
-        vec![synthetic_node("a", 0.0, 0.0, 40.0, 40.0, false)],
-        vec![],
-    );
+    let mut map = synthetic_map(vec![synthetic_node("a", 0.0, 0.0, 40.0, 40.0, false)], vec![]);
     map.canvas.background_color = "var(--missing)".into();
     let scene = build_scene(&map, 1.0);
     // Unknown var is passed through verbatim — downstream consumers

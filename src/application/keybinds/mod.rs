@@ -57,4 +57,3 @@ pub use config::KeybindConfig;
 pub use config::ParametricBinding;
 pub use context::InputContext;
 pub use resolved::ResolvedKeybinds;
-

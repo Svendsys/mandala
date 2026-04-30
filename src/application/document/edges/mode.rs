@@ -2,10 +2,7 @@
 
 //! Edge type / display-mode / style-reset — toggles on the edge structural shape.
 
-
-use baumhard::mindmap::model::{
-    is_portal_edge, DISPLAY_MODE_LINE, DISPLAY_MODE_PORTAL,
-};
+use baumhard::mindmap::model::{is_portal_edge, DISPLAY_MODE_LINE, DISPLAY_MODE_PORTAL};
 
 use super::super::types::{EdgeRef, SelectionState};
 use super::super::undo_action::UndoAction;
@@ -29,12 +26,10 @@ impl MindMapDocument {
         // (from_id, to_id, new_type) triple.
         let from_id = self.mindmap.edges[idx].from_id.clone();
         let to_id = self.mindmap.edges[idx].to_id.clone();
-        let duplicate = self.mindmap.edges.iter().enumerate().any(|(i, e)| {
-            i != idx
-                && e.from_id == from_id
-                && e.to_id == to_id
-                && e.edge_type == new_type
-        });
+        let duplicate =
+            self.mindmap.edges.iter().enumerate().any(|(i, e)| {
+                i != idx && e.from_id == from_id && e.to_id == to_id && e.edge_type == new_type
+            });
         if duplicate {
             return false;
         }
@@ -46,11 +41,7 @@ impl MindMapDocument {
         // under its new identity.
         if let SelectionState::Edge(ref cur) = self.selection {
             if cur == edge_ref {
-                self.selection = SelectionState::Edge(EdgeRef::new(
-                    from_id,
-                    to_id,
-                    new_type,
-                ));
+                self.selection = SelectionState::Edge(EdgeRef::new(from_id, to_id, new_type));
             }
         }
         true

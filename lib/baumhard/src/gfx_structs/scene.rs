@@ -143,12 +143,7 @@ impl Scene {
     /// O(1) into the slab; marks the layer-order cache dirty so the
     /// next ordered iteration rebuilds it. No allocation on the hot
     /// path unless the slab grows.
-    pub fn insert(
-        &mut self,
-        tree: Tree<GfxElement, GfxMutator>,
-        layer: i32,
-        offset: Vec2,
-    ) -> SceneTreeId {
+    pub fn insert(&mut self, tree: Tree<GfxElement, GfxMutator>, layer: i32, offset: Vec2) -> SceneTreeId {
         let entry = SceneEntry {
             tree,
             layer,
@@ -301,4 +296,3 @@ impl Scene {
         self.layer_order_dirty = false;
     }
 }
-

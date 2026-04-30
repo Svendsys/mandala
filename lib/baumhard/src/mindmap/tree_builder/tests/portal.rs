@@ -51,8 +51,7 @@ fn portal_tree_skips_edge_with_folded_endpoint() {
     map.nodes.get_mut("parent").unwrap().folded = true;
     // Portal endpoints: hidden child + visible other. Should be
     // skipped wholesale because is_hidden_by_fold(child) is true.
-    map.edges
-        .push(synthetic_portal_edge("child", "other", "#00ff00"));
+    map.edges.push(synthetic_portal_edge("child", "other", "#00ff00"));
     let result = build_portal_tree(&map, &HashMap::new(), None, None, None, None, 1.0);
     assert_eq!(result.tree.root.children(&result.tree.arena).count(), 0);
     assert!(result.icon_hitboxes.is_empty());
@@ -143,7 +142,10 @@ fn portal_pair_channels_are_strictly_ascending() {
     let channels: Vec<usize> = pairs.iter().map(|p| p.pair_channel).collect();
     let mut prev = 0;
     for c in &channels {
-        assert!(*c > prev, "pair channels must be strictly ascending: {channels:?}");
+        assert!(
+            *c > prev,
+            "pair channels must be strictly ascending: {channels:?}"
+        );
         prev = *c;
     }
 }
@@ -205,10 +207,8 @@ fn portal_mutator_round_trip_matches_full_rebuild() {
             let e_leaves: Vec<NodeId> = e_ep.children(&expected.arena).collect();
             assert_eq!(a_leaves.len(), e_leaves.len());
             for (a_leaf, e_leaf) in a_leaves.iter().zip(e_leaves.iter()) {
-                let a_area =
-                    tree_a.arena.get(*a_leaf).unwrap().get().glyph_area().unwrap();
-                let e_area =
-                    expected.arena.get(*e_leaf).unwrap().get().glyph_area().unwrap();
+                let a_area = tree_a.arena.get(*a_leaf).unwrap().get().glyph_area().unwrap();
+                let e_area = expected.arena.get(*e_leaf).unwrap().get().glyph_area().unwrap();
                 assert_eq!(a_area.text, e_area.text);
                 assert_eq!(a_area.position, e_area.position);
                 assert_eq!(a_area.render_bounds, e_area.render_bounds);
@@ -238,8 +238,7 @@ fn portal_identity_sequence_drops_folded_pairs() {
         vec![],
     );
     map.edges.push(synthetic_portal_edge("a", "b", "#ff0000"));
-    map.edges
-        .push(synthetic_portal_edge("b", "child", "#00ff00"));
+    map.edges.push(synthetic_portal_edge("b", "child", "#00ff00"));
 
     let pairs_before = portal_pair_data(&map, &HashMap::new(), None, None, None, None, 1.0);
     assert_eq!(
@@ -257,7 +256,6 @@ fn portal_identity_sequence_drops_folded_pairs() {
         vec![EdgeKey::new("a", "b", "cross_link")]
     );
 }
-
 
 /// A portal glyph containing a ZWJ (zero-width joiner) sequence —
 /// e.g. the family emoji "👨‍👩‍👧" which is three codepoints joined
@@ -440,10 +438,7 @@ fn portal_tree_hitbox_excludes_reserved_text_slot_when_text_absent() {
         .get(&key)
         .expect("icon hitbox should be registered for from-endpoint");
     let icon_pos = glam::Vec2::new(icon_area.position.x.0, icon_area.position.y.0);
-    let icon_extent = glam::Vec2::new(
-        icon_area.render_bounds.x.0,
-        icon_area.render_bounds.y.0,
-    );
+    let icon_extent = glam::Vec2::new(icon_area.render_bounds.x.0, icon_area.render_bounds.y.0);
     assert!((min.x - icon_pos.x).abs() < 1.0e-3, "min.x");
     assert!((min.y - icon_pos.y).abs() < 1.0e-3, "min.y");
     assert!((max.x - (icon_pos.x + icon_extent.x)).abs() < 1.0e-3, "max.x");

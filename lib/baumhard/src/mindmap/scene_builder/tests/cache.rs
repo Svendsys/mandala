@@ -14,7 +14,15 @@ use std::collections::HashMap;
 fn test_cache_populated_on_first_build() {
     let map = two_node_edge_map();
     let mut cache = SceneConnectionCache::new();
-    let scene = build_scene_with_cache(&map, &HashMap::new(), SceneSelectionContext::default(), None, None, &mut cache, 1.0);
+    let scene = build_scene_with_cache(
+        &map,
+        &HashMap::new(),
+        SceneSelectionContext::default(),
+        None,
+        None,
+        &mut cache,
+        1.0,
+    );
 
     assert_eq!(scene.connection_elements.len(), 1);
     assert_eq!(cache.len(), 1);
@@ -33,7 +41,15 @@ fn test_cache_hit_preserves_sample_identity() {
     // it would have overwritten our mutation with fresh geometry.
     let map = two_node_edge_map();
     let mut cache = SceneConnectionCache::new();
-    let _first = build_scene_with_cache(&map, &HashMap::new(), SceneSelectionContext::default(), None, None, &mut cache, 1.0);
+    let _first = build_scene_with_cache(
+        &map,
+        &HashMap::new(),
+        SceneSelectionContext::default(),
+        None,
+        None,
+        &mut cache,
+        1.0,
+    );
 
     // Mutate the cached entry so we can see whether build #2 read it.
     let key = EdgeKey::new("a", "b", "cross_link");
@@ -55,11 +71,21 @@ fn test_cache_hit_preserves_sample_identity() {
         },
     );
 
-    let second = build_scene_with_cache(&map, &HashMap::new(), SceneSelectionContext::default(), None, None, &mut cache, 1.0);
+    let second = build_scene_with_cache(
+        &map,
+        &HashMap::new(),
+        SceneSelectionContext::default(),
+        None,
+        None,
+        &mut cache,
+        1.0,
+    );
     assert_eq!(second.connection_elements.len(), 1);
     let conn = &second.connection_elements[0];
-    assert_eq!(conn.body_glyph, "SENTINEL",
-        "cache-hit path should have used the stored entry");
+    assert_eq!(
+        conn.body_glyph, "SENTINEL",
+        "cache-hit path should have used the stored entry"
+    );
     assert_eq!(conn.color, "#ff00ff");
     // Single cached pre-clip point should have survived the clip
     // filter (it's outside both nodes).
@@ -73,7 +99,15 @@ fn test_cache_invalidated_on_endpoint_offset() {
     // sentinel we stashed in the cache.
     let map = two_node_edge_map();
     let mut cache = SceneConnectionCache::new();
-    let _first = build_scene_with_cache(&map, &HashMap::new(), SceneSelectionContext::default(), None, None, &mut cache, 1.0);
+    let _first = build_scene_with_cache(
+        &map,
+        &HashMap::new(),
+        SceneSelectionContext::default(),
+        None,
+        None,
+        &mut cache,
+        1.0,
+    );
 
     let key = EdgeKey::new("a", "b", "cross_link");
     cache.insert(
@@ -93,10 +127,20 @@ fn test_cache_invalidated_on_endpoint_offset() {
 
     let mut offsets = HashMap::new();
     offsets.insert("a".to_string(), (10.0, 0.0));
-    let second = build_scene_with_cache(&map, &offsets, SceneSelectionContext::default(), None, None, &mut cache, 1.0);
+    let second = build_scene_with_cache(
+        &map,
+        &offsets,
+        SceneSelectionContext::default(),
+        None,
+        None,
+        &mut cache,
+        1.0,
+    );
     let conn = &second.connection_elements[0];
-    assert_ne!(conn.body_glyph, "SENTINEL",
-        "endpoint-moved edge should have been re-sampled");
+    assert_ne!(
+        conn.body_glyph, "SENTINEL",
+        "endpoint-moved edge should have been re-sampled"
+    );
     // The cache should contain the freshly-resampled entry now.
     let refreshed = cache.get(&key).unwrap();
     assert_ne!(refreshed.body_glyph, "SENTINEL");
@@ -121,7 +165,15 @@ fn test_cache_preserves_unrelated_edge_under_drag() {
         ],
     );
     let mut cache = SceneConnectionCache::new();
-    let _first = build_scene_with_cache(&map, &HashMap::new(), SceneSelectionContext::default(), None, None, &mut cache, 1.0);
+    let _first = build_scene_with_cache(
+        &map,
+        &HashMap::new(),
+        SceneSelectionContext::default(),
+        None,
+        None,
+        &mut cache,
+        1.0,
+    );
 
     let cd_key = EdgeKey::new("c", "d", "cross_link");
     cache.insert(
@@ -141,7 +193,15 @@ fn test_cache_preserves_unrelated_edge_under_drag() {
 
     let mut offsets = HashMap::new();
     offsets.insert("a".to_string(), (5.0, 0.0));
-    let second = build_scene_with_cache(&map, &offsets, SceneSelectionContext::default(), None, None, &mut cache, 1.0);
+    let second = build_scene_with_cache(
+        &map,
+        &offsets,
+        SceneSelectionContext::default(),
+        None,
+        None,
+        &mut cache,
+        1.0,
+    );
 
     // Find the c↔d connection element and verify it came from the
     // cache unchanged.
@@ -150,8 +210,10 @@ fn test_cache_preserves_unrelated_edge_under_drag() {
         .iter()
         .find(|e| e.edge_key == cd_key)
         .expect("c↔d element should exist");
-    assert_eq!(cd_elem.body_glyph, "STABLE_SENTINEL",
-        "unrelated edge should have been served from cache, not re-sampled");
+    assert_eq!(
+        cd_elem.body_glyph, "STABLE_SENTINEL",
+        "unrelated edge should have been served from cache, not re-sampled"
+    );
 
     // The a↔b edge should have been re-sampled.
     let ab_key = EdgeKey::new("a", "b", "cross_link");
@@ -182,7 +244,15 @@ fn test_cache_clip_reruns_against_fresh_aabbs() {
     );
 
     let mut cache = SceneConnectionCache::new();
-    let first = build_scene_with_cache(&map, &HashMap::new(), SceneSelectionContext::default(), None, None, &mut cache, 1.0);
+    let first = build_scene_with_cache(
+        &map,
+        &HashMap::new(),
+        SceneSelectionContext::default(),
+        None,
+        None,
+        &mut cache,
+        1.0,
+    );
     let first_count = first.connection_elements[0].glyph_positions.len();
 
     // Now move `c` into the middle of the connection — use a drag
@@ -191,15 +261,34 @@ fn test_cache_clip_reruns_against_fresh_aabbs() {
     // notice `c`'s new position.
     let mut offsets = HashMap::new();
     offsets.insert("c".to_string(), (0.0, 500.0));
-    let second = build_scene_with_cache(&map, &offsets, SceneSelectionContext::default(), None, None, &mut cache, 1.0);
+    let second = build_scene_with_cache(
+        &map,
+        &offsets,
+        SceneSelectionContext::default(),
+        None,
+        None,
+        &mut cache,
+        1.0,
+    );
     let second_count = second.connection_elements[0].glyph_positions.len();
-    assert!(second_count < first_count,
+    assert!(
+        second_count < first_count,
         "moving c through the edge should reduce post-clip glyph count: {} → {}",
-        first_count, second_count);
+        first_count,
+        second_count
+    );
 
     // Now move `c` back out of the way via a model edit + full rebuild.
     map.nodes.get_mut("c").unwrap().position.y = -500.0;
-    let third = build_scene_with_cache(&map, &HashMap::new(), SceneSelectionContext::default(), None, None, &mut cache, 1.0);
+    let third = build_scene_with_cache(
+        &map,
+        &HashMap::new(),
+        SceneSelectionContext::default(),
+        None,
+        None,
+        &mut cache,
+        1.0,
+    );
     assert_eq!(third.connection_elements[0].glyph_positions.len(), first_count);
 }
 
@@ -207,16 +296,34 @@ fn test_cache_clip_reruns_against_fresh_aabbs() {
 fn test_cache_evicts_deleted_edges() {
     let mut map = two_node_edge_map();
     let mut cache = SceneConnectionCache::new();
-    let _first = build_scene_with_cache(&map, &HashMap::new(), SceneSelectionContext::default(), None, None, &mut cache, 1.0);
+    let _first = build_scene_with_cache(
+        &map,
+        &HashMap::new(),
+        SceneSelectionContext::default(),
+        None,
+        None,
+        &mut cache,
+        1.0,
+    );
     let key = EdgeKey::new("a", "b", "cross_link");
     assert!(cache.get(&key).is_some());
 
     // Remove the edge from the model and rebuild.
     map.edges.clear();
-    let second = build_scene_with_cache(&map, &HashMap::new(), SceneSelectionContext::default(), None, None, &mut cache, 1.0);
+    let second = build_scene_with_cache(
+        &map,
+        &HashMap::new(),
+        SceneSelectionContext::default(),
+        None,
+        None,
+        &mut cache,
+        1.0,
+    );
     assert!(second.connection_elements.is_empty());
-    assert!(cache.get(&key).is_none(),
-        "deleted edge should be evicted from cache");
+    assert!(
+        cache.get(&key).is_none(),
+        "deleted edge should be evicted from cache"
+    );
 }
 
 #[test]
@@ -237,12 +344,19 @@ fn test_connection_element_edge_key_always_populated() {
         ],
     );
     let mut cache = SceneConnectionCache::new();
-    let scene = build_scene_with_cache(&map, &HashMap::new(), SceneSelectionContext::default(), None, None, &mut cache, 1.0);
+    let scene = build_scene_with_cache(
+        &map,
+        &HashMap::new(),
+        SceneSelectionContext::default(),
+        None,
+        None,
+        &mut cache,
+        1.0,
+    );
     assert_eq!(scene.connection_elements.len(), 2);
     let ab = EdgeKey::new("a", "b", "cross_link");
     let bc = EdgeKey::new("b", "c", "cross_link");
-    let keys: Vec<&EdgeKey> =
-        scene.connection_elements.iter().map(|e| &e.edge_key).collect();
+    let keys: Vec<&EdgeKey> = scene.connection_elements.iter().map(|e| &e.edge_key).collect();
     assert!(keys.contains(&&ab));
     assert!(keys.contains(&&bc));
 }
@@ -256,13 +370,26 @@ fn test_second_cache_hit_produces_identical_output() {
     // a fresh build would.
     let map = two_node_edge_map();
     let mut cache = SceneConnectionCache::new();
-    let first = build_scene_with_cache(&map, &HashMap::new(), SceneSelectionContext::default(), None, None, &mut cache, 1.0);
-    let second = build_scene_with_cache(&map, &HashMap::new(), SceneSelectionContext::default(), None, None, &mut cache, 1.0);
-
-    assert_eq!(
-        first.connection_elements.len(),
-        second.connection_elements.len(),
+    let first = build_scene_with_cache(
+        &map,
+        &HashMap::new(),
+        SceneSelectionContext::default(),
+        None,
+        None,
+        &mut cache,
+        1.0,
     );
+    let second = build_scene_with_cache(
+        &map,
+        &HashMap::new(),
+        SceneSelectionContext::default(),
+        None,
+        None,
+        &mut cache,
+        1.0,
+    );
+
+    assert_eq!(first.connection_elements.len(), second.connection_elements.len(),);
     let a = &first.connection_elements[0];
     let b = &second.connection_elements[0];
     assert_eq!(a.edge_key, b.edge_key);
@@ -291,11 +418,20 @@ fn test_fold_hidden_edge_does_not_populate_cache() {
     let map = synthetic_map(vec![a, b_child], vec![edge]);
 
     let mut cache = SceneConnectionCache::new();
-    let scene = build_scene_with_cache(&map, &HashMap::new(), SceneSelectionContext::default(), None, None, &mut cache, 1.0);
-    assert!(scene.connection_elements.is_empty(),
-        "folded edge should be skipped");
-    assert!(cache.is_empty(),
-        "folded edge should not appear in cache");
+    let scene = build_scene_with_cache(
+        &map,
+        &HashMap::new(),
+        SceneSelectionContext::default(),
+        None,
+        None,
+        &mut cache,
+        1.0,
+    );
+    assert!(
+        scene.connection_elements.is_empty(),
+        "folded edge should be skipped"
+    );
+    assert!(cache.is_empty(), "folded edge should not appear in cache");
 }
 
 #[test]
@@ -306,7 +442,15 @@ fn test_cache_selection_change_does_not_invalidate() {
     // selection override.
     let map = two_node_edge_map();
     let mut cache = SceneConnectionCache::new();
-    let _first = build_scene_with_cache(&map, &HashMap::new(), SceneSelectionContext::default(), None, None, &mut cache, 1.0);
+    let _first = build_scene_with_cache(
+        &map,
+        &HashMap::new(),
+        SceneSelectionContext::default(),
+        None,
+        None,
+        &mut cache,
+        1.0,
+    );
     let key = EdgeKey::new("a", "b", "cross_link");
     let stored_color = cache.get(&key).unwrap().color.clone();
 
@@ -340,10 +484,14 @@ fn test_cache_selection_change_does_not_invalidate() {
         1.0,
     );
     let conn = &second.connection_elements[0];
-    assert_eq!(conn.body_glyph, "SENTINEL",
-        "selection change should not have dropped the cache");
-    assert_eq!(conn.color, SELECTED_EDGE_COLOR,
-        "selected element should pick up the highlight color");
+    assert_eq!(
+        conn.body_glyph, "SENTINEL",
+        "selection change should not have dropped the cache"
+    );
+    assert_eq!(
+        conn.color, SELECTED_EDGE_COLOR,
+        "selected element should pick up the highlight color"
+    );
     // And the cache's stored color should be unchanged (still the
     // pre-selection value).
     assert_eq!(cache.get(&key).unwrap().color, stored_color);
@@ -423,8 +571,7 @@ fn test_cache_fast_path_serves_stale_when_model_moved_without_offsets() {
         1.0,
     );
     assert_eq!(
-        without_clear.connection_elements[0].body_glyph,
-        "STALE_SENTINEL",
+        without_clear.connection_elements[0].body_glyph, "STALE_SENTINEL",
         "cache fast-path serves cached samples when neither endpoint appears in offsets, \
          even if the model endpoint has moved since the entry was written"
     );
@@ -442,8 +589,7 @@ fn test_cache_fast_path_serves_stale_when_model_moved_without_offsets() {
         1.0,
     );
     assert_ne!(
-        after_clear.connection_elements[0].body_glyph,
-        "STALE_SENTINEL",
+        after_clear.connection_elements[0].body_glyph, "STALE_SENTINEL",
         "after scene_cache.clear() the rebuild must resample from the committed model"
     );
     assert!(
@@ -531,7 +677,8 @@ fn test_translate_path_reuses_cache_on_shared_delta_subtree_drag() {
         assert!(
             (x - 215.0).abs() < 1e-4 && (y - 207.0).abs() < 1e-4,
             "translated sample should be (215, 207), got ({}, {})",
-            x, y
+            x,
+            y
         );
     }
 
@@ -540,7 +687,10 @@ fn test_translate_path_reuses_cache_on_shared_delta_subtree_drag() {
     let after = cache.get(&key).unwrap();
     let from_node = map.nodes.get("a").unwrap();
     let to_node = map.nodes.get("b").unwrap();
-    let expected_from = Vec2::new(from_node.position.x as f32 + 15.0, from_node.position.y as f32 + 7.0);
+    let expected_from = Vec2::new(
+        from_node.position.x as f32 + 15.0,
+        from_node.position.y as f32 + 7.0,
+    );
     let expected_to = Vec2::new(to_node.position.x as f32 + 15.0, to_node.position.y as f32 + 7.0);
     assert!((after.base_from - expected_from).length_squared() < 1e-6);
     assert!((after.base_to - expected_to).length_squared() < 1e-6);
@@ -597,8 +747,7 @@ fn test_translate_path_falls_through_on_mismatched_deltas() {
     );
 
     assert_ne!(
-        second.connection_elements[0].body_glyph,
-        "NO_TRANSLATE_SENTINEL",
+        second.connection_elements[0].body_glyph, "NO_TRANSLATE_SENTINEL",
         "mismatched endpoint deltas must fall through to the slow path"
     );
 }
@@ -673,7 +822,10 @@ fn test_translate_path_falls_through_on_glyph_config_change() {
         "slow path resample must overwrite the stale body_glyph"
     );
     assert!(
-        refreshed.pre_clip_positions.iter().all(|p| *p != Vec2::new(999.0, 999.0)),
+        refreshed
+            .pre_clip_positions
+            .iter()
+            .all(|p| *p != Vec2::new(999.0, 999.0)),
         "slow path must overwrite the placeholder sentinel positions"
     );
 }
@@ -749,8 +901,12 @@ fn test_scene_build_still_works_on_real_map() {
     assert!(!scene.text_elements.is_empty());
     assert!(!scene.connection_elements.is_empty());
     // At least one connection should have a non-empty glyph list.
-    let any_with_glyphs = scene.connection_elements.iter()
+    let any_with_glyphs = scene
+        .connection_elements
+        .iter()
         .any(|c| !c.glyph_positions.is_empty());
-    assert!(any_with_glyphs,
-        "at least one connection should have un-clipped glyphs");
+    assert!(
+        any_with_glyphs,
+        "at least one connection should have un-clipped glyphs"
+    );
 }

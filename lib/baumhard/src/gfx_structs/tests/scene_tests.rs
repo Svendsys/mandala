@@ -20,11 +20,7 @@ use crate::gfx_structs::tree::{MutatorTree, Tree};
 /// Build a small tree with one `GlyphArea` of the given AABB,
 /// returning the tree and the id of the single leaf we can hit-test
 /// against.
-fn tree_with_area(
-    position: Vec2,
-    bounds: Vec2,
-    channel: usize,
-) -> (Tree<GfxElement, GfxMutator>, NodeId) {
+fn tree_with_area(position: Vec2, bounds: Vec2, channel: usize) -> (Tree<GfxElement, GfxMutator>, NodeId) {
     fonts::init();
     let mut tree = Tree::new_non_indexed();
     let area = GlyphArea::new_with_str("x", 1.0, 10.0, position, bounds);
@@ -40,20 +36,8 @@ fn tree_with_area(
 fn tree_outer_inner() -> (Tree<GfxElement, GfxMutator>, NodeId, NodeId) {
     fonts::init();
     let mut tree = Tree::new_non_indexed();
-    let outer = GlyphArea::new_with_str(
-        "outer",
-        1.0,
-        10.0,
-        Vec2::new(0.0, 0.0),
-        Vec2::new(100.0, 100.0),
-    );
-    let inner = GlyphArea::new_with_str(
-        "inner",
-        1.0,
-        10.0,
-        Vec2::new(40.0, 40.0),
-        Vec2::new(20.0, 20.0),
-    );
+    let outer = GlyphArea::new_with_str("outer", 1.0, 10.0, Vec2::new(0.0, 0.0), Vec2::new(100.0, 100.0));
+    let inner = GlyphArea::new_with_str("inner", 1.0, 10.0, Vec2::new(40.0, 40.0), Vec2::new(20.0, 20.0));
     let outer_id = tree
         .arena
         .new_node(GfxElement::new_area_non_indexed_with_id(outer, 0, 1));
@@ -139,14 +123,8 @@ pub fn do_scene_insert_and_component_at() {
     let id_b = scene.insert(tree_b, 0, Vec2::ZERO);
 
     assert_eq!(scene.len(), 2);
-    assert_eq!(
-        scene.component_at(Vec2::new(10.0, 10.0)),
-        Some((id_a, leaf_a))
-    );
-    assert_eq!(
-        scene.component_at(Vec2::new(110.0, 10.0)),
-        Some((id_b, leaf_b))
-    );
+    assert_eq!(scene.component_at(Vec2::new(10.0, 10.0)), Some((id_a, leaf_a)));
+    assert_eq!(scene.component_at(Vec2::new(110.0, 10.0)), Some((id_b, leaf_b)));
     assert_eq!(scene.component_at(Vec2::new(500.0, 500.0)), None);
 }
 
@@ -185,10 +163,7 @@ pub fn do_scene_offset_is_applied_to_hit_test() {
     let id = scene.insert(tree, 0, Vec2::new(200.0, 200.0));
 
     // Tree-local (10,10) is screen-space (210, 210).
-    assert_eq!(
-        scene.component_at(Vec2::new(210.0, 210.0)),
-        Some((id, leaf))
-    );
+    assert_eq!(scene.component_at(Vec2::new(210.0, 210.0)), Some((id, leaf)));
     // Tree-local (10, 10) not at (10, 10) screen-space — out of bounds.
     assert_eq!(scene.component_at(Vec2::new(10.0, 10.0)), None);
 }
@@ -257,19 +232,16 @@ pub fn do_descendants_aabb_cache_invalidated_by_mutator() {
     let (mut tree, _leaf) = tree_with_area(Vec2::new(10.0, 10.0), Vec2::new(50.0, 50.0), 1);
 
     // Warm the bbox cache.
-    let initial = tree
-        .descendants_aabb()
-        .expect("seeded tree has one visible area");
+    let initial = tree.descendants_aabb().expect("seeded tree has one visible area");
     assert!((initial.0.x - 10.0).abs() < 1e-3);
 
     // Mutator: void parent + child that overwrites the area's
     // position to (100, 100). Bounds and size unchanged.
     let mut mutator: MutatorTree<GfxMutator> = MutatorTree::new();
-    let area_delta =
-        crate::gfx_structs::area::DeltaGlyphArea::new(vec![
-            GlyphAreaField::position(100.0, 100.0),
-            GlyphAreaField::Operation(crate::core::primitives::ApplyOperation::Assign),
-        ]);
+    let area_delta = crate::gfx_structs::area::DeltaGlyphArea::new(vec![
+        GlyphAreaField::position(100.0, 100.0),
+        GlyphAreaField::Operation(crate::core::primitives::ApplyOperation::Assign),
+    ]);
     let mutator_node = mutator
         .arena
         .new_node(GfxMutator::new(Mutation::area_delta(area_delta), 1));

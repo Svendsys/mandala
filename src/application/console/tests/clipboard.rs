@@ -60,14 +60,7 @@ fn node_paste_unchanged_text_reports_unchanged() {
     // report `Applied`, and HashMap iteration order picks the
     // "first" node non-deterministically. Normalising first pins
     // the assertion to the round-trip we actually care about.
-    let original = doc
-        .mindmap
-        .nodes
-        .get(&nid)
-        .unwrap()
-        .text
-        .trim_end()
-        .to_string();
+    let original = doc.mindmap.nodes.get(&nid).unwrap().text.trim_end().to_string();
     doc.set_node_text(&nid, original.clone());
     let tid = TargetId::Node(nid);
     let mut view = view_for(&mut doc, &tid);
@@ -121,9 +114,7 @@ fn edge_paste_valid_hex_sets_color() {
     assert_eq!(outcome, Outcome::Applied);
     let edge = doc.mindmap.edges.iter().find(|e| er.matches(e)).unwrap();
     assert_eq!(
-        edge.glyph_connection
-            .as_ref()
-            .and_then(|c| c.color.as_deref()),
+        edge.glyph_connection.as_ref().and_then(|c| c.color.as_deref()),
         Some("#112233")
     );
 }
@@ -157,19 +148,16 @@ fn edge_paste_rejects_malformed_var_forms() {
     // before validation, so trailing-space cases aren't tested
     // here — they normalise to a valid form.
     for malformed in [
-        "var(--accent)extra)",  // trailing garbage before the final `)`
-        "var(--)",              // empty name
-        "var(--foo(bar))",      // nested paren
-        "var",                  // no name at all
+        "var(--accent)extra)", // trailing garbage before the final `)`
+        "var(--)",             // empty name
+        "var(--foo(bar))",     // nested paren
+        "var",                 // no name at all
     ] {
         let tid = TargetId::Edge(er.clone());
         let mut view = view_for(&mut doc, &tid);
         match view.clipboard_paste(malformed) {
             Outcome::Invalid(_) => {}
-            other => panic!(
-                "expected Invalid for {:?}, got {:?}",
-                malformed, other
-            ),
+            other => panic!("expected Invalid for {:?}, got {:?}", malformed, other),
         }
     }
 }
@@ -279,9 +267,7 @@ fn edge_label_paste_valid_hex_sets_label_color_only() {
         "label color should land in label_config"
     );
     assert_eq!(
-        edge.glyph_connection
-            .as_ref()
-            .and_then(|c| c.color.as_deref()),
+        edge.glyph_connection.as_ref().and_then(|c| c.color.as_deref()),
         Some("#000000"),
         "edge body color must remain unchanged"
     );
@@ -344,11 +330,8 @@ fn portal_text_paste_valid_hex_sets_text_color_only() {
     // Confirm `text_color` got the paste and the icon `color`
     // was not touched — the two channels are independent by
     // design.
-    let state = baumhard::mindmap::model::portal_endpoint_state(
-        &doc.mindmap.edges[idx],
-        &endpoint,
-    )
-    .expect("endpoint state should exist");
+    let state = baumhard::mindmap::model::portal_endpoint_state(&doc.mindmap.edges[idx], &endpoint)
+        .expect("endpoint state should exist");
     assert_eq!(state.text_color.as_deref(), Some("#99ccff"));
     assert_eq!(state.color.as_deref(), Some("#000000"));
 }
@@ -372,10 +355,7 @@ fn portal_text_cut_returns_hex_and_clears_text_override() {
         view.clipboard_cut()
     };
     assert_eq!(cut, ClipboardContent::Text("#99ccff".into()));
-    let state = baumhard::mindmap::model::portal_endpoint_state(
-        &doc.mindmap.edges[idx],
-        &endpoint,
-    );
+    let state = baumhard::mindmap::model::portal_endpoint_state(&doc.mindmap.edges[idx], &endpoint);
     assert!(state.and_then(|s| s.text_color.as_deref()).is_none());
 }
 

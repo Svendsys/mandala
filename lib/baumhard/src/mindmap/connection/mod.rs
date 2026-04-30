@@ -25,8 +25,8 @@ use glam::Vec2;
 use crate::mindmap::model::ControlPoint;
 
 use self::bezier::{
-    cubic_bezier_length, cubic_bezier_point, cubic_bezier_second_derivative,
-    cubic_bezier_tangent, sample_cubic_bezier,
+    cubic_bezier_length, cubic_bezier_point, cubic_bezier_second_derivative, cubic_bezier_tangent,
+    sample_cubic_bezier,
 };
 
 /// A single sampled point along a connection path, produced by
@@ -62,12 +62,7 @@ pub enum ConnectionPath {
 /// - `node_size`: (width, height) of the node
 /// - `anchor`: "auto", "top", "right", "bottom", "left"
 /// - `other_center`: center of the other node (used for auto resolution)
-pub fn resolve_anchor_point(
-    node_pos: Vec2,
-    node_size: Vec2,
-    anchor: &str,
-    other_center: Vec2,
-) -> Vec2 {
+pub fn resolve_anchor_point(node_pos: Vec2, node_size: Vec2, anchor: &str, other_center: Vec2) -> Vec2 {
     let half_w = node_size.x * 0.5;
     let half_h = node_size.y * 0.5;
 
@@ -84,7 +79,8 @@ pub fn resolve_anchor_point(
                 Vec2::new(node_pos.x + half_w, node_pos.y + node_size.y),
                 Vec2::new(node_pos.x, node_pos.y + half_h),
             ];
-            candidates.into_iter()
+            candidates
+                .into_iter()
                 .min_by(|a, b| {
                     let da = a.distance_squared(other_center);
                     let db = b.distance_squared(other_center);
@@ -129,13 +125,23 @@ pub fn build_connection_path(
             // Quadratic -> Cubic: C1 = P0 + 2/3*(Q - P0), C2 = P2 + 2/3*(Q - P2)
             let c1 = start + (2.0 / 3.0) * (qp - start);
             let c2 = end + (2.0 / 3.0) * (qp - end);
-            ConnectionPath::CubicBezier { start, control1: c1, control2: c2, end }
+            ConnectionPath::CubicBezier {
+                start,
+                control1: c1,
+                control2: c2,
+                end,
+            }
         }
         _ => {
             // Cubic Bezier: control points are offsets from respective node centers
             let c1 = from_center + Vec2::new(control_points[0].x as f32, control_points[0].y as f32);
             let c2 = to_center + Vec2::new(control_points[1].x as f32, control_points[1].y as f32);
-            ConnectionPath::CubicBezier { start, control1: c1, control2: c2, end }
+            ConnectionPath::CubicBezier {
+                start,
+                control1: c1,
+                control2: c2,
+                end,
+            }
         }
     }
 }
@@ -154,9 +160,12 @@ pub fn point_at_t(path: &ConnectionPath, t: f32) -> Vec2 {
     let t = t.clamp(0.0, 1.0);
     match path {
         ConnectionPath::Straight { start, end } => start.lerp(*end, t),
-        ConnectionPath::CubicBezier { start, control1, control2, end } => {
-            cubic_bezier_point(t, *start, *control1, *control2, *end)
-        }
+        ConnectionPath::CubicBezier {
+            start,
+            control1,
+            control2,
+            end,
+        } => cubic_bezier_point(t, *start, *control1, *control2, *end),
     }
 }
 
@@ -171,9 +180,12 @@ pub fn tangent_at_t(path: &ConnectionPath, t: f32) -> Vec2 {
     let t = t.clamp(0.0, 1.0);
     let raw = match path {
         ConnectionPath::Straight { start, end } => *end - *start,
-        ConnectionPath::CubicBezier { start, control1, control2, end } => {
-            cubic_bezier_tangent(t, *start, *control1, *control2, *end)
-        }
+        ConnectionPath::CubicBezier {
+            start,
+            control1,
+            control2,
+            end,
+        } => cubic_bezier_tangent(t, *start, *control1, *control2, *end),
     };
     let len = raw.length();
     if len < f32::EPSILON {
@@ -243,7 +255,12 @@ pub fn closest_point_on_path(path: &ConnectionPath, cursor: Vec2) -> (f32, f32) 
             let perp = to_cursor.dot(normal);
             (t, perp)
         }
-        ConnectionPath::CubicBezier { start, control1, control2, end } => {
+        ConnectionPath::CubicBezier {
+            start,
+            control1,
+            control2,
+            end,
+        } => {
             let p0 = *start;
             let p1 = *control1;
             let p2 = *control2;
@@ -296,8 +313,7 @@ pub fn closest_point_on_path(path: &ConnectionPath, cursor: Vec2) -> (f32, f32) 
                 (best_t, cubic_bezier_point(best_t, p0, p1, p2, p3))
             };
             let to_cursor = cursor - closest;
-            let tangent =
-                cubic_bezier_tangent(final_t, p0, p1, p2, p3).normalize_or_zero();
+            let tangent = cubic_bezier_tangent(final_t, p0, p1, p2, p3).normalize_or_zero();
             let normal = Vec2::new(-tangent.y, tangent.x);
             let perp = to_cursor.dot(normal);
             (final_t, perp)
@@ -337,9 +353,12 @@ pub fn normal_at_t(path: &ConnectionPath, t: f32) -> Vec2 {
 pub fn path_length(path: &ConnectionPath) -> f32 {
     match path {
         ConnectionPath::Straight { start, end } => start.distance(*end),
-        ConnectionPath::CubicBezier { start, control1, control2, end } => {
-            cubic_bezier_length(*start, *control1, *control2, *end)
-        }
+        ConnectionPath::CubicBezier {
+            start,
+            control1,
+            control2,
+            end,
+        } => cubic_bezier_length(*start, *control1, *control2, *end),
     }
 }
 
@@ -354,12 +373,13 @@ pub fn sample_path(path: &ConnectionPath, spacing: f32) -> Vec<SampledPoint> {
     }
 
     match path {
-        ConnectionPath::Straight { start, end } => {
-            sample_straight(*start, *end, spacing)
-        }
-        ConnectionPath::CubicBezier { start, control1, control2, end } => {
-            sample_cubic_bezier(*start, *control1, *control2, *end, spacing)
-        }
+        ConnectionPath::Straight { start, end } => sample_straight(*start, *end, spacing),
+        ConnectionPath::CubicBezier {
+            start,
+            control1,
+            control2,
+            end,
+        } => sample_cubic_bezier(*start, *control1, *control2, *end, spacing),
     }
 }
 
@@ -413,9 +433,7 @@ pub fn distance_to_path(point: Vec2, path: &ConnectionPath) -> f32 {
             }
             let mut min_sq = f32::INFINITY;
             for pair in samples.windows(2) {
-                let d = point_to_segment_distance_squared(
-                    point, pair[0].position, pair[1].position,
-                );
+                let d = point_to_segment_distance_squared(point, pair[0].position, pair[1].position);
                 if d < min_sq {
                     min_sq = d;
                 }

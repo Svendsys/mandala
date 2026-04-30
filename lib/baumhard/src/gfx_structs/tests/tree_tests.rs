@@ -24,13 +24,10 @@ use crate::gfx_structs::area::{
 };
 use crate::gfx_structs::element::{GfxElement, GfxElementField};
 use crate::gfx_structs::model::{
-    GlyphComponent, GlyphLine, GlyphModel, GlyphModelCommand, GlyphModelCommandType,
-    GlyphModelField,
+    GlyphComponent, GlyphLine, GlyphModel, GlyphModelCommand, GlyphModelCommandType, GlyphModelField,
 };
 use crate::gfx_structs::mutator::Instruction::RepeatWhile;
-use crate::gfx_structs::mutator::{
-    GfxMutator, GlyphTreeEvent, GlyphTreeEventInstance, Mutation,
-};
+use crate::gfx_structs::mutator::{GfxMutator, GlyphTreeEvent, GlyphTreeEventInstance, Mutation};
 use crate::gfx_structs::tree::{BranchChannel, EventSubscriber, MutatorTree, Tree};
 use crate::gfx_structs::tree_walker::walk_tree_from;
 use crate::util::color::{add_rgba, Color, FloatRgba};
@@ -55,22 +52,13 @@ pub fn basics_solo_mutation() {
     // This is necessary to initialize lazy statics
     fonts::init();
     let mut element = GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "test",
-            1.0,
-            10.0,
-            Vec2::new(10.0, 10.0),
-            Vec2::new(10.0, 10.0),
-        ),
+        GlyphArea::new_with_str("test", 1.0, 10.0, Vec2::new(10.0, 10.0), Vec2::new(10.0, 10.0)),
         0,
         0,
     );
 
-    let color_font_region = ColorFontRegion::new(
-        Range::new(0, 1),
-        Some(DenseLetters),
-        Some([0.0, 0.0, 0.0, 1.0]),
-    );
+    let color_font_region =
+        ColorFontRegion::new(Range::new(0, 1), Some(DenseLetters), Some([0.0, 0.0, 0.0, 1.0]));
 
     element
         .glyph_area_mut()
@@ -83,9 +71,7 @@ pub fn basics_solo_mutation() {
         vec![
             GlyphAreaField::Text("test".to_string()),
             GlyphAreaField::scale(1.0),
-            GlyphAreaField::ColorFontRegions(ColorFontRegions::new_from(vec![
-                color_font_region.clone()
-            ])),
+            GlyphAreaField::ColorFontRegions(ColorFontRegions::new_from(vec![color_font_region.clone()])),
             GlyphAreaField::position(10.0, 10.0),
         ],
     );
@@ -93,9 +79,11 @@ pub fn basics_solo_mutation() {
     let mutator = GfxMutator::new(
         Mutation::area_delta(DeltaGlyphArea::new(vec![
             GlyphAreaField::Operation(ApplyOperation::Add),
-            GlyphAreaField::ColorFontRegions(ColorFontRegions::new_from(vec![
-                ColorFontRegion::new(Range::new(0, 1), Some(AppleTea), None),
-            ])),
+            GlyphAreaField::ColorFontRegions(ColorFontRegions::new_from(vec![ColorFontRegion::new(
+                Range::new(0, 1),
+                Some(AppleTea),
+                None,
+            )])),
             GlyphAreaField::position(5.0, 5.0),
         ])),
         0,
@@ -108,25 +96,28 @@ pub fn basics_solo_mutation() {
         vec![
             GlyphAreaField::Text("test".to_string()),
             GlyphAreaField::scale(1.0),
-            GlyphAreaField::ColorFontRegions(ColorFontRegions::new_from(vec![
-                ColorFontRegion::new(Range::new(0, 1), Some(AppleTea), Some([0.0, 0.0, 0.0, 1.0])),
-            ])),
+            GlyphAreaField::ColorFontRegions(ColorFontRegions::new_from(vec![ColorFontRegion::new(
+                Range::new(0, 1),
+                Some(AppleTea),
+                Some([0.0, 0.0, 0.0, 1.0]),
+            )])),
             GlyphAreaField::position(15.0, 15.0),
         ],
     );
 
     element.rotate(Vec2::new(5.0, 5.0), 60.0);
 
-    let expect =
-        geometry::clockwise_rotation_around_pivot(Vec2::new(15.0, 15.0), Vec2::new(5.0, 5.0), 60.0);
+    let expect = geometry::clockwise_rotation_around_pivot(Vec2::new(15.0, 15.0), Vec2::new(5.0, 5.0), 60.0);
     assert_element_delta(
         &element,
         vec![
             GlyphAreaField::Text("test".to_string()),
             GlyphAreaField::scale(1.0),
-            GlyphAreaField::ColorFontRegions(ColorFontRegions::new_from(vec![
-                ColorFontRegion::new(Range::new(0, 1), Some(AppleTea), Some([0.0, 0.0, 0.0, 1.0])),
-            ])),
+            GlyphAreaField::ColorFontRegions(ColorFontRegions::new_from(vec![ColorFontRegion::new(
+                Range::new(0, 1),
+                Some(AppleTea),
+                Some([0.0, 0.0, 0.0, 1.0]),
+            )])),
             GlyphAreaField::position(expect.x, expect.y),
         ],
     );
@@ -363,9 +354,7 @@ pub fn model_block_commands() {
         {
             // Apply the command to be tested to our model
             command_type_set.insert(command_expect_set.0.variant());
-            command_expect_set
-                .0
-                .apply_to(my_model.glyph_model_mut().unwrap());
+            command_expect_set.0.apply_to(my_model.glyph_model_mut().unwrap());
         }
         // The expected values are applied to our reference
         for (element_field, apply_operation) in command_expect_set.1 {
@@ -373,10 +362,8 @@ pub fn model_block_commands() {
                 GfxElementField::GlyphModel(model_field) => match model_field {
                     GlyphModelField::GlyphMatrix(matrix) => {
                         let mut my_reference = reference_model.clone();
-                        apply_operation.apply(
-                            &mut my_reference.glyph_model_mut().unwrap().glyph_matrix,
-                            matrix,
-                        );
+                        apply_operation
+                            .apply(&mut my_reference.glyph_model_mut().unwrap().glyph_matrix, matrix);
                         assert_eq!(my_reference, my_model);
                     }
                     GlyphModelField::GlyphLine(num, line) => {
@@ -388,14 +375,10 @@ pub fn model_block_commands() {
                         assert_eq!(my_reference, my_model);
                     }
                     GlyphModelField::GlyphLines(lines) => {
-                        let mut my_matrix =
-                            reference_model.glyph_model().unwrap().glyph_matrix.clone();
+                        let mut my_matrix = reference_model.glyph_model().unwrap().glyph_matrix.clone();
                         for (num, line) in lines {
                             apply_operation.apply(&mut my_matrix[num], line);
-                            assert_eq!(
-                                my_matrix[num],
-                                my_model.glyph_model().unwrap().glyph_matrix[num]
-                            );
+                            assert_eq!(my_matrix[num], my_model.glyph_model().unwrap().glyph_matrix[num]);
                         }
                         assert_eq!(my_matrix, my_model.glyph_model().unwrap().glyph_matrix);
                     }
@@ -445,11 +428,7 @@ pub fn area_block_commands() {
         .glyph_area_mut()
         .unwrap()
         .regions
-        .submit_region(ColorFontRegion::new(
-            Range::new(0, 1),
-            Some(DenseLetters),
-            None,
-        ));
+        .submit_region(ColorFontRegion::new(Range::new(0, 1), Some(DenseLetters), None));
     reference_block
         .glyph_area_mut()
         .unwrap()
@@ -466,9 +445,7 @@ pub fn area_block_commands() {
         let mut my_block = reference_block.clone();
         {
             command_type_set.insert(command_expect_set.0.variant());
-            command_expect_set
-                .0
-                .apply_to(my_block.glyph_area_mut().unwrap());
+            command_expect_set.0.apply_to(my_block.glyph_area_mut().unwrap());
         }
         for (element_field, apply_operation) in command_expect_set.1 {
             match apply_operation {
@@ -477,8 +454,7 @@ pub fn area_block_commands() {
                         GfxElementField::GlyphArea(field) => match field {
                             GlyphAreaField::Text(text) => {
                                 let my_text = my_block.glyph_area().unwrap().text.as_str();
-                                let reference_text =
-                                    reference_block.glyph_area().unwrap().text.as_str();
+                                let reference_text = reference_block.glyph_area().unwrap().text.as_str();
                                 assert_eq!(my_text, reference_text.to_owned() + text.as_str())
                             }
                             GlyphAreaField::Scale(scale) => {
@@ -506,13 +482,13 @@ pub fn area_block_commands() {
                             }
                             GlyphAreaField::Bounds(vec) => {
                                 assert_eq!(
-                                   vec.x + reference_block.glyph_area().unwrap().render_bounds.x,
-                                   my_block.glyph_area().unwrap().render_bounds.x
+                                    vec.x + reference_block.glyph_area().unwrap().render_bounds.x,
+                                    my_block.glyph_area().unwrap().render_bounds.x
                                 );
 
                                 assert_eq!(
-                                   vec.y + reference_block.glyph_area().unwrap().render_bounds.y,
-                                   my_block.glyph_area().unwrap().render_bounds.y
+                                    vec.y + reference_block.glyph_area().unwrap().render_bounds.y,
+                                    my_block.glyph_area().unwrap().render_bounds.y
                                 );
                             }
                             GlyphAreaField::ColorFontRegions(_) => {
@@ -541,10 +517,8 @@ pub fn area_block_commands() {
                             match field {
                                 // This range is the value that is expected to have been added
                                 ColorFontRegionField::Range(add_range) => {
-                                    let new_range = Range::new(
-                                        range.start + add_range.start,
-                                        range.end + add_range.end,
-                                    );
+                                    let new_range =
+                                        Range::new(range.start + add_range.start, range.end + add_range.end);
                                     let ref_range = reference_block
                                         .glyph_area()
                                         .unwrap()
@@ -560,12 +534,8 @@ pub fn area_block_commands() {
                                         new_range
                                     );
 
-                                    let my_range = my_block
-                                        .glyph_area()
-                                        .unwrap()
-                                        .regions
-                                        .hard_get(new_range)
-                                        .range;
+                                    let my_range =
+                                        my_block.glyph_area().unwrap().regions.hard_get(new_range).range;
                                     assert_eq!(my_range, new_range)
                                 }
                                 ColorFontRegionField::Font(_) => {
@@ -576,10 +546,7 @@ pub fn area_block_commands() {
                                 }
                                 ColorFontRegionField::Color(color) => {
                                     assert_eq!(
-                                        add_rgba(
-                                            &reference_block.color_at_region(range).unwrap(),
-                                            &color
-                                        ),
+                                        add_rgba(&reference_block.color_at_region(range).unwrap(), &color),
                                         my_block.color_at_region(range).unwrap()
                                     );
                                 }
@@ -599,9 +566,7 @@ pub fn area_block_commands() {
                         // `GfxElementField::GlyphModel`, write the Add-branch
                         // assertion here.
                         GfxElementField::GlyphModel(_) => {
-                            unreachable!(
-                                "AREA_COMMANDS does not emit GlyphModel on Add — see MODEL_COMMANDS",
-                            )
+                            unreachable!("AREA_COMMANDS does not emit GlyphModel on Add — see MODEL_COMMANDS",)
                         }
                         GfxElementField::Flag(_) => {}
                     }
@@ -644,18 +609,8 @@ pub fn area_block_commands() {
                     GfxElementField::Region(range, color_font_region_field) => {
                         match color_font_region_field {
                             ColorFontRegionField::Range(new_range) => {
-                                assert!(my_block
-                                    .glyph_area()
-                                    .unwrap()
-                                    .regions
-                                    .get(new_range)
-                                    .is_some());
-                                assert!(my_block
-                                    .glyph_area()
-                                    .unwrap()
-                                    .regions
-                                    .get(range)
-                                    .is_none());
+                                assert!(my_block.glyph_area().unwrap().regions.get(new_range).is_some());
+                                assert!(my_block.glyph_area().unwrap().regions.get(range).is_none());
                             }
                             ColorFontRegionField::Font(font) => {
                                 assert_eq!(
@@ -682,18 +637,8 @@ pub fn area_block_commands() {
                                 );
                             }
                             ColorFontRegionField::This => {
-                                assert!(my_block
-                                    .glyph_area()
-                                    .unwrap()
-                                    .regions
-                                    .get(range)
-                                    .is_some());
-                                assert!(reference_block
-                                    .glyph_area()
-                                    .unwrap()
-                                    .regions
-                                    .get(range)
-                                    .is_none());
+                                assert!(my_block.glyph_area().unwrap().regions.get(range).is_some());
+                                assert!(reference_block.glyph_area().unwrap().regions.get(range).is_none());
                             }
                         }
                     }
@@ -706,14 +651,10 @@ pub fn area_block_commands() {
                     // assertion here if a new AREA_COMMANDS entry starts
                     // emitting either field.
                     GfxElementField::Id(_) => {
-                        unreachable!(
-                            "AREA_COMMANDS does not emit Id on Assign",
-                        )
+                        unreachable!("AREA_COMMANDS does not emit Id on Assign",)
                     }
                     GfxElementField::GlyphModel(_) => {
-                        unreachable!(
-                            "AREA_COMMANDS does not emit GlyphModel on Assign — see MODEL_COMMANDS",
-                        )
+                        unreachable!("AREA_COMMANDS does not emit GlyphModel on Assign — see MODEL_COMMANDS",)
                     }
                     GfxElementField::Flag(_) => {}
                 },
@@ -751,13 +692,13 @@ pub fn area_block_commands() {
                             }
                             GlyphAreaField::Bounds(vec) => {
                                 assert_eq!(
-                                   vec.x - reference_block.glyph_area().unwrap().render_bounds.x,
-                                   my_block.glyph_area().unwrap().render_bounds.x
+                                    vec.x - reference_block.glyph_area().unwrap().render_bounds.x,
+                                    my_block.glyph_area().unwrap().render_bounds.x
                                 );
 
                                 assert_eq!(
-                                   vec.y - reference_block.glyph_area().unwrap().render_bounds.y,
-                                   my_block.glyph_area().unwrap().render_bounds.y
+                                    vec.y - reference_block.glyph_area().unwrap().render_bounds.y,
+                                    my_block.glyph_area().unwrap().render_bounds.y
                                 );
                             }
                             GlyphAreaField::ColorFontRegions(_) => {
@@ -781,10 +722,8 @@ pub fn area_block_commands() {
                             match field {
                                 // This range is the value that is expected to have been added
                                 ColorFontRegionField::Range(add_range) => {
-                                    let new_range = Range::new(
-                                        range.start - add_range.start,
-                                        range.end - add_range.end,
-                                    );
+                                    let new_range =
+                                        Range::new(range.start - add_range.start, range.end - add_range.end);
 
                                     let ref_range = reference_block
                                         .glyph_area()
@@ -801,23 +740,18 @@ pub fn area_block_commands() {
                                         new_range
                                     );
 
-                                    let my_range = my_block
-                                        .glyph_area()
-                                        .unwrap()
-                                        .regions
-                                        .hard_get(new_range)
-                                        .range;
+                                    let my_range =
+                                        my_block.glyph_area().unwrap().regions.hard_get(new_range).range;
                                     assert_eq!(my_range, new_range)
                                 }
                                 ColorFontRegionField::Font(_font) => {
-                                    panic!("Subtract operation on font? You have strayed [far] from the path.");
+                                    panic!(
+                                        "Subtract operation on font? You have strayed [far] from the path."
+                                    );
                                 }
                                 ColorFontRegionField::Color(color) => {
                                     assert_eq!(
-                                        add_rgba(
-                                            &reference_block.color_at_region(range).unwrap(),
-                                            &color
-                                        ),
+                                        add_rgba(&reference_block.color_at_region(range).unwrap(), &color),
                                         my_block.color_at_region(range).unwrap()
                                     );
                                 }
@@ -843,69 +777,69 @@ pub fn area_block_commands() {
                 }
                 ApplyOperation::Multiply => {
                     match element_field {
-                        GfxElementField::GlyphArea(field) => match field {
-                            GlyphAreaField::Text(_) => {
-                                panic!("Multiply on text? Do you not understand that actions have consequences?");
-                            }
-                            GlyphAreaField::Scale(scale) => {
-                                assert_eq!(
-                                    scale * reference_block.glyph_area().unwrap().scale,
-                                    my_block.glyph_area().unwrap().scale
-                                )
-                            }
-                            GlyphAreaField::LineHeight(line_height) => {
-                                assert_eq!(
-                                    line_height * reference_block.glyph_area().unwrap().line_height,
-                                    my_block.glyph_area().unwrap().line_height
-                                )
-                            }
-                            GlyphAreaField::Position(vec) => {
-                                assert_eq!(
-                                    vec.x * reference_block.glyph_area().unwrap().position.x,
-                                    my_block.glyph_area().unwrap().position.x
-                                );
+                        GfxElementField::GlyphArea(field) => {
+                            match field {
+                                GlyphAreaField::Text(_) => {
+                                    panic!("Multiply on text? Do you not understand that actions have consequences?");
+                                }
+                                GlyphAreaField::Scale(scale) => {
+                                    assert_eq!(
+                                        scale * reference_block.glyph_area().unwrap().scale,
+                                        my_block.glyph_area().unwrap().scale
+                                    )
+                                }
+                                GlyphAreaField::LineHeight(line_height) => {
+                                    assert_eq!(
+                                        line_height * reference_block.glyph_area().unwrap().line_height,
+                                        my_block.glyph_area().unwrap().line_height
+                                    )
+                                }
+                                GlyphAreaField::Position(vec) => {
+                                    assert_eq!(
+                                        vec.x * reference_block.glyph_area().unwrap().position.x,
+                                        my_block.glyph_area().unwrap().position.x
+                                    );
 
-                                assert_eq!(
-                                    vec.y * reference_block.glyph_area().unwrap().position.y,
-                                    my_block.glyph_area().unwrap().position.y
-                                );
-                            }
-                            GlyphAreaField::Bounds(vec) => {
-                                assert_eq!(
-                                   vec.x * reference_block.glyph_area().unwrap().render_bounds.x,
-                                   my_block.glyph_area().unwrap().render_bounds.x
-                                );
+                                    assert_eq!(
+                                        vec.y * reference_block.glyph_area().unwrap().position.y,
+                                        my_block.glyph_area().unwrap().position.y
+                                    );
+                                }
+                                GlyphAreaField::Bounds(vec) => {
+                                    assert_eq!(
+                                        vec.x * reference_block.glyph_area().unwrap().render_bounds.x,
+                                        my_block.glyph_area().unwrap().render_bounds.x
+                                    );
 
-                                assert_eq!(
-                                   vec.y * reference_block.glyph_area().unwrap().render_bounds.y,
-                                   my_block.glyph_area().unwrap().render_bounds.y
-                                );
+                                    assert_eq!(
+                                        vec.y * reference_block.glyph_area().unwrap().render_bounds.y,
+                                        my_block.glyph_area().unwrap().render_bounds.y
+                                    );
+                                }
+                                GlyphAreaField::ColorFontRegions(_) => {
+                                    panic!("Not supported, use GfxElementField::Region instead, dummy (you are forgiven)")
+                                }
+                                GlyphAreaField::Outline(_) => {
+                                    // See `do_outline_*` in area_tests.rs.
+                                }
+                                GlyphAreaField::Shape(_) => {
+                                    // Shape lives on `DeltaGlyphArea`
+                                    // only; see `shape::tests`.
+                                }
+                                GlyphAreaField::ZoomVisibility(_) => {
+                                    // Window lives on `DeltaGlyphArea`;
+                                    // see `zoom_visibility_tests.rs`.
+                                }
+                                GlyphAreaField::Operation(_) => {}
                             }
-                            GlyphAreaField::ColorFontRegions(_) => {
-                                panic!("Not supported, use GfxElementField::Region instead, dummy (you are forgiven)")
-                            }
-                            GlyphAreaField::Outline(_) => {
-                                // See `do_outline_*` in area_tests.rs.
-                            }
-                            GlyphAreaField::Shape(_) => {
-                                // Shape lives on `DeltaGlyphArea`
-                                // only; see `shape::tests`.
-                            }
-                            GlyphAreaField::ZoomVisibility(_) => {
-                                // Window lives on `DeltaGlyphArea`;
-                                // see `zoom_visibility_tests.rs`.
-                            }
-                            GlyphAreaField::Operation(_) => {}
-                        },
+                        }
                         // This range is the expected target
                         GfxElementField::Region(range, field) => {
                             match field {
                                 // This range is the value that is expected to have been added
                                 ColorFontRegionField::Range(add_range) => {
-                                    let new_range = Range::new(
-                                        range.start * add_range.start,
-                                        range.end * add_range.end,
-                                    );
+                                    let new_range =
+                                        Range::new(range.start * add_range.start, range.end * add_range.end);
                                     let ref_range = reference_block
                                         .glyph_area()
                                         .unwrap()
@@ -921,12 +855,8 @@ pub fn area_block_commands() {
                                         new_range
                                     );
 
-                                    let my_range = my_block
-                                        .glyph_area()
-                                        .unwrap()
-                                        .regions
-                                        .hard_get(new_range)
-                                        .range;
+                                    let my_range =
+                                        my_block.glyph_area().unwrap().regions.hard_get(new_range).range;
                                     assert_eq!(my_range, new_range)
                                 }
                                 ColorFontRegionField::Font(_font) => {
@@ -934,10 +864,7 @@ pub fn area_block_commands() {
                                 }
                                 ColorFontRegionField::Color(color) => {
                                     assert_eq!(
-                                        add_rgba(
-                                            &reference_block.color_at_region(range).unwrap(),
-                                            &color
-                                        ),
+                                        add_rgba(&reference_block.color_at_region(range).unwrap(), &color),
                                         my_block.color_at_region(range).unwrap()
                                     );
                                 }
@@ -1031,12 +958,7 @@ pub fn area_block_commands() {
                         }
                         ColorFontRegionField::This => {
                             assert!(my_block.glyph_area().unwrap().regions.get(range).is_none());
-                            assert!(reference_block
-                                .glyph_area()
-                                .unwrap()
-                                .regions
-                                .get(range)
-                                .is_some());
+                            assert!(reference_block.glyph_area().unwrap().regions.get(range).is_some());
                         }
                     },
                     GfxElementField::Channel(_) => {}
@@ -1247,12 +1169,7 @@ pub fn event_propagation_simple() {
     let event_id = mutator.arena.new_node(event);
     let event_baby_id = mutator.arena.new_node(event_baby);
     event_id.append(event_baby_id, &mut mutator.arena);
-    walk_tree_from(
-        &mut model,
-        &mut mutator,
-        model_root_id,
-        event_id,
-    );
+    walk_tree_from(&mut model, &mut mutator, model_root_id, event_id);
 }
 
 #[test]
@@ -1268,121 +1185,61 @@ pub fn complex_tree_mutation() {
 
     // Create the tree-model nodes
     let root_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "root",
-            1.0,
-            10.0,
-            Vec2::new(50.0, 50.0),
-            Vec2::new(500.0, 500.0),
-        ),
+        GlyphArea::new_with_str("root", 1.0, 10.0, Vec2::new(50.0, 50.0), Vec2::new(500.0, 500.0)),
         0,
         0,
     ));
 
     let node_a_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "A",
-            1.0,
-            10.0,
-            Vec2::new(30.0, 70.0),
-            Vec2::new(500.0, 500.0),
-        ),
+        GlyphArea::new_with_str("A", 1.0, 10.0, Vec2::new(30.0, 70.0), Vec2::new(500.0, 500.0)),
         1,
         1,
     ));
 
     let node_b_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "B",
-            1.0,
-            10.0,
-            Vec2::new(70.0, 70.0),
-            Vec2::new(500.0, 500.0),
-        ),
+        GlyphArea::new_with_str("B", 1.0, 10.0, Vec2::new(70.0, 70.0), Vec2::new(500.0, 500.0)),
         2,
         2,
     ));
 
     let node_c_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "C",
-            1.0,
-            10.0,
-            Vec2::new(50.0, 70.0),
-            Vec2::new(500.0, 500.0),
-        ),
+        GlyphArea::new_with_str("C", 1.0, 10.0, Vec2::new(50.0, 70.0), Vec2::new(500.0, 500.0)),
         0,
         3,
     ));
 
     let node_aa_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "Aa",
-            1.0,
-            10.0,
-            Vec2::new(20.0, 80.0),
-            Vec2::new(500.0, 500.0),
-        ),
+        GlyphArea::new_with_str("Aa", 1.0, 10.0, Vec2::new(20.0, 80.0), Vec2::new(500.0, 500.0)),
         1,
         4,
     ));
 
     let node_ab_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "Ab",
-            1.0,
-            10.0,
-            Vec2::new(40.0, 80.0),
-            Vec2::new(500.0, 500.0),
-        ),
+        GlyphArea::new_with_str("Ab", 1.0, 10.0, Vec2::new(40.0, 80.0), Vec2::new(500.0, 500.0)),
         2,
         5,
     ));
 
     let node_aaa_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "Aaa",
-            1.0,
-            10.0,
-            Vec2::new(20.0, 90.0),
-            Vec2::new(500.0, 500.0),
-        ),
+        GlyphArea::new_with_str("Aaa", 1.0, 10.0, Vec2::new(20.0, 90.0), Vec2::new(500.0, 500.0)),
         1,
         6,
     ));
 
     let node_aba_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "Aba",
-            1.0,
-            10.0,
-            Vec2::new(40.0, 90.0),
-            Vec2::new(500.0, 500.0),
-        ),
+        GlyphArea::new_with_str("Aba", 1.0, 10.0, Vec2::new(40.0, 90.0), Vec2::new(500.0, 500.0)),
         2,
         7,
     ));
 
     let node_aaaa_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "Aaaa",
-            1.0,
-            10.0,
-            Vec2::new(20.0, 100.0),
-            Vec2::new(500.0, 500.0),
-        ),
+        GlyphArea::new_with_str("Aaaa", 1.0, 10.0, Vec2::new(20.0, 100.0), Vec2::new(500.0, 500.0)),
         1,
         8,
     ));
 
     let node_abaa_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "Abaa",
-            1.0,
-            10.0,
-            Vec2::new(40.0, 100.0),
-            Vec2::new(500.0, 500.0),
-        ),
+        GlyphArea::new_with_str("Abaa", 1.0, 10.0, Vec2::new(40.0, 100.0), Vec2::new(500.0, 500.0)),
         2,
         9,
     ));
@@ -1412,37 +1269,19 @@ pub fn complex_tree_mutation() {
     ));
 
     let node_ca_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "Ca",
-            1.0,
-            10.0,
-            Vec2::new(50.0, 80.0),
-            Vec2::new(500.0, 500.0),
-        ),
+        GlyphArea::new_with_str("Ca", 1.0, 10.0, Vec2::new(50.0, 80.0), Vec2::new(500.0, 500.0)),
         0,
         12,
     ));
 
     let node_caa_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "Caa",
-            1.0,
-            10.0,
-            Vec2::new(50.0, 90.0),
-            Vec2::new(500.0, 500.0),
-        ),
+        GlyphArea::new_with_str("Caa", 1.0, 10.0, Vec2::new(50.0, 90.0), Vec2::new(500.0, 500.0)),
         0,
         13,
     ));
 
     let node_caaa_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "Caaa",
-            1.0,
-            10.0,
-            Vec2::new(50.0, 100.0),
-            Vec2::new(500.0, 500.0),
-        ),
+        GlyphArea::new_with_str("Caaa", 1.0, 10.0, Vec2::new(50.0, 100.0), Vec2::new(500.0, 500.0)),
         0,
         14,
     ));
@@ -1484,73 +1323,37 @@ pub fn complex_tree_mutation() {
     ));
 
     let node_ba_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "Ba",
-            1.0,
-            10.0,
-            Vec2::new(60.0, 80.0),
-            Vec2::new(500.0, 500.0),
-        ),
+        GlyphArea::new_with_str("Ba", 1.0, 10.0, Vec2::new(60.0, 80.0), Vec2::new(500.0, 500.0)),
         0,
         18,
     ));
 
     let node_bb_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "Bb",
-            1.0,
-            10.0,
-            Vec2::new(80.0, 80.0),
-            Vec2::new(500.0, 500.0),
-        ),
+        GlyphArea::new_with_str("Bb", 1.0, 10.0, Vec2::new(80.0, 80.0), Vec2::new(500.0, 500.0)),
         0,
         19,
     ));
 
     let node_baa_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "Baa",
-            1.0,
-            10.0,
-            Vec2::new(60.0, 90.0),
-            Vec2::new(500.0, 500.0),
-        ),
+        GlyphArea::new_with_str("Baa", 1.0, 10.0, Vec2::new(60.0, 90.0), Vec2::new(500.0, 500.0)),
         0,
         20,
     ));
 
     let node_bba_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "Bba",
-            1.0,
-            10.0,
-            Vec2::new(80.0, 90.0),
-            Vec2::new(500.0, 500.0),
-        ),
+        GlyphArea::new_with_str("Bba", 1.0, 10.0, Vec2::new(80.0, 90.0), Vec2::new(500.0, 500.0)),
         0,
         21,
     ));
 
     let node_baaa_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "Baaa",
-            1.0,
-            10.0,
-            Vec2::new(60.0, 100.0),
-            Vec2::new(500.0, 500.0),
-        ),
+        GlyphArea::new_with_str("Baaa", 1.0, 10.0, Vec2::new(60.0, 100.0), Vec2::new(500.0, 500.0)),
         0,
         22,
     ));
 
     let node_bbaa_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "Bbaa",
-            1.0,
-            10.0,
-            Vec2::new(80.0, 100.0),
-            Vec2::new(500.0, 500.0),
-        ),
+        GlyphArea::new_with_str("Bbaa", 1.0, 10.0, Vec2::new(80.0, 100.0), Vec2::new(500.0, 500.0)),
         0,
         23,
     ));
@@ -1614,7 +1417,9 @@ pub fn complex_tree_mutation() {
         .fields
         .push((GfxElementField::Channel(0), Comparator::equals()));
     // Create mutator-tree
-    let c_instruction = mutator_c.arena.new_node(GfxMutator::new_instruction(RepeatWhile(c_predicate)));
+    let c_instruction = mutator_c
+        .arena
+        .new_node(GfxMutator::new_instruction(RepeatWhile(c_predicate)));
 
     let mutator_child_c = mutator_c.arena.new_node(GfxMutator::new_macro(
         vec![
@@ -1840,16 +1645,13 @@ pub fn complex_tree_mutation() {
         .fields
         .push((GfxElementField::Channel(1), Comparator::equals()));
 
-    let a_instruction = mutator_a.arena.new_node(GfxMutator::new_instruction(RepeatWhile(
-        a_predicate,
-    )));
+    let a_instruction = mutator_a
+        .arena
+        .new_node(GfxMutator::new_instruction(RepeatWhile(a_predicate)));
 
     let mutator_child_a = mutator_a.arena.new_node(GfxMutator::new_macro(
         vec![
-            Mutation::area_command(GlyphAreaCommand::SetRegionFont(
-                Range::new(0, 1),
-                AppFont::Norse,
-            )),
+            Mutation::area_command(GlyphAreaCommand::SetRegionFont(Range::new(0, 1), AppFont::Norse)),
             Mutation::area_command(GlyphAreaCommand::GrowFont(10.0)),
             Mutation::area_command(GlyphAreaCommand::NudgeDown(100.0)),
         ],
@@ -2030,109 +1832,55 @@ pub fn simple_tree_mutation() {
 
     // Create the tree-model nodes
     let root_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "root",
-            1.0,
-            10.0,
-            Vec2::new(50.0, 50.0),
-            Vec2::new(500.0, 500.0),
-        ),
+        GlyphArea::new_with_str("root", 1.0, 10.0, Vec2::new(50.0, 50.0), Vec2::new(500.0, 500.0)),
         0,
         0,
     ));
 
     let node_a_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "A",
-            1.0,
-            10.0,
-            Vec2::new(30.0, 70.0),
-            Vec2::new(500.0, 500.0),
-        ),
+        GlyphArea::new_with_str("A", 1.0, 10.0, Vec2::new(30.0, 70.0), Vec2::new(500.0, 500.0)),
         1,
         1,
     ));
 
     let node_b_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "B",
-            1.0,
-            10.0,
-            Vec2::new(70.0, 70.0),
-            Vec2::new(500.0, 500.0),
-        ),
+        GlyphArea::new_with_str("B", 1.0, 10.0, Vec2::new(70.0, 70.0), Vec2::new(500.0, 500.0)),
         2,
         2,
     ));
 
     let node_c_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "C",
-            1.0,
-            10.0,
-            Vec2::new(50.0, 70.0),
-            Vec2::new(500.0, 500.0),
-        ),
+        GlyphArea::new_with_str("C", 1.0, 10.0, Vec2::new(50.0, 70.0), Vec2::new(500.0, 500.0)),
         0,
         3,
     ));
 
     let node_aa_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "Aa",
-            1.0,
-            10.0,
-            Vec2::new(20.0, 80.0),
-            Vec2::new(500.0, 500.0),
-        ),
+        GlyphArea::new_with_str("Aa", 1.0, 10.0, Vec2::new(20.0, 80.0), Vec2::new(500.0, 500.0)),
         1,
         4,
     ));
 
     let node_ab_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "Ab",
-            1.0,
-            10.0,
-            Vec2::new(40.0, 80.0),
-            Vec2::new(500.0, 500.0),
-        ),
+        GlyphArea::new_with_str("Ab", 1.0, 10.0, Vec2::new(40.0, 80.0), Vec2::new(500.0, 500.0)),
         1,
         5,
     ));
 
     let node_ca_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "Ca",
-            1.0,
-            10.0,
-            Vec2::new(50.0, 80.0),
-            Vec2::new(500.0, 500.0),
-        ),
+        GlyphArea::new_with_str("Ca", 1.0, 10.0, Vec2::new(50.0, 80.0), Vec2::new(500.0, 500.0)),
         0,
         6,
     ));
 
     let node_ba_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "Ba",
-            1.0,
-            10.0,
-            Vec2::new(60.0, 80.0),
-            Vec2::new(500.0, 500.0),
-        ),
+        GlyphArea::new_with_str("Ba", 1.0, 10.0, Vec2::new(60.0, 80.0), Vec2::new(500.0, 500.0)),
         1,
         7,
     ));
 
     let node_bb_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "Bb",
-            1.0,
-            10.0,
-            Vec2::new(80.0, 80.0),
-            Vec2::new(500.0, 500.0),
-        ),
+        GlyphArea::new_with_str("Bb", 1.0, 10.0, Vec2::new(80.0, 80.0), Vec2::new(500.0, 500.0)),
         2,
         8,
     ));
@@ -2154,19 +1902,17 @@ pub fn simple_tree_mutation() {
     let mutator_root = mutator.arena.new_node(GfxMutator::new(
         Mutation::area_delta(DeltaGlyphArea::new(vec![
             GlyphAreaField::Operation(ApplyOperation::Add),
-            GlyphAreaField::ColorFontRegions(ColorFontRegions::new_from(vec![
-                ColorFontRegion::new(Range::new(0, 1), Some(AppleTea), None),
-            ])),
+            GlyphAreaField::ColorFontRegions(ColorFontRegions::new_from(vec![ColorFontRegion::new(
+                Range::new(0, 1),
+                Some(AppleTea),
+                None,
+            )])),
         ])),
         0,
     ));
 
     let mutator_a = mutator.arena.new_node(GfxMutator::new(
-        Mutation::area_delta(make_mutator(
-            Some(AliceInWonderland),
-            None,
-            Vec2::new(-1.0, -5.0),
-        )),
+        Mutation::area_delta(make_mutator(Some(AliceInWonderland), None, Vec2::new(-1.0, -5.0))),
         1,
     ));
 
@@ -2176,11 +1922,7 @@ pub fn simple_tree_mutation() {
     ));
 
     let mutator_c = mutator.arena.new_node(GfxMutator::new(
-        Mutation::area_delta(make_mutator(
-            Some(AliceInWonderland),
-            None,
-            Vec2::new(0.0, -4.0),
-        )),
+        Mutation::area_delta(make_mutator(Some(AliceInWonderland), None, Vec2::new(0.0, -4.0))),
         0,
     ));
 
@@ -2190,11 +1932,7 @@ pub fn simple_tree_mutation() {
     ));
 
     let mutator_ba = mutator.arena.new_node(GfxMutator::new(
-        Mutation::area_delta(make_mutator(
-            Some(Evilz),
-            None,
-            Vec2::new(-25.0, 25.0),
-        )),
+        Mutation::area_delta(make_mutator(Some(Evilz), None, Vec2::new(-25.0, 25.0))),
         1,
     ));
 
@@ -2247,9 +1985,11 @@ pub fn simple_tree_mutation() {
         b.get(),
         vec![
             GlyphAreaField::position(69.0, 65.0),
-            GlyphAreaField::ColorFontRegions(ColorFontRegions::new_from(vec![
-                ColorFontRegion::new(Range::new(0, 1), Some(NorseBold), None),
-            ])),
+            GlyphAreaField::ColorFontRegions(ColorFontRegions::new_from(vec![ColorFontRegion::new(
+                Range::new(0, 1),
+                Some(NorseBold),
+                None,
+            )])),
         ],
     );
 
@@ -2258,9 +1998,11 @@ pub fn simple_tree_mutation() {
         ba.get(),
         vec![
             GlyphAreaField::position(35.0, 105.0),
-            GlyphAreaField::ColorFontRegions(ColorFontRegions::new_from(vec![
-                ColorFontRegion::new(Range::new(0, 1), Some(Evilz), None),
-            ])),
+            GlyphAreaField::ColorFontRegions(ColorFontRegions::new_from(vec![ColorFontRegion::new(
+                Range::new(0, 1),
+                Some(Evilz),
+                None,
+            )])),
         ],
     );
 
@@ -2269,9 +2011,11 @@ pub fn simple_tree_mutation() {
         bb.get(),
         vec![
             GlyphAreaField::position(105.0, 105.0),
-            GlyphAreaField::ColorFontRegions(ColorFontRegions::new_from(vec![
-                ColorFontRegion::new(Range::new(0, 1), Some(Evilz), None),
-            ])),
+            GlyphAreaField::ColorFontRegions(ColorFontRegions::new_from(vec![ColorFontRegion::new(
+                Range::new(0, 1),
+                Some(Evilz),
+                None,
+            )])),
         ],
     );
 
@@ -2280,9 +2024,11 @@ pub fn simple_tree_mutation() {
         ca.get(),
         vec![
             GlyphAreaField::position(50.0, 76.0),
-            GlyphAreaField::ColorFontRegions(ColorFontRegions::new_from(vec![
-                ColorFontRegion::new(Range::new(0, 1), Some(Casanova), None),
-            ])),
+            GlyphAreaField::ColorFontRegions(ColorFontRegions::new_from(vec![ColorFontRegion::new(
+                Range::new(0, 1),
+                Some(Casanova),
+                None,
+            )])),
         ],
     );
 
@@ -2291,9 +2037,11 @@ pub fn simple_tree_mutation() {
         c.get(),
         vec![
             GlyphAreaField::position(50.0, 66.0),
-            GlyphAreaField::ColorFontRegions(ColorFontRegions::new_from(vec![
-                ColorFontRegion::new(Range::new(0, 1), Some(AliceInWonderland), None),
-            ])),
+            GlyphAreaField::ColorFontRegions(ColorFontRegions::new_from(vec![ColorFontRegion::new(
+                Range::new(0, 1),
+                Some(AliceInWonderland),
+                None,
+            )])),
         ],
     );
 }

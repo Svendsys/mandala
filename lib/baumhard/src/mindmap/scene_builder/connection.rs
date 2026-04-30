@@ -39,9 +39,7 @@ use crate::mindmap::scene_cache::{CachedConnection, EdgeKey, SceneConnectionCach
 use crate::util::color::resolve_var;
 
 use super::edge_handle::build_edge_handles;
-use super::{
-    ConnectionElement, EdgeColorPreview, EdgeHandleElement, SELECTED_EDGE_COLOR,
-};
+use super::{ConnectionElement, EdgeColorPreview, EdgeHandleElement, SELECTED_EDGE_COLOR};
 
 /// Squared-length threshold below which `delta_from` and `delta_to`
 /// count as "the same delta" for the translate path. In the
@@ -131,8 +129,7 @@ pub(super) fn build_connection_elements(
         }
 
         // Did either endpoint of THIS edge move this frame?
-        let endpoint_moved =
-            offsets.contains_key(&from_node.id) || offsets.contains_key(&to_node.id);
+        let endpoint_moved = offsets.contains_key(&from_node.id) || offsets.contains_key(&to_node.id);
 
         // --- Fast path: cached geometry is still valid ---
         //
@@ -164,15 +161,11 @@ pub(super) fn build_connection_elements(
                     cached.color.clone()
                 };
                 let cap_start = match &cached.cap_start {
-                    Some((g, p)) if !point_inside_any_node(*p, node_aabbs) => {
-                        Some((g.clone(), (p.x, p.y)))
-                    }
+                    Some((g, p)) if !point_inside_any_node(*p, node_aabbs) => Some((g.clone(), (p.x, p.y))),
                     _ => None,
                 };
                 let cap_end = match &cached.cap_end {
-                    Some((g, p)) if !point_inside_any_node(*p, node_aabbs) => {
-                        Some((g.clone(), (p.x, p.y)))
-                    }
+                    Some((g, p)) if !point_inside_any_node(*p, node_aabbs) => Some((g.clone(), (p.x, p.y))),
                     _ => None,
                 };
                 let glyph_positions: Vec<(f32, f32)> = cached
@@ -285,15 +278,11 @@ pub(super) fn build_connection_elements(
             // a translated edge must still clip out the glyphs
             // inside it.
             let cap_start = match entry.cap_start.as_ref() {
-                Some((g, p)) if !point_inside_any_node(*p, node_aabbs) => {
-                    Some((g.clone(), (p.x, p.y)))
-                }
+                Some((g, p)) if !point_inside_any_node(*p, node_aabbs) => Some((g.clone(), (p.x, p.y))),
                 _ => None,
             };
             let cap_end = match entry.cap_end.as_ref() {
-                Some((g, p)) if !point_inside_any_node(*p, node_aabbs) => {
-                    Some((g.clone(), (p.x, p.y)))
-                }
+                Some((g, p)) if !point_inside_any_node(*p, node_aabbs) => Some((g.clone(), (p.x, p.y))),
                 _ => None,
             };
             let glyph_positions: Vec<(f32, f32)> = entry

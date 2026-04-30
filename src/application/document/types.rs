@@ -92,9 +92,7 @@ impl EdgeRef {
 
     /// Returns true if this ref identifies the given `MindEdge`.
     pub fn matches(&self, edge: &MindEdge) -> bool {
-        self.from_id == edge.from_id
-            && self.to_id == edge.to_id
-            && self.edge_type == edge.edge_type
+        self.from_id == edge.from_id && self.to_id == edge.to_id && self.edge_type == edge.edge_type
     }
 }
 
@@ -282,9 +280,7 @@ impl SelectionState {
         match self {
             SelectionState::Edge(e) => Some(e.clone()),
             SelectionState::EdgeLabel(s) => Some(s.edge_ref.clone()),
-            SelectionState::PortalLabel(s) | SelectionState::PortalText(s) => {
-                Some(s.edge_ref())
-            }
+            SelectionState::PortalLabel(s) | SelectionState::PortalText(s) => Some(s.edge_ref()),
             _ => None,
         }
     }
@@ -318,7 +314,10 @@ impl SelectionState {
     pub fn selected_portal_label_scene_ref(
         &self,
     ) -> Option<baumhard::mindmap::scene_builder::SelectedPortalLabel<'_>> {
-        let PortalLabelSel { edge_key, endpoint_node_id } = match self {
+        let PortalLabelSel {
+            edge_key,
+            endpoint_node_id,
+        } = match self {
             SelectionState::PortalLabel(s) | SelectionState::PortalText(s) => s,
             _ => return None,
         };
@@ -423,11 +422,7 @@ mod tests {
     /// `String` boundary (no truncation, no normalization).
     #[test]
     fn edge_ref_edge_key_conversion_preserves_strings() {
-        let er = EdgeRef::new(
-            "a-with-dashes-and-1.0.2",
-            "b/with/slashes",
-            "parent_child",
-        );
+        let er = EdgeRef::new("a-with-dashes-and-1.0.2", "b/with/slashes", "parent_child");
         let key = EdgeKey::from(&er);
         assert_eq!(key.from_id, er.from_id);
         assert_eq!(key.to_id, er.to_id);

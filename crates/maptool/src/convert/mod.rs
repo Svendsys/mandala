@@ -55,8 +55,7 @@ pub fn convert_legacy(input_path: &Path, output_path: &Path) -> Result<(), Strin
     palettes::hoist_palettes(&mut root);
     cleanup::cleanup_nodes(&mut root);
 
-    let json = serde_json::to_string_pretty(&root)
-        .map_err(|e| format!("failed to serialize: {e}"))?;
+    let json = serde_json::to_string_pretty(&root).map_err(|e| format!("failed to serialize: {e}"))?;
 
     std::fs::write(output_path, &json)
         .map_err(|e| format!("failed to write {}: {e}", output_path.display()))?;

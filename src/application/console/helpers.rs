@@ -44,14 +44,8 @@ pub fn require_edge_or_portal(eff: &ConsoleEffects) -> Result<EdgeRef, ExecResul
 /// Accepting `usage` as the empty-error message matches the prior
 /// hand-rolled shape (`"usage: anchor from=<side> to=<side>"`)
 /// without forcing a separate prefix.
-pub fn collect_kvs_or_usage(
-    args: &Args,
-    usage: &str,
-) -> Result<Vec<(String, String)>, ExecResult> {
-    let kvs: Vec<(String, String)> = args
-        .kvs()
-        .map(|(k, v)| (k.to_string(), v.to_string()))
-        .collect();
+pub fn collect_kvs_or_usage(args: &Args, usage: &str) -> Result<Vec<(String, String)>, ExecResult> {
+    let kvs: Vec<(String, String)> = args.kvs().map(|(k, v)| (k.to_string(), v.to_string())).collect();
     if kvs.is_empty() {
         return Err(ExecResult::err(usage.to_string()));
     }

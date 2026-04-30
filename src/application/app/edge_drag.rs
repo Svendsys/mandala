@@ -120,7 +120,11 @@ pub(in crate::application::app) fn apply_edge_handle_drag(
 /// midpoint closest to the position. Used by the anchor-handle
 /// drag to snap the anchor to whichever side the cursor is nearest.
 #[cfg(not(target_arch = "wasm32"))]
-pub(in crate::application::app) fn nearest_anchor_side(point: Vec2, node_pos: Vec2, node_size: Vec2) -> String {
+pub(in crate::application::app) fn nearest_anchor_side(
+    point: Vec2,
+    node_pos: Vec2,
+    node_size: Vec2,
+) -> String {
     let half_w = node_size.x * 0.5;
     let half_h = node_size.y * 0.5;
     let top = Vec2::new(node_pos.x + half_w, node_pos.y);

@@ -24,9 +24,7 @@ impl super::WasmApp {
         let factor = if scroll_y > 0.0 { 1.1 } else { 1.0 / 1.1 };
         let mut input_borrow = self.input.borrow_mut();
         let mut renderer_borrow = self.renderer.borrow_mut();
-        if let (Some(input), Some(renderer)) =
-            (input_borrow.as_mut(), renderer_borrow.as_mut())
-        {
+        if let (Some(input), Some(renderer)) = (input_borrow.as_mut(), renderer_borrow.as_mut()) {
             // A zoom mid-click invalidates the pending selection:
             // the canvas coord the user pressed over has shifted
             // to a new screen position, so committing the pending
@@ -43,7 +41,12 @@ impl super::WasmApp {
             // Zoom touches scene geometry (connection glyph
             // sample spacing, viewport cull rect) but not the
             // node text tree — scene-only rebuild is enough.
-            rebuild_scene_only(&input.document, &mut input.app_scene, renderer, &mut input.scene_cache);
+            rebuild_scene_only(
+                &input.document,
+                &mut input.app_scene,
+                renderer,
+                &mut input.scene_cache,
+            );
         }
     }
 }

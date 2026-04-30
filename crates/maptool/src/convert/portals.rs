@@ -32,8 +32,8 @@ pub fn convert_portals(input_path: &Path, output_path: &Path) -> Result<(), Stri
         Some(Value::Array(a)) => a,
         Some(_) | None => {
             // No portals field, or an unexpected shape: pass through.
-            let json = serde_json::to_string_pretty(&root)
-                .map_err(|e| format!("failed to serialize: {e}"))?;
+            let json =
+                serde_json::to_string_pretty(&root).map_err(|e| format!("failed to serialize: {e}"))?;
             write_atomic(output_path, &json)?;
             return Ok(());
         }
@@ -79,10 +79,7 @@ pub fn convert_portals(input_path: &Path, output_path: &Path) -> Result<(), Stri
             .and_then(|v| v.as_str())
             .unwrap_or("#aa88cc")
             .to_string();
-        let font_size_pt = obj
-            .get("font_size_pt")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(16.0);
+        let font_size_pt = obj.get("font_size_pt").and_then(|v| v.as_f64()).unwrap_or(16.0);
         let font = obj.get("font").cloned().unwrap_or(Value::Null);
 
         let mut glyph_connection = serde_json::Map::new();
@@ -90,8 +87,7 @@ pub fn convert_portals(input_path: &Path, output_path: &Path) -> Result<(), Stri
         glyph_connection.insert(
             "font_size_pt".into(),
             Value::Number(
-                serde_json::Number::from_f64(font_size_pt)
-                    .unwrap_or_else(|| serde_json::Number::from(16)),
+                serde_json::Number::from_f64(font_size_pt).unwrap_or_else(|| serde_json::Number::from(16)),
             ),
         );
         if !font.is_null() {
@@ -116,8 +112,7 @@ pub fn convert_portals(input_path: &Path, output_path: &Path) -> Result<(), Stri
         edges.push(edge);
     }
 
-    let json = serde_json::to_string_pretty(&root)
-        .map_err(|e| format!("failed to serialize: {e}"))?;
+    let json = serde_json::to_string_pretty(&root).map_err(|e| format!("failed to serialize: {e}"))?;
     write_atomic(output_path, &json)?;
 
     eprintln!("converted {} portal(s) to portal-mode edges", converted);
@@ -133,11 +128,7 @@ fn write_atomic(path: &Path, contents: &str) -> Result<(), String> {
         .file_name()
         .ok_or_else(|| format!("invalid path: {}", path.display()))?
         .to_string_lossy();
-    let tmp_path = dir.join(format!(
-        ".{}.maptool.{}.tmp",
-        file_name,
-        std::process::id()
-    ));
+    let tmp_path = dir.join(format!(".{}.maptool.{}.tmp", file_name, std::process::id()));
     std::fs::write(&tmp_path, contents)
         .map_err(|e| format!("failed to write {}: {e}", tmp_path.display()))?;
     std::fs::rename(&tmp_path, path).map_err(|e| {
@@ -187,8 +178,7 @@ mod tests {
         .unwrap();
         let dst = tempfile::NamedTempFile::new().unwrap();
         convert_portals(src.path(), dst.path()).unwrap();
-        let out: Value =
-            serde_json::from_str(&std::fs::read_to_string(dst.path()).unwrap()).unwrap();
+        let out: Value = serde_json::from_str(&std::fs::read_to_string(dst.path()).unwrap()).unwrap();
         let body = &out.get("edges").unwrap().as_array().unwrap()[0]["glyph_connection"]["body"];
         assert_eq!(body.as_str().unwrap(), "\u{25C8}");
     }

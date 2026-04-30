@@ -13,9 +13,7 @@
 pub use super::area_fields::*;
 pub use super::area_mutators::*;
 
-use crate::core::primitives::{
-    ApplyOperation, ColorFontRegion, ColorFontRegions, Range,
-};
+use crate::core::primitives::{ApplyOperation, ColorFontRegion, ColorFontRegions, Range};
 use crate::font::fonts::AppFont;
 use crate::gfx_structs::shape::NodeShape;
 use crate::gfx_structs::util::hitbox::HitBox;
@@ -79,10 +77,18 @@ impl EdgePadding {
         self.top.0 == 0.0 && self.right.0 == 0.0 && self.bottom.0 == 0.0 && self.left.0 == 0.0
     }
 
-    pub fn top(&self) -> f32 { self.top.0 }
-    pub fn right(&self) -> f32 { self.right.0 }
-    pub fn bottom(&self) -> f32 { self.bottom.0 }
-    pub fn left(&self) -> f32 { self.left.0 }
+    pub fn top(&self) -> f32 {
+        self.top.0
+    }
+    pub fn right(&self) -> f32 {
+        self.right.0
+    }
+    pub fn bottom(&self) -> f32 {
+        self.bottom.0
+    }
+    pub fn left(&self) -> f32 {
+        self.left.0
+    }
 }
 
 impl Default for EdgePadding {
@@ -235,13 +241,7 @@ impl GlyphArea {
     /// Construct an area pre-populated with `text`. Mirrors `new` but
     /// skips the empty-string detour. O(n) in `text.len()` for the
     /// owning copy.
-    pub fn new_with_str(
-        text: &str,
-        scale: f32,
-        line_height: f32,
-        position: Vec2,
-        bounds: Vec2,
-    ) -> Self {
+    pub fn new_with_str(text: &str, scale: f32, line_height: f32, position: Vec2, bounds: Vec2) -> Self {
         GlyphArea {
             text: text.to_string(),
             scale: OrderedFloat::from(scale),
@@ -336,12 +336,7 @@ impl GlyphArea {
         // Shapes don't compose (you can't "add" an ellipse to a
         // rectangle); Assign and Add both overwrite, Subtract
         // resets to the default rectangle.
-        apply_overwrite_or_reset(
-            operation,
-            delta.shape(),
-            &mut self.shape,
-            NodeShape::Rectangle,
-        );
+        apply_overwrite_or_reset(operation, delta.shape(), &mut self.shape, NodeShape::Rectangle);
 
         // Zoom windows don't compose arithmetically (combining
         // "zoomed in only" with "zoomed out only" yields nothing
@@ -494,12 +489,7 @@ impl GlyphArea {
 /// `delta` is `None` when the corresponding [`DeltaGlyphArea`]
 /// field wasn't set on construction; the helper short-circuits
 /// in that case so the target field is untouched.
-fn apply_overwrite_or_reset<T>(
-    op: ApplyOperation,
-    delta: Option<T>,
-    target: &mut T,
-    reset: T,
-) {
+fn apply_overwrite_or_reset<T>(op: ApplyOperation, delta: Option<T>, target: &mut T, reset: T) {
     let Some(value) = delta else { return };
     match op {
         ApplyOperation::Assign | ApplyOperation::Add => *target = value,

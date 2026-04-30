@@ -7,10 +7,7 @@ use super::fixtures::*;
 
 #[test]
 fn test_background_color_opaque_hex_populates_field() {
-    let mut map = synthetic_map(
-        vec![synthetic_node("n", None, 0.0, 0.0)],
-        vec![],
-    );
+    let mut map = synthetic_map(vec![synthetic_node("n", None, 0.0, 0.0)], vec![]);
     map.nodes.get_mut("n").unwrap().style.background_color = "#ff8800".into();
     let result = build_mindmap_tree(&map);
     let area = glyph_area_of(&result.tree, *result.node_map.get("n").unwrap());
@@ -19,10 +16,7 @@ fn test_background_color_opaque_hex_populates_field() {
 
 #[test]
 fn test_background_color_empty_string_becomes_none() {
-    let mut map = synthetic_map(
-        vec![synthetic_node("n", None, 0.0, 0.0)],
-        vec![],
-    );
+    let mut map = synthetic_map(vec![synthetic_node("n", None, 0.0, 0.0)], vec![]);
     map.nodes.get_mut("n").unwrap().style.background_color = "".into();
     let result = build_mindmap_tree(&map);
     let area = glyph_area_of(&result.tree, *result.node_map.get("n").unwrap());
@@ -31,10 +25,7 @@ fn test_background_color_empty_string_becomes_none() {
 
 #[test]
 fn test_background_color_fully_transparent_becomes_none() {
-    let mut map = synthetic_map(
-        vec![synthetic_node("n", None, 0.0, 0.0)],
-        vec![],
-    );
+    let mut map = synthetic_map(vec![synthetic_node("n", None, 0.0, 0.0)], vec![]);
     // `#00000000` is the conventional "no fill" opt-out.
     map.nodes.get_mut("n").unwrap().style.background_color = "#00000000".into();
     let result = build_mindmap_tree(&map);
@@ -44,10 +35,7 @@ fn test_background_color_fully_transparent_becomes_none() {
 
 #[test]
 fn test_background_color_resolves_theme_variable() {
-    let mut map = synthetic_map(
-        vec![synthetic_node("n", None, 0.0, 0.0)],
-        vec![],
-    );
+    let mut map = synthetic_map(vec![synthetic_node("n", None, 0.0, 0.0)], vec![]);
     map.canvas
         .theme_variables
         .insert("--panel".into(), "#112233".into());
@@ -59,10 +47,7 @@ fn test_background_color_resolves_theme_variable() {
 
 #[test]
 fn test_background_color_malformed_hex_degrades_to_none() {
-    let mut map = synthetic_map(
-        vec![synthetic_node("n", None, 0.0, 0.0)],
-        vec![],
-    );
+    let mut map = synthetic_map(vec![synthetic_node("n", None, 0.0, 0.0)], vec![]);
     // `hex_to_rgba_safe` degrades unknown/bad strings to the
     // fallback we passed in — `[0,0,0,0]` for background — which
     // then trips the transparent-alpha sentinel below and becomes
@@ -89,10 +74,7 @@ fn test_background_color_malformed_hex_degrades_to_none() {
 #[test]
 fn test_framed_node_carries_visible_stroke_background_padding() {
     use crate::mindmap::border::{BORDER_APPROX_CHAR_WIDTH_FRAC, BORDER_CORNER_OVERLAP_FRAC};
-    let map = synthetic_map(
-        vec![synthetic_node("n", None, 0.0, 0.0)],
-        vec![],
-    );
+    let map = synthetic_map(vec![synthetic_node("n", None, 0.0, 0.0)], vec![]);
     // `synthetic_node` defaults `show_frame: true`, size 80×40.
     let result = build_mindmap_tree(&map);
     let area = glyph_area_of(&result.tree, *result.node_map.get("n").unwrap());
@@ -161,10 +143,7 @@ fn test_framed_node_carries_visible_stroke_background_padding() {
 #[test]
 fn test_pad_right_equals_pad_left_when_nw_is_acw_aligned() {
     use crate::mindmap::border::BORDER_APPROX_CHAR_WIDTH_FRAC;
-    let mut map = synthetic_map(
-        vec![synthetic_node("n", None, 0.0, 0.0)],
-        vec![],
-    );
+    let mut map = synthetic_map(vec![synthetic_node("n", None, 0.0, 0.0)], vec![]);
     let fs = 14.0_f32;
     let acw = fs * BORDER_APPROX_CHAR_WIDTH_FRAC;
     // 10 × acw = 84.0 px exactly — char_count = ceil(10 + 2) = 12,
@@ -189,10 +168,7 @@ fn test_pad_right_equals_pad_left_when_nw_is_acw_aligned() {
 /// rectangle nodes with `show_frame = true` extend the fill rect.
 #[test]
 fn test_frameless_node_keeps_zero_background_padding() {
-    let mut map = synthetic_map(
-        vec![synthetic_node("n", None, 0.0, 0.0)],
-        vec![],
-    );
+    let mut map = synthetic_map(vec![synthetic_node("n", None, 0.0, 0.0)], vec![]);
     map.nodes.get_mut("n").unwrap().style.show_frame = false;
     let result = build_mindmap_tree(&map);
     let area = glyph_area_of(&result.tree, *result.node_map.get("n").unwrap());
@@ -201,10 +177,7 @@ fn test_frameless_node_keeps_zero_background_padding() {
 
 #[test]
 fn test_background_color_three_digit_hex_works() {
-    let mut map = synthetic_map(
-        vec![synthetic_node("n", None, 0.0, 0.0)],
-        vec![],
-    );
+    let mut map = synthetic_map(vec![synthetic_node("n", None, 0.0, 0.0)], vec![]);
     // `#000` is the default in all the synthetic nodes above, and
     // it's opaque black — verify the builder treats it as a real
     // fill (not transparent) so the renderer draws the rect. A

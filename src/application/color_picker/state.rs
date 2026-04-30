@@ -287,8 +287,7 @@ pub enum FlashKind {
 /// same no-op.
 pub fn request_error_flash(state: &mut ColorPickerState, _kind: FlashKind) {
     if let ColorPickerState::Open {
-        pending_error_flash,
-        ..
+        pending_error_flash, ..
     } = state
     {
         *pending_error_flash = true;

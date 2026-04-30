@@ -45,9 +45,8 @@ pub(in crate::application) mod tests;
 pub use geometry::ColorPickerOverlayGeometry;
 pub use glyph_tables::{
     arm_bottom_font, arm_bottom_glyphs, arm_left_glyphs, arm_right_glyphs, arm_top_glyphs,
-    center_preview_glyph, hue_ring_glyphs, hue_slot_to_degrees, picker_channel,
-    sat_cell_to_value, val_cell_to_value, CROSSHAIR_CENTER_CELL, HUE_SLOT_COUNT,
-    SAT_CELL_COUNT, VAL_CELL_COUNT,
+    center_preview_glyph, hue_ring_glyphs, hue_slot_to_degrees, picker_channel, sat_cell_to_value,
+    val_cell_to_value, CROSSHAIR_CENTER_CELL, HUE_SLOT_COUNT, SAT_CELL_COUNT, VAL_CELL_COUNT,
 };
 pub use hit::PickerHit;
 pub use layout::ColorPickerLayout;
@@ -65,8 +64,7 @@ pub use glyph_tables::hue_ring_font_scale;
 pub use hit::hit_test_picker;
 #[cfg(not(target_arch = "wasm32"))]
 pub use state::{
-    request_error_flash, ColorPickerState, FlashKind, PickerDynamicApplyKey, PickerGesture,
-    PickerMode,
+    request_error_flash, ColorPickerState, FlashKind, PickerDynamicApplyKey, PickerGesture, PickerMode,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use targets::{current_hsv_at, PickerHandle};

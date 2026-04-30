@@ -56,9 +56,9 @@ pub use borders::measure_max_glyph_advance;
 // cargo check (without `--tests`) doesn't see those usages.
 #[allow(unused_imports)]
 pub use console_geometry::{
-    build_console_border_strings, compute_console_frame_layout, ConsoleFrameLayout,
-    ConsoleOverlayCompletion, ConsoleOverlayGeometry, ConsoleOverlayLine, ConsoleOverlayLineKind,
-    MAX_CONSOLE_COMPLETION_ROWS, MAX_CONSOLE_SCROLLBACK_ROWS,
+    build_console_border_strings, compute_console_frame_layout, ConsoleFrameLayout, ConsoleOverlayCompletion,
+    ConsoleOverlayGeometry, ConsoleOverlayLine, ConsoleOverlayLineKind, MAX_CONSOLE_COMPLETION_ROWS,
+    MAX_CONSOLE_SCROLLBACK_ROWS,
 };
 #[cfg(test)]
 use console_pass::{
@@ -78,8 +78,8 @@ use log::{error, info, warn};
 use rustc_hash::FxHashMap;
 
 use wgpu::{
-    Adapter, Color, Device, Instance, MultisampleState, Queue, RenderPipeline, ShaderModule,
-    Surface, SurfaceCapabilities, SurfaceConfiguration, TextureFormat,
+    Adapter, Color, Device, Instance, MultisampleState, Queue, RenderPipeline, ShaderModule, Surface,
+    SurfaceCapabilities, SurfaceConfiguration, TextureFormat,
 };
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
@@ -509,11 +509,7 @@ pub(crate) fn clamp_surface_size_to_gpu_limit(width: u32, height: u32, max_dim: 
 }
 
 impl Renderer {
-    pub async fn new(
-        instance: Instance,
-        surface: Surface<'static>,
-        window: Arc<Window>,
-    ) -> Renderer {
+    pub async fn new(instance: Instance, surface: Surface<'static>, window: Arc<Window>) -> Renderer {
         let adapter = Self::get_adapter(&instance, &surface).await;
         let (device, queue) = Self::get_device(&adapter).await;
         let mut shaders = FxHashMap::default();
@@ -527,12 +523,8 @@ impl Renderer {
         let surface_capabilities = surface.get_capabilities(&adapter);
         let texture_format = surface_capabilities.formats[0];
 
-        let render_pipeline = Self::create_render_pipeline(
-            &device,
-            &shader,
-            &pipeline_layout,
-            texture_format.clone(),
-        );
+        let render_pipeline =
+            Self::create_render_pipeline(&device, &shader, &pipeline_layout, texture_format.clone());
         let size = window.inner_size();
         let config = Self::create_surface_config(
             texture_format.clone(),
@@ -542,10 +534,8 @@ impl Renderer {
         let glyphon_cache = Cache::new(&device);
 
         let mut atlas = TextAtlas::new(&device, &queue, &glyphon_cache, swapchain_format);
-        let text_renderer =
-            TextRenderer::new(&mut atlas, &device, MultisampleState::default(), None);
-        let console_text_renderer =
-            TextRenderer::new(&mut atlas, &device, MultisampleState::default(), None);
+        let text_renderer = TextRenderer::new(&mut atlas, &device, MultisampleState::default(), None);
+        let console_text_renderer = TextRenderer::new(&mut atlas, &device, MultisampleState::default(), None);
         let viewport = Viewport::new(&device, &glyphon_cache);
         let camera = Camera2D::new(size.width, size.height);
 
@@ -761,8 +751,7 @@ impl Renderer {
             }
             RedrawMode::FpsLimit(_) => {
                 if self.timer.is_expired() {
-                    let delta_duration =
-                        self.target_duration_between_renders - self.last_render_time;
+                    let delta_duration = self.target_duration_between_renders - self.last_render_time;
                     if delta_duration.le(&Self::ZERO_DURATION) {
                         self.timer.expire_in(Duration::from(Self::ZERO_DURATION));
                     } else {
@@ -808,14 +797,8 @@ impl Renderer {
         };
         let text = format!("FPS: {}", self.fps.unwrap_or(0));
         let attrs = Attrs::new().color(cosmic_text::Color::rgba(255, 235, 0, 255));
-        let buf = borders::create_border_buffer(
-            &mut font_system,
-            &text,
-            &attrs,
-            16.0,
-            (8.0, 8.0),
-            (200.0, 24.0),
-        );
+        let buf =
+            borders::create_border_buffer(&mut font_system, &text, &attrs, 16.0, (8.0, 8.0), (200.0, 24.0));
         self.fps_overlay_buffers.clear();
         self.fps_overlay_buffers.push(buf);
         self.last_fps_shaped = self.fps;
@@ -880,8 +863,7 @@ impl Renderer {
         self.config.height = height;
 
         self.surface.configure(&self.device, &self.config);
-        self.viewport
-            .update(&self.queue, Resolution { width, height });
+        self.viewport.update(&self.queue, Resolution { width, height });
         self.camera.set_viewport_size(width, height);
         // Canvas-space glyph positions and shaped buffers survive a
         // viewport resize; the per-frame `visible_at` cull handles

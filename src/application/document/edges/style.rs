@@ -2,7 +2,6 @@
 
 //! Edge visual styling — body glyph, caps, color, font sizing/family, spacing.
 
-
 use baumhard::mindmap::model::{
     portal_endpoint_state_mut, EdgeLabelConfig, GlyphConnectionConfig, PortalEndpointState,
 };
@@ -11,9 +10,7 @@ use baumhard::util::geometry::{almost_equal, is_positive_finite};
 use super::super::types::EdgeRef;
 use super::super::undo_action::UndoAction;
 use super::super::MindMapDocument;
-use super::closure_helpers::{
-    ensure_glyph_connection_inline, ensure_label_config_inline,
-};
+use super::closure_helpers::{ensure_glyph_connection_inline, ensure_label_config_inline};
 
 impl MindMapDocument {
     /// Set the body glyph string for a connection. Empty strings are
@@ -115,13 +112,9 @@ impl MindMapDocument {
     /// touches one site.
     pub fn resolve_edge_color(&self, edge_ref: &EdgeRef) -> Option<String> {
         let edge = self.mindmap.edges.iter().find(|e| edge_ref.matches(e))?;
-        let cfg =
-            baumhard::mindmap::model::GlyphConnectionConfig::resolved_for(edge, &self.mindmap.canvas);
+        let cfg = baumhard::mindmap::model::GlyphConnectionConfig::resolved_for(edge, &self.mindmap.canvas);
         let raw = cfg.color.as_deref().unwrap_or(edge.color.as_str());
-        Some(
-            baumhard::util::color::resolve_var(raw, &self.mindmap.canvas.theme_variables)
-                .to_string(),
-        )
+        Some(baumhard::util::color::resolve_var(raw, &self.mindmap.canvas.theme_variables).to_string())
     }
 
     /// Read the resolved edge-label color for copy-to-clipboard.
@@ -141,8 +134,7 @@ impl MindMapDocument {
             .and_then(|c| c.color.clone());
         if let Some(hex) = label_override {
             return Some(
-                baumhard::util::color::resolve_var(&hex, &self.mindmap.canvas.theme_variables)
-                    .to_string(),
+                baumhard::util::color::resolve_var(&hex, &self.mindmap.canvas.theme_variables).to_string(),
             );
         }
         self.resolve_edge_color(edge_ref)
@@ -154,19 +146,14 @@ impl MindMapDocument {
     /// cascade (per-endpoint `color` → `glyph_connection.color` →
     /// `edge.color`). Returns `None` only when the edge is
     /// missing.
-    pub fn resolve_portal_text_color(
-        &self,
-        edge_ref: &EdgeRef,
-        endpoint_node_id: &str,
-    ) -> Option<String> {
+    pub fn resolve_portal_text_color(&self, edge_ref: &EdgeRef, endpoint_node_id: &str) -> Option<String> {
         let edge = self.mindmap.edges.iter().find(|e| edge_ref.matches(e))?;
         let state = baumhard::mindmap::model::portal_endpoint_state(edge, endpoint_node_id);
         // Text's own override wins; fall back to the icon's
         // already-resolved cascade via `resolve_portal_label_color`.
         if let Some(hex) = state.and_then(|s| s.text_color.as_deref()) {
             return Some(
-                baumhard::util::color::resolve_var(hex, &self.mindmap.canvas.theme_variables)
-                    .to_string(),
+                baumhard::util::color::resolve_var(hex, &self.mindmap.canvas.theme_variables).to_string(),
             );
         }
         self.resolve_portal_label_color(edge_ref, endpoint_node_id)
@@ -204,8 +191,7 @@ impl MindMapDocument {
     pub fn set_edge_font_size_step(&mut self, edge_ref: &EdgeRef, delta_pt: f32) -> bool {
         self.mutate_edge(edge_ref, |edge, canvas| {
             let cfg = ensure_glyph_connection_inline(edge, canvas);
-            let new_val = (cfg.font_size_pt + delta_pt)
-                .clamp(cfg.min_font_size_pt, cfg.max_font_size_pt);
+            let new_val = (cfg.font_size_pt + delta_pt).clamp(cfg.min_font_size_pt, cfg.max_font_size_pt);
             if almost_equal(cfg.font_size_pt, new_val) {
                 return false;
             }
@@ -282,10 +268,7 @@ impl MindMapDocument {
             None => return false,
         };
         let before = self.mindmap.edges[idx].clone();
-        let cfg = Self::ensure_glyph_connection(
-            &mut self.mindmap.edges[idx],
-            &self.mindmap.canvas,
-        );
+        let cfg = Self::ensure_glyph_connection(&mut self.mindmap.edges[idx], &self.mindmap.canvas);
         // Resolve the (min, max) pair that will land on the struct
         // if this call succeeds. Reject inverted pairs before any
         // mutation — Self::clamp panics on `min > max`, and a
@@ -345,11 +328,7 @@ impl MindMapDocument {
     /// it through `baumhard::font::fonts::app_font_by_family` at
     /// render time, falling back to monospace with a warning if
     /// the family is unknown.
-    pub fn set_edge_font_family(
-        &mut self,
-        edge_ref: &EdgeRef,
-        family: Option<&str>,
-    ) -> bool {
+    pub fn set_edge_font_family(&mut self, edge_ref: &EdgeRef, family: Option<&str>) -> bool {
         let idx = match self.mindmap.edges.iter().position(|e| edge_ref.matches(e)) {
             Some(i) => i,
             None => return false,
@@ -366,10 +345,7 @@ impl MindMapDocument {
             return false;
         }
         let before = self.mindmap.edges[idx].clone();
-        let cfg = Self::ensure_glyph_connection(
-            &mut self.mindmap.edges[idx],
-            &self.mindmap.canvas,
-        );
+        let cfg = Self::ensure_glyph_connection(&mut self.mindmap.edges[idx], &self.mindmap.canvas);
         cfg.font = target.map(|s| s.to_string());
         self.undo_stack.push(UndoAction::EditEdge { index: idx, before });
         self.dirty = true;
@@ -528,8 +504,7 @@ impl MindMapDocument {
         // to keep `clamp` panic-safe here and downstream.
         let (existing_text_min, existing_text_max) = {
             let edge = &self.mindmap.edges[idx];
-            let state =
-                baumhard::mindmap::model::portal_endpoint_state(edge, endpoint_node_id);
+            let state = baumhard::mindmap::model::portal_endpoint_state(edge, endpoint_node_id);
             (
                 state.and_then(|s| s.text_min_font_size_pt),
                 state.and_then(|s| s.text_max_font_size_pt),
@@ -547,10 +522,7 @@ impl MindMapDocument {
             return false;
         }
         let before = self.mindmap.edges[idx].clone();
-        let slot = match portal_endpoint_state_mut(
-            &mut self.mindmap.edges[idx],
-            endpoint_node_id,
-        ) {
+        let slot = match portal_endpoint_state_mut(&mut self.mindmap.edges[idx], endpoint_node_id) {
             Some(s) => s,
             None => return false,
         };
@@ -598,10 +570,7 @@ impl MindMapDocument {
         // `forked_default`.
         if forked_default {
             let edge = &mut self.mindmap.edges[idx];
-            let post_state = baumhard::mindmap::model::portal_endpoint_state(
-                edge,
-                endpoint_node_id,
-            );
+            let post_state = baumhard::mindmap::model::portal_endpoint_state(edge, endpoint_node_id);
             if post_state.map_or(false, |s| s == &PortalEndpointState::default()) {
                 if endpoint_node_id == edge.from_id {
                     edge.portal_from = None;

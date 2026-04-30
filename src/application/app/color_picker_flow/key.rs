@@ -14,8 +14,7 @@ use crate::application::renderer::Renderer;
 
 use super::super::throttled_interaction::ColorPickerHoverInteraction;
 use super::commit::{
-    apply_picker_preview, cancel_color_picker, commit_color_picker,
-    commit_color_picker_to_selection,
+    apply_picker_preview, cancel_color_picker, commit_color_picker, commit_color_picker_to_selection,
 };
 
 /// Route a keystroke to the picker via `action_for_context`. Returns
@@ -41,9 +40,7 @@ pub(in crate::application::app) fn handle_color_picker_key(
         None => return false,
     };
 
-    let action = keybinds.action_for_context(
-        InputContext::ColorPicker, name, ctrl, shift, alt,
-    );
+    let action = keybinds.action_for_context(InputContext::ColorPicker, name, ctrl, shift, alt);
 
     match action {
         Some(Action::Copy) => {
@@ -75,44 +72,30 @@ pub(in crate::application::app) fn handle_color_picker_key(
         }
         Some(Action::PickerCommit) => {
             if state.is_standalone() {
-                commit_color_picker_to_selection(
-                    state, doc, mindmap_tree, app_scene, renderer, scene_cache,
-                );
+                commit_color_picker_to_selection(state, doc, mindmap_tree, app_scene, renderer, scene_cache);
             } else {
                 commit_color_picker(state, doc, mindmap_tree, app_scene, renderer, scene_cache);
             }
             true
         }
-        Some(Action::PickerNudgeHueDown) => {
-            nudge_picker(state, doc, picker_hover, |h, _, _| {
-                *h = (*h - 15.0).rem_euclid(360.0);
-            })
-        }
-        Some(Action::PickerNudgeHueUp) => {
-            nudge_picker(state, doc, picker_hover, |h, _, _| {
-                *h = (*h + 15.0).rem_euclid(360.0);
-            })
-        }
-        Some(Action::PickerNudgeSatDown) => {
-            nudge_picker(state, doc, picker_hover, |_, s, _| {
-                *s = (*s - 0.1).clamp(0.0, 1.0);
-            })
-        }
-        Some(Action::PickerNudgeSatUp) => {
-            nudge_picker(state, doc, picker_hover, |_, s, _| {
-                *s = (*s + 0.1).clamp(0.0, 1.0);
-            })
-        }
-        Some(Action::PickerNudgeValDown) => {
-            nudge_picker(state, doc, picker_hover, |_, _, v| {
-                *v = (*v - 0.1).clamp(0.0, 1.0);
-            })
-        }
-        Some(Action::PickerNudgeValUp) => {
-            nudge_picker(state, doc, picker_hover, |_, _, v| {
-                *v = (*v + 0.1).clamp(0.0, 1.0);
-            })
-        }
+        Some(Action::PickerNudgeHueDown) => nudge_picker(state, doc, picker_hover, |h, _, _| {
+            *h = (*h - 15.0).rem_euclid(360.0);
+        }),
+        Some(Action::PickerNudgeHueUp) => nudge_picker(state, doc, picker_hover, |h, _, _| {
+            *h = (*h + 15.0).rem_euclid(360.0);
+        }),
+        Some(Action::PickerNudgeSatDown) => nudge_picker(state, doc, picker_hover, |_, s, _| {
+            *s = (*s - 0.1).clamp(0.0, 1.0);
+        }),
+        Some(Action::PickerNudgeSatUp) => nudge_picker(state, doc, picker_hover, |_, s, _| {
+            *s = (*s + 0.1).clamp(0.0, 1.0);
+        }),
+        Some(Action::PickerNudgeValDown) => nudge_picker(state, doc, picker_hover, |_, _, v| {
+            *v = (*v - 0.1).clamp(0.0, 1.0);
+        }),
+        Some(Action::PickerNudgeValUp) => nudge_picker(state, doc, picker_hover, |_, _, v| {
+            *v = (*v + 0.1).clamp(0.0, 1.0);
+        }),
         Some(_) => {
             // A Document-level action fell through — let the event
             // loop handle it via normal dispatch.
@@ -128,7 +111,14 @@ fn nudge_picker(
     picker_hover: &mut ColorPickerHoverInteraction,
     f: impl FnOnce(&mut f32, &mut f32, &mut f32),
 ) -> bool {
-    if let ColorPickerState::Open { hue_deg, sat, val, hover_preview, .. } = state {
+    if let ColorPickerState::Open {
+        hue_deg,
+        sat,
+        val,
+        hover_preview,
+        ..
+    } = state
+    {
         f(hue_deg, sat, val);
         *hover_preview = None;
         apply_picker_preview(state, doc, picker_hover);

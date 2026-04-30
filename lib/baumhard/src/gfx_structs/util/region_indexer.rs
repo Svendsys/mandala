@@ -89,10 +89,7 @@ impl RegionIndexer {
             if !self.reverse_index.contains_key(&element_id) {
                 self.reverse_index.insert(element_id, BTreeSet::new());
             }
-            self.reverse_index
-                .get_mut(&element_id)
-                .unwrap()
-                .insert(region);
+            self.reverse_index.get_mut(&element_id).unwrap().insert(region);
         }
     }
 
@@ -103,10 +100,7 @@ impl RegionIndexer {
         self.index[region].remove(&element_id);
         if self.use_reverse_index {
             if self.reverse_index.contains_key(&element_id) {
-                self.reverse_index
-                    .get_mut(&element_id)
-                    .unwrap()
-                    .remove(&region);
+                self.reverse_index.get_mut(&element_id).unwrap().remove(&region);
             }
         }
     }
@@ -141,10 +135,7 @@ impl RegionIndexer {
     /// `&mut self` signature (kept for API compatibility with older
     /// callers).
     pub fn get_reverse_index_for_element(&mut self, element_id: usize) -> BTreeSet<usize> {
-        self.reverse_index
-            .get(&element_id)
-            .cloned()
-            .unwrap_or_default()
+        self.reverse_index.get(&element_id).cloned().unwrap_or_default()
     }
 }
 

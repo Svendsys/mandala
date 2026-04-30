@@ -22,7 +22,6 @@ use super::console_geometry::{
 };
 use super::measure_max_glyph_advance;
 
-
 // =============================================================
 // Stable channel scheme for the console overlay tree
 // =============================================================
@@ -79,8 +78,7 @@ pub(super) fn console_overlay_areas(
 ) -> Vec<(usize, GlyphArea)> {
     use crate::application::console::visuals::{
         ACCENT_COLOR, BORDER_COLOR, CURSOR_GLYPH, ERROR_COLOR, GUTTER_GLYPH, INPUT_ECHO_COLOR,
-        SCROLLBACK_MIN_ALPHA, SELECTED_COMPLETION_MARKER, TEXT_COLOR,
-        UNSELECTED_COMPLETION_MARKER,
+        SCROLLBACK_MIN_ALPHA, SELECTED_COMPLETION_MARKER, TEXT_COLOR, UNSELECTED_COMPLETION_MARKER,
     };
 
     let &ConsoleFrameLayout {
@@ -131,12 +129,10 @@ pub(super) fn console_overlay_areas(
         area
     };
 
-    let measured_char_width =
-        measure_max_glyph_advance(font_system, &["\u{2500}", "\u{2502}"], font_size);
+    let measured_char_width = measure_max_glyph_advance(font_system, &["\u{2500}", "\u{2502}"], font_size);
     let cols = ((frame_width / measured_char_width).floor() as usize).max(2);
     let side_rows = side_row_count(frame_height, font_size, row_height);
-    let (top_border, bottom_border, left_col, right_col) =
-        build_console_border_strings(cols, side_rows);
+    let (top_border, bottom_border, left_col, right_col) = build_console_border_strings(cols, side_rows);
 
     let mut out: Vec<(usize, GlyphArea)> = Vec::new();
 
@@ -254,10 +250,7 @@ pub(super) fn console_overlay_areas(
                     GUTTER_GLYPH,
                 ),
             };
-            let clipped = baumhard::util::grapheme_chad::truncate_to_display_width(
-                &line.text,
-                content_cols,
-            );
+            let clipped = baumhard::util::grapheme_chad::truncate_to_display_width(&line.text, content_cols);
             let gutter = if gutter_glyph == " " {
                 String::new()
             } else {
@@ -322,10 +315,7 @@ pub(super) fn console_overlay_areas(
                 Some(hint) => format!("{prefix}{}    {}", c.text, hint),
                 None => format!("{prefix}{}", c.text),
             };
-            let clipped = baumhard::util::grapheme_chad::truncate_to_display_width(
-                &line,
-                content_cols,
-            );
+            let clipped = baumhard::util::grapheme_chad::truncate_to_display_width(&line, content_cols);
             (clipped.to_string(), color)
         };
         out.push((
@@ -348,11 +338,9 @@ pub(super) fn console_overlay_areas(
     // advance.
     let prompt_budget = font_size * 1.4;
     let y = layout.prompt_y();
-    let cursor_byte = baumhard::util::grapheme_chad::find_byte_index_of_grapheme(
-        &geometry.input,
-        geometry.cursor_grapheme,
-    )
-    .unwrap_or(geometry.input.len());
+    let cursor_byte =
+        baumhard::util::grapheme_chad::find_byte_index_of_grapheme(&geometry.input, geometry.cursor_grapheme)
+            .unwrap_or(geometry.input.len());
     let (pre, post) = geometry.input.split_at(cursor_byte);
     let input_with_cursor = format!("{pre}{CURSOR_GLYPH}{post}");
     let input_clipped = baumhard::util::grapheme_chad::truncate_to_display_width(
@@ -362,8 +350,7 @@ pub(super) fn console_overlay_areas(
     let prompt_text = "\u{276F} ";
     let combined = format!("{prompt_text}{input_clipped}");
     let prompt_chars = baumhard::util::grapheme_chad::count_grapheme_clusters(prompt_text);
-    let input_chars =
-        baumhard::util::grapheme_chad::count_grapheme_clusters(&input_clipped);
+    let input_chars = baumhard::util::grapheme_chad::count_grapheme_clusters(&input_clipped);
 
     let mut prompt_area = GlyphArea::new_with_str(
         &combined,

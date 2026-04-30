@@ -46,8 +46,14 @@ fn layout_scales_with_user_size_scale() {
     let (_, _, bw_b, _) = baseline.backdrop;
     let (_, _, bw_g, _) = grown.backdrop;
     let (_, _, bw_s, _) = shrunk.backdrop;
-    assert!(bw_g > bw_b, "size_scale=1.5 backdrop {bw_g} not larger than baseline {bw_b}");
-    assert!(bw_s < bw_b, "size_scale=0.7 backdrop {bw_s} not smaller than baseline {bw_b}");
+    assert!(
+        bw_g > bw_b,
+        "size_scale=1.5 backdrop {bw_g} not larger than baseline {bw_b}"
+    );
+    assert!(
+        bw_s < bw_b,
+        "size_scale=0.7 backdrop {bw_s} not smaller than baseline {bw_b}"
+    );
     assert!(grown.font_size > baseline.font_size);
     assert!(shrunk.font_size < baseline.font_size);
 }

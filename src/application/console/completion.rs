@@ -85,11 +85,7 @@ pub fn complete(input: &str, cursor: usize, ctx: &ConsoleContext) -> Vec<Complet
     let tokens = tokenize(prefix);
     // If the prefix ends on whitespace (or is empty), the user is
     // starting a fresh token — cursor_token is `tokens.len()`.
-    let at_word_boundary = prefix
-        .chars()
-        .last()
-        .map(|c| c.is_whitespace())
-        .unwrap_or(true);
+    let at_word_boundary = prefix.chars().last().map(|c| c.is_whitespace()).unwrap_or(true);
     let cursor_token = if at_word_boundary {
         tokens.len()
     } else {
@@ -116,10 +112,7 @@ pub fn complete(input: &str, cursor: usize, ctx: &ConsoleContext) -> Vec<Complet
         (CompletionContext::CommandName, raw_partial)
     } else {
         match split_kv_at_cursor(&raw_partial) {
-            Some((key, value_partial)) => (
-                CompletionContext::KvValue { key },
-                value_partial,
-            ),
+            Some((key, value_partial)) => (CompletionContext::KvValue { key }, value_partial),
             None => {
                 // Count positionals before `cursor_token`. A token
                 // is kv-form iff it contains `=` and doesn't start
@@ -249,11 +242,7 @@ mod tests {
         let cursor = input.len();
         let prefix = &input[..cursor];
         let tokens = tokenize(prefix);
-        let at_word_boundary = prefix
-            .chars()
-            .last()
-            .map(|c| c.is_whitespace())
-            .unwrap_or(true);
+        let at_word_boundary = prefix.chars().last().map(|c| c.is_whitespace()).unwrap_or(true);
         let cursor_token = if at_word_boundary {
             tokens.len()
         } else {
