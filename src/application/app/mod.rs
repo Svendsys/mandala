@@ -1,5 +1,39 @@
 // SPDX-License-Identifier: MPL-2.0
 
+//! Application shell: winit event loop, modal state machines,
+//! and the dispatch funnel that ties them together. [`Application`]
+//! is the binary entry point's root; [`Application::run`]
+//! transfers control to the per-target run loop
+//! ([`run_native`] / [`run_wasm`]) which builds the appropriate
+//! `ApplicationHandler` and hands it to winit.
+//!
+//! **Dispatch funnel.** Every user-driven action — keyboard,
+//! mouse-click, console verb, macro replay — flows through
+//! [`dispatch::dispatch_action`] (CODE_CONVENTIONS §3). Per-event
+//! handlers (in `event_keyboard`, `event_mouse_click`,
+//! `event_cursor_moved` on native; the per-arm methods of
+//! [`run_wasm::WasmApp`] on WASM) recognise an input gesture,
+//! resolve it to an [`crate::application::keybinds::Action`],
+//! and call into the funnel. Adding a new behaviour is variant
+//! + default + arm, in that order; never inline a body in a
+//! handler.
+//!
+//! **Modal state machines.** `text_edit`, `label_edit`,
+//! `portal_text_edit`, `console_input`, and `color_picker_flow`
+//! steal keyboard input when open (the §3 carve-out for modals
+//! that own the literal `winit::Key` payload). Mouse handlers
+//! continue to run; modal commit / cancel routes through
+//! `Action::TextEditCommit` / `LabelEditCancel` etc.
+//!
+//! **Cross-platform shape.** Pure logic (gesture recognition,
+//! viewport math, hit testing, `Action` resolution) lives in
+//! `cfg`-untagged free functions so it compiles for both
+//! native and WASM. The native vs. WASM divergence is largely
+//! confined to the run-loop entry point; cross-platform
+//! `Action` arms route through [`dispatch::action_core`]'s
+//! `dispatch_compatible`. See `WASM_CONVERGENCE.md` for the
+//! current convergence status.
+
 mod scene_rebuild;
 mod text_edit;
 
@@ -449,7 +483,20 @@ enum DragState {
     Throttled(ThrottledDrag),
 }
 
-/// Application root: winit window + event loop, launches the rendering pipeline.
+/// Application root — owns the launch options and (on WASM
+/// only) the pre-created winit `EventLoop` + canvas `Window`.
+/// Constructed from `main.rs` via [`Application::new`]; control
+/// transfers to winit on [`Application::run`].
+///
+/// **Why the cfg-split.** Native creates the window inside winit's
+/// `ApplicationHandler::resumed` callback (the modern winit 0.30
+/// path). WASM has to attach the canvas to the DOM before the
+/// browser's main thread starts dispatching events, so it
+/// pre-creates the window and the event loop in [`Application::new`]
+/// and hands them to [`run_wasm::run`] together. The `#[allow(deprecated)]`
+/// on the WASM constructor's `event_loop.create_window(...)` call
+/// records this asymmetry — ditto the `event_loop` field, which
+/// only exists on the WASM side.
 #[cfg(target_arch = "wasm32")]
 pub struct Application {
     options: Options,
@@ -506,17 +553,45 @@ impl Application {
     }
 }
 
-/// Launch options for the application.
+/// Launch options assembled by `main.rs` from CLI flags + env
+/// detection, frozen into [`Application`] at startup. Read once
+/// per launch; never mutated post-construction.
 #[derive(Clone)]
 pub struct Options {
+    /// Hint to wgpu's adapter selection: prefer integrated /
+    /// low-power GPUs over discrete ones. Useful on laptops
+    /// where the discrete GPU would burn battery for a render
+    /// load Mandala can run on the iGPU.
     pub launch_gpu_prefer_low_power: bool,
+    /// `true` to short-circuit the event loop after the first
+    /// frame — used by smoke-tests / CI captures that just need
+    /// to verify a single render pass succeeds. The interactive
+    /// run never sets this.
     pub should_exit: bool,
+    /// Window startup mode (windowed / fullscreen / maximised);
+    /// see [`WindowMode`].
     pub window_mode: WindowMode,
+    /// User-config UI-scale offset. The renderer scales every
+    /// glyph by `1.0 + ui_scale * UI_SCALE_STEP`; `0` is the
+    /// neutral default. Negative shrinks, positive grows.
     pub ui_scale: i8,
+    /// Static title bar text. `&'static` because it's set at
+    /// compile time and never user-edited.
     pub window_title_text: &'static str,
+    /// Input dispatch mode (direct vs. instruction-mapped).
+    /// See [`InputMode`].
     pub input_mode: InputMode,
+    /// CPU core count detected at startup. Reserved for future
+    /// thread-pool sizing; today the app is single-threaded so
+    /// this is informational only.
     pub avail_cores: usize,
+    /// `true` when wgpu requires the renderer to live on the
+    /// main thread (the macOS / wasm constraint). Set by
+    /// platform detection in `main.rs`.
     pub render_must_be_main: bool,
+    /// Path to the `.mindmap.json` file to load at startup.
+    /// Native: filesystem path; WASM: a fetch-relative URL
+    /// resolved against the page origin.
     pub mindmap_path: String,
     /// The user's keybinding configuration (already loaded from file or
     /// defaults). The event loop resolves this into a `ResolvedKeybinds`

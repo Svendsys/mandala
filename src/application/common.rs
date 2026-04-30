@@ -1,10 +1,23 @@
 // SPDX-License-Identifier: MPL-2.0
 
+//! Small cross-cutting types shared between the event loop, the
+//! renderer, and console verbs. Each type below carries its own
+//! invariant; together they form the "configuration" surface the
+//! event loop reads on every frame.
+
 use std::time::Duration;
 // `web_time` maps to `performance.now()` on wasm32; without this swap
 // `Instant::now()` panics with "time not implemented on this platform".
 use web_time::Instant;
 
+/// How aggressively the event loop schedules redraws.
+///
+/// - `OnRequest` — only when an `Action` or input event explicitly
+///   requests a redraw. Saves battery when the canvas is idle.
+/// - `FpsLimit(n)` — at most `n` frames per second. The current
+///   default; matches typical display refresh rates.
+/// - `NoLimit` — render every loop iteration. Used for benchmark
+///   captures and animation soak tests; not a user-facing default.
 #[derive(Copy, Clone, Eq, Hash, PartialEq)]
 pub enum RedrawMode {
     OnRequest,

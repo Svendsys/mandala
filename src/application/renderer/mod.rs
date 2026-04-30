@@ -1,5 +1,40 @@
 // SPDX-License-Identifier: MPL-2.0
 
+//! GPU-side presentation: every wgpu device, every cosmic-text
+//! rasterization, every text/rect/border buffer Mandala paints
+//! lives under [`Renderer`]. `Renderer` reads two intermediate
+//! representations the document layer hands it
+//! (`Tree<GfxElement, GfxMutator>` for canvas content,
+//! `Scene` for connection / portal / label overlays); it never
+//! reaches into the document directly, and the document never
+//! holds GPU resources (CODE_CONVENTIONS §3 "Model / view
+//! separation").
+//!
+//! The submodule split corresponds to wgpu pipeline boundaries:
+//!
+//! - [`pipeline`] — the small `RenderPipeline` factory shared
+//!   across every text + rect pass.
+//! - [`render`] — the per-frame `RenderPass` driver
+//!   (`Renderer::process`); composes the buffer layers in
+//!   draw order.
+//! - [`tree_buffers`] / [`tree_walker`] — `GfxElement` tree
+//!   → text-buffer + rect-buffer projection. The tree walker
+//!   is where the bulk of canvas-content shaping happens.
+//! - [`scene_buffers`] — connection paths, edge handles,
+//!   portal markers, edge labels. Scene-graph projection.
+//! - [`borders`] — node-frame buffers (the box-drawing
+//!   glyph runs around each node).
+//! - [`console_pass`] / [`console_geometry`] — the console
+//!   overlay's glyph-tree pass + pure-function layout math.
+//! - [`color_picker`] — the glyph-wheel picker overlay.
+//! - [`hit`] — screen-space → canvas-space hit math
+//!   (`screen_to_canvas`, `canvas_to_screen`, AABB resolution).
+//! - [`decree`] — the `RenderDecree` queue the event loop
+//!   feeds the renderer (resize, zoom, camera-pan, etc.).
+//! - [`overlay_dispatch`] — overlay-vs-canvas slot routing
+//!   for the [`crate::application::scene_host::AppScene`]
+//!   tree handles.
+
 mod borders;
 mod color_picker;
 mod console_geometry;
