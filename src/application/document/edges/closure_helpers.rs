@@ -80,3 +80,52 @@ pub(super) fn write_endpoint_field<T, S>(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `write_endpoint_field` scrubs the slot back to `None` when
+    /// a `None` write would leave the state entirely default —
+    /// the "no undo droppings on unchanged selections" contract.
+    #[test]
+    fn write_endpoint_field_scrubs_default_state_on_clear() {
+        let mut slot: Option<PortalEndpointState> = Some(PortalEndpointState {
+            color: Some("#ff0000".to_string()),
+            ..Default::default()
+        });
+        write_endpoint_field(&mut slot, None::<String>, |s, v| s.color = v);
+        assert!(slot.is_none(), "scrub did not collapse to None");
+    }
+
+    /// When the slot has *other* fields set, scrubbing one field
+    /// to `None` keeps the slot alive — only the all-default
+    /// state collapses.
+    #[test]
+    fn write_endpoint_field_keeps_slot_when_other_fields_remain() {
+        let mut slot: Option<PortalEndpointState> = Some(PortalEndpointState {
+            color: Some("#ff0000".to_string()),
+            text: Some("annotation".to_string()),
+            ..Default::default()
+        });
+        write_endpoint_field(&mut slot, None::<String>, |s, v| s.color = v);
+        assert!(slot.is_some(), "slot scrubbed despite remaining fields");
+        let s = slot.unwrap();
+        assert!(s.color.is_none());
+        assert_eq!(s.text.as_deref(), Some("annotation"));
+    }
+
+    /// Writing `Some(value)` lazily forks a default slot when
+    /// none was set yet — the sibling "lazy install" contract.
+    #[test]
+    fn write_endpoint_field_lazily_forks_default_slot() {
+        let mut slot: Option<PortalEndpointState> = None;
+        write_endpoint_field(
+            &mut slot,
+            Some("#abcdef".to_string()),
+            |s, v| s.color = v,
+        );
+        assert!(slot.is_some());
+        assert_eq!(slot.unwrap().color.as_deref(), Some("#abcdef"));
+    }
+}

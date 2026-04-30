@@ -15,19 +15,20 @@
 //! - [`mode`]: edge type, display-mode, and style-reset toggles.
 //! - [`portal`]: portal-edge lifecycle and portal-label
 //!   mutations.
-//! - [`inline`]: free-fn helpers (`ensure_glyph_connection_inline`,
-//!   `option_f32_eps_eq`, `write_endpoint_field`, ...) reachable
-//!   from `mutate_edge` closures that can't capture `Self`. The
-//!   first style edit on a stock edge forks its
+//! - [`closure_helpers`]: free-fn helpers
+//!   (`ensure_glyph_connection_inline`, `write_endpoint_field`, ...)
+//!   reachable from `mutate_edge` closures that can't capture
+//!   `Self`. The first style edit on a stock edge forks its
 //!   `GlyphConnectionConfig` off the canvas defaults via
 //!   `ensure_glyph_connection_inline` here before writing to it.
+//!
+//! Tests live inline under each axis's own file (per
+//! `TEST_CONVENTIONS.md §T2.1`); the shared helpers' tests are in
+//! `structural.rs` and `closure_helpers.rs`.
 
-mod inline;
+mod closure_helpers;
 mod label;
 mod mode;
 mod portal;
 mod structural;
 mod style;
-
-#[cfg(test)]
-mod tests;

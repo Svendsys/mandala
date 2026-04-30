@@ -10,7 +10,7 @@ use baumhard::mindmap::model::{
 use super::super::defaults::default_portal_edge;
 use super::super::types::EdgeRef;
 use super::super::MindMapDocument;
-use super::inline::write_endpoint_field;
+use super::closure_helpers::write_endpoint_field;
 
 impl MindMapDocument {
     /// Create a new portal-mode edge between two nodes. Validation

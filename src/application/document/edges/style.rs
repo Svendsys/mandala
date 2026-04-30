@@ -10,7 +10,7 @@ use baumhard::mindmap::model::{
 use super::super::types::EdgeRef;
 use super::super::undo_action::UndoAction;
 use super::super::MindMapDocument;
-use super::inline::{
+use super::closure_helpers::{
     ensure_glyph_connection_inline, ensure_label_config_inline,
 };
 

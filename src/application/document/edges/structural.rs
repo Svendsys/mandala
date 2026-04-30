@@ -13,7 +13,7 @@ use baumhard::mindmap::scene_builder;
 use super::super::types::EdgeRef;
 use super::super::undo_action::UndoAction;
 use super::super::MindMapDocument;
-use super::inline::ensure_glyph_connection_inline;
+use super::closure_helpers::ensure_glyph_connection_inline;
 
 impl MindMapDocument {
     pub fn remove_edge(&mut self, edge_ref: &EdgeRef) -> Option<(usize, MindEdge)> {
@@ -435,5 +435,146 @@ impl MindMapDocument {
                 .push(UndoAction::EditEdge { index: idx, before: original });
             self.dirty = true;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Tests for the shared internal helpers `mutate_edge` and
+    //! `commit_throttled_edge_drag`. Free-fn helpers
+    //! (`ensure_glyph_connection_inline` etc.) are tested in
+    //! `closure_helpers.rs::tests` next to their definitions.
+    use super::*;
+    use crate::application::document::tests_common::doc_with_one_edge as doc_with_edge;
+    use super::super::closure_helpers::ensure_glyph_connection_inline;
+
+    /// `mutate_edge` returning `false` from the closure rolls
+    /// back any in-place fork via `ensure_glyph_connection_inline`
+    /// — the live model returns to the pre-closure state, no
+    /// `EditEdge` undo entry is pushed, and `dirty` stays where
+    /// it was. Critical for the no-op contract every per-field
+    /// setter (`set_edge_color`, `set_edge_cap_start`, ...) routes
+    /// through.
+    #[test]
+    fn mutate_edge_rolls_back_fork_on_false_return() {
+        let (mut doc, er) = doc_with_edge();
+        // Pre-condition: this edge has no glyph_connection.
+        assert!(doc.mindmap.edges[0].glyph_connection.is_none());
+        doc.dirty = false;
+
+        let returned = doc.mutate_edge(&er, |edge, canvas| {
+            // Force a fork — but then return false.
+            let _cfg = ensure_glyph_connection_inline(edge, canvas);
+            false
+        });
+
+        assert!(!returned);
+        // Fork must have rolled back.
+        assert!(
+            doc.mindmap.edges[0].glyph_connection.is_none(),
+            "the fork survived a false-return rollback"
+        );
+        assert!(doc.undo_stack.is_empty(), "no undo entry on false-return");
+        assert!(!doc.dirty, "dirty stays unset on false-return");
+    }
+
+    /// On a `true` return, `mutate_edge` pushes one `EditEdge`
+    /// undo entry carrying the *pre-fork* state, sets `dirty`,
+    /// and leaves the closure's mutations in place. Locks the
+    /// other half of the contract.
+    #[test]
+    fn mutate_edge_pushes_undo_with_pre_fork_state_on_true() {
+        let (mut doc, er) = doc_with_edge();
+        assert!(doc.mindmap.edges[0].glyph_connection.is_none());
+        doc.dirty = false;
+
+        let returned = doc.mutate_edge(&er, |edge, canvas| {
+            ensure_glyph_connection_inline(edge, canvas).body =
+                "X".to_string();
+            true
+        });
+
+        assert!(returned);
+        assert_eq!(
+            doc.mindmap.edges[0].glyph_connection.as_ref().unwrap().body,
+            "X"
+        );
+        assert!(doc.dirty);
+        assert_eq!(doc.undo_stack.len(), 1);
+        match &doc.undo_stack[0] {
+            UndoAction::EditEdge { before, .. } => {
+                assert!(
+                    before.glyph_connection.is_none(),
+                    "undo snapshot must carry the pre-fork None"
+                );
+            }
+            other => panic!("expected EditEdge, got {:?}", other),
+        }
+    }
+
+    /// `commit_throttled_edge_drag` with a `|_, _| true`
+    /// predicate (the EdgeHandle release path) pushes one
+    /// `EditEdge` undo entry carrying the supplied `original`
+    /// snapshot, regardless of whether the live edge changed.
+    /// The drag-threshold contract (every reaching release is
+    /// post-mutation, so always commit).
+    #[test]
+    fn commit_throttled_edge_drag_always_commits_on_true_predicate() {
+        let (mut doc, er) = doc_with_edge();
+        doc.dirty = false;
+        let original = doc.mindmap.edges[0].clone();
+        doc.commit_throttled_edge_drag(&er, original, |_, _| true);
+        assert!(doc.dirty, "true-predicate must mark dirty");
+        assert_eq!(doc.undo_stack.len(), 1);
+        assert!(matches!(
+            &doc.undo_stack[0],
+            UndoAction::EditEdge { .. }
+        ));
+    }
+
+    /// A `false` predicate skips the undo push and dirty flag
+    /// — the per-frame paths' "no field changed" no-op.
+    #[test]
+    fn commit_throttled_edge_drag_skips_on_false_predicate() {
+        let (mut doc, er) = doc_with_edge();
+        doc.dirty = false;
+        let original = doc.mindmap.edges[0].clone();
+        doc.commit_throttled_edge_drag(&er, original, |_, _| false);
+        assert!(!doc.dirty);
+        assert!(doc.undo_stack.is_empty());
+    }
+
+    /// Predicate runs against the *current* edge state (may
+    /// differ from `original`). Verifies the closure receives
+    /// the live edge as its first arg and the snapshot as the
+    /// second.
+    #[test]
+    fn commit_throttled_edge_drag_predicate_sees_current_and_original() {
+        let (mut doc, er) = doc_with_edge();
+        let original = doc.mindmap.edges[0].clone();
+        // Mutate the live edge's color so current != original.
+        doc.mindmap.edges[0].color = "#abcdef".to_string();
+        let mut saw_current_color: Option<String> = None;
+        let mut saw_original_color: Option<String> = None;
+        doc.commit_throttled_edge_drag(&er, original, |current, original| {
+            saw_current_color = Some(current.color.clone());
+            saw_original_color = Some(original.color.clone());
+            true
+        });
+        assert_eq!(saw_current_color.as_deref(), Some("#abcdef"));
+        assert_ne!(saw_current_color, saw_original_color);
+    }
+
+    /// No-op when the edge_ref doesn't resolve — the snapshot
+    /// can outlive the edge if a concurrent delete fires.
+    #[test]
+    fn commit_throttled_edge_drag_noop_when_edge_missing() {
+        let (mut doc, _er) = doc_with_edge();
+        let stale_er = EdgeRef::new("nope-from", "nope-to", "cross_link");
+        let original = doc.mindmap.edges[0].clone();
+        doc.dirty = false;
+        doc.commit_throttled_edge_drag(&stale_er, original, |_, _| true);
+        assert!(!doc.dirty);
+        assert!(doc.undo_stack.is_empty());
     }
 }

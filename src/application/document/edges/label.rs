@@ -10,7 +10,7 @@ use baumhard::mindmap::model::{
 
 use super::super::types::EdgeRef;
 use super::super::MindMapDocument;
-use super::inline::ensure_label_config_inline;
+use super::closure_helpers::ensure_label_config_inline;
 
 impl MindMapDocument {
     /// Set the label text on an edge. Passing `None` (or `Some("")`)
