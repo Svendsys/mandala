@@ -18,8 +18,6 @@
 
 use super::*;
 
-use super::*;
-
 #[test]
 fn macro_registry_insert_and_get() {
     let mut reg = MacroRegistry::new();
