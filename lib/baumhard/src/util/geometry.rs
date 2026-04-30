@@ -39,6 +39,22 @@ pub fn is_positive_finite(f: f32) -> bool {
    f.is_finite() && f > 0.0
 }
 
+/// `true` iff `f` is a non-NaN, non-infinite, non-negative
+/// `f64`. The canonical predicate for "is this a coordinate /
+/// size safe to feed into layout math?" — rejects `NaN`,
+/// `±∞`, and negative numbers, but allows zero (a zero-width
+/// node or zero-coord position is a valid layout input).
+///
+/// Used by `document::mutations::*` layout helpers that walk
+/// `MindNode.size` / `position` (both `f64`) before applying
+/// derived math; a non-finite or negative coord fed into
+/// trigonometry produces NaN that propagates into every
+/// downstream row, so the safe-coord check stops the cascade
+/// at the source. Cost: O(1).
+pub fn is_non_negative_finite_f64(f: f64) -> bool {
+   f.is_finite() && f >= 0.0
+}
+
 /// Logical inverse of [`almost_equal`]. Named "pretty" because it
 /// treats within-epsilon pairs as equal rather than fighting with raw
 /// `!=` comparisons at float boundaries.

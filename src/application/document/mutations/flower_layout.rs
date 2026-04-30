@@ -9,6 +9,8 @@
 
 use log::debug;
 
+use baumhard::util::geometry::is_non_negative_finite_f64 as is_safe_coord;
+
 use super::MindMapDocument;
 
 /// Padding added to the computed radius so children don't kiss the
@@ -18,15 +20,6 @@ const RADIAL_PADDING: f64 = 40.0;
 /// quarter turn so the first child lands at the top of the circle,
 /// matching the convention in mind-mapping tools.
 const START_ANGLE: f64 = -std::f64::consts::FRAC_PI_2;
-
-/// `true` iff `f` is finite and not negative. Used to gate the
-/// layout geometry: a non-finite or negative size / position on any
-/// participating node would propagate as NaN / Infinity into every
-/// computed position, silently corrupting the model. §7
-/// interactive-path posture: degrade the frame, log, keep running.
-fn is_safe_coord(f: f64) -> bool {
-    f.is_finite() && f >= 0.0
-}
 
 pub fn apply(doc: &mut MindMapDocument, target_id: &str) {
     let Some(target) = doc.mindmap.nodes.get(target_id).cloned() else {

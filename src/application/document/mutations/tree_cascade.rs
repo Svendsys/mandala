@@ -11,18 +11,12 @@ use std::collections::VecDeque;
 
 use log::debug;
 
+use baumhard::util::geometry::is_non_negative_finite_f64 as is_safe_coord;
+
 use super::MindMapDocument;
 
 const ROW_GAP: f64 = 80.0;
 const SIBLING_GAP: f64 = 40.0;
-
-/// `true` iff `f` is finite and not negative. Guards the layout
-/// against NaN / Infinity / negative sizes propagating into every
-/// downstream row — see `flower_layout::is_safe_coord` for the
-/// same rationale.
-fn is_safe_coord(f: f64) -> bool {
-    f.is_finite() && f >= 0.0
-}
 
 pub fn apply(doc: &mut MindMapDocument, target_id: &str) {
     // BFS queue, seeded with the anchor. MindMap's single-parent

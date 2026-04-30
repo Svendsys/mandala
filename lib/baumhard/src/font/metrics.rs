@@ -9,7 +9,7 @@
 //! font-face calibration update lands in one place.
 //!
 //! Real glyph measurement (per-face advance, ink bounds) lives in
-//! [`super::fonts`] via `measure_glyph_ink_bounds`; reach for
+//! `super::fonts` via `measure_glyph_ink_bounds`; reach for
 //! those when a `FontSystem` is in scope. The helper here is the
 //! coarse estimate used when one isn't.
 

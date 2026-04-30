@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use crate::util::geometry::{almost_equal, almost_equal_vec2, clockwise_rotation_around_pivot,
-                            is_positive_finite, option_almost_equal, pixel_greater_or_equal,
-                            pixel_greater_than, pixel_less_or_equal, pixel_lesser_than};
+                            is_non_negative_finite_f64, is_positive_finite, option_almost_equal,
+                            pixel_greater_or_equal, pixel_greater_than, pixel_less_or_equal,
+                            pixel_lesser_than};
 use glam::Vec2;
 
 #[test]
@@ -190,4 +191,26 @@ pub fn do_is_positive_finite() {
     assert!(!is_positive_finite(f32::NAN));
     assert!(!is_positive_finite(f32::INFINITY));
     assert!(!is_positive_finite(f32::NEG_INFINITY));
+}
+
+#[test]
+fn test_is_non_negative_finite_f64() {
+    do_is_non_negative_finite_f64();
+}
+
+pub fn do_is_non_negative_finite_f64() {
+    // Zero passes — the predicate is `>= 0.0`, distinct from
+    // `is_positive_finite`'s strict `> 0.0`.
+    assert!(is_non_negative_finite_f64(0.0));
+    assert!(is_non_negative_finite_f64(-0.0));
+    assert!(is_non_negative_finite_f64(0.000001));
+    assert!(is_non_negative_finite_f64(1.0));
+    assert!(is_non_negative_finite_f64(1e300));
+
+    // Negative + non-finite all reject.
+    assert!(!is_non_negative_finite_f64(-0.000001));
+    assert!(!is_non_negative_finite_f64(-1.0));
+    assert!(!is_non_negative_finite_f64(f64::NAN));
+    assert!(!is_non_negative_finite_f64(f64::INFINITY));
+    assert!(!is_non_negative_finite_f64(f64::NEG_INFINITY));
 }
