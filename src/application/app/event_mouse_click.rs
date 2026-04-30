@@ -113,36 +113,63 @@ pub(super) fn handle_mouse_input(
         MouseButton::Left => {
             // In reparent or connect mode, left-click (release) is consumed as
             // a "choose target" gesture and never transitions to Pending/drag.
+            // Hit-test inline so the dispatch arm receives a resolved target id;
+            // the arms read the source(s) from `ctx.app_mode` directly.
             if matches!(ctx.app_mode, AppMode::Reparent { .. }) {
                 if state == ElementState::Released {
-                    handle_reparent_target_click(
-                        cursor_pos_val,
-                        ctx.app_mode,
-                        ctx.hovered_node,
-                        ctx.document,
-                        ctx.mindmap_tree,
-                        ctx.app_scene,
-                        ctx.renderer,
-                        ctx.scene_cache,
+                    let target: Option<String> = ctx.mindmap_tree.as_mut().and_then(|tree| {
+                        let canvas_pos = ctx
+                            .renderer
+                            .screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
+                        crate::application::document::hit_test(canvas_pos, tree)
+                    });
+                    let _ = super::dispatch::dispatch_action(
+                        Action::ReparentToTarget(target),
+                        ctx,
+                        None,
                     );
                     // Mode-exit via target click — clear any stale
                     // click so the first post-mode click can't be
-                    // paired into a double-click.
+                    // paired into a double-click. Stays here per the
+                    // §3 carve-out: pre-funnel state-machine
+                    // bookkeeping, not user-named effect.
                     *ctx.last_click = None;
                 }
                 // Pressed: swallow — do not transition drag state
             } else if matches!(ctx.app_mode, AppMode::Connect { .. }) {
                 if state == ElementState::Released {
-                    handle_connect_target_click(
-                        cursor_pos_val,
-                        ctx.app_mode,
-                        ctx.hovered_node,
-                        ctx.document,
-                        ctx.mindmap_tree,
-                        ctx.app_scene,
-                        ctx.renderer,
-                        ctx.scene_cache,
-                    );
+                    let target: Option<String> = ctx.mindmap_tree.as_mut().and_then(|tree| {
+                        let canvas_pos = ctx
+                            .renderer
+                            .screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
+                        crate::application::document::hit_test(canvas_pos, tree)
+                    });
+                    // Empty-hit on Connect: still dispatch so the
+                    // mode exits + scene rebuilds. The arm body
+                    // skips the `create_cross_link_edge` call and
+                    // just runs the rebuild.
+                    if let Some(target_id) = target {
+                        let _ = super::dispatch::dispatch_action(
+                            Action::ConnectToTarget(target_id),
+                            ctx,
+                            None,
+                        );
+                    } else {
+                        // No target — exit mode without firing the
+                        // dispatch arm (mode-exit cleanup matches
+                        // the pre-funnel handler's empty-hit branch).
+                        *ctx.app_mode = AppMode::Normal;
+                        *ctx.hovered_node = None;
+                        if let Some(doc) = ctx.document.as_mut() {
+                            super::scene_rebuild::rebuild_all(
+                                doc,
+                                ctx.mindmap_tree,
+                                ctx.app_scene,
+                                ctx.renderer,
+                                ctx.scene_cache,
+                            );
+                        }
+                    }
                     *ctx.last_click = None;
                 }
                 // Pressed: swallow

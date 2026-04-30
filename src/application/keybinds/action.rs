@@ -44,6 +44,22 @@ pub enum Action {
     EnterReparentMode,
     /// Enter connect mode for the currently selected node.
     EnterConnectMode,
+    /// Confirm a reparent operation by clicking on a target node
+    /// (or empty canvas to promote sources to root). Sources come
+    /// from `AppMode::Reparent { sources }`; the payload carries
+    /// the target node id (`None` for empty-canvas → root).
+    /// NativeOnly: depends on `AppMode`, which doesn't exist on
+    /// WASM. Dispatched from `event_mouse_click.rs` while
+    /// `AppMode::Reparent` is active; macro tiers cannot fire this
+    /// directly because the gate is `AppMode != Normal`.
+    ReparentToTarget(Option<String>),
+    /// Confirm a connect operation by clicking on a target node.
+    /// Source comes from `AppMode::Connect { source }`; the
+    /// payload is the target node id. NativeOnly per the same
+    /// reasoning as `ReparentToTarget`. Empty-canvas clicks during
+    /// connect mode don't dispatch this — the click handler skips
+    /// when no target is hit.
+    ConnectToTarget(String),
     /// Delete the current selection (currently: selected edge).
     DeleteSelection,
     /// Cancel the current mode (reparent / connect).
@@ -412,6 +428,14 @@ impl Action {
             | Action::OrphanSelection
             | Action::CreateOrphanNode
             | Action::CreateOrphanNodeAndEdit
+            // Reparent/Connect target confirmation: tree topology
+            // mutations (subtree move; cross-link edge create) with
+            // hand-rolled `UndoAction` entries. The `EnterReparentMode`
+            // / `EnterConnectMode` siblings stay non-destructive
+            // (just app-mode toggles); the `*ToTarget` variants are
+            // the actual mutators.
+            | Action::ReparentToTarget(_)
+            | Action::ConnectToTarget(_)
             // Clipboard surface (Copy is read-only on the
             // document side, but reads private content into the
             // shared OS buffer — a surveillance vector for
@@ -624,6 +648,8 @@ impl Action {
             Action::Undo
             | Action::EnterReparentMode
             | Action::EnterConnectMode
+            | Action::ReparentToTarget(_)
+            | Action::ConnectToTarget(_)
             | Action::DeleteSelection
             | Action::CancelMode
             | Action::CreateOrphanNode
@@ -808,6 +834,8 @@ impl Action {
             // ── Native-only: AppMode (Reparent / Connect) ────
             Action::EnterReparentMode
             | Action::EnterConnectMode
+            | Action::ReparentToTarget(_)
+            | Action::ConnectToTarget(_)
             | Action::CancelMode => WasmCompatibility::NativeOnly,
 
             // ── Mixed-branch Actions — NativeOnly per the

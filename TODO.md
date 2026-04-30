@@ -81,10 +81,17 @@ Shipped on this branch:
   macro tiers per the privilege gate. `mutation apply <id>`
   stays console-only — already covered by
   `custom_mutation_bindings`.
-- **Reparent / Connect target-click handlers bypass the funnel.**
-  `event_mouse_click.rs` calls `handle_reparent_target_click` /
-  `handle_connect_target_click` directly. Both push undo entries
-  but aren't `Action` variants — they should be.
+- ~~**Reparent / Connect target-click handlers bypass the funnel.**~~
+  **Shipped.** `Action::ReparentToTarget(Option<String>)` and
+  `Action::ConnectToTarget(Option<String>)` route through the
+  dispatch funnel. Mouse handler in `event_mouse_click.rs`
+  hit-tests then dispatches; arm bodies in `dispatch.rs` extract
+  source(s) from `app_mode` via `mem::replace(.., AppMode::Normal)`
+  (atomic mode-exit), apply the mutation, push the undo entry,
+  rebuild. Both variants classify NativeOnly + destructive (model
+  mutation + undo); non-User macro tiers are denylisted via the
+  privilege gate. `handle_reparent_target_click` /
+  `handle_connect_target_click` deleted from `click.rs`.
 - ~~**Modal commit/cancel inline in modal handlers.**~~
   **Shipped.** All three modals (`text_edit`, `label_edit`,
   `portal_text_edit`) now route commit/cancel through
