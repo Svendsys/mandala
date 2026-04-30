@@ -676,10 +676,13 @@ pub(in crate::application::app) fn dispatch_action(
         // never reach this match. `LabelEdit*` are NativeOnly
         // (label_edit + portal_text_edit modules are cfg-gated to
         // native) — handled here. Both reuse the same Action
-        // variants since the editors are mutually exclusive; the
-        // arm picks the open state — portal-text first (matches the
-        // keyboard handler's check ordering at
-        // `event_keyboard.rs`), then label-edit.
+        // variants since the editors are mutually exclusive by
+        // selection-state construction (a node selection opens the
+        // text editor; an edge-label selection opens the label
+        // editor; a portal-text selection opens the portal-text
+        // editor — never two at once). Order is observationally
+        // equivalent because at most one is_open(); checking
+        // portal-text first picks the more specific selection.
         Action::LabelEditCancel => {
             if let Some(doc) = ctx.document.as_mut() {
                 if ctx.portal_text_edit_state.is_open() {

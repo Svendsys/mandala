@@ -9,6 +9,7 @@
 
 use super::input_context::InputHandlerContext;
 use super::*;
+use crate::application::keybinds::Action;
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::Key;
 
@@ -99,7 +100,7 @@ pub(super) fn handle_keyboard_input(
                 ctx.modifiers.alt_key(),
             )
         });
-        if matches!(action, Some(crate::application::keybinds::Action::LabelEditCommit) | Some(crate::application::keybinds::Action::LabelEditCancel)) {
+        if matches!(action, Some(Action::LabelEditCommit) | Some(Action::LabelEditCancel)) {
             let _ = super::dispatch::dispatch_action(action.unwrap(), ctx, None);
             return;
         }
@@ -138,7 +139,7 @@ pub(super) fn handle_keyboard_input(
                 ctx.modifiers.alt_key(),
             )
         });
-        if matches!(action, Some(crate::application::keybinds::Action::LabelEditCommit) | Some(crate::application::keybinds::Action::LabelEditCancel)) {
+        if matches!(action, Some(Action::LabelEditCommit) | Some(Action::LabelEditCancel)) {
             let _ = super::dispatch::dispatch_action(action.unwrap(), ctx, None);
             return;
         }
@@ -178,7 +179,7 @@ pub(super) fn handle_keyboard_input(
                 ctx.modifiers.alt_key(),
             )
         });
-        if matches!(action, Some(crate::application::keybinds::Action::TextEditCommit) | Some(crate::application::keybinds::Action::TextEditCancel)) {
+        if matches!(action, Some(Action::TextEditCommit) | Some(Action::TextEditCancel)) {
             let _ = super::dispatch::dispatch_action(action.unwrap(), ctx, None);
             return;
         }
