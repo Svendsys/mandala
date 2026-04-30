@@ -37,7 +37,7 @@ Shipped on this branch:
 
 - ~~**WASM convergence — full funnel.**~~ **Track C shipped**
   — both targets now dispatch every Compatible Action through
-  the same cross-platform `dispatch_action_core::dispatch_compatible`
+  the same cross-platform `dispatch::action_core::dispatch_compatible`
   function. WASM-only `dispatch_compatible_action_wasm` shim
   deleted (-320 LoC). `InputContextCore` (cross-platform 11
   fields) + `NativeContextExt` (native-only 10 fields) split via
@@ -61,7 +61,7 @@ Shipped on this branch:
   wired arms (Copy / Cut / Paste / CreateOrphanNodeAndEdit /
   TextEdit cursor primitives — modal-steal routed).
 - ~~**WASM Compatible Actions need arms.**~~ **Track A largely
-  shipped.** A new `cross_dispatch` module (partial Track C) holds
+  shipped.** A new `dispatch::cross_dispatch` module (partial Track C) holds
   the Action arm bodies that touch only state shared between
   native and WASM; both dispatchers call the same per-action
   helpers. Wired across two batches: A.1 (camera + selection +
@@ -97,7 +97,7 @@ Shipped on this branch:
   `portal_text_edit`) now route commit/cancel through
   `dispatch_action`. `Action::TextEditCommit` / `TextEditCancel`
   are Compatible (handled in cross-platform
-  `dispatch_action_core::dispatch_compatible`); WASM keyboard
+  `dispatch::action_core::dispatch_compatible`); WASM keyboard
   + click-outside paths reach the same arm as native.
   `Action::LabelEditCommit` / `LabelEditCancel` are NativeOnly
   but reused by `portal_text_edit` (mutually exclusive states);

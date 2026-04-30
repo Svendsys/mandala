@@ -2102,7 +2102,7 @@ mitigations).
 **Summary.** Every user-driven application-level effect is a variant
 of `enum Action` (`src/application/keybinds/action.rs`) and runs
 through a single `dispatch_action(action, ctx, hit)` funnel
-(`src/application/app/dispatch.rs`). Mouse, keyboard, the future
+(`src/application/app/dispatch/native.rs`). Mouse, keyboard, the future
 macro runtime, and any plugin host all reach the same arms.
 
 **What it's for.** Before this funnel existed, mouse gestures

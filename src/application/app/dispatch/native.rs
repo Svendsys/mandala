@@ -15,19 +15,20 @@ use glam::Vec2;
 use crate::application::document::{EdgeRef, SelectionState, UndoAction};
 use crate::application::keybinds::Action;
 
-use super::input_context::InputHandlerContext;
-use super::{AppMode, ClickHit, DragState};
-use super::{
+use super::super::input_context::InputHandlerContext;
+use super::super::{AppMode, ClickHit, DragState};
+use super::super::{
     open_label_edit, open_portal_text_edit, open_text_edit,
 };
-use super::scene_rebuild::rebuild_all;
-use super::click::rebuild_all_with_mode;
-use super::color_picker_flow::{
+use super::super::scene_rebuild::rebuild_all;
+use super::super::click::rebuild_all_with_mode;
+use super::super::color_picker_flow::{
     close_color_picker_standalone, open_color_picker_standalone,
 };
-use super::console_input::{
+use super::super::console_input::{
     rebuild_console_overlay, save_console_history, save_document_to_bound_path,
 };
+use super::cross_dispatch::apply_keybind_custom_mutation;
 use crate::application::console::ConsoleState;
 
 /// Per-event payload that mouse-driven Actions need but keyboard
@@ -43,10 +44,10 @@ pub struct DispatchHit {
     pub canvas_pos: Vec2,
 }
 
-// `DispatchOutcome` lives in `cross_dispatch` so the cross-platform
-// `dispatch_macro_core::MacroDispatchTarget` trait can return it
-// from both targets' impls. Re-imported here for the dispatch arms.
-pub(in crate::application::app) use super::cross_dispatch::DispatchOutcome;
+// `DispatchOutcome` lives in `cross_dispatch`; the dispatch arms
+// here name it via `super::DispatchOutcome` (re-exported in
+// `dispatch/mod.rs`).
+use super::DispatchOutcome;
 
 /// Quote a free-form string (typically a filesystem path) so the
 /// console parser sees it as a single token. Wraps with `"..."`
@@ -79,7 +80,7 @@ fn quote_console_arg(s: &str) -> String {
 /// `None`; mouse callers populate it before invoking the dispatcher.
 ///
 /// **Two-stage dispatch.** Every call routes through the cross-
-/// platform [`dispatch_action_core::dispatch_compatible`] first.
+/// platform [`super::action_core::dispatch_compatible`] first.
 /// On `Handled`, this returns immediately — that path covers every
 /// Compatible-classified Action plus the cross-platform slice of
 /// mixed-branch arms (`CancelMode`'s `last_click` clear,
@@ -116,7 +117,7 @@ pub(in crate::application::app) fn dispatch_action(
         // only arms below re-borrow from `ctx` directly after this
         // scope drops.
         let (mut core, _) = ctx.split_borrow();
-        super::dispatch_action_core::dispatch_compatible(&action, &mut core)
+        super::action_core::dispatch_compatible(&action, &mut core)
     };
     if matches!(cross_outcome, DispatchOutcome::Handled) {
         return cross_outcome;
@@ -173,7 +174,7 @@ pub(in crate::application::app) fn dispatch_action(
         | Action::ConsoleScrollPageDown
         | Action::ConsoleScrollEnd
         | Action::ConsoleScrollHome => {
-            super::console_input::dispatch_console_action(&action, ctx);
+            super::super::console_input::dispatch_console_action(&action, ctx);
             DispatchOutcome::Handled
         }
         Action::CancelMode => {
@@ -438,7 +439,7 @@ pub(in crate::application::app) fn dispatch_action(
                         doc.selection = SelectionState::EdgeLabel(
                             crate::application::document::EdgeLabelSel::new(er.clone()),
                         );
-                        super::scene_rebuild::rebuild_after_selection_change(
+                        super::super::scene_rebuild::rebuild_after_selection_change(
                             &prev,
                             doc,
                             ctx.mindmap_tree,
@@ -564,7 +565,7 @@ pub(in crate::application::app) fn dispatch_action(
         Action::LabelEditCancel => {
             if let Some(doc) = ctx.document.as_mut() {
                 if ctx.portal_text_edit_state.is_open() {
-                    super::close_portal_text_edit(
+                    super::super::close_portal_text_edit(
                         false,
                         doc,
                         ctx.portal_text_edit_state,
@@ -574,7 +575,7 @@ pub(in crate::application::app) fn dispatch_action(
                         ctx.scene_cache,
                     );
                 } else if ctx.label_edit_state.is_open() {
-                    super::close_label_edit(
+                    super::super::close_label_edit(
                         false,
                         doc,
                         ctx.label_edit_state,
@@ -590,7 +591,7 @@ pub(in crate::application::app) fn dispatch_action(
         Action::LabelEditCommit => {
             if let Some(doc) = ctx.document.as_mut() {
                 if ctx.portal_text_edit_state.is_open() {
-                    super::close_portal_text_edit(
+                    super::super::close_portal_text_edit(
                         true,
                         doc,
                         ctx.portal_text_edit_state,
@@ -600,7 +601,7 @@ pub(in crate::application::app) fn dispatch_action(
                         ctx.scene_cache,
                     );
                 } else if ctx.label_edit_state.is_open() {
-                    super::close_label_edit(
+                    super::super::close_label_edit(
                         true,
                         doc,
                         ctx.label_edit_state,
@@ -691,7 +692,7 @@ pub(in crate::application::app) fn apply_label_edit_action_to_buffer(
     buffer: &mut String,
     cursor: &mut usize,
 ) -> bool {
-    use super::text_edit::{delete_at_cursor, delete_before_cursor};
+    use super::super::text_edit::{delete_at_cursor, delete_before_cursor};
     use baumhard::util::grapheme_chad;
     let before = *cursor;
     let len_before = buffer.len();
@@ -731,9 +732,9 @@ pub(in crate::application::app) fn apply_label_edit_action_to_buffer(
 /// the LabelEditState carrier directly.
 pub(in crate::application::app) fn apply_label_edit_action(
     action: Action,
-    state: &mut super::LabelEditState,
+    state: &mut super::super::LabelEditState,
 ) -> bool {
-    use super::LabelEditState;
+    use super::super::LabelEditState;
     let LabelEditState::Open {
         buffer,
         cursor_grapheme_pos,
@@ -742,7 +743,7 @@ pub(in crate::application::app) fn apply_label_edit_action(
     apply_label_edit_action_to_buffer(action, buffer, cursor_grapheme_pos)
 }
 
-// `sibling_id` lifted to `cross_dispatch.rs` so the WASM dispatcher
+// `sibling_id` lifted to `dispatch/cross_dispatch.rs` so the WASM dispatcher
 // can reach the same fold-aware navigation logic.
 
 /// Run a macro by id against the current `InputHandlerContext`.
@@ -769,10 +770,10 @@ pub(in crate::application::app) fn dispatch_macro(
     // native dispatch chain calls the same step loop the WASM
     // dispatcher uses. The privilege gate is single-sourced there.
     let mut target = NativeMacroDispatchTarget { ctx };
-    super::dispatch_macro_core::dispatch_macro(macro_id, &mut target)
+    super::macro_core::dispatch_macro(macro_id, &mut target)
 }
 
-/// Native impl of [`super::dispatch_macro_core::MacroDispatchTarget`].
+/// Native impl of [`super::macro_core::MacroDispatchTarget`].
 /// Wraps `&mut InputHandlerContext` and forwards each operation to
 /// the existing native helpers (`dispatch_action`,
 /// `apply_keybind_custom_mutation`, `execute_console_line`).
@@ -780,13 +781,13 @@ struct NativeMacroDispatchTarget<'a, 'b> {
     ctx: &'a mut InputHandlerContext<'b>,
 }
 
-impl<'a, 'b> super::dispatch_macro_core::MacroDispatchTarget for NativeMacroDispatchTarget<'a, 'b> {
+impl<'a, 'b> super::macro_core::MacroDispatchTarget for NativeMacroDispatchTarget<'a, 'b> {
     fn registry(&self) -> &crate::application::macros::MacroRegistry {
         self.ctx.macros
     }
 
     fn dispatch_action(&mut self, action: Action) -> DispatchOutcome {
-        super::dispatch::dispatch_action(action, self.ctx, None)
+        dispatch_action(action, self.ctx, None)
     }
 
     fn apply_custom_mutation(&mut self, id: &str, node_id: &str) -> bool {
@@ -806,7 +807,7 @@ impl<'a, 'b> super::dispatch_macro_core::MacroDispatchTarget for NativeMacroDisp
         let Some(doc) = self.ctx.document.as_mut() else {
             return false;
         };
-        let now = super::now_ms() as u64;
+        let now = super::super::now_ms() as u64;
         if apply_keybind_custom_mutation(
             doc,
             self.ctx.mindmap_tree,
@@ -877,12 +878,6 @@ impl<'a, 'b> super::dispatch_macro_core::MacroDispatchTarget for NativeMacroDisp
     }
 }
 
-// `apply_keybind_custom_mutation` lifted to `cross_dispatch` (Track B
-// Commit 5) so the WASM macro dispatch path can reach it. Re-exported
-// here so the existing test import at
-// `crate::application::app::dispatch::apply_keybind_custom_mutation`
-// (in `document/tests_mutations.rs:116`) still resolves.
-pub(crate) use super::cross_dispatch::apply_keybind_custom_mutation;
 
 /// Resolve a custom-mutation key binding and apply it through the same
 /// path the click-trigger handler at `click.rs:35-64` uses: animation-
@@ -918,7 +913,7 @@ pub(in crate::application::app) fn dispatch_custom_mutation_for_key(
     let Some(cm) = doc.mutation_registry.get(&id).cloned() else {
         return false;
     };
-    let now = super::now_ms() as u64;
+    let now = super::super::now_ms() as u64;
     let applied = apply_keybind_custom_mutation(
         doc,
         ctx.mindmap_tree,

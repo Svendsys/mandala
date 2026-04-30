@@ -5,18 +5,13 @@ use std::sync::Arc;
 mod scene_rebuild;
 mod text_edit;
 
-// Cross-platform — Action arm bodies that touch only state shared
-// between native and WASM. Both `dispatch::dispatch_action` and
-// `run_wasm`'s inline match call into here. See
-// `WASM_CONVERGENCE.md` "partial Track C" for the rationale.
-mod cross_dispatch;
-
-// Cross-platform — `dispatch_macro` step loop + privilege gate,
-// abstracted over `MacroDispatchTarget`. Native and WASM each
-// provide an impl that wraps their respective context type.
-// Lifted from `dispatch.rs::dispatch_macro` to single-source the
-// privilege gate. See `WASM_CONVERGENCE.md` Track B.
-mod dispatch_macro_core;
+// Dispatch funnel — `cross_dispatch` (shared apply_* helpers),
+// `action_core` (Compatible-Action dispatcher), `macro_core`
+// (cross-platform macro step loop + privilege gate), and `native`
+// (native dispatch_action wrapper that adds the NativeOnly arm
+// match). The directory's `mod.rs` re-exports the public surface
+// so callers stay terse.
+pub(crate) mod dispatch;
 
 // Native-only — interactive modal state machines absent on WASM.
 // See CLAUDE.md "Dual-target status".
@@ -26,8 +21,6 @@ mod click;
 mod color_picker_flow;
 #[cfg(not(target_arch = "wasm32"))]
 mod console_input;
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) mod dispatch;
 #[cfg(not(target_arch = "wasm32"))]
 mod drain_frame;
 #[cfg(not(target_arch = "wasm32"))]
@@ -47,10 +40,6 @@ mod input_context;
 // Cross-platform context-bundles for the unified `dispatch_action`
 // funnel. Track C from `WASM_CONVERGENCE.md` (final convergence step).
 mod input_context_core;
-// Cross-platform action dispatcher. Native dispatch.rs delegates
-// to here for Compatible arms; WASM (post-Track C wire-up) calls
-// it directly. Sibling to `dispatch_macro_core` (Track B precedent).
-mod dispatch_action_core;
 #[cfg(not(target_arch = "wasm32"))]
 mod portal_label_drag;
 #[cfg(not(target_arch = "wasm32"))]

@@ -91,7 +91,7 @@ use crate::application::scene_host::AppScene;
 use baumhard::mindmap::scene_cache::SceneConnectionCache;
 use baumhard::mindmap::tree_builder::MindMapTree;
 
-use super::scene_rebuild::rebuild_all;
+use super::super::scene_rebuild::rebuild_all;
 
 /// Borrowed bundle of the shared rebuild plumbing — the minimum
 /// surface every cross-platform mutating Action arm needs.
@@ -151,7 +151,7 @@ impl<'a> RebuildContext<'a> {
 // ── RebuildContext construction macro ───────────────────────────
 
 /// Build a [`RebuildContext`] from a context-like struct (native
-/// [`super::input_context::InputHandlerContext`] or WASM
+/// [`super::super::input_context::InputHandlerContext`] or WASM
 /// `WasmInputState`) plus an already-unwrapped
 /// `&mut MindMapDocument`. Expands inline so the borrow-checker
 /// accepts the disjoint per-field borrows; a `fn rebuild_ctx(&mut
@@ -163,7 +163,7 @@ impl<'a> RebuildContext<'a> {
 /// rebuilding arm into a single `rebuild_ctx!(ctx, doc)` call.
 macro_rules! rebuild_ctx {
     ($ctx:expr, $doc:expr) => {
-        $crate::application::app::cross_dispatch::RebuildContext {
+        $crate::application::app::dispatch::cross_dispatch::RebuildContext {
             document: $doc,
             mindmap_tree: $ctx.mindmap_tree,
             app_scene: $ctx.app_scene,
@@ -239,11 +239,11 @@ pub(in crate::application::app) fn apply_create_orphan_node(
 pub(in crate::application::app) fn apply_create_orphan_node_and_edit(
     canvas_pos: glam::Vec2,
     rc: &mut RebuildContext<'_>,
-    text_edit_state: &mut super::TextEditState,
+    text_edit_state: &mut super::super::TextEditState,
 ) {
     let new_id = rc.document.create_orphan_and_select(canvas_pos);
     rc.rebuild_after_geometry_change();
-    super::text_edit::open_text_edit(
+    super::super::text_edit::open_text_edit(
         &new_id,
         true,
         rc.document,
@@ -287,12 +287,12 @@ pub(in crate::application::app) fn apply_delete_selection(rc: &mut RebuildContex
 pub(in crate::application::app) fn apply_open_text_edit_on_single(
     clean: bool,
     rc: &mut RebuildContext<'_>,
-    text_edit_state: &mut super::TextEditState,
+    text_edit_state: &mut super::super::TextEditState,
 ) -> bool {
     let SelectionState::Single(id) = rc.document.selection.clone() else {
         return false;
     };
-    super::text_edit::open_text_edit(
+    super::super::text_edit::open_text_edit(
         &id,
         clean,
         rc.document,

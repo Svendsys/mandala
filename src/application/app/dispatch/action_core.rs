@@ -31,7 +31,7 @@ use crate::application::document::OptionEdit;
 use crate::application::keybinds::{Action, WasmCompatibility};
 
 use super::cross_dispatch::DispatchOutcome;
-use super::input_context_core::InputContextCore;
+use super::super::input_context_core::InputContextCore;
 
 /// Run `f` against a `RebuildContext` built from `core`, IF the
 /// document is loaded. Skips silently otherwise. Captures the
@@ -162,7 +162,7 @@ pub(in crate::application::app) fn dispatch_compatible(
         Action::TextEditCancel | Action::TextEditCommit => {
             let commit = matches!(action, Action::TextEditCommit);
             if let Some(doc) = core.document.as_deref_mut() {
-                super::text_edit::close_text_edit(
+                super::super::text_edit::close_text_edit(
                     commit,
                     doc,
                     core.text_edit_state,
@@ -374,7 +374,7 @@ pub(in crate::application::app) fn dispatch_compatible(
         | Action::TextEditWordRight
         | Action::TextEditDeleteWordBack
         | Action::TextEditDeleteWordForward => {
-            super::text_edit::apply_text_edit_action(action.clone(), core.text_edit_state);
+            super::super::text_edit::apply_text_edit_action(action.clone(), core.text_edit_state);
         }
         // Catch-all for variants `dispatch_compatible` doesn't
         // own. Two cohorts reach here: NativeOnly arms (caller's
