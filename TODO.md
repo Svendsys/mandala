@@ -47,12 +47,19 @@ Shipped on this branch:
   cross-platform slice in the unified dispatcher and return
   `Unhandled` so native fall-through can run the residual
   AppMode / EdgeLabel / Portal native-only branches.
-- **Native dead-arm cleanup**: the Compatible arms in
-  `dispatch.rs::dispatch_action`'s match (Undo, ZoomIn, etc.)
-  are now unreachable — the cross-platform dispatcher handles
-  them first via the delegation shim. Left in place this branch
-  for behaviour-preservation safety; a focused follow-up can
-  delete them and shrink the file.
+- ~~**Native dead-arm cleanup.**~~ **Shipped.** ~30 Compatible
+  arms (Undo, Delete*, Zoom*, Pan*, Center, Jump, ToggleFps*,
+  Selection cluster, all 20 parametric mutators, ClearZoom)
+  removed from `dispatch.rs::dispatch_action`'s match — they
+  were unreachable after Track C's delegation shim. File
+  shrank by ~300 LoC. The native match now contains only:
+  NativeOnly arms (Console / Picker / AppMode / EditOpen /
+  Save / DoubleClick / OpenDocument / SaveDocumentAs /
+  NewDocumentAt / PanCanvas / LabelEditCursor*),
+  mixed-branch native residuals (CancelMode AppMode reset,
+  EditSelection* EdgeLabel/Portal), and Compatible-not-yet-
+  wired arms (Copy / Cut / Paste / CreateOrphanNodeAndEdit /
+  TextEdit cursor primitives — modal-steal routed).
 - ~~**WASM Compatible Actions need arms.**~~ **Track A largely
   shipped.** A new `cross_dispatch` module (partial Track C) holds
   the Action arm bodies that touch only state shared between

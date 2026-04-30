@@ -78,26 +78,35 @@ fn quote_console_arg(s: &str) -> String {
 /// the cursor was in canvas space). Keyboard / macro callers pass
 /// `None`; mouse callers populate it before invoking the dispatcher.
 ///
-/// The function is platform-gated to native today;
-/// `WASM_CONVERGENCE.md` documents the path to bringing WASM
-/// into the same funnel.
+/// **Two-stage dispatch.** Every call routes through the cross-
+/// platform [`dispatch_action_core::dispatch_compatible`] first.
+/// On `Handled`, this returns immediately — that path covers every
+/// Compatible-classified Action plus the cross-platform slice of
+/// mixed-branch arms (`CancelMode`'s `last_click` clear,
+/// `EditSelection*`-Single open). The native match below runs only
+/// when the cross-platform dispatcher returns `Unhandled`, which
+/// means one of:
+///   - a NativeOnly Action whose body needs `NativeContextExt` fields
+///     (console / picker / app_mode / drag — see
+///     `Action::wasm_compatibility`'s NativeOnly classification),
+///   - a mixed-branch arm's native residual (`CancelMode`'s AppMode
+///     reset + rebuild; `EditSelection*` on EdgeLabel / Portal
+///     selections),
+///   - a Compatible arm not yet wired in `dispatch_compatible`
+///     (Copy / Cut / Paste — clipboard helpers; `CreateOrphanNodeAndEdit`
+///     — the click-position mixed-payload arm; `TextEditCursor*` /
+///     `TextEditCommit` / `TextEditCancel` — modal-steal routed).
+///
+/// `WASM_CONVERGENCE.md` Track C records the architecture; calling
+/// `dispatch_compatible` from this fn is the seam.
 pub(in crate::application::app) fn dispatch_action(
     action: Action,
     ctx: &mut InputHandlerContext<'_>,
     hit: Option<&DispatchHit>,
 ) -> DispatchOutcome {
-    // Track C: try the cross-platform dispatcher first. Compatible
-    // arms (Document-lifecycle, camera/zoom, FPS, selection nav,
-    // parametric mutators) and the cross-platform slice of
-    // mixed-branch arms (CancelMode's `last_click` clear,
-    // EditSelection*-Single open) all run from there. Returning
-    // `Handled` short-circuits this match; returning `Unhandled`
-    // means the cross-platform dispatcher saw the variant but
-    // didn't fully own it — the native arm below runs to cover
-    // the residual NativeOnly slice.
-    //
-    // The split-borrow scope is bounded so `ctx` is freely
-    // accessible again for the native-only arms below.
+    // Cross-platform stage. Bounded scope so `_` (the unused
+    // `NativeContextExt` view returned by `split_borrow`) drops
+    // before the outer match re-borrows `ctx`.
     let cross_outcome = {
         // `_` (not `_ext`) — the extension view is constructed by
         // `split_borrow` because it returns the pair, but the
@@ -127,13 +136,6 @@ pub(in crate::application::app) fn dispatch_action(
                         ctx.keybinds,
                     );
                 }
-            }
-            DispatchOutcome::Handled
-        }
-        Action::Undo => {
-            if let Some(doc) = ctx.document.as_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
-                super::cross_dispatch::apply_undo(&mut rc);
             }
             DispatchOutcome::Handled
         }
@@ -202,33 +204,6 @@ pub(in crate::application::app) fn dispatch_action(
                         ctx.scene_cache,
                     );
                 }
-            }
-            DispatchOutcome::Handled
-        }
-        Action::DeleteSelection => {
-            if let Some(doc) = ctx.document.as_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
-                super::cross_dispatch::apply_delete_selection(&mut rc);
-            }
-            DispatchOutcome::Handled
-        }
-        Action::CreateOrphanNode => {
-            // Cursor position is screen-space; convert before
-            // entering the cross-platform helper so the helper's
-            // signature stays renderer-agnostic.
-            let canvas_pos = ctx
-                .renderer
-                .screen_to_canvas(ctx.cursor_pos.0 as f32, ctx.cursor_pos.1 as f32);
-            if let Some(doc) = ctx.document.as_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
-                super::cross_dispatch::apply_create_orphan_node(canvas_pos, &mut rc);
-            }
-            DispatchOutcome::Handled
-        }
-        Action::OrphanSelection => {
-            if let Some(doc) = ctx.document.as_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
-                super::cross_dispatch::apply_orphan_selection(&mut rc);
             }
             DispatchOutcome::Handled
         }
@@ -504,14 +479,6 @@ pub(in crate::application::app) fn dispatch_action(
             }
             DispatchOutcome::Handled
         }
-        Action::ToggleFps => {
-            super::cross_dispatch::apply_toggle_fps(ctx.renderer);
-            DispatchOutcome::Handled
-        }
-        Action::ToggleFpsDebug => {
-            super::cross_dispatch::apply_toggle_fps_debug(ctx.renderer);
-            DispatchOutcome::Handled
-        }
         Action::LabelEditOnSelection => {
             // Mirror `label edit`: open the inline editor on the
             // currently-selected edge / portal-endpoint.
@@ -542,105 +509,6 @@ pub(in crate::application::app) fn dispatch_action(
                             "LabelEditOnSelection: selection is not an edge / portal endpoint; no-op"
                         );
                     }
-                }
-            }
-            DispatchOutcome::Handled
-        }
-
-        Action::ZoomIn | Action::ZoomOut => {
-            use super::cross_dispatch::ZoomDir;
-            let dir = match action {
-                Action::ZoomIn => ZoomDir::In,
-                Action::ZoomOut => ZoomDir::Out,
-                // Safe-fallback for `#[non_exhaustive]` Action: a
-                // future variant added to the outer or-pattern
-                // without updating the inner match would otherwise
-                // panic in an interactive path.
-                _ => {
-                    log::error!("Zoom fan-out missed inner-match variant: {:?}", action);
-                    return DispatchOutcome::Handled;
-                }
-            };
-            super::cross_dispatch::apply_zoom_step(dir, *ctx.cursor_pos, ctx.renderer);
-            DispatchOutcome::Handled
-        }
-        Action::ZoomReset => {
-            super::cross_dispatch::apply_zoom_reset(ctx.renderer);
-            DispatchOutcome::Handled
-        }
-        Action::ZoomFit => {
-            super::cross_dispatch::apply_zoom_fit(ctx.mindmap_tree, ctx.renderer);
-            DispatchOutcome::Handled
-        }
-        Action::PanCameraNorth
-        | Action::PanCameraSouth
-        | Action::PanCameraEast
-        | Action::PanCameraWest => {
-            use super::cross_dispatch::PanDir;
-            let dir = match action {
-                Action::PanCameraNorth => PanDir::North,
-                Action::PanCameraSouth => PanDir::South,
-                Action::PanCameraEast => PanDir::East,
-                Action::PanCameraWest => PanDir::West,
-                _ => {
-                    log::error!(
-                        "PanCamera fan-out missed inner-match variant: {:?}",
-                        action,
-                    );
-                    return DispatchOutcome::Handled;
-                }
-            };
-            super::cross_dispatch::apply_pan_camera(dir, ctx.renderer);
-            DispatchOutcome::Handled
-        }
-        Action::CenterOnSelection => {
-            if let Some(doc) = ctx.document.as_ref() {
-                super::cross_dispatch::apply_center_on_selection(doc, ctx.renderer);
-            }
-            DispatchOutcome::Handled
-        }
-        Action::JumpToRoot => {
-            if let Some(doc) = ctx.document.as_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
-                super::cross_dispatch::apply_jump_to_root(&mut rc);
-            }
-            DispatchOutcome::Handled
-        }
-
-        // ── Selection Actions ────────────────────────────────
-        Action::SelectAll
-        | Action::DeselectAll
-        | Action::InvertSelection
-        | Action::SelectParent
-        | Action::SelectChild
-        | Action::SelectNextSibling
-        | Action::SelectPrevSibling => {
-            if let Some(doc) = ctx.document.as_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
-                match action {
-                    Action::SelectAll => super::cross_dispatch::apply_select_all(&mut rc),
-                    Action::DeselectAll => super::cross_dispatch::apply_deselect_all(&mut rc),
-                    Action::InvertSelection => {
-                        super::cross_dispatch::apply_invert_selection(&mut rc)
-                    }
-                    Action::SelectParent => {
-                        super::cross_dispatch::apply_select_parent(&mut rc)
-                    }
-                    Action::SelectChild => super::cross_dispatch::apply_select_child(&mut rc),
-                    Action::SelectNextSibling => {
-                        super::cross_dispatch::apply_select_sibling(true, &mut rc)
-                    }
-                    Action::SelectPrevSibling => {
-                        super::cross_dispatch::apply_select_sibling(false, &mut rc)
-                    }
-                    // Outer pattern guarantees one of the seven, but
-                    // `Action` is `#[non_exhaustive]`. Safe-fallback
-                    // log + no-op per CODE_CONVENTIONS §9 for
-                    // interactive paths.
-                    _ => log::error!(
-                        "Selection fan-out missed inner-match variant: {:?}",
-                        action,
-                    ),
                 }
             }
             DispatchOutcome::Handled
@@ -683,177 +551,6 @@ pub(in crate::application::app) fn dispatch_action(
             DispatchOutcome::Handled
         }
 
-        // ── Parametric console-verb Actions ────────────────────
-        // Each routes through the verb's `pub(crate) apply_*` core
-        // — single source of truth with the typed console verb.
-        // On a successful change, trigger a full scene rebuild
-        // mirroring the verb dispatcher's post-execute drain.
-        Action::SetEdgeAnchor { ref from, ref to } => {
-            if let Some(doc) = ctx.document.as_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
-                super::cross_dispatch::apply_set_edge_anchor(from, to, &mut rc);
-            }
-            DispatchOutcome::Handled
-        }
-        Action::SetEdgeBodyGlyph(ref preset) => {
-            if let Some(doc) = ctx.document.as_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
-                super::cross_dispatch::apply_set_edge_body_glyph(preset, &mut rc);
-            }
-            DispatchOutcome::Handled
-        }
-        Action::SetBorderField { ref field, ref value } => {
-            if let Some(doc) = ctx.document.as_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
-                super::cross_dispatch::apply_set_border_field(field, value, &mut rc);
-            }
-            DispatchOutcome::Handled
-        }
-        Action::SetEdgeCap { ref from, ref to } => {
-            if let Some(doc) = ctx.document.as_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
-                super::cross_dispatch::apply_set_edge_cap(from, to, &mut rc);
-            }
-            DispatchOutcome::Handled
-        }
-        Action::SetColorBg(ref value)
-        | Action::SetColorText(ref value)
-        | Action::SetColorBorder(ref value) => {
-            use super::cross_dispatch::ColorAxis;
-            let axis = match action {
-                Action::SetColorBg(_) => ColorAxis::Bg,
-                Action::SetColorText(_) => ColorAxis::Text,
-                Action::SetColorBorder(_) => ColorAxis::Border,
-                _ => {
-                    log::error!(
-                        "SetColor* fan-out missed inner-match variant: {:?}",
-                        action,
-                    );
-                    return DispatchOutcome::Handled;
-                }
-            };
-            if let Some(doc) = ctx.document.as_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
-                super::cross_dispatch::apply_set_color_axis(axis, value, &mut rc);
-            }
-            DispatchOutcome::Handled
-        }
-        Action::SetEdgeType(ref value) => {
-            if let Some(doc) = ctx.document.as_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
-                super::cross_dispatch::apply_set_edge_type(value, &mut rc);
-            }
-            DispatchOutcome::Handled
-        }
-        Action::SetEdgeDisplayMode(ref value) => {
-            if let Some(doc) = ctx.document.as_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
-                super::cross_dispatch::apply_set_edge_display_mode(value, &mut rc);
-            }
-            DispatchOutcome::Handled
-        }
-        Action::ResetEdge(ref kind) => {
-            if let Some(doc) = ctx.document.as_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
-                super::cross_dispatch::apply_reset_edge(kind, &mut rc);
-            }
-            DispatchOutcome::Handled
-        }
-        Action::SetFontFamily(ref family) => {
-            if let Some(doc) = ctx.document.as_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
-                super::cross_dispatch::apply_set_font_family(family, &mut rc);
-            }
-            DispatchOutcome::Handled
-        }
-        Action::SetFontSize(ref pt)
-        | Action::SetFontMin(ref pt)
-        | Action::SetFontMax(ref pt) => {
-            use super::cross_dispatch::FontSlot;
-            let slot = match action {
-                Action::SetFontSize(_) => FontSlot::Size,
-                Action::SetFontMin(_) => FontSlot::Min,
-                Action::SetFontMax(_) => FontSlot::Max,
-                _ => {
-                    log::error!(
-                        "SetFont* fan-out missed inner-match variant: {:?}",
-                        action,
-                    );
-                    return DispatchOutcome::Handled;
-                }
-            };
-            // Best-effort parse; non-finite / non-positive silently
-            // no-op (the verb path surfaces typed errors).
-            let parsed = match pt.parse::<f32>() {
-                Ok(v) if v.is_finite() && v > 0.0 => v,
-                _ => {
-                    log::warn!("SetFont{:?}: invalid '{}'", slot, pt);
-                    return DispatchOutcome::Handled;
-                }
-            };
-            if let Some(doc) = ctx.document.as_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
-                super::cross_dispatch::apply_set_font_kv(slot, parsed, &mut rc);
-            }
-            DispatchOutcome::Handled
-        }
-        Action::SetEdgeLabelText(ref text) => {
-            if let Some(doc) = ctx.document.as_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
-                super::cross_dispatch::apply_set_edge_label_text(text, &mut rc);
-            }
-            DispatchOutcome::Handled
-        }
-        Action::SetEdgeLabelPosition(ref position) => {
-            if let Some(doc) = ctx.document.as_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
-                super::cross_dispatch::apply_set_edge_label_position(position, &mut rc);
-            }
-            DispatchOutcome::Handled
-        }
-        Action::SetSpacing(ref input) => {
-            if let Some(doc) = ctx.document.as_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
-                super::cross_dispatch::apply_set_spacing(input, &mut rc);
-            }
-            DispatchOutcome::Handled
-        }
-        Action::SetZoomMin(ref payload) | Action::SetZoomMax(ref payload) => {
-            use crate::application::document::OptionEdit;
-            let parsed = match crate::application::console::commands::zoom::parse_zoom_payload(payload) {
-                Some(e) => e,
-                None => {
-                    log::warn!(
-                        "set_zoom_*: invalid zoom payload '{}' — must be a positive finite float or 'unset'",
-                        payload,
-                    );
-                    return DispatchOutcome::Handled;
-                }
-            };
-            let (min, max) = match action {
-                Action::SetZoomMin(_) => (parsed, OptionEdit::Keep),
-                Action::SetZoomMax(_) => (OptionEdit::Keep, parsed),
-                _ => {
-                    log::error!(
-                        "SetZoom* fan-out missed inner-match variant: {:?}",
-                        action,
-                    );
-                    return DispatchOutcome::Handled;
-                }
-            };
-            if let Some(doc) = ctx.document.as_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
-                super::cross_dispatch::apply_set_zoom_window(min, max, &mut rc);
-            }
-            DispatchOutcome::Handled
-        }
-        Action::ClearZoom => {
-            if let Some(doc) = ctx.document.as_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
-                super::cross_dispatch::apply_clear_zoom(&mut rc);
-            }
-            DispatchOutcome::Handled
-        }
         // ── Filesystem variants (NativeOnly) ────────────────────
         // Dispatch arms route through `execute_console_line` so the
         // existing `replace_document` / `dirty` / `file_path`
