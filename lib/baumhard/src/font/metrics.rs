@@ -34,29 +34,3 @@ pub const MONOSPACE_ADVANCE_RATIO: f32 = 0.6;
 pub fn monospace_advance(font_size_pt: f32) -> f32 {
     font_size_pt * MONOSPACE_ADVANCE_RATIO
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::util::geometry::almost_equal;
-
-    #[test]
-    fn test_monospace_advance_zero_is_zero() {
-        assert_eq!(monospace_advance(0.0), 0.0);
-    }
-
-    #[test]
-    fn test_monospace_advance_scales_linearly() {
-        assert!(almost_equal(monospace_advance(10.0), 6.0));
-        assert!(almost_equal(monospace_advance(20.0), 12.0));
-        assert!(almost_equal(
-            monospace_advance(33.3),
-            33.3 * MONOSPACE_ADVANCE_RATIO,
-        ));
-    }
-
-    #[test]
-    fn test_monospace_advance_ratio_is_zero_point_six() {
-        assert_eq!(MONOSPACE_ADVANCE_RATIO, 0.6);
-    }
-}

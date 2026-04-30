@@ -13,6 +13,7 @@ use baumhard::gfx_structs::tests::scene_tests::*;
 use baumhard::gfx_structs::tests::shape_tests::*;
 use baumhard::gfx_structs::tests::tree_tests::*;
 use baumhard::font::tests::hex_tests::*;
+use baumhard::font::tests::metrics_tests::*;
 use baumhard::gfx_structs::tests::tree_walker_tests::*;
 use baumhard::gfx_structs::tests::zoom_visibility_tests::*;
 use baumhard::util::tests::arena_utils_tests::*;
@@ -231,6 +232,20 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("pixel_functions", |b| b.iter(|| do_pixel_functions()));
     c.bench_function("almost_equal", |b| b.iter(|| do_almost_equal()));
     c.bench_function("almost_equal_vec2", |b| b.iter(|| do_almost_equal_vec2()));
+    c.bench_function("is_positive_finite", |b| b.iter(|| do_is_positive_finite()));
+    c.bench_function("is_non_negative_finite_f64", |b| {
+        b.iter(|| do_is_non_negative_finite_f64())
+    });
+    // font / metrics //
+    c.bench_function("monospace_advance_zero_is_zero", |b| {
+        b.iter(|| do_monospace_advance_zero_is_zero())
+    });
+    c.bench_function("monospace_advance_scales_linearly", |b| {
+        b.iter(|| do_monospace_advance_scales_linearly())
+    });
+    c.bench_function("monospace_advance_ratio_is_zero_point_six", |b| {
+        b.iter(|| do_monospace_advance_ratio_is_zero_point_six())
+    });
     // color //
     c.bench_function("from_hex", |b| b.iter(|| do_from_hex()));
     c.bench_function("from_hex_lazy_static", |b| b.iter(|| do_from_hex_lazy_static()));
