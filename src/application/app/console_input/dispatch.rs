@@ -8,14 +8,11 @@
 
 use winit::keyboard::Key;
 
-use crate::application::color_picker::ColorPickerState;
 use crate::application::console::{ConsoleLine, ConsoleState, MAX_HISTORY};
 use crate::application::document::MindMapDocument;
 use crate::application::keybinds::{Action, InputContext, ResolvedKeybinds};
 use crate::application::renderer::Renderer;
 
-use super::super::LabelEditState;
-use super::super::PortalTextEditState;
 use super::completion::{accept_console_completion, nav_popup, recompute_console_completions};
 use super::edit::{self, EditOutcome};
 use super::exec::execute_console_line;
@@ -179,7 +176,19 @@ pub(in crate::application::app) fn dispatch_console_action(
                 Action::ConsoleScrollPageDown => edit::ScrollDirection::PageDown,
                 Action::ConsoleScrollHome => edit::ScrollDirection::Home,
                 Action::ConsoleScrollEnd => edit::ScrollDirection::End,
-                _ => unreachable!("scroll outer pattern exhaustive"),
+                // Safe fallback per CODE_CONVENTIONS §9 — `Action`
+                // is `#[non_exhaustive]`, so a future variant added
+                // to the outer or-pattern without an inner arm
+                // would otherwise panic in an interactive path.
+                // Match the precedent established in
+                // `dispatch_action_core::dispatch_compatible`.
+                _ => {
+                    log::error!(
+                        "dispatch_console_action: scroll fan-out missed inner-match: {:?}",
+                        action,
+                    );
+                    return;
+                }
             };
             edit::adjust_scroll(ctx.console_state, direction);
             after_state_change(
@@ -219,7 +228,16 @@ pub(in crate::application::app) fn dispatch_console_action(
                 Action::ConsoleDeleteBack => edit::delete_back(ctx.console_state),
                 Action::ConsoleDeleteForward => edit::delete_forward(ctx.console_state),
                 Action::ConsoleInsertSpace => edit::insert_space(ctx.console_state),
-                _ => unreachable!("pure-edit outer pattern exhaustive"),
+                // Safe fallback per CODE_CONVENTIONS §9 — same
+                // forward-compat reasoning as the scroll cluster
+                // above.
+                _ => {
+                    log::error!(
+                        "dispatch_console_action: pure-edit fan-out missed inner-match: {:?}",
+                        action,
+                    );
+                    return;
+                }
             };
             after_state_change(
                 outcome,
