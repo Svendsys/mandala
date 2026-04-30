@@ -427,12 +427,13 @@ pub fn delete_front_unicode(s: &mut String, n: usize) {
 /// `cursor` of 0 returns 0; a `cursor` greater than the grapheme
 /// count is clamped at the buffer's grapheme count.
 ///
-/// **Cost**: O(n) grapheme walk on each call. The implementation
-/// walks the iterator twice in the worst case (once to seek to
-/// `cursor`, once during the boundary-skip + word-skip), without
-/// materialising a `Vec<&str>` of the whole buffer — the prior
-/// in-app version did. Two `O(n)` walks beats one `O(n)` walk plus
-/// one `O(n)` allocation on hot paths (per `CONVENTIONS §B7`).
+/// **Cost**: one O(n) `grapheme_indices` walk bounded by `cursor`
+/// (collects byte offsets into a `Vec<usize>` of capacity `cursor`),
+/// then a backward array-index scan of that vector — the second
+/// scan is O(cursor) byte-slice + `is_alphanumeric` checks, no
+/// grapheme decoding. Allocates `cursor * size_of::<usize>()` bytes;
+/// the prior in-app version allocated a `Vec<&str>` over the
+/// **whole** buffer (per `CONVENTIONS §B7` hot-path posture).
 ///
 /// `is_alphanumeric` is applied to the grapheme's *first* scalar.
 /// For ZWJ clusters and combining-mark sequences this matches the
