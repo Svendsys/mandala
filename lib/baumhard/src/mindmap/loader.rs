@@ -174,7 +174,6 @@ mod tests {
     #[test]
     fn test_testament_edges_produce_paths() {
         use crate::mindmap::connection;
-        use glam::Vec2;
 
         let path = test_map_path();
         let map = load_from_file(&path).unwrap();

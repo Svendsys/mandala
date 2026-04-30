@@ -8,7 +8,6 @@
 
 use baumhard::gfx_structs::area::GlyphAreaCommand;
 use baumhard::gfx_structs::mutator::Mutation;
-use baumhard::mindmap::animation::lerp_f32;
 use baumhard::mindmap::custom_mutation::{CustomMutation, PlatformContext, Trigger};
 use baumhard::mindmap::model::MindNode;
 use baumhard::mindmap::tree_builder::MindMapTree;

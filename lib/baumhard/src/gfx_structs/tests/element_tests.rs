@@ -202,7 +202,7 @@ fn test_subtree_aabb_ignored_in_eq() {
 /// considered equal — the cache is not part of element identity.
 pub fn do_subtree_aabb_ignored_in_eq() {
     let mut a = GfxElement::new_void_with_id(0, 42);
-    let mut b = GfxElement::new_void_with_id(0, 42);
+    let b = GfxElement::new_void_with_id(0, 42);
 
     a.set_subtree_aabb(Some((Vec2::ZERO, Vec2::new(100.0, 100.0))));
     // b has no subtree_aabb set.

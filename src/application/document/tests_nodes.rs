@@ -11,8 +11,7 @@ use super::tests_common::{
 use super::*;
 
 use baumhard::mindmap::model::{
-    Canvas, MindNode, NodeLayout, NodeStyle, Position, Size,
-    TextRun,
+    MindNode, NodeLayout, NodeStyle, Position, Size, TextRun,
 };
 use baumhard::util::grapheme_chad::count_grapheme_clusters;
 

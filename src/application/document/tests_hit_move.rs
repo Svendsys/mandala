@@ -262,10 +262,10 @@ use glam::Vec2;
             assert!((n.position.y - oy).abs() < 0.001, "Descendant {} y changed unexpectedly", id);
         }
 
-        // But the target node should have moved
-        let target = doc.mindmap.nodes.get(node_id).unwrap();
-        // We don't assert exact position here, just that it changed
-        // (the original was stored before the move, but we didn't save it in this test)
+        // The target node still exists; we don't assert on its
+        // exact post-move position here (the test pre-condition
+        // captures only descendant positions).
+        assert!(doc.mindmap.nodes.contains_key(node_id));
     }
 
     /// `start_animation` records an instance, snapshots from/to,

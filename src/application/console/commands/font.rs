@@ -480,7 +480,7 @@ mod tests {
     use super::*;
     use crate::application::console::tests::fixtures::{assert_exec_ok, join_lines, run};
     use crate::application::document::tests_common::load_test_doc as fixture_doc;
-    use crate::application::document::{EdgeRef, MindMapDocument, SelectionState};
+    use crate::application::document::{EdgeRef, SelectionState};
 
     fn first_loaded_family() -> String {
         baumhard::font::fonts::init();

@@ -92,11 +92,8 @@ use glam::Vec2;
         // regardless of whether some other handle happens to be near.
         let edge = &doc.mindmap.edges[edge_idx];
         let from_node = doc.mindmap.nodes.get(&edge.from_id).unwrap();
-        let to_node = doc.mindmap.nodes.get(&edge.to_id).unwrap();
         let from_pos = from_node.pos_vec2();
         let from_size = from_node.size_vec2();
-        let to_pos = to_node.pos_vec2();
-        let to_size = to_node.size_vec2();
         let from_center = Vec2::new(from_pos.x + from_size.x * 0.5, from_pos.y + from_size.y * 0.5);
 
         // The control point is at from_center + (50, 50). Hit there:
@@ -999,8 +996,6 @@ use glam::Vec2;
     fn test_set_edge_type_refuses_duplicate() {
         let mut doc = load_test_doc();
         let er = first_testament_edge_ref(&doc);
-        let from_id = er.from_id.clone();
-        let to_id = er.to_id.clone();
         // Seed a duplicate edge with the OPPOSITE type so conversion
         // would collide with it.
         let target_type = if er.edge_type == "parent_child" { "cross_link" } else { "parent_child" };
