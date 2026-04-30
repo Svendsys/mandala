@@ -95,10 +95,10 @@ pub fn hit_test_edge(canvas_pos: Vec2, map: &MindMap, tolerance: f32) -> Option<
             continue;
         }
 
-        let from_pos = Vec2::new(from_node.position.x as f32, from_node.position.y as f32);
-        let from_size = Vec2::new(from_node.size.width as f32, from_node.size.height as f32);
-        let to_pos = Vec2::new(to_node.position.x as f32, to_node.position.y as f32);
-        let to_size = Vec2::new(to_node.size.width as f32, to_node.size.height as f32);
+        let from_pos = from_node.pos_vec2();
+        let from_size = from_node.size_vec2();
+        let to_pos = to_node.pos_vec2();
+        let to_size = to_node.size_vec2();
 
         let path = connection::build_connection_path(
             from_pos, from_size, &edge.anchor_from,

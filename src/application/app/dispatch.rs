@@ -407,11 +407,7 @@ pub(in crate::application::app) fn dispatch_action(
                     };
                     if let Some(doc) = ctx.document.as_ref() {
                         if let Some(node) = doc.mindmap.nodes.get(&other_id) {
-                            let target = glam::Vec2::new(
-                                node.position.x as f32 + node.size.width as f32 * 0.5,
-                                node.position.y as f32 + node.size.height as f32 * 0.5,
-                            );
-                            ctx.renderer.set_camera_center(target);
+                            ctx.renderer.set_camera_center(node.center_vec2());
                         }
                     }
                     if let Some(doc) = ctx.document.as_mut() {

@@ -672,10 +672,7 @@ pub(in crate::application::app) fn apply_center_on_selection(
     let mut count = 0u32;
     for id in &ids {
         if let Some(node) = document.mindmap.nodes.get(*id) {
-            sum += glam::Vec2::new(
-                node.position.x as f32 + node.size.width as f32 * 0.5,
-                node.position.y as f32 + node.size.height as f32 * 0.5,
-            );
+            sum += node.center_vec2();
             count += 1;
         }
     }
@@ -913,13 +910,7 @@ pub(in crate::application::app) fn jump_to_root_in(
     doc: &mut MindMapDocument,
 ) -> Option<glam::Vec2> {
     let (id, centre) = doc.mindmap.root_nodes().first().map(|n| {
-        (
-            n.id.clone(),
-            glam::Vec2::new(
-                n.position.x as f32 + n.size.width as f32 * 0.5,
-                n.position.y as f32 + n.size.height as f32 * 0.5,
-            ),
-        )
+        (n.id.clone(), n.center_vec2())
     })?;
     doc.selection = SelectionState::Single(id);
     Some(centre)

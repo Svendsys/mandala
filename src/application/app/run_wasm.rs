@@ -781,13 +781,7 @@ app.event_loop.run(move |event, _window_target| {
                                 edge.from_id.clone()
                             };
                             if let Some(node) = input.document.mindmap.nodes.get(&other_id) {
-                                let target = glam::Vec2::new(
-                                    node.position.x as f32
-                                        + node.size.width as f32 * 0.5,
-                                    node.position.y as f32
-                                        + node.size.height as f32 * 0.5,
-                                );
-                                renderer.set_camera_center(target);
+                                renderer.set_camera_center(node.center_vec2());
                             }
                             input.document.selection = SelectionState::Edge(
                                 crate::application::document::EdgeRef::new(

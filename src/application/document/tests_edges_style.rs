@@ -23,10 +23,10 @@ use glam::Vec2;
         let edge = doc.mindmap.edges.iter().find(|e| edge_ref.matches(e)).unwrap();
         let from_node = doc.mindmap.nodes.get(&edge.from_id).unwrap();
         let to_node = doc.mindmap.nodes.get(&edge.to_id).unwrap();
-        let from_pos = Vec2::new(from_node.position.x as f32, from_node.position.y as f32);
-        let from_size = Vec2::new(from_node.size.width as f32, from_node.size.height as f32);
-        let to_pos = Vec2::new(to_node.position.x as f32, to_node.position.y as f32);
-        let to_size = Vec2::new(to_node.size.width as f32, to_node.size.height as f32);
+        let from_pos = from_node.pos_vec2();
+        let from_size = from_node.size_vec2();
+        let to_pos = to_node.pos_vec2();
+        let to_size = to_node.size_vec2();
         let to_center = Vec2::new(to_pos.x + to_size.x * 0.5, to_pos.y + to_size.y * 0.5);
         let anchor_from_pos = baumhard::mindmap::connection::resolve_anchor_point(
             from_pos, from_size, &edge.anchor_from, to_center,
@@ -54,10 +54,10 @@ use glam::Vec2;
         let edge = &doc.mindmap.edges[edge_idx];
         let from_node = doc.mindmap.nodes.get(&edge.from_id).unwrap();
         let to_node = doc.mindmap.nodes.get(&edge.to_id).unwrap();
-        let from_pos = Vec2::new(from_node.position.x as f32, from_node.position.y as f32);
-        let from_size = Vec2::new(from_node.size.width as f32, from_node.size.height as f32);
-        let to_pos = Vec2::new(to_node.position.x as f32, to_node.position.y as f32);
-        let to_size = Vec2::new(to_node.size.width as f32, to_node.size.height as f32);
+        let from_pos = from_node.pos_vec2();
+        let from_size = from_node.size_vec2();
+        let to_pos = to_node.pos_vec2();
+        let to_size = to_node.size_vec2();
         let from_center = Vec2::new(from_pos.x + from_size.x * 0.5, from_pos.y + from_size.y * 0.5);
         let to_center = Vec2::new(to_pos.x + to_size.x * 0.5, to_pos.y + to_size.y * 0.5);
         let start = baumhard::mindmap::connection::resolve_anchor_point(
@@ -93,10 +93,10 @@ use glam::Vec2;
         let edge = &doc.mindmap.edges[edge_idx];
         let from_node = doc.mindmap.nodes.get(&edge.from_id).unwrap();
         let to_node = doc.mindmap.nodes.get(&edge.to_id).unwrap();
-        let from_pos = Vec2::new(from_node.position.x as f32, from_node.position.y as f32);
-        let from_size = Vec2::new(from_node.size.width as f32, from_node.size.height as f32);
-        let to_pos = Vec2::new(to_node.position.x as f32, to_node.position.y as f32);
-        let to_size = Vec2::new(to_node.size.width as f32, to_node.size.height as f32);
+        let from_pos = from_node.pos_vec2();
+        let from_size = from_node.size_vec2();
+        let to_pos = to_node.pos_vec2();
+        let to_size = to_node.size_vec2();
         let from_center = Vec2::new(from_pos.x + from_size.x * 0.5, from_pos.y + from_size.y * 0.5);
 
         // The control point is at from_center + (50, 50). Hit there:

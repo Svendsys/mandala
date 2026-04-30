@@ -162,10 +162,10 @@ pub(super) fn pick_test_edge(doc: &MindMapDocument) -> (super::EdgeRef, glam::Ve
         .expect("testament map has visible edges");
     let from = doc.mindmap.nodes.get(&edge.from_id).unwrap();
     let to = doc.mindmap.nodes.get(&edge.to_id).unwrap();
-    let from_pos = Vec2::new(from.position.x as f32, from.position.y as f32);
-    let from_size = Vec2::new(from.size.width as f32, from.size.height as f32);
-    let to_pos = Vec2::new(to.position.x as f32, to.position.y as f32);
-    let to_size = Vec2::new(to.size.width as f32, to.size.height as f32);
+    let from_pos = from.pos_vec2();
+    let from_size = from.size_vec2();
+    let to_pos = to.pos_vec2();
+    let to_size = to.size_vec2();
     let path = baumhard::mindmap::connection::build_connection_path(
         from_pos, from_size, &edge.anchor_from,
         to_pos, to_size, &edge.anchor_to,

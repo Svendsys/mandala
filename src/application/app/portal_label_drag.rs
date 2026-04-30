@@ -69,8 +69,8 @@ pub(in crate::application::app) fn apply_portal_label_drag(
         );
         return false;
     };
-    let node_pos = Vec2::new(node.position.x as f32, node.position.y as f32);
-    let node_size = Vec2::new(node.size.width as f32, node.size.height as f32);
+    let node_pos = node.pos_vec2();
+    let node_size = node.size_vec2();
     let (t, perp) = project_cursor_to_portal_params(node_pos, node_size, cursor_canvas);
 
     // Direct field write — bypassing `set_portal_label_border_t`

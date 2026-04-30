@@ -5,6 +5,7 @@
 //! and the glyph-border config. Borders belong here because they are
 //! always per-node (no edge-level borders exist).
 
+use glam::Vec2;
 use serde::{Deserialize, Serialize};
 
 use crate::gfx_structs::zoom_visibility::ZoomVisibility;
@@ -131,6 +132,30 @@ impl MindNode {
             self.min_zoom_to_render,
             self.max_zoom_to_render,
         )
+    }
+
+    /// Top-left corner of the node's AABB in canvas space, as a
+    /// `glam::Vec2`. The model stores position as `f64` for serde
+    /// fidelity; downstream geometry (camera transforms, hit tests,
+    /// connection sampling) runs at `f32`. This helper performs the
+    /// conversion at the model boundary so call sites can drop the
+    /// `Vec2::new(node.position.x as f32, node.position.y as f32)`
+    /// boilerplate.
+    pub fn pos_vec2(&self) -> Vec2 {
+        Vec2::new(self.position.x as f32, self.position.y as f32)
+    }
+
+    /// Width/height of the node's AABB in canvas space, as a
+    /// `glam::Vec2`. Sibling of [`Self::pos_vec2`].
+    pub fn size_vec2(&self) -> Vec2 {
+        Vec2::new(self.size.width as f32, self.size.height as f32)
+    }
+
+    /// Center of the node's AABB in canvas space — `pos + size / 2`.
+    /// Used by edge-anchor and connection-routing math that needs
+    /// the node's geometric centre rather than its top-left corner.
+    pub fn center_vec2(&self) -> Vec2 {
+        self.pos_vec2() + self.size_vec2() * 0.5
     }
 }
 
