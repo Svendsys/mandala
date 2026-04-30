@@ -565,19 +565,17 @@ impl KeybindConfig {
             },
         );
         // Color: `args = [axis, value]` where axis = `bg|text|border`.
+        // `axis.parse::<ColorAxis>()` is the strum-`EnumString`-derived
+        // round-trip with `IntoStaticStr` (`Bg.into() == "bg"` etc.) —
+        // unrecognised tokens land in `Err`, which `push_parametric`
+        // then warns and skips on.
         push_parametric(&mut binds, "set_color", 2, &self.set_color, |args| match args {
-            [axis, value] => {
-                let axis = match axis.as_str() {
-                    "bg" => super::ColorAxis::Bg,
-                    "text" => super::ColorAxis::Text,
-                    "border" => super::ColorAxis::Border,
-                    _ => return None,
-                };
-                Some(Action::SetColor {
+            [axis, value] => axis.parse::<super::ColorAxis>().ok().map(|axis| {
+                Action::SetColor {
                     axis,
                     value: value.clone(),
-                })
-            }
+                }
+            }),
             _ => None,
         });
         // Edge structural — type / display_mode / reset.
@@ -624,18 +622,12 @@ impl KeybindConfig {
         );
         // Font: `args = [slot, pt]` where slot = `size|min|max`.
         push_parametric(&mut binds, "set_font", 2, &self.set_font, |args| match args {
-            [slot, value] => {
-                let slot = match slot.as_str() {
-                    "size" => super::FontSlot::Size,
-                    "min" => super::FontSlot::Min,
-                    "max" => super::FontSlot::Max,
-                    _ => return None,
-                };
-                Some(Action::SetFont {
+            [slot, value] => slot.parse::<super::FontSlot>().ok().map(|slot| {
+                Action::SetFont {
                     slot,
                     value: value.clone(),
-                })
-            }
+                }
+            }),
             _ => None,
         });
         push_parametric(
@@ -671,17 +663,12 @@ impl KeybindConfig {
         // Zoom: `args = [bound, value]` where bound = `min|max`.
         // `clear_zoom` is a separate unit variant.
         push_parametric(&mut binds, "set_zoom", 2, &self.set_zoom, |args| match args {
-            [bound, value] => {
-                let bound = match bound.as_str() {
-                    "min" => super::ZoomBound::Min,
-                    "max" => super::ZoomBound::Max,
-                    _ => return None,
-                };
-                Some(Action::SetZoom {
+            [bound, value] => bound.parse::<super::ZoomBound>().ok().map(|bound| {
+                Action::SetZoom {
                     bound,
                     value: value.clone(),
-                })
-            }
+                }
+            }),
             _ => None,
         });
         push_parametric(

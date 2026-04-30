@@ -5,7 +5,7 @@
 //! matching `KeybindConfig` field + default + binding-string list.
 
 use serde::{Deserialize, Serialize};
-use strum_macros::{EnumDiscriminants, EnumIter};
+use strum_macros::{EnumDiscriminants, EnumIter, EnumString, IntoStaticStr};
 
 use super::context::InputContext;
 
@@ -25,47 +25,37 @@ use super::context::InputContext;
 // path the typed `bg|text|border` console kv would have hit.
 
 /// Which color axis a [`Action::SetColor`] targets. Mirrors the
-/// `bg|text|border` kv key on the `color` console verb.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// `bg|text|border` kv key on the `color` console verb. The strum
+/// derives generate the bidirectional kv-key conversion: `Bg.into()
+/// == "bg"` (via `IntoStaticStr`) and `"bg".parse::<ColorAxis>() ==
+/// Ok(Bg)` (via `EnumString`) — the verb-core consults these at the
+/// boundary, replacing what was three hand-rolled match blocks.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize,
+    IntoStaticStr, EnumString,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum ColorAxis {
     Bg,
     Text,
     Border,
 }
 
-impl ColorAxis {
-    /// kv-key string the `color` verb-core accepts.
-    pub fn as_kv_key(self) -> &'static str {
-        match self {
-            ColorAxis::Bg => "bg",
-            ColorAxis::Text => "text",
-            ColorAxis::Border => "border",
-        }
-    }
-}
-
 /// Which font slot a [`Action::SetFont`] targets. Mirrors the
 /// `size|min|max` kv key on the `font` console verb. Family
 /// (`SetFontFamily`) lives on its own Action because the verb
 /// dispatches it through a different code path.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize,
+    IntoStaticStr, EnumString,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum FontSlot {
     Size,
     Min,
     Max,
-}
-
-impl FontSlot {
-    /// kv-key string the `font` verb-core accepts.
-    pub fn as_kv_key(self) -> &'static str {
-        match self {
-            FontSlot::Size => "size",
-            FontSlot::Min => "min",
-            FontSlot::Max => "max",
-        }
-    }
 }
 
 /// Which zoom bound a [`Action::SetZoom`] targets. Mirrors the
@@ -74,21 +64,15 @@ impl FontSlot {
 /// verb-core takes a `(min, max)` pair where each half is an
 /// `OptionEdit<f32>`, and `Clear/Clear` is a meaningfully distinct
 /// operation from `Keep/Keep`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize,
+    IntoStaticStr, EnumString,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum ZoomBound {
     Min,
     Max,
-}
-
-impl ZoomBound {
-    /// kv-key string the `zoom` verb-core accepts.
-    pub fn as_kv_key(self) -> &'static str {
-        match self {
-            ZoomBound::Min => "min",
-            ZoomBound::Max => "max",
-        }
-    }
 }
 
 /// High-level user actions that can be bound to keys. Add a new variant

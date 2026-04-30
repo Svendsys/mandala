@@ -435,7 +435,7 @@ pub(in crate::application::app) fn apply_set_color_axis(
     apply_with_rebuild(rc, |doc| {
         crate::application::console::commands::color::apply_color_axis_to_selection(
             doc,
-            axis.as_kv_key(),
+            axis.into(),
             value,
         )
     });
@@ -490,7 +490,7 @@ pub(in crate::application::app) fn apply_set_font_kv(
     apply_with_rebuild(rc, |doc| {
         crate::application::console::commands::font::apply_font_kv_to_selection(
             doc,
-            slot.as_kv_key(),
+            slot.into(),
             pt,
         )
     });
