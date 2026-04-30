@@ -458,68 +458,11 @@ fn test_insert_caret_after_emoji() {
     assert_eq!(out, "ab🍕|cd");
 }
 
-// -----------------------------------------------------------------
-// Word-boundary cursor primitives. New surface added when
-// `apply_text_edit_action` moved cross-platform — emoji / ZWJ
-// awareness is non-obvious for word jumps and deserves its own
-// regression coverage (CODE_CONVENTIONS §B2/§B3).
-// -----------------------------------------------------------------
-
-#[test]
-fn test_word_left_from_end_of_single_word() {
-    assert_eq!(word_left("hello", 5), 0);
-}
-
-#[test]
-fn test_word_left_from_zero_is_noop() {
-    assert_eq!(word_left("hello", 0), 0);
-}
-
-#[test]
-fn test_word_left_skips_punctuation_then_word() {
-    // Cursor at end of "hello,"; first walks left through the
-    // comma, then through "hello".
-    assert_eq!(word_left("hello,", 6), 0);
-}
-
-#[test]
-fn test_word_left_through_two_words() {
-    // "hello world" with cursor at end. One word_left lands at
-    // start of "world" (after walking the space).
-    assert_eq!(word_left("hello world", 11), 6);
-}
-
-#[test]
-fn test_word_right_from_zero_to_first_word_end() {
-    assert_eq!(word_right("hello", 0), 5);
-}
-
-#[test]
-fn test_word_right_skips_leading_punctuation() {
-    // Cursor at 0 of ",hello"; first skips the comma then walks
-    // the word.
-    assert_eq!(word_right(",hello", 0), 6);
-}
-
-#[test]
-fn test_word_right_at_end_is_noop() {
-    let s = "hello";
-    assert_eq!(word_right(s, 5), 5);
-}
-
-#[test]
-fn test_word_left_treats_emoji_as_non_word() {
-    // 🍕 is_alphanumeric() == false, so it's treated as
-    // word-boundary punctuation. Cursor after the emoji walks
-    // through the emoji + the space and lands at start of
-    // "hello".
-    let s = "hello 🍕 world";
-    let total = unicode_segmentation::UnicodeSegmentation::graphemes(s, true).count();
-    // Walk from end: skip "world", land on " 🍕 ".
-    let after_world_start = word_left(s, total);
-    // "world" starts at grapheme index 8 (h-e-l-l-o-space-pizza-space-w...).
-    assert_eq!(after_world_start, 8);
-}
+// `word_left` / `word_right` unit tests moved to baumhard alongside
+// the primitives — see `lib/baumhard/src/util/tests/grapheme_chad_tests.rs`
+// `do_word_left` / `do_word_right`. The `apply_text_edit_action` integration
+// tests below still exercise the dispatcher path through `Action::TextEditWordLeft`
+// / `TextEditWordRight`.
 
 // -----------------------------------------------------------------
 // `apply_text_edit_action` — pure dispatcher, called from every
