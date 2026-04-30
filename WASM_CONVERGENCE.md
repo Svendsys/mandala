@@ -387,6 +387,55 @@ overlay, …) — tracked in TODO.md.
 - Filesystem on WASM (`OpenDocument` / `SaveDocumentAs` /
   `NewDocumentAt` parametric Action variants stay `NativeOnly`
   pending a chosen storage strategy).
+- **Touch / IME / Focused** input event arms — the catch-all in
+  `WasmApp::handle_window_event` documents these by name; each
+  needs its own `event_*.rs` sibling once wired. Touch is
+  mobile-budget-binding (§4); IME is required for non-Latin
+  text editing in the inline node-text editor.
+
+## Per-arm event-handler shape divergence
+
+Wave 6C.1 split `WasmApp::handle_window_event` into per-event
+sibling files at `src/application/app/run_wasm/event_*.rs`,
+mirroring native's `src/application/app/event_*.rs` at file
+granularity. The two layouts now diff cleanly side-by-side —
+intentional, so a future Track-D reviewer can fold per-arm
+bodies once the unified context is reachable.
+
+But the function shape diverged:
+- **Native** handlers are free functions taking `&mut
+  InputHandlerContext<'_>` (e.g. `pub(super) fn
+  handle_keyboard_input(logical_key, event_loop, ctx)` at
+  `event_keyboard.rs:24`).
+- **WASM** handlers are inherent methods on `WasmApp` (e.g.
+  `impl WasmApp { pub(super) fn handle_keyboard_input(&mut
+  self, logical_key) }` at `run_wasm/event_keyboard.rs`).
+
+The WASM method shape is forced by the `Rc<RefCell<Option<…>>>`
+cell projection — only inherent methods can do the
+`borrow_mut().as_mut()` dance against `&mut self.input` /
+`self.renderer` at call-site cost. A free function would
+require the caller to do the projection and pass `&mut
+WasmInputState` + `&mut Renderer` separately, which means
+each arm body's call site grows by 5–8 lines of
+`borrow_mut()` + `as_mut()` + early-return guards.
+
+Track D's full convergence (collapse to "shared free functions
+taking `&mut InputContextCore`") will need to either:
+1. **Remove the cells**: convert `WasmApp` to own
+   `Renderer` / `WasmInputState` directly. Possible since
+   `WasmApp` is `'static` and the rAF render loop currently
+   needs `Rc` clones — but Track D would replace the rAF loop
+   shape too (e.g. drive rendering through
+   `ApplicationHandler::about_to_wait`). Substantial refactor.
+2. **Keep the cells, accept the method shape**: native's
+   handlers grow `&mut self`-method shape too, with `self`
+   wrapping a `&mut InputHandlerContext` stash. Less work but
+   less elegant.
+
+For now, the per-arm method shape is load-bearing on WASM and
+diverges from native by design. New WASM event handlers added
+before Track D should follow the method pattern.
 
 ## Smoke-testing the boundary
 
