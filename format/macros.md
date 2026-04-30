@@ -11,7 +11,10 @@ existing ones (`Action`, `CustomMutation`, console verbs).
 
 This document is the on-disk format reference. For the Rust-side
 types see `src/application/macros/`; the dispatcher lives in
-`src/application/app/dispatch.rs::dispatch_macro`.
+`src/application/app/dispatch/macro_core.rs::dispatch_macro`
+(cross-platform, abstracted over the `MacroDispatchTarget` trait —
+the native shim that wraps `InputHandlerContext` is at
+`src/application/app/dispatch/native.rs::dispatch_macro`).
 
 ## Where macros come from
 

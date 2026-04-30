@@ -1630,6 +1630,7 @@ dependencies = [
  "js-sys",
  "lazy_static",
  "log",
+ "mandala_derive",
  "num_cpus",
  "path-slash",
  "pollster",
@@ -1639,6 +1640,8 @@ dependencies = [
  "serde-lexpr",
  "serde_json",
  "smol_str 0.3.6",
+ "strum 0.27.2",
+ "strum_macros 0.27.2",
  "syn 2.0.117",
  "tinyvec",
  "ttf-parser",
@@ -1650,6 +1653,15 @@ dependencies = [
  "web-time",
  "wgpu",
  "winit",
+]
+
+[[package]]
+name = "mandala_derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]

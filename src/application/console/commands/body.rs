@@ -4,7 +4,7 @@
 //! Edge-specific; the concept doesn't generalize beyond edges.
 
 use super::Command;
-use crate::application::console::completion::{prefix_filter, Completion, CompletionContext, CompletionState};
+use crate::application::console::completion::{prefix_filter, Completion, CompletionContext, CompletionState, kv_key_completions};
 use crate::application::console::helpers::require_edge_or_portal;
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::edge_selected;
@@ -36,16 +36,7 @@ pub const COMMAND: Command = Command {
 
 fn complete_body(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completion> {
     match &state.context {
-        CompletionContext::Token { .. } => KEYS
-            .iter()
-            .filter(|k| k.starts_with(state.partial))
-            .map(|k| Completion {
-                text: format!("{}=", k),
-                display: format!("{}=", k),
-                hint: None,
-                font_family: None,
-            })
-            .collect(),
+        CompletionContext::Token { .. } => kv_key_completions(KEYS, state.partial),
         CompletionContext::KvValue { key } if key == "glyph" => {
             let names: Vec<&str> = PRESETS.iter().map(|(n, _)| *n).collect();
             prefix_filter(&names, state.partial)

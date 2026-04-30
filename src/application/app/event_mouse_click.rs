@@ -6,10 +6,27 @@
 
 #![cfg(not(target_arch = "wasm32"))]
 
-use super::input_context::InputHandlerContext;
-use super::throttled_interaction::ThrottledDrag;
-use super::*;
+use glam::Vec2;
+use winit::event::{ElementState, MouseButton};
 
+use super::click::handle_click;
+use super::color_picker_flow::{end_color_picker_gesture, handle_color_picker_click};
+use super::console_input::save_console_history;
+use super::edge_drag::apply_edge_handle_drag;
+use super::input_context::InputHandlerContext;
+use super::portal_label_drag::apply_portal_label_drag;
+use super::scene_rebuild::{
+    rebuild_after_selection_change, rebuild_all, rebuild_scene_only,
+};
+use super::throttled_interaction::ThrottledDrag;
+use super::{
+    is_double_click, now_ms, AppMode, DragState, LastClick,
+    EDGE_HANDLE_HIT_TOLERANCE_PX,
+};
+use crate::application::console::ConsoleState;
+use crate::application::document::{
+    apply_drag_delta, rect_select, SelectionState, UndoAction,
+};
 use crate::application::keybinds::Action;
 
 /// Dispatch a `WindowEvent::MouseInput`. Persistent state arrives
@@ -90,9 +107,7 @@ pub(super) fn handle_mouse_input(
                 // drag state below — mirrors today's behaviour where
                 // any drag's release goes to None regardless of which
                 // gesture started it.
-                let name = crate::application::keybinds::gesture_key_name(
-                    crate::application::keybinds::MouseGesture::MiddleClick,
-                );
+                let name = crate::application::keybinds::MouseGesture::MiddleClick.key_name();
                 // Modifier-fallback: Ctrl+MiddleClick matches the bare
                 // MiddleClick binding when no exact-modifier match
                 // exists. Preserves pre-branch modifier-agnostic
@@ -243,9 +258,7 @@ pub(super) fn handle_mouse_input(
                     // `CreateOrphanNodeAndEdit` when the user has
                     // explicitly bound that Action somewhere
                     // (off-by-default per user request).
-                    let dblclick_name = crate::application::keybinds::gesture_key_name(
-                        crate::application::keybinds::MouseGesture::DoubleClick,
-                    );
+                    let dblclick_name = crate::application::keybinds::MouseGesture::DoubleClick.key_name();
                     // Modifier-fallback so Shift+DoubleClick still
                     // activates the bare DoubleClick binding when no
                     // explicit Shift+DoubleClick binding exists.

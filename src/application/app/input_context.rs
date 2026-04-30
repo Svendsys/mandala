@@ -20,10 +20,10 @@ use crate::application::macros::MacroRegistry;
 use crate::application::renderer::Renderer;
 use crate::application::scene_host::AppScene;
 
+use super::label_edit::{LabelEditState, PortalTextEditState};
+use super::text_edit::TextEditState;
 use super::throttled_interaction::ColorPickerHoverInteraction;
-use super::{
-    AppMode, DragState, LabelEditState, LastClick, PortalTextEditState, TextEditState,
-};
+use super::{AppMode, DragState, LastClick};
 
 /// Borrowed view of the persistent state every interactive-path
 /// dispatcher reads and writes. Built once per event by

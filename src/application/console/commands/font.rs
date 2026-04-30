@@ -38,7 +38,7 @@
 
 use super::Command;
 use crate::application::console::completion::{
-    prefix_filter, Completion, CompletionContext, CompletionState,
+    kv_key_completions_with_hints, prefix_filter, Completion, CompletionContext, CompletionState,
 };
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
@@ -81,36 +81,12 @@ fn complete_font(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completi
                             other => other.to_string(),
                         },
                         display: v.to_string(),
-                        hint: Some(
-                            match *v {
-                                "set" => "pin the font family on the current selection",
-                                "list" => "list every loaded font, each rendered in its face",
-                                _ => "",
-                            }
-                            .into(),
-                        ),
+                        hint: verb_hint(v).map(str::to_string),
                         font_family: None,
                     });
                 }
             }
-            for k in KEYS {
-                if k.starts_with(state.partial) {
-                    out.push(Completion {
-                        text: format!("{}=", k),
-                        display: format!("{}=", k),
-                        hint: Some(
-                            match *k {
-                                "size" => "target on-screen size in points",
-                                "min" => "lower screen-space clamp in points",
-                                "max" => "upper screen-space clamp in points",
-                                _ => "points",
-                            }
-                            .into(),
-                        ),
-                        font_family: None,
-                    });
-                }
-            }
+            out.extend(kv_key_completions_with_hints(KEYS, state.partial, kv_hint));
             out
         }
         // Token 1 after `set`: every loaded font family, each
@@ -124,28 +100,30 @@ fn complete_font(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completi
         // Bare-token slots past index 0 with no preceding `set`
         // fall back to the kv keys (parity with the pre-existing
         // shape).
-        CompletionContext::Token { .. } => KEYS
-            .iter()
-            .filter(|k| k.starts_with(state.partial))
-            .map(|k| Completion {
-                text: format!("{}=", k),
-                display: format!("{}=", k),
-                hint: Some(
-                    match *k {
-                        "size" => "target on-screen size in points",
-                        "min" => "lower screen-space clamp in points",
-                        "max" => "upper screen-space clamp in points",
-                        _ => "points",
-                    }
-                    .into(),
-                ),
-                font_family: None,
-            })
-            .collect(),
+        CompletionContext::Token { .. } => {
+            kv_key_completions_with_hints(KEYS, state.partial, kv_hint)
+        }
         CompletionContext::KvValue { key } if KEYS.contains(&key.as_str()) => {
             prefix_filter(SIZE_PRESETS, state.partial)
         }
         _ => Vec::new(),
+    }
+}
+
+fn verb_hint(verb: &str) -> Option<&'static str> {
+    match verb {
+        "set" => Some("pin the font family on the current selection"),
+        "list" => Some("list every loaded font, each rendered in its face"),
+        _ => None,
+    }
+}
+
+fn kv_hint(key: &str) -> Option<&'static str> {
+    match key {
+        "size" => Some("target on-screen size in points"),
+        "min" => Some("lower screen-space clamp in points"),
+        "max" => Some("upper screen-space clamp in points"),
+        _ => None,
     }
 }
 

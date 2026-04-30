@@ -31,7 +31,7 @@ and [`src/application/app/run_wasm.rs`](./src/application/app/run_wasm.rs).
   the native context).
 - An inline `match action { ... }` block for keyboard input where
   every Compatible Action arm is a thin call into the shared
-  `cross_dispatch` helper module. Bodies that pre-Track-A had
+  `dispatch::cross_dispatch` helper module. Bodies that pre-Track-A had
   drift (Undo missing `fast_forward_animations`, e.g.) now share
   one source of truth with the native dispatcher. The mixed-branch
   Actions `EditSelection` / `EditSelectionClean` route their
@@ -45,9 +45,9 @@ and [`src/application/app/run_wasm.rs`](./src/application/app/run_wasm.rs).
 
 The asymmetry is shrinking — Track A has folded camera, selection,
 FPS, and the 20 parametric Compatible arms into shared helpers in
-`src/application/app/cross_dispatch.rs`. Both dispatchers call the
+`src/application/app/dispatch/cross_dispatch.rs`. Both dispatchers call the
 same per-action functions, so adding a new Compatible variant now
-requires writing the body once (in `cross_dispatch`), then a thin
+requires writing the body once (in `dispatch::cross_dispatch`), then a thin
 call from each side. Tracks B (macro registry) and C (full
 context-type unification) remain.
 
@@ -76,7 +76,7 @@ spells out the rules in detail.
 
 The tracks have soft dependencies. **Track A.3 (partial Track C)
 is now the recommended path** for any new Compatible Action: lift
-the body into `src/application/app/cross_dispatch.rs` once, then
+the body into `src/application/app/dispatch/cross_dispatch.rs` once, then
 both dispatchers call the same helper. **Track B (the macro
 registry) can land independently of A and C** — the registry's
 data and resolver are self-contained — but does require the
@@ -89,7 +89,7 @@ a new Compatible variant and need to wire it through both
 dispatchers. **Three paths**, in order of preference:
 
 - **Path A.3 — partial Track C (preferred for Compatible Actions).**
-  Add a per-action helper to `cross_dispatch.rs` that takes the
+  Add a per-action helper to `dispatch/cross_dispatch.rs` that takes the
   typed payload + a `RebuildContext`. Both dispatchers call the
   same function — no mirror tax. This is what every camera /
   selection / FPS / parametric Compatible arm does today (see
@@ -117,11 +117,11 @@ dispatchers. **Three paths**, in order of preference:
 2. Add the corresponding state to `WasmInputState` in
    `run_wasm.rs`.
 3. Open the matching native dispatch arm in
-   `src/application/app/dispatch.rs` to understand the body.
+   `src/application/app/dispatch/native.rs` to understand the body.
 4. Write a parallel arm in `run_wasm.rs`'s `match a { ... }` block
    that does the same thing against `WasmInputState`. Comment with
-   `// MIRROR OF dispatch.rs::Action::Foo arm — keep in sync until
-   Track C consolidates.`
+   `// MIRROR OF dispatch/native.rs::Action::Foo arm — keep in
+   sync until Track C consolidates.`
 5. Flip the Action's `wasm_compatibility` classification to
    `Compatible`. Update the corresponding test in
    `src/application/keybinds/tests.rs`.
@@ -165,7 +165,7 @@ the same Action → Macro chain native uses.
   triage stays uniform.
 
 - **`dispatch_macro` extracted** to
-  `src/application/app/dispatch_macro_core.rs` (cross-platform,
+  `src/application/app/dispatch/macro_core.rs` (cross-platform,
   no cfg). Step loop + privilege gate are abstracted over a
   `MacroDispatchTarget` trait so native and WASM share the
   body byte-for-byte. **Re-implementing the loop on either
@@ -179,17 +179,17 @@ the same Action → Macro chain native uses.
 - **WASM keyboard fall-through** at the keyboard handler:
   after `keybinds.action_for_context` returns `None`,
   `keybinds.macro_for(...)` is consulted; on hit
-  `dispatch_macro_core::dispatch_macro` runs the macro through
+  `dispatch::macro_core::dispatch_macro` runs the macro through
   the trait impl. Mirrors native's `event_keyboard.rs:271-310`
   Action → Macro → (CustomMutation tier on native; macros only
   on WASM today).
 
-- **`apply_keybind_custom_mutation` lifted** from `dispatch.rs`
-  (cfg-gated) to `cross_dispatch.rs` so the WASM macro target
-  can reach the same animation-aware apply +
-  `apply_document_actions` envelope native uses. Re-exported
-  from `dispatch.rs` for the existing
-  `document/tests_mutations` import.
+- **`apply_keybind_custom_mutation` lifted** from native dispatch
+  (cfg-gated) to `dispatch/cross_dispatch.rs` so the WASM macro
+  target can reach the same animation-aware apply +
+  `apply_document_actions` envelope native uses. Re-exported from
+  `dispatch/mod.rs` (as `dispatch::apply_keybind_custom_mutation`)
+  for the existing `document/tests_mutations` import.
 
 - **`MacroStep::ConsoleLine` on WASM** — User-tier logs
   `warn!` and skips (the macro continues with the next step).
@@ -207,7 +207,7 @@ http://localhost:8080/?map=path&keybinds={"macro_bindings":{"Ctrl+G":"my-macro"}
 ```
 
 **Test coverage:**
-- 9 mock-target tests in `dispatch_macro_core::tests` exercise
+- 9 mock-target tests in `dispatch::macro_core::tests` exercise
   the privilege gate at the actual loop body (not just the
   per-step simulator).
 - `loader::tests` covers `parse_user_macros_json` (the shared
@@ -221,7 +221,7 @@ http://localhost:8080/?map=path&keybinds={"macro_bindings":{"Ctrl+G":"my-macro"}
 
 Track C landed in 4 commits. Both targets now dispatch every
 Compatible Action through the same cross-platform
-`dispatch_action_core::dispatch_compatible` function; the
+`dispatch::action_core::dispatch_compatible` function; the
 WASM-only `dispatch_compatible_action_wasm` shim is deleted.
 
 **Architecture summary:**
@@ -246,11 +246,11 @@ WASM-only `dispatch_compatible_action_wasm` shim is deleted.
   views with shorter lifetime. Native callers split before
   calling the cross-platform dispatcher.
 
-- **`dispatch_action_core::dispatch_compatible(&Action, &mut InputContextCore)
+- **`dispatch::action_core::dispatch_compatible(&Action, &mut InputContextCore)
   -> DispatchOutcome`** — the canonical cross-platform dispatcher.
   Handles every Compatible-classified Action arm (Document-
   lifecycle, camera/zoom, FPS, selection nav, parametric
-  mutators) via `cross_dispatch::apply_*` helpers. Returns
+  mutators) via `dispatch::cross_dispatch::apply_*` helpers. Returns
   `Handled` when the body fired; `Unhandled` for NativeOnly
   variants (caller's fall-through runs them) and for mixed-
   branch Actions whose cross-platform slice didn't apply.
@@ -298,12 +298,16 @@ with `&mut self` accessors would close over the whole context
 on every call; the concrete struct with split borrows tracks
 field-level borrows correctly.
 
-**Open follow-up:** the now-unreachable Compatible arms in
-`dispatch.rs::dispatch_action`'s match (Undo, ZoomIn, etc.) can
-be deleted. They run after the cross-platform dispatcher
-returns Handled so they're never reached. Left in place this
-commit for behaviour-preservation safety; a focused follow-up
-can remove them. Marked as the new "Outstanding" item.
+**Native-dead-arm cleanup shipped.** The now-unreachable Compatible
+arms in `dispatch/native.rs::dispatch_action`'s match (Undo, ZoomIn,
+all parametric `Set*`, etc.) were removed in a follow-up commit —
+they were unreachable after Track C's delegation shim, so the
+removal preserved behaviour. The match now contains only NativeOnly
+arms (Console / Picker / AppMode / EditOpen / Save / DoubleClick /
+filesystem / PanCanvas / LabelEditCursor*), the mixed-branch native
+residuals, and the mouse-with-`DispatchHit` branch of
+`CreateOrphanNodeAndEdit` (the keyboard branch is in
+`dispatch_compatible`).
 
 ### Track-D meta — keep the privilege model intact
 
@@ -320,21 +324,28 @@ because hostile mindmaps shouldn't invoke it).
 `MacroSource::allows_action` and `allows_console_line` live in
 `src/application/macros/mod.rs` — these methods are NOT cfg-
 gated; they compile on both targets. The fail-closed enforcement
-loop, however, is in `dispatch::dispatch_macro` at
-`src/application/app/dispatch.rs`, and the *entire* `dispatch.rs`
-module is `#![cfg(not(target_arch = "wasm32"))]`-gated at line 9.
+loop is in `dispatch::macro_core::dispatch_macro` at
+`src/application/app/dispatch/macro_core.rs` (cross-platform,
+abstracted over `MacroDispatchTarget`); the native shim that
+wraps `InputHandlerContext` lives in
+`src/application/app/dispatch/native.rs`, gated to native via the
+file-level `#![cfg(not(target_arch = "wasm32"))]`.
 
-When you implement WASM macro dispatch, **do NOT re-implement the
-`allows_action` / `allows_console_line` checks inline.** Two
-acceptable shapes:
+**Track B took option (b) below: shape was the right one.** The
+`dispatch_macro` step loop and privilege gate live in
+`dispatch/macro_core.rs` (cross-platform); the native-only
+Action-arm dispatcher in `dispatch/native.rs` stays cfg-gated.
+WASM's `WasmMacroDispatchTarget` impl wraps `WasmInputState +
+&mut Renderer` and reaches the SAME gate via the
+`MacroDispatchTarget` trait. Recorded here for Track-A
+contributors who might be tempted to re-implement the check
+inline; the alternative was:
 
-- **(a) Lift the cfg gate off `dispatch.rs`'s module declaration**
-  and gate individual native-only arms instead. The privilege-
-  enforcement code becomes cross-platform automatically.
-- **(b) Extract `dispatch_macro` and its enforcement loop into
-  `dispatch_macro_core.rs`** (cross-platform), leaving the
-  Action-arm dispatcher gated. WASM imports the core module
-  unchanged.
+- **(a) Lift the cfg gate off the native dispatch module's
+  declaration** and gate individual native-only arms instead. The
+  privilege-enforcement code becomes cross-platform automatically.
+  Not taken because the per-arm cfg-gate sprawl would be worse
+  than the trait abstraction.
 
 Re-implementing the privilege check inline is **forbidden** —
 it's the threat-model defence and must be single-sourced. A
@@ -391,10 +402,14 @@ today, per `TEST_CONVENTIONS.md §T9`).
 
 ## Reading order for the impatient
 
-1. [`src/application/keybinds/action.rs`](./src/application/keybinds/action.rs) —
-   `Action::wasm_compatibility` is the API contract.
-2. [`src/application/app/dispatch.rs`](./src/application/app/dispatch.rs) —
+1. [`src/application/keybinds/action/mod.rs`](./src/application/keybinds/action/mod.rs) —
+   `Action::wasm_compatibility` is the API contract; the per-variant
+   `#[action(wasm = ...)]` attributes drive
+   `mandala_derive::ActionClassify`'s emitted classifier.
+2. [`src/application/app/dispatch/native.rs`](./src/application/app/dispatch/native.rs) —
    the native dispatch funnel arms are the reference implementation.
+   Cross-platform Compatible-arm bodies live in
+   [`src/application/app/dispatch/cross_dispatch.rs`](./src/application/app/dispatch/cross_dispatch.rs).
 3. [`src/application/app/input_context.rs`](./src/application/app/input_context.rs) —
    the 21-field context every native arm reads (passed by
    `&mut InputHandlerContext<'_>`).

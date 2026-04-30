@@ -20,7 +20,7 @@
 //! - `Multi`: fans out over each node id.
 
 use super::Command;
-use crate::application::console::completion::{prefix_filter, Completion, CompletionContext, CompletionState};
+use crate::application::console::completion::{prefix_filter, Completion, CompletionContext, CompletionState, kv_key_completions};
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
 use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
@@ -71,16 +71,7 @@ fn complete_zoom(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completi
             }
             out
         }
-        CompletionContext::Token { .. } => KEYS
-            .iter()
-            .filter(|k| k.starts_with(state.partial))
-            .map(|k| Completion {
-                text: format!("{}=", k),
-                display: format!("{}=", k),
-                hint: None,
-                font_family: None,
-            })
-            .collect(),
+        CompletionContext::Token { .. } => kv_key_completions(KEYS, state.partial),
         CompletionContext::KvValue { key } if KEYS.contains(&key.as_str()) => {
             prefix_filter(VALUE_PRESETS, state.partial)
         }

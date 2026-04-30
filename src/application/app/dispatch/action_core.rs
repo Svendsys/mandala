@@ -31,7 +31,7 @@ use crate::application::document::OptionEdit;
 use crate::application::keybinds::{Action, WasmCompatibility};
 
 use super::cross_dispatch::DispatchOutcome;
-use super::input_context_core::InputContextCore;
+use super::super::input_context_core::InputContextCore;
 
 /// Run `f` against a `RebuildContext` built from `core`, IF the
 /// document is loaded. Skips silently otherwise. Captures the
@@ -162,7 +162,7 @@ pub(in crate::application::app) fn dispatch_compatible(
         Action::TextEditCancel | Action::TextEditCommit => {
             let commit = matches!(action, Action::TextEditCommit);
             if let Some(doc) = core.document.as_deref_mut() {
-                super::text_edit::close_text_edit(
+                super::super::text_edit::close_text_edit(
                     commit,
                     doc,
                     core.text_edit_state,
@@ -268,25 +268,9 @@ pub(in crate::application::app) fn dispatch_compatible(
         Action::SetEdgeCap { from, to } => with_doc_rebuild(core, |rc| {
             super::cross_dispatch::apply_set_edge_cap(from, to, rc)
         }),
-        Action::SetColorBg(value)
-        | Action::SetColorText(value)
-        | Action::SetColorBorder(value) => {
-            let axis = match action {
-                Action::SetColorBg(_) => super::cross_dispatch::ColorAxis::Bg,
-                Action::SetColorText(_) => super::cross_dispatch::ColorAxis::Text,
-                Action::SetColorBorder(_) => super::cross_dispatch::ColorAxis::Border,
-                _ => {
-                    log::error!(
-                        "dispatch_compatible: color axis fan-out missed inner-match: {:?}",
-                        action,
-                    );
-                    return DispatchOutcome::Handled;
-                }
-            };
-            with_doc_rebuild(core, |rc| {
-                super::cross_dispatch::apply_set_color_axis(axis, value, rc)
-            });
-        }
+        Action::SetColor { axis, value } => with_doc_rebuild(core, |rc| {
+            super::cross_dispatch::apply_set_color_axis(*axis, value, rc)
+        }),
         Action::SetEdgeType(value) => with_doc_rebuild(core, |rc| {
             super::cross_dispatch::apply_set_edge_type(value, rc)
         }),
@@ -299,28 +283,16 @@ pub(in crate::application::app) fn dispatch_compatible(
         Action::SetFontFamily(family) => with_doc_rebuild(core, |rc| {
             super::cross_dispatch::apply_set_font_family(family, rc)
         }),
-        Action::SetFontSize(pt) | Action::SetFontMin(pt) | Action::SetFontMax(pt) => {
-            let slot = match action {
-                Action::SetFontSize(_) => super::cross_dispatch::FontSlot::Size,
-                Action::SetFontMin(_) => super::cross_dispatch::FontSlot::Min,
-                Action::SetFontMax(_) => super::cross_dispatch::FontSlot::Max,
-                _ => {
-                    log::error!(
-                        "dispatch_compatible: font slot fan-out missed inner-match: {:?}",
-                        action,
-                    );
-                    return DispatchOutcome::Handled;
-                }
-            };
-            let parsed = match pt.parse::<f32>() {
+        Action::SetFont { slot, value } => {
+            let parsed = match value.parse::<f32>() {
                 Ok(v) if v.is_finite() && v > 0.0 => v,
                 _ => {
-                    log::warn!("SetFont{:?}: invalid '{}'", slot, pt);
+                    log::warn!("SetFont{{slot={:?}}}: invalid '{}'", slot, value);
                     return DispatchOutcome::Handled;
                 }
             };
             with_doc_rebuild(core, |rc| {
-                super::cross_dispatch::apply_set_font_kv(slot, parsed, rc)
+                super::cross_dispatch::apply_set_font_kv(*slot, parsed, rc)
             });
         }
         Action::SetEdgeLabelText(text) => with_doc_rebuild(core, |rc| {
@@ -332,26 +304,19 @@ pub(in crate::application::app) fn dispatch_compatible(
         Action::SetSpacing(i) => {
             with_doc_rebuild(core, |rc| super::cross_dispatch::apply_set_spacing(i, rc))
         }
-        Action::SetZoomMin(payload) | Action::SetZoomMax(payload) => {
+        Action::SetZoom { bound, value } => {
             let parsed = match crate::application::console::commands::zoom::parse_zoom_payload(
-                payload,
+                value,
             ) {
                 Some(e) => e,
                 None => {
-                    log::warn!("set_zoom_*: invalid '{}'", payload);
+                    log::warn!("SetZoom{{bound={:?}}}: invalid '{}'", bound, value);
                     return DispatchOutcome::Handled;
                 }
             };
-            let (min, max) = match action {
-                Action::SetZoomMin(_) => (parsed, OptionEdit::Keep),
-                Action::SetZoomMax(_) => (OptionEdit::Keep, parsed),
-                _ => {
-                    log::error!(
-                        "dispatch_compatible: zoom min/max fan-out missed inner-match: {:?}",
-                        action,
-                    );
-                    return DispatchOutcome::Handled;
-                }
+            let (min, max) = match bound {
+                crate::application::keybinds::ZoomBound::Min => (parsed, OptionEdit::Keep),
+                crate::application::keybinds::ZoomBound::Max => (OptionEdit::Keep, parsed),
             };
             with_doc_rebuild(core, |rc| {
                 super::cross_dispatch::apply_set_zoom_window(min, max, rc)
@@ -360,12 +325,64 @@ pub(in crate::application::app) fn dispatch_compatible(
         Action::ClearZoom => {
             with_doc_rebuild(core, |rc| super::cross_dispatch::apply_clear_zoom(rc))
         }
-        // Compatible-classified but not wired here yet (Copy /
-        // Cut / Paste — clipboard stubs on WASM; CreateOrphan-
-        // NodeAndEdit; TextEdit cursor primitives — modal-steal
-        // routed). Caller's fall-through (native only) catches
-        // them. Returning `Unhandled` mirrors the catch-all
-        // posture in `dispatch_compatible_action_wasm` pre-Track-C.
+        // ── Clipboard ─────────────────────────────────────────
+        // Compatible because `clipboard::{read,write}_clipboard`
+        // are logged stubs on WASM (pending async-clipboard) and
+        // the trait-driven walk over `selection_targets` compiles
+        // on both targets.
+        Action::Copy | Action::Cut => {
+            let is_cut = matches!(action, Action::Cut);
+            if let Some(doc) = core.document.as_deref_mut() {
+                super::cross_dispatch::apply_copy_or_cut(is_cut, doc);
+            }
+        }
+        Action::Paste => with_doc_rebuild(core, |rc| super::cross_dispatch::apply_paste(rc)),
+        // ── Create-orphan-and-edit (keyboard shape) ───────────
+        // Mouse-driven empty-canvas double-click stays in
+        // `dispatch.rs` (DoubleClickActivate::Empty calls
+        // `dispatch_create_orphan_and_edit` directly with
+        // `DispatchHit::canvas_pos`). The keyboard-bound case
+        // — and the WASM target which has no DispatchHit on this
+        // path — uses `cursor_pos` here.
+        Action::CreateOrphanNodeAndEdit => {
+            let canvas_pos = core
+                .renderer
+                .screen_to_canvas(core.cursor_pos.0 as f32, core.cursor_pos.1 as f32);
+            if let Some(doc) = core.document.as_deref_mut() {
+                let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
+                super::cross_dispatch::apply_create_orphan_node_and_edit(
+                    canvas_pos,
+                    &mut rc,
+                    core.text_edit_state,
+                );
+            }
+        }
+        // ── TextEdit cursor primitives ────────────────────────
+        // Pure state mutations on `text_edit_state`. The modal
+        // handler `handle_text_edit_key` calls `dispatch_action`
+        // and refreshes the preview tree afterwards, so arms
+        // here only touch state — no rebuild.
+        Action::TextEditCursorLeft
+        | Action::TextEditCursorRight
+        | Action::TextEditCursorUp
+        | Action::TextEditCursorDown
+        | Action::TextEditCursorHome
+        | Action::TextEditCursorEnd
+        | Action::TextEditDeleteBack
+        | Action::TextEditDeleteForward
+        | Action::TextEditWordLeft
+        | Action::TextEditWordRight
+        | Action::TextEditDeleteWordBack
+        | Action::TextEditDeleteWordForward => {
+            super::super::text_edit::apply_text_edit_action(action.clone(), core.text_edit_state);
+        }
+        // Catch-all for variants `dispatch_compatible` doesn't
+        // own. Two cohorts reach here: NativeOnly arms (caller's
+        // fall-through runs them on native; on WASM they're
+        // silently skipped, which is fine — well-formed configs
+        // don't bind NativeOnly Actions to WASM key combos), and
+        // mixed-branch arms whose cross-platform slice fell
+        // through (`EditSelection*` on a non-Single selection).
         _ => return DispatchOutcome::Unhandled,
     }
     DispatchOutcome::Handled

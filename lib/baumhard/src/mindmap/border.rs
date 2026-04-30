@@ -48,61 +48,52 @@ pub struct BorderGlyphSet {
     pub bottom_right: char,
 }
 
+/// Single source of truth for the four canonical Unicode
+/// box-drawing presets. Each row is `(name, [top, bottom, left,
+/// right, tl, tr, bl, br])`. Adding a fifth preset is a one-row
+/// extension here, plus an entry in [`BORDER_PRESETS`] (which the
+/// console's `border preset=` completion surfaces).
+const PRESET_TABLE: &[(&str, [char; 8])] = &[
+    ("light",   ['─', '─', '│', '│', '┌', '┐', '└', '┘']),
+    ("heavy",   ['━', '━', '┃', '┃', '┏', '┓', '┗', '┛']),
+    ("double", ['═', '═', '║', '║', '╔', '╗', '╚', '╝']),
+    ("rounded", ['─', '─', '│', '│', '╭', '╮', '╰', '╯']),
+];
+
 impl BorderGlyphSet {
-    /// Standard Unicode box-drawing characters (light lines)
+    /// Build a glyph set from the 8-char layout `[top, bottom,
+    /// left, right, tl, tr, bl, br]` used by [`PRESET_TABLE`].
+    fn from_glyphs(g: [char; 8]) -> Self {
+        BorderGlyphSet {
+            top: g[0],
+            bottom: g[1],
+            left: g[2],
+            right: g[3],
+            top_left: g[4],
+            top_right: g[5],
+            bottom_left: g[6],
+            bottom_right: g[7],
+        }
+    }
+
+    /// Standard Unicode box-drawing characters (light lines).
     pub fn box_drawing_light() -> Self {
-        BorderGlyphSet {
-            top: '\u{2500}',        // ─
-            bottom: '\u{2500}',     // ─
-            left: '\u{2502}',       // │
-            right: '\u{2502}',      // │
-            top_left: '\u{250C}',   // ┌
-            top_right: '\u{2510}',  // ┐
-            bottom_left: '\u{2514}',// └
-            bottom_right: '\u{2518}',// ┘
-        }
+        Self::from_glyphs(PRESET_TABLE[0].1)
     }
 
-    /// Heavy box-drawing characters
+    /// Heavy box-drawing characters.
     pub fn box_drawing_heavy() -> Self {
-        BorderGlyphSet {
-            top: '\u{2501}',        // ━
-            bottom: '\u{2501}',     // ━
-            left: '\u{2503}',       // ┃
-            right: '\u{2503}',      // ┃
-            top_left: '\u{250F}',   // ┏
-            top_right: '\u{2513}',  // ┓
-            bottom_left: '\u{2517}',// ┗
-            bottom_right: '\u{251B}',// ┛
-        }
+        Self::from_glyphs(PRESET_TABLE[1].1)
     }
 
-    /// Double-line box-drawing characters
+    /// Double-line box-drawing characters.
     pub fn box_drawing_double() -> Self {
-        BorderGlyphSet {
-            top: '\u{2550}',        // ═
-            bottom: '\u{2550}',     // ═
-            left: '\u{2551}',       // ║
-            right: '\u{2551}',      // ║
-            top_left: '\u{2554}',   // ╔
-            top_right: '\u{2557}',  // ╗
-            bottom_left: '\u{255A}',// ╚
-            bottom_right: '\u{255D}',// ╝
-        }
+        Self::from_glyphs(PRESET_TABLE[2].1)
     }
 
-    /// Rounded box-drawing characters
+    /// Rounded box-drawing characters.
     pub fn box_drawing_rounded() -> Self {
-        BorderGlyphSet {
-            top: '\u{2500}',        // ─
-            bottom: '\u{2500}',     // ─
-            left: '\u{2502}',       // │
-            right: '\u{2502}',      // │
-            top_left: '\u{256D}',   // ╭
-            top_right: '\u{256E}',  // ╮
-            bottom_left: '\u{2570}',// ╰
-            bottom_right: '\u{256F}',// ╯
-        }
+        Self::from_glyphs(PRESET_TABLE[3].1)
     }
 
     /// Generates the top border string for a given width in characters.
@@ -674,27 +665,56 @@ pub fn resolve_border_style(
 /// sides are overridden downstream by the `glyphs` payload, so the
 /// fallback only shows through when the user picked custom but
 /// supplied no glyph fields.
+///
+/// Reachable per tree rebuild (`tree_builder/border.rs:111`),
+/// which §9 puts in interactive territory — no panic site. The
+/// fallback is statically known to exist because [`PRESET_TABLE`]
+/// is `const &[…; 4]` (non-empty by construction).
 pub fn preset_glyph_set(preset: &str) -> BorderGlyphSet {
-    match preset.to_ascii_lowercase().as_str() {
-        "rounded" => BorderGlyphSet::box_drawing_rounded(),
-        "heavy" => BorderGlyphSet::box_drawing_heavy(),
-        "double" => BorderGlyphSet::box_drawing_double(),
-        "light" | "custom" => BorderGlyphSet::box_drawing_light(),
-        other => {
-            log::warn!(
-                "border preset '{}' unknown; using 'light'",
-                other
-            );
-            BorderGlyphSet::box_drawing_light()
-        }
-    }
+    let name = preset.to_ascii_lowercase();
+    let row = PRESET_TABLE
+        .iter()
+        .find(|(n, _)| *n == name)
+        .unwrap_or_else(|| {
+            // "custom" is in `BORDER_PRESETS` but absent from the
+            // glyph table — it signals "user-supplied glyphs
+            // override these defaults," with the per-side fallback
+            // to `light`. Anything else gets a warn-log.
+            if name != CUSTOM_PRESET_NAME {
+                log::warn!("border preset '{}' unknown; using 'light'", preset);
+            }
+            &PRESET_TABLE[0]
+        });
+    BorderGlyphSet::from_glyphs(row.1)
 }
 
-/// The five preset names accepted by the schema's
-/// `GlyphBorderConfig.preset` field. Surfaced for the console's
-/// `border preset=` completion.
-pub const BORDER_PRESETS: &[&str] =
-    &["light", "heavy", "double", "rounded", "custom"];
+/// Sentinel preset name for "user-supplied glyphs override these
+/// defaults." Has no row in [`PRESET_TABLE`]; the per-side
+/// fallback in [`preset_glyph_set`] is `light`. Repeated literal
+/// `"custom"` checks reach for this to keep the meaning single-
+/// sourced.
+pub const CUSTOM_PRESET_NAME: &str = "custom";
+
+/// Every preset name accepted by the schema's
+/// `GlyphBorderConfig.preset` field — the four typed glyph rows
+/// in [`PRESET_TABLE`] plus the [`CUSTOM_PRESET_NAME`] sentinel.
+/// Surfaced for the console's `border preset=` completion.
+///
+/// Derived from `PRESET_TABLE`'s row-index → name extraction at
+/// const-fn time so adding a fifth glyph row to `PRESET_TABLE`
+/// only requires extending the table — `BORDER_PRESETS` rebuilds
+/// automatically.
+pub const BORDER_PRESETS: &[&str] = &{
+    const N: usize = PRESET_TABLE.len();
+    let mut out: [&str; N + 1] = [""; N + 1];
+    let mut i = 0;
+    while i < N {
+        out[i] = PRESET_TABLE[i].0;
+        i += 1;
+    }
+    out[N] = CUSTOM_PRESET_NAME;
+    out
+};
 
 fn corners_and_patterns_from_custom(
     g: &CustomBorderGlyphs,

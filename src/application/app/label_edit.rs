@@ -13,10 +13,11 @@ use crate::application::document::MindMapDocument;
 use crate::application::keybinds::{InputContext, ResolvedKeybinds};
 use crate::application::renderer::Renderer;
 
-use super::text_edit::insert_caret;
-use super::{
-    rebuild_all, route_label_edit_key, update_connection_label_tree, update_portal_tree,
+use super::scene_rebuild::{
+    rebuild_all, update_connection_label_tree, update_portal_tree,
 };
+use super::text_edit::insert_caret;
+use super::route_label_edit_key;
 
 // (`update_portal_tree` imported above is used by the portal-text
 // editor; the line-mode label editor deliberately does NOT touch
@@ -149,10 +150,10 @@ pub(in crate::application::app) fn handle_label_edit_key(
     keybinds: &ResolvedKeybinds,
     label_edit_state: &mut LabelEditState,
     doc: &mut MindMapDocument,
-    mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
+    _mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
     app_scene: &mut crate::application::scene_host::AppScene,
     renderer: &mut Renderer,
-    scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
+    _scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
 ) {
     let name = key_name.as_deref();
     let action = name.and_then(|n| {

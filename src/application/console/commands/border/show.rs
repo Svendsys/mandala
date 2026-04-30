@@ -65,10 +65,9 @@ fn format_border_readout(
     );
     let approx_char_width =
         style.font_size_pt * BORDER_APPROX_CHAR_WIDTH_FRAC;
-    let char_count = ((node.size.width as f32 / approx_char_width) + 2.0)
-        .ceil()
-        .max(3.0) as usize;
-    let row_count = (node.size.height as f32 / style.font_size_pt)
+    let size = node.size_vec2();
+    let char_count = ((size.x / approx_char_width) + 2.0).ceil().max(3.0) as usize;
+    let row_count = (size.y / style.font_size_pt)
         .round()
         .max(1.0) as usize;
 

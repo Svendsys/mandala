@@ -7,7 +7,7 @@
 use crate::application::document::{EdgeRef, MindMapDocument};
 use crate::application::renderer::Renderer;
 
-use super::super::rebuild_all;
+use super::super::scene_rebuild::rebuild_all;
 use super::super::throttled_interaction::ColorPickerHoverInteraction;
 
 /// Cancel the picker: clear the transient document preview and

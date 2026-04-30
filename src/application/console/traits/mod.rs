@@ -19,9 +19,14 @@ mod view;
 mod tests;
 
 pub use capabilities::{
-    AcceptsFontFamily, AcceptsWheelColor, HandlesCopy, HandlesCut, HandlesPaste, HasBgColor,
-    HasBorderColor, HasLabel, HasTextColor,
+    AcceptsFontFamily, HandlesCopy, HandlesCut, HandlesPaste, HasBgColor, HasBorderColor,
+    HasLabel, HasTextColor,
 };
+// Native-only: `AcceptsWheelColor` is consulted by the inline
+// color-picker modal in `app/color_picker_flow/`, which is
+// native-gated. WASM has no inline picker yet.
+#[cfg(not(target_arch = "wasm32"))]
+pub use capabilities::AcceptsWheelColor;
 pub use color_value::ColorValue;
 pub use dispatch::{apply_kvs, apply_to_targets, DispatchReport};
 pub use outcome::{ClipboardContent, Outcome};

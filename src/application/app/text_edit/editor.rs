@@ -16,7 +16,7 @@ use crate::application::document::MindMapDocument;
 use crate::application::keybinds::{InputContext, ResolvedKeybinds};
 use crate::application::renderer::Renderer;
 
-use super::super::rebuild_all;
+use super::super::scene_rebuild::rebuild_all;
 use super::{insert_at_cursor, insert_caret, TextEditState};
 
 
@@ -332,11 +332,11 @@ pub(in crate::application::app) fn handle_text_edit_key(
     alt: bool,
     keybinds: &ResolvedKeybinds,
     text_edit_state: &mut TextEditState,
-    doc: &mut MindMapDocument,
+    _doc: &mut MindMapDocument,
     mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
-    app_scene: &mut crate::application::scene_host::AppScene,
+    _app_scene: &mut crate::application::scene_host::AppScene,
     renderer: &mut Renderer,
-    scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
+    _scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
 ) {
     let name = key_name.as_deref();
     let action = name.and_then(|n| {

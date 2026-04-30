@@ -6,10 +6,25 @@
 
 #![cfg(target_arch = "wasm32")]
 
-use super::*;
-use crate::application::document::MindMapDocument;
-use crate::application::keybinds::Action;
+use std::sync::Arc;
+
 use baumhard::mindmap::tree_builder::MindMapTree;
+use wgpu::Instance;
+use winit::event::{
+    ElementState, Event, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent,
+};
+
+use super::scene_rebuild::{
+    flush_canvas_scene_buffers, rebuild_after_selection_change, rebuild_all,
+    rebuild_scene_only, update_border_tree_static,
+    update_connection_label_tree, update_connection_tree, update_portal_tree,
+};
+use super::text_edit::{handle_text_edit_key, open_text_edit, TextEditState};
+use super::{is_double_click, now_ms, Application, ClickHit, LastClick};
+use crate::application::common::RenderDecree;
+use crate::application::document::{MindMapDocument, SelectionState};
+use crate::application::keybinds::{Action, ResolvedKeybinds};
+use crate::application::renderer::Renderer;
 
 /// Pending left-click awaiting a release. `None` on init and after
 /// release consumed; `Empty` after a click-down on empty canvas;
@@ -126,12 +141,12 @@ struct WasmMacroDispatchTarget<'a> {
     keybinds: &'a crate::application::keybinds::ResolvedKeybinds,
 }
 
-impl<'a> super::dispatch_macro_core::MacroDispatchTarget for WasmMacroDispatchTarget<'a> {
+impl<'a> super::dispatch::macro_core::MacroDispatchTarget for WasmMacroDispatchTarget<'a> {
     fn registry(&self) -> &crate::application::macros::MacroRegistry {
         &self.input.macros
     }
 
-    fn dispatch_action(&mut self, action: Action) -> super::cross_dispatch::DispatchOutcome {
+    fn dispatch_action(&mut self, action: Action) -> super::dispatch::DispatchOutcome {
         // Track C: route through the unified cross-platform
         // dispatcher. Pre-Track-C this called the WASM-only
         // `dispatch_compatible_action_wasm` shim; that shim is
@@ -143,9 +158,9 @@ impl<'a> super::dispatch_macro_core::MacroDispatchTarget for WasmMacroDispatchTa
         // `lift_mixed_branch_for_wasm_macro`'s rustdoc.
         let outcome = {
             let mut core = self.input.input_context_core(self.renderer, self.keybinds);
-            super::dispatch_action_core::dispatch_compatible(&action, &mut core)
+            super::dispatch::action_core::dispatch_compatible(&action, &mut core)
         };
-        super::dispatch_action_core::lift_mixed_branch_for_wasm_macro(&action, outcome)
+        super::dispatch::action_core::lift_mixed_branch_for_wasm_macro(&action, outcome)
     }
 
     fn apply_custom_mutation(&mut self, id: &str, node_id: &str) -> bool {
@@ -160,7 +175,7 @@ impl<'a> super::dispatch_macro_core::MacroDispatchTarget for WasmMacroDispatchTa
             return false;
         };
         let now = super::now_ms() as u64;
-        let applied = super::cross_dispatch::apply_keybind_custom_mutation(
+        let applied = super::dispatch::apply_keybind_custom_mutation(
             &mut self.input.document,
             &mut self.input.mindmap_tree,
             &mut self.input.scene_cache,
@@ -547,7 +562,7 @@ app.event_loop.run(move |event, _window_target| {
             event: WindowEvent::KeyboardInput {
                 event: KeyEvent {
                     state: ElementState::Pressed,
-                    logical_key: ref logical_key,
+                    ref logical_key,
                     ..
                 },
                 ..
@@ -584,7 +599,7 @@ app.event_loop.run(move |event, _window_target| {
                     Some(Action::TextEditCommit) | Some(Action::TextEditCancel)
                 ) {
                     let mut core = input.input_context_core(renderer, &keybinds);
-                    let _ = super::dispatch_action_core::dispatch_compatible(
+                    let _ = super::dispatch::action_core::dispatch_compatible(
                         &action.unwrap(),
                         &mut core,
                     );
@@ -641,7 +656,7 @@ app.event_loop.run(move |event, _window_target| {
                     matches!(a, Action::EditSelection | Action::EditSelectionClean);
                 let _ = {
                     let mut core = input.input_context_core(renderer, &keybinds);
-                    super::dispatch_action_core::dispatch_compatible(&a, &mut core)
+                    super::dispatch::action_core::dispatch_compatible(&a, &mut core)
                 };
                 if was_edit_selection {
                     // Mirror pre-Track-B `set(is_open())`: flip
@@ -678,7 +693,7 @@ app.event_loop.run(move |event, _window_target| {
                         renderer,
                         keybinds: &keybinds,
                     };
-                    let _ = super::dispatch_macro_core::dispatch_macro(&macro_id, &mut target);
+                    let _ = super::dispatch::macro_core::dispatch_macro(&macro_id, &mut target);
                 }
             }
         }
@@ -781,13 +796,7 @@ app.event_loop.run(move |event, _window_target| {
                                 edge.from_id.clone()
                             };
                             if let Some(node) = input.document.mindmap.nodes.get(&other_id) {
-                                let target = glam::Vec2::new(
-                                    node.position.x as f32
-                                        + node.size.width as f32 * 0.5,
-                                    node.position.y as f32
-                                        + node.size.height as f32 * 0.5,
-                                );
-                                renderer.set_camera_center(target);
+                                renderer.set_camera_center(node.center_vec2());
                             }
                             input.document.selection = SelectionState::Edge(
                                 crate::application::document::EdgeRef::new(
@@ -939,7 +948,7 @@ app.event_loop.run(move |event, _window_target| {
                     // native uses for this Compatible Action.
                     {
                         let mut core = input.input_context_core(renderer, &keybinds);
-                        let _ = super::dispatch_action_core::dispatch_compatible(
+                        let _ = super::dispatch::action_core::dispatch_compatible(
                             &Action::TextEditCommit,
                             &mut core,
                         );

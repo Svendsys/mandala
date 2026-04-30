@@ -51,16 +51,24 @@ mod tests_reparent;
 #[cfg(test)]
 mod tests_selection;
 
+// Cross-platform: consumers (`scene_rebuild.rs`, `event_mouse_click.rs`,
+// `run_wasm.rs`, `scene_host.rs`) compile on both targets.
+pub use hit_test::{apply_tree_highlights, hit_test, point_in_node_aabb};
+// Native-only: consumed by drag handlers, the click router, and
+// rect-select drain — none reachable on WASM today.
+#[cfg(not(target_arch = "wasm32"))]
 pub use hit_test::{
-    apply_drag_delta, apply_drag_delta_and_collect_patches,
-    apply_tree_highlights, hit_test, hit_test_edge,
-    point_in_node_aabb, rect_select,
+    apply_drag_delta, apply_drag_delta_and_collect_patches, hit_test_edge, rect_select,
 };
 pub use nodes::{BorderConfigEdits, BorderEditOutcome, OptionEdit, BorderSide};
 pub use types::{
-    AnimationInstance, EdgeLabelSel, EdgeRef, PortalLabelSel, SelectionState,
-    HIGHLIGHT_COLOR, REPARENT_SOURCE_COLOR, REPARENT_TARGET_COLOR,
+    AnimationInstance, EdgeLabelSel, EdgeRef, PortalLabelSel, SelectionState, HIGHLIGHT_COLOR,
 };
+// Native-only: consumed by `app/click.rs`'s reparent / connect mode
+// rendering. WASM doesn't dispatch `EnterReparentMode` /
+// `EnterConnectMode` (NativeOnly per `wasm_compatibility`).
+#[cfg(not(target_arch = "wasm32"))]
+pub use types::{REPARENT_SOURCE_COLOR, REPARENT_TARGET_COLOR};
 pub use undo_action::UndoAction;
 
 /// Owns the MindMap data model and provides scene-building for the Renderer.
@@ -284,10 +292,11 @@ pub(super) fn grow_one_node_to_fit_border(
     let need_h =
         need_vertical_clusters as f32 * style.font_size_pt;
 
-    if (node.size.width as f32) < need_w {
+    let size = node.size_vec2();
+    if size.x < need_w {
         node.size.width = need_w as f64;
     }
-    if (node.size.height as f32) < need_h {
+    if size.y < need_h {
         node.size.height = need_h as f64;
     }
 }

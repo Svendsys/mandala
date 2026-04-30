@@ -163,21 +163,24 @@ pub struct KeybindConfig {
     pub set_edge_body_glyph: Vec<ParametricBinding>,
     pub set_border_field: Vec<ParametricBinding>,
     pub set_edge_cap: Vec<ParametricBinding>,
-    pub set_color_bg: Vec<ParametricBinding>,
-    pub set_color_text: Vec<ParametricBinding>,
-    pub set_color_border: Vec<ParametricBinding>,
+    /// `args = [axis, value]` where `axis` is `bg|text|border`
+    /// and `value` is a color string (`#rrggbb`, `var(--name)`,
+    /// palette key). Maps to [`Action::SetColor`].
+    pub set_color: Vec<ParametricBinding>,
     pub set_edge_type: Vec<ParametricBinding>,
     pub set_edge_display_mode: Vec<ParametricBinding>,
     pub reset_edge: Vec<ParametricBinding>,
     pub set_font_family: Vec<ParametricBinding>,
-    pub set_font_size: Vec<ParametricBinding>,
-    pub set_font_min: Vec<ParametricBinding>,
-    pub set_font_max: Vec<ParametricBinding>,
+    /// `args = [slot, pt]` where `slot` is `size|min|max` and `pt`
+    /// is a positive finite float string. Maps to [`Action::SetFont`].
+    pub set_font: Vec<ParametricBinding>,
     pub set_edge_label_text: Vec<ParametricBinding>,
     pub set_edge_label_position: Vec<ParametricBinding>,
     pub set_spacing: Vec<ParametricBinding>,
-    pub set_zoom_min: Vec<ParametricBinding>,
-    pub set_zoom_max: Vec<ParametricBinding>,
+    /// `args = [bound, value]` where `bound` is `min|max` and
+    /// `value` is `"unset"`, `""`, or a positive finite float
+    /// string. Maps to [`Action::SetZoom`].
+    pub set_zoom: Vec<ParametricBinding>,
     /// Unit variant — `args` is ignored, only `combo` matters.
     pub clear_zoom: Vec<ParametricBinding>,
     /// Filesystem-touching parametric variants — NativeOnly +
@@ -356,21 +359,16 @@ impl Default for KeybindConfig {
             set_edge_body_glyph: vec![],
             set_border_field: vec![],
             set_edge_cap: vec![],
-            set_color_bg: vec![],
-            set_color_text: vec![],
-            set_color_border: vec![],
+            set_color: vec![],
             set_edge_type: vec![],
             set_edge_display_mode: vec![],
             reset_edge: vec![],
             set_font_family: vec![],
-            set_font_size: vec![],
-            set_font_min: vec![],
-            set_font_max: vec![],
+            set_font: vec![],
             set_edge_label_text: vec![],
             set_edge_label_position: vec![],
             set_spacing: vec![],
-            set_zoom_min: vec![],
-            set_zoom_max: vec![],
+            set_zoom: vec![],
             clear_zoom: vec![],
             open_document: vec![],
             save_document_as: vec![],
@@ -566,37 +564,20 @@ impl KeybindConfig {
                 _ => None,
             },
         );
-        // Color axes — three sibling parametric variants.
-        push_parametric(
-            &mut binds,
-            "set_color_bg",
-            1,
-            &self.set_color_bg,
-            |args| match args {
-                [color] => Some(Action::SetColorBg(color.clone())),
-                _ => None,
-            },
-        );
-        push_parametric(
-            &mut binds,
-            "set_color_text",
-            1,
-            &self.set_color_text,
-            |args| match args {
-                [color] => Some(Action::SetColorText(color.clone())),
-                _ => None,
-            },
-        );
-        push_parametric(
-            &mut binds,
-            "set_color_border",
-            1,
-            &self.set_color_border,
-            |args| match args {
-                [color] => Some(Action::SetColorBorder(color.clone())),
-                _ => None,
-            },
-        );
+        // Color: `args = [axis, value]` where axis = `bg|text|border`.
+        // `axis.parse::<ColorAxis>()` is the strum-`EnumString`-derived
+        // round-trip with `IntoStaticStr` (`Bg.into() == "bg"` etc.) —
+        // unrecognised tokens land in `Err`, which `push_parametric`
+        // then warns and skips on.
+        push_parametric(&mut binds, "set_color", 2, &self.set_color, |args| match args {
+            [axis, value] => axis.parse::<super::ColorAxis>().ok().map(|axis| {
+                Action::SetColor {
+                    axis,
+                    value: value.clone(),
+                }
+            }),
+            _ => None,
+        });
         // Edge structural — type / display_mode / reset.
         push_parametric(
             &mut binds,
@@ -639,36 +620,16 @@ impl KeybindConfig {
                 _ => None,
             },
         );
-        push_parametric(
-            &mut binds,
-            "set_font_size",
-            1,
-            &self.set_font_size,
-            |args| match args {
-                [pt] => Some(Action::SetFontSize(pt.clone())),
-                _ => None,
-            },
-        );
-        push_parametric(
-            &mut binds,
-            "set_font_min",
-            1,
-            &self.set_font_min,
-            |args| match args {
-                [pt] => Some(Action::SetFontMin(pt.clone())),
-                _ => None,
-            },
-        );
-        push_parametric(
-            &mut binds,
-            "set_font_max",
-            1,
-            &self.set_font_max,
-            |args| match args {
-                [pt] => Some(Action::SetFontMax(pt.clone())),
-                _ => None,
-            },
-        );
+        // Font: `args = [slot, pt]` where slot = `size|min|max`.
+        push_parametric(&mut binds, "set_font", 2, &self.set_font, |args| match args {
+            [slot, value] => slot.parse::<super::FontSlot>().ok().map(|slot| {
+                Action::SetFont {
+                    slot,
+                    value: value.clone(),
+                }
+            }),
+            _ => None,
+        });
         push_parametric(
             &mut binds,
             "set_edge_label_text",
@@ -699,29 +660,17 @@ impl KeybindConfig {
                 _ => None,
             },
         );
-        // Zoom-visibility window: min / max take a single arg
-        // each; `clear_zoom` is a unit variant so an empty `args`
-        // is the only valid shape.
-        push_parametric(
-            &mut binds,
-            "set_zoom_min",
-            1,
-            &self.set_zoom_min,
-            |args| match args {
-                [v] => Some(Action::SetZoomMin(v.clone())),
-                _ => None,
-            },
-        );
-        push_parametric(
-            &mut binds,
-            "set_zoom_max",
-            1,
-            &self.set_zoom_max,
-            |args| match args {
-                [v] => Some(Action::SetZoomMax(v.clone())),
-                _ => None,
-            },
-        );
+        // Zoom: `args = [bound, value]` where bound = `min|max`.
+        // `clear_zoom` is a separate unit variant.
+        push_parametric(&mut binds, "set_zoom", 2, &self.set_zoom, |args| match args {
+            [bound, value] => bound.parse::<super::ZoomBound>().ok().map(|bound| {
+                Action::SetZoom {
+                    bound,
+                    value: value.clone(),
+                }
+            }),
+            _ => None,
+        });
         push_parametric(
             &mut binds,
             "clear_zoom",

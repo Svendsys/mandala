@@ -57,11 +57,11 @@ pub(in crate::application::app) fn apply_edge_label_drag(
             );
             return false;
         };
-        let from_pos = Vec2::new(from_node.position.x as f32, from_node.position.y as f32);
+        let from_pos = from_node.pos_vec2();
         let from_size =
-            Vec2::new(from_node.size.width as f32, from_node.size.height as f32);
-        let to_pos = Vec2::new(to_node.position.x as f32, to_node.position.y as f32);
-        let to_size = Vec2::new(to_node.size.width as f32, to_node.size.height as f32);
+            from_node.size_vec2();
+        let to_pos = to_node.pos_vec2();
+        let to_size = to_node.size_vec2();
         connection::build_connection_path(
             from_pos,
             from_size,
@@ -84,10 +84,10 @@ pub(in crate::application::app) fn apply_edge_label_drag(
     let cfg = edge
         .label_config
         .get_or_insert_with(EdgeLabelConfig::default);
+    use baumhard::util::geometry::pretty_inequal;
     let existing_t = cfg.position_t.unwrap_or(0.5);
     let existing_perp = cfg.perpendicular_offset.unwrap_or(0.0);
-    let changed =
-        (existing_t - t).abs() >= f32::EPSILON || (existing_perp - perp).abs() >= f32::EPSILON;
+    let changed = pretty_inequal(existing_t, t) || pretty_inequal(existing_perp, perp);
     if !changed {
         return false;
     }

@@ -1,23 +1,15 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use std::collections::HashMap;
-use std::sync::Arc;
-
 mod scene_rebuild;
 mod text_edit;
 
-// Cross-platform — Action arm bodies that touch only state shared
-// between native and WASM. Both `dispatch::dispatch_action` and
-// `run_wasm`'s inline match call into here. See
-// `WASM_CONVERGENCE.md` "partial Track C" for the rationale.
-mod cross_dispatch;
-
-// Cross-platform — `dispatch_macro` step loop + privilege gate,
-// abstracted over `MacroDispatchTarget`. Native and WASM each
-// provide an impl that wraps their respective context type.
-// Lifted from `dispatch.rs::dispatch_macro` to single-source the
-// privilege gate. See `WASM_CONVERGENCE.md` Track B.
-mod dispatch_macro_core;
+// Dispatch funnel — `cross_dispatch` (shared apply_* helpers),
+// `action_core` (Compatible-Action dispatcher), `macro_core`
+// (cross-platform macro step loop + privilege gate), and `native`
+// (native dispatch_action wrapper that adds the NativeOnly arm
+// match). The directory's `mod.rs` re-exports the public surface
+// so callers stay terse.
+pub(crate) mod dispatch;
 
 // Native-only — interactive modal state machines absent on WASM.
 // See CLAUDE.md "Dual-target status".
@@ -27,8 +19,6 @@ mod click;
 mod color_picker_flow;
 #[cfg(not(target_arch = "wasm32"))]
 mod console_input;
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) mod dispatch;
 #[cfg(not(target_arch = "wasm32"))]
 mod drain_frame;
 #[cfg(not(target_arch = "wasm32"))]
@@ -48,10 +38,6 @@ mod input_context;
 // Cross-platform context-bundles for the unified `dispatch_action`
 // funnel. Track C from `WASM_CONVERGENCE.md` (final convergence step).
 mod input_context_core;
-// Cross-platform action dispatcher. Native dispatch.rs delegates
-// to here for Compatible arms; WASM (post-Track C wire-up) calls
-// it directly. Sibling to `dispatch_macro_core` (Track B precedent).
-mod dispatch_action_core;
 #[cfg(not(target_arch = "wasm32"))]
 mod portal_label_drag;
 #[cfg(not(target_arch = "wasm32"))]
@@ -69,51 +55,37 @@ mod run_wasm;
 // new fields:
 //   1. The struct in `app/input_context.rs`.
 //   2. The `InitState::input_context()` builder in `run_native.rs`.
-//   3. `dispatch_action`'s signature in `app/dispatch.rs` (the funnel
-//      every handler ultimately calls).
+//   3. `dispatch_action`'s signature in `app/dispatch/native.rs` (the
+//      funnel every handler ultimately calls).
 // Input handlers (`event_keyboard.rs`, `event_mouse_click.rs`,
 // `event_cursor_moved.rs`) take `ctx: &mut InputHandlerContext<'_>`
 // and access fields via `ctx.foo`, so adding a field doesn't ripple
 // through their bodies — Rust's split borrows let modal handlers
 // receive `&mut ctx.console_state` etc. without re-destructuring.
 
-// Cross-platform imports.
-use scene_rebuild::{
-    flush_canvas_scene_buffers, rebuild_after_selection_change, rebuild_all,
-    rebuild_scene_only, update_border_tree_static,
-    update_connection_label_tree, update_connection_tree, update_edge_handle_tree,
-    update_portal_tree,
-};
-use text_edit::{close_text_edit, handle_text_edit_key, insert_at_cursor, open_text_edit, TextEditState};
+// Sub-modules pull what they need from siblings directly; mod.rs
+// only imports for its own body (`now_ms`, the `Application` /
+// `Options` struct definitions, and the `route_label_edit_key`
+// helper below). Adding an `InputContext::Foo` arm doesn't widen
+// this list — the consumer in `event_keyboard.rs` imports it
+// itself.
+use crate::application::common::{InputMode, WindowMode};
 
 #[cfg(not(target_arch = "wasm32"))]
-use click::{
-    handle_click,
-    rebuild_all_with_mode,
-};
-#[cfg(not(target_arch = "wasm32"))]
-use color_picker_flow::{
-    end_color_picker_gesture, handle_color_picker_click, handle_color_picker_key,
-    handle_color_picker_mouse_move, rebuild_color_picker_overlay,
-};
-#[cfg(not(target_arch = "wasm32"))]
-use console_input::{
-    handle_console_key, load_console_history, save_console_history,
-};
-#[cfg(not(target_arch = "wasm32"))]
-use edge_drag::apply_edge_handle_drag;
-#[cfg(not(target_arch = "wasm32"))]
-use label_edit::{
-    close_label_edit, close_portal_text_edit, handle_label_edit_key,
-    handle_portal_text_edit_key, open_label_edit, open_portal_text_edit,
-    LabelEditState, PortalTextEditState,
-};
-#[cfg(not(target_arch = "wasm32"))]
-use pollster::block_on;
-#[cfg(not(target_arch = "wasm32"))]
-use portal_label_drag::apply_portal_label_drag;
-#[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
+#[cfg(not(target_arch = "wasm32"))]
+use glam::Vec2;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::application::document::EdgeRef;
+#[cfg(not(target_arch = "wasm32"))]
+use text_edit::insert_at_cursor;
+#[cfg(not(target_arch = "wasm32"))]
+use throttled_interaction::ThrottledDrag;
+
+#[cfg(target_arch = "wasm32")]
+use std::sync::Arc;
+#[cfg(target_arch = "wasm32")]
+use winit::{event_loop::EventLoop, window::Window};
 
 /// Cross-platform monotonic clock in ms since first call. Native:
 /// `Instant`. WASM: `performance.now()` (≥1ms quantised; fine for
@@ -132,31 +104,6 @@ fn now_ms() -> f64 {
         .map(|p| p.now())
         .unwrap_or(0.0)
 }
-use glam::Vec2;
-use wgpu::Instance;
-use winit::event::{ElementState, Event, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
-use winit::event_loop::ControlFlow;
-use winit::keyboard::ModifiersState;
-use winit::window::CursorIcon;
-use winit::{event_loop::EventLoop, window::Window};
-
-use crate::application::common::{InputMode, RenderDecree, WindowMode};
-#[cfg(not(target_arch = "wasm32"))]
-use crate::application::console::ConsoleState;
-use crate::application::document::{
-    apply_drag_delta, apply_tree_highlights, hit_test, hit_test_edge,
-    rect_select, EdgeRef, MindMapDocument,
-    SelectionState,
-    UndoAction,
-    HIGHLIGHT_COLOR, REPARENT_SOURCE_COLOR, REPARENT_TARGET_COLOR,
-};
-use crate::application::keybinds::ResolvedKeybinds;
-use crate::application::renderer::Renderer;
-#[cfg(not(target_arch = "wasm32"))]
-use throttled_interaction::ThrottledDrag;
-
-#[cfg(not(target_arch = "wasm32"))]
-use baumhard::mindmap::custom_mutation::{PlatformContext, Trigger};
 
 /// Screen-space click tolerance (in pixels) for edge hit testing. Converted
 /// to canvas units via `Renderer::canvas_per_pixel()` so the click target

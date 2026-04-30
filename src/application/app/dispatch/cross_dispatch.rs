@@ -91,7 +91,7 @@ use crate::application::scene_host::AppScene;
 use baumhard::mindmap::scene_cache::SceneConnectionCache;
 use baumhard::mindmap::tree_builder::MindMapTree;
 
-use super::scene_rebuild::rebuild_all;
+use super::super::scene_rebuild::rebuild_all;
 
 /// Borrowed bundle of the shared rebuild plumbing — the minimum
 /// surface every cross-platform mutating Action arm needs.
@@ -151,7 +151,7 @@ impl<'a> RebuildContext<'a> {
 // ── RebuildContext construction macro ───────────────────────────
 
 /// Build a [`RebuildContext`] from a context-like struct (native
-/// [`super::input_context::InputHandlerContext`] or WASM
+/// [`super::super::input_context::InputHandlerContext`] or WASM
 /// `WasmInputState`) plus an already-unwrapped
 /// `&mut MindMapDocument`. Expands inline so the borrow-checker
 /// accepts the disjoint per-field borrows; a `fn rebuild_ctx(&mut
@@ -163,7 +163,7 @@ impl<'a> RebuildContext<'a> {
 /// rebuilding arm into a single `rebuild_ctx!(ctx, doc)` call.
 macro_rules! rebuild_ctx {
     ($ctx:expr, $doc:expr) => {
-        $crate::application::app::cross_dispatch::RebuildContext {
+        $crate::application::app::dispatch::cross_dispatch::RebuildContext {
             document: $doc,
             mindmap_tree: $ctx.mindmap_tree,
             app_scene: $ctx.app_scene,
@@ -226,6 +226,34 @@ pub(in crate::application::app) fn apply_create_orphan_node(
     rc.rebuild_after_geometry_change();
 }
 
+/// Create a new orphan node at `canvas_pos`, select it, rebuild,
+/// then open the inline text editor on the new node pre-cleared.
+/// The keyboard-driven shape of `Action::CreateOrphanNodeAndEdit`.
+///
+/// Mouse-driven empty-canvas double-click reaches the same
+/// outcome through `dispatch::dispatch_create_orphan_and_edit`
+/// (which uses `DispatchHit::canvas_pos` instead of `cursor_pos`)
+/// — that helper is called inline by the `DoubleClickActivate`
+/// arm and stays in `dispatch.rs` because `DispatchHit` doesn't
+/// flow through `dispatch_compatible`.
+pub(in crate::application::app) fn apply_create_orphan_node_and_edit(
+    canvas_pos: glam::Vec2,
+    rc: &mut RebuildContext<'_>,
+    text_edit_state: &mut super::super::text_edit::TextEditState,
+) {
+    let new_id = rc.document.create_orphan_and_select(canvas_pos);
+    rc.rebuild_after_geometry_change();
+    super::super::text_edit::open_text_edit(
+        &new_id,
+        true,
+        rc.document,
+        text_edit_state,
+        rc.mindmap_tree,
+        rc.app_scene,
+        rc.renderer,
+    );
+}
+
 /// Detach every currently-selected node from its parent. No-op
 /// when nothing is selected or every selected node was already a
 /// root.
@@ -259,12 +287,12 @@ pub(in crate::application::app) fn apply_delete_selection(rc: &mut RebuildContex
 pub(in crate::application::app) fn apply_open_text_edit_on_single(
     clean: bool,
     rc: &mut RebuildContext<'_>,
-    text_edit_state: &mut super::TextEditState,
+    text_edit_state: &mut super::super::text_edit::TextEditState,
 ) -> bool {
     let SelectionState::Single(id) = rc.document.selection.clone() else {
         return false;
     };
-    super::text_edit::open_text_edit(
+    super::super::text_edit::open_text_edit(
         &id,
         clean,
         rc.document,
@@ -274,6 +302,64 @@ pub(in crate::application::app) fn apply_open_text_edit_on_single(
         rc.renderer,
     );
     true
+}
+
+// ── Clipboard ───────────────────────────────────────────────────
+//
+// Cross-platform: `clipboard::{read,write}_clipboard` are logged
+// stubs on WASM (pending the async-clipboard integration). The
+// trait-driven walk over `selection_targets` is identical on both
+// targets — `console::traits` compiles WASM-side because it only
+// reaches into the document model, not the cfg-gated console
+// runtime.
+
+/// Copy or Cut the current selection's clipboard-eligible content
+/// to the system clipboard. Cut additionally clears the source
+/// component's text where the trait supports it. Read-only on the
+/// document — no rebuild.
+pub(in crate::application::app) fn apply_copy_or_cut(
+    is_cut: bool,
+    doc: &mut MindMapDocument,
+) {
+    use crate::application::console::traits::{
+        selection_targets, view_for, ClipboardContent, HandlesCopy, HandlesCut,
+    };
+    let targets = selection_targets(&doc.selection);
+    for tid in &targets {
+        let mut view = view_for(doc, tid);
+        let content = if is_cut {
+            view.clipboard_cut()
+        } else {
+            view.clipboard_copy()
+        };
+        if let ClipboardContent::Text(text) = content {
+            crate::application::clipboard::write_clipboard(&text);
+            break;
+        }
+    }
+}
+
+/// Read the system clipboard and paste into every clipboard-eligible
+/// target in the current selection. Triggers a geometry rebuild iff
+/// at least one target accepted the paste.
+pub(in crate::application::app) fn apply_paste(rc: &mut RebuildContext<'_>) {
+    use crate::application::console::traits::{
+        selection_targets, view_for, HandlesPaste, Outcome,
+    };
+    let Some(text) = crate::application::clipboard::read_clipboard() else {
+        return;
+    };
+    let targets = selection_targets(&rc.document.selection);
+    let mut any_applied = false;
+    for tid in &targets {
+        let mut view = view_for(rc.document, tid);
+        if let Outcome::Applied = view.clipboard_paste(&text) {
+            any_applied = true;
+        }
+    }
+    if any_applied {
+        rc.rebuild_after_geometry_change();
+    }
 }
 
 // ── Parametric Action arms (Compatible) ─────────────────────────
@@ -341,40 +427,15 @@ pub(in crate::application::app) fn apply_set_edge_cap(
     });
 }
 
-/// Which color axis a `SetColor*` Action targets. Sibling of
-/// [`ZoomDir`] / [`PanDir`] — keeps the dispatcher fan-out typed
-/// rather than stringly. Maps to the verb's `bg|text|border` kv
-/// key at the boundary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::application::app) enum ColorAxis {
-    Bg,
-    Text,
-    Border,
-}
-
-impl ColorAxis {
-    /// The kv-key string the underlying verb-core accepts. Kept
-    /// at the boundary so `apply_color_axis_to_selection` (which
-    /// re-uses the verb's `apply_kvs` trait dispatch) doesn't need
-    /// to grow a typed surface.
-    fn as_kv_key(self) -> &'static str {
-        match self {
-            ColorAxis::Bg => "bg",
-            ColorAxis::Text => "text",
-            ColorAxis::Border => "border",
-        }
-    }
-}
-
 pub(in crate::application::app) fn apply_set_color_axis(
-    axis: ColorAxis,
+    axis: crate::application::keybinds::ColorAxis,
     value: &str,
     rc: &mut RebuildContext<'_>,
 ) {
     apply_with_rebuild(rc, |doc| {
         crate::application::console::commands::color::apply_color_axis_to_selection(
             doc,
-            axis.as_kv_key(),
+            axis.into(),
             value,
         )
     });
@@ -418,37 +479,18 @@ pub(in crate::application::app) fn apply_set_font_family(
     });
 }
 
-/// Which font slot a `SetFontSize|Min|Max` Action targets. Sibling
-/// of [`ColorAxis`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::application::app) enum FontSlot {
-    Size,
-    Min,
-    Max,
-}
-
-impl FontSlot {
-    fn as_kv_key(self) -> &'static str {
-        match self {
-            FontSlot::Size => "size",
-            FontSlot::Min => "min",
-            FontSlot::Max => "max",
-        }
-    }
-}
-
 /// `pt` is already-parsed (the dispatcher's caller is responsible
 /// for parsing the user-facing `String` payload — invalid floats
 /// emit a warn-log and skip the helper call entirely).
 pub(in crate::application::app) fn apply_set_font_kv(
-    slot: FontSlot,
+    slot: crate::application::keybinds::FontSlot,
     pt: f32,
     rc: &mut RebuildContext<'_>,
 ) {
     apply_with_rebuild(rc, |doc| {
         crate::application::console::commands::font::apply_font_kv_to_selection(
             doc,
-            slot.as_kv_key(),
+            slot.into(),
             pt,
         )
     });
@@ -630,10 +672,7 @@ pub(in crate::application::app) fn apply_center_on_selection(
     let mut count = 0u32;
     for id in &ids {
         if let Some(node) = document.mindmap.nodes.get(*id) {
-            sum += glam::Vec2::new(
-                node.position.x as f32 + node.size.width as f32 * 0.5,
-                node.position.y as f32 + node.size.height as f32 * 0.5,
-            );
+            sum += node.center_vec2();
             count += 1;
         }
     }
@@ -871,13 +910,7 @@ pub(in crate::application::app) fn jump_to_root_in(
     doc: &mut MindMapDocument,
 ) -> Option<glam::Vec2> {
     let (id, centre) = doc.mindmap.root_nodes().first().map(|n| {
-        (
-            n.id.clone(),
-            glam::Vec2::new(
-                n.position.x as f32 + n.size.width as f32 * 0.5,
-                n.position.y as f32 + n.size.height as f32 * 0.5,
-            ),
-        )
+        (n.id.clone(), n.center_vec2())
     })?;
     doc.selection = SelectionState::Single(id);
     Some(centre)

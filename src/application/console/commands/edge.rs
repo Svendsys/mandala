@@ -23,7 +23,7 @@
 //! on this command.
 
 use super::Command;
-use crate::application::console::completion::{prefix_filter, Completion, CompletionContext, CompletionState};
+use crate::application::console::completion::{prefix_filter, Completion, CompletionContext, CompletionState, kv_key_completions};
 use crate::application::console::constants::{EDGE_TYPE_CROSS_LINK, EDGE_TYPE_PARENT_CHILD};
 use crate::application::console::helpers::{
     collect_kvs_or_usage, require_edge_or_portal, ApplyTally,
@@ -67,16 +67,7 @@ pub const COMMAND: Command = Command {
 
 fn complete_edge(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completion> {
     match &state.context {
-        CompletionContext::Token { .. } => KEYS
-            .iter()
-            .filter(|k| k.starts_with(state.partial))
-            .map(|k| Completion {
-                text: format!("{}=", k),
-                display: format!("{}=", k),
-                hint: None,
-                font_family: None,
-            })
-            .collect(),
+        CompletionContext::Token { .. } => kv_key_completions(KEYS, state.partial),
         CompletionContext::KvValue { key } if key == "type" => {
             prefix_filter(EDGE_TYPES, state.partial)
         }

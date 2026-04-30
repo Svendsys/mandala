@@ -15,9 +15,10 @@ use super::super::color_picker_flow::{
     close_color_picker_standalone, open_color_picker_contextual,
     open_color_picker_standalone,
 };
-use super::super::{
-    open_label_edit, open_portal_text_edit, rebuild_all, LabelEditState, PortalTextEditState,
+use super::super::label_edit::{
+    open_label_edit, open_portal_text_edit, LabelEditState, PortalTextEditState,
 };
+use super::super::scene_rebuild::rebuild_all;
 use super::{push_scrollback_error, push_scrollback_output, push_scrollback_output_in_font};
 
 /// Parse and execute a console line. Drains deferred modal handoffs

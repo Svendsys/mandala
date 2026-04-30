@@ -9,7 +9,7 @@
 use crate::application::document::MindMapDocument;
 use crate::application::renderer::Renderer;
 
-use super::super::rebuild_scene_only;
+use super::super::scene_rebuild::rebuild_scene_only;
 use super::rebuild::rebuild_color_picker_overlay;
 
 /// Open the color picker in contextual mode, bound to the given

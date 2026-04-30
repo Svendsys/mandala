@@ -186,6 +186,40 @@ pub fn prefix_filter<S: AsRef<str>>(options: &[S], partial: &str) -> Vec<Complet
         .collect()
 }
 
+/// Helper used by per-command `complete` fns at `Token { .. }`
+/// completion sites: filter the verb's kv-key list by prefix and
+/// emit each as a `key=` completion (the trailing `=` cues the
+/// user that a value follows). No per-key hint surface — for that,
+/// use [`kv_key_completions_with_hints`].
+pub fn kv_key_completions(keys: &[&str], partial: &str) -> Vec<Completion> {
+    kv_key_completions_with_hints(keys, partial, |_| None)
+}
+
+/// Like [`kv_key_completions`] but each emitted row carries a hint
+/// returned by `hint_for(key)`. Used by `font` / `color` whose kv
+/// keys carry a per-key explanation (`size = "target on-screen size
+/// in points"`, `bg = "fill / background color"`, etc.).
+///
+/// Returning `None` from `hint_for` for a particular key emits a
+/// hint-less row (same shape as [`kv_key_completions`]) for that
+/// key — useful when a verb mixes documented and undocumented kv
+/// keys, though no current verb does.
+pub fn kv_key_completions_with_hints(
+    keys: &[&str],
+    partial: &str,
+    hint_for: impl Fn(&str) -> Option<&'static str>,
+) -> Vec<Completion> {
+    keys.iter()
+        .filter(|k| k.starts_with(partial))
+        .map(|k| Completion {
+            text: format!("{}=", k),
+            display: format!("{}=", k),
+            hint: hint_for(k).map(str::to_string),
+            font_family: None,
+        })
+        .collect()
+}
+
 /// A token is kv-form iff it contains `=` and the `=` is not the
 /// first character. Mirrors `parser::is_kv_token`.
 fn is_kv_token(t: &str) -> bool {

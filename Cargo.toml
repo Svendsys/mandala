@@ -1,5 +1,5 @@
 [workspace]
-members = ["lib/baumhard", "crates/maptool"]
+members = ["lib/baumhard", "lib/mandala_derive", "crates/maptool"]
 
 [workspace.package]
 license = "MPL-2.0"
@@ -31,9 +31,12 @@ syn = "2.0.117"
 log = { version = "0.4.29", features = ["release_max_level_off"] }
 env_logger = "0.11.10"
 smol_str = "0.3.6"
+strum = "0.27"
+strum_macros = "0.27"
 indextree = {version = "4.8.1", features = ["serde"]}
 ttf-parser = "0.25.1"
 baumhard = {path="./lib/baumhard"}
+mandala_derive = {path="./lib/mandala_derive"}
 # Cross-platform `Instant` — on native re-exports `std::time::Instant`;
 # on wasm32 uses `performance.now()`. Needed because
 # `std::time::Instant::now()` panics on `wasm32-unknown-unknown`

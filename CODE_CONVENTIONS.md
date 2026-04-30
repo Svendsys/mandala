@@ -126,7 +126,7 @@ decision, not a drive-by edit.
   native and WASM lives in functions taking plain values.
 - **Single dispatch funnel.** Every user-driven application-level
   behaviour is reified as an `Action` and dispatched via
-  `dispatch_action` (`src/application/app/dispatch.rs`). New gestures,
+  `dispatch_action` (`src/application/app/dispatch/native.rs`). New gestures,
   new console verbs that mutate state, new navigation keys: variant,
   default binding, dispatch arm — in that order. No second copy of
   Action body logic in a handler. Mouse handlers synthesize a gesture

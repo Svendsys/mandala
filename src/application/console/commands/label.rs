@@ -11,7 +11,7 @@
 //! editor modal.
 
 use super::Command;
-use crate::application::console::completion::{prefix_filter, Completion, CompletionContext, CompletionState};
+use crate::application::console::completion::{prefix_filter, Completion, CompletionContext, CompletionState, kv_key_completions};
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::edge_or_portal_label_selected;
 use crate::application::console::traits::{apply_kvs, HasLabel};
@@ -53,16 +53,7 @@ fn complete_label(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Complet
             }
             out
         }
-        CompletionContext::Token { .. } => KEYS
-            .iter()
-            .filter(|k| k.starts_with(state.partial))
-            .map(|k| Completion {
-                text: format!("{}=", k),
-                display: format!("{}=", k),
-                hint: None,
-                font_family: None,
-            })
-            .collect(),
+        CompletionContext::Token { .. } => kv_key_completions(KEYS, state.partial),
         CompletionContext::KvValue { key } if key == "position" => {
             prefix_filter(POSITIONS, state.partial)
         }

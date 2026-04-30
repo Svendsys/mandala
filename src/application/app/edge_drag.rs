@@ -41,10 +41,10 @@ pub(in crate::application::app) fn apply_edge_handle_drag(
             Some(n) => n,
             None => return handle,
         };
-        let from_pos = Vec2::new(from_node.position.x as f32, from_node.position.y as f32);
-        let from_size = Vec2::new(from_node.size.width as f32, from_node.size.height as f32);
-        let to_pos = Vec2::new(to_node.position.x as f32, to_node.position.y as f32);
-        let to_size = Vec2::new(to_node.size.width as f32, to_node.size.height as f32);
+        let from_pos = from_node.pos_vec2();
+        let from_size = from_node.size_vec2();
+        let to_pos = to_node.pos_vec2();
+        let to_size = to_node.size_vec2();
         (
             Vec2::new(from_pos.x + from_size.x * 0.5, from_pos.y + from_size.y * 0.5),
             Vec2::new(to_pos.x + to_size.x * 0.5, to_pos.y + to_size.y * 0.5),
@@ -94,8 +94,8 @@ pub(in crate::application::app) fn apply_edge_handle_drag(
                 );
                 return handle;
             };
-            let node_pos = Vec2::new(from_node.position.x as f32, from_node.position.y as f32);
-            let node_size = Vec2::new(from_node.size.width as f32, from_node.size.height as f32);
+            let node_pos = from_node.pos_vec2();
+            let node_size = from_node.size_vec2();
             edge.anchor_from = nearest_anchor_side(new_handle_canvas, node_pos, node_size);
             EdgeHandleKind::AnchorFrom
         }
@@ -107,8 +107,8 @@ pub(in crate::application::app) fn apply_edge_handle_drag(
                 );
                 return handle;
             };
-            let node_pos = Vec2::new(to_node.position.x as f32, to_node.position.y as f32);
-            let node_size = Vec2::new(to_node.size.width as f32, to_node.size.height as f32);
+            let node_pos = to_node.pos_vec2();
+            let node_size = to_node.size_vec2();
             edge.anchor_to = nearest_anchor_side(new_handle_canvas, node_pos, node_size);
             EdgeHandleKind::AnchorTo
         }

@@ -43,8 +43,8 @@ pub(super) fn mindnode_to_glyph_area(
         .map(|r| r.size_pt as f32)
         .unwrap_or(14.0);
     let line_height = scale * 1.2;
-    let position = Vec2::new(node.position.x as f32, node.position.y as f32);
-    let bounds = Vec2::new(node.size.width as f32, node.size.height as f32);
+    let position = node.pos_vec2();
+    let bounds = node.size_vec2();
 
     let mut area = GlyphArea::new_with_str(&node.text, scale, line_height, position, bounds);
 
@@ -108,7 +108,7 @@ pub(super) fn mindnode_to_glyph_area(
         let fs = border_style.font_size_pt;
         let acw = fs * BORDER_APPROX_CHAR_WIDTH_FRAC;
         let corner_overlap = fs * crate::mindmap::border::BORDER_CORNER_OVERLAP_FRAC;
-        let nw = node.size.width as f32;
+        let nw = node.size_vec2().x;
         // Mirror the char_count formula in `append_border_sub_tree`
         // so `pad_right` and the actual right-column placement stay
         // in lock-step. `.max(3.0)` covers the degenerate

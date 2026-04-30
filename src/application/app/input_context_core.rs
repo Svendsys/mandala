@@ -39,7 +39,8 @@ use crate::application::macros::MacroRegistry;
 use crate::application::renderer::Renderer;
 use crate::application::scene_host::AppScene;
 
-use super::{LastClick, TextEditState};
+use super::text_edit::TextEditState;
+use super::LastClick;
 
 /// Cross-platform action-dispatch context. Borrows every field by
 /// `&mut` for write paths and `&` for read-only fields
@@ -118,9 +119,9 @@ pub(in crate::application::app) struct NativeContextExt<'a> {
     /// Console command-history ring.
     pub console_history: &'a mut Vec<String>,
     /// Inline edge-label editor state.
-    pub label_edit_state: &'a mut super::LabelEditState,
+    pub label_edit_state: &'a mut super::label_edit::LabelEditState,
     /// Inline portal-text editor state.
-    pub portal_text_edit_state: &'a mut super::PortalTextEditState,
+    pub portal_text_edit_state: &'a mut super::label_edit::PortalTextEditState,
     /// Glyph-wheel color-picker state.
     pub color_picker_state: &'a mut crate::application::color_picker::ColorPickerState,
     /// The node the cursor is currently over, if any.
