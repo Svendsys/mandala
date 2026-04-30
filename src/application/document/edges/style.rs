@@ -6,7 +6,7 @@
 use baumhard::mindmap::model::{
     portal_endpoint_state_mut, EdgeLabelConfig, GlyphConnectionConfig, PortalEndpointState,
 };
-use baumhard::util::geometry::is_positive_finite;
+use baumhard::util::geometry::{almost_equal, is_positive_finite};
 
 use super::super::types::EdgeRef;
 use super::super::undo_action::UndoAction;
@@ -197,7 +197,7 @@ impl MindMapDocument {
             let cfg = ensure_glyph_connection_inline(edge, canvas);
             let new_val = (cfg.font_size_pt + delta_pt)
                 .clamp(cfg.min_font_size_pt, cfg.max_font_size_pt);
-            if (cfg.font_size_pt - new_val).abs() < f32::EPSILON {
+            if almost_equal(cfg.font_size_pt, new_val) {
                 return false;
             }
             cfg.font_size_pt = new_val;
@@ -216,7 +216,7 @@ impl MindMapDocument {
         self.mutate_edge(edge_ref, |edge, canvas| {
             let cfg = ensure_glyph_connection_inline(edge, canvas);
             let new_val = pt.clamp(cfg.min_font_size_pt, cfg.max_font_size_pt);
-            if (cfg.font_size_pt - new_val).abs() < f32::EPSILON {
+            if almost_equal(cfg.font_size_pt, new_val) {
                 return false;
             }
             cfg.font_size_pt = new_val;
@@ -230,7 +230,7 @@ impl MindMapDocument {
         let default_size = GlyphConnectionConfig::default().font_size_pt;
         self.mutate_edge(edge_ref, |edge, canvas| {
             let cfg = ensure_glyph_connection_inline(edge, canvas);
-            if (cfg.font_size_pt - default_size).abs() < f32::EPSILON {
+            if almost_equal(cfg.font_size_pt, default_size) {
                 return false;
             }
             cfg.font_size_pt = default_size;
@@ -612,7 +612,7 @@ impl MindMapDocument {
     pub fn set_edge_spacing(&mut self, edge_ref: &EdgeRef, spacing: f32) -> bool {
         self.mutate_edge(edge_ref, |edge, canvas| {
             let cfg = ensure_glyph_connection_inline(edge, canvas);
-            if (cfg.spacing - spacing).abs() < f32::EPSILON {
+            if almost_equal(cfg.spacing, spacing) {
                 return false;
             }
             cfg.spacing = spacing;

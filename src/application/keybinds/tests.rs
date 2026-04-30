@@ -636,7 +636,7 @@ fn test_action_for_gesture_returns_none_when_completely_unbound() {
 #[test]
 fn test_default_console_font_size_is_16() {
     let cfg = KeybindConfig::default();
-    assert!((cfg.console_font_size - 16.0).abs() < f32::EPSILON);
+    assert!(baumhard::util::geometry::almost_equal(cfg.console_font_size, 16.0));
 }
 
 #[test]
@@ -648,7 +648,7 @@ fn test_resolve_exposes_console_style_fields() {
     };
     let r = cfg.resolve();
     assert_eq!(r.console_font, "MyFont");
-    assert!((r.console_font_size - 20.0).abs() < f32::EPSILON);
+    assert!(baumhard::util::geometry::almost_equal(r.console_font_size, 20.0));
 }
 
 #[test]

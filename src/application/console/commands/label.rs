@@ -10,6 +10,8 @@
 //! `edit` is a positional verb that hands off to the inline label
 //! editor modal.
 
+use baumhard::util::geometry::pretty_inequal;
+
 use super::Command;
 use crate::application::console::completion::{prefix_filter, Completion, CompletionContext, CompletionState, kv_key_completions};
 use crate::application::console::parser::Args;
@@ -234,7 +236,7 @@ fn execute_label(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                     // "worked" even though the stored value
                     // differs from what they typed.
                     let clamped = t.clamp(0.0, 1.0);
-                    if (t - clamped).abs() > f32::EPSILON {
+                    if pretty_inequal(t, clamped) {
                         messages.push(format!(
                             "position_t {} clamped to {}",
                             value, clamped
@@ -271,7 +273,7 @@ fn execute_label(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                     // the stored value isn't silently shifted.
                     let wrapped =
                         baumhard::mindmap::portal_geometry::wrap_border_t(t);
-                    if (t - wrapped).abs() > f32::EPSILON {
+                    if pretty_inequal(t, wrapped) {
                         messages.push(format!(
                             "position_t {} wrapped to {:.4}",
                             value, wrapped
