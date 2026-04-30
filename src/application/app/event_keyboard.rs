@@ -27,25 +27,7 @@ pub(super) fn handle_keyboard_input(
     // closes. Regular hotkeys are suppressed until
     // the console closes.
     if ctx.console_state.is_open() {
-        handle_console_key(
-            &key_name,
-            &logical_key,
-            ctx.modifiers.control_key(),
-            ctx.modifiers.shift_key(),
-            ctx.modifiers.alt_key(),
-            ctx.console_state,
-            ctx.console_history,
-            ctx.label_edit_state,
-            ctx.portal_text_edit_state,
-            ctx.color_picker_state,
-            ctx.document,
-            ctx.mindmap_tree,
-            ctx.app_scene,
-            ctx.renderer,
-            ctx.scene_cache,
-            ctx.keybinds,
-            ctx.macros,
-        );
+        handle_console_key(&key_name, &logical_key, ctx);
         return;
     }
 

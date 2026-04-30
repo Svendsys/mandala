@@ -107,10 +107,19 @@ Shipped on this branch:
   `winit::Key` payloads). Click-outside commit at three call
   sites (`event_mouse_click.rs:351, 394, 441`) and one WASM site
   (`run_wasm.rs:910`) all route through the funnel.
-- **Console-verb Action bodies inline in `console_input/dispatch.rs`.**
-  Every `Action::Console*` variant is matched and run inline at
-  the console handler; none reach `dispatch_action`. Either route
-  through the funnel or document the carve-out clearly.
+- ~~**Console-verb Action bodies inline in `console_input/dispatch.rs`.**~~
+  **Shipped.** All 22 `Action::Console*` variants funnel through
+  `dispatch_action` via a single or-pattern arm that delegates to
+  `console_input::dispatch_console_action`. The fan-out lives in
+  the same module as the `edit::*` private helpers it reaches
+  (CODE_CONVENTIONS §6 conceptual boundary). `handle_console_key`
+  shrinks to: resolve action → `dispatch_action` → carve-out
+  literal-`Key::Character` insertion (the §3 carve-out for IME /
+  character-insertion payloads only). User-tier macros can now
+  fire any Console variant — `[Action::ConsoleScrollPageUp,
+  Action::ConsoleScrollPageUp]` paginates the scrollback from a
+  macro keybinding, etc. The `Key::Character` insertion path
+  stays inline as the actual §3 carve-out.
 - ~~**`word_left` / `word_right` belong in baumhard.**~~
   **Shipped.** Moved from `text_edit/mod.rs` to
   `baumhard::util::grapheme_chad` per CONVENTIONS §B3.
