@@ -247,7 +247,7 @@ fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     let doc = &mut eff.document;
     match doc.selection.clone() {
         SelectionState::Single(id) => {
-            node_font_outcome(doc, &id, size, min, max, 1)
+            node_font_outcome(doc, &id, size, min, max)
         }
         SelectionState::Multi(ids) => {
             // Fanout: apply size to each node; collect a single
@@ -310,7 +310,6 @@ fn node_font_outcome(
     size: Option<f32>,
     min: Option<f32>,
     max: Option<f32>,
-    _: i32,
 ) -> ExecResult {
     let mut messages = Vec::new();
     let mut any_applied = false;

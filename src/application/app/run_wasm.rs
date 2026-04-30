@@ -265,8 +265,20 @@ let web_window = web_sys::window().expect("No global window");
 let document = web_window.document().expect("No document");
 let body = document.body().expect("No body");
 body.append_child(&canvas).expect("Failed to append canvas");
-canvas.set_width(web_window.inner_width().unwrap().as_f64().unwrap() as u32);
-canvas.set_height(web_window.inner_height().unwrap().as_f64().unwrap() as u32);
+canvas.set_width(
+    web_window
+        .inner_width()
+        .expect("web_window.inner_width before first frame")
+        .as_f64()
+        .expect("inner_width JsValue is f64") as u32,
+);
+canvas.set_height(
+    web_window
+        .inner_height()
+        .expect("web_window.inner_height before first frame")
+        .as_f64()
+        .expect("inner_height JsValue is f64") as u32,
+);
 let cw = canvas.width();
 let ch = canvas.height();
 log::info!("WASM: canvas sized {}x{}", cw, ch);
@@ -594,13 +606,12 @@ app.event_loop.run(move |event, _window_target| {
                         input.modifiers.alt_key(),
                     )
                 });
-                if matches!(
-                    action,
-                    Some(Action::TextEditCommit) | Some(Action::TextEditCancel)
-                ) {
+                if let Some(modal_action @ (Action::TextEditCommit | Action::TextEditCancel)) =
+                    &action
+                {
                     let mut core = input.input_context_core(renderer, &keybinds);
                     let _ = super::dispatch::action_core::dispatch_compatible(
-                        &action.unwrap(),
+                        modal_action,
                         &mut core,
                     );
                     suppress_for_events.set(input.text_edit_state.is_open());
