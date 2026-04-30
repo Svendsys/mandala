@@ -319,7 +319,10 @@ impl GlyphArea {
 
         if let Some(text) = delta.text_ref() {
             match operation {
-                ApplyOperation::Assign => self.text = text.to_string(),
+                ApplyOperation::Assign => {
+                    self.text.clear();
+                    self.text.push_str(text);
+                }
                 ApplyOperation::Add => self.text += text,
                 _ => {}
             }

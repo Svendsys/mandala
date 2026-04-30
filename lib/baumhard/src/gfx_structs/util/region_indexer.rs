@@ -71,12 +71,8 @@ impl RegionIndexer {
     /// allocated buckets — O(num_regions) and clears all indexed
     /// elements.
     pub fn initialize(&mut self, num_regions: usize) {
-        if self.index.len() > 0 {
-            self.index = Vec::new();
-        }
-        for _ in 0..num_regions {
-            self.index.push(BTreeSet::new());
-        }
+        self.index.clear();
+        self.index.resize_with(num_regions, BTreeSet::new);
     }
 
     /// Record that `element_id` currently occupies `region`. Also
