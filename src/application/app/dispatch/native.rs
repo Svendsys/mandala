@@ -15,12 +15,6 @@ use glam::Vec2;
 use crate::application::document::{EdgeRef, SelectionState, UndoAction};
 use crate::application::keybinds::Action;
 
-use super::super::input_context::InputHandlerContext;
-use super::super::{AppMode, ClickHit, DragState};
-use super::super::{
-    open_label_edit, open_portal_text_edit, open_text_edit,
-};
-use super::super::scene_rebuild::rebuild_all;
 use super::super::click::rebuild_all_with_mode;
 use super::super::color_picker_flow::{
     close_color_picker_standalone, open_color_picker_standalone,
@@ -28,7 +22,12 @@ use super::super::color_picker_flow::{
 use super::super::console_input::{
     rebuild_console_overlay, save_console_history, save_document_to_bound_path,
 };
-use super::cross_dispatch::apply_keybind_custom_mutation;
+use super::super::input_context::InputHandlerContext;
+use super::super::label_edit::{open_label_edit, open_portal_text_edit};
+use super::super::scene_rebuild::rebuild_all;
+use super::super::text_edit::open_text_edit;
+use super::super::{AppMode, ClickHit, DragState};
+use super::apply_keybind_custom_mutation;
 use crate::application::console::ConsoleState;
 
 /// Per-event payload that mouse-driven Actions need but keyboard
@@ -565,7 +564,7 @@ pub(in crate::application::app) fn dispatch_action(
         Action::LabelEditCancel => {
             if let Some(doc) = ctx.document.as_mut() {
                 if ctx.portal_text_edit_state.is_open() {
-                    super::super::close_portal_text_edit(
+                    super::super::label_edit::close_portal_text_edit(
                         false,
                         doc,
                         ctx.portal_text_edit_state,
@@ -575,7 +574,7 @@ pub(in crate::application::app) fn dispatch_action(
                         ctx.scene_cache,
                     );
                 } else if ctx.label_edit_state.is_open() {
-                    super::super::close_label_edit(
+                    super::super::label_edit::close_label_edit(
                         false,
                         doc,
                         ctx.label_edit_state,
@@ -591,7 +590,7 @@ pub(in crate::application::app) fn dispatch_action(
         Action::LabelEditCommit => {
             if let Some(doc) = ctx.document.as_mut() {
                 if ctx.portal_text_edit_state.is_open() {
-                    super::super::close_portal_text_edit(
+                    super::super::label_edit::close_portal_text_edit(
                         true,
                         doc,
                         ctx.portal_text_edit_state,
@@ -601,7 +600,7 @@ pub(in crate::application::app) fn dispatch_action(
                         ctx.scene_cache,
                     );
                 } else if ctx.label_edit_state.is_open() {
-                    super::super::close_label_edit(
+                    super::super::label_edit::close_label_edit(
                         true,
                         doc,
                         ctx.label_edit_state,
@@ -732,9 +731,9 @@ pub(in crate::application::app) fn apply_label_edit_action_to_buffer(
 /// the LabelEditState carrier directly.
 pub(in crate::application::app) fn apply_label_edit_action(
     action: Action,
-    state: &mut super::super::LabelEditState,
+    state: &mut super::super::label_edit::LabelEditState,
 ) -> bool {
-    use super::super::LabelEditState;
+    use super::super::label_edit::LabelEditState;
     let LabelEditState::Open {
         buffer,
         cursor_grapheme_pos,

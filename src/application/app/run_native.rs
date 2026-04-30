@@ -6,15 +6,32 @@
 
 #![cfg(not(target_arch = "wasm32"))]
 
-use super::*;
+use std::sync::Arc;
 
-use super::freeze_watchdog::FreezeWatchdog;
-use super::input_context::InputHandlerContext;
 use baumhard::mindmap::tree_builder::MindMapTree;
 use winit::application::ApplicationHandler;
-use winit::event::StartCause;
-use winit::event_loop::ActiveEventLoop;
-use winit::window::WindowId;
+use winit::event::{
+    ElementState, Event, KeyEvent, MouseScrollDelta, StartCause, WindowEvent,
+};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::keyboard::ModifiersState;
+use winit::window::{Window, WindowId};
+
+use super::color_picker_flow::rebuild_color_picker_overlay;
+use super::freeze_watchdog::FreezeWatchdog;
+use super::input_context::InputHandlerContext;
+use super::label_edit::{LabelEditState, PortalTextEditState};
+use super::run_native_init;
+use super::text_edit::TextEditState;
+use super::{
+    drain_frame, event_cursor_moved, event_keyboard, event_mouse_click, AppMode,
+    Application, DragState, LastClick, Options,
+};
+use crate::application::common::RenderDecree;
+use crate::application::console::ConsoleState;
+use crate::application::document::MindMapDocument;
+use crate::application::keybinds::ResolvedKeybinds;
+use crate::application::renderer::Renderer;
 
 /// Entry point called from `Application::run` on every non-WASM
 /// target. Hands control to winit's event loop; returns when the

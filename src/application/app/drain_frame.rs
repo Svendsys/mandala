@@ -10,7 +10,18 @@
 
 use std::collections::HashMap;
 
-use super::*;
+use glam::Vec2;
+
+use super::now_ms;
+use super::scene_rebuild::{
+    flush_canvas_scene_buffers, rebuild_all, update_connection_label_tree,
+    update_connection_tree, update_edge_handle_tree, update_portal_tree,
+};
+use crate::application::document::{
+    apply_tree_highlights, rect_select, MindMapDocument, SelectionState,
+    HIGHLIGHT_COLOR,
+};
+use crate::application::renderer::Renderer;
 
 pub(super) fn drain_selecting_rect(
     start_canvas: Vec2,

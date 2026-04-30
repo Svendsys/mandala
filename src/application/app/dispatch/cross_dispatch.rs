@@ -239,7 +239,7 @@ pub(in crate::application::app) fn apply_create_orphan_node(
 pub(in crate::application::app) fn apply_create_orphan_node_and_edit(
     canvas_pos: glam::Vec2,
     rc: &mut RebuildContext<'_>,
-    text_edit_state: &mut super::super::TextEditState,
+    text_edit_state: &mut super::super::text_edit::TextEditState,
 ) {
     let new_id = rc.document.create_orphan_and_select(canvas_pos);
     rc.rebuild_after_geometry_change();
@@ -287,7 +287,7 @@ pub(in crate::application::app) fn apply_delete_selection(rc: &mut RebuildContex
 pub(in crate::application::app) fn apply_open_text_edit_on_single(
     clean: bool,
     rc: &mut RebuildContext<'_>,
-    text_edit_state: &mut super::super::TextEditState,
+    text_edit_state: &mut super::super::text_edit::TextEditState,
 ) -> bool {
     let SelectionState::Single(id) = rc.document.selection.clone() else {
         return false;

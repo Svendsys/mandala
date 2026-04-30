@@ -6,6 +6,7 @@
 //! cursor / time math, so exercising them here keeps the
 //! winit event loop out of the test scaffold.
 
+use super::text_edit::TextEditState;
 use super::*;
 
 // -----------------------------------------------------------------

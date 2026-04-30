@@ -16,7 +16,7 @@ use crate::application::document::MindMapDocument;
 use crate::application::keybinds::{InputContext, ResolvedKeybinds};
 use crate::application::renderer::Renderer;
 
-use super::super::rebuild_all;
+use super::super::scene_rebuild::rebuild_all;
 use super::{insert_at_cursor, insert_caret, TextEditState};
 
 

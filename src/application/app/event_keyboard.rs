@@ -7,11 +7,19 @@
 
 #![cfg(not(target_arch = "wasm32"))]
 
-use super::input_context::InputHandlerContext;
-use super::*;
-use crate::application::keybinds::Action;
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::Key;
+
+use super::color_picker_flow::handle_color_picker_key;
+use super::console_input::handle_console_key;
+use super::input_context::InputHandlerContext;
+use super::label_edit::{
+    handle_label_edit_key, handle_portal_text_edit_key, open_label_edit,
+    open_portal_text_edit,
+};
+use super::text_edit::handle_text_edit_key;
+use crate::application::document::SelectionState;
+use crate::application::keybinds::Action;
 
 pub(super) fn handle_keyboard_input(
     logical_key: Key,

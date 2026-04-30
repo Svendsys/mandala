@@ -7,14 +7,22 @@
 
 #![cfg(not(target_arch = "wasm32"))]
 
+use winit::dpi::PhysicalPosition;
+use winit::window::{CursorIcon, Window};
+
+use super::click::rebuild_all_with_mode;
+use super::color_picker_flow::handle_color_picker_mouse_move;
 use super::input_context::InputHandlerContext;
+use super::scene_rebuild::{rebuild_after_selection_change, rebuild_all};
 use super::throttled_interaction::{
     EdgeHandleInteraction, EdgeLabelInteraction, MovingNodeInteraction,
     PortalLabelInteraction, ThrottledDrag,
 };
-use super::*;
-use winit::dpi::PhysicalPosition;
-use winit::window::Window;
+use super::{AppMode, DragState};
+use crate::application::common::RenderDecree;
+use crate::application::document::{
+    apply_tree_highlights, hit_test, SelectionState, HIGHLIGHT_COLOR,
+};
 
 pub(super) fn handle_cursor_moved(
     position: PhysicalPosition<f64>,

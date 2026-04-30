@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use std::sync::Arc;
-
 mod scene_rebuild;
 mod text_edit;
 
@@ -57,61 +55,37 @@ mod run_wasm;
 // new fields:
 //   1. The struct in `app/input_context.rs`.
 //   2. The `InitState::input_context()` builder in `run_native.rs`.
-//   3. `dispatch_action`'s signature in `app/dispatch.rs` (the funnel
-//      every handler ultimately calls).
+//   3. `dispatch_action`'s signature in `app/dispatch/native.rs` (the
+//      funnel every handler ultimately calls).
 // Input handlers (`event_keyboard.rs`, `event_mouse_click.rs`,
 // `event_cursor_moved.rs`) take `ctx: &mut InputHandlerContext<'_>`
 // and access fields via `ctx.foo`, so adding a field doesn't ripple
 // through their bodies — Rust's split borrows let modal handlers
 // receive `&mut ctx.console_state` etc. without re-destructuring.
 
-// Cross-platform imports.
-use scene_rebuild::{
-    flush_canvas_scene_buffers, rebuild_after_selection_change, rebuild_all,
-    rebuild_scene_only, update_border_tree_static,
-    update_connection_label_tree, update_connection_tree, update_portal_tree,
-};
-// `update_edge_handle_tree` is touched only by the native-only
-// drain path (selected-edge handles follow camera changes); the
-// glob `use super::*;` in `drain_frame.rs` re-exposes it from
-// here. WASM has no `drain_frame.rs`, so the import must be
-// cfg-gated to avoid a wasm32 unused-import warning.
-#[cfg(not(target_arch = "wasm32"))]
-use scene_rebuild::update_edge_handle_tree;
-use text_edit::{handle_text_edit_key, open_text_edit, TextEditState};
-// Native-only: `route_label_edit_key` (below) is the sole caller;
-// gating avoids a wasm32 unused-import warning.
-#[cfg(not(target_arch = "wasm32"))]
-use text_edit::insert_at_cursor;
+// Sub-modules pull what they need from siblings directly; mod.rs
+// only imports for its own body (`now_ms`, the `Application` /
+// `Options` struct definitions, and the `route_label_edit_key`
+// helper below). Adding an `InputContext::Foo` arm doesn't widen
+// this list — the consumer in `event_keyboard.rs` imports it
+// itself.
+use crate::application::common::{InputMode, WindowMode};
 
 #[cfg(not(target_arch = "wasm32"))]
-use click::{
-    handle_click,
-    rebuild_all_with_mode,
-};
-#[cfg(not(target_arch = "wasm32"))]
-use color_picker_flow::{
-    end_color_picker_gesture, handle_color_picker_click, handle_color_picker_key,
-    handle_color_picker_mouse_move, rebuild_color_picker_overlay,
-};
-#[cfg(not(target_arch = "wasm32"))]
-use console_input::{
-    handle_console_key, load_console_history, save_console_history,
-};
-#[cfg(not(target_arch = "wasm32"))]
-use edge_drag::apply_edge_handle_drag;
-#[cfg(not(target_arch = "wasm32"))]
-use label_edit::{
-    close_label_edit, close_portal_text_edit, handle_label_edit_key,
-    handle_portal_text_edit_key, open_label_edit, open_portal_text_edit,
-    LabelEditState, PortalTextEditState,
-};
-#[cfg(not(target_arch = "wasm32"))]
-use pollster::block_on;
-#[cfg(not(target_arch = "wasm32"))]
-use portal_label_drag::apply_portal_label_drag;
-#[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
+#[cfg(not(target_arch = "wasm32"))]
+use glam::Vec2;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::application::document::EdgeRef;
+#[cfg(not(target_arch = "wasm32"))]
+use text_edit::insert_at_cursor;
+#[cfg(not(target_arch = "wasm32"))]
+use throttled_interaction::ThrottledDrag;
+
+#[cfg(target_arch = "wasm32")]
+use std::sync::Arc;
+#[cfg(target_arch = "wasm32")]
+use winit::{event_loop::EventLoop, window::Window};
 
 /// Cross-platform monotonic clock in ms since first call. Native:
 /// `Instant`. WASM: `performance.now()` (≥1ms quantised; fine for
@@ -130,49 +104,6 @@ fn now_ms() -> f64 {
         .map(|p| p.now())
         .unwrap_or(0.0)
 }
-// `Vec2` is only named bare from the native-only `DragState`
-// variants below — on WASM the gated-out `DragState` definition
-// is the only consumer, so the import goes too.
-#[cfg(not(target_arch = "wasm32"))]
-use glam::Vec2;
-use wgpu::Instance;
-use winit::event::{ElementState, Event, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
-// `ControlFlow` is set in `run_native.rs` only — WASM drives the
-// loop via `requestAnimationFrame`.
-#[cfg(not(target_arch = "wasm32"))]
-use winit::event_loop::ControlFlow;
-// `ModifiersState` and `CursorIcon` are only consumed by native
-// sub-modules via `use super::*;`. WASM-side `run_wasm.rs` reaches
-// them through fully-qualified paths (`winit::keyboard::ModifiersState`)
-// directly, so the bare-name import is unused there.
-#[cfg(not(target_arch = "wasm32"))]
-use winit::keyboard::ModifiersState;
-#[cfg(not(target_arch = "wasm32"))]
-use winit::window::CursorIcon;
-use winit::{event_loop::EventLoop, window::Window};
-
-use crate::application::common::{InputMode, RenderDecree, WindowMode};
-#[cfg(not(target_arch = "wasm32"))]
-use crate::application::console::ConsoleState;
-// `SelectionState` is the only document item used cross-platform
-// (referenced inside several `DragState` variants and re-exposed
-// to children via `super::*`). The rest are consumed only by
-// native sub-modules (drag handlers, click router, hit-testers);
-// gating them keeps wasm32 free of unused-import noise.
-use crate::application::document::SelectionState;
-#[cfg(not(target_arch = "wasm32"))]
-use crate::application::document::{
-    apply_drag_delta, apply_tree_highlights, hit_test, hit_test_edge,
-    rect_select, EdgeRef, MindMapDocument, UndoAction,
-    HIGHLIGHT_COLOR, REPARENT_SOURCE_COLOR, REPARENT_TARGET_COLOR,
-};
-use crate::application::keybinds::ResolvedKeybinds;
-use crate::application::renderer::Renderer;
-#[cfg(not(target_arch = "wasm32"))]
-use throttled_interaction::ThrottledDrag;
-
-#[cfg(not(target_arch = "wasm32"))]
-use baumhard::mindmap::custom_mutation::{PlatformContext, Trigger};
 
 /// Screen-space click tolerance (in pixels) for edge hit testing. Converted
 /// to canvas units via `Renderer::canvas_per_pixel()` so the click target

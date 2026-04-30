@@ -13,10 +13,11 @@ use crate::application::document::MindMapDocument;
 use crate::application::keybinds::{InputContext, ResolvedKeybinds};
 use crate::application::renderer::Renderer;
 
-use super::text_edit::insert_caret;
-use super::{
-    rebuild_all, route_label_edit_key, update_connection_label_tree, update_portal_tree,
+use super::scene_rebuild::{
+    rebuild_all, update_connection_label_tree, update_portal_tree,
 };
+use super::text_edit::insert_caret;
+use super::route_label_edit_key;
 
 // (`update_portal_tree` imported above is used by the portal-text
 // editor; the line-mode label editor deliberately does NOT touch

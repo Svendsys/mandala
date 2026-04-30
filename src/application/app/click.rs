@@ -7,7 +7,15 @@
 
 #![cfg(not(target_arch = "wasm32"))]
 
-use super::*;
+use baumhard::mindmap::custom_mutation::{PlatformContext, Trigger};
+
+use super::scene_rebuild::{rebuild_all, rebuild_scene_only};
+use super::{now_ms, AppMode, EDGE_HIT_TOLERANCE_PX};
+use crate::application::document::{
+    apply_tree_highlights, hit_test_edge, MindMapDocument, SelectionState,
+    HIGHLIGHT_COLOR, REPARENT_SOURCE_COLOR, REPARENT_TARGET_COLOR,
+};
+use crate::application::renderer::Renderer;
 
 
 /// Handle a click event: update selection, rebuild tree with highlight.

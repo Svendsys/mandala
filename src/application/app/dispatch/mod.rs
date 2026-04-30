@@ -45,4 +45,9 @@ pub(in crate::application::app) use native::{
 // `tests_mutations` parity tests import via the shorter
 // `super::dispatch::*` form.
 pub(in crate::application::app) use cross_dispatch::DispatchOutcome;
+// `pub(crate)` so `tests_mutations` (in `document/`) and the
+// WASM run loop (`run_wasm.rs`) can both reach it through this
+// canonical re-export. Native sub-modules (`native.rs`) also call
+// here rather than the sibling path so the surface stays
+// uniform across targets.
 pub(crate) use cross_dispatch::apply_keybind_custom_mutation;

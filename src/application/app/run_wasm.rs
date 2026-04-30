@@ -6,10 +6,25 @@
 
 #![cfg(target_arch = "wasm32")]
 
-use super::*;
-use crate::application::document::MindMapDocument;
-use crate::application::keybinds::Action;
+use std::sync::Arc;
+
 use baumhard::mindmap::tree_builder::MindMapTree;
+use wgpu::Instance;
+use winit::event::{
+    ElementState, Event, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent,
+};
+
+use super::scene_rebuild::{
+    flush_canvas_scene_buffers, rebuild_after_selection_change, rebuild_all,
+    rebuild_scene_only, update_border_tree_static,
+    update_connection_label_tree, update_connection_tree, update_portal_tree,
+};
+use super::text_edit::{handle_text_edit_key, open_text_edit, TextEditState};
+use super::{is_double_click, now_ms, Application, ClickHit, LastClick};
+use crate::application::common::RenderDecree;
+use crate::application::document::{MindMapDocument, SelectionState};
+use crate::application::keybinds::{Action, ResolvedKeybinds};
+use crate::application::renderer::Renderer;
 
 /// Pending left-click awaiting a release. `None` on init and after
 /// release consumed; `Empty` after a click-down on empty canvas;
