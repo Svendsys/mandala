@@ -683,7 +683,7 @@ pub fn resolve_border_style(
 ///
 /// Reachable per tree rebuild (`tree_builder/border.rs:111`),
 /// which §9 puts in interactive territory — no panic site. The
-/// fallback is statically known to exist because [`PRESET_TABLE`]
+/// fallback is statically known to exist because `PRESET_TABLE`
 /// is `const &[…; 4]` (non-empty by construction).
 pub fn preset_glyph_set(preset: &str) -> BorderGlyphSet {
     let name = preset.to_ascii_lowercase();
@@ -701,7 +701,7 @@ pub fn preset_glyph_set(preset: &str) -> BorderGlyphSet {
 }
 
 /// Sentinel preset name for "user-supplied glyphs override these
-/// defaults." Has no row in [`PRESET_TABLE`]; the per-side
+/// defaults." Has no row in `PRESET_TABLE`; the per-side
 /// fallback in [`preset_glyph_set`] is `light`. Repeated literal
 /// `"custom"` checks reach for this to keep the meaning single-
 /// sourced.
@@ -709,7 +709,7 @@ pub const CUSTOM_PRESET_NAME: &str = "custom";
 
 /// Every preset name accepted by the schema's
 /// `GlyphBorderConfig.preset` field — the four typed glyph rows
-/// in [`PRESET_TABLE`] plus the [`CUSTOM_PRESET_NAME`] sentinel.
+/// in `PRESET_TABLE` plus the [`CUSTOM_PRESET_NAME`] sentinel.
 /// Surfaced for the console's `border preset=` completion.
 ///
 /// Derived from `PRESET_TABLE`'s row-index → name extraction at

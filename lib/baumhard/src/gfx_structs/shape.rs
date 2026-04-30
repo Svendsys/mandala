@@ -2,10 +2,11 @@
 
 //! Per-node background / hit-test shapes.
 //!
-//! [`NodeShape`] is the single source of truth for "what shape does
-//! this node occupy?". Both the renderer (SDF fragment path) and the
-//! BVH hit test (point-in-shape check) consult the same enum, so
-//! adding a new shape never drifts between visuals and input.
+//! [`crate::gfx_structs::shape::NodeShape`] is the single source of
+//! truth for "what shape does this node occupy?". Both the renderer
+//! (SDF fragment path) and the BVH hit test (point-in-shape check)
+//! consult the same enum, so adding a new shape never drifts between
+//! visuals and input.
 //!
 //! Extending the set is deliberately local:
 //!
@@ -13,8 +14,9 @@
 //! 2. Add a `SHAPE_*` constant + a `case` arm to the rect pipeline's
 //!    fragment shader (`src/application/renderer/mod.rs`,
 //!    `RECT_SHADER_WGSL`).
-//! 3. Add a branch in [`NodeShape::contains_local`] and
-//!    [`NodeShape::intersects_local_aabb`].
+//! 3. Add a branch in
+//!    [`crate::gfx_structs::shape::NodeShape::contains_local`] and
+//!    [`crate::gfx_structs::shape::NodeShape::intersects_local_aabb`].
 //!
 //! No new structs, no new mutation surfaces, no new mesh builders.
 

@@ -438,10 +438,9 @@ impl GfxElement {
 
     /// Write the cached subtree AABB for this node.
     ///
-    /// Called by
-    /// [`Tree::compute_subtree_aabbs`](crate::gfx_structs::tree::Tree::compute_subtree_aabbs)
-    /// during the bottom-up pass. Application code should not call
-    /// this directly — use the tree-level API instead.
+    /// Called by `Tree::compute_subtree_aabbs` during the bottom-up
+    /// pass. Application code should not call this directly — use
+    /// the tree-level API instead.
     ///
     /// O(1), no allocation.
     pub fn set_subtree_aabb(&mut self, aabb: Option<(Vec2, Vec2)>) {

@@ -6,9 +6,10 @@
 //! (the model-level representation of styled text runs) into either
 //! cosmic-text API shape:
 //!
-//! - [`attrs_list_from_regions`] returns an `AttrsList` for
-//!   callers using `Editor::insert_string`.
-//! - [`RegionFamilies`] + [`rich_text_spans_from_regions`] returns
+//! - [`crate::font::attrs::attrs_list_from_regions`] returns an
+//!   `AttrsList` for callers using `Editor::insert_string`.
+//! - [`crate::font::attrs::RegionFamilies`] +
+//!   [`crate::font::attrs::rich_text_spans_from_regions`] returns
 //!   a `Vec<(&str, Attrs)>` for callers using `Buffer::set_rich_text`.
 //!
 //! Both honour the per-region color, font pin, and grapheme-aware

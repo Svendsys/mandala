@@ -6,9 +6,11 @@
 //! `FONT_SYSTEM`; `attrs` translates `ColorFontRegions` into
 //! cosmic-text `AttrsList`s.
 
-/// `ColorFontRegions` → cosmic-text bridges (`attrs_list_from_regions`
-/// for `Editor::insert_string`, `RegionFamilies` +
-/// `rich_text_spans_from_regions` for `Buffer::set_rich_text`).
+/// `ColorFontRegions` → cosmic-text bridges
+/// ([`attrs::attrs_list_from_regions`] for `Editor::insert_string`,
+/// [`attrs::RegionFamilies`] +
+/// [`attrs::rich_text_spans_from_regions`] for
+/// `Buffer::set_rich_text`).
 pub mod attrs;
 /// Compiled-in font table, shared `FONT_SYSTEM`, cosmic-text editor
 /// factories, and the text-measurement primitives.

@@ -121,7 +121,7 @@ fn connection_edge_layout(
 /// `Renderer::rebuild_connection_buffers_keyed` applied. Color is
 /// baked into a single `ColorFontRegion` covering the body glyph.
 ///
-/// Channels come from [`connection_edge_layout`] so the in-place
+/// Channels come from `connection_edge_layout` so the in-place
 /// [`build_connection_mutator_tree`] path can target each leaf by
 /// the same channel across calls when the structure (body glyph
 /// count, cap presence) hasn't changed.
@@ -160,7 +160,7 @@ pub fn build_connection_tree(
 /// that updates an already-registered connection tree to the
 /// current `elements` state without rebuilding the arena. Pairs
 /// with [`build_connection_tree`] — both consume
-/// [`connection_edge_layout`], so applying this mutator to a tree
+/// `connection_edge_layout`, so applying this mutator to a tree
 /// built from an element slice with the same
 /// [`connection_identity_sequence`] updates each glyph's variable
 /// fields in place.

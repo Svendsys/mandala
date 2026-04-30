@@ -49,22 +49,24 @@ pub enum Instruction {
     /// attached mutation (typically a [`Mutation::Event`] carrying
     /// [`MouseEventData`]) to that node; no-op if no node contains.
     ///
-    /// Bypasses channel alignment — like [`MapChildren`] but routing
-    /// on spatial hit-test rather than sibling position. Tree-walker
-    /// counterpart of [`Tree::descendant_at`](crate::gfx_structs::tree::Tree::descendant_at).
+    /// Bypasses channel alignment — like [`Instruction::MapChildren`]
+    /// but routing on spatial hit-test rather than sibling position.
+    /// Tree-walker counterpart of
+    /// [`Tree::descendant_at`](crate::gfx_structs::tree::Tree::descendant_at).
     ///
     /// Cost: O(branching × depth) for spatially disjoint subtrees,
     /// O(n) worst case with fully overlapping subtrees.
     SpatialDescend(OrderedVec2),
     /// Pair mutator children with target children **by sibling
     /// position** (zip), ignoring channels on the paired children.
-    /// The opt-in alternative to [`RepeatWhile`]'s channel-broadcast
-    /// semantics, used when each child needs a distinct mutation
-    /// (per-index layout). Excess children on either side are
-    /// dropped with one `debug!` at termination. The attached
-    /// `mutation` field is applied to the current target before the
-    /// body runs, same as [`RepeatWhile`]. Composes with the AST
-    /// `Repeat` wrapper for runtime-count expansion.
+    /// The opt-in alternative to [`Instruction::RepeatWhile`]'s
+    /// channel-broadcast semantics, used when each child needs a
+    /// distinct mutation (per-index layout). Excess children on
+    /// either side are dropped with one `debug!` at termination.
+    /// The attached `mutation` field is applied to the current
+    /// target before the body runs, same as
+    /// [`Instruction::RepeatWhile`]. Composes with the AST `Repeat`
+    /// wrapper for runtime-count expansion.
     ///
     /// Cost: O(min(mutator_children, target_children)); no
     /// allocation inside the zip.
@@ -209,12 +211,12 @@ pub enum Mutation {
     /// its parameter. Cost: O(1) per command.
     AreaCommand(Box<GlyphAreaCommand>),
     /// A field-level delta applied to a [`GlyphModel`]. Semantics
-    /// mirror [`AreaDelta`](Mutation::AreaDelta) but target model
-    /// fields (glyph matrix, layer, position).
+    /// mirror [`Mutation::AreaDelta`] but target model fields
+    /// (glyph matrix, layer, position).
     ModelDelta(Box<DeltaGlyphModel>),
     /// An imperative command applied to a [`GlyphModel`] (nudge,
     /// rotate, insert line, etc.). Mirrors
-    /// [`AreaCommand`](Mutation::AreaCommand) for model elements.
+    /// [`Mutation::AreaCommand`] for model elements.
     ModelCommand(Box<GlyphModelCommand>),
     /// Delivers a [`GlyphTreeEventInstance`] to the target element's
     /// event subscribers. Does not modify element data directly;

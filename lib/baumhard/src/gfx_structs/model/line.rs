@@ -51,7 +51,7 @@ impl MulAssign for GlyphLine {
 }
 
 impl AddAssign for GlyphLine {
-    /// Using [GlyphLineOp::Assign] here intentionally
+    /// Using `GlyphLineOp::Assign` here intentionally
     fn add_assign(&mut self, rhs: Self) {
         self.perform_op(&rhs, GlyphLineOp::Assign);
     }
