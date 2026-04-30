@@ -217,39 +217,93 @@ http://localhost:8080/?map=path&keybinds={"macro_bindings":{"Ctrl+G":"my-macro"}
   (`TEST_CONVENTIONS.md §T9`); manual smoke via `trunk serve`
   with the URL form above.
 
-### Track C — unify the context type
+### Track C — unify the context type — **SHIPPED**
 
-Eventually `WasmInputState` should converge with
-`InputHandlerContext`. Two viable shapes:
+Track C landed in 4 commits. Both targets now dispatch every
+Compatible Action through the same cross-platform
+`dispatch_action_core::dispatch_compatible` function; the
+WASM-only `dispatch_compatible_action_wasm` shim is deleted.
 
-**Shape 1: shared `InputContextCore` + native-only extension.**
-Define a new `InputContextCore` containing the 9 fields both
-targets have. Native's `InputHandlerContext` keeps its 21-field
-struct but embeds `InputContextCore` plus 12 native-only fields.
-WASM constructs `InputContextCore` directly. `dispatch_action`'s
-signature changes to `&mut InputContextCore`; arms that need
-native-only state get gated behind a separate
-`fn dispatch_native_only_action(action, &mut InputHandlerContext)`.
+**Architecture summary:**
 
-**Shape 2: trait-based context.** Define
-`trait DispatchableContext { fn document_mut(&mut self) -> ...; ... }`
-with accessors for every field. `InputHandlerContext` implements
-the full trait; `WasmInputState` implements a subset. Each
-dispatch arm requires only the accessors it actually uses; the
-borrow checker handles the split borrows. More flexible, more
-trait surface to maintain.
+- **`InputContextCore<'a>`** at `src/application/app/input_context_core.rs`
+  — cross-platform struct holding the 11 fields both native's
+  `InputHandlerContext` and WASM's `WasmInputState` carry
+  (document, mindmap_tree, app_scene, renderer, scene_cache,
+  text_edit_state, last_click, cursor_pos, modifiers, keybinds,
+  macros). `document` is `Option<&'a mut MindMapDocument>` so
+  both ownership shapes (native's `Option`, WASM's owned-by-
+  value) construct without ownership shuffles.
 
-Shape 1 is closer to the current code and likely the better
-landing point. Shape 2 is more idiomatic Rust but is a bigger
-diff.
+- **`NativeContextExt<'a>`** sibling — native-only struct holding
+  the 10 fields the browser doesn't have (drag_state, app_mode,
+  console_state, console_history, label_edit_state,
+  portal_text_edit_state, color_picker_state, hovered_node,
+  cursor_is_hand, picker_hover). cfg-gated to native.
 
-**Scaffolding posture.** This branch ships ZERO scaffolding for
-Track C — no stub `InputContextCore` struct, no
-`DispatchableContext` trait. The choice between Shape 1 and
-Shape 2 is left to the contributor who lands the refactor; pre-
-committing to one shape via a stub would close off the other.
-Track A path A1 is the working alternative until Track C is
-chosen and built.
+- **`InputHandlerContext::split_borrow(&mut self) -> (InputContextCore,
+  NativeContextExt)`** — re-borrows the 21 fields into the two
+  views with shorter lifetime. Native callers split before
+  calling the cross-platform dispatcher.
+
+- **`dispatch_action_core::dispatch_compatible(&Action, &mut InputContextCore)
+  -> DispatchOutcome`** — the canonical cross-platform dispatcher.
+  Handles every Compatible-classified Action arm (Document-
+  lifecycle, camera/zoom, FPS, selection nav, parametric
+  mutators) via `cross_dispatch::apply_*` helpers. Returns
+  `Handled` when the body fired; `Unhandled` for NativeOnly
+  variants (caller's fall-through runs them) and for mixed-
+  branch Actions whose cross-platform slice didn't apply.
+
+- **Mixed-branch handling** — `Action::CancelMode` and
+  `Action::EditSelection*` have NativeOnly branches but
+  cross-platform slices. The cross-platform dispatcher runs the
+  slice (clear `last_click` for CancelMode; call
+  `apply_open_text_edit_on_single` for EditSelection*-Single)
+  and returns `Unhandled` so native fall-through runs the
+  residual arm body (AppMode clearing; EdgeLabel/Portal editor
+  open). Same effective behaviour as pre-Track-C native.
+
+- **Native shim** — `dispatch::dispatch_action` adds a 9-line
+  delegation at the top: split context, call
+  `dispatch_compatible`, return early on Handled, otherwise
+  fall through to the existing match for native-only arms.
+  Compatible arms in the existing match are now unreachable
+  (cross-platform dispatcher handles them first); they're left
+  in place as harmless dead code, can be cleaned in a follow-up.
+
+- **WASM caller** — `WasmInputState::input_context_core(&mut self,
+  &mut Renderer, &ResolvedKeybinds)` builds the cross-platform
+  view. Both the keyboard handler and `WasmMacroDispatchTarget::dispatch_action`
+  call `dispatch_compatible(...)` against it. The WASM-only
+  `dispatch_compatible_action_wasm` (~320 LoC) is deleted.
+
+**The 4 commits:**
+1. **C1** `b60569a` — introduce `InputContextCore` +
+   `NativeContextExt` + `split_borrow` (additive, no behaviour
+   change).
+2. **C2** `37c2897` — cross-platform `dispatch_compatible` +
+   native delegation.
+3. **C3** `1fd2eeb` — wire WASM at unified dispatcher; delete
+   `dispatch_compatible_action_wasm` shim.
+4. **C4** *(this commit)* — docs + TODO.md.
+
+**Why a struct, not a trait** (vs Track B's `MacroDispatchTarget`):
+the macro dispatcher's loop runs a few times per gesture and
+each step is a single dispatch — a virtual call there is
+cheap. `dispatch_compatible` runs on every keystroke and arms
+need split borrows across multiple disjoint fields (renderer +
+document + mindmap_tree + app_scene simultaneously). A trait
+with `&mut self` accessors would close over the whole context
+on every call; the concrete struct with split borrows tracks
+field-level borrows correctly.
+
+**Open follow-up:** the now-unreachable Compatible arms in
+`dispatch.rs::dispatch_action`'s match (Undo, ZoomIn, etc.) can
+be deleted. They run after the cross-platform dispatcher
+returns Handled so they're never reached. Left in place this
+commit for behaviour-preservation safety; a focused follow-up
+can remove them. Marked as the new "Outstanding" item.
 
 ### Track-D meta — keep the privilege model intact
 

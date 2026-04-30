@@ -45,6 +45,13 @@ mod event_mouse_click;
 mod freeze_watchdog;
 #[cfg(not(target_arch = "wasm32"))]
 mod input_context;
+// Cross-platform context-bundles for the unified `dispatch_action`
+// funnel. Track C from `WASM_CONVERGENCE.md` (final convergence step).
+mod input_context_core;
+// Cross-platform action dispatcher. Native dispatch.rs delegates
+// to here for Compatible arms; WASM (post-Track C wire-up) calls
+// it directly. Sibling to `dispatch_macro_core` (Track B precedent).
+mod dispatch_action_core;
 #[cfg(not(target_arch = "wasm32"))]
 mod portal_label_drag;
 #[cfg(not(target_arch = "wasm32"))]

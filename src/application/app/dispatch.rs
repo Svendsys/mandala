@@ -86,6 +86,30 @@ pub(in crate::application::app) fn dispatch_action(
     ctx: &mut InputHandlerContext<'_>,
     hit: Option<&DispatchHit>,
 ) -> DispatchOutcome {
+    // Track C: try the cross-platform dispatcher first. Compatible
+    // arms (Document-lifecycle, camera/zoom, FPS, selection nav,
+    // parametric mutators) and the cross-platform slice of
+    // mixed-branch arms (CancelMode's `last_click` clear,
+    // EditSelection*-Single open) all run from there. Returning
+    // `Handled` short-circuits this match; returning `Unhandled`
+    // means the cross-platform dispatcher saw the variant but
+    // didn't fully own it — the native arm below runs to cover
+    // the residual NativeOnly slice.
+    //
+    // The split-borrow scope is bounded so `ctx` is freely
+    // accessible again for the native-only arms below.
+    let cross_outcome = {
+        // `_` (not `_ext`) — the extension view is constructed by
+        // `split_borrow` because it returns the pair, but the
+        // cross-platform dispatcher takes only `core`. The native-
+        // only arms below re-borrow from `ctx` directly after this
+        // scope drops.
+        let (mut core, _) = ctx.split_borrow();
+        super::dispatch_action_core::dispatch_compatible(&action, &mut core)
+    };
+    if matches!(cross_outcome, DispatchOutcome::Handled) {
+        return cross_outcome;
+    }
     match action {
         Action::OpenConsole => {
             if ctx.console_state.is_open() {
@@ -114,10 +138,13 @@ pub(in crate::application::app) fn dispatch_action(
             DispatchOutcome::Handled
         }
         Action::CancelMode => {
+            // `last_click` was already cleared by the cross-platform
+            // dispatcher (`dispatch_compatible`'s mixed-branch slice
+            // for CancelMode). This arm runs only the native-only
+            // residual: AppMode reset + hovered_node clear + rebuild.
             if matches!(*ctx.app_mode, AppMode::Reparent { .. } | AppMode::Connect { .. }) {
                 *ctx.app_mode = AppMode::Normal;
                 *ctx.hovered_node = None;
-                *ctx.last_click = None;
                 if let Some(doc) = ctx.document.as_ref() {
                     rebuild_all_with_mode(
                         doc,
@@ -206,43 +233,36 @@ pub(in crate::application::app) fn dispatch_action(
             DispatchOutcome::Handled
         }
         Action::EditSelection | Action::EditSelectionClean => {
-            let clean = matches!(action, Action::EditSelectionClean);
+            // The Single branch is owned by the cross-platform
+            // dispatcher (`dispatch_compatible`'s mixed-branch slice).
+            // This arm runs ONLY when that returned `Unhandled`,
+            // which means selection was non-Single — so we go
+            // straight to the EdgeLabel / Portal native-only
+            // branches without re-checking Single.
+            let _clean = matches!(action, Action::EditSelectionClean);
             if let Some(doc) = ctx.document.as_mut() {
-                // Single branch is Compatible — route through the
-                // shared cross_dispatch helper. EdgeLabel + Portal
-                // branches are NativeOnly and stay inline.
-                let single_handled = {
-                    let mut rc = super::cross_dispatch::rebuild_ctx!(ctx, doc);
-                    super::cross_dispatch::apply_open_text_edit_on_single(
-                        clean,
-                        &mut rc,
-                        ctx.text_edit_state,
-                    )
-                };
-                if !single_handled {
-                    match doc.selection.clone() {
-                        SelectionState::PortalLabel(s) | SelectionState::PortalText(s) => {
-                            let er = s.edge_ref();
-                            open_portal_text_edit(
-                                &er,
-                                &s.endpoint_node_id,
-                                doc,
-                                ctx.portal_text_edit_state,
-                                ctx.app_scene,
-                                ctx.renderer,
-                            );
-                        }
-                        SelectionState::EdgeLabel(s) => {
-                            open_label_edit(
-                                &s.edge_ref,
-                                doc,
-                                ctx.label_edit_state,
-                                ctx.app_scene,
-                                ctx.renderer,
-                            );
-                        }
-                        _ => {}
+                match doc.selection.clone() {
+                    SelectionState::PortalLabel(s) | SelectionState::PortalText(s) => {
+                        let er = s.edge_ref();
+                        open_portal_text_edit(
+                            &er,
+                            &s.endpoint_node_id,
+                            doc,
+                            ctx.portal_text_edit_state,
+                            ctx.app_scene,
+                            ctx.renderer,
+                        );
                     }
+                    SelectionState::EdgeLabel(s) => {
+                        open_label_edit(
+                            &s.edge_ref,
+                            doc,
+                            ctx.label_edit_state,
+                            ctx.app_scene,
+                            ctx.renderer,
+                        );
+                    }
+                    _ => {}
                 }
             }
             DispatchOutcome::Handled
