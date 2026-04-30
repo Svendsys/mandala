@@ -5,6 +5,7 @@
 use super::super::*;
 use super::fixtures::*;
 use crate::mindmap::model::{EdgeLabelConfig, GlyphConnectionConfig};
+use crate::util::geometry::almost_equal;
 
 #[test]
 fn test_label_element_emitted_for_edge_with_label() {
@@ -283,7 +284,7 @@ fn test_label_bounds_use_grapheme_count_not_scalar_count() {
     let plain_w = plain_scene.connection_label_elements[0].bounds.0;
     let zwj_w = zwj_scene.connection_label_elements[0].bounds.0;
     assert!(
-        (plain_w - zwj_w).abs() < f32::EPSILON,
+        almost_equal(plain_w, zwj_w),
         "grapheme-sized bounds expected; got plain={plain_w} zwj={zwj_w}",
     );
 }
@@ -337,7 +338,7 @@ fn assert_label_one_grapheme_equivalent(label: &str) {
     let baseline_w = baseline_scene.connection_label_elements[0].bounds.0;
     let actual_w = actual_scene.connection_label_elements[0].bounds.0;
     assert!(
-        (baseline_w - actual_w).abs() < f32::EPSILON,
+        almost_equal(baseline_w, actual_w),
         "label {:?} should size as one grapheme; got {actual_w} vs. baseline {baseline_w}",
         label,
     );
