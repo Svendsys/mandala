@@ -144,32 +144,22 @@ pub(super) fn handle_mouse_input(
                             .screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
                         crate::application::document::hit_test(canvas_pos, tree)
                     });
-                    // Empty-hit on Connect: still dispatch so the
-                    // mode exits + scene rebuilds. The arm body
-                    // skips the `create_cross_link_edge` call and
-                    // just runs the rebuild.
-                    if let Some(target_id) = target {
-                        let _ = super::dispatch::dispatch_action(
-                            Action::ConnectToTarget(target_id),
-                            ctx,
-                            None,
-                        );
-                    } else {
-                        // No target — exit mode without firing the
-                        // dispatch arm (mode-exit cleanup matches
-                        // the pre-funnel handler's empty-hit branch).
-                        *ctx.app_mode = AppMode::Normal;
-                        *ctx.hovered_node = None;
-                        if let Some(doc) = ctx.document.as_mut() {
-                            super::scene_rebuild::rebuild_all(
-                                doc,
-                                ctx.mindmap_tree,
-                                ctx.app_scene,
-                                ctx.renderer,
-                                ctx.scene_cache,
-                            );
-                        }
-                    }
+                    // `target = None` (empty-canvas) and
+                    // `target = Some(id)` both flow through the
+                    // funnel; the arm body owns the mode-exit
+                    // rebuild on either branch. Symmetric with
+                    // `Action::ReparentToTarget` (also takes
+                    // `Option<String>`).
+                    let _ = super::dispatch::dispatch_action(
+                        Action::ConnectToTarget(target),
+                        ctx,
+                        None,
+                    );
+                    // Mode-exit via target click — clear any stale
+                    // click so the first post-mode click can't be
+                    // paired into a double-click. Stays here per
+                    // the §3 carve-out: pre-funnel state-machine
+                    // bookkeeping, not user-named effect.
                     *ctx.last_click = None;
                 }
                 // Pressed: swallow

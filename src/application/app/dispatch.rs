@@ -244,10 +244,13 @@ pub(in crate::application::app) fn dispatch_action(
             }
             DispatchOutcome::Handled
         }
-        Action::ConnectToTarget(ref target_id) => {
+        Action::ConnectToTarget(ref target) => {
             // Mirror `ReparentToTarget`'s mode-exit pattern. Source
             // comes from `AppMode::Connect { source }`; stale-fire
-            // outside Connect mode silently no-ops.
+            // outside Connect mode silently no-ops. `target = None`
+            // is empty-canvas mode-exit (no edge to create); the
+            // arm still runs the rebuild so orange/green highlights
+            // clear.
             let source = match std::mem::replace(ctx.app_mode, AppMode::Normal) {
                 AppMode::Connect { source } => source,
                 AppMode::Normal | AppMode::Reparent { .. } => {
@@ -256,17 +259,19 @@ pub(in crate::application::app) fn dispatch_action(
             };
             *ctx.hovered_node = None;
             if let Some(doc) = ctx.document.as_mut() {
-                if let Some(idx) = doc.create_cross_link_edge(&source, target_id) {
-                    doc.undo_stack.push(UndoAction::CreateEdge { index: idx });
-                    // Snap selection to the new edge so the user
-                    // gets immediate visual confirmation and can
-                    // Delete or style it next.
-                    doc.selection = SelectionState::Edge(EdgeRef::new(
-                        source.clone(),
-                        target_id.clone(),
-                        "cross_link",
-                    ));
-                    doc.dirty = true;
+                if let Some(target_id) = target.as_deref() {
+                    if let Some(idx) = doc.create_cross_link_edge(&source, target_id) {
+                        doc.undo_stack.push(UndoAction::CreateEdge { index: idx });
+                        // Snap selection to the new edge so the
+                        // user gets immediate visual confirmation
+                        // and can Delete or style it next.
+                        doc.selection = SelectionState::Edge(EdgeRef::new(
+                            source.clone(),
+                            target_id.to_string(),
+                            "cross_link",
+                        ));
+                        doc.dirty = true;
+                    }
                 }
                 rebuild_all(
                     doc,

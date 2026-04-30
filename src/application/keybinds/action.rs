@@ -49,17 +49,20 @@ pub enum Action {
     /// from `AppMode::Reparent { sources }`; the payload carries
     /// the target node id (`None` for empty-canvas → root).
     /// NativeOnly: depends on `AppMode`, which doesn't exist on
-    /// WASM. Dispatched from `event_mouse_click.rs` while
-    /// `AppMode::Reparent` is active; macro tiers cannot fire this
-    /// directly because the gate is `AppMode != Normal`.
+    /// WASM. Classified `is_destructive = true` so the privilege
+    /// gate (`MacroSource::allows_action`) denylists non-User
+    /// macro tiers; the arm body's `mem::replace(.., Normal)` is
+    /// an additional runtime guard (stale fire outside Reparent
+    /// mode is a no-op).
     ReparentToTarget(Option<String>),
-    /// Confirm a connect operation by clicking on a target node.
-    /// Source comes from `AppMode::Connect { source }`; the
-    /// payload is the target node id. NativeOnly per the same
-    /// reasoning as `ReparentToTarget`. Empty-canvas clicks during
-    /// connect mode don't dispatch this — the click handler skips
-    /// when no target is hit.
-    ConnectToTarget(String),
+    /// Confirm a connect operation by clicking on a target node
+    /// (or empty canvas to exit Connect mode without creating an
+    /// edge). Source comes from `AppMode::Connect { source }`; the
+    /// payload carries the target node id (`None` for empty-canvas
+    /// → mode-exit only, mirroring `ReparentToTarget`'s shape).
+    /// NativeOnly + `is_destructive = true` per the same reasoning
+    /// as `ReparentToTarget`.
+    ConnectToTarget(Option<String>),
     /// Delete the current selection (currently: selected edge).
     DeleteSelection,
     /// Cancel the current mode (reparent / connect).

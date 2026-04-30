@@ -325,7 +325,7 @@ fn test_wasm_compatibility_modal_actions_are_native_only() {
         Action::EnterReparentMode,
         Action::EnterConnectMode,
         Action::ReparentToTarget(None),
-        Action::ConnectToTarget("dummy".to_string()),
+        Action::ConnectToTarget(None),
         Action::CancelMode,
         Action::PickerCancel,
         Action::PickerCommit,
@@ -385,7 +385,7 @@ fn test_wasm_compatibility_classifies_every_variant_explicitly() {
         Action::EnterReparentMode,
         Action::EnterConnectMode,
         Action::ReparentToTarget(None),
-        Action::ConnectToTarget("dummy".to_string()),
+        Action::ConnectToTarget(None),
         Action::DeleteSelection,
         Action::CancelMode,
         Action::CreateOrphanNode,
@@ -566,7 +566,7 @@ fn test_is_destructive_destructive_set_is_pinned() {
         // mutation + undo entry. The `Enter*Mode` siblings stay
         // non-destructive (just app-mode toggles).
         Action::ReparentToTarget(None),
-        Action::ConnectToTarget("dummy".to_string()),
+        Action::ConnectToTarget(None),
         // Parametric filesystem variants — destructive +
         // privilege-gated (denylisted from non-User macro tiers).
         Action::OpenDocument("/tmp/test.mindmap.json".into()),
