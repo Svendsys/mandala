@@ -6,6 +6,7 @@
 use baumhard::mindmap::model::{
     portal_endpoint_state_mut, EdgeLabelConfig, GlyphConnectionConfig, PortalEndpointState,
 };
+use baumhard::util::geometry::is_positive_finite;
 
 use super::super::types::EdgeRef;
 use super::super::undo_action::UndoAction;
@@ -282,10 +283,10 @@ impl MindMapDocument {
         // later renderer frame hits the same panic via
         // `effective_font_size_pt`.
         let final_min = min
-            .filter(|v| v.is_finite() && *v > 0.0)
+            .filter(|v| is_positive_finite(*v))
             .unwrap_or(cfg.min_font_size_pt);
         let final_max = max
-            .filter(|v| v.is_finite() && *v > 0.0)
+            .filter(|v| is_positive_finite(*v))
             .unwrap_or(cfg.max_font_size_pt);
         if final_min > final_max {
             self.mindmap.edges[idx] = before;
@@ -293,19 +294,19 @@ impl MindMapDocument {
         }
         use baumhard::util::geometry::pretty_inequal;
         let mut changed = false;
-        if let Some(m) = min.filter(|v| v.is_finite() && *v > 0.0) {
+        if let Some(m) = min.filter(|v| is_positive_finite(*v)) {
             if pretty_inequal(cfg.min_font_size_pt, m) {
                 cfg.min_font_size_pt = m;
                 changed = true;
             }
         }
-        if let Some(m) = max.filter(|v| v.is_finite() && *v > 0.0) {
+        if let Some(m) = max.filter(|v| is_positive_finite(*v)) {
             if pretty_inequal(cfg.max_font_size_pt, m) {
                 cfg.max_font_size_pt = m;
                 changed = true;
             }
         }
-        if let Some(s) = size.filter(|v| v.is_finite() && *v > 0.0) {
+        if let Some(s) = size.filter(|v| is_positive_finite(*v)) {
             // Bounds resolved above, known-ordered, safe for clamp.
             let clamped = s.clamp(cfg.min_font_size_pt, cfg.max_font_size_pt);
             if pretty_inequal(cfg.font_size_pt, clamped) {
@@ -417,11 +418,11 @@ impl MindMapDocument {
             .as_ref()
             .and_then(|c| c.max_font_size_pt);
         let final_min = min
-            .filter(|v| v.is_finite() && *v > 0.0)
+            .filter(|v| is_positive_finite(*v))
             .or(existing_label_min)
             .unwrap_or(body_min);
         let final_max = max
-            .filter(|v| v.is_finite() && *v > 0.0)
+            .filter(|v| is_positive_finite(*v))
             .or(existing_label_max)
             .unwrap_or(body_max);
         if final_min > final_max {
@@ -430,19 +431,19 @@ impl MindMapDocument {
         let before = self.mindmap.edges[idx].clone();
         let label_cfg = Self::ensure_label_config(&mut self.mindmap.edges[idx]);
         let mut changed = false;
-        if let Some(m) = min.filter(|v| v.is_finite() && *v > 0.0) {
+        if let Some(m) = min.filter(|v| is_positive_finite(*v)) {
             if label_cfg.min_font_size_pt != Some(m) {
                 label_cfg.min_font_size_pt = Some(m);
                 changed = true;
             }
         }
-        if let Some(m) = max.filter(|v| v.is_finite() && *v > 0.0) {
+        if let Some(m) = max.filter(|v| is_positive_finite(*v)) {
             if label_cfg.max_font_size_pt != Some(m) {
                 label_cfg.max_font_size_pt = Some(m);
                 changed = true;
             }
         }
-        if let Some(s) = size.filter(|v| v.is_finite() && *v > 0.0) {
+        if let Some(s) = size.filter(|v| is_positive_finite(*v)) {
             let effective_min = label_cfg.min_font_size_pt.unwrap_or(body_min);
             let effective_max = label_cfg.max_font_size_pt.unwrap_or(body_max);
             // `effective_{min,max}` are guaranteed ordered by the
@@ -526,11 +527,11 @@ impl MindMapDocument {
             )
         };
         let final_min = min
-            .filter(|v| v.is_finite() && *v > 0.0)
+            .filter(|v| is_positive_finite(*v))
             .or(existing_text_min)
             .unwrap_or(body_min);
         let final_max = max
-            .filter(|v| v.is_finite() && *v > 0.0)
+            .filter(|v| is_positive_finite(*v))
             .or(existing_text_max)
             .unwrap_or(body_max);
         if final_min > final_max {
@@ -551,19 +552,19 @@ impl MindMapDocument {
         let forked_default = slot.is_none();
         let state = slot.get_or_insert_with(PortalEndpointState::default);
         let mut changed = false;
-        if let Some(m) = min.filter(|v| v.is_finite() && *v > 0.0) {
+        if let Some(m) = min.filter(|v| is_positive_finite(*v)) {
             if state.text_min_font_size_pt != Some(m) {
                 state.text_min_font_size_pt = Some(m);
                 changed = true;
             }
         }
-        if let Some(m) = max.filter(|v| v.is_finite() && *v > 0.0) {
+        if let Some(m) = max.filter(|v| is_positive_finite(*v)) {
             if state.text_max_font_size_pt != Some(m) {
                 state.text_max_font_size_pt = Some(m);
                 changed = true;
             }
         }
-        if let Some(s) = size.filter(|v| v.is_finite() && *v > 0.0) {
+        if let Some(s) = size.filter(|v| is_positive_finite(*v)) {
             let effective_min = state.text_min_font_size_pt.unwrap_or(body_min);
             let effective_max = state.text_max_font_size_pt.unwrap_or(body_max);
             // Guaranteed ordered by the `final_min > final_max`

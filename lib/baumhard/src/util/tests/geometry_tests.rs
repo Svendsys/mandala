@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use crate::util::geometry::{almost_equal, almost_equal_vec2, clockwise_rotation_around_pivot,
-                            option_almost_equal, pixel_greater_or_equal, pixel_greater_than,
-                            pixel_less_or_equal, pixel_lesser_than};
+                            is_positive_finite, option_almost_equal, pixel_greater_or_equal,
+                            pixel_greater_than, pixel_less_or_equal, pixel_lesser_than};
 use glam::Vec2;
 
 #[test]
@@ -169,4 +169,25 @@ pub fn do_almost_equal_vec2() {
         Vec2::new(-1.1f32, -1.2f32),
         Vec2::new(-1.2f32, -1.3f32)
     ));
+}
+
+#[test]
+fn test_is_positive_finite() {
+    do_is_positive_finite();
+}
+
+pub fn do_is_positive_finite() {
+    // Strictly positive finite values pass.
+    assert!(is_positive_finite(0.000001));
+    assert!(is_positive_finite(1.0));
+    assert!(is_positive_finite(1e30));
+
+    // Zero, negative, NaN, ±∞ all reject.
+    assert!(!is_positive_finite(0.0));
+    assert!(!is_positive_finite(-0.0));
+    assert!(!is_positive_finite(-0.000001));
+    assert!(!is_positive_finite(-1.0));
+    assert!(!is_positive_finite(f32::NAN));
+    assert!(!is_positive_finite(f32::INFINITY));
+    assert!(!is_positive_finite(f32::NEG_INFINITY));
 }

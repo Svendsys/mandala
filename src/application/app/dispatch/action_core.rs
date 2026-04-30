@@ -27,6 +27,8 @@
 //! today — that function gets deleted in C3 once the WASM caller
 //! moves over.
 
+use baumhard::util::geometry::is_positive_finite;
+
 use crate::application::document::OptionEdit;
 use crate::application::keybinds::{Action, WasmCompatibility};
 
@@ -285,7 +287,7 @@ pub(in crate::application::app) fn dispatch_compatible(
         }),
         Action::SetFont { slot, value } => {
             let parsed = match value.parse::<f32>() {
-                Ok(v) if v.is_finite() && v > 0.0 => v,
+                Ok(v) if is_positive_finite(v) => v,
                 _ => {
                     log::warn!("SetFont{{slot={:?}}}: invalid '{}'", slot, value);
                     return DispatchOutcome::Handled;

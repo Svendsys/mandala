@@ -19,6 +19,8 @@
 //!   (replace-not-intersect cascade vs. edge).
 //! - `Multi`: fans out over each node id.
 
+use baumhard::util::geometry::is_positive_finite;
+
 use super::Command;
 use crate::application::console::completion::{prefix_filter, Completion, CompletionContext, CompletionState, kv_key_completions};
 use crate::application::console::parser::Args;
@@ -89,7 +91,7 @@ fn parse_bound(key: &str, value: &str) -> Result<OptionEdit<f32>, ExecResult> {
         return Ok(OptionEdit::Clear);
     }
     match value.parse::<f32>() {
-        Ok(v) if v.is_finite() && v > 0.0 => Ok(OptionEdit::Set(v)),
+        Ok(v) if is_positive_finite(v) => Ok(OptionEdit::Set(v)),
         Ok(v) => Err(ExecResult::err(format!(
             "{}='{}' must be positive and finite or `unset`; got {}",
             key, value, v
@@ -203,7 +205,7 @@ pub(crate) fn parse_zoom_payload(value: &str) -> Option<OptionEdit<f32>> {
         return Some(OptionEdit::Clear);
     }
     match value.parse::<f32>() {
-        Ok(v) if v.is_finite() && v > 0.0 => Some(OptionEdit::Set(v)),
+        Ok(v) if is_positive_finite(v) => Some(OptionEdit::Set(v)),
         _ => None,
     }
 }

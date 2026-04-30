@@ -27,6 +27,18 @@ pub fn almost_equal(a: f32, b: f32) -> bool {
    (a - b).abs() <= ERROR_TOLERANCE_ALMOST_EQUAL
 }
 
+/// `true` iff `f` is a non-NaN, non-infinite, strictly-positive
+/// `f32`. The canonical predicate for "is this a valid pixel /
+/// zoom / scale / font-size value coming from user input?" —
+/// rejects `NaN`, `±∞`, and zero-or-negative numbers.
+///
+/// Used on the parse → mutation boundary (every console verb
+/// that accepts a numeric pt size, every edge-style setter
+/// that accepts a positive measurement). Cost: O(1).
+pub fn is_positive_finite(f: f32) -> bool {
+   f.is_finite() && f > 0.0
+}
+
 /// Logical inverse of [`almost_equal`]. Named "pretty" because it
 /// treats within-epsilon pairs as equal rather than fighting with raw
 /// `!=` comparisons at float boundaries.
