@@ -8,6 +8,88 @@ use serde::{Deserialize, Serialize};
 
 use super::context::InputContext;
 
+// ── Action payload enums ─────────────────────────────────────────
+//
+// Typed discriminators for the parametric Action variants whose
+// underlying console verb fans across a small fixed set of axes.
+// Promoting these into the variant payload (instead of one Action
+// variant per axis) keeps the dispatcher's match arm exhaustive
+// without a `_ => log::error!(...)` "fan-out missed inner-match"
+// guard, and eliminates the `set_color_bg / _text / _border`-style
+// listing tax across `KeybindConfig`, `is_destructive`,
+// `wasm_compatibility`, and `context`.
+//
+// Each carries a kv-key string at the boundary so the verb-core's
+// existing `apply_kvs`-style trait dispatch reaches the same code
+// path the typed `bg|text|border` console kv would have hit.
+
+/// Which color axis a [`Action::SetColor`] targets. Mirrors the
+/// `bg|text|border` kv key on the `color` console verb.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ColorAxis {
+    Bg,
+    Text,
+    Border,
+}
+
+impl ColorAxis {
+    /// kv-key string the `color` verb-core accepts.
+    pub fn as_kv_key(self) -> &'static str {
+        match self {
+            ColorAxis::Bg => "bg",
+            ColorAxis::Text => "text",
+            ColorAxis::Border => "border",
+        }
+    }
+}
+
+/// Which font slot a [`Action::SetFont`] targets. Mirrors the
+/// `size|min|max` kv key on the `font` console verb. Family
+/// (`SetFontFamily`) lives on its own Action because the verb
+/// dispatches it through a different code path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FontSlot {
+    Size,
+    Min,
+    Max,
+}
+
+impl FontSlot {
+    /// kv-key string the `font` verb-core accepts.
+    pub fn as_kv_key(self) -> &'static str {
+        match self {
+            FontSlot::Size => "size",
+            FontSlot::Min => "min",
+            FontSlot::Max => "max",
+        }
+    }
+}
+
+/// Which zoom bound a [`Action::SetZoom`] targets. Mirrors the
+/// `min|max` kv key on the `zoom` console verb. Clearing both at
+/// once lives on its own [`Action::ClearZoom`] variant — the
+/// verb-core takes a `(min, max)` pair where each half is an
+/// `OptionEdit<f32>`, and `Clear/Clear` is a meaningfully distinct
+/// operation from `Keep/Keep`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ZoomBound {
+    Min,
+    Max,
+}
+
+impl ZoomBound {
+    /// kv-key string the `zoom` verb-core accepts.
+    pub fn as_kv_key(self) -> &'static str {
+        match self {
+            ZoomBound::Min => "min",
+            ZoomBound::Max => "max",
+        }
+    }
+}
+
 /// High-level user actions that can be bound to keys. Add a new variant
 /// here when a new keyboard interaction is introduced, extend
 /// `KeybindConfig` with a matching field + default, and handle the variant
@@ -327,12 +409,14 @@ pub enum Action {
         from: String,
         to: String,
     },
-    /// Mirror `color bg=<color>` on the current selection.
-    SetColorBg(String),
-    /// Mirror `color text=<color>` on the current selection.
-    SetColorText(String),
-    /// Mirror `color border=<color>` on the current selection.
-    SetColorBorder(String),
+    /// Mirror `color <axis>=<color>` on the current selection.
+    /// `axis` picks the field group (background, text, or border);
+    /// `value` is the user-facing color string (`#rrggbb`,
+    /// `var(--name)`, palette key, etc.) which the verb-core parses.
+    SetColor {
+        axis: ColorAxis,
+        value: String,
+    },
     /// Mirror `edge type=<cross_link|parent_child>` on the selected
     /// edge.
     SetEdgeType(String),
@@ -345,17 +429,16 @@ pub enum Action {
     /// family names silently no-op (the verb path surfaces a typed
     /// error; the Action arm has no scrollback).
     SetFontFamily(String),
-    /// Mirror `font size=<pt>` on the current selection. Payload is
-    /// the raw `pt` string parsed at dispatch time; non-finite or
-    /// non-positive values silently no-op.
-    SetFontSize(String),
-    /// Mirror `font min=<pt>`. Selection-aware: applicable to
-    /// edge / edge-label / portal-text channels; nodes have no
-    /// screen-space clamp and no-op silently.
-    SetFontMin(String),
-    /// Mirror `font max=<pt>`. Same selection rules as
-    /// `SetFontMin`.
-    SetFontMax(String),
+    /// Mirror `font <slot>=<pt>` on the current selection.
+    /// `slot` picks `size|min|max`; `value` is the raw pt string
+    /// parsed at dispatch time (non-finite or non-positive values
+    /// silently no-op). `min` / `max` are selection-aware:
+    /// applicable to edge / edge-label / portal-text channels;
+    /// nodes have no screen-space clamp and no-op silently.
+    SetFont {
+        slot: FontSlot,
+        value: String,
+    },
     /// Mirror `label text=<text>` on the selected edge / portal
     /// label. Empty payload clears the label.
     SetEdgeLabelText(String),
@@ -366,13 +449,14 @@ pub enum Action {
     /// Mirror `spacing value=<tight|normal|wide|<float>>` on the
     /// selected edge.
     SetSpacing(String),
-    /// Mirror `zoom min=<zoom|unset>` on the current selection.
-    /// Payload is `"unset"`, `""`, or a positive finite float
-    /// string. Inverted bounds (`min > max`) silently no-op.
-    SetZoomMin(String),
-    /// Mirror `zoom max=<zoom|unset>` on the current selection.
-    /// Same payload shape as `SetZoomMin`.
-    SetZoomMax(String),
+    /// Mirror `zoom <bound>=<zoom|unset>` on the current selection.
+    /// `bound` picks `min|max`; `value` is `"unset"`, `""`, or a
+    /// positive finite float string. Inverted bounds (`min > max`)
+    /// silently no-op.
+    SetZoom {
+        bound: ZoomBound,
+        value: String,
+    },
     /// Mirror `zoom clear` — drop both `min_zoom_to_render` and
     /// `max_zoom_to_render` on the current selection. Unit
     /// variant — no payload.
@@ -497,21 +581,16 @@ impl Action {
             | Action::SetEdgeBodyGlyph(_)
             | Action::SetBorderField { .. }
             | Action::SetEdgeCap { .. }
-            | Action::SetColorBg(_)
-            | Action::SetColorText(_)
-            | Action::SetColorBorder(_)
+            | Action::SetColor { .. }
             | Action::SetEdgeType(_)
             | Action::SetEdgeDisplayMode(_)
             | Action::ResetEdge(_)
             | Action::SetFontFamily(_)
-            | Action::SetFontSize(_)
-            | Action::SetFontMin(_)
-            | Action::SetFontMax(_)
+            | Action::SetFont { .. }
             | Action::SetEdgeLabelText(_)
             | Action::SetEdgeLabelPosition(_)
             | Action::SetSpacing(_)
-            | Action::SetZoomMin(_)
-            | Action::SetZoomMax(_)
+            | Action::SetZoom { .. }
             | Action::ClearZoom => false,
 
             // Modal-context Actions (Console / Picker / TextEdit /
@@ -694,21 +773,16 @@ impl Action {
             | Action::SetEdgeBodyGlyph(_)
             | Action::SetBorderField { .. }
             | Action::SetEdgeCap { .. }
-            | Action::SetColorBg(_)
-            | Action::SetColorText(_)
-            | Action::SetColorBorder(_)
+            | Action::SetColor { .. }
             | Action::SetEdgeType(_)
             | Action::SetEdgeDisplayMode(_)
             | Action::ResetEdge(_)
             | Action::SetFontFamily(_)
-            | Action::SetFontSize(_)
-            | Action::SetFontMin(_)
-            | Action::SetFontMax(_)
+            | Action::SetFont { .. }
             | Action::SetEdgeLabelText(_)
             | Action::SetEdgeLabelPosition(_)
             | Action::SetSpacing(_)
-            | Action::SetZoomMin(_)
-            | Action::SetZoomMax(_)
+            | Action::SetZoom { .. }
             | Action::ClearZoom
             | Action::OpenDocument(_)
             | Action::SaveDocumentAs(_)
@@ -788,21 +862,16 @@ impl Action {
             | Action::SetEdgeBodyGlyph(_)
             | Action::SetBorderField { .. }
             | Action::SetEdgeCap { .. }
-            | Action::SetColorBg(_)
-            | Action::SetColorText(_)
-            | Action::SetColorBorder(_)
+            | Action::SetColor { .. }
             | Action::SetEdgeType(_)
             | Action::SetEdgeDisplayMode(_)
             | Action::ResetEdge(_)
             | Action::SetFontFamily(_)
-            | Action::SetFontSize(_)
-            | Action::SetFontMin(_)
-            | Action::SetFontMax(_)
+            | Action::SetFont { .. }
             | Action::SetEdgeLabelText(_)
             | Action::SetEdgeLabelPosition(_)
             | Action::SetSpacing(_)
-            | Action::SetZoomMin(_)
-            | Action::SetZoomMax(_)
+            | Action::SetZoom { .. }
             | Action::ClearZoom => WasmCompatibility::Compatible,
 
             // ── Renderer-only — works on both targets ─────────

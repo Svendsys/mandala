@@ -427,33 +427,8 @@ pub(in crate::application::app) fn apply_set_edge_cap(
     });
 }
 
-/// Which color axis a `SetColor*` Action targets. Sibling of
-/// [`ZoomDir`] / [`PanDir`] — keeps the dispatcher fan-out typed
-/// rather than stringly. Maps to the verb's `bg|text|border` kv
-/// key at the boundary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::application::app) enum ColorAxis {
-    Bg,
-    Text,
-    Border,
-}
-
-impl ColorAxis {
-    /// The kv-key string the underlying verb-core accepts. Kept
-    /// at the boundary so `apply_color_axis_to_selection` (which
-    /// re-uses the verb's `apply_kvs` trait dispatch) doesn't need
-    /// to grow a typed surface.
-    fn as_kv_key(self) -> &'static str {
-        match self {
-            ColorAxis::Bg => "bg",
-            ColorAxis::Text => "text",
-            ColorAxis::Border => "border",
-        }
-    }
-}
-
 pub(in crate::application::app) fn apply_set_color_axis(
-    axis: ColorAxis,
+    axis: crate::application::keybinds::ColorAxis,
     value: &str,
     rc: &mut RebuildContext<'_>,
 ) {
@@ -504,30 +479,11 @@ pub(in crate::application::app) fn apply_set_font_family(
     });
 }
 
-/// Which font slot a `SetFontSize|Min|Max` Action targets. Sibling
-/// of [`ColorAxis`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::application::app) enum FontSlot {
-    Size,
-    Min,
-    Max,
-}
-
-impl FontSlot {
-    fn as_kv_key(self) -> &'static str {
-        match self {
-            FontSlot::Size => "size",
-            FontSlot::Min => "min",
-            FontSlot::Max => "max",
-        }
-    }
-}
-
 /// `pt` is already-parsed (the dispatcher's caller is responsible
 /// for parsing the user-facing `String` payload — invalid floats
 /// emit a warn-log and skip the helper call entirely).
 pub(in crate::application::app) fn apply_set_font_kv(
-    slot: FontSlot,
+    slot: crate::application::keybinds::FontSlot,
     pt: f32,
     rc: &mut RebuildContext<'_>,
 ) {

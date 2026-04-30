@@ -499,21 +499,45 @@ fn test_wasm_compatibility_classifies_every_variant_explicitly() {
             from: "arrow".into(),
             to: "none".into(),
         },
-        Action::SetColorBg("#fafafa".into()),
-        Action::SetColorText("accent".into()),
-        Action::SetColorBorder("#000000".into()),
+        Action::SetColor {
+            axis: ColorAxis::Bg,
+            value: "#fafafa".into(),
+        },
+        Action::SetColor {
+            axis: ColorAxis::Text,
+            value: "accent".into(),
+        },
+        Action::SetColor {
+            axis: ColorAxis::Border,
+            value: "#000000".into(),
+        },
         Action::SetEdgeType("cross_link".into()),
         Action::SetEdgeDisplayMode("portal".into()),
         Action::ResetEdge("style".into()),
         Action::SetFontFamily("Norse".into()),
-        Action::SetFontSize("14".into()),
-        Action::SetFontMin("10".into()),
-        Action::SetFontMax("32".into()),
+        Action::SetFont {
+            slot: FontSlot::Size,
+            value: "14".into(),
+        },
+        Action::SetFont {
+            slot: FontSlot::Min,
+            value: "10".into(),
+        },
+        Action::SetFont {
+            slot: FontSlot::Max,
+            value: "32".into(),
+        },
         Action::SetEdgeLabelText("hi".into()),
         Action::SetEdgeLabelPosition("middle".into()),
         Action::SetSpacing("normal".into()),
-        Action::SetZoomMin("0.5".into()),
-        Action::SetZoomMax("2.0".into()),
+        Action::SetZoom {
+            bound: ZoomBound::Min,
+            value: "0.5".into(),
+        },
+        Action::SetZoom {
+            bound: ZoomBound::Max,
+            value: "2.0".into(),
+        },
         Action::ClearZoom,
         Action::OpenDocument("/tmp/test.mindmap.json".into()),
         Action::SaveDocumentAs("/tmp/test.mindmap.json".into()),
@@ -606,21 +630,45 @@ fn test_is_destructive_destructive_set_is_pinned() {
             from: "arrow".into(),
             to: "none".into(),
         },
-        Action::SetColorBg("#fafafa".into()),
-        Action::SetColorText("accent".into()),
-        Action::SetColorBorder("#000000".into()),
+        Action::SetColor {
+            axis: ColorAxis::Bg,
+            value: "#fafafa".into(),
+        },
+        Action::SetColor {
+            axis: ColorAxis::Text,
+            value: "accent".into(),
+        },
+        Action::SetColor {
+            axis: ColorAxis::Border,
+            value: "#000000".into(),
+        },
         Action::SetEdgeType("cross_link".into()),
         Action::SetEdgeDisplayMode("portal".into()),
         Action::ResetEdge("style".into()),
         Action::SetFontFamily("Norse".into()),
-        Action::SetFontSize("14".into()),
-        Action::SetFontMin("10".into()),
-        Action::SetFontMax("32".into()),
+        Action::SetFont {
+            slot: FontSlot::Size,
+            value: "14".into(),
+        },
+        Action::SetFont {
+            slot: FontSlot::Min,
+            value: "10".into(),
+        },
+        Action::SetFont {
+            slot: FontSlot::Max,
+            value: "32".into(),
+        },
         Action::SetEdgeLabelText("hi".into()),
         Action::SetEdgeLabelPosition("middle".into()),
         Action::SetSpacing("normal".into()),
-        Action::SetZoomMin("0.5".into()),
-        Action::SetZoomMax("2.0".into()),
+        Action::SetZoom {
+            bound: ZoomBound::Min,
+            value: "0.5".into(),
+        },
+        Action::SetZoom {
+            bound: ZoomBound::Max,
+            value: "2.0".into(),
+        },
         Action::ClearZoom,
     ] {
         assert!(
@@ -1383,32 +1431,43 @@ fn test_parametric_set_border_field_resolves_with_two_args() {
 #[test]
 fn test_parametric_color_axes_resolve() {
     let cfg = KeybindConfig {
-        set_color_bg: vec![ParametricBinding {
-            combo: "F1".into(),
-            args: vec!["#fafafa".into()],
-        }],
-        set_color_text: vec![ParametricBinding {
-            combo: "F2".into(),
-            args: vec!["accent".into()],
-        }],
-        set_color_border: vec![ParametricBinding {
-            combo: "F3".into(),
-            args: vec!["#000000".into()],
-        }],
+        set_color: vec![
+            ParametricBinding {
+                combo: "F1".into(),
+                args: vec!["bg".into(), "#fafafa".into()],
+            },
+            ParametricBinding {
+                combo: "F2".into(),
+                args: vec!["text".into(), "accent".into()],
+            },
+            ParametricBinding {
+                combo: "F3".into(),
+                args: vec!["border".into(), "#000000".into()],
+            },
+        ],
         ..KeybindConfig::default()
     };
     let resolved = cfg.resolve();
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "f1", false, false, false),
-        Some(Action::SetColorBg("#fafafa".into())),
+        Some(Action::SetColor {
+            axis: ColorAxis::Bg,
+            value: "#fafafa".into(),
+        }),
     );
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "f2", false, false, false),
-        Some(Action::SetColorText("accent".into())),
+        Some(Action::SetColor {
+            axis: ColorAxis::Text,
+            value: "accent".into(),
+        }),
     );
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "f3", false, false, false),
-        Some(Action::SetColorBorder("#000000".into())),
+        Some(Action::SetColor {
+            axis: ColorAxis::Border,
+            value: "#000000".into(),
+        }),
     );
 }
 
@@ -1451,18 +1510,20 @@ fn test_parametric_font_family_size_resolve() {
             combo: "F7".into(),
             args: vec!["Norse".into()],
         }],
-        set_font_size: vec![ParametricBinding {
-            combo: "F8".into(),
-            args: vec!["14".into()],
-        }],
-        set_font_min: vec![ParametricBinding {
-            combo: "Ctrl+F8".into(),
-            args: vec!["10".into()],
-        }],
-        set_font_max: vec![ParametricBinding {
-            combo: "Shift+F8".into(),
-            args: vec!["32".into()],
-        }],
+        set_font: vec![
+            ParametricBinding {
+                combo: "F8".into(),
+                args: vec!["size".into(), "14".into()],
+            },
+            ParametricBinding {
+                combo: "Ctrl+F8".into(),
+                args: vec!["min".into(), "10".into()],
+            },
+            ParametricBinding {
+                combo: "Shift+F8".into(),
+                args: vec!["max".into(), "32".into()],
+            },
+        ],
         ..KeybindConfig::default()
     };
     let resolved = cfg.resolve();
@@ -1472,15 +1533,24 @@ fn test_parametric_font_family_size_resolve() {
     );
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "f8", false, false, false),
-        Some(Action::SetFontSize("14".into())),
+        Some(Action::SetFont {
+            slot: FontSlot::Size,
+            value: "14".into(),
+        }),
     );
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "f8", true, false, false),
-        Some(Action::SetFontMin("10".into())),
+        Some(Action::SetFont {
+            slot: FontSlot::Min,
+            value: "10".into(),
+        }),
     );
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "f8", false, true, false),
-        Some(Action::SetFontMax("32".into())),
+        Some(Action::SetFont {
+            slot: FontSlot::Max,
+            value: "32".into(),
+        }),
     );
 }
 
@@ -1519,14 +1589,16 @@ fn test_parametric_label_text_position_resolve() {
 #[test]
 fn test_parametric_zoom_resolve_set_and_clear() {
     let cfg = KeybindConfig {
-        set_zoom_min: vec![ParametricBinding {
-            combo: "F12".into(),
-            args: vec!["0.5".into()],
-        }],
-        set_zoom_max: vec![ParametricBinding {
-            combo: "Ctrl+F12".into(),
-            args: vec!["2.0".into()],
-        }],
+        set_zoom: vec![
+            ParametricBinding {
+                combo: "F12".into(),
+                args: vec!["min".into(), "0.5".into()],
+            },
+            ParametricBinding {
+                combo: "Ctrl+F12".into(),
+                args: vec!["max".into(), "2.0".into()],
+            },
+        ],
         clear_zoom: vec![ParametricBinding {
             combo: "Shift+F12".into(),
             args: vec![],
@@ -1536,11 +1608,17 @@ fn test_parametric_zoom_resolve_set_and_clear() {
     let resolved = cfg.resolve();
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "f12", false, false, false),
-        Some(Action::SetZoomMin("0.5".into())),
+        Some(Action::SetZoom {
+            bound: ZoomBound::Min,
+            value: "0.5".into(),
+        }),
     );
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "f12", true, false, false),
-        Some(Action::SetZoomMax("2.0".into())),
+        Some(Action::SetZoom {
+            bound: ZoomBound::Max,
+            value: "2.0".into(),
+        }),
     );
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "f12", false, true, false),

@@ -2355,14 +2355,27 @@ sibling `ParametricBinding` shape:
   "set_border_field": [
     { "combo": "Ctrl+B", "args": ["preset", "rounded"] }
   ],
-  "set_color_bg": [
-    { "combo": "Ctrl+1", "args": ["#fafafa"] }
+  "set_color": [
+    { "combo": "Ctrl+1", "args": ["bg", "#fafafa"] },
+    { "combo": "Ctrl+2", "args": ["text", "accent"] }
+  ],
+  "set_font": [
+    { "combo": "F8", "args": ["size", "14"] }
+  ],
+  "set_zoom": [
+    { "combo": "F12", "args": ["min", "0.5"] }
   ],
   "clear_zoom": [
     { "combo": "Shift+F12", "args": [] }
   ]
 }
 ```
+
+Color / font / zoom carry the axis as the first arg (`bg|text|border`,
+`size|min|max`, `min|max` respectively) so a single binding-list
+covers the whole field group. The typed `ColorAxis` / `FontSlot` /
+`ZoomBound` enums on the Action variant make the dispatcher's
+match exhaustive without a fan-out guard.
 
 Each variant documents its arg shape on the `Action` definition;
 wrong arg counts emit a warn-log and are skipped (never panic).

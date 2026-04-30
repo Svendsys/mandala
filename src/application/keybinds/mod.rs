@@ -24,6 +24,12 @@ mod platform_web;
 mod tests;
 
 pub use action::Action;
+// Typed-payload enums for the parametric `SetColor` / `SetFont` /
+// `SetZoom` Action variants. Re-exported so `cross_dispatch` and the
+// `KeybindConfig` resolvers can name them without reaching into
+// `keybinds::action`.
+#[allow(unused_imports)]
+pub use action::{ColorAxis, FontSlot, ZoomBound};
 // `WasmCompatibility` is consumed by `run_wasm.rs` (wasm32-only) and
 // the test suite. On a native non-test build no caller pulls it in,
 // hence the `unused_import` warning the lint would otherwise raise.

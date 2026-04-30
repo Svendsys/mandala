@@ -268,25 +268,9 @@ pub(in crate::application::app) fn dispatch_compatible(
         Action::SetEdgeCap { from, to } => with_doc_rebuild(core, |rc| {
             super::cross_dispatch::apply_set_edge_cap(from, to, rc)
         }),
-        Action::SetColorBg(value)
-        | Action::SetColorText(value)
-        | Action::SetColorBorder(value) => {
-            let axis = match action {
-                Action::SetColorBg(_) => super::cross_dispatch::ColorAxis::Bg,
-                Action::SetColorText(_) => super::cross_dispatch::ColorAxis::Text,
-                Action::SetColorBorder(_) => super::cross_dispatch::ColorAxis::Border,
-                _ => {
-                    log::error!(
-                        "dispatch_compatible: color axis fan-out missed inner-match: {:?}",
-                        action,
-                    );
-                    return DispatchOutcome::Handled;
-                }
-            };
-            with_doc_rebuild(core, |rc| {
-                super::cross_dispatch::apply_set_color_axis(axis, value, rc)
-            });
-        }
+        Action::SetColor { axis, value } => with_doc_rebuild(core, |rc| {
+            super::cross_dispatch::apply_set_color_axis(*axis, value, rc)
+        }),
         Action::SetEdgeType(value) => with_doc_rebuild(core, |rc| {
             super::cross_dispatch::apply_set_edge_type(value, rc)
         }),
@@ -299,28 +283,16 @@ pub(in crate::application::app) fn dispatch_compatible(
         Action::SetFontFamily(family) => with_doc_rebuild(core, |rc| {
             super::cross_dispatch::apply_set_font_family(family, rc)
         }),
-        Action::SetFontSize(pt) | Action::SetFontMin(pt) | Action::SetFontMax(pt) => {
-            let slot = match action {
-                Action::SetFontSize(_) => super::cross_dispatch::FontSlot::Size,
-                Action::SetFontMin(_) => super::cross_dispatch::FontSlot::Min,
-                Action::SetFontMax(_) => super::cross_dispatch::FontSlot::Max,
-                _ => {
-                    log::error!(
-                        "dispatch_compatible: font slot fan-out missed inner-match: {:?}",
-                        action,
-                    );
-                    return DispatchOutcome::Handled;
-                }
-            };
-            let parsed = match pt.parse::<f32>() {
+        Action::SetFont { slot, value } => {
+            let parsed = match value.parse::<f32>() {
                 Ok(v) if v.is_finite() && v > 0.0 => v,
                 _ => {
-                    log::warn!("SetFont{:?}: invalid '{}'", slot, pt);
+                    log::warn!("SetFont{{slot={:?}}}: invalid '{}'", slot, value);
                     return DispatchOutcome::Handled;
                 }
             };
             with_doc_rebuild(core, |rc| {
-                super::cross_dispatch::apply_set_font_kv(slot, parsed, rc)
+                super::cross_dispatch::apply_set_font_kv(*slot, parsed, rc)
             });
         }
         Action::SetEdgeLabelText(text) => with_doc_rebuild(core, |rc| {
@@ -332,26 +304,19 @@ pub(in crate::application::app) fn dispatch_compatible(
         Action::SetSpacing(i) => {
             with_doc_rebuild(core, |rc| super::cross_dispatch::apply_set_spacing(i, rc))
         }
-        Action::SetZoomMin(payload) | Action::SetZoomMax(payload) => {
+        Action::SetZoom { bound, value } => {
             let parsed = match crate::application::console::commands::zoom::parse_zoom_payload(
-                payload,
+                value,
             ) {
                 Some(e) => e,
                 None => {
-                    log::warn!("set_zoom_*: invalid '{}'", payload);
+                    log::warn!("SetZoom{{bound={:?}}}: invalid '{}'", bound, value);
                     return DispatchOutcome::Handled;
                 }
             };
-            let (min, max) = match action {
-                Action::SetZoomMin(_) => (parsed, OptionEdit::Keep),
-                Action::SetZoomMax(_) => (OptionEdit::Keep, parsed),
-                _ => {
-                    log::error!(
-                        "dispatch_compatible: zoom min/max fan-out missed inner-match: {:?}",
-                        action,
-                    );
-                    return DispatchOutcome::Handled;
-                }
+            let (min, max) = match bound {
+                crate::application::keybinds::ZoomBound::Min => (parsed, OptionEdit::Keep),
+                crate::application::keybinds::ZoomBound::Max => (OptionEdit::Keep, parsed),
             };
             with_doc_rebuild(core, |rc| {
                 super::cross_dispatch::apply_set_zoom_window(min, max, rc)
