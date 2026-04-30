@@ -17,6 +17,9 @@ pub mod fonts;
 /// renderer code uses to resolve a theme-variable hex into the
 /// cosmic-text colour type without importing `cosmic_text` itself.
 pub mod hex;
+/// Font-metric approximations (`monospace_advance` + the underlying
+/// `MONOSPACE_ADVANCE_RATIO`) usable without a live `FontSystem`.
+pub mod metrics;
 /// Test bodies exposed via `pub mod tests` so `benches/test_bench.rs`
 /// can reuse the `do_*()` functions as micro-benchmarks (§B8).
 pub mod tests;

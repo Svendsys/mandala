@@ -18,6 +18,8 @@
 
 use std::f32::consts::TAU;
 
+use baumhard::font::metrics::monospace_advance;
+
 use super::geometry::ColorPickerOverlayGeometry;
 use super::glyph_tables::{CROSSHAIR_CENTER_CELL, HUE_SLOT_COUNT};
 use crate::application::widgets::color_picker_widget::GeometrySpec;
@@ -87,12 +89,12 @@ pub(super) fn derive_sizing(
         (screen_w / (wheel_side_in_fonts + 2.0).max(chip_width_in_fonts)).max(1.0);
     let font_size = font_clamped.min(max_font_for_h).min(max_font_for_w).max(1.0);
 
-    let char_width = font_size * 0.6;
+    let char_width = monospace_advance(font_size);
     let ring_font_size = font_size * ring_scale;
 
     // Re-derive every dimension at the chosen font_size.
     let cell_advance = (cell_factor * font_size).max(char_width);
-    let ring_advance = (ring_factor * ring_font_size).max(ring_font_size * 0.6);
+    let ring_advance = (ring_factor * ring_font_size).max(monospace_advance(ring_font_size));
     let inner_extent = CROSSHAIR_CENTER_CELL as f32 * cell_advance;
     let bar_to_ring_padding = ring_font_size * g.bar_to_ring_padding_scale;
     let min_ring_r = (HUE_SLOT_COUNT as f32 * ring_advance) / TAU;

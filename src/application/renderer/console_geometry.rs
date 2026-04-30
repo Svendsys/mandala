@@ -9,6 +9,8 @@
 //! shaper consumes. Kept free of cosmic-text and wgpu so unit tests
 //! can construct geometries trivially.
 
+use baumhard::font::metrics::monospace_advance;
+
 /// Pre-layout console data handed from the app event loop to the
 /// renderer.
 ///
@@ -217,13 +219,13 @@ pub fn compute_console_frame_layout(
     screen_height: f32,
 ) -> ConsoleFrameLayout {
     let font_size = geometry.font_size.max(4.0);
-    // `0.6` is a conservative monospace advance — cosmic-text's
-    // fallback chain lands on a proportional font by default, but the
-    // characters we render (`╭ ─ ╮ │ ╰ ╯ ❯ ▌ ▸ ▏`) all advance by
-    // roughly font_size * 0.6. Tweaking this value visibly shifts
-    // the column count; keep it in sync with the real advance if
-    // you swap the default font.
-    let char_width = font_size * 0.6;
+    // `monospace_advance` returns `font_size * MONOSPACE_ADVANCE_RATIO`
+    // (≈ 0.6) — a conservative estimate that matches the actual
+    // shaped width of the box-drawing glyphs we render
+    // (`╭ ─ ╮ │ ╰ ╯ ❯ ▌ ▸ ▏`). Tweaking the ratio visibly shifts
+    // the column count; if a future face calibration is needed, the
+    // constant lives at `baumhard::font::metrics::MONOSPACE_ADVANCE_RATIO`.
+    let char_width = monospace_advance(font_size);
     let inner_padding: f32 = 8.0;
     let row_height = font_size + 2.0;
 
