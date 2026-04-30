@@ -50,8 +50,8 @@ Shipped on this branch:
 - ~~**Native dead-arm cleanup.**~~ **Shipped.** ~30 Compatible
   arms (Undo, Delete*, Zoom*, Pan*, Center, Jump, ToggleFps*,
   Selection cluster, all 20 parametric mutators, ClearZoom)
-  removed from `dispatch.rs::dispatch_action`'s match — they
-  were unreachable after Track C's delegation shim. File
+  removed from `dispatch/native.rs::dispatch_action`'s match —
+  they were unreachable after Track C's delegation shim. File
   shrank by ~300 LoC. The native match now contains only:
   NativeOnly arms (Console / Picker / AppMode / EditOpen /
   Save / DoubleClick / OpenDocument / SaveDocumentAs /
@@ -85,7 +85,8 @@ Shipped on this branch:
   **Shipped.** `Action::ReparentToTarget(Option<String>)` and
   `Action::ConnectToTarget(Option<String>)` route through the
   dispatch funnel. Mouse handler in `event_mouse_click.rs`
-  hit-tests then dispatches; arm bodies in `dispatch.rs` extract
+  hit-tests then dispatches; arm bodies in `dispatch/native.rs`
+  extract
   source(s) from `app_mode` via `mem::replace(.., AppMode::Normal)`
   (atomic mode-exit), apply the mutation, push the undo entry,
   rebuild. Both variants classify NativeOnly + destructive (model

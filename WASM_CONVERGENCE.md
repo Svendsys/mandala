@@ -117,11 +117,11 @@ dispatchers. **Three paths**, in order of preference:
 2. Add the corresponding state to `WasmInputState` in
    `run_wasm.rs`.
 3. Open the matching native dispatch arm in
-   `src/application/app/dispatch.rs` to understand the body.
+   `src/application/app/dispatch/native.rs` to understand the body.
 4. Write a parallel arm in `run_wasm.rs`'s `match a { ... }` block
    that does the same thing against `WasmInputState`. Comment with
-   `// MIRROR OF dispatch.rs::Action::Foo arm — keep in sync until
-   Track C consolidates.`
+   `// MIRROR OF dispatch/native.rs::Action::Foo arm — keep in
+   sync until Track C consolidates.`
 5. Flip the Action's `wasm_compatibility` classification to
    `Compatible`. Update the corresponding test in
    `src/application/keybinds/tests.rs`.
@@ -184,12 +184,12 @@ the same Action → Macro chain native uses.
   Action → Macro → (CustomMutation tier on native; macros only
   on WASM today).
 
-- **`apply_keybind_custom_mutation` lifted** from `dispatch.rs`
-  (cfg-gated) to `dispatch/cross_dispatch.rs` so the WASM macro target
-  can reach the same animation-aware apply +
-  `apply_document_actions` envelope native uses. Re-exported
-  from `dispatch.rs` for the existing
-  `document/tests_mutations` import.
+- **`apply_keybind_custom_mutation` lifted** from native dispatch
+  (cfg-gated) to `dispatch/cross_dispatch.rs` so the WASM macro
+  target can reach the same animation-aware apply +
+  `apply_document_actions` envelope native uses. Re-exported from
+  `dispatch/mod.rs` (as `dispatch::apply_keybind_custom_mutation`)
+  for the existing `document/tests_mutations` import.
 
 - **`MacroStep::ConsoleLine` on WASM** — User-tier logs
   `warn!` and skips (the macro continues with the next step).
@@ -298,12 +298,16 @@ with `&mut self` accessors would close over the whole context
 on every call; the concrete struct with split borrows tracks
 field-level borrows correctly.
 
-**Open follow-up:** the now-unreachable Compatible arms in
-`dispatch.rs::dispatch_action`'s match (Undo, ZoomIn, etc.) can
-be deleted. They run after the cross-platform dispatcher
-returns Handled so they're never reached. Left in place this
-commit for behaviour-preservation safety; a focused follow-up
-can remove them. Marked as the new "Outstanding" item.
+**Native-dead-arm cleanup shipped.** The now-unreachable Compatible
+arms in `dispatch/native.rs::dispatch_action`'s match (Undo, ZoomIn,
+all parametric `Set*`, etc.) were removed in a follow-up commit —
+they were unreachable after Track C's delegation shim, so the
+removal preserved behaviour. The match now contains only NativeOnly
+arms (Console / Picker / AppMode / EditOpen / Save / DoubleClick /
+filesystem / PanCanvas / LabelEditCursor*), the mixed-branch native
+residuals, and the mouse-with-`DispatchHit` branch of
+`CreateOrphanNodeAndEdit` (the keyboard branch is in
+`dispatch_compatible`).
 
 ### Track-D meta — keep the privilege model intact
 
@@ -320,21 +324,28 @@ because hostile mindmaps shouldn't invoke it).
 `MacroSource::allows_action` and `allows_console_line` live in
 `src/application/macros/mod.rs` — these methods are NOT cfg-
 gated; they compile on both targets. The fail-closed enforcement
-loop, however, is in `dispatch::dispatch_macro` at
-`src/application/app/dispatch.rs`, and the *entire* `dispatch.rs`
-module is `#![cfg(not(target_arch = "wasm32"))]`-gated at line 9.
+loop is in `dispatch::macro_core::dispatch_macro` at
+`src/application/app/dispatch/macro_core.rs` (cross-platform,
+abstracted over `MacroDispatchTarget`); the native shim that
+wraps `InputHandlerContext` lives in
+`src/application/app/dispatch/native.rs`, gated to native via the
+file-level `#![cfg(not(target_arch = "wasm32"))]`.
 
-When you implement WASM macro dispatch, **do NOT re-implement the
-`allows_action` / `allows_console_line` checks inline.** Two
-acceptable shapes:
+**Track B took option (b) below: shape was the right one.** The
+`dispatch_macro` step loop and privilege gate live in
+`dispatch/macro_core.rs` (cross-platform); the native-only
+Action-arm dispatcher in `dispatch/native.rs` stays cfg-gated.
+WASM's `WasmMacroDispatchTarget` impl wraps `WasmInputState +
+&mut Renderer` and reaches the SAME gate via the
+`MacroDispatchTarget` trait. Recorded here for Track-A
+contributors who might be tempted to re-implement the check
+inline; the alternative was:
 
-- **(a) Lift the cfg gate off `dispatch.rs`'s module declaration**
-  and gate individual native-only arms instead. The privilege-
-  enforcement code becomes cross-platform automatically.
-- **(b) Extract `dispatch_macro` and its enforcement loop into
-  `dispatch/macro_core.rs`** (cross-platform), leaving the
-  Action-arm dispatcher gated. WASM imports the core module
-  unchanged.
+- **(a) Lift the cfg gate off the native dispatch module's
+  declaration** and gate individual native-only arms instead. The
+  privilege-enforcement code becomes cross-platform automatically.
+  Not taken because the per-arm cfg-gate sprawl would be worse
+  than the trait abstraction.
 
 Re-implementing the privilege check inline is **forbidden** —
 it's the threat-model defence and must be single-sourced. A
@@ -391,10 +402,14 @@ today, per `TEST_CONVENTIONS.md §T9`).
 
 ## Reading order for the impatient
 
-1. [`src/application/keybinds/action.rs`](./src/application/keybinds/action.rs) —
-   `Action::wasm_compatibility` is the API contract.
-2. [`src/application/app/dispatch.rs`](./src/application/app/dispatch.rs) —
+1. [`src/application/keybinds/action/mod.rs`](./src/application/keybinds/action/mod.rs) —
+   `Action::wasm_compatibility` is the API contract; the per-variant
+   `#[action(wasm = ...)]` attributes drive
+   `mandala_derive::ActionClassify`'s emitted classifier.
+2. [`src/application/app/dispatch/native.rs`](./src/application/app/dispatch/native.rs) —
    the native dispatch funnel arms are the reference implementation.
+   Cross-platform Compatible-arm bodies live in
+   [`src/application/app/dispatch/cross_dispatch.rs`](./src/application/app/dispatch/cross_dispatch.rs).
 3. [`src/application/app/input_context.rs`](./src/application/app/input_context.rs) —
    the 21-field context every native arm reads (passed by
    `&mut InputHandlerContext<'_>`).
