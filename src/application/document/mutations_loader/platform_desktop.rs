@@ -3,19 +3,17 @@
 //! Desktop user-file plumbing: filesystem-based user mutation loading
 //! with `$XDG_CONFIG_HOME` / `$HOME/.config` fallback, mirroring the
 //! shape of `keybinds::platform_desktop`. Not compiled on WASM.
+//!
+//! Path resolution and the size-cap constant are delegated to
+//! [`crate::application::user_config`] — the same plumbing used by
+//! the keybinds and macros loaders.
 
 use log::warn;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use baumhard::mindmap::custom_mutation::CustomMutation;
 
-/// Upper bound on user-file size, in bytes. Mutation files in the
-/// wild are small (tens of KB at most — the app bundle is 800
-/// bytes). A multi-megabyte file is almost certainly either a
-/// mistake (wrong file at the user path) or malicious, and loading
-/// it into memory + running serde over it is pointless work.
-/// Chosen generously: 1 MiB is ~3000× the app bundle's size.
-const MAX_USER_FILE_BYTES: u64 = 1 << 20;
+use crate::application::user_config::{xdg::xdg_mandala_path, MAX_USER_PAYLOAD_BYTES};
 
 /// Load user mutations, with layered fallback: explicit CLI path >
 /// `$XDG_CONFIG_HOME/mandala/mutations.json` >
@@ -31,7 +29,7 @@ pub fn load_user(explicit_path: Option<&Path>) -> Vec<CustomMutation> {
             Err(e) => warn!("mutations load failed for explicit path: {}", e),
         }
     }
-    if let Some(default_path) = default_user_mutations_path() {
+    if let Some(default_path) = xdg_mandala_path("mutations.json") {
         if default_path.exists() {
             match read_and_parse(&default_path) {
                 Ok(v) => {
@@ -52,14 +50,16 @@ pub fn load_user(explicit_path: Option<&Path>) -> Vec<CustomMutation> {
 fn read_and_parse(path: &Path) -> Result<Vec<CustomMutation>, String> {
     // Reject oversized files before reading — `read_to_string`
     // would otherwise allocate a String the size of the entire
-    // file and hand it to serde. See `MAX_USER_FILE_BYTES`.
+    // file and hand it to serde. The cap is shared with the web
+    // loader and the other user-tier loaders via
+    // `user_config::MAX_USER_PAYLOAD_BYTES`.
     match std::fs::metadata(path) {
-        Ok(meta) if meta.len() > MAX_USER_FILE_BYTES => {
+        Ok(meta) if meta.len() > MAX_USER_PAYLOAD_BYTES as u64 => {
             return Err(format!(
                 "{} exceeds size cap ({} bytes > {} max); refusing to load",
                 path.display(),
                 meta.len(),
-                MAX_USER_FILE_BYTES
+                MAX_USER_PAYLOAD_BYTES,
             ));
         }
         Ok(_) => {}
@@ -68,30 +68,6 @@ fn read_and_parse(path: &Path) -> Result<Vec<CustomMutation>, String> {
     let src = std::fs::read_to_string(path)
         .map_err(|e| format!("read {}: {}", path.display(), e))?;
     super::parse_mutations_json(&src)
-}
-
-/// `$XDG_CONFIG_HOME/mandala/mutations.json` if set, else
-/// `$HOME/.config/mandala/mutations.json`. `None` if neither env
-/// variable is set.
-pub fn default_user_mutations_path() -> Option<PathBuf> {
-    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-        if !xdg.is_empty() {
-            let mut p = PathBuf::from(xdg);
-            p.push("mandala");
-            p.push("mutations.json");
-            return Some(p);
-        }
-    }
-    if let Ok(home) = std::env::var("HOME") {
-        if !home.is_empty() {
-            let mut p = PathBuf::from(home);
-            p.push(".config");
-            p.push("mandala");
-            p.push("mutations.json");
-            return Some(p);
-        }
-    }
-    None
 }
 
 #[cfg(test)]
@@ -119,7 +95,7 @@ mod tests {
         let tmp = std::env::temp_dir().join("mandala_test_oversized_mutations.json");
         // Write a 2 MiB file — twice the 1 MiB cap. Content is
         // irrelevant; the rejection happens before serde runs.
-        let blob = vec![b' '; (MAX_USER_FILE_BYTES as usize) * 2];
+        let blob = vec![b' '; MAX_USER_PAYLOAD_BYTES * 2];
         std::fs::write(&tmp, &blob).unwrap();
         let v = load_user(Some(&tmp));
         assert!(v.is_empty(), "oversized file must produce an empty result");

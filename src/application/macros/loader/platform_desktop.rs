@@ -10,24 +10,13 @@
 //! resilience posture: the app boots with an empty user tier when
 //! the file is absent or malformed, and warns on parse failure so
 //! the user notices.
-
-use std::path::PathBuf;
+//!
+//! Path resolution is delegated to
+//! [`crate::application::user_config::xdg::xdg_mandala_path`] —
+//! shared with the keybinds and mutations loaders.
 
 use super::Macro;
-
-/// Resolve the user's macros.json path: prefer
-/// `$XDG_CONFIG_HOME/mandala/macros.json`, fall back to
-/// `~/.config/mandala/macros.json`. Returns `None` when neither
-/// `XDG_CONFIG_HOME` nor `HOME` is set (a degenerate environment).
-fn user_macros_path() -> Option<PathBuf> {
-    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-        if !xdg.is_empty() {
-            return Some(PathBuf::from(xdg).join("mandala").join("macros.json"));
-        }
-    }
-    let home = std::env::var("HOME").ok().filter(|s| !s.is_empty())?;
-    Some(PathBuf::from(home).join(".config").join("mandala").join("macros.json"))
-}
+use crate::application::user_config::xdg::xdg_mandala_path;
 
 /// Load the user-layer macros. Tier: `MacroSource::User`, assigned
 /// at the call site in `run_native_init::build`.
@@ -35,7 +24,7 @@ fn user_macros_path() -> Option<PathBuf> {
 /// Returns an empty `Vec` when the file is absent or malformed;
 /// failures log a warning so users notice but the app still boots.
 pub fn load_user_macros() -> Vec<Macro> {
-    let path = match user_macros_path() {
+    let path = match xdg_mandala_path("macros.json") {
         Some(p) => p,
         None => {
             log::debug!("macros: no HOME / XDG_CONFIG_HOME; user macro file disabled");
