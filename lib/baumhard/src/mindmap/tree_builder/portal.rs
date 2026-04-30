@@ -193,14 +193,11 @@ pub fn portal_pair_data(
 
         let make_endpoint = |owner: &MindNode, partner: &MindNode| -> EndpointAreas {
             let (ox, oy) = offsets.get(&owner.id).copied().unwrap_or((0.0, 0.0));
-            let owner_pos =
-                Vec2::new(owner.position.x as f32 + ox, owner.position.y as f32 + oy);
-            let owner_size = Vec2::new(owner.size.width as f32, owner.size.height as f32);
+            let owner_pos = owner.pos_vec2() + Vec2::new(ox, oy);
+            let owner_size = owner.size_vec2();
             let (px, py) = offsets.get(&partner.id).copied().unwrap_or((0.0, 0.0));
-            let partner_pos =
-                Vec2::new(partner.position.x as f32 + px, partner.position.y as f32 + py);
-            let partner_size =
-                Vec2::new(partner.size.width as f32, partner.size.height as f32);
+            let partner_pos = partner.pos_vec2() + Vec2::new(px, py);
+            let partner_size = partner.size_vec2();
 
             let endpoint_state = portal_endpoint_state(edge, &owner.id);
             let is_this_label_selected = selected_portal_label.map_or(false, |s| {

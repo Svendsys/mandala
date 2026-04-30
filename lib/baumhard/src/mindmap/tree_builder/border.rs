@@ -120,15 +120,17 @@ pub fn border_node_data(
             color_rgba,
         );
 
+        let pos = node.pos_vec2();
+        let size = node.size_vec2();
         out.push(BorderNodeData {
             node_id: node.id.clone(),
             parent_channel,
             border_style,
             color_rgba,
-            pos_x: node.position.x as f32 + ox,
-            pos_y: node.position.y as f32 + oy,
-            size_x: node.size.width as f32,
-            size_y: node.size.height as f32,
+            pos_x: pos.x + ox,
+            pos_y: pos.y + oy,
+            size_x: size.x,
+            size_y: size.y,
             zoom_visibility: node.zoom_window(),
             palette_cycle,
         });

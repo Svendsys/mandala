@@ -290,16 +290,12 @@ impl MindMapDocument {
                 Some(n) => n,
                 None => continue,
             };
-            node.position.x = lerp_f32(
-                anim.from_node.position.x as f32,
-                anim.to_node.position.x as f32,
-                t,
-            ) as f64;
-            node.position.y = lerp_f32(
-                anim.from_node.position.y as f32,
-                anim.to_node.position.y as f32,
-                t,
-            ) as f64;
+            let lerped = anim
+                .from_node
+                .pos_vec2()
+                .lerp(anim.to_node.pos_vec2(), t);
+            node.position.x = lerped.x as f64;
+            node.position.y = lerped.y as f64;
             any_advanced = true;
         }
 

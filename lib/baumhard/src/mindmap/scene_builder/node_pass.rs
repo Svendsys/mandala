@@ -51,10 +51,12 @@ pub(super) fn build_node_elements(
         }
 
         let (ox, oy) = offsets.get(&node.id).copied().unwrap_or((0.0, 0.0));
-        let pos_x = node.position.x as f32 + ox;
-        let pos_y = node.position.y as f32 + oy;
-        let size_x = node.size.width as f32;
-        let size_y = node.size.height as f32;
+        let pos = node.pos_vec2();
+        let size = node.size_vec2();
+        let pos_x = pos.x + ox;
+        let pos_y = pos.y + oy;
+        let size_x = size.x;
+        let size_y = size.y;
 
         // Resolve the frame color through theme variables once — used for
         // both the clip AABB sizing and the border element below.

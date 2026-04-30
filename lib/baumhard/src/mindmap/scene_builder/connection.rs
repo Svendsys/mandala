@@ -120,16 +120,10 @@ pub(super) fn build_connection_elements(
         if is_selected {
             let (fox, foy) = offsets.get(&from_node.id).copied().unwrap_or((0.0, 0.0));
             let (tox, toy) = offsets.get(&to_node.id).copied().unwrap_or((0.0, 0.0));
-            let from_pos = Vec2::new(
-                from_node.position.x as f32 + fox,
-                from_node.position.y as f32 + foy,
-            );
-            let from_size = Vec2::new(from_node.size.width as f32, from_node.size.height as f32);
-            let to_pos = Vec2::new(
-                to_node.position.x as f32 + tox,
-                to_node.position.y as f32 + toy,
-            );
-            let to_size = Vec2::new(to_node.size.width as f32, to_node.size.height as f32);
+            let from_pos = from_node.pos_vec2() + Vec2::new(fox, foy);
+            let from_size = from_node.size_vec2();
+            let to_pos = to_node.pos_vec2() + Vec2::new(tox, toy);
+            let to_size = to_node.size_vec2();
             edge_handles.extend(build_edge_handles(
                 edge, &edge_key, from_pos, from_size, to_pos, to_size,
             ));
@@ -221,16 +215,10 @@ pub(super) fn build_connection_elements(
         let (fox, foy) = offsets.get(&from_node.id).copied().unwrap_or((0.0, 0.0));
         let (tox, toy) = offsets.get(&to_node.id).copied().unwrap_or((0.0, 0.0));
 
-        let from_pos = Vec2::new(
-            from_node.position.x as f32 + fox,
-            from_node.position.y as f32 + foy,
-        );
-        let from_size = Vec2::new(from_node.size.width as f32, from_node.size.height as f32);
-        let to_pos = Vec2::new(
-            to_node.position.x as f32 + tox,
-            to_node.position.y as f32 + toy,
-        );
-        let to_size = Vec2::new(to_node.size.width as f32, to_node.size.height as f32);
+        let from_pos = from_node.pos_vec2() + Vec2::new(fox, foy);
+        let from_size = from_node.size_vec2();
+        let to_pos = to_node.pos_vec2() + Vec2::new(tox, toy);
+        let to_size = to_node.size_vec2();
 
         // --- Translate path: rigid-body subtree-drag optimization ---
         //

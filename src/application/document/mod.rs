@@ -292,10 +292,11 @@ pub(super) fn grow_one_node_to_fit_border(
     let need_h =
         need_vertical_clusters as f32 * style.font_size_pt;
 
-    if (node.size.width as f32) < need_w {
+    let size = node.size_vec2();
+    if size.x < need_w {
         node.size.width = need_w as f64;
     }
-    if (node.size.height as f32) < need_h {
+    if size.y < need_h {
         node.size.height = need_h as f64;
     }
 }
