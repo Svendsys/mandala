@@ -351,3 +351,8 @@ Workspace-level commitment:
   outside an explicit `cfg` guard must build for
   `wasm32-unknown-unknown` before commit.
 - **Commit messages explain *why*, not what the diff shows.**
+
+## §13 Complete ownership
+- **We do drive-by refactors and fixes.** There are always a million excuses as to why cleaning up something should be postponed. But the quality of our codebase is priority #1, so whenever something not-ideal is spotted we ADDRESS it. It doesn't matter if we get mixed pull requests.
+- **Always explicitly look for opportunities to improve the quality of existing code.**
+- **Never accept "good enough". No one has asked you for "good enough".**
