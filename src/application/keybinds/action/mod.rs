@@ -117,7 +117,10 @@ impl ZoomBound {
 /// inconsequential; for a synthetic load of macros firing thousands
 /// of `Action`s/sec, switch the lookup to return `&Action` and clone
 /// at the dispatch boundary, or wrap payload strings in `Arc<str>`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, EnumDiscriminants)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, EnumDiscriminants,
+    mandala_derive::ActionClassify,
+)]
 #[strum_discriminants(
     name(ActionKind),
     derive(Hash, EnumIter),
@@ -134,10 +137,13 @@ impl ZoomBound {
 pub enum Action {
     // ── Document-level (global) ──────────────────────────────────
     /// Undo the last action on the document.
+    #[action(context = Document, wasm = Compatible)]
     Undo,
     /// Enter reparent mode for the currently selected nodes.
+    #[action(context = Document, wasm = NativeOnly)]
     EnterReparentMode,
     /// Enter connect mode for the currently selected node.
+    #[action(context = Document, wasm = NativeOnly)]
     EnterConnectMode,
     /// Confirm a reparent operation by clicking on a target node
     /// (or empty canvas to promote sources to root). Sources come
@@ -149,6 +155,7 @@ pub enum Action {
     /// macro tiers; the arm body's `mem::replace(.., Normal)` is
     /// an additional runtime guard (stale fire outside Reparent
     /// mode is a no-op).
+    #[action(context = Document, wasm = NativeOnly, destructive)]
     ReparentToTarget(Option<String>),
     /// Confirm a connect operation by clicking on a target node
     /// (or empty canvas to exit Connect mode without creating an
@@ -157,23 +164,32 @@ pub enum Action {
     /// → mode-exit only, mirroring `ReparentToTarget`'s shape).
     /// NativeOnly + `is_destructive = true` per the same reasoning
     /// as `ReparentToTarget`.
+    #[action(context = Document, wasm = NativeOnly, destructive)]
     ConnectToTarget(Option<String>),
     /// Delete the current selection (currently: selected edge).
+    #[action(context = Document, wasm = Compatible, destructive)]
     DeleteSelection,
     /// Cancel the current mode (reparent / connect).
+    #[action(context = Document, wasm = NativeOnly)]
     CancelMode,
     /// Create a new unattached (orphan) node at the cursor position.
+    #[action(context = Document, wasm = Compatible, destructive)]
     CreateOrphanNode,
     /// Detach every currently selected node from its parent.
+    #[action(context = Document, wasm = Compatible, destructive)]
     OrphanSelection,
     /// Open the inline text editor on the currently selected single node
     /// with the node's existing text, cursor at end.
+    #[action(context = Document, wasm = NativeOnly, destructive)]
     EditSelection,
     /// Same as `EditSelection` but opens the editor with an empty buffer.
+    #[action(context = Document, wasm = NativeOnly, destructive)]
     EditSelectionClean,
     /// Open (or toggle) the CLI console.
+    #[action(context = Document, wasm = NativeOnly)]
     OpenConsole,
     /// Save the currently-open mindmap document to its bound file path.
+    #[action(context = Document, wasm = NativeOnly, destructive)]
     SaveDocument,
     /// Copy the focused component's clipboard representation.
     /// **WASM:** the underlying `clipboard::write_clipboard` is a
@@ -181,93 +197,130 @@ pub enum Action {
     /// pending). The Action is classified `Compatible` because it
     /// doesn't crash, but the user-visible behaviour is "nothing
     /// happens." Tracked in `WASM_CONVERGENCE.md`.
+    #[action(context = Document, wasm = Compatible, destructive)]
     Copy,
     /// Paste the system clipboard's text content into the focused component.
     /// **WASM:** same stub posture as `Copy` — `read_clipboard`
     /// returns `None`.
+    #[action(context = Document, wasm = Compatible, destructive)]
     Paste,
     /// Cut: copy then clear the focused component's clipboard representation.
     /// **WASM:** same stub posture as `Copy`.
+    #[action(context = Document, wasm = Compatible, destructive)]
     Cut,
 
     // ── Console ──────────────────────────────────────────────────
     /// Close the console (two-tier: dismiss popup first, then close).
+    #[action(context = Console, wasm = NativeOnly)]
     ConsoleClose,
     /// Submit the current console input line for execution.
+    #[action(context = Console, wasm = NativeOnly)]
     ConsoleSubmit,
     /// Cycle tab completions.
+    #[action(context = Console, wasm = NativeOnly)]
     ConsoleTabComplete,
     /// Walk history backward / navigate completion popup upward.
+    #[action(context = Console, wasm = NativeOnly)]
     ConsoleHistoryUp,
     /// Walk history forward / navigate completion popup downward.
+    #[action(context = Console, wasm = NativeOnly)]
     ConsoleHistoryDown,
     /// Move cursor one grapheme left.
+    #[action(context = Console, wasm = NativeOnly)]
     ConsoleCursorLeft,
     /// Move cursor one grapheme right.
+    #[action(context = Console, wasm = NativeOnly)]
     ConsoleCursorRight,
     /// Move cursor to start of input.
+    #[action(context = Console, wasm = NativeOnly)]
     ConsoleCursorHome,
     /// Move cursor to end of input.
+    #[action(context = Console, wasm = NativeOnly)]
     ConsoleCursorEnd,
     /// Delete grapheme before cursor.
+    #[action(context = Console, wasm = NativeOnly)]
     ConsoleDeleteBack,
     /// Delete grapheme after cursor.
+    #[action(context = Console, wasm = NativeOnly)]
     ConsoleDeleteForward,
     /// Insert a literal space (winit delivers Space as Named, not Character).
+    #[action(context = Console, wasm = NativeOnly)]
     ConsoleInsertSpace,
     /// Clear the current input line (shell Ctrl+C muscle-memory).
+    #[action(context = Console, wasm = NativeOnly)]
     ConsoleClearLine,
     /// Jump cursor to start of line (shell Ctrl+A).
+    #[action(context = Console, wasm = NativeOnly)]
     ConsoleJumpStart,
     /// Jump cursor to end of line (shell Ctrl+E).
+    #[action(context = Console, wasm = NativeOnly)]
     ConsoleJumpEnd,
     /// Kill from cursor to start of line (shell Ctrl+U).
+    #[action(context = Console, wasm = NativeOnly)]
     ConsoleKillToStart,
     /// Kill the word before cursor (shell Ctrl+W).
+    #[action(context = Console, wasm = NativeOnly)]
     ConsoleKillWord,
     /// Scroll the scrollback window up by one line (Shift+Up).
     /// Plain Up still walks command history.
+    #[action(context = Console, wasm = NativeOnly)]
     ConsoleScrollUp,
     /// Scroll the scrollback window down by one line (Shift+Down).
+    #[action(context = Console, wasm = NativeOnly)]
     ConsoleScrollDown,
     /// Scroll the scrollback window up by one page
     /// (`MAX_CONSOLE_SCROLLBACK_ROWS` lines, PgUp).
+    #[action(context = Console, wasm = NativeOnly)]
     ConsoleScrollPageUp,
     /// Scroll the scrollback window down by one page (PgDn).
+    #[action(context = Console, wasm = NativeOnly)]
     ConsoleScrollPageDown,
     /// Pin the scrollback window at the bottom (newest line trailing,
     /// Shift+End).
+    #[action(context = Console, wasm = NativeOnly)]
     ConsoleScrollEnd,
     /// Pin the scrollback window at the top (oldest reachable line,
     /// Shift+Home).
+    #[action(context = Console, wasm = NativeOnly)]
     ConsoleScrollHome,
 
     // ── Color Picker ─────────────────────────────────────────────
     /// Cancel the color picker (contextual mode only; ignored in standalone).
+    #[action(context = ColorPicker, wasm = NativeOnly)]
     PickerCancel,
     /// Commit the current color (contextual: close; standalone: apply to selection).
+    #[action(context = ColorPicker, wasm = NativeOnly)]
     PickerCommit,
     /// Nudge hue −15°.
+    #[action(context = ColorPicker, wasm = NativeOnly)]
     PickerNudgeHueDown,
     /// Nudge hue +15°.
+    #[action(context = ColorPicker, wasm = NativeOnly)]
     PickerNudgeHueUp,
     /// Nudge saturation −0.1.
+    #[action(context = ColorPicker, wasm = NativeOnly)]
     PickerNudgeSatDown,
     /// Nudge saturation +0.1.
+    #[action(context = ColorPicker, wasm = NativeOnly)]
     PickerNudgeSatUp,
     /// Nudge value −0.1.
+    #[action(context = ColorPicker, wasm = NativeOnly)]
     PickerNudgeValDown,
     /// Nudge value +0.1.
+    #[action(context = ColorPicker, wasm = NativeOnly)]
     PickerNudgeValUp,
 
     // ── Label Editor ─────────────────────────────────────────────
     /// Cancel the inline label editor (discard changes).
+    #[action(context = LabelEdit, wasm = NativeOnly)]
     LabelEditCancel,
     /// Commit the inline label editor.
+    #[action(context = LabelEdit, wasm = NativeOnly)]
     LabelEditCommit,
 
     // ── Text Editor ──────────────────────────────────────────────
     /// Cancel the inline text editor (discard changes).
+    #[action(context = TextEdit, wasm = Compatible)]
     TextEditCancel,
 
     // ─────────────────────────────────────────────────────────────
@@ -284,113 +337,158 @@ pub enum Action {
     /// `Empty` → fire `CreateOrphanNodeAndEdit` if it's bound (default
     /// off — the gesture is intentionally unbound for empty-canvas
     /// double-clicks).
+    #[action(context = Document, wasm = NativeOnly, destructive)]
     DoubleClickActivate,
     /// Create an unattached node at the cursor and immediately open
     /// its text editor with an empty buffer. Sibling of `CreateOrphanNode`
     /// which only creates and selects (no editor). Default unbound.
+    #[action(context = Document, wasm = Compatible, destructive)]
     CreateOrphanNodeAndEdit,
     /// Continuous left-button drag on empty canvas → camera pan.
     /// Default-bound to `LeftDrag` and `MiddleClick`. The dispatcher
     /// enters `DragState::Panning` on press and exits on release.
+    #[action(context = Document, wasm = NativeOnly)]
     PanCanvas,
 
     // ── Navigation / camera (Document context) ──────────────────
     /// Zoom the camera in by one step. Default-bound to `WheelUp`.
+    #[action(context = Document, wasm = Compatible)]
     ZoomIn,
     /// Zoom the camera out by one step. Default-bound to `WheelDown`.
+    #[action(context = Document, wasm = Compatible)]
     ZoomOut,
     /// Reset the camera zoom to 1.0.
+    #[action(context = Document, wasm = Compatible)]
     ZoomReset,
     /// Fit the entire mindmap tree to the viewport.
+    #[action(context = Document, wasm = Compatible)]
     ZoomFit,
     /// Pan the camera north (up) by one step.
+    #[action(context = Document, wasm = Compatible)]
     PanCameraNorth,
     /// Pan the camera south (down) by one step.
+    #[action(context = Document, wasm = Compatible)]
     PanCameraSouth,
     /// Pan the camera east (right) by one step.
+    #[action(context = Document, wasm = Compatible)]
     PanCameraEast,
     /// Pan the camera west (left) by one step.
+    #[action(context = Document, wasm = Compatible)]
     PanCameraWest,
     /// Center the camera on the centroid of the current selection.
+    #[action(context = Document, wasm = Compatible)]
     CenterOnSelection,
     /// Jump the camera + selection to the document's root node.
+    #[action(context = Document, wasm = Compatible)]
     JumpToRoot,
 
     // ── Selection (Document context) ────────────────────────────
     /// Select every node in the document.
+    #[action(context = Document, wasm = Compatible)]
     SelectAll,
     /// Clear the current selection.
+    #[action(context = Document, wasm = Compatible)]
     DeselectAll,
     /// Invert the current selection (selected ↔ unselected).
+    #[action(context = Document, wasm = Compatible)]
     InvertSelection,
     /// Select the parent of the currently-selected single node.
+    #[action(context = Document, wasm = Compatible)]
     SelectParent,
     /// Select the first child of the currently-selected single node.
+    #[action(context = Document, wasm = Compatible)]
     SelectChild,
     /// Select the next sibling of the currently-selected single node.
+    #[action(context = Document, wasm = Compatible)]
     SelectNextSibling,
     /// Select the previous sibling of the currently-selected single node.
+    #[action(context = Document, wasm = Compatible)]
     SelectPrevSibling,
 
     // ── TextEdit cursor primitives (TextEdit context) ───────────
     /// Move cursor one grapheme left.
+    #[action(context = TextEdit, wasm = Compatible)]
     TextEditCursorLeft,
     /// Move cursor one grapheme right.
+    #[action(context = TextEdit, wasm = Compatible)]
     TextEditCursorRight,
     /// Move cursor one visual line up.
+    #[action(context = TextEdit, wasm = Compatible)]
     TextEditCursorUp,
     /// Move cursor one visual line down.
+    #[action(context = TextEdit, wasm = Compatible)]
     TextEditCursorDown,
     /// Jump cursor to the start of the current line.
+    #[action(context = TextEdit, wasm = Compatible)]
     TextEditCursorHome,
     /// Jump cursor to the end of the current line.
+    #[action(context = TextEdit, wasm = Compatible)]
     TextEditCursorEnd,
     /// Move cursor one word left.
+    #[action(context = TextEdit, wasm = Compatible)]
     TextEditWordLeft,
     /// Move cursor one word right.
+    #[action(context = TextEdit, wasm = Compatible)]
     TextEditWordRight,
     /// Delete the grapheme before the cursor.
+    #[action(context = TextEdit, wasm = Compatible)]
     TextEditDeleteBack,
     /// Delete the grapheme at / after the cursor.
+    #[action(context = TextEdit, wasm = Compatible)]
     TextEditDeleteForward,
     /// Delete from cursor back to the start of the current word.
+    #[action(context = TextEdit, wasm = Compatible)]
     TextEditDeleteWordBack,
     /// Delete from cursor forward through the current word.
+    #[action(context = TextEdit, wasm = Compatible)]
     TextEditDeleteWordForward,
     /// Commit the editor's buffer to the model and close. Default unbound
     /// (Enter is literal in the multi-line node editor).
+    #[action(context = TextEdit, wasm = Compatible)]
     TextEditCommit,
 
     // ── LabelEdit cursor primitives (LabelEdit context) ─────────
     /// Move cursor one grapheme left in the label/portal-text editor.
+    #[action(context = LabelEdit, wasm = NativeOnly)]
     LabelEditCursorLeft,
     /// Move cursor one grapheme right.
+    #[action(context = LabelEdit, wasm = NativeOnly)]
     LabelEditCursorRight,
     /// Jump cursor to the start of the buffer.
+    #[action(context = LabelEdit, wasm = NativeOnly)]
     LabelEditCursorHome,
     /// Jump cursor to the end of the buffer.
+    #[action(context = LabelEdit, wasm = NativeOnly)]
     LabelEditCursorEnd,
     /// Delete the grapheme before the cursor.
+    #[action(context = LabelEdit, wasm = NativeOnly)]
     LabelEditDeleteBack,
     /// Delete the grapheme at / after the cursor.
+    #[action(context = LabelEdit, wasm = NativeOnly)]
     LabelEditDeleteForward,
 
     // ── Console-verb Actions (Document context) ─────────────────
     /// Open the glyph-wheel color picker as a standalone palette.
     /// Mirrors `color picker on`.
+    #[action(context = Document, wasm = NativeOnly)]
     OpenColorPicker,
     /// Close the glyph-wheel color picker. Mirrors `color picker off`.
+    #[action(context = Document, wasm = NativeOnly)]
     CloseColorPicker,
     /// Open the inline label editor on the currently-selected edge.
     /// Mirrors `label edit`.
+    #[action(context = Document, wasm = NativeOnly, destructive)]
     LabelEditOnSelection,
     /// Toggle the FPS overlay on/off. Mirrors `fps on` ↔ `fps off`.
+    #[action(context = Document, wasm = Compatible)]
     ToggleFps,
     /// Toggle the FPS overlay's debug variant. Mirrors `fps debug` ↔
     /// `fps off`.
+    #[action(context = Document, wasm = Compatible)]
     ToggleFpsDebug,
     /// Replace the current document with a fresh blank one. Mirrors
     /// `new` (no path).
+    #[action(context = Document, wasm = NativeOnly, destructive)]
     NewDocument,
 
     // ── Parametric console-verb Actions (Document context) ──────
@@ -401,23 +499,27 @@ pub enum Action {
     // scrollback — Action arms have no scrollback surface).
     /// Mirror `anchor from=<side> to=<side>` on the selected edge.
     /// Sides: `auto|top|right|bottom|left`. Single-edge selection.
+    #[action(context = Document, wasm = Compatible)]
     SetEdgeAnchor {
         from: String,
         to: String,
     },
     /// Mirror `body glyph=<dot|dash|double|wave|chain>` on the
     /// selected edge.
+    #[action(context = Document, wasm = Compatible)]
     SetEdgeBodyGlyph(String),
     /// Mirror `border <field>=<value>` on the selected node(s).
     /// Single kv per binding (multi-kv border edits stay
     /// console-only). Field names: `preset|font|size|color|palette|
     /// field|padding|top|bottom|left|right|tl|tr|bl|br`.
+    #[action(context = Document, wasm = Compatible)]
     SetBorderField {
         field: String,
         value: String,
     },
     /// Mirror `cap from=<arrow|circle|diamond|none> to=<...>` on the
     /// selected edge.
+    #[action(context = Document, wasm = Compatible)]
     SetEdgeCap {
         from: String,
         to: String,
@@ -426,21 +528,26 @@ pub enum Action {
     /// `axis` picks the field group (background, text, or border);
     /// `value` is the user-facing color string (`#rrggbb`,
     /// `var(--name)`, palette key, etc.) which the verb-core parses.
+    #[action(context = Document, wasm = Compatible)]
     SetColor {
         axis: ColorAxis,
         value: String,
     },
     /// Mirror `edge type=<cross_link|parent_child>` on the selected
     /// edge.
+    #[action(context = Document, wasm = Compatible)]
     SetEdgeType(String),
     /// Mirror `edge display_mode=<line|portal>` on the selected edge.
+    #[action(context = Document, wasm = Compatible)]
     SetEdgeDisplayMode(String),
     /// Mirror `edge reset=<straight|curve|style|position>` on the
     /// selected edge.
+    #[action(context = Document, wasm = Compatible)]
     ResetEdge(String),
     /// Mirror `font set <family>` on the current selection. Unknown
     /// family names silently no-op (the verb path surfaces a typed
     /// error; the Action arm has no scrollback).
+    #[action(context = Document, wasm = Compatible)]
     SetFontFamily(String),
     /// Mirror `font <slot>=<pt>` on the current selection.
     /// `slot` picks `size|min|max`; `value` is the raw pt string
@@ -448,24 +555,29 @@ pub enum Action {
     /// silently no-op). `min` / `max` are selection-aware:
     /// applicable to edge / edge-label / portal-text channels;
     /// nodes have no screen-space clamp and no-op silently.
+    #[action(context = Document, wasm = Compatible)]
     SetFont {
         slot: FontSlot,
         value: String,
     },
     /// Mirror `label text=<text>` on the selected edge / portal
     /// label. Empty payload clears the label.
+    #[action(context = Document, wasm = Compatible)]
     SetEdgeLabelText(String),
     /// Mirror `label position=<start|middle|end>` on the selected
     /// line-mode edge. Portal selections silently no-op (they use
     /// the `position_t=<f32>` shape, not named anchors).
+    #[action(context = Document, wasm = Compatible)]
     SetEdgeLabelPosition(String),
     /// Mirror `spacing value=<tight|normal|wide|<float>>` on the
     /// selected edge.
+    #[action(context = Document, wasm = Compatible)]
     SetSpacing(String),
     /// Mirror `zoom <bound>=<zoom|unset>` on the current selection.
     /// `bound` picks `min|max`; `value` is `"unset"`, `""`, or a
     /// positive finite float string. Inverted bounds (`min > max`)
     /// silently no-op.
+    #[action(context = Document, wasm = Compatible)]
     SetZoom {
         bound: ZoomBound,
         value: String,
@@ -473,22 +585,26 @@ pub enum Action {
     /// Mirror `zoom clear` — drop both `min_zoom_to_render` and
     /// `max_zoom_to_render` on the current selection. Unit
     /// variant — no payload.
+    #[action(context = Document, wasm = Compatible)]
     ClearZoom,
     /// Mirror `open <path>` — replace the current document with the
     /// one loaded from `path`. **NativeOnly** + **destructive**:
     /// touches the filesystem. Denylisted for non-User macro tiers
     /// — a hostile mindmap must not be able to load arbitrary
     /// content as the active document.
+    #[action(context = Document, wasm = NativeOnly, destructive)]
     OpenDocument(String),
     /// Mirror `save <path>` — write the current document to `path`
     /// and rebind. **NativeOnly** + **destructive**: writes to the
     /// filesystem; a hostile macro could overwrite arbitrary files.
     /// Denylisted for non-User macro tiers.
+    #[action(context = Document, wasm = NativeOnly, destructive)]
     SaveDocumentAs(String),
     /// Mirror `new <path>` — start a fresh document and bind it to
     /// `path` (writes a blank file there immediately). **NativeOnly**
     /// + **destructive**: writes to the filesystem. Denylisted for
     /// non-User macro tiers.
+    #[action(context = Document, wasm = NativeOnly, destructive)]
     NewDocumentAt(String),
 }
 
@@ -554,7 +670,3 @@ pub enum WasmCompatibility {
     /// `Compatible`. Tracked in `WASM_CONVERGENCE.md`.
     NativeOnly,
 }
-
-mod context;
-mod destructive;
-mod wasm;
