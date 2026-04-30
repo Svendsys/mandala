@@ -12,7 +12,7 @@
 
 use glam::Vec2;
 
-use crate::application::document::SelectionState;
+use crate::application::document::{hit_test, EdgeRef, SelectionState, UndoAction};
 use crate::application::keybinds::Action;
 
 use super::input_context::InputHandlerContext;
@@ -204,6 +204,82 @@ pub(in crate::application::app) fn dispatch_action(
                         ctx.scene_cache,
                     );
                 }
+            }
+            DispatchOutcome::Handled
+        }
+        Action::ReparentToTarget(ref target) => {
+            // Mode-exit + mutation: extract sources from `app_mode`
+            // atomically with the reset to `Normal`. A stale fire
+            // outside Reparent mode silently no-ops; the
+            // `mem::replace` guards against re-entry leaving
+            // `app_mode` half-reset on early return.
+            let sources = match std::mem::replace(ctx.app_mode, AppMode::Normal) {
+                AppMode::Reparent { sources } => sources,
+                AppMode::Normal | AppMode::Connect { .. } => {
+                    return DispatchOutcome::Handled;
+                }
+            };
+            *ctx.hovered_node = None;
+            if let Some(doc) = ctx.document.as_mut() {
+                // `target` of `Some(id)` reparents under that node;
+                // `None` promotes sources to root (empty-canvas click).
+                let undo_data = doc.apply_reparent(&sources, target.as_deref());
+                if !undo_data.entries.is_empty() {
+                    doc.undo_stack.push(UndoAction::ReparentNodes {
+                        entries: undo_data.entries,
+                        old_edges: undo_data.old_edges,
+                    });
+                    doc.dirty = true;
+                }
+                // Full rebuild regardless: tree structure changed
+                // (or even if no-op, mode-exit must clear orange/
+                // green highlights).
+                rebuild_all(
+                    doc,
+                    ctx.mindmap_tree,
+                    ctx.app_scene,
+                    ctx.renderer,
+                    ctx.scene_cache,
+                );
+            }
+            DispatchOutcome::Handled
+        }
+        Action::ConnectToTarget(ref target) => {
+            // Mirror `ReparentToTarget`'s mode-exit pattern. Source
+            // comes from `AppMode::Connect { source }`; stale-fire
+            // outside Connect mode silently no-ops. `target = None`
+            // is empty-canvas mode-exit (no edge to create); the
+            // arm still runs the rebuild so orange/green highlights
+            // clear.
+            let source = match std::mem::replace(ctx.app_mode, AppMode::Normal) {
+                AppMode::Connect { source } => source,
+                AppMode::Normal | AppMode::Reparent { .. } => {
+                    return DispatchOutcome::Handled;
+                }
+            };
+            *ctx.hovered_node = None;
+            if let Some(doc) = ctx.document.as_mut() {
+                if let Some(target_id) = target.as_deref() {
+                    if let Some(idx) = doc.create_cross_link_edge(&source, target_id) {
+                        doc.undo_stack.push(UndoAction::CreateEdge { index: idx });
+                        // Snap selection to the new edge so the
+                        // user gets immediate visual confirmation
+                        // and can Delete or style it next.
+                        doc.selection = SelectionState::Edge(EdgeRef::new(
+                            source.clone(),
+                            target_id.to_string(),
+                            "cross_link",
+                        ));
+                        doc.dirty = true;
+                    }
+                }
+                rebuild_all(
+                    doc,
+                    ctx.mindmap_tree,
+                    ctx.app_scene,
+                    ctx.renderer,
+                    ctx.scene_cache,
+                );
             }
             DispatchOutcome::Handled
         }

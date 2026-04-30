@@ -88,7 +88,7 @@ use text_edit::{close_text_edit, handle_text_edit_key, insert_at_cursor, open_te
 
 #[cfg(not(target_arch = "wasm32"))]
 use click::{
-    handle_click, handle_connect_target_click, handle_reparent_target_click,
+    handle_click,
     rebuild_all_with_mode,
 };
 #[cfg(not(target_arch = "wasm32"))]

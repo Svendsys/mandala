@@ -44,6 +44,25 @@ pub enum Action {
     EnterReparentMode,
     /// Enter connect mode for the currently selected node.
     EnterConnectMode,
+    /// Confirm a reparent operation by clicking on a target node
+    /// (or empty canvas to promote sources to root). Sources come
+    /// from `AppMode::Reparent { sources }`; the payload carries
+    /// the target node id (`None` for empty-canvas → root).
+    /// NativeOnly: depends on `AppMode`, which doesn't exist on
+    /// WASM. Classified `is_destructive = true` so the privilege
+    /// gate (`MacroSource::allows_action`) denylists non-User
+    /// macro tiers; the arm body's `mem::replace(.., Normal)` is
+    /// an additional runtime guard (stale fire outside Reparent
+    /// mode is a no-op).
+    ReparentToTarget(Option<String>),
+    /// Confirm a connect operation by clicking on a target node
+    /// (or empty canvas to exit Connect mode without creating an
+    /// edge). Source comes from `AppMode::Connect { source }`; the
+    /// payload carries the target node id (`None` for empty-canvas
+    /// → mode-exit only, mirroring `ReparentToTarget`'s shape).
+    /// NativeOnly + `is_destructive = true` per the same reasoning
+    /// as `ReparentToTarget`.
+    ConnectToTarget(Option<String>),
     /// Delete the current selection (currently: selected edge).
     DeleteSelection,
     /// Cancel the current mode (reparent / connect).
@@ -412,6 +431,14 @@ impl Action {
             | Action::OrphanSelection
             | Action::CreateOrphanNode
             | Action::CreateOrphanNodeAndEdit
+            // Reparent/Connect target confirmation: tree topology
+            // mutations (subtree move; cross-link edge create) with
+            // hand-rolled `UndoAction` entries. The `EnterReparentMode`
+            // / `EnterConnectMode` siblings stay non-destructive
+            // (just app-mode toggles); the `*ToTarget` variants are
+            // the actual mutators.
+            | Action::ReparentToTarget(_)
+            | Action::ConnectToTarget(_)
             // Clipboard surface (Copy is read-only on the
             // document side, but reads private content into the
             // shared OS buffer — a surveillance vector for
@@ -624,6 +651,8 @@ impl Action {
             Action::Undo
             | Action::EnterReparentMode
             | Action::EnterConnectMode
+            | Action::ReparentToTarget(_)
+            | Action::ConnectToTarget(_)
             | Action::DeleteSelection
             | Action::CancelMode
             | Action::CreateOrphanNode
@@ -808,6 +837,8 @@ impl Action {
             // ── Native-only: AppMode (Reparent / Connect) ────
             Action::EnterReparentMode
             | Action::EnterConnectMode
+            | Action::ReparentToTarget(_)
+            | Action::ConnectToTarget(_)
             | Action::CancelMode => WasmCompatibility::NativeOnly,
 
             // ── Mixed-branch Actions — NativeOnly per the
