@@ -22,6 +22,15 @@
 /// Used by both crates: renderer hot paths (border layout,
 /// connection-label placement, console glyph sizing) and the
 /// color-picker layout in the app crate.
+///
+/// **Forward-compat (§B10).** This is currently a single
+/// face-calibrated constant — exposing it as `pub` honours
+/// today's "in-tree app needs it" need but isn't a stable
+/// plugin contract. When the plugin font-metrics API lands
+/// it will own per-face calibration; this constant becomes
+/// either internal scaffolding or moves under that surface.
+/// Don't reach for it from plugin code as if it were a
+/// shipped API.
 pub const MONOSPACE_ADVANCE_RATIO: f32 = 0.6;
 
 /// Approximate per-glyph horizontal advance for a monospace face
@@ -30,6 +39,13 @@ pub const MONOSPACE_ADVANCE_RATIO: f32 = 0.6;
 ///
 /// **Cost.** O(1); no allocation, no font-system access. Safe to
 /// call from per-frame layout paths.
+///
+/// **Forward-compat (§B10).** See the note on
+/// [`MONOSPACE_ADVANCE_RATIO`] — this helper inherits the same
+/// "single-face calibration" caveat. Per-face calibration will
+/// belong to the plugin font-metrics API when it lands; treat
+/// this `pub` exposure as in-tree scaffolding, not a plugin
+/// contract.
 #[inline]
 pub fn monospace_advance(font_size_pt: f32) -> f32 {
     font_size_pt * MONOSPACE_ADVANCE_RATIO

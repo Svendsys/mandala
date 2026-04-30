@@ -9,6 +9,9 @@
 
 use super::{apply_with_rebuild, RebuildContext};
 
+/// Set both endpoints' anchor side (`top` / `bottom` / `left` /
+/// `right` / `center`) on every edge in the current selection.
+/// Geometry change → full rebuild via `apply_with_rebuild`.
 pub(in crate::application::app) fn apply_set_edge_anchor(
     from: &str,
     to: &str,
@@ -23,6 +26,9 @@ pub(in crate::application::app) fn apply_set_edge_anchor(
     });
 }
 
+/// Stamp the named body-glyph preset (`solid` / `dashed` / etc.)
+/// on every edge in the current selection. Geometry change →
+/// full rebuild.
 pub(in crate::application::app) fn apply_set_edge_body_glyph(
     preset: &str,
     rc: &mut RebuildContext<'_>,
@@ -32,6 +38,9 @@ pub(in crate::application::app) fn apply_set_edge_body_glyph(
     });
 }
 
+/// Set both endpoints' arrow-cap glyph (`arrow` / `none` /
+/// preset name) on every edge in the current selection. Geometry
+/// change → full rebuild.
 pub(in crate::application::app) fn apply_set_edge_cap(
     from: &str,
     to: &str,
@@ -46,6 +55,9 @@ pub(in crate::application::app) fn apply_set_edge_cap(
     });
 }
 
+/// Switch every edge in the current selection to the named
+/// `edge_type` (`parent_child` / `cross_link`). Topology
+/// change → full rebuild.
 pub(in crate::application::app) fn apply_set_edge_type(
     edge_type: &str,
     rc: &mut RebuildContext<'_>,
@@ -55,6 +67,9 @@ pub(in crate::application::app) fn apply_set_edge_type(
     });
 }
 
+/// Switch every edge in the current selection to the named
+/// `display_mode` (`line` / `portal`). Visual change → full
+/// rebuild.
 pub(in crate::application::app) fn apply_set_edge_display_mode(
     mode: &str,
     rc: &mut RebuildContext<'_>,
@@ -66,6 +81,9 @@ pub(in crate::application::app) fn apply_set_edge_display_mode(
     });
 }
 
+/// Reset the named edge attribute kind (`anchor` / `cap` /
+/// `body` / `color` / `font` / `label`) to its default value
+/// across the current selection. Visual change → full rebuild.
 pub(in crate::application::app) fn apply_reset_edge(
     kind: &str,
     rc: &mut RebuildContext<'_>,
@@ -75,6 +93,8 @@ pub(in crate::application::app) fn apply_reset_edge(
     });
 }
 
+/// Set the label text on every edge in the current selection.
+/// Empty `text` clears the label. Visual change → full rebuild.
 pub(in crate::application::app) fn apply_set_edge_label_text(
     text: &str,
     rc: &mut RebuildContext<'_>,
@@ -84,6 +104,9 @@ pub(in crate::application::app) fn apply_set_edge_label_text(
     });
 }
 
+/// Set the label position along each edge in the current
+/// selection (`start` / `middle` / `end` / numeric `t`).
+/// Geometry change → full rebuild.
 pub(in crate::application::app) fn apply_set_edge_label_position(
     position: &str,
     rc: &mut RebuildContext<'_>,
