@@ -10,7 +10,7 @@ use winit::keyboard::Key;
 use baumhard::util::grapheme_chad;
 
 use crate::application::document::MindMapDocument;
-use crate::application::keybinds::{Action, InputContext, ResolvedKeybinds};
+use crate::application::keybinds::{InputContext, ResolvedKeybinds};
 use crate::application::renderer::Renderer;
 
 use super::text_edit::insert_caret;
@@ -158,14 +158,10 @@ pub(in crate::application::app) fn handle_label_edit_key(
     let action = name.and_then(|n| {
         keybinds.action_for_context(InputContext::LabelEdit, n, ctrl, shift, alt)
     });
-    if action == Some(Action::LabelEditCancel) {
-        close_label_edit(false, doc, label_edit_state, mindmap_tree, app_scene, renderer, scene_cache);
-        return;
-    }
-    if action == Some(Action::LabelEditCommit) {
-        close_label_edit(true, doc, label_edit_state, mindmap_tree, app_scene, renderer, scene_cache);
-        return;
-    }
+    // `LabelEditCommit` / `LabelEditCancel` are funneled via the
+    // keyboard handler's pre-filter (`event_keyboard.rs:85-103`).
+    // This handler reaches only the literal-Key character + cursor
+    // primitive paths.
 
     // Action-driven path: cursor / delete primitives route through
     // `dispatch::apply_label_edit_action`. Falls through to the
@@ -422,14 +418,12 @@ pub(in crate::application::app) fn handle_portal_text_edit_key(
         return;
     }
 
-    if action == Some(Action::LabelEditCancel) {
-        close_portal_text_edit(false, doc, state, mindmap_tree, app_scene, renderer, scene_cache);
-        return;
-    }
-    if action == Some(Action::LabelEditCommit) {
-        close_portal_text_edit(true, doc, state, mindmap_tree, app_scene, renderer, scene_cache);
-        return;
-    }
+    // `LabelEditCommit` / `LabelEditCancel` are funneled via the
+    // keyboard handler's pre-filter (`event_keyboard.rs:109-127`).
+    // The portal-text editor reuses `LabelEdit*` Actions (it shares
+    // `InputContext::LabelEdit`); the dispatch arm picks the open
+    // state. The edge-validity guard above stays inline (pre-funnel
+    // state-machine bookkeeping per CODE_CONVENTIONS §3 carve-out).
 
     // Route through dispatch's buffer-generic helper when an Action
     // matched (cursor/delete primitives), else fall back to the
