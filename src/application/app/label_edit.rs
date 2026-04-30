@@ -149,10 +149,10 @@ pub(in crate::application::app) fn handle_label_edit_key(
     keybinds: &ResolvedKeybinds,
     label_edit_state: &mut LabelEditState,
     doc: &mut MindMapDocument,
-    mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
+    _mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
     app_scene: &mut crate::application::scene_host::AppScene,
     renderer: &mut Renderer,
-    scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
+    _scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
 ) {
     let name = key_name.as_deref();
     let action = name.and_then(|n| {

@@ -8,6 +8,8 @@
 
 #![cfg(not(target_arch = "wasm32"))]
 
+use std::collections::HashMap;
+
 use super::*;
 
 pub(super) fn drain_selecting_rect(

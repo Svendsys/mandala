@@ -547,7 +547,7 @@ app.event_loop.run(move |event, _window_target| {
             event: WindowEvent::KeyboardInput {
                 event: KeyEvent {
                     state: ElementState::Pressed,
-                    logical_key: ref logical_key,
+                    ref logical_key,
                     ..
                 },
                 ..
