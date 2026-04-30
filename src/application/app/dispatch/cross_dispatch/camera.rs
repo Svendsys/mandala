@@ -17,11 +17,10 @@
 //! `rebuild_after_selection_change`.
 
 use crate::application::common::RenderDecree;
-use crate::application::document::{MindMapDocument, OptionEdit};
+use crate::application::document::{MindMapDocument, OptionEdit, SelectionState};
 use crate::application::renderer::Renderer;
 use baumhard::mindmap::tree_builder::MindMapTree;
 
-use super::selection::jump_to_root_in;
 use super::{apply_with_rebuild, RebuildContext};
 
 /// Direction of a single keyboard / wheel zoom step. Typed so
@@ -133,6 +132,25 @@ pub(in crate::application::app) fn apply_center_on_selection(
     }
 }
 
+/// Set the document's selection to its first root node (id-sorted)
+/// and return the canvas-space centre the camera should jump to.
+/// Returns `None` when the document is empty (and selection is
+/// untouched).
+///
+/// Lives in camera.rs alongside [`apply_jump_to_root`] (its sole
+/// consumer) — the function pair is the cross-bucket arm
+/// described in this file's `//!` header.
+#[must_use = "Some(centre) is the camera target — drop with `let _ = …` to skip the camera move"]
+pub(in crate::application::app) fn jump_to_root_in(
+    doc: &mut MindMapDocument,
+) -> Option<glam::Vec2> {
+    let (id, centre) = doc.mindmap.root_nodes().first().map(|n| {
+        (n.id.clone(), n.center_vec2())
+    })?;
+    doc.selection = SelectionState::Single(id);
+    Some(centre)
+}
+
 /// Select the document's first root node and centre the camera on
 /// it. No-op when the document is empty.
 pub(in crate::application::app) fn apply_jump_to_root(rc: &mut RebuildContext<'_>) {
@@ -176,4 +194,44 @@ pub(in crate::application::app) fn apply_clear_zoom(rc: &mut RebuildContext<'_>)
             OptionEdit::Clear,
         )
     });
+}
+
+#[cfg(test)]
+mod tests {
+    //! Pure-doc-mutation tests for the camera-bucket helpers
+    //! that DO mutate document state — `jump_to_root_in`
+    //! today; future zoom-window helpers' inner functions
+    //! would land here too. The renderer-touching `apply_*`
+    //! wrappers are out of scope per `TEST_CONVENTIONS.md §T8`.
+
+    use super::*;
+    use crate::application::document::tests_common::load_test_doc;
+
+    fn first_root_id(doc: &MindMapDocument) -> String {
+        doc.mindmap
+            .root_nodes()
+            .first()
+            .expect("test fixture has at least one root")
+            .id
+            .clone()
+    }
+
+    #[test]
+    fn jump_to_root_in_returns_first_root_centre_and_selects_it() {
+        let mut doc = load_test_doc();
+        let expected_root = first_root_id(&doc);
+        let centre = jump_to_root_in(&mut doc).expect("non-empty fixture");
+        assert!(centre.x.is_finite() && centre.y.is_finite());
+        assert!(matches!(
+            doc.selection,
+            SelectionState::Single(ref s) if s == &expected_root
+        ));
+    }
+
+    #[test]
+    fn jump_to_root_in_returns_none_for_empty_doc() {
+        let mut doc = MindMapDocument::new_blank(None);
+        assert!(jump_to_root_in(&mut doc).is_none());
+        assert!(matches!(doc.selection, SelectionState::None));
+    }
 }

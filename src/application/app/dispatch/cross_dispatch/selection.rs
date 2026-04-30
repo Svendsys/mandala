@@ -234,21 +234,6 @@ fn sibling_id(
     }
 }
 
-/// Set the document's selection to its first root node (id-sorted)
-/// and return the canvas-space centre the camera should jump to.
-/// Returns `None` when the document is empty (and selection is
-/// untouched).
-#[must_use = "Some(centre) is the camera target — drop with `let _ = …` to skip the camera move"]
-pub(in crate::application::app) fn jump_to_root_in(
-    doc: &mut MindMapDocument,
-) -> Option<glam::Vec2> {
-    let (id, centre) = doc.mindmap.root_nodes().first().map(|n| {
-        (n.id.clone(), n.center_vec2())
-    })?;
-    doc.selection = SelectionState::Single(id);
-    Some(centre)
-}
-
 #[cfg(test)]
 mod tests {
     //! Pure-doc-mutation tests for the selection helpers. The
@@ -498,22 +483,4 @@ mod tests {
         assert!(select_sibling_in(&mut doc, false));
     }
 
-    #[test]
-    fn jump_to_root_in_returns_first_root_centre_and_selects_it() {
-        let mut doc = load_test_doc();
-        let expected_root = first_root_id(&doc);
-        let centre = jump_to_root_in(&mut doc).expect("non-empty fixture");
-        assert!(centre.x.is_finite() && centre.y.is_finite());
-        assert!(matches!(
-            doc.selection,
-            SelectionState::Single(ref s) if s == &expected_root
-        ));
-    }
-
-    #[test]
-    fn jump_to_root_in_returns_none_for_empty_doc() {
-        let mut doc = MindMapDocument::new_blank(None);
-        assert!(jump_to_root_in(&mut doc).is_none());
-        assert!(matches!(doc.selection, SelectionState::None));
-    }
 }
