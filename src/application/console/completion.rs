@@ -186,6 +186,23 @@ pub fn prefix_filter<S: AsRef<str>>(options: &[S], partial: &str) -> Vec<Complet
         .collect()
 }
 
+/// Helper used by per-command `complete` fns at `Token { .. }`
+/// completion sites: filter the verb's kv-key list by prefix and
+/// emit each as a `key=` completion (the trailing `=` cues the
+/// user that a value follows). Mirrors `prefix_filter` but
+/// formats the text/display as `key=` rather than the bare key.
+pub fn kv_key_completions(keys: &[&str], partial: &str) -> Vec<Completion> {
+    keys.iter()
+        .filter(|k| k.starts_with(partial))
+        .map(|k| Completion {
+            text: format!("{}=", k),
+            display: format!("{}=", k),
+            hint: None,
+            font_family: None,
+        })
+        .collect()
+}
+
 /// A token is kv-form iff it contains `=` and the `=` is not the
 /// first character. Mirrors `parser::is_kv_token`.
 fn is_kv_token(t: &str) -> bool {
