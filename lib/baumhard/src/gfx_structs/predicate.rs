@@ -185,7 +185,8 @@ impl Predicate {
                             // predicate to non-match rather than panic (§9).
                             _ => {
                                 log::warn!(
-                                    "predicate: unsupported Comparator {:?} on GlyphArea::Text — treating as non-match",
+                                    "predicate: unsupported Comparator {:?} on GlyphArea::Text \
+                                     — treating as non-match",
                                     comparator,
                                 );
                                 false
@@ -297,7 +298,8 @@ impl Predicate {
                                 // malformed input.
                                 ColorFontRegionField::This => {
                                     log::warn!(
-                                        "predicate: Equals on ColorFontRegionField::This has no meaning — treating as non-match",
+                                        "predicate: Equals on ColorFontRegionField::This has no \
+                                         meaning — treating as non-match",
                                     );
                                     false
                                 }
@@ -308,7 +310,8 @@ impl Predicate {
                                 // this are opaque.
                                 _ => {
                                     log::warn!(
-                                        "predicate: GreaterThan on non-Range ColorFontRegionField {:?} — treating as non-match",
+                                        "predicate: GreaterThan on non-Range \
+                                         ColorFontRegionField {:?} — treating as non-match",
                                         color_font_region_field,
                                     );
                                     false
@@ -318,7 +321,8 @@ impl Predicate {
                                 ColorFontRegionField::Range(range) => (target.range < *range) != *negation,
                                 _ => {
                                     log::warn!(
-                                        "predicate: LessThan on non-Range ColorFontRegionField {:?} — treating as non-match",
+                                        "predicate: LessThan on non-Range \
+                                         ColorFontRegionField {:?} — treating as non-match",
                                         color_font_region_field,
                                     );
                                     false
@@ -361,7 +365,8 @@ impl Predicate {
                                 // `GlyphMatrix` / `GlyphLine` for equality.
                                 GlyphLines(_) => {
                                     log::warn!(
-                                        "predicate: Equals on GlyphLines (count-only field) — use GlyphMatrix or GlyphLine for equality",
+                                        "predicate: Equals on GlyphLines (count-only field) \
+                                         — use GlyphMatrix or GlyphLine for equality",
                                     );
                                     false
                                 }
@@ -379,7 +384,9 @@ impl Predicate {
                                     // line-count ordering.
                                     GlyphMatrix(_) => {
                                         log::warn!(
-                                            "predicate: GreaterThan on GlyphMatrix (structured payload) — use GlyphLines for count ordering",
+                                            "predicate: GreaterThan on GlyphMatrix \
+                                             (structured payload) — use GlyphLines for count \
+                                             ordering",
                                         );
                                         false
                                     }
@@ -406,8 +413,10 @@ impl Predicate {
                             LessThan(negation) => match model_field {
                                 GlyphMatrix(_) => {
                                     log::warn!(
-                                            "predicate: LessThan on GlyphMatrix (structured payload) — use GlyphLines for count ordering",
-                                        );
+                                        "predicate: LessThan on GlyphMatrix \
+                                         (structured payload) — use GlyphLines for count \
+                                         ordering",
+                                    );
                                     false
                                 }
                                 GlyphLine(line_num, line) => {
