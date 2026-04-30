@@ -368,314 +368,80 @@ fn test_wasm_compatibility_mixed_branch_actions_are_native_only() {
     }
 }
 
-/// Exhaustiveness pin: every variant returns one of the two
-/// `WasmCompatibility` values. The list is hand-maintained, so
-/// adding a new `Action` variant requires extending it (a PR-
-/// review forcing function — the compiler doesn't enforce list
-/// completeness, but the test name + comment make the
-/// requirement loud). Catches a future broad-default
-/// `_ => Compatible` regression that would lose the match's
-/// arm-per-variant structural property.
+/// Exhaustiveness pin: every variant kind classifies cleanly under
+/// the three classifier methods. `ActionKind::iter()` walks every
+/// discriminant — adding a new `Action` variant extends the list
+/// automatically (no hand-maintenance), and the classifier matches
+/// on `ActionKind` are exhaustive (compiler-enforced) so a missing
+/// arm is a build error. This test pins the *value* (every variant
+/// kind returns a real `WasmCompatibility` and a `bool`, never
+/// panics), the type system pins structural completeness.
 #[test]
-fn test_wasm_compatibility_classifies_every_variant_explicitly() {
+fn test_classifiers_cover_every_variant_kind() {
     use crate::application::keybinds::WasmCompatibility;
-    let all_variants: &[Action] = &[
-        // Document-level
-        Action::Undo,
-        Action::EnterReparentMode,
-        Action::EnterConnectMode,
-        Action::ReparentToTarget(None),
-        Action::ConnectToTarget(None),
-        Action::DeleteSelection,
-        Action::CancelMode,
-        Action::CreateOrphanNode,
-        Action::OrphanSelection,
-        Action::EditSelection,
-        Action::EditSelectionClean,
-        Action::OpenConsole,
-        Action::SaveDocument,
-        Action::Copy,
-        Action::Paste,
-        Action::Cut,
-        // Console
-        Action::ConsoleClose,
-        Action::ConsoleSubmit,
-        Action::ConsoleTabComplete,
-        Action::ConsoleHistoryUp,
-        Action::ConsoleHistoryDown,
-        Action::ConsoleCursorLeft,
-        Action::ConsoleCursorRight,
-        Action::ConsoleCursorHome,
-        Action::ConsoleCursorEnd,
-        Action::ConsoleDeleteBack,
-        Action::ConsoleDeleteForward,
-        Action::ConsoleInsertSpace,
-        Action::ConsoleClearLine,
-        Action::ConsoleJumpStart,
-        Action::ConsoleJumpEnd,
-        Action::ConsoleKillToStart,
-        Action::ConsoleKillWord,
-        Action::ConsoleScrollUp,
-        Action::ConsoleScrollDown,
-        Action::ConsoleScrollPageUp,
-        Action::ConsoleScrollPageDown,
-        Action::ConsoleScrollEnd,
-        Action::ConsoleScrollHome,
-        // Picker
-        Action::PickerCancel,
-        Action::PickerCommit,
-        Action::PickerNudgeHueDown,
-        Action::PickerNudgeHueUp,
-        Action::PickerNudgeSatDown,
-        Action::PickerNudgeSatUp,
-        Action::PickerNudgeValDown,
-        Action::PickerNudgeValUp,
-        // Label / text-edit cancel/commit
-        Action::LabelEditCancel,
-        Action::LabelEditCommit,
-        Action::TextEditCancel,
-        // Mouse gestures
-        Action::DoubleClickActivate,
-        Action::CreateOrphanNodeAndEdit,
-        Action::PanCanvas,
-        // Navigation / camera
-        Action::ZoomIn,
-        Action::ZoomOut,
-        Action::ZoomReset,
-        Action::ZoomFit,
-        Action::PanCameraNorth,
-        Action::PanCameraSouth,
-        Action::PanCameraEast,
-        Action::PanCameraWest,
-        Action::CenterOnSelection,
-        Action::JumpToRoot,
-        // Selection
-        Action::SelectAll,
-        Action::DeselectAll,
-        Action::InvertSelection,
-        Action::SelectParent,
-        Action::SelectChild,
-        Action::SelectNextSibling,
-        Action::SelectPrevSibling,
-        // TextEdit cursor primitives
-        Action::TextEditCursorLeft,
-        Action::TextEditCursorRight,
-        Action::TextEditCursorUp,
-        Action::TextEditCursorDown,
-        Action::TextEditCursorHome,
-        Action::TextEditCursorEnd,
-        Action::TextEditWordLeft,
-        Action::TextEditWordRight,
-        Action::TextEditDeleteBack,
-        Action::TextEditDeleteForward,
-        Action::TextEditDeleteWordBack,
-        Action::TextEditDeleteWordForward,
-        Action::TextEditCommit,
-        // LabelEdit cursor primitives
-        Action::LabelEditCursorLeft,
-        Action::LabelEditCursorRight,
-        Action::LabelEditCursorHome,
-        Action::LabelEditCursorEnd,
-        Action::LabelEditDeleteBack,
-        Action::LabelEditDeleteForward,
-        // Console verbs
-        Action::OpenColorPicker,
-        Action::CloseColorPicker,
-        Action::LabelEditOnSelection,
-        Action::ToggleFps,
-        Action::ToggleFpsDebug,
-        Action::NewDocument,
-        // Parametric console verbs
-        Action::SetEdgeAnchor {
-            from: "top".into(),
-            to: "auto".into(),
-        },
-        Action::SetEdgeBodyGlyph("dash".into()),
-        Action::SetBorderField {
-            field: "preset".into(),
-            value: "rounded".into(),
-        },
-        Action::SetEdgeCap {
-            from: "arrow".into(),
-            to: "none".into(),
-        },
-        Action::SetColor {
-            axis: ColorAxis::Bg,
-            value: "#fafafa".into(),
-        },
-        Action::SetColor {
-            axis: ColorAxis::Text,
-            value: "accent".into(),
-        },
-        Action::SetColor {
-            axis: ColorAxis::Border,
-            value: "#000000".into(),
-        },
-        Action::SetEdgeType("cross_link".into()),
-        Action::SetEdgeDisplayMode("portal".into()),
-        Action::ResetEdge("style".into()),
-        Action::SetFontFamily("Norse".into()),
-        Action::SetFont {
-            slot: FontSlot::Size,
-            value: "14".into(),
-        },
-        Action::SetFont {
-            slot: FontSlot::Min,
-            value: "10".into(),
-        },
-        Action::SetFont {
-            slot: FontSlot::Max,
-            value: "32".into(),
-        },
-        Action::SetEdgeLabelText("hi".into()),
-        Action::SetEdgeLabelPosition("middle".into()),
-        Action::SetSpacing("normal".into()),
-        Action::SetZoom {
-            bound: ZoomBound::Min,
-            value: "0.5".into(),
-        },
-        Action::SetZoom {
-            bound: ZoomBound::Max,
-            value: "2.0".into(),
-        },
-        Action::ClearZoom,
-        Action::OpenDocument("/tmp/test.mindmap.json".into()),
-        Action::SaveDocumentAs("/tmp/test.mindmap.json".into()),
-        Action::NewDocumentAt("/tmp/test.mindmap.json".into()),
-    ];
-    for a in all_variants {
-        let c = a.wasm_compatibility();
+    use strum::IntoEnumIterator;
+    for kind in ActionKind::iter() {
+        let c = kind.wasm_compatibility();
         assert!(
             matches!(c, WasmCompatibility::Compatible | WasmCompatibility::NativeOnly),
             "{:?} returned an unexpected classification {:?}",
-            a, c
+            kind, c
         );
-        // Co-pin `is_destructive` against the same variant set so
-        // adding a new `Action` forces the privilege classification
-        // to land alongside the WASM classification. Both methods
-        // are exhaustive over `Action`, so the compiler enforces
-        // the missing-arm shape; this loop pins the *value* (every
-        // variant should classify either way without panicking)
-        // and keeps the destructive set discoverable as a list.
-        let _ = a.is_destructive();
+        let _ = kind.is_destructive();
+        let _ = kind.context();
     }
 }
 
-/// Lock the `is_destructive` set for the privilege gate. Every
-/// `Action` variant in the list above resolves to `true` (gated
-/// from non-User macro tiers) or `false` (allowed). Adding a new
-/// variant flips the test to "missing classification" only if
-/// the variant is also missing from `all_variants` — but the
-/// exhaustive match in `Action::is_destructive` is the
-/// load-bearing structural check. This test pins the *contents*
-/// of the destructive set so a change to which variants are
-/// considered destructive shows up as a diff.
+/// Lock the destructive set for the privilege gate. The
+/// `ActionKind::is_destructive` match is exhaustive (compiler-
+/// enforced); this test pins the *contents* so a change to which
+/// variant kinds are considered destructive shows up as a diff in
+/// review. Reparent/Connect `*ToTarget` are destructive (tree
+/// topology mutation + undo); the `Enter*Mode` siblings stay
+/// non-destructive (just app-mode toggles).
 #[test]
 fn test_is_destructive_destructive_set_is_pinned() {
-    let destructive: &[Action] = &[
-        Action::SaveDocument,
-        Action::NewDocument,
-        Action::DeleteSelection,
-        Action::OrphanSelection,
-        Action::CreateOrphanNode,
-        Action::CreateOrphanNodeAndEdit,
-        Action::Copy,
-        Action::Cut,
-        Action::Paste,
-        Action::DoubleClickActivate,
-        Action::EditSelection,
-        Action::EditSelectionClean,
-        Action::LabelEditOnSelection,
-        // Reparent/Connect target confirmation — tree topology
-        // mutation + undo entry. The `Enter*Mode` siblings stay
-        // non-destructive (just app-mode toggles).
-        Action::ReparentToTarget(None),
-        Action::ConnectToTarget(None),
-        // Parametric filesystem variants — destructive +
-        // privilege-gated (denylisted from non-User macro tiers).
-        Action::OpenDocument("/tmp/test.mindmap.json".into()),
-        Action::SaveDocumentAs("/tmp/test.mindmap.json".into()),
-        Action::NewDocumentAt("/tmp/test.mindmap.json".into()),
+    let destructive: &[ActionKind] = &[
+        ActionKind::SaveDocument,
+        ActionKind::NewDocument,
+        ActionKind::DeleteSelection,
+        ActionKind::OrphanSelection,
+        ActionKind::CreateOrphanNode,
+        ActionKind::CreateOrphanNodeAndEdit,
+        ActionKind::Copy,
+        ActionKind::Cut,
+        ActionKind::Paste,
+        ActionKind::DoubleClickActivate,
+        ActionKind::EditSelection,
+        ActionKind::EditSelectionClean,
+        ActionKind::LabelEditOnSelection,
+        ActionKind::ReparentToTarget,
+        ActionKind::ConnectToTarget,
+        ActionKind::OpenDocument,
+        ActionKind::SaveDocumentAs,
+        ActionKind::NewDocumentAt,
     ];
-    for a in destructive {
+    for k in destructive {
         assert!(
-            a.is_destructive(),
+            k.is_destructive(),
             "{:?} expected to be destructive (privilege-gated for non-User tiers)",
-            a
+            k
         );
     }
-
-    // Spot-check a few non-destructive to lock the inverse — the
-    // exhaustive match in `is_destructive` itself is the
-    // structural completeness check.
-    for a in [
-        Action::Undo,
-        Action::ZoomIn,
-        Action::SelectAll,
-        Action::TextEditCursorLeft,
-        Action::OpenColorPicker,
-        // Parametric mutators are recoverable via undo, so they
-        // ride the non-destructive lane (same trust posture as
-        // the existing configurable-* Actions).
-        Action::SetEdgeAnchor {
-            from: "top".into(),
-            to: "auto".into(),
-        },
-        Action::SetEdgeBodyGlyph("dash".into()),
-        Action::SetBorderField {
-            field: "preset".into(),
-            value: "rounded".into(),
-        },
-        Action::SetEdgeCap {
-            from: "arrow".into(),
-            to: "none".into(),
-        },
-        Action::SetColor {
-            axis: ColorAxis::Bg,
-            value: "#fafafa".into(),
-        },
-        Action::SetColor {
-            axis: ColorAxis::Text,
-            value: "accent".into(),
-        },
-        Action::SetColor {
-            axis: ColorAxis::Border,
-            value: "#000000".into(),
-        },
-        Action::SetEdgeType("cross_link".into()),
-        Action::SetEdgeDisplayMode("portal".into()),
-        Action::ResetEdge("style".into()),
-        Action::SetFontFamily("Norse".into()),
-        Action::SetFont {
-            slot: FontSlot::Size,
-            value: "14".into(),
-        },
-        Action::SetFont {
-            slot: FontSlot::Min,
-            value: "10".into(),
-        },
-        Action::SetFont {
-            slot: FontSlot::Max,
-            value: "32".into(),
-        },
-        Action::SetEdgeLabelText("hi".into()),
-        Action::SetEdgeLabelPosition("middle".into()),
-        Action::SetSpacing("normal".into()),
-        Action::SetZoom {
-            bound: ZoomBound::Min,
-            value: "0.5".into(),
-        },
-        Action::SetZoom {
-            bound: ZoomBound::Max,
-            value: "2.0".into(),
-        },
-        Action::ClearZoom,
-    ] {
-        assert!(
-            !a.is_destructive(),
-            "{:?} expected to be non-destructive",
-            a
-        );
+    // Inverse pin: the rest are non-destructive. Iterating
+    // `ActionKind::iter()` and filtering against the destructive
+    // set above is the structural completeness check.
+    use std::collections::HashSet;
+    use strum::IntoEnumIterator;
+    let destructive_set: HashSet<ActionKind> = destructive.iter().copied().collect();
+    for k in ActionKind::iter() {
+        if !destructive_set.contains(&k) {
+            assert!(
+                !k.is_destructive(),
+                "{:?} unexpectedly classified destructive",
+                k
+            );
+        }
     }
 }
 

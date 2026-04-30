@@ -1639,6 +1639,8 @@ dependencies = [
  "serde-lexpr",
  "serde_json",
  "smol_str 0.3.6",
+ "strum 0.27.2",
+ "strum_macros 0.27.2",
  "syn 2.0.117",
  "tinyvec",
  "ttf-parser",
