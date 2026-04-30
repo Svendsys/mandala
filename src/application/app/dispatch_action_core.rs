@@ -33,6 +33,55 @@ use crate::application::keybinds::{Action, WasmCompatibility};
 use super::cross_dispatch::DispatchOutcome;
 use super::input_context_core::InputContextCore;
 
+/// Run `f` against a `RebuildContext` built from `core`, IF the
+/// document is loaded. Skips silently otherwise. Captures the
+/// `if let Some(doc) = core.document.as_deref_mut() { let mut rc =
+/// rebuild_ctx!(core, doc); f(&mut rc); }` pattern that 20+
+/// document-mutating arms in [`dispatch_compatible`] previously
+/// repeated inline.
+///
+/// CODE_CONVENTIONS §5: "If a function is needed in two or more
+/// places, the answer is never to copy it." This helper closes
+/// that gap inside the dispatcher.
+fn with_doc_rebuild<F>(core: &mut InputContextCore<'_>, f: F)
+where
+    F: FnOnce(&mut super::cross_dispatch::RebuildContext<'_>),
+{
+    if let Some(doc) = core.document.as_deref_mut() {
+        let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
+        f(&mut rc);
+    }
+}
+
+/// Lift `Unhandled → Handled` for the two mixed-branch arms whose
+/// cross-platform slice IS the totality of what WASM can do
+/// (`CancelMode`, `EditSelection*`). On native, `Unhandled` flows
+/// to the dispatcher's existing match for the AppMode-clear or
+/// EdgeLabel/Portal editor open. WASM has no such fall-through —
+/// `WasmMacroDispatchTarget::dispatch_action` calls
+/// [`dispatch_compatible`] directly, so the macro loop's
+/// `any_ran` flag would stop bumping for these arms without this
+/// lift.
+///
+/// Public-in-app so the WASM macro target's impl can call it,
+/// and so unit tests under `#[cfg(test)]` can pin the contract
+/// without spinning up a `WasmInputState`.
+pub(in crate::application::app) fn lift_mixed_branch_for_wasm_macro(
+    action: &Action,
+    outcome: DispatchOutcome,
+) -> DispatchOutcome {
+    if matches!(outcome, DispatchOutcome::Unhandled)
+        && matches!(
+            action,
+            Action::CancelMode | Action::EditSelection | Action::EditSelectionClean,
+        )
+    {
+        DispatchOutcome::Handled
+    } else {
+        outcome
+    }
+}
+
 /// Cross-platform action dispatcher. Returns `Handled` when the
 /// arm body ran; `Unhandled` for variants this dispatcher doesn't
 /// own (NativeOnly Actions without a cross-platform slice, or
@@ -102,33 +151,21 @@ pub(in crate::application::app) fn dispatch_compatible(
 
     match action {
         // ── Document-lifecycle ─────────────────────────────────
-        Action::Undo => {
-            if let Some(doc) = core.document.as_deref_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
-                super::cross_dispatch::apply_undo(&mut rc);
-            }
-        }
+        Action::Undo => with_doc_rebuild(core, |rc| super::cross_dispatch::apply_undo(rc)),
         Action::DeleteSelection => {
-            if let Some(doc) = core.document.as_deref_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
-                super::cross_dispatch::apply_delete_selection(&mut rc);
-            }
+            with_doc_rebuild(core, |rc| super::cross_dispatch::apply_delete_selection(rc))
         }
         Action::OrphanSelection => {
-            if let Some(doc) = core.document.as_deref_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
-                super::cross_dispatch::apply_orphan_selection(&mut rc);
-            }
+            with_doc_rebuild(core, |rc| super::cross_dispatch::apply_orphan_selection(rc))
         }
         Action::CreateOrphanNode => {
             let canvas_pos = core.renderer.screen_to_canvas(
                 core.cursor_pos.0 as f32,
                 core.cursor_pos.1 as f32,
             );
-            if let Some(doc) = core.document.as_deref_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
-                super::cross_dispatch::apply_create_orphan_node(canvas_pos, &mut rc);
-            }
+            with_doc_rebuild(core, |rc| {
+                super::cross_dispatch::apply_create_orphan_node(canvas_pos, rc)
+            });
         }
         // ── Camera / zoom ──────────────────────────────────────
         Action::ZoomIn => super::cross_dispatch::apply_zoom_step(
@@ -160,15 +197,14 @@ pub(in crate::application::app) fn dispatch_compatible(
             core.renderer,
         ),
         Action::CenterOnSelection => {
+            // Read-only on document; doesn't fit `with_doc_rebuild`'s
+            // `&mut RebuildContext` shape.
             if let Some(doc) = core.document.as_deref() {
                 super::cross_dispatch::apply_center_on_selection(doc, core.renderer);
             }
         }
         Action::JumpToRoot => {
-            if let Some(doc) = core.document.as_deref_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
-                super::cross_dispatch::apply_jump_to_root(&mut rc);
-            }
+            with_doc_rebuild(core, |rc| super::cross_dispatch::apply_jump_to_root(rc))
         }
         // ── FPS overlay ────────────────────────────────────────
         Action::ToggleFps => super::cross_dispatch::apply_toggle_fps(core.renderer),
@@ -180,64 +216,35 @@ pub(in crate::application::app) fn dispatch_compatible(
         | Action::SelectParent
         | Action::SelectChild
         | Action::SelectNextSibling
-        | Action::SelectPrevSibling => {
-            if let Some(doc) = core.document.as_deref_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
-                match action {
-                    Action::SelectAll => super::cross_dispatch::apply_select_all(&mut rc),
-                    Action::DeselectAll => super::cross_dispatch::apply_deselect_all(&mut rc),
-                    Action::InvertSelection => {
-                        super::cross_dispatch::apply_invert_selection(&mut rc)
-                    }
-                    Action::SelectParent => {
-                        super::cross_dispatch::apply_select_parent(&mut rc)
-                    }
-                    Action::SelectChild => {
-                        super::cross_dispatch::apply_select_child(&mut rc)
-                    }
-                    Action::SelectNextSibling => {
-                        super::cross_dispatch::apply_select_sibling(true, &mut rc)
-                    }
-                    Action::SelectPrevSibling => {
-                        super::cross_dispatch::apply_select_sibling(false, &mut rc)
-                    }
-                    // Safe fallback — outer match should be exhaustive but
-                    // a future Action variant added to the outer cluster
-                    // without a corresponding inner arm would panic via
-                    // unreachable! Replace with log+no-op per
-                    // CODE_CONVENTIONS §9 (interactive paths fail-safe).
-                    _ => log::error!(
-                        "dispatch_compatible: selection fan-out missed inner-match: {:?}",
-                        action,
-                    ),
-                }
-            }
-        }
+        | Action::SelectPrevSibling => with_doc_rebuild(core, |rc| match action {
+            Action::SelectAll => super::cross_dispatch::apply_select_all(rc),
+            Action::DeselectAll => super::cross_dispatch::apply_deselect_all(rc),
+            Action::InvertSelection => super::cross_dispatch::apply_invert_selection(rc),
+            Action::SelectParent => super::cross_dispatch::apply_select_parent(rc),
+            Action::SelectChild => super::cross_dispatch::apply_select_child(rc),
+            Action::SelectNextSibling => super::cross_dispatch::apply_select_sibling(true, rc),
+            Action::SelectPrevSibling => super::cross_dispatch::apply_select_sibling(false, rc),
+            // Safe fallback per CODE_CONVENTIONS §9 (interactive
+            // paths fail-safe). Reachable only if a future Action
+            // variant joins the outer cluster without an inner arm.
+            _ => log::error!(
+                "dispatch_compatible: selection fan-out missed inner-match: {:?}",
+                action,
+            ),
+        }),
         // ── Parametric mutators ────────────────────────────────
-        Action::SetEdgeAnchor { from, to } => {
-            if let Some(doc) = core.document.as_deref_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
-                super::cross_dispatch::apply_set_edge_anchor(from, to, &mut rc);
-            }
-        }
-        Action::SetEdgeBodyGlyph(preset) => {
-            if let Some(doc) = core.document.as_deref_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
-                super::cross_dispatch::apply_set_edge_body_glyph(preset, &mut rc);
-            }
-        }
-        Action::SetBorderField { field, value } => {
-            if let Some(doc) = core.document.as_deref_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
-                super::cross_dispatch::apply_set_border_field(field, value, &mut rc);
-            }
-        }
-        Action::SetEdgeCap { from, to } => {
-            if let Some(doc) = core.document.as_deref_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
-                super::cross_dispatch::apply_set_edge_cap(from, to, &mut rc);
-            }
-        }
+        Action::SetEdgeAnchor { from, to } => with_doc_rebuild(core, |rc| {
+            super::cross_dispatch::apply_set_edge_anchor(from, to, rc)
+        }),
+        Action::SetEdgeBodyGlyph(preset) => with_doc_rebuild(core, |rc| {
+            super::cross_dispatch::apply_set_edge_body_glyph(preset, rc)
+        }),
+        Action::SetBorderField { field, value } => with_doc_rebuild(core, |rc| {
+            super::cross_dispatch::apply_set_border_field(field, value, rc)
+        }),
+        Action::SetEdgeCap { from, to } => with_doc_rebuild(core, |rc| {
+            super::cross_dispatch::apply_set_edge_cap(from, to, rc)
+        }),
         Action::SetColorBg(value)
         | Action::SetColorText(value)
         | Action::SetColorBorder(value) => {
@@ -253,35 +260,22 @@ pub(in crate::application::app) fn dispatch_compatible(
                     return DispatchOutcome::Handled;
                 }
             };
-            if let Some(doc) = core.document.as_deref_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
-                super::cross_dispatch::apply_set_color_axis(axis, value, &mut rc);
-            }
+            with_doc_rebuild(core, |rc| {
+                super::cross_dispatch::apply_set_color_axis(axis, value, rc)
+            });
         }
-        Action::SetEdgeType(value) => {
-            if let Some(doc) = core.document.as_deref_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
-                super::cross_dispatch::apply_set_edge_type(value, &mut rc);
-            }
-        }
-        Action::SetEdgeDisplayMode(value) => {
-            if let Some(doc) = core.document.as_deref_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
-                super::cross_dispatch::apply_set_edge_display_mode(value, &mut rc);
-            }
-        }
+        Action::SetEdgeType(value) => with_doc_rebuild(core, |rc| {
+            super::cross_dispatch::apply_set_edge_type(value, rc)
+        }),
+        Action::SetEdgeDisplayMode(value) => with_doc_rebuild(core, |rc| {
+            super::cross_dispatch::apply_set_edge_display_mode(value, rc)
+        }),
         Action::ResetEdge(kind) => {
-            if let Some(doc) = core.document.as_deref_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
-                super::cross_dispatch::apply_reset_edge(kind, &mut rc);
-            }
+            with_doc_rebuild(core, |rc| super::cross_dispatch::apply_reset_edge(kind, rc))
         }
-        Action::SetFontFamily(family) => {
-            if let Some(doc) = core.document.as_deref_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
-                super::cross_dispatch::apply_set_font_family(family, &mut rc);
-            }
-        }
+        Action::SetFontFamily(family) => with_doc_rebuild(core, |rc| {
+            super::cross_dispatch::apply_set_font_family(family, rc)
+        }),
         Action::SetFontSize(pt) | Action::SetFontMin(pt) | Action::SetFontMax(pt) => {
             let slot = match action {
                 Action::SetFontSize(_) => super::cross_dispatch::FontSlot::Size,
@@ -302,28 +296,18 @@ pub(in crate::application::app) fn dispatch_compatible(
                     return DispatchOutcome::Handled;
                 }
             };
-            if let Some(doc) = core.document.as_deref_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
-                super::cross_dispatch::apply_set_font_kv(slot, parsed, &mut rc);
-            }
+            with_doc_rebuild(core, |rc| {
+                super::cross_dispatch::apply_set_font_kv(slot, parsed, rc)
+            });
         }
-        Action::SetEdgeLabelText(text) => {
-            if let Some(doc) = core.document.as_deref_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
-                super::cross_dispatch::apply_set_edge_label_text(text, &mut rc);
-            }
-        }
-        Action::SetEdgeLabelPosition(pos) => {
-            if let Some(doc) = core.document.as_deref_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
-                super::cross_dispatch::apply_set_edge_label_position(pos, &mut rc);
-            }
-        }
+        Action::SetEdgeLabelText(text) => with_doc_rebuild(core, |rc| {
+            super::cross_dispatch::apply_set_edge_label_text(text, rc)
+        }),
+        Action::SetEdgeLabelPosition(pos) => with_doc_rebuild(core, |rc| {
+            super::cross_dispatch::apply_set_edge_label_position(pos, rc)
+        }),
         Action::SetSpacing(i) => {
-            if let Some(doc) = core.document.as_deref_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
-                super::cross_dispatch::apply_set_spacing(i, &mut rc);
-            }
+            with_doc_rebuild(core, |rc| super::cross_dispatch::apply_set_spacing(i, rc))
         }
         Action::SetZoomMin(payload) | Action::SetZoomMax(payload) => {
             let parsed = match crate::application::console::commands::zoom::parse_zoom_payload(
@@ -346,16 +330,12 @@ pub(in crate::application::app) fn dispatch_compatible(
                     return DispatchOutcome::Handled;
                 }
             };
-            if let Some(doc) = core.document.as_deref_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
-                super::cross_dispatch::apply_set_zoom_window(min, max, &mut rc);
-            }
+            with_doc_rebuild(core, |rc| {
+                super::cross_dispatch::apply_set_zoom_window(min, max, rc)
+            });
         }
         Action::ClearZoom => {
-            if let Some(doc) = core.document.as_deref_mut() {
-                let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
-                super::cross_dispatch::apply_clear_zoom(&mut rc);
-            }
+            with_doc_rebuild(core, |rc| super::cross_dispatch::apply_clear_zoom(rc))
         }
         // Compatible-classified but not wired here yet (Copy /
         // Cut / Paste — clipboard stubs on WASM; CreateOrphan-
@@ -366,4 +346,102 @@ pub(in crate::application::app) fn dispatch_compatible(
         _ => return DispatchOutcome::Unhandled,
     }
     DispatchOutcome::Handled
+}
+
+#[cfg(test)]
+mod tests {
+    //! Unit coverage for the mixed-branch outcome lift. The full
+    //! `dispatch_compatible` body needs a `Renderer` per
+    //! `TEST_CONVENTIONS.md §T8` so it isn't testable headless;
+    //! the lift helper, however, is pure data — pin its contract
+    //! here so the WASM-macro `any_ran` regression flagged by the
+    //! Track-C parity reviewer can't recur silently.
+    use super::*;
+    use crate::application::keybinds::Action;
+
+    #[test]
+    fn cancel_mode_unhandled_lifts_to_handled() {
+        let out = lift_mixed_branch_for_wasm_macro(
+            &Action::CancelMode,
+            DispatchOutcome::Unhandled,
+        );
+        assert_eq!(out, DispatchOutcome::Handled);
+    }
+
+    #[test]
+    fn edit_selection_unhandled_lifts_to_handled() {
+        let out = lift_mixed_branch_for_wasm_macro(
+            &Action::EditSelection,
+            DispatchOutcome::Unhandled,
+        );
+        assert_eq!(out, DispatchOutcome::Handled);
+    }
+
+    #[test]
+    fn edit_selection_clean_unhandled_lifts_to_handled() {
+        let out = lift_mixed_branch_for_wasm_macro(
+            &Action::EditSelectionClean,
+            DispatchOutcome::Unhandled,
+        );
+        assert_eq!(out, DispatchOutcome::Handled);
+    }
+
+    #[test]
+    fn handled_passes_through_for_mixed_branch_arms() {
+        // The lift only flips Unhandled→Handled; an already-Handled
+        // outcome is passed through untouched. (EditSelection on a
+        // Single selection returns Handled from the cross-platform
+        // dispatcher; we don't want to alter that.)
+        for action in [
+            Action::CancelMode,
+            Action::EditSelection,
+            Action::EditSelectionClean,
+        ] {
+            let out = lift_mixed_branch_for_wasm_macro(&action, DispatchOutcome::Handled);
+            assert_eq!(out, DispatchOutcome::Handled, "action={:?}", action);
+        }
+    }
+
+    #[test]
+    fn non_mixed_branch_actions_pass_through_both_outcomes() {
+        // PURE Compatible arms: their dispatch_compatible behaviour
+        // is authoritative on both targets. The lift must NOT alter
+        // outcomes for them — if cross-platform returned Unhandled
+        // for `Undo` (e.g. no document loaded), it stays Unhandled.
+        let cases = [
+            (Action::Undo, DispatchOutcome::Unhandled),
+            (Action::Undo, DispatchOutcome::Handled),
+            (Action::ZoomIn, DispatchOutcome::Unhandled),
+            (Action::ZoomReset, DispatchOutcome::Handled),
+            (Action::SelectAll, DispatchOutcome::Unhandled),
+        ];
+        for (action, outcome) in cases {
+            let out = lift_mixed_branch_for_wasm_macro(&action, outcome);
+            assert_eq!(out, outcome, "action={:?}", action);
+        }
+    }
+
+    #[test]
+    fn pure_native_only_unhandled_stays_unhandled() {
+        // PURE NativeOnly arms (not in the mixed-branch set): the
+        // lift must NOT promote these. A WASM macro firing
+        // `Action::OpenConsole` should report `any_ran=false` because
+        // the dispatcher really did nothing.
+        let cases = [
+            Action::OpenConsole,
+            Action::EnterReparentMode,
+            Action::EnterConnectMode,
+            Action::SaveDocument,
+        ];
+        for action in cases {
+            let out =
+                lift_mixed_branch_for_wasm_macro(&action, DispatchOutcome::Unhandled);
+            assert_eq!(
+                out,
+                DispatchOutcome::Unhandled,
+                "lift must not promote PURE NativeOnly: {:?}",
+                action,
+            );
+        }
+    }
 }

@@ -79,8 +79,11 @@ pub(in crate::application::app) struct InputHandlerContext<'a> {
     /// per-frame drain rebuilds the scene + overlay through the
     /// unified adaptive-throttle shell.
     pub picker_hover: &'a mut ColorPickerHoverInteraction,
-    /// Resolved user keybinds.
-    pub keybinds: &'a mut ResolvedKeybinds,
+    /// Resolved user keybinds. `&` (immutable) — no dispatch path
+    /// mutates keybinds; query methods (`action_for_*`, `macro_for`,
+    /// `custom_mutation_for`, `has_*`) are all `&self`. Track-C
+    /// review reflagged the original `&mut` as dead.
+    pub keybinds: &'a ResolvedKeybinds,
     /// Macro registry (App + User tiers loaded at startup; Map tier
     /// re-loaded whenever a document is replaced via `open` / `new`).
     /// Mutable so the document-replace path in
@@ -119,7 +122,8 @@ impl<'a> InputHandlerContext<'a> {
                 last_click: &mut *self.last_click,
                 cursor_pos: &mut *self.cursor_pos,
                 modifiers: &*self.modifiers,
-                keybinds: &*self.keybinds,
+                keybinds: self.keybinds,
+
                 macros: &mut *self.macros,
             },
             super::input_context_core::NativeContextExt {

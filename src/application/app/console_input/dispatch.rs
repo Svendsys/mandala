@@ -49,7 +49,7 @@ pub(in crate::application::app) fn handle_console_key(
     app_scene: &mut crate::application::scene_host::AppScene,
     renderer: &mut Renderer,
     scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
-    keybinds: &mut ResolvedKeybinds,
+    keybinds: &ResolvedKeybinds,
     macros: &mut crate::application::macros::MacroRegistry,
 ) {
     let Some(name) = key_name.as_deref() else {

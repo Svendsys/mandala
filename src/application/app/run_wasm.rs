@@ -137,33 +137,15 @@ impl<'a> super::dispatch_macro_core::MacroDispatchTarget for WasmMacroDispatchTa
         // `dispatch_compatible_action_wasm` shim; that shim is
         // deleted and both the keyboard handler and this trait
         // impl reach `dispatch_action_core::dispatch_compatible`.
-        use super::cross_dispatch::DispatchOutcome;
+        // The mixed-branch lift below restores `Handled` returns
+        // for `CancelMode`/`EditSelection*` so the macro loop's
+        // `any_ran` flag bumps correctly — see
+        // `lift_mixed_branch_for_wasm_macro`'s rustdoc.
         let outcome = {
             let mut core = self.input.input_context_core(self.renderer, self.keybinds);
             super::dispatch_action_core::dispatch_compatible(&action, &mut core)
         };
-        // Mixed-branch lift: `dispatch_compatible` returns `Unhandled`
-        // for `CancelMode` (always) and `EditSelection*` on non-Single
-        // selections so native's caller can run the residual native-
-        // only slice (AppMode clearing, EdgeLabel/Portal editor open).
-        // WASM has no such residual — the cross-platform slice IS the
-        // totality of what we can do — so lift Unhandled→Handled here
-        // so the macro loop's `any_ran` flag bumps correctly. Pre-
-        // Track-C the WASM-only `dispatch_compatible_action_wasm`
-        // returned `Handled` for both arms unconditionally; this
-        // restores that contract for the macro-target path.
-        if matches!(outcome, DispatchOutcome::Unhandled)
-            && matches!(
-                action,
-                Action::CancelMode
-                    | Action::EditSelection
-                    | Action::EditSelectionClean
-            )
-        {
-            DispatchOutcome::Handled
-        } else {
-            outcome
-        }
+        super::dispatch_action_core::lift_mixed_branch_for_wasm_macro(&action, outcome)
     }
 
     fn apply_custom_mutation(&mut self, id: &str, node_id: &str) -> bool {
