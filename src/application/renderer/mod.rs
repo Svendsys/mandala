@@ -18,7 +18,7 @@ pub use borders::measure_max_glyph_advance;
 // non-test build flags them as unused. Gate to keep cargo check
 // clean while leaving the test build self-contained.
 #[cfg(test)]
-use borders::{create_border_buffer, parse_hex_color};
+use borders::create_border_buffer;
 // `ConsoleFrameLayout` / `MAX_*` / `build_console_border_strings` are
 // part of the renderer's public surface and consumed by the test
 // block at the bottom of this file plus external callers (the app
