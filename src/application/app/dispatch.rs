@@ -666,11 +666,75 @@ pub(in crate::application::app) fn dispatch_action(
             apply_text_edit_action(action, ctx.text_edit_state);
             DispatchOutcome::Handled
         }
-        // `TextEditCommit` falls through to the catch-all `Unhandled`;
-        // the modal handler at `text_edit/editor.rs` owns the renderer-
-        // touching close-and-rebuild path. The dead `Action::TextEditCommit
-        // => Unhandled` arm that used to live here was structurally
-        // identical to the catch-all and added no information.
+        // ── Modal commit / cancel ────────────────────────────
+        // §3 funnel: modal handlers used to call `close_*` helpers
+        // inline. Commit/cancel are user-named effects (Esc /
+        // Enter / click-outside), NOT the §3 carve-out for literal
+        // Key character insertion — so they belong in the funnel.
+        // `TextEditCommit` / `TextEditCancel` are Compatible and
+        // handled by `dispatch_compatible` (cross-platform); they
+        // never reach this match. `LabelEdit*` are NativeOnly
+        // (label_edit + portal_text_edit modules are cfg-gated to
+        // native) — handled here. Both reuse the same Action
+        // variants since the editors are mutually exclusive by
+        // selection-state construction (a node selection opens the
+        // text editor; an edge-label selection opens the label
+        // editor; a portal-text selection opens the portal-text
+        // editor — never two at once). Order is observationally
+        // equivalent because at most one is_open(); checking
+        // portal-text first picks the more specific selection.
+        Action::LabelEditCancel => {
+            if let Some(doc) = ctx.document.as_mut() {
+                if ctx.portal_text_edit_state.is_open() {
+                    super::close_portal_text_edit(
+                        false,
+                        doc,
+                        ctx.portal_text_edit_state,
+                        ctx.mindmap_tree,
+                        ctx.app_scene,
+                        ctx.renderer,
+                        ctx.scene_cache,
+                    );
+                } else if ctx.label_edit_state.is_open() {
+                    super::close_label_edit(
+                        false,
+                        doc,
+                        ctx.label_edit_state,
+                        ctx.mindmap_tree,
+                        ctx.app_scene,
+                        ctx.renderer,
+                        ctx.scene_cache,
+                    );
+                }
+            }
+            DispatchOutcome::Handled
+        }
+        Action::LabelEditCommit => {
+            if let Some(doc) = ctx.document.as_mut() {
+                if ctx.portal_text_edit_state.is_open() {
+                    super::close_portal_text_edit(
+                        true,
+                        doc,
+                        ctx.portal_text_edit_state,
+                        ctx.mindmap_tree,
+                        ctx.app_scene,
+                        ctx.renderer,
+                        ctx.scene_cache,
+                    );
+                } else if ctx.label_edit_state.is_open() {
+                    super::close_label_edit(
+                        true,
+                        doc,
+                        ctx.label_edit_state,
+                        ctx.mindmap_tree,
+                        ctx.app_scene,
+                        ctx.renderer,
+                        ctx.scene_cache,
+                    );
+                }
+            }
+            DispatchOutcome::Handled
+        }
 
         // ── LabelEdit cursor primitives ───────────────────────
         Action::LabelEditCursorLeft

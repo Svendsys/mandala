@@ -10,6 +10,8 @@ use super::input_context::InputHandlerContext;
 use super::throttled_interaction::ThrottledDrag;
 use super::*;
 
+use crate::application::keybinds::Action;
+
 /// Dispatch a `WindowEvent::MouseInput`. Persistent state arrives
 /// via [`InputHandlerContext`].
 pub(super) fn handle_mouse_input(
@@ -342,22 +344,15 @@ pub(super) fn handle_mouse_input(
                                 // is fully consumed.
                                 return;
                             }
-                            // Click-outside: commit the
-                            // edit first, then fall
-                            // through to the regular
-                            // click path so the new
-                            // selection lands.
-                            if let Some(doc) = ctx.document.as_mut() {
-                                close_text_edit(
-                                    true,
-                                    doc,
-                                    ctx.text_edit_state,
-                                    ctx.mindmap_tree,
-                                    ctx.app_scene,
-                                    ctx.renderer,
-                                    ctx.scene_cache,
-                                );
-                            }
+                            // Click-outside: commit the edit through
+                            // the funnel (`Action::TextEditCommit`),
+                            // then fall through to the regular click
+                            // path so the new selection lands.
+                            let _ = super::dispatch::dispatch_action(
+                                Action::TextEditCommit,
+                                ctx,
+                                None,
+                            );
                         }
                         // Same shape for the inline edge-label
                         // editor: a release that doesn't hit the
@@ -390,17 +385,13 @@ pub(super) fn handle_mouse_input(
                             if stays_on_edited_label {
                                 return;
                             }
-                            if let Some(doc) = ctx.document.as_mut() {
-                                close_label_edit(
-                                    true,
-                                    doc,
-                                    ctx.label_edit_state,
-                                    ctx.mindmap_tree,
-                                    ctx.app_scene,
-                                    ctx.renderer,
-                                    ctx.scene_cache,
-                                );
-                            }
+                            // Click-outside the edited label: commit
+                            // through the funnel (`LabelEditCommit`).
+                            let _ = super::dispatch::dispatch_action(
+                                Action::LabelEditCommit,
+                                ctx,
+                                None,
+                            );
                         }
                         // Portal-text editor uses the portal-text
                         // hitbox instead of the edge-label hitbox,
@@ -437,17 +428,16 @@ pub(super) fn handle_mouse_input(
                             if stays_on_edited_text {
                                 return;
                             }
-                            if let Some(doc) = ctx.document.as_mut() {
-                                close_portal_text_edit(
-                                    true,
-                                    doc,
-                                    ctx.portal_text_edit_state,
-                                    ctx.mindmap_tree,
-                                    ctx.app_scene,
-                                    ctx.renderer,
-                                    ctx.scene_cache,
-                                );
-                            }
+                            // Click-outside the edited portal-text:
+                            // commit through the funnel. The dispatch
+                            // arm picks `portal_text_edit_state` over
+                            // `label_edit_state` since portal is
+                            // checked first.
+                            let _ = super::dispatch::dispatch_action(
+                                Action::LabelEditCommit,
+                                ctx,
+                                None,
+                            );
                         }
                         // Edge-label single click: route to the
                         // `EdgeLabel` selection rather than opening

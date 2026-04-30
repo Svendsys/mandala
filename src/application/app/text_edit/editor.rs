@@ -13,7 +13,7 @@ use winit::keyboard::Key;
 use baumhard::util::grapheme_chad;
 
 use crate::application::document::MindMapDocument;
-use crate::application::keybinds::{Action, InputContext, ResolvedKeybinds};
+use crate::application::keybinds::{InputContext, ResolvedKeybinds};
 use crate::application::renderer::Renderer;
 
 use super::super::rebuild_all;
@@ -342,19 +342,10 @@ pub(in crate::application::app) fn handle_text_edit_key(
     let action = name.and_then(|n| {
         keybinds.action_for_context(InputContext::TextEdit, n, ctrl, shift, alt)
     });
-    // Cancel is the one TextEdit Action that needs the renderer for
-    // its close-and-rebuild path; handled inline. Commit (Phase 5)
-    // also needs the renderer if a user binds it; handled the same
-    // way. Other TextEdit actions (cursor/delete primitives) route
-    // through `dispatch::apply_text_edit_action` which is pure.
-    if action == Some(Action::TextEditCancel) {
-        close_text_edit(false, doc, text_edit_state, mindmap_tree, app_scene, renderer, scene_cache);
-        return;
-    }
-    if action == Some(Action::TextEditCommit) {
-        close_text_edit(true, doc, text_edit_state, mindmap_tree, app_scene, renderer, scene_cache);
-        return;
-    }
+    // `TextEditCommit` / `TextEditCancel` are funneled via the
+    // keyboard handler's pre-filter (`event_keyboard.rs:135-153`).
+    // This handler reaches only the literal-Key character + cursor
+    // primitive paths.
 
     // `enter` and `tab` insert literal characters in the multi-line
     // node editor unless the user explicitly bound a TextEdit Action

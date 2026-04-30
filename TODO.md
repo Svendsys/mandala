@@ -78,11 +78,21 @@ Shipped on this branch:
   `event_mouse_click.rs` calls `handle_reparent_target_click` /
   `handle_connect_target_click` directly. Both push undo entries
   but aren't `Action` variants — they should be.
-- **Modal commit/cancel inline in modal handlers.** `text_edit`,
-  `label_edit`, `portal_text_edit` each have their own commit /
-  cancel branches in their modal handler bodies; only `TextEdit`
-  Cancel routes through the funnel. Folding the rest is a §3
-  cleanup.
+- ~~**Modal commit/cancel inline in modal handlers.**~~
+  **Shipped.** All three modals (`text_edit`, `label_edit`,
+  `portal_text_edit`) now route commit/cancel through
+  `dispatch_action`. `Action::TextEditCommit` / `TextEditCancel`
+  are Compatible (handled in cross-platform
+  `dispatch_action_core::dispatch_compatible`); WASM keyboard
+  + click-outside paths reach the same arm as native.
+  `Action::LabelEditCommit` / `LabelEditCancel` are NativeOnly
+  but reused by `portal_text_edit` (mutually exclusive states);
+  the dispatch arm picks the open state — portal-text first,
+  then label-edit. Modal handlers now only handle the literal-
+  Key character + cursor primitive paths (the §3 carve-out for
+  `winit::Key` payloads). Click-outside commit at three call
+  sites (`event_mouse_click.rs:351, 394, 441`) and one WASM site
+  (`run_wasm.rs:910`) all route through the funnel.
 - **Console-verb Action bodies inline in `console_input/dispatch.rs`.**
   Every `Action::Console*` variant is matched and run inline at
   the console handler; none reach `dispatch_action`. Either route

@@ -564,7 +564,33 @@ app.event_loop.run(move |event, _window_target| {
 
             // Editor keyboard-steal: if open, route all keys
             // to the editor so hotkeys don't collide with typed text.
+            //
+            // Commit/cancel pre-filter: dispatch through the funnel
+            // (`Action::TextEditCommit` / `TextEditCancel`) BEFORE
+            // calling the modal handler. Mirrors the native shape
+            // at `event_keyboard.rs`.
             if input.text_edit_state.is_open() {
+                let action = key_name.as_deref().and_then(|n| {
+                    keybinds.action_for_context(
+                        crate::application::keybinds::InputContext::TextEdit,
+                        n,
+                        input.modifiers.control_key(),
+                        input.modifiers.shift_key(),
+                        input.modifiers.alt_key(),
+                    )
+                });
+                if matches!(
+                    action,
+                    Some(Action::TextEditCommit) | Some(Action::TextEditCancel)
+                ) {
+                    let mut core = input.input_context_core(renderer, &keybinds);
+                    let _ = super::dispatch_action_core::dispatch_compatible(
+                        &action.unwrap(),
+                        &mut core,
+                    );
+                    suppress_for_events.set(input.text_edit_state.is_open());
+                    return;
+                }
                 handle_text_edit_key(
                     &key_name,
                     logical_key,
@@ -907,15 +933,17 @@ app.event_loop.run(move |event, _window_target| {
                         return;
                     }
 
-                    close_text_edit(
-                        true,
-                        &mut input.document,
-                        &mut input.text_edit_state,
-                        &mut input.mindmap_tree,
-                        &mut input.app_scene,
-                        renderer,
-                        &mut input.scene_cache,
-                    );
+                    // Click-outside: commit via the funnel
+                    // (`Action::TextEditCommit`). Track C lets WASM
+                    // call the same `dispatch_compatible` that
+                    // native uses for this Compatible Action.
+                    {
+                        let mut core = input.input_context_core(renderer, &keybinds);
+                        let _ = super::dispatch_action_core::dispatch_compatible(
+                            &Action::TextEditCommit,
+                            &mut core,
+                        );
+                    }
                     suppress_for_events.set(false);
                     return;
                 }

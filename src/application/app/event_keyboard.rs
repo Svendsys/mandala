@@ -9,6 +9,7 @@
 
 use super::input_context::InputHandlerContext;
 use super::*;
+use crate::application::keybinds::Action;
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::Key;
 
@@ -82,7 +83,27 @@ pub(super) fn handle_keyboard_input(
     // Inline label edit modal. Steals keys the same way
     // the console does. Escape discards, Enter commits,
     // Backspace pops, character keys append.
+    //
+    // Commit/cancel pre-filter: dispatch through the funnel
+    // (`Action::LabelEditCommit` / `LabelEditCancel`) BEFORE
+    // calling the modal handler — `dispatch_action`'s arm body
+    // owns the close-and-rebuild path. The modal handler retains
+    // the literal-Key character insertion + cursor primitives
+    // (CODE_CONVENTIONS §3 carve-out for Key payloads).
     if ctx.label_edit_state.is_open() {
+        let action = key_name.as_deref().and_then(|n| {
+            ctx.keybinds.action_for_context(
+                crate::application::keybinds::InputContext::LabelEdit,
+                n,
+                ctx.modifiers.control_key(),
+                ctx.modifiers.shift_key(),
+                ctx.modifiers.alt_key(),
+            )
+        });
+        if matches!(action, Some(Action::LabelEditCommit) | Some(Action::LabelEditCancel)) {
+            let _ = super::dispatch::dispatch_action(action.unwrap(), ctx, None);
+            return;
+        }
         if let Some(doc) = ctx.document.as_mut() {
             handle_label_edit_key(
                 &key_name,
@@ -105,8 +126,23 @@ pub(super) fn handle_keyboard_input(
     // Inline portal-text edit modal — parallel to the
     // edge label editor but keyed to
     // `(edge_ref, endpoint_node_id)`. Same keystroke
-    // routing via `InputContext::LabelEdit`.
+    // routing via `InputContext::LabelEdit` and the same
+    // `LabelEditCommit/Cancel` Actions (the dispatch arm
+    // picks the open state).
     if ctx.portal_text_edit_state.is_open() {
+        let action = key_name.as_deref().and_then(|n| {
+            ctx.keybinds.action_for_context(
+                crate::application::keybinds::InputContext::LabelEdit,
+                n,
+                ctx.modifiers.control_key(),
+                ctx.modifiers.shift_key(),
+                ctx.modifiers.alt_key(),
+            )
+        });
+        if matches!(action, Some(Action::LabelEditCommit) | Some(Action::LabelEditCancel)) {
+            let _ = super::dispatch::dispatch_action(action.unwrap(), ctx, None);
+            return;
+        }
         if let Some(doc) = ctx.document.as_mut() {
             handle_portal_text_edit_key(
                 &key_name,
@@ -131,8 +167,22 @@ pub(super) fn handle_keyboard_input(
     // are literal characters inside the editor — this is
     // a multi-line paragraph editor, not an outliner.
     // Esc cancels; commit is via click-outside in the
-    // mouse handler.
+    // mouse handler. Pre-filter commit/cancel through the
+    // funnel like LabelEdit above.
     if ctx.text_edit_state.is_open() {
+        let action = key_name.as_deref().and_then(|n| {
+            ctx.keybinds.action_for_context(
+                crate::application::keybinds::InputContext::TextEdit,
+                n,
+                ctx.modifiers.control_key(),
+                ctx.modifiers.shift_key(),
+                ctx.modifiers.alt_key(),
+            )
+        });
+        if matches!(action, Some(Action::TextEditCommit) | Some(Action::TextEditCancel)) {
+            let _ = super::dispatch::dispatch_action(action.unwrap(), ctx, None);
+            return;
+        }
         if let Some(doc) = ctx.document.as_mut() {
             handle_text_edit_key(
                 &key_name,

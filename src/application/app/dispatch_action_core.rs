@@ -150,6 +150,29 @@ pub(in crate::application::app) fn dispatch_compatible(
     }
 
     match action {
+        // ── Modal text-edit commit / cancel ───────────────────
+        // Cross-platform — `text_edit::close_text_edit` is reachable
+        // on both targets. WASM keyboard handler + click-outside
+        // path AND native modal handler all funnel through these
+        // arms; the close helper owns the `mem::replace(.., Closed)`
+        // mode-exit + tree-revert / scene-rebuild lifecycle. Inlined
+        // (not via `with_doc_rebuild`) because the helper signature
+        // takes `text_edit_state` separately from the rebuild
+        // bundle, and the closure shape can't split-borrow `core`.
+        Action::TextEditCancel | Action::TextEditCommit => {
+            let commit = matches!(action, Action::TextEditCommit);
+            if let Some(doc) = core.document.as_deref_mut() {
+                super::text_edit::close_text_edit(
+                    commit,
+                    doc,
+                    core.text_edit_state,
+                    core.mindmap_tree,
+                    core.app_scene,
+                    core.renderer,
+                    core.scene_cache,
+                );
+            }
+        }
         // ── Document-lifecycle ─────────────────────────────────
         Action::Undo => with_doc_rebuild(core, |rc| super::cross_dispatch::apply_undo(rc)),
         Action::DeleteSelection => {
