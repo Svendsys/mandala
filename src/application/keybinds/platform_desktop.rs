@@ -3,17 +3,38 @@
 //! Desktop config-source plumbing: file-based `KeybindConfig` loading
 //! with the `$XDG_CONFIG_HOME` / `$HOME/.config` fallback, plus the
 //! layered `load_for_desktop` driver. Not compiled on WASM.
+//!
+//! Path resolution is delegated to
+//! [`crate::application::user_config::xdg::xdg_mandala_path`] —
+//! shared with the mutations and macros loaders so all three pick
+//! up `mandala/<file>.json` from the same XDG namespace.
 
 use log::warn;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use super::config::KeybindConfig;
+use crate::application::user_config::{xdg::xdg_mandala_path, MAX_USER_PAYLOAD_BYTES};
 
 impl KeybindConfig {
     /// Load a config from a file on disk. Desktop-only; WASM users load
     /// via `load_from_web`. Failures return an error string the caller can
-    /// log.
+    /// log. Files larger than `MAX_USER_PAYLOAD_BYTES` are rejected before
+    /// `read_to_string` runs — same posture as the mutations desktop
+    /// loader, since a multi-MB keybinds file is almost certainly the
+    /// wrong file or hostile content.
     pub fn load_from_file(path: &Path) -> Result<Self, String> {
+        match std::fs::metadata(path) {
+            Ok(meta) if meta.len() > MAX_USER_PAYLOAD_BYTES as u64 => {
+                return Err(format!(
+                    "{} exceeds size cap ({} bytes > {} max); refusing to load",
+                    path.display(),
+                    meta.len(),
+                    MAX_USER_PAYLOAD_BYTES,
+                ));
+            }
+            Ok(_) => {}
+            Err(e) => return Err(format!("stat {}: {}", path.display(), e)),
+        }
         let json = std::fs::read_to_string(path)
             .map_err(|e| format!("read {}: {}", path.display(), e))?;
         Self::from_json(&json)
@@ -32,7 +53,7 @@ impl KeybindConfig {
                 Err(e) => warn!("keybinds load failed for explicit path: {}", e),
             }
         }
-        if let Some(default_path) = default_desktop_config_path() {
+        if let Some(default_path) = xdg_mandala_path("keybinds.json") {
             if default_path.exists() {
                 match Self::load_from_file(&default_path) {
                     Ok(cfg) => {
@@ -45,29 +66,4 @@ impl KeybindConfig {
         }
         Self::default()
     }
-}
-
-/// Conventional default path for the desktop user's keybinds config. Uses
-/// `$XDG_CONFIG_HOME/mandala/keybinds.json` if set, falling back to
-/// `$HOME/.config/mandala/keybinds.json`. Returns `None` if neither env
-/// variable is set.
-pub fn default_desktop_config_path() -> Option<PathBuf> {
-    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-        if !xdg.is_empty() {
-            let mut p = PathBuf::from(xdg);
-            p.push("mandala");
-            p.push("keybinds.json");
-            return Some(p);
-        }
-    }
-    if let Ok(home) = std::env::var("HOME") {
-        if !home.is_empty() {
-            let mut p = PathBuf::from(home);
-            p.push(".config");
-            p.push("mandala");
-            p.push("keybinds.json");
-            return Some(p);
-        }
-    }
-    None
 }

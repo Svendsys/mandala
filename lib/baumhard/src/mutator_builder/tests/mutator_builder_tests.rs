@@ -6,13 +6,21 @@
 
 use crate::core::primitives::{ApplyOperation, ColorFontRegions};
 use crate::gfx_structs::area::GlyphArea;
-use crate::gfx_structs::tree::BranchChannel;
 use crate::mutator_builder::{
-    build, iter_section_channels, CellField, ChannelSrc, CountSrc, InstructionSpec,
-    MutationListSrc, MutationSrc, MutatorNode, SectionContext,
+    CellField, ChannelSrc, MutationSrc, MutatorNode, SectionContext,
 };
 use glam::Vec2;
 use std::collections::HashMap;
+
+// Names below are referenced only by `#[test]` bodies. Without
+// `#[cfg(test)]` the non-test build of `pub mod tests;` (§T2.2)
+// would flag them as unused.
+#[cfg(test)]
+use crate::gfx_structs::tree::BranchChannel;
+#[cfg(test)]
+use crate::mutator_builder::{
+    build, iter_section_channels, CountSrc, InstructionSpec, MutationListSrc,
+};
 
 /// Stub context: yields one pre-built `GlyphArea` per index, and
 /// honours runtime-count queries out of a `HashMap`. Per-section
@@ -229,7 +237,11 @@ fn repeat_runtime_count_consults_context() {
 // future script-API mutators).
 // =============================================================
 
+// Test-only — same rationale as the `#[cfg(test)]`-gated imports
+// at the top of this file (§T2.2 `pub mod tests;` exposure).
+#[cfg(test)]
 use crate::gfx_structs::mutator::{GfxMutator, Instruction, Mutation, MutatorType};
+#[cfg(test)]
 use crate::gfx_structs::predicate::Predicate;
 
 

@@ -7,7 +7,6 @@
 
 use std::collections::HashMap;
 
-use glam::Vec2;
 use indextree::NodeId;
 
 use crate::core::primitives::{ColorFontRegion, ColorFontRegions, Range};

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use crate::util::color::{from_hex, hex_to_rgba_safe};
+use crate::util::color_conversion::hex_to_rgba;
 use crate::{hex, rgb, rgba};
 use lazy_static::lazy_static;
 
@@ -89,4 +90,90 @@ pub fn do_rgba_hex_macros() {
    assert_eq!(rgba_rgba2, hex_rgba2);
    assert_eq!(rgb_rgba1, hex_rgba1);
    assert_eq!(rgb_rgba2, rgba_rgba2);
+}
+
+#[test]
+fn test_hex_to_rgba_three_digit() {
+    do_hex_to_rgba_three_digit();
+}
+
+/// `#f0a` expands per-nibble to `#ff00aa` with alpha pinned to 1.0.
+/// Locks the canonical CSS-style 3-digit shorthand expansion.
+pub fn do_hex_to_rgba_three_digit() {
+    let parsed = hex_to_rgba("#f0a").unwrap();
+    assert_eq!(parsed, [1.0, 0.0, 170.0 / 255.0, 1.0]);
+    // Same string, no leading `#`.
+    assert_eq!(hex_to_rgba("f0a").unwrap(), parsed);
+}
+
+#[test]
+fn test_hex_to_rgba_four_digit() {
+    do_hex_to_rgba_four_digit();
+}
+
+/// `#f0a8` expands per-nibble to `#ff00aa88` — alpha lifted from
+/// the fourth nibble rather than pinned to 1.0.
+pub fn do_hex_to_rgba_four_digit() {
+    let parsed = hex_to_rgba("#f0a8").unwrap();
+    assert_eq!(parsed, [1.0, 0.0, 170.0 / 255.0, 136.0 / 255.0]);
+}
+
+#[test]
+fn test_hex_to_rgba_six_digit() {
+    do_hex_to_rgba_six_digit();
+}
+
+/// `#05638f` is the same fixture used elsewhere in this file
+/// (matches `hex!("#05638f")` and `rgba!([5, 99, 143, 255])`).
+/// Six-digit form pins alpha to 1.0.
+pub fn do_hex_to_rgba_six_digit() {
+    let parsed = hex_to_rgba("#05638f").unwrap();
+    assert_eq!(parsed, [5.0 / 255.0, 99.0 / 255.0, 143.0 / 255.0, 1.0]);
+}
+
+#[test]
+fn test_hex_to_rgba_eight_digit() {
+    do_hex_to_rgba_eight_digit();
+}
+
+/// Eight-digit form carries an explicit alpha byte. Tests an
+/// unambiguous half-alpha (`80` = 128) so the channel can't be
+/// confused with a default 255.
+pub fn do_hex_to_rgba_eight_digit() {
+    let parsed = hex_to_rgba("#05638f80").unwrap();
+    assert_eq!(parsed, [5.0 / 255.0, 99.0 / 255.0, 143.0 / 255.0, 128.0 / 255.0]);
+}
+
+#[test]
+fn test_hex_to_rgba_rejects_invalid_length() {
+    do_hex_to_rgba_rejects_invalid_length();
+}
+
+/// 1, 2, 5, 7, 9 digit and empty inputs are not accepted lengths.
+/// Each must round-trip to `None` so the fallible API contract holds.
+pub fn do_hex_to_rgba_rejects_invalid_length() {
+    assert!(hex_to_rgba("").is_none());
+    assert!(hex_to_rgba("#").is_none());
+    assert!(hex_to_rgba("#f").is_none());
+    assert!(hex_to_rgba("#ff").is_none());
+    assert!(hex_to_rgba("#ffff5").is_none());
+    assert!(hex_to_rgba("#ffff55a").is_none());
+    assert!(hex_to_rgba("#ffff55aa1").is_none());
+}
+
+#[test]
+fn test_hex_to_rgba_rejects_non_hex_char() {
+    do_hex_to_rgba_rejects_non_hex_char();
+}
+
+/// A non-hex byte anywhere in the body fails the parse — both
+/// in the short-form path (length 3/4) and the byte-pair path
+/// (length 6/8).
+pub fn do_hex_to_rgba_rejects_non_hex_char() {
+    assert!(hex_to_rgba("#zzz").is_none());
+    assert!(hex_to_rgba("#zzzz").is_none());
+    assert!(hex_to_rgba("#gg0000").is_none());
+    assert!(hex_to_rgba("#ff00ZZ").is_none());
+    assert!(hex_to_rgba("#deadbeef!").is_none()); // length-mismatch wins
+    assert!(hex_to_rgba("#ff00 0a").is_none());   // embedded space
 }

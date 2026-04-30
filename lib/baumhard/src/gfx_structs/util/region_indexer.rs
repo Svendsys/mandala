@@ -67,16 +67,15 @@ impl RegionIndexer {
         self.initialize(x * y)
     }
 
-    /// Allocate `num_regions` empty region buckets. Drops any previously
-    /// allocated buckets — O(num_regions) and clears all indexed
-    /// elements.
+    /// Allocate `num_regions` empty region buckets. Reuses the existing
+    /// outer `Vec`'s capacity via `clear() + resize_with(BTreeSet::new)`
+    /// so a re-initialise after window resize does not free + reallocate
+    /// the bucket vector. Cost is O(num_regions): each bucket's
+    /// `BTreeSet` is dropped (clearing previously indexed elements)
+    /// and a fresh one is constructed in its slot.
     pub fn initialize(&mut self, num_regions: usize) {
-        if self.index.len() > 0 {
-            self.index = Vec::new();
-        }
-        for _ in 0..num_regions {
-            self.index.push(BTreeSet::new());
-        }
+        self.index.clear();
+        self.index.resize_with(num_regions, BTreeSet::new);
     }
 
     /// Record that `element_id` currently occupies `region`. Also

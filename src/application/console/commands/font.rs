@@ -247,7 +247,7 @@ fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     let doc = &mut eff.document;
     match doc.selection.clone() {
         SelectionState::Single(id) => {
-            node_font_outcome(doc, &id, size, min, max, 1)
+            node_font_outcome(doc, &id, size, min, max)
         }
         SelectionState::Multi(ids) => {
             // Fanout: apply size to each node; collect a single
@@ -310,7 +310,6 @@ fn node_font_outcome(
     size: Option<f32>,
     min: Option<f32>,
     max: Option<f32>,
-    _: i32,
 ) -> ExecResult {
     let mut messages = Vec::new();
     let mut any_applied = false;
@@ -481,7 +480,7 @@ mod tests {
     use super::*;
     use crate::application::console::tests::fixtures::{assert_exec_ok, join_lines, run};
     use crate::application::document::tests_common::load_test_doc as fixture_doc;
-    use crate::application::document::{EdgeRef, MindMapDocument, SelectionState};
+    use crate::application::document::{EdgeRef, SelectionState};
 
     fn first_loaded_family() -> String {
         baumhard::font::fonts::init();

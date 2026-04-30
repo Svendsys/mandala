@@ -14,11 +14,6 @@ mod tree_buffers;
 mod tree_walker;
 
 pub use borders::measure_max_glyph_advance;
-// These imports are referenced only from the test block; the
-// non-test build flags them as unused. Gate to keep cargo check
-// clean while leaving the test build self-contained.
-#[cfg(test)]
-use borders::{create_border_buffer, parse_hex_color};
 // `ConsoleFrameLayout` / `MAX_*` / `build_console_border_strings` are
 // part of the renderer's public surface and consumed by the test
 // block at the bottom of this file plus external callers (the app
@@ -35,8 +30,6 @@ use console_pass::{
     build_console_overlay_mutator, build_console_overlay_tree, console_overlay_areas,
     console_overlay_signature,
 };
-#[cfg(test)]
-use tree_walker::walk_tree_into_buffers;
 
 use std::borrow::Cow;
 use std::sync::Arc;

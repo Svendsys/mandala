@@ -733,8 +733,8 @@ mod tests {
         assert!(src.allows_console_line());
 
         // Reveal property: clearing User exposes the App entry
-        // underneath. (The TODO note about displacement-is-
-        // permanent is closed by this test.)
+        // underneath, so a higher-tier load is non-destructive
+        // to the lower tier.
         reg.clear_tier(MacroSource::User);
         let (m, src) = reg
             .get_with_source("shared-id")

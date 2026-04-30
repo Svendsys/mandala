@@ -47,15 +47,15 @@ pub fn resolve_var<'a>(raw: &'a str, vars: &'a HashMap<String, String>) -> &'a s
 }
 
 /// Parse a hex color string into an `[f32; 4]` RGBA quad, returning
-/// `fallback` on any parse failure. Accepts 3, 4, 6, or 8 hex chars
-/// with an optional leading `#`. Intended for render-time color
-/// resolution paths that should never crash the app over a typo in a
-/// theme variable.
-pub fn hex_to_rgba_safe(color: &str, fallback: [f32; 4]) -> [f32; 4] {
+/// `None` on any parse failure. Accepts 3, 4, 6, or 8 hex chars
+/// with an optional leading `#`. The fallible cousin of
+/// [`hex_to_rgba_safe`]; reach for this when the caller wants to
+/// reject malformed strings rather than substitute a default.
+pub fn hex_to_rgba(color: &str) -> Option<[f32; 4]> {
     let color = color.trim_start_matches('#');
     let length = color.len();
     if length != 3 && length != 4 && length != 6 && length != 8 {
-        return fallback;
+        return None;
     }
 
     fn nibble(b: u8) -> Option<u8> {
@@ -68,13 +68,10 @@ pub fn hex_to_rgba_safe(color: &str, fallback: [f32; 4]) -> [f32; 4] {
     }
 
     let bytes = color.as_bytes();
-    let mut rgba = fallback;
+    let mut rgba = [0.0f32; 4];
     if length == 3 || length == 4 {
         for i in 0..length {
-            let n = match nibble(bytes[i]) {
-                Some(v) => v,
-                None => return fallback,
-            };
+            let n = nibble(bytes[i])?;
             rgba[i] = ((n << 4) | n) as f32 / 255.0;
         }
         if length == 3 {
@@ -82,21 +79,24 @@ pub fn hex_to_rgba_safe(color: &str, fallback: [f32; 4]) -> [f32; 4] {
         }
     } else {
         for i in 0..(length / 2) {
-            let hi = match nibble(bytes[i * 2]) {
-                Some(v) => v,
-                None => return fallback,
-            };
-            let lo = match nibble(bytes[i * 2 + 1]) {
-                Some(v) => v,
-                None => return fallback,
-            };
+            let hi = nibble(bytes[i * 2])?;
+            let lo = nibble(bytes[i * 2 + 1])?;
             rgba[i] = ((hi << 4) | lo) as f32 / 255.0;
         }
         if length == 6 {
             rgba[3] = 1.0;
         }
     }
-    rgba
+    Some(rgba)
+}
+
+/// Parse a hex color string into an `[f32; 4]` RGBA quad, returning
+/// `fallback` on any parse failure. Accepts 3, 4, 6, or 8 hex chars
+/// with an optional leading `#`. Intended for render-time color
+/// resolution paths that should never crash the app over a typo in a
+/// theme variable.
+pub fn hex_to_rgba_safe(color: &str, fallback: [f32; 4]) -> [f32; 4] {
+    hex_to_rgba(color).unwrap_or(fallback)
 }
 
 /// Convert HSV → RGB, all components normalized to `[0, 1]`. `h` is in

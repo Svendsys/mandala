@@ -12,4 +12,5 @@ pub(crate) mod keybinds;
 pub(crate) mod macros;
 pub mod renderer;
 pub(crate) mod scene_host;
+pub(crate) mod user_config;
 pub(crate) mod widgets;

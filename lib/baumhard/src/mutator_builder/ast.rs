@@ -1,7 +1,14 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! AST types for the mutator-tree DSL. See `super` for the high-level
-//! tour; this file is the type-level wire format that JSON parses into.
+//! Typed AST for the mutator-tree DSL. The variants here are what
+//! [`mutator_builder::build`](super::build) walks to produce a
+//! [`MutatorTree<GfxMutator>`](crate::gfx_structs::tree::MutatorTree)
+//! ready for `apply_to`. Every JSON-loaded mutator (custom mutations,
+//! procedural animation defs in `lib/baumhard/src/mindmap/`) round-trips
+//! through these types via serde, and the procedural-builder code paths
+//! in the app crate construct the same shapes directly. See `super` for
+//! the high-level tour and CONVENTIONS §B2 for why the tree mutates
+//! rather than rebuilds.
 
 use crate::core::primitives::ApplyOperation;
 use crate::gfx_structs::mutator::{Instruction, Mutation};
@@ -17,13 +24,23 @@ pub enum MutatorNode {
     /// `GfxMutator::Void` — no mutation, just structural grouping.
     /// Children are expanded in declaration order.
     Void {
+        /// Branch-routing channel index. The walker descends only
+        /// where the target tree's channel matches.
         channel: usize,
+        /// Inner mutator nodes expanded in declaration order under
+        /// this grouping. Empty by default so a bare structural
+        /// `Void` need not declare an empty list.
         #[serde(default)]
         children: Vec<MutatorNode>,
     },
     /// `GfxMutator::Single` — one mutation on one channel.
     Single {
+        /// Channel source — literal index or per-iteration index
+        /// resolved by an enclosing [`MutatorNode::Repeat`].
         channel: ChannelSrc,
+        /// Mutation payload — literal `Mutation`, runtime-fetched
+        /// from a [`SectionContext`](super::context::SectionContext),
+        /// or `None` placeholder.
         mutation: MutationSrc,
     },
     /// `GfxMutator::Macro` — flat batch of `Mutation`s on one channel.
@@ -35,18 +52,36 @@ pub enum MutatorNode {
     /// child walking descendants). Defaults to empty so the overwhelming
     /// "flat Macro" case stays terse.
     Macro {
+        /// Branch-routing channel index for the whole macro batch.
         channel: usize,
+        /// Source of the flat `Vec<Mutation>` — literal payload
+        /// or runtime-fetched by label.
         mutations: MutationListSrc,
+        /// Optional inner nodes expanded after the macro. The
+        /// `SelfAndDescendants` shape uses one
+        /// `Instruction(RepeatWhile)` child to walk descendants.
+        /// Empty default keeps the common flat-Macro case terse.
         #[serde(default)]
         children: Vec<MutatorNode>,
     },
     /// `GfxMutator::Instruction` — recursive evaluation driver
     /// (`RepeatWhile` etc.) wrapping inner children.
     Instruction {
+        /// Branch-routing channel index. The walker descends only
+        /// where the target tree's channel matches.
         channel: usize,
+        /// Which `Instruction` variant drives the recursive walk
+        /// (`RepeatWhile`, `RotateWhile`, `SpatialDescend`,
+        /// `MapChildren`).
         instruction: InstructionSpec,
+        /// Optional per-step mutation applied to the current
+        /// target before descending. Defaults to
+        /// [`MutationSrc::None`] so `Instruction` nodes that only
+        /// drive walking need not carry a payload.
         #[serde(default = "MutationSrc::none_default")]
         mutation: MutationSrc,
+        /// Inner mutator nodes evaluated against each visited
+        /// target during the walk. Empty default for terse JSON.
         #[serde(default)]
         children: Vec<MutatorNode>,
     },
@@ -57,11 +92,23 @@ pub enum MutatorNode {
     /// The `template`'s `ChannelSrc` should be `SectionIndex` so the
     /// builder threads the per-iteration channel through.
     Repeat {
+        /// Free-form label the [`SectionContext`](super::context::SectionContext)
+        /// keys per-iteration runtime data on (mutation lookups,
+        /// runtime counts, area lookups).
         section: String,
+        /// First channel in the iterated range. Iteration `i`
+        /// (zero-indexed) maps to channel `channel_base + i`.
         channel_base: usize,
+        /// How many iterations to expand — literal at AST time or
+        /// runtime-fetched by section label.
         count: CountSrc,
+        /// Iteration indices to skip. The expanded child set is
+        /// `count - skip_indices.len()` nodes. Empty by default.
         #[serde(default)]
         skip_indices: Vec<usize>,
+        /// One template node cloned per iteration; its
+        /// [`ChannelSrc::SectionIndex`] entries resolve to
+        /// `channel_base + iter_index` at build time.
         template: Box<MutatorNode>,
     },
 }
@@ -131,13 +178,28 @@ pub enum MutationListSrc {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(non_camel_case_types)]
 pub enum CellField {
+    /// Pull the cell's text payload from the per-section area
+    /// lookup at apply time.
     Text,
+    /// Pull the cell's canvas-space position
+    /// (`OrderedVec2`) from the area lookup.
     position,
+    /// Pull the cell's render bounds (width, height in canvas
+    /// pixels) from the area lookup.
     bounds,
+    /// Pull the cell's font-size scalar from the area lookup.
     scale,
+    /// Pull the cell's line-height multiplier from the area lookup.
     line_height,
+    /// Pull the cell's [`ColorFontRegions`](crate::core::primitives::ColorFontRegions)
+    /// styled-span set from the area lookup.
     ColorFontRegions,
+    /// Pull the cell's optional halo outline payload from the
+    /// area lookup.
     Outline,
+    /// Bake an [`ApplyOperation`] literal into the delta — every
+    /// cell built from this template uses the same arithmetic
+    /// (`Add`, `Assign`, `Subtract`, `Delete`, ...).
     Operation(ApplyOperation),
 }
 

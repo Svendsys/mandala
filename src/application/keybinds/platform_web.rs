@@ -2,56 +2,47 @@
 
 //! Web (WASM) config-source plumbing: URL `?keybinds=` query param +
 //! `localStorage` fallback. Not compiled on native.
+//!
+//! Query-param parsing and `localStorage` access are delegated to
+//! [`crate::application::user_config::web_storage`] — shared with
+//! the mutations and macros loaders so all three reach for the same
+//! window/storage shape.
 
 use log::warn;
 
 use super::config::KeybindConfig;
+use crate::application::user_config::payload_within_cap;
+use crate::application::user_config::web_storage::{read_local_storage, read_query_param};
 
 impl KeybindConfig {
     /// Load a config on WASM, with layered fallback: URL `?keybinds=<json>`
     /// query param (inline JSON, URL-encoded) > `localStorage` value under
-    /// the `mandala_keybinds` key > hardcoded defaults.
+    /// the `mandala_keybinds` key > hardcoded defaults. Each layer's
+    /// payload is bounded by `MAX_USER_PAYLOAD_BYTES` — an oversized
+    /// blob is logged and skipped without invoking serde.
     pub fn load_for_web() -> Self {
-        if let Some(json) = read_keybinds_from_query() {
-            match Self::from_json(&json) {
-                Ok(cfg) => {
-                    log::info!("loaded keybinds from URL query param");
-                    return cfg;
+        if let Some(json) = read_query_param("keybinds") {
+            if payload_within_cap("keybinds", "query param", json.len()) {
+                match Self::from_json(&json) {
+                    Ok(cfg) => {
+                        log::info!("loaded keybinds from URL query param");
+                        return cfg;
+                    }
+                    Err(e) => warn!("keybinds query param parse failed: {}", e),
                 }
-                Err(e) => warn!("keybinds query param parse failed: {}", e),
             }
         }
-        if let Some(json) = read_keybinds_from_local_storage() {
-            match Self::from_json(&json) {
-                Ok(cfg) => {
-                    log::info!("loaded keybinds from localStorage");
-                    return cfg;
+        if let Some(json) = read_local_storage("mandala_keybinds") {
+            if payload_within_cap("keybinds", "localStorage value", json.len()) {
+                match Self::from_json(&json) {
+                    Ok(cfg) => {
+                        log::info!("loaded keybinds from localStorage");
+                        return cfg;
+                    }
+                    Err(e) => warn!("keybinds localStorage parse failed: {}", e),
                 }
-                Err(e) => warn!("keybinds localStorage parse failed: {}", e),
             }
         }
         Self::default()
     }
-}
-
-fn read_keybinds_from_query() -> Option<String> {
-    let window = web_sys::window()?;
-    let search = window.location().search().ok()?;
-    // Expect format: "?keybinds=<url-encoded-json>" or
-    // "?map=foo&keybinds=<url-encoded-json>"
-    let trimmed = search.trim_start_matches('?');
-    for pair in trimmed.split('&') {
-        if let Some(val) = pair.strip_prefix("keybinds=") {
-            // Manual URL-decode: replace + with space, percent-decode the rest.
-            let decoded = js_sys::decode_uri_component(val).ok()?;
-            return decoded.as_string();
-        }
-    }
-    None
-}
-
-fn read_keybinds_from_local_storage() -> Option<String> {
-    let window = web_sys::window()?;
-    let storage = window.local_storage().ok()??;
-    storage.get_item("mandala_keybinds").ok()?
 }

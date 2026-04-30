@@ -107,7 +107,7 @@ impl DeltaGlyphModel {
     pub fn new(fields: Vec<GlyphModelField>) -> DeltaGlyphModel {
         let mut field_map = FxHashMap::default();
         for field in fields {
-            field_map.insert(field.variant(), field.clone());
+            field_map.insert(field.variant(), field);
         }
         DeltaGlyphModel { fields: field_map }
     }

@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Border-buffer creators, glyph-advance measurement, hex-colour
-//! parser. Every helper returns a [`MindMapTextBuffer`] with
+//! Border-buffer creators and glyph-advance measurement. Every
+//! helper returns a [`MindMapTextBuffer`] with
 //! [`ZoomVisibility::unbounded`]; scene-builder routes overwrite it
 //! to gate on zoom, overlay routes leave it at default.
 //!
 //! Per CODE_CONVENTIONS §1, styled-region → cosmic-text spans go
-//! through `baumhard::font::attrs` — never inlined here.
+//! through `baumhard::font::attrs` — never inlined here. Hex-colour
+//! parsing into `cosmic_text::Color` goes through
+//! `baumhard::font::hex::hex_to_cosmic_color` (§B5: cosmic-text
+//! usage stays inside `font/`).
 
 use cosmic_text::{Attrs, FontSystem};
 
@@ -154,19 +157,5 @@ pub(super) fn create_centered_cell_buffer(
     );
     buf.shape_until_scroll(font_system, false);
     MindMapTextBuffer { buffer: buf, pos, bounds, zoom_visibility: ZoomVisibility::unbounded() }
-}
-
-pub(super) fn parse_hex_color(hex: &str) -> Option<cosmic_text::Color> {
-    let hex = hex.strip_prefix('#')?;
-    if hex.len() != 6 {
-        return None;
-    }
-    let rgb = u32::from_str_radix(hex, 16).ok()?;
-    Some(cosmic_text::Color::rgba(
-        (rgb >> 16) as u8,
-        (rgb >> 8) as u8,
-        rgb as u8,
-        255,
-    ))
 }
 

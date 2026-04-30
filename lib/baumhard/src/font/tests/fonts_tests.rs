@@ -6,17 +6,12 @@
 //! Follows the `do_*()` / `test_*()` split from §B8 — every `do_*`
 //! body is benchmarkable from `benches/test_bench.rs`.
 
-use std::sync::mpsc;
-use std::thread;
-use std::time::Duration;
-
 use cosmic_text::SwashCache;
 
 use crate::font::fonts;
 use crate::font::fonts::{
-    acquire_font_system_write, acquire_font_system_write_with_timeout,
-    app_font_by_family, list_loaded_families, loaded_families_iter,
-    measure_glyph_ink_bounds, measure_text_block_unbounded, AppFont, FONT_SYSTEM,
+    acquire_font_system_write, app_font_by_family, list_loaded_families, loaded_families_iter,
+    measure_glyph_ink_bounds, measure_text_block_unbounded, AppFont,
 };
 
 #[test]
@@ -371,6 +366,11 @@ pub fn do_app_font_by_family_unknown_returns_none() {
 #[test]
 #[should_panic(expected = "FONT_SYSTEM write lock not available")]
 fn test_acquire_font_system_write_panics_on_timeout() {
+    use crate::font::fonts::{acquire_font_system_write_with_timeout, FONT_SYSTEM};
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
+
     fonts::init();
     let (acquired_tx, acquired_rx) = mpsc::channel();
     // Spawn a thread that grabs the guard, signals us, then holds

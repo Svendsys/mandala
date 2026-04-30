@@ -255,7 +255,7 @@ impl DeltaGlyphArea {
     pub fn new(fields: Vec<GlyphAreaField>) -> DeltaGlyphArea {
         let mut field_map = FxHashMap::default();
         for field in fields {
-            field_map.insert(field.variant(), field.clone());
+            field_map.insert(field.variant(), field);
         }
 
         DeltaGlyphArea { fields: field_map }

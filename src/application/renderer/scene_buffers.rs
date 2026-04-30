@@ -10,9 +10,10 @@ use baumhard::mindmap::scene_builder::BorderElement;
 use cosmic_text::Attrs;
 use glam::Vec2;
 
-use super::borders::{create_border_buffer, parse_hex_color};
+use super::borders::create_border_buffer;
 use super::{MindMapTextBuffer, Renderer};
 use baumhard::font::attrs::{rich_text_spans_from_regions, RegionFamilies};
+use baumhard::font::hex::hex_to_cosmic_color;
 use baumhard::mindmap::border::build_border_regions;
 use baumhard::util::color::hex_to_rgba_safe;
 
@@ -173,7 +174,7 @@ impl Renderer {
         let mut font_system =
             fonts::acquire_font_system_write("rebuild_edge_handle_buffers");
         for handle in handles {
-            let cosmic_color = parse_hex_color(&handle.color)
+            let cosmic_color = hex_to_cosmic_color(&handle.color)
                 .unwrap_or(cosmic_text::Color::rgba(0, 229, 255, 255));
             let attrs = Attrs::new()
                 .color(cosmic_color)
@@ -223,7 +224,7 @@ impl Renderer {
             fonts::acquire_font_system_write("rebuild_connection_label_buffers");
 
         for elem in label_elements {
-            let cosmic_color = parse_hex_color(&elem.color)
+            let cosmic_color = hex_to_cosmic_color(&elem.color)
                 .unwrap_or(cosmic_text::Color::rgba(235, 235, 235, 255));
             let attrs = Attrs::new()
                 .color(cosmic_color)

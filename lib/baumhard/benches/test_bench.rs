@@ -12,6 +12,7 @@ use baumhard::gfx_structs::tests::region_rect_tests::*;
 use baumhard::gfx_structs::tests::scene_tests::*;
 use baumhard::gfx_structs::tests::shape_tests::*;
 use baumhard::gfx_structs::tests::tree_tests::*;
+use baumhard::font::tests::hex_tests::*;
 use baumhard::gfx_structs::tests::tree_walker_tests::*;
 use baumhard::gfx_structs::tests::zoom_visibility_tests::*;
 use baumhard::util::tests::arena_utils_tests::*;
@@ -237,6 +238,19 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter(|| do_from_hex_garbage_falls_back_to_black())
     });
     c.bench_function("rgba_hex_macros", |b| b.iter(|| do_rgba_hex_macros()));
+    c.bench_function("hex_to_rgba_three_digit", |b| b.iter(|| do_hex_to_rgba_three_digit()));
+    c.bench_function("hex_to_rgba_four_digit", |b| b.iter(|| do_hex_to_rgba_four_digit()));
+    c.bench_function("hex_to_rgba_six_digit", |b| b.iter(|| do_hex_to_rgba_six_digit()));
+    c.bench_function("hex_to_rgba_eight_digit", |b| b.iter(|| do_hex_to_rgba_eight_digit()));
+    c.bench_function("hex_to_rgba_rejects_invalid_length", |b| {
+        b.iter(|| do_hex_to_rgba_rejects_invalid_length())
+    });
+    c.bench_function("hex_to_rgba_rejects_non_hex_char", |b| {
+        b.iter(|| do_hex_to_rgba_rejects_non_hex_char())
+    });
+    c.bench_function("hex_to_cosmic_color_round_trip", |b| {
+        b.iter(|| do_hex_to_cosmic_color_round_trip())
+    });
     // primitives //
     c.bench_function("overlaps", |b| b.iter(|| do_overlaps()));
     c.bench_function("split_and_separate_1", |b| b.iter(|| do_split_and_separate_1()));

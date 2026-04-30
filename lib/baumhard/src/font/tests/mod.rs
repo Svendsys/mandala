@@ -2,3 +2,4 @@
 
 pub mod attrs_tests;
 pub mod fonts_tests;
+pub mod hex_tests;

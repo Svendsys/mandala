@@ -156,7 +156,6 @@ pub(in crate::application) fn doc_with_one_edge() -> (MindMapDocument, super::Ed
 /// Pick the first visible edge and return its EdgeRef + a guaranteed
 /// on-path sample point. Used by hit-test edge tests.
 pub(super) fn pick_test_edge(doc: &MindMapDocument) -> (super::EdgeRef, glam::Vec2) {
-    use glam::Vec2;
     let edge = doc.mindmap.edges.iter()
         .find(|e| e.visible)
         .expect("testament map has visible edges");
