@@ -4,15 +4,18 @@
 //! and the dispatch funnel that ties them together. [`Application`]
 //! is the binary entry point's root; [`Application::run`]
 //! transfers control to the per-target run loop
-//! ([`run_native`] / [`run_wasm`]) which builds the appropriate
-//! `ApplicationHandler` and hands it to winit.
+//! ([`run_native`] / `run_wasm`) which builds the appropriate
+//! `ApplicationHandler` and hands it to winit. The `run_wasm`
+//! module is `cfg(target_arch = "wasm32")`-gated, hence the
+//! plain code-span (rustdoc resolves intra-doc links against
+//! the active target's module tree).
 //!
 //! **Dispatch funnel.** Every user-driven action — keyboard,
 //! mouse-click, console verb, macro replay — flows through
 //! [`dispatch::dispatch_action`] (CODE_CONVENTIONS §3). Per-event
 //! handlers (in `event_keyboard`, `event_mouse_click`,
 //! `event_cursor_moved` on native; the per-arm methods of
-//! [`run_wasm::WasmApp`] on WASM) recognise an input gesture,
+//! `run_wasm::WasmApp` on WASM) recognise an input gesture,
 //! resolve it to an [`crate::application::keybinds::Action`],
 //! and call into the funnel. Adding a new behaviour is variant
 //! + default + arm, in that order; never inline a body in a
@@ -483,20 +486,19 @@ enum DragState {
     Throttled(ThrottledDrag),
 }
 
-/// Application root — owns the launch options and (on WASM
-/// only) the pre-created winit `EventLoop` + canvas `Window`.
-/// Constructed from `main.rs` via [`Application::new`]; control
-/// transfers to winit on [`Application::run`].
+/// Application root — owns the launch options and (on WASM only)
+/// the pre-created winit `EventLoop` + canvas `Window`. Constructed
+/// from `main.rs` via [`Application::new`]; control transfers to
+/// winit on [`Application::run`].
 ///
-/// **Why the cfg-split.** Native creates the window inside winit's
-/// `ApplicationHandler::resumed` callback (the modern winit 0.30
-/// path). WASM has to attach the canvas to the DOM before the
-/// browser's main thread starts dispatching events, so it
-/// pre-creates the window and the event loop in [`Application::new`]
-/// and hands them to [`run_wasm::run`] together. The `#[allow(deprecated)]`
-/// on the WASM constructor's `event_loop.create_window(...)` call
-/// records this asymmetry — ditto the `event_loop` field, which
-/// only exists on the WASM side.
+/// **WASM variant.** WASM has to attach the canvas to the DOM
+/// before the browser's main thread starts dispatching events, so
+/// it pre-creates the window and the event loop in
+/// [`Application::new`] and hands them to `run_wasm::run` together.
+/// The `#[allow(deprecated)]` on the WASM constructor's
+/// `event_loop.create_window(...)` call records this asymmetry —
+/// ditto the `event_loop` and `window` fields, which only exist on
+/// the WASM side.
 #[cfg(target_arch = "wasm32")]
 pub struct Application {
     options: Options,
@@ -504,6 +506,15 @@ pub struct Application {
     window: Arc<Window>,
 }
 
+/// Application root — owns the launch options. Constructed from
+/// `main.rs` via [`Application::new`]; control transfers to winit
+/// on [`Application::run`].
+///
+/// **Native variant.** Native creates the window inside winit's
+/// `ApplicationHandler::resumed` callback (the modern winit 0.30
+/// path), so the struct here only carries [`Options`]. The window
+/// itself lives on the run-loop's `InitState`, materialised lazily
+/// on first resume.
 #[cfg(not(target_arch = "wasm32"))]
 pub struct Application {
     options: Options,

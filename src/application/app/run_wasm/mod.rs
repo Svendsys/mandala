@@ -13,12 +13,14 @@
 //! start `None` and the handler's match arms guard accordingly.
 //!
 //! The [`ApplicationHandler::window_event`] callback funnels into
-//! [`WasmApp::handle_window_event`], which owns only the seven-arm
-//! dispatch match. Each arm's body lives in a sibling
-//! `event_*.rs` file as a `pub(super) fn handle_*` inherent method
-//! on `WasmApp`. Mirrors native's per-arm split under
-//! `app/event_*.rs` so cross-target convergence reviews can
-//! diff the two layouts side by side.
+//! [`WasmApp::handle_window_event`], which owns the dispatch
+//! match: six arms fan out to per-arm `handle_*` inherent methods
+//! defined in sibling `event_*.rs` files (Resized, ModifiersChanged,
+//! KeyboardInput, CursorMoved, MouseInput, MouseWheel) plus an
+//! inline `CloseRequested` no-op and a catch-all that drops the
+//! arms WASM doesn't currently consume. Mirrors native's per-arm
+//! split under `app/event_*.rs` so cross-target convergence
+//! reviews can diff the two layouts side by side.
 
 #![cfg(target_arch = "wasm32")]
 
@@ -327,12 +329,13 @@ impl ApplicationHandler for WasmApp {
 }
 
 impl WasmApp {
-    /// Per-event dispatch — terse seven-arm match that fans out
-    /// into per-arm methods defined in sibling `event_*.rs`
-    /// files. Each arm extracts only the fields that arm needs;
-    /// the `_ => {}` catch-all silently drops the arms winit
-    /// fires that WASM doesn't currently consume (touch events,
-    /// IME composition, focus changes).
+    /// Per-event dispatch — six arms fan out into per-arm methods
+    /// defined in sibling `event_*.rs` files, plus an inline
+    /// `CloseRequested` no-op (browser tabs don't really close)
+    /// and a `_ => {}` catch-all that silently drops the arms
+    /// winit fires that WASM doesn't currently consume (touch
+    /// events, IME composition, focus changes). Each fan-out arm
+    /// extracts only the fields that arm needs.
     fn handle_window_event(&mut self, event: WindowEvent) {
         match event {
             WindowEvent::Resized(s) => self.handle_resized(s),

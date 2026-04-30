@@ -6,15 +6,16 @@
 //! `Action::*` variant bodies in a form callable from BOTH the
 //! native dispatcher ([`super::action_core`] +
 //! [`super::native::dispatch_action`]) and the WASM dispatcher
-//! ([`super::super::run_wasm`]). The split between native and
-//! WASM exists because the two dispatchers carry different
-//! context types — native has 21 fields including console /
-//! picker / app_mode / modifiers; WASM has 9 fields, a strict
-//! subset. Arms whose bodies touch only the shared subset live
-//! here; native-only arms stay in [`super::native`].
+//! (`super::super::run_wasm` — cfg-gated, hence the plain
+//! code-span). The split between native and WASM exists because
+//! the two dispatchers carry different context types — native has
+//! 21 fields including console / picker / app_mode / modifiers;
+//! WASM has 9 fields, a strict subset. Arms whose bodies touch
+//! only the shared subset live here; native-only arms stay in
+//! [`super::native`].
 //!
 //! This is the partial-Track-C path documented in
-//! [`WASM_CONVERGENCE.md`]: incrementally lift arm bodies as they
+//! `WASM_CONVERGENCE.md`: incrementally lift arm bodies as they
 //! turn out to need only cross-platform state, without waiting
 //! for a full context-type unification. Each migration removes
 //! duplication and the "keep in sync" maintenance tax that
