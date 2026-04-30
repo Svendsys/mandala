@@ -52,7 +52,7 @@ pub(super) fn recompute_console_completions(
 /// `false` when there's no popup, letting the caller fall through
 /// to history navigation.
 #[cfg(not(target_arch = "wasm32"))]
-pub(super) fn nav_popup(console_state: &mut ConsoleState, step: i32) -> bool {
+pub(in crate::application::app) fn nav_popup(console_state: &mut ConsoleState, step: i32) -> bool {
     if let ConsoleState::Open { completions, completion_idx, .. } = console_state {
         if completions.is_empty() {
             return false;
@@ -78,7 +78,7 @@ pub(super) fn nav_popup(console_state: &mut ConsoleState, step: i32) -> bool {
 ///
 /// No-op if no popup is present.
 #[cfg(not(target_arch = "wasm32"))]
-pub(super) fn accept_console_completion(console_state: &mut ConsoleState) {
+pub(in crate::application::app) fn accept_console_completion(console_state: &mut ConsoleState) {
     use baumhard::util::grapheme_chad::{count_grapheme_clusters, find_byte_index_of_grapheme};
     use unicode_segmentation::UnicodeSegmentation;
     let ConsoleState::Open {

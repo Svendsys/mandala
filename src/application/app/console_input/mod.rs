@@ -14,6 +14,7 @@ pub(in crate::application::app) mod exec;
 mod history;
 
 pub(super) use dispatch::handle_console_key;
+pub(in crate::application::app) use dispatch::dispatch_console_action;
 pub(super) use exec::save_document_to_bound_path;
 pub(super) use history::{load_console_history, save_console_history};
 

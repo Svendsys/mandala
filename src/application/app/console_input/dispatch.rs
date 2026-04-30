@@ -36,152 +36,218 @@ use super::rebuild_console_overlay;
 pub(in crate::application::app) fn handle_console_key(
     key_name: &Option<String>,
     logical_key: &Key,
-    ctrl_pressed: bool,
-    shift_pressed: bool,
-    alt_pressed: bool,
-    console_state: &mut ConsoleState,
-    console_history: &mut Vec<String>,
-    label_edit_state: &mut LabelEditState,
-    portal_text_edit_state: &mut PortalTextEditState,
-    color_picker_state: &mut ColorPickerState,
-    document: &mut Option<MindMapDocument>,
-    mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
-    app_scene: &mut crate::application::scene_host::AppScene,
-    renderer: &mut Renderer,
-    scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
-    keybinds: &ResolvedKeybinds,
-    macros: &mut crate::application::macros::MacroRegistry,
+    ctx: &mut super::super::input_context::InputHandlerContext<'_>,
 ) {
     let Some(name) = key_name.as_deref() else {
         return;
     };
 
-    let action = keybinds.action_for_context(
-        InputContext::Console, name, ctrl_pressed, shift_pressed, alt_pressed,
+    let action = ctx.keybinds.action_for_context(
+        InputContext::Console,
+        name,
+        ctx.modifiers.control_key(),
+        ctx.modifiers.shift_key(),
+        ctx.modifiers.alt_key(),
     );
 
-    // Two-tier Close: dismiss popup first, then close.
-    if let Some(Action::ConsoleClose) = action {
-        if edit::dismiss_popup(console_state) {
-            after_state_change(
-                EditOutcome::Unchanged, console_state, document, app_scene, renderer, keybinds,
-            );
-        } else {
-            save_console_history(console_history);
-            *console_state = ConsoleState::Closed;
-            renderer.rebuild_console_overlay_buffers(app_scene, None);
-        }
+    // Funneled path: every `Action::Console*` variant routes
+    // through `dispatch_action`, which delegates back to the
+    // [`dispatch_console_action`] fan-out below. Macros can fire
+    // any Console variant (e.g. `Action::ConsoleScrollPageUp` from
+    // a User-tier macro stepping through the scrollback) — same
+    // funnel `OpenConsole` already used. CODE_CONVENTIONS §3.
+    if let Some(a) = action {
+        let _ = super::super::dispatch::dispatch_action(a, ctx, None);
         return;
     }
 
-    // Submit executes the line; keeps its own flow because it needs
-    // scene/tree/renderer access to run commands.
-    if let Some(Action::ConsoleSubmit) = action {
-        submit_line(SubmitLineContext {
-            console_state,
-            console_history,
-            label_edit_state,
-            portal_text_edit_state,
-            color_picker_state,
-            document,
-            mindmap_tree,
-            app_scene,
-            renderer,
-            scene_cache,
-            keybinds,
-            macros,
-        });
+    // Carve-out (§3 "Modal steals own the literal `winit::Key`
+    // payload — character insertion, IME sequences"): no Action
+    // matched but the key produced a character, so insert it.
+    let Key::Character(c) = logical_key else {
         return;
-    }
-
-    // History navigation first tries the completion popup, then
-    // walks the command history.
-    if let Some(Action::ConsoleHistoryUp) = action {
-        let outcome = if nav_popup(console_state, -1) {
-            EditOutcome::Unchanged
-        } else {
-            edit::history_walk_back(console_state)
-        };
-        after_state_change(outcome, console_state, document, app_scene, renderer, keybinds);
-        return;
-    }
-    if let Some(Action::ConsoleHistoryDown) = action {
-        let outcome = if nav_popup(console_state, 1) {
-            EditOutcome::Unchanged
-        } else {
-            edit::history_walk_forward(console_state)
-        };
-        after_state_change(outcome, console_state, document, app_scene, renderer, keybinds);
-        return;
-    }
-
-    // Tab accepts the highlighted completion, then recomputes so
-    // the popup either narrows or clears against the new cursor.
-    if let Some(Action::ConsoleTabComplete) = action {
-        accept_console_completion(console_state);
-        after_state_change(
-            EditOutcome::InputChanged, console_state, document, app_scene, renderer, keybinds,
-        );
-        return;
-    }
-
-    // Scrollback navigation. Plain Up/Down stays on history; these
-    // are the Shift+Up/Down + PgUp/PgDn + Shift+Home/End shortcuts.
-    if let Some(scroll_action) = action.as_ref().and_then(|a| map_scroll_action(a.clone())) {
-        edit::adjust_scroll(console_state, scroll_action);
-        after_state_change(
-            EditOutcome::Unchanged, console_state, document, app_scene, renderer, keybinds,
-        );
-        return;
-    }
-
-    // All remaining Console actions are pure edits.
-    let edit_outcome = match action {
-        Some(Action::ConsoleClearLine) => edit::clear_line(console_state),
-        Some(Action::ConsoleJumpStart) => edit::jump_to_start(console_state),
-        Some(Action::ConsoleJumpEnd) => edit::jump_to_end(console_state),
-        Some(Action::ConsoleKillToStart) => edit::kill_to_start(console_state),
-        Some(Action::ConsoleKillWord) => edit::kill_word(console_state),
-        Some(Action::ConsoleCursorLeft) => edit::cursor_left(console_state),
-        Some(Action::ConsoleCursorRight) => edit::cursor_right(console_state),
-        Some(Action::ConsoleCursorHome) => edit::cursor_home(console_state),
-        Some(Action::ConsoleCursorEnd) => edit::cursor_end(console_state),
-        Some(Action::ConsoleDeleteBack) => edit::delete_back(console_state),
-        Some(Action::ConsoleDeleteForward) => edit::delete_forward(console_state),
-        Some(Action::ConsoleInsertSpace) => edit::insert_space(console_state),
-        _ => match logical_key {
-            // No console action matched. If the key produced a
-            // character, insert it as literal text.
-            Key::Character(c) => edit::insert_text(console_state, c.as_str()),
-            _ => return,
-        },
     };
-
-    after_state_change(edit_outcome, console_state, document, app_scene, renderer, keybinds);
+    let outcome = edit::insert_text(ctx.console_state, c.as_str());
+    after_state_change(
+        outcome,
+        ctx.console_state,
+        ctx.document,
+        ctx.app_scene,
+        ctx.renderer,
+        ctx.keybinds,
+    );
 }
 
-/// Translate the scroll-related `Action` variants into the small
-/// `ScrollDirection` enum the edit helper consumes. Returns `None`
-/// for non-scroll actions so the caller can fall through to the
-/// generic edit path.
+/// Dispatch fan-out for every `Action::Console*` variant. Called
+/// from `dispatch::dispatch_action`'s single Console* arm so
+/// macros AND keystrokes reach the same body. Each branch calls
+/// the matching `edit::*` helper (or `submit_line` /
+/// `nav_popup` / `accept_console_completion` for the multi-line
+/// cases) and runs `after_state_change` for the post-edit
+/// completion-recompute + overlay rebuild.
+///
+/// `pub(in crate::application::app)` so the dispatch arm can call
+/// it; `edit::*` helpers stay `pub(super)` to console_input —
+/// outside callers reach them only through this one seam.
 #[cfg(not(target_arch = "wasm32"))]
-fn map_scroll_action(action: Action) -> Option<edit::ScrollDirection> {
+pub(in crate::application::app) fn dispatch_console_action(
+    action: &Action,
+    ctx: &mut super::super::input_context::InputHandlerContext<'_>,
+) {
     match action {
-        Action::ConsoleScrollUp => Some(edit::ScrollDirection::LineUp),
-        Action::ConsoleScrollDown => Some(edit::ScrollDirection::LineDown),
-        Action::ConsoleScrollPageUp => Some(edit::ScrollDirection::PageUp),
-        Action::ConsoleScrollPageDown => Some(edit::ScrollDirection::PageDown),
-        Action::ConsoleScrollHome => Some(edit::ScrollDirection::Home),
-        Action::ConsoleScrollEnd => Some(edit::ScrollDirection::End),
-        _ => None,
+        // Two-tier Close: dismiss popup first, then close the modal
+        // and persist history.
+        Action::ConsoleClose => {
+            if edit::dismiss_popup(ctx.console_state) {
+                after_state_change(
+                    EditOutcome::Unchanged,
+                    ctx.console_state,
+                    ctx.document,
+                    ctx.app_scene,
+                    ctx.renderer,
+                    ctx.keybinds,
+                );
+            } else {
+                save_console_history(ctx.console_history);
+                *ctx.console_state = ConsoleState::Closed;
+                ctx.renderer.rebuild_console_overlay_buffers(ctx.app_scene, None);
+            }
+        }
+        // Submit executes the line — own flow because it needs
+        // scene/tree/renderer + macro registry to run commands.
+        Action::ConsoleSubmit => {
+            submit_line(ctx);
+        }
+        // History navigation first tries the completion popup,
+        // then falls back to walking command history.
+        Action::ConsoleHistoryUp => {
+            let outcome = if nav_popup(ctx.console_state, -1) {
+                EditOutcome::Unchanged
+            } else {
+                edit::history_walk_back(ctx.console_state)
+            };
+            after_state_change(
+                outcome,
+                ctx.console_state,
+                ctx.document,
+                ctx.app_scene,
+                ctx.renderer,
+                ctx.keybinds,
+            );
+        }
+        Action::ConsoleHistoryDown => {
+            let outcome = if nav_popup(ctx.console_state, 1) {
+                EditOutcome::Unchanged
+            } else {
+                edit::history_walk_forward(ctx.console_state)
+            };
+            after_state_change(
+                outcome,
+                ctx.console_state,
+                ctx.document,
+                ctx.app_scene,
+                ctx.renderer,
+                ctx.keybinds,
+            );
+        }
+        // Tab accepts the highlighted completion; recompute the
+        // popup against the new cursor.
+        Action::ConsoleTabComplete => {
+            accept_console_completion(ctx.console_state);
+            after_state_change(
+                EditOutcome::InputChanged,
+                ctx.console_state,
+                ctx.document,
+                ctx.app_scene,
+                ctx.renderer,
+                ctx.keybinds,
+            );
+        }
+        // Scrollback navigation (Shift+Up/Down + PgUp/PgDn +
+        // Shift+Home/End). `Unchanged` outcome — scrollback is
+        // a view position, not an input mutation.
+        Action::ConsoleScrollUp
+        | Action::ConsoleScrollDown
+        | Action::ConsoleScrollPageUp
+        | Action::ConsoleScrollPageDown
+        | Action::ConsoleScrollHome
+        | Action::ConsoleScrollEnd => {
+            let direction = match action {
+                Action::ConsoleScrollUp => edit::ScrollDirection::LineUp,
+                Action::ConsoleScrollDown => edit::ScrollDirection::LineDown,
+                Action::ConsoleScrollPageUp => edit::ScrollDirection::PageUp,
+                Action::ConsoleScrollPageDown => edit::ScrollDirection::PageDown,
+                Action::ConsoleScrollHome => edit::ScrollDirection::Home,
+                Action::ConsoleScrollEnd => edit::ScrollDirection::End,
+                _ => unreachable!("scroll outer pattern exhaustive"),
+            };
+            edit::adjust_scroll(ctx.console_state, direction);
+            after_state_change(
+                EditOutcome::Unchanged,
+                ctx.console_state,
+                ctx.document,
+                ctx.app_scene,
+                ctx.renderer,
+                ctx.keybinds,
+            );
+        }
+        // Pure edits: cursor / delete / kill / clear-line / insert-
+        // space. Each helper returns an `EditOutcome` that
+        // `after_state_change` consumes.
+        Action::ConsoleClearLine
+        | Action::ConsoleJumpStart
+        | Action::ConsoleJumpEnd
+        | Action::ConsoleKillToStart
+        | Action::ConsoleKillWord
+        | Action::ConsoleCursorLeft
+        | Action::ConsoleCursorRight
+        | Action::ConsoleCursorHome
+        | Action::ConsoleCursorEnd
+        | Action::ConsoleDeleteBack
+        | Action::ConsoleDeleteForward
+        | Action::ConsoleInsertSpace => {
+            let outcome = match action {
+                Action::ConsoleClearLine => edit::clear_line(ctx.console_state),
+                Action::ConsoleJumpStart => edit::jump_to_start(ctx.console_state),
+                Action::ConsoleJumpEnd => edit::jump_to_end(ctx.console_state),
+                Action::ConsoleKillToStart => edit::kill_to_start(ctx.console_state),
+                Action::ConsoleKillWord => edit::kill_word(ctx.console_state),
+                Action::ConsoleCursorLeft => edit::cursor_left(ctx.console_state),
+                Action::ConsoleCursorRight => edit::cursor_right(ctx.console_state),
+                Action::ConsoleCursorHome => edit::cursor_home(ctx.console_state),
+                Action::ConsoleCursorEnd => edit::cursor_end(ctx.console_state),
+                Action::ConsoleDeleteBack => edit::delete_back(ctx.console_state),
+                Action::ConsoleDeleteForward => edit::delete_forward(ctx.console_state),
+                Action::ConsoleInsertSpace => edit::insert_space(ctx.console_state),
+                _ => unreachable!("pure-edit outer pattern exhaustive"),
+            };
+            after_state_change(
+                outcome,
+                ctx.console_state,
+                ctx.document,
+                ctx.app_scene,
+                ctx.renderer,
+                ctx.keybinds,
+            );
+        }
+        // No-op: `Action` is `#[non_exhaustive]` so a future variant
+        // added inadvertently to a Console* binding context would
+        // land here. Log per CODE_CONVENTIONS §9 (interactive paths
+        // fail-safe).
+        _ => log::error!(
+            "dispatch_console_action: unrecognized action {:?}",
+            action,
+        ),
     }
 }
 
 /// Apply the side-effects of an edit: recompute completions if the
 /// input changed, then rebuild the overlay so the next frame
-/// reflects the new state.
+/// reflects the new state. `pub(in crate::application::app)` so
+/// the funneled `Action::Console*` dispatch arms in `dispatch.rs`
+/// reach the same post-edit bookkeeping.
 #[cfg(not(target_arch = "wasm32"))]
-fn after_state_change(
+pub(in crate::application::app) fn after_state_change(
     outcome: EditOutcome,
     console_state: &mut ConsoleState,
     document: &Option<MindMapDocument>,
@@ -203,44 +269,20 @@ fn after_state_change(
     }
 }
 
-/// Console-submit context — the narrow view the line executor needs
-/// into app state. Mirrors the `InputHandlerContext` shape but
-/// scoped to console submission, and kept inside this module because
-/// no code outside the submit path constructs it.
-#[cfg(not(target_arch = "wasm32"))]
-struct SubmitLineContext<'a> {
-    console_state: &'a mut ConsoleState,
-    console_history: &'a mut Vec<String>,
-    label_edit_state: &'a mut LabelEditState,
-    portal_text_edit_state: &'a mut PortalTextEditState,
-    color_picker_state: &'a mut ColorPickerState,
-    document: &'a mut Option<MindMapDocument>,
-    mindmap_tree: &'a mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
-    app_scene: &'a mut crate::application::scene_host::AppScene,
-    renderer: &'a mut Renderer,
-    scene_cache: &'a mut baumhard::mindmap::scene_cache::SceneConnectionCache,
-    keybinds: &'a ResolvedKeybinds,
-    macros: &'a mut crate::application::macros::MacroRegistry,
-}
-
 /// Take the current input line, append to history + scrollback,
 /// execute via `execute_console_line`, and rebuild the overlay.
+/// `pub(in crate::application::app)` so the funneled
+/// `Action::ConsoleSubmit` dispatch arm in `dispatch.rs` reaches it.
 #[cfg(not(target_arch = "wasm32"))]
-fn submit_line(ctx: SubmitLineContext<'_>) {
-    let SubmitLineContext {
-        console_state,
-        console_history,
-        label_edit_state,
-        portal_text_edit_state,
-        color_picker_state,
-        document,
-        mindmap_tree,
-        app_scene,
-        renderer,
-        scene_cache,
-        keybinds,
-        macros,
-    } = ctx;
+pub(in crate::application::app) fn submit_line(
+    ctx: &mut super::super::input_context::InputHandlerContext<'_>,
+) {
+    // Local re-bindings preserve the original
+    // SubmitLineContext-destructure shape. Without these, `match
+    // ctx.console_state` doesn't trigger match-ergonomics on the
+    // through-field place expression and inner field bindings come
+    // out by value instead of by `&mut`.
+    let console_state: &mut ConsoleState = &mut *ctx.console_state;
     let line = match console_state {
         ConsoleState::Open { input, .. } => std::mem::take(input),
         ConsoleState::Closed => return,
@@ -276,29 +318,29 @@ fn submit_line(ctx: SubmitLineContext<'_>) {
                 let drop = history.len() - MAX_HISTORY;
                 history.drain(..drop);
             }
-            console_history.push(line.clone());
-            if console_history.len() > MAX_HISTORY {
-                let drop = console_history.len() - MAX_HISTORY;
-                console_history.drain(..drop);
+            ctx.console_history.push(line.clone());
+            if ctx.console_history.len() > MAX_HISTORY {
+                let drop = ctx.console_history.len() - MAX_HISTORY;
+                ctx.console_history.drain(..drop);
             }
         }
-        if let Some(doc) = document.as_mut() {
+        if let Some(doc) = ctx.document.as_mut() {
             execute_console_line(
                 &line,
-                console_state,
-                label_edit_state,
-                portal_text_edit_state,
-                color_picker_state,
+                ctx.console_state,
+                ctx.label_edit_state,
+                ctx.portal_text_edit_state,
+                ctx.color_picker_state,
                 doc,
-                mindmap_tree,
-                app_scene,
-                renderer,
-                scene_cache,
-                macros,
+                ctx.mindmap_tree,
+                ctx.app_scene,
+                ctx.renderer,
+                ctx.scene_cache,
+                ctx.macros,
             );
         }
     }
-    if let Some(doc) = document.as_ref() {
-        rebuild_console_overlay(console_state, doc, app_scene, renderer, keybinds);
+    if let Some(doc) = ctx.document.as_ref() {
+        rebuild_console_overlay(ctx.console_state, doc, ctx.app_scene, ctx.renderer, ctx.keybinds);
     }
 }

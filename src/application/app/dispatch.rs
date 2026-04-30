@@ -139,6 +139,41 @@ pub(in crate::application::app) fn dispatch_action(
             }
             DispatchOutcome::Handled
         }
+        // ── Console keystroke Actions (NativeOnly) ──────────────
+        // Every `Console*` variant funnels here; the fan-out body
+        // lives in `console_input::dispatch::dispatch_console_action`
+        // alongside the `edit::*` private helpers it reaches.
+        // Or-pattern groups all 22 variants under one arm — they
+        // share the delegation. CODE_CONVENTIONS §3: the funnel
+        // requires each user-named effect to be an `Action` and
+        // reach `dispatch_action`; it does not require one match
+        // arm per variant.
+        Action::ConsoleClose
+        | Action::ConsoleSubmit
+        | Action::ConsoleTabComplete
+        | Action::ConsoleHistoryUp
+        | Action::ConsoleHistoryDown
+        | Action::ConsoleCursorLeft
+        | Action::ConsoleCursorRight
+        | Action::ConsoleCursorHome
+        | Action::ConsoleCursorEnd
+        | Action::ConsoleDeleteBack
+        | Action::ConsoleDeleteForward
+        | Action::ConsoleInsertSpace
+        | Action::ConsoleClearLine
+        | Action::ConsoleJumpStart
+        | Action::ConsoleJumpEnd
+        | Action::ConsoleKillToStart
+        | Action::ConsoleKillWord
+        | Action::ConsoleScrollUp
+        | Action::ConsoleScrollDown
+        | Action::ConsoleScrollPageUp
+        | Action::ConsoleScrollPageDown
+        | Action::ConsoleScrollEnd
+        | Action::ConsoleScrollHome => {
+            super::console_input::dispatch_console_action(&action, ctx);
+            DispatchOutcome::Handled
+        }
         Action::CancelMode => {
             // `last_click` was already cleared by the cross-platform
             // dispatcher (`dispatch_compatible`'s mixed-branch slice
