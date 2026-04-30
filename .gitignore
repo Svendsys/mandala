@@ -1,5 +1,6 @@
 /target
 /.idea
+/dist
 /target/llvm-cov
 lcov.info
 *.profraw

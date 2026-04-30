@@ -1,6 +1,12 @@
 # CLAUDE.md
-When launching sub-agents for investigation or reviews, always use the most powerful agent you have available, 
+§1 When launching sub-agents for investigation or reviews, always use the most powerful agent you have available, 
 not whatever is the default. Opus or if available Mythos
+
+§2 NEVER skip changes because they are "merely cosmetic". 
+
+§3 When proposing multiple options, if any of those options strays from the original task then make that absolutely clear
+
+§4 NEVER use "Not introduced by me" as excuse. No one cares, just address it.
 
 "API error: Stream idle timeout - partial response received" is an error that occurs regularly these days. 
 To avoid it, please make sure that any large files such as (but not limited to) plan files are written in 
