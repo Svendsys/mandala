@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! WASM event-loop body for [`super::Application::run`]. Browser
-//! thread owned by winit-web's loop; on shutdown the closure returns
-//! and winit propagates any internal failure.
+//! WASM event-loop body for [`super::Application::run`]. Builds a
+//! [`WasmApp`] [`ApplicationHandler`] and hands it to winit-web's
+//! [`EventLoopExtWebSys::spawn_app`]; the browser's main thread
+//! drives the loop from there. DOM setup (canvas attach, focus
+//! listener, keydown preventDefault, async `Renderer::new`, rAF
+//! render loop) all happens in [`run`] before `spawn_app` is
+//! called.
 
 #![cfg(target_arch = "wasm32")]
 
@@ -10,9 +14,13 @@ use std::sync::Arc;
 
 use baumhard::mindmap::tree_builder::MindMapTree;
 use wgpu::Instance;
+use winit::application::ApplicationHandler;
 use winit::event::{
-    ElementState, Event, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent,
+    ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent,
 };
+use winit::event_loop::ActiveEventLoop;
+use winit::platform::web::EventLoopExtWebSys;
+use winit::window::{Window, WindowId};
 
 use super::scene_rebuild::{
     flush_canvas_scene_buffers, rebuild_after_selection_change, rebuild_all,
@@ -240,6 +248,56 @@ impl<'a> super::dispatch::macro_core::MacroDispatchTarget for WasmMacroDispatchT
 
     fn has_node(&self, node_id: &str) -> bool {
         self.input.document.mindmap.nodes.contains_key(node_id)
+    }
+}
+
+/// winit 0.30 [`ApplicationHandler`] for the WASM target. Mirrors
+/// the native [`super::run_native`]'s `NativeApp` shape so each
+/// target's event-loop entry point reads the same way.
+///
+/// Initial DOM setup (canvas attach, `tabindex` focus, keydown
+/// preventDefault listener, async renderer construction, document
+/// fetch, rAF render loop install) happens inside [`run`] before
+/// [`EventLoopExtWebSys::spawn_app`] hands control to winit; the
+/// handler then receives [`WindowEvent`]s on the browser's main
+/// thread until the tab is torn down. `spawn_app` requires the
+/// handler be `'static`, which is why every shared field is
+/// `Rc`/`Arc`-owned rather than borrowed.
+struct WasmApp {
+    /// Held to keep the canvas alive across the loop's lifetime.
+    /// The canvas is attached to the DOM in [`run`]; this field
+    /// doesn't drive event flow but prevents premature drop of
+    /// the underlying [`winit::window::Window`].
+    _window: Arc<Window>,
+    /// Shared with the rAF render loop set up in [`run`]. `None`
+    /// until the async `Renderer::new` future inside `spawn_local`
+    /// resolves.
+    renderer: std::rc::Rc<std::cell::RefCell<Option<Renderer>>>,
+    /// Shared with the rAF render loop. `None` until the document
+    /// fetch + tree build inside `spawn_local` completes.
+    input: std::rc::Rc<std::cell::RefCell<Option<WasmInputState>>>,
+    /// Shared with the canvas keydown listener so the editor's
+    /// open / close transitions can flip its `preventDefault` flag.
+    suppress_keys: std::rc::Rc<std::cell::Cell<bool>>,
+    /// Resolved keybind table — built once in [`run`] from
+    /// `Options::keybind_config`, read on every key event.
+    keybinds: ResolvedKeybinds,
+}
+
+impl ApplicationHandler for WasmApp {
+    fn resumed(&mut self, _event_loop: &ActiveEventLoop) {
+        // Canvas + window were created and DOM-attached before
+        // `spawn_app` ran (browser DOM ordering is driven by JS
+        // events, not winit's resume cycle). No work needed here.
+    }
+
+    fn window_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _window_id: WindowId,
+        event: WindowEvent,
+    ) {
+        self.handle_window_event(event);
     }
 }
 
@@ -536,55 +594,60 @@ wasm_bindgen_futures::spawn_local(async move {
 // answers the dispatch question for every keydown.
 let keybinds: ResolvedKeybinds = app.options.keybind_config.resolve();
 
-// Clone Rcs for the event loop closure
-let renderer_for_events = renderer_rc.clone();
-let input_for_events = input_rc.clone();
-let suppress_for_events = suppress_keys.clone();
+// Hand control to winit. The handler owns the renderer / input
+// cells (shared with the rAF render loop), the editor-suppress
+// flag (shared with the canvas keydown listener), and the
+// resolved keybind table. `spawn_app` returns immediately on
+// the web target — the browser's main thread keeps running and
+// dispatches events through the handler until the tab tears down.
+let handler = WasmApp {
+    _window: app.window,
+    renderer: renderer_rc,
+    input: input_rc,
+    suppress_keys,
+    keybinds,
+};
+app.event_loop.spawn_app(handler);
+}
 
-app.event_loop.run(move |event, _window_target| {
-    _ = (&app.window, &mut app.options);
-
-    match event {
-        Event::WindowEvent {
-            event: WindowEvent::Resized(size), ..
-        } => {
-            if let Some(renderer) = renderer_for_events.borrow_mut().as_mut() {
+impl WasmApp {
+    /// Per-event dispatch — same body that previously lived in
+    /// the closure passed to `event_loop.run`. Split out as an
+    /// inherent method so [`ApplicationHandler::window_event`]
+    /// can stay terse.
+    fn handle_window_event(&mut self, event: WindowEvent) {
+        match event {
+        WindowEvent::Resized(size) => {
+            if let Some(renderer) = self.renderer.borrow_mut().as_mut() {
                 renderer.process_decree(
                     RenderDecree::SetSurfaceSize(size.width, size.height),
                 );
             }
         }
-        Event::WindowEvent {
-            event: WindowEvent::CloseRequested, ..
-        } => {
+        WindowEvent::CloseRequested => {
             // WASM doesn't really close
         }
 
         // --- Modifier tracking ---
-        Event::WindowEvent {
-            event: WindowEvent::ModifiersChanged(mods), ..
-        } => {
-            if let Some(input) = input_for_events.borrow_mut().as_mut() {
+        WindowEvent::ModifiersChanged(mods) => {
+            if let Some(input) = self.input.borrow_mut().as_mut() {
                 input.modifiers = mods.state();
             }
         }
 
         // --- Keyboard input ---
-        Event::WindowEvent {
-            event: WindowEvent::KeyboardInput {
-                event: KeyEvent {
-                    state: ElementState::Pressed,
-                    ref logical_key,
-                    ..
-                },
+        WindowEvent::KeyboardInput {
+            event: KeyEvent {
+                state: ElementState::Pressed,
+                ref logical_key,
                 ..
             },
             ..
         } => {
             let key_name = crate::application::keybinds::key_to_name(logical_key);
 
-            let mut input_borrow = input_for_events.borrow_mut();
-            let mut renderer_borrow = renderer_for_events.borrow_mut();
+            let mut input_borrow = self.input.borrow_mut();
+            let mut renderer_borrow = self.renderer.borrow_mut();
             let (Some(input), Some(renderer)) =
                 (input_borrow.as_mut(), renderer_borrow.as_mut())
             else { return; };
@@ -598,7 +661,7 @@ app.event_loop.run(move |event, _window_target| {
             // at `event_keyboard.rs`.
             if input.text_edit_state.is_open() {
                 let action = key_name.as_deref().and_then(|n| {
-                    keybinds.action_for_context(
+                    self.keybinds.action_for_context(
                         crate::application::keybinds::InputContext::TextEdit,
                         n,
                         input.modifiers.control_key(),
@@ -609,12 +672,12 @@ app.event_loop.run(move |event, _window_target| {
                 if let Some(modal_action @ (Action::TextEditCommit | Action::TextEditCancel)) =
                     &action
                 {
-                    let mut core = input.input_context_core(renderer, &keybinds);
+                    let mut core = input.input_context_core(renderer, &self.keybinds);
                     let _ = super::dispatch::action_core::dispatch_compatible(
                         modal_action,
                         &mut core,
                     );
-                    suppress_for_events.set(input.text_edit_state.is_open());
+                    self.suppress_keys.set(input.text_edit_state.is_open());
                     return;
                 }
                 handle_text_edit_key(
@@ -623,7 +686,7 @@ app.event_loop.run(move |event, _window_target| {
                     input.modifiers.control_key(),
                     input.modifiers.shift_key(),
                     input.modifiers.alt_key(),
-                    &keybinds,
+                    &self.keybinds,
                     &mut input.text_edit_state,
                     &mut input.document,
                     &mut input.mindmap_tree,
@@ -631,13 +694,13 @@ app.event_loop.run(move |event, _window_target| {
                     renderer,
                     &mut input.scene_cache,
                 );
-                suppress_for_events.set(input.text_edit_state.is_open());
+                self.suppress_keys.set(input.text_edit_state.is_open());
                 return;
             }
 
             // Hotkey dispatch via keybinds.
             let action = key_name.as_deref().and_then(|k| {
-                keybinds.action_for_context(
+                self.keybinds.action_for_context(
                     crate::application::keybinds::InputContext::Document,
                     k,
                     input.modifiers.control_key(),
@@ -658,7 +721,7 @@ app.event_loop.run(move |event, _window_target| {
             // CustomMutation chain native uses (`event_keyboard.rs`).
             if let Some(a) = action.clone() {
                 // Pin "did the user just trigger an EditSelection?"
-                // before the dispatch — `suppress_for_events` is
+                // before the dispatch — `self.suppress_keys` is
                 // ONLY updated for that pair (pre-Track-B, the
                 // suppress call lived inside the EditSelection
                 // pre-filter arm). Other Compatible Actions don't
@@ -666,7 +729,7 @@ app.event_loop.run(move |event, _window_target| {
                 let was_edit_selection =
                     matches!(a, Action::EditSelection | Action::EditSelectionClean);
                 let _ = {
-                    let mut core = input.input_context_core(renderer, &keybinds);
+                    let mut core = input.input_context_core(renderer, &self.keybinds);
                     super::dispatch::action_core::dispatch_compatible(&a, &mut core)
                 };
                 if was_edit_selection {
@@ -679,7 +742,7 @@ app.event_loop.run(move |event, _window_target| {
                     // `Handled` which left suppress stuck-true on a
                     // non-Single EditSelection (Unhandled outcome);
                     // restored here per the design reviewer's flag.
-                    suppress_for_events.set(input.text_edit_state.is_open());
+                    self.suppress_keys.set(input.text_edit_state.is_open());
                 }
             } else {
                 // No built-in Action bound to this combo — fall
@@ -691,7 +754,7 @@ app.event_loop.run(move |event, _window_target| {
                 // hostile Map / Inline tier macro can't slip
                 // destructive Actions or ConsoleLine past.
                 if let Some(macro_id) = key_name.as_deref().and_then(|k| {
-                    keybinds.macro_for(
+                    self.keybinds.macro_for(
                         k,
                         input.modifiers.control_key(),
                         input.modifiers.shift_key(),
@@ -702,7 +765,7 @@ app.event_loop.run(move |event, _window_target| {
                     let mut target = WasmMacroDispatchTarget {
                         input,
                         renderer,
-                        keybinds: &keybinds,
+                        keybinds: &self.keybinds,
                     };
                     let _ = super::dispatch::macro_core::dispatch_macro(&macro_id, &mut target);
                 }
@@ -710,30 +773,25 @@ app.event_loop.run(move |event, _window_target| {
         }
 
         // --- Mouse input ---
-        Event::WindowEvent {
-            event: WindowEvent::CursorMoved { position, .. }, ..
-        } => {
-            if let Some(input) = input_for_events.borrow_mut().as_mut() {
+        WindowEvent::CursorMoved { position, .. } => {
+            if let Some(input) = self.input.borrow_mut().as_mut() {
                 input.cursor_pos = (position.x, position.y);
             }
         }
 
-        Event::WindowEvent {
-            event: WindowEvent::MouseInput {
-                state: btn_state,
-                button: MouseButton::Left,
-                ..
-            },
+        WindowEvent::MouseInput {
+            state: btn_state,
+            button: MouseButton::Left,
             ..
         } => {
             if btn_state == ElementState::Pressed {
                 // --- Left mouse Pressed ---
-                let mut input_borrow = input_for_events.borrow_mut();
+                let mut input_borrow = self.input.borrow_mut();
                 let Some(input) = input_borrow.as_mut() else { return; };
 
                 // Compute canvas position via renderer
                 let canvas_pos = {
-                    let renderer_borrow = renderer_for_events.borrow();
+                    let renderer_borrow = self.renderer.borrow();
                     match renderer_borrow.as_ref() {
                         Some(r) => r.screen_to_canvas(
                             input.cursor_pos.0 as f32,
@@ -750,7 +808,7 @@ app.event_loop.run(move |event, _window_target| {
                 // hit-routing block now lives in one place.
                 let now = now_ms();
                 let parts = {
-                    let renderer_borrow = renderer_for_events.borrow();
+                    let renderer_borrow = self.renderer.borrow();
                     let Some(renderer) = renderer_borrow.as_ref() else { return; };
                     super::compute_click_hit(
                         canvas_pos,
@@ -778,7 +836,7 @@ app.event_loop.run(move |event, _window_target| {
                 if is_dblclick {
                     input.last_click = None;
 
-                    let mut renderer_borrow = renderer_for_events.borrow_mut();
+                    let mut renderer_borrow = self.renderer.borrow_mut();
                     let Some(renderer) = renderer_borrow.as_mut() else { return; };
 
                     match &click_hit {
@@ -871,7 +929,7 @@ app.event_loop.run(move |event, _window_target| {
                             let allow_create = !matches!(
                                 input.document.selection,
                                 SelectionState::Edge(_)
-                            ) && keybinds.has_any_binding_for(
+                            ) && self.keybinds.has_any_binding_for(
                                 crate::application::keybinds::Action::CreateOrphanNodeAndEdit,
                             );
                             if allow_create {
@@ -888,7 +946,7 @@ app.event_loop.run(move |event, _window_target| {
                             }
                         }
                     }
-                    suppress_for_events.set(input.text_edit_state.is_open());
+                    self.suppress_keys.set(input.text_edit_state.is_open());
                     return;
                 }
 
@@ -925,14 +983,14 @@ app.event_loop.run(move |event, _window_target| {
                 });
             } else {
                 // --- Left mouse Released ---
-                let mut input_borrow = input_for_events.borrow_mut();
+                let mut input_borrow = self.input.borrow_mut();
                 let Some(input) = input_borrow.as_mut() else { return; };
 
                 let pending = std::mem::replace(&mut input.pending_click, PendingClick::None);
                 if matches!(pending, PendingClick::None) { return; }
 
                 if input.text_edit_state.is_open() {
-                    let mut renderer_borrow = renderer_for_events.borrow_mut();
+                    let mut renderer_borrow = self.renderer.borrow_mut();
                     let Some(renderer) = renderer_borrow.as_mut() else { return; };
                     let release_canvas = renderer.screen_to_canvas(
                         input.cursor_pos.0 as f32,
@@ -958,13 +1016,13 @@ app.event_loop.run(move |event, _window_target| {
                     // call the same `dispatch_compatible` that
                     // native uses for this Compatible Action.
                     {
-                        let mut core = input.input_context_core(renderer, &keybinds);
+                        let mut core = input.input_context_core(renderer, &self.keybinds);
                         let _ = super::dispatch::action_core::dispatch_compatible(
                             &Action::TextEditCommit,
                             &mut core,
                         );
                     }
-                    suppress_for_events.set(false);
+                    self.suppress_keys.set(false);
                     return;
                 }
 
@@ -1008,7 +1066,7 @@ app.event_loop.run(move |event, _window_target| {
                     }
                     _ => SelectionState::None,
                 };
-                let mut renderer_borrow = renderer_for_events.borrow_mut();
+                let mut renderer_borrow = self.renderer.borrow_mut();
                 if let Some(renderer) = renderer_borrow.as_mut() {
                     rebuild_after_selection_change(
                         &prev_selection,
@@ -1022,16 +1080,14 @@ app.event_loop.run(move |event, _window_target| {
             }
         }
 
-        Event::WindowEvent {
-            event: WindowEvent::MouseWheel { delta, .. }, ..
-        } => {
+        WindowEvent::MouseWheel { delta, .. } => {
             let scroll_y = match delta {
                 MouseScrollDelta::LineDelta(_, y) => y as f64,
                 MouseScrollDelta::PixelDelta(pos) => pos.y / 50.0,
             };
             let factor = if scroll_y > 0.0 { 1.1 } else { 1.0 / 1.1 };
-            let mut input_borrow = input_for_events.borrow_mut();
-            let mut renderer_borrow = renderer_for_events.borrow_mut();
+            let mut input_borrow = self.input.borrow_mut();
+            let mut renderer_borrow = self.renderer.borrow_mut();
             if let (Some(input), Some(renderer)) =
                 (input_borrow.as_mut(), renderer_borrow.as_mut())
             {
@@ -1057,7 +1113,7 @@ app.event_loop.run(move |event, _window_target| {
 
         _ => {}
     }
-}).expect("Event loop error");
+    }
 }
 
 /// Schedule `f` on the next browser animation frame — the
