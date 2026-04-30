@@ -360,12 +360,64 @@ pub(in crate::application::app) fn dispatch_compatible(
         Action::ClearZoom => {
             with_doc_rebuild(core, |rc| super::cross_dispatch::apply_clear_zoom(rc))
         }
-        // Compatible-classified but not wired here yet (Copy /
-        // Cut / Paste — clipboard stubs on WASM; CreateOrphan-
-        // NodeAndEdit; TextEdit cursor primitives — modal-steal
-        // routed). Caller's fall-through (native only) catches
-        // them. Returning `Unhandled` mirrors the catch-all
-        // posture in `dispatch_compatible_action_wasm` pre-Track-C.
+        // ── Clipboard ─────────────────────────────────────────
+        // Compatible because `clipboard::{read,write}_clipboard`
+        // are logged stubs on WASM (pending async-clipboard) and
+        // the trait-driven walk over `selection_targets` compiles
+        // on both targets.
+        Action::Copy | Action::Cut => {
+            let is_cut = matches!(action, Action::Cut);
+            if let Some(doc) = core.document.as_deref_mut() {
+                super::cross_dispatch::apply_copy_or_cut(is_cut, doc);
+            }
+        }
+        Action::Paste => with_doc_rebuild(core, |rc| super::cross_dispatch::apply_paste(rc)),
+        // ── Create-orphan-and-edit (keyboard shape) ───────────
+        // Mouse-driven empty-canvas double-click stays in
+        // `dispatch.rs` (DoubleClickActivate::Empty calls
+        // `dispatch_create_orphan_and_edit` directly with
+        // `DispatchHit::canvas_pos`). The keyboard-bound case
+        // — and the WASM target which has no DispatchHit on this
+        // path — uses `cursor_pos` here.
+        Action::CreateOrphanNodeAndEdit => {
+            let canvas_pos = core
+                .renderer
+                .screen_to_canvas(core.cursor_pos.0 as f32, core.cursor_pos.1 as f32);
+            if let Some(doc) = core.document.as_deref_mut() {
+                let mut rc = super::cross_dispatch::rebuild_ctx!(core, doc);
+                super::cross_dispatch::apply_create_orphan_node_and_edit(
+                    canvas_pos,
+                    &mut rc,
+                    core.text_edit_state,
+                );
+            }
+        }
+        // ── TextEdit cursor primitives ────────────────────────
+        // Pure state mutations on `text_edit_state`. The modal
+        // handler `handle_text_edit_key` calls `dispatch_action`
+        // and refreshes the preview tree afterwards, so arms
+        // here only touch state — no rebuild.
+        Action::TextEditCursorLeft
+        | Action::TextEditCursorRight
+        | Action::TextEditCursorUp
+        | Action::TextEditCursorDown
+        | Action::TextEditCursorHome
+        | Action::TextEditCursorEnd
+        | Action::TextEditDeleteBack
+        | Action::TextEditDeleteForward
+        | Action::TextEditWordLeft
+        | Action::TextEditWordRight
+        | Action::TextEditDeleteWordBack
+        | Action::TextEditDeleteWordForward => {
+            super::text_edit::apply_text_edit_action(action.clone(), core.text_edit_state);
+        }
+        // Catch-all for variants `dispatch_compatible` doesn't
+        // own. Two cohorts reach here: NativeOnly arms (caller's
+        // fall-through runs them on native; on WASM they're
+        // silently skipped, which is fine — well-formed configs
+        // don't bind NativeOnly Actions to WASM key combos), and
+        // mixed-branch arms whose cross-platform slice fell
+        // through (`EditSelection*` on a non-Single selection).
         _ => return DispatchOutcome::Unhandled,
     }
     DispatchOutcome::Handled

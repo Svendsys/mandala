@@ -12,7 +12,7 @@
 
 use glam::Vec2;
 
-use crate::application::document::{hit_test, EdgeRef, SelectionState, UndoAction};
+use crate::application::document::{EdgeRef, SelectionState, UndoAction};
 use crate::application::keybinds::Action;
 
 use super::input_context::InputHandlerContext;
@@ -92,10 +92,12 @@ fn quote_console_arg(s: &str) -> String {
 ///   - a mixed-branch arm's native residual (`CancelMode`'s AppMode
 ///     reset + rebuild; `EditSelection*` on EdgeLabel / Portal
 ///     selections),
-///   - a Compatible arm not yet wired in `dispatch_compatible`
-///     (Copy / Cut / Paste — clipboard helpers; `CreateOrphanNodeAndEdit`
-///     — the click-position mixed-payload arm; `TextEditCursor*` /
-///     `TextEditCommit` / `TextEditCancel` — modal-steal routed).
+///   - the mouse-mixed branch of `DoubleClickActivate` and the
+///     mouse-with-hit branch of `CreateOrphanNodeAndEdit`, both
+///     of which need `DispatchHit::canvas_pos` (a payload
+///     `dispatch_compatible` doesn't carry). The keyboard /
+///     no-hit branch of `CreateOrphanNodeAndEdit` is handled
+///     in `dispatch_compatible` (uses `cursor_pos`).
 ///
 /// `WASM_CONVERGENCE.md` Track C records the architecture; calling
 /// `dispatch_compatible` from this fn is the seam.
@@ -353,55 +355,6 @@ pub(in crate::application::app) fn dispatch_action(
             }
             DispatchOutcome::Handled
         }
-        Action::Copy | Action::Cut => {
-            use crate::application::console::traits::{
-                selection_targets, view_for, ClipboardContent, HandlesCopy, HandlesCut,
-            };
-            let is_cut = matches!(action, Action::Cut);
-            if let Some(doc) = ctx.document.as_mut() {
-                let targets = selection_targets(&doc.selection);
-                for tid in &targets {
-                    let mut view = view_for(doc, tid);
-                    let content = if is_cut {
-                        view.clipboard_cut()
-                    } else {
-                        view.clipboard_copy()
-                    };
-                    if let ClipboardContent::Text(text) = content {
-                        crate::application::clipboard::write_clipboard(&text);
-                        break;
-                    }
-                }
-            }
-            DispatchOutcome::Handled
-        }
-        Action::Paste => {
-            use crate::application::console::traits::{
-                selection_targets, view_for, HandlesPaste, Outcome,
-            };
-            if let Some(text) = crate::application::clipboard::read_clipboard() {
-                if let Some(doc) = ctx.document.as_mut() {
-                    let targets = selection_targets(&doc.selection);
-                    let mut any_applied = false;
-                    for tid in &targets {
-                        let mut view = view_for(doc, tid);
-                        if let Outcome::Applied = view.clipboard_paste(&text) {
-                            any_applied = true;
-                        }
-                    }
-                    if any_applied {
-                        rebuild_all(
-                            doc,
-                            ctx.mindmap_tree,
-                            ctx.app_scene,
-                            ctx.renderer,
-                            ctx.scene_cache,
-                        );
-                    }
-                }
-            }
-            DispatchOutcome::Handled
-        }
         Action::SaveDocument => {
             if let Some(doc) = ctx.document.as_mut() {
                 save_document_to_bound_path(doc, ctx.console_state);
@@ -524,36 +477,6 @@ pub(in crate::application::app) fn dispatch_action(
             }
             DispatchOutcome::Handled
         }
-        Action::CreateOrphanNodeAndEdit => {
-            // Direct invocation (e.g. from a key binding). When dispatched
-            // via DoubleClickActivate's empty-canvas path, the helper is
-            // called inline.
-            if let Some(h) = hit {
-                dispatch_create_orphan_and_edit(ctx, h);
-            } else if let Some(doc) = ctx.document.as_mut() {
-                let canvas_pos = ctx
-                    .renderer
-                    .screen_to_canvas(ctx.cursor_pos.0 as f32, ctx.cursor_pos.1 as f32);
-                let new_id = doc.create_orphan_and_select(canvas_pos);
-                rebuild_all(
-                    doc,
-                    ctx.mindmap_tree,
-                    ctx.app_scene,
-                    ctx.renderer,
-                    ctx.scene_cache,
-                );
-                open_text_edit(
-                    &new_id,
-                    true,
-                    doc,
-                    ctx.text_edit_state,
-                    ctx.mindmap_tree,
-                    ctx.app_scene,
-                    ctx.renderer,
-                );
-            }
-            DispatchOutcome::Handled
-        }
         Action::PanCanvas => {
             // Continuous gesture: enter pan mode for the duration of
             // the press. The mouse-release handler unconditionally
@@ -625,26 +548,6 @@ pub(in crate::application::app) fn dispatch_action(
             DispatchOutcome::Handled
         }
 
-        // ── TextEdit cursor primitives ────────────────────────
-        // Each arm mutates `ctx.text_edit_state` in place. The modal
-        // handler `handle_text_edit_key` calls `dispatch_action` and
-        // refreshes the preview tree afterwards, so arms here only
-        // touch state — they don't need to rebuild.
-        Action::TextEditCursorLeft
-        | Action::TextEditCursorRight
-        | Action::TextEditCursorUp
-        | Action::TextEditCursorDown
-        | Action::TextEditCursorHome
-        | Action::TextEditCursorEnd
-        | Action::TextEditDeleteBack
-        | Action::TextEditDeleteForward
-        | Action::TextEditWordLeft
-        | Action::TextEditWordRight
-        | Action::TextEditDeleteWordBack
-        | Action::TextEditDeleteWordForward => {
-            apply_text_edit_action(action, ctx.text_edit_state);
-            DispatchOutcome::Handled
-        }
         // ── Modal commit / cancel ────────────────────────────
         // §3 funnel: modal handlers used to call `close_*` helpers
         // inline. Commit/cancel are user-named effects (Esc /
@@ -781,13 +684,6 @@ pub(in crate::application::app) fn dispatch_action(
         }
     }
 }
-
-// `apply_text_edit_action` lives in `text_edit/mod.rs` (cross-platform)
-// so the WASM build can call it from the editor's modal handler.
-// Brought into scope here for the dispatch arm above. Not re-exported
-// — external callers should reach the function via `text_edit::`
-// directly (see `text_edit/editor.rs` for the canonical caller).
-use super::text_edit::apply_text_edit_action;
 
 /// Apply a LabelEdit cursor / delete primitive to a generic
 /// `(buffer, cursor)` pair. Both `LabelEditState` and
