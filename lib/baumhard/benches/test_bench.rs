@@ -12,6 +12,7 @@ use baumhard::gfx_structs::tests::region_rect_tests::*;
 use baumhard::gfx_structs::tests::scene_tests::*;
 use baumhard::gfx_structs::tests::shape_tests::*;
 use baumhard::gfx_structs::tests::tree_tests::*;
+use baumhard::font::tests::hex_tests::*;
 use baumhard::gfx_structs::tests::tree_walker_tests::*;
 use baumhard::gfx_structs::tests::zoom_visibility_tests::*;
 use baumhard::util::tests::arena_utils_tests::*;

@@ -13,6 +13,10 @@ pub mod attrs;
 /// Compiled-in font table, shared `FONT_SYSTEM`, cosmic-text editor
 /// factories, and the text-measurement primitives.
 pub mod fonts;
+/// Hex-string → `cosmic_text::Color` bridge — the single entry point
+/// renderer code uses to resolve a theme-variable hex into the
+/// cosmic-text colour type without importing `cosmic_text` itself.
+pub mod hex;
 /// Test bodies exposed via `pub mod tests` so `benches/test_bench.rs`
 /// can reuse the `do_*()` functions as micro-benchmarks (§B8).
 pub mod tests;

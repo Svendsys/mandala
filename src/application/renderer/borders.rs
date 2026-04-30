@@ -6,9 +6,10 @@
 //! to gate on zoom, overlay routes leave it at default.
 //!
 //! Per CODE_CONVENTIONS §1, styled-region → cosmic-text spans go
-//! through `baumhard::font::attrs` — never inlined here. The same
-//! §1 directs hex-colour parsing to
-//! `baumhard::util::color_conversion::hex_to_cosmic_color`.
+//! through `baumhard::font::attrs` — never inlined here. Hex-colour
+//! parsing into `cosmic_text::Color` goes through
+//! `baumhard::font::hex::hex_to_cosmic_color` (§B5: cosmic-text
+//! usage stays inside `font/`).
 
 use cosmic_text::{Attrs, FontSystem};
 

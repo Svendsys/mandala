@@ -13,9 +13,9 @@ use glam::Vec2;
 use super::borders::create_border_buffer;
 use super::{MindMapTextBuffer, Renderer};
 use baumhard::font::attrs::{rich_text_spans_from_regions, RegionFamilies};
+use baumhard::font::hex::hex_to_cosmic_color;
 use baumhard::mindmap::border::build_border_regions;
 use baumhard::util::color::hex_to_rgba_safe;
-use baumhard::util::color_conversion::hex_to_cosmic_color;
 
 impl Renderer {
     /// Full (non-keyed) border rebuild — wipes the keyed cache and rebuilds

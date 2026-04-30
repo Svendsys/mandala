@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use crate::util::color::{from_hex, hex_to_rgba_safe};
-use crate::util::color_conversion::{hex_to_cosmic_color, hex_to_rgba};
+use crate::util::color_conversion::hex_to_rgba;
 use crate::{hex, rgb, rgba};
 use lazy_static::lazy_static;
 
@@ -176,40 +176,4 @@ pub fn do_hex_to_rgba_rejects_non_hex_char() {
     assert!(hex_to_rgba("#ff00ZZ").is_none());
     assert!(hex_to_rgba("#deadbeef!").is_none()); // length-mismatch wins
     assert!(hex_to_rgba("#ff00 0a").is_none());   // embedded space
-}
-
-#[test]
-fn test_hex_to_cosmic_color_round_trip() {
-    do_hex_to_cosmic_color_round_trip();
-}
-
-/// `#ff0000` lands as `cosmic_text::Color::rgba(255, 0, 0, 255)`.
-/// Round-tripping every channel boundary (00, 80, ff) catches
-/// off-by-one errors in the f32→u8 rounding step.
-pub fn do_hex_to_cosmic_color_round_trip() {
-    assert_eq!(
-        hex_to_cosmic_color("#ff0000").unwrap(),
-        cosmic_text::Color::rgba(255, 0, 0, 255)
-    );
-    assert_eq!(
-        hex_to_cosmic_color("#000000").unwrap(),
-        cosmic_text::Color::rgba(0, 0, 0, 255)
-    );
-    assert_eq!(
-        hex_to_cosmic_color("#ffffff").unwrap(),
-        cosmic_text::Color::rgba(255, 255, 255, 255)
-    );
-    // Shorthand path: `#f00` must produce the same colour as `#ff0000`.
-    assert_eq!(
-        hex_to_cosmic_color("#f00").unwrap(),
-        hex_to_cosmic_color("#ff0000").unwrap()
-    );
-    // Eight-digit form carries alpha through.
-    assert_eq!(
-        hex_to_cosmic_color("#05638f80").unwrap(),
-        cosmic_text::Color::rgba(5, 99, 143, 128)
-    );
-    // Garbage rejects rather than substituting.
-    assert!(hex_to_cosmic_color("not-a-color").is_none());
-    assert!(hex_to_cosmic_color("#ggg").is_none());
 }
