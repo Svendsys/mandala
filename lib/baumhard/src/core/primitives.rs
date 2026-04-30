@@ -29,8 +29,15 @@ use crate::util::color::FloatRgba;
 /// [`ColorFontRegions`] set regardless of colour / font.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct ColorFontRegion {
+    /// Half-open grapheme-cluster span this region covers in the
+    /// backing text. Sole key for `Eq` / `Ord` / `Hash` on the
+    /// owning [`ColorFontRegions`] set.
     pub range: Range,
+    /// Optional font pin overriding the area's default for this
+    /// span. `None` lets the area's font show through.
     pub font: Option<AppFont>,
+    /// Optional colour pin overriding the area's default. `None`
+    /// lets the area's text colour show through.
     pub color: Option<FloatRgba>,
 }
 
@@ -47,9 +54,18 @@ impl Hash for ColorFontRegion {
 /// that update a single facet of an existing region.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ColorFontRegionField {
+    /// Replace the region's grapheme-cluster span. Repositions the
+    /// region within the owning set's `BTreeSet` ordering.
     Range(Range),
+    /// Set the region's font pin to a specific [`AppFont`],
+    /// overriding the area's default for the region's span.
     Font(AppFont),
+    /// Set the region's colour pin to an explicit [`FloatRgba`],
+    /// overriding the area's default text colour for the span.
     Color(FloatRgba),
+    /// Mutates the region as a whole (insert, replace, or delete
+    /// the entry), without targeting an individual sub-field. The
+    /// outer mutation's [`ApplyOperation`] decides which.
     This,
 }
 
@@ -96,6 +112,13 @@ impl ColorFontRegion {
 /// insertion / deletion of characters in the backing text.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Hash)]
 pub struct ColorFontRegions {
+    /// Sorted set of styled spans, keyed on
+    /// [`ColorFontRegion::range`]. Stored in a `BTreeSet` so range
+    /// lookup, insertion, and ordered iteration over overlapping
+    /// spans are all O(log n). Direct mutation bypasses the
+    /// [`RegionIndexer`](crate::gfx_structs::util::regions::RegionIndexer)
+    /// — see CONVENTIONS §B6: writes go through the mutator
+    /// pipeline, never through this field directly.
     pub regions: BTreeSet<ColorFontRegion>,
 }
 
@@ -471,7 +494,12 @@ impl ApplyOperation {
 /// core model. Totally ordered for `BTreeSet` storage.
 #[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
 pub struct Range {
+    /// Inclusive start index in grapheme clusters (not bytes, not
+    /// chars). User-derived offsets land here.
     pub start: usize,
+    /// Exclusive end index in grapheme clusters. `end >= start`
+    /// must hold; inverted ranges are dropped with a warning by
+    /// [`ColorFontRegions::submit_region`].
     pub end: usize,
 }
 
@@ -525,8 +553,14 @@ impl Range {
 /// Helper for types that can have [`Flag`]s toggled on and off.
 /// Implementers typically back this with a bitset.
 pub trait Flaggable {
+    /// `true` iff `flag` is currently set on `self`. O(1) on
+    /// hash-set / bitset implementations.
     fn flag_is_set(&self, flag: Flag) -> bool;
+    /// Set `flag` on `self`. Idempotent: setting an already-set
+    /// flag is a no-op. O(1) on hash-set / bitset implementations.
     fn set_flag(&mut self, flag: Flag);
+    /// Clear `flag` from `self`. Idempotent: clearing an unset
+    /// flag is a no-op. O(1) on hash-set / bitset implementations.
     fn clear_flag(&mut self, flag: Flag);
 }
 
@@ -534,6 +568,16 @@ pub trait Flaggable {
 /// pipeline's dispatch trait — every delta type implements it against
 /// its target.
 pub trait Applicable<T: Clone> {
+    /// Merge `self`'s change into `target` in place. The single
+    /// dispatch contract for the entire mutation pipeline: every
+    /// `MutatorTree` walk, every `DeltaGlyphArea` / `DeltaGlyphModel`
+    /// merge, and every `GfxMutator` evaluation eventually bottoms
+    /// out in a call to this method (see CONVENTIONS §B2 — mutate,
+    /// don't rebuild). Implementations must keep `target`'s
+    /// invariants intact (sorted region sets, region-index
+    /// consistency, AABB cache invalidation) and must not allocate
+    /// a fresh arena to apply a single field change. Cost varies
+    /// by impl; the contract is "cheaper than cloning the target".
     fn apply_to(&self, target: &mut T);
 }
 
@@ -542,8 +586,17 @@ pub trait Applicable<T: Clone> {
 /// generation; new flags are added as interactions grow.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Hash, Eq, PartialEq)]
 pub enum Flag {
+    /// Element holds keyboard / interaction focus. The renderer
+    /// uses this to highlight the focused area, and the input
+    /// router routes typed text into the focused node.
     Focused,
+    /// Element accepts user-driven mutation. Read-only nodes
+    /// (legend chrome, headers) leave this unset so the editing
+    /// paths skip them.
     Mutable,
+    /// Element is layout-pinned. Carries the [`AnchorBox`]
+    /// describing which corners / edges are constrained against
+    /// which target.
     Anchored(AnchorBox),
     /// If set in an element, all mutations should also create a corresponding event
     MutationEvents,
@@ -554,9 +607,17 @@ pub enum Flag {
 /// constraints on the layout solver.
 #[derive(Clone, Copy, Hash, Eq, PartialEq, Debug, Serialize, Deserialize)]
 pub enum AnchorBox {
+    /// One pin only — element is constrained at a single point;
+    /// the rest of its position is free for the layout solver.
     Single(Anchor),
+    /// Two pins — sufficient to lock position and one axis of
+    /// scale, e.g. left and right edges glued to siblings.
     Dual(Anchor, Anchor),
+    /// Three pins — locks position plus one axis of scale and
+    /// rotation; one degree of freedom remains.
     Trio(Anchor, Anchor, Anchor),
+    /// Four pins, one per corner — the element is fully
+    /// constrained; the layout solver has no freedom left.
     Full(Anchor, Anchor, Anchor, Anchor),
 }
 
@@ -643,10 +704,20 @@ impl Default for Anchor {
 /// `World` use global coordinate systems.
 #[derive(Clone, Copy, Hash, Eq, PartialEq, Debug, Serialize, Deserialize)]
 pub enum AnchorTarget {
+    /// Pin to an ancestor. `generation_offset == 0` is the
+    /// immediate parent, `1` is the grandparent, and so on.
     Parent { generation_offset: usize },
+    /// Pin to a specific child by sibling index. Resolved at
+    /// layout time against the anchored element's children list.
     Child { child_num: usize },
+    /// Pin to the OS window's coordinate space — moves with the
+    /// window but ignores camera pan and zoom.
     Window,
+    /// Pin to the physical display's coordinate space — survives
+    /// window moves on multi-monitor setups.
     Display,
+    /// Pin in world (canvas) coordinates — moves with camera pan
+    /// and zoom but is independent of any element.
     World,
 }
 
@@ -655,23 +726,39 @@ pub enum AnchorTarget {
 /// adding a fresh variant.
 #[derive(Clone, Copy, Hash, Eq, PartialEq, Debug, Serialize, Deserialize)]
 pub enum AnchorPoint {
+    /// Top-left corner of the rectangle. Inner `i16` is a pixel
+    /// nudge applied uniformly to both axes.
     TopLeft(i16),
+    /// Midpoint of the top edge, plus `i16` pixel offset.
     TopCenter(i16),
+    /// Top-right corner of the rectangle, plus `i16` pixel offset.
     TopRight(i16),
+    /// Bottom-left corner of the rectangle, plus `i16` pixel offset.
     BotLeft(i16),
+    /// Midpoint of the bottom edge, plus `i16` pixel offset.
     BotCenter(i16),
+    /// Bottom-right corner of the rectangle, plus `i16` pixel offset.
     BotRight(i16),
+    /// Midpoint of the left edge, plus `i16` pixel offset.
     LeftCenter(i16),
+    /// Midpoint of the right edge, plus `i16` pixel offset.
     RightCenter(i16),
+    /// Geometric centre of the rectangle, plus `i16` pixel offset.
+    /// The default starting pin for new tree nodes.
     Center(i16),
 }
 
 /// Query a 2D position from an element.
 pub trait Positioned {
+    /// World-space top-left position in canvas pixels. O(1) on
+    /// every existing implementation — must not allocate or walk
+    /// children.
     fn position(&self) -> OrderedVec2;
 }
 
 /// Query the bounding-box dimensions (width, height) of an element.
 pub trait Bounded {
+    /// Width / height in canvas pixels. O(1) on every existing
+    /// implementation — must not allocate or trigger a re-layout.
     fn bounds(&self) -> OrderedVec2;
 }

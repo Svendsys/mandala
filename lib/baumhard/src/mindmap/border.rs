@@ -38,13 +38,21 @@ pub const BORDER_APPROX_CHAR_WIDTH_FRAC: f32 = 0.6;
 /// The border is rendered as positioned text elements around the node content.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BorderGlyphSet {
+    /// Horizontal fill glyph used along the top edge between corners.
     pub top: char,
+    /// Horizontal fill glyph used along the bottom edge between corners.
     pub bottom: char,
+    /// Vertical fill glyph used along the left edge between corners.
     pub left: char,
+    /// Vertical fill glyph used along the right edge between corners.
     pub right: char,
+    /// Single-character glyph at the top-left corner.
     pub top_left: char,
+    /// Single-character glyph at the top-right corner.
     pub top_right: char,
+    /// Single-character glyph at the bottom-left corner.
     pub bottom_left: char,
+    /// Single-character glyph at the bottom-right corner.
     pub bottom_right: char,
 }
 
@@ -203,9 +211,13 @@ pub struct BorderCorners {
 /// preset's defaults.
 #[derive(Clone, Debug)]
 pub struct SidePatternQuad {
+    /// Pattern fitted between the top corners.
     pub top: SidePattern,
+    /// Pattern fitted between the bottom corners.
     pub bottom: SidePattern,
+    /// Pattern repeated down the left column.
     pub left: SidePattern,
+    /// Pattern repeated down the right column.
     pub right: SidePattern,
 }
 
@@ -217,9 +229,19 @@ pub struct SidePatternQuad {
 /// localised change.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PaletteField {
+    /// Cycle the border across each `ColorGroup`'s `frame`
+    /// channel — the historical default and the channel whose
+    /// meaning matches the border itself.
     Frame,
+    /// Cycle across each group's `background` channel — useful
+    /// when the border should track the node fill rather than the
+    /// frame stroke.
     Background,
+    /// Cycle across each group's `text` channel — for borders
+    /// drawn in the same hue as the node label.
     Text,
+    /// Cycle across each group's `title` channel — for borders
+    /// drawn in the same hue as the node title.
     Title,
 }
 
@@ -524,9 +546,13 @@ pub fn border_run_specs(
 /// pattern fitter speaks in.
 #[derive(Clone, Copy, Debug)]
 pub struct CornerClusterCounts {
+    /// Grapheme-cluster count of the top-left corner string.
     pub top_left: usize,
+    /// Grapheme-cluster count of the top-right corner string.
     pub top_right: usize,
+    /// Grapheme-cluster count of the bottom-left corner string.
     pub bottom_left: usize,
+    /// Grapheme-cluster count of the bottom-right corner string.
     pub bottom_right: usize,
 }
 
