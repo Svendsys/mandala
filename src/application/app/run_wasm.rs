@@ -3,13 +3,19 @@
 //! WASM event-loop body for [`super::Application::run`]. Builds a
 //! [`WasmApp`] [`ApplicationHandler`] and hands it to winit-web's
 //! [`EventLoopExtWebSys::spawn_app`]; the browser's main thread
-//! drives the loop from there. DOM setup (canvas attach, focus
-//! listener, keydown preventDefault, async `Renderer::new`, rAF
-//! render loop) all happens in [`run`] before `spawn_app` is
-//! called.
+//! drives the loop from there. Synchronous DOM setup (canvas
+//! attach, `tabindex` focus, keydown preventDefault listener)
+//! finishes inside [`run`] before `spawn_app` is called; the
+//! async path (`Renderer::new`, document fetch, rAF render loop
+//! install) is *spawned* before `spawn_app` via
+//! `wasm_bindgen_futures::spawn_local` but resumes on later
+//! microtask ticks, so [`WasmApp`]'s `renderer` / `input` cells
+//! start `None` and the handler's match arms guard accordingly.
 
 #![cfg(target_arch = "wasm32")]
 
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use baumhard::mindmap::tree_builder::MindMapTree;
@@ -20,7 +26,7 @@ use winit::event::{
 };
 use winit::event_loop::ActiveEventLoop;
 use winit::platform::web::EventLoopExtWebSys;
-use winit::window::{Window, WindowId};
+use winit::window::WindowId;
 
 use super::scene_rebuild::{
     flush_canvas_scene_buffers, rebuild_after_selection_change, rebuild_all,
@@ -257,28 +263,29 @@ impl<'a> super::dispatch::macro_core::MacroDispatchTarget for WasmMacroDispatchT
 ///
 /// Initial DOM setup (canvas attach, `tabindex` focus, keydown
 /// preventDefault listener, async renderer construction, document
-/// fetch, rAF render loop install) happens inside [`run`] before
-/// [`EventLoopExtWebSys::spawn_app`] hands control to winit; the
-/// handler then receives [`WindowEvent`]s on the browser's main
+/// fetch, rAF render loop install) is kicked off inside [`run`]
+/// before [`EventLoopExtWebSys::spawn_app`] hands control to winit;
+/// the handler then receives [`WindowEvent`]s on the browser's main
 /// thread until the tab is torn down. `spawn_app` requires the
 /// handler be `'static`, which is why every shared field is
 /// `Rc`/`Arc`-owned rather than borrowed.
+///
+/// The `winit::window::Window` itself is held by the [`Renderer`]
+/// (`Arc<Window>` field, populated inside `Renderer::new` from a
+/// clone made before this handler is constructed); the handler does
+/// not need its own clone for keep-alive purposes and never reads
+/// the window directly from event-handler context.
 struct WasmApp {
-    /// Held to keep the canvas alive across the loop's lifetime.
-    /// The canvas is attached to the DOM in [`run`]; this field
-    /// doesn't drive event flow but prevents premature drop of
-    /// the underlying [`winit::window::Window`].
-    _window: Arc<Window>,
     /// Shared with the rAF render loop set up in [`run`]. `None`
     /// until the async `Renderer::new` future inside `spawn_local`
     /// resolves.
-    renderer: std::rc::Rc<std::cell::RefCell<Option<Renderer>>>,
+    renderer: Rc<RefCell<Option<Renderer>>>,
     /// Shared with the rAF render loop. `None` until the document
     /// fetch + tree build inside `spawn_local` completes.
-    input: std::rc::Rc<std::cell::RefCell<Option<WasmInputState>>>,
+    input: Rc<RefCell<Option<WasmInputState>>>,
     /// Shared with the canvas keydown listener so the editor's
     /// open / close transitions can flip its `preventDefault` flag.
-    suppress_keys: std::rc::Rc<std::cell::Cell<bool>>,
+    suppress_keys: Rc<Cell<bool>>,
     /// Resolved keybind table — built once in [`run`] from
     /// `Options::keybind_config`, read on every key event.
     keybinds: ResolvedKeybinds,
@@ -288,7 +295,11 @@ impl ApplicationHandler for WasmApp {
     fn resumed(&mut self, _event_loop: &ActiveEventLoop) {
         // Canvas + window were created and DOM-attached before
         // `spawn_app` ran (browser DOM ordering is driven by JS
-        // events, not winit's resume cycle). No work needed here.
+        // events, not winit's resume cycle), so first-fire is a
+        // no-op. winit-web also re-fires `resumed` after a
+        // bfcache restore; the empty body is idempotent so no
+        // guard is needed (unlike `NativeApp::resumed`'s
+        // `is_some()` check, which protects window re-creation).
     }
 
     fn window_event(
@@ -305,8 +316,6 @@ impl ApplicationHandler for WasmApp {
 pub(super) fn run(mut app: Application) {
 use wasm_bindgen::JsCast;
 use winit::platform::web::WindowExtWebSys;
-use std::rc::Rc;
-use std::cell::{Cell, RefCell};
 use baumhard::mindmap::tree_builder::MindMapTree;
 
 baumhard::font::fonts::init();
@@ -600,8 +609,11 @@ let keybinds: ResolvedKeybinds = app.options.keybind_config.resolve();
 // resolved keybind table. `spawn_app` returns immediately on
 // the web target — the browser's main thread keeps running and
 // dispatches events through the handler until the tab tears down.
+// The renderer (constructed inside `spawn_local`) already holds
+// an `Arc<Window>` clone made before this handler is built, so
+// the window outlives the loop without the handler needing its
+// own clone.
 let handler = WasmApp {
-    _window: app.window,
     renderer: renderer_rc,
     input: input_rc,
     suppress_keys,
