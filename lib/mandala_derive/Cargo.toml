@@ -8,6 +8,10 @@ license.workspace = true
 proc-macro = true
 
 [dependencies]
-syn = { version = "2.0.117", features = ["full"] }
+# Default features (`derive`, `parsing`, `printing`, `clone-impls`,
+# `proc-macro`) are sufficient — the macro never reaches into syn's
+# expression / statement / item parsers, which is what `["full"]`
+# adds. Default-only halves syn's compile cost for this crate.
+syn = "2.0.117"
 quote = "1.0.41"
 proc-macro2 = "1.0.103"
