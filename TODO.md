@@ -104,8 +104,17 @@ Shipped on this branch:
   Every `Action::Console*` variant is matched and run inline at
   the console handler; none reach `dispatch_action`. Either route
   through the funnel or document the carve-out clearly.
-- **`word_left` / `word_right` belong in baumhard.**
-  `text_edit/mod.rs` houses these primitives today, but per
-  CODE_CONVENTIONS §B3 text primitives extend
-  `lib/baumhard/src/util/grapheme_chad.rs`. Cross-crate move +
-  bench per §B3.
+- ~~**`word_left` / `word_right` belong in baumhard.**~~
+  **Shipped.** Moved from `text_edit/mod.rs` to
+  `baumhard::util::grapheme_chad` per CONVENTIONS §B3.
+  Implementation tightened along the way — the prior in-app
+  version `Vec<&str>::collect()`-ed the entire buffer's
+  graphemes per call (an O(n) allocation that scaled with
+  document size). The baumhard versions walk the
+  `grapheme_indices` iterator in place; `word_right` allocates
+  zero, `word_left` allocates only `cursor` `usize`s. Tests
+  ported to `lib/baumhard/src/util/tests/grapheme_chad_tests.rs`
+  with 4 added gap cases (empty string, single grapheme,
+  cursor-past-count, ZWJ cluster, NFD combining mark, regional-
+  indicator pair). Bench entries in
+  `lib/baumhard/benches/test_bench.rs` per §B7.

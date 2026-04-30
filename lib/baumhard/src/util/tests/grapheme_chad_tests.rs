@@ -7,7 +7,7 @@ use crate::util::grapheme_chad::{
     delete_grapheme_at, find_byte_index_of_grapheme, find_nth_line_byte_range,
     find_nth_line_grapheme_range, grapheme_display_width, insert_new_lines,
     insert_str_at_grapheme, push_spaces, replace_graphemes_until_newline, scalar_display_width,
-    slice_to_newline, split_off_graphemes, truncate_to_display_width,
+    slice_to_newline, split_off_graphemes, truncate_to_display_width, word_left, word_right,
 };
 
 lazy_static! {
@@ -481,4 +481,102 @@ pub fn do_delete_grapheme_at() {
    let mut s = String::from("ab🧑‍🚀cd");
    delete_grapheme_at(&mut s, 2);
    assert_eq!(s, "abcd");
+}
+
+#[test]
+pub fn test_word_left() {
+   do_word_left();
+}
+
+pub fn do_word_left() {
+   // Cursor at the end of a single word lands at the word's start.
+   assert_eq!(word_left("hello", 5), 0);
+
+   // Cursor at 0 is a no-op.
+   assert_eq!(word_left("hello world", 0), 0);
+
+   // Skip backwards past leading boundary chars then through the
+   // preceding word — `"foo, bar"` cursor=8 (end) → 5 (start of
+   // "bar"); cursor=5 (start of "bar") → 0 (start of "foo").
+   assert_eq!(word_left("foo, bar", 8), 5);
+   assert_eq!(word_left("foo, bar", 5), 0);
+
+   // Walk through two words: `"foo bar"` cursor=7 → 4 → 0.
+   assert_eq!(word_left("foo bar", 7), 4);
+   assert_eq!(word_left("foo bar", 4), 0);
+
+   // Empty string is a no-op for any cursor.
+   assert_eq!(word_left("", 0), 0);
+   assert_eq!(word_left("", 5), 0);
+
+   // Cursor past the grapheme count is clamped to the count.
+   assert_eq!(word_left("hello", 99), 0);
+
+   // Single grapheme.
+   assert_eq!(word_left("a", 1), 0);
+
+   // Emoji is a non-word boundary — `"foo🍕bar"` cursor=7 → 4
+   // (start of "bar" since 🍕 is one grapheme cluster between
+   // graphemes 3 and 4).
+   assert_eq!(word_left("foo🍕bar", 7), 4);
+
+   // ZWJ cluster (👨‍👩‍👧) — first scalar `'\u{1F468}'` is non-
+   // alphanumeric, so the entire cluster counts as one boundary
+   // grapheme. `"foo👨‍👩‍👧bar"` cursor=7 → 4.
+   assert_eq!(word_left("foo👨‍👩‍👧bar", 7), 4);
+
+   // Combining-mark cluster (NFD `café` = "cafe\u{0301}") — the
+   // base scalar is alphanumeric, so the cluster IS a word
+   // grapheme. cursor=4 (end of "café") → 0.
+   let cafe_nfd = "cafe\u{0301}";
+   assert_eq!(word_left(cafe_nfd, 4), 0);
+
+   // Regional-indicator pair (🇺🇸 = two scalars, one cluster) —
+   // first scalar `'\u{1F1FA}'` is non-alphanumeric, cluster is
+   // a boundary. `"foo🇺🇸bar"` cursor=7 → 4.
+   assert_eq!(word_left("foo🇺🇸bar", 7), 4);
+}
+
+#[test]
+pub fn test_word_right() {
+   do_word_right();
+}
+
+pub fn do_word_right() {
+   // Cursor at 0 of a single word lands past the word's end.
+   assert_eq!(word_right("hello", 0), 5);
+
+   // Cursor at end is a no-op.
+   assert_eq!(word_right("hello", 5), 5);
+
+   // Cursor past the end is clamped at the grapheme count.
+   assert_eq!(word_right("hello", 99), 5);
+
+   // Skip leading boundary chars then through the following word.
+   assert_eq!(word_right(", foo bar", 0), 5);
+   assert_eq!(word_right("foo bar", 0), 3);
+   assert_eq!(word_right("foo bar", 3), 7);
+
+   // Empty string is a no-op for any cursor.
+   assert_eq!(word_right("", 0), 0);
+   assert_eq!(word_right("", 5), 0);
+
+   // Single grapheme.
+   assert_eq!(word_right("a", 0), 1);
+
+   // Emoji boundary — `"foo🍕bar"` cursor=0 → 3 (end of "foo");
+   // cursor=3 → 7 (past the boundary 🍕 and through "bar").
+   assert_eq!(word_right("foo🍕bar", 0), 3);
+   assert_eq!(word_right("foo🍕bar", 3), 7);
+
+   // ZWJ cluster — `"foo👨‍👩‍👧bar"` cursor=3 → 7.
+   assert_eq!(word_right("foo👨‍👩‍👧bar", 3), 7);
+
+   // Combining-mark cluster — base scalar alphanumeric, so the
+   // cluster IS a word grapheme. cursor=0 of `"café"` (NFD) → 4.
+   let cafe_nfd = "cafe\u{0301}";
+   assert_eq!(word_right(cafe_nfd, 0), 4);
+
+   // Regional-indicator pair — `"foo🇺🇸bar"` cursor=3 → 7.
+   assert_eq!(word_right("foo🇺🇸bar", 3), 7);
 }

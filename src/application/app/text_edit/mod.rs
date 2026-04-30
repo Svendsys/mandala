@@ -255,20 +255,20 @@ pub(in crate::application::app) fn apply_text_edit_action(
             }
         }
         Action::TextEditWordLeft => {
-            *cursor = word_left(buffer, *cursor);
+            *cursor = grapheme_chad::word_left(buffer, *cursor);
         }
         Action::TextEditWordRight => {
-            *cursor = word_right(buffer, *cursor);
+            *cursor = grapheme_chad::word_right(buffer, *cursor);
         }
         Action::TextEditDeleteWordBack => {
-            let target = word_left(buffer, *cursor);
+            let target = grapheme_chad::word_left(buffer, *cursor);
             while *cursor > target {
                 buffer_regions.shrink_regions_after(*cursor - 1, 1);
                 *cursor = delete_before_cursor(buffer, *cursor);
             }
         }
         Action::TextEditDeleteWordForward => {
-            let target = word_right(buffer, *cursor);
+            let target = grapheme_chad::word_right(buffer, *cursor);
             let total = grapheme_chad::count_grapheme_clusters(buffer);
             let to_delete = target.saturating_sub(*cursor).min(total - *cursor);
             for _ in 0..to_delete {
@@ -281,39 +281,9 @@ pub(in crate::application::app) fn apply_text_edit_action(
     *cursor != before || buffer.len() != len_before
 }
 
-/// Word-boundary cursor helpers. A "word" is a run of alphanumeric
-/// characters; punctuation and whitespace are word-boundary characters.
-fn word_left(buffer: &str, cursor: usize) -> usize {
-    use unicode_segmentation::UnicodeSegmentation;
-    if cursor == 0 {
-        return 0;
-    }
-    let graphemes: Vec<&str> = buffer.graphemes(true).collect();
-    let mut i = cursor;
-    let is_word = |g: &str| g.chars().next().map(char::is_alphanumeric).unwrap_or(false);
-    while i > 0 && !is_word(graphemes[i - 1]) {
-        i -= 1;
-    }
-    while i > 0 && is_word(graphemes[i - 1]) {
-        i -= 1;
-    }
-    i
-}
-
-fn word_right(buffer: &str, cursor: usize) -> usize {
-    use unicode_segmentation::UnicodeSegmentation;
-    let graphemes: Vec<&str> = buffer.graphemes(true).collect();
-    let len = graphemes.len();
-    let mut i = cursor;
-    let is_word = |g: &str| g.chars().next().map(char::is_alphanumeric).unwrap_or(false);
-    while i < len && !is_word(graphemes[i]) {
-        i += 1;
-    }
-    while i < len && is_word(graphemes[i]) {
-        i += 1;
-    }
-    i
-}
+// `word_left` / `word_right` moved to `baumhard::util::grapheme_chad`
+// (CONVENTIONS §B3 — text primitives belong in the foundation crate).
+// Reach for them via `grapheme_chad::word_left` / `word_right`.
 
 /// Build the display text for the edited node by inserting the caret
 /// glyph at the cursor's grapheme position. Used on every keystroke
