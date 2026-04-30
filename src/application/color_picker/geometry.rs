@@ -29,7 +29,7 @@ pub struct ColorPickerOverlayGeometry {
     pub hex_visible: bool,
     /// Widest shaped advance across the 32 crosshair-arm glyphs,
     /// measured by the renderer via cosmic-text at picker open. The
-    /// layout fn divides by [`measurement_font_size`] to recover a
+    /// layout fn divides by `measurement_font_size` to recover a
     /// dimensionless ratio it can scale with whatever font_size the
     /// new sizing formula derives — so the picker can shrink to a
     /// font_size below the measurement baseline without re-measuring.

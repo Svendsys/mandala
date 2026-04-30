@@ -369,9 +369,9 @@ impl MindMapDocument {
     /// which Rust's split-borrow rules allow under a single
     /// `&mut self` because both are direct field projections of
     /// `self.mindmap`. The closure can reach
-    /// [`ensure_glyph_connection`] through the free
-    /// [`ensure_glyph_connection_inline`] without having to
-    /// re-fetch `&mut self`.
+    /// [`Self::ensure_glyph_connection`] through the free
+    /// [`super::closure_helpers::ensure_glyph_connection_inline`]
+    /// without having to re-fetch `&mut self`.
     pub(in crate::application::document) fn mutate_edge<F>(&mut self, edge_ref: &EdgeRef, mutate: F) -> bool
     where
         F: FnOnce(&mut MindEdge, &Canvas) -> bool,

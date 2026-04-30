@@ -17,8 +17,9 @@ pub const HIGHLIGHT_COLOR: [f32; 4] = [0.0, 0.9, 1.0, 1.0];
 /// Per-active-mutation runtime record for the animation system.
 /// Carries the from/to `MindNode` snapshot and the driving
 /// `CustomMutation`; the dispatcher in
-/// [`MindMapDocument::tick_animations`] interpolates per-frame
-/// and writes the blended state back into `mindmap.nodes`.
+/// [`super::MindMapDocument::tick_animations`] interpolates
+/// per-frame and writes the blended state back into
+/// `mindmap.nodes`.
 ///
 /// `cm` is the single source of truth — `mutation_id()` and
 /// `timing()` project out the fields the dispatcher needs, so

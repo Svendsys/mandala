@@ -41,7 +41,8 @@ pub const MAX_N: u32 = 8;
 pub const DEFAULT_BUDGET: Duration = Duration::from_micros(14_000);
 
 /// Per-frame throttle that degrades mutation frequency under load.
-/// Call [`reset`] when the drag ends so the next drag starts at `n = 1`.
+/// Call [`Self::reset`] when the drag ends so the next drag starts
+/// at `n = 1`.
 #[derive(Debug)]
 pub struct MutationFrequencyThrottle {
     budget: Duration,

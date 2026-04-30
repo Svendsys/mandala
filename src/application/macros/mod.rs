@@ -75,7 +75,7 @@ impl MacroSource {
 
     /// Whether macros from this source may invoke the given Action
     /// via a `MacroStep::Action`. Symmetric with
-    /// [`allows_console_line`]: only `User`-tier macros can fire
+    /// [`Self::allows_console_line`]: only `User`-tier macros can fire
     /// the destructive / I/O / clipboard-touching Actions, since
     /// other tiers may load from untrusted sources (a hostile
     /// `.mindmap.json` could otherwise bind `Action::SaveDocument`

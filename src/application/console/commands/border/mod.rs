@@ -3,7 +3,8 @@
 //! `border` — configure a node's glyph border.
 //!
 //! Selection-aware (per `font` / `color`): operates on the current
-//! [`SelectionState::Single`] / [`SelectionState::Multi`].
+//! [`crate::application::document::SelectionState::Single`] /
+//! [`crate::application::document::SelectionState::Multi`].
 //! Edge-adjacent selections surface a "not applicable to `<kind>`"
 //! message — borders are node-only.
 //!

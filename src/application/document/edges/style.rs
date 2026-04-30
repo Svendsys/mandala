@@ -204,9 +204,9 @@ impl MindMapDocument {
     /// clamped into `[min_font_size_pt, max_font_size_pt]`. Returns
     /// `true` if the clamped value differs from the current.
     ///
-    /// Counterpart to [`set_edge_font_size_step`] for the console's
-    /// `font size=<pt>` kv form, where callers have an absolute
-    /// target rather than a delta.
+    /// Counterpart to [`Self::set_edge_font_size_step`] for the
+    /// console's `font size=<pt>` kv form, where callers have an
+    /// absolute target rather than a delta.
     pub fn set_edge_font_size(&mut self, edge_ref: &EdgeRef, pt: f32) -> bool {
         self.mutate_edge(edge_ref, |edge, canvas| {
             let cfg = ensure_glyph_connection_inline(edge, canvas);

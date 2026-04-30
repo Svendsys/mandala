@@ -13,8 +13,8 @@
 //! [`ApplyTally::finalize`] picks the right Ok/Err shape.
 //!
 //! Out of scope: the trait-dispatch path (`color`, `font`, `zoom`)
-//! already routes through [`traits::DispatchReport`] and a sibling
-//! `finalize_report`. This module exists for the bespoke
+//! already routes through [`super::traits::DispatchReport`] and a
+//! sibling `finalize_report`. This module exists for the bespoke
 //! direct-setter verbs that don't lift to that machinery.
 
 use baumhard::util::geometry::is_positive_finite;

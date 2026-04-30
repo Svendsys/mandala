@@ -205,8 +205,8 @@ struct LastClick {
     time: f64,
     screen_pos: (f64, f64),
     /// What the first click landed on. Two clicks whose `hit`
-    /// values are equal (see [`ClickHit::PartialEq`]) qualify as a
-    /// double-click.
+    /// values compare equal under `ClickHit`'s derived `PartialEq`
+    /// qualify as a double-click.
     hit: ClickHit,
 }
 

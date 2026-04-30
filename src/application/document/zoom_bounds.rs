@@ -27,9 +27,10 @@ use super::{EdgeRef, MindMapDocument};
 impl MindMapDocument {
     /// Write the edge's top-level zoom-visibility window. The
     /// full edge is snapshotted into the undo stack via
-    /// [`UndoAction::EditEdge`]. Returns `true` when either side
-    /// changed. Rejects non-finite or inverted pairs as a
-    /// no-op. See [`OptionEdit<f32>`] for per-side semantics.
+    /// [`super::UndoAction::EditEdge`]. Returns `true` when
+    /// either side changed. Rejects non-finite or inverted pairs
+    /// as a no-op. See [`super::OptionEdit<f32>`] for per-side
+    /// semantics.
     pub fn set_edge_zoom_visibility(
         &mut self,
         edge_ref: &EdgeRef,

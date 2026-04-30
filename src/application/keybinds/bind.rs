@@ -8,9 +8,9 @@
 //! `"DoubleClick"` or `"Shift+MiddleClick"` parses into the same
 //! [`KeyBind`] struct as a keyboard binding, with the gesture's
 //! canonical lowercase name in the `key` field. Mouse handlers
-//! synthesize the same name via [`gesture_key_name`] before calling
-//! `ResolvedKeybinds::action_for_context`, so the lookup table is
-//! universal across input devices.
+//! synthesize the same name via [`MouseGesture::key_name`] before
+//! calling `ResolvedKeybinds::action_for_context`, so the lookup
+//! table is universal across input devices.
 
 use winit::keyboard::Key;
 
@@ -34,8 +34,8 @@ pub struct KeyBind {
 /// it via `<&'static str>::from(self)`, surfaced as
 /// [`MouseGesture::key_name`]. The PascalCase emit form (the
 /// shape the user types in `keybinds.json`) is the variant name
-/// itself; [`pascal_form`] returns it via the same `EnumIter`
-/// walk both directions share.
+/// itself; [`MouseGesture::pascal_form`] returns it via the same
+/// `EnumIter` walk both directions share.
 ///
 /// `LeftClick` and `RightClick` were previously reserved-but-not-
 /// dispatched; per CODE_CONVENTIONS §5 (no half-features) they were

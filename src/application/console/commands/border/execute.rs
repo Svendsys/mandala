@@ -3,10 +3,12 @@
 //! `border` execute path: positional dispatch + atomic kv apply.
 //!
 //! The kv form parses every recognised key into a
-//! [`BorderConfigEdits`] up front, validates each value against
-//! its typed parser, then hands the whole bundle to
-//! [`MindMapDocument::set_node_border_config`] per selected node.
-//! Validation failures abort before any node is mutated.
+//! [`crate::application::document::BorderConfigEdits`] up front,
+//! validates each value against its typed parser, then hands the
+//! whole bundle to
+//! [`crate::application::document::MindMapDocument::set_node_border_config`]
+//! per selected node. Validation failures abort before any node
+//! is mutated.
 //!
 //! ## Why parse-then-dispatch instead of `apply_kvs` / capability traits
 //!

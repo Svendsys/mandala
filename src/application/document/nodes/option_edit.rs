@@ -20,7 +20,7 @@
 /// without `Clear`, callers couldn't distinguish "the user didn't
 /// mention this field" from "the user wants this field cleared".
 ///
-/// `Keep` is the default so [`BorderConfigEdits`]'s
+/// `Keep` is the default so [`super::border::BorderConfigEdits`]'s
 /// `#[derive(Default)]` builds the no-op edit set, and the console
 /// verb only fills in the keys the user actually typed.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -108,7 +108,8 @@ where
 
 /// `String`-specialised value-set used by the side / corner glyph
 /// fields: only the `Set` arm writes; `Clear` and `Keep` are no-ops
-/// because the eight glyph slots in [`CustomBorderGlyphs`] are
+/// because the eight glyph slots in
+/// [`baumhard::mindmap::model::CustomBorderGlyphs`] are
 /// non-`Option<String>` (the schema stores hardcoded fallbacks
 /// rather than tri-state overrides).
 pub(super) fn apply_string_set(edit: &OptionEdit<String>, slot: &mut String) -> bool {

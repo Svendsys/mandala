@@ -394,7 +394,7 @@ pub(super) fn console_overlay_areas(
 /// across keystrokes — the prerequisite for the in-place
 /// [`build_console_overlay_mutator`] path.
 ///
-/// Used by [`Renderer::rebuild_console_overlay_buffers`] which
+/// Used by [`super::Renderer::rebuild_console_overlay_buffers`] which
 /// then registers the tree under
 /// [`crate::application::scene_host::OverlayRole::Console`] and
 /// walks it through the standard overlay-scene pipeline.
@@ -432,7 +432,7 @@ pub(super) fn build_console_overlay_tree(
 /// because the arena needs to be created or torn down. A change
 /// in `scrollback_rows` or `completion_rows` (window resize)
 /// shifts the structural signature and the dispatcher in
-/// [`Renderer::rebuild_console_overlay_buffers`] falls back to a
+/// [`super::Renderer::rebuild_console_overlay_buffers`] falls back to a
 /// rebuild.
 pub(super) fn build_console_overlay_mutator(
     geometry: &ConsoleOverlayGeometry,

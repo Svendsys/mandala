@@ -4,7 +4,8 @@
 //! set, plus the tree- and mutator-builders that wrap it into the
 //! shapes the renderer registers. The initial-build path and the §B2
 //! mutator paths cannot drift because they all read from the same
-//! [`PickerAreas`] table built by [`compute_picker_areas`].
+//! [`areas::PickerAreas`] table built by
+//! [`compute::compute_picker_areas`].
 //!
 //! Section names ("title", "hue_ring", "hint", "sat_bar", "val_bar",
 //! "preview", "hex") must match the `mutator_spec.sections[*].section`

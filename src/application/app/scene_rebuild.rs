@@ -239,8 +239,9 @@ pub(in crate::application::app) fn rebuild_scene_only(
 // =====================================================================
 
 /// Build the border tree (no drag offsets) and register it under
-/// [`CanvasRole::Borders`]. Caller must follow with
-/// [`flush_canvas_scene_buffers`] before the next render.
+/// [`crate::application::scene_host::CanvasRole::Borders`]. Caller
+/// must follow with [`flush_canvas_scene_buffers`] before the next
+/// render.
 pub(in crate::application::app) fn update_border_tree_static(
     doc: &MindMapDocument,
     app_scene: &mut crate::application::scene_host::AppScene,
@@ -249,7 +250,7 @@ pub(in crate::application::app) fn update_border_tree_static(
 }
 
 /// Build or in-place update the border tree under
-/// [`CanvasRole::Borders`].
+/// [`crate::application::scene_host::CanvasRole::Borders`].
 ///
 /// **§B2 dispatch.** The hot path this closes: when the color
 /// picker is open, every throttled `AboutToWait` drain calls
@@ -295,11 +296,12 @@ pub(in crate::application::app) fn update_border_tree_with_offsets(
 }
 
 /// Build or in-place update the portal tree under
-/// [`CanvasRole::Portals`]. Selection-cyan and color-preview
-/// override rules mirror `scene_builder::build_scene`. Hands the
-/// AABB-keyed hitbox map back to the renderer so the legacy
-/// `Renderer::hit_test_portal` keeps working until hit-test
-/// routing migrates to [`Scene::component_at`].
+/// [`crate::application::scene_host::CanvasRole::Portals`].
+/// Selection-cyan and color-preview override rules mirror
+/// `scene_builder::build_scene`. Hands the AABB-keyed hitbox map
+/// back to the renderer so the legacy `Renderer::hit_test_portal`
+/// keeps working until hit-test routing migrates to
+/// [`baumhard::gfx_structs::scene::Scene::component_at`].
 ///
 /// **§B2 dispatch.** Drag, color-preview, and selection toggle
 /// all leave the visible-portal *identity sequence* unchanged —
@@ -392,7 +394,7 @@ pub(in crate::application::app) fn update_portal_tree(
 }
 
 /// Build or in-place update the connection tree under
-/// [`CanvasRole::Connections`].
+/// [`crate::application::scene_host::CanvasRole::Connections`].
 ///
 /// **§B2 dispatch.** Selection toggle, color preview, and theme
 /// switches change only per-glyph fields (color regions, body
@@ -427,7 +429,8 @@ pub(in crate::application::app) fn update_connection_tree(
 }
 
 /// Build or in-place update the connection-label tree under
-/// [`CanvasRole::ConnectionLabels`]. Threads the per-edge AABB
+/// [`crate::application::scene_host::CanvasRole::ConnectionLabels`].
+/// Threads the per-edge AABB
 /// hitbox map back to the renderer so `hit_test_edge_label`
 /// keeps working.
 ///
@@ -466,7 +469,7 @@ pub(in crate::application::app) fn update_connection_label_tree(
 }
 
 /// Build or in-place update the edge-handle tree under
-/// [`CanvasRole::EdgeHandles`].
+/// [`crate::application::scene_host::CanvasRole::EdgeHandles`].
 ///
 /// **§B2 dispatch.** Dragging a handle moves only its position;
 /// the handle set's *identity sequence* (the
