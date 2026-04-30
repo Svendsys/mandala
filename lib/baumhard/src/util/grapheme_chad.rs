@@ -415,6 +415,112 @@ pub fn delete_front_unicode(s: &mut String, n: usize) {
     s.drain(0..char_count);
 }
 
+/// Move a grapheme-indexed cursor LEFT to the previous word boundary.
+/// A "word" is a maximal run of graphemes whose first scalar is
+/// alphanumeric (per `char::is_alphanumeric`); punctuation, whitespace,
+/// and emoji are treated as word boundaries. Skips backwards past any
+/// boundary graphemes immediately before `cursor`, then past the run
+/// of word graphemes the boundary skipping reached, returning the
+/// grapheme index at the start of that word run.
+///
+/// `cursor` is interpreted as a count of graphemes (not bytes); a
+/// `cursor` of 0 returns 0; a `cursor` greater than the grapheme
+/// count is clamped at the buffer's grapheme count.
+///
+/// **Cost**: O(n) grapheme walk on each call. The implementation
+/// walks the iterator twice in the worst case (once to seek to
+/// `cursor`, once during the boundary-skip + word-skip), without
+/// materialising a `Vec<&str>` of the whole buffer — the prior
+/// in-app version did. Two `O(n)` walks beats one `O(n)` walk plus
+/// one `O(n)` allocation on hot paths (per `CONVENTIONS §B7`).
+///
+/// `is_alphanumeric` is applied to the grapheme's *first* scalar.
+/// For ZWJ clusters and combining-mark sequences this matches the
+/// human-perceived base character; for regional-indicator pairs
+/// (flag emoji) the first scalar is non-alphanumeric so the cluster
+/// counts as a boundary.
+pub fn word_left(buffer: &str, cursor: usize) -> usize {
+    if cursor == 0 {
+        return 0;
+    }
+    // Collect grapheme-start byte offsets up to `cursor` so we can
+    // walk them in reverse. Allocates `cursor` `usize`s (cheap), not
+    // the full grapheme `&str` slices.
+    let mut starts: Vec<usize> = Vec::with_capacity(cursor);
+    for (idx, (byte, _)) in buffer.grapheme_indices(true).enumerate() {
+        if idx >= cursor {
+            break;
+        }
+        starts.push(byte);
+    }
+    // Append the byte length so we can recover the grapheme just
+    // before `cursor` regardless of cursor's relation to the grapheme
+    // count. (If `cursor > grapheme_count`, the walk above stopped
+    // early; `starts.len()` is the actual grapheme count.)
+    let count = starts.len();
+    if count == 0 {
+        return 0;
+    }
+    starts.push(buffer.len());
+    let mut i = count;
+    while i > 0 && !grapheme_is_word(&buffer[starts[i - 1]..starts[i]]) {
+        i -= 1;
+    }
+    while i > 0 && grapheme_is_word(&buffer[starts[i - 1]..starts[i]]) {
+        i -= 1;
+    }
+    i
+}
+
+/// Move a grapheme-indexed cursor RIGHT to the next word boundary.
+/// Mirror of [`word_left`]: skip forward past any boundary graphemes
+/// at `cursor`, then past the run of word graphemes that follows,
+/// returning the grapheme index just past the word's end.
+///
+/// `cursor` is a grapheme count; a `cursor` at or past the buffer's
+/// grapheme count returns it unchanged.
+///
+/// **Cost**: O(n) grapheme walk; no allocation. Walks the
+/// `grapheme_indices` iterator forward once and stops as soon as the
+/// next-boundary is found.
+pub fn word_right(buffer: &str, cursor: usize) -> usize {
+    let mut iter = buffer.grapheme_indices(true);
+    // Skip past `cursor` graphemes; if we exhaust before reaching
+    // `cursor`, we're already at the end.
+    let mut idx = 0usize;
+    for _ in 0..cursor {
+        if iter.next().is_none() {
+            return idx;
+        }
+        idx += 1;
+    }
+    // Phase 1: skip non-word graphemes at the cursor.
+    let mut peek = iter.next();
+    while let Some((_, g)) = peek {
+        if grapheme_is_word(g) {
+            break;
+        }
+        idx += 1;
+        peek = iter.next();
+    }
+    // Phase 2: skip word graphemes until non-word or end.
+    while let Some((_, g)) = peek {
+        if !grapheme_is_word(g) {
+            break;
+        }
+        idx += 1;
+        peek = iter.next();
+    }
+    idx
+}
+
+/// Whether a grapheme is part of a "word" for word-boundary cursor
+/// motion (`word_left` / `word_right`). Reads the grapheme's first
+/// scalar and applies `char::is_alphanumeric`.
+fn grapheme_is_word(g: &str) -> bool {
+    g.chars().next().map(char::is_alphanumeric).unwrap_or(false)
+}
+
 #[cfg(test)]
 mod test {
 

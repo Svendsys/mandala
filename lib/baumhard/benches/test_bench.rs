@@ -220,6 +220,8 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("delete_grapheme_at", |b| b.iter(|| do_delete_grapheme_at()));
     c.bench_function("grapheme_display_width", |b| b.iter(|| do_grapheme_display_width()));
     c.bench_function("truncate_to_display_width", |b| b.iter(|| do_truncate_to_display_width()));
+    c.bench_function("word_left", |b| b.iter(|| do_word_left()));
+    c.bench_function("word_right", |b| b.iter(|| do_word_right()));
     // geometry //
     c.bench_function("90_deg_rotation", |b| b.iter(|| do_90_deg_rotation()));
     c.bench_function("180_deg_rotation", |b| b.iter(|| do_180_deg_rotation()));
