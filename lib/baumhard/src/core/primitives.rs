@@ -723,11 +723,14 @@ pub enum AnchorTarget {
 
 /// Named point on a rectangular region — the nine cardinal positions
 /// plus a pixel-offset parameter so callers can nudge a pin without
-/// adding a fresh variant.
+/// adding a fresh variant. The inner `i16` on every variant is a
+/// signed pixel offset whose axis interpretation is the consumer's
+/// to choose (no current consumer fixes a convention; the
+/// named-trajectory plugin / animation surfaces will pin the
+/// semantics when they land).
 #[derive(Clone, Copy, Hash, Eq, PartialEq, Debug, Serialize, Deserialize)]
 pub enum AnchorPoint {
-    /// Top-left corner of the rectangle. Inner `i16` is a pixel
-    /// nudge applied uniformly to both axes.
+    /// Top-left corner of the rectangle, plus `i16` pixel offset.
     TopLeft(i16),
     /// Midpoint of the top edge, plus `i16` pixel offset.
     TopCenter(i16),
