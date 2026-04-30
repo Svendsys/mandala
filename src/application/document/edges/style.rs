@@ -291,15 +291,16 @@ impl MindMapDocument {
             self.mindmap.edges[idx] = before;
             return false;
         }
+        use baumhard::util::geometry::pretty_inequal;
         let mut changed = false;
         if let Some(m) = min.filter(|v| v.is_finite() && *v > 0.0) {
-            if (cfg.min_font_size_pt - m).abs() >= f32::EPSILON {
+            if pretty_inequal(cfg.min_font_size_pt, m) {
                 cfg.min_font_size_pt = m;
                 changed = true;
             }
         }
         if let Some(m) = max.filter(|v| v.is_finite() && *v > 0.0) {
-            if (cfg.max_font_size_pt - m).abs() >= f32::EPSILON {
+            if pretty_inequal(cfg.max_font_size_pt, m) {
                 cfg.max_font_size_pt = m;
                 changed = true;
             }
@@ -307,7 +308,7 @@ impl MindMapDocument {
         if let Some(s) = size.filter(|v| v.is_finite() && *v > 0.0) {
             // Bounds resolved above, known-ordered, safe for clamp.
             let clamped = s.clamp(cfg.min_font_size_pt, cfg.max_font_size_pt);
-            if (cfg.font_size_pt - clamped).abs() >= f32::EPSILON {
+            if pretty_inequal(cfg.font_size_pt, clamped) {
                 cfg.font_size_pt = clamped;
                 changed = true;
             }

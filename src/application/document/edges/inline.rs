@@ -42,20 +42,6 @@ pub(super) fn ensure_label_config_inline(edge: &mut MindEdge) -> &mut EdgeLabelC
     edge.label_config.get_or_insert_with(EdgeLabelConfig::default)
 }
 
-/// EPSILON-tolerant equality on `Option<f32>` slots. The setter
-/// no-op short-circuit on perpendicular offsets and portal
-/// `border_t` writes used to hand-roll the same `match (a, b)
-/// { (None, None) => true, (Some(a), Some(b)) => (a-b).abs() <
-/// EPSILON, _ => false }` cascade. Lifting it here lets every
-/// such setter shrink to one call.
-pub(super) fn option_f32_eps_eq(a: Option<f32>, b: Option<f32>) -> bool {
-    match (a, b) {
-        (None, None) => true,
-        (Some(x), Some(y)) => (x - y).abs() < f32::EPSILON,
-        _ => false,
-    }
-}
-
 /// Write `value` to the `Option<T>` field on the
 /// `PortalEndpointState` slot, lazily forking a default state on
 /// `Some` and scrubbing the slot back to `None` on `Some(field) ->

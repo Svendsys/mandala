@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use crate::util::geometry::{almost_equal, almost_equal_vec2, clockwise_rotation_around_pivot, pixel_greater_or_equal,
-                            pixel_greater_than, pixel_less_or_equal, pixel_lesser_than};
+use crate::util::geometry::{almost_equal, almost_equal_vec2, clockwise_rotation_around_pivot,
+                            option_almost_equal, pixel_greater_or_equal, pixel_greater_than,
+                            pixel_less_or_equal, pixel_lesser_than};
 use glam::Vec2;
 
 #[test]
@@ -102,6 +103,29 @@ pub fn do_almost_equal() {
     assert!(!almost_equal(-1.1f32, -1.2f32));
     assert!(!almost_equal(95.0, 105.0));
     assert!(!almost_equal(105.0, 95.0));
+}
+
+#[test]
+fn test_option_almost_equal() {
+    do_option_almost_equal();
+}
+
+pub fn do_option_almost_equal() {
+    // Both `None` is equal — the "value not set on either side"
+    // case the per-axis edge / portal-label setters short-circuit on.
+    assert!(option_almost_equal(None, None));
+
+    // Both `Some` and within tolerance.
+    assert!(option_almost_equal(Some(1.0), Some(1.000001)));
+    assert!(option_almost_equal(Some(-0.5), Some(-0.500001)));
+
+    // Both `Some` and clearly outside tolerance.
+    assert!(!option_almost_equal(Some(0.0), Some(0.1)));
+    assert!(!option_almost_equal(Some(1.0), Some(2.0)));
+
+    // Mismatched tags — never equal.
+    assert!(!option_almost_equal(None, Some(0.0)));
+    assert!(!option_almost_equal(Some(0.0), None));
 }
 #[test]
 fn test_almost_equal_vec2() {

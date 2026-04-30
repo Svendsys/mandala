@@ -86,3 +86,21 @@ pub fn pretty_inequal_vec2(vec1: Vec2, vec2: Vec2) -> bool {
 pub fn almost_equal_vec2(vec1: Vec2, vec2: Vec2) -> bool {
    almost_equal(vec1.x, vec2.x) && almost_equal(vec1.y, vec2.y)
 }
+
+/// Option-aware [`almost_equal`]: `(None, None) -> true`,
+/// `(Some(a), Some(b)) -> almost_equal(a, b)`, mismatched-tag
+/// pairs (`Some` vs `None`) -> false.
+///
+/// Used by per-axis edge / portal-label setters to short-circuit
+/// "no-op writes" when the user re-types a value that's
+/// within-epsilon of the stored one. Centralised here so the
+/// setter no-op contract is single-sourced across edges/style.rs,
+/// edge_label_drag, portal_label_drag, and the connection cache's
+/// font-size diff.
+pub fn option_almost_equal(a: Option<f32>, b: Option<f32>) -> bool {
+   match (a, b) {
+      (None, None) => true,
+      (Some(x), Some(y)) => almost_equal(x, y),
+      _ => false,
+   }
+}

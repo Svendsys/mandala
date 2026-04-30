@@ -84,10 +84,10 @@ pub(in crate::application::app) fn apply_edge_label_drag(
     let cfg = edge
         .label_config
         .get_or_insert_with(EdgeLabelConfig::default);
+    use baumhard::util::geometry::pretty_inequal;
     let existing_t = cfg.position_t.unwrap_or(0.5);
     let existing_perp = cfg.perpendicular_offset.unwrap_or(0.0);
-    let changed =
-        (existing_t - t).abs() >= f32::EPSILON || (existing_perp - perp).abs() >= f32::EPSILON;
+    let changed = pretty_inequal(existing_t, t) || pretty_inequal(existing_perp, perp);
     if !changed {
         return false;
     }

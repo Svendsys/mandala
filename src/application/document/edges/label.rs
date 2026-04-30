@@ -10,9 +10,7 @@ use baumhard::mindmap::model::{
 
 use super::super::types::EdgeRef;
 use super::super::MindMapDocument;
-use super::inline::{
-    ensure_label_config_inline, option_f32_eps_eq,
-};
+use super::inline::ensure_label_config_inline;
 
 impl MindMapDocument {
     /// Set the label text on an edge. Passing `None` (or `Some("")`)
@@ -81,7 +79,7 @@ impl MindMapDocument {
         }
         self.mutate_edge(edge_ref, |edge, _canvas| {
             let current = edge.label_config.as_ref().and_then(|c| c.perpendicular_offset);
-            if option_f32_eps_eq(current, offset) {
+            if baumhard::util::geometry::option_almost_equal(current, offset) {
                 return false;
             }
             match offset {

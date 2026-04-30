@@ -91,14 +91,11 @@ pub(in crate::application::app) fn apply_portal_label_drag(
         Some(s) => s,
         None => return false,
     };
+    use baumhard::util::geometry::{option_almost_equal, pretty_inequal};
     let prev_t = slot.as_ref().and_then(|s| s.border_t);
     let prev_perp = slot.as_ref().and_then(|s| s.perpendicular_offset);
-    let t_changed = prev_t.map_or(true, |prev| (prev - t).abs() >= f32::EPSILON);
-    let perp_changed = match (prev_perp, perp) {
-        (None, None) => false,
-        (Some(a), Some(b)) => (a - b).abs() >= f32::EPSILON,
-        _ => true,
-    };
+    let t_changed = prev_t.map_or(true, |prev| pretty_inequal(prev, t));
+    let perp_changed = !option_almost_equal(prev_perp, perp);
     if !t_changed && !perp_changed {
         return false;
     }

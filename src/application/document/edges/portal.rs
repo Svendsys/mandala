@@ -10,10 +10,7 @@ use baumhard::mindmap::model::{
 use super::super::defaults::default_portal_edge;
 use super::super::types::EdgeRef;
 use super::super::MindMapDocument;
-use super::inline::{
-    option_f32_eps_eq,
-    write_endpoint_field,
-};
+use super::inline::write_endpoint_field;
 
 impl MindMapDocument {
     /// Create a new portal-mode edge between two nodes. Validation
@@ -111,7 +108,7 @@ impl MindMapDocument {
                 return false;
             };
             let current = slot.as_ref().and_then(|s| s.border_t);
-            if option_f32_eps_eq(current, wrapped) {
+            if baumhard::util::geometry::option_almost_equal(current, wrapped) {
                 return false;
             }
             write_endpoint_field(slot, wrapped, |s, v| s.border_t = v);
@@ -146,7 +143,7 @@ impl MindMapDocument {
                 return false;
             };
             let current = slot.as_ref().and_then(|s| s.perpendicular_offset);
-            if option_f32_eps_eq(current, offset) {
+            if baumhard::util::geometry::option_almost_equal(current, offset) {
                 return false;
             }
             write_endpoint_field(slot, offset, |s, v| s.perpendicular_offset = v);

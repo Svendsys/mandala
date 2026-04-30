@@ -6,9 +6,7 @@
 
 use baumhard::mindmap::model::PortalEndpointState;
 
-use super::inline::{
-    ensure_glyph_connection_inline, option_f32_eps_eq, write_endpoint_field,
-};
+use super::inline::{ensure_glyph_connection_inline, write_endpoint_field};
 use crate::application::document::tests_common::doc_with_one_edge as doc_with_edge;
 use crate::application::document::types::EdgeRef;
 use crate::application::document::undo_action::UndoAction;
@@ -143,22 +141,12 @@ fn commit_throttled_edge_drag_noop_when_edge_missing() {
     assert!(doc.undo_stack.is_empty());
 }
 
-/// `option_f32_eps_eq` treats values within `EPSILON` as
-/// equal, including the `(None, None)` and `(Some, Some)`
-/// cases. The `(None, Some)` and `(Some, None)` mismatches
-/// are not equal.
-#[test]
-fn option_f32_eps_eq_treats_epsilon_as_equal() {
-    assert!(option_f32_eps_eq(None, None));
-    assert!(option_f32_eps_eq(Some(1.0), Some(1.0)));
-    assert!(option_f32_eps_eq(
-        Some(1.0),
-        Some(1.0 + f32::EPSILON / 2.0),
-    ));
-    assert!(!option_f32_eps_eq(None, Some(0.0)));
-    assert!(!option_f32_eps_eq(Some(0.0), None));
-    assert!(!option_f32_eps_eq(Some(1.0), Some(2.0)));
-}
+// `option_almost_equal` lives in `baumhard::util::geometry`; its
+// own `do_*()` test in `lib/baumhard/src/util/tests/geometry_tests.rs`
+// pins the (None, None) / (Some, Some) / mismatched-tag cases. No
+// wrapper test needed here — the edge setters' callers route
+// through it for setter no-op short-circuiting, but the contract
+// is baumhard's, not edges'.
 
 /// `write_endpoint_field` scrubs the slot back to `None` when
 /// a `None` write would leave the state entirely default —

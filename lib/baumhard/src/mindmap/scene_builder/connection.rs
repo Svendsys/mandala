@@ -245,7 +245,7 @@ pub(super) fn build_connection_elements(
         // `cache.translate_in_place` mutates the entry's positions
         // without re-indexing `by_node` or cloning the string fields.
         let translate_delta = cache.get(&edge_key).and_then(|cached| {
-            if (cached.font_size_pt - font_size).abs() >= f32::EPSILON {
+            if crate::util::geometry::pretty_inequal(cached.font_size_pt, font_size) {
                 return None;
             }
             if cached.body_glyph != config.body {
