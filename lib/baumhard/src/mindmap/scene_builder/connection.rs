@@ -32,6 +32,7 @@ use std::collections::{HashMap, HashSet};
 
 use glam::Vec2;
 
+use crate::font::metrics::monospace_advance;
 use crate::mindmap::connection;
 use crate::mindmap::model::{GlyphConnectionConfig, MindMap};
 use crate::mindmap::scene_cache::{CachedConnection, EdgeKey, SceneConnectionCache};
@@ -209,7 +210,7 @@ pub(super) fn build_connection_elements(
         // drain budget at high zoom. The translate path below is what
         // keeps subtree-drag cost bounded there.
         let font_size = config.effective_font_size_pt(camera_zoom);
-        let approx_glyph_width = font_size * 0.6;
+        let approx_glyph_width = monospace_advance(font_size);
         let effective_spacing = approx_glyph_width + config.spacing;
 
         let (fox, foy) = offsets.get(&from_node.id).copied().unwrap_or((0.0, 0.0));

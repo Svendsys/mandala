@@ -17,6 +17,8 @@
 //! `finalize_report`. This module exists for the bespoke
 //! direct-setter verbs that don't lift to that machinery.
 
+use baumhard::util::geometry::is_positive_finite;
+
 use super::parser::Args;
 use super::{ConsoleEffects, ExecResult};
 use crate::application::document::EdgeRef;
@@ -140,7 +142,7 @@ impl ApplyTally {
 /// each reimplemented this with byte-identical wording.
 pub fn parse_finite_pt(key: &str, value: &str) -> Result<f32, String> {
     match value.parse::<f32>() {
-        Ok(n) if n.is_finite() && n > 0.0 => Ok(n),
+        Ok(n) if is_positive_finite(n) => Ok(n),
         Ok(n) => Err(format!(
             "{}='{}' must be positive and finite; got {}",
             key, value, n

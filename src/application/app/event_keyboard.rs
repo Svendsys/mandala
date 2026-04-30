@@ -90,8 +90,8 @@ pub(super) fn handle_keyboard_input(
                 ctx.modifiers.alt_key(),
             )
         });
-        if matches!(action, Some(Action::LabelEditCommit) | Some(Action::LabelEditCancel)) {
-            let _ = super::dispatch::dispatch_action(action.unwrap(), ctx, None);
+        if let Some(modal_action @ (Action::LabelEditCommit | Action::LabelEditCancel)) = action {
+            let _ = super::dispatch::dispatch_action(modal_action, ctx, None);
             return;
         }
         if let Some(doc) = ctx.document.as_mut() {
@@ -129,8 +129,8 @@ pub(super) fn handle_keyboard_input(
                 ctx.modifiers.alt_key(),
             )
         });
-        if matches!(action, Some(Action::LabelEditCommit) | Some(Action::LabelEditCancel)) {
-            let _ = super::dispatch::dispatch_action(action.unwrap(), ctx, None);
+        if let Some(modal_action @ (Action::LabelEditCommit | Action::LabelEditCancel)) = action {
+            let _ = super::dispatch::dispatch_action(modal_action, ctx, None);
             return;
         }
         if let Some(doc) = ctx.document.as_mut() {
@@ -169,8 +169,8 @@ pub(super) fn handle_keyboard_input(
                 ctx.modifiers.alt_key(),
             )
         });
-        if matches!(action, Some(Action::TextEditCommit) | Some(Action::TextEditCancel)) {
-            let _ = super::dispatch::dispatch_action(action.unwrap(), ctx, None);
+        if let Some(modal_action @ (Action::TextEditCommit | Action::TextEditCancel)) = action {
+            let _ = super::dispatch::dispatch_action(modal_action, ctx, None);
             return;
         }
         if let Some(doc) = ctx.document.as_mut() {

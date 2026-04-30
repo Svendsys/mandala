@@ -114,7 +114,7 @@ mod tests {
             .glyph_connection
             .as_ref()
             .expect("glyph_connection should fork on first spacing write");
-        assert!((cfg.spacing - 6.0).abs() < f32::EPSILON);
+        assert!(baumhard::util::geometry::almost_equal(cfg.spacing, 6.0));
     }
 
     #[test]

@@ -13,13 +13,14 @@
 
 use cosmic_text::{Attrs, FontSystem};
 
+use baumhard::font::metrics::monospace_advance;
 use baumhard::gfx_structs::zoom_visibility::ZoomVisibility;
 
 use super::MindMapTextBuffer;
 
 /// Widest shaped advance across `glyphs` at `font_size`, via
-/// cosmic-text. Falls back to `font_size * 0.6` if every glyph
-/// shapes to zero (tofu + missing fallback).
+/// cosmic-text. Falls back to `monospace_advance(font_size)` if
+/// every glyph shapes to zero (tofu + missing fallback).
 pub fn measure_max_glyph_advance(
     font_system: &mut cosmic_text::FontSystem,
     glyphs: &[&str],
@@ -49,7 +50,7 @@ pub fn measure_max_glyph_advance(
         }
     }
     if max_w <= 0.0 {
-        font_size * 0.6
+        monospace_advance(font_size)
     } else {
         max_w
     }

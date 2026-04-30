@@ -10,6 +10,7 @@
 use super::super::*;
 use super::fixtures::*;
 use crate::mindmap::scene_cache::{EdgeKey, SceneConnectionCache};
+use crate::util::geometry::almost_equal;
 use glam::Vec2;
 use std::collections::HashMap;
 
@@ -663,7 +664,7 @@ fn test_portal_text_bounds_use_grapheme_count_not_scalar_count() {
         "A\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}B",
     );
     assert!(
-        (plain.bounds.x - zwj.bounds.x).abs() < f32::EPSILON,
+        almost_equal(plain.bounds.x, zwj.bounds.x),
         "grapheme-sized bounds expected; got plain={} zwj={}",
         plain.bounds.x, zwj.bounds.x,
     );
@@ -737,7 +738,7 @@ fn test_portal_text_bounds_empty_string_uses_one_grapheme_floor() {
         "X",
     );
     assert!(
-        (empty.bounds.x - one_char.bounds.x).abs() < f32::EPSILON,
+        almost_equal(empty.bounds.x, one_char.bounds.x),
         "empty portal-text should match 1-grapheme width via the .max(1) floor; got empty={} one_char={}",
         empty.bounds.x, one_char.bounds.x,
     );
@@ -790,7 +791,7 @@ fn assert_portal_text_one_grapheme_equivalent(text: &str) {
         text,
     );
     assert!(
-        (baseline.bounds.x - actual.bounds.x).abs() < f32::EPSILON,
+        almost_equal(baseline.bounds.x, actual.bounds.x),
         "portal text {:?} should size as one grapheme; got {} vs. baseline {}",
         text, actual.bounds.x, baseline.bounds.x,
     );

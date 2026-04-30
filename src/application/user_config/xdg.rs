@@ -29,12 +29,26 @@ pub fn xdg_mandala_path(filename: &str) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// Process-wide mutex serialising tests that mutate
+    /// `std::env::*`. Cargo runs unit tests on multiple threads
+    /// by default (one per logical core); env vars are global
+    /// per-process, so two `with_env` calls on different threads
+    /// would race on `XDG_CONFIG_HOME` / `HOME`. The mutex makes
+    /// the save → set → body → restore dance atomic across the
+    /// suite. Poisoning is tolerated — if a previous test
+    /// panicked while holding the guard, we take the lock anyway
+    /// (env state may be slightly off but we'd rather run than
+    /// deadlock).
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     /// Run a closure with `XDG_CONFIG_HOME` and `HOME` overridden,
-    /// then restored. Cargo runs unit tests on a single thread by
-    /// default — but `--test-threads=N` could parallelise; the
-    /// save/restore dance keeps adjacent tests sane regardless.
+    /// then restored. Holds [`ENV_LOCK`] for the duration so
+    /// concurrent env-touching tests don't observe each other's
+    /// mid-mutation state.
     fn with_env<F: FnOnce()>(xdg: Option<&str>, home: Option<&str>, body: F) {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let prev_xdg = std::env::var_os("XDG_CONFIG_HOME");
         let prev_home = std::env::var_os("HOME");
         match xdg {

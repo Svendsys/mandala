@@ -14,6 +14,7 @@ use super::borders::create_border_buffer;
 use super::{MindMapTextBuffer, Renderer};
 use baumhard::font::attrs::{rich_text_spans_from_regions, RegionFamilies};
 use baumhard::font::hex::hex_to_cosmic_color;
+use baumhard::font::metrics::monospace_advance;
 use baumhard::mindmap::border::build_border_regions;
 use baumhard::util::color::hex_to_rgba_safe;
 
@@ -260,7 +261,7 @@ impl Renderer {
             fonts::acquire_font_system_write("rebuild_selection_rect_overlay");
 
         let font_size: f32 = 14.0;
-        let approx_char_width = font_size * 0.6;
+        let approx_char_width = monospace_advance(font_size);
         let rect_color = cosmic_text::Color::rgba(0, 230, 255, 200);
         let attrs = Attrs::new()
             .color(rect_color)

@@ -24,6 +24,7 @@ use crate::mindmap::model::{EdgeLabelConfig, GlyphConnectionConfig, MindMap};
 use crate::mindmap::scene_cache::EdgeKey;
 use crate::mindmap::SELECTION_HIGHLIGHT_HEX;
 use crate::util::color::resolve_var;
+use crate::util::geometry::almost_equal;
 use crate::util::grapheme_chad::count_grapheme_clusters;
 
 use super::{ConnectionLabelElement, EdgeColorPreview};
@@ -274,7 +275,7 @@ fn apply_perpendicular_offset(
     anchor: Vec2,
     perp: f32,
 ) -> Vec2 {
-    if perp.abs() < f32::EPSILON {
+    if almost_equal(perp, 0.0) {
         return anchor;
     }
     anchor + connection::normal_at_t(path, t) * perp

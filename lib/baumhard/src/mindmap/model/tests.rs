@@ -7,6 +7,7 @@
 use super::*;
 use crate::mindmap::loader;
 use crate::mindmap::test_helpers::{blank_canvas, testament_map_path as test_map_path};
+use crate::util::geometry::is_positive_finite;
 
 #[test]
 fn test_all_descendants() {
@@ -178,9 +179,9 @@ fn effective_font_size_handles_zero_and_negative_zoom() {
     // panicking or returning NaN.
     let cfg = GlyphConnectionConfig::default();
     let z0 = cfg.effective_font_size_pt(0.0);
-    assert!(z0.is_finite() && z0 > 0.0, "expected finite > 0, got {z0}");
+    assert!(is_positive_finite(z0), "expected finite > 0, got {z0}");
     let zn = cfg.effective_font_size_pt(-1.0);
-    assert!(zn.is_finite() && zn > 0.0, "expected finite > 0, got {zn}");
+    assert!(is_positive_finite(zn), "expected finite > 0, got {zn}");
 }
 
 #[test]

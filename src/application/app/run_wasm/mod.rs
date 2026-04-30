@@ -11,8 +11,25 @@
 //! `wasm_bindgen_futures::spawn_local` but resumes on later
 //! microtask ticks, so [`WasmApp`]'s `renderer` / `input` cells
 //! start `None` and the handler's match arms guard accordingly.
+//!
+//! The [`ApplicationHandler::window_event`] callback funnels into
+//! [`WasmApp::handle_window_event`], which owns the dispatch
+//! match: six arms fan out to per-arm `handle_*` inherent methods
+//! defined in sibling `event_*.rs` files (Resized, ModifiersChanged,
+//! KeyboardInput, CursorMoved, MouseInput, MouseWheel) plus an
+//! inline `CloseRequested` no-op and a catch-all that drops the
+//! arms WASM doesn't currently consume. Mirrors native's per-arm
+//! split under `app/event_*.rs` so cross-target convergence
+//! reviews can diff the two layouts side by side.
 
 #![cfg(target_arch = "wasm32")]
+
+mod event_cursor_moved;
+mod event_keyboard;
+mod event_modifiers;
+mod event_mouse_click;
+mod event_mouse_wheel;
+mod event_resized;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -22,21 +39,20 @@ use baumhard::mindmap::tree_builder::MindMapTree;
 use wgpu::Instance;
 use winit::application::ApplicationHandler;
 use winit::event::{
-    ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent,
+    ElementState, KeyEvent, MouseButton, WindowEvent,
 };
 use winit::event_loop::ActiveEventLoop;
 use winit::platform::web::EventLoopExtWebSys;
 use winit::window::WindowId;
 
 use super::scene_rebuild::{
-    flush_canvas_scene_buffers, rebuild_after_selection_change, rebuild_all,
-    rebuild_scene_only, update_border_tree_static,
+    flush_canvas_scene_buffers, update_border_tree_static,
     update_connection_label_tree, update_connection_tree, update_portal_tree,
 };
-use super::text_edit::{handle_text_edit_key, open_text_edit, TextEditState};
-use super::{is_double_click, now_ms, Application, ClickHit, LastClick};
+use super::text_edit::TextEditState;
+use super::{Application, LastClick};
 use crate::application::common::RenderDecree;
-use crate::application::document::{MindMapDocument, SelectionState};
+use crate::application::document::MindMapDocument;
 use crate::application::keybinds::{Action, ResolvedKeybinds};
 use crate::application::renderer::Renderer;
 
@@ -279,12 +295,32 @@ struct WasmApp {
     /// Shared with the rAF render loop set up in [`run`]. `None`
     /// until the async `Renderer::new` future inside `spawn_local`
     /// resolves.
+    ///
+    /// **Re-borrow contract.** Any code path that's already
+    /// holding `self.renderer.borrow*()` (per-arm methods do this
+    /// at the top of their body) must NOT call back into a
+    /// dispatch path that re-clones this `Rc` and re-borrows it —
+    /// `RefCell` defers the conflict to runtime panic. Today no
+    /// such re-entry exists (cross_dispatch arms see only the
+    /// `RebuildContext` projection, not the outer `Rc`); future
+    /// arms wiring `WasmInputState`-internal Rc handles must
+    /// keep this contract.
     renderer: Rc<RefCell<Option<Renderer>>>,
     /// Shared with the rAF render loop. `None` until the document
     /// fetch + tree build inside `spawn_local` completes.
+    ///
+    /// Same re-borrow contract as [`Self::renderer`] applies.
     input: Rc<RefCell<Option<WasmInputState>>>,
     /// Shared with the canvas keydown listener so the editor's
     /// open / close transitions can flip its `preventDefault` flag.
+    ///
+    /// **`Cell`, not `RefCell`** — load-bearing. Several per-arm
+    /// methods call `self.suppress_keys.set(...)` while
+    /// `self.input.borrow_mut()` is still live; if the type were
+    /// `Rc<RefCell<bool>>` those calls would have to drop the
+    /// input borrow first to avoid the runtime borrow conflict.
+    /// `Cell::set` doesn't take a borrow so the two operations
+    /// can interleave freely. Don't change the type.
     suppress_keys: Rc<Cell<bool>>,
     /// Resolved keybind table — built once in [`run`] from
     /// `Options::keybind_config`, read on every key event.
@@ -309,6 +345,66 @@ impl ApplicationHandler for WasmApp {
         event: WindowEvent,
     ) {
         self.handle_window_event(event);
+    }
+}
+
+impl WasmApp {
+    /// Per-event dispatch — six arms fan out into per-arm methods
+    /// defined in sibling `event_*.rs` files, plus an inline
+    /// `CloseRequested` no-op (browser tabs don't really close)
+    /// and a `_ => {}` catch-all that silently drops the arms
+    /// winit fires that WASM doesn't currently consume (touch
+    /// events, IME composition, focus changes). Each fan-out arm
+    /// extracts only the fields that arm needs.
+    fn handle_window_event(&mut self, event: WindowEvent) {
+        match event {
+            WindowEvent::Resized(s) => self.handle_resized(s),
+            WindowEvent::CloseRequested => {
+                // WASM doesn't really close
+            }
+            WindowEvent::ModifiersChanged(m) => self.handle_modifiers_changed(m),
+            WindowEvent::KeyboardInput {
+                event: KeyEvent {
+                    state: ElementState::Pressed,
+                    logical_key,
+                    ..
+                },
+                ..
+            } => self.handle_keyboard_input(logical_key),
+            WindowEvent::CursorMoved { position, .. } => {
+                self.handle_cursor_moved(position)
+            }
+            WindowEvent::MouseInput {
+                state,
+                button: MouseButton::Left,
+                ..
+            } => self.handle_mouse_input(state),
+            WindowEvent::MouseWheel { delta, .. } => self.handle_mouse_wheel(delta),
+            // Catch-all for winit `WindowEvent` variants WASM
+            // doesn't yet route. The notable un-wired ones:
+            //
+            // - `WindowEvent::Touch` — primary mobile-browser
+            //   input. Wiring this requires an event_touch.rs
+            //   sibling + the gesture-recognizer state machine
+            //   that native already has. Mobile budget is
+            //   binding (CODE_CONVENTIONS §4); landing this
+            //   is on the named trajectory.
+            // - `WindowEvent::Ime` — IME composition strings.
+            //   Required for non-Latin text editing inside the
+            //   inline node-text editor. Modal-handler-side
+            //   work; the dispatch funnel doesn't see literal
+            //   IME payloads (§3 carve-out for `winit::Key`).
+            // - `WindowEvent::Focused`, `CursorEntered` /
+            //   `CursorLeft` — informational; could drive a
+            //   "canvas inactive" overlay in the future.
+            //
+            // Drop silently rather than log because winit fires
+            // every variant on every event tick; a log would
+            // burn 60Hz × variants. When any of the above gets
+            // wired, lift the corresponding match arm out of
+            // this catch-all into a dedicated handle_* method.
+            _ => {}
+        }
     }
 }
 
@@ -620,512 +716,6 @@ let handler = WasmApp {
     keybinds,
 };
 app.event_loop.spawn_app(handler);
-}
-
-impl WasmApp {
-    /// Per-event dispatch — same body that previously lived in
-    /// the closure passed to `event_loop.run`. Split out as an
-    /// inherent method so [`ApplicationHandler::window_event`]
-    /// can stay terse.
-    fn handle_window_event(&mut self, event: WindowEvent) {
-        match event {
-        WindowEvent::Resized(size) => {
-            if let Some(renderer) = self.renderer.borrow_mut().as_mut() {
-                renderer.process_decree(
-                    RenderDecree::SetSurfaceSize(size.width, size.height),
-                );
-            }
-        }
-        WindowEvent::CloseRequested => {
-            // WASM doesn't really close
-        }
-
-        // --- Modifier tracking ---
-        WindowEvent::ModifiersChanged(mods) => {
-            if let Some(input) = self.input.borrow_mut().as_mut() {
-                input.modifiers = mods.state();
-            }
-        }
-
-        // --- Keyboard input ---
-        WindowEvent::KeyboardInput {
-            event: KeyEvent {
-                state: ElementState::Pressed,
-                ref logical_key,
-                ..
-            },
-            ..
-        } => {
-            let key_name = crate::application::keybinds::key_to_name(logical_key);
-
-            let mut input_borrow = self.input.borrow_mut();
-            let mut renderer_borrow = self.renderer.borrow_mut();
-            let (Some(input), Some(renderer)) =
-                (input_borrow.as_mut(), renderer_borrow.as_mut())
-            else { return; };
-
-            // Editor keyboard-steal: if open, route all keys
-            // to the editor so hotkeys don't collide with typed text.
-            //
-            // Commit/cancel pre-filter: dispatch through the funnel
-            // (`Action::TextEditCommit` / `TextEditCancel`) BEFORE
-            // calling the modal handler. Mirrors the native shape
-            // at `event_keyboard.rs`.
-            if input.text_edit_state.is_open() {
-                let action = key_name.as_deref().and_then(|n| {
-                    self.keybinds.action_for_context(
-                        crate::application::keybinds::InputContext::TextEdit,
-                        n,
-                        input.modifiers.control_key(),
-                        input.modifiers.shift_key(),
-                        input.modifiers.alt_key(),
-                    )
-                });
-                if let Some(modal_action @ (Action::TextEditCommit | Action::TextEditCancel)) =
-                    &action
-                {
-                    let mut core = input.input_context_core(renderer, &self.keybinds);
-                    let _ = super::dispatch::action_core::dispatch_compatible(
-                        modal_action,
-                        &mut core,
-                    );
-                    self.suppress_keys.set(input.text_edit_state.is_open());
-                    return;
-                }
-                handle_text_edit_key(
-                    &key_name,
-                    logical_key,
-                    input.modifiers.control_key(),
-                    input.modifiers.shift_key(),
-                    input.modifiers.alt_key(),
-                    &self.keybinds,
-                    &mut input.text_edit_state,
-                    &mut input.document,
-                    &mut input.mindmap_tree,
-                    &mut input.app_scene,
-                    renderer,
-                    &mut input.scene_cache,
-                );
-                self.suppress_keys.set(input.text_edit_state.is_open());
-                return;
-            }
-
-            // Hotkey dispatch via keybinds.
-            let action = key_name.as_deref().and_then(|k| {
-                self.keybinds.action_for_context(
-                    crate::application::keybinds::InputContext::Document,
-                    k,
-                    input.modifiers.control_key(),
-                    input.modifiers.shift_key(),
-                    input.modifiers.alt_key(),
-                )
-            });
-            // WASM dispatch ladder. Action body lives in the
-            // unified `dispatch_action_core::dispatch_compatible`
-            // (Track C) — both the keyboard path here and the
-            // `WasmMacroDispatchTarget::dispatch_action` impl
-            // reach the same body. Native's `dispatch::dispatch_action`
-            // delegates to it as well; one source of truth for
-            // every Compatible arm across both targets.
-            //
-            // After the action lookup completes, fall through to
-            // macro lookup — the same Action → Macro →
-            // CustomMutation chain native uses (`event_keyboard.rs`).
-            if let Some(a) = action.clone() {
-                // Pin "did the user just trigger an EditSelection?"
-                // before the dispatch — `self.suppress_keys` is
-                // ONLY updated for that pair (pre-Track-B, the
-                // suppress call lived inside the EditSelection
-                // pre-filter arm). Other Compatible Actions don't
-                // touch suppress.
-                let was_edit_selection =
-                    matches!(a, Action::EditSelection | Action::EditSelectionClean);
-                let _ = {
-                    let mut core = input.input_context_core(renderer, &self.keybinds);
-                    super::dispatch::action_core::dispatch_compatible(&a, &mut core)
-                };
-                if was_edit_selection {
-                    // Mirror pre-Track-B `set(is_open())`: flip
-                    // suppress to whatever the modal state ended
-                    // up at — true if the editor opened, false if
-                    // it didn't (e.g. selection wasn't Single).
-                    // Always-set, NOT gated on dispatch outcome.
-                    // Track-C-Commit-3 incorrectly gated on
-                    // `Handled` which left suppress stuck-true on a
-                    // non-Single EditSelection (Unhandled outcome);
-                    // restored here per the design reviewer's flag.
-                    self.suppress_keys.set(input.text_edit_state.is_open());
-                }
-            } else {
-                // No built-in Action bound to this combo — fall
-                // through to macro lookup. Mirrors native's
-                // `event_keyboard.rs` chain: Action → Macro →
-                // (CustomMutation tier on native; macros only on
-                // WASM today). Privilege gate runs inside
-                // `dispatch_macro_core::dispatch_macro` so a
-                // hostile Map / Inline tier macro can't slip
-                // destructive Actions or ConsoleLine past.
-                if let Some(macro_id) = key_name.as_deref().and_then(|k| {
-                    self.keybinds.macro_for(
-                        k,
-                        input.modifiers.control_key(),
-                        input.modifiers.shift_key(),
-                        input.modifiers.alt_key(),
-                    )
-                }) {
-                    let macro_id = macro_id.to_string();
-                    let mut target = WasmMacroDispatchTarget {
-                        input,
-                        renderer,
-                        keybinds: &self.keybinds,
-                    };
-                    let _ = super::dispatch::macro_core::dispatch_macro(&macro_id, &mut target);
-                }
-            }
-        }
-
-        // --- Mouse input ---
-        WindowEvent::CursorMoved { position, .. } => {
-            if let Some(input) = self.input.borrow_mut().as_mut() {
-                input.cursor_pos = (position.x, position.y);
-            }
-        }
-
-        WindowEvent::MouseInput {
-            state: btn_state,
-            button: MouseButton::Left,
-            ..
-        } => {
-            if btn_state == ElementState::Pressed {
-                // --- Left mouse Pressed ---
-                let mut input_borrow = self.input.borrow_mut();
-                let Some(input) = input_borrow.as_mut() else { return; };
-
-                // Compute canvas position via renderer
-                let canvas_pos = {
-                    let renderer_borrow = self.renderer.borrow();
-                    match renderer_borrow.as_ref() {
-                        Some(r) => r.screen_to_canvas(
-                            input.cursor_pos.0 as f32,
-                            input.cursor_pos.1 as f32,
-                        ),
-                        None => return,
-                    }
-                };
-
-                // Hit test against nodes + portal sub-parts + edge
-                // labels. Cross-platform helper — the priority chain
-                // is byte-identical to native (`compute_click_hit`
-                // in `app/mod.rs`), so the previously-duplicated
-                // hit-routing block now lives in one place.
-                let now = now_ms();
-                let parts = {
-                    let renderer_borrow = self.renderer.borrow();
-                    let Some(renderer) = renderer_borrow.as_ref() else { return; };
-                    super::compute_click_hit(
-                        canvas_pos,
-                        input.mindmap_tree.as_mut(),
-                        renderer,
-                    )
-                };
-                let super::ClickHitParts {
-                    click_hit,
-                    hit_node,
-                    portal_text_hit,
-                    portal_icon_hit,
-                    edge_label_hit,
-                } = parts;
-                let already_editing_same_target = input.text_edit_state
-                    .node_id()
-                    .map(|id| hit_node.as_deref() == Some(id))
-                    .unwrap_or(false);
-                let is_dblclick = !already_editing_same_target
-                    && input.last_click
-                        .as_ref()
-                        .map(|prev| is_double_click(prev, now, input.cursor_pos, &click_hit))
-                        .unwrap_or(false);
-
-                if is_dblclick {
-                    input.last_click = None;
-
-                    let mut renderer_borrow = self.renderer.borrow_mut();
-                    let Some(renderer) = renderer_borrow.as_mut() else { return; };
-
-                    match &click_hit {
-                        ClickHit::Node(node_id) => {
-                            let nid = node_id.clone();
-                            input.document.selection = SelectionState::Single(nid.clone());
-                            rebuild_all(&input.document, &mut input.mindmap_tree, &mut input.app_scene, renderer, &mut input.scene_cache);
-                            open_text_edit(
-                                &nid, false,
-                                &mut input.document,
-                                &mut input.text_edit_state,
-                                &mut input.mindmap_tree,
-                                &mut input.app_scene,
-                                renderer,
-                            );
-                        }
-                        ClickHit::PortalMarker { edge, endpoint }
-                        | ClickHit::PortalText { edge, endpoint } => {
-                            // Double-click on icon or text both
-                            // jump to the partner endpoint — they
-                            // share the same endpoint identity
-                            // and the same "navigate" intent.
-                            let other_id = if *endpoint == edge.from_id {
-                                edge.to_id.clone()
-                            } else {
-                                edge.from_id.clone()
-                            };
-                            if let Some(node) = input.document.mindmap.nodes.get(&other_id) {
-                                renderer.set_camera_center(node.center_vec2());
-                            }
-                            input.document.selection = SelectionState::Edge(
-                                crate::application::document::EdgeRef::new(
-                                    &edge.from_id,
-                                    &edge.to_id,
-                                    &edge.edge_type,
-                                ),
-                            );
-                            rebuild_all(&input.document, &mut input.mindmap_tree, &mut input.app_scene, renderer, &mut input.scene_cache);
-                        }
-                        ClickHit::EdgeLabel(edge_key) => {
-                            // Edge-label double-click is a parity
-                            // placeholder on WASM. Native opens the
-                            // inline label editor; WASM's modal
-                            // editor path isn't available here yet,
-                            // so the user falls back to the
-                            // `/label edit` console verb. The
-                            // previous single-click (release 1 in
-                            // the dbl-click pair) already committed
-                            // `SelectionState::EdgeLabel` and
-                            // rebuilt the scene — this branch has
-                            // nothing to add. Skipping the
-                            // redundant commit + rebuild is both
-                            // correct and meaningfully cheaper on
-                            // mobile browsers (§4 mobile budget).
-                            // If the selection somehow drifted
-                            // between the two clicks, the `match`
-                            // below handles re-committing; the
-                            // guard just avoids the wasted
-                            // rebuild in the common case.
-                            let expected_er = crate::application::document::EdgeRef::new(
-                                edge_key.from_id.as_str(),
-                                edge_key.to_id.as_str(),
-                                edge_key.edge_type.as_str(),
-                            );
-                            let already_selected = matches!(
-                                &input.document.selection,
-                                SelectionState::EdgeLabel(s) if s.edge_ref == expected_er
-                            );
-                            if !already_selected {
-                                input.document.selection = SelectionState::EdgeLabel(
-                                    crate::application::document::EdgeLabelSel::new(
-                                        expected_er,
-                                    ),
-                                );
-                                rebuild_scene_only(
-                                    &input.document,
-                                    &mut input.app_scene,
-                                    renderer,
-                                    &mut input.scene_cache,
-                                );
-                            }
-                        }
-                        ClickHit::Empty => {
-                            // Match native: empty-canvas double-click is
-                            // a no-op unless the user has explicitly
-                            // bound `CreateOrphanNodeAndEdit`. Default
-                            // ships unbound — addresses the user's
-                            // "annoying" complaint on the WASM target
-                            // too.
-                            let allow_create = !matches!(
-                                input.document.selection,
-                                SelectionState::Edge(_)
-                            ) && self.keybinds.has_any_binding_for(
-                                crate::application::keybinds::Action::CreateOrphanNodeAndEdit,
-                            );
-                            if allow_create {
-                                let new_id = input.document.create_orphan_and_select(canvas_pos);
-                                rebuild_all(&input.document, &mut input.mindmap_tree, &mut input.app_scene, renderer, &mut input.scene_cache);
-                                open_text_edit(
-                                    &new_id, true,
-                                    &mut input.document,
-                                    &mut input.text_edit_state,
-                                    &mut input.mindmap_tree,
-                                    &mut input.app_scene,
-                                    renderer,
-                                );
-                            }
-                        }
-                    }
-                    self.suppress_keys.set(input.text_edit_state.is_open());
-                    return;
-                }
-
-                input.pending_click = if let Some(id) = hit_node.clone() {
-                    PendingClick::Node(id)
-                } else if let Some((key, endpoint)) = portal_text_hit.clone() {
-                    // Portal **text** click — committed to
-                    // `SelectionState::PortalText` on mouse-up.
-                    PendingClick::PortalText {
-                        edge_key: key,
-                        endpoint_node_id: endpoint,
-                    }
-                } else if let Some((key, endpoint)) = portal_icon_hit.clone() {
-                    // Portal **icon** click — committed to
-                    // `SelectionState::PortalLabel` on mouse-up.
-                    // Double-click already fired above so a
-                    // pending marker click can only mean "select
-                    // this label".
-                    PendingClick::PortalMarker {
-                        edge_key: key,
-                        endpoint_node_id: endpoint,
-                    }
-                } else if let Some(key) = edge_label_hit.clone() {
-                    // Edge label click — committed to
-                    // `SelectionState::EdgeLabel` on mouse-up.
-                    PendingClick::EdgeLabel(key)
-                } else {
-                    PendingClick::Empty
-                };
-                input.last_click = Some(LastClick {
-                    time: now,
-                    screen_pos: input.cursor_pos,
-                    hit: click_hit,
-                });
-            } else {
-                // --- Left mouse Released ---
-                let mut input_borrow = self.input.borrow_mut();
-                let Some(input) = input_borrow.as_mut() else { return; };
-
-                let pending = std::mem::replace(&mut input.pending_click, PendingClick::None);
-                if matches!(pending, PendingClick::None) { return; }
-
-                if input.text_edit_state.is_open() {
-                    let mut renderer_borrow = self.renderer.borrow_mut();
-                    let Some(renderer) = renderer_borrow.as_mut() else { return; };
-                    let release_canvas = renderer.screen_to_canvas(
-                        input.cursor_pos.0 as f32,
-                        input.cursor_pos.1 as f32,
-                    );
-
-                    let inside_edit_node = input.text_edit_state
-                        .node_id()
-                        .zip(input.mindmap_tree.as_ref())
-                        .map(|(id, tree)| {
-                            crate::application::document::point_in_node_aabb(
-                                release_canvas, id, tree,
-                            )
-                        })
-                        .unwrap_or(false);
-
-                    if inside_edit_node {
-                        return;
-                    }
-
-                    // Click-outside: commit via the funnel
-                    // (`Action::TextEditCommit`). Track C lets WASM
-                    // call the same `dispatch_compatible` that
-                    // native uses for this Compatible Action.
-                    {
-                        let mut core = input.input_context_core(renderer, &self.keybinds);
-                        let _ = super::dispatch::action_core::dispatch_compatible(
-                            &Action::TextEditCommit,
-                            &mut core,
-                        );
-                    }
-                    self.suppress_keys.set(false);
-                    return;
-                }
-
-                // Plain selection click. Snapshot the previous
-                // selection so `rebuild_after_selection_change`
-                // can pick between `rebuild_all` (needed when
-                // either side is a node selection — tree
-                // highlights must be applied or cleared) and the
-                // cheaper `rebuild_scene_only` (edge-adjacent →
-                // edge-adjacent transitions).
-                let prev_selection = input.document.selection.clone();
-                input.document.selection = match pending {
-                    PendingClick::Node(node_id) => SelectionState::Single(node_id),
-                    PendingClick::PortalMarker {
-                        edge_key,
-                        endpoint_node_id,
-                    } => SelectionState::PortalLabel(
-                        crate::application::document::PortalLabelSel {
-                            edge_key,
-                            endpoint_node_id,
-                        },
-                    ),
-                    PendingClick::PortalText {
-                        edge_key,
-                        endpoint_node_id,
-                    } => SelectionState::PortalText(
-                        crate::application::document::PortalLabelSel {
-                            edge_key,
-                            endpoint_node_id,
-                        },
-                    ),
-                    PendingClick::EdgeLabel(edge_key) => {
-                        let er = crate::application::document::EdgeRef::new(
-                            edge_key.from_id.as_str(),
-                            edge_key.to_id.as_str(),
-                            edge_key.edge_type.as_str(),
-                        );
-                        SelectionState::EdgeLabel(
-                            crate::application::document::EdgeLabelSel::new(er),
-                        )
-                    }
-                    _ => SelectionState::None,
-                };
-                let mut renderer_borrow = self.renderer.borrow_mut();
-                if let Some(renderer) = renderer_borrow.as_mut() {
-                    rebuild_after_selection_change(
-                        &prev_selection,
-                        &input.document,
-                        &mut input.mindmap_tree,
-                        &mut input.app_scene,
-                        renderer,
-                        &mut input.scene_cache,
-                    );
-                }
-            }
-        }
-
-        WindowEvent::MouseWheel { delta, .. } => {
-            let scroll_y = match delta {
-                MouseScrollDelta::LineDelta(_, y) => y as f64,
-                MouseScrollDelta::PixelDelta(pos) => pos.y / 50.0,
-            };
-            let factor = if scroll_y > 0.0 { 1.1 } else { 1.0 / 1.1 };
-            let mut input_borrow = self.input.borrow_mut();
-            let mut renderer_borrow = self.renderer.borrow_mut();
-            if let (Some(input), Some(renderer)) =
-                (input_borrow.as_mut(), renderer_borrow.as_mut())
-            {
-                // A zoom mid-click invalidates the pending selection:
-                // the canvas coord the user pressed over has shifted
-                // to a new screen position, so committing the pending
-                // click on the eventual mouse-up would select whatever
-                // now sits under the release cursor — not what the
-                // user pressed on. Clear it so release falls through
-                // to empty-click handling.
-                input.pending_click = PendingClick::None;
-                renderer.process_decree(RenderDecree::CameraZoom {
-                    screen_x: input.cursor_pos.0 as f32,
-                    screen_y: input.cursor_pos.1 as f32,
-                    factor: factor as f32,
-                });
-                // Zoom touches scene geometry (connection glyph
-                // sample spacing, viewport cull rect) but not the
-                // node text tree — scene-only rebuild is enough.
-                rebuild_scene_only(&input.document, &mut input.app_scene, renderer, &mut input.scene_cache);
-            }
-        }
-
-        _ => {}
-    }
-    }
 }
 
 /// Schedule `f` on the next browser animation frame — the

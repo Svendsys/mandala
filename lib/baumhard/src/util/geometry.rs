@@ -27,6 +27,34 @@ pub fn almost_equal(a: f32, b: f32) -> bool {
    (a - b).abs() <= ERROR_TOLERANCE_ALMOST_EQUAL
 }
 
+/// `true` iff `f` is a non-NaN, non-infinite, strictly-positive
+/// `f32`. The canonical predicate for "is this a valid pixel /
+/// zoom / scale / font-size value coming from user input?" —
+/// rejects `NaN`, `±∞`, and zero-or-negative numbers.
+///
+/// Used on the parse → mutation boundary (every console verb
+/// that accepts a numeric pt size, every edge-style setter
+/// that accepts a positive measurement). Cost: O(1).
+pub fn is_positive_finite(f: f32) -> bool {
+   f.is_finite() && f > 0.0
+}
+
+/// `true` iff `f` is a non-NaN, non-infinite, non-negative
+/// `f64`. The canonical predicate for "is this a coordinate /
+/// size safe to feed into layout math?" — rejects `NaN`,
+/// `±∞`, and negative numbers, but allows zero (a zero-width
+/// node or zero-coord position is a valid layout input).
+///
+/// Used by `document::mutations::*` layout helpers that walk
+/// `MindNode.size` / `position` (both `f64`) before applying
+/// derived math; a non-finite or negative coord fed into
+/// trigonometry produces NaN that propagates into every
+/// downstream row, so the safe-coord check stops the cascade
+/// at the source. Cost: O(1).
+pub fn is_non_negative_finite_f64(f: f64) -> bool {
+   f.is_finite() && f >= 0.0
+}
+
 /// Logical inverse of [`almost_equal`]. Named "pretty" because it
 /// treats within-epsilon pairs as equal rather than fighting with raw
 /// `!=` comparisons at float boundaries.

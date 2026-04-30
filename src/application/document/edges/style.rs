@@ -6,6 +6,7 @@
 use baumhard::mindmap::model::{
     portal_endpoint_state_mut, EdgeLabelConfig, GlyphConnectionConfig, PortalEndpointState,
 };
+use baumhard::util::geometry::{almost_equal, is_positive_finite};
 
 use super::super::types::EdgeRef;
 use super::super::undo_action::UndoAction;
@@ -191,12 +192,21 @@ impl MindMapDocument {
     /// clamped into `[min_font_size_pt, max_font_size_pt]`. Returns
     /// `true` if the clamp yielded a different value from the current
     /// (i.e. we're not already pinned at the relevant bound).
+    ///
+    /// **No-op tolerance.** The change-detection compares
+    /// pre/post via `almost_equal` (1e-5). A `delta_pt` smaller
+    /// than that magnitude (e.g. `1e-6`) silently no-ops — the
+    /// stored value is f32 and sub-1e-5 deltas don't survive
+    /// the clamp's float arithmetic anyway, so the no-op
+    /// preserves the model's "bit-exact equality after
+    /// round-trip" property. User-facing verbs should validate
+    /// reasonable delta magnitudes upstream.
     pub fn set_edge_font_size_step(&mut self, edge_ref: &EdgeRef, delta_pt: f32) -> bool {
         self.mutate_edge(edge_ref, |edge, canvas| {
             let cfg = ensure_glyph_connection_inline(edge, canvas);
             let new_val = (cfg.font_size_pt + delta_pt)
                 .clamp(cfg.min_font_size_pt, cfg.max_font_size_pt);
-            if (cfg.font_size_pt - new_val).abs() < f32::EPSILON {
+            if almost_equal(cfg.font_size_pt, new_val) {
                 return false;
             }
             cfg.font_size_pt = new_val;
@@ -215,7 +225,7 @@ impl MindMapDocument {
         self.mutate_edge(edge_ref, |edge, canvas| {
             let cfg = ensure_glyph_connection_inline(edge, canvas);
             let new_val = pt.clamp(cfg.min_font_size_pt, cfg.max_font_size_pt);
-            if (cfg.font_size_pt - new_val).abs() < f32::EPSILON {
+            if almost_equal(cfg.font_size_pt, new_val) {
                 return false;
             }
             cfg.font_size_pt = new_val;
@@ -229,7 +239,7 @@ impl MindMapDocument {
         let default_size = GlyphConnectionConfig::default().font_size_pt;
         self.mutate_edge(edge_ref, |edge, canvas| {
             let cfg = ensure_glyph_connection_inline(edge, canvas);
-            if (cfg.font_size_pt - default_size).abs() < f32::EPSILON {
+            if almost_equal(cfg.font_size_pt, default_size) {
                 return false;
             }
             cfg.font_size_pt = default_size;
@@ -282,10 +292,10 @@ impl MindMapDocument {
         // later renderer frame hits the same panic via
         // `effective_font_size_pt`.
         let final_min = min
-            .filter(|v| v.is_finite() && *v > 0.0)
+            .filter(|v| is_positive_finite(*v))
             .unwrap_or(cfg.min_font_size_pt);
         let final_max = max
-            .filter(|v| v.is_finite() && *v > 0.0)
+            .filter(|v| is_positive_finite(*v))
             .unwrap_or(cfg.max_font_size_pt);
         if final_min > final_max {
             self.mindmap.edges[idx] = before;
@@ -293,19 +303,19 @@ impl MindMapDocument {
         }
         use baumhard::util::geometry::pretty_inequal;
         let mut changed = false;
-        if let Some(m) = min.filter(|v| v.is_finite() && *v > 0.0) {
+        if let Some(m) = min.filter(|v| is_positive_finite(*v)) {
             if pretty_inequal(cfg.min_font_size_pt, m) {
                 cfg.min_font_size_pt = m;
                 changed = true;
             }
         }
-        if let Some(m) = max.filter(|v| v.is_finite() && *v > 0.0) {
+        if let Some(m) = max.filter(|v| is_positive_finite(*v)) {
             if pretty_inequal(cfg.max_font_size_pt, m) {
                 cfg.max_font_size_pt = m;
                 changed = true;
             }
         }
-        if let Some(s) = size.filter(|v| v.is_finite() && *v > 0.0) {
+        if let Some(s) = size.filter(|v| is_positive_finite(*v)) {
             // Bounds resolved above, known-ordered, safe for clamp.
             let clamped = s.clamp(cfg.min_font_size_pt, cfg.max_font_size_pt);
             if pretty_inequal(cfg.font_size_pt, clamped) {
@@ -417,11 +427,11 @@ impl MindMapDocument {
             .as_ref()
             .and_then(|c| c.max_font_size_pt);
         let final_min = min
-            .filter(|v| v.is_finite() && *v > 0.0)
+            .filter(|v| is_positive_finite(*v))
             .or(existing_label_min)
             .unwrap_or(body_min);
         let final_max = max
-            .filter(|v| v.is_finite() && *v > 0.0)
+            .filter(|v| is_positive_finite(*v))
             .or(existing_label_max)
             .unwrap_or(body_max);
         if final_min > final_max {
@@ -430,19 +440,19 @@ impl MindMapDocument {
         let before = self.mindmap.edges[idx].clone();
         let label_cfg = Self::ensure_label_config(&mut self.mindmap.edges[idx]);
         let mut changed = false;
-        if let Some(m) = min.filter(|v| v.is_finite() && *v > 0.0) {
+        if let Some(m) = min.filter(|v| is_positive_finite(*v)) {
             if label_cfg.min_font_size_pt != Some(m) {
                 label_cfg.min_font_size_pt = Some(m);
                 changed = true;
             }
         }
-        if let Some(m) = max.filter(|v| v.is_finite() && *v > 0.0) {
+        if let Some(m) = max.filter(|v| is_positive_finite(*v)) {
             if label_cfg.max_font_size_pt != Some(m) {
                 label_cfg.max_font_size_pt = Some(m);
                 changed = true;
             }
         }
-        if let Some(s) = size.filter(|v| v.is_finite() && *v > 0.0) {
+        if let Some(s) = size.filter(|v| is_positive_finite(*v)) {
             let effective_min = label_cfg.min_font_size_pt.unwrap_or(body_min);
             let effective_max = label_cfg.max_font_size_pt.unwrap_or(body_max);
             // `effective_{min,max}` are guaranteed ordered by the
@@ -526,11 +536,11 @@ impl MindMapDocument {
             )
         };
         let final_min = min
-            .filter(|v| v.is_finite() && *v > 0.0)
+            .filter(|v| is_positive_finite(*v))
             .or(existing_text_min)
             .unwrap_or(body_min);
         let final_max = max
-            .filter(|v| v.is_finite() && *v > 0.0)
+            .filter(|v| is_positive_finite(*v))
             .or(existing_text_max)
             .unwrap_or(body_max);
         if final_min > final_max {
@@ -551,19 +561,19 @@ impl MindMapDocument {
         let forked_default = slot.is_none();
         let state = slot.get_or_insert_with(PortalEndpointState::default);
         let mut changed = false;
-        if let Some(m) = min.filter(|v| v.is_finite() && *v > 0.0) {
+        if let Some(m) = min.filter(|v| is_positive_finite(*v)) {
             if state.text_min_font_size_pt != Some(m) {
                 state.text_min_font_size_pt = Some(m);
                 changed = true;
             }
         }
-        if let Some(m) = max.filter(|v| v.is_finite() && *v > 0.0) {
+        if let Some(m) = max.filter(|v| is_positive_finite(*v)) {
             if state.text_max_font_size_pt != Some(m) {
                 state.text_max_font_size_pt = Some(m);
                 changed = true;
             }
         }
-        if let Some(s) = size.filter(|v| v.is_finite() && *v > 0.0) {
+        if let Some(s) = size.filter(|v| is_positive_finite(*v)) {
             let effective_min = state.text_min_font_size_pt.unwrap_or(body_min);
             let effective_max = state.text_max_font_size_pt.unwrap_or(body_max);
             // Guaranteed ordered by the `final_min > final_max`
@@ -611,7 +621,7 @@ impl MindMapDocument {
     pub fn set_edge_spacing(&mut self, edge_ref: &EdgeRef, spacing: f32) -> bool {
         self.mutate_edge(edge_ref, |edge, canvas| {
             let cfg = ensure_glyph_connection_inline(edge, canvas);
-            if (cfg.spacing - spacing).abs() < f32::EPSILON {
+            if almost_equal(cfg.spacing, spacing) {
                 return false;
             }
             cfg.spacing = spacing;

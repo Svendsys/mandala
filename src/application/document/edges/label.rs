@@ -7,6 +7,7 @@ use baumhard::mindmap::model::{
     EdgeLabelConfig,
     MindEdge,
 };
+use baumhard::util::geometry::almost_equal;
 
 use super::super::types::EdgeRef;
 use super::super::MindMapDocument;
@@ -41,7 +42,7 @@ impl MindMapDocument {
         let clamped = t.clamp(0.0, 1.0);
         self.mutate_edge(edge_ref, |edge, _canvas| {
             let current = EdgeLabelConfig::effective_position_t(edge.label_config.as_ref());
-            if (current - clamped).abs() < f32::EPSILON {
+            if almost_equal(current, clamped) {
                 return false;
             }
             ensure_label_config_inline(edge).position_t = Some(clamped);

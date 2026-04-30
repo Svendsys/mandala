@@ -890,7 +890,7 @@ mod tests {
             .glyph_connection
             .as_ref()
             .expect("size write forks glyph_connection");
-        assert!((cfg.font_size_pt - 14.0).abs() < f32::EPSILON);
+        assert!(baumhard::util::geometry::almost_equal(cfg.font_size_pt, 14.0));
     }
 
     #[test]

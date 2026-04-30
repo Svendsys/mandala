@@ -164,7 +164,16 @@ fn is_kv_token(t: &str) -> bool {
     }
 }
 
-fn split_kv(t: &str) -> Option<(&str, &str)> {
+/// Split a `"key=value"` token into `(key, value)`. Returns
+/// `None` when no `=` is present, or when `=` is at byte offset 0
+/// (a leading-`=` token stays positional — the escape hatch for
+/// literal values that happen to start with `=`).
+///
+/// Borrow-returning so cursor-time completion paths can call this
+/// without forcing an allocation; owned-`String` callers
+/// (`completion::compute_completion_state`) `.to_string()` at the
+/// boundary.
+pub(super) fn split_kv(t: &str) -> Option<(&str, &str)> {
     let eq = t.find('=')?;
     if eq == 0 {
         return None;
