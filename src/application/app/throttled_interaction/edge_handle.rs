@@ -116,7 +116,7 @@ impl ThrottledInteraction for EdgeHandleInteraction {
 mod tests {
     use super::*;
     use crate::application::app::throttled_interaction::test_utils::{
-        drive_throttle_over_budget, fixture_edge,
+        drive_throttle_over_budget, fixture_edge, trait_default_tests_for_throttled_interaction,
     };
     use baumhard::mindmap::scene_builder::EdgeHandleKind;
 
@@ -172,7 +172,7 @@ mod tests {
         assert_eq!(i.handle, EdgeHandleKind::AnchorFrom);
     }
 
-    crate::application::app::throttled_interaction::test_utils::trait_default_tests_for_throttled_interaction! {
+    trait_default_tests_for_throttled_interaction! {
         build = fixture_interaction,
         set_pending = |i: &mut EdgeHandleInteraction| {
             i.pending_delta = Vec2::new(2.0, 0.0);

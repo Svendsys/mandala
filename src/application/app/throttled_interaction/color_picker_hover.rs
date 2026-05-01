@@ -114,7 +114,9 @@ impl ThrottledInteraction for ColorPickerHoverInteraction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::app::throttled_interaction::test_utils::drive_throttle_over_budget;
+    use crate::application::app::throttled_interaction::test_utils::{
+        drive_throttle_over_budget, trait_default_tests_for_throttled_interaction,
+    };
 
     #[test]
     fn test_default_is_not_dirty() {
@@ -160,7 +162,7 @@ mod tests {
         assert!(i.dirty);
     }
 
-    crate::application::app::throttled_interaction::test_utils::trait_default_tests_for_throttled_interaction! {
+    trait_default_tests_for_throttled_interaction! {
         build = ColorPickerHoverInteraction::new,
         set_pending = |i: &mut ColorPickerHoverInteraction| {
             i.dirty = true;

@@ -59,12 +59,13 @@ impl AddAssign for GlyphLine {
 
 // `AddAssign` and `Noop` are arithmetic-op seams matching the
 // `MulAssign`/`SubAssign` set; preserved per CODE_CONVENTIONS.md §6.
-#[allow(dead_code)]
 pub(crate) enum GlyphLineOp {
     Assign,
+    #[allow(dead_code)]
     AddAssign,
     MulAssign,
     SubAssign,
+    #[allow(dead_code)]
     Noop,
 }
 

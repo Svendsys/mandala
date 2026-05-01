@@ -106,8 +106,8 @@ pub(in crate::application::app) struct InputContextCore<'a> {
 ///
 /// **Field set is the 10 fields not on `WasmInputState`** plus
 /// `drag_state` (which WASM substitutes for via `pending_click` on
-/// `WasmInputState`, kept outside the unified context per the
-/// research surprise — `pending_click` isn't a 1:1 mirror).
+/// `WasmInputState`, kept outside the unified context — `pending_click`
+/// isn't a 1:1 mirror).
 #[cfg(not(target_arch = "wasm32"))]
 pub(in crate::application::app) struct NativeContextExt<'a> {
     /// Current pointer / drag state machine.

@@ -5,7 +5,7 @@
 //! The format reference is in `format/macros.md`. Each tier has a
 //! pinned `MacroSource`; the registry picks the highest-tier macro
 //! by id when collisions happen. All four tiers ship on both native
-//! and WASM after Track B (`WASM_CONVERGENCE.md`):
+//! and WASM (Track B in `WASM_CONVERGENCE.md`):
 //! - **App** — `assets/macros/application.json`, embedded with
 //!   `include_str!`. Cross-platform.
 //! - **User** — `~/.config/mandala/macros.json` on native;
@@ -114,8 +114,6 @@ pub fn parse_map_macros(values: &[serde_json::Value]) -> Vec<Macro> {
 /// 1. `run_native_init::build` after the initial document load.
 /// 2. `execute_console_line` when `replace_document` swaps the
 ///    document via `open` / `new`.
-/// 3. *(future)* the WASM document-load path when Track A in
-///    `WASM_CONVERGENCE.md` lands.
 pub fn rebuild_map_macros(
     registry: &mut super::MacroRegistry,
     doc: &crate::application::document::MindMapDocument,

@@ -175,6 +175,10 @@ pub enum MutationListSrc {
 /// Per-cell `AreaDelta` field slot. Bare variants = "supplied at
 /// runtime by the area lookup"; tagged variants = baked-in literals
 /// reused for every cell.
+//
+// The lowercase variants (`position`, `bounds`, `scale`, `line_height`)
+// match the snake_case JSON tags consumers emit for runtime-supplied
+// fields; renaming them would break the on-the-wire contract.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(non_camel_case_types)]
 pub enum CellField {

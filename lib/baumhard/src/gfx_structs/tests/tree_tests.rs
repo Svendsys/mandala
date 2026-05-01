@@ -12,13 +12,9 @@ use std::sync::{Arc, Mutex};
 use strum::IntoEnumIterator;
 
 use crate::font::fonts;
-use crate::font::fonts::AppFont;
-use crate::font::fonts::AppFont::AlphaMusicMan;
-use crate::font::fonts::AppFont::AppleTea;
-use crate::font::fonts::AppFont::Casanova;
-use crate::font::fonts::AppFont::DenseLetters;
-use crate::font::fonts::AppFont::NorseBold;
-use crate::font::fonts::AppFont::{AliceInWonderland, Evilz};
+use crate::font::fonts::AppFont::{
+    self, AliceInWonderland, AlphaMusicMan, AppleTea, Casanova, DenseLetters, Evilz, NorseBold,
+};
 use crate::gfx_structs::area::{
     DeltaGlyphArea, GlyphArea, GlyphAreaCommand, GlyphAreaCommandType, GlyphAreaField,
 };

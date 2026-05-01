@@ -13,6 +13,10 @@ use std::path::Path;
 /// memory via `std::fs::read_to_string`, then delegates to
 /// [`load_from_str`]. Native-only (synchronous I/O). Returns a
 /// `String` error describing the path + underlying cause.
+///
+/// Cost: one filesystem read (latency-bound, plus an allocation
+/// sized to the file's UTF-8 length) followed by [`load_from_str`]'s
+/// JSON parse — O(file_size) overall. Felt every map load.
 pub fn load_from_file(path: &Path) -> Result<MindMap, String> {
     let content =
         fs::read_to_string(path).map_err(|e| format!("Failed to read file {}: {}", path.display(), e))?;
@@ -24,6 +28,13 @@ pub fn load_from_file(path: &Path) -> Result<MindMap, String> {
 /// migration pointer (`maptool convert --portals`) so a stale map
 /// doesn't silently lose its portals — serde would otherwise ignore
 /// the unknown field. Allocation-bounded by the input size.
+///
+/// Cost: one JSON parse into `serde_json::Value`, followed by a
+/// `from_value` walk that rebuilds the typed `MindMap` from the
+/// parsed tree (no second parse). O(input_len) in both time and
+/// peak memory — the `Value` tree is kept around until the typed
+/// conversion completes, keeping the legacy-portal probe off the
+/// typed happy path.
 pub fn load_from_str(json: &str) -> Result<MindMap, String> {
     // Pre-refactor maps stored portals in a separate `portals[]` array.
     // Post-refactor portals are edges with `display_mode = "portal"`,
@@ -462,7 +473,7 @@ mod tests {
     /// `MindMap.macros` round-trips through save+load with absence
     /// preserved (skip_serializing_if = "Vec::is_empty") and
     /// non-empty content preserved exactly. Locks the on-disk
-    /// contract for the new field added in commit 5964448.
+    /// contract for the `macros` field.
     #[test]
     fn test_save_to_file_macros_round_trip() {
         // Empty case: no `macros` key written, no key on reload.
