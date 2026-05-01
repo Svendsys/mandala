@@ -5,16 +5,82 @@
 //! `CustomMutation` shape and the document's mutation-and-undo
 //! plumbing.
 
+use baumhard::core::primitives::ColorFontRegion;
+use baumhard::font::fonts::family_name_of;
 use baumhard::mindmap::custom_mutation::{
     apply_mutations_to_element, flat_mutations, mutator_reach, CustomMutation, DocumentAction,
     MutationBehavior, TargetScope,
 };
-use baumhard::mindmap::model::MindNode;
+use baumhard::mindmap::model::{MindNode, TextRun};
 use baumhard::mindmap::tree_builder::MindMapTree;
+use baumhard::util::color_conversion::rgba_to_hex;
 
 use super::mutations_loader::MutationSource;
+use super::nodes::clamp_runs_to_text;
 use super::undo_action::UndoAction;
 use super::MindMapDocument;
+
+/// Default text-run colour when neither the tree-side region nor
+/// a prior model run carries one. Matches the renderer's
+/// fall-through-to-`#ffffff` floor on a node with no explicit
+/// `style.text_color` override.
+const DEFAULT_TEXT_RUN_COLOR: &str = "#ffffff";
+
+/// Default font-size used by the renderer when no run pins one.
+/// Mirrors `cosmic_text`'s 14pt fallback used at scene-build time.
+const DEFAULT_TEXT_RUN_SIZE_PT: u32 = 14;
+
+/// Roll a tree-side [`ColorFontRegion`] back into a model-side
+/// [`TextRun`], merging fields the tree dropped during the
+/// forward conversion against a `prior` run when the prior
+/// covered the same `Range`. The forward path
+/// (`tree_builder/node.rs::append_node_sections`) only carries
+/// `range`, `color`, and `font` onto the tree-side region;
+/// `bold` / `italic` / `underline` / `size_pt` / `hyperlink`
+/// disappear into the cosmic-text default attribute set. The
+/// reverse path can recover them only when a matching prior run
+/// is available — which is true for round-trips through the
+/// custom-mutation pipeline (the tree is rebuilt from the model
+/// just before each apply, so every region's range was an
+/// authored run before the mutation ran).
+///
+/// Limitations:
+/// - `var(--name)` colour references collapse to their resolved
+///   hex on the round trip — the tree-side `FloatRgba` carries
+///   no record of the variable. Authors who edit text colours
+///   through custom mutations and then save the model will see
+///   the variable replaced with a hex literal.
+/// - Unknown `AppFont` (corrupt tree state) falls through to
+///   the empty string, matching the loader's tolerance for
+///   missing-font runs.
+fn region_to_text_run(region: &ColorFontRegion, prior: Option<&TextRun>) -> TextRun {
+    let color = match region.color {
+        Some(rgba) => rgba_to_hex(rgba),
+        None => prior
+            .map(|p| p.color.clone())
+            .unwrap_or_else(|| DEFAULT_TEXT_RUN_COLOR.to_string()),
+    };
+    let font = match region.font.and_then(family_name_of) {
+        Some(name) => name.to_string(),
+        None => prior.map(|p| p.font.clone()).unwrap_or_default(),
+    };
+    let bold = prior.is_some_and(|p| p.bold);
+    let italic = prior.is_some_and(|p| p.italic);
+    let underline = prior.is_some_and(|p| p.underline);
+    let size_pt = prior.map(|p| p.size_pt).unwrap_or(DEFAULT_TEXT_RUN_SIZE_PT);
+    let hyperlink = prior.and_then(|p| p.hyperlink.clone());
+    TextRun {
+        start: region.range.start,
+        end: region.range.end,
+        bold,
+        italic,
+        underline,
+        font,
+        size_pt,
+        color,
+        hyperlink,
+    }
+}
 
 impl MindMapDocument {
     /// `true` when the registered mutation at `mutation_id` will
@@ -366,24 +432,161 @@ impl MindMapDocument {
         }
     }
 
-    /// Sync a node's position from the Baumhard tree back to the MindMap model.
-    /// Used after persistent mutations to ensure the model reflects tree state.
+    /// Sync a node's position **and per-section text + runs** from
+    /// the Baumhard tree back to the MindMap model. Used after
+    /// persistent mutations so the model reflects every tree-side
+    /// edit — without the section pass, custom mutations that
+    /// touch text / colour / font would land on the live tree but
+    /// the next `rebuild_all` would overwrite the tree from the
+    /// stale model.
+    ///
+    /// **Selective section sync.** For each section we compare the
+    /// tree-side `(text, regions)` against the model's current
+    /// `(text, text_runs)` snapshot; sections whose tree state
+    /// equals the model state byte-identically skip the rewrite.
+    /// Without this gate every `apply_to_tree` call would round-
+    /// trip *every* section's runs through `region_to_text_run`,
+    /// which is lossy: the converter rebuilds runs from
+    /// `area.regions` and would strip bold / italic / underline /
+    /// size_pt / hyperlink fields from sections the mutation
+    /// didn't touch (those fields don't survive the forward
+    /// conversion). The selective gate ensures only sections that
+    /// changed pay the lossy round-trip; untouched sections keep
+    /// their original runs verbatim.
     fn sync_node_from_tree(&mut self, node_id: &str, tree: &MindMapTree) {
-        let tree_nid = match tree.arena_id_for(node_id) {
-            Some(nid) => nid,
-            None => return,
+        let Some(tree_nid) = tree.arena_id_for(node_id) else {
+            return;
         };
-        let element = match tree.tree.arena.get(tree_nid) {
-            Some(n) => n.get(),
-            None => return,
+        let Some(element) = tree.tree.arena.get(tree_nid).map(|n| n.get()) else {
+            return;
         };
-        let area = match element.glyph_area() {
-            Some(a) => a,
-            None => return,
+        let Some(area) = element.glyph_area() else {
+            return;
         };
-        if let Some(model_node) = self.mindmap.nodes.get_mut(node_id) {
-            model_node.position.x = area.position.x.0 as f64;
-            model_node.position.y = area.position.y.0 as f64;
+        let new_pos = (area.position.x.0 as f64, area.position.y.0 as f64);
+
+        // Gather every section's tree-side (text, regions) before
+        // we acquire `&mut` on the model. The arena lookup needs
+        // `&tree`; the model write needs `&mut self`; sequencing
+        // them avoids overlapping borrows on `self.mindmap`.
+        let section_count = self
+            .mindmap
+            .nodes
+            .get(node_id)
+            .map(|n| n.sections.len())
+            .unwrap_or(0);
+        let mut section_snapshots: Vec<Option<(String, Vec<ColorFontRegion>)>> =
+            Vec::with_capacity(section_count);
+        for idx in 0..section_count {
+            let snapshot = tree
+                .section_arena_id(node_id, idx)
+                .and_then(|sid| tree.tree.arena.get(sid))
+                .and_then(|n| n.get().glyph_area())
+                .map(|sec_area| {
+                    (
+                        sec_area.text.clone(),
+                        sec_area
+                            .regions
+                            .all_regions()
+                            .into_iter()
+                            .copied()
+                            .collect::<Vec<ColorFontRegion>>(),
+                    )
+                });
+            section_snapshots.push(snapshot);
+        }
+
+        let Some(model_node) = self.mindmap.nodes.get_mut(node_id) else {
+            return;
+        };
+        model_node.position.x = new_pos.0;
+        model_node.position.y = new_pos.1;
+
+        for (idx, snapshot) in section_snapshots.into_iter().enumerate() {
+            let Some((tree_text, tree_regions)) = snapshot else {
+                continue;
+            };
+            let Some(section) = model_node.sections.get_mut(idx) else {
+                continue;
+            };
+            // Selective gate: tree-side state matches the model
+            // snapshot? Skip the round-trip so untouched sections
+            // keep their bold / italic / underline / size_pt /
+            // hyperlink. Range / colour / font are everything the
+            // forward conversion preserves; comparing those three
+            // lets us identify sections the mutation didn't touch.
+            // Iteration is positional — the tree's
+            // `all_regions()` and the model's `text_runs` walk in
+            // grapheme order, so position-by-position equality
+            // works without sorting.
+            let model_regions_match = section.text_runs.len() == tree_regions.len()
+                && section
+                    .text_runs
+                    .iter()
+                    .zip(tree_regions.iter())
+                    .all(|(run, region)| {
+                        if run.start != region.range.start || run.end != region.range.end {
+                            return false;
+                        }
+                        // Forward path: model `color: String` → tree
+                        // `region.color: Option<FloatRgba>`; reverse
+                        // path quantises through `convert_f32_to_u8`.
+                        // Comparing tree-side hex to model-side hex
+                        // covers every channel.
+                        let region_color_hex = region.color.map(rgba_to_hex);
+                        let model_color_hex = if run.color.starts_with('#') {
+                            Some(run.color.clone())
+                        } else {
+                            // `var(--name)` references can't compare
+                            // structurally — treat as "different" so
+                            // the round-trip runs, replacing the
+                            // variable with its resolved hex (the
+                            // documented limit on
+                            // `region_to_text_run`).
+                            None
+                        };
+                        if region_color_hex != model_color_hex {
+                            return false;
+                        }
+                        // Forward path: model `font: String` → tree
+                        // `region.font: Option<AppFont>`; the reverse
+                        // path uses `family_name_of`. Empty model
+                        // font and `None` AppFont collide on
+                        // "no pin", so equate them here.
+                        let region_font_name = region.font.and_then(family_name_of);
+                        let model_font_name: Option<&str> = if run.font.is_empty() {
+                            None
+                        } else {
+                            Some(run.font.as_str())
+                        };
+                        region_font_name == model_font_name
+                    });
+            if section.text == tree_text && model_regions_match {
+                continue;
+            }
+
+            // Build the new run list by merging each tree-side
+            // region with the prior run sharing the same range
+            // (grapheme-bounds key). Lookup is linear over
+            // `text_runs` — typical sections carry 1–4 runs so an
+            // O(n×m) scan is cheaper than a HashMap build.
+            let new_runs: Vec<TextRun> = tree_regions
+                .iter()
+                .map(|region| {
+                    let prior = section
+                        .text_runs
+                        .iter()
+                        .find(|r| r.start == region.range.start && r.end == region.range.end);
+                    region_to_text_run(region, prior)
+                })
+                .collect();
+
+            section.text = tree_text;
+            section.text_runs = new_runs;
+            // Ensure no run extends past the new grapheme count —
+            // `clamp_runs_to_text` is already idempotent on
+            // already-clean run lists.
+            clamp_runs_to_text(section);
         }
     }
 }

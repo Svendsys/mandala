@@ -578,6 +578,27 @@ mod tests {
         }
     }
 
+    /// `rgba_to_hex` round-trips opaque RGBA into the same
+    /// `#RRGGBB` shape `MindEdge.color` and `TextRun.color`
+    /// stash. Drops alpha at α=1.0; emits the eight-char form
+    /// otherwise so transparent picks survive a round-trip.
+    #[test]
+    fn rgba_to_hex_drops_alpha_only_when_saturated_opaque() {
+        // Pure red, opaque.
+        let s = rgba_to_hex([1.0, 0.0, 0.0, 1.0]);
+        assert_eq!(s, "#ff0000");
+
+        // Pure red, semi-transparent — alpha must be encoded.
+        let s = rgba_to_hex([1.0, 0.0, 0.0, 0.5]);
+        assert_eq!(s, "#ff000080");
+
+        // Round-trip stability: hex → rgba → hex must match.
+        let original = "#3366cc";
+        let parsed = hex_to_rgba_safe(original, [0.0; 4]);
+        let back = rgba_to_hex(parsed);
+        assert_eq!(back, original);
+    }
+
     /// `Color + Color` wraps modulo 256 per channel — the
     /// procedural-palette use case the wrapping policy exists
     /// for. Locks the contract against any future drift to

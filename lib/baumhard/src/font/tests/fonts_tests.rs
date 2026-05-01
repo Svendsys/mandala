@@ -10,7 +10,7 @@ use cosmic_text::SwashCache;
 
 use crate::font::fonts;
 use crate::font::fonts::{
-    acquire_font_system_write, app_font_by_family, list_loaded_families, loaded_families_iter,
+    acquire_font_system_write, app_font_by_family, family_name_of, list_loaded_families, loaded_families_iter,
     measure_glyph_ink_bounds, measure_text_block_unbounded, AppFont,
 };
 
@@ -312,6 +312,36 @@ pub fn do_app_font_by_family_round_trips() {
             app_font_by_family(family).is_some(),
             "family '{}' should resolve to some AppFont",
             family
+        );
+    }
+}
+
+/// `family_name_of` reverses `app_font_by_family` for every
+/// loaded family — the post-mutation reverse-converter relies on
+/// the round-trip when rolling tree-side `ColorFontRegion.font:
+/// Option<AppFont>` back into the model's
+/// `TextRun.font: String`. Empty / unknown families resolve to
+/// `None` rather than panicking, matching the optional-pin
+/// contract on `app_font_by_family`.
+#[test]
+fn test_family_name_of_round_trips() {
+    do_family_name_of_round_trips();
+}
+
+pub fn do_family_name_of_round_trips() {
+    fonts::init();
+    for family in loaded_families_iter() {
+        let app_font = app_font_by_family(family).expect("loaded family resolves");
+        // Every loaded AppFont has at least one family name back —
+        // not necessarily *this* exact name (multiple aliases per
+        // AppFont collapse to alphabetical-first), but always
+        // some non-empty name.
+        let back = family_name_of(app_font);
+        assert!(
+            back.is_some_and(|s| !s.is_empty()),
+            "family '{}' (AppFont {:?}) must reverse to a non-empty name",
+            family,
+            app_font
         );
     }
 }

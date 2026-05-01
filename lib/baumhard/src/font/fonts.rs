@@ -223,6 +223,34 @@ pub fn app_font_by_family(name: &str) -> Option<AppFont> {
         .map(|(_, app_font)| *app_font)
 }
 
+/// Reverse lookup: family name string for a given `AppFont`, or
+/// `None` when the font isn't represented in the loaded
+/// `FAMILY_INDEX`. Returns the *first* family name registered
+/// for the variant (alphabetical-by-name, matching
+/// `loaded_families_iter`'s order); when a single AppFont
+/// surfaces multiple aliases (localised names, postscript names),
+/// only the first is returned.
+///
+/// Used by the post-mutation reverse converter in
+/// `document/custom.rs::region_to_text_run` — a tree-side
+/// `ColorFontRegion.font: Option<AppFont>` rolls back into the
+/// model's `TextRun.font: String` shape. `None` falls through to
+/// the empty string at that site, matching the pre-section
+/// behaviour for runs without a family pin.
+///
+/// Costs: O(n) over `FAMILY_INDEX`, but `n` is the small set of
+/// compiled-in families (~30 today), so the scan is cheaper than
+/// a `HashMap` build. No allocation; the borrowed `&'static str`
+/// borrows from the `OnceLock`-cached index that lives for the
+/// process lifetime.
+pub fn family_name_of(app_font: AppFont) -> Option<&'static str> {
+    FAMILY_INDEX
+        .get_or_init(build_family_index)
+        .iter()
+        .find(|(_, family_app_font)| *family_app_font == app_font)
+        .map(|(name, _)| name.as_str())
+}
+
 /// Wall-clock ceiling for a `FONT_SYSTEM` write acquisition. Mandala
 /// is single-threaded (see `CLAUDE.md`), so in healthy operation the
 /// lock is always free when a caller asks for it. Any wait longer

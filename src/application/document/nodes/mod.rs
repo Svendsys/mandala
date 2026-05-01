@@ -543,7 +543,7 @@ impl MindMapDocument {
 /// Cost: O(runs.len() * text grapheme count) — one
 /// `count_grapheme_clusters` call per section, plus a linear pass
 /// over the runs. Trivial for typical single-run sections.
-fn clamp_runs_to_text(section: &mut baumhard::mindmap::model::MindSection) {
+pub(super) fn clamp_runs_to_text(section: &mut baumhard::mindmap::model::MindSection) {
     let max_end = baumhard::util::grapheme_chad::count_grapheme_clusters(&section.text);
     section.text_runs.retain_mut(|run| {
         if run.start >= max_end {

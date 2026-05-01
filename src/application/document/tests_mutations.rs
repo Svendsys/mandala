@@ -485,6 +485,117 @@ fn test_apply_custom_mutation_sections_only_targets_section_areas() {
     );
 }
 
+/// `sync_node_from_tree` writes per-section text + runs back to
+/// the model after a custom mutation that touches regions.
+/// Pre-fix only `position` was synced, so a custom mutation that
+/// recoloured a section's runs would land on the live tree but
+/// be reverted on the next `rebuild_all`. The merge-with-prior
+/// reverse converter preserves bold / italic / underline /
+/// size_pt / hyperlink across the round trip. Pins the
+/// persistence so multi-section custom mutations survive
+/// save+load.
+#[test]
+fn test_sync_node_from_tree_writes_back_section_run_color() {
+    use baumhard::core::primitives::Range;
+    use baumhard::gfx_structs::area::GlyphAreaCommand;
+    use baumhard::gfx_structs::mutator::Mutation;
+    use baumhard::mindmap::custom_mutation::{scope, CustomMutation, MutationBehavior};
+    use baumhard::mindmap::model::TextRun;
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    {
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        // Materialise a section with an explicit run carrying
+        // bold=true so we can verify the merge-with-prior path
+        // preserves the field across the lossy round-trip.
+        node.sections[0].text = "hello".into();
+        node.sections[0].text_runs = vec![TextRun {
+            start: 0,
+            end: 5,
+            bold: true,
+            italic: false,
+            underline: false,
+            font: "LiberationSans".into(),
+            size_pt: 14,
+            color: "#ffffff".into(),
+            hyperlink: None,
+        }];
+    }
+    let cm = CustomMutation {
+        id: "recolor".into(),
+        name: "Recolor".into(),
+        description: String::new(),
+        contexts: vec![],
+        mutator: Some(scope::self_only(vec![Mutation::area_command(
+            GlyphAreaCommand::SetRegionColor(Range::new(0, 5), [1.0, 0.0, 0.0, 1.0]),
+        )])),
+        target_scope: TS::SelfOnly,
+        behavior: MB::Persistent,
+        predicate: None,
+        document_actions: vec![],
+        timing: None,
+    };
+    let mut tree = doc.build_tree();
+
+    doc.apply_custom_mutation(&cm, &nid, Some(&mut tree));
+
+    let section0_run = &doc.mindmap.nodes.get(&nid).unwrap().sections[0].text_runs[0];
+    assert_eq!(
+        section0_run.color, "#ff0000",
+        "section 0 colour must round-trip through rgba_to_hex"
+    );
+    assert!(
+        section0_run.bold,
+        "merge-with-prior must preserve bold across the reverse converter"
+    );
+}
+
+/// Selective sync gate: a mutation that doesn't touch
+/// regions (e.g. `NudgeRight` only shifts position) must skip
+/// the section round-trip so bold / italic / underline /
+/// size_pt / hyperlink survive verbatim. The forward conversion
+/// drops these fields, so an unconditional round-trip would
+/// silently strip them every time any custom mutation ran on a
+/// node — the gate keeps them anchored.
+#[test]
+fn test_sync_node_from_tree_selective_gate_preserves_unchanged_runs() {
+    use baumhard::mindmap::model::TextRun;
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    {
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        node.sections[0].text = "hello".into();
+        node.sections[0].text_runs = vec![TextRun {
+            start: 0,
+            end: 5,
+            bold: false,
+            italic: true,
+            underline: true,
+            font: "LiberationSans".into(),
+            size_pt: 21, // Non-default so we can detect a stripped round-trip.
+            color: "#abcdef".into(),
+            hyperlink: Some("https://example.org".into()),
+        }];
+    }
+    // NudgeRight only shifts position — the section's regions
+    // stay byte-identical to the model snapshot, so the gate
+    // skips the lossy round-trip.
+    let cm = make_test_mutation("nudge", TS::SelfOnly);
+    let mut tree = doc.build_tree();
+
+    doc.apply_custom_mutation(&cm, &nid, Some(&mut tree));
+
+    let run = &doc.mindmap.nodes.get(&nid).unwrap().sections[0].text_runs[0];
+    assert!(run.italic, "italic must survive a position-only mutation");
+    assert!(run.underline, "underline must survive a position-only mutation");
+    assert_eq!(run.size_pt, 21, "size_pt must survive a position-only mutation");
+    assert_eq!(
+        run.hyperlink.as_deref(),
+        Some("https://example.org"),
+        "hyperlink must survive a position-only mutation"
+    );
+}
+
 /// Top-level `CustomMutation.predicate` filters the candidate
 /// element list before mutations land. A
 /// `Predicate { fields: [(Flag(SectionRoot), Equals(false))] }`
