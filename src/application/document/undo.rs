@@ -69,22 +69,20 @@ impl MindMapDocument {
                 }
                 UndoAction::EditNodeText {
                     node_id,
-                    before_text,
-                    before_runs,
+                    before_sections,
                 } => {
                     if let Some(node) = self.mindmap.nodes.get_mut(&node_id) {
-                        node.text = before_text;
-                        node.text_runs = before_runs;
+                        node.sections = before_sections;
                     }
                 }
                 UndoAction::EditNodeStyle {
                     node_id,
                     before_style,
-                    before_runs,
+                    before_sections,
                 } => {
                     if let Some(node) = self.mindmap.nodes.get_mut(&node_id) {
                         node.style = before_style;
-                        node.text_runs = before_runs;
+                        node.sections = before_sections;
                     }
                 }
                 UndoAction::EditNodeZoom {

@@ -39,8 +39,8 @@ fn test_scene_connection_color_resolves_theme_variable() {
     use std::collections::HashMap;
     let mut a = synthetic_node("a", 0.0, 0.0, 40.0, 40.0, false);
     let mut b = synthetic_node("b", 200.0, 0.0, 40.0, 40.0, false);
-    a.text = "".into(); // skip text element
-    b.text = "".into();
+    a.sections[0].text = "".into(); // skip text element
+    b.sections[0].text = "".into();
     let mut edge = synthetic_edge("a", "b", "right", "left");
     edge.color = "var(--edge)".into();
     let mut map = synthetic_map(vec![a, b], vec![edge]);

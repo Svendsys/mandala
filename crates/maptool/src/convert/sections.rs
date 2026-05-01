@@ -1,0 +1,197 @@
+// SPDX-License-Identifier: MPL-2.0
+
+//! Section-shape migration — moves a legacy node's `text` +
+//! `text_runs` into a single-element `sections[]` array on the
+//! same node. Idempotent: a node already carrying `sections` is
+//! left alone, so running the converter twice is safe.
+//!
+//! Operates at the `serde_json::Value` level so legacy maps that
+//! the typed `load_from_str` would now reject (per CODE_CONVENTIONS
+//! §10 "no dual shapes") still flow through cleanly. The pipeline
+//! mirrors `convert_portals` — read raw JSON, transform, write
+//! pretty-printed JSON.
+
+use serde_json::{Map, Value};
+use std::path::Path;
+
+use super::nodes_obj_mut;
+
+/// Read a legacy `.mindmap.json`, fold each node's `text` /
+/// `text_runs` pair into a default single section under
+/// `sections[0]`, and write the result to `output_path`.
+///
+/// Output `sections[0]` shape: `{ "text": <node.text>, "text_runs":
+/// <node.text_runs> }` — `offset`, `size`, and `channel` are
+/// omitted (they default to `(0, 0)`, "fill the parent", and `0`
+/// respectively, all `skip_serializing_if`-guarded on the typed
+/// side).
+///
+/// Idempotency: a node that already has `sections` (and no
+/// `text` / `text_runs`) is left untouched — no double-wrapping.
+/// A node with both `sections` *and* legacy `text` is treated as
+/// a partial migration: legacy fields are dropped and the
+/// existing sections remain authoritative.
+pub fn convert_sections(input_path: &Path, output_path: &Path) -> Result<(), String> {
+    let content = std::fs::read_to_string(input_path)
+        .map_err(|e| format!("failed to read {}: {e}", input_path.display()))?;
+
+    let mut root: Value = serde_json::from_str(&content)
+        .map_err(|e| format!("failed to parse {}: {e}", input_path.display()))?;
+
+    let mut migrated = 0usize;
+    if let Some(nodes) = nodes_obj_mut(&mut root) {
+        for (_id, node) in nodes.iter_mut() {
+            if migrate_one_node(node) {
+                migrated += 1;
+            }
+        }
+    }
+
+    let json = serde_json::to_string_pretty(&root).map_err(|e| format!("failed to serialize: {e}"))?;
+    std::fs::write(output_path, &json)
+        .map_err(|e| format!("failed to write {}: {e}", output_path.display()))?;
+
+    eprintln!("converted {} nodes into section-bearing shape", migrated);
+    Ok(())
+}
+
+/// Public alias for use by the legacy pipeline in `mod.rs`. The
+/// `_legacy` suffix names the call site, not a different
+/// behaviour — the function body is identical to
+/// [`migrate_one_node`]; there's just one public name for the
+/// pipeline integration and the test module reaches for the
+/// short-named helper.
+pub(super) fn migrate_one_node_legacy(node: &mut Value) -> bool {
+    migrate_one_node(node)
+}
+
+/// Migrate one node's JSON object. Returns `true` when the node
+/// shape changed — used by the caller for the summary log.
+///
+/// Order of operations matters: the legacy `text` / `text_runs`
+/// values are *moved* (not copied) into the new section so a
+/// round-trip through the typed loader matches the on-disk file
+/// byte-for-byte (no orphaned legacy keys remain).
+fn migrate_one_node(node: &mut Value) -> bool {
+    let Some(obj) = node.as_object_mut() else {
+        return false;
+    };
+
+    let already_has_sections = obj
+        .get("sections")
+        .and_then(|s| s.as_array())
+        .map(|a| !a.is_empty())
+        .unwrap_or(false);
+
+    let legacy_text = obj.remove("text");
+    let legacy_runs = obj.remove("text_runs");
+
+    if already_has_sections {
+        // Partial-migration case: keep the existing sections,
+        // drop any stray legacy fields. Fired silently — the
+        // summary line counts only fresh migrations.
+        return legacy_text.is_some() || legacy_runs.is_some();
+    }
+
+    // Build the default section. `text` defaults to empty when
+    // absent — matches the typed loader which deserializes
+    // `text: String` from a missing key as empty via the
+    // `String::default()` Serde behaviour for fields without
+    // explicit attributes (here we explicitly synthesise the key
+    // so the typed shape doesn't surprise downstream tooling).
+    let mut section = Map::new();
+    let text = legacy_text.unwrap_or_else(|| Value::String(String::new()));
+    section.insert("text".to_string(), text);
+    if let Some(runs) = legacy_runs {
+        // Skip serialising an empty runs array — matches the
+        // typed `MindSection`'s `skip_serializing_if =
+        // "Vec::is_empty"` so converted maps stay byte-stable
+        // against unconverted-but-otherwise-identical sibling
+        // sections.
+        let is_empty = runs.as_array().map(|a| a.is_empty()).unwrap_or(true);
+        if !is_empty {
+            section.insert("text_runs".to_string(), runs);
+        }
+    }
+
+    obj.insert("sections".to_string(), Value::Array(vec![Value::Object(section)]));
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_migrate_one_node_lifts_text_and_runs() {
+        let mut node = json!({
+            "id": "0",
+            "text": "Hello",
+            "text_runs": [{ "start": 0, "end": 5, "color": "#fff" }],
+            "size": { "width": 100, "height": 40 },
+        });
+        assert!(migrate_one_node(&mut node));
+
+        let obj = node.as_object().unwrap();
+        assert!(obj.get("text").is_none(), "legacy text removed");
+        assert!(obj.get("text_runs").is_none(), "legacy text_runs removed");
+        let sections = obj.get("sections").unwrap().as_array().unwrap();
+        assert_eq!(sections.len(), 1);
+        let s0 = sections[0].as_object().unwrap();
+        assert_eq!(s0.get("text").unwrap().as_str(), Some("Hello"));
+        let runs = s0.get("text_runs").unwrap().as_array().unwrap();
+        assert_eq!(runs.len(), 1);
+    }
+
+    #[test]
+    fn test_migrate_one_node_skips_empty_runs() {
+        let mut node = json!({
+            "id": "0",
+            "text": "Hi",
+            "text_runs": [],
+        });
+        migrate_one_node(&mut node);
+        let s0 = node.get("sections").unwrap().as_array().unwrap()[0]
+            .as_object()
+            .unwrap();
+        assert!(s0.get("text_runs").is_none(), "empty runs not serialised");
+    }
+
+    #[test]
+    fn test_migrate_one_node_idempotent_for_already_migrated() {
+        let mut node = json!({
+            "id": "0",
+            "sections": [{"text": "already here"}],
+        });
+        let changed = migrate_one_node(&mut node);
+        assert!(!changed, "no legacy fields, no migration");
+        let sections = node.get("sections").unwrap().as_array().unwrap();
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].get("text").unwrap().as_str(), Some("already here"));
+    }
+
+    #[test]
+    fn test_migrate_one_node_drops_legacy_when_sections_present() {
+        let mut node = json!({
+            "id": "0",
+            "text": "stale",
+            "sections": [{"text": "fresh"}],
+        });
+        let changed = migrate_one_node(&mut node);
+        assert!(changed);
+        assert!(node.get("text").is_none());
+        let sections = node.get("sections").unwrap().as_array().unwrap();
+        assert_eq!(sections[0].get("text").unwrap().as_str(), Some("fresh"));
+    }
+
+    #[test]
+    fn test_migrate_one_node_text_defaults_to_empty() {
+        let mut node = json!({"id": "0"});
+        migrate_one_node(&mut node);
+        let s0 = node.get("sections").unwrap().as_array().unwrap()[0]
+            .as_object()
+            .unwrap();
+        assert_eq!(s0.get("text").unwrap().as_str(), Some(""));
+    }
+}

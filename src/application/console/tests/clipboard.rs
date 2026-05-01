@@ -16,7 +16,7 @@ use crate::application::console::traits::{
 fn node_copy_returns_node_text() {
     let mut doc = load_test_doc();
     let nid = first_node_id(&doc);
-    let original = doc.mindmap.nodes.get(&nid).unwrap().text.clone();
+    let original = doc.mindmap.nodes.get(&nid).unwrap().display_text();
     let tid = TargetId::Node(nid);
     let view = view_for(&mut doc, &tid);
     match view.clipboard_copy() {
@@ -46,7 +46,7 @@ fn node_paste_replaces_text_and_pushes_undo() {
         view.clipboard_paste("pasted text")
     };
     assert_eq!(outcome, Outcome::Applied);
-    assert_eq!(doc.mindmap.nodes.get(&nid).unwrap().text, "pasted text");
+    assert_eq!(doc.mindmap.nodes.get(&nid).unwrap().display_text(), "pasted text");
     assert_eq!(doc.undo_stack.len(), undo_before + 1);
 }
 
@@ -60,7 +60,14 @@ fn node_paste_unchanged_text_reports_unchanged() {
     // report `Applied`, and HashMap iteration order picks the
     // "first" node non-deterministically. Normalising first pins
     // the assertion to the round-trip we actually care about.
-    let original = doc.mindmap.nodes.get(&nid).unwrap().text.trim_end().to_string();
+    let original = doc
+        .mindmap
+        .nodes
+        .get(&nid)
+        .unwrap()
+        .display_text()
+        .trim_end()
+        .to_string();
     doc.set_node_text(&nid, original.clone());
     let tid = TargetId::Node(nid);
     let mut view = view_for(&mut doc, &tid);
@@ -71,7 +78,7 @@ fn node_paste_unchanged_text_reports_unchanged() {
 fn node_cut_returns_text_and_clears_node() {
     let mut doc = load_test_doc();
     let nid = first_node_id(&doc);
-    let original = doc.mindmap.nodes.get(&nid).unwrap().text.clone();
+    let original = doc.mindmap.nodes.get(&nid).unwrap().display_text();
     assert!(!original.is_empty(), "fixture node should have text");
     let tid = TargetId::Node(nid.clone());
     let cut = {
@@ -79,7 +86,7 @@ fn node_cut_returns_text_and_clears_node() {
         view.clipboard_cut()
     };
     assert_eq!(cut, ClipboardContent::Text(original));
-    assert_eq!(doc.mindmap.nodes.get(&nid).unwrap().text, "");
+    assert_eq!(doc.mindmap.nodes.get(&nid).unwrap().display_text(), "");
 }
 
 // ── Edge (body) ──────────────────────────────────────────────────

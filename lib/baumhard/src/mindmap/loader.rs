@@ -53,6 +53,48 @@ pub fn load_from_str(json: &str) -> Result<MindMap, String> {
             );
         }
     }
+    // Pre-section-refactor maps put `text` and `text_runs` directly
+    // on each node. Post-refactor those live on
+    // `MindNode.sections[].{text, text_runs}`. Reject legacy files
+    // with a concrete migration pointer rather than letting serde
+    // drop the unknown fields silently — see CODE_CONVENTIONS §10
+    // "Do not carry dual shapes".
+    if let Some(nodes) = raw.get("nodes").and_then(|n| n.as_object()) {
+        if let Some((id, _)) = nodes
+            .iter()
+            .find(|(_, v)| v.get("text").is_some() || v.get("text_runs").is_some())
+        {
+            return Err(format!(
+                "legacy `text` / `text_runs` on node {:?}; run \
+                 `maptool convert --sections <file>` to migrate node \
+                 text into `sections[]`",
+                id
+            ));
+        }
+        if let Some((id, _)) = nodes
+            .iter()
+            .find(|(_, v)| v.get("sections").map(|s| !s.is_array()).unwrap_or(false))
+        {
+            return Err(format!(
+                "node {:?} has `sections` but it is not an array — \
+                 see format/sections.md",
+                id
+            ));
+        }
+        if let Some((id, _)) = nodes.iter().find(|(_, v)| {
+            v.get("sections")
+                .and_then(|s| s.as_array())
+                .map(|arr| arr.is_empty())
+                .unwrap_or(true)
+        }) {
+            return Err(format!(
+                "node {:?} ships zero sections — every renderable node \
+                 needs at least one. Run `maptool convert --sections <file>` \
+                 to migrate, or add an explicit `sections` array.",
+                id
+            ));
+        }
+    }
     serde_json::from_value(raw).map_err(|e| format!("Failed to parse mindmap JSON: {}", e))
 }
 
@@ -125,15 +167,121 @@ mod tests {
         }
     }
 
+    /// Pre-section-refactor maps carry `text` / `text_runs` directly
+    /// on each node; the loader rejects those with a concrete
+    /// migration pointer (per CODE_CONVENTIONS §10 "no dual shapes")
+    /// instead of silently dropping the unknown fields. Mirrors the
+    /// portal-legacy rejection at the top of `load_from_str`.
+    #[test]
+    fn test_legacy_text_field_rejected_with_migration_pointer() {
+        let raw = r##"{
+            "version": "1.0",
+            "name": "legacy",
+            "canvas": {"background_color": "#000", "default_border": null,
+                       "default_connection": null, "theme_variables": {},
+                       "theme_variants": {}},
+            "nodes": {"0": {
+                "id": "0", "parent_id": null,
+                "position": {"x": 0, "y": 0},
+                "size": {"width": 100, "height": 50},
+                "text": "I'm legacy",
+                "text_runs": [],
+                "style": {"background_color":"#000","frame_color":"#000",
+                          "text_color":"#fff","shape":"rectangle",
+                          "corner_radius_percent":0,"frame_thickness":0,
+                          "show_frame":false,"show_shadow":false},
+                "layout": {"type":"map","direction":"auto","spacing":0},
+                "folded": false, "notes": "",
+                "color_schema": null
+            }},
+            "edges": []
+        }"##;
+        let err = load_from_str(raw).expect_err("legacy text field must be rejected");
+        assert!(
+            err.contains("legacy") && err.contains("maptool convert --sections"),
+            "error must point at the migration tool: {err}"
+        );
+    }
+
+    /// A valid post-section node parses through the typed loader.
+    /// Pairs with `test_legacy_text_field_rejected_with_migration_pointer`
+    /// — the rejection only fires for maps that ship the legacy
+    /// shape, not for fresh ones.
+    #[test]
+    fn test_post_section_node_parses() {
+        let raw = r##"{
+            "version": "1.0",
+            "name": "fresh",
+            "canvas": {"background_color": "#000", "default_border": null,
+                       "default_connection": null, "theme_variables": {},
+                       "theme_variants": {}},
+            "nodes": {"0": {
+                "id": "0", "parent_id": null,
+                "position": {"x": 0, "y": 0},
+                "size": {"width": 100, "height": 50},
+                "sections": [{"text": "ok"}],
+                "style": {"background_color":"#000","frame_color":"#000",
+                          "text_color":"#fff","shape":"rectangle",
+                          "corner_radius_percent":0,"frame_thickness":0,
+                          "show_frame":false,"show_shadow":false},
+                "layout": {"type":"map","direction":"auto","spacing":0},
+                "folded": false, "notes": "",
+                "color_schema": null
+            }},
+            "edges": []
+        }"##;
+        let map = load_from_str(raw).expect("post-section node parses");
+        assert_eq!(map.nodes.len(), 1);
+        let node = map.nodes.get("0").unwrap();
+        assert_eq!(node.sections.len(), 1);
+        assert_eq!(node.sections[0].text, "ok");
+    }
+
+    /// A node with `sections: []` is rejected — every renderable
+    /// node needs at least one section, and the loader catches this
+    /// at parse time so the tree builder's recursion never sees a
+    /// zero-section node.
+    #[test]
+    fn test_zero_sections_rejected() {
+        let raw = r##"{
+            "version": "1.0",
+            "name": "empty",
+            "canvas": {"background_color": "#000", "default_border": null,
+                       "default_connection": null, "theme_variables": {},
+                       "theme_variants": {}},
+            "nodes": {"0": {
+                "id": "0", "parent_id": null,
+                "position": {"x": 0, "y": 0},
+                "size": {"width": 100, "height": 50},
+                "sections": [],
+                "style": {"background_color":"#000","frame_color":"#000",
+                          "text_color":"#fff","shape":"rectangle",
+                          "corner_radius_percent":0,"frame_thickness":0,
+                          "show_frame":false,"show_shadow":false},
+                "layout": {"type":"map","direction":"auto","spacing":0},
+                "folded": false, "notes": "",
+                "color_schema": null
+            }},
+            "edges": []
+        }"##;
+        let err = load_from_str(raw).expect_err("empty sections must be rejected");
+        assert!(
+            err.contains("zero sections"),
+            "error must explain the invariant: {err}"
+        );
+    }
+
     #[test]
     fn test_text_runs() {
         let path = test_map_path();
         let map = load_from_file(&path).unwrap();
 
         let node = map.nodes.get("0").unwrap();
-        assert_eq!(node.text, "Lord God");
-        assert_eq!(node.text_runs.len(), 1);
-        let run = &node.text_runs[0];
+        assert_eq!(node.sections.len(), 1, "post-migration: one section per node");
+        let section = &node.sections[0];
+        assert_eq!(section.text, "Lord God");
+        assert_eq!(section.text_runs.len(), 1);
+        let run = &section.text_runs[0];
         assert_eq!(run.start, 0);
         assert_eq!(run.end, 8);
         assert!(run.bold);
@@ -516,7 +664,7 @@ mod tests {
         // `inline_macros`. Empty case is implicitly covered by
         // `test_save_blank_map_round_trip` (every node has an
         // empty Vec).
-        use crate::mindmap::model::{Canvas, MindNode, NodeLayout, NodeStyle, Position, Size};
+        use crate::mindmap::model::{Canvas, MindNode, MindSection, NodeLayout, NodeStyle, Position, Size};
         use std::collections::HashMap;
 
         let node = MindNode {
@@ -527,8 +675,7 @@ mod tests {
                 width: 100.0,
                 height: 50.0,
             },
-            text: "n".to_string(),
-            text_runs: Vec::new(),
+            sections: vec![MindSection::new_default("n".to_string(), Vec::new())],
             style: NodeStyle {
                 background_color: "#000000".to_string(),
                 frame_color: "#ffffff".to_string(),

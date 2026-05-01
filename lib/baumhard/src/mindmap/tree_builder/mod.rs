@@ -48,23 +48,52 @@ pub use portal::{
     PortalIdentity, PortalMutator, PortalPairData, PortalTree, SelectedEdgeRef,
 };
 
-use node::{build_children_recursive, mindnode_to_glyph_area};
+use node::{append_node_sections, build_children_recursive, mindnode_container_area};
 
 /// Result of building a Baumhard tree from a MindMap. The tree
-/// mirrors the MindMap's parent-child hierarchy, with each
-/// MindNode represented as a GlyphArea element.
+/// mirrors the MindMap's parent-child hierarchy. Each MindNode
+/// produces a three-deep subtree:
+///
+/// - one **container** `GlyphArea` (chrome only — background, frame
+///   padding, shape, zoom window),
+/// - one **section-area** `GlyphArea` per [`MindSection`], carrying
+///   the section's text + theme-resolved regions (these are the
+///   buffers the renderer's tree walker shapes),
+/// - one **section-model** `GlyphModel` child per section-area as a
+///   structural seam for future per-component / per-grapheme
+///   mutations.
+///
+/// [`MindSection`]: crate::mindmap::model::MindSection
 pub struct MindMapTree {
     pub tree: Tree<GfxElement, GfxMutator>,
-    /// Maps MindNode ID → indextree NodeId for later lookup.
+    /// Maps MindNode ID → arena `NodeId` of the *container* area.
+    /// Hit-tests that resolve to a section element climb to the
+    /// container's arena ancestor before consulting this map.
     pub node_map: HashMap<String, NodeId>,
-    /// Reverse map: indextree NodeId → MindNode ID. Built alongside
-    /// `node_map` during tree construction. Enables O(1) lookup when
-    /// the BVH descent returns a `NodeId` and the caller needs the
-    /// corresponding mindmap node ID.
+    /// Maps `(MindNode ID, section index)` → arena `NodeId` of
+    /// the section-area. Empty for nodes whose sections were
+    /// excluded by fold (the same fold path that excludes a whole
+    /// node from `node_map`). Section-models are reachable as the
+    /// only child of the section-area inside the arena, so no
+    /// separate map is needed for them.
+    pub section_map: HashMap<(String, usize), NodeId>,
+    /// Reverse map: arena `NodeId` → MindNode ID. Populated for
+    /// container areas only — section-areas live in
+    /// `section_map`'s values, not here, so a hit on a section
+    /// element returns `None` from [`Self::mind_id_for_node`]
+    /// (callers walk one level up via the arena to find the
+    /// container).
     ///
     /// Private to preserve forward-compatible API (§B10) — callers
-    /// use [`MindMapTree::mind_id_for_node`] instead.
+    /// use [`MindMapTree::mind_id_for_node`] /
+    /// [`MindMapTree::section_for_node`] instead.
     reverse_node_map: HashMap<NodeId, String>,
+    /// Reverse map for sections: arena `NodeId` of a section-area
+    /// → `(MindNode ID, section index)`. Populated alongside
+    /// `section_map` during tree construction so hit tests that
+    /// land on a section can recover the (node_id, section_idx)
+    /// pair in O(1) without an arena climb.
+    reverse_section_map: HashMap<NodeId, (String, usize)>,
 }
 
 /// Builds a `Tree<GfxElement, GfxMutator>` from a MindMap's
@@ -78,11 +107,19 @@ pub struct MindMapTree {
 /// - Children nested recursively following parent_id
 /// - Nodes hidden by fold state are excluded
 ///
-/// Each MindNode becomes a GlyphArea element with its text,
-/// position, size, and color regions.
+/// Each MindNode produces three layers:
+/// - one *container* `GlyphArea` (chrome only),
+/// - one *section-area* `GlyphArea` per
+///   [`MindSection`](crate::mindmap::model::MindSection) as a
+///   sibling of any child mind-node-areas; sections carry the
+///   text + regions the renderer shapes,
+/// - one structural *section-model* `GlyphModel` child per
+///   section-area (a future per-component-mutation seam — the
+///   renderer skips it).
 pub fn build_mindmap_tree(map: &MindMap) -> MindMapTree {
     let mut tree: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed();
     let mut node_map: HashMap<String, NodeId> = HashMap::new();
+    let mut section_map: HashMap<(String, usize), NodeId> = HashMap::new();
     let mut id_counter: usize = 1; // 0 is reserved for the Void root
 
     let vars = &map.canvas.theme_variables;
@@ -92,7 +129,7 @@ pub fn build_mindmap_tree(map: &MindMap) -> MindMapTree {
         if map.is_hidden_by_fold(root) {
             continue;
         }
-        let area = mindnode_to_glyph_area(root, vars, canvas_default_border);
+        let area = mindnode_container_area(root, vars, canvas_default_border);
         let element = GfxElement::new_area_non_indexed_with_id(area, root.channel, id_counter);
         id_counter += 1;
 
@@ -100,27 +137,76 @@ pub fn build_mindmap_tree(map: &MindMap) -> MindMapTree {
         tree.root.append(node_id, &mut tree.arena);
         node_map.insert(root.id.clone(), node_id);
 
-        build_children_recursive(map, &root.id, node_id, &mut tree, &mut node_map, &mut id_counter);
+        append_node_sections(root, node_id, vars, &mut tree, &mut section_map, &mut id_counter);
+
+        build_children_recursive(
+            map,
+            &root.id,
+            node_id,
+            &mut tree,
+            &mut node_map,
+            &mut section_map,
+            &mut id_counter,
+        );
     }
 
     let reverse_node_map: HashMap<NodeId, String> = node_map
         .iter()
-        .map(|(mind_id, &node_id)| (node_id, mind_id.clone()))
+        .map(|(mind_id, &arena_id)| (arena_id, mind_id.clone()))
+        .collect();
+    let reverse_section_map: HashMap<NodeId, (String, usize)> = section_map
+        .iter()
+        .map(|((mind_id, idx), &arena_id)| (arena_id, (mind_id.clone(), *idx)))
         .collect();
     MindMapTree {
         tree,
         node_map,
+        section_map,
         reverse_node_map,
+        reverse_section_map,
     }
 }
 
 impl MindMapTree {
-    /// Look up the MindMap node ID for a given arena `NodeId`.
+    /// Look up the MindMap node ID for a *container* arena
+    /// `NodeId`. Returns `None` for void roots, removed nodes,
+    /// section-areas, and section-models — those are not
+    /// node-containers. Use [`Self::section_for_node`] to resolve
+    /// section-area arena ids; both maps together cover every
+    /// hit-test target an interactive path can land on.
     ///
-    /// O(1) hash lookup. Returns `None` if `node_id` does not
-    /// correspond to a MindNode (e.g. it is the void root or was
-    /// removed).
+    /// O(1) hash lookup, no allocation.
     pub fn mind_id_for_node(&self, node_id: NodeId) -> Option<&str> {
         self.reverse_node_map.get(&node_id).map(|s| s.as_str())
+    }
+
+    /// Look up the `(MindNode ID, section index)` pair for an
+    /// arena `NodeId`, returning `None` when the id is anything
+    /// other than a section-area (containers, section-models,
+    /// the void root, removed nodes).
+    ///
+    /// O(1) hash lookup, no allocation.
+    pub fn section_for_node(&self, node_id: NodeId) -> Option<(&str, usize)> {
+        self.reverse_section_map
+            .get(&node_id)
+            .map(|(mind_id, idx)| (mind_id.as_str(), *idx))
+    }
+
+    /// Resolve a hit-tested arena `NodeId` to the owning MindNode
+    /// id. Whether the user landed on the container, a section-
+    /// area, or a section-model, the caller almost always wants
+    /// the MindNode id; this helper consolidates the climb so
+    /// every hit-test site doesn't reimplement the dispatch.
+    ///
+    /// Climbs at most three arena edges (model → section →
+    /// container) — O(1) in practice.
+    pub fn owning_mind_id(&self, mut node_id: NodeId) -> Option<&str> {
+        for _ in 0..3 {
+            if let Some(id) = self.mind_id_for_node(node_id) {
+                return Some(id);
+            }
+            node_id = self.tree.arena.get(node_id)?.parent()?;
+        }
+        None
     }
 }

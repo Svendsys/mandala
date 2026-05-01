@@ -8,7 +8,9 @@
 
 use glam::Vec2;
 
-use baumhard::mindmap::model::{MindEdge, MindNode, NodeLayout, NodeStyle, Position, Size, TextRun};
+use baumhard::mindmap::model::{
+    MindEdge, MindNode, MindSection, NodeLayout, NodeStyle, Position, Size, TextRun,
+};
 
 pub(in crate::application) fn default_parent_child_edge(from_id: &str, to_id: &str) -> MindEdge {
     MindEdge {
@@ -59,8 +61,10 @@ pub(in crate::application) fn default_orphan_node(id: &str, position: Vec2) -> M
             width: 240.0,
             height: 60.0,
         },
-        text,
-        text_runs,
+        // Fresh orphan: one default section so the user can edit
+        // immediately. `MindSection::new_default` covers the
+        // (offset 0, fill the node, channel 0) shape.
+        sections: vec![MindSection::new_default(text, text_runs)],
         style: NodeStyle {
             background_color: "#141414".to_string(),
             frame_color: "#30b082".to_string(),

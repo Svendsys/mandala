@@ -7,7 +7,7 @@
 use super::tests_common::{first_testament_node_id, load_test_doc};
 use super::*;
 
-use baumhard::mindmap::model::{MindNode, NodeLayout, NodeStyle, Position, Size, TextRun};
+use baumhard::mindmap::model::{MindNode, MindSection, NodeLayout, NodeStyle, Position, Size, TextRun};
 use baumhard::util::grapheme_chad::count_grapheme_clusters;
 
 #[test]
@@ -17,10 +17,13 @@ fn test_set_node_text_updates_text_and_collapses_runs() {
     let changed = doc.set_node_text(&nid, "Hello world".to_string());
     assert!(changed);
     let node = doc.mindmap.nodes.get(&nid).unwrap();
-    assert_eq!(node.text, "Hello world");
-    assert_eq!(node.text_runs.len(), 1);
-    assert_eq!(node.text_runs[0].start, 0);
-    assert_eq!(node.text_runs[0].end, count_grapheme_clusters("Hello world"));
+    assert_eq!(node.sections[0].text, "Hello world");
+    assert_eq!(node.sections[0].text_runs.len(), 1);
+    assert_eq!(node.sections[0].text_runs[0].start, 0);
+    assert_eq!(
+        node.sections[0].text_runs[0].end,
+        count_grapheme_clusters("Hello world")
+    );
     assert!(doc.dirty);
     assert!(matches!(
         doc.undo_stack.last(),
@@ -32,7 +35,7 @@ fn test_set_node_text_updates_text_and_collapses_runs() {
 fn test_set_node_text_noop_on_unchanged() {
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
-    let current = doc.mindmap.nodes.get(&nid).unwrap().text.clone();
+    let current = doc.mindmap.nodes.get(&nid).unwrap().sections[0].text.clone();
     doc.undo_stack.clear();
     doc.dirty = false;
     let changed = doc.set_node_text(&nid, current);
@@ -45,26 +48,22 @@ fn test_set_node_text_noop_on_unchanged() {
 fn test_set_node_text_undo_round_trip() {
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
-    let before_text = doc.mindmap.nodes.get(&nid).unwrap().text.clone();
-    let before_runs_len = doc.mindmap.nodes.get(&nid).unwrap().text_runs.len();
-    let before_first_run_color = doc
-        .mindmap
-        .nodes
-        .get(&nid)
-        .unwrap()
+    let before_text = doc.mindmap.nodes.get(&nid).unwrap().sections[0].text.clone();
+    let before_runs_len = doc.mindmap.nodes.get(&nid).unwrap().sections[0].text_runs.len();
+    let before_first_run_color = doc.mindmap.nodes.get(&nid).unwrap().sections[0]
         .text_runs
         .first()
         .map(|r| r.color.clone());
     assert!(doc.set_node_text(&nid, "mutated".to_string()));
-    assert_eq!(doc.mindmap.nodes.get(&nid).unwrap().text, "mutated");
+    assert_eq!(doc.mindmap.nodes.get(&nid).unwrap().sections[0].text, "mutated");
     assert!(doc.undo());
     let restored = doc.mindmap.nodes.get(&nid).unwrap();
-    assert_eq!(restored.text, before_text);
+    assert_eq!(restored.sections[0].text, before_text);
     // TextRun doesn't implement PartialEq, so compare the parts
     // we care about: count + first run's color.
-    assert_eq!(restored.text_runs.len(), before_runs_len);
+    assert_eq!(restored.sections[0].text_runs.len(), before_runs_len);
     assert_eq!(
-        restored.text_runs.first().map(|r| r.color.clone()),
+        restored.sections[0].text_runs.first().map(|r| r.color.clone()),
         before_first_run_color
     );
 }
@@ -75,11 +74,11 @@ fn test_set_node_text_multiline_with_newlines() {
     let nid = first_testament_node_id(&doc);
     assert!(doc.set_node_text(&nid, "line 1\nline 2\nline 3".to_string()));
     let node = doc.mindmap.nodes.get(&nid).unwrap();
-    assert_eq!(node.text, "line 1\nline 2\nline 3");
+    assert_eq!(node.sections[0].text, "line 1\nline 2\nline 3");
     // Collapsed single run spans the full char count, including newlines.
-    assert_eq!(node.text_runs.len(), 1);
+    assert_eq!(node.sections[0].text_runs.len(), 1);
     assert_eq!(
-        node.text_runs[0].end,
+        node.sections[0].text_runs[0].end,
         count_grapheme_clusters("line 1\nline 2\nline 3")
     );
 }
@@ -101,10 +100,11 @@ fn test_set_node_text_inherits_first_run_formatting() {
     // Force a specific first-run formatting we can check for.
     {
         let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
-        if node.text_runs.is_empty() {
-            node.text_runs.push(TextRun {
+        if node.sections[0].text_runs.is_empty() {
+            let end = count_grapheme_clusters(&node.sections[0].text);
+            node.sections[0].text_runs.push(TextRun {
                 start: 0,
-                end: count_grapheme_clusters(&node.text),
+                end,
                 bold: false,
                 italic: false,
                 underline: false,
@@ -114,12 +114,12 @@ fn test_set_node_text_inherits_first_run_formatting() {
                 hyperlink: None,
             });
         }
-        node.text_runs[0].bold = true;
-        node.text_runs[0].color = "#abcdef".to_string();
-        node.text_runs[0].size_pt = 33;
+        node.sections[0].text_runs[0].bold = true;
+        node.sections[0].text_runs[0].color = "#abcdef".to_string();
+        node.sections[0].text_runs[0].size_pt = 33;
     }
     assert!(doc.set_node_text(&nid, "rewritten".to_string()));
-    let run = &doc.mindmap.nodes.get(&nid).unwrap().text_runs[0];
+    let run = &doc.mindmap.nodes.get(&nid).unwrap().sections[0].text_runs[0];
     assert!(run.bold);
     assert_eq!(run.color, "#abcdef");
     assert_eq!(run.size_pt, 33);
@@ -227,7 +227,7 @@ fn test_set_node_text_color_preserves_per_run_overrides() {
     {
         let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
         node.style.text_color = "#dddddd".into();
-        node.text_runs = vec![
+        node.sections[0].text_runs = vec![
             TextRun {
                 start: 0,
                 end: 3,
@@ -256,11 +256,11 @@ fn test_set_node_text_color_preserves_per_run_overrides() {
     let node = doc.mindmap.nodes.get(&nid).unwrap();
     assert_eq!(node.style.text_color, "#111111");
     assert_eq!(
-        node.text_runs[0].color, "#111111",
+        node.sections[0].text_runs[0].color, "#111111",
         "default-following run should update"
     );
     assert_eq!(
-        node.text_runs[1].color, "#abcdef",
+        node.sections[0].text_runs[1].color, "#abcdef",
         "per-run override should be preserved"
     );
 }
@@ -272,16 +272,12 @@ fn test_set_node_text_color_round_trips_through_undo() {
     {
         let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
         node.style.text_color = "#dddddd".into();
-        for run in node.text_runs.iter_mut() {
+        for run in node.sections[0].text_runs.iter_mut() {
             run.color = "#dddddd".into();
         }
     }
     let before_default = doc.mindmap.nodes.get(&nid).unwrap().style.text_color.clone();
-    let before_run_colors: Vec<String> = doc
-        .mindmap
-        .nodes
-        .get(&nid)
-        .unwrap()
+    let before_run_colors: Vec<String> = doc.mindmap.nodes.get(&nid).unwrap().sections[0]
         .text_runs
         .iter()
         .map(|r| r.color.clone())
@@ -290,7 +286,11 @@ fn test_set_node_text_color_round_trips_through_undo() {
     assert!(doc.undo());
     let restored = doc.mindmap.nodes.get(&nid).unwrap();
     assert_eq!(restored.style.text_color, before_default);
-    let restored_colors: Vec<String> = restored.text_runs.iter().map(|r| r.color.clone()).collect();
+    let restored_colors: Vec<String> = restored.sections[0]
+        .text_runs
+        .iter()
+        .map(|r| r.color.clone())
+        .collect();
     assert_eq!(restored_colors, before_run_colors);
 }
 
@@ -298,24 +298,16 @@ fn test_set_node_text_color_round_trips_through_undo() {
 fn test_set_node_font_size_writes_all_runs_and_round_trips() {
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
-    let before_sizes: Vec<u32> = doc
-        .mindmap
-        .nodes
-        .get(&nid)
-        .unwrap()
+    let before_sizes: Vec<u32> = doc.mindmap.nodes.get(&nid).unwrap().sections[0]
         .text_runs
         .iter()
         .map(|r| r.size_pt)
         .collect();
     assert!(doc.set_node_font_size(&nid, 48.0));
     let node = doc.mindmap.nodes.get(&nid).unwrap();
-    assert!(node.text_runs.iter().all(|r| r.size_pt == 48));
+    assert!(node.sections[0].text_runs.iter().all(|r| r.size_pt == 48));
     assert!(doc.undo());
-    let after_sizes: Vec<u32> = doc
-        .mindmap
-        .nodes
-        .get(&nid)
-        .unwrap()
+    let after_sizes: Vec<u32> = doc.mindmap.nodes.get(&nid).unwrap().sections[0]
         .text_runs
         .iter()
         .map(|r| r.size_pt)
@@ -329,7 +321,7 @@ fn test_set_node_font_size_clamps_below_one() {
     let nid = first_testament_node_id(&doc);
     assert!(doc.set_node_font_size(&nid, 0.5));
     let node = doc.mindmap.nodes.get(&nid).unwrap();
-    assert!(node.text_runs.iter().all(|r| r.size_pt == 1));
+    assert!(node.sections[0].text_runs.iter().all(|r| r.size_pt == 1));
 }
 
 #[test]
@@ -351,11 +343,7 @@ fn test_set_node_font_family_writes_all_runs_and_round_trips() {
     baumhard::font::fonts::init();
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
-    let before_fonts: Vec<String> = doc
-        .mindmap
-        .nodes
-        .get(&nid)
-        .unwrap()
+    let before_fonts: Vec<String> = doc.mindmap.nodes.get(&nid).unwrap().sections[0]
         .text_runs
         .iter()
         .map(|r| r.font.clone())
@@ -369,18 +357,14 @@ fn test_set_node_font_family_writes_all_runs_and_round_trips() {
         .expect("at least one loaded family must differ from the fixture");
     assert!(doc.set_node_font_family(&nid, Some(&target)));
     let node = doc.mindmap.nodes.get(&nid).unwrap();
-    assert!(node.text_runs.iter().all(|r| r.font == target));
+    assert!(node.sections[0].text_runs.iter().all(|r| r.font == target));
     // Idempotent re-set is a no-op.
     let stack_len = doc.undo_stack.len();
     assert!(!doc.set_node_font_family(&nid, Some(&target)));
     assert_eq!(doc.undo_stack.len(), stack_len);
     // Undo restores the prior heterogeneous state.
     assert!(doc.undo());
-    let after_fonts: Vec<String> = doc
-        .mindmap
-        .nodes
-        .get(&nid)
-        .unwrap()
+    let after_fonts: Vec<String> = doc.mindmap.nodes.get(&nid).unwrap().sections[0]
         .text_runs
         .iter()
         .map(|r| r.font.clone())
@@ -577,7 +561,7 @@ fn test_set_node_font_family_none_clears_every_run() {
     // sentinel that the tree builder reads as "use default".
     assert!(doc.set_node_font_family(&nid, None));
     let node = doc.mindmap.nodes.get(&nid).unwrap();
-    assert!(node.text_runs.iter().all(|r| r.font.is_empty()));
+    assert!(node.sections[0].text_runs.iter().all(|r| r.font.is_empty()));
     // Re-clear is a no-op.
     let stack_len = doc.undo_stack.len();
     assert!(!doc.set_node_font_family(&nid, None));
@@ -634,8 +618,7 @@ fn finalize_grows_nodes_to_fit_border_static_parts() {
                 width: 5.0,
                 height: 5.0,
             },
-            text: "n".into(),
-            text_runs: vec![],
+            sections: vec![MindSection::new_default("n".into(), vec![])],
             style,
             layout: NodeLayout {
                 layout_type: "map".into(),

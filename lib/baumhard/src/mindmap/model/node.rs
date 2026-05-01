@@ -11,8 +11,14 @@ use serde::{Deserialize, Serialize};
 use crate::gfx_structs::zoom_visibility::ZoomVisibility;
 use crate::mindmap::custom_mutation::{CustomMutation, TriggerBinding};
 
-/// A single node in the mindmap: one rectangle of text + style,
-/// attached to a tree position via [`Self::parent_id`] and a
+/// A single node in the mindmap: a styled rectangle that hosts one
+/// or more [`MindSection`]s carrying the text content. The node
+/// itself owns the visual chrome (background, frame, shape, border,
+/// shadow) and the structural pieces (`parent_id`, `channel`,
+/// trigger bindings, palette binding); the *user-facing strata of
+/// data* live on its sections.
+///
+/// Attached to a tree position via [`Self::parent_id`] and a
 /// Dewey-decimal [`Self::id`]. The loader materializes one of these
 /// per `.mindmap.json` entry; the scene builder and tree builder
 /// both project from this shape.
@@ -32,19 +38,31 @@ pub struct MindNode {
     pub position: Position,
     /// Canvas-space width and height of the node's AABB.
     pub size: Size,
-    /// Primary text content. Styled-slice overrides live in
-    /// [`Self::text_runs`]: an empty `text_runs` vector renders the
-    /// full string in the cosmic-text default style, but any
-    /// non-empty run-set renders *only* the covered ranges —
-    /// grapheme ranges outside every run drop silently. Callers
-    /// that want the whole string styled must cover it with at
-    /// least one run.
-    pub text: String,
-    /// Styled slices of [`Self::text`] — see [`TextRun`].
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub text_runs: Vec<TextRun>,
+    /// The user data strata of this node, in render order. Each
+    /// section is a positioned text-bearing surface inside the node
+    /// AABB. Validation invariants:
+    ///
+    /// - `sections` is non-empty for every renderable node — the
+    ///   loader rejects maps where any node ships zero sections,
+    ///   pointing at `maptool convert --sections` for migration.
+    /// - Section `offset` + `size` should stay within the node's
+    ///   AABB; `maptool verify` flags out-of-bounds sections.
+    /// - Section `channel` collisions with sibling sections are
+    ///   warned (not failed) by `verify`; collisions broadcast a
+    ///   single mutation across both, which is occasionally the
+    ///   intent.
+    ///
+    /// `#[serde(default)]` lets the typed shape parse a node
+    /// without `sections` (deserialising as empty) so unit tests
+    /// that synthesise `MindNode` from raw JSON skipping
+    /// section authoring still parse — the *loader* is the layer
+    /// that rejects zero-section maps with a migration pointer.
+    #[serde(default)]
+    pub sections: Vec<MindSection>,
     /// Background / frame / text colours, border, shape, and the
-    /// visible-frame toggle.
+    /// visible-frame toggle. The text colour here acts as the
+    /// node-level default — sections without their own per-run
+    /// colour override fall through to it.
     pub style: NodeStyle,
     /// Layout descriptor carried through from miMind-format source
     /// maps. Mandala drives layout through custom mutations instead
@@ -158,6 +176,27 @@ impl MindNode {
         Vec2::new(self.size.width as f32, self.size.height as f32)
     }
 
+    /// All section text concatenated with `'\n'` between sections —
+    /// for legacy consumers (markdown export, plain-text dump) that
+    /// want one rendered string per node. Single-section nodes (the
+    /// legacy-migration default) round-trip with no surprises:
+    /// `display_text()` is just `sections[0].text`.
+    ///
+    /// **Costs.** O(total section text bytes); one fresh `String`
+    /// allocation sized to the joined output. Hot paths that need
+    /// per-section rendering should walk `sections` directly
+    /// instead of reaching for this helper.
+    pub fn display_text(&self) -> String {
+        let mut out = String::new();
+        for (i, section) in self.sections.iter().enumerate() {
+            if i > 0 {
+                out.push('\n');
+            }
+            out.push_str(&section.text);
+        }
+        out
+    }
+
     /// Center of the node's AABB in canvas space — `pos + size / 2`.
     /// Used by edge-anchor and connection-routing math that needs
     /// the node's geometric centre rather than its top-left corner.
@@ -174,14 +213,18 @@ impl MindNode {
     }
 }
 
-/// Canvas-space top-left corner of a node's AABB. Units are
-/// arbitrary canvas pixels (the camera transforms to screen space at
-/// render time). Plain data; no runtime cost.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Canvas-space top-left corner of a node's AABB, or — when used on
+/// a [`MindSection`] — the node-local offset where the section
+/// sits inside its owning node. Units are arbitrary canvas pixels
+/// (the camera transforms to screen space at render time). Plain
+/// data; no runtime cost.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Position {
-    /// Canvas-space x coordinate.
+    /// Canvas-space x coordinate (or node-local offset for sections).
+    #[serde(default)]
     pub x: f64,
     /// Canvas-space y coordinate (canvas y-axis grows downward).
+    #[serde(default)]
     pub y: f64,
 }
 
@@ -197,11 +240,99 @@ pub struct Size {
     pub height: f64,
 }
 
-/// A styled slice of a node's `text`, matching miMind's text-run
+/// One stratum of user data inside a [`MindNode`]. A section is a
+/// positioned, text-bearing surface that lives inside the parent
+/// node's AABB. Nodes can carry one or many sections; the
+/// post-section-refactor data shape moves the old per-node
+/// `text` + `text_runs` pair onto each section.
+///
+/// In the Baumhard tree (see [`crate::mindmap::tree_builder`])
+/// each section materialises as a `GfxElement::GlyphArea` child
+/// of the owning node's container area, with a single
+/// `GfxElement::GlyphModel` grandchild that paints the section's
+/// glyphs into the section-area's buffer. The section-area is the
+/// hit-test target for click routing and the carrier for
+/// per-section style mutations; the section-model carries the
+/// actual glyph composition.
+///
+/// **Defaults / inheritance.** A section without `text_runs`
+/// renders at cosmic-text's defaults clamped by `node.style`:
+/// the section's effective colour falls through to
+/// `node.style.text_color`, and the size to `14.0pt`. Per-grapheme
+/// styling layers via `text_runs`.
+///
+/// Plain data; no runtime cost beyond the `String` allocations
+/// serde performs on deserialize.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MindSection {
+    /// Primary text content. Styled-slice overrides live in
+    /// [`Self::text_runs`]; the empty-runs / partial-runs trade-off
+    /// matches the pre-refactor [`TextRun`] contract — non-empty
+    /// runs render *only* the covered ranges.
+    pub text: String,
+    /// Per-grapheme styled slices — see [`TextRun`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub text_runs: Vec<TextRun>,
+    /// Top-left of the section's AABB *relative to the owning
+    /// node's `position`*, in canvas units. `(0, 0)` puts the
+    /// section flush against the node's top-left.
+    #[serde(default, skip_serializing_if = "is_default_position")]
+    pub offset: Position,
+    /// Section AABB. `None` means "fill the parent node" — the
+    /// tree and scene builders compute the absolute size from the
+    /// node at projection time. Authors who want a section to
+    /// occupy only part of a node's AABB set this explicitly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<Size>,
+    /// Channel index for mutation routing inside the parent
+    /// node-area. Defaults to the section's index in
+    /// `MindNode.sections`. Sibling section channels collide with
+    /// any child mind-node sharing the same channel inside the
+    /// same node — by design today; a future predicate seam
+    /// (`Predicate::IsSection` / `TargetScope::SectionsOnly`) will
+    /// disambiguate without changing this field.
+    #[serde(default, skip_serializing_if = "is_zero_usize")]
+    pub channel: usize,
+}
+
+fn is_zero_usize(v: &usize) -> bool {
+    *v == 0
+}
+
+fn is_default_position(p: &Position) -> bool {
+    p.x == 0.0 && p.y == 0.0
+}
+
+impl MindSection {
+    /// Build a section that owns the given text and runs and
+    /// otherwise inherits everything from the parent node — fills
+    /// the node's AABB, channel 0, no offset. The right shape for
+    /// the legacy single-section migration (`maptool convert
+    /// --sections`) and for fresh orphan nodes that ship with one
+    /// default section so users can start typing immediately.
+    pub fn new_default(text: String, text_runs: Vec<TextRun>) -> Self {
+        MindSection {
+            text,
+            text_runs,
+            offset: Position::default(),
+            size: None,
+            channel: 0,
+        }
+    }
+
+    /// Empty section at the node origin filling the parent AABB.
+    /// O(1); allocates the empty `String` and empty `Vec`.
+    pub fn empty() -> Self {
+        MindSection::new_default(String::new(), Vec::new())
+    }
+}
+
+/// A styled slice of a section's `text`, matching miMind's text-run
 /// concept: `[start, end)` grapheme indices carry one font / size /
 /// color / style combination, with optional hyperlink target.
 /// Multiple runs describe a single multi-style string; gaps in
-/// coverage render with node-level defaults.
+/// coverage render with section-level defaults (which themselves
+/// fall through to the owning node's defaults).
 ///
 /// Plain data; no runtime cost beyond the string allocations.
 #[derive(Debug, Clone, Serialize, Deserialize)]

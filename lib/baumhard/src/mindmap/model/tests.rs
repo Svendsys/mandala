@@ -716,6 +716,50 @@ fn edge_locations_uses_bracket_index_stamp() {
     assert_eq!(stamps, vec!["edge[0]", "edge[1]", "edge[2]"]);
 }
 
+/// `MindSection` defaults round-trip cleanly on a freshly-built
+/// node. The default shape — `offset=(0,0)`, `size=None`,
+/// `channel=0`, no runs — must serialise to a minimal JSON form
+/// (only `text` is serialised) so the on-disk file stays tight
+/// for the migration-default case where every node ships exactly
+/// one default section. Pins the `skip_serializing_if` contracts
+/// on `text_runs`, `offset`, `size`, and `channel`.
+#[test]
+fn mindsection_defaults_serialize_minimally() {
+    let section = MindSection::new_default("hi".into(), Vec::new());
+    let json = serde_json::to_string(&section).expect("serialises");
+    // Only the `text` field should be present.
+    assert!(json.contains("\"text\":\"hi\""), "json: {json}");
+    assert!(!json.contains("text_runs"), "empty runs must not serialise");
+    assert!(!json.contains("offset"), "default offset must not serialise");
+    assert!(!json.contains("\"size\""), "None size must not serialise");
+    assert!(!json.contains("channel"), "default channel must not serialise");
+
+    // Round-trip: parse the minimal JSON back; defaults must hold.
+    let back: MindSection = serde_json::from_str("{\"text\":\"hi\"}").unwrap();
+    assert_eq!(back.text, "hi");
+    assert!(back.text_runs.is_empty());
+    assert_eq!(back.offset.x, 0.0);
+    assert_eq!(back.offset.y, 0.0);
+    assert!(back.size.is_none());
+    assert_eq!(back.channel, 0);
+}
+
+/// `MindNode.display_text` joins every section's text with `'\n'`
+/// — the legacy bridge for export / clipboard / copy paths that
+/// want one rendered string per node. Single-section nodes
+/// round-trip identically with the pre-section behaviour.
+#[test]
+fn mindnode_display_text_joins_sections() {
+    use crate::mindmap::test_helpers::synthetic_node_full;
+    let mut node = synthetic_node_full("n", None, 0.0, 0.0, 80.0, 40.0, false);
+    node.sections = vec![
+        MindSection::new_default("alpha".into(), Vec::new()),
+        MindSection::new_default("beta".into(), Vec::new()),
+        MindSection::new_default("gamma".into(), Vec::new()),
+    ];
+    assert_eq!(node.display_text(), "alpha\nbeta\ngamma");
+}
+
 /// Empty maps yield empty iterators — the no-op base case the
 /// checker call sites rely on (no location-stamp leakage when
 /// the map carries zero nodes / zero edges).

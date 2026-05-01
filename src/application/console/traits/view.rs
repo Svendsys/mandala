@@ -285,8 +285,14 @@ impl<'a> HandlesCopy for TargetView<'a> {
             // `Empty` so the caller can distinguish from a target type
             // that doesn't support copy at all.
             TargetView::Node { doc, id } => match doc.mindmap.nodes.get(id) {
-                Some(n) if n.text.is_empty() => ClipboardContent::Empty,
-                Some(n) => ClipboardContent::Text(n.text.clone()),
+                Some(n) => {
+                    let text = n.display_text();
+                    if text.is_empty() {
+                        ClipboardContent::Empty
+                    } else {
+                        ClipboardContent::Text(text)
+                    }
+                }
                 None => ClipboardContent::NotApplicable,
             },
             // Edge copy = the resolved edge color hex. User-facing
@@ -409,7 +415,7 @@ impl<'a> HandlesCut for TargetView<'a> {
         match self {
             TargetView::Node { doc, id } => {
                 let text = match doc.mindmap.nodes.get(id) {
-                    Some(n) => n.text.clone(),
+                    Some(n) => n.display_text(),
                     None => return ClipboardContent::NotApplicable,
                 };
                 doc.set_node_text(id, String::new());

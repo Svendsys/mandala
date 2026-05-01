@@ -190,8 +190,8 @@ mod drag_helper_tests {
             width: 100.0,
             height: 60.0,
         };
-        n.text = "n".to_string();
-        n.text_runs[0].end = 1;
+        n.sections[0].text = "n".to_string();
+        n.sections[0].text_runs[0].end = 1;
         n
     }
 

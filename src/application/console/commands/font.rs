@@ -508,8 +508,8 @@ mod tests {
         assert_exec_ok(run(&format!("font set {}", family), &mut doc));
         // Every TextRun on the node should now carry the family.
         let node = doc.mindmap.nodes.get("0").expect("node 0 exists");
-        assert!(!node.text_runs.is_empty());
-        for run in &node.text_runs {
+        assert!(!node.sections[0].text_runs.is_empty());
+        for run in &node.sections[0].text_runs {
             assert_eq!(run.font, family);
         }
     }
@@ -604,7 +604,7 @@ mod tests {
                 .nodes
                 .get(id)
                 .expect("multi-selection ids exist in the doc");
-            for run in &node.text_runs {
+            for run in &node.sections[0].text_runs {
                 assert_eq!(run.font, family, "every run on every node should be pinned");
             }
         }
@@ -785,8 +785,10 @@ mod tests {
         let mut doc = fixture_doc();
         doc.selection = SelectionState::Single("0".into());
         assert!(super::apply_font_family_to_selection(&mut doc, &family));
-        for run in &doc.mindmap.nodes.get("0").unwrap().text_runs {
-            assert_eq!(run.font, family);
+        for section in &doc.mindmap.nodes.get("0").unwrap().sections {
+            for run in &section.text_runs {
+                assert_eq!(run.font, family);
+            }
         }
     }
 
@@ -825,8 +827,8 @@ mod tests {
         // `set_node_font_size` rounds the f32 and writes
         // `text_runs[i].size_pt` (u32) on every run.
         let node = doc.mindmap.nodes.get("0").unwrap();
-        assert!(!node.text_runs.is_empty());
-        for run in &node.text_runs {
+        assert!(!node.sections[0].text_runs.is_empty());
+        for run in &node.sections[0].text_runs {
             assert_eq!(run.size_pt, 18);
         }
     }

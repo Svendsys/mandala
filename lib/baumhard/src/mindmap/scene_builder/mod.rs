@@ -64,12 +64,26 @@ pub struct RenderScene {
     pub background_color: String,
 }
 
-/// A visible text node to be rendered.
+/// A visible text element to be rendered. Each renderable
+/// [`MindSection`](crate::mindmap::model::MindSection) of a
+/// non-folded node emits one `TextElement`; sections without text
+/// (and folded nodes' sections) skip emission entirely.
 pub struct TextElement {
+    /// Owning MindNode id — the same id every other per-node
+    /// element (`BorderElement`, hit-test AABB, edge endpoint)
+    /// keys on. Multiple `TextElement`s share this id when a
+    /// node has multiple sections.
     pub node_id: String,
+    /// Index into [`MindNode.sections`](crate::mindmap::model::MindNode::sections)
+    /// — the position of the section that produced this element.
+    /// Stable across scene rebuilds for unchanged nodes.
+    pub section_idx: usize,
     pub text: String,
     pub text_runs: Vec<TextRun>,
+    /// Top-left of the section AABB in canvas space —
+    /// `node.position + section.offset`.
     pub position: (f32, f32),
+    /// Section AABB size — `section.size.unwrap_or(node.size)`.
     pub size: (f32, f32),
 }
 

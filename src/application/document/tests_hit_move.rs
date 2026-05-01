@@ -125,10 +125,19 @@ fn test_selection_state_from_ids_many_elements_is_multi_preserving_order() {
 #[test]
 fn test_apply_tree_highlights_via_walker() {
     let mut tree = load_test_tree();
-    let node_id = *tree.node_map.get("0").unwrap();
+    // Post-refactor: regions live on the section-area, not the
+    // container. Read through the section_map.
+    let section_id = *tree.section_map.get(&("0".to_string(), 0)).unwrap();
 
-    // Before highlight: original color (white)
-    let area = tree.tree.arena.get(node_id).unwrap().get().glyph_area().unwrap();
+    // Before highlight: original color (white).
+    let area = tree
+        .tree
+        .arena
+        .get(section_id)
+        .unwrap()
+        .get()
+        .glyph_area()
+        .unwrap();
     let original_color = area.regions.all_regions()[0].color.unwrap();
     assert!(
         (original_color[0] - 1.0).abs() < 0.01,
@@ -138,8 +147,15 @@ fn test_apply_tree_highlights_via_walker() {
     // Apply highlight via the new mutator-driven path.
     apply_tree_highlights(&mut tree, std::iter::once(("0", HIGHLIGHT_COLOR)));
 
-    // After highlight: cyan
-    let area = tree.tree.arena.get(node_id).unwrap().get().glyph_area().unwrap();
+    // After highlight: cyan on section-area's regions.
+    let area = tree
+        .tree
+        .arena
+        .get(section_id)
+        .unwrap()
+        .get()
+        .glyph_area()
+        .unwrap();
     let highlighted_color = area.regions.all_regions()[0].color.unwrap();
     assert!((highlighted_color[0] - HIGHLIGHT_COLOR[0]).abs() < 0.01);
     assert!((highlighted_color[1] - HIGHLIGHT_COLOR[1]).abs() < 0.01);
@@ -185,14 +201,22 @@ fn test_apply_tree_highlights_later_pair_overrides_earlier() {
     // previously-applied selection-cyan on the same node. Verify the
     // last-write-wins semantics of apply_tree_highlights.
     let mut tree = load_test_tree();
-    let node_id = *tree.node_map.get("0").unwrap();
+    // Regions live on the section-area, not the container.
+    let section_id = *tree.section_map.get(&("0".to_string(), 0)).unwrap();
 
     apply_tree_highlights(
         &mut tree,
         vec![("0", HIGHLIGHT_COLOR), ("0", REPARENT_SOURCE_COLOR)],
     );
 
-    let area = tree.tree.arena.get(node_id).unwrap().get().glyph_area().unwrap();
+    let area = tree
+        .tree
+        .arena
+        .get(section_id)
+        .unwrap()
+        .get()
+        .glyph_area()
+        .unwrap();
     let c = area.regions.all_regions()[0].color.unwrap();
     assert!((c[0] - REPARENT_SOURCE_COLOR[0]).abs() < 0.01);
     assert!((c[1] - REPARENT_SOURCE_COLOR[1]).abs() < 0.01);

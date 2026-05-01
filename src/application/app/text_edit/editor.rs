@@ -40,8 +40,13 @@ pub(in crate::application::app) fn open_text_edit(
     _app_scene: &mut crate::application::scene_host::AppScene,
     renderer: &mut Renderer,
 ) {
-    let current_text = match doc.mindmap.nodes.get(node_id) {
-        Some(n) => n.text.clone(),
+    // Post-section: a node's editable text lives on its first
+    // section. The follow-up commit adds per-section addressing
+    // via `SelectionState::Section`; for now the inline editor
+    // always edits `sections[0]`, matching the migration default
+    // where every node has exactly one section.
+    let current_text = match doc.mindmap.nodes.get(node_id).and_then(|n| n.sections.first()) {
+        Some(section) => section.text.clone(),
         None => return,
     };
     let buffer = if from_creation {
@@ -96,31 +101,42 @@ pub(in crate::application::app) fn open_text_edit(
     );
 }
 
-/// Read a node's `GlyphArea::regions` off the live tree. Returns
-/// `None` when the tree or the node isn't present, or when the
-/// target element isn't a `GlyphArea` (it's a `GlyphModel` for
-/// multi-line node containers). The text-edit path uses this to
-/// seed `TextEditState::Open::buffer_regions` at open time so
-/// per-run color and `AppFont` pins survive the edit lifecycle.
+/// Resolve `node_id` to the arena `NodeId` of its *first
+/// section-area* — the post-refactor home of editable text +
+/// regions. Returns `None` when the tree, the node, or the node's
+/// `sections[0]` slot is missing.
+fn first_section_arena_id(
+    tree: &baumhard::mindmap::tree_builder::MindMapTree,
+    node_id: &str,
+) -> Option<indextree::NodeId> {
+    tree.section_map.get(&(node_id.to_string(), 0)).copied()
+}
+
+/// Read the first section's `GlyphArea::regions` off the live
+/// tree. Returns `None` when the tree or the node isn't present,
+/// or when the target element isn't a `GlyphArea`. The text-edit
+/// path uses this to seed `TextEditState::Open::buffer_regions`
+/// at open time so per-run color and `AppFont` pins survive the
+/// edit lifecycle.
 pub(in crate::application::app) fn read_node_regions(
     mindmap_tree: Option<&baumhard::mindmap::tree_builder::MindMapTree>,
     node_id: &str,
 ) -> Option<baumhard::core::primitives::ColorFontRegions> {
     let tree = mindmap_tree?;
-    let nid = *tree.node_map.get(node_id)?;
+    let nid = first_section_arena_id(tree, node_id)?;
     let element = tree.tree.arena.get(nid)?.get();
     element.glyph_area().map(|a| a.regions.clone())
 }
 
-/// Read a node's `GlyphArea::text` off the live tree. Pairs with
-/// [`read_node_regions`] — together they capture the pre-edit
-/// snapshot the cancel path restores via `DeltaGlyphArea`.
+/// Read the first section's `GlyphArea::text` off the live tree.
+/// Pairs with [`read_node_regions`] — together they capture the
+/// pre-edit snapshot the cancel path restores via `DeltaGlyphArea`.
 pub(in crate::application::app) fn read_node_text(
     mindmap_tree: Option<&baumhard::mindmap::tree_builder::MindMapTree>,
     node_id: &str,
 ) -> Option<String> {
     let tree = mindmap_tree?;
-    let nid = *tree.node_map.get(node_id)?;
+    let nid = first_section_arena_id(tree, node_id)?;
     let element = tree.tree.arena.get(nid)?.get();
     element.glyph_area().map(|a| a.text.clone())
 }
@@ -143,8 +159,10 @@ pub(in crate::application::app) fn apply_text_and_regions_delta(
         Some(t) => t,
         None => return false,
     };
-    let indextree_node_id = match tree.node_map.get(node_id) {
-        Some(id) => *id,
+    // Targets the first section-area, not the container — text
+    // and regions live on the section in the post-refactor shape.
+    let indextree_node_id = match first_section_arena_id(tree, node_id) {
+        Some(id) => id,
         None => return false,
     };
     let element = match tree.tree.arena.get_mut(indextree_node_id) {
@@ -263,11 +281,13 @@ pub(in crate::application::app) fn apply_text_edit_to_tree(
         Some(t) => t,
         None => return,
     };
-    let indextree_node_id = match tree.node_map.get(node_id) {
-        Some(id) => *id,
+    // The text editor targets the first section-area's
+    // GlyphArea — that's where text + regions live post-refactor.
+    let indextree_node_id = match first_section_arena_id(tree, node_id) {
+        Some(id) => id,
         None => return,
     };
-    // Grab a mutable handle to the target node's GlyphArea.
+    // Grab a mutable handle to the target section's GlyphArea.
     let element = tree.tree.arena.get_mut(indextree_node_id);
     let element = match element {
         Some(n) => n.get_mut(),
@@ -430,25 +450,28 @@ mod tests {
     use baumhard::mindmap::tree_builder::build_mindmap_tree;
 
     /// Build a fresh tree from the testament map and pick the first
-    /// node id whose `GlyphArea::text` is non-empty — we need a
-    /// real text string so the "mutate then revert" assertion is
-    /// meaningful.
+    /// MindNode id whose first section-area carries non-empty text.
+    /// Post-section refactor the editable text lives on
+    /// `sections[0]` rather than the node container, so the
+    /// fixture probes the section-area side of the new tree shape.
     fn tree_with_text_node() -> (baumhard::mindmap::tree_builder::MindMapTree, String) {
         let map = loader::load_from_file(&test_map_path()).unwrap();
         let tree = build_mindmap_tree(&map);
         let node_id = tree
-            .node_map
+            .section_map
             .iter()
-            .find(|(_, nid)| {
-                tree.tree
-                    .arena
-                    .get(**nid)
-                    .and_then(|n| n.get().glyph_area())
-                    .map(|a| !a.text.is_empty())
-                    .unwrap_or(false)
+            .find(|((_, idx), nid)| {
+                *idx == 0
+                    && tree
+                        .tree
+                        .arena
+                        .get(**nid)
+                        .and_then(|n| n.get().glyph_area())
+                        .map(|a| !a.text.is_empty())
+                        .unwrap_or(false)
             })
-            .map(|(id, _)| id.clone())
-            .expect("testament map has at least one node with non-empty text");
+            .map(|((mid, _), _)| mid.clone())
+            .expect("testament map has at least one node with non-empty section text");
         (tree, node_id)
     }
 

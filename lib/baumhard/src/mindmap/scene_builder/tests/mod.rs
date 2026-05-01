@@ -28,4 +28,5 @@ mod edge_handles;
 mod labels;
 mod point_inside;
 mod portals;
+mod sections;
 mod themes;

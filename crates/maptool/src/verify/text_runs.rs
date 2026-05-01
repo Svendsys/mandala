@@ -13,47 +13,52 @@ pub fn check(map: &MindMap) -> Vec<Violation> {
     let mut out = Vec::new();
 
     for (_loc, node) in map.node_locations() {
-        if node.text_runs.is_empty() {
-            continue;
-        }
-
-        let total = count_grapheme_clusters(&node.text);
-        let mut prev_end: Option<usize> = None;
-
-        for (i, run) in node.text_runs.iter().enumerate() {
-            if run.start >= run.end {
-                out.push(Violation::node(
-                    "text_runs",
-                    node,
-                    format!("run[{}] has start {} not less than end {}", i, run.start, run.end),
-                ));
+        for (s_idx, section) in node.sections.iter().enumerate() {
+            if section.text_runs.is_empty() {
                 continue;
             }
 
-            if run.end > total {
-                out.push(Violation::node(
-                    "text_runs",
-                    node,
-                    format!(
-                        "run[{}] end {} exceeds text length {} (grapheme clusters)",
-                        i, run.end, total
-                    ),
-                ));
-            }
+            let total = count_grapheme_clusters(&section.text);
+            let mut prev_end: Option<usize> = None;
 
-            if let Some(p) = prev_end {
-                if run.start < p {
+            for (i, run) in section.text_runs.iter().enumerate() {
+                if run.start >= run.end {
                     out.push(Violation::node(
                         "text_runs",
                         node,
                         format!(
-                            "run[{}] overlaps previous run (start {} < previous end {})",
-                            i, run.start, p
+                            "section[{}].run[{}] has start {} not less than end {}",
+                            s_idx, i, run.start, run.end
+                        ),
+                    ));
+                    continue;
+                }
+
+                if run.end > total {
+                    out.push(Violation::node(
+                        "text_runs",
+                        node,
+                        format!(
+                            "section[{}].run[{}] end {} exceeds text length {} (grapheme clusters)",
+                            s_idx, i, run.end, total
                         ),
                     ));
                 }
+
+                if let Some(p) = prev_end {
+                    if run.start < p {
+                        out.push(Violation::node(
+                            "text_runs",
+                            node,
+                            format!(
+                                "section[{}].run[{}] overlaps previous run (start {} < previous end {})",
+                                s_idx, i, run.start, p
+                            ),
+                        ));
+                    }
+                }
+                prev_end = Some(run.end);
             }
-            prev_end = Some(run.end);
         }
     }
 
@@ -84,7 +89,7 @@ mod tests {
     fn empty_runs_clean() {
         let mut map = MindMap::new_blank("t");
         let mut n = node("0", None);
-        n.text = "Hello".into();
+        n.sections[0].text = "Hello".into();
         map.nodes.insert("0".into(), n);
         assert!(check(&map).is_empty());
     }
@@ -93,8 +98,8 @@ mod tests {
     fn valid_runs_clean() {
         let mut map = MindMap::new_blank("t");
         let mut n = node("0", None);
-        n.text = "Hello world".into();
-        n.text_runs = vec![run(0, 5), run(6, 11)];
+        n.sections[0].text = "Hello world".into();
+        n.sections[0].text_runs = vec![run(0, 5), run(6, 11)];
         map.nodes.insert("0".into(), n);
         assert!(check(&map).is_empty());
     }
@@ -103,8 +108,8 @@ mod tests {
     fn overlapping_runs_flagged() {
         let mut map = MindMap::new_blank("t");
         let mut n = node("0", None);
-        n.text = "Hello world".into();
-        n.text_runs = vec![run(0, 5), run(3, 8)];
+        n.sections[0].text = "Hello world".into();
+        n.sections[0].text_runs = vec![run(0, 5), run(3, 8)];
         map.nodes.insert("0".into(), n);
         let v = check(&map);
         assert!(v
@@ -116,8 +121,8 @@ mod tests {
     fn out_of_bounds_runs_flagged() {
         let mut map = MindMap::new_blank("t");
         let mut n = node("0", None);
-        n.text = "Hi".into();
-        n.text_runs = vec![run(0, 100)];
+        n.sections[0].text = "Hi".into();
+        n.sections[0].text_runs = vec![run(0, 100)];
         map.nodes.insert("0".into(), n);
         let v = check(&map);
         assert!(v
@@ -129,8 +134,8 @@ mod tests {
     fn inverted_run_flagged() {
         let mut map = MindMap::new_blank("t");
         let mut n = node("0", None);
-        n.text = "Hello".into();
-        n.text_runs = vec![run(3, 3)];
+        n.sections[0].text = "Hello".into();
+        n.sections[0].text_runs = vec![run(3, 3)];
         map.nodes.insert("0".into(), n);
         let v = check(&map);
         assert!(v
@@ -145,9 +150,9 @@ mod tests {
         let mut map = MindMap::new_blank("t");
         let mut n = node("0", None);
         // 👨‍👩‍👧 = 5 codepoints joined by ZWJ, 1 grapheme cluster.
-        n.text = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}A".into();
+        n.sections[0].text = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}A".into();
         // Two clusters: the family + the trailing 'A'.
-        n.text_runs = vec![run(0, 1), run(1, 2)];
+        n.sections[0].text_runs = vec![run(0, 1), run(1, 2)];
         map.nodes.insert("0".into(), n);
         let v = check(&map);
         assert!(
@@ -164,8 +169,8 @@ mod tests {
     fn zwj_emoji_out_of_bounds_uses_grapheme_unit_in_message() {
         let mut map = MindMap::new_blank("t");
         let mut n = node("0", None);
-        n.text = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}A".into();
-        n.text_runs = vec![run(0, 5)]; // 5 > 2 clusters
+        n.sections[0].text = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}A".into();
+        n.sections[0].text_runs = vec![run(0, 5)]; // 5 > 2 clusters
         map.nodes.insert("0".into(), n);
         let v = check(&map);
         let exceeded = v

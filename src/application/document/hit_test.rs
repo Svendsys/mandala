@@ -11,7 +11,7 @@
 
 use glam::Vec2;
 
-use baumhard::core::primitives::Range;
+use baumhard::core::primitives::{Flag, Flaggable, Range};
 use baumhard::gfx_structs::area::GlyphAreaCommand;
 use baumhard::gfx_structs::mutator::{GfxMutator, Mutation};
 use baumhard::gfx_structs::tree::MutatorTree;
@@ -31,10 +31,20 @@ use super::types::EdgeRef;
 /// O(n) worst case. One `Vec` allocation on the first call after a
 /// mutation (subtree AABB recomputation); O(1) on subsequent calls.
 pub fn hit_test(canvas_pos: Vec2, tree: &mut MindMapTree) -> Option<String> {
-    tree.tree
-        .descendant_at(canvas_pos)
-        .and_then(|nid| tree.mind_id_for_node(nid))
-        .map(|s| s.to_owned())
+    // Sections render as `GlyphArea` children of the owning node's
+    // container, so the BVH descent can land on a section-area
+    // (or a section-model) rather than the container itself. Climb
+    // to the owning MindNode container, then re-apply the
+    // container's shape filter — a click on the rectangular AABB
+    // of a section inside an ellipse-shaped node must not register
+    // as a hit on that node, just like the pre-section behaviour
+    // where the node area's shape was the only one consulted.
+    let landed = tree.tree.descendant_at(canvas_pos)?;
+    let mind_id = tree.owning_mind_id(landed)?.to_owned();
+    if !point_in_node_aabb(canvas_pos, &mind_id, tree) {
+        return None;
+    }
+    Some(mind_id)
 }
 
 /// Is `canvas_pos` inside node `node_id`'s shape? Reads the tree-side
@@ -179,44 +189,64 @@ where
     for (mind_id, color) in highlights {
         let Some(&node_id) = tree.node_map.get(mind_id) else { continue };
 
-        // Collect existing region ranges up front. The SetRegionColor
-        // mutation needs the exact `Range` of each target region so that
-        // the underlying `set_or_insert` finds a match and updates
-        // in-place rather than inserting a duplicate region.
-        let (ranges, target_channel): (Vec<Range>, usize) = {
-            let Some(node) = tree.tree.arena.get(node_id) else { continue };
-            let element = node.get();
-            let Some(area) = element.glyph_area() else { continue };
-            let ranges = area.regions.all_regions().iter().map(|r| r.range).collect();
-            // Match the element's channel so the walker's channel-
-            // alignment check in `apply_if_matching_channel` passes.
-            let channel = {
-                use baumhard::gfx_structs::tree::BranchChannel;
-                element.channel()
-            };
-            (ranges, channel)
-        };
-        if ranges.is_empty() {
-            continue;
-        }
-
-        let mutations: Vec<Mutation> = ranges
-            .into_iter()
-            .map(|r| Mutation::area_command(GlyphAreaCommand::SetRegionColor(r, color)))
+        // Sections live as `GlyphArea` children of the node
+        // container, and that's where the text-runs (and therefore
+        // `ColorFontRegions`) actually live post-refactor. Iterate
+        // every immediate child marked `Flag::SectionRoot` and
+        // apply the highlight macro to each.
+        //
+        // Today every per-grapheme run on a node is repainted in
+        // the highlight colour — same posture as the pre-section
+        // behaviour where the node's single area carried the
+        // runs. Per-section selective highlighting (only one
+        // section's runs glow when only that section is selected)
+        // is the named seam in the per-section UX commit.
+        let section_ids: Vec<indextree::NodeId> = node_id
+            .children(&tree.tree.arena)
+            .filter(|cid| {
+                tree.tree
+                    .arena
+                    .get(*cid)
+                    .map(|n| n.get().flag_is_set(Flag::SectionRoot))
+                    .unwrap_or(false)
+            })
             .collect();
-        let mutator_tree = MutatorTree::new_with(GfxMutator::new_macro(mutations, target_channel));
 
-        // `walk_tree_from` applied at a specific target_id with a
-        // single-node MutatorTree runs the macro on that element only
-        // (no descendants are touched because the mutator tree has no
-        // children, so `align_child_walks` is a no-op). This is the
-        // idiomatic "one-shot mutation to a specific node" shape.
-        walk_tree_from(&mut tree.tree, &mutator_tree, node_id, mutator_tree.root);
+        for section_node_id in section_ids {
+            let (ranges, target_channel): (Vec<Range>, usize) = {
+                let Some(node) = tree.tree.arena.get(section_node_id) else { continue };
+                let element = node.get();
+                let Some(area) = element.glyph_area() else { continue };
+                let ranges = area.regions.all_regions().iter().map(|r| r.range).collect();
+                let channel = {
+                    use baumhard::gfx_structs::tree::BranchChannel;
+                    element.channel()
+                };
+                (ranges, channel)
+            };
+            if ranges.is_empty() {
+                continue;
+            }
+
+            let mutations: Vec<Mutation> = ranges
+                .into_iter()
+                .map(|r| Mutation::area_command(GlyphAreaCommand::SetRegionColor(r, color)))
+                .collect();
+            let mutator_tree = MutatorTree::new_with(GfxMutator::new_macro(mutations, target_channel));
+            walk_tree_from(&mut tree.tree, &mutator_tree, section_node_id, mutator_tree.root);
+        }
     }
 }
 
 /// Apply a position delta directly to nodes in the Baumhard tree (in-place mutation).
 /// Used during drag for fast visual preview without rebuilding from the MindMap model.
+///
+/// `include_descendants` toggles whether *child mind-nodes* track the
+/// drag — but the node's own sections always come along regardless,
+/// because they live as `Flag::SectionRoot` children of the container
+/// and store absolute canvas positions in the tree (a stationary
+/// section beneath a moving container would visibly detach from its
+/// node).
 pub fn apply_drag_delta(tree: &mut MindMapTree, node_id: &str, dx: f32, dy: f32, include_descendants: bool) {
     let tree_node_id = match tree.node_map.get(node_id) {
         Some(&id) => id,
@@ -225,9 +255,34 @@ pub fn apply_drag_delta(tree: &mut MindMapTree, node_id: &str, dx: f32, dy: f32,
 
     if include_descendants {
         apply_delta_recursive(&mut tree.tree.arena, tree_node_id, dx, dy);
-    } else if let Some(node) = tree.tree.arena.get_mut(tree_node_id) {
+    } else {
+        apply_delta_node_and_sections(&mut tree.tree.arena, tree_node_id, dx, dy);
+    }
+}
+
+/// Move a node container plus every section-area / section-model
+/// descendant under it. Skips child mind-node containers (and
+/// their subtrees) — the "drag this node only" path.
+fn apply_delta_node_and_sections(
+    arena: &mut indextree::Arena<baumhard::gfx_structs::element::GfxElement>,
+    node_id: indextree::NodeId,
+    dx: f32,
+    dy: f32,
+) {
+    if let Some(node) = arena.get_mut(node_id) {
         if let Some(area) = node.get_mut().glyph_area_mut() {
             area.move_position(dx, dy);
+        }
+    }
+    let mut child = arena.get(node_id).and_then(|n| n.first_child());
+    while let Some(cid) = child {
+        child = arena.get(cid).and_then(|n| n.next_sibling());
+        let is_section = arena
+            .get(cid)
+            .map(|n| n.get().flag_is_set(Flag::SectionRoot))
+            .unwrap_or(false);
+        if is_section {
+            apply_delta_recursive(arena, cid, dx, dy);
         }
     }
 }
@@ -255,13 +310,42 @@ pub fn apply_drag_delta_and_collect_patches(
     if include_descendants {
         collect_patches_recursive(&mut tree.tree.arena, tree_node_id, dx, dy, patches);
     } else {
-        if let Some(node) = tree.tree.arena.get_mut(tree_node_id) {
-            let elem = node.get_mut();
-            if let Some(area) = elem.glyph_area_mut() {
-                area.move_position(dx, dy);
-            }
-            let pos = elem.position();
-            patches.push((elem.unique_id(), (pos.x, pos.y)));
+        // Container plus every section sub-element (`Flag::SectionRoot`).
+        // Sections store absolute canvas positions and must move
+        // with the node container or they'll visibly detach. Child
+        // mind-nodes (without `Flag::SectionRoot`) are skipped —
+        // the historical `include_descendants=false` semantic.
+        collect_patches_node_and_sections(&mut tree.tree.arena, tree_node_id, dx, dy, patches);
+    }
+}
+
+/// Collect drag patches for the container plus its section
+/// descendants only — siblings that carry `Flag::SectionRoot`
+/// recurse, child mind-nodes are skipped.
+fn collect_patches_node_and_sections(
+    arena: &mut indextree::Arena<baumhard::gfx_structs::element::GfxElement>,
+    node_id: indextree::NodeId,
+    dx: f32,
+    dy: f32,
+    patches: &mut Vec<(usize, (f32, f32))>,
+) {
+    if let Some(node) = arena.get_mut(node_id) {
+        let elem = node.get_mut();
+        if let Some(area) = elem.glyph_area_mut() {
+            area.move_position(dx, dy);
+        }
+        let pos = elem.position();
+        patches.push((elem.unique_id(), (pos.x, pos.y)));
+    }
+    let mut child = arena.get(node_id).and_then(|n| n.first_child());
+    while let Some(cid) = child {
+        child = arena.get(cid).and_then(|n| n.next_sibling());
+        let is_section = arena
+            .get(cid)
+            .map(|n| n.get().flag_is_set(Flag::SectionRoot))
+            .unwrap_or(false);
+        if is_section {
+            collect_patches_recursive(arena, cid, dx, dy, patches);
         }
     }
 }

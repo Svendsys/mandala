@@ -164,7 +164,7 @@ impl MindMapDocument {
             None => return BorderEditOutcome::default(),
         };
         let before_style = node.style.clone();
-        let before_runs = node.text_runs.clone();
+        let before_sections = node.sections.clone();
         let preset_before = before_style.border.as_ref().map(|c| c.preset.clone());
 
         let mut outcome = BorderEditOutcome::default();
@@ -214,7 +214,7 @@ impl MindMapDocument {
         self.undo_stack.push(UndoAction::EditNodeStyle {
             node_id: node_id.to_string(),
             before_style,
-            before_runs,
+            before_sections,
         });
         self.dirty = true;
         outcome.changed = true;

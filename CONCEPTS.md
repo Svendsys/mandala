@@ -987,23 +987,78 @@ entries.
 
 ### `MindNode`
 
-**Summary.** One node — text, position, size, style, layout hint,
-palette binding, channel, and trigger bindings.
+**Summary.** One node — position, size, style, layout hint,
+palette binding, channel, trigger bindings, and one or more
+[`MindSection`](#mindsection)s carrying the text content.
 
 **What it's for.** The unit of content. Each node renders as a
-shape with text inside, optionally framed by a glyph border, and
-participates in the parent-child tree through its `parent_id`.
-Beyond the obvious display fields, it carries a `channel` for
-mutation routing, a `color_schema` referencing a palette, optional
-`text_runs` for rich text, optional `trigger_bindings` mapping
-input to custom mutations, optional `inline_mutations` (the
-lowest-precedence mutation source), and optional zoom-bounds.
+shape with one or more text-bearing **sections** inside,
+optionally framed by a glyph border, and participates in the
+parent-child tree through its `parent_id`. Post-section refactor
+the node owns visual chrome (background, frame, shape, border,
+shadow) and structural pieces (`channel`, `color_schema`,
+`trigger_bindings`, `inline_mutations`, zoom-bounds); the
+user-typed text lives on its sections.
 
 **Under the hood.** `lib/baumhard/src/mindmap/model/node.rs`. Full
 field reference in [`format/schema.md`](./format/schema.md). Author
 owns non-overlap of node AABBs; the model does no collision
 checking. The tree builder excludes folded subtrees from the
-display tree; the underlying data persists either way.
+display tree; the underlying data persists either way. The node
+container materialises as a chrome-only `GfxElement::GlyphArea`
+in the runtime tree, with the section subtree appended as
+children — see [tree builder](#tree-builder).
+
+### `MindSection`
+
+**Summary.** A positioned text-bearing surface inside a
+`MindNode` — the post-section data shape's home for `text` and
+`text_runs`. Every renderable node has at least one section.
+
+**What it's for.** The user-facing strata of data. A node is a
+*container*; a section is *what the user typed*. Sections give
+the architecture room to grow per-stratum styling, per-stratum
+mutations, and per-stratum interaction without making the node
+itself bigger. For migrated maps the typical shape is one default
+section per node (offset `(0, 0)`, fills the parent); authors who
+want multiple strata of data on one node opt in by appending
+extra sections.
+
+**Under the hood.** `lib/baumhard/src/mindmap/model/node.rs:MindSection`.
+Plain data — `text`, `text_runs`, `offset`, optional `size`,
+`channel`. In the runtime tree each section becomes a
+`GfxElement::GlyphArea` child of the owning node's container area,
+plus a structural `GfxElement::GlyphModel` grandchild that exists
+as a future per-component-mutation seam (the renderer skips it).
+The renderer's tree walker shapes each section-area into its own
+`cosmic_text::Buffer` keyed by `unique_id`, so multiplicity falls
+out for free. Loader rejects pre-section maps with a concrete
+pointer at `maptool convert --sections`. Full reference:
+[`format/sections.md`](./format/sections.md).
+
+**Vision.** Three named seams attach here:
+
+- **Per-section selection / editing.** A
+  `SelectionState::Section { node_id, idx }` variant lets a click
+  target a specific section; the inline text editor follows. This
+  is a tracked follow-up to the data-model commit.
+- **Per-section mutations.** Sections are first-class
+  `GlyphArea`s in the tree, so existing `target_scope = Descendants`
+  mutations already reach them. A future
+  `Predicate::IsSection` / `TargetScope::SectionsOnly` extension
+  lets mutations discriminate sections from sibling child mind-nodes
+  without changing the data model.
+- **Multiple `GlyphModel`s per section.** Today a section holds
+  exactly one structural model; richer composed-glyph layouts
+  (a gridded matrix beside a text run) attach as additional
+  children of the section-area when needed.
+
+**Caveat.** Section channels share the channel space with sibling
+child mind-nodes inside the same parent container — a custom
+mutation targeting "channel 0 children" hits both the first
+section and any channel-0 child mind-node. The
+`Predicate::IsSection` seam closes this when richer authoring
+needs it.
 
 ### `MindEdge`
 
@@ -1374,22 +1429,30 @@ build.
 
 **Summary.** Projects a `MindMap` into a Baumhard
 `Tree<GfxElement, GfxMutator>` mirroring the parent-child
-structure, with sibling order
-`(channel, id_sort_key)`.
+structure, with each `MindNode` materialising as a three-deep
+subtree (container + section-areas + section-models).
 
 **What it's for.** Mutations need a `Tree` to walk against. The
 tree builder constructs it from the model: each visible
-`MindNode` becomes a `GfxElement::GlyphArea`, parent-child
-relationships become tree edges, channels are preserved. Per-role
-sub-builders cover borders, portals, connections, edge labels,
-and edge handles, each producing its own tree (and matching
-mutator-tree) so per-role mutations stay scoped.
+`MindNode` becomes a chrome-only container `GfxElement::GlyphArea`
+plus one `GfxElement::GlyphArea` per section (carrying the
+section's text + theme-resolved regions) plus a structural
+`GfxElement::GlyphModel` grandchild per section-area as a
+future-mutation seam. Parent-child relationships become tree
+edges; channels are preserved. Per-role sub-builders cover
+borders, portals, connections, edge labels, and edge handles,
+each producing its own tree (and matching mutator-tree) so
+per-role mutations stay scoped.
 
 **Under the hood.**
 `lib/baumhard/src/mindmap/tree_builder/mod.rs`. Returns a
-`MindMapTree` with `node_map: HashMap<String, NodeId>` and the
-reverse map for cheap lookups in either direction. Folded nodes
-are excluded.
+`MindMapTree` with `node_map: HashMap<String, NodeId>` (mind id →
+container arena id), `section_map: HashMap<(String, usize), NodeId>`
+(mind id + section index → section-area arena id), reverse maps
+for both, and an `owning_mind_id` helper that climbs up to three
+arena edges (model → section → container) to find the owning
+mind-node. Section-areas (and section-models) carry
+`Flag::SectionRoot`. Folded nodes are excluded.
 
 ### Scene builder
 
@@ -2789,6 +2852,9 @@ its full treatment above.
   [§5: MindMapDocument](#mindmapdocument).
 - **`MindNode`** — one mindmap node. See
   [§3: MindNode](#mindnode).
+- **`MindSection`** — one stratum of user data inside a
+  `MindNode`; the post-section data shape's home for `text` and
+  `text_runs`. See [§3: MindSection](#mindsection).
 - **model / view separation** — document owns data, renderer owns
   GPU resources. See
   [§1: Model / view separation](#model--view-separation).

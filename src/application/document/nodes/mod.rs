@@ -55,25 +55,36 @@ impl MindMapDocument {
             Some(n) => n,
             None => return false,
         };
-        if node.text == new_text {
+        // Pre-section-refactor this setter wrote `node.text`; post-
+        // refactor it writes the *first* section's text. Multi-
+        // section nodes only have their first section edited here —
+        // the per-section UX surface lives in the follow-up commit;
+        // the data model already supports addressing by index.
+        let Some(first_section) = node.sections.first() else {
+            return false;
+        };
+        if first_section.text == new_text {
             return false;
         }
-        let before_text = node.text.clone();
-        let before_runs = node.text_runs.clone();
-        // Collapse to a single run that spans the new text. Inherit
-        // formatting from the first original run, or fall back to the
-        // default-orphan defaults if the node had no runs.
-        let template = before_runs.first().cloned().unwrap_or_else(|| TextRun {
-            start: 0,
-            end: 0,
-            bold: false,
-            italic: false,
-            underline: false,
-            font: "LiberationSans".to_string(),
-            size_pt: 24,
-            color: "#ffffff".to_string(),
-            hyperlink: None,
-        });
+        let before_sections = node.sections.clone();
+        // Collapse the first section to a single run spanning the new
+        // text. Inherit formatting from the first original run on that
+        // section, or fall back to the default-orphan defaults.
+        let template = first_section
+            .text_runs
+            .first()
+            .cloned()
+            .unwrap_or_else(|| TextRun {
+                start: 0,
+                end: 0,
+                bold: false,
+                italic: false,
+                underline: false,
+                font: "LiberationSans".to_string(),
+                size_pt: 24,
+                color: "#ffffff".to_string(),
+                hyperlink: None,
+            });
         let new_runs = vec![TextRun {
             start: 0,
             end: baumhard::util::grapheme_chad::count_grapheme_clusters(&new_text),
@@ -81,8 +92,10 @@ impl MindMapDocument {
         }];
         let canvas_default = self.mindmap.canvas.default_border.clone();
         let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
-        node.text = new_text;
-        node.text_runs = new_runs;
+        if let Some(section) = node.sections.first_mut() {
+            section.text = new_text;
+            section.text_runs = new_runs;
+        }
         // Re-fit the box on text change for the same reason
         // `set_node_font_size` / `set_node_font_family` do: longer
         // text on the same face overflows the right edge, and the
@@ -93,8 +106,7 @@ impl MindMapDocument {
         super::grow_one_node_to_fit_border(node, canvas_default.as_ref());
         self.undo_stack.push(UndoAction::EditNodeText {
             node_id: node_id.to_string(),
-            before_text,
-            before_runs,
+            before_sections,
         });
         self.dirty = true;
         true
@@ -151,25 +163,28 @@ impl MindMapDocument {
         };
         let old_default = node.style.text_color.clone();
         let any_run_changes = node
-            .text_runs
+            .sections
             .iter()
+            .flat_map(|s| s.text_runs.iter())
             .any(|r| r.color == old_default && r.color != color);
         if old_default == color && !any_run_changes {
             return false;
         }
         let before_style = node.style.clone();
-        let before_runs = node.text_runs.clone();
+        let before_sections = node.sections.clone();
         let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
         node.style.text_color = color.clone();
-        for run in node.text_runs.iter_mut() {
-            if run.color == old_default {
-                run.color = color.clone();
+        for section in node.sections.iter_mut() {
+            for run in section.text_runs.iter_mut() {
+                if run.color == old_default {
+                    run.color = color.clone();
+                }
             }
         }
         self.undo_stack.push(UndoAction::EditNodeStyle {
             node_id: node_id.to_string(),
             before_style,
-            before_runs,
+            before_sections,
         });
         self.dirty = true;
         true
@@ -190,16 +205,22 @@ impl MindMapDocument {
             Some(n) => n,
             None => return false,
         };
-        let already = node.text_runs.iter().all(|r| r.size_pt == size_u);
+        let already = node
+            .sections
+            .iter()
+            .flat_map(|s| s.text_runs.iter())
+            .all(|r| r.size_pt == size_u);
         if already {
             return false;
         }
         let before_style = node.style.clone();
-        let before_runs = node.text_runs.clone();
+        let before_sections = node.sections.clone();
         let canvas_default = self.mindmap.canvas.default_border.clone();
         let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
-        for run in node.text_runs.iter_mut() {
-            run.size_pt = size_u;
+        for section in node.sections.iter_mut() {
+            for run in section.text_runs.iter_mut() {
+                run.size_pt = size_u;
+            }
         }
         // Larger text needs a larger box. Same monotonic floor as
         // `set_node_font_family`: grow on demand, never shrink.
@@ -208,7 +229,7 @@ impl MindMapDocument {
         self.undo_stack.push(UndoAction::EditNodeStyle {
             node_id: node_id.to_string(),
             before_style,
-            before_runs,
+            before_sections,
         });
         self.dirty = true;
         true
@@ -238,16 +259,22 @@ impl MindMapDocument {
             Some(n) => n,
             None => return false,
         };
-        let already = node.text_runs.iter().all(|r| r.font.as_str() == target);
+        let already = node
+            .sections
+            .iter()
+            .flat_map(|s| s.text_runs.iter())
+            .all(|r| r.font.as_str() == target);
         if already {
             return false;
         }
         let before_style = node.style.clone();
-        let before_runs = node.text_runs.clone();
+        let before_sections = node.sections.clone();
         let canvas_default = self.mindmap.canvas.default_border.clone();
         let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
-        for run in node.text_runs.iter_mut() {
-            run.font = target.to_string();
+        for section in node.sections.iter_mut() {
+            for run in section.text_runs.iter_mut() {
+                run.font = target.to_string();
+            }
         }
         // Re-measure the node's text in the new face. Fonts vary
         // wildly in advance width — pinning a wide display face on
@@ -261,7 +288,7 @@ impl MindMapDocument {
         self.undo_stack.push(UndoAction::EditNodeStyle {
             node_id: node_id.to_string(),
             before_style,
-            before_runs,
+            before_sections,
         });
         self.dirty = true;
         true
@@ -351,14 +378,14 @@ pub(super) fn set_node_style_field(
         None => return false,
     };
     let before_style = node.style.clone();
-    let before_runs = node.text_runs.clone();
+    let before_sections = node.sections.clone();
     if !mutate(&mut node.style) {
         return false;
     }
     doc.undo_stack.push(UndoAction::EditNodeStyle {
         node_id: node_id.to_string(),
         before_style,
-        before_runs,
+        before_sections,
     });
     doc.dirty = true;
     true
