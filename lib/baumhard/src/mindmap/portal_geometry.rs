@@ -47,6 +47,7 @@ pub const BORDER_T_PERIOD: f32 = 4.0;
 /// infinity) fall back to `0.0` — no caller path produces them in
 /// practice, but a guard is cheaper than propagating NaN into
 /// glyph positions and debugging the resulting blank render.
+///
 /// Cost: O(1).
 pub fn wrap_border_t(t: f32) -> f32 {
     if !t.is_finite() {
@@ -67,7 +68,9 @@ pub fn wrap_border_t(t: f32) -> f32 {
 /// - `[3, 4)` → left edge, bottom → top
 ///
 /// Values outside the canonical range are wrapped via
-/// [`wrap_border_t`]. Cost: O(1).
+/// [`wrap_border_t`].
+///
+/// Cost: O(1).
 pub fn border_point_at(node_pos: Vec2, node_size: Vec2, t: f32) -> Vec2 {
     let t = wrap_border_t(t);
     let side = t.floor() as i32;
@@ -84,7 +87,9 @@ pub fn border_point_at(node_pos: Vec2, node_size: Vec2, t: f32) -> Vec2 {
 /// of the four axis-aligned unit vectors (±x, ±y). Used to offset
 /// a label outside the border so its glyph doesn't overlap the
 /// node frame: `label_origin = border_point + outward_normal *
-/// outset`. Cost: O(1).
+/// outset`.
+///
+/// Cost: O(1).
 pub fn border_outward_normal(t: f32) -> Vec2 {
     let t = wrap_border_t(t);
     match t.floor() as i32 {
@@ -107,7 +112,9 @@ pub fn border_outward_normal(t: f32) -> Vec2 {
 /// if two nodes are exactly overlapping), falls back to the
 /// top-right corner (`t = 1.0`) to match the pre-refactor portal
 /// marker placement so a broken map still renders something
-/// recognizable. Cost: O(1).
+/// recognizable.
+///
+/// Cost: O(1).
 pub fn default_border_t(owner_pos: Vec2, owner_size: Vec2, partner_center: Vec2) -> f32 {
     let owner_center = Vec2::new(owner_pos.x + owner_size.x * 0.5, owner_pos.y + owner_size.y * 0.5);
     let dir = partner_center - owner_center;
@@ -160,8 +167,10 @@ pub fn default_border_t(owner_pos: Vec2, owner_size: Vec2, partner_center: Vec2)
 /// downstream picks a well-defined single normal. Visually
 /// indistinguishable (one epsilon of canvas space), but it keeps
 /// the outward-normal direction stable instead of flipping on
-/// sub-pixel cursor jitter. Cost: O(1) — four candidate distances,
-/// constant-time min, no allocation.
+/// sub-pixel cursor jitter.
+///
+/// Cost: O(1) — four candidate distances, constant-time min, no
+/// allocation.
 pub fn nearest_border_t(node_pos: Vec2, node_size: Vec2, point: Vec2) -> f32 {
     // Clamp the point onto the rectangle (interior points snap to
     // the nearest edge, exterior points project onto the closest
