@@ -355,9 +355,14 @@ pub(in crate::application::app) fn apply_text_edit_to_tree(
     ]);
     delta.apply_to(area);
 
-    // Re-shape the node buffers off the mutated tree. This is the
-    // existing tree-render path, reused.
-    renderer.rebuild_buffers_from_tree(&tree.tree);
+    // Re-shape only the edited section's buffer — the keyed reshape
+    // drops the per-keystroke cost on a multi-section node from
+    // `O(N × sections)` (the old `rebuild_buffers_from_tree` over
+    // the whole arena) to `O(halos+1)` for this single element.
+    // Capture the unique_id before releasing the `&mut` borrow on
+    // the arena element.
+    let unique_id = element.unique_id();
+    renderer.reshape_buffer_for(unique_id, &tree.tree);
 }
 
 /// route a keystroke to the open node text editor. All

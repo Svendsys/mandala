@@ -53,122 +53,144 @@ pub(super) fn walk_tree_into_buffers(
             Some(n) => n,
             None => continue,
         };
-        let element = node.get();
-        let area = match element.glyph_area() {
-            Some(a) => a,
-            None => continue, // Void and GlyphModel nodes carry no text.
-        };
+        shape_one_element_into_buffers(
+            node.get(),
+            offset,
+            font_system,
+            &mut yield_buffer,
+            &mut yield_background,
+        );
+    }
+}
 
-        if let Some(color) = area.background_color {
-            // Inflate the fill rect outward by `background_padding`
-            // — per-edge values so framed nodes whose four border
-            // runs sit at different visible-stroke offsets get an
-            // asymmetric fill that matches each side. The `is_zero`
-            // fast-path skips the four-add arithmetic for unframed
-            // nodes (the common case): `EdgePadding::ZERO` means
-            // the fill coincides with the text rect, the historical
-            // behaviour, so we can read `position` / `render_bounds`
-            // straight through.
-            let pad = area.background_padding;
-            let pos = Vec2::new(area.position.x.0, area.position.y.0);
-            let size = Vec2::new(area.render_bounds.x.0, area.render_bounds.y.0);
-            let (rect_pos, rect_size) = if pad.is_zero() {
-                (pos, size)
-            } else {
-                (
-                    Vec2::new(pos.x - pad.left(), pos.y - pad.top()),
-                    Vec2::new(
-                        size.x + pad.left() + pad.right(),
-                        size.y + pad.top() + pad.bottom(),
-                    ),
-                )
-            };
-            yield_background(NodeBackgroundRect {
-                position: rect_pos + offset,
-                size: rect_size,
-                color,
-                shape_id: area.shape.shader_id(),
-                zoom_visibility: area.zoom_visibility,
-            });
-        }
+/// Shape a single `GfxElement` into a (background, buffer-set)
+/// pair via the same per-element work the full walker does.
+/// Extracted so the keyed-reshape API
+/// (`Renderer::reshape_buffer_for`) can re-shape one element
+/// without walking the whole tree on every keystroke. `Void` /
+/// `GlyphModel` elements (no text-bearing payload) yield
+/// nothing — same fast-skip the full walker uses.
+pub(super) fn shape_one_element_into_buffers(
+    element: &GfxElement,
+    offset: Vec2,
+    font_system: &mut FontSystem,
+    yield_buffer: &mut dyn FnMut(usize, MindMapTextBuffer),
+    yield_background: &mut dyn FnMut(NodeBackgroundRect),
+) {
+    let area = match element.glyph_area() {
+        Some(a) => a,
+        None => return, // Void and GlyphModel nodes carry no text.
+    };
 
-        if area.text.is_empty() {
-            continue;
-        }
-
-        let scale = area.scale.0;
-        let line_height = area.line_height.0;
-        let bound_x = area.render_bounds.x.0;
-        let bound_y = area.render_bounds.y.0;
-
-        // Pre-resolve every region's family-name string once; reuse
-        // the result across the main glyph + every halo stamp so the
-        // `font_system.db().face(...)` lookups don't re-run per
-        // stamp. Lives in baumhard so the styled-region → cosmic-text
-        // bridge has a single owner.
-        let families = RegionFamilies::resolve(&area.regions, font_system);
-
-        let text = &area.text;
-        let alignment = if area.align_center {
-            Some(cosmic_text::Align::Center)
+    if let Some(color) = area.background_color {
+        // Inflate the fill rect outward by `background_padding`
+        // — per-edge values so framed nodes whose four border
+        // runs sit at different visible-stroke offsets get an
+        // asymmetric fill that matches each side. The `is_zero`
+        // fast-path skips the four-add arithmetic for unframed
+        // nodes (the common case): `EdgePadding::ZERO` means
+        // the fill coincides with the text rect, the historical
+        // behaviour, so we can read `position` / `render_bounds`
+        // straight through.
+        let pad = area.background_padding;
+        let pos = Vec2::new(area.position.x.0, area.position.y.0);
+        let size = Vec2::new(area.render_bounds.x.0, area.render_bounds.y.0);
+        let (rect_pos, rect_size) = if pad.is_zero() {
+            (pos, size)
         } else {
-            None
-        };
-
-        // Helper to shape one buffer at an offset and yield it. The
-        // wrap mode stays at cosmic-text's default `Wrap::WordOrGlyph`
-        // — `Word` mode silently dropped supplementary-plane glyphs
-        // (e.g. picker Egyptian hieroglyphs) whose shaped advance
-        // exceeded the cell box.
-        let mut shape_and_yield = |spans: Vec<(&str, Attrs)>, x_off: f32, y_off: f32, fs: &mut FontSystem| {
-            let mut buffer = cosmic_text::Buffer::new(fs, cosmic_text::Metrics::new(scale, line_height));
-            buffer.set_size(fs, Some(bound_x), Some(bound_y));
-            buffer.set_rich_text(
-                fs,
-                spans,
-                &Attrs::new(),
-                cosmic_text::Shaping::Advanced,
-                alignment,
-            );
-            buffer.shape_until_scroll(fs, false);
-            let text_buffer = MindMapTextBuffer {
-                buffer,
-                pos: (
-                    area.position.x.0 + x_off + offset.x,
-                    area.position.y.0 + y_off + offset.y,
+            (
+                Vec2::new(pos.x - pad.left(), pos.y - pad.top()),
+                Vec2::new(
+                    size.x + pad.left() + pad.right(),
+                    size.y + pad.top() + pad.bottom(),
                 ),
-                bounds: (bound_x, bound_y),
-                zoom_visibility: area.zoom_visibility,
-            };
-            yield_buffer(element.unique_id(), text_buffer);
+            )
         };
+        yield_background(NodeBackgroundRect {
+            position: rect_pos + offset,
+            size: rect_size,
+            color,
+            shape_id: area.shape.shader_id(),
+            zoom_visibility: area.zoom_visibility,
+        });
+    }
 
-        // Halos first — DFS yield order means later buffers render on
-        // top, so emitting halos before the main glyph puts them
-        // visually behind. The stamp geometry is canonical in
-        // baumhard (`OutlineStyle::offsets`); the per-region attrs
-        // construction is canonical in
-        // `baumhard::font::attrs::rich_text_spans_from_regions`. We
-        // just stamp once per offset.
-        if let Some(outline) = area.outline {
-            if outline.px > 0.0 {
-                let halo_color = cosmic_text::Color::rgba(
-                    outline.color[0],
-                    outline.color[1],
-                    outline.color[2],
-                    outline.color[3],
-                );
-                for (dx, dy) in outline.offsets() {
-                    let halo_spans =
-                        rich_text_spans_from_regions(text, &families, scale, line_height, Some(halo_color));
-                    shape_and_yield(halo_spans, dx, dy, font_system);
-                }
+    if area.text.is_empty() {
+        return;
+    }
+
+    let scale = area.scale.0;
+    let line_height = area.line_height.0;
+    let bound_x = area.render_bounds.x.0;
+    let bound_y = area.render_bounds.y.0;
+
+    // Pre-resolve every region's family-name string once; reuse
+    // the result across the main glyph + every halo stamp so the
+    // `font_system.db().face(...)` lookups don't re-run per
+    // stamp. Lives in baumhard so the styled-region → cosmic-text
+    // bridge has a single owner.
+    let families = RegionFamilies::resolve(&area.regions, font_system);
+
+    let text = &area.text;
+    let alignment = if area.align_center {
+        Some(cosmic_text::Align::Center)
+    } else {
+        None
+    };
+
+    // Helper to shape one buffer at an offset and yield it. The
+    // wrap mode stays at cosmic-text's default `Wrap::WordOrGlyph`
+    // — `Word` mode silently dropped supplementary-plane glyphs
+    // (e.g. picker Egyptian hieroglyphs) whose shaped advance
+    // exceeded the cell box.
+    let mut shape_and_yield = |spans: Vec<(&str, Attrs)>, x_off: f32, y_off: f32, fs: &mut FontSystem| {
+        let mut buffer = cosmic_text::Buffer::new(fs, cosmic_text::Metrics::new(scale, line_height));
+        buffer.set_size(fs, Some(bound_x), Some(bound_y));
+        buffer.set_rich_text(
+            fs,
+            spans,
+            &Attrs::new(),
+            cosmic_text::Shaping::Advanced,
+            alignment,
+        );
+        buffer.shape_until_scroll(fs, false);
+        let text_buffer = MindMapTextBuffer {
+            buffer,
+            pos: (
+                area.position.x.0 + x_off + offset.x,
+                area.position.y.0 + y_off + offset.y,
+            ),
+            bounds: (bound_x, bound_y),
+            zoom_visibility: area.zoom_visibility,
+        };
+        yield_buffer(element.unique_id(), text_buffer);
+    };
+
+    // Halos first — DFS yield order means later buffers render on
+    // top, so emitting halos before the main glyph puts them
+    // visually behind. The stamp geometry is canonical in
+    // baumhard (`OutlineStyle::offsets`); the per-region attrs
+    // construction is canonical in
+    // `baumhard::font::attrs::rich_text_spans_from_regions`. We
+    // just stamp once per offset.
+    if let Some(outline) = area.outline {
+        if outline.px > 0.0 {
+            let halo_color = cosmic_text::Color::rgba(
+                outline.color[0],
+                outline.color[1],
+                outline.color[2],
+                outline.color[3],
+            );
+            for (dx, dy) in outline.offsets() {
+                let halo_spans =
+                    rich_text_spans_from_regions(text, &families, scale, line_height, Some(halo_color));
+                shape_and_yield(halo_spans, dx, dy, font_system);
             }
         }
-
-        // Main glyph. Always emitted last so it sits on top of any
-        // halos.
-        let main_spans = rich_text_spans_from_regions(text, &families, scale, line_height, None);
-        shape_and_yield(main_spans, 0.0, 0.0, font_system);
     }
+
+    // Main glyph. Always emitted last so it sits on top of any
+    // halos.
+    let main_spans = rich_text_spans_from_regions(text, &families, scale, line_height, None);
+    shape_and_yield(main_spans, 0.0, 0.0, font_system);
 }

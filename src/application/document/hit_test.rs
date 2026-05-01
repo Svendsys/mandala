@@ -509,6 +509,15 @@ fn apply_delta_recursive(
 
 /// Recursively apply delta, collect patches, via `first_child` /
 /// `next_sibling` — zero allocations per call (§B7).
+///
+/// Patches are only emitted for elements that carry a renderer
+/// buffer entry — i.e. `GlyphArea`-bearing variants. Section-
+/// model `GlyphModel` siblings have no buffer key (the renderer
+/// doesn't shape them), so emitting their `unique_id` would
+/// drive a hash miss in `patch_drag_positions` per drag tick on
+/// every section-model in the dragged subtree. Dropping them
+/// here costs one branch per arena entry; the avoided hash
+/// misses cost an order of magnitude more.
 fn collect_patches_recursive(
     arena: &mut indextree::Arena<baumhard::gfx_structs::element::GfxElement>,
     node_id: indextree::NodeId,
@@ -521,9 +530,9 @@ fn collect_patches_recursive(
         let elem = node.get_mut();
         if let Some(area) = elem.glyph_area_mut() {
             area.move_position(dx, dy);
+            let pos = elem.position();
+            patches.push((elem.unique_id(), (pos.x, pos.y)));
         }
-        let pos = elem.position();
-        patches.push((elem.unique_id(), (pos.x, pos.y)));
     }
     // Recurse into children.
     let mut child = arena.get(node_id).and_then(|n| n.first_child());

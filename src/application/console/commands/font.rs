@@ -46,7 +46,7 @@ use crate::application::console::traits::{apply_to_targets, AcceptsFontFamily};
 use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
 use crate::application::document::{SectionSel, SelectionState};
 
-pub const KEYS: &[&str] = &["size", "min", "max"];
+pub const KEYS: &[&str] = &["size", "min", "max", "section"];
 /// Positional subverbs surfaced as token-0 completions alongside
 /// the kv keys.
 pub const VERBS: &[&str] = &["set", "list"];
@@ -118,6 +118,7 @@ fn kv_hint(key: &str) -> Option<&'static str> {
         "size" => Some("target on-screen size in points"),
         "min" => Some("lower screen-space clamp in points"),
         "max" => Some("upper screen-space clamp in points"),
+        "section" => Some("target section index inside a multi-section node"),
         _ => None,
     }
 }
@@ -193,6 +194,7 @@ fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     let mut size: Option<f32> = None;
     let mut min: Option<f32> = None;
     let mut max: Option<f32> = None;
+    let mut section_target: Option<usize> = None;
     let mut saw_any = false;
     for (k, v) in args.kvs() {
         saw_any = true;
@@ -208,6 +210,15 @@ fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             "max" => match parse_pt("max", v) {
                 Ok(pt) => max = Some(pt),
                 Err(e) => return e,
+            },
+            "section" => match v.parse::<usize>() {
+                Ok(idx) => section_target = Some(idx),
+                Err(_) => {
+                    return ExecResult::err(format!(
+                        "font: section='{}' is not a non-negative integer",
+                        v
+                    ));
+                }
             },
             other => return ExecResult::err(format!("unknown key '{}'", other)),
         }
@@ -239,11 +250,20 @@ fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     // their own channel.
     let doc = &mut eff.document;
     match doc.selection.clone() {
-        SelectionState::Single(id) => node_font_outcome(doc, &id, size, min, max),
-        // Per-section size requires a future verb syntax; for
-        // today's `font size=N` route through to the owning node
-        // (writes apply to every section's runs).
-        SelectionState::Section(s) => node_font_outcome(doc, &s.node_id, size, min, max),
+        // `section=N` (E5 verb syntax) routes to that specific
+        // section's runs; absent, the write applies to every
+        // section on the node.
+        SelectionState::Single(id) => match section_target {
+            Some(idx) => section_font_outcome(doc, &id, idx, size, min, max),
+            None => node_font_outcome(doc, &id, size, min, max),
+        },
+        SelectionState::Section(s) => {
+            // Section selection: explicit `section=N` overrides
+            // the active section index; otherwise fall through to
+            // the section the user pointed at.
+            let idx = section_target.unwrap_or(s.section_idx);
+            section_font_outcome(doc, &s.node_id, idx, size, min, max)
+        }
         SelectionState::Multi(ids) => {
             // Fanout: apply size to each node; collect a single
             // "any changed?" result. `min` / `max` are
@@ -290,6 +310,43 @@ fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             finalize("portal text", changed)
         }
         SelectionState::None => ExecResult::err("font: no selection"),
+    }
+}
+
+/// Per-section font outcome — the `section=N` verb syntax routes
+/// here. Mirrors [`node_font_outcome`] for the shape, but writes
+/// only to section `section_idx` via
+/// [`super::super::super::document::MindMapDocument::set_section_font_size`].
+/// `min` / `max` remain NotApplicable for nodes / sections; the
+/// surface message is the same.
+fn section_font_outcome(
+    doc: &mut crate::application::document::MindMapDocument,
+    id: &str,
+    section_idx: usize,
+    size: Option<f32>,
+    min: Option<f32>,
+    max: Option<f32>,
+) -> ExecResult {
+    let mut messages = Vec::new();
+    let mut any_applied = false;
+    if let Some(pt) = size {
+        if doc.set_section_font_size(id, section_idx, pt) {
+            any_applied = true;
+        }
+    }
+    if min.is_some() || max.is_some() {
+        messages.push("min/max: nodes have no screen-space clamps".to_string());
+    }
+    if !messages.is_empty() {
+        if !any_applied {
+            return ExecResult::err(messages.join("; "));
+        }
+        return ExecResult::lines(messages);
+    }
+    if any_applied {
+        ExecResult::ok_msg(format!("font applied to section {}", section_idx))
+    } else {
+        ExecResult::ok_msg("font: no change")
     }
 }
 
@@ -894,5 +951,46 @@ mod tests {
         let mut doc = fixture_doc();
         doc.selection = SelectionState::None;
         assert!(!super::apply_font_kv_to_selection(&mut doc, "size", 14.0));
+    }
+
+    /// `font size=N section=K` routes through the section setter
+    /// for the specified index — the run on section K gets the new
+    /// size, sections at other indices stay untouched.
+    #[test]
+    fn font_size_section_kv_targets_specific_section() {
+        use baumhard::mindmap::model::MindSection;
+        let mut doc = fixture_doc();
+        // Materialise a multi-section node and pin every section's
+        // runs to size 14 so we can detect which index changed.
+        {
+            let node = doc.mindmap.nodes.get_mut("0").unwrap();
+            node.sections
+                .push(MindSection::new_default("second".into(), Vec::new()));
+            for section in node.sections.iter_mut() {
+                section.text_runs.clear();
+                section.text_runs.push(baumhard::mindmap::model::TextRun {
+                    start: 0,
+                    end: section.text.chars().count().max(1),
+                    bold: false,
+                    italic: false,
+                    underline: false,
+                    font: "LiberationSans".into(),
+                    size_pt: 14,
+                    color: "#ffffff".into(),
+                    hyperlink: None,
+                });
+            }
+        }
+        doc.selection = SelectionState::Single("0".into());
+        assert_exec_ok(run("font size=22 section=1", &mut doc));
+        let node = doc.mindmap.nodes.get("0").unwrap();
+        assert!(
+            node.sections[0].text_runs.iter().all(|r| r.size_pt == 14),
+            "section 0 must NOT receive the size change"
+        );
+        assert!(
+            node.sections[1].text_runs.iter().all(|r| r.size_pt == 22),
+            "section 1 must receive the new size"
+        );
     }
 }

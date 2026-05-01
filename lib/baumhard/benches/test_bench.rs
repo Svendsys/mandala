@@ -601,5 +601,96 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, criterion_benchmark);
+/// Inline a minimal `MindNode` constructor for the bench file —
+/// `baumhard::mindmap::test_helpers::synthetic_node_full` is
+/// `pub(crate)` so external benches can't reach it. Mirrors the
+/// shape that helper produces (no border, simple style).
+fn bench_node(id: &str, x: f64, sections: Vec<baumhard::mindmap::model::MindSection>) -> baumhard::mindmap::model::MindNode {
+    use baumhard::mindmap::model::{MindNode, NodeLayout, NodeStyle, Position, Size};
+    MindNode {
+        id: id.to_string(),
+        parent_id: None,
+        position: Position { x, y: 0.0 },
+        size: Size {
+            width: 80.0,
+            height: 40.0,
+        },
+        sections,
+        style: NodeStyle {
+            background_color: "#000".into(),
+            frame_color: "#fff".into(),
+            text_color: "#fff".into(),
+            shape: "rectangle".into(),
+            corner_radius_percent: 0.0,
+            frame_thickness: 1.0,
+            show_frame: false,
+            show_shadow: false,
+            border: None,
+        },
+        layout: NodeLayout {
+            layout_type: "map".into(),
+            direction: "auto".into(),
+            spacing: 0.0,
+        },
+        folded: false,
+        notes: String::new(),
+        color_schema: None,
+        channel: 0,
+        trigger_bindings: vec![],
+        inline_mutations: vec![],
+        inline_macros: Vec::new(),
+        min_zoom_to_render: None,
+        max_zoom_to_render: None,
+    }
+}
+
+fn synthetic_single_section_map(node_count: usize) -> MindMap {
+    use baumhard::mindmap::model::MindSection;
+    let mut map = MindMap::new_blank("bench-single");
+    for i in 0..node_count {
+        let section = MindSection::new_default(format!("node {}", i), Vec::new());
+        let node = bench_node(&format!("n{}", i), (i as f64) * 5.0, vec![section]);
+        map.nodes.insert(node.id.clone(), node);
+    }
+    map
+}
+
+fn synthetic_multi_section_map(node_count: usize, sections_per_node: usize) -> MindMap {
+    use baumhard::mindmap::model::MindSection;
+    let mut map = MindMap::new_blank("bench-multi");
+    for i in 0..node_count {
+        let sections: Vec<MindSection> = (0..sections_per_node)
+            .map(|s_idx| MindSection::new_default(format!("section {} of {}", s_idx, i), Vec::new()))
+            .collect();
+        let node = bench_node(&format!("m{}", i), (i as f64) * 5.0, sections);
+        map.nodes.insert(node.id.clone(), node);
+    }
+    map
+}
+
+fn do_build_mindmap_tree(map: &MindMap) {
+    use baumhard::mindmap::tree_builder::build_mindmap_tree;
+    let _ = build_mindmap_tree(map);
+}
+
+fn section_tree_build_benchmark(c: &mut Criterion) {
+    // 243-node single-section map — the canonical "every node has
+    // one default section" shape (every legacy / migrated map).
+    let single_section = synthetic_single_section_map(243);
+    c.bench_function("section_tree_build_243_single_section", |b| {
+        b.iter(|| do_build_mindmap_tree(&single_section));
+    });
+
+    // 50-node × 5-section multi-section map — the heavy authoring
+    // shape that the post-section refactor newly enables. The
+    // ratio between this and the single-section benchmark is the
+    // headline number for "how much does multi-section authoring
+    // cost the tree builder?".
+    let multi_section = synthetic_multi_section_map(50, 5);
+    c.bench_function("section_tree_build_50_multi_section", |b| {
+        b.iter(|| do_build_mindmap_tree(&multi_section));
+    });
+}
+
+criterion_group!(benches, criterion_benchmark, section_tree_build_benchmark);
 criterion_main!(benches);

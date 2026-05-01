@@ -10,7 +10,7 @@ use baumhard::gfx_structs::mutator::GfxMutator;
 use baumhard::gfx_structs::tree::Tree;
 use glam::Vec2;
 
-use super::tree_walker::walk_tree_into_buffers;
+use super::tree_walker::{shape_one_element_into_buffers, walk_tree_into_buffers};
 use super::Renderer;
 
 impl Renderer {
@@ -44,6 +44,63 @@ impl Renderer {
                 self.mindmap_buffers.insert(unique_id.to_string(), buffer);
             },
             |rect| self.node_background_rects.push(rect),
+        );
+    }
+
+    /// Re-shape one element's text buffers in place, keyed by the
+    /// element's `unique_id`. Used by the per-keystroke text-edit
+    /// path on a multi-section node — pre-fix the path called
+    /// [`Self::rebuild_buffers_from_tree`] which walked the entire
+    /// arena and re-shaped every section across every node, an
+    /// O(N×sections) cost paid on every keypress. The keyed reshape
+    /// drops this to O(1) (well, O(halos+1) buffers per element).
+    ///
+    /// Drops every existing buffer keyed by the element's
+    /// `unique_id` (the main glyph plus any halos share the same
+    /// key) before re-shaping; the re-shape pass writes the new
+    /// buffers back via `mindmap_buffers.insert`. Background rects
+    /// for *this element* are dropped from `node_background_rects`
+    /// and re-collected from the fresh element so a section whose
+    /// background colour just changed reflects the new fill.
+    /// Other elements' backgrounds are untouched — they sit on
+    /// other elements' `unique_id`s.
+    pub fn reshape_buffer_for(
+        &mut self,
+        unique_id: usize,
+        tree: &Tree<GfxElement, GfxMutator>,
+    ) {
+        // Find the arena element whose unique_id matches.
+        let element = tree
+            .root()
+            .descendants(&tree.arena)
+            .find_map(|node_id| {
+                tree.arena
+                    .get(node_id)
+                    .map(|n| n.get())
+                    .filter(|el| el.unique_id() == unique_id)
+            });
+        let Some(element) = element else { return };
+
+        // Drop the existing buffers + background entries keyed to
+        // this element so the re-shape pass can write fresh ones.
+        let key = unique_id.to_string();
+        self.mindmap_buffers.remove(&key);
+        // Backgrounds aren't keyed; the cheap pass is to keep
+        // every other element's rect and just append the freshly-
+        // shaped one. Drag-only paths use
+        // [`Self::rebuild_node_backgrounds_from_tree`] for the same
+        // intent; here we keep the per-element scope tight.
+        let mut font_system = fonts::FONT_SYSTEM
+            .write()
+            .expect("Failed to acquire font_system lock");
+        shape_one_element_into_buffers(
+            element,
+            Vec2::ZERO,
+            &mut font_system,
+            &mut |uid, buffer| {
+                self.mindmap_buffers.insert(uid.to_string(), buffer);
+            },
+            &mut |rect| self.node_background_rects.push(rect),
         );
     }
 
