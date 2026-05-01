@@ -135,7 +135,9 @@ impl ThrottledInteraction for MovingNodeInteraction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::app::throttled_interaction::test_utils::drive_throttle_over_budget;
+    use crate::application::app::throttled_interaction::test_utils::{
+        drive_throttle_over_budget, trait_default_tests_for_throttled_interaction,
+    };
 
     #[test]
     fn test_new_initialises_fields_with_zero_deltas() {
@@ -199,7 +201,7 @@ mod tests {
         assert!(i.individual);
     }
 
-    crate::application::app::throttled_interaction::test_utils::trait_default_tests_for_throttled_interaction! {
+    trait_default_tests_for_throttled_interaction! {
         build = || MovingNodeInteraction::new(vec!["n".into()], false),
         set_pending = |i: &mut MovingNodeInteraction| {
             i.pending_delta = Vec2::new(1.0, 0.0);

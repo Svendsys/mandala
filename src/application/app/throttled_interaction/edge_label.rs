@@ -92,7 +92,7 @@ impl ThrottledInteraction for EdgeLabelInteraction {
 mod tests {
     use super::*;
     use crate::application::app::throttled_interaction::test_utils::{
-        drive_throttle_over_budget, fixture_edge,
+        drive_throttle_over_budget, fixture_edge, trait_default_tests_for_throttled_interaction,
     };
 
     fn fixture_interaction() -> EdgeLabelInteraction {
@@ -144,7 +144,7 @@ mod tests {
         assert_eq!(i.pending_cursor, Some(Vec2::new(8.0, 9.0)));
     }
 
-    crate::application::app::throttled_interaction::test_utils::trait_default_tests_for_throttled_interaction! {
+    trait_default_tests_for_throttled_interaction! {
         build = fixture_interaction,
         set_pending = |i: &mut EdgeLabelInteraction| {
             i.pending_cursor = Some(Vec2::new(0.0, 0.0));
