@@ -11,6 +11,9 @@
 //! - [`crate::font::attrs::RegionFamilies`] +
 //!   [`crate::font::attrs::rich_text_spans_from_regions`] returns
 //!   a `Vec<(&str, Attrs)>` for callers using `Buffer::set_rich_text`.
+//!   (Full crate paths because rustdoc resolves intra-doc links inside
+//!   `//!` inner-module docs against the parent module's namespace,
+//!   not this module's own — `self::` and bare names both fail.)
 //!
 //! Both honour the per-region color, font pin, and grapheme-aware
 //! byte slicing — `Range` indices on `ColorFontRegion` carry

@@ -56,8 +56,8 @@ pub(super) fn ensure_label_config_inline(edge: &mut MindEdge) -> &mut EdgeLabelC
 /// Caller is responsible for the equality / no-op short-circuit
 /// before invoking — this helper unconditionally writes. Pairs
 /// with [`super::super::MindMapDocument::mutate_edge`]: the
-/// closure does `current == new_val? false :
-/// { write_endpoint_field(...); true }`.
+/// closure does
+/// `if current == new_val { false } else { write_endpoint_field(...); true }`.
 pub(super) fn write_endpoint_field<T, S>(slot: &mut Option<PortalEndpointState>, value: Option<T>, setter: S)
 where
     S: FnOnce(&mut PortalEndpointState, Option<T>),

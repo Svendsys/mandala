@@ -15,8 +15,12 @@ pub use super::color_conversion::*;
 /// Compile-time `[u8; 4]` → `[f32; 4]` RGBA literal, dividing each
 /// channel by 255.0. Use in `const`-adjacent contexts where a
 /// float-RGBA is wanted without a helper call. For runtime
-/// conversions reach for [`super::color_conversion::hex_to_rgba_safe`]
-/// or the explicit accessors on [`FloatRgba`].
+/// conversions reach for
+/// [`crate::util::color_conversion::hex_to_rgba_safe`] or the
+/// explicit accessors on [`crate::util::color::FloatRgba`].
+/// Absolute paths because `#[macro_export]` doc-renders at the
+/// crate root, where `super::` would resolve against the wrong
+/// scope.
 #[macro_export]
 macro_rules! rgba {
     ([$r:expr, $g:expr, $b:expr, $a:expr]) => {{

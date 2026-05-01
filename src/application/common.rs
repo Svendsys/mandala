@@ -41,7 +41,7 @@ pub enum InputMode {
 }
 
 /// Renderer-side command queue entry. Event loop pushes one
-/// per per-frame intent the renderer should react to; the
+/// for each per-frame intent the renderer should react to; the
 /// renderer drains them at frame start. Everything that
 /// changes GPU state without changing document state goes
 /// through here so the model/view boundary (§3) stays clean.
