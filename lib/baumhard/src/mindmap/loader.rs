@@ -13,6 +13,10 @@ use std::path::Path;
 /// memory via `std::fs::read_to_string`, then delegates to
 /// [`load_from_str`]. Native-only (synchronous I/O). Returns a
 /// `String` error describing the path + underlying cause.
+///
+/// Cost: one filesystem read (latency-bound, plus an allocation
+/// sized to the file's UTF-8 length) followed by [`load_from_str`]'s
+/// JSON parse — O(file_size) overall. Felt every map load.
 pub fn load_from_file(path: &Path) -> Result<MindMap, String> {
     let content =
         fs::read_to_string(path).map_err(|e| format!("Failed to read file {}: {}", path.display(), e))?;
@@ -24,6 +28,11 @@ pub fn load_from_file(path: &Path) -> Result<MindMap, String> {
 /// migration pointer (`maptool convert --portals`) so a stale map
 /// doesn't silently lose its portals — serde would otherwise ignore
 /// the unknown field. Allocation-bounded by the input size.
+///
+/// Cost: two serde-JSON passes — first into `serde_json::Value` for
+/// the legacy-portal probe, then `from_value` into `MindMap`.
+/// O(input_len) in both time and peak memory; pays the parse twice
+/// over to keep the legacy-detection branch off the happy path.
 pub fn load_from_str(json: &str) -> Result<MindMap, String> {
     // Pre-refactor maps stored portals in a separate `portals[]` array.
     // Post-refactor portals are edges with `display_mode = "portal"`,
