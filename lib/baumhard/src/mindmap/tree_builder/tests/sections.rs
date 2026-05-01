@@ -30,8 +30,8 @@ fn test_container_is_empty_text_section_carries_glyphs() {
     let map = synthetic_map(vec![node], vec![]);
     let result = build_mindmap_tree(&map);
 
-    let container_id = result.node_map.get("n").unwrap();
-    let container = result.tree.arena.get(*container_id).unwrap().get();
+    let container_id = result.arena_id_for("n").unwrap();
+    let container = result.tree.arena.get(container_id).unwrap().get();
     let container_area = container.glyph_area().expect("container is a GlyphArea");
     assert!(
         container_area.text.is_empty(),
@@ -42,8 +42,8 @@ fn test_container_is_empty_text_section_carries_glyphs() {
         "container must NOT be flagged SectionRoot"
     );
 
-    let section_id = result.section_map.get(&("n".to_string(), 0)).unwrap();
-    let section = result.tree.arena.get(*section_id).unwrap().get();
+    let section_id = result.section_arena_id("n", 0).unwrap();
+    let section = result.tree.arena.get(section_id).unwrap().get();
     let section_area = section.glyph_area().expect("section-area is a GlyphArea");
     assert_eq!(section_area.text, "hello");
     assert!(
@@ -57,7 +57,7 @@ fn test_section_model_is_glyph_model_child_of_section_area() {
     let map = synthetic_map(vec![synthetic_node("n", None, 0.0, 0.0)], vec![]);
     let result = build_mindmap_tree(&map);
 
-    let section_id = *result.section_map.get(&("n".to_string(), 0)).unwrap();
+    let section_id = result.section_arena_id("n", 0).unwrap();
     let model_id = section_id
         .children(&result.tree.arena)
         .next()
@@ -118,7 +118,7 @@ fn test_section_offset_and_size_resolve_to_absolute_aabb() {
     let map = synthetic_map(vec![node], vec![]);
     let result = build_mindmap_tree(&map);
 
-    let section_id = *result.section_map.get(&("n".to_string(), 0)).unwrap();
+    let section_id = result.section_arena_id("n", 0).unwrap();
     let area = result
         .tree
         .arena
@@ -146,7 +146,7 @@ fn test_section_size_none_inherits_node_aabb() {
     let map = synthetic_map(vec![node], vec![]);
     let result = build_mindmap_tree(&map);
 
-    let section_id = *result.section_map.get(&("n".to_string(), 0)).unwrap();
+    let section_id = result.section_arena_id("n", 0).unwrap();
     let area = result
         .tree
         .arena
@@ -164,8 +164,8 @@ fn test_owning_mind_id_climbs_from_section_area_and_model() {
     let map = synthetic_map(vec![synthetic_node("n", None, 0.0, 0.0)], vec![]);
     let result = build_mindmap_tree(&map);
 
-    let container_id = *result.node_map.get("n").unwrap();
-    let section_id = *result.section_map.get(&("n".to_string(), 0)).unwrap();
+    let container_id = result.arena_id_for("n").unwrap();
+    let section_id = result.section_arena_id("n", 0).unwrap();
     let model_id = section_id
         .children(&result.tree.arena)
         .next()
@@ -186,7 +186,7 @@ fn test_section_for_node_returns_index_only_for_section_areas() {
     let map = synthetic_map(vec![node], vec![]);
     let result = build_mindmap_tree(&map);
 
-    let container_id = *result.node_map.get("n").unwrap();
+    let container_id = result.arena_id_for("n").unwrap();
     assert_eq!(
         result.section_for_node(container_id),
         None,
@@ -194,7 +194,7 @@ fn test_section_for_node_returns_index_only_for_section_areas() {
     );
 
     for idx in 0..2 {
-        let section_id = *result.section_map.get(&("n".to_string(), idx)).unwrap();
+        let section_id = result.section_arena_id("n", idx).unwrap();
         assert_eq!(result.section_for_node(section_id), Some(("n", idx)));
     }
 }
@@ -216,7 +216,7 @@ fn test_default_section_channel_falls_through_to_index() {
 
     use crate::gfx_structs::tree::BranchChannel;
     for (idx, expected_channel) in [(0usize, 0usize), (1, 1), (2, 2)] {
-        let section_id = *result.section_map.get(&("n".to_string(), idx)).unwrap();
+        let section_id = result.section_arena_id("n", idx).unwrap();
         let element = result.tree.arena.get(section_id).unwrap().get();
         assert_eq!(
             element.channel(),
@@ -226,4 +226,50 @@ fn test_default_section_channel_falls_through_to_index() {
             expected_channel
         );
     }
+}
+
+/// `section_count_for` reports per-mind-id section counts so the
+/// hit-test single-section-fold heuristic doesn't have to walk
+/// the arena per click. Empty / missing nodes report 0.
+#[test]
+fn test_section_count_for_reports_authored_count() {
+    let mut single = synthetic_node("single", None, 0.0, 0.0);
+    let _ = &mut single;
+    let mut multi = synthetic_node("multi", None, 100.0, 0.0);
+    multi.sections = vec![
+        MindSection::new_default("a".into(), vec![]),
+        MindSection::new_default("b".into(), vec![]),
+        MindSection::new_default("c".into(), vec![]),
+    ];
+    let map = synthetic_map(vec![single, multi], vec![]);
+    let result = build_mindmap_tree(&map);
+    assert_eq!(result.section_count_for("single"), 1);
+    assert_eq!(result.section_count_for("multi"), 3);
+    assert_eq!(result.section_count_for("does-not-exist"), 0);
+}
+
+/// Section text content emits as a `TextElement` with a stable
+/// `section_idx` matching its position in `MindNode.sections`.
+/// Pins the multi-section path through the scene builder that
+/// today's single-section fixtures don't reach.
+#[test]
+fn test_multi_section_emits_distinct_text_elements() {
+    use crate::mindmap::scene_builder::build_scene;
+    let mut node = synthetic_node("n", None, 0.0, 0.0);
+    node.sections = vec![
+        MindSection::new_default("first".into(), vec![]),
+        MindSection::new_default("second".into(), vec![]),
+        MindSection::new_default("".into(), vec![]), // empty → no element
+    ];
+    let map = synthetic_map(vec![node], vec![]);
+    let scene = build_scene(&map, 1.0);
+    assert_eq!(scene.text_elements.len(), 2);
+    let by_idx: std::collections::HashMap<usize, &str> = scene
+        .text_elements
+        .iter()
+        .map(|e| (e.section_idx, e.text.as_str()))
+        .collect();
+    assert_eq!(by_idx.get(&0), Some(&"first"));
+    assert_eq!(by_idx.get(&1), Some(&"second"));
+    assert!(!by_idx.contains_key(&2), "empty section emits nothing");
 }

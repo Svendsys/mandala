@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Inline node text editor: open / close / handle key /
+//! Inline section text editor: open / close / handle key /
 //! apply preview-to-tree. The text editor is a multi-line in-place
 //! buffer whose cursor + content live on `TextEditState::Open` and
 //! whose preview is stamped into the live Baumhard tree via
 //! `apply_text_edit_to_tree` so the user sees their typing on every
 //! keystroke without touching the model. Commit on Esc folds the
-//! buffer into `MindNode.text` via `MindMapDocument::set_node_text`.
+//! buffer into the targeted `MindSection.text` via
+//! `MindMapDocument::set_section_text` (the editor records the
+//! `section_idx` resolved from the active `SelectionState` at open
+//! time so per-section selections commit to the right section).
 
 use winit::keyboard::Key;
 
@@ -45,19 +48,26 @@ pub(in crate::application::app) fn open_text_edit(
     // *that* section; any other selection (Single, Multi, edge-
     // adjacent) defaults to section 0 — preserving the historical
     // single-section single-node behaviour for migrated maps.
-    let section_idx = match doc.selection.selected_section() {
+    //
+    // Clamp the candidate index against `node.sections.len()`: a
+    // custom mutation between the click that set the Section
+    // selection and this open call can have shrunk the sections
+    // vec, leaving the selection's `section_idx` stale. The clamp
+    // collapses the editor to section 0 in that case rather than
+    // returning silently and leaving the user with a stuck
+    // double-click.
+    let Some(node) = doc.mindmap.nodes.get(node_id) else {
+        return;
+    };
+    if node.sections.is_empty() {
+        return;
+    }
+    let candidate_idx = match doc.selection.selected_section() {
         Some(s) if s.node_id == node_id => s.section_idx,
         _ => 0,
     };
-    let current_text = match doc
-        .mindmap
-        .nodes
-        .get(node_id)
-        .and_then(|n| n.sections.get(section_idx))
-    {
-        Some(section) => section.text.clone(),
-        None => return,
-    };
+    let section_idx = candidate_idx.min(node.sections.len() - 1);
+    let current_text = node.sections[section_idx].text.clone();
     let buffer = if from_creation {
         String::new()
     } else {
@@ -108,7 +118,7 @@ fn section_arena_id(
     node_id: &str,
     section_idx: usize,
 ) -> Option<indextree::NodeId> {
-    tree.section_map.get(&(node_id.to_string(), section_idx)).copied()
+    tree.section_arena_id(node_id, section_idx)
 }
 
 /// Read a specific section's `GlyphArea::regions` off the live
@@ -479,19 +489,18 @@ mod tests {
         let map = loader::load_from_file(&test_map_path()).unwrap();
         let tree = build_mindmap_tree(&map);
         let node_id = tree
-            .section_map
-            .iter()
+            .section_ids()
             .find(|((_, idx), nid)| {
                 *idx == 0
                     && tree
                         .tree
                         .arena
-                        .get(**nid)
+                        .get(*nid)
                         .and_then(|n| n.get().glyph_area())
                         .map(|a| !a.text.is_empty())
                         .unwrap_or(false)
             })
-            .map(|((mid, _), _)| mid.clone())
+            .map(|((mid, _), _)| mid.to_string())
             .expect("testament map has at least one node with non-empty section text");
         (tree, node_id)
     }

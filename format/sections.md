@@ -69,6 +69,31 @@ The legacy `convert --legacy` pipeline (miMind import) folds the
 section pass in automatically, so a single `convert --legacy`
 hop produces a post-section file in one step.
 
+## Custom mutations
+
+Mutations authored as `CustomMutation` reach a node's section
+text + runs at apply time. The flat-apply path
+(`apply_custom_mutation` in
+`src/application/document/custom.rs`) iterates every
+`Flag::SectionRoot` child of each affected node container and
+applies the mutation list to each — same primitive as
+`apply_tree_highlights` walks. Mutations that target chrome
+fields (`area.scale`, `area.position`) also land on the
+container, so position-affecting mutations move the whole node
+in lockstep with its sections.
+
+Section content sync from the tree back to the model on
+persistent mutations is a known limitation: `sync_node_from_tree`
+syncs `node.position` only. Custom mutations that change section
+text or runs visually update the live tree, but the next
+`rebuild_all` rebuilds the tree from the model and reverts the
+visual change. This matches the pre-section behaviour for the
+same shape of mutation (text edits via custom mutations were
+already one-way against the model). The `set_section_text` /
+`set_section_text_color` / `set_section_font_size` /
+`set_section_font_family` document setters write the model
+directly and are the persistent path.
+
 ## Channel space
 
 Sections live in the same Baumhard tree as child mind-nodes. The
@@ -82,6 +107,18 @@ a simpler tree shape. The named seam that closes it is a
 predicate variant `Predicate::IsSection` plus a target-scope
 variant `TargetScope::SectionsOnly` / `ChildrenOnly` — neither
 field needs adjustment when those land.
+
+A second authoring footgun lives on the channel field itself:
+`MindSection.channel: usize` cannot distinguish "author left it
+default" from "author wrote 0 explicitly". The tree builder
+substitutes the section's index for `channel == 0` when the
+index is `> 0` — which silently overrides an author's explicit
+`channel: 0` on sections beyond the first. Authors who depend on
+explicit channel routing should set non-zero channels. The
+named seam to close this is `MindSection.channel:
+Option<usize>`, which preserves backward compat for every
+default-channel section but makes the explicit-zero case
+distinguishable.
 
 ## Validation
 

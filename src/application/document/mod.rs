@@ -191,10 +191,16 @@ pub(super) fn grow_one_node_to_fit_text(node: &mut baumhard::mindmap::model::Min
     // floor. Sections with explicit `size` carry their own
     // intrinsic bounds and don't grow the node — only `None`-size
     // sections (the migration-default "fill the parent" shape)
-    // pull on the node's AABB. This matches the pre-section
-    // behaviour for single-section migrated nodes exactly: one
-    // section, no explicit size, the union is just that section's
-    // measurement.
+    // pull on the node's AABB.
+    //
+    // §B5 lock-scope discipline: each section's measurement
+    // acquires + drops the `FONT_SYSTEM` write guard
+    // independently. A single guard around the whole loop would
+    // be one fewer ceremony per node, but parallel cargo-test
+    // workers thrashed the lock when a test wrote two sections
+    // through `set_section_text` and the surrounding test threads
+    // all wanted the same guard — narrower scopes drain faster
+    // than fewer-but-longer ones under contention.
     let mut floor_w: f64 = 0.0;
     let mut floor_h: f64 = 0.0;
     for section in &node.sections {
@@ -223,9 +229,6 @@ pub(super) fn grow_one_node_to_fit_text(node: &mut baumhard::mindmap::model::Min
                 }
             });
 
-        // Per-node lock scope: a renderer frame scheduled during
-        // document load can interleave between nodes rather than
-        // waiting for every measurement. §B5.
         let block = {
             let mut fs = acquire_font_system_write("grow_one_node_to_fit_text");
             measure_text_block_unbounded(&mut fs, &section.text, scale, line_height, measure_font)

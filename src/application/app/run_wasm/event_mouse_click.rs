@@ -32,7 +32,7 @@ use crate::application::app::{
     compute_click_hit, dispatch, is_double_click, now_ms, ClickHit, ClickHitParts, LastClick,
 };
 use crate::application::document::{
-    point_in_node_aabb, EdgeLabelSel, EdgeRef, PortalLabelSel, SelectionState,
+    point_in_node_aabb, EdgeLabelSel, EdgeRef, PortalLabelSel, SectionSel, SelectionState,
 };
 use crate::application::keybinds::Action;
 
@@ -77,12 +77,7 @@ impl super::WasmApp {
         let ClickHitParts {
             click_hit,
             hit_node,
-            // Section-level click routing is a native-side surface
-            // today (the `Section` selection variant exists on
-            // both targets, but no WASM input path produces it
-            // yet). Kept reachable here for parity once a
-            // multi-section authoring flow lands on the web.
-            hit_section_idx: _,
+            hit_section_idx,
             portal_text_hit,
             portal_icon_hit,
             edge_label_hit,
@@ -227,7 +222,19 @@ impl super::WasmApp {
         }
 
         input.pending_click = if let Some(id) = hit_node.clone() {
-            PendingClick::Node(id)
+            // Multi-section nodes opt into per-section click
+            // routing — the press records the section index so
+            // mouse-up commits a `SelectionState::Section`
+            // selection. Single-section nodes route through
+            // `Node` to preserve today's whole-node click
+            // semantic on every migrated map.
+            match hit_section_idx {
+                Some(section_idx) => PendingClick::Section {
+                    node_id: id,
+                    section_idx,
+                },
+                None => PendingClick::Node(id),
+            }
         } else if let Some((key, endpoint)) = portal_text_hit.clone() {
             // Portal **text** click — committed to
             // `SelectionState::PortalText` on mouse-up.
@@ -312,6 +319,9 @@ impl super::WasmApp {
         let prev_selection = input.document.selection.clone();
         input.document.selection = match pending {
             PendingClick::Node(node_id) => SelectionState::Single(node_id),
+            PendingClick::Section { node_id, section_idx } => {
+                SelectionState::Section(SectionSel { node_id, section_idx })
+            }
             PendingClick::PortalMarker {
                 edge_key,
                 endpoint_node_id,

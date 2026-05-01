@@ -77,14 +77,15 @@ pub(super) fn handle_click(
         // section nodes always have `hit_section = None` from
         // `hit_test_target`, falling through to the
         // whole-node-Single arm below.
-        (Some(id), false) if hit_section.is_some() => {
-            doc.selection = SelectionState::Section(SectionSel {
-                node_id: id.clone(),
-                section_idx: hit_section.unwrap(),
-            });
-        }
         (Some(id), false) => {
-            doc.selection = SelectionState::Single(id.clone());
+            if let Some(section_idx) = hit_section {
+                doc.selection = SelectionState::Section(SectionSel {
+                    node_id: id.clone(),
+                    section_idx,
+                });
+            } else {
+                doc.selection = SelectionState::Single(id.clone());
+            }
         }
         (Some(id), true) => {
             // Shift+click: toggle node in/out of multi-selection.
@@ -195,28 +196,33 @@ pub(super) fn rebuild_all_with_mode(
     // hovered target (green). This matches the previous behavior
     // where reparent_source_highlight was documented to override
     // selection_highlight on conflict.
-    let mut highlights: Vec<(&str, [f32; 4])> = doc
+    // Highlight tuples are `(node_id, section_idx?, color)`. A
+    // Section selection narrows the highlight to the selected
+    // section only; mode-driven Reparent / Connect highlights
+    // always paint every section (the gesture is whole-node).
+    let only_section_idx = doc.selection.selected_section().map(|s| s.section_idx);
+    let mut highlights: Vec<(&str, Option<usize>, [f32; 4])> = doc
         .selection
         .selected_ids()
         .into_iter()
-        .map(|id| (id, HIGHLIGHT_COLOR))
+        .map(|id| (id, only_section_idx, HIGHLIGHT_COLOR))
         .collect();
     match app_mode {
         AppMode::Reparent { sources } => {
             for s in sources {
-                highlights.push((s.as_str(), REPARENT_SOURCE_COLOR));
+                highlights.push((s.as_str(), None, REPARENT_SOURCE_COLOR));
             }
             if let Some(h) = hovered_node {
                 if !sources.iter().any(|s| s == h) {
-                    highlights.push((h, REPARENT_TARGET_COLOR));
+                    highlights.push((h, None, REPARENT_TARGET_COLOR));
                 }
             }
         }
         AppMode::Connect { source } => {
-            highlights.push((source.as_str(), REPARENT_SOURCE_COLOR));
+            highlights.push((source.as_str(), None, REPARENT_SOURCE_COLOR));
             if let Some(h) = hovered_node {
                 if h != source {
-                    highlights.push((h, REPARENT_TARGET_COLOR));
+                    highlights.push((h, None, REPARENT_TARGET_COLOR));
                 }
             }
         }

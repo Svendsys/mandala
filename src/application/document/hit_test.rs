@@ -94,53 +94,39 @@ pub fn hit_test_target(canvas_pos: Vec2, tree: &mut MindMapTree) -> Option<HitTa
     if !point_in_node_aabb(canvas_pos, &mind_id, tree) {
         return None;
     }
-    // Climb at most three arena edges (model → section → container)
-    // looking for a section identity. A landing on the container
-    // itself returns `None` from `section_for_node` and falls
-    // through to the `NodeContainer` arm.
+    // Climb the parent chain looking for a section identity. The
+    // depth is bounded by the section subtree's natural shape
+    // (model → section), but the loop is *not* hardcoded to a
+    // step count — a future per-component refinement that
+    // deepens a section's children resolves correctly here
+    // without a code change.
     let mut probe = landed;
-    for _ in 0..3 {
+    let mut hit_section: Option<(String, usize)> = None;
+    loop {
         if let Some((id, idx)) = tree.section_for_node(probe) {
-            // For single-section nodes, fold to NodeContainer so
-            // every today's whole-node click semantic survives —
-            // the section variant unlocks for nodes the author
-            // explicitly gave more than one section.
-            let owning_node_section_count = tree
-                .tree
-                .arena
-                .get(*tree.node_map.get(id)?)
-                .map(|n| {
-                    n.first_child()
-                        .map(|fc| {
-                            std::iter::successors(Some(fc), |&c| {
-                                tree.tree.arena.get(c).and_then(|x| x.next_sibling())
-                            })
-                            .filter(|&c| {
-                                tree.tree
-                                    .arena
-                                    .get(c)
-                                    .map(|x| {
-                                        use baumhard::core::primitives::Flaggable;
-                                        x.get().flag_is_set(Flag::SectionRoot)
-                                    })
-                                    .unwrap_or(false)
-                            })
-                            .count()
-                        })
-                        .unwrap_or(0)
-                })
-                .unwrap_or(0);
-            if owning_node_section_count > 1 {
-                return Some(HitTarget::Section {
-                    node_id: id.to_string(),
-                    section_idx: idx,
-                });
-            }
+            hit_section = Some((id.to_string(), idx));
+            break;
+        }
+        if tree.mind_id_for_node(probe).is_some() {
             break;
         }
         match tree.tree.arena.get(probe).and_then(|n| n.parent()) {
             Some(p) => probe = p,
             None => break,
+        }
+    }
+    // Single-section nodes fold to NodeContainer so today's
+    // whole-node click semantics survive on every migrated map.
+    // The Section variant unlocks for nodes whose author gave
+    // them more than one section. `section_count_for` is an O(1)
+    // map lookup populated at tree-build time — no per-click
+    // arena walk.
+    if let Some((id, idx)) = hit_section {
+        if tree.section_count_for(&id) > 1 {
+            return Some(HitTarget::Section {
+                node_id: id,
+                section_idx: idx,
+            });
         }
     }
     Some(HitTarget::NodeContainer { node_id: mind_id })
@@ -157,9 +143,8 @@ pub fn hit_test_target(canvas_pos: Vec2, tree: &mut MindMapTree) -> Option<HitTa
 /// a click over a child of `node_id` still counts as "inside" `node_id`,
 /// which is what the text editor's click-outside-commit gesture wants.
 pub fn point_in_node_aabb(canvas_pos: Vec2, node_id: &str, tree: &MindMapTree) -> bool {
-    tree.node_map
-        .get(node_id)
-        .and_then(|nid| tree.tree.arena.get(*nid))
+    tree.arena_id_for(node_id)
+        .and_then(|nid| tree.tree.arena.get(nid))
         .and_then(|n| n.get().glyph_area())
         .map(|area| {
             let x = area.position.x.0;
@@ -237,7 +222,7 @@ pub fn rect_select(corner_a: Vec2, corner_b: Vec2, tree: &MindMapTree) -> Vec<St
     let max_y = corner_a.y.max(corner_b.y);
 
     let mut hits = Vec::new();
-    for (mind_id, &node_id) in &tree.node_map {
+    for (mind_id, node_id) in tree.node_ids() {
         let area = match tree.tree.arena.get(node_id).and_then(|n| n.get().glyph_area()) {
             Some(a) => a,
             None => continue,
@@ -256,7 +241,7 @@ pub fn rect_select(corner_a: Vec2, corner_b: Vec2, tree: &MindMapTree) -> Vec<St
             .shape
             .intersects_local_aabb(local_min, local_max, Vec2::new(w, h))
         {
-            hits.push(mind_id.clone());
+            hits.push(mind_id.to_string());
         }
     }
     hits
@@ -283,23 +268,19 @@ pub fn rect_select(corner_a: Vec2, corner_b: Vec2, tree: &MindMapTree) -> Vec<St
 /// edit.
 pub fn apply_tree_highlights<'a, I>(tree: &mut MindMapTree, highlights: I)
 where
-    I: IntoIterator<Item = (&'a str, [f32; 4])>,
+    I: IntoIterator<Item = (&'a str, Option<usize>, [f32; 4])>,
 {
-    for (mind_id, color) in highlights {
-        let Some(&node_id) = tree.node_map.get(mind_id) else { continue };
+    for (mind_id, only_section_idx, color) in highlights {
+        let Some(node_id) = tree.arena_id_for(mind_id) else { continue };
 
         // Sections live as `GlyphArea` children of the node
         // container, and that's where the text-runs (and therefore
         // `ColorFontRegions`) actually live post-refactor. Iterate
         // every immediate child marked `Flag::SectionRoot` and
-        // apply the highlight macro to each.
-        //
-        // Today every per-grapheme run on a node is repainted in
-        // the highlight colour — same posture as the pre-section
-        // behaviour where the node's single area carried the
-        // runs. Per-section selective highlighting (only one
-        // section's runs glow when only that section is selected)
-        // is the named seam in the per-section UX commit.
+        // apply the highlight macro to each — unless the caller
+        // restricted the highlight to a specific section index
+        // (Section selection), in which case only that section's
+        // runs paint cyan.
         let section_ids: Vec<indextree::NodeId> = node_id
             .children(&tree.tree.arena)
             .filter(|cid| {
@@ -310,6 +291,21 @@ where
                     .unwrap_or(false)
             })
             .collect();
+
+        // When a Section selection is active, filter the section
+        // list to that one element so visual feedback matches what
+        // the user pointed at.
+        let section_ids: Vec<indextree::NodeId> = match only_section_idx {
+            Some(target_idx) => section_ids
+                .into_iter()
+                .filter(|sid| {
+                    tree.section_for_node(*sid)
+                        .map(|(_, idx)| idx == target_idx)
+                        .unwrap_or(false)
+                })
+                .collect(),
+            None => section_ids,
+        };
 
         for section_node_id in section_ids {
             let (ranges, target_channel): (Vec<Range>, usize) = {
@@ -347,8 +343,8 @@ where
 /// section beneath a moving container would visibly detach from its
 /// node).
 pub fn apply_drag_delta(tree: &mut MindMapTree, node_id: &str, dx: f32, dy: f32, include_descendants: bool) {
-    let tree_node_id = match tree.node_map.get(node_id) {
-        Some(&id) => id,
+    let tree_node_id = match tree.arena_id_for(node_id) {
+        Some(id) => id,
         None => return,
     };
 
@@ -401,8 +397,8 @@ pub fn apply_drag_delta_and_collect_patches(
     include_descendants: bool,
     patches: &mut Vec<(usize, (f32, f32))>,
 ) {
-    let tree_node_id = match tree.node_map.get(node_id) {
-        Some(&id) => id,
+    let tree_node_id = match tree.arena_id_for(node_id) {
+        Some(id) => id,
         None => return,
     };
 

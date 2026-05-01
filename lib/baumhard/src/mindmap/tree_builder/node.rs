@@ -129,15 +129,21 @@ pub(super) fn mindnode_section_area(
     section: &MindSection,
     vars: &HashMap<String, String>,
 ) -> GlyphArea {
-    // Effective scale: prefer the first run's `size_pt`, fall
-    // through to the cosmic-text/historical default (14pt) when
-    // the section has no runs. Matches the pre-section behaviour
-    // for legacy single-section nodes exactly.
-    let scale = section
+    // Effective scale: pick the *largest* run size so a multi-run
+    // section with a small first run and a 96pt later run gets a
+    // line-height tall enough to keep the larger glyphs from
+    // clipping. Falls through to the cosmic-text / historical
+    // default (14pt) when the section has no runs. The single-
+    // section default-migration shape (one run spanning all of
+    // `text`) round-trips with the pre-section behaviour because
+    // there's only one size to pick. Mirrors the same `max`
+    // posture in `grow_one_node_to_fit_text`.
+    let scale_max = section
         .text_runs
-        .first()
+        .iter()
         .map(|r| r.size_pt as f32)
-        .unwrap_or(14.0);
+        .fold(0.0_f32, f32::max);
+    let scale = if scale_max > 0.0 { scale_max } else { 14.0 };
     let line_height = scale * 1.2;
     let position = node.pos_vec2() + Vec2::new(section.offset.x as f32, section.offset.y as f32);
     let bounds = section

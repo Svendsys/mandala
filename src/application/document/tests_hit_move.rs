@@ -15,8 +15,8 @@ use glam::Vec2;
 fn test_hit_test_direct_hit() {
     let mut tree = load_test_tree();
     // "Lord God" node (id: 0) — get its position from the tree
-    let node_id = tree.node_map.get("0").unwrap();
-    let area = tree.tree.arena.get(*node_id).unwrap().get().glyph_area().unwrap();
+    let node_id = tree.arena_id_for("0").unwrap();
+    let area = tree.tree.arena.get(node_id).unwrap().get().glyph_area().unwrap();
     let center = Vec2::new(
         area.position.x.0 + area.render_bounds.x.0 / 2.0,
         area.position.y.0 + area.render_bounds.y.0 / 2.0,
@@ -32,8 +32,8 @@ fn test_hit_test_direct_hit() {
 #[test]
 fn test_hit_test_target_single_section_collapses_to_node() {
     let mut tree = load_test_tree();
-    let node_id = tree.node_map.get("0").unwrap();
-    let area = tree.tree.arena.get(*node_id).unwrap().get().glyph_area().unwrap();
+    let node_id = tree.arena_id_for("0").unwrap();
+    let area = tree.tree.arena.get(node_id).unwrap().get().glyph_area().unwrap();
     let center = Vec2::new(
         area.position.x.0 + area.render_bounds.x.0 / 2.0,
         area.position.y.0 + area.render_bounds.y.0 / 2.0,
@@ -61,31 +61,30 @@ fn test_hit_test_returns_smallest_on_overlap() {
     // "Lord God" (0) has children — find one whose bounds overlap
     let parent_id_str = "0";
     let parent_size = {
-        let nid = tree.node_map.get(parent_id_str).unwrap();
-        let area = tree.tree.arena.get(*nid).unwrap().get().glyph_area().unwrap();
+        let nid = tree.arena_id_for(parent_id_str).unwrap();
+        let area = tree.tree.arena.get(nid).unwrap().get().glyph_area().unwrap();
         area.render_bounds.x.0 * area.render_bounds.y.0
     };
 
     // Collect candidate (mind_id, center) pairs first to release
     // the immutable borrow on tree.node_map before calling
     // hit_test (which needs &mut tree).
-    let candidate: Option<(String, Vec2)> = tree
-        .node_map
-        .iter()
-        .filter(|(id, _)| id.as_str() != parent_id_str)
-        .find_map(|(mind_id, &nid)| {
-            let a = tree.tree.arena.get(nid)?.get().glyph_area()?;
-            let child_size = a.render_bounds.x.0 * a.render_bounds.y.0;
-            let child_center = Vec2::new(
-                a.position.x.0 + a.render_bounds.x.0 / 2.0,
-                a.position.y.0 + a.render_bounds.y.0 / 2.0,
-            );
-            if child_size < parent_size && point_in_node_aabb(child_center, parent_id_str, &tree) {
-                Some((mind_id.clone(), child_center))
-            } else {
-                None
-            }
-        });
+    let candidate: Option<(String, Vec2)> =
+        tree.node_ids()
+            .filter(|(id, _)| *id != parent_id_str)
+            .find_map(|(mind_id, nid)| {
+                let a = tree.tree.arena.get(nid)?.get().glyph_area()?;
+                let child_size = a.render_bounds.x.0 * a.render_bounds.y.0;
+                let child_center = Vec2::new(
+                    a.position.x.0 + a.render_bounds.x.0 / 2.0,
+                    a.position.y.0 + a.render_bounds.y.0 / 2.0,
+                );
+                if child_size < parent_size && point_in_node_aabb(child_center, parent_id_str, &tree) {
+                    Some((mind_id.to_string(), child_center))
+                } else {
+                    None
+                }
+            });
 
     if let Some((expected_id, center)) = candidate {
         let result = hit_test(center, &mut tree);
@@ -111,6 +110,23 @@ fn test_selection_state_is_selected() {
     assert!(multi.is_selected("123"));
     assert!(multi.is_selected("456"));
     assert!(!multi.is_selected("789"));
+
+    // Section selection counts as "this owning node is selected" —
+    // every per-node consumer (highlight, drag, chrome) gets the
+    // natural answer.
+    let section = SelectionState::Section(SectionSel::new("123", 1));
+    assert!(section.is_selected("123"));
+    assert!(!section.is_selected("456"));
+    assert_eq!(section.selected_ids(), vec!["123"]);
+    let s = section
+        .selected_section()
+        .expect("Section variant carries SectionSel");
+    assert_eq!(s.node_id, "123");
+    assert_eq!(s.section_idx, 1);
+    // Other selection variants return `None` from
+    // `selected_section()`.
+    assert!(none.selected_section().is_none());
+    assert!(single.selected_section().is_none());
 }
 
 #[test]
@@ -148,7 +164,7 @@ fn test_apply_tree_highlights_via_walker() {
     let mut tree = load_test_tree();
     // Post-refactor: regions live on the section-area, not the
     // container. Read through the section_map.
-    let section_id = *tree.section_map.get(&("0".to_string(), 0)).unwrap();
+    let section_id = tree.section_arena_id("0", 0).unwrap();
 
     // Before highlight: original color (white).
     let area = tree
@@ -166,7 +182,7 @@ fn test_apply_tree_highlights_via_walker() {
     );
 
     // Apply highlight via the new mutator-driven path.
-    apply_tree_highlights(&mut tree, std::iter::once(("0", HIGHLIGHT_COLOR)));
+    apply_tree_highlights(&mut tree, std::iter::once(("0", None, HIGHLIGHT_COLOR)));
 
     // After highlight: cyan on section-area's regions.
     let area = tree
@@ -188,8 +204,13 @@ fn test_apply_tree_highlights_does_not_affect_others() {
     let mut tree = load_test_tree();
 
     // Pick a different node and copy its regions before mutation.
-    let other_id = tree.node_map.keys().find(|k| *k != "0").unwrap().clone();
-    let other_node_id = *tree.node_map.get(&other_id).unwrap();
+    let other_id = tree
+        .node_ids()
+        .map(|(k, _)| k)
+        .find(|k| *k != "0")
+        .unwrap()
+        .to_string();
+    let other_node_id = tree.arena_id_for(&other_id).unwrap();
     let before = tree
         .tree
         .arena
@@ -201,7 +222,7 @@ fn test_apply_tree_highlights_does_not_affect_others() {
         .regions
         .clone();
 
-    apply_tree_highlights(&mut tree, std::iter::once(("0", HIGHLIGHT_COLOR)));
+    apply_tree_highlights(&mut tree, std::iter::once(("0", None, HIGHLIGHT_COLOR)));
 
     let after = tree
         .tree
@@ -223,11 +244,11 @@ fn test_apply_tree_highlights_later_pair_overrides_earlier() {
     // last-write-wins semantics of apply_tree_highlights.
     let mut tree = load_test_tree();
     // Regions live on the section-area, not the container.
-    let section_id = *tree.section_map.get(&("0".to_string(), 0)).unwrap();
+    let section_id = tree.section_arena_id("0", 0).unwrap();
 
     apply_tree_highlights(
         &mut tree,
-        vec![("0", HIGHLIGHT_COLOR), ("0", REPARENT_SOURCE_COLOR)],
+        vec![("0", None, HIGHLIGHT_COLOR), ("0", None, REPARENT_SOURCE_COLOR)],
     );
 
     let area = tree
@@ -597,7 +618,7 @@ fn test_apply_drag_delta() {
     let mut tree = doc.build_tree();
     let node_id = "0";
 
-    let tree_nid = *tree.node_map.get(node_id).unwrap();
+    let tree_nid = tree.arena_id_for(node_id).unwrap();
     let orig_x = tree
         .tree
         .arena
@@ -659,7 +680,7 @@ fn test_apply_drag_delta_with_descendants() {
     let child_ids: Vec<String> = doc.mindmap.all_descendants(node_id);
     assert!(!child_ids.is_empty());
     let child_id = &child_ids[0];
-    let child_tree_nid = *tree.node_map.get(child_id).unwrap();
+    let child_tree_nid = tree.arena_id_for(child_id).unwrap();
     let child_orig_x = tree
         .tree
         .arena
@@ -730,7 +751,7 @@ fn test_apply_move_multiple_no_double_movement() {
 fn test_rect_select_finds_nodes_in_region() {
     let tree = load_test_tree();
     // Get position/bounds of "Lord God" to build a rect that contains it
-    let node_id = *tree.node_map.get("0").unwrap();
+    let node_id = tree.arena_id_for("0").unwrap();
     let area = tree.tree.arena.get(node_id).unwrap().get().glyph_area().unwrap();
     let x = area.position.x.0;
     let y = area.position.y.0;
@@ -769,14 +790,14 @@ fn test_rect_select_misses_distant_nodes() {
 
 fn set_node_shape_ellipse(tree: &mut baumhard::mindmap::tree_builder::MindMapTree, node_id: &str) {
     use baumhard::gfx_structs::shape::NodeShape;
-    let nid = *tree.node_map.get(node_id).expect("node exists");
+    let nid = tree.arena_id_for(node_id).expect("node exists");
     let node = tree.tree.arena.get_mut(nid).expect("arena has node");
     let area = node.get_mut().glyph_area_mut().expect("node is a GlyphArea");
     area.shape = NodeShape::Ellipse;
 }
 
 fn node_bounds(tree: &baumhard::mindmap::tree_builder::MindMapTree, node_id: &str) -> (Vec2, Vec2) {
-    let nid = *tree.node_map.get(node_id).unwrap();
+    let nid = tree.arena_id_for(node_id).unwrap();
     let area = tree.tree.arena.get(nid).unwrap().get().glyph_area().unwrap();
     (
         Vec2::new(area.position.x.0, area.position.y.0),

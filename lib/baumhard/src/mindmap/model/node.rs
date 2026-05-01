@@ -72,7 +72,10 @@ pub struct MindNode {
     /// the model but the scene builder treats them as hidden.
     pub folded: bool,
     /// Long-form text attached to the node; rendered separately from
-    /// [`Self::text`] by the notes overlay path.
+    /// the node's [`MindSection`] text by the notes overlay path.
+    /// Carried at the node level rather than per-section because
+    /// notes annotate the whole node, not any one stratum of data
+    /// inside it.
     pub notes: String,
     /// Optional palette binding that colours this node and its
     /// descendants at a given depth level.
@@ -318,12 +321,6 @@ impl MindSection {
             size: None,
             channel: 0,
         }
-    }
-
-    /// Empty section at the node origin filling the parent AABB.
-    /// O(1); allocates the empty `String` and empty `Vec`.
-    pub fn empty() -> Self {
-        MindSection::new_default(String::new(), Vec::new())
     }
 }
 

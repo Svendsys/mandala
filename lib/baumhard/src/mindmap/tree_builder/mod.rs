@@ -67,16 +67,21 @@ use node::{append_node_sections, build_children_recursive, mindnode_container_ar
 pub struct MindMapTree {
     pub tree: Tree<GfxElement, GfxMutator>,
     /// Maps MindNode ID → arena `NodeId` of the *container* area.
-    /// Hit-tests that resolve to a section element climb to the
-    /// container's arena ancestor before consulting this map.
-    pub node_map: HashMap<String, NodeId>,
+    /// Private to keep §B10 — callers reach this through
+    /// [`Self::arena_id_for`] / [`Self::node_ids`] accessors so a
+    /// future internal-representation change (different map type,
+    /// extra metadata per entry) doesn't ripple through every
+    /// consumer.
+    node_map: HashMap<String, NodeId>,
     /// Maps `(MindNode ID, section index)` → arena `NodeId` of
     /// the section-area. Empty for nodes whose sections were
     /// excluded by fold (the same fold path that excludes a whole
     /// node from `node_map`). Section-models are reachable as the
     /// only child of the section-area inside the arena, so no
     /// separate map is needed for them.
-    pub section_map: HashMap<(String, usize), NodeId>,
+    ///
+    /// Private — callers use [`Self::section_arena_id`].
+    section_map: HashMap<(String, usize), NodeId>,
     /// Reverse map: arena `NodeId` → MindNode ID. Populated for
     /// container areas only — section-areas live in
     /// `section_map`'s values, not here, so a hit on a section
@@ -94,6 +99,11 @@ pub struct MindMapTree {
     /// land on a section can recover the (node_id, section_idx)
     /// pair in O(1) without an arena climb.
     reverse_section_map: HashMap<NodeId, (String, usize)>,
+    /// Per-mind-id section count. The hit-test single-section-
+    /// fold heuristic asks "does this MindNode have more than one
+    /// section?" on every click — caching the count once at build
+    /// time avoids the per-click arena children walk.
+    section_counts: HashMap<String, usize>,
 }
 
 /// Builds a `Tree<GfxElement, GfxMutator>` from a MindMap's
@@ -158,12 +168,17 @@ pub fn build_mindmap_tree(map: &MindMap) -> MindMapTree {
         .iter()
         .map(|((mind_id, idx), &arena_id)| (arena_id, (mind_id.clone(), *idx)))
         .collect();
+    let mut section_counts: HashMap<String, usize> = HashMap::new();
+    for (mind_id, _) in section_map.keys() {
+        *section_counts.entry(mind_id.clone()).or_insert(0) += 1;
+    }
     MindMapTree {
         tree,
         node_map,
         section_map,
         reverse_node_map,
         reverse_section_map,
+        section_counts,
     }
 }
 
@@ -192,21 +207,93 @@ impl MindMapTree {
             .map(|(mind_id, idx)| (mind_id.as_str(), *idx))
     }
 
+    /// How many sections the named MindNode has in this tree, or
+    /// `0` when the node is missing or folded out. The hit-test
+    /// fold-to-NodeContainer heuristic ("single-section nodes
+    /// behave like whole-node clicks") consults this to avoid
+    /// per-click arena traversals; populated once at tree build.
+    ///
+    /// O(1) hash lookup, no allocation.
+    pub fn section_count_for(&self, mind_id: &str) -> usize {
+        self.section_counts.get(mind_id).copied().unwrap_or(0)
+    }
+
+    /// Container arena `NodeId` for a MindNode id, or `None` when
+    /// the node is missing / folded out / not yet built. The
+    /// post-section caller-facing accessor over the private
+    /// `node_map`.
+    ///
+    /// O(1) hash lookup, no allocation.
+    pub fn arena_id_for(&self, mind_id: &str) -> Option<NodeId> {
+        self.node_map.get(mind_id).copied()
+    }
+
+    /// Section-area arena `NodeId` for a `(MindNode id, section
+    /// index)` pair, or `None` when the section is missing.
+    /// Caller-facing accessor over the private `section_map`.
+    ///
+    /// O(1) hash lookup, no allocation.
+    pub fn section_arena_id(&self, mind_id: &str, section_idx: usize) -> Option<NodeId> {
+        self.section_map.get(&(mind_id.to_string(), section_idx)).copied()
+    }
+
+    /// Iterator over every container `(mind_id, arena_id)` pair.
+    /// Replaces direct `&node_map` borrowing — keeps the storage
+    /// representation private. Iteration order is HashMap-defined
+    /// (caller sorts when stability matters).
+    pub fn node_ids(&self) -> impl Iterator<Item = (&str, NodeId)> + '_ {
+        self.node_map.iter().map(|(k, v)| (k.as_str(), *v))
+    }
+
+    /// `true` if this tree owns a container for `mind_id`.
+    /// Convenience wrapper over [`Self::arena_id_for`] for
+    /// presence checks.
+    pub fn contains_node(&self, mind_id: &str) -> bool {
+        self.node_map.contains_key(mind_id)
+    }
+
+    /// Number of MindNode containers in this tree (sections /
+    /// section-models excluded). Equivalent to
+    /// `self.node_ids().count()` but O(1).
+    pub fn node_count(&self) -> usize {
+        self.node_map.len()
+    }
+
+    /// Iterator over every section as `((mind_id, section_idx),
+    /// arena_id)`. Replaces direct `&section_map` borrowing —
+    /// keeps the storage representation private. HashMap
+    /// iteration order; caller sorts when stability matters.
+    pub fn section_ids(&self) -> impl Iterator<Item = ((&str, usize), NodeId)> + '_ {
+        self.section_map
+            .iter()
+            .map(|((mid, idx), arena)| ((mid.as_str(), *idx), *arena))
+    }
+
     /// Resolve a hit-tested arena `NodeId` to the owning MindNode
     /// id. Whether the user landed on the container, a section-
     /// area, or a section-model, the caller almost always wants
     /// the MindNode id; this helper consolidates the climb so
     /// every hit-test site doesn't reimplement the dispatch.
     ///
-    /// Climbs at most three arena edges (model → section →
-    /// container) — O(1) in practice.
+    /// Climbs the parent chain until a container arena id is hit
+    /// (i.e. `mind_id_for_node` returns `Some`) or the root is
+    /// reached. The depth is bounded by the section subtree's
+    /// natural shape today (model → section → container = 3
+    /// edges) but the climb is *not* hardcoded to 3, so a future
+    /// per-component refinement that deepens a section's subtree
+    /// (e.g. additional `GlyphModel` children for richer
+    /// composition) keeps resolving correctly without a code
+    /// change here.
+    ///
+    /// Cost: O(climb depth) — one arena lookup per edge. Bounded
+    /// in practice by the depth of the section subtree which is
+    /// 2 today (3 if you count the container hit).
     pub fn owning_mind_id(&self, mut node_id: NodeId) -> Option<&str> {
-        for _ in 0..3 {
+        loop {
             if let Some(id) = self.mind_id_for_node(node_id) {
                 return Some(id);
             }
             node_id = self.tree.arena.get(node_id)?.parent()?;
         }
-        None
     }
 }

@@ -202,6 +202,7 @@ fn targets_kind_label(targets: &[TargetId]) -> &'static str {
                 "node"
             }
         }
+        Some(TargetId::Section { .. }) => "section",
         Some(TargetId::Edge(_)) => "edge",
         Some(TargetId::EdgeLabel(_)) => "edge label",
         Some(TargetId::PortalLabel { .. }) => "portal label",

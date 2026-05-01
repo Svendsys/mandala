@@ -286,12 +286,14 @@ pub(super) fn handle_cursor_moved(
                             doc.selection = SelectionState::Single(node_id.clone());
                             if let Some(tree) = ctx.mindmap_tree.as_mut() {
                                 let mut new_tree = doc.build_tree();
+                                let only_section_idx =
+                                    doc.selection.selected_section().map(|s| s.section_idx);
                                 apply_tree_highlights(
                                     &mut new_tree,
                                     doc.selection
                                         .selected_ids()
                                         .into_iter()
-                                        .map(|id| (id, HIGHLIGHT_COLOR)),
+                                        .map(|id| (id, only_section_idx, HIGHLIGHT_COLOR)),
                                 );
                                 ctx.renderer.rebuild_buffers_from_tree(&new_tree.tree);
                                 *tree = new_tree;

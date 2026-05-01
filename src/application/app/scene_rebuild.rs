@@ -26,7 +26,17 @@ pub(in crate::application::app) fn selection_change_touches_tree(
     new: &SelectionState,
 ) -> bool {
     fn touches_tree(sel: &SelectionState) -> bool {
-        matches!(sel, SelectionState::Single(_) | SelectionState::Multi(_))
+        // `Section` joins `Single` / `Multi` because section-area
+        // highlights are stamped through the node-tree's
+        // `ColorFontRegions` (see `apply_tree_highlights`); a
+        // Section-selection transition that goes through
+        // `rebuild_scene_only` would leave the prior cyan stamp
+        // un-cleared (or never apply a fresh one), leaking a
+        // stale highlight.
+        matches!(
+            sel,
+            SelectionState::Single(_) | SelectionState::Multi(_) | SelectionState::Section(_)
+        )
     }
     touches_tree(prev) || touches_tree(new)
 }
@@ -180,12 +190,18 @@ pub(in crate::application::app) fn rebuild_all(
     scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
 ) {
     let mut new_tree = doc.build_tree();
+    // For a `Section` selection, restrict the highlight to the
+    // selected section only — visual feedback matches what the
+    // user pointed at. `Single` / `Multi` continue to highlight
+    // every section of the selected nodes (the whole-node
+    // semantic).
+    let only_section_idx = doc.selection.selected_section().map(|s| s.section_idx);
     apply_tree_highlights(
         &mut new_tree,
         doc.selection
             .selected_ids()
             .into_iter()
-            .map(|id| (id, HIGHLIGHT_COLOR)),
+            .map(|id| (id, only_section_idx, HIGHLIGHT_COLOR)),
     );
     renderer.rebuild_buffers_from_tree(&new_tree.tree);
 

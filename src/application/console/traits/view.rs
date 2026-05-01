@@ -31,6 +31,17 @@ pub enum TargetView<'a> {
         doc: &'a mut MindMapDocument,
         id: String,
     },
+    /// One section of one node — clipboard / per-section style
+    /// dispatch routes here from `SelectionState::Section`. Copy
+    /// reads `section.text` only (vs whole-node `display_text`
+    /// for `Node`), paste / cut write through `set_section_text`
+    /// to the indexed section. Style verbs (color, font) collapse
+    /// to whole-node behaviour at the dispatch site.
+    Section {
+        doc: &'a mut MindMapDocument,
+        id: String,
+        section_idx: usize,
+    },
     /// Line-mode edge body target. Color operations write the
     /// edge's `color` / `glyph_connection.color`; clipboard
     /// copy/paste/cut target the resolved **edge color** hex
@@ -78,6 +89,7 @@ impl<'a> TargetView<'a> {
     pub fn kind(&self) -> &'static str {
         match self {
             TargetView::Node { .. } => "node",
+            TargetView::Section { .. } => "section",
             TargetView::Edge { .. } => "edge",
             TargetView::EdgeLabel { .. } => "edge label",
             TargetView::PortalLabel { .. } => "portal label",
@@ -114,7 +126,13 @@ fn edge_color_as_override(c: &ColorValue) -> Option<String> {
 impl<'a> HasBgColor for TargetView<'a> {
     fn set_bg_color(&mut self, c: ColorValue) -> Outcome {
         match self {
-            TargetView::Node { doc, id } => {
+            // Background fill is node-level chrome; Section
+            // selection collapses to its owning node so a `bg=#fff`
+            // on a section paints the parent node's background.
+            // Per-section background fills aren't part of the data
+            // shape today; the named seam is documented in
+            // `format/sections.md`.
+            TargetView::Node { doc, id } | TargetView::Section { doc, id, .. } => {
                 Outcome::applied(doc.set_node_bg_color(id, color_as_string(&c, "#141414")))
             }
             // Edges and all edge-sub-part selections have no
@@ -135,7 +153,13 @@ impl<'a> HasBgColor for TargetView<'a> {
 impl<'a> HasTextColor for TargetView<'a> {
     fn set_text_color(&mut self, c: ColorValue) -> Outcome {
         match self {
-            TargetView::Node { doc, id } => {
+            // Whole-node `text` color rewrites the node's default
+            // and every section's matching runs (see
+            // `set_node_text_color`). Section selection collapses
+            // here too — per-section colour overrides without
+            // touching siblings is a future verb (`color text=…
+            // section=K`).
+            TargetView::Node { doc, id } | TargetView::Section { doc, id, .. } => {
                 Outcome::applied(doc.set_node_text_color(id, color_as_string(&c, "#ffffff")))
             }
             // Edge body: the edge's one color field (line + any
@@ -176,7 +200,9 @@ impl<'a> HasTextColor for TargetView<'a> {
 impl<'a> HasBorderColor for TargetView<'a> {
     fn set_border_color(&mut self, c: ColorValue) -> Outcome {
         match self {
-            TargetView::Node { doc, id } => {
+            // Frame/border is node-level chrome; Section
+            // selection collapses to its owning node.
+            TargetView::Node { doc, id } | TargetView::Section { doc, id, .. } => {
                 Outcome::applied(doc.set_node_border_color(id, color_as_string(&c, "#ffffff")))
             }
             // `border` on any edge-adjacent selection is an alias
@@ -216,8 +242,10 @@ impl<'a> HasBorderColor for TargetView<'a> {
 impl<'a> AcceptsWheelColor for TargetView<'a> {
     fn apply_wheel_color(&mut self, c: ColorValue) -> Outcome {
         match self {
-            // Node default: background fill.
-            TargetView::Node { .. } => self.set_bg_color(c),
+            // Node + Section default: background fill on the
+            // owning node (whole-node bg; per-section bg is the
+            // named seam, not authored today).
+            TargetView::Node { .. } | TargetView::Section { .. } => self.set_bg_color(c),
             // Every edge-adjacent selection routes the wheel
             // commit through `set_border_color`, which each
             // variant maps to its own one-channel color setter
@@ -233,10 +261,13 @@ impl<'a> AcceptsWheelColor for TargetView<'a> {
 impl<'a> AcceptsFontFamily for TargetView<'a> {
     fn set_font_family(&mut self, family: Option<&str>) -> Outcome {
         match self {
-            // Node: writes every `TextRun.font` plus the future
-            // node-level default (when one is added). Node has no
-            // per-channel font split today.
-            TargetView::Node { doc, id } => Outcome::applied(doc.set_node_font_family(id, family)),
+            // Node / Section: writes every `TextRun.font` across
+            // every section. Per-section font override is a future
+            // verb; today the whole-node and section-targeted
+            // fonts share one setter.
+            TargetView::Node { doc, id } | TargetView::Section { doc, id, .. } => {
+                Outcome::applied(doc.set_node_font_family(id, family))
+            }
             // Edge body: `glyph_connection.font` override.
             TargetView::Edge { doc, er } => Outcome::applied(doc.set_edge_font_family(er, family)),
             // Portal icon shares the edge body's `glyph_connection.font` —
@@ -281,9 +312,23 @@ impl<'a> HasLabel for TargetView<'a> {
 impl<'a> HandlesCopy for TargetView<'a> {
     fn clipboard_copy(&self) -> ClipboardContent {
         match self {
-            // Node copy = the node's current text. Empty text reports
-            // `Empty` so the caller can distinguish from a target type
-            // that doesn't support copy at all.
+            // Section copy = the targeted section's text only —
+            // per-section paste / cut round-trips through the
+            // section-aware setter without disturbing siblings.
+            TargetView::Section { doc, id, section_idx } => match doc
+                .mindmap
+                .nodes
+                .get(id)
+                .and_then(|n| n.sections.get(*section_idx))
+            {
+                Some(section) if section.text.is_empty() => ClipboardContent::Empty,
+                Some(section) => ClipboardContent::Text(section.text.clone()),
+                None => ClipboardContent::NotApplicable,
+            },
+            // Node copy = the node's current text (every section
+            // joined by '\n' via `display_text`). Empty text
+            // reports `Empty` so the caller can distinguish from a
+            // target type that doesn't support copy at all.
             TargetView::Node { doc, id } => match doc.mindmap.nodes.get(id) {
                 Some(n) => {
                     let text = n.display_text();
@@ -341,11 +386,19 @@ impl<'a> HandlesCopy for TargetView<'a> {
 impl<'a> HandlesPaste for TargetView<'a> {
     fn clipboard_paste(&mut self, content: &str) -> Outcome {
         match self {
+            // Section paste = replace just the targeted section's
+            // text. Sibling sections stay untouched, matching
+            // `clipboard_copy`'s per-section read so a copy →
+            // paste round-trip on a multi-section node preserves
+            // the data shape.
+            TargetView::Section { doc, id, section_idx } => {
+                Outcome::applied(doc.set_section_text(id, *section_idx, content.trim_end().to_string()))
+            }
             // Paste replaces the node's text with the clipboard
-            // contents wholesale. Mirrors the user's mental model:
-            // "paste here" = "put this where I'm pointing". Trims
-            // trailing whitespace newline noise (a common source
-            // when clipboard contents come from a paragraph).
+            // contents wholesale. Today's `set_node_text` writes
+            // section[0]; sections 1+ stay intact. Authors who
+            // want full-node replacement should explicitly select
+            // a section first.
             TargetView::Node { doc, id } => {
                 Outcome::applied(doc.set_node_text(id, content.trim_end().to_string()))
             }
@@ -413,6 +466,27 @@ impl<'a> HandlesPaste for TargetView<'a> {
 impl<'a> HandlesCut for TargetView<'a> {
     fn clipboard_cut(&mut self) -> ClipboardContent {
         match self {
+            // Section cut = grab the targeted section's text, then
+            // clear it (siblings untouched). Pairs with the
+            // section-aware paste so copy → cut → paste round-trips
+            // on a multi-section node preserve the data shape.
+            TargetView::Section { doc, id, section_idx } => {
+                let text = match doc
+                    .mindmap
+                    .nodes
+                    .get(id)
+                    .and_then(|n| n.sections.get(*section_idx))
+                {
+                    Some(section) => section.text.clone(),
+                    None => return ClipboardContent::NotApplicable,
+                };
+                doc.set_section_text(id, *section_idx, String::new());
+                if text.is_empty() {
+                    ClipboardContent::Empty
+                } else {
+                    ClipboardContent::Text(text)
+                }
+            }
             TargetView::Node { doc, id } => {
                 let text = match doc.mindmap.nodes.get(id) {
                     Some(n) => n.display_text(),
@@ -517,10 +591,24 @@ fn read_edge_label(doc: &MindMapDocument, er: &EdgeRef) -> Option<String> {
 /// safe fanout).
 pub enum TargetId {
     Node(String),
+    /// One section of one node, identified by `(node_id, section_idx)`.
+    /// Surfaces only for `SelectionState::Section`; clipboard copy /
+    /// cut / paste route to the specific section's `text` (vs the
+    /// whole-node `display_text` join for `Node` targets).
+    Section {
+        node_id: String,
+        section_idx: usize,
+    },
     Edge(EdgeRef),
     EdgeLabel(EdgeRef),
-    PortalLabel { edge: EdgeRef, endpoint_node_id: String },
-    PortalText { edge: EdgeRef, endpoint_node_id: String },
+    PortalLabel {
+        edge: EdgeRef,
+        endpoint_node_id: String,
+    },
+    PortalText {
+        edge: EdgeRef,
+        endpoint_node_id: String,
+    },
 }
 
 pub fn selection_targets(sel: &SelectionState) -> Vec<TargetId> {
@@ -528,12 +616,18 @@ pub fn selection_targets(sel: &SelectionState) -> Vec<TargetId> {
         SelectionState::None => Vec::new(),
         SelectionState::Single(id) => vec![TargetId::Node(id.clone())],
         SelectionState::Multi(ids) => ids.iter().cloned().map(TargetId::Node).collect(),
-        // A section selection routes through to its owning node
-        // for the legacy whole-node verbs (color, font, …) that
-        // iterate `selection_targets`. Per-section UX (a console
-        // verb that takes an explicit `section=N`) consults
-        // `selected_section()` directly to bypass this collapse.
-        SelectionState::Section(s) => vec![TargetId::Node(s.node_id.clone())],
+        // A section selection routes to a dedicated `Section`
+        // target so clipboard copy / cut / paste land on the
+        // selected section's `text` instead of collapsing to
+        // whole-node behaviour. Style-and-layout verbs (color,
+        // font, border, zoom) that are inherently node-level
+        // continue to consult `selection_targets` as well, and
+        // their dispatch arms collapse `Section` back to the
+        // owning node — see the per-verb arms in `console/commands/`.
+        SelectionState::Section(s) => vec![TargetId::Section {
+            node_id: s.node_id.clone(),
+            section_idx: s.section_idx,
+        }],
         SelectionState::Edge(er) => vec![TargetId::Edge(er.clone())],
         SelectionState::EdgeLabel(s) => vec![TargetId::EdgeLabel(s.edge_ref.clone())],
         SelectionState::PortalLabel(s) => vec![TargetId::PortalLabel {
@@ -552,6 +646,11 @@ pub fn selection_targets(sel: &SelectionState) -> Vec<TargetId> {
 pub fn view_for<'a>(doc: &'a mut MindMapDocument, id: &TargetId) -> TargetView<'a> {
     match id {
         TargetId::Node(nid) => TargetView::Node { doc, id: nid.clone() },
+        TargetId::Section { node_id, section_idx } => TargetView::Section {
+            doc,
+            id: node_id.clone(),
+            section_idx: *section_idx,
+        },
         TargetId::Edge(er) => TargetView::Edge { doc, er: er.clone() },
         TargetId::EdgeLabel(er) => TargetView::EdgeLabel { doc, er: er.clone() },
         TargetId::PortalLabel {

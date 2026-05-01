@@ -1060,6 +1060,26 @@ section and any channel-0 child mind-node. The
 `Predicate::IsSection` seam closes this when richer authoring
 needs it.
 
+A second deferred seam: `MindSection.channel: Option<usize>`
+would let authors distinguish "explicit channel 0" from "default
+0", currently indistinguishable when the section sits at
+index > 0 (the tree builder substitutes the index in that case).
+Authors who depend on explicit channel routing should set
+non-zero values today.
+
+**Custom-mutation reach.** `apply_custom_mutation`'s flat-apply
+path resolves the targeted MindNode to its container *and* every
+`Flag::SectionRoot` child, applying the mutation list to each.
+Position-affecting mutations land on both (lockstep movement);
+text / region / scale mutations are visible only through the
+section-areas (the chrome-only container has no glyphs).
+Section text/run changes do *not* sync back to
+`MindNode.sections` — `sync_node_from_tree` covers position
+only — so the next `rebuild_all` reverts custom-mutation text
+changes. This matches the pre-section limit on the same shape;
+text-bearing custom mutations should ride on
+`set_section_text` (the persistent setter).
+
 ### `MindEdge`
 
 **Summary.** A directed connection between two nodes — line-mode

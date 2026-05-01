@@ -19,6 +19,9 @@
 //! - [`portals`] — portal element emission (two-per-pair / missing
 //!   endpoint / fold filter / theme var / selection highlight /
 //!   anchor / drag offset).
+//! - [`sections`] — per-section text emission, multi-section
+//!   `section_idx` round-trip, section AABB resolution, and the
+//!   empty-section skip path.
 
 mod fixtures;
 

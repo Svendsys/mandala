@@ -66,6 +66,17 @@ pub(super) enum PendingClick {
     None,
     Empty,
     Node(String),
+    /// Cursor landed on a specific section inside a multi-section
+    /// node at mouse-down. Committed at mouse-up into
+    /// `SelectionState::Section { node_id, section_idx }` so
+    /// per-section verbs (text edit, font, color) target only
+    /// that section. Single-section nodes route through `Node`
+    /// instead, preserving the whole-node click semantic for
+    /// migrated maps.
+    Section {
+        node_id: String,
+        section_idx: usize,
+    },
     /// Cursor landed on a portal **icon** at mouse-down. Committed
     /// at mouse-up into a `SelectionState::PortalLabel`. Carries
     /// both the owning-edge key and the endpoint id the marker

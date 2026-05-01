@@ -211,13 +211,52 @@ impl MindMapDocument {
     /// flat list (runtime-hole-bearing, size-aware) are skipped at this
     /// layer; a later session wires the richer `mutator_builder::build`
     /// path for those.
+    ///
+    /// **Section fan-out.** Post-section the per-node element shape is
+    /// "chrome-only container + N section-areas + N section-models". A
+    /// pre-section custom mutation that mutated the per-node area (text,
+    /// runs, scale) used to land on the one-area-per-node entry; today
+    /// it has to fan out across every section-area, otherwise the
+    /// mutation lands on a no-glyph container with no visible effect.
+    /// Position-affecting mutations apply to *both* container and
+    /// sections so the whole node moves in lockstep (sections store
+    /// absolute canvas positions in the tree).
     fn apply_to_tree(&self, custom: &CustomMutation, node_id: &str, tree: &mut MindMapTree) {
+        use baumhard::core::primitives::{Flag, Flaggable};
+
         let Some(mutator) = custom.mutator.as_ref() else { return };
         let Some(mutations) = flat_mutations(mutator) else { return };
         let affected = self.collect_affected_node_ids(node_id, &custom.target_scope);
         for id in &affected {
-            if let Some(&nid) = tree.node_map.get(id.as_str()) {
-                if let Some(node) = tree.tree.arena.get_mut(nid) {
+            let Some(container_arena_id) = tree.arena_id_for(id.as_str()) else {
+                continue;
+            };
+            // Apply to the container (carries position; text/regions
+            // are empty so text-affecting mutations are visually no-op
+            // here, but `area.scale` and position deltas land cleanly).
+            if let Some(node) = tree.tree.arena.get_mut(container_arena_id) {
+                apply_mutations_to_element(&mutations, node.get_mut());
+            }
+            // Fan out across every immediate `Flag::SectionRoot` child
+            // of the container — that's where `text`, `text_runs`
+            // (regions), and per-section `scale` actually live in the
+            // post-section tree shape. Without this fan-out every
+            // text/font/region custom mutation silently no-ops on the
+            // empty container. Mirrors `apply_tree_highlights`'s
+            // walk so mutations and highlights both reach sections by
+            // the same primitive.
+            let section_arena_ids: Vec<indextree::NodeId> = container_arena_id
+                .children(&tree.tree.arena)
+                .filter(|cid| {
+                    tree.tree
+                        .arena
+                        .get(*cid)
+                        .map(|n| n.get().flag_is_set(Flag::SectionRoot))
+                        .unwrap_or(false)
+                })
+                .collect();
+            for sid in section_arena_ids {
+                if let Some(node) = tree.tree.arena.get_mut(sid) {
                     apply_mutations_to_element(&mutations, node.get_mut());
                 }
             }
@@ -267,8 +306,8 @@ impl MindMapDocument {
     /// Sync a node's position from the Baumhard tree back to the MindMap model.
     /// Used after persistent mutations to ensure the model reflects tree state.
     fn sync_node_from_tree(&mut self, node_id: &str, tree: &MindMapTree) {
-        let tree_nid = match tree.node_map.get(node_id) {
-            Some(&nid) => nid,
+        let tree_nid = match tree.arena_id_for(node_id) {
+            Some(nid) => nid,
             None => return,
         };
         let element = match tree.tree.arena.get(tree_nid) {
