@@ -25,6 +25,27 @@ fn test_hit_test_direct_hit() {
     assert_eq!(result, Some("0".to_string()));
 }
 
+/// `hit_test_target` collapses single-section nodes (the
+/// migration default) to `HitTarget::NodeContainer` — clicking
+/// anywhere inside a node with one default section gives the
+/// pre-section whole-node hit semantic.
+#[test]
+fn test_hit_test_target_single_section_collapses_to_node() {
+    let mut tree = load_test_tree();
+    let node_id = tree.node_map.get("0").unwrap();
+    let area = tree.tree.arena.get(*node_id).unwrap().get().glyph_area().unwrap();
+    let center = Vec2::new(
+        area.position.x.0 + area.render_bounds.x.0 / 2.0,
+        area.position.y.0 + area.render_bounds.y.0 / 2.0,
+    );
+    match hit_test_target(center, &mut tree) {
+        Some(HitTarget::NodeContainer { node_id }) => {
+            assert_eq!(node_id, "0");
+        }
+        other => panic!("expected NodeContainer, got {other:?}"),
+    }
+}
+
 #[test]
 fn test_hit_test_miss() {
     let mut tree = load_test_tree();

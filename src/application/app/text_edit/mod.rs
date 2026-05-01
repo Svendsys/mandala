@@ -28,6 +28,15 @@ pub(in crate::application::app) enum TextEditState {
     Closed,
     Open {
         node_id: String,
+        /// Index inside `MindNode.sections` identifying which
+        /// section the buffer is editing. Defaults to `0` when
+        /// the editor is opened from a `SelectionState::Single`
+        /// (whole-node) selection, matching the migration default.
+        /// A `SelectionState::Section` open carries through its
+        /// `section_idx` so per-section edits target the right
+        /// section across the entire edit lifecycle (open / revert
+        /// / commit / per-keystroke tree apply).
+        section_idx: usize,
         /// The in-progress multi-line buffer.
         buffer: String,
         /// Cursor position as a grapheme-cluster index into `buffer`.

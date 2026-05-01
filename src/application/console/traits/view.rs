@@ -528,6 +528,12 @@ pub fn selection_targets(sel: &SelectionState) -> Vec<TargetId> {
         SelectionState::None => Vec::new(),
         SelectionState::Single(id) => vec![TargetId::Node(id.clone())],
         SelectionState::Multi(ids) => ids.iter().cloned().map(TargetId::Node).collect(),
+        // A section selection routes through to its owning node
+        // for the legacy whole-node verbs (color, font, …) that
+        // iterate `selection_targets`. Per-section UX (a console
+        // verb that takes an explicit `section=N`) consults
+        // `selected_section()` directly to bypass this collapse.
+        SelectionState::Section(s) => vec![TargetId::Node(s.node_id.clone())],
         SelectionState::Edge(er) => vec![TargetId::Edge(er.clone())],
         SelectionState::EdgeLabel(s) => vec![TargetId::EdgeLabel(s.edge_ref.clone())],
         SelectionState::PortalLabel(s) => vec![TargetId::PortalLabel {

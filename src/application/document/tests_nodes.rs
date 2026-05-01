@@ -31,6 +31,51 @@ fn test_set_node_text_updates_text_and_collapses_runs() {
     ));
 }
 
+/// `set_section_text(node, idx, text)` writes through to the
+/// requested section — section 0 gets the same behaviour as the
+/// pre-section `set_node_text`, sections 1+ stay untouched
+/// unless explicitly targeted. Pins the section-aware setter's
+/// addressing for the per-section text-edit path.
+#[test]
+fn test_set_section_text_targets_specific_section() {
+    use baumhard::mindmap::model::MindSection;
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    // Materialise a multi-section node by appending a second
+    // section to the existing testament root.
+    {
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        node.sections
+            .push(MindSection::new_default("second".into(), vec![]));
+    }
+    doc.undo_stack.clear();
+    doc.dirty = false;
+
+    // Edit section 1 only — section 0 must stay untouched.
+    let s0_before = doc.mindmap.nodes.get(&nid).unwrap().sections[0].text.clone();
+    assert!(doc.set_section_text(&nid, 1, "rewrote section 1".to_string()));
+    let n = doc.mindmap.nodes.get(&nid).unwrap();
+    assert_eq!(n.sections[0].text, s0_before, "section 0 untouched");
+    assert_eq!(n.sections[1].text, "rewrote section 1");
+    // Undo restores both sections.
+    assert!(doc.undo());
+    let n = doc.mindmap.nodes.get(&nid).unwrap();
+    assert_eq!(n.sections[1].text, "second");
+}
+
+/// Out-of-range section index is a no-op — neither push undo
+/// nor flip dirty. Mirrors `set_node_text` no-op contract.
+#[test]
+fn test_set_section_text_out_of_range_is_noop() {
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    doc.undo_stack.clear();
+    doc.dirty = false;
+    assert!(!doc.set_section_text(&nid, 99, "nope".to_string()));
+    assert!(doc.undo_stack.is_empty());
+    assert!(!doc.dirty);
+}
+
 #[test]
 fn test_set_node_text_noop_on_unchanged() {
     let mut doc = load_test_doc();

@@ -1854,9 +1854,9 @@ those are all on `InitState`.
 
 ### `SelectionState`
 
-**Summary.** A tagged union of what the user has selected: nothing,
-a node, multiple nodes, an edge body, an edge label, a portal
-icon, or a portal text.
+**Summary.** A tagged union of what the user has selected:
+nothing, a node, multiple nodes, one section of one node, an
+edge body, an edge label, a portal icon, or a portal text.
 
 **What it's for.** Selection variants are mutually exclusive by
 construction — at most one thing is selected at a time. The
@@ -1867,11 +1867,19 @@ command sets. The renderer uses it to apply the cyan highlight
 to the right element.
 
 **Under the hood.**
-`src/application/document/types.rs:99-148`. Variants:
+`src/application/document/types.rs`. Variants:
 
 - `None`
 - `Single(node_id)` — one node
 - `Multi(Vec<node_id>)` — multiple nodes
+- `Section(SectionSel)` — one [`MindSection`](#mindsection) of
+  one node, identified by `(node_id, section_idx)`. Surfaces
+  when the user clicks on a section-area in a *multi-section*
+  node (single-section migrated nodes still route through
+  `Single` so today's whole-node verbs keep firing on the whole
+  node target). Per-section verbs (`set_section_text` and
+  friends) consult `selected_section()` to bypass the
+  whole-node collapse.
 - `Edge(EdgeRef)` — the whole edge body
 - `EdgeLabel(EdgeLabelSel)` — the text label of a line-mode edge
 - `PortalLabel(PortalLabelSel)` — a portal endpoint icon

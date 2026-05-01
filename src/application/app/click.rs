@@ -12,7 +12,7 @@ use baumhard::mindmap::custom_mutation::{PlatformContext, Trigger};
 use super::scene_rebuild::{rebuild_all, rebuild_scene_only};
 use super::{now_ms, AppMode, EDGE_HIT_TOLERANCE_PX};
 use crate::application::document::{
-    apply_tree_highlights, hit_test_edge, MindMapDocument, SelectionState, HIGHLIGHT_COLOR,
+    apply_tree_highlights, hit_test_edge, MindMapDocument, SectionSel, SelectionState, HIGHLIGHT_COLOR,
     REPARENT_SOURCE_COLOR, REPARENT_TARGET_COLOR,
 };
 use crate::application::renderer::Renderer;
@@ -26,6 +26,7 @@ use crate::application::renderer::Renderer;
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn handle_click(
     hit: Option<String>,
+    hit_section: Option<usize>,
     cursor_pos: (f64, f64),
     shift_pressed: bool,
     document: &mut Option<MindMapDocument>,
@@ -70,6 +71,18 @@ pub(super) fn handle_click(
 
     // Update selection state
     match (&hit, shift_pressed) {
+        // Click on a specific section in a multi-section node:
+        // route to `SelectionState::Section` so per-section verbs
+        // (text edit, font, color) target that section. Single-
+        // section nodes always have `hit_section = None` from
+        // `hit_test_target`, falling through to the
+        // whole-node-Single arm below.
+        (Some(id), false) if hit_section.is_some() => {
+            doc.selection = SelectionState::Section(SectionSel {
+                node_id: id.clone(),
+                section_idx: hit_section.unwrap(),
+            });
+        }
         (Some(id), false) => {
             doc.selection = SelectionState::Single(id.clone());
         }
@@ -82,12 +95,15 @@ pub(super) fn handle_click(
                 // shift+click on a node — promote the node to a
                 // fresh single selection, the same as clicking
                 // from a `None` or `Edge` state. Covers all four
-                // edge-side variants (body, label, icon, text).
+                // edge-side variants (body, label, icon, text)
+                // plus a `Section` (no shift+click multi-select
+                // semantics for sections; promote to whole-node).
                 SelectionState::None
                 | SelectionState::Edge(_)
                 | SelectionState::EdgeLabel(_)
                 | SelectionState::PortalLabel(_)
-                | SelectionState::PortalText(_) => {
+                | SelectionState::PortalText(_)
+                | SelectionState::Section(_) => {
                     doc.selection = SelectionState::Single(id.clone());
                 }
                 SelectionState::Single(existing) => {

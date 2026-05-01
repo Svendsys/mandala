@@ -47,6 +47,105 @@ pub fn hit_test(canvas_pos: Vec2, tree: &mut MindMapTree) -> Option<String> {
     Some(mind_id)
 }
 
+/// Richer hit-test result that distinguishes a click on the node
+/// chrome from a click on a specific section. Used by the click
+/// handler to opt into `SelectionState::Section` when a click
+/// lands inside an authored section AABB; today's typical
+/// migrated single-section node treats every click as a click on
+/// the chrome (Section selection bites only when the node has
+/// multiple sections, so unambiguous "the user pointed at this
+/// section" gestures don't appear on legacy maps).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HitTarget {
+    /// Click landed on the node chrome — the container area or a
+    /// section-area inside a single-section node. The
+    /// SelectionState consumer turns this into `Single(node_id)`,
+    /// preserving today's whole-node selection semantics.
+    NodeContainer { node_id: String },
+    /// Click landed on a specific section-area inside a multi-
+    /// section node. The SelectionState consumer turns this into
+    /// `Section { node_id, section_idx }` so per-section verbs
+    /// (text edit, font, color) can operate on just this section.
+    Section { node_id: String, section_idx: usize },
+}
+
+impl HitTarget {
+    /// Owning node id — the same value every per-node consumer
+    /// (highlight, drag, …) wants regardless of whether the user
+    /// pointed at the chrome or a specific section.
+    pub fn node_id(&self) -> &str {
+        match self {
+            HitTarget::NodeContainer { node_id } => node_id,
+            HitTarget::Section { node_id, .. } => node_id,
+        }
+    }
+}
+
+/// Hit-test variant that returns a [`HitTarget`] — distinguishes
+/// "the user clicked on a specific section" from "the user
+/// clicked on the chrome of a node that happens to have one
+/// section filling it". The plain [`hit_test`] keeps the old
+/// `Option<String>` shape; this one is the click-handler entry
+/// point that wires `SelectionState::Section` for multi-section
+/// authoring.
+pub fn hit_test_target(canvas_pos: Vec2, tree: &mut MindMapTree) -> Option<HitTarget> {
+    let landed = tree.tree.descendant_at(canvas_pos)?;
+    let mind_id = tree.owning_mind_id(landed)?.to_owned();
+    if !point_in_node_aabb(canvas_pos, &mind_id, tree) {
+        return None;
+    }
+    // Climb at most three arena edges (model → section → container)
+    // looking for a section identity. A landing on the container
+    // itself returns `None` from `section_for_node` and falls
+    // through to the `NodeContainer` arm.
+    let mut probe = landed;
+    for _ in 0..3 {
+        if let Some((id, idx)) = tree.section_for_node(probe) {
+            // For single-section nodes, fold to NodeContainer so
+            // every today's whole-node click semantic survives —
+            // the section variant unlocks for nodes the author
+            // explicitly gave more than one section.
+            let owning_node_section_count = tree
+                .tree
+                .arena
+                .get(*tree.node_map.get(id)?)
+                .map(|n| {
+                    n.first_child()
+                        .map(|fc| {
+                            std::iter::successors(Some(fc), |&c| {
+                                tree.tree.arena.get(c).and_then(|x| x.next_sibling())
+                            })
+                            .filter(|&c| {
+                                tree.tree
+                                    .arena
+                                    .get(c)
+                                    .map(|x| {
+                                        use baumhard::core::primitives::Flaggable;
+                                        x.get().flag_is_set(Flag::SectionRoot)
+                                    })
+                                    .unwrap_or(false)
+                            })
+                            .count()
+                        })
+                        .unwrap_or(0)
+                })
+                .unwrap_or(0);
+            if owning_node_section_count > 1 {
+                return Some(HitTarget::Section {
+                    node_id: id.to_string(),
+                    section_idx: idx,
+                });
+            }
+            break;
+        }
+        match tree.tree.arena.get(probe).and_then(|n| n.parent()) {
+            Some(p) => probe = p,
+            None => break,
+        }
+    }
+    Some(HitTarget::NodeContainer { node_id: mind_id })
+}
+
 /// Is `canvas_pos` inside node `node_id`'s shape? Reads the tree-side
 /// glyph area so drag-preview positions count (tree is authoritative
 /// during in-flight mutations; identical to the model when idle). The

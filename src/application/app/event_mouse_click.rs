@@ -186,6 +186,7 @@ pub(super) fn handle_mouse_input(
                 let super::ClickHitParts {
                     click_hit,
                     hit_node,
+                    hit_section_idx,
                     portal_text_hit,
                     portal_icon_hit,
                     edge_label_hit,
@@ -318,6 +319,7 @@ pub(super) fn handle_mouse_input(
                 *ctx.drag_state = DragState::Pending {
                     start_pos: cursor_pos_val,
                     hit_node,
+                    hit_section_idx,
                     hit_edge_handle,
                     hit_portal_label,
                     hit_edge_label: edge_label_hit,
@@ -327,6 +329,7 @@ pub(super) fn handle_mouse_input(
                 match std::mem::replace(ctx.drag_state, DragState::None) {
                     DragState::Pending {
                         hit_node,
+                        hit_section_idx,
                         hit_edge_label,
                         ..
                     } => {
@@ -486,6 +489,7 @@ pub(super) fn handle_mouse_input(
                         if !entered_label_select {
                             handle_click(
                                 hit_node,
+                                hit_section_idx,
                                 cursor_pos_val,
                                 ctx.modifiers.shift_key(),
                                 ctx.document,

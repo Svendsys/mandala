@@ -304,6 +304,7 @@ fn test_text_edit_state_node_id_round_trip() {
 
     let open = TextEditState::Open {
         node_id: "n-42".to_string(),
+        section_idx: 0,
         buffer: "hi".to_string(),
         cursor_grapheme_pos: 2,
         buffer_regions: baumhard::core::primitives::ColorFontRegions::new_empty(),
@@ -458,6 +459,7 @@ fn test_insert_caret_after_emoji() {
 fn make_open_state(buffer: &str, cursor: usize) -> TextEditState {
     TextEditState::Open {
         node_id: "n-test".to_string(),
+        section_idx: 0,
         buffer: buffer.to_string(),
         cursor_grapheme_pos: cursor,
         buffer_regions: baumhard::core::primitives::ColorFontRegions::new_empty(),

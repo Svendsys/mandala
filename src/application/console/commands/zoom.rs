@@ -184,6 +184,8 @@ fn execute_zoom(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
 
     let kind: &str = match &doc.selection {
         SelectionState::Single(_) => "node",
+        // Zoom-bounds attach to the node, not the section.
+        SelectionState::Section(_) => "node",
         SelectionState::Edge(_) => "edge",
         SelectionState::EdgeLabel(_) => "edge label",
         SelectionState::PortalLabel(_) => "portal label",
@@ -243,6 +245,9 @@ pub(crate) fn apply_zoom_to_selection(
     }
     match doc.selection.clone() {
         SelectionState::Single(id) => doc.set_node_zoom_visibility(&id, min, max),
+        // Zoom-bounds are node-level; section selection routes
+        // through to the owning node.
+        SelectionState::Section(s) => doc.set_node_zoom_visibility(&s.node_id, min, max),
         SelectionState::Multi(ids) => {
             let mut changed = false;
             for id in &ids {

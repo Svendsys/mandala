@@ -53,13 +53,15 @@ mod tests_selection;
 
 // Cross-platform: consumers (`scene_rebuild.rs`, `event_mouse_click.rs`,
 // `run_wasm/`, `scene_host.rs`) compile on both targets.
-pub use hit_test::{apply_tree_highlights, hit_test, point_in_node_aabb};
+pub use hit_test::{apply_tree_highlights, hit_test, hit_test_target, point_in_node_aabb, HitTarget};
 // Native-only: consumed by drag handlers, the click router, and
 // rect-select drain — none reachable on WASM today.
 #[cfg(not(target_arch = "wasm32"))]
 pub use hit_test::{apply_drag_delta, apply_drag_delta_and_collect_patches, hit_test_edge, rect_select};
 pub use nodes::{BorderConfigEdits, BorderEditOutcome, BorderSide, OptionEdit};
-pub use types::{AnimationInstance, EdgeLabelSel, EdgeRef, PortalLabelSel, SelectionState, HIGHLIGHT_COLOR};
+pub use types::{
+    AnimationInstance, EdgeLabelSel, EdgeRef, PortalLabelSel, SectionSel, SelectionState, HIGHLIGHT_COLOR,
+};
 // Native-only: consumed by `app/click.rs`'s reparent / connect mode
 // rendering. WASM doesn't dispatch `EnterReparentMode` /
 // `EnterConnectMode` (NativeOnly per `wasm_compatibility`).

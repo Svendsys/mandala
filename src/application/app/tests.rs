@@ -113,6 +113,7 @@ fn test_double_click_just_under_boundary_fires() {
 fn test_double_click_guard_skips_same_target_when_editor_open() {
     let editor = TextEditState::Open {
         node_id: "node-A".to_string(),
+        section_idx: 0,
         buffer: "in progress".to_string(),
         cursor_grapheme_pos: 11,
         buffer_regions: baumhard::core::primitives::ColorFontRegions::new_empty(),
@@ -131,6 +132,7 @@ fn test_double_click_guard_skips_same_target_when_editor_open() {
 fn test_double_click_guard_allows_different_target_when_editor_open() {
     let editor = TextEditState::Open {
         node_id: "node-A".to_string(),
+        section_idx: 0,
         buffer: "in progress".to_string(),
         cursor_grapheme_pos: 11,
         buffer_regions: baumhard::core::primitives::ColorFontRegions::new_empty(),

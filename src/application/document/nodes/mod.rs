@@ -46,6 +46,59 @@ impl MindMapDocument {
     /// **Collapse caveat**: authored multi-run nodes lose their per-span
     /// formatting on any edit — a future per-run splitter would preserve
     /// it, but until then the editor path is single-run.
+    /// Replace one section's `text` and collapse its `text_runs`
+    /// to a single run inheriting the first original run's
+    /// formatting. Returns `true` when the value actually changed.
+    /// Section-aware sibling of [`Self::set_node_text`] — the
+    /// latter's contract is preserved by routing through here
+    /// with `section_idx = 0`.
+    ///
+    /// No-op (returns `false`, no undo push) when the section
+    /// doesn't exist or its text already matches.
+    pub fn set_section_text(&mut self, node_id: &str, section_idx: usize, new_text: String) -> bool {
+        let node = match self.mindmap.nodes.get(node_id) {
+            Some(n) => n,
+            None => return false,
+        };
+        let Some(section) = node.sections.get(section_idx) else {
+            return false;
+        };
+        if section.text == new_text {
+            return false;
+        }
+        let before_sections = node.sections.clone();
+        let template = section.text_runs.first().cloned().unwrap_or_else(|| TextRun {
+            start: 0,
+            end: 0,
+            bold: false,
+            italic: false,
+            underline: false,
+            font: "LiberationSans".to_string(),
+            size_pt: 24,
+            color: "#ffffff".to_string(),
+            hyperlink: None,
+        });
+        let new_runs = vec![TextRun {
+            start: 0,
+            end: baumhard::util::grapheme_chad::count_grapheme_clusters(&new_text),
+            ..template
+        }];
+        let canvas_default = self.mindmap.canvas.default_border.clone();
+        let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
+        if let Some(section) = node.sections.get_mut(section_idx) {
+            section.text = new_text;
+            section.text_runs = new_runs;
+        }
+        super::grow_one_node_to_fit_text(node);
+        super::grow_one_node_to_fit_border(node, canvas_default.as_ref());
+        self.undo_stack.push(UndoAction::EditNodeText {
+            node_id: node_id.to_string(),
+            before_sections,
+        });
+        self.dirty = true;
+        true
+    }
+
     pub fn set_node_text(&mut self, node_id: &str, new_text: String) -> bool {
         // Validate + capture under an immutable borrow so the mutable
         // re-acquisition below can coexist with the canvas-default

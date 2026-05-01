@@ -147,6 +147,14 @@ pub enum SelectionState {
     None,
     Single(String),
     Multi(Vec<String>),
+    /// One section of one node — emitted when the user clicks on a
+    /// section-area in a multi-section node and routes per-section
+    /// edits (text, font, colour) to that specific section. Single-
+    /// section migrated nodes prefer [`Self::Single`] so today's
+    /// per-node verbs continue to fire on the whole-node target;
+    /// the section variant is the seam that surfaces when richer
+    /// authoring needs the discrimination.
+    Section(SectionSel),
     Edge(EdgeRef),
     /// Line-mode label selection: the edge's text label sits
     /// along the connection path and is selected independently
@@ -160,6 +168,30 @@ pub enum SelectionState {
     /// because the identity (`edge_key`, `endpoint_node_id`) is
     /// identical to the icon; only the selection target differs.
     PortalText(PortalLabelSel),
+}
+
+/// Identity of a single
+/// [`MindSection`](baumhard::mindmap::model::MindSection) in the
+/// document — the owning MindNode id plus the section's index in
+/// `MindNode.sections`. Stable across scene rebuilds for unchanged
+/// nodes; same identity shape every per-section interaction
+/// (selection, hit-test, scene rebuild keys) speaks.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct SectionSel {
+    pub node_id: String,
+    pub section_idx: usize,
+}
+
+impl SectionSel {
+    /// Construct a section selection from owned strings + index.
+    /// Mirrors [`EdgeRef::new`] — same idiomatic shape across
+    /// every selection-bearing identity in the document layer.
+    pub fn new(node_id: impl Into<String>, section_idx: usize) -> Self {
+        SectionSel {
+            node_id: node_id.into(),
+            section_idx,
+        }
+    }
 }
 
 impl SelectionState {
@@ -196,6 +228,11 @@ impl SelectionState {
             SelectionState::None => false,
             SelectionState::Single(id) => id == node_id,
             SelectionState::Multi(ids) => ids.contains(&node_id.to_string()),
+            // A section selection counts the owning node as
+            // selected — every per-node consumer (highlight,
+            // chrome rendering, child filter) gets the natural
+            // "this node is the one in focus" answer.
+            SelectionState::Section(s) => s.node_id == node_id,
             SelectionState::Edge(_)
             | SelectionState::EdgeLabel(_)
             | SelectionState::PortalLabel(_)
@@ -208,10 +245,23 @@ impl SelectionState {
             SelectionState::None => vec![],
             SelectionState::Single(id) => vec![id.as_str()],
             SelectionState::Multi(ids) => ids.iter().map(|s| s.as_str()).collect(),
+            SelectionState::Section(s) => vec![s.node_id.as_str()],
             SelectionState::Edge(_)
             | SelectionState::EdgeLabel(_)
             | SelectionState::PortalLabel(_)
             | SelectionState::PortalText(_) => vec![],
+        }
+    }
+
+    /// Borrow the inner [`SectionSel`] for a section selection,
+    /// or `None` for any other variant. Per-section verbs
+    /// (`set_section_text` and friends) consult this accessor to
+    /// route an edit at the section index instead of the
+    /// whole-node default.
+    pub fn selected_section(&self) -> Option<&SectionSel> {
+        match self {
+            SelectionState::Section(s) => Some(s),
+            _ => None,
         }
     }
 

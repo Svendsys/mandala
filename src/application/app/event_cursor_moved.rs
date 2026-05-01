@@ -160,6 +160,13 @@ pub(super) fn handle_cursor_moved(
         DragState::Pending {
             start_pos,
             hit_node,
+            // Section index isn't consumed during the drag-threshold
+            // promotion below — drag transitions select the whole
+            // node (`MovingNode`) regardless of which section the
+            // press landed on. `_` keeps the destructure exhaustive
+            // without claiming the field is unused at the data
+            // level.
+            hit_section_idx: _,
             hit_edge_handle,
             hit_portal_label,
             hit_edge_label,

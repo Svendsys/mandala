@@ -99,8 +99,15 @@ pub(in crate::application::app) fn apply_open_text_edit_on_single(
     rc: &mut RebuildContext<'_>,
     text_edit_state: &mut super::super::super::text_edit::TextEditState,
 ) -> bool {
-    let SelectionState::Single(id) = rc.document.selection.clone() else {
-        return false;
+    // Section selection routes to its owning node's text editor —
+    // the editor today edits the section identified by the
+    // selection's `section_idx` (the inner editor consults
+    // `selected_section()`); this dispatch shim only needs to
+    // resolve the owning node id for the entry point.
+    let id = match rc.document.selection.clone() {
+        SelectionState::Single(id) => id,
+        SelectionState::Section(s) => s.node_id,
+        _ => return false,
     };
     super::super::super::text_edit::open_text_edit(
         &id,

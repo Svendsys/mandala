@@ -40,12 +40,21 @@ pub(in crate::application::app) fn open_text_edit(
     _app_scene: &mut crate::application::scene_host::AppScene,
     renderer: &mut Renderer,
 ) {
-    // Post-section: a node's editable text lives on its first
-    // section. The follow-up commit adds per-section addressing
-    // via `SelectionState::Section`; for now the inline editor
-    // always edits `sections[0]`, matching the migration default
-    // where every node has exactly one section.
-    let current_text = match doc.mindmap.nodes.get(node_id).and_then(|n| n.sections.first()) {
+    // Resolve the section index from the document's selection.
+    // `Section { node_id: id, section_idx }` opens the editor on
+    // *that* section; any other selection (Single, Multi, edge-
+    // adjacent) defaults to section 0 — preserving the historical
+    // single-section single-node behaviour for migrated maps.
+    let section_idx = match doc.selection.selected_section() {
+        Some(s) if s.node_id == node_id => s.section_idx,
+        _ => 0,
+    };
+    let current_text = match doc
+        .mindmap
+        .nodes
+        .get(node_id)
+        .and_then(|n| n.sections.get(section_idx))
+    {
         Some(section) => section.text.clone(),
         None => return,
     };
@@ -56,26 +65,13 @@ pub(in crate::application::app) fn open_text_edit(
     };
     let cursor_grapheme_pos = grapheme_chad::count_grapheme_clusters(&buffer);
     // Seed `buffer_regions` from the tree's current `area.regions`,
-    // which the tree builder populated from the node's `text_runs`.
+    // which the tree builder populated from the section's `text_runs`.
     // The tree is the source of truth for regions during an edit
     // session; the model is frozen until commit. `from_creation`
     // nodes have no prior regions, so we start from empty.
-    // Snapshot the tree's pre-edit text + regions so cancel can
-    // apply them back as a delta instead of triggering `rebuild_all`.
-    // Both reads go through the tree rather than the model so any
-    // selection-highlight the last `rebuild_all` stamped onto the
-    // node survives cancel — the `from_creation` path is no
-    // exception (a freshly-created node is `Single(new_id)`
-    // selected, so its tree regions carry the cyan highlight we'd
-    // otherwise wipe on cancel).
-    let original_text = read_node_text(mindmap_tree.as_ref(), node_id).unwrap_or_default();
-    let original_regions = read_node_regions(mindmap_tree.as_ref(), node_id).unwrap_or_default();
-    // `buffer_regions` drives region bookkeeping during typing —
-    // seeded from the original regions and then mutated by each
-    // keystroke via `shift_regions_after` / `shrink_regions_after`.
-    // `from_creation` nodes start with empty regions because the
-    // buffer itself starts empty, so there's nothing the cursor
-    // could be absorbed into yet.
+    let original_text = read_section_text(mindmap_tree.as_ref(), node_id, section_idx).unwrap_or_default();
+    let original_regions =
+        read_section_regions(mindmap_tree.as_ref(), node_id, section_idx).unwrap_or_default();
     let buffer_regions = if from_creation {
         baumhard::core::primitives::ColorFontRegions::new_empty()
     } else {
@@ -83,6 +79,7 @@ pub(in crate::application::app) fn open_text_edit(
     };
     *text_edit_state = TextEditState::Open {
         node_id: node_id.to_string(),
+        section_idx,
         buffer: buffer.clone(),
         cursor_grapheme_pos,
         buffer_regions: buffer_regions.clone(),
@@ -93,6 +90,7 @@ pub(in crate::application::app) fn open_text_edit(
     // caret at end" for edit) through the Baumhard mutation pipeline.
     apply_text_edit_to_tree(
         node_id,
+        section_idx,
         &buffer,
         &buffer_regions,
         cursor_grapheme_pos,
@@ -101,42 +99,46 @@ pub(in crate::application::app) fn open_text_edit(
     );
 }
 
-/// Resolve `node_id` to the arena `NodeId` of its *first
-/// section-area* — the post-refactor home of editable text +
-/// regions. Returns `None` when the tree, the node, or the node's
-/// `sections[0]` slot is missing.
-fn first_section_arena_id(
+/// Resolve `(node_id, section_idx)` to the arena `NodeId` of
+/// the matching section-area — the post-refactor home of
+/// editable text + regions. Returns `None` when the tree, the
+/// node, or the section slot is missing.
+fn section_arena_id(
     tree: &baumhard::mindmap::tree_builder::MindMapTree,
     node_id: &str,
+    section_idx: usize,
 ) -> Option<indextree::NodeId> {
-    tree.section_map.get(&(node_id.to_string(), 0)).copied()
+    tree.section_map.get(&(node_id.to_string(), section_idx)).copied()
 }
 
-/// Read the first section's `GlyphArea::regions` off the live
-/// tree. Returns `None` when the tree or the node isn't present,
-/// or when the target element isn't a `GlyphArea`. The text-edit
-/// path uses this to seed `TextEditState::Open::buffer_regions`
-/// at open time so per-run color and `AppFont` pins survive the
-/// edit lifecycle.
-pub(in crate::application::app) fn read_node_regions(
+/// Read a specific section's `GlyphArea::regions` off the live
+/// tree. Returns `None` when the tree or the section isn't
+/// present, or when the target element isn't a `GlyphArea`. The
+/// text-edit path uses this to seed
+/// `TextEditState::Open::buffer_regions` at open time so per-run
+/// color and `AppFont` pins survive the edit lifecycle.
+pub(in crate::application::app) fn read_section_regions(
     mindmap_tree: Option<&baumhard::mindmap::tree_builder::MindMapTree>,
     node_id: &str,
+    section_idx: usize,
 ) -> Option<baumhard::core::primitives::ColorFontRegions> {
     let tree = mindmap_tree?;
-    let nid = first_section_arena_id(tree, node_id)?;
+    let nid = section_arena_id(tree, node_id, section_idx)?;
     let element = tree.tree.arena.get(nid)?.get();
     element.glyph_area().map(|a| a.regions.clone())
 }
 
-/// Read the first section's `GlyphArea::text` off the live tree.
-/// Pairs with [`read_node_regions`] — together they capture the
-/// pre-edit snapshot the cancel path restores via `DeltaGlyphArea`.
-pub(in crate::application::app) fn read_node_text(
+/// Read a specific section's `GlyphArea::text` off the live
+/// tree. Pairs with [`read_section_regions`] — together they
+/// capture the pre-edit snapshot the cancel path restores via
+/// `DeltaGlyphArea`.
+pub(in crate::application::app) fn read_section_text(
     mindmap_tree: Option<&baumhard::mindmap::tree_builder::MindMapTree>,
     node_id: &str,
+    section_idx: usize,
 ) -> Option<String> {
     let tree = mindmap_tree?;
-    let nid = first_section_arena_id(tree, node_id)?;
+    let nid = section_arena_id(tree, node_id, section_idx)?;
     let element = tree.tree.arena.get(nid)?.get();
     element.glyph_area().map(|a| a.text.clone())
 }
@@ -148,6 +150,7 @@ pub(in crate::application::app) fn read_node_text(
 /// the tree, node, or element isn't present.
 pub(in crate::application::app) fn apply_text_and_regions_delta(
     node_id: &str,
+    section_idx: usize,
     text: String,
     regions: baumhard::core::primitives::ColorFontRegions,
     mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
@@ -159,9 +162,9 @@ pub(in crate::application::app) fn apply_text_and_regions_delta(
         Some(t) => t,
         None => return false,
     };
-    // Targets the first section-area, not the container — text
+    // Targets the section-area at `(node_id, section_idx)`. Text
     // and regions live on the section in the post-refactor shape.
-    let indextree_node_id = match first_section_arena_id(tree, node_id) {
+    let indextree_node_id = match section_arena_id(tree, node_id, section_idx) {
         Some(id) => id,
         None => return false,
     };
@@ -194,12 +197,13 @@ pub(in crate::application::app) fn apply_text_and_regions_delta(
 /// rebuild.
 pub(in crate::application::app) fn revert_node_text_on_tree(
     node_id: &str,
+    section_idx: usize,
     text: String,
     regions: baumhard::core::primitives::ColorFontRegions,
     mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
     renderer: &mut Renderer,
 ) {
-    if !apply_text_and_regions_delta(node_id, text, regions, mindmap_tree) {
+    if !apply_text_and_regions_delta(node_id, section_idx, text, regions, mindmap_tree) {
         return;
     }
     if let Some(tree) = mindmap_tree.as_ref() {
@@ -232,18 +236,22 @@ pub(in crate::application::app) fn close_text_edit(
     let snapshot = match std::mem::replace(text_edit_state, TextEditState::Closed) {
         TextEditState::Open {
             node_id,
+            section_idx,
             buffer,
             original_text,
             original_regions,
             ..
-        } => (node_id, buffer, original_text, original_regions),
+        } => (node_id, section_idx, buffer, original_text, original_regions),
         TextEditState::Closed => return,
     };
-    let (node_id, buffer, original_text, original_regions) = snapshot;
+    let (node_id, section_idx, buffer, original_text, original_regions) = snapshot;
     if commit {
-        doc.set_node_text(&node_id, buffer);
+        // Section-aware commit: the editor records the section
+        // index in `TextEditState::Open` so a `Section` selection
+        // commits to that section, not to section 0.
+        doc.set_section_text(&node_id, section_idx, buffer);
         // Commit changed the model — pull the tree back to it.
-        // No `scene_cache.clear()` is needed: `set_node_text` writes
+        // No `scene_cache.clear()` is needed: `set_section_text` writes
         // only the text field; `node.size` is authored, not
         // autosized, so edge endpoints don't shift and cached
         // connection samples stay valid. If autosizing ever lands,
@@ -251,10 +259,18 @@ pub(in crate::application::app) fn close_text_edit(
         rebuild_all(doc, mindmap_tree, app_scene, renderer, scene_cache);
     } else {
         // Cancel: model is untouched, so we only need to revert the
-        // edited node's transient caret-bearing text/regions to the
-        // pre-edit snapshot. Scene elements (borders, connections,
-        // etc.) were never mutated during the edit session.
-        revert_node_text_on_tree(&node_id, original_text, original_regions, mindmap_tree, renderer);
+        // edited section's transient caret-bearing text/regions to
+        // the pre-edit snapshot. Scene elements (borders,
+        // connections, etc.) were never mutated during the edit
+        // session.
+        revert_node_text_on_tree(
+            &node_id,
+            section_idx,
+            original_text,
+            original_regions,
+            mindmap_tree,
+            renderer,
+        );
     }
 }
 
@@ -268,6 +284,7 @@ pub(in crate::application::app) fn close_text_edit(
 /// keystroke.
 pub(in crate::application::app) fn apply_text_edit_to_tree(
     node_id: &str,
+    section_idx: usize,
     buffer: &str,
     buffer_regions: &baumhard::core::primitives::ColorFontRegions,
     cursor_grapheme_pos: usize,
@@ -281,9 +298,10 @@ pub(in crate::application::app) fn apply_text_edit_to_tree(
         Some(t) => t,
         None => return,
     };
-    // The text editor targets the first section-area's
-    // GlyphArea — that's where text + regions live post-refactor.
-    let indextree_node_id = match first_section_arena_id(tree, node_id) {
+    // The text editor targets the section-area at
+    // `(node_id, section_idx)` — that's where text + regions live
+    // post-refactor.
+    let indextree_node_id = match section_arena_id(tree, node_id, section_idx) {
         Some(id) => id,
         None => return,
     };
@@ -413,6 +431,7 @@ pub(in crate::application::app) fn handle_text_edit_key(
         // `apply_text_edit_to_tree`.
         let TextEditState::Open {
             node_id,
+            section_idx,
             buffer,
             cursor_grapheme_pos,
             buffer_regions,
@@ -422,11 +441,13 @@ pub(in crate::application::app) fn handle_text_edit_key(
             return;
         };
         let node_id_owned = node_id.clone();
+        let section_idx_snapshot = *section_idx;
         let buffer_owned = buffer.clone();
         let regions_owned = buffer_regions.clone();
         let cursor_snapshot = *cursor_grapheme_pos;
         apply_text_edit_to_tree(
             &node_id_owned,
+            section_idx_snapshot,
             &buffer_owned,
             &regions_owned,
             cursor_snapshot,
@@ -486,8 +507,8 @@ mod tests {
         let mut tree_opt = Some(tree);
 
         // Snapshot pre-edit text + regions.
-        let original_text = read_node_text(tree_opt.as_ref(), &node_id).unwrap();
-        let original_regions = read_node_regions(tree_opt.as_ref(), &node_id).unwrap();
+        let original_text = read_section_text(tree_opt.as_ref(), &node_id, 0).unwrap();
+        let original_regions = read_section_regions(tree_opt.as_ref(), &node_id, 0).unwrap();
 
         // Stamp garbage onto the live tree to simulate an edit session.
         let mut garbage_regions = ColorFontRegions::new_empty();
@@ -499,27 +520,29 @@ mod tests {
         let garbage_text = "zzzzz|".to_string();
         assert!(apply_text_and_regions_delta(
             &node_id,
+            0,
             garbage_text.clone(),
             garbage_regions,
             &mut tree_opt,
         ));
-        let after_garbage = read_node_text(tree_opt.as_ref(), &node_id).unwrap();
+        let after_garbage = read_section_text(tree_opt.as_ref(), &node_id, 0).unwrap();
         assert_eq!(after_garbage, garbage_text, "garbage delta must stick");
 
         // Revert to the pre-edit snapshot.
         assert!(apply_text_and_regions_delta(
             &node_id,
+            0,
             original_text.clone(),
             original_regions.clone(),
             &mut tree_opt,
         ));
         assert_eq!(
-            read_node_text(tree_opt.as_ref(), &node_id).unwrap(),
+            read_section_text(tree_opt.as_ref(), &node_id, 0).unwrap(),
             original_text,
             "revert delta must restore text exactly"
         );
         assert_eq!(
-            read_node_regions(tree_opt.as_ref(), &node_id).unwrap(),
+            read_section_regions(tree_opt.as_ref(), &node_id, 0).unwrap(),
             original_regions,
             "revert delta must restore regions exactly"
         );
@@ -535,6 +558,7 @@ mod tests {
         let mut none_tree: Option<baumhard::mindmap::tree_builder::MindMapTree> = None;
         assert!(!apply_text_and_regions_delta(
             "whatever",
+            0,
             String::new(),
             ColorFontRegions::new_empty(),
             &mut none_tree,
@@ -545,6 +569,7 @@ mod tests {
         let mut some_tree = Some(tree);
         assert!(!apply_text_and_regions_delta(
             "nonexistent-node-id",
+            0,
             String::new(),
             ColorFontRegions::new_empty(),
             &mut some_tree,

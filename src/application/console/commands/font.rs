@@ -44,7 +44,7 @@ use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
 use crate::application::console::traits::{apply_to_targets, AcceptsFontFamily};
 use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
-use crate::application::document::SelectionState;
+use crate::application::document::{SectionSel, SelectionState};
 
 pub const KEYS: &[&str] = &["size", "min", "max"];
 /// Positional subverbs surfaced as token-0 completions alongside
@@ -240,6 +240,10 @@ fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     let doc = &mut eff.document;
     match doc.selection.clone() {
         SelectionState::Single(id) => node_font_outcome(doc, &id, size, min, max),
+        // Per-section size requires a future verb syntax; for
+        // today's `font size=N` route through to the owning node
+        // (writes apply to every section's runs).
+        SelectionState::Section(s) => node_font_outcome(doc, &s.node_id, size, min, max),
         SelectionState::Multi(ids) => {
             // Fanout: apply size to each node; collect a single
             // "any changed?" result. `min` / `max` are
@@ -410,7 +414,11 @@ pub(crate) fn apply_font_kv_to_selection(
         _ => return false,
     };
     match doc.selection.clone() {
-        SelectionState::Single(id) => {
+        // A `Section` selection routes its parametric font edit
+        // through the whole-node setter for now — section-level
+        // size overrides are a future verb syntax (`font size=N
+        // section=K`).
+        SelectionState::Single(id) | SelectionState::Section(SectionSel { node_id: id, .. }) => {
             // Nodes only accept `size`; `min` / `max` are
             // NotApplicable. Mirror the verb's behaviour.
             if size.is_some() {

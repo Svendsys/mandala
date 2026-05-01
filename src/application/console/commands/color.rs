@@ -23,7 +23,7 @@ use crate::application::console::traits::{
     apply_kvs, ColorValue, HasBgColor, HasBorderColor, HasTextColor, Outcome,
 };
 use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
-use crate::application::document::SelectionState;
+use crate::application::document::{SectionSel, SelectionState};
 
 pub const KEYS: &[&str] = &["bg", "text", "border"];
 pub const VALUE_PRESETS: &[&str] = &["accent", "edge", "fg", "reset"];
@@ -91,17 +91,23 @@ fn picker_target_for(verb: &str, selection: &SelectionState) -> Option<ColorTarg
         _ => return None,
     };
     match selection {
-        SelectionState::Single(id) => match axis {
-            Some(a) => Some(ColorTarget::Node {
-                id: id.clone(),
-                axis: a,
-            }),
-            // `color pick` on a node defaults to bg.
-            None => Some(ColorTarget::Node {
-                id: id.clone(),
-                axis: NodeColorAxis::Bg,
-            }),
-        },
+        // A section selection collapses through to its owning
+        // node: today's color picker is whole-node — bg / text /
+        // border are all node-level fields. Per-section text
+        // colour overrides arrive in a follow-up.
+        SelectionState::Single(id) | SelectionState::Section(SectionSel { node_id: id, .. }) => {
+            match axis {
+                Some(a) => Some(ColorTarget::Node {
+                    id: id.clone(),
+                    axis: a,
+                }),
+                // `color pick` on a node defaults to bg.
+                None => Some(ColorTarget::Node {
+                    id: id.clone(),
+                    axis: NodeColorAxis::Bg,
+                }),
+            }
+        }
         SelectionState::Multi(ids) => {
             // The picker is single-target; pick the first node in
             // the multi-selection. Fanout through the picker is

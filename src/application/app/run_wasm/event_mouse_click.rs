@@ -77,6 +77,12 @@ impl super::WasmApp {
         let ClickHitParts {
             click_hit,
             hit_node,
+            // Section-level click routing is a native-side surface
+            // today (the `Section` selection variant exists on
+            // both targets, but no WASM input path produces it
+            // yet). Kept reachable here for parity once a
+            // multi-section authoring flow lands on the web.
+            hit_section_idx: _,
             portal_text_hit,
             portal_icon_hit,
             edge_label_hit,
