@@ -15,9 +15,7 @@ use glam::Vec2;
 use crate::font::fonts;
 use crate::gfx_structs::area::GlyphArea;
 use crate::gfx_structs::element::GfxElement;
-use crate::gfx_structs::tests::subtree_aabb_tests::{
-    build_deep_chain, build_test_tree, build_wide_tree,
-};
+use crate::gfx_structs::tests::subtree_aabb_tests::{build_deep_chain, build_test_tree, build_wide_tree};
 use crate::gfx_structs::tree::Tree;
 
 // ── basic hit/miss ────────────────────────────────────────────────

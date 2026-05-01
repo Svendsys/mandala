@@ -45,9 +45,7 @@ use glam::Vec2;
 /// byte components → float regions is symmetric to the picker's
 /// own byte→float conversion in `make_area`.
 #[inline]
-pub(super) fn glyph_model_from_picker_area(
-    area: &GlyphArea,
-) -> baumhard::gfx_structs::model::GlyphModel {
+pub(super) fn glyph_model_from_picker_area(area: &GlyphArea) -> baumhard::gfx_structs::model::GlyphModel {
     use baumhard::gfx_structs::model::{GlyphComponent, GlyphLine, GlyphModel};
     use baumhard::util::color::Color as BaumhardColor;
     use baumhard::util::ordered_vec2::OrderedVec2;
@@ -79,10 +77,6 @@ pub(super) fn glyph_model_from_picker_area(
         None => (AppFont::Any, BaumhardColor::black()),
     };
 
-    model.add_line(GlyphLine::new_with(GlyphComponent::text(
-        &area.text,
-        font,
-        color,
-    )));
+    model.add_line(GlyphLine::new_with(GlyphComponent::text(&area.text, font, color)));
     model
 }

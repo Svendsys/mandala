@@ -15,8 +15,8 @@
 //! the owning edge's fields.
 
 use super::capabilities::{
-    AcceptsFontFamily, AcceptsWheelColor, HandlesCopy, HandlesCut, HandlesPaste, HasBgColor,
-    HasBorderColor, HasLabel, HasTextColor,
+    AcceptsFontFamily, AcceptsWheelColor, HandlesCopy, HandlesCut, HandlesPaste, HasBgColor, HasBorderColor,
+    HasLabel, HasTextColor,
 };
 use super::color_value::ColorValue;
 use super::outcome::{ClipboardContent, Outcome};
@@ -27,12 +27,18 @@ use crate::application::document::{EdgeRef, MindMapDocument, SelectionState};
 /// per-iteration in a `Multi` fanout so no two views hold aliasing
 /// `&mut doc` borrows at once.
 pub enum TargetView<'a> {
-    Node { doc: &'a mut MindMapDocument, id: String },
+    Node {
+        doc: &'a mut MindMapDocument,
+        id: String,
+    },
     /// Line-mode edge body target. Color operations write the
     /// edge's `color` / `glyph_connection.color`; clipboard
     /// copy/paste/cut target the resolved **edge color** hex
     /// (the user's mental model of "copy this edge's colour").
-    Edge { doc: &'a mut MindMapDocument, er: EdgeRef },
+    Edge {
+        doc: &'a mut MindMapDocument,
+        er: EdgeRef,
+    },
     /// Line-mode **label** target. Carries the owning-edge ref
     /// so color writes route to `label_config.color` and
     /// clipboard operates on the resolved label color hex. The
@@ -134,15 +140,15 @@ impl<'a> HasTextColor for TargetView<'a> {
             }
             // Edge body: the edge's one color field (line + any
             // text that inherits).
-            TargetView::Edge { doc, er } => Outcome::applied(
-                doc.set_edge_color(er, edge_color_as_override(&c).as_deref()),
-            ),
+            TargetView::Edge { doc, er } => {
+                Outcome::applied(doc.set_edge_color(er, edge_color_as_override(&c).as_deref()))
+            }
             // Edge label: the label's own color override — lets a
             // coloured edge carry a differently-coloured label
             // (the user-facing independent-label-color feature).
-            TargetView::EdgeLabel { doc, er } => Outcome::applied(
-                doc.set_edge_label_color(er, edge_color_as_override(&c).as_deref()),
-            ),
+            TargetView::EdgeLabel { doc, er } => {
+                Outcome::applied(doc.set_edge_label_color(er, edge_color_as_override(&c).as_deref()))
+            }
             TargetView::PortalLabel {
                 doc,
                 er,
@@ -170,21 +176,21 @@ impl<'a> HasTextColor for TargetView<'a> {
 impl<'a> HasBorderColor for TargetView<'a> {
     fn set_border_color(&mut self, c: ColorValue) -> Outcome {
         match self {
-            TargetView::Node { doc, id } => Outcome::applied(
-                doc.set_node_border_color(id, color_as_string(&c, "#ffffff")),
-            ),
+            TargetView::Node { doc, id } => {
+                Outcome::applied(doc.set_node_border_color(id, color_as_string(&c, "#ffffff")))
+            }
             // `border` on any edge-adjacent selection is an alias
             // for `text` — each sub-part has one color channel
             // and the axis distinction doesn't apply. Routing
             // through the same setters keeps the console's `color
             // border=` / `color text=` pair interchangeable for
             // these variants.
-            TargetView::Edge { doc, er } => Outcome::applied(
-                doc.set_edge_color(er, edge_color_as_override(&c).as_deref()),
-            ),
-            TargetView::EdgeLabel { doc, er } => Outcome::applied(
-                doc.set_edge_label_color(er, edge_color_as_override(&c).as_deref()),
-            ),
+            TargetView::Edge { doc, er } => {
+                Outcome::applied(doc.set_edge_color(er, edge_color_as_override(&c).as_deref()))
+            }
+            TargetView::EdgeLabel { doc, er } => {
+                Outcome::applied(doc.set_edge_label_color(er, edge_color_as_override(&c).as_deref()))
+            }
             TargetView::PortalLabel {
                 doc,
                 er,
@@ -230,25 +236,17 @@ impl<'a> AcceptsFontFamily for TargetView<'a> {
             // Node: writes every `TextRun.font` plus the future
             // node-level default (when one is added). Node has no
             // per-channel font split today.
-            TargetView::Node { doc, id } => {
-                Outcome::applied(doc.set_node_font_family(id, family))
-            }
+            TargetView::Node { doc, id } => Outcome::applied(doc.set_node_font_family(id, family)),
             // Edge body: `glyph_connection.font` override.
-            TargetView::Edge { doc, er } => {
-                Outcome::applied(doc.set_edge_font_family(er, family))
-            }
+            TargetView::Edge { doc, er } => Outcome::applied(doc.set_edge_font_family(er, family)),
             // Portal icon shares the edge body's `glyph_connection.font` —
             // the same routing existing `font size=` uses for the
             // PortalLabel selection.
-            TargetView::PortalLabel { doc, er, .. } => {
-                Outcome::applied(doc.set_edge_font_family(er, family))
-            }
+            TargetView::PortalLabel { doc, er, .. } => Outcome::applied(doc.set_edge_font_family(er, family)),
             // Edge labels and portal text inherit the edge body's
             // font today; no per-channel `font_family` slot exists
             // on `EdgeLabelConfig` / `PortalEndpointState` yet.
-            TargetView::EdgeLabel { .. } | TargetView::PortalText { .. } => {
-                Outcome::NotApplicable
-            }
+            TargetView::EdgeLabel { .. } | TargetView::PortalText { .. } => Outcome::NotApplicable,
         }
     }
 }
@@ -305,12 +303,10 @@ impl<'a> HandlesCopy for TargetView<'a> {
             // edge.color). Always a concrete hex when the edge
             // exists, so pasting to another target produces a
             // real value.
-            TargetView::EdgeLabel { doc, er } => {
-                match doc.resolve_edge_label_color(er) {
-                    Some(hex) => ClipboardContent::Text(hex),
-                    None => ClipboardContent::NotApplicable,
-                }
-            }
+            TargetView::EdgeLabel { doc, er } => match doc.resolve_edge_label_color(er) {
+                Some(hex) => ClipboardContent::Text(hex),
+                None => ClipboardContent::NotApplicable,
+            },
             // Portal icon copy = resolved icon color hex. Always a
             // real value (cascade fallback resolves to a concrete
             // hex even when no override is set).
@@ -382,16 +378,12 @@ impl<'a> HandlesPaste for TargetView<'a> {
             } => {
                 let trimmed = content.trim();
                 if trimmed.is_empty() {
-                    return Outcome::applied(
-                        doc.set_portal_label_color(er, endpoint_node_id, None),
-                    );
+                    return Outcome::applied(doc.set_portal_label_color(er, endpoint_node_id, None));
                 }
                 if !is_valid_color_literal(trimmed) {
                     return Outcome::Invalid(format!("not a color: {trimmed}"));
                 }
-                Outcome::applied(
-                    doc.set_portal_label_color(er, endpoint_node_id, Some(trimmed)),
-                )
+                Outcome::applied(doc.set_portal_label_color(er, endpoint_node_id, Some(trimmed)))
             }
             // Portal text paste = per-endpoint text color from hex.
             TargetView::PortalText {
@@ -401,16 +393,12 @@ impl<'a> HandlesPaste for TargetView<'a> {
             } => {
                 let trimmed = content.trim();
                 if trimmed.is_empty() {
-                    return Outcome::applied(
-                        doc.set_portal_label_text_color(er, endpoint_node_id, None),
-                    );
+                    return Outcome::applied(doc.set_portal_label_text_color(er, endpoint_node_id, None));
                 }
                 if !is_valid_color_literal(trimmed) {
                     return Outcome::Invalid(format!("not a color: {trimmed}"));
                 }
-                Outcome::applied(
-                    doc.set_portal_label_text_color(er, endpoint_node_id, Some(trimmed)),
-                )
+                Outcome::applied(doc.set_portal_label_text_color(er, endpoint_node_id, Some(trimmed)))
             }
         }
     }
@@ -504,8 +492,7 @@ impl<'a> HandlesCut for TargetView<'a> {
 /// / ends_with` pair.
 fn is_valid_color_literal(s: &str) -> bool {
     if let Some(rest) = s.strip_prefix('#') {
-        return (rest.len() == 6 || rest.len() == 8)
-            && rest.chars().all(|c| c.is_ascii_hexdigit());
+        return (rest.len() == 6 || rest.len() == 8) && rest.chars().all(|c| c.is_ascii_hexdigit());
     }
     if let Some(inner) = s.strip_prefix("var(--").and_then(|s| s.strip_suffix(')')) {
         return !inner.is_empty() && !inner.contains(|c: char| c == '(' || c == ')');
@@ -526,14 +513,8 @@ pub enum TargetId {
     Node(String),
     Edge(EdgeRef),
     EdgeLabel(EdgeRef),
-    PortalLabel {
-        edge: EdgeRef,
-        endpoint_node_id: String,
-    },
-    PortalText {
-        edge: EdgeRef,
-        endpoint_node_id: String,
-    },
+    PortalLabel { edge: EdgeRef, endpoint_node_id: String },
+    PortalText { edge: EdgeRef, endpoint_node_id: String },
 }
 
 pub fn selection_targets(sel: &SelectionState) -> Vec<TargetId> {
@@ -561,12 +542,18 @@ pub fn view_for<'a>(doc: &'a mut MindMapDocument, id: &TargetId) -> TargetView<'
         TargetId::Node(nid) => TargetView::Node { doc, id: nid.clone() },
         TargetId::Edge(er) => TargetView::Edge { doc, er: er.clone() },
         TargetId::EdgeLabel(er) => TargetView::EdgeLabel { doc, er: er.clone() },
-        TargetId::PortalLabel { edge, endpoint_node_id } => TargetView::PortalLabel {
+        TargetId::PortalLabel {
+            edge,
+            endpoint_node_id,
+        } => TargetView::PortalLabel {
             doc,
             er: edge.clone(),
             endpoint_node_id: endpoint_node_id.clone(),
         },
-        TargetId::PortalText { edge, endpoint_node_id } => TargetView::PortalText {
+        TargetId::PortalText {
+            edge,
+            endpoint_node_id,
+        } => TargetView::PortalText {
             doc,
             er: edge.clone(),
             endpoint_node_id: endpoint_node_id.clone(),

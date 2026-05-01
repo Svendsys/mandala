@@ -80,9 +80,7 @@ pub(in crate::application::app) fn apply_deselect_all(rc: &mut RebuildContext<'_
 pub(in crate::application::app) fn invert_selection_in(doc: &mut MindMapDocument) -> bool {
     let invertable = matches!(
         doc.selection,
-        SelectionState::None
-            | SelectionState::Single(_)
-            | SelectionState::Multi(_)
+        SelectionState::None | SelectionState::Single(_) | SelectionState::Multi(_)
     );
     if !invertable {
         return false;
@@ -118,12 +116,7 @@ pub(in crate::application::app) fn select_parent_in(doc: &mut MindMapDocument) -
     let SelectionState::Single(nid) = doc.selection.clone() else {
         return false;
     };
-    let Some(parent_id) = doc
-        .mindmap
-        .nodes
-        .get(&nid)
-        .and_then(|n| n.parent_id.clone())
-    else {
+    let Some(parent_id) = doc.mindmap.nodes.get(&nid).and_then(|n| n.parent_id.clone()) else {
         return false;
     };
     doc.selection = SelectionState::Single(parent_id);
@@ -171,10 +164,7 @@ pub(in crate::application::app) fn apply_select_child(rc: &mut RebuildContext<'_
 /// node, or when no visible neighbour exists in the requested
 /// direction. Returns `true` when the selection changed.
 #[must_use = "the bool gates the scene rebuild — drop it explicitly with `let _ = …` if you don't care"]
-pub(in crate::application::app) fn select_sibling_in(
-    doc: &mut MindMapDocument,
-    forward: bool,
-) -> bool {
+pub(in crate::application::app) fn select_sibling_in(doc: &mut MindMapDocument, forward: bool) -> bool {
     let SelectionState::Single(nid) = doc.selection.clone() else {
         return false;
     };
@@ -185,10 +175,7 @@ pub(in crate::application::app) fn select_sibling_in(
     true
 }
 
-pub(in crate::application::app) fn apply_select_sibling(
-    forward: bool,
-    rc: &mut RebuildContext<'_>,
-) {
+pub(in crate::application::app) fn apply_select_sibling(forward: bool, rc: &mut RebuildContext<'_>) {
     if select_sibling_in(rc.document, forward) {
         rc.rebuild_after_selection_change();
     }
@@ -199,11 +186,7 @@ pub(in crate::application::app) fn apply_select_sibling(
 /// folded entries so keyboard navigation matches the fold-aware
 /// click hit-test. Returns `None` when `nid` has no visible
 /// neighbour in the requested direction.
-fn sibling_id(
-    map: &baumhard::mindmap::model::MindMap,
-    nid: &str,
-    forward: bool,
-) -> Option<String> {
+fn sibling_id(map: &baumhard::mindmap::model::MindMap, nid: &str, forward: bool) -> Option<String> {
     let parent_id = map.nodes.get(nid).and_then(|n| n.parent_id.clone());
     let siblings: Vec<(String, bool)> = match parent_id {
         Some(pid) => map

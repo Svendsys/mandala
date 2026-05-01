@@ -15,18 +15,11 @@ use super::console_input::save_console_history;
 use super::edge_drag::apply_edge_handle_drag;
 use super::input_context::InputHandlerContext;
 use super::portal_label_drag::apply_portal_label_drag;
-use super::scene_rebuild::{
-    rebuild_after_selection_change, rebuild_all, rebuild_scene_only,
-};
+use super::scene_rebuild::{rebuild_after_selection_change, rebuild_all, rebuild_scene_only};
 use super::throttled_interaction::ThrottledDrag;
-use super::{
-    is_double_click, now_ms, AppMode, DragState, LastClick,
-    EDGE_HANDLE_HIT_TOLERANCE_PX,
-};
+use super::{is_double_click, now_ms, AppMode, DragState, LastClick, EDGE_HANDLE_HIT_TOLERANCE_PX};
 use crate::application::console::ConsoleState;
-use crate::application::document::{
-    apply_drag_delta, rect_select, SelectionState, UndoAction,
-};
+use crate::application::document::{apply_drag_delta, rect_select, SelectionState, UndoAction};
 use crate::application::keybinds::Action;
 
 /// Dispatch a `WindowEvent::MouseInput`. Persistent state arrives
@@ -67,9 +60,7 @@ pub(super) fn handle_mouse_input(
     // else while the palette was open. In
     // **Contextual** mode the picker captures
     // everything; outside-click cancels.
-    if ctx.color_picker_state.is_open()
-        && matches!(button, MouseButton::Left | MouseButton::Right)
-    {
+    if ctx.color_picker_state.is_open() && matches!(button, MouseButton::Left | MouseButton::Right) {
         let consumed = if state == ElementState::Pressed {
             if let Some(doc) = ctx.document.as_mut() {
                 handle_color_picker_click(
@@ -119,7 +110,7 @@ pub(super) fn handle_mouse_input(
                     ctx.modifiers.alt_key(),
                 );
                 if let Some(a) = action {
-                                        let _ = super::dispatch::dispatch_action(a, ctx, None);
+                    let _ = super::dispatch::dispatch_action(a, ctx, None);
                 }
             } else {
                 *ctx.drag_state = DragState::None;
@@ -138,11 +129,7 @@ pub(super) fn handle_mouse_input(
                             .screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
                         crate::application::document::hit_test(canvas_pos, tree)
                     });
-                    let _ = super::dispatch::dispatch_action(
-                        Action::ReparentToTarget(target),
-                        ctx,
-                        None,
-                    );
+                    let _ = super::dispatch::dispatch_action(Action::ReparentToTarget(target), ctx, None);
                     // Mode-exit via target click — clear any stale
                     // click so the first post-mode click can't be
                     // paired into a double-click. Stays here per the
@@ -165,11 +152,7 @@ pub(super) fn handle_mouse_input(
                     // rebuild on either branch. Symmetric with
                     // `Action::ReparentToTarget` (also takes
                     // `Option<String>`).
-                    let _ = super::dispatch::dispatch_action(
-                        Action::ConnectToTarget(target),
-                        ctx,
-                        None,
-                    );
+                    let _ = super::dispatch::dispatch_action(Action::ConnectToTarget(target), ctx, None);
                     // Mode-exit via target click — clear any stale
                     // click so the first post-mode click can't be
                     // paired into a double-click. Stays here per
@@ -180,10 +163,9 @@ pub(super) fn handle_mouse_input(
                 // Pressed: swallow
             } else if state == ElementState::Pressed {
                 // Hit test to determine if clicking on a node
-                let canvas_pos = ctx.renderer.screen_to_canvas(
-                    ctx.cursor_pos.0 as f32,
-                    ctx.cursor_pos.1 as f32,
-                );
+                let canvas_pos = ctx
+                    .renderer
+                    .screen_to_canvas(ctx.cursor_pos.0 as f32, ctx.cursor_pos.1 as f32);
 
                 // Double-click detection. If this press within the
                 // double-click window matches the previous one (same
@@ -220,11 +202,13 @@ pub(super) fn handle_mouse_input(
                 // model value and silently destroys the in-progress
                 // edit.
                 let already_editing_same_target = {
-                    let node_match = ctx.text_edit_state
+                    let node_match = ctx
+                        .text_edit_state
                         .node_id()
                         .map(|id| hit_node.as_deref() == Some(id))
                         .unwrap_or(false);
-                    let edge_label_match = ctx.label_edit_state
+                    let edge_label_match = ctx
+                        .label_edit_state
                         .edited_edge_ref()
                         .zip(edge_label_hit.as_ref())
                         .map(|(er, hit)| {
@@ -233,7 +217,8 @@ pub(super) fn handle_mouse_input(
                                 && hit.edge_type == er.edge_type.as_str()
                         })
                         .unwrap_or(false);
-                    let portal_text_match = ctx.portal_text_edit_state
+                    let portal_text_match = ctx
+                        .portal_text_edit_state
                         .edited_endpoint()
                         .zip(portal_text_hit.as_ref())
                         .map(|((er, ep), (hit_key, hit_ep))| {
@@ -246,7 +231,8 @@ pub(super) fn handle_mouse_input(
                     node_match || edge_label_match || portal_text_match
                 };
                 let is_dblclick = !already_editing_same_target
-                    && ctx.last_click
+                    && ctx
+                        .last_click
                         .as_ref()
                         .map(|prev| is_double_click(prev, now, cursor_pos_val, &click_hit))
                         .unwrap_or(false);
@@ -273,7 +259,7 @@ pub(super) fn handle_mouse_input(
                             click_hit: click_hit.clone(),
                             canvas_pos,
                         };
-                                                let _ = super::dispatch::dispatch_action(a, ctx, Some(&dispatch_hit));
+                        let _ = super::dispatch::dispatch_action(a, ctx, Some(&dispatch_hit));
                         return;
                     }
                     // No Action bound to DoubleClick: silently no-op.
@@ -299,8 +285,7 @@ pub(super) fn handle_mouse_input(
                 let hit_edge_handle = match ctx.document.as_ref() {
                     Some(doc) => match &doc.selection {
                         SelectionState::Edge(er) => {
-                            let tol = EDGE_HANDLE_HIT_TOLERANCE_PX
-                                * ctx.renderer.canvas_per_pixel();
+                            let tol = EDGE_HANDLE_HIT_TOLERANCE_PX * ctx.renderer.canvas_per_pixel();
                             doc.hit_test_edge_handle(canvas_pos, er, tol)
                                 .map(|(kind, _pos)| (er.clone(), kind))
                         }
@@ -321,9 +306,7 @@ pub(super) fn handle_mouse_input(
                 // isn't a supported interaction. Only populate
                 // this when the icon-side hit was present.
                 let hit_portal_label = match &portal_icon_hit {
-                    Some((key, endpoint)) if hit_node.is_none() => {
-                        Some((key.clone(), endpoint.clone()))
-                    }
+                    Some((key, endpoint)) if hit_node.is_none() => Some((key.clone(), endpoint.clone())),
                     _ => None,
                 };
                 // Reuse the press-time edge-label hit captured
@@ -342,7 +325,11 @@ pub(super) fn handle_mouse_input(
             } else {
                 // Released
                 match std::mem::replace(ctx.drag_state, DragState::None) {
-                    DragState::Pending { hit_node, hit_edge_label, .. } => {
+                    DragState::Pending {
+                        hit_node,
+                        hit_edge_label,
+                        ..
+                    } => {
                         // If the node text editor is open, the
                         // release decides whether to commit or
                         // swallow. If the release lands inside the
@@ -350,17 +337,15 @@ pub(super) fn handle_mouse_input(
                         // commit, no selection change). Otherwise
                         // commit and fall through.
                         if ctx.text_edit_state.is_open() {
-                            let release_canvas = ctx.renderer.screen_to_canvas(
-                                ctx.cursor_pos.0 as f32,
-                                ctx.cursor_pos.1 as f32,
-                            );
-                            let inside = ctx.text_edit_state
+                            let release_canvas = ctx
+                                .renderer
+                                .screen_to_canvas(ctx.cursor_pos.0 as f32, ctx.cursor_pos.1 as f32);
+                            let inside = ctx
+                                .text_edit_state
                                 .node_id()
                                 .zip(ctx.mindmap_tree.as_ref())
                                 .map(|(id, tree)| {
-                                    crate::application::document::point_in_node_aabb(
-                                        release_canvas, id, tree,
-                                    )
+                                    crate::application::document::point_in_node_aabb(release_canvas, id, tree)
                                 })
                                 .unwrap_or(false);
                             if inside {
@@ -378,11 +363,7 @@ pub(super) fn handle_mouse_input(
                             // the funnel (`Action::TextEditCommit`),
                             // then fall through to the regular click
                             // path so the new selection lands.
-                            let _ = super::dispatch::dispatch_action(
-                                Action::TextEditCommit,
-                                ctx,
-                                None,
-                            );
+                            let _ = super::dispatch::dispatch_action(Action::TextEditCommit, ctx, None);
                         }
                         // Same shape for the inline edge-label
                         // editor: a release that doesn't hit the
@@ -395,21 +376,18 @@ pub(super) fn handle_mouse_input(
                         // Mirrors the node text editor's behaviour
                         // so the same muscle memory transfers.
                         if ctx.label_edit_state.is_open() {
-                            let release_canvas = ctx.renderer.screen_to_canvas(
-                                ctx.cursor_pos.0 as f32,
-                                ctx.cursor_pos.1 as f32,
-                            );
+                            let release_canvas = ctx
+                                .renderer
+                                .screen_to_canvas(ctx.cursor_pos.0 as f32, ctx.cursor_pos.1 as f32);
                             let edited = ctx.label_edit_state.edited_edge_ref().cloned();
                             let stays_on_edited_label = edited
                                 .as_ref()
                                 .and_then(|er| {
-                                    ctx.renderer
-                                        .hit_test_any_edge_label(release_canvas)
-                                        .map(|hit| {
-                                            hit.from_id == er.from_id.as_str()
-                                                && hit.to_id == er.to_id.as_str()
-                                                && hit.edge_type == er.edge_type.as_str()
-                                        })
+                                    ctx.renderer.hit_test_any_edge_label(release_canvas).map(|hit| {
+                                        hit.from_id == er.from_id.as_str()
+                                            && hit.to_id == er.to_id.as_str()
+                                            && hit.edge_type == er.edge_type.as_str()
+                                    })
                                 })
                                 .unwrap_or(false);
                             if stays_on_edited_label {
@@ -417,11 +395,7 @@ pub(super) fn handle_mouse_input(
                             }
                             // Click-outside the edited label: commit
                             // through the funnel (`LabelEditCommit`).
-                            let _ = super::dispatch::dispatch_action(
-                                Action::LabelEditCommit,
-                                ctx,
-                                None,
-                            );
+                            let _ = super::dispatch::dispatch_action(Action::LabelEditCommit, ctx, None);
                         }
                         // Portal-text editor uses the portal-text
                         // hitbox instead of the edge-label hitbox,
@@ -432,27 +406,24 @@ pub(super) fn handle_mouse_input(
                         // click as a fresh selection on the new
                         // endpoint.
                         if ctx.portal_text_edit_state.is_open() {
-                            let release_canvas = ctx.renderer.screen_to_canvas(
-                                ctx.cursor_pos.0 as f32,
-                                ctx.cursor_pos.1 as f32,
-                            );
-                            let edited = ctx.portal_text_edit_state
+                            let release_canvas = ctx
+                                .renderer
+                                .screen_to_canvas(ctx.cursor_pos.0 as f32, ctx.cursor_pos.1 as f32);
+                            let edited = ctx
+                                .portal_text_edit_state
                                 .edited_endpoint()
                                 .map(|(er, ep)| (er.clone(), ep.to_string()));
                             let stays_on_edited_text = edited
                                 .as_ref()
                                 .and_then(|(er, ep)| {
-                                    ctx.renderer
-                                        .hit_test_portal_text(release_canvas)
-                                        .map(|(hit_key, hit_ep)| {
-                                            hit_key.from_id
-                                                == er.from_id.as_str()
-                                                && hit_key.to_id
-                                                    == er.to_id.as_str()
-                                                && hit_key.edge_type
-                                                    == er.edge_type.as_str()
+                                    ctx.renderer.hit_test_portal_text(release_canvas).map(
+                                        |(hit_key, hit_ep)| {
+                                            hit_key.from_id == er.from_id.as_str()
+                                                && hit_key.to_id == er.to_id.as_str()
+                                                && hit_key.edge_type == er.edge_type.as_str()
                                                 && hit_ep == *ep
-                                        })
+                                        },
+                                    )
                                 })
                                 .unwrap_or(false);
                             if stays_on_edited_text {
@@ -463,11 +434,7 @@ pub(super) fn handle_mouse_input(
                             // arm picks `portal_text_edit_state` over
                             // `label_edit_state` since portal is
                             // checked first.
-                            let _ = super::dispatch::dispatch_action(
-                                Action::LabelEditCommit,
-                                ctx,
-                                None,
-                            );
+                            let _ = super::dispatch::dispatch_action(Action::LabelEditCommit, ctx, None);
                         }
                         // Edge-label single click: route to the
                         // `EdgeLabel` selection rather than opening
@@ -487,38 +454,35 @@ pub(super) fn handle_mouse_input(
                         // edge label before release would mis-
                         // route to `EdgeLabel` instead of the
                         // portal's sub-threshold single-click.
-                        let edge_label_target: Option<crate::application::document::EdgeRef> =
-                            hit_edge_label.map(|k| {
+                        let edge_label_target: Option<crate::application::document::EdgeRef> = hit_edge_label
+                            .map(|k| {
                                 crate::application::document::EdgeRef::new(
                                     k.from_id.as_str(),
                                     k.to_id.as_str(),
                                     k.edge_type.as_str(),
                                 )
                             });
-                        let entered_label_select =
-                            if let Some(er) = edge_label_target {
-                                if let Some(doc) = ctx.document.as_mut() {
-                                    let prev = doc.selection.clone();
-                                    doc.selection = SelectionState::EdgeLabel(
-                                        crate::application::document::EdgeLabelSel::new(
-                                            er,
-                                        ),
-                                    );
-                                    rebuild_after_selection_change(
-                                        &prev,
-                                        doc,
-                                        ctx.mindmap_tree,
-                                        ctx.app_scene,
-                                        ctx.renderer,
-                                        ctx.scene_cache,
-                                    );
-                                    true
-                                } else {
-                                    false
-                                }
+                        let entered_label_select = if let Some(er) = edge_label_target {
+                            if let Some(doc) = ctx.document.as_mut() {
+                                let prev = doc.selection.clone();
+                                doc.selection = SelectionState::EdgeLabel(
+                                    crate::application::document::EdgeLabelSel::new(er),
+                                );
+                                rebuild_after_selection_change(
+                                    &prev,
+                                    doc,
+                                    ctx.mindmap_tree,
+                                    ctx.app_scene,
+                                    ctx.renderer,
+                                    ctx.scene_cache,
+                                );
+                                true
                             } else {
                                 false
-                            };
+                            }
+                        } else {
+                            false
+                        };
                         if !entered_label_select {
                             handle_click(
                                 hit_node,
@@ -541,7 +505,13 @@ pub(super) fn handle_mouse_input(
                         if had_pending {
                             if let Some(tree) = ctx.mindmap_tree.as_mut() {
                                 for nid in &i.node_ids {
-                                    apply_drag_delta(tree, nid, i.pending_delta.x, i.pending_delta.y, !i.individual);
+                                    apply_drag_delta(
+                                        tree,
+                                        nid,
+                                        i.pending_delta.x,
+                                        i.pending_delta.y,
+                                        !i.individual,
+                                    );
                                 }
                             }
                         }
@@ -575,7 +545,13 @@ pub(super) fn handle_mouse_input(
                             }
 
                             // Full rebuild from model
-                            rebuild_all(doc, ctx.mindmap_tree, ctx.app_scene, ctx.renderer, ctx.scene_cache);
+                            rebuild_all(
+                                doc,
+                                ctx.mindmap_tree,
+                                ctx.app_scene,
+                                ctx.renderer,
+                                ctx.scene_cache,
+                            );
                         }
                     }
                     DragState::Throttled(ThrottledDrag::EdgeHandle(i)) => {
@@ -601,17 +577,17 @@ pub(super) fn handle_mouse_input(
                             ..
                         } = i;
                         if let Some(doc) = ctx.document.as_mut() {
-                            apply_edge_handle_drag(
-                                doc,
-                                &edge_ref,
-                                handle,
-                                start_handle_pos,
-                                total_delta,
-                            );
+                            apply_edge_handle_drag(doc, &edge_ref, handle, start_handle_pos, total_delta);
                             // Crossing the drag threshold guarantees a
                             // state change, so commit unconditionally.
                             doc.commit_throttled_edge_drag(&edge_ref, original, |_, _| true);
-                            rebuild_all(doc, ctx.mindmap_tree, ctx.app_scene, ctx.renderer, ctx.scene_cache);
+                            rebuild_all(
+                                doc,
+                                ctx.mindmap_tree,
+                                ctx.app_scene,
+                                ctx.renderer,
+                                ctx.scene_cache,
+                            );
                         }
                     }
                     DragState::Throttled(ThrottledDrag::PortalLabel(i)) => {
@@ -631,15 +607,8 @@ pub(super) fn handle_mouse_input(
                             pending_cursor,
                             ..
                         } = i;
-                        if let (Some(doc), Some(cursor)) =
-                            (ctx.document.as_mut(), pending_cursor)
-                        {
-                            apply_portal_label_drag(
-                                doc,
-                                &edge_ref,
-                                &endpoint_node_id,
-                                cursor,
-                            );
+                        if let (Some(doc), Some(cursor)) = (ctx.document.as_mut(), pending_cursor) {
+                            apply_portal_label_drag(doc, &edge_ref, &endpoint_node_id, cursor);
                         }
                         // Commit with a single EditEdge undo
                         // carrying the pre-drag snapshot, matching
@@ -653,7 +622,13 @@ pub(super) fn handle_mouse_input(
                             doc.commit_throttled_edge_drag(&edge_ref, original, |c, o| {
                                 c.portal_from != o.portal_from || c.portal_to != o.portal_to
                             });
-                            rebuild_all(doc, ctx.mindmap_tree, ctx.app_scene, ctx.renderer, ctx.scene_cache);
+                            rebuild_all(
+                                doc,
+                                ctx.mindmap_tree,
+                                ctx.app_scene,
+                                ctx.renderer,
+                                ctx.scene_cache,
+                            );
                         }
                     }
                     DragState::Throttled(ThrottledDrag::EdgeLabel(i)) => {
@@ -668,14 +643,8 @@ pub(super) fn handle_mouse_input(
                             pending_cursor,
                             ..
                         } = i;
-                        if let (Some(doc), Some(cursor)) =
-                            (ctx.document.as_mut(), pending_cursor)
-                        {
-                            super::edge_label_drag::apply_edge_label_drag(
-                                doc,
-                                &edge_ref,
-                                cursor,
-                            );
+                        if let (Some(doc), Some(cursor)) = (ctx.document.as_mut(), pending_cursor) {
+                            super::edge_label_drag::apply_edge_label_drag(doc, &edge_ref, cursor);
                         }
                         // Commit with a single `EditEdge` carrying
                         // the pre-drag snapshot, skipping the undo
@@ -692,13 +661,22 @@ pub(super) fn handle_mouse_input(
                             rebuild_scene_only(doc, ctx.app_scene, ctx.renderer, ctx.scene_cache);
                         }
                     }
-                    DragState::SelectingRect { start_canvas, current_canvas } => {
+                    DragState::SelectingRect {
+                        start_canvas,
+                        current_canvas,
+                    } => {
                         // Finalize: select all nodes in the rectangle
                         ctx.renderer.clear_overlay_buffers();
                         if let (Some(doc), Some(tree)) = (ctx.document.as_mut(), ctx.mindmap_tree.as_ref()) {
                             let hits = rect_select(start_canvas, current_canvas, tree);
                             doc.selection = SelectionState::from_ids(hits);
-                            rebuild_all(doc, ctx.mindmap_tree, ctx.app_scene, ctx.renderer, ctx.scene_cache);
+                            rebuild_all(
+                                doc,
+                                ctx.mindmap_tree,
+                                ctx.app_scene,
+                                ctx.renderer,
+                                ctx.scene_cache,
+                            );
                         }
                     }
                     DragState::Panning | DragState::None => {}

@@ -13,9 +13,7 @@ pub const TOTAL_WHITE: Color = Color {
 };
 
 /// Opaque RGB black.
-pub const TOTAL_BLACK: Color = Color {
-    rgba: [0, 0, 0, 255],
-};
+pub const TOTAL_BLACK: Color = Color { rgba: [0, 0, 0, 255] };
 
 /// Earth-toned five-colour palette.
 pub mod light_forest {
@@ -23,8 +21,7 @@ pub mod light_forest {
     use crate::util::color::FloatRgba;
 
     /// The full palette as an ordered array.
-    pub const LIGHT_FOREST: [FloatRgba; 5] =
-        [DARK_BROWN, LIGHT_BROWN, LIGHT_GREEN, GREEN, DARK_GREEN];
+    pub const LIGHT_FOREST: [FloatRgba; 5] = [DARK_BROWN, LIGHT_BROWN, LIGHT_GREEN, GREEN, DARK_GREEN];
 
     /// Deep-shadow bark brown.
     pub const DARK_BROWN: FloatRgba = rgba!([72, 60, 31, 255]);

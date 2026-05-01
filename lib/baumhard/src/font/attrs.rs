@@ -6,10 +6,14 @@
 //! (the model-level representation of styled text runs) into either
 //! cosmic-text API shape:
 //!
-//! - [`attrs_list_from_regions`] returns an `AttrsList` for
-//!   callers using `Editor::insert_string`.
-//! - [`RegionFamilies`] + [`rich_text_spans_from_regions`] returns
+//! - [`crate::font::attrs::attrs_list_from_regions`] returns an
+//!   `AttrsList` for callers using `Editor::insert_string`.
+//! - [`crate::font::attrs::RegionFamilies`] +
+//!   [`crate::font::attrs::rich_text_spans_from_regions`] returns
 //!   a `Vec<(&str, Attrs)>` for callers using `Buffer::set_rich_text`.
+//!   (Full crate paths because rustdoc resolves intra-doc links inside
+//!   `//!` inner-module docs against the parent module's namespace,
+//!   not this module's own — `self::` and bare names both fail.)
 //!
 //! Both honour the per-region color, font pin, and grapheme-aware
 //! byte slicing — `Range` indices on `ColorFontRegion` carry
@@ -94,10 +98,9 @@ pub fn attrs_list_from_regions(
             Some(ref name) => attrs.family(Family::Name(name.as_str())),
             None => attrs.family(Family::Monospace),
         };
-        let start = grapheme_chad::find_byte_index_of_grapheme(text, region.range.start)
-            .unwrap_or(text.len());
-        let end = grapheme_chad::find_byte_index_of_grapheme(text, region.range.end)
-            .unwrap_or(text.len());
+        let start =
+            grapheme_chad::find_byte_index_of_grapheme(text, region.range.start).unwrap_or(text.len());
+        let end = grapheme_chad::find_byte_index_of_grapheme(text, region.range.end).unwrap_or(text.len());
         if start >= end {
             continue;
         }
@@ -237,7 +240,7 @@ pub fn rich_text_spans_from_regions<'a>(
         }
         return vec![(text, attrs)];
     }
-        families
+    families
         .regions
         .iter()
         .zip(families.names.iter())
@@ -250,10 +253,10 @@ pub fn rich_text_spans_from_regions<'a>(
             // be a malformed input — by construction this never
             // happens, since every fresh producer counts via
             // `count_grapheme_clusters`.
-            let start = grapheme_chad::find_byte_index_of_grapheme(text, region.range.start)
-                .unwrap_or(text.len());
-            let end = grapheme_chad::find_byte_index_of_grapheme(text, region.range.end)
-                .unwrap_or(text.len());
+            let start =
+                grapheme_chad::find_byte_index_of_grapheme(text, region.range.start).unwrap_or(text.len());
+            let end =
+                grapheme_chad::find_byte_index_of_grapheme(text, region.range.end).unwrap_or(text.len());
             if start >= end {
                 return None;
             }

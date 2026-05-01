@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use crate::util::geometry::{almost_equal, almost_equal_vec2, clockwise_rotation_around_pivot,
-                            is_non_negative_finite_f64, is_positive_finite, option_almost_equal,
-                            pixel_greater_or_equal, pixel_greater_than, pixel_less_or_equal,
-                            pixel_lesser_than};
+use crate::util::geometry::{
+    almost_equal, almost_equal_vec2, clockwise_rotation_around_pivot, is_non_negative_finite_f64,
+    is_positive_finite, option_almost_equal, pixel_greater_or_equal, pixel_greater_than, pixel_less_or_equal,
+    pixel_lesser_than,
+};
 use glam::Vec2;
 
 #[test]

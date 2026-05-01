@@ -120,30 +120,28 @@ pub(super) fn walk_tree_into_buffers(
         // — `Word` mode silently dropped supplementary-plane glyphs
         // (e.g. picker Egyptian hieroglyphs) whose shaped advance
         // exceeded the cell box.
-        let mut shape_and_yield =
-            |spans: Vec<(&str, Attrs)>, x_off: f32, y_off: f32, fs: &mut FontSystem| {
-                let mut buffer =
-                    cosmic_text::Buffer::new(fs, cosmic_text::Metrics::new(scale, line_height));
-                buffer.set_size(fs, Some(bound_x), Some(bound_y));
-                buffer.set_rich_text(
-                    fs,
-                    spans,
-                    &Attrs::new(),
-                    cosmic_text::Shaping::Advanced,
-                    alignment,
-                );
-                buffer.shape_until_scroll(fs, false);
-                let text_buffer = MindMapTextBuffer {
-                    buffer,
-                    pos: (
-                        area.position.x.0 + x_off + offset.x,
-                        area.position.y.0 + y_off + offset.y,
-                    ),
-                    bounds: (bound_x, bound_y),
-                    zoom_visibility: area.zoom_visibility,
-                };
-                yield_buffer(element.unique_id(), text_buffer);
+        let mut shape_and_yield = |spans: Vec<(&str, Attrs)>, x_off: f32, y_off: f32, fs: &mut FontSystem| {
+            let mut buffer = cosmic_text::Buffer::new(fs, cosmic_text::Metrics::new(scale, line_height));
+            buffer.set_size(fs, Some(bound_x), Some(bound_y));
+            buffer.set_rich_text(
+                fs,
+                spans,
+                &Attrs::new(),
+                cosmic_text::Shaping::Advanced,
+                alignment,
+            );
+            buffer.shape_until_scroll(fs, false);
+            let text_buffer = MindMapTextBuffer {
+                buffer,
+                pos: (
+                    area.position.x.0 + x_off + offset.x,
+                    area.position.y.0 + y_off + offset.y,
+                ),
+                bounds: (bound_x, bound_y),
+                zoom_visibility: area.zoom_visibility,
             };
+            yield_buffer(element.unique_id(), text_buffer);
+        };
 
         // Halos first — DFS yield order means later buffers render on
         // top, so emitting halos before the main glyph puts them
@@ -161,13 +159,8 @@ pub(super) fn walk_tree_into_buffers(
                     outline.color[3],
                 );
                 for (dx, dy) in outline.offsets() {
-                    let halo_spans = rich_text_spans_from_regions(
-                        text,
-                        &families,
-                        scale,
-                        line_height,
-                        Some(halo_color),
-                    );
+                    let halo_spans =
+                        rich_text_spans_from_regions(text, &families, scale, line_height, Some(halo_color));
                     shape_and_yield(halo_spans, dx, dy, font_system);
                 }
             }

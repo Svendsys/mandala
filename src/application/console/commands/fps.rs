@@ -36,9 +36,7 @@ pub const COMMAND: Command = Command {
 
 fn complete_fps(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completion> {
     match &state.context {
-        CompletionContext::Token { index: 0 } => {
-            prefix_filter(&["on", "off", "debug"], state.partial)
-        }
+        CompletionContext::Token { index: 0 } => prefix_filter(&["on", "off", "debug"], state.partial),
         _ => Vec::new(),
     }
 }

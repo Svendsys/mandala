@@ -94,10 +94,7 @@ pub(in crate::application::app) enum PanDir {
 /// Keyboard nudge — fixed step in screen pixels, then converted
 /// to a `CameraPan` decree like the LeftDrag path emits per cursor
 /// move. Step size matches a coarse but perceptible nudge.
-pub(in crate::application::app) fn apply_pan_camera(
-    dir: PanDir,
-    renderer: &mut Renderer,
-) {
+pub(in crate::application::app) fn apply_pan_camera(dir: PanDir, renderer: &mut Renderer) {
     const PAN_STEP_PX: f32 = 50.0;
     let (dx, dy) = match dir {
         PanDir::North => (0.0, -PAN_STEP_PX),
@@ -141,12 +138,12 @@ pub(in crate::application::app) fn apply_center_on_selection(
 /// consumer) — the function pair is the cross-bucket arm
 /// described in this file's `//!` header.
 #[must_use = "Some(centre) is the camera target — drop with `let _ = …` to skip the camera move"]
-pub(in crate::application::app) fn jump_to_root_in(
-    doc: &mut MindMapDocument,
-) -> Option<glam::Vec2> {
-    let (id, centre) = doc.mindmap.root_nodes().first().map(|n| {
-        (n.id.clone(), n.center_vec2())
-    })?;
+pub(in crate::application::app) fn jump_to_root_in(doc: &mut MindMapDocument) -> Option<glam::Vec2> {
+    let (id, centre) = doc
+        .mindmap
+        .root_nodes()
+        .first()
+        .map(|n| (n.id.clone(), n.center_vec2()))?;
     doc.selection = SelectionState::Single(id);
     Some(centre)
 }

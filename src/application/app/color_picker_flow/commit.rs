@@ -164,9 +164,7 @@ pub(in crate::application::app) fn apply_picker_preview(
             ..
         } => {
             let handle = match mode {
-                crate::application::color_picker::PickerMode::Contextual { handle } => {
-                    Some(handle.clone())
-                }
+                crate::application::color_picker::PickerMode::Contextual { handle } => Some(handle.clone()),
                 // Standalone mode has no bound target — nothing to
                 // preview on the scene. The ࿕ glyph in the wheel
                 // still shows the current HSV (rendered by the picker
@@ -185,8 +183,7 @@ pub(in crate::application::app) fn apply_picker_preview(
             PickerHandle::Edge(index) => {
                 if let Some(edge) = doc.mindmap.edges.get(index) {
                     let key = baumhard::mindmap::scene_cache::EdgeKey::from_edge(edge);
-                    doc.color_picker_preview =
-                        Some(ColorPickerPreview::Edge { key, color: hex });
+                    doc.color_picker_preview = Some(ColorPickerPreview::Edge { key, color: hex });
                 }
             }
             PickerHandle::Node { .. } => {

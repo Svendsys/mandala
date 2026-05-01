@@ -17,7 +17,12 @@ fn test_console_state_open_is_not_closed() {
 fn test_console_state_open_seeded_with_history() {
     let history = vec!["help".to_string(), "anchor set from auto".to_string()];
     match ConsoleState::open(history.clone()) {
-        ConsoleState::Open { history: h, input, cursor, .. } => {
+        ConsoleState::Open {
+            history: h,
+            input,
+            cursor,
+            ..
+        } => {
             assert_eq!(h, history);
             assert_eq!(input, "");
             assert_eq!(cursor, 0);

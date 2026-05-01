@@ -11,8 +11,7 @@ use crate::application::renderer::Renderer;
 
 use super::super::throttled_interaction::ColorPickerHoverInteraction;
 use super::commit::{
-    apply_picker_preview, cancel_color_picker, commit_color_picker,
-    commit_color_picker_to_selection,
+    apply_picker_preview, cancel_color_picker, commit_color_picker, commit_color_picker_to_selection,
 };
 
 /// Click handler for the picker. Semantics:
@@ -60,11 +59,14 @@ pub(in crate::application::app) fn handle_color_picker_click(
     picker_hover: &mut ColorPickerHoverInteraction,
 ) -> bool {
     use crate::application::color_picker::{
-        hit_test_picker, hue_slot_to_degrees, sat_cell_to_value, val_cell_to_value,
-        ColorPickerState, PickerGesture, PickerHit,
+        hit_test_picker, hue_slot_to_degrees, sat_cell_to_value, val_cell_to_value, ColorPickerState,
+        PickerGesture, PickerHit,
     };
 
-    let hit = if let ColorPickerState::Open { layout: Some(layout), .. } = state {
+    let hit = if let ColorPickerState::Open {
+        layout: Some(layout), ..
+    } = state
+    {
         hit_test_picker(layout, cursor_pos.0 as f32, cursor_pos.1 as f32)
     } else {
         return false;
@@ -96,21 +98,32 @@ pub(in crate::application::app) fn handle_color_picker_click(
             cancel_color_picker(state, doc, mindmap_tree, app_scene, renderer, scene_cache);
         }
         PickerHit::Hue(slot) => {
-            if let ColorPickerState::Open { hue_deg, hover_preview, .. } = state {
+            if let ColorPickerState::Open {
+                hue_deg,
+                hover_preview,
+                ..
+            } = state
+            {
                 *hue_deg = hue_slot_to_degrees(slot);
                 *hover_preview = None;
             }
             apply_picker_preview(state, doc, picker_hover);
         }
         PickerHit::SatCell(i) => {
-            if let ColorPickerState::Open { sat, hover_preview, .. } = state {
+            if let ColorPickerState::Open {
+                sat, hover_preview, ..
+            } = state
+            {
                 *sat = sat_cell_to_value(i);
                 *hover_preview = None;
             }
             apply_picker_preview(state, doc, picker_hover);
         }
         PickerHit::ValCell(i) => {
-            if let ColorPickerState::Open { val, hover_preview, .. } = state {
+            if let ColorPickerState::Open {
+                val, hover_preview, ..
+            } = state
+            {
                 *val = val_cell_to_value(i);
                 *hover_preview = None;
             }
@@ -120,14 +133,7 @@ pub(in crate::application::app) fn handle_color_picker_click(
             if is_standalone {
                 // Standalone mode: apply the current HSV to each
                 // item in the selection. Stay open.
-                commit_color_picker_to_selection(
-                    state,
-                    doc,
-                    mindmap_tree,
-                    app_scene,
-                    renderer,
-                    scene_cache,
-                );
+                commit_color_picker_to_selection(state, doc, mindmap_tree, app_scene, renderer, scene_cache);
             } else {
                 // Contextual mode: commit to the bound target,
                 // close.
@@ -152,10 +158,7 @@ pub(in crate::application::app) fn handle_color_picker_click(
                 let cursor = (cursor_pos.0 as f32, cursor_pos.1 as f32);
                 *gesture = Some(match button {
                     MouseButton::Left => PickerGesture::Move {
-                        grab_offset: (
-                            layout.center.0 - cursor.0,
-                            layout.center.1 - cursor.1,
-                        ),
+                        grab_offset: (layout.center.0 - cursor.0, layout.center.1 - cursor.1),
                     },
                     MouseButton::Right => {
                         // Floor the anchor radius so a grab very

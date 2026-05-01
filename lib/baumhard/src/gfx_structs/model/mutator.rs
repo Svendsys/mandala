@@ -114,8 +114,7 @@ impl DeltaGlyphModel {
 
     /// Clone the matrix payload if present. O(matrix size).
     pub fn glyph_matrix(&self) -> Option<GlyphMatrix> {
-        if let Some(GlyphModelField::GlyphMatrix(matrix)) =
-            self.fields.get(&GlyphModelFieldType::GlyphMatrix)
+        if let Some(GlyphModelField::GlyphMatrix(matrix)) = self.fields.get(&GlyphModelFieldType::GlyphMatrix)
         {
             Some(matrix.clone())
         } else {
@@ -145,9 +144,7 @@ impl DeltaGlyphModel {
 
     /// Clone the multi-line payload if present. O(sum of line sizes).
     pub fn glyph_lines(&self) -> Option<Vec<(usize, GlyphLine)>> {
-        if let Some(GlyphModelField::GlyphLines(lines)) =
-            self.fields.get(&GlyphModelFieldType::GlyphLines)
-        {
+        if let Some(GlyphModelField::GlyphLines(lines)) = self.fields.get(&GlyphModelFieldType::GlyphLines) {
             Some(lines.clone())
         } else {
             None
@@ -156,9 +153,7 @@ impl DeltaGlyphModel {
 
     /// Position payload, if any. O(1).
     pub fn position(&self) -> Option<OrderedVec2> {
-        if let Some(GlyphModelField::Position(vec)) =
-            self.fields.get(&GlyphModelFieldType::Position)
-        {
+        if let Some(GlyphModelField::Position(vec)) = self.fields.get(&GlyphModelFieldType::Position) {
             Some(*vec)
         } else {
             None
@@ -168,8 +163,7 @@ impl DeltaGlyphModel {
     /// Global arithmetic mode (`Assign` / `Add` / `Subtract`), or
     /// `Noop` when no `Operation` entry is present. O(1).
     pub fn operation_variant(&self) -> ApplyOperation {
-        if let Some(GlyphModelField::Operation(operation)) =
-            self.fields.get(&GlyphModelFieldType::Operation)
+        if let Some(GlyphModelField::Operation(operation)) = self.fields.get(&GlyphModelFieldType::Operation)
         {
             *operation
         } else {

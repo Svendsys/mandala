@@ -216,9 +216,7 @@ pub fn build_scene_with_cache(
     // every sub-part of the edge).
     let selected_edge_label_highlight_key: Option<EdgeKey> = selected_edge_label
         .clone()
-        .or_else(|| {
-            selected_edge.map(|(f, t, ty)| EdgeKey::new(f, t, ty))
-        });
+        .or_else(|| selected_edge.map(|(f, t, ty)| EdgeKey::new(f, t, ty)));
     let connection_label_elements = build_label_elements(
         map,
         offsets,
@@ -250,8 +248,6 @@ pub fn build_scene_with_cache(
         portal_elements,
         edge_handles,
         connection_label_elements,
-        background_color: resolve_var(&map.canvas.background_color, &map.canvas.theme_variables)
-            .to_string(),
+        background_color: resolve_var(&map.canvas.background_color, &map.canvas.theme_variables).to_string(),
     }
 }
-

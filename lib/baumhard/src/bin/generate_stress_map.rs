@@ -53,8 +53,7 @@ use std::fs;
 use std::process::ExitCode;
 
 use baumhard::mindmap::model::{
-    Canvas, MindEdge, MindMap, MindNode, NodeLayout, NodeStyle, Position, Size,
-    TextRun,
+    Canvas, MindEdge, MindMap, MindNode, NodeLayout, NodeStyle, Position, Size, TextRun,
 };
 use baumhard::util::grapheme_chad::count_grapheme_clusters;
 use rand::rngs::StdRng;
@@ -167,40 +166,29 @@ fn parse_args() -> Result<Option<Config>, String> {
                 i += 2;
             }
             "--nodes" => {
-                cfg.nodes = next(i, key)?
-                    .parse()
-                    .map_err(|e| format!("{}: {}", key, e))?;
+                cfg.nodes = next(i, key)?.parse().map_err(|e| format!("{}: {}", key, e))?;
                 i += 2;
             }
             "--depth" => {
-                cfg.depth = next(i, key)?
-                    .parse()
-                    .map_err(|e| format!("{}: {}", key, e))?;
+                cfg.depth = next(i, key)?.parse().map_err(|e| format!("{}: {}", key, e))?;
                 i += 2;
             }
             "--branching" => {
-                cfg.branching = next(i, key)?
-                    .parse()
-                    .map_err(|e| format!("{}: {}", key, e))?;
+                cfg.branching = next(i, key)?.parse().map_err(|e| format!("{}: {}", key, e))?;
                 i += 2;
             }
             "--cross-links" => {
-                cfg.cross_links = next(i, key)?
-                    .parse()
-                    .map_err(|e| format!("{}: {}", key, e))?;
+                cfg.cross_links = next(i, key)?.parse().map_err(|e| format!("{}: {}", key, e))?;
                 i += 2;
             }
             "--long-edges" => {
-                cfg.long_edges = next(i, key)?
-                    .parse()
-                    .map_err(|e| format!("{}: {}", key, e))?;
+                cfg.long_edges = next(i, key)?.parse().map_err(|e| format!("{}: {}", key, e))?;
                 i += 2;
             }
             "--seed" => {
                 let v = next(i, key)?;
                 cfg.seed = if let Some(hex) = v.strip_prefix("0x") {
-                    u64::from_str_radix(hex, 16)
-                        .map_err(|e| format!("{}: {}", key, e))?
+                    u64::from_str_radix(hex, 16).map_err(|e| format!("{}: {}", key, e))?
                 } else {
                     v.parse().map_err(|e| format!("{}: {}", key, e))?
                 };
@@ -385,7 +373,13 @@ fn gen_skewed(nodes: usize) -> (Vec<MindNode>, Vec<MindEdge>) {
         let parent = &result_nodes[spine_idx];
         let x = parent.position.x + COL_SPACING;
         let y = parent.position.y;
-        result_nodes.push(make_node(id.clone(), Some(parent_id.clone()), x, y, spine_idx + 1));
+        result_nodes.push(make_node(
+            id.clone(),
+            Some(parent_id.clone()),
+            x,
+            y,
+            spine_idx + 1,
+        ));
         edges.push(make_parent_child_edge(&parent_id, &id));
         next_id += 1;
         spine_idx += 1;
@@ -423,12 +417,7 @@ fn gen_star(nodes: usize) -> (Vec<MindNode>, Vec<MindEdge>) {
 
 /// Add `count` random cross-link edges. Avoids self-links and duplicates of
 /// existing edges (hierarchy or cross-link).
-fn add_random_cross_links(
-    nodes: &[MindNode],
-    edges: &mut Vec<MindEdge>,
-    count: usize,
-    rng: &mut StdRng,
-) {
+fn add_random_cross_links(nodes: &[MindNode], edges: &mut Vec<MindEdge>, count: usize, rng: &mut StdRng) {
     if nodes.len() < 2 || count == 0 {
         return;
     }
@@ -549,8 +538,7 @@ fn run(cfg: Config) -> Result<(), String> {
     let node_count = nodes.len();
     let edge_count = edges.len();
     let map = assemble_mindmap(&name, nodes, edges);
-    let json = serde_json::to_string_pretty(&map)
-        .map_err(|e| format!("serialise mindmap: {}", e))?;
+    let json = serde_json::to_string_pretty(&map).map_err(|e| format!("serialise mindmap: {}", e))?;
     fs::write(&cfg.output, json).map_err(|e| format!("write {}: {}", cfg.output, e))?;
     println!(
         "wrote {} ({} nodes, {} edges, seed 0x{:X})",

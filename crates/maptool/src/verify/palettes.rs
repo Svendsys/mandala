@@ -16,10 +16,7 @@ pub fn check(map: &MindMap) -> Vec<Violation> {
                 out.push(Violation::node(
                     "palettes",
                     node,
-                    format!(
-                        "palette {:?} is not defined in map.palettes",
-                        schema.palette
-                    ),
+                    format!("palette {:?} is not defined in map.palettes", schema.palette),
                 ));
             }
         }
@@ -56,7 +53,12 @@ mod tests {
     #[test]
     fn valid_palette_ref_clean() {
         let mut map = MindMap::new_blank("t");
-        map.palettes.insert("coral".into(), Palette { groups: vec![group()] });
+        map.palettes.insert(
+            "coral".into(),
+            Palette {
+                groups: vec![group()],
+            },
+        );
         let mut n = node("0", None);
         n.color_schema = Some(ColorSchema {
             palette: "coral".into(),
@@ -80,7 +82,9 @@ mod tests {
         });
         map.nodes.insert("0".into(), n);
         let v = check(&map);
-        assert!(v.iter().any(|x| x.category == "palettes" && x.message.contains("sunset")));
+        assert!(v
+            .iter()
+            .any(|x| x.category == "palettes" && x.message.contains("sunset")));
     }
 
     #[test]
@@ -88,6 +92,8 @@ mod tests {
         let mut map = MindMap::new_blank("t");
         map.palettes.insert("empty".into(), Palette { groups: vec![] });
         let v = check(&map);
-        assert!(v.iter().any(|x| x.category == "palettes" && x.location == "empty"));
+        assert!(v
+            .iter()
+            .any(|x| x.category == "palettes" && x.location == "empty"));
     }
 }

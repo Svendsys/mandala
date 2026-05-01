@@ -68,10 +68,8 @@ fn inject_palettes(root: &mut Value, palettes: &HashMap<String, Value>) {
     if palettes.is_empty() {
         return;
     }
-    let palette_obj: serde_json::Map<String, Value> = palettes
-        .iter()
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect();
+    let palette_obj: serde_json::Map<String, Value> =
+        palettes.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
     if let Some(obj) = root.as_object_mut() {
         obj.insert("palettes".to_string(), Value::Object(palette_obj));
     }
@@ -91,10 +89,7 @@ fn simplify_node_schemas(root: &mut Value) {
         let key = palette_key(&schema);
         let level = schema.get("level").cloned().unwrap_or(json!(0));
         let starts_at_root = schema.get("starts_at_root").cloned().unwrap_or(json!(true));
-        let connections_colored = schema
-            .get("connections_colored")
-            .cloned()
-            .unwrap_or(json!(true));
+        let connections_colored = schema.get("connections_colored").cloned().unwrap_or(json!(true));
 
         let simplified = json!({
             "palette": key,

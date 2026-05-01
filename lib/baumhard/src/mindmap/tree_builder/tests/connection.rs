@@ -130,7 +130,13 @@ fn connection_mutator_round_trip_matches_full_rebuild() {
         zoom_visibility: zv,
     };
     let elem_a = mk("#ff0000", ZoomVisibility::unbounded());
-    let elem_b = mk("#00E5FF", ZoomVisibility { min: Some(0.75), max: Some(3.0) });
+    let elem_b = mk(
+        "#00E5FF",
+        ZoomVisibility {
+            min: Some(0.75),
+            max: Some(3.0),
+        },
+    );
 
     let mut tree_a = build_connection_tree(std::slice::from_ref(&elem_a));
     let mutator = build_connection_mutator_tree(std::slice::from_ref(&elem_b));
@@ -190,7 +196,13 @@ fn connection_label_mutator_round_trip_handles_text_edit() {
         zoom_visibility: zv,
     };
     let elem_a = mk("old", ZoomVisibility::unbounded());
-    let elem_b = mk("new label", ZoomVisibility { min: Some(1.5), max: None });
+    let elem_b = mk(
+        "new label",
+        ZoomVisibility {
+            min: Some(1.5),
+            max: None,
+        },
+    );
     assert_eq!(
         connection_label_identity_sequence(std::slice::from_ref(&elem_a)),
         connection_label_identity_sequence(std::slice::from_ref(&elem_b))
@@ -277,7 +289,14 @@ fn connection_label_region_sized_by_grapheme_cluster_count_not_codepoints() {
     };
     let tree = build_connection_label_tree(&[elem]);
     let label_node = tree.tree.root.children(&tree.tree.arena).next().unwrap();
-    let area = tree.tree.arena.get(label_node).unwrap().get().glyph_area().unwrap();
+    let area = tree
+        .tree
+        .arena
+        .get(label_node)
+        .unwrap()
+        .get()
+        .glyph_area()
+        .unwrap();
     let regions = area.regions.all_regions();
     assert_eq!(regions.len(), 1, "connection label emits one region");
     assert_eq!(

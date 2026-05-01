@@ -89,7 +89,6 @@ impl TextEditState {
 /// matches the body font's metrics.
 const TEXT_EDIT_CARET: char = '|';
 
-
 // Text-edit cursor helpers.
 //
 // These all operate on **grapheme-cluster indices** (not chars or
@@ -215,7 +214,10 @@ pub(in crate::application::app) fn apply_text_edit_action(
         cursor_grapheme_pos,
         buffer_regions,
         ..
-    } = state else { return false; };
+    } = state
+    else {
+        return false;
+    };
     let cursor = cursor_grapheme_pos;
     let before = *cursor;
     let len_before = buffer.len();
@@ -289,8 +291,7 @@ pub(in crate::application::app) fn apply_text_edit_action(
 /// glyph at the cursor's grapheme position. Used on every keystroke
 /// to produce the `Mutation::AreaDelta` payload.
 pub(in crate::application::app) fn insert_caret(buffer: &str, cursor: usize) -> String {
-    let byte = grapheme_chad::find_byte_index_of_grapheme(buffer, cursor)
-        .unwrap_or(buffer.len());
+    let byte = grapheme_chad::find_byte_index_of_grapheme(buffer, cursor).unwrap_or(buffer.len());
     let mut out = String::with_capacity(buffer.len() + TEXT_EDIT_CARET.len_utf8());
     out.push_str(&buffer[..byte]);
     out.push(TEXT_EDIT_CARET);

@@ -82,14 +82,38 @@ fn test_default_config_has_all_actions() {
     let cfg = KeybindConfig::default();
     let resolved = cfg.resolve();
     assert_eq!(resolved.action_for("z", true, false, false), Some(Action::Undo));
-    assert_eq!(resolved.action_for("p", true, false, false), Some(Action::EnterReparentMode));
-    assert_eq!(resolved.action_for("d", true, false, false), Some(Action::EnterConnectMode));
-    assert_eq!(resolved.action_for("delete", false, false, false), Some(Action::DeleteSelection));
-    assert_eq!(resolved.action_for("escape", false, false, false), Some(Action::CancelMode));
-    assert_eq!(resolved.action_for("n", true, false, false), Some(Action::CreateOrphanNode));
-    assert_eq!(resolved.action_for("o", true, false, false), Some(Action::OrphanSelection));
-    assert_eq!(resolved.action_for("enter", false, false, false), Some(Action::EditSelection));
-    assert_eq!(resolved.action_for("backspace", false, false, false), Some(Action::EditSelectionClean));
+    assert_eq!(
+        resolved.action_for("p", true, false, false),
+        Some(Action::EnterReparentMode)
+    );
+    assert_eq!(
+        resolved.action_for("d", true, false, false),
+        Some(Action::EnterConnectMode)
+    );
+    assert_eq!(
+        resolved.action_for("delete", false, false, false),
+        Some(Action::DeleteSelection)
+    );
+    assert_eq!(
+        resolved.action_for("escape", false, false, false),
+        Some(Action::CancelMode)
+    );
+    assert_eq!(
+        resolved.action_for("n", true, false, false),
+        Some(Action::CreateOrphanNode)
+    );
+    assert_eq!(
+        resolved.action_for("o", true, false, false),
+        Some(Action::OrphanSelection)
+    );
+    assert_eq!(
+        resolved.action_for("enter", false, false, false),
+        Some(Action::EditSelection)
+    );
+    assert_eq!(
+        resolved.action_for("backspace", false, false, false),
+        Some(Action::EditSelectionClean)
+    );
 }
 
 #[test]
@@ -137,7 +161,10 @@ fn test_custom_mutation_invalid_combo_is_skipped() {
         ..KeybindConfig::default()
     };
     let resolved = cfg.resolve();
-    assert_eq!(resolved.custom_mutation_for("m", true, false, false), Some("valid"));
+    assert_eq!(
+        resolved.custom_mutation_for("m", true, false, false),
+        Some("valid")
+    );
 }
 
 #[test]
@@ -169,21 +196,12 @@ fn test_remove_custom_mutation_binding_returns_removed_id() {
         .unwrap();
     let prev = resolved.remove_custom_mutation_binding("Ctrl+Shift+M").unwrap();
     assert_eq!(prev.as_deref(), Some("id-1"));
-    assert_eq!(
-        resolved.custom_mutation_for("m", true, true, false),
-        None
-    );
+    assert_eq!(resolved.custom_mutation_for("m", true, true, false), None);
 }
 
 #[test]
 fn test_keybind_string_round_trip_through_parse() {
-    let cases = &[
-        "Ctrl+Z",
-        "Ctrl+Shift+M",
-        "Alt+F4",
-        "Shift+Enter",
-        "Escape",
-    ];
+    let cases = &["Ctrl+Z", "Ctrl+Shift+M", "Alt+F4", "Shift+Enter", "Escape"];
     for c in cases {
         let parsed = KeyBind::parse(c).unwrap();
         let rendered = parsed.to_binding_string();
@@ -379,7 +397,8 @@ fn test_classifiers_cover_every_variant_kind() {
         assert!(
             matches!(c, WasmCompatibility::Compatible | WasmCompatibility::NativeOnly),
             "{:?} returned an unexpected classification {:?}",
-            kind, c
+            kind,
+            c
         );
         let _ = kind.is_destructive();
         let _ = kind.context();
@@ -430,11 +449,7 @@ fn test_is_destructive_destructive_set_is_pinned() {
     let destructive_set: HashSet<ActionKind> = destructive.iter().copied().collect();
     for k in ActionKind::iter() {
         if !destructive_set.contains(&k) {
-            assert!(
-                !k.is_destructive(),
-                "{:?} unexpectedly classified destructive",
-                k
-            );
+            assert!(!k.is_destructive(), "{:?} unexpectedly classified destructive", k);
         }
     }
 }
@@ -574,8 +589,8 @@ fn test_action_for_gesture_exact_modifier_match_wins_over_fallback() {
     // exercises only the configured bindings.
     let cfg = KeybindConfig {
         zoom_in: vec![],
-        zoom_out: vec!["WheelUp".into()],            // bare WheelUp -> ZoomOut
-        zoom_reset: vec!["Ctrl+WheelUp".into()],     // Ctrl+WheelUp -> ZoomReset
+        zoom_out: vec!["WheelUp".into()],        // bare WheelUp -> ZoomOut
+        zoom_reset: vec!["Ctrl+WheelUp".into()], // Ctrl+WheelUp -> ZoomReset
         ..KeybindConfig::default()
     };
     let r = cfg.resolve();
@@ -636,7 +651,10 @@ fn test_action_for_gesture_returns_none_when_completely_unbound() {
 #[test]
 fn test_default_console_font_size_is_16() {
     let cfg = KeybindConfig::default();
-    assert!(baumhard::util::geometry::almost_equal(cfg.console_font_size, 16.0));
+    assert!(baumhard::util::geometry::almost_equal(
+        cfg.console_font_size,
+        16.0
+    ));
 }
 
 #[test]
@@ -706,7 +724,11 @@ fn test_all_document_defaults_resolve_via_action_for_context() {
             r.action_for_context(doc, key, *ctrl, *shift, *alt),
             Some(action.clone()),
             "expected {:?} for key={:?} ctrl={} shift={} alt={}",
-            action, key, ctrl, shift, alt,
+            action,
+            key,
+            ctrl,
+            shift,
+            alt,
         );
     }
 }
@@ -726,7 +748,10 @@ fn test_default_config_has_undo_alias() {
     // Ctrl+Z and the bare "Undo" key should both fire undo
     let cfg = KeybindConfig::default();
     let resolved = cfg.resolve();
-    assert_eq!(resolved.action_for("undo", false, false, false), Some(Action::Undo));
+    assert_eq!(
+        resolved.action_for("undo", false, false, false),
+        Some(Action::Undo)
+    );
 }
 
 #[test]

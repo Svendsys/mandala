@@ -10,9 +10,7 @@
 
 use baumhard::gfx_structs::area::GlyphArea;
 
-use crate::application::color_picker::{
-    compute_color_picker_layout, ColorPickerOverlayGeometry,
-};
+use crate::application::color_picker::{compute_color_picker_layout, ColorPickerOverlayGeometry};
 use crate::application::color_picker_overlay::picker_glyph_areas::picker_glyph_areas;
 
 pub(super) use crate::application::color_picker::tests::fixtures::sample_geometry as picker_sample_geometry;
@@ -20,9 +18,7 @@ pub(super) use crate::application::color_picker::tests::fixtures::sample_geometr
 /// Compute the picker's channel-ordered `(channel, GlyphArea)` list
 /// at the canonical 1280×720 viewport — what every test that reasons
 /// about emitted areas wants.
-pub(super) fn picker_glyph_areas_for(
-    geometry: &ColorPickerOverlayGeometry,
-) -> Vec<(usize, GlyphArea)> {
+pub(super) fn picker_glyph_areas_for(geometry: &ColorPickerOverlayGeometry) -> Vec<(usize, GlyphArea)> {
     let layout = compute_color_picker_layout(geometry, 1280.0, 720.0);
     picker_glyph_areas(geometry, &layout)
 }

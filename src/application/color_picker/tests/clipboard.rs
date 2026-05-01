@@ -2,12 +2,8 @@
 
 //! Clipboard trait tests for `ColorPickerState`.
 
-use crate::application::color_picker::{
-    ColorPickerState, PickerMode, CROSSHAIR_CENTER_CELL,
-};
-use crate::application::console::traits::{
-    ClipboardContent, HandlesCopy, HandlesCut, HandlesPaste, Outcome,
-};
+use crate::application::color_picker::{ColorPickerState, PickerMode, CROSSHAIR_CENTER_CELL};
+use crate::application::console::traits::{ClipboardContent, HandlesCopy, HandlesCut, HandlesPaste, Outcome};
 
 /// Build a `ColorPickerState::Open` in Standalone mode with given HSV.
 /// Only the fields the clipboard traits read/write are meaningful;
@@ -67,7 +63,10 @@ fn paste_valid_hex_sets_hsv() {
         hue_deg, sat, val, ..
     } = &state
     {
-        assert!((*hue_deg - 0.0).abs() < 1.0, "hue should be ~0 for red, got {hue_deg}");
+        assert!(
+            (*hue_deg - 0.0).abs() < 1.0,
+            "hue should be ~0 for red, got {hue_deg}"
+        );
         assert!(*sat > 0.9, "sat should be ~1 for red, got {sat}");
         assert!(*val > 0.9, "val should be ~1 for red, got {val}");
     } else {

@@ -75,8 +75,7 @@ fn connection_edge_layout(
 
     let edge_zoom_window = elem.zoom_visibility;
     let mk_area = |text: &str, pos: Vec2| -> GlyphArea {
-        let mut area =
-            GlyphArea::new_with_str(text, font_size, font_size, pos, glyph_bounds);
+        let mut area = GlyphArea::new_with_str(text, font_size, font_size, pos, glyph_bounds);
         area.zoom_visibility = edge_zoom_window;
         let cluster_count = crate::util::grapheme_chad::count_grapheme_clusters(text);
         area.regions = ColorFontRegions::single_span(cluster_count, Some(color_rgba), None);
@@ -122,7 +121,7 @@ fn connection_edge_layout(
 /// `Renderer::rebuild_connection_buffers_keyed` applied. Color is
 /// baked into a single `ColorFontRegion` covering the body glyph.
 ///
-/// Channels come from [`connection_edge_layout`] so the in-place
+/// Channels come from `connection_edge_layout` so the in-place
 /// [`build_connection_mutator_tree`] path can target each leaf by
 /// the same channel across calls when the structure (body glyph
 /// count, cap presence) hasn't changed.
@@ -161,7 +160,7 @@ pub fn build_connection_tree(
 /// that updates an already-registered connection tree to the
 /// current `elements` state without rebuilding the arena. Pairs
 /// with [`build_connection_tree`] — both consume
-/// [`connection_edge_layout`], so applying this mutator to a tree
+/// `connection_edge_layout`, so applying this mutator to a tree
 /// built from an element slice with the same
 /// [`connection_identity_sequence`] updates each glyph's variable
 /// fields in place.
@@ -180,13 +179,11 @@ pub fn build_connection_mutator_tree(
 
         for (channel, area) in children {
             let delta = DeltaGlyphArea::full_assign_from(&area);
-            let leaf = mt.arena.new_node(GfxMutator::new(
-                Mutation::AreaDelta(Box::new(delta)),
-                channel,
-            ));
+            let leaf = mt
+                .arena
+                .new_node(GfxMutator::new(Mutation::AreaDelta(Box::new(delta)), channel));
             edge_node.append(leaf, &mut mt.arena);
         }
     }
     mt
 }
-

@@ -167,7 +167,6 @@ mod tests {
         },
     }
 
-
     #[test]
     fn test_canvas_needs_rebuild_false_by_default() {
         // Fresh interaction: nothing has called `apply_picker_preview`,

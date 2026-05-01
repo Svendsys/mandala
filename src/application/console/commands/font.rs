@@ -31,8 +31,8 @@
 //!   selection variant decides which channel the family lands on
 //!   (nodes → every `TextRun.font`, edges + portal icons →
 //!   `glyph_connection.font`); edge labels and portal text return
-//!   `NotApplicable` and surface a clear "not applicable to <kind>"
-//!   message.
+//!   `NotApplicable` and surface a clear "not applicable to
+//!   `<kind>`" message.
 //! - `font list` — emit one scrollback line per loaded family,
 //!   each rendered in its own face. Sorted alphabetically.
 
@@ -60,8 +60,7 @@ pub const COMMAND: Command = Command {
     summary: "Set font family / size / clamps on the selection, or list fonts",
     usage: "font set <family> | font list | font size=<pt> [min=<pt>] [max=<pt>]",
     tags: &[
-        "font", "family", "set", "list", "size", "min", "max", "clamp", "pt",
-        "smaller", "larger",
+        "font", "family", "set", "list", "size", "min", "max", "clamp", "pt", "smaller", "larger",
     ],
     applicable: always,
     complete: complete_font,
@@ -92,17 +91,13 @@ fn complete_font(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completi
         // Token 1 after `set`: every loaded font family, each
         // pre-shaped in its own face so the user sees the look
         // before committing.
-        CompletionContext::Token { index: 1 }
-            if state.tokens.get(1).map(String::as_str) == Some("set") =>
-        {
+        CompletionContext::Token { index: 1 } if state.tokens.get(1).map(String::as_str) == Some("set") => {
             font_family_completions(state.partial)
         }
         // Bare-token slots past index 0 with no preceding `set`
         // fall back to the kv keys (parity with the pre-existing
         // shape).
-        CompletionContext::Token { .. } => {
-            kv_key_completions_with_hints(KEYS, state.partial, kv_hint)
-        }
+        CompletionContext::Token { .. } => kv_key_completions_with_hints(KEYS, state.partial, kv_hint),
         CompletionContext::KvValue { key } if KEYS.contains(&key.as_str()) => {
             prefix_filter(SIZE_PRESETS, state.partial)
         }
@@ -234,9 +229,7 @@ fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     // one side and it inverts against the existing struct.
     if let (Some(lo), Some(hi)) = (min, max) {
         if lo > hi {
-            return ExecResult::err(format!(
-                "font: min={lo} > max={hi} (inverted bounds)"
-            ));
+            return ExecResult::err(format!("font: min={lo} > max={hi} (inverted bounds)"));
         }
     }
 
@@ -246,9 +239,7 @@ fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     // their own channel.
     let doc = &mut eff.document;
     match doc.selection.clone() {
-        SelectionState::Single(id) => {
-            node_font_outcome(doc, &id, size, min, max)
-        }
+        SelectionState::Single(id) => node_font_outcome(doc, &id, size, min, max),
         SelectionState::Multi(ids) => {
             // Fanout: apply size to each node; collect a single
             // "any changed?" result. `min` / `max` are
@@ -291,13 +282,7 @@ fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             finalize("portal label", changed)
         }
         SelectionState::PortalText(s) => {
-            let changed = doc.set_portal_text_font(
-                &s.edge_ref(),
-                &s.endpoint_node_id,
-                size,
-                min,
-                max,
-            );
+            let changed = doc.set_portal_text_font(&s.edge_ref(), &s.endpoint_node_id, size, min, max);
             finalize("portal text", changed)
         }
         SelectionState::None => ExecResult::err("font: no selection"),
@@ -446,16 +431,10 @@ pub(crate) fn apply_font_kv_to_selection(
         }
         SelectionState::Edge(er) => doc.set_edge_font(&er, size, min, max),
         SelectionState::EdgeLabel(s) => doc.set_edge_label_font(&s.edge_ref, size, min, max),
-        SelectionState::PortalLabel(s) => {
-            doc.set_edge_font(&s.edge_ref(), size, min, max)
+        SelectionState::PortalLabel(s) => doc.set_edge_font(&s.edge_ref(), size, min, max),
+        SelectionState::PortalText(s) => {
+            doc.set_portal_text_font(&s.edge_ref(), &s.endpoint_node_id, size, min, max)
         }
-        SelectionState::PortalText(s) => doc.set_portal_text_font(
-            &s.edge_ref(),
-            &s.endpoint_node_id,
-            size,
-            min,
-            max,
-        ),
         SelectionState::None => false,
     }
 }
@@ -496,8 +475,7 @@ mod tests {
         let mut doc = fixture_doc();
         match run("font list", &mut doc) {
             ExecResult::Lines(rows) => {
-                let families: Vec<&'static str> =
-                    baumhard::font::fonts::loaded_families_iter().collect();
+                let families: Vec<&'static str> = baumhard::font::fonts::loaded_families_iter().collect();
                 assert_eq!(rows.len(), families.len());
                 for (i, line) in rows.iter().enumerate() {
                     assert_eq!(line.text, families[i]);
@@ -581,14 +559,9 @@ mod tests {
             .edges
             .first()
             .expect("testament map has at least one edge");
-        let er = EdgeRef::new(
-            edge.from_id.clone(),
-            edge.to_id.clone(),
-            edge.edge_type.clone(),
-        );
-        doc.selection = SelectionState::EdgeLabel(
-            crate::application::document::EdgeLabelSel { edge_ref: er },
-        );
+        let er = EdgeRef::new(edge.from_id.clone(), edge.to_id.clone(), edge.edge_type.clone());
+        doc.selection =
+            SelectionState::EdgeLabel(crate::application::document::EdgeLabelSel { edge_ref: er });
         match run(&format!("font set {}", family), &mut doc) {
             ExecResult::Lines(msgs) => {
                 assert!(join_lines(&msgs).contains("not applicable"));
@@ -618,13 +591,7 @@ mod tests {
         let family = first_loaded_family();
         let mut doc = fixture_doc();
         // Pick the first three node ids in the testament map.
-        let ids: Vec<String> = doc
-            .mindmap
-            .nodes
-            .keys()
-            .take(3)
-            .cloned()
-            .collect();
+        let ids: Vec<String> = doc.mindmap.nodes.keys().take(3).cloned().collect();
         assert_eq!(ids.len(), 3, "testament map must have ≥3 nodes");
         doc.selection = SelectionState::Multi(ids.clone());
         match run(&format!("font set {}", family), &mut doc) {
@@ -736,10 +703,7 @@ mod tests {
                 assert!(join_lines(&msgs).contains("not applicable"));
             }
             ExecResult::Err(s) => assert!(s.contains("not applicable")),
-            other => panic!(
-                "expected Lines / Err with 'not applicable', got {:?}",
-                other
-            ),
+            other => panic!("expected Lines / Err with 'not applicable', got {:?}", other),
         }
     }
 
@@ -765,11 +729,10 @@ mod tests {
             // is the same except when the name contains whitespace,
             // in which case it's wrapped in double quotes so a
             // tab-accept produces a parseable token.
-            assert!(
-                c.display
-                    .to_ascii_lowercase()
-                    .starts_with(&prefix.to_ascii_lowercase())
-            );
+            assert!(c
+                .display
+                .to_ascii_lowercase()
+                .starts_with(&prefix.to_ascii_lowercase()));
             assert_eq!(c.font_family.as_deref(), Some(c.display.as_str()));
             if c.display.chars().any(char::is_whitespace) {
                 assert_eq!(c.text, format!("\"{}\"", c.display));
@@ -899,7 +862,11 @@ mod tests {
         doc.selection = SelectionState::Single("0".into());
         // NaN, infinite, zero, negative — all rejected upfront.
         assert!(!super::apply_font_kv_to_selection(&mut doc, "size", f32::NAN));
-        assert!(!super::apply_font_kv_to_selection(&mut doc, "size", f32::INFINITY));
+        assert!(!super::apply_font_kv_to_selection(
+            &mut doc,
+            "size",
+            f32::INFINITY
+        ));
         assert!(!super::apply_font_kv_to_selection(&mut doc, "size", 0.0));
         assert!(!super::apply_font_kv_to_selection(&mut doc, "size", -1.0));
     }

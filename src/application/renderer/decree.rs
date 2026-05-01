@@ -50,19 +50,21 @@ impl Renderer {
             }
             RenderDecree::Noop => {}
             RenderDecree::CameraPan(dx, dy) => {
-                self.camera.apply_mutation(
-                    &baumhard::gfx_structs::camera::CameraMutation::Pan {
+                self.camera
+                    .apply_mutation(&baumhard::gfx_structs::camera::CameraMutation::Pan {
                         screen_delta: Vec2::new(dx, dy),
-                    },
-                );
+                    });
             }
-            RenderDecree::CameraZoom { screen_x, screen_y, factor } => {
-                self.camera.apply_mutation(
-                    &baumhard::gfx_structs::camera::CameraMutation::ZoomAt {
+            RenderDecree::CameraZoom {
+                screen_x,
+                screen_y,
+                factor,
+            } => {
+                self.camera
+                    .apply_mutation(&baumhard::gfx_structs::camera::CameraMutation::ZoomAt {
                         screen_focus: Vec2::new(screen_x, screen_y),
                         factor,
-                    },
-                );
+                    });
                 // Zoom invalidates the document-side sample cache:
                 // the effective font size — and therefore sample
                 // spacing along connection paths — is a function of

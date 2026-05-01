@@ -19,16 +19,13 @@ use crate::font::fonts;
 use crate::gfx_structs::area::GlyphArea;
 use crate::gfx_structs::element::GfxElement;
 use crate::gfx_structs::mutator::{
-    GfxMutator, GlyphTreeEvent, GlyphTreeEventInstance, Instruction,
-    MouseEventData, Mutation,
+    GfxMutator, GlyphTreeEvent, GlyphTreeEventInstance, Instruction, MouseEventData, Mutation,
 };
 use crate::gfx_structs::tree::{EventSubscriber, MutatorTree, Tree};
 use crate::gfx_structs::tree_walker::walk_tree_from;
 use crate::util::ordered_vec2::OrderedVec2;
 
-use crate::gfx_structs::tests::subtree_aabb_tests::{
-    build_deep_chain, build_test_tree, build_wide_tree,
-};
+use crate::gfx_structs::tests::subtree_aabb_tests::{build_deep_chain, build_test_tree, build_wide_tree};
 
 /// Build a MutatorTree that delivers a MouseEvent via SpatialDescend.
 fn spatial_descend_mutator(x: f32, y: f32) -> MutatorTree<GfxMutator> {
@@ -56,11 +53,17 @@ pub fn do_spatial_descend_delivers_event_to_leaf() {
     let received = Arc::new(AtomicBool::new(false));
     let rc = received.clone();
     let sub: EventSubscriber = Arc::new(Mutex::new(
-        move |_: &mut GfxElement, _: GlyphTreeEventInstance| { rc.store(true, Ordering::SeqCst); },
+        move |_: &mut GfxElement, _: GlyphTreeEventInstance| {
+            rc.store(true, Ordering::SeqCst);
+        },
     ));
     let right_id = tree.root.children(&tree.arena).nth(1).unwrap();
-    tree.arena.get_mut(right_id).unwrap().get_mut()
-        .subscribers_mut().push(sub);
+    tree.arena
+        .get_mut(right_id)
+        .unwrap()
+        .get_mut()
+        .subscribers_mut()
+        .push(sub);
 
     let mtree = spatial_descend_mutator(210.0, 210.0);
     let root = tree.root;
@@ -80,11 +83,17 @@ pub fn do_spatial_descend_miss_is_noop() {
     let received = Arc::new(AtomicBool::new(false));
     let rc = received.clone();
     let sub: EventSubscriber = Arc::new(Mutex::new(
-        move |_: &mut GfxElement, _: GlyphTreeEventInstance| { rc.store(true, Ordering::SeqCst); },
+        move |_: &mut GfxElement, _: GlyphTreeEventInstance| {
+            rc.store(true, Ordering::SeqCst);
+        },
     ));
     let right_id = tree.root.children(&tree.arena).nth(1).unwrap();
-    tree.arena.get_mut(right_id).unwrap().get_mut()
-        .subscribers_mut().push(sub);
+    tree.arena
+        .get_mut(right_id)
+        .unwrap()
+        .get_mut()
+        .subscribers_mut()
+        .push(sub);
 
     let mtree = spatial_descend_mutator(999.0, 999.0);
     let root = tree.root;
@@ -106,19 +115,31 @@ pub fn do_spatial_descend_finds_innermost_node() {
 
     let lr = left_received.clone();
     let left_sub: EventSubscriber = Arc::new(Mutex::new(
-        move |_: &mut GfxElement, _: GlyphTreeEventInstance| { lr.store(true, Ordering::SeqCst); },
+        move |_: &mut GfxElement, _: GlyphTreeEventInstance| {
+            lr.store(true, Ordering::SeqCst);
+        },
     ));
     let cr = child_received.clone();
     let child_sub: EventSubscriber = Arc::new(Mutex::new(
-        move |_: &mut GfxElement, _: GlyphTreeEventInstance| { cr.store(true, Ordering::SeqCst); },
+        move |_: &mut GfxElement, _: GlyphTreeEventInstance| {
+            cr.store(true, Ordering::SeqCst);
+        },
     ));
 
     let left_id = tree.root.children(&tree.arena).next().unwrap();
     let left_child_id = left_id.children(&tree.arena).next().unwrap();
-    tree.arena.get_mut(left_id).unwrap().get_mut()
-        .subscribers_mut().push(left_sub);
-    tree.arena.get_mut(left_child_id).unwrap().get_mut()
-        .subscribers_mut().push(child_sub);
+    tree.arena
+        .get_mut(left_id)
+        .unwrap()
+        .get_mut()
+        .subscribers_mut()
+        .push(left_sub);
+    tree.arena
+        .get_mut(left_child_id)
+        .unwrap()
+        .get_mut()
+        .subscribers_mut()
+        .push(child_sub);
 
     let mtree = spatial_descend_mutator(25.0, 42.0);
     let root = tree.root;
@@ -140,7 +161,9 @@ pub fn do_spatial_descend_deep_chain_delivers_to_leaf() {
     let received = Arc::new(AtomicBool::new(false));
     let rc = received.clone();
     let sub: EventSubscriber = Arc::new(Mutex::new(
-        move |_: &mut GfxElement, _: GlyphTreeEventInstance| { rc.store(true, Ordering::SeqCst); },
+        move |_: &mut GfxElement, _: GlyphTreeEventInstance| {
+            rc.store(true, Ordering::SeqCst);
+        },
     ));
 
     // Walk to deepest node.
@@ -151,8 +174,12 @@ pub fn do_spatial_descend_deep_chain_delivers_to_leaf() {
             None => break,
         }
     }
-    tree.arena.get_mut(node).unwrap().get_mut()
-        .subscribers_mut().push(sub);
+    tree.arena
+        .get_mut(node)
+        .unwrap()
+        .get_mut()
+        .subscribers_mut()
+        .push(sub);
 
     let mtree = spatial_descend_mutator(105.0, 105.0);
     let root = tree.root;
@@ -179,8 +206,12 @@ pub fn do_spatial_descend_wide_tree_hits_correct_child() {
                 ids.lock().unwrap().push(i);
             },
         ));
-        tree.arena.get_mut(cid).unwrap().get_mut()
-            .subscribers_mut().push(sub);
+        tree.arena
+            .get_mut(cid)
+            .unwrap()
+            .get_mut()
+            .subscribers_mut()
+            .push(sub);
     }
 
     let mtree = spatial_descend_mutator(760.0, 10.0);
@@ -201,11 +232,17 @@ pub fn do_spatial_descend_no_mutation_is_noop() {
     let received = Arc::new(AtomicBool::new(false));
     let rc = received.clone();
     let sub: EventSubscriber = Arc::new(Mutex::new(
-        move |_: &mut GfxElement, _: GlyphTreeEventInstance| { rc.store(true, Ordering::SeqCst); },
+        move |_: &mut GfxElement, _: GlyphTreeEventInstance| {
+            rc.store(true, Ordering::SeqCst);
+        },
     ));
     let right_id = tree.root.children(&tree.arena).nth(1).unwrap();
-    tree.arena.get_mut(right_id).unwrap().get_mut()
-        .subscribers_mut().push(sub);
+    tree.arena
+        .get_mut(right_id)
+        .unwrap()
+        .get_mut()
+        .subscribers_mut()
+        .push(sub);
 
     let instruction = GfxMutator::Instruction {
         instruction: Instruction::SpatialDescend(OrderedVec2::new_f32(210.0, 210.0)),
@@ -237,13 +274,19 @@ pub fn do_spatial_descend_ignores_channel_mismatch() {
     let received = Arc::new(AtomicBool::new(false));
     let rc = received.clone();
     let sub: EventSubscriber = Arc::new(Mutex::new(
-        move |_: &mut GfxElement, _: GlyphTreeEventInstance| { rc.store(true, Ordering::SeqCst); },
+        move |_: &mut GfxElement, _: GlyphTreeEventInstance| {
+            rc.store(true, Ordering::SeqCst);
+        },
     ));
 
     let id = tree.arena.new_node(area);
     tree.root.append(id, &mut tree.arena);
-    tree.arena.get_mut(id).unwrap().get_mut()
-        .subscribers_mut().push(sub);
+    tree.arena
+        .get_mut(id)
+        .unwrap()
+        .get_mut()
+        .subscribers_mut()
+        .push(sub);
 
     // SpatialDescend channel 0 should still find channel-5 node.
     let mtree = spatial_descend_mutator(25.0, 25.0);
@@ -303,10 +346,7 @@ fn test_glyph_tree_event_mouse_carries_data() {
 
 pub fn do_glyph_tree_event_mouse_carries_data() {
     let data = MouseEventData::new(100.0, 200.0);
-    let event = GlyphTreeEventInstance::new(
-        GlyphTreeEvent::MouseEvent(data),
-        12345,
-    );
+    let event = GlyphTreeEventInstance::new(GlyphTreeEvent::MouseEvent(data), 12345);
     assert_eq!(event.event_time_millis, 12345);
     match &event.event_type {
         GlyphTreeEvent::MouseEvent(d) => {

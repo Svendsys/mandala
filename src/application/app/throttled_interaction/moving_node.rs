@@ -21,9 +21,8 @@ use crate::application::document::apply_drag_delta_and_collect_patches;
 use crate::application::frame_throttle::MutationFrequencyThrottle;
 
 use super::super::scene_rebuild::{
-    flush_canvas_scene_buffers, update_border_tree_with_offsets,
-    update_connection_label_tree, update_connection_tree, update_edge_handle_tree,
-    update_portal_tree,
+    flush_canvas_scene_buffers, update_border_tree_with_offsets, update_connection_label_tree,
+    update_connection_tree, update_edge_handle_tree, update_portal_tree,
 };
 use super::{DrainContext, ThrottledInteraction};
 
@@ -51,10 +50,7 @@ impl MovingNodeInteraction {
     /// Start a fresh move-node drag. The throttle begins at the
     /// default budget; `pending_delta` and `total_delta` start
     /// zeroed — the `CursorMoved` handler fills them.
-    pub(in crate::application::app) fn new(
-        node_ids: Vec<String>,
-        individual: bool,
-    ) -> Self {
+    pub(in crate::application::app) fn new(node_ids: Vec<String>, individual: bool) -> Self {
         Self {
             node_ids,
             total_delta: Vec2::ZERO,
@@ -122,11 +118,7 @@ impl ThrottledInteraction for MovingNodeInteraction {
                 }
             }
 
-            let scene = doc.build_scene_with_cache(
-                &offsets,
-                scene_cache,
-                renderer.camera_zoom(),
-            );
+            let scene = doc.build_scene_with_cache(&offsets, scene_cache, renderer.camera_zoom());
 
             update_connection_tree(&scene, app_scene);
             update_border_tree_with_offsets(doc, &offsets, app_scene);
@@ -147,10 +139,7 @@ mod tests {
 
     #[test]
     fn test_new_initialises_fields_with_zero_deltas() {
-        let i = MovingNodeInteraction::new(
-            vec!["a".to_string(), "b".to_string()],
-            true,
-        );
+        let i = MovingNodeInteraction::new(vec!["a".to_string(), "b".to_string()], true);
         assert_eq!(i.node_ids, vec!["a".to_string(), "b".to_string()]);
         assert_eq!(i.pending_delta, Vec2::ZERO);
         assert_eq!(i.total_delta, Vec2::ZERO);

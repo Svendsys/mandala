@@ -74,13 +74,7 @@ fn border_tree_applies_drag_offset() {
     // (which is `pos_x - approx_char_width`).
     let parent = tree.root.children(&tree.arena).next().unwrap();
     let top_run = parent.children(&tree.arena).next().unwrap();
-    let area = tree
-        .arena
-        .get(top_run)
-        .unwrap()
-        .get()
-        .glyph_area()
-        .unwrap();
+    let area = tree.arena.get(top_run).unwrap().get().glyph_area().unwrap();
     // pos_x + offset = 0 + 50 = 50, then shifted by
     // -approx_char_width (0.6 * font_size).
     let font_size = 14.0_f32;
@@ -110,13 +104,7 @@ fn border_tree_resolves_frame_color_through_theme_vars() {
     let tree = build_border_tree(&map, &HashMap::new());
     let parent = tree.root.children(&tree.arena).next().unwrap();
     let top_run = parent.children(&tree.arena).next().unwrap();
-    let area = tree
-        .arena
-        .get(top_run)
-        .unwrap()
-        .get()
-        .glyph_area()
-        .unwrap();
+    let area = tree.arena.get(top_run).unwrap().get().glyph_area().unwrap();
     let region = area.regions.all_regions()[0];
     let c = region.color.unwrap();
     // #ff0000 → red channel 1.0, green/blue 0.0.
@@ -211,10 +199,8 @@ fn border_mutator_round_trip_matches_full_rebuild() {
 
     let expected = build_border_tree(&map, &offsets);
 
-    let actual_parents: Vec<NodeId> =
-        tree_a.root.children(&tree_a.arena).collect();
-    let expected_parents: Vec<NodeId> =
-        expected.root.children(&expected.arena).collect();
+    let actual_parents: Vec<NodeId> = tree_a.root.children(&tree_a.arena).collect();
+    let expected_parents: Vec<NodeId> = expected.root.children(&expected.arena).collect();
     assert_eq!(actual_parents.len(), expected_parents.len());
     // Full-field parity — text / position / bounds / scale /
     // line_height / regions / outline / zoom_visibility — so
@@ -251,11 +237,11 @@ fn border_mutator_round_trip_matches_full_rebuild() {
 fn border_runs_inherit_owning_node_zoom_visibility() {
     use crate::gfx_structs::zoom_visibility::ZoomVisibility;
 
-    let mut map = synthetic_map(
-        vec![synthetic_node("a", None, 0.0, 0.0)],
-        vec![],
-    );
-    let window = ZoomVisibility { min: Some(1.0), max: Some(2.5) };
+    let mut map = synthetic_map(vec![synthetic_node("a", None, 0.0, 0.0)], vec![]);
+    let window = ZoomVisibility {
+        min: Some(1.0),
+        max: Some(2.5),
+    };
     if let Some(node) = map.nodes.get_mut("a") {
         node.min_zoom_to_render = Some(1.0);
         node.max_zoom_to_render = Some(2.5);
@@ -278,10 +264,7 @@ fn border_runs_inherit_owning_node_zoom_visibility() {
 fn border_runs_default_to_unbounded_when_node_has_no_window() {
     use crate::gfx_structs::zoom_visibility::ZoomVisibility;
 
-    let map = synthetic_map(
-        vec![synthetic_node("a", None, 0.0, 0.0)],
-        vec![],
-    );
+    let map = synthetic_map(vec![synthetic_node("a", None, 0.0, 0.0)], vec![]);
     let tree = build_border_tree(&map, &HashMap::new());
     let parents: Vec<NodeId> = tree.root.children(&tree.arena).collect();
     let runs: Vec<NodeId> = parents[0].children(&tree.arena).collect();
@@ -305,13 +288,11 @@ fn border_identity_sequence_changes_on_show_frame_toggle() {
         ],
         vec![],
     );
-    let before =
-        border_identity_sequence(&border_node_data(&map, &HashMap::new()));
+    let before = border_identity_sequence(&border_node_data(&map, &HashMap::new()));
     assert_eq!(before, vec!["a".to_string(), "b".to_string()]);
 
     map.nodes.get_mut("b").unwrap().style.show_frame = false;
-    let after =
-        border_identity_sequence(&border_node_data(&map, &HashMap::new()));
+    let after = border_identity_sequence(&border_node_data(&map, &HashMap::new()));
     assert_eq!(after, vec!["a".to_string()]);
     assert_ne!(before, after);
 }
@@ -351,10 +332,7 @@ fn border_tree_left_column_rows_use_ceil_not_round() {
         }
     }
     let text = left_col_text.expect("left column run found in tree");
-    let cluster_count = text
-        .split('\n')
-        .filter(|s| !s.is_empty())
-        .count();
+    let cluster_count = text.split('\n').filter(|s| !s.is_empty()).count();
     // ceil(100 / 14) = 8 clusters, NOT round(100/14) = 7.
     assert_eq!(
         cluster_count, 8,
@@ -451,14 +429,7 @@ fn border_tree_honors_custom_side_pattern() {
     let runs: Vec<_> = parent.children(&tree.arena).collect();
     assert_eq!(runs.len(), 4, "expect top/bottom/left/right runs");
 
-    let top_text = &tree
-        .arena
-        .get(runs[0])
-        .unwrap()
-        .get()
-        .glyph_area()
-        .unwrap()
-        .text;
+    let top_text = &tree.arena.get(runs[0]).unwrap().get().glyph_area().unwrap().text;
     // Top row starts with '<', ends with '>' (the configured corners),
     // and contains '#' / '*' (the prefix-fill-suffix pattern).
     assert!(top_text.starts_with('<'), "got: '{}'", top_text);
@@ -479,10 +450,7 @@ fn border_mutator_picks_up_pattern_change() {
     use crate::core::primitives::Applicable;
     use crate::mindmap::model::{CustomBorderGlyphs, GlyphBorderConfig};
 
-    let mut map = synthetic_map(
-        vec![synthetic_node("a", None, 0.0, 0.0)],
-        vec![],
-    );
+    let mut map = synthetic_map(vec![synthetic_node("a", None, 0.0, 0.0)], vec![]);
     map.nodes.get_mut("a").unwrap().size.width = 400.0;
     map.nodes.get_mut("a").unwrap().size.height = 80.0;
 
@@ -585,9 +553,7 @@ fn border_mutator_picks_up_pattern_change() {
 /// from a single name → group mapping.
 #[test]
 fn border_tree_honors_palette_cycling() {
-    use crate::mindmap::model::{
-        ColorGroup, GlyphBorderConfig, Palette,
-    };
+    use crate::mindmap::model::{ColorGroup, GlyphBorderConfig, Palette};
 
     let mut map = synthetic_map(vec![synthetic_node("a", None, 0.0, 0.0)], vec![]);
     map.palettes.insert(

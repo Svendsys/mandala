@@ -12,8 +12,8 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use baumhard::util::grapheme_chad::{
-    count_grapheme_clusters, delete_front_unicode, delete_grapheme_at,
-    find_byte_index_of_grapheme, insert_str_at_grapheme,
+    count_grapheme_clusters, delete_front_unicode, delete_grapheme_at, find_byte_index_of_grapheme,
+    insert_str_at_grapheme,
 };
 
 use crate::application::console::ConsoleState;
@@ -62,12 +62,8 @@ pub(super) fn adjust_scroll(state: &mut ConsoleState, direction: ScrollDirection
         let new = match direction {
             ScrollDirection::LineUp => scroll_offset.saturating_add(1).min(max),
             ScrollDirection::LineDown => scroll_offset.saturating_sub(1),
-            ScrollDirection::PageUp => scroll_offset
-                .saturating_add(MAX_CONSOLE_SCROLLBACK_ROWS)
-                .min(max),
-            ScrollDirection::PageDown => {
-                scroll_offset.saturating_sub(MAX_CONSOLE_SCROLLBACK_ROWS)
-            }
+            ScrollDirection::PageUp => scroll_offset.saturating_add(MAX_CONSOLE_SCROLLBACK_ROWS).min(max),
+            ScrollDirection::PageDown => scroll_offset.saturating_sub(MAX_CONSOLE_SCROLLBACK_ROWS),
             ScrollDirection::Home => max,
             ScrollDirection::End => 0,
         };
@@ -126,7 +122,13 @@ pub(super) fn accumulate_wheel_lines(accum: &mut f32, dy: f32) -> i32 {
 }
 
 pub(super) fn clear_line(state: &mut ConsoleState) -> EditOutcome {
-    let ConsoleState::Open { input, cursor, history_idx, .. } = state else {
+    let ConsoleState::Open {
+        input,
+        cursor,
+        history_idx,
+        ..
+    } = state
+    else {
         return EditOutcome::Unchanged;
     };
     if input.is_empty() && *cursor == 0 && history_idx.is_none() {
@@ -257,7 +259,13 @@ pub(super) fn insert_space(state: &mut ConsoleState) -> EditOutcome {
 /// have named-action bindings and shouldn't show up as literal
 /// characters).
 pub(super) fn insert_text(state: &mut ConsoleState, text: &str) -> EditOutcome {
-    let ConsoleState::Open { input, cursor, history_idx, .. } = state else {
+    let ConsoleState::Open {
+        input,
+        cursor,
+        history_idx,
+        ..
+    } = state
+    else {
         return EditOutcome::Unchanged;
     };
     let mut changed = false;
@@ -282,7 +290,14 @@ pub(super) fn insert_text(state: &mut ConsoleState, text: &str) -> EditOutcome {
 /// Walk history backward (toward older entries). Caller is
 /// responsible for trying popup navigation first.
 pub(super) fn history_walk_back(state: &mut ConsoleState) -> EditOutcome {
-    let ConsoleState::Open { input, cursor, history, history_idx, .. } = state else {
+    let ConsoleState::Open {
+        input,
+        cursor,
+        history,
+        history_idx,
+        ..
+    } = state
+    else {
         return EditOutcome::Unchanged;
     };
     if history.is_empty() {
@@ -303,7 +318,14 @@ pub(super) fn history_walk_back(state: &mut ConsoleState) -> EditOutcome {
 /// resets to a fresh empty line). Caller is responsible for trying
 /// popup navigation first.
 pub(super) fn history_walk_forward(state: &mut ConsoleState) -> EditOutcome {
-    let ConsoleState::Open { input, cursor, history, history_idx, .. } = state else {
+    let ConsoleState::Open {
+        input,
+        cursor,
+        history,
+        history_idx,
+        ..
+    } = state
+    else {
         return EditOutcome::Unchanged;
     };
     match history_idx {
@@ -327,7 +349,12 @@ pub(super) fn history_walk_forward(state: &mut ConsoleState) -> EditOutcome {
 /// Dismiss an open completion popup without closing the console.
 /// Returns `true` if a popup was present and was cleared.
 pub(super) fn dismiss_popup(state: &mut ConsoleState) -> bool {
-    let ConsoleState::Open { completions, completion_idx, .. } = state else {
+    let ConsoleState::Open {
+        completions,
+        completion_idx,
+        ..
+    } = state
+    else {
         return false;
     };
     if completions.is_empty() {

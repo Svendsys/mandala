@@ -238,10 +238,7 @@ impl MindMapDocument {
             Some(n) => n,
             None => return false,
         };
-        let already = node
-            .text_runs
-            .iter()
-            .all(|r| r.font.as_str() == target);
+        let already = node.text_runs.iter().all(|r| r.font.as_str() == target);
         if already {
             return false;
         }
@@ -371,8 +368,7 @@ pub(super) fn set_node_style_field(
 mod tests {
     use super::*;
     use crate::application::document::tests_common::{
-        first_testament_node_id as first_node_id,
-        load_test_doc as fixture_doc,
+        first_testament_node_id as first_node_id, load_test_doc as fixture_doc,
     };
 
     /// `BorderConfigEdits::with_side_pattern` validates the
@@ -401,7 +397,8 @@ mod tests {
         let id = first_node_id(&doc);
         let mut edits = BorderConfigEdits::default();
         edits.preset = OptionEdit::Set("heavy".into());
-        edits.with_side_pattern(BorderSide::Top, "###(*)###")
+        edits
+            .with_side_pattern(BorderSide::Top, "###(*)###")
             .expect("pattern parses");
         let outcome = doc.set_node_border_config(&id, edits);
         assert!(outcome.changed, "expected change applied");
@@ -431,14 +428,7 @@ mod tests {
     fn set_node_border_config_undo_round_trip_restores_style() {
         let mut doc = fixture_doc();
         let id = first_node_id(&doc);
-        let before_border = doc
-            .mindmap
-            .nodes
-            .get(&id)
-            .unwrap()
-            .style
-            .border
-            .clone();
+        let before_border = doc.mindmap.nodes.get(&id).unwrap().style.border.clone();
         let mut edits = BorderConfigEdits::default();
         edits.preset = OptionEdit::Set("double".into());
         let outcome = doc.set_node_border_config(&id, edits);

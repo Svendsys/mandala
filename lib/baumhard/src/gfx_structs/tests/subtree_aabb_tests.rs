@@ -41,7 +41,13 @@ pub fn build_test_tree() -> Tree<GfxElement, GfxMutator> {
         0,
     );
     let right = GfxElement::new_area_non_indexed(
-        GlyphArea::new_with_str("right", 14.0, 14.0, Vec2::new(200.0, 200.0), Vec2::new(80.0, 30.0)),
+        GlyphArea::new_with_str(
+            "right",
+            14.0,
+            14.0,
+            Vec2::new(200.0, 200.0),
+            Vec2::new(80.0, 30.0),
+        ),
         1,
     );
     let left_child = GfxElement::new_area_non_indexed(
@@ -87,7 +93,8 @@ pub fn build_wide_tree() -> Tree<GfxElement, GfxMutator> {
         let area = GfxElement::new_area_non_indexed(
             GlyphArea::new_with_str(
                 &format!("n{}", i),
-                14.0, 14.0,
+                14.0,
+                14.0,
                 Vec2::new(i as f32 * 50.0, 0.0),
                 Vec2::new(30.0, 20.0),
             ),
@@ -125,7 +132,12 @@ pub fn do_subtree_aabb_parent_encloses_children() {
     let mut tree = build_test_tree();
     tree.ensure_subtree_aabbs();
     let left_id = tree.root.children(&tree.arena).next().expect("left child");
-    let (min, max) = tree.arena.get(left_id).unwrap().get().subtree_aabb()
+    let (min, max) = tree
+        .arena
+        .get(left_id)
+        .unwrap()
+        .get()
+        .subtree_aabb()
         .expect("left subtree has an AABB");
     assert!(min.x <= 10.0);
     assert!(min.y <= 10.0);
@@ -143,7 +155,12 @@ fn test_subtree_aabb_root_encloses_entire_tree() {
 pub fn do_subtree_aabb_root_encloses_entire_tree() {
     let mut tree = build_test_tree();
     tree.ensure_subtree_aabbs();
-    let (min, max) = tree.arena.get(tree.root).unwrap().get().subtree_aabb()
+    let (min, max) = tree
+        .arena
+        .get(tree.root)
+        .unwrap()
+        .get()
+        .subtree_aabb()
         .expect("root subtree has an AABB");
     assert!(min.x <= 10.0);
     assert!(min.y <= 10.0);
@@ -161,20 +178,27 @@ fn test_subtree_aabb_invalidated_by_mutation() {
 pub fn do_subtree_aabb_invalidated_by_mutation() {
     let mut tree = build_test_tree();
     tree.ensure_subtree_aabbs();
-    let before = tree.arena.get(tree.root).unwrap().get().subtree_aabb()
+    let before = tree
+        .arena
+        .get(tree.root)
+        .unwrap()
+        .get()
+        .subtree_aabb()
         .expect("root has AABB");
 
-    let move_mutator = GfxMutator::new(
-        Mutation::area_command(GlyphAreaCommand::MoveTo(500.0, 500.0)),
-        1,
-    );
+    let move_mutator = GfxMutator::new(Mutation::area_command(GlyphAreaCommand::MoveTo(500.0, 500.0)), 1);
     let mut mtree = MutatorTree::new();
     let move_id = mtree.arena.new_node(move_mutator);
     mtree.root.append(move_id, &mut mtree.arena);
     mtree.apply_to(&mut tree);
 
     tree.ensure_subtree_aabbs();
-    let after = tree.arena.get(tree.root).unwrap().get().subtree_aabb()
+    let after = tree
+        .arena
+        .get(tree.root)
+        .unwrap()
+        .get()
+        .subtree_aabb()
         .expect("root has AABB after mutation");
     assert!(after.1.x >= 580.0);
     assert!(after.1.y >= 530.0);
@@ -247,7 +271,12 @@ fn test_subtree_aabb_wide_tree_root_covers_all() {
 pub fn do_subtree_aabb_wide_tree_root_covers_all() {
     let mut tree = build_wide_tree();
     tree.ensure_subtree_aabbs();
-    let root_aabb = tree.arena.get(tree.root).unwrap().get().subtree_aabb()
+    let root_aabb = tree
+        .arena
+        .get(tree.root)
+        .unwrap()
+        .get()
+        .subtree_aabb()
         .expect("root should have AABB");
     assert!(root_aabb.0.x <= 0.0);
     assert!(root_aabb.1.x >= 980.0);

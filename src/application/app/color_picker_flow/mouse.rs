@@ -39,8 +39,8 @@ pub(in crate::application::app) fn handle_color_picker_mouse_move(
     picker_hover: &mut ColorPickerHoverInteraction,
 ) -> bool {
     use crate::application::color_picker::{
-        hit_test_picker, hue_slot_to_degrees, sat_cell_to_value, val_cell_to_value,
-        ColorPickerState, PickerHit,
+        hit_test_picker, hue_slot_to_degrees, sat_cell_to_value, val_cell_to_value, ColorPickerState,
+        PickerHit,
     };
 
     // Always record the cursor position on the state before hit-
@@ -84,8 +84,7 @@ pub(in crate::application::app) fn handle_color_picker_mouse_move(
                 let dy = cursor.1 - anchor_center.1;
                 let raw_r = (dx * dx + dy * dy).sqrt();
                 let r_now = raw_r.max(anchor_radius * 0.1);
-                let geom =
-                    &crate::application::widgets::color_picker_widget::load_spec().geometry;
+                let geom = &crate::application::widgets::color_picker_widget::load_spec().geometry;
                 *size_scale = (anchor_scale * (r_now / anchor_radius))
                     .clamp(geom.resize_scale_min, geom.resize_scale_max);
             }
@@ -94,7 +93,10 @@ pub(in crate::application::app) fn handle_color_picker_mouse_move(
         return true;
     }
 
-    let hit = if let ColorPickerState::Open { layout: Some(layout), .. } = state {
+    let hit = if let ColorPickerState::Open {
+        layout: Some(layout), ..
+    } = state
+    {
         hit_test_picker(layout, cursor.0, cursor.1)
     } else {
         // Picker closed, or open but the first rebuild hasn't happened
@@ -137,10 +139,9 @@ pub(in crate::application::app) fn handle_color_picker_mouse_move(
         // from a ring glyph onto the empty backdrop) flips the
         // hovered_hit and triggers a rebuild.
         let new_hover = match hit {
-            PickerHit::Hue(_)
-            | PickerHit::SatCell(_)
-            | PickerHit::ValCell(_)
-            | PickerHit::Commit => Some(hit),
+            PickerHit::Hue(_) | PickerHit::SatCell(_) | PickerHit::ValCell(_) | PickerHit::Commit => {
+                Some(hit)
+            }
             // DragAnchor / Outside are not hoverable targets —
             // they don't grow on hover.
             PickerHit::DragAnchor | PickerHit::Outside => None,
@@ -155,15 +156,9 @@ pub(in crate::application::app) fn handle_color_picker_mouse_move(
         // nudge — hover just sets a transient preview the
         // rendering pipeline reads for visual feedback.
         let new_preview = match hit {
-            PickerHit::Hue(slot) => {
-                Some((hue_slot_to_degrees(slot), *sat, *val))
-            }
-            PickerHit::SatCell(i) => {
-                Some((*hue_deg, sat_cell_to_value(i), *val))
-            }
-            PickerHit::ValCell(i) => {
-                Some((*hue_deg, *sat, val_cell_to_value(i)))
-            }
+            PickerHit::Hue(slot) => Some((hue_slot_to_degrees(slot), *sat, *val)),
+            PickerHit::SatCell(i) => Some((*hue_deg, sat_cell_to_value(i), *val)),
+            PickerHit::ValCell(i) => Some((*hue_deg, *sat, val_cell_to_value(i))),
             PickerHit::Commit | PickerHit::DragAnchor | PickerHit::Outside => None,
         };
         if *hover_preview != new_preview {

@@ -33,13 +33,7 @@ fn test_new_area_constructs_glyph_area_variant() {
 /// values passed at construction.
 pub fn do_new_area_constructs_glyph_area_variant() {
     fonts::init();
-    let area = GlyphArea::new_with_str(
-        "hello",
-        14.0,
-        14.0,
-        Vec2::new(0.0, 0.0),
-        Vec2::new(100.0, 20.0),
-    );
+    let area = GlyphArea::new_with_str("hello", 14.0, 14.0, Vec2::new(0.0, 0.0), Vec2::new(100.0, 20.0));
     let elem = GfxElement::new_area_non_indexed_with_id(area, 7, 42);
 
     assert_eq!(elem.get_type(), GfxElementType::GlyphArea);
@@ -76,13 +70,7 @@ pub fn do_channel_accessor_returns_correct_value() {
     fonts::init();
 
     // GlyphArea
-    let area = GlyphArea::new_with_str(
-        "ch",
-        10.0,
-        10.0,
-        Vec2::ZERO,
-        Vec2::new(50.0, 10.0),
-    );
+    let area = GlyphArea::new_with_str("ch", 10.0, 10.0, Vec2::ZERO, Vec2::new(50.0, 10.0));
     let elem_area = GfxElement::new_area_non_indexed_with_id(area, 11, 0);
     assert_eq!(elem_area.channel(), 11);
 
@@ -226,22 +214,21 @@ pub fn do_event_subscribers_add_and_check() {
     assert!(elem.subscribers_as_ref().is_empty());
 
     // Add a subscriber (a no-op closure wrapped in Arc<Mutex<...>>).
-    let subscriber: Arc<Mutex<dyn FnMut(&mut GfxElement, GlyphTreeEventInstance) + Send + Sync>> =
-        Arc::new(Mutex::new(|_elem: &mut GfxElement, _evt: GlyphTreeEventInstance| {}));
+    let subscriber: Arc<Mutex<dyn FnMut(&mut GfxElement, GlyphTreeEventInstance) + Send + Sync>> = Arc::new(
+        Mutex::new(|_elem: &mut GfxElement, _evt: GlyphTreeEventInstance| {}),
+    );
     elem.subscribers_mut().push(subscriber.clone());
 
     // List should now contain exactly one entry.
     assert_eq!(elem.subscribers_as_ref().len(), 1);
 
     // The subscriber we pushed should be the same Arc (pointer equality).
-    assert!(Arc::ptr_eq(
-        &elem.subscribers_as_ref()[0],
-        &subscriber,
-    ));
+    assert!(Arc::ptr_eq(&elem.subscribers_as_ref()[0], &subscriber,));
 
     // A second subscriber is distinguishable.
-    let subscriber2: Arc<Mutex<dyn FnMut(&mut GfxElement, GlyphTreeEventInstance) + Send + Sync>> =
-        Arc::new(Mutex::new(|_elem: &mut GfxElement, _evt: GlyphTreeEventInstance| {}));
+    let subscriber2: Arc<Mutex<dyn FnMut(&mut GfxElement, GlyphTreeEventInstance) + Send + Sync>> = Arc::new(
+        Mutex::new(|_elem: &mut GfxElement, _evt: GlyphTreeEventInstance| {}),
+    );
     elem.subscribers_mut().push(subscriber2.clone());
     assert_eq!(elem.subscribers_as_ref().len(), 2);
     assert!(!Arc::ptr_eq(

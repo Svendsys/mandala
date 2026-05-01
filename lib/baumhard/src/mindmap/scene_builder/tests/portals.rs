@@ -42,8 +42,7 @@ fn portal_emits_two_elements_per_edge() {
 fn portal_skipped_when_endpoint_missing_from_map() {
     let nodes = vec![synthetic_node("a", 0.0, 0.0, 60.0, 40.0, false)];
     let mut map = synthetic_map(nodes, vec![]);
-    map.edges
-        .push(synthetic_portal_edge("a", "ghost", "#aa88cc"));
+    map.edges.push(synthetic_portal_edge("a", "ghost", "#aa88cc"));
     let scene = build_scene(&map, 1.0);
     assert!(
         scene.portal_elements.is_empty(),
@@ -62,8 +61,7 @@ fn portal_skipped_when_either_endpoint_hidden_by_fold() {
     child.parent_id = Some("root".to_string());
     let other = synthetic_node("other", 500.0, 0.0, 60.0, 40.0, false);
     let mut map = synthetic_map(vec![root, child, other], vec![]);
-    map.edges
-        .push(synthetic_portal_edge("child", "other", "#aa88cc"));
+    map.edges.push(synthetic_portal_edge("child", "other", "#aa88cc"));
     let scene = build_scene(&map, 1.0);
     assert!(
         scene.portal_elements.is_empty(),
@@ -81,8 +79,7 @@ fn portal_color_resolves_through_theme_variable() {
     map.canvas
         .theme_variables
         .insert("--accent".to_string(), "#ff00aa".to_string());
-    map.edges
-        .push(synthetic_portal_edge("a", "b", "var(--accent)"));
+    map.edges.push(synthetic_portal_edge("a", "b", "var(--accent)"));
     let scene = build_scene(&map, 1.0);
     assert_eq!(
         scene.portal_elements[0].color, "#ff00aa",
@@ -189,7 +186,10 @@ fn portal_marker_follows_drag_offsets() {
     // whether the anchor slid vertically to face the new partner
     // direction.
     assert!(dx > 50.0, "marker x should follow node rightward, got {dx}");
-    assert!(dy >= -10.0 && dy <= 60.0, "marker y shift {dy} within node move range");
+    assert!(
+        dy >= -10.0 && dy <= 60.0,
+        "marker y shift {dy} within node move range"
+    );
 }
 
 #[test]
@@ -222,7 +222,10 @@ fn portal_color_preview_wins_over_selection() {
     let mut map = synthetic_map(nodes, vec![]);
     map.edges.push(synthetic_portal_edge("a", "b", "#aa88cc"));
     let key = EdgeKey::new("a", "b", "cross_link");
-    let preview = PortalColorPreview { edge_key: &key, color: "#112233" };
+    let preview = PortalColorPreview {
+        edge_key: &key,
+        color: "#112233",
+    };
     let mut cache = SceneConnectionCache::new();
     let scene = build_scene_with_cache(
         &map,
@@ -257,21 +260,14 @@ fn portal_text_style_inherits_icon_color_when_override_absent() {
     map.edges.push(synthetic_portal_edge("a", "b", "#aa88cc"));
     let edge = &map.edges[0];
     let icon_color = "#aa88cc";
-    let text_style = resolve_portal_endpoint_text_style(
-        edge,
-        None,
-        &map.canvas,
-        None,
-        icon_color,
-        1.0,
-    );
+    let text_style = resolve_portal_endpoint_text_style(edge, None, &map.canvas, None, icon_color, 1.0);
     assert_eq!(text_style.color, icon_color);
 }
 
 #[test]
 fn portal_text_color_override_wins_over_icon_cascade() {
-    use crate::mindmap::model::PortalEndpointState;
     use super::super::portal::resolve_portal_endpoint_text_style;
+    use crate::mindmap::model::PortalEndpointState;
     let nodes = vec![
         synthetic_node("a", 0.0, 0.0, 60.0, 40.0, false),
         synthetic_node("b", 500.0, 0.0, 60.0, 40.0, false),
@@ -282,14 +278,8 @@ fn portal_text_color_override_wins_over_icon_cascade() {
         text_color: Some("#00ff00".to_string()),
         ..Default::default()
     };
-    let text_style = resolve_portal_endpoint_text_style(
-        &map.edges[0],
-        Some(&endpoint),
-        &map.canvas,
-        None,
-        "#aa88cc",
-        1.0,
-    );
+    let text_style =
+        resolve_portal_endpoint_text_style(&map.edges[0], Some(&endpoint), &map.canvas, None, "#aa88cc", 1.0);
     assert_eq!(text_style.color, "#00ff00");
 }
 
@@ -298,8 +288,8 @@ fn portal_text_color_transient_override_wins_over_endpoint_override() {
     // Selection cyan / preview hex must beat the per-endpoint
     // `text_color` so wheel drag stays visible while a label is
     // selected.
-    use crate::mindmap::model::PortalEndpointState;
     use super::super::portal::resolve_portal_endpoint_text_style;
+    use crate::mindmap::model::PortalEndpointState;
     let nodes = vec![
         synthetic_node("a", 0.0, 0.0, 60.0, 40.0, false),
         synthetic_node("b", 500.0, 0.0, 60.0, 40.0, false),
@@ -326,8 +316,8 @@ fn portal_text_font_size_override_wins_over_icon_base() {
     // Per-endpoint `text_font_size_pt` detaches the text from the
     // icon so a coloured badge can host a smaller annotation beside
     // it without shrinking the badge itself.
-    use crate::mindmap::model::PortalEndpointState;
     use super::super::portal::resolve_portal_endpoint_text_style;
+    use crate::mindmap::model::PortalEndpointState;
     let nodes = vec![
         synthetic_node("a", 0.0, 0.0, 60.0, 40.0, false),
         synthetic_node("b", 500.0, 0.0, 60.0, 40.0, false),
@@ -341,14 +331,8 @@ fn portal_text_font_size_override_wins_over_icon_base() {
         ..Default::default()
     };
     // At zoom 1.0, target screen = 24 pt, well inside [12, 96] → 24.
-    let text_style = resolve_portal_endpoint_text_style(
-        &map.edges[0],
-        Some(&endpoint),
-        &map.canvas,
-        None,
-        "#aa88cc",
-        1.0,
-    );
+    let text_style =
+        resolve_portal_endpoint_text_style(&map.edges[0], Some(&endpoint), &map.canvas, None, "#aa88cc", 1.0);
     assert!(
         (text_style.font_size_pt - 24.0).abs() < 1.0e-4,
         "expected 24, got {}",
@@ -376,30 +360,15 @@ fn portal_text_font_size_inherits_icon_default_when_absent() {
     // No `text_font_size_pt` override → text size equals the icon
     // size (which inherits from `glyph_connection` or the portal
     // default).
-    use super::super::portal::{
-        resolve_portal_endpoint_style, resolve_portal_endpoint_text_style,
-    };
+    use super::super::portal::{resolve_portal_endpoint_style, resolve_portal_endpoint_text_style};
     let nodes = vec![
         synthetic_node("a", 0.0, 0.0, 60.0, 40.0, false),
         synthetic_node("b", 500.0, 0.0, 60.0, 40.0, false),
     ];
     let mut map = synthetic_map(nodes, vec![]);
     map.edges.push(synthetic_portal_edge("a", "b", "#aa88cc"));
-    let icon = resolve_portal_endpoint_style(
-        &map.edges[0],
-        None,
-        &map.canvas,
-        None,
-        1.0,
-    );
-    let text = resolve_portal_endpoint_text_style(
-        &map.edges[0],
-        None,
-        &map.canvas,
-        None,
-        &icon.color,
-        1.0,
-    );
+    let icon = resolve_portal_endpoint_style(&map.edges[0], None, &map.canvas, None, 1.0);
+    let text = resolve_portal_endpoint_text_style(&map.edges[0], None, &map.canvas, None, &icon.color, 1.0);
     assert!((icon.font_size_pt - text.font_size_pt).abs() < 1.0e-4);
 }
 
@@ -433,13 +402,7 @@ fn portal_text_aabb_never_overlaps_icon_aabb() {
             border_t: Some(t),
             ..Default::default()
         };
-        let icon = layout_portal_label(
-            owner_pos,
-            owner_size,
-            partner_center,
-            Some(&state),
-            icon_font,
-        );
+        let icon = layout_portal_label(owner_pos, owner_size, partner_center, Some(&state), icon_font);
         for text in [
             "x",
             "hello",
@@ -468,7 +431,10 @@ fn portal_text_aabb_never_overlaps_icon_aabb() {
                 disjoint_x || disjoint_y,
                 "text AABB overlaps icon AABB at border_t={t} text={text:?}: \
                  icon=[{:?}..{:?}] text=[{:?}..{:?}]",
-                icon_min, icon_max, text_min, text_max,
+                icon_min,
+                icon_max,
+                text_min,
+                text_max,
             );
         }
     }
@@ -501,7 +467,10 @@ fn portal_zoom_visibility_inherits_edge_window_when_endpoint_absent() {
     for pe in &scene.portal_elements {
         assert_eq!(
             pe.zoom_visibility,
-            ZoomVisibility { min: Some(0.5), max: Some(2.0) },
+            ZoomVisibility {
+                min: Some(0.5),
+                max: Some(2.0)
+            },
         );
     }
 }
@@ -545,12 +514,18 @@ fn portal_zoom_visibility_endpoint_override_replaces_edge_window() {
         .expect("portal_to endpoint present");
     assert_eq!(
         from.zoom_visibility,
-        ZoomVisibility { min: Some(1.5), max: None },
+        ZoomVisibility {
+            min: Some(1.5),
+            max: None
+        },
         "endpoint override must fully replace the edge window, not intersect"
     );
     assert_eq!(
         to.zoom_visibility,
-        ZoomVisibility { min: Some(0.5), max: Some(2.0) },
+        ZoomVisibility {
+            min: Some(0.5),
+            max: Some(2.0)
+        },
         "the untouched endpoint must still inherit the edge window",
     );
 }
@@ -611,7 +586,10 @@ fn portal_zoom_visibility_inherits_when_endpoint_has_no_zoom_bounds() {
         .expect("portal_from endpoint present");
     assert_eq!(
         from.zoom_visibility,
-        ZoomVisibility { min: Some(0.5), max: Some(2.0) },
+        ZoomVisibility {
+            min: Some(0.5),
+            max: Some(2.0)
+        },
         "Some(endpoint) with no zoom bounds must inherit the edge window"
     );
 }
@@ -635,13 +613,7 @@ fn test_portal_text_bounds_use_grapheme_count_not_scalar_count() {
         border_t: Some(0.0),
         ..Default::default()
     };
-    let icon = layout_portal_label(
-        owner_pos,
-        owner_size,
-        partner_center,
-        Some(&state),
-        icon_font,
-    );
+    let icon = layout_portal_label(owner_pos, owner_size, partner_center, Some(&state), icon_font);
     let plain = layout_portal_text(
         icon,
         owner_pos,
@@ -666,7 +638,8 @@ fn test_portal_text_bounds_use_grapheme_count_not_scalar_count() {
     assert!(
         almost_equal(plain.bounds.x, zwj.bounds.x),
         "grapheme-sized bounds expected; got plain={} zwj={}",
-        plain.bounds.x, zwj.bounds.x,
+        plain.bounds.x,
+        zwj.bounds.x,
     );
 }
 
@@ -710,13 +683,7 @@ fn test_portal_text_bounds_empty_string_uses_one_grapheme_floor() {
         border_t: Some(0.0),
         ..Default::default()
     };
-    let icon = layout_portal_label(
-        owner_pos,
-        owner_size,
-        partner_center,
-        Some(&state),
-        icon_font,
-    );
+    let icon = layout_portal_label(owner_pos, owner_size, partner_center, Some(&state), icon_font);
     let empty = layout_portal_text(
         icon,
         owner_pos,
@@ -740,7 +707,8 @@ fn test_portal_text_bounds_empty_string_uses_one_grapheme_floor() {
     assert!(
         almost_equal(empty.bounds.x, one_char.bounds.x),
         "empty portal-text should match 1-grapheme width via the .max(1) floor; got empty={} one_char={}",
-        empty.bounds.x, one_char.bounds.x,
+        empty.bounds.x,
+        one_char.bounds.x,
     );
     assert!(
         empty.bounds.x > 0.0,
@@ -763,13 +731,7 @@ fn assert_portal_text_one_grapheme_equivalent(text: &str) {
         border_t: Some(0.0),
         ..Default::default()
     };
-    let icon = layout_portal_label(
-        owner_pos,
-        owner_size,
-        partner_center,
-        Some(&state),
-        icon_font,
-    );
+    let icon = layout_portal_label(owner_pos, owner_size, partner_center, Some(&state), icon_font);
     let baseline = layout_portal_text(
         icon,
         owner_pos,
@@ -793,6 +755,8 @@ fn assert_portal_text_one_grapheme_equivalent(text: &str) {
     assert!(
         almost_equal(baseline.bounds.x, actual.bounds.x),
         "portal text {:?} should size as one grapheme; got {} vs. baseline {}",
-        text, actual.bounds.x, baseline.bounds.x,
+        text,
+        actual.bounds.x,
+        baseline.bounds.x,
     );
 }

@@ -6,16 +6,17 @@
 
 #![cfg(test)]
 
-use baumhard::mindmap::model::{
-    MindEdge, MindNode, NodeLayout, NodeStyle, Position, Size,
-};
+use baumhard::mindmap::model::{MindEdge, MindNode, NodeLayout, NodeStyle, Position, Size};
 
 pub fn node(id: &str, parent_id: Option<&str>) -> MindNode {
     MindNode {
         id: id.to_string(),
         parent_id: parent_id.map(|s| s.to_string()),
         position: Position { x: 0.0, y: 0.0 },
-        size: Size { width: 100.0, height: 40.0 },
+        size: Size {
+            width: 100.0,
+            height: 40.0,
+        },
         text: String::new(),
         text_runs: vec![],
         style: NodeStyle {

@@ -7,8 +7,8 @@ use std::borrow::Cow;
 use log::debug;
 use rustc_hash::FxHashMap;
 use wgpu::{
-    Adapter, Device, Instance, MultisampleState, PipelineLayout, Queue, RenderPipeline,
-    ShaderModule, Surface, SurfaceCapabilities, SurfaceConfiguration, TextureFormat,
+    Adapter, Device, Instance, MultisampleState, PipelineLayout, Queue, RenderPipeline, ShaderModule,
+    Surface, SurfaceCapabilities, SurfaceConfiguration, TextureFormat,
 };
 use winit::dpi::PhysicalSize;
 
@@ -97,17 +97,14 @@ impl Renderer {
     #[inline]
     pub(super) async fn get_device(adapter: &Adapter) -> (Device, Queue) {
         adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: None,
-                    required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::downlevel_defaults()
-                        .using_resolution(adapter.limits()),
-                    memory_hints: Default::default(),
-                    trace: Default::default(),
-                    experimental_features: Default::default(),
-                },
-            )
+            .request_device(&wgpu::DeviceDescriptor {
+                label: None,
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits()),
+                memory_hints: Default::default(),
+                trace: Default::default(),
+                experimental_features: Default::default(),
+            })
             .await
             .expect("Failed to create device")
     }

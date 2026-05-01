@@ -76,17 +76,17 @@ mod input_context;
 // funnel. Track C from `WASM_CONVERGENCE.md` (final convergence step).
 mod input_context_core;
 #[cfg(not(target_arch = "wasm32"))]
-mod portal_label_drag;
-#[cfg(not(target_arch = "wasm32"))]
 mod label_edit;
+#[cfg(not(target_arch = "wasm32"))]
+mod portal_label_drag;
 #[cfg(not(target_arch = "wasm32"))]
 mod run_native;
 #[cfg(not(target_arch = "wasm32"))]
 mod run_native_init;
-#[cfg(not(target_arch = "wasm32"))]
-mod throttled_interaction;
 #[cfg(target_arch = "wasm32")]
 mod run_wasm;
+#[cfg(not(target_arch = "wasm32"))]
+mod throttled_interaction;
 
 // FIELD COUNT: `InputHandlerContext` has 21 fields. Drift surface for
 // new fields:
@@ -109,11 +109,11 @@ mod run_wasm;
 use crate::application::common::{InputMode, WindowMode};
 
 #[cfg(not(target_arch = "wasm32"))]
-use std::time::Instant;
+use crate::application::document::EdgeRef;
 #[cfg(not(target_arch = "wasm32"))]
 use glam::Vec2;
 #[cfg(not(target_arch = "wasm32"))]
-use crate::application::document::EdgeRef;
+use std::time::Instant;
 #[cfg(not(target_arch = "wasm32"))]
 use text_edit::insert_at_cursor;
 #[cfg(not(target_arch = "wasm32"))]
@@ -154,7 +154,6 @@ const EDGE_HIT_TOLERANCE_PX: f32 = 8.0;
 /// to feel forgiving.
 #[cfg(not(target_arch = "wasm32"))]
 const EDGE_HANDLE_HIT_TOLERANCE_PX: f32 = 12.0;
-
 
 /// What a single click targeted. Used by [`LastClick`] + the
 /// double-click detector so a portal-marker double-click (navigate)
@@ -206,8 +205,8 @@ struct LastClick {
     time: f64,
     screen_pos: (f64, f64),
     /// What the first click landed on. Two clicks whose `hit`
-    /// values are equal (see [`ClickHit::PartialEq`]) qualify as a
-    /// double-click.
+    /// values compare equal under `ClickHit`'s derived `PartialEq`
+    /// qualify as a double-click.
     hit: ClickHit,
 }
 
@@ -216,7 +215,6 @@ const DOUBLE_CLICK_MS: f64 = 400.0;
 
 /// Double-click maximum distance² in screen-space pixels.
 const DOUBLE_CLICK_DIST_SQ: f64 = 16.0 * 16.0;
-
 
 /// Returns `true` when a new click-down qualifies as a double-click
 /// given the previous click. Pure helper so cursor/time math can be
@@ -249,12 +247,9 @@ fn is_double_click(
 pub(super) struct ClickHitParts {
     pub(super) click_hit: ClickHit,
     pub(super) hit_node: Option<String>,
-    pub(super) portal_text_hit:
-        Option<(baumhard::mindmap::scene_cache::EdgeKey, String)>,
-    pub(super) portal_icon_hit:
-        Option<(baumhard::mindmap::scene_cache::EdgeKey, String)>,
-    pub(super) edge_label_hit:
-        Option<baumhard::mindmap::scene_cache::EdgeKey>,
+    pub(super) portal_text_hit: Option<(baumhard::mindmap::scene_cache::EdgeKey, String)>,
+    pub(super) portal_icon_hit: Option<(baumhard::mindmap::scene_cache::EdgeKey, String)>,
+    pub(super) edge_label_hit: Option<baumhard::mindmap::scene_cache::EdgeKey>,
 }
 
 /// Pure router for "what did this click target?". Runs the
@@ -279,35 +274,25 @@ pub(super) fn compute_click_hit(
     mindmap_tree: Option<&mut baumhard::mindmap::tree_builder::MindMapTree>,
     renderer: &crate::application::renderer::Renderer,
 ) -> ClickHitParts {
-    let hit_node = mindmap_tree
-        .and_then(|tree| crate::application::document::hit_test(canvas_pos, tree));
+    let hit_node = mindmap_tree.and_then(|tree| crate::application::document::hit_test(canvas_pos, tree));
 
     let portal_text_hit = if hit_node.is_none() {
         renderer.hit_test_portal_text(canvas_pos)
     } else {
         None
     };
-    let portal_icon_hit =
-        if hit_node.is_none() && portal_text_hit.is_none() {
-            renderer.hit_test_portal(canvas_pos)
-        } else {
-            None
-        };
-    let edge_label_hit = if hit_node.is_none()
-        && portal_text_hit.is_none()
-        && portal_icon_hit.is_none()
-    {
+    let portal_icon_hit = if hit_node.is_none() && portal_text_hit.is_none() {
+        renderer.hit_test_portal(canvas_pos)
+    } else {
+        None
+    };
+    let edge_label_hit = if hit_node.is_none() && portal_text_hit.is_none() && portal_icon_hit.is_none() {
         renderer.hit_test_any_edge_label(canvas_pos)
     } else {
         None
     };
 
-    let click_hit = click_hit_from_priority(
-        &hit_node,
-        &portal_text_hit,
-        &portal_icon_hit,
-        &edge_label_hit,
-    );
+    let click_hit = click_hit_from_priority(&hit_node, &portal_text_hit, &portal_icon_hit, &edge_label_hit);
 
     ClickHitParts {
         click_hit,
@@ -394,7 +379,6 @@ pub(in crate::application::app) fn route_label_edit_key(
     false
 }
 
-
 /// Tracks the high-level interaction mode. Normal handles the usual
 /// select/drag/pan flow; Reparent mode is entered via Ctrl+P and captures
 /// the next left-click as a "choose reparent target" gesture. Connect mode
@@ -406,11 +390,15 @@ enum AppMode {
     /// Reparent mode: the user is choosing a new parent for `sources`.
     /// The next left-click on a node attaches all sources as its last children;
     /// a left-click on empty canvas promotes them to root. Esc cancels.
-    Reparent { sources: Vec<String> },
+    Reparent {
+        sources: Vec<String>,
+    },
     /// Connect mode: the user is drawing a new cross_link edge from `source`.
     /// The next left-click on a target node creates the edge; a left-click
     /// on empty canvas cancels. Esc also cancels.
-    Connect { source: String },
+    Connect {
+        source: String,
+    },
 }
 
 /// Tracks the current drag interaction state.
@@ -454,10 +442,7 @@ enum DragState {
         /// label," not "move this node." Independent of
         /// `hit_edge_handle` because portal-mode edges don't
         /// expose edge-handles in the first place.
-        hit_portal_label: Option<(
-            baumhard::mindmap::scene_cache::EdgeKey,
-            String,
-        )>,
+        hit_portal_label: Option<(baumhard::mindmap::scene_cache::EdgeKey, String)>,
         /// If the cursor landed on an edge-label AABB at
         /// mouse-down, this records the owning edge key so a
         /// drag past threshold transitions to

@@ -41,7 +41,8 @@ pub const MAX_N: u32 = 8;
 pub const DEFAULT_BUDGET: Duration = Duration::from_micros(14_000);
 
 /// Per-frame throttle that degrades mutation frequency under load.
-/// Call [`reset`] when the drag ends so the next drag starts at `n = 1`.
+/// Call [`Self::reset`] when the drag ends so the next drag starts
+/// at `n = 1`.
 #[derive(Debug)]
 pub struct MutationFrequencyThrottle {
     budget: Duration,
@@ -286,8 +287,7 @@ mod tests {
         // `Duration / u32` keeps sub-millisecond precision, so compute
         // the exact nanosecond expectation rather than truncating.
         t.record_work_duration(ms(100));
-        let expected_nanos =
-            (10 * (WINDOW_SIZE as u64 - 1) + 100) * 1_000_000 / WINDOW_SIZE as u64;
+        let expected_nanos = (10 * (WINDOW_SIZE as u64 - 1) + 100) * 1_000_000 / WINDOW_SIZE as u64;
         assert_eq!(t.moving_average(), Duration::from_nanos(expected_nanos));
     }
 
@@ -385,7 +385,11 @@ mod tests {
                 t.record_work_duration(Duration::from_micros(20_000));
             }
         }
-        assert!(t.current_n() > 1, "expected n > 1 after sustained over-budget, got {}", t.current_n());
+        assert!(
+            t.current_n() > 1,
+            "expected n > 1 after sustained over-budget, got {}",
+            t.current_n()
+        );
 
         // With n > 1, some should_drain() calls must return false.
         let mut saw_false = false;
@@ -396,7 +400,10 @@ mod tests {
             }
             t.record_work_duration(Duration::from_micros(20_000));
         }
-        assert!(saw_false, "with n > 1, should_drain() must sometimes return false");
+        assert!(
+            saw_false,
+            "with n > 1, should_drain() must sometimes return false"
+        );
     }
 
     #[test]
@@ -435,7 +442,11 @@ mod tests {
                 t.record_work_duration(Duration::from_micros(1_000));
             }
         }
-        assert_eq!(t.current_n(), 1, "n should recover to 1 after sustained under-budget load");
+        assert_eq!(
+            t.current_n(),
+            1,
+            "n should recover to 1 after sustained under-budget load"
+        );
     }
 
     #[test]

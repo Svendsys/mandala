@@ -104,21 +104,14 @@ impl GlyphModel {
     /// whitespace padding as needed. O(line length) for the
     /// grapheme walk plus the splice.
     pub fn rude_insert(&mut self, component: &GlyphComponent, line_num: &usize, at_idx: &usize) {
-        self.glyph_matrix
-            .overriding_insert(*line_num, *at_idx, component);
+        self.glyph_matrix.overriding_insert(*line_num, *at_idx, component);
     }
 
     /// Insert `component` at `(line_num, at_idx)` shifting existing
     /// graphemes to the right. O(line length) for the grapheme walk
     /// plus the shift.
-    pub fn expanding_insert(
-        &mut self,
-        component: &GlyphComponent,
-        line_num: &usize,
-        at_idx: &usize,
-    ) {
-        self.glyph_matrix
-            .expanding_insert(*line_num, *at_idx, component);
+    pub fn expanding_insert(&mut self, component: &GlyphComponent, line_num: &usize, at_idx: &usize) {
+        self.glyph_matrix.expanding_insert(*line_num, *at_idx, component);
     }
 
     pub(super) fn apply_operation(&mut self, delta: &DeltaGlyphModel) {

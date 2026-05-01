@@ -11,8 +11,7 @@ use crate::application::console::tests::fixtures::{
 };
 use crate::application::console::ExecResult;
 use crate::application::document::tests_common::{
-    first_testament_node_id as first_node_id,
-    load_test_doc as fixture_doc,
+    first_testament_node_id as first_node_id, load_test_doc as fixture_doc,
 };
 use crate::application::document::{MindMapDocument, SelectionState};
 
@@ -71,12 +70,7 @@ fn border_preset_custom_alone_emits_glyph_field_hint() {
     // The hint mentions the eight glyph keys so the user can copy
     // a starting pair without a doc dive.
     for key in &["top=", "bottom=", "left=", "right=", "tl=", "tr=", "bl=", "br="] {
-        assert!(
-            blob.contains(key),
-            "hint missing '{}': {}",
-            key,
-            blob
-        );
+        assert!(blob.contains(key), "hint missing '{}': {}", key, blob);
     }
 }
 
@@ -307,13 +301,7 @@ fn border_unquoted_multi_word_value_hints_at_quoting() {
 #[test]
 fn border_multi_node_selection_applies_to_all() {
     let mut doc = fixture_doc();
-    let ids: Vec<String> = doc
-        .mindmap
-        .nodes
-        .keys()
-        .take(3)
-        .cloned()
-        .collect();
+    let ids: Vec<String> = doc.mindmap.nodes.keys().take(3).cloned().collect();
     assert_eq!(ids.len(), 3, "testament map must have ≥3 nodes");
     doc.selection = SelectionState::Multi(ids.clone());
     match run("border preset=heavy", &mut doc) {
@@ -377,10 +365,7 @@ fn border_show_on_node_without_per_node_override() {
 fn border_preset_auto_promotion_is_announced() {
     let mut doc = fixture_doc();
     doc.selection = SelectionState::Single(first_node_id(&doc));
-    match run(
-        "border preset=heavy top=\"###(*)###\"",
-        &mut doc,
-    ) {
+    match run("border preset=heavy top=\"###(*)###\"", &mut doc) {
         ExecResult::Lines(rows) => {
             let joined = join_lines(&rows);
             assert!(
@@ -389,10 +374,7 @@ fn border_preset_auto_promotion_is_announced() {
                 joined
             );
         }
-        other => panic!(
-            "expected Lines (success + auto-promotion note), got {:?}",
-            other
-        ),
+        other => panic!("expected Lines (success + auto-promotion note), got {:?}", other),
     }
 }
 
@@ -409,11 +391,7 @@ fn border_unknown_key_error_lists_valid_keys() {
             assert!(s.contains("valid keys"), "got: {}", s);
             // Cherry-pick a few keys that should appear.
             for k in &["preset", "color", "palette", "top"] {
-                assert!(
-                    s.contains(*k),
-                    "expected '{}' in valid-keys list, got: {}",
-                    k, s
-                );
+                assert!(s.contains(*k), "expected '{}' in valid-keys list, got: {}", k, s);
             }
         }
         other => panic!("expected Err, got {:?}", other),
@@ -472,7 +450,9 @@ fn apply_border_field_writes_preset() {
 fn apply_border_field_returns_false_with_no_selection() {
     let mut doc = fixture_doc();
     // Default selection is None — borders are node-only.
-    assert!(!super::apply_border_field_to_selection(&mut doc, "preset", "heavy"));
+    assert!(!super::apply_border_field_to_selection(
+        &mut doc, "preset", "heavy"
+    ));
 }
 
 #[test]
@@ -482,7 +462,11 @@ fn apply_border_field_returns_false_on_invalid_value() {
     doc.selection = SelectionState::Single(id.clone());
     // `stage_kv` rejects unknown presets — the core silently no-ops
     // (Action arm warns upstream; verb path surfaces the typed err).
-    assert!(!super::apply_border_field_to_selection(&mut doc, "preset", "totally-invalid"));
+    assert!(!super::apply_border_field_to_selection(
+        &mut doc,
+        "preset",
+        "totally-invalid"
+    ));
 }
 
 #[test]
@@ -490,9 +474,13 @@ fn apply_border_field_returns_false_for_edge_selection() {
     let mut doc = fixture_doc();
     let e = doc.mindmap.edges.first().expect("testament edges").clone();
     doc.selection = SelectionState::Edge(crate::application::document::EdgeRef::new(
-        &e.from_id, &e.to_id, &e.edge_type,
+        &e.from_id,
+        &e.to_id,
+        &e.edge_type,
     ));
     // Edge-adjacent selections are not applicable to borders — the
     // core's selection resolver returns Err, the core returns false.
-    assert!(!super::apply_border_field_to_selection(&mut doc, "preset", "heavy"));
+    assert!(!super::apply_border_field_to_selection(
+        &mut doc, "preset", "heavy"
+    ));
 }

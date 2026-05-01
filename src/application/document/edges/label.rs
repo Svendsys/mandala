@@ -2,11 +2,7 @@
 
 //! Edge label text, position-along-curve, and perpendicular offset.
 
-
-use baumhard::mindmap::model::{
-    EdgeLabelConfig,
-    MindEdge,
-};
+use baumhard::mindmap::model::{EdgeLabelConfig, MindEdge};
 use baumhard::util::geometry::almost_equal;
 
 use super::super::types::EdgeRef;
@@ -66,11 +62,7 @@ impl MindMapDocument {
     /// `None` returns the label to the on-path position.
     /// Rolls back an all-default `EdgeLabelConfig` on clear so
     /// unchanged selections leave no undo droppings.
-    pub fn set_edge_label_perpendicular_offset(
-        &mut self,
-        edge_ref: &EdgeRef,
-        offset: Option<f32>,
-    ) -> bool {
+    pub fn set_edge_label_perpendicular_offset(&mut self, edge_ref: &EdgeRef, offset: Option<f32>) -> bool {
         // Reject NaN / infinity at the boundary; the label
         // config stores only finite values.
         if let Some(v) = offset {

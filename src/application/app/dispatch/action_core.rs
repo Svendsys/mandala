@@ -32,8 +32,8 @@ use baumhard::util::geometry::is_positive_finite;
 use crate::application::document::OptionEdit;
 use crate::application::keybinds::{Action, WasmCompatibility};
 
-use super::cross_dispatch::DispatchOutcome;
 use super::super::input_context_core::InputContextCore;
+use super::cross_dispatch::DispatchOutcome;
 
 /// Run `f` against a `RebuildContext` built from `core`, IF the
 /// document is loaded. Skips silently otherwise. Captures the
@@ -125,11 +125,7 @@ pub(in crate::application::app) fn dispatch_compatible(
                     renderer: core.renderer,
                     scene_cache: core.scene_cache,
                 };
-                super::cross_dispatch::apply_open_text_edit_on_single(
-                    clean,
-                    &mut rc,
-                    core.text_edit_state,
-                )
+                super::cross_dispatch::apply_open_text_edit_on_single(clean, &mut rc, core.text_edit_state)
             } else {
                 false
             };
@@ -184,10 +180,9 @@ pub(in crate::application::app) fn dispatch_compatible(
             with_doc_rebuild(core, |rc| super::cross_dispatch::apply_orphan_selection(rc))
         }
         Action::CreateOrphanNode => {
-            let canvas_pos = core.renderer.screen_to_canvas(
-                core.cursor_pos.0 as f32,
-                core.cursor_pos.1 as f32,
-            );
+            let canvas_pos = core
+                .renderer
+                .screen_to_canvas(core.cursor_pos.0 as f32, core.cursor_pos.1 as f32);
             with_doc_rebuild(core, |rc| {
                 super::cross_dispatch::apply_create_orphan_node(canvas_pos, rc)
             });
@@ -205,22 +200,18 @@ pub(in crate::application::app) fn dispatch_compatible(
         ),
         Action::ZoomReset => super::cross_dispatch::apply_zoom_reset(core.renderer),
         Action::ZoomFit => super::cross_dispatch::apply_zoom_fit(core.mindmap_tree, core.renderer),
-        Action::PanCameraNorth => super::cross_dispatch::apply_pan_camera(
-            super::cross_dispatch::PanDir::North,
-            core.renderer,
-        ),
-        Action::PanCameraSouth => super::cross_dispatch::apply_pan_camera(
-            super::cross_dispatch::PanDir::South,
-            core.renderer,
-        ),
-        Action::PanCameraEast => super::cross_dispatch::apply_pan_camera(
-            super::cross_dispatch::PanDir::East,
-            core.renderer,
-        ),
-        Action::PanCameraWest => super::cross_dispatch::apply_pan_camera(
-            super::cross_dispatch::PanDir::West,
-            core.renderer,
-        ),
+        Action::PanCameraNorth => {
+            super::cross_dispatch::apply_pan_camera(super::cross_dispatch::PanDir::North, core.renderer)
+        }
+        Action::PanCameraSouth => {
+            super::cross_dispatch::apply_pan_camera(super::cross_dispatch::PanDir::South, core.renderer)
+        }
+        Action::PanCameraEast => {
+            super::cross_dispatch::apply_pan_camera(super::cross_dispatch::PanDir::East, core.renderer)
+        }
+        Action::PanCameraWest => {
+            super::cross_dispatch::apply_pan_camera(super::cross_dispatch::PanDir::West, core.renderer)
+        }
         Action::CenterOnSelection => {
             // Read-only on document; doesn't fit `with_doc_rebuild`'s
             // `&mut RebuildContext` shape.
@@ -228,9 +219,7 @@ pub(in crate::application::app) fn dispatch_compatible(
                 super::cross_dispatch::apply_center_on_selection(doc, core.renderer);
             }
         }
-        Action::JumpToRoot => {
-            with_doc_rebuild(core, |rc| super::cross_dispatch::apply_jump_to_root(rc))
-        }
+        Action::JumpToRoot => with_doc_rebuild(core, |rc| super::cross_dispatch::apply_jump_to_root(rc)),
         // ── FPS overlay ────────────────────────────────────────
         Action::ToggleFps => super::cross_dispatch::apply_toggle_fps(core.renderer),
         Action::ToggleFpsDebug => super::cross_dispatch::apply_toggle_fps_debug(core.renderer),
@@ -267,15 +256,15 @@ pub(in crate::application::app) fn dispatch_compatible(
         Action::SetBorderField { field, value } => with_doc_rebuild(core, |rc| {
             super::cross_dispatch::apply_set_border_field(field, value, rc)
         }),
-        Action::SetEdgeCap { from, to } => with_doc_rebuild(core, |rc| {
-            super::cross_dispatch::apply_set_edge_cap(from, to, rc)
-        }),
+        Action::SetEdgeCap { from, to } => {
+            with_doc_rebuild(core, |rc| super::cross_dispatch::apply_set_edge_cap(from, to, rc))
+        }
         Action::SetColor { axis, value } => with_doc_rebuild(core, |rc| {
             super::cross_dispatch::apply_set_color_axis(*axis, value, rc)
         }),
-        Action::SetEdgeType(value) => with_doc_rebuild(core, |rc| {
-            super::cross_dispatch::apply_set_edge_type(value, rc)
-        }),
+        Action::SetEdgeType(value) => {
+            with_doc_rebuild(core, |rc| super::cross_dispatch::apply_set_edge_type(value, rc))
+        }
         Action::SetEdgeDisplayMode(value) => with_doc_rebuild(core, |rc| {
             super::cross_dispatch::apply_set_edge_display_mode(value, rc)
         }),
@@ -303,13 +292,9 @@ pub(in crate::application::app) fn dispatch_compatible(
         Action::SetEdgeLabelPosition(pos) => with_doc_rebuild(core, |rc| {
             super::cross_dispatch::apply_set_edge_label_position(pos, rc)
         }),
-        Action::SetSpacing(i) => {
-            with_doc_rebuild(core, |rc| super::cross_dispatch::apply_set_spacing(i, rc))
-        }
+        Action::SetSpacing(i) => with_doc_rebuild(core, |rc| super::cross_dispatch::apply_set_spacing(i, rc)),
         Action::SetZoom { bound, value } => {
-            let parsed = match crate::application::console::commands::zoom::parse_zoom_payload(
-                value,
-            ) {
+            let parsed = match crate::application::console::commands::zoom::parse_zoom_payload(value) {
                 Some(e) => e,
                 None => {
                     log::warn!("SetZoom{{bound={:?}}}: invalid '{}'", bound, value);
@@ -324,9 +309,7 @@ pub(in crate::application::app) fn dispatch_compatible(
                 super::cross_dispatch::apply_set_zoom_window(min, max, rc)
             });
         }
-        Action::ClearZoom => {
-            with_doc_rebuild(core, |rc| super::cross_dispatch::apply_clear_zoom(rc))
-        }
+        Action::ClearZoom => with_doc_rebuild(core, |rc| super::cross_dispatch::apply_clear_zoom(rc)),
         // ── Clipboard ─────────────────────────────────────────
         // Compatible because `clipboard::{read,write}_clipboard`
         // are logged stubs on WASM (pending async-clipboard) and
@@ -403,28 +386,19 @@ mod tests {
 
     #[test]
     fn cancel_mode_unhandled_lifts_to_handled() {
-        let out = lift_mixed_branch_for_wasm_macro(
-            &Action::CancelMode,
-            DispatchOutcome::Unhandled,
-        );
+        let out = lift_mixed_branch_for_wasm_macro(&Action::CancelMode, DispatchOutcome::Unhandled);
         assert_eq!(out, DispatchOutcome::Handled);
     }
 
     #[test]
     fn edit_selection_unhandled_lifts_to_handled() {
-        let out = lift_mixed_branch_for_wasm_macro(
-            &Action::EditSelection,
-            DispatchOutcome::Unhandled,
-        );
+        let out = lift_mixed_branch_for_wasm_macro(&Action::EditSelection, DispatchOutcome::Unhandled);
         assert_eq!(out, DispatchOutcome::Handled);
     }
 
     #[test]
     fn edit_selection_clean_unhandled_lifts_to_handled() {
-        let out = lift_mixed_branch_for_wasm_macro(
-            &Action::EditSelectionClean,
-            DispatchOutcome::Unhandled,
-        );
+        let out = lift_mixed_branch_for_wasm_macro(&Action::EditSelectionClean, DispatchOutcome::Unhandled);
         assert_eq!(out, DispatchOutcome::Handled);
     }
 
@@ -476,8 +450,7 @@ mod tests {
             Action::SaveDocument,
         ];
         for action in cases {
-            let out =
-                lift_mixed_branch_for_wasm_macro(&action, DispatchOutcome::Unhandled);
+            let out = lift_mixed_branch_for_wasm_macro(&action, DispatchOutcome::Unhandled);
             assert_eq!(
                 out,
                 DispatchOutcome::Unhandled,

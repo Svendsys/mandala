@@ -27,9 +27,10 @@ use super::{EdgeRef, MindMapDocument};
 impl MindMapDocument {
     /// Write the edge's top-level zoom-visibility window. The
     /// full edge is snapshotted into the undo stack via
-    /// [`UndoAction::EditEdge`]. Returns `true` when either side
-    /// changed. Rejects non-finite or inverted pairs as a
-    /// no-op. See [`OptionEdit<f32>`] for per-side semantics.
+    /// [`super::UndoAction::EditEdge`]. Returns `true` when
+    /// either side changed. Rejects non-finite or inverted pairs
+    /// as a no-op. See [`super::OptionEdit<f32>`] for per-side
+    /// semantics.
     pub fn set_edge_zoom_visibility(
         &mut self,
         edge_ref: &EdgeRef,
@@ -111,7 +112,11 @@ impl MindMapDocument {
             if !is_from && !is_to {
                 return false;
             }
-            let slot = if is_from { &mut edge.portal_from } else { &mut edge.portal_to };
+            let slot = if is_from {
+                &mut edge.portal_from
+            } else {
+                &mut edge.portal_to
+            };
             let (cur_min, cur_max) = slot
                 .as_ref()
                 .map(|s| (s.min_zoom_to_render, s.max_zoom_to_render))
@@ -140,8 +145,7 @@ impl MindMapDocument {
 mod tests {
     use super::*;
     use crate::application::document::tests_common::{
-        doc_with_one_edge as doc_with_edge,
-        doc_with_one_orphan_node as doc_with_node,
+        doc_with_one_edge as doc_with_edge, doc_with_one_orphan_node as doc_with_node,
     };
 
     #[test]
@@ -156,11 +160,7 @@ mod tests {
     #[test]
     fn set_node_zoom_sets_both_bounds() {
         let mut doc = doc_with_node();
-        let changed = doc.set_node_zoom_visibility(
-            "0",
-            OptionEdit::Set(0.5),
-            OptionEdit::Set(2.0),
-        );
+        let changed = doc.set_node_zoom_visibility("0", OptionEdit::Set(0.5), OptionEdit::Set(2.0));
         assert!(changed);
         let node = doc.mindmap.nodes.get("0").unwrap();
         assert_eq!(node.min_zoom_to_render, Some(0.5));
@@ -171,16 +171,8 @@ mod tests {
     fn set_node_zoom_keep_leaves_value_untouched() {
         let mut doc = doc_with_node();
         // Seed with a bound then only edit the other side.
-        doc.set_node_zoom_visibility(
-            "0",
-            OptionEdit::Set(0.5),
-            OptionEdit::Set(2.0),
-        );
-        let changed = doc.set_node_zoom_visibility(
-            "0",
-            OptionEdit::Keep,
-            OptionEdit::Set(3.0),
-        );
+        doc.set_node_zoom_visibility("0", OptionEdit::Set(0.5), OptionEdit::Set(2.0));
+        let changed = doc.set_node_zoom_visibility("0", OptionEdit::Keep, OptionEdit::Set(3.0));
         assert!(changed);
         let node = doc.mindmap.nodes.get("0").unwrap();
         assert_eq!(node.min_zoom_to_render, Some(0.5));
@@ -190,16 +182,8 @@ mod tests {
     #[test]
     fn set_node_zoom_clear_sets_to_none() {
         let mut doc = doc_with_node();
-        doc.set_node_zoom_visibility(
-            "0",
-            OptionEdit::Set(0.5),
-            OptionEdit::Set(2.0),
-        );
-        let changed = doc.set_node_zoom_visibility(
-            "0",
-            OptionEdit::Clear,
-            OptionEdit::Clear,
-        );
+        doc.set_node_zoom_visibility("0", OptionEdit::Set(0.5), OptionEdit::Set(2.0));
+        let changed = doc.set_node_zoom_visibility("0", OptionEdit::Clear, OptionEdit::Clear);
         assert!(changed);
         let node = doc.mindmap.nodes.get("0").unwrap();
         assert!(node.min_zoom_to_render.is_none());
@@ -209,11 +193,7 @@ mod tests {
     #[test]
     fn set_node_zoom_rejects_inverted_pair() {
         let mut doc = doc_with_node();
-        let changed = doc.set_node_zoom_visibility(
-            "0",
-            OptionEdit::Set(3.0),
-            OptionEdit::Set(1.0),
-        );
+        let changed = doc.set_node_zoom_visibility("0", OptionEdit::Set(3.0), OptionEdit::Set(1.0));
         assert!(!changed, "inverted pair must be rejected as no-op");
         let node = doc.mindmap.nodes.get("0").unwrap();
         assert!(node.min_zoom_to_render.is_none());
@@ -223,31 +203,15 @@ mod tests {
     #[test]
     fn set_node_zoom_rejects_non_finite() {
         let mut doc = doc_with_node();
-        assert!(!doc.set_node_zoom_visibility(
-            "0",
-            OptionEdit::Set(f32::NAN),
-            OptionEdit::Keep,
-        ));
-        assert!(!doc.set_node_zoom_visibility(
-            "0",
-            OptionEdit::Keep,
-            OptionEdit::Set(f32::INFINITY),
-        ));
+        assert!(!doc.set_node_zoom_visibility("0", OptionEdit::Set(f32::NAN), OptionEdit::Keep,));
+        assert!(!doc.set_node_zoom_visibility("0", OptionEdit::Keep, OptionEdit::Set(f32::INFINITY),));
     }
 
     #[test]
     fn set_node_zoom_undo_restores_previous_pair() {
         let mut doc = doc_with_node();
-        doc.set_node_zoom_visibility(
-            "0",
-            OptionEdit::Set(0.5),
-            OptionEdit::Set(2.0),
-        );
-        doc.set_node_zoom_visibility(
-            "0",
-            OptionEdit::Set(1.0),
-            OptionEdit::Set(3.0),
-        );
+        doc.set_node_zoom_visibility("0", OptionEdit::Set(0.5), OptionEdit::Set(2.0));
+        doc.set_node_zoom_visibility("0", OptionEdit::Set(1.0), OptionEdit::Set(3.0));
         assert!(doc.undo());
         let node = doc.mindmap.nodes.get("0").unwrap();
         assert_eq!(node.min_zoom_to_render, Some(0.5));
@@ -257,17 +221,8 @@ mod tests {
     #[test]
     fn set_edge_zoom_round_trips_through_undo() {
         let (mut doc, er) = doc_with_edge();
-        doc.set_edge_zoom_visibility(
-            &er,
-            OptionEdit::Set(0.5),
-            OptionEdit::Set(2.0),
-        );
-        let before_idx = doc
-            .mindmap
-            .edges
-            .iter()
-            .position(|e| er.matches(e))
-            .unwrap();
+        doc.set_edge_zoom_visibility(&er, OptionEdit::Set(0.5), OptionEdit::Set(2.0));
+        let before_idx = doc.mindmap.edges.iter().position(|e| er.matches(e)).unwrap();
         assert_eq!(doc.mindmap.edges[before_idx].min_zoom_to_render, Some(0.5));
         assert_eq!(doc.mindmap.edges[before_idx].max_zoom_to_render, Some(2.0));
         assert!(doc.undo());
@@ -279,11 +234,7 @@ mod tests {
     fn set_edge_label_zoom_forks_label_config() {
         let (mut doc, er) = doc_with_edge();
         assert!(doc.mindmap.edges[0].label_config.is_none());
-        let changed = doc.set_edge_label_zoom_visibility(
-            &er,
-            OptionEdit::Set(1.5),
-            OptionEdit::Keep,
-        );
+        let changed = doc.set_edge_label_zoom_visibility(&er, OptionEdit::Set(1.5), OptionEdit::Keep);
         assert!(changed);
         let cfg = doc.mindmap.edges[0]
             .label_config
@@ -324,11 +275,7 @@ mod tests {
     #[test]
     fn setters_short_circuit_noop_when_all_keep() {
         let mut doc = doc_with_node();
-        let changed = doc.set_node_zoom_visibility(
-            "0",
-            OptionEdit::Keep,
-            OptionEdit::Keep,
-        );
+        let changed = doc.set_node_zoom_visibility("0", OptionEdit::Keep, OptionEdit::Keep);
         assert!(!changed);
         assert!(doc.undo_stack.is_empty(), "no-op must not push undo");
     }

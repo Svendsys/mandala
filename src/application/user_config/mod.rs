@@ -8,10 +8,12 @@
 //!
 //! Native uses [`xdg::xdg_mandala_path`] to resolve
 //! `$XDG_CONFIG_HOME/mandala/<file>.json` (or the `$HOME/.config`
-//! fallback); web uses [`web_storage::read_query_param`] and
-//! [`web_storage::read_local_storage`] for the URL/localStorage
-//! lookups. Both targets share the [`MAX_USER_PAYLOAD_BYTES`] cap
-//! and the [`payload_within_cap`] guard so size-cap rejection logs
+//! fallback); web uses `web_storage::read_query_param` and
+//! `web_storage::read_local_storage` for the URL/localStorage
+//! lookups (both cfg-gated to wasm32, so plain backticks instead of
+//! intra-doc links to keep native cargo doc clean). Both targets
+//! share the [`MAX_USER_PAYLOAD_BYTES`] cap and the
+//! [`payload_within_cap`] guard so size-cap rejection logs
 //! consistently across loaders.
 
 #[cfg(not(target_arch = "wasm32"))]

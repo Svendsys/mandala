@@ -6,8 +6,8 @@
 
 use super::fixtures::sample_geometry;
 use crate::application::color_picker::{
-    arm_bottom_glyphs, arm_left_glyphs, arm_right_glyphs, arm_top_glyphs,
-    compute_color_picker_layout, CROSSHAIR_CENTER_CELL, SAT_CELL_COUNT, VAL_CELL_COUNT,
+    arm_bottom_glyphs, arm_left_glyphs, arm_right_glyphs, arm_top_glyphs, compute_color_picker_layout,
+    CROSSHAIR_CENTER_CELL, SAT_CELL_COUNT, VAL_CELL_COUNT,
 };
 
 /// Each crosshair arm must render exactly 8 cells. The bars have

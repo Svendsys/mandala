@@ -51,7 +51,7 @@ impl MulAssign for GlyphLine {
 }
 
 impl AddAssign for GlyphLine {
-    /// Using [GlyphLineOp::Assign] here intentionally
+    /// Using `GlyphLineOp::Assign` here intentionally
     fn add_assign(&mut self, rhs: Self) {
         self.perform_op(&rhs, GlyphLineOp::Assign);
     }
@@ -313,10 +313,7 @@ impl GlyphLine {
         // 4. [######][new_item][...##]
         //                        ^discard_front(e-b)
         let split_index = begin - comp_begin_e_idx;
-        let mut cloned_comp = line
-            .get(comp_idx)
-            .expect("Yeah we expected this one")
-            .clone();
+        let mut cloned_comp = line.get(comp_idx).expect("Yeah we expected this one").clone();
         let split_str = split_off_graphemes(&mut line.get_mut(comp_idx).unwrap().text, split_index);
         cloned_comp.text = split_str;
         cloned_comp.discard_front(end - begin);
@@ -348,9 +345,7 @@ impl GlyphLine {
         if self.length() <= begin {
             let spaces_we_need_to_add = begin - self.length();
             if self.line.len() > 0 {
-                self.last_comp_mut()
-                    .unwrap()
-                    .space_back(spaces_we_need_to_add);
+                self.last_comp_mut().unwrap().space_back(spaces_we_need_to_add);
             } else {
                 if spaces_we_need_to_add > 0 {
                     self.push(GlyphComponent::space(spaces_we_need_to_add));
@@ -380,11 +375,7 @@ impl GlyphLine {
             return;
         }
         // It must be (a)
-        Self::split_component_at(
-            comp_at_insert,
-            begin - index_of_comp_at_insert,
-            &mut self.line,
-        );
+        Self::split_component_at(comp_at_insert, begin - index_of_comp_at_insert, &mut self.line);
         self.line.insert(comp_at_insert + 1, item.clone());
     }
 
@@ -445,14 +436,8 @@ impl GlyphLine {
                         needs_comp_begin = false;
                     }
                 } else {
-                    let found_end = Self::seek_comp_end(
-                        e_idx_head,
-                        end,
-                        e_begin_comp,
-                        comp,
-                        i,
-                        &mut idx_comp_drain_end,
-                    );
+                    let found_end =
+                        Self::seek_comp_end(e_idx_head, end, e_begin_comp, comp, i, &mut idx_comp_drain_end);
                     if found_end {
                         break;
                     }

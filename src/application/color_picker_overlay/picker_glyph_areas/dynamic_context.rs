@@ -210,10 +210,7 @@ pub(super) struct PickerDynamicContext<'a> {
 }
 
 impl<'a> PickerDynamicContext<'a> {
-    pub(super) fn new(
-        geometry: &'a ColorPickerOverlayGeometry,
-        layout: &'a ColorPickerLayout,
-    ) -> Self {
+    pub(super) fn new(geometry: &'a ColorPickerOverlayGeometry, layout: &'a ColorPickerLayout) -> Self {
         let preview_rgb = hsv_to_rgb(geometry.hue_deg, geometry.sat, geometry.val);
         let preview_color = rgb_to_cosmic_color(preview_rgb);
 
@@ -349,9 +346,7 @@ impl<'a> SectionContext for PickerDynamicContext<'a> {
                     "picker dynamic context received unsupported field {other:?}; \
                      dynamic spec should only list Text / scale / ColorFontRegions / Operation"
                 );
-                return GlyphAreaField::ColorFontRegions(
-                    ColorFontRegions::single_span(0, None, None),
-                );
+                return GlyphAreaField::ColorFontRegions(ColorFontRegions::single_span(0, None, None));
             }
         }
 
@@ -559,10 +554,7 @@ mod tests {
     fn sat_colors_for_invalidates_on_val_change() {
         let a = sat_colors_for(&geom(45.0, 0.5, 0.2));
         let b = sat_colors_for(&geom(45.0, 0.5, 0.9));
-        assert_ne!(
-            a[0].rgb, b[0].rgb,
-            "val shift must produce a different sat table"
-        );
+        assert_ne!(a[0].rgb, b[0].rgb, "val shift must produce a different sat table");
     }
 
     /// Symmetric guard for val_colors: val_colors depends on
@@ -571,10 +563,7 @@ mod tests {
     fn val_colors_for_invalidates_on_sat_change() {
         let a = val_colors_for(&geom(45.0, 0.1, 0.5));
         let b = val_colors_for(&geom(45.0, 0.9, 0.5));
-        assert_ne!(
-            a[0].rgb, b[0].rgb,
-            "sat shift must produce a different val table"
-        );
+        assert_ne!(a[0].rgb, b[0].rgb, "sat shift must produce a different val table");
     }
 
     /// The crosshair centre slot is never populated on the dynamic
@@ -606,10 +595,6 @@ mod tests {
         let probe = SAT_CELL_COUNT - 1;
         // Three primaries — each must produce a distinct table at
         // the fully-saturated cell.
-        assert!(
-            a[probe].rgb != b[probe].rgb
-                && b[probe].rgb != c[probe].rgb
-                && a[probe].rgb != c[probe].rgb
-        );
+        assert!(a[probe].rgb != b[probe].rgb && b[probe].rgb != c[probe].rgb && a[probe].rgb != c[probe].rgb);
     }
 }

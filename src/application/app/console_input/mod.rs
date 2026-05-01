@@ -13,8 +13,8 @@ mod edit;
 pub(in crate::application::app) mod exec;
 mod history;
 
-pub(super) use dispatch::handle_console_key;
 pub(in crate::application::app) use dispatch::dispatch_console_action;
+pub(super) use dispatch::handle_console_key;
 pub(super) use exec::save_document_to_bound_path;
 pub(super) use history::{load_console_history, save_console_history};
 
@@ -35,10 +35,7 @@ pub(in crate::application::app) fn scroll_console_by_lines(
 /// loop calls this on every wheel event so slow scrolls accumulate
 /// across ticks instead of rounding to zero.
 #[cfg(not(target_arch = "wasm32"))]
-pub(in crate::application::app) fn accumulate_wheel_lines(
-    accum: &mut f32,
-    dy: f32,
-) -> i32 {
+pub(in crate::application::app) fn accumulate_wheel_lines(accum: &mut f32, dy: f32) -> i32 {
     edit::accumulate_wheel_lines(accum, dy)
 }
 
@@ -106,38 +103,35 @@ pub(super) fn rebuild_console_overlay(
     keybinds: &ResolvedKeybinds,
 ) {
     use crate::application::renderer::{
-        ConsoleOverlayCompletion, ConsoleOverlayGeometry, ConsoleOverlayLine,
-        ConsoleOverlayLineKind, MAX_CONSOLE_SCROLLBACK_ROWS,
+        ConsoleOverlayCompletion, ConsoleOverlayGeometry, ConsoleOverlayLine, ConsoleOverlayLineKind,
+        MAX_CONSOLE_SCROLLBACK_ROWS,
     };
-    let (input, cursor, scrollback, completions, selected_completion, scroll_offset) =
-        match console_state {
-            ConsoleState::Closed => {
-                renderer.rebuild_console_overlay_buffers(app_scene, None);
-                return;
-            }
-            ConsoleState::Open {
-                input,
-                cursor,
-                scrollback,
-                completions,
-                completion_idx,
-                scroll_offset,
-                ..
-            } => (
-                input,
-                *cursor,
-                scrollback,
-                completions,
-                *completion_idx,
-                *scroll_offset,
-            ),
-        };
+    let (input, cursor, scrollback, completions, selected_completion, scroll_offset) = match console_state {
+        ConsoleState::Closed => {
+            renderer.rebuild_console_overlay_buffers(app_scene, None);
+            return;
+        }
+        ConsoleState::Open {
+            input,
+            cursor,
+            scrollback,
+            completions,
+            completion_idx,
+            scroll_offset,
+            ..
+        } => (
+            input,
+            *cursor,
+            scrollback,
+            completions,
+            *completion_idx,
+            *scroll_offset,
+        ),
+    };
     // Clamp the scroll offset against the maximum reachable
     // position so a window-shrink or scrollback-shorten can never
     // strand the offset beyond the actual history.
-    let max_offset = scrollback
-        .len()
-        .saturating_sub(MAX_CONSOLE_SCROLLBACK_ROWS);
+    let max_offset = scrollback.len().saturating_sub(MAX_CONSOLE_SCROLLBACK_ROWS);
     let offset = scroll_offset.min(max_offset);
     // Slice "tail N starting from `len - offset`" so the
     // bottom-anchored rendering shape is preserved — the drawn

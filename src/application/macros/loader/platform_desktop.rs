@@ -63,11 +63,7 @@ pub fn load_user_macros() -> Vec<Macro> {
     match super::parse_user_macros_json(&text) {
         Ok(v) => {
             if !v.is_empty() {
-                log::info!(
-                    "macros: loaded {} user macro(s) from {}",
-                    v.len(),
-                    path.display(),
-                );
+                log::info!("macros: loaded {} user macro(s) from {}", v.len(), path.display(),);
             }
             v
         }

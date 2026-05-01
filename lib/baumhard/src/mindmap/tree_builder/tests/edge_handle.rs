@@ -16,7 +16,10 @@ fn edge_handle_channels_preserve_ordering_and_distinctness() {
     assert!(to < mid, "AnchorTo < Midpoint");
     assert!(to < cp0, "AnchorTo < ControlPoint(0)");
     assert!(cp0 < cp1, "ControlPoint(0) < ControlPoint(1)");
-    assert_ne!(mid, cp0, "Midpoint and ControlPoint(0) must occupy different channels");
+    assert_ne!(
+        mid, cp0,
+        "Midpoint and ControlPoint(0) must occupy different channels"
+    );
 }
 
 /// Round-trip: a tree built from handle set A, with the mutator
@@ -62,10 +65,8 @@ fn edge_handle_mutator_round_trip_matches_full_rebuild() {
     mutator.apply_to(&mut tree_a);
 
     let expected = build_edge_handle_tree(&set_b);
-    let actual_leaves: Vec<NodeId> =
-        tree_a.root.children(&tree_a.arena).collect();
-    let expected_leaves: Vec<NodeId> =
-        expected.root.children(&expected.arena).collect();
+    let actual_leaves: Vec<NodeId> = tree_a.root.children(&tree_a.arena).collect();
+    let expected_leaves: Vec<NodeId> = expected.root.children(&expected.arena).collect();
     assert_eq!(actual_leaves.len(), expected_leaves.len());
     for (a, e) in actual_leaves.iter().zip(expected_leaves.iter()) {
         let a_area = tree_a.arena.get(*a).unwrap().get().glyph_area().unwrap();

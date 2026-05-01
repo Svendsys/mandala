@@ -82,13 +82,7 @@ impl PickerAreas {
 
     /// Push a built area into `ordered` and stamp its position into
     /// the matching per-section index array.
-    pub(super) fn push(
-        &mut self,
-        section: PickerSection,
-        index: usize,
-        channel: usize,
-        area: GlyphArea,
-    ) {
+    pub(super) fn push(&mut self, section: PickerSection, index: usize, channel: usize, area: GlyphArea) {
         let vec_index = self.ordered.len();
         self.ordered.push((channel, area));
         let slot = match section {
@@ -100,14 +94,13 @@ impl PickerAreas {
             PickerSection::Preview => self.preview.get_mut(index),
             PickerSection::Hex => self.hex.get_mut(index),
         };
-        *slot.expect("picker area builder: index past compile-time section size") =
-            Some(vec_index);
+        *slot.expect("picker area builder: index past compile-time section size") = Some(vec_index);
     }
 
     /// Resolve a `(section, index) → &GlyphArea` lookup. Panics if
     /// the section wasn't populated (the spec / builder disagree
     /// on what sections exist) or the requested index was deliberately
-    /// skipped (e.g. the crosshair centre slot at sat_bar[8]) —
+    /// skipped (e.g. the crosshair centre slot at `sat_bar[8]`) —
     /// the picker apply path treats both as a programming error
     /// rather than a recoverable state.
     pub(super) fn area(&self, section: &str, index: usize) -> &GlyphArea {

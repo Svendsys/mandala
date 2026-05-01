@@ -20,15 +20,16 @@ use std::hash::{Hash, Hasher};
 use glam::f32::Vec2;
 
 use crate::core::primitives::ApplyOperation;
-use crate::gfx_structs::area::{
-    DeltaGlyphArea, GlyphArea, GlyphAreaField, OutlineStyle,
-};
+use crate::gfx_structs::area::{DeltaGlyphArea, GlyphArea, GlyphAreaField, OutlineStyle};
 use crate::gfx_structs::shape::NodeShape;
 
 /// A halo style suitable for "add a 3 px black outline" — the
 /// picker's default. Reused across the outline tests.
 fn sample_outline() -> OutlineStyle {
-    OutlineStyle { color: [0, 0, 0, 255], px: 3.0 }
+    OutlineStyle {
+        color: [0, 0, 0, 255],
+        px: 3.0,
+    }
 }
 
 /// Newly-constructed `GlyphArea`s default to no halo. A consumer
@@ -42,13 +43,7 @@ pub fn test_outline_default_is_none() {
 }
 
 pub fn do_outline_default_is_none() {
-    let area = GlyphArea::new_with_str(
-        "hello",
-        14.0,
-        14.0,
-        Vec2::new(0.0, 0.0),
-        Vec2::new(100.0, 20.0),
-    );
+    let area = GlyphArea::new_with_str("hello", 14.0, 14.0, Vec2::new(0.0, 0.0), Vec2::new(100.0, 20.0));
     assert!(area.outline.is_none(), "GlyphArea should default to no halo");
 }
 
@@ -62,13 +57,7 @@ pub fn test_outline_assign_round_trip() {
 }
 
 pub fn do_outline_assign_round_trip() {
-    let mut area = GlyphArea::new_with_str(
-        "hello",
-        14.0,
-        14.0,
-        Vec2::new(0.0, 0.0),
-        Vec2::new(100.0, 20.0),
-    );
+    let mut area = GlyphArea::new_with_str("hello", 14.0, 14.0, Vec2::new(0.0, 0.0), Vec2::new(100.0, 20.0));
 
     // Assign a halo via the field-based mutator surface.
     let outline = sample_outline();
@@ -98,13 +87,7 @@ pub fn test_outline_subtract_clears() {
 }
 
 pub fn do_outline_subtract_clears() {
-    let mut area = GlyphArea::new_with_str(
-        "hello",
-        14.0,
-        14.0,
-        Vec2::new(0.0, 0.0),
-        Vec2::new(100.0, 20.0),
-    );
+    let mut area = GlyphArea::new_with_str("hello", 14.0, 14.0, Vec2::new(0.0, 0.0), Vec2::new(100.0, 20.0));
     area.outline = Some(sample_outline());
 
     let delta = DeltaGlyphArea::new(vec![
@@ -112,7 +95,10 @@ pub fn do_outline_subtract_clears() {
         GlyphAreaField::Operation(ApplyOperation::Subtract),
     ]);
     area.apply_operation(&delta);
-    assert!(area.outline.is_none(), "Subtract should clear regardless of payload");
+    assert!(
+        area.outline.is_none(),
+        "Subtract should clear regardless of payload"
+    );
 }
 
 /// Hash discrimination: two areas that differ only in their
@@ -125,13 +111,8 @@ pub fn test_outline_changes_hash() {
 }
 
 pub fn do_outline_changes_hash() {
-    let mut area_a = GlyphArea::new_with_str(
-        "hello",
-        14.0,
-        14.0,
-        Vec2::new(0.0, 0.0),
-        Vec2::new(100.0, 20.0),
-    );
+    let mut area_a =
+        GlyphArea::new_with_str("hello", 14.0, 14.0, Vec2::new(0.0, 0.0), Vec2::new(100.0, 20.0));
     let mut area_b = area_a.clone();
     area_b.outline = Some(sample_outline());
 
@@ -188,7 +169,10 @@ pub fn test_outline_offsets_canonical_8_stamp() {
 }
 
 pub fn do_outline_offsets_canonical_8_stamp() {
-    let style = OutlineStyle { color: [0, 0, 0, 255], px: 3.0 };
+    let style = OutlineStyle {
+        color: [0, 0, 0, 255],
+        px: 3.0,
+    };
     let offsets: Vec<(f32, f32)> = style.offsets().collect();
     assert_eq!(offsets.len(), 8, "canonical pattern is 8 stamps");
     for (dx, dy) in &offsets {
@@ -203,8 +187,7 @@ pub fn do_outline_offsets_canonical_8_stamp() {
     for i in 0..offsets.len() {
         for j in (i + 1)..offsets.len() {
             assert!(
-                (offsets[i].0 - offsets[j].0).abs() > 1e-4
-                    || (offsets[i].1 - offsets[j].1).abs() > 1e-4,
+                (offsets[i].0 - offsets[j].0).abs() > 1e-4 || (offsets[i].1 - offsets[j].1).abs() > 1e-4,
                 "stamps {i} and {j} are duplicates"
             );
         }
@@ -221,13 +204,7 @@ pub fn test_shape_default_is_rectangle() {
 }
 
 pub fn do_shape_default_is_rectangle() {
-    let area = GlyphArea::new_with_str(
-        "hello",
-        14.0,
-        14.0,
-        Vec2::new(0.0, 0.0),
-        Vec2::new(100.0, 20.0),
-    );
+    let area = GlyphArea::new_with_str("hello", 14.0, 14.0, Vec2::new(0.0, 0.0), Vec2::new(100.0, 20.0));
     assert_eq!(area.shape, NodeShape::Rectangle);
 }
 
@@ -241,13 +218,7 @@ pub fn test_shape_assign_round_trip() {
 }
 
 pub fn do_shape_assign_round_trip() {
-    let mut area = GlyphArea::new_with_str(
-        "hello",
-        14.0,
-        14.0,
-        Vec2::new(0.0, 0.0),
-        Vec2::new(100.0, 20.0),
-    );
+    let mut area = GlyphArea::new_with_str("hello", 14.0, 14.0, Vec2::new(0.0, 0.0), Vec2::new(100.0, 20.0));
 
     let delta_set = DeltaGlyphArea::new(vec![
         GlyphAreaField::Shape(NodeShape::Ellipse),
@@ -278,13 +249,7 @@ pub fn test_shape_subtract_resets_to_rectangle() {
 }
 
 pub fn do_shape_subtract_resets_to_rectangle() {
-    let mut area = GlyphArea::new_with_str(
-        "hello",
-        14.0,
-        14.0,
-        Vec2::new(0.0, 0.0),
-        Vec2::new(100.0, 20.0),
-    );
+    let mut area = GlyphArea::new_with_str("hello", 14.0, 14.0, Vec2::new(0.0, 0.0), Vec2::new(100.0, 20.0));
     area.shape = NodeShape::Ellipse;
 
     // Payload is `Ellipse` but `Subtract` ignores it — the
@@ -309,13 +274,7 @@ pub fn test_shape_changes_hash() {
 }
 
 pub fn do_shape_changes_hash() {
-    let area_rect = GlyphArea::new_with_str(
-        "hello",
-        14.0,
-        14.0,
-        Vec2::new(0.0, 0.0),
-        Vec2::new(100.0, 20.0),
-    );
+    let area_rect = GlyphArea::new_with_str("hello", 14.0, 14.0, Vec2::new(0.0, 0.0), Vec2::new(100.0, 20.0));
     let mut area_ellipse = area_rect.clone();
     area_ellipse.shape = NodeShape::Ellipse;
 

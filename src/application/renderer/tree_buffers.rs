@@ -77,10 +77,7 @@ impl Renderer {
     ///
     /// O(n) descendant walk, but no text shaping, no font-system
     /// lock — just position and color reads from the arena.
-    pub fn rebuild_node_backgrounds_from_tree(
-        &mut self,
-        tree: &Tree<GfxElement, GfxMutator>,
-    ) {
+    pub fn rebuild_node_backgrounds_from_tree(&mut self, tree: &Tree<GfxElement, GfxMutator>) {
         self.node_background_rects.clear();
         for descendant_id in tree.root().descendants(&tree.arena) {
             let Some(node) = tree.arena.get(descendant_id) else { continue };
@@ -182,10 +179,7 @@ impl Renderer {
     /// O(sum of descendants) across every canvas tree. Allocates a
     /// `cosmic_text::Buffer` per non-empty `GlyphArea`. Empty
     /// sub-scenes short-circuit cheaply.
-    pub fn rebuild_canvas_scene_buffers(
-        &mut self,
-        app_scene: &mut crate::application::scene_host::AppScene,
-    ) {
+    pub fn rebuild_canvas_scene_buffers(&mut self, app_scene: &mut crate::application::scene_host::AppScene) {
         self.canvas_scene_buffers.clear();
         self.canvas_scene_background_rects.clear();
         let ids = app_scene.canvas_ids_in_layer_order();

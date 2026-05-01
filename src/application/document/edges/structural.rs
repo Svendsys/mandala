@@ -5,8 +5,7 @@
 use glam::Vec2;
 
 use baumhard::mindmap::model::{
-    portal_endpoint_state_mut, Canvas, EdgeLabelConfig, GlyphConnectionConfig,
-    MindEdge, PortalEndpointState,
+    portal_endpoint_state_mut, Canvas, EdgeLabelConfig, GlyphConnectionConfig, MindEdge, PortalEndpointState,
 };
 use baumhard::mindmap::scene_builder;
 
@@ -46,9 +45,8 @@ impl MindMapDocument {
         let to_size = to_node.size_vec2();
 
         let edge_key = baumhard::mindmap::scene_cache::EdgeKey::from_edge(edge);
-        let handles = scene_builder::build_edge_handles(
-            edge, &edge_key, from_pos, from_size, to_pos, to_size,
-        );
+        let handles =
+            scene_builder::build_edge_handles(edge, &edge_key, from_pos, from_size, to_pos, to_size);
 
         let mut best: Option<(scene_builder::EdgeHandleKind, Vec2, f32)> = None;
         for h in handles {
@@ -105,18 +103,13 @@ impl MindMapDocument {
     /// (the "nothing to reset" case — lets the console verb print
     /// a helpful "already at default" message instead of a dead
     /// undo entry).
-    pub fn reset_edge_position(
-        &mut self,
-        edge_ref: &EdgeRef,
-        endpoint: Option<&str>,
-    ) -> bool {
+    pub fn reset_edge_position(&mut self, edge_ref: &EdgeRef, endpoint: Option<&str>) -> bool {
         let idx = match self.mindmap.edges.iter().position(|e| edge_ref.matches(e)) {
             Some(i) => i,
             None => return false,
         };
         let before = self.mindmap.edges[idx].clone();
-        let is_portal =
-            baumhard::mindmap::model::is_portal_edge(&self.mindmap.edges[idx]);
+        let is_portal = baumhard::mindmap::model::is_portal_edge(&self.mindmap.edges[idx]);
         let mut changed = false;
 
         if is_portal {
@@ -132,10 +125,7 @@ impl MindMapDocument {
                 None => vec![edge.from_id.clone(), edge.to_id.clone()],
             };
             for target in &targets {
-                let slot = match portal_endpoint_state_mut(
-                    &mut self.mindmap.edges[idx],
-                    target,
-                ) {
+                let slot = match portal_endpoint_state_mut(&mut self.mindmap.edges[idx], target) {
                     Some(s) => s,
                     None => continue,
                 };
@@ -244,8 +234,7 @@ impl MindMapDocument {
             None => return false,
         };
         let from_pos = from_node.pos_vec2();
-        let from_size =
-            from_node.size_vec2();
+        let from_size = from_node.size_vec2();
         let to_pos = to_node.pos_vec2();
         let to_size = to_node.size_vec2();
         let path = connection::build_connection_path(
@@ -281,8 +270,7 @@ impl MindMapDocument {
         // curve without looking like a bug.
         let normal = connection::normal_at_t(&path, 0.5);
         let control_point_canvas = mid + normal * (length * 0.25);
-        let from_center =
-            Vec2::new(from_pos.x + from_size.x * 0.5, from_pos.y + from_size.y * 0.5);
+        let from_center = Vec2::new(from_pos.x + from_size.x * 0.5, from_pos.y + from_size.y * 0.5);
         let offset = control_point_canvas - from_center;
 
         let before = self.mindmap.edges[idx].clone();
@@ -303,7 +291,11 @@ impl MindMapDocument {
     /// the anchor was already at the requested value.
     pub fn set_edge_anchor(&mut self, edge_ref: &EdgeRef, is_from: bool, value: &str) -> bool {
         self.mutate_edge(edge_ref, |edge, _canvas| {
-            let slot = if is_from { &mut edge.anchor_from } else { &mut edge.anchor_to };
+            let slot = if is_from {
+                &mut edge.anchor_from
+            } else {
+                &mut edge.anchor_to
+            };
             if slot == value {
                 return false;
             }
@@ -377,9 +369,9 @@ impl MindMapDocument {
     /// which Rust's split-borrow rules allow under a single
     /// `&mut self` because both are direct field projections of
     /// `self.mindmap`. The closure can reach
-    /// [`ensure_glyph_connection`] through the free
-    /// [`ensure_glyph_connection_inline`] without having to
-    /// re-fetch `&mut self`.
+    /// [`Self::ensure_glyph_connection`] through the free
+    /// [`super::closure_helpers::ensure_glyph_connection_inline`]
+    /// without having to re-fetch `&mut self`.
     pub(in crate::application::document) fn mutate_edge<F>(&mut self, edge_ref: &EdgeRef, mutate: F) -> bool
     where
         F: FnOnce(&mut MindEdge, &Canvas) -> bool,
@@ -394,8 +386,7 @@ impl MindMapDocument {
             self.mindmap.edges[idx] = before;
             return false;
         }
-        self.undo_stack
-            .push(UndoAction::EditEdge { index: idx, before });
+        self.undo_stack.push(UndoAction::EditEdge { index: idx, before });
         self.dirty = true;
         true
     }
@@ -417,12 +408,8 @@ impl MindMapDocument {
     /// previously open-coded with byte-identical
     /// `if let Some(idx) = doc.edge_index(&edge_ref) { ... push +
     /// dirty ... }` scaffolding.
-    pub(crate) fn commit_throttled_edge_drag<F>(
-        &mut self,
-        edge_ref: &EdgeRef,
-        original: MindEdge,
-        changed: F,
-    ) where
+    pub(crate) fn commit_throttled_edge_drag<F>(&mut self, edge_ref: &EdgeRef, original: MindEdge, changed: F)
+    where
         F: FnOnce(&MindEdge, &MindEdge) -> bool,
     {
         let idx = match self.edge_index(edge_ref) {
@@ -431,8 +418,10 @@ impl MindMapDocument {
         };
         let current = &self.mindmap.edges[idx];
         if changed(current, &original) {
-            self.undo_stack
-                .push(UndoAction::EditEdge { index: idx, before: original });
+            self.undo_stack.push(UndoAction::EditEdge {
+                index: idx,
+                before: original,
+            });
             self.dirty = true;
         }
     }
@@ -444,9 +433,9 @@ mod tests {
     //! `commit_throttled_edge_drag`. Free-fn helpers
     //! (`ensure_glyph_connection_inline` etc.) are tested in
     //! `closure_helpers.rs::tests` next to their definitions.
+    use super::super::closure_helpers::ensure_glyph_connection_inline;
     use super::*;
     use crate::application::document::tests_common::doc_with_one_edge as doc_with_edge;
-    use super::super::closure_helpers::ensure_glyph_connection_inline;
 
     /// `mutate_edge` returning `false` from the closure rolls
     /// back any in-place fork via `ensure_glyph_connection_inline`
@@ -489,16 +478,12 @@ mod tests {
         doc.dirty = false;
 
         let returned = doc.mutate_edge(&er, |edge, canvas| {
-            ensure_glyph_connection_inline(edge, canvas).body =
-                "X".to_string();
+            ensure_glyph_connection_inline(edge, canvas).body = "X".to_string();
             true
         });
 
         assert!(returned);
-        assert_eq!(
-            doc.mindmap.edges[0].glyph_connection.as_ref().unwrap().body,
-            "X"
-        );
+        assert_eq!(doc.mindmap.edges[0].glyph_connection.as_ref().unwrap().body, "X");
         assert!(doc.dirty);
         assert_eq!(doc.undo_stack.len(), 1);
         match &doc.undo_stack[0] {
@@ -526,10 +511,7 @@ mod tests {
         doc.commit_throttled_edge_drag(&er, original, |_, _| true);
         assert!(doc.dirty, "true-predicate must mark dirty");
         assert_eq!(doc.undo_stack.len(), 1);
-        assert!(matches!(
-            &doc.undo_stack[0],
-            UndoAction::EditEdge { .. }
-        ));
+        assert!(matches!(&doc.undo_stack[0], UndoAction::EditEdge { .. }));
     }
 
     /// A `false` predicate skips the undo push and dirty flag

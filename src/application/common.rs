@@ -40,11 +40,11 @@ pub enum InputMode {
     MappedToInstruction,
 }
 
-/// Renderer-side command queue entry. Event loop pushes one of
-/// these per per-frame intent that the renderer should react to;
-/// the renderer drains them at frame start. Everything that
-/// changes GPU state without changing document state goes through
-/// here so the model/view boundary (§3) stays clean.
+/// Renderer-side command queue entry. Event loop pushes one
+/// for each per-frame intent the renderer should react to; the
+/// renderer drains them at frame start. Everything that
+/// changes GPU state without changing document state goes
+/// through here so the model/view boundary (§3) stays clean.
 ///
 /// Variants:
 /// - `Noop` — default sentinel; never actually queued by the
@@ -77,7 +77,11 @@ pub enum RenderDecree {
     SetSurfaceSize(u32, u32),
     Terminate,
     CameraPan(f32, f32),
-    CameraZoom { screen_x: f32, screen_y: f32, factor: f32 },
+    CameraZoom {
+        screen_x: f32,
+        screen_y: f32,
+        factor: f32,
+    },
 }
 
 /// Which FPS readout the renderer should display, if any.
@@ -163,9 +167,7 @@ impl PollTimer {
     }
 
     pub fn is_expired(&self) -> bool {
-        Instant::now()
-            .duration_since(self.instant)
-            .ge(&self.duration)
+        Instant::now().duration_since(self.instant).ge(&self.duration)
     }
     pub fn expire_in(&mut self, duration: Duration) {
         self.instant = Instant::now();
@@ -194,13 +196,19 @@ mod tests {
     #[test]
     fn test_poll_timer_immediately_is_expired() {
         let timer = PollTimer::immediately();
-        assert!(timer.is_expired(), "PollTimer::immediately() should be expired right away");
+        assert!(
+            timer.is_expired(),
+            "PollTimer::immediately() should be expired right away"
+        );
     }
 
     #[test]
     fn test_poll_timer_far_future_not_expired() {
         let timer = PollTimer::new(Duration::from_secs(60));
-        assert!(!timer.is_expired(), "PollTimer with 60s duration should not expire instantly");
+        assert!(
+            !timer.is_expired(),
+            "PollTimer with 60s duration should not expire instantly"
+        );
     }
 
     #[test]
@@ -208,7 +216,10 @@ mod tests {
         let mut timer = PollTimer::immediately();
         assert!(timer.is_expired());
         timer.expire_in(Duration::from_secs(60));
-        assert!(!timer.is_expired(), "expire_in should reset the timer with a new duration");
+        assert!(
+            !timer.is_expired(),
+            "expire_in should reset the timer with a new duration"
+        );
     }
 
     #[test]

@@ -25,10 +25,7 @@ use super::MindMapDocument;
 /// `NudgeDown`; other commands are no-ops on the model snapshot
 /// (their tree-side effect still runs at completion via
 /// `apply_custom_mutation`).
-fn apply_position_mutations_to_node(
-    mutations: &[Mutation],
-    node: &mut MindNode,
-) {
+fn apply_position_mutations_to_node(mutations: &[Mutation], node: &mut MindNode) {
     for mutation in mutations {
         if let Mutation::AreaCommand(cmd) = mutation {
             match cmd.as_ref() {
@@ -68,10 +65,7 @@ impl MindMapDocument {
 
     /// Variant retained for callers that already supply a user slice.
     /// Delegates to the four-source builder with an empty app slice.
-    pub fn build_mutation_registry_with_user(
-        &mut self,
-        user_mutations: &[CustomMutation],
-    ) {
+    pub fn build_mutation_registry_with_user(&mut self, user_mutations: &[CustomMutation]) {
         self.build_mutation_registry_with_app_and_user(&[], user_mutations);
     }
 
@@ -90,18 +84,15 @@ impl MindMapDocument {
         self.mutation_sources.clear();
         for cm in app_mutations {
             self.mutation_registry.insert(cm.id.clone(), cm.clone());
-            self.mutation_sources
-                .insert(cm.id.clone(), MutationSource::App);
+            self.mutation_sources.insert(cm.id.clone(), MutationSource::App);
         }
         for cm in user_mutations {
             self.mutation_registry.insert(cm.id.clone(), cm.clone());
-            self.mutation_sources
-                .insert(cm.id.clone(), MutationSource::User);
+            self.mutation_sources.insert(cm.id.clone(), MutationSource::User);
         }
         for cm in &self.mindmap.custom_mutations {
             self.mutation_registry.insert(cm.id.clone(), cm.clone());
-            self.mutation_sources
-                .insert(cm.id.clone(), MutationSource::Map);
+            self.mutation_sources.insert(cm.id.clone(), MutationSource::Map);
         }
         for node in self.mindmap.nodes.values() {
             for cm in &node.inline_mutations {
@@ -181,21 +172,12 @@ impl MindMapDocument {
     /// continuously; text / regions / structural fields snap at
     /// completion. `Followup` variants (`Reverse`, `Chain`, `Loop`)
     /// are recorded on the instance but not yet enacted.
-    pub fn start_animation(
-        &mut self,
-        cm: &CustomMutation,
-        target_id: &str,
-        now_ms: u64,
-    ) {
+    pub fn start_animation(&mut self, cm: &CustomMutation, target_id: &str, now_ms: u64) {
         // Invariant check the `AnimationInstance::timing()`
         // projection relies on: `cm.timing` must be Some with a
         // non-zero duration, else the caller should have taken
         // the instant-mutation path.
-        if !cm
-            .timing
-            .as_ref()
-            .is_some_and(|t| t.duration_ms > 0)
-        {
+        if !cm.timing.as_ref().is_some_and(|t| t.duration_ms > 0) {
             return;
         }
 
@@ -256,11 +238,7 @@ impl MindMapDocument {
     /// model-sync + undo-push path runs exactly once), then the
     /// instance is dropped. Drain order is back-to-front so
     /// `swap_remove` is safe.
-    pub fn tick_animations(
-        &mut self,
-        now_ms: u64,
-        mut tree: Option<&mut MindMapTree>,
-    ) -> bool {
+    pub fn tick_animations(&mut self, now_ms: u64, mut tree: Option<&mut MindMapTree>) -> bool {
         if self.active_animations.is_empty() {
             return false;
         }
@@ -281,18 +259,14 @@ impl MindMapDocument {
             if elapsed < timing.delay_ms as u64 {
                 continue;
             }
-            let progress =
-                (elapsed - timing.delay_ms as u64) as f32 / timing.duration_ms as f32;
+            let progress = (elapsed - timing.delay_ms as u64) as f32 / timing.duration_ms as f32;
             let t = timing.easing.evaluate(progress);
 
             let node = match self.mindmap.nodes.get_mut(&anim.target_id) {
                 Some(n) => n,
                 None => continue,
             };
-            let lerped = anim
-                .from_node
-                .pos_vec2()
-                .lerp(anim.to_node.pos_vec2(), t);
+            let lerped = anim.from_node.pos_vec2().lerp(anim.to_node.pos_vec2(), t);
             node.position.x = lerped.x as f64;
             node.position.y = lerped.y as f64;
             any_advanced = true;

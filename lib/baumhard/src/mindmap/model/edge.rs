@@ -105,10 +105,7 @@ impl MindEdge {
     /// every call site that needs the edge's window reaches
     /// for the same name. O(1).
     pub fn zoom_window(&self) -> ZoomVisibility {
-        ZoomVisibility::from_pair(
-            self.min_zoom_to_render,
-            self.max_zoom_to_render,
-        )
+        ZoomVisibility::from_pair(self.min_zoom_to_render, self.max_zoom_to_render)
     }
 
     /// Resolve the zoom window for one of this edge's labels
@@ -124,17 +121,12 @@ impl MindEdge {
     /// construction both call through here, so a future
     /// change to the cascade rule has one code site to update
     /// (§B0, §B10). O(1).
-    pub fn label_zoom_window(
-        &self,
-        label_cfg: Option<&EdgeLabelConfig>,
-    ) -> ZoomVisibility {
+    pub fn label_zoom_window(&self, label_cfg: Option<&EdgeLabelConfig>) -> ZoomVisibility {
         let edge_window = self.zoom_window();
         match label_cfg {
-            Some(cfg) => ZoomVisibility::cascade_replace(
-                edge_window,
-                cfg.min_zoom_to_render,
-                cfg.max_zoom_to_render,
-            ),
+            Some(cfg) => {
+                ZoomVisibility::cascade_replace(edge_window, cfg.min_zoom_to_render, cfg.max_zoom_to_render)
+            }
             None => edge_window,
         }
     }
@@ -150,10 +142,7 @@ impl MindEdge {
     /// Single source of truth for the portal-endpoint cascade
     /// — scene-builder portal emission and tree-builder
     /// portal construction both call through here. O(1).
-    pub fn portal_endpoint_zoom_window(
-        &self,
-        endpoint: Option<&PortalEndpointState>,
-    ) -> ZoomVisibility {
+    pub fn portal_endpoint_zoom_window(&self, endpoint: Option<&PortalEndpointState>) -> ZoomVisibility {
         let edge_window = self.zoom_window();
         match endpoint {
             Some(state) => ZoomVisibility::cascade_replace(
@@ -376,16 +365,24 @@ pub struct GlyphConnectionConfig {
     pub spacing: f32,
 }
 
-fn default_connection_body() -> String { "\u{00B7}".to_string() } // middle dot ·
-fn default_connection_font_size() -> f32 { 12.0 }
-fn default_connection_min_font_size() -> f32 { 8.0 }
+fn default_connection_body() -> String {
+    "\u{00B7}".to_string()
+} // middle dot ·
+fn default_connection_font_size() -> f32 {
+    12.0
+}
+fn default_connection_min_font_size() -> f32 {
+    8.0
+}
 // 128pt is enough for billboard-sized portal labels on a
 // widescreen display while keeping a typo (`font size=10000`)
 // from eating the whole viewport silently. Existing maps that
 // serialize their own `max_font_size_pt` keep their saved value
 // through serde; only freshly-constructed `GlyphConnectionConfig`
 // values pick up this ceiling.
-fn default_connection_max_font_size() -> f32 { 128.0 }
+fn default_connection_max_font_size() -> f32 {
+    128.0
+}
 
 impl Default for GlyphConnectionConfig {
     fn default() -> Self {
@@ -418,8 +415,7 @@ impl GlyphConnectionConfig {
     /// failure mode at extreme zoom levels.
     pub fn effective_font_size_pt(&self, camera_zoom: f32) -> f32 {
         let z = camera_zoom.max(f32::EPSILON);
-        let target_screen = (self.font_size_pt * z)
-            .clamp(self.min_font_size_pt, self.max_font_size_pt);
+        let target_screen = (self.font_size_pt * z).clamp(self.min_font_size_pt, self.max_font_size_pt);
         target_screen / z
     }
 
@@ -432,7 +428,10 @@ impl GlyphConnectionConfig {
     /// first style edit. The returned `Cow::Owned` case carries a
     /// freshly-cloned value the caller can install into
     /// `edge.glyph_connection`.
-    pub fn resolved_for<'a>(edge: &'a MindEdge, canvas: &'a Canvas) -> std::borrow::Cow<'a, GlyphConnectionConfig> {
+    pub fn resolved_for<'a>(
+        edge: &'a MindEdge,
+        canvas: &'a Canvas,
+    ) -> std::borrow::Cow<'a, GlyphConnectionConfig> {
         if let Some(cfg) = edge.glyph_connection.as_ref() {
             std::borrow::Cow::Borrowed(cfg)
         } else if let Some(cfg) = canvas.default_connection.as_ref() {

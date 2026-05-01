@@ -4,596 +4,649 @@
 //!
 //! Part of the tests split for `document`. Helpers live in
 //! `tests_common`; only the tests for this theme live here.
-use super::tests_common::{
-    first_testament_node_id, load_test_doc, TestNudgeMutation,
-};
+use super::tests_common::{first_testament_node_id, load_test_doc, TestNudgeMutation};
 use super::*;
 
 use baumhard::mindmap::animation::{AnimationTiming, Easing};
 use baumhard::mindmap::custom_mutation::{
-    CustomMutation as CM, DocumentAction,
-    MutationBehavior as MB, PlatformContext as PC, TargetScope as TS,
+    CustomMutation as CM, DocumentAction, MutationBehavior as MB, PlatformContext as PC, TargetScope as TS,
     Trigger as Tr, TriggerBinding as TB,
 };
-
 
 fn make_test_mutation(id: &str, scope: TS) -> CM {
     TestNudgeMutation::new(id, scope).magnitude(10.0).build()
 }
 
-    /// Build a `CustomMutation` whose only payload is a single
-    /// `SetThemeVariables` document-level action that sets `--bg`
-    /// to the given value. Used by the `apply_document_actions`
-    /// regression tests.
-    fn make_set_bg_doc_mutation(value: &str) -> CM {
-            let mut vars = HashMap::new();
-        vars.insert("--bg".to_string(), value.to_string());
-        CM {
-            id: "set-bg".to_string(),
-            name: "Set --bg".to_string(),
-            description: String::new(),
-            contexts: vec![],
-            mutator: None,
-            target_scope: TS::SelfOnly,
-            behavior: MB::Persistent,
-            predicate: None,
-            document_actions: vec![DocumentAction::SetThemeVariables(vars)],
-            timing: None,
-        }
+/// Build a `CustomMutation` whose only payload is a single
+/// `SetThemeVariables` document-level action that sets `--bg`
+/// to the given value. Used by the `apply_document_actions`
+/// regression tests.
+fn make_set_bg_doc_mutation(value: &str) -> CM {
+    let mut vars = HashMap::new();
+    vars.insert("--bg".to_string(), value.to_string());
+    CM {
+        id: "set-bg".to_string(),
+        name: "Set --bg".to_string(),
+        description: String::new(),
+        contexts: vec![],
+        mutator: None,
+        target_scope: TS::SelfOnly,
+        behavior: MB::Persistent,
+        predicate: None,
+        document_actions: vec![DocumentAction::SetThemeVariables(vars)],
+        timing: None,
     }
+}
 
-    /// Round-trip regression for `UndoAction::CanvasSnapshot`. The
-    /// `apply_document_actions` path is the only producer of this
-    /// variant, and prior to chunk 5 it had zero test coverage —
-    /// CODE_CONVENTIONS.md §6 says every undo variant ships with at
-    /// least a forward-and-back test.
-    #[test]
-    fn test_apply_document_actions_undo_round_trip() {
-        let mut doc = load_test_doc();
-        // Capture the canvas state before any document-level mutation.
-        let before = doc.mindmap.canvas.clone();
-        let undo_len_before = doc.undo_stack.len();
+/// Round-trip regression for `UndoAction::CanvasSnapshot`. The
+/// `apply_document_actions` path is the only producer of this
+/// variant, and prior to chunk 5 it had zero test coverage —
+/// CODE_CONVENTIONS.md §6 says every undo variant ships with at
+/// least a forward-and-back test.
+#[test]
+fn test_apply_document_actions_undo_round_trip() {
+    let mut doc = load_test_doc();
+    // Capture the canvas state before any document-level mutation.
+    let before = doc.mindmap.canvas.clone();
+    let undo_len_before = doc.undo_stack.len();
 
-        // Apply a single SetThemeVariables action that sets --bg to a
-        // sentinel value not present in the testament map.
-        let custom = make_set_bg_doc_mutation("#bada55");
-        let changed = doc.apply_document_actions(&custom);
-        assert!(changed, "applying a new theme var must report a change");
-        assert_eq!(
-            doc.mindmap.canvas.theme_variables.get("--bg"),
-            Some(&"#bada55".to_string())
-        );
-        assert_eq!(
-            doc.undo_stack.len(),
-            undo_len_before + 1,
-            "exactly one CanvasSnapshot entry should have been pushed"
-        );
-        assert!(doc.dirty);
+    // Apply a single SetThemeVariables action that sets --bg to a
+    // sentinel value not present in the testament map.
+    let custom = make_set_bg_doc_mutation("#bada55");
+    let changed = doc.apply_document_actions(&custom);
+    assert!(changed, "applying a new theme var must report a change");
+    assert_eq!(
+        doc.mindmap.canvas.theme_variables.get("--bg"),
+        Some(&"#bada55".to_string())
+    );
+    assert_eq!(
+        doc.undo_stack.len(),
+        undo_len_before + 1,
+        "exactly one CanvasSnapshot entry should have been pushed"
+    );
+    assert!(doc.dirty);
 
-        // Undo restores the entire pre-mutation canvas wholesale.
-        assert!(doc.undo());
-        assert_eq!(doc.mindmap.canvas.theme_variables, before.theme_variables);
-        assert_eq!(doc.mindmap.canvas.background_color, before.background_color);
-        assert_eq!(
-            doc.undo_stack.len(),
-            undo_len_before,
-            "undo should have popped the CanvasSnapshot entry"
-        );
-    }
+    // Undo restores the entire pre-mutation canvas wholesale.
+    assert!(doc.undo());
+    assert_eq!(doc.mindmap.canvas.theme_variables, before.theme_variables);
+    assert_eq!(doc.mindmap.canvas.background_color, before.background_color);
+    assert_eq!(
+        doc.undo_stack.len(),
+        undo_len_before,
+        "undo should have popped the CanvasSnapshot entry"
+    );
+}
 
-    /// `apply_document_actions` returns false and pushes nothing
-    /// when the action would not actually change anything (writing
-    /// the same value that's already there). Guards the dirty/undo
-    /// no-op path that the docstring on `apply_document_actions`
-    /// promises.
-    #[test]
-    fn test_apply_document_actions_noop_does_not_push_undo() {
-        let mut doc = load_test_doc();
-        // First write — should change the canvas and push undo.
-        let custom = make_set_bg_doc_mutation("#bada55");
-        doc.apply_document_actions(&custom);
-        let undo_len_after_first = doc.undo_stack.len();
-        doc.dirty = false;
+/// `apply_document_actions` returns false and pushes nothing
+/// when the action would not actually change anything (writing
+/// the same value that's already there). Guards the dirty/undo
+/// no-op path that the docstring on `apply_document_actions`
+/// promises.
+#[test]
+fn test_apply_document_actions_noop_does_not_push_undo() {
+    let mut doc = load_test_doc();
+    // First write — should change the canvas and push undo.
+    let custom = make_set_bg_doc_mutation("#bada55");
+    doc.apply_document_actions(&custom);
+    let undo_len_after_first = doc.undo_stack.len();
+    doc.dirty = false;
 
-        // Second write of the same value — no-op, no undo push,
-        // dirty flag should stay false.
-        let changed = doc.apply_document_actions(&custom);
-        assert!(!changed, "writing the same value must not report a change");
-        assert_eq!(doc.undo_stack.len(), undo_len_after_first);
-        assert!(!doc.dirty);
-    }
+    // Second write of the same value — no-op, no undo push,
+    // dirty flag should stay false.
+    let changed = doc.apply_document_actions(&custom);
+    assert!(!changed, "writing the same value must not report a change");
+    assert_eq!(doc.undo_stack.len(), undo_len_after_first);
+    assert!(!doc.dirty);
+}
 
-    /// Phase-7 parity regression: the keybind-side custom-mutation
-    /// path previously skipped both `apply_document_actions` and the
-    /// animation `timing` envelope. After the fix, the keybind path
-    /// runs through `dispatch::apply_keybind_custom_mutation` which
-    /// goes through both. This test pins the parity contract by
-    /// calling the helper directly (no renderer needed) and asserting
-    /// the document-actions side-effect lands.
-    #[cfg(not(target_arch = "wasm32"))]
-    #[test]
-    fn test_apply_keybind_custom_mutation_runs_document_actions() {
-        use crate::application::app::dispatch::apply_keybind_custom_mutation;
-        use baumhard::mindmap::scene_cache::SceneConnectionCache;
-        use baumhard::mindmap::tree_builder::build_mindmap_tree;
+/// Phase-7 parity regression: the keybind-side custom-mutation
+/// path previously skipped both `apply_document_actions` and the
+/// animation `timing` envelope. After the fix, the keybind path
+/// runs through `dispatch::apply_keybind_custom_mutation` which
+/// goes through both. This test pins the parity contract by
+/// calling the helper directly (no renderer needed) and asserting
+/// the document-actions side-effect lands.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn test_apply_keybind_custom_mutation_runs_document_actions() {
+    use crate::application::app::dispatch::apply_keybind_custom_mutation;
+    use baumhard::mindmap::scene_cache::SceneConnectionCache;
+    use baumhard::mindmap::tree_builder::build_mindmap_tree;
 
-        let mut doc = load_test_doc();
-        let nid = first_testament_node_id(&doc);
-        let mut scene_cache = SceneConnectionCache::default();
-        let cm = make_set_bg_doc_mutation("#bada55");
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    let mut scene_cache = SceneConnectionCache::default();
+    let cm = make_set_bg_doc_mutation("#bada55");
 
-        // Without a tree the non-animated branch can't apply.
-        let mut no_tree: Option<baumhard::mindmap::tree_builder::MindMapTree> = None;
-        let applied = apply_keybind_custom_mutation(
-            &mut doc, &mut no_tree, &mut scene_cache, &cm, &nid, 0,
-        );
-        assert!(!applied, "no tree + no animation: nothing to apply");
+    // Without a tree the non-animated branch can't apply.
+    let mut no_tree: Option<baumhard::mindmap::tree_builder::MindMapTree> = None;
+    let applied = apply_keybind_custom_mutation(&mut doc, &mut no_tree, &mut scene_cache, &cm, &nid, 0);
+    assert!(!applied, "no tree + no animation: nothing to apply");
 
-        // Build a tree so the non-animated branch can run.
-        let mut tree = Some(build_mindmap_tree(&doc.mindmap));
-        let applied = apply_keybind_custom_mutation(
-            &mut doc, &mut tree, &mut scene_cache, &cm, &nid, 0,
-        );
-        assert!(applied, "with a tree, non-animated mutation must apply");
-        // The load-bearing assertion: document actions ran.
-        assert_eq!(
-            doc.mindmap.canvas.theme_variables.get("--bg"),
-            Some(&"#bada55".to_string()),
-            "Phase-7 parity: apply_document_actions must run on the keybind path"
-        );
-    }
+    // Build a tree so the non-animated branch can run.
+    let mut tree = Some(build_mindmap_tree(&doc.mindmap));
+    let applied = apply_keybind_custom_mutation(&mut doc, &mut tree, &mut scene_cache, &cm, &nid, 0);
+    assert!(applied, "with a tree, non-animated mutation must apply");
+    // The load-bearing assertion: document actions ran.
+    assert_eq!(
+        doc.mindmap.canvas.theme_variables.get("--bg"),
+        Some(&"#bada55".to_string()),
+        "Phase-7 parity: apply_document_actions must run on the keybind path"
+    );
+}
 
-    /// Phase-7 parity regression for the animation branch. When a
-    /// custom mutation has `timing.duration_ms > 0`, the keybind path
-    /// must call `start_animation` (not the immediate apply).
-    #[cfg(not(target_arch = "wasm32"))]
-    #[test]
-    fn test_apply_keybind_custom_mutation_with_timing_starts_animation() {
-        use crate::application::app::dispatch::apply_keybind_custom_mutation;
-        use baumhard::mindmap::scene_cache::SceneConnectionCache;
+/// Phase-7 parity regression for the animation branch. When a
+/// custom mutation has `timing.duration_ms > 0`, the keybind path
+/// must call `start_animation` (not the immediate apply).
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn test_apply_keybind_custom_mutation_with_timing_starts_animation() {
+    use crate::application::app::dispatch::apply_keybind_custom_mutation;
+    use baumhard::mindmap::scene_cache::SceneConnectionCache;
 
-        let mut doc = load_test_doc();
-        let nid = first_testament_node_id(&doc);
-        let mut tree = None;
-        let mut scene_cache = SceneConnectionCache::default();
-        let mut cm = TestNudgeMutation::new("animated-nudge", TS::SelfOnly)
-            .magnitude(10.0)
-            .build();
-        cm.timing = Some(AnimationTiming {
-            duration_ms: 200,
-            ..AnimationTiming::default()
-        });
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    let mut tree = None;
+    let mut scene_cache = SceneConnectionCache::default();
+    let mut cm = TestNudgeMutation::new("animated-nudge", TS::SelfOnly)
+        .magnitude(10.0)
+        .build();
+    cm.timing = Some(AnimationTiming {
+        duration_ms: 200,
+        ..AnimationTiming::default()
+    });
 
-        assert!(!doc.has_active_animations());
-        let applied = apply_keybind_custom_mutation(
-            &mut doc, &mut tree, &mut scene_cache, &cm, &nid, 0,
-        );
-        assert!(applied, "animated branch must succeed even without a tree");
-        assert!(
-            doc.has_active_animations(),
-            "Phase-7 parity: timing.duration_ms > 0 must call start_animation"
-        );
-    }
+    assert!(!doc.has_active_animations());
+    let applied = apply_keybind_custom_mutation(&mut doc, &mut tree, &mut scene_cache, &cm, &nid, 0);
+    assert!(applied, "animated branch must succeed even without a tree");
+    assert!(
+        doc.has_active_animations(),
+        "Phase-7 parity: timing.duration_ms > 0 must call start_animation"
+    );
+}
 
-    #[test]
-    fn test_mutation_registry_empty_for_existing_map() {
-        let doc = load_test_doc();
-        assert!(doc.mutation_registry.is_empty(),
-            "Existing map without custom_mutations should have empty registry");
-    }
+#[test]
+fn test_mutation_registry_empty_for_existing_map() {
+    let doc = load_test_doc();
+    assert!(
+        doc.mutation_registry.is_empty(),
+        "Existing map without custom_mutations should have empty registry"
+    );
+}
 
-    #[test]
-    fn test_mutation_registry_from_map_level() {
-        let mut doc = load_test_doc();
-        doc.mindmap.custom_mutations.push(make_test_mutation("nudge-right", TS::SelfOnly));
-        doc.build_mutation_registry();
-        assert_eq!(doc.mutation_registry.len(), 1);
-        assert!(doc.mutation_registry.contains_key("nudge-right"));
-    }
+#[test]
+fn test_mutation_registry_from_map_level() {
+    let mut doc = load_test_doc();
+    doc.mindmap
+        .custom_mutations
+        .push(make_test_mutation("nudge-right", TS::SelfOnly));
+    doc.build_mutation_registry();
+    assert_eq!(doc.mutation_registry.len(), 1);
+    assert!(doc.mutation_registry.contains_key("nudge-right"));
+}
 
-    #[test]
-    fn test_mutation_registry_inline_overrides_map() {
-        let mut doc = load_test_doc();
-        // Map-level mutation
-        let mut map_cm = make_test_mutation("shared-id", TS::SelfOnly);
-        map_cm.name = "Map Version".to_string();
-        doc.mindmap.custom_mutations.push(map_cm);
+#[test]
+fn test_mutation_registry_inline_overrides_map() {
+    let mut doc = load_test_doc();
+    // Map-level mutation
+    let mut map_cm = make_test_mutation("shared-id", TS::SelfOnly);
+    map_cm.name = "Map Version".to_string();
+    doc.mindmap.custom_mutations.push(map_cm);
 
-        // Inline mutation on a node with the same id
-        let mut inline_cm = make_test_mutation("shared-id", TS::Children);
-        inline_cm.name = "Inline Version".to_string();
-        let node_id = "0";
-        doc.mindmap.nodes.get_mut(node_id).unwrap().inline_mutations.push(inline_cm);
+    // Inline mutation on a node with the same id
+    let mut inline_cm = make_test_mutation("shared-id", TS::Children);
+    inline_cm.name = "Inline Version".to_string();
+    let node_id = "0";
+    doc.mindmap
+        .nodes
+        .get_mut(node_id)
+        .unwrap()
+        .inline_mutations
+        .push(inline_cm);
 
-        doc.build_mutation_registry();
-        assert_eq!(doc.mutation_registry.len(), 1);
-        let cm = doc.mutation_registry.get("shared-id").unwrap();
-        assert_eq!(cm.name, "Inline Version", "Inline should override map-level");
-        assert_eq!(cm.target_scope, TS::Children);
-    }
+    doc.build_mutation_registry();
+    assert_eq!(doc.mutation_registry.len(), 1);
+    let cm = doc.mutation_registry.get("shared-id").unwrap();
+    assert_eq!(cm.name, "Inline Version", "Inline should override map-level");
+    assert_eq!(cm.target_scope, TS::Children);
+}
 
-    #[test]
-    fn test_find_triggered_mutations_match() {
-        let mut doc = load_test_doc();
-        doc.mindmap.custom_mutations.push(make_test_mutation("nudge", TS::SelfOnly));
-        doc.build_mutation_registry();
+#[test]
+fn test_find_triggered_mutations_match() {
+    let mut doc = load_test_doc();
+    doc.mindmap
+        .custom_mutations
+        .push(make_test_mutation("nudge", TS::SelfOnly));
+    doc.build_mutation_registry();
 
-        let node_id = "0";
-        doc.mindmap.nodes.get_mut(node_id).unwrap().trigger_bindings.push(TB {
+    let node_id = "0";
+    doc.mindmap
+        .nodes
+        .get_mut(node_id)
+        .unwrap()
+        .trigger_bindings
+        .push(TB {
             trigger: Tr::OnClick,
             mutation_id: "nudge".to_string(),
             contexts: vec![],
         });
 
-        let results = doc.find_triggered_mutations(node_id, &Tr::OnClick, &PC::Desktop);
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].id, "nudge");
-    }
+    let results = doc.find_triggered_mutations(node_id, &Tr::OnClick, &PC::Desktop);
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].id, "nudge");
+}
 
-    #[test]
-    fn test_find_triggered_mutations_no_match() {
-        let mut doc = load_test_doc();
-        doc.mindmap.custom_mutations.push(make_test_mutation("nudge", TS::SelfOnly));
-        doc.build_mutation_registry();
+#[test]
+fn test_find_triggered_mutations_no_match() {
+    let mut doc = load_test_doc();
+    doc.mindmap
+        .custom_mutations
+        .push(make_test_mutation("nudge", TS::SelfOnly));
+    doc.build_mutation_registry();
 
-        let node_id = "0";
-        doc.mindmap.nodes.get_mut(node_id).unwrap().trigger_bindings.push(TB {
+    let node_id = "0";
+    doc.mindmap
+        .nodes
+        .get_mut(node_id)
+        .unwrap()
+        .trigger_bindings
+        .push(TB {
             trigger: Tr::OnClick,
             mutation_id: "nudge".to_string(),
             contexts: vec![],
         });
 
-        // OnHover should not match
-        let results = doc.find_triggered_mutations(node_id, &Tr::OnHover, &PC::Desktop);
-        assert!(results.is_empty());
-    }
+    // OnHover should not match
+    let results = doc.find_triggered_mutations(node_id, &Tr::OnHover, &PC::Desktop);
+    assert!(results.is_empty());
+}
 
-    #[test]
-    fn test_find_triggered_mutations_platform_filter() {
-        let mut doc = load_test_doc();
-        doc.mindmap.custom_mutations.push(make_test_mutation("desktop-only", TS::SelfOnly));
-        doc.build_mutation_registry();
+#[test]
+fn test_find_triggered_mutations_platform_filter() {
+    let mut doc = load_test_doc();
+    doc.mindmap
+        .custom_mutations
+        .push(make_test_mutation("desktop-only", TS::SelfOnly));
+    doc.build_mutation_registry();
 
-        let node_id = "0";
-        doc.mindmap.nodes.get_mut(node_id).unwrap().trigger_bindings.push(TB {
+    let node_id = "0";
+    doc.mindmap
+        .nodes
+        .get_mut(node_id)
+        .unwrap()
+        .trigger_bindings
+        .push(TB {
             trigger: Tr::OnClick,
             mutation_id: "desktop-only".to_string(),
             contexts: vec![PC::Desktop],
         });
 
-        // Desktop should match
-        let results = doc.find_triggered_mutations(node_id, &Tr::OnClick, &PC::Desktop);
-        assert_eq!(results.len(), 1);
+    // Desktop should match
+    let results = doc.find_triggered_mutations(node_id, &Tr::OnClick, &PC::Desktop);
+    assert_eq!(results.len(), 1);
 
-        // Touch should be filtered out
-        let results = doc.find_triggered_mutations(node_id, &Tr::OnClick, &PC::Touch);
-        assert!(results.is_empty());
+    // Touch should be filtered out
+    let results = doc.find_triggered_mutations(node_id, &Tr::OnClick, &PC::Touch);
+    assert!(results.is_empty());
+}
+
+#[test]
+fn test_collect_affected_node_ids_self_only() {
+    let doc = load_test_doc();
+    let ids = doc.collect_affected_node_ids("0", &TS::SelfOnly);
+    assert_eq!(ids, vec!["0"]);
+}
+
+#[test]
+fn test_collect_affected_node_ids_children() {
+    let doc = load_test_doc();
+    let children = doc.mindmap.children_of("0");
+    let ids = doc.collect_affected_node_ids("0", &TS::Children);
+    assert_eq!(ids.len(), children.len());
+    for child in &children {
+        assert!(ids.contains(&child.id));
     }
+}
 
-    #[test]
-    fn test_collect_affected_node_ids_self_only() {
-        let doc = load_test_doc();
-        let ids = doc.collect_affected_node_ids("0", &TS::SelfOnly);
-        assert_eq!(ids, vec!["0"]);
-    }
+#[test]
+fn test_collect_affected_node_ids_descendants() {
+    let doc = load_test_doc();
+    let all_desc = doc.mindmap.all_descendants("0");
+    let ids = doc.collect_affected_node_ids("0", &TS::Descendants);
+    assert_eq!(ids.len(), all_desc.len());
+}
 
-    #[test]
-    fn test_collect_affected_node_ids_children() {
-        let doc = load_test_doc();
-        let children = doc.mindmap.children_of("0");
-        let ids = doc.collect_affected_node_ids("0", &TS::Children);
-        assert_eq!(ids.len(), children.len());
-        for child in &children {
-            assert!(ids.contains(&child.id));
-        }
-    }
+#[test]
+fn test_collect_affected_node_ids_self_and_descendants() {
+    let doc = load_test_doc();
+    let all_desc = doc.mindmap.all_descendants("0");
+    let ids = doc.collect_affected_node_ids("0", &TS::SelfAndDescendants);
+    assert_eq!(ids.len(), all_desc.len() + 1);
+    assert!(ids.contains(&"0".to_string()));
+}
 
-    #[test]
-    fn test_collect_affected_node_ids_descendants() {
-        let doc = load_test_doc();
-        let all_desc = doc.mindmap.all_descendants("0");
-        let ids = doc.collect_affected_node_ids("0", &TS::Descendants);
-        assert_eq!(ids.len(), all_desc.len());
-    }
+#[test]
+fn test_collect_affected_node_ids_parent() {
+    let doc = load_test_doc();
+    // Find a non-root node that has a parent
+    let child_id = doc
+        .mindmap
+        .nodes
+        .values()
+        .find(|n| n.parent_id.is_some())
+        .map(|n| n.id.clone())
+        .expect("testament map has child nodes");
+    let parent_id = doc
+        .mindmap
+        .nodes
+        .get(&child_id)
+        .unwrap()
+        .parent_id
+        .clone()
+        .unwrap();
 
-    #[test]
-    fn test_collect_affected_node_ids_self_and_descendants() {
-        let doc = load_test_doc();
-        let all_desc = doc.mindmap.all_descendants("0");
-        let ids = doc.collect_affected_node_ids("0", &TS::SelfAndDescendants);
-        assert_eq!(ids.len(), all_desc.len() + 1);
-        assert!(ids.contains(&"0".to_string()));
-    }
+    let ids = doc.collect_affected_node_ids(&child_id, &TS::Parent);
+    assert_eq!(ids.len(), 1);
+    assert_eq!(ids[0], parent_id);
+}
 
-    #[test]
-    fn test_collect_affected_node_ids_parent() {
-        let doc = load_test_doc();
-        // Find a non-root node that has a parent
-        let child_id = doc.mindmap.nodes.values()
-            .find(|n| n.parent_id.is_some())
-            .map(|n| n.id.clone())
-            .expect("testament map has child nodes");
-        let parent_id = doc.mindmap.nodes.get(&child_id).unwrap().parent_id.clone().unwrap();
+#[test]
+fn test_collect_affected_node_ids_parent_of_root_is_empty() {
+    let doc = load_test_doc();
+    // Root node (0) has no parent
+    let ids = doc.collect_affected_node_ids("0", &TS::Parent);
+    assert!(ids.is_empty(), "Root node has no parent; should return empty");
+}
 
-        let ids = doc.collect_affected_node_ids(&child_id, &TS::Parent);
-        assert_eq!(ids.len(), 1);
-        assert_eq!(ids[0], parent_id);
-    }
+#[test]
+fn test_collect_affected_node_ids_siblings() {
+    let doc = load_test_doc();
+    // Find a child node and verify its siblings list excludes itself
+    let child_id = doc
+        .mindmap
+        .nodes
+        .values()
+        .find(|n| n.parent_id.is_some())
+        .map(|n| n.id.clone())
+        .expect("testament map has child nodes");
+    let parent_id = doc
+        .mindmap
+        .nodes
+        .get(&child_id)
+        .unwrap()
+        .parent_id
+        .clone()
+        .unwrap();
+    let all_children = doc.mindmap.children_of(&parent_id);
 
-    #[test]
-    fn test_collect_affected_node_ids_parent_of_root_is_empty() {
-        let doc = load_test_doc();
-        // Root node (0) has no parent
-        let ids = doc.collect_affected_node_ids("0", &TS::Parent);
-        assert!(ids.is_empty(), "Root node has no parent; should return empty");
-    }
+    let ids = doc.collect_affected_node_ids(&child_id, &TS::Siblings);
+    // Siblings = parent's children minus self
+    assert_eq!(ids.len(), all_children.len() - 1);
+    assert!(!ids.contains(&child_id), "Siblings should not include self");
+}
 
-    #[test]
-    fn test_collect_affected_node_ids_siblings() {
-        let doc = load_test_doc();
-        // Find a child node and verify its siblings list excludes itself
-        let child_id = doc.mindmap.nodes.values()
-            .find(|n| n.parent_id.is_some())
-            .map(|n| n.id.clone())
-            .expect("testament map has child nodes");
-        let parent_id = doc.mindmap.nodes.get(&child_id).unwrap().parent_id.clone().unwrap();
-        let all_children = doc.mindmap.children_of(&parent_id);
+#[test]
+fn test_collect_affected_node_ids_siblings_of_root_is_empty() {
+    let doc = load_test_doc();
+    // Root has no parent, so no siblings
+    let ids = doc.collect_affected_node_ids("0", &TS::Siblings);
+    assert!(ids.is_empty());
+}
 
-        let ids = doc.collect_affected_node_ids(&child_id, &TS::Siblings);
-        // Siblings = parent's children minus self
-        assert_eq!(ids.len(), all_children.len() - 1);
-        assert!(!ids.contains(&child_id), "Siblings should not include self");
-    }
+#[test]
+fn test_apply_custom_mutation_persistent_sets_dirty() {
+    let mut doc = load_test_doc();
+    let cm = make_test_mutation("nudge", TS::SelfOnly);
+    doc.mindmap.custom_mutations.push(cm.clone());
+    doc.build_mutation_registry();
+    let mut tree = doc.build_tree();
 
-    #[test]
-    fn test_collect_affected_node_ids_siblings_of_root_is_empty() {
-        let doc = load_test_doc();
-        // Root has no parent, so no siblings
-        let ids = doc.collect_affected_node_ids("0", &TS::Siblings);
-        assert!(ids.is_empty());
-    }
+    assert!(!doc.dirty);
+    doc.apply_custom_mutation(&cm, "0", Some(&mut tree));
+    assert!(doc.dirty, "Persistent mutation should set dirty flag");
+    assert_eq!(doc.undo_stack.len(), 1, "Should push undo action");
+}
 
-    #[test]
-    fn test_apply_custom_mutation_persistent_sets_dirty() {
-        let mut doc = load_test_doc();
-        let cm = make_test_mutation("nudge", TS::SelfOnly);
-        doc.mindmap.custom_mutations.push(cm.clone());
-        doc.build_mutation_registry();
-        let mut tree = doc.build_tree();
+#[test]
+fn test_apply_custom_mutation_toggle_does_not_set_dirty() {
+    let mut doc = load_test_doc();
+    let mut cm = make_test_mutation("toggle-test", TS::SelfOnly);
+    cm.behavior = MB::Toggle;
+    doc.mindmap.custom_mutations.push(cm.clone());
+    doc.build_mutation_registry();
+    let mut tree = doc.build_tree();
 
-        assert!(!doc.dirty);
-        doc.apply_custom_mutation(&cm, "0", Some(&mut tree));
-        assert!(doc.dirty, "Persistent mutation should set dirty flag");
-        assert_eq!(doc.undo_stack.len(), 1, "Should push undo action");
-    }
+    doc.apply_custom_mutation(&cm, "0", Some(&mut tree));
+    assert!(!doc.dirty, "Toggle mutation should not set dirty flag");
+    assert!(doc.undo_stack.is_empty(), "Toggle mutation should not push undo");
+    assert!(doc
+        .active_toggles
+        .contains(&("0".to_string(), "toggle-test".to_string())));
+}
 
-    #[test]
-    fn test_apply_custom_mutation_toggle_does_not_set_dirty() {
-        let mut doc = load_test_doc();
-        let mut cm = make_test_mutation("toggle-test", TS::SelfOnly);
-        cm.behavior = MB::Toggle;
-        doc.mindmap.custom_mutations.push(cm.clone());
-        doc.build_mutation_registry();
-        let mut tree = doc.build_tree();
+#[test]
+fn test_apply_custom_mutation_toggle_reverses() {
+    let mut doc = load_test_doc();
+    let mut cm = make_test_mutation("toggle-test", TS::SelfOnly);
+    cm.behavior = MB::Toggle;
+    doc.mindmap.custom_mutations.push(cm.clone());
+    doc.build_mutation_registry();
+    let mut tree = doc.build_tree();
 
-        doc.apply_custom_mutation(&cm, "0", Some(&mut tree));
-        assert!(!doc.dirty, "Toggle mutation should not set dirty flag");
-        assert!(doc.undo_stack.is_empty(), "Toggle mutation should not push undo");
-        assert!(doc.active_toggles.contains(&("0".to_string(), "toggle-test".to_string())));
-    }
+    // First apply: activates toggle
+    doc.apply_custom_mutation(&cm, "0", Some(&mut tree));
+    assert!(doc
+        .active_toggles
+        .contains(&("0".to_string(), "toggle-test".to_string())));
 
-    #[test]
-    fn test_apply_custom_mutation_toggle_reverses() {
-        let mut doc = load_test_doc();
-        let mut cm = make_test_mutation("toggle-test", TS::SelfOnly);
-        cm.behavior = MB::Toggle;
-        doc.mindmap.custom_mutations.push(cm.clone());
-        doc.build_mutation_registry();
-        let mut tree = doc.build_tree();
+    // Second apply: deactivates toggle
+    doc.apply_custom_mutation(&cm, "0", Some(&mut tree));
+    assert!(!doc
+        .active_toggles
+        .contains(&("0".to_string(), "toggle-test".to_string())));
+}
 
-        // First apply: activates toggle
-        doc.apply_custom_mutation(&cm, "0", Some(&mut tree));
-        assert!(doc.active_toggles.contains(&("0".to_string(), "toggle-test".to_string())));
+#[test]
+fn test_undo_custom_mutation_restores_node() {
+    let mut doc = load_test_doc();
+    let cm = make_test_mutation("nudge", TS::SelfOnly);
+    let node_id = "0";
 
-        // Second apply: deactivates toggle
-        doc.apply_custom_mutation(&cm, "0", Some(&mut tree));
-        assert!(!doc.active_toggles.contains(&("0".to_string(), "toggle-test".to_string())));
-    }
+    let orig_x = doc.mindmap.nodes.get(node_id).unwrap().position.x;
+    let mut tree = doc.build_tree();
 
-    #[test]
-    fn test_undo_custom_mutation_restores_node() {
-        let mut doc = load_test_doc();
-        let cm = make_test_mutation("nudge", TS::SelfOnly);
-        let node_id = "0";
+    doc.apply_custom_mutation(&cm, node_id, Some(&mut tree));
+    // Position may have been synced from tree; verify undo restores original
+    assert!(doc.undo());
+    let restored_x = doc.mindmap.nodes.get(node_id).unwrap().position.x;
+    assert!(
+        (restored_x - orig_x).abs() < 0.001,
+        "Undo should restore original position"
+    );
+}
 
-        let orig_x = doc.mindmap.nodes.get(node_id).unwrap().position.x;
-        let mut tree = doc.build_tree();
+// ----- Animation lifecycle tests (§T1 — fundamental) -----
 
-        doc.apply_custom_mutation(&cm, node_id, Some(&mut tree));
-        // Position may have been synced from tree; verify undo restores original
-        assert!(doc.undo());
-        let restored_x = doc.mindmap.nodes.get(node_id).unwrap().position.x;
-        assert!((restored_x - orig_x).abs() < 0.001, "Undo should restore original position");
-    }
+fn make_animated_mutation(id: &str, duration_ms: u32) -> CM {
+    TestNudgeMutation::new(id, TS::SelfOnly)
+        .magnitude(100.0)
+        .timing(AnimationTiming {
+            duration_ms,
+            delay_ms: 0,
+            easing: Easing::Linear,
+            then: None,
+        })
+        .build()
+}
 
-    // ----- Animation lifecycle tests (§T1 — fundamental) -----
+#[test]
+fn test_start_animation_creates_instance() {
+    let mut doc = load_test_doc();
+    let cm = make_animated_mutation("anim-1", 500);
+    let node_id = first_testament_node_id(&doc);
+    assert!(!doc.has_active_animations());
 
-    fn make_animated_mutation(id: &str, duration_ms: u32) -> CM {
-        TestNudgeMutation::new(id, TS::SelfOnly)
-            .magnitude(100.0)
-            .timing(AnimationTiming {
-                duration_ms,
-                delay_ms: 0,
-                easing: Easing::Linear,
-                then: None,
-            })
-            .build()
-    }
+    doc.start_animation(&cm, &node_id, 0);
+    assert!(doc.has_active_animations());
+    assert_eq!(doc.active_animations.len(), 1);
+    assert_eq!(doc.active_animations[0].target_id, node_id);
+}
 
-    #[test]
-    fn test_start_animation_creates_instance() {
-        let mut doc = load_test_doc();
-        let cm = make_animated_mutation("anim-1", 500);
-        let node_id = first_testament_node_id(&doc);
-        assert!(!doc.has_active_animations());
+#[test]
+fn test_start_animation_derives_to_snapshot_via_nudge() {
+    let mut doc = load_test_doc();
+    let cm = make_animated_mutation("anim-pos", 500);
+    let node_id = first_testament_node_id(&doc);
+    let orig_x = doc.mindmap.nodes.get(&node_id).unwrap().position.x;
 
-        doc.start_animation(&cm, &node_id, 0);
-        assert!(doc.has_active_animations());
-        assert_eq!(doc.active_animations.len(), 1);
-        assert_eq!(doc.active_animations[0].target_id, node_id);
-    }
+    doc.start_animation(&cm, &node_id, 0);
+    let anim = &doc.active_animations[0];
+    let expected_to_x = orig_x + 100.0;
+    assert!(
+        (anim.to_node.position.x - expected_to_x).abs() < 0.001,
+        "to_node.x should be original + 100 (NudgeRight(100)); got {} expected {}",
+        anim.to_node.position.x,
+        expected_to_x,
+    );
+    assert!(
+        (anim.from_node.position.x - orig_x).abs() < 0.001,
+        "from_node.x should match original",
+    );
+}
 
-    #[test]
-    fn test_start_animation_derives_to_snapshot_via_nudge() {
-        let mut doc = load_test_doc();
-        let cm = make_animated_mutation("anim-pos", 500);
-        let node_id = first_testament_node_id(&doc);
-        let orig_x = doc.mindmap.nodes.get(&node_id).unwrap().position.x;
+#[test]
+fn test_start_animation_no_op_for_zero_duration() {
+    let mut doc = load_test_doc();
+    let cm = make_animated_mutation("anim-zero", 0);
+    let node_id = first_testament_node_id(&doc);
+    doc.start_animation(&cm, &node_id, 0);
+    assert!(!doc.has_active_animations());
+}
 
-        doc.start_animation(&cm, &node_id, 0);
-        let anim = &doc.active_animations[0];
-        let expected_to_x = orig_x + 100.0;
-        assert!(
-            (anim.to_node.position.x - expected_to_x).abs() < 0.001,
-            "to_node.x should be original + 100 (NudgeRight(100)); got {} expected {}",
-            anim.to_node.position.x, expected_to_x,
-        );
-        assert!(
-            (anim.from_node.position.x - orig_x).abs() < 0.001,
-            "from_node.x should match original",
-        );
-    }
+#[test]
+fn test_start_animation_no_op_for_duplicate_in_flight() {
+    let mut doc = load_test_doc();
+    let cm = make_animated_mutation("anim-dup", 500);
+    let node_id = first_testament_node_id(&doc);
+    doc.start_animation(&cm, &node_id, 0);
+    doc.start_animation(&cm, &node_id, 100);
+    assert_eq!(doc.active_animations.len(), 1);
+}
 
-    #[test]
-    fn test_start_animation_no_op_for_zero_duration() {
-        let mut doc = load_test_doc();
-        let cm = make_animated_mutation("anim-zero", 0);
-        let node_id = first_testament_node_id(&doc);
-        doc.start_animation(&cm, &node_id, 0);
-        assert!(!doc.has_active_animations());
-    }
+#[test]
+fn test_tick_animations_advances_position() {
+    let mut doc = load_test_doc();
+    let cm = make_animated_mutation("anim-tick", 1000);
+    let node_id = first_testament_node_id(&doc);
+    let orig_x = doc.mindmap.nodes.get(&node_id).unwrap().position.x;
 
-    #[test]
-    fn test_start_animation_no_op_for_duplicate_in_flight() {
-        let mut doc = load_test_doc();
-        let cm = make_animated_mutation("anim-dup", 500);
-        let node_id = first_testament_node_id(&doc);
-        doc.start_animation(&cm, &node_id, 0);
-        doc.start_animation(&cm, &node_id, 100);
-        assert_eq!(doc.active_animations.len(), 1);
-    }
+    doc.start_animation(&cm, &node_id, 0);
+    // Tick at 50% progress (500 ms into 1000 ms duration).
+    let advanced = doc.tick_animations(500, None);
+    assert!(advanced);
 
-    #[test]
-    fn test_tick_animations_advances_position() {
-        let mut doc = load_test_doc();
-        let cm = make_animated_mutation("anim-tick", 1000);
-        let node_id = first_testament_node_id(&doc);
-        let orig_x = doc.mindmap.nodes.get(&node_id).unwrap().position.x;
+    let current_x = doc.mindmap.nodes.get(&node_id).unwrap().position.x;
+    // Linear easing at t=0.5: should be ~halfway.
+    let expected_mid = orig_x + 50.0;
+    assert!(
+        (current_x - expected_mid).abs() < 1.0,
+        "position.x at t=0.5 should be ~halfway; got {} expected ~{}",
+        current_x,
+        expected_mid,
+    );
+}
 
-        doc.start_animation(&cm, &node_id, 0);
-        // Tick at 50% progress (500 ms into 1000 ms duration).
-        let advanced = doc.tick_animations(500, None);
-        assert!(advanced);
+#[test]
+fn test_tick_animations_completes_at_duration() {
+    let mut doc = load_test_doc();
+    let cm = make_animated_mutation("anim-end", 1000);
+    let node_id = first_testament_node_id(&doc);
 
-        let current_x = doc.mindmap.nodes.get(&node_id).unwrap().position.x;
-        // Linear easing at t=0.5: should be ~halfway.
-        let expected_mid = orig_x + 50.0;
-        assert!(
-            (current_x - expected_mid).abs() < 1.0,
-            "position.x at t=0.5 should be ~halfway; got {} expected ~{}",
-            current_x, expected_mid,
-        );
-    }
+    doc.start_animation(&cm, &node_id, 0);
+    // Tick past the end.
+    let advanced = doc.tick_animations(1500, None);
+    assert!(advanced);
+    assert!(!doc.has_active_animations(), "animation should have drained");
+}
 
-    #[test]
-    fn test_tick_animations_completes_at_duration() {
-        let mut doc = load_test_doc();
-        let cm = make_animated_mutation("anim-end", 1000);
-        let node_id = first_testament_node_id(&doc);
+#[test]
+fn test_tick_animations_no_advance_on_empty() {
+    let mut doc = load_test_doc();
+    let advanced = doc.tick_animations(1000, None);
+    assert!(!advanced);
+}
 
-        doc.start_animation(&cm, &node_id, 0);
-        // Tick past the end.
-        let advanced = doc.tick_animations(1500, None);
-        assert!(advanced);
-        assert!(!doc.has_active_animations(), "animation should have drained");
-    }
+/// Freeze-hardening regression: a tick called with an
+/// astronomically large `now_ms` (simulating CPU starvation that
+/// delays the event loop well past the animation's duration)
+/// must complete the animation exactly once and leave the active
+/// list empty on the next call — never loop or overshoot. The
+/// invariant holds because `tick_animations` short-circuits on
+/// `elapsed >= total` before it computes the progress fraction.
+#[test]
+fn test_tick_animations_extreme_overshoot_still_completes() {
+    let mut doc = load_test_doc();
+    let cm = make_animated_mutation("anim-overshoot", 1000);
+    let node_id = first_testament_node_id(&doc);
+    let orig_x = doc.mindmap.nodes.get(&node_id).unwrap().position.x;
 
-    #[test]
-    fn test_tick_animations_no_advance_on_empty() {
-        let mut doc = load_test_doc();
-        let advanced = doc.tick_animations(1000, None);
-        assert!(!advanced);
-    }
+    doc.start_animation(&cm, &node_id, 0);
+    // now_ms four orders of magnitude past duration.
+    let advanced_first = doc.tick_animations(u64::MAX / 2, None);
+    assert!(advanced_first, "first tick should complete the animation");
+    assert!(
+        !doc.has_active_animations(),
+        "animation must drain on overshoot, not linger"
+    );
 
-    /// Freeze-hardening regression: a tick called with an
-    /// astronomically large `now_ms` (simulating CPU starvation that
-    /// delays the event loop well past the animation's duration)
-    /// must complete the animation exactly once and leave the active
-    /// list empty on the next call — never loop or overshoot. The
-    /// invariant holds because `tick_animations` short-circuits on
-    /// `elapsed >= total` before it computes the progress fraction.
-    #[test]
-    fn test_tick_animations_extreme_overshoot_still_completes() {
-        let mut doc = load_test_doc();
-        let cm = make_animated_mutation("anim-overshoot", 1000);
-        let node_id = first_testament_node_id(&doc);
-        let orig_x = doc.mindmap.nodes.get(&node_id).unwrap().position.x;
-
-        doc.start_animation(&cm, &node_id, 0);
-        // now_ms four orders of magnitude past duration.
-        let advanced_first = doc.tick_animations(u64::MAX / 2, None);
-        assert!(advanced_first, "first tick should complete the animation");
-        assert!(
-            !doc.has_active_animations(),
-            "animation must drain on overshoot, not linger"
-        );
-
-        // Pin the intermediate invariant: the completing tick
-        // must write the `to` position synchronously, not defer
-        // it to a later tick. If the drain path ever stopped
-        // committing position on the no-tree branch, the final
-        // assertion below would still trip, but this intermediate
-        // check names the tick that owes the write.
-        let pos_after_first = doc.mindmap.nodes.get(&node_id).unwrap().position.x;
-        let expected = orig_x + 100.0;
-        assert!(
-            (pos_after_first - expected).abs() < 0.001,
-            "first (completing) tick should already land on to_node position, \
+    // Pin the intermediate invariant: the completing tick
+    // must write the `to` position synchronously, not defer
+    // it to a later tick. If the drain path ever stopped
+    // committing position on the no-tree branch, the final
+    // assertion below would still trip, but this intermediate
+    // check names the tick that owes the write.
+    let pos_after_first = doc.mindmap.nodes.get(&node_id).unwrap().position.x;
+    let expected = orig_x + 100.0;
+    assert!(
+        (pos_after_first - expected).abs() < 0.001,
+        "first (completing) tick should already land on to_node position, \
              got {} expected ~{}",
-            pos_after_first, expected,
-        );
+        pos_after_first,
+        expected,
+    );
 
-        let advanced_second = doc.tick_animations(u64::MAX / 2, None);
-        assert!(
-            !advanced_second,
-            "subsequent tick with no active animations must not advance"
-        );
+    let advanced_second = doc.tick_animations(u64::MAX / 2, None);
+    assert!(
+        !advanced_second,
+        "subsequent tick with no active animations must not advance"
+    );
 
-        let final_x = doc.mindmap.nodes.get(&node_id).unwrap().position.x;
-        assert!(
-            (final_x - expected).abs() < 0.001,
-            "overshoot tick should land on to_node position, got {} expected ~{}",
-            final_x, expected,
-        );
-    }
+    let final_x = doc.mindmap.nodes.get(&node_id).unwrap().position.x;
+    assert!(
+        (final_x - expected).abs() < 0.001,
+        "overshoot tick should land on to_node position, got {} expected ~{}",
+        final_x,
+        expected,
+    );
+}
 
-    #[test]
-    fn test_fast_forward_animations_snaps_to_end() {
-        let mut doc = load_test_doc();
-        let cm = make_animated_mutation("anim-ff", 5000);
-        let node_id = first_testament_node_id(&doc);
-        let orig_x = doc.mindmap.nodes.get(&node_id).unwrap().position.x;
+#[test]
+fn test_fast_forward_animations_snaps_to_end() {
+    let mut doc = load_test_doc();
+    let cm = make_animated_mutation("anim-ff", 5000);
+    let node_id = first_testament_node_id(&doc);
+    let orig_x = doc.mindmap.nodes.get(&node_id).unwrap().position.x;
 
-        doc.start_animation(&cm, &node_id, 0);
-        doc.fast_forward_animations(None);
-        assert!(!doc.has_active_animations());
+    doc.start_animation(&cm, &node_id, 0);
+    doc.fast_forward_animations(None);
+    assert!(!doc.has_active_animations());
 
-        // Without a tree, fast_forward writes the to_node.position
-        // directly into the model.
-        let final_x = doc.mindmap.nodes.get(&node_id).unwrap().position.x;
-        let expected = orig_x + 100.0;
-        assert!(
-            (final_x - expected).abs() < 0.001,
-            "fast-forward should snap to to_node position",
-        );
-    }
+    // Without a tree, fast_forward writes the to_node.position
+    // directly into the model.
+    let final_x = doc.mindmap.nodes.get(&node_id).unwrap().position.x;
+    let expected = orig_x + 100.0;
+    assert!(
+        (final_x - expected).abs() < 0.001,
+        "fast-forward should snap to to_node position",
+    );
+}

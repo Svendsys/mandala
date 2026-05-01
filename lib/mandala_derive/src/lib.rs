@@ -111,7 +111,11 @@ fn derive_action_classify_impl(input: DeriveInput) -> syn::Result<TokenStream2> 
     for variant in &data_enum.variants {
         let variant_name = &variant.ident;
         match parse_action_attrs(variant) {
-            Ok(ActionAttrs { context, wasm, destructive }) => {
+            Ok(ActionAttrs {
+                context,
+                wasm,
+                destructive,
+            }) => {
                 destructive_arms.push(quote! {
                     #discriminant::#variant_name => #destructive
                 });
@@ -266,7 +270,11 @@ fn parse_action_attrs(variant: &Variant) -> syn::Result<ActionAttrs> {
         )
     })?;
 
-    Ok(ActionAttrs { context, wasm, destructive })
+    Ok(ActionAttrs {
+        context,
+        wasm,
+        destructive,
+    })
 }
 
 /// Pull the discriminant enum's name out of `#[strum_discriminants(
@@ -294,8 +302,7 @@ fn discriminant_name(input: &DeriveInput) -> syn::Result<Ident> {
             )
         })?;
 
-    let metas: Punctuated<Meta, Token![,]> =
-        strum_attr.parse_args_with(Punctuated::parse_terminated)?;
+    let metas: Punctuated<Meta, Token![,]> = strum_attr.parse_args_with(Punctuated::parse_terminated)?;
     for meta in &metas {
         if let Meta::List(ml) = meta {
             if ml.path.is_ident("name") {
@@ -472,7 +479,10 @@ mod tests {
         let out = derive_action_classify_impl(input).unwrap();
         let s = out.to_string();
         assert!(s.contains("impl WeirdName"), "discriminant respected: {s}");
-        assert!(s.contains("WeirdName :: from"), "delegates use detected name: {s}");
+        assert!(
+            s.contains("WeirdName :: from"),
+            "delegates use detected name: {s}"
+        );
     }
 
     #[test]

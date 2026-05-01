@@ -93,10 +93,11 @@ pub(in crate::application::app) struct InputHandlerContext<'a> {
 }
 
 impl<'a> InputHandlerContext<'a> {
-    /// Decompose into the cross-platform [`InputContextCore`] +
-    /// native-only [`NativeContextExt`] pair the unified
-    /// `dispatch_action` expects after Track C lands. Each returned
-    /// view re-borrows from `self` so the original
+    /// Decompose into the cross-platform
+    /// [`super::input_context_core::InputContextCore`] +
+    /// native-only [`super::input_context_core::NativeContextExt`]
+    /// pair the unified `dispatch_action` expects post-Track-C.
+    /// Each returned view re-borrows from `self` so the original
     /// `InputHandlerContext` is borrowed as `&mut` for the
     /// duration; the views are dropped before the dispatcher
     /// returns. WASM constructs an `InputContextCore` directly via

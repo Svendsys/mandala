@@ -15,8 +15,8 @@
 //! - [`applicability`] — per-command `is_applicable` predicates.
 //! - [`completion`] — completion engine.
 
-mod apply_kvs;
 mod applicability;
+mod apply_kvs;
 mod clipboard;
 mod commands;
 mod completion;

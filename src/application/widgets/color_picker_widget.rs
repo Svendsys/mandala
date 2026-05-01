@@ -116,8 +116,8 @@ pub struct GeometrySpec {
     /// nearest arm cell, expressed as a multiple of `font_size`.
     /// `compute_color_picker_layout` floors `cell_advance` at
     /// `preview_size / 2 + font_size * bar_to_preview_padding_scale`
-    /// so the preview's bounding radius never covers cell[9] /
-    /// cell[11]. Without this floor, a `preview_size_scale` much
+    /// so the preview's bounding radius never covers `cell[9]` /
+    /// `cell[11]`. Without this floor, a `preview_size_scale` much
     /// larger than the per-script cell-advance ratio (3.0 vs ~1.0 in
     /// the default spec) produces visible overlap between the ࿕ and
     /// the first arm glyph in each direction.
@@ -210,9 +210,7 @@ mod tests {
             ("hex", 600, 1, &[]),
         ];
         assert_eq!(children.len(), expected.len());
-        for (child, (exp_section, exp_base, exp_count, exp_skip)) in
-            children.iter().zip(expected.iter())
-        {
+        for (child, (exp_section, exp_base, exp_count, exp_skip)) in children.iter().zip(expected.iter()) {
             let MutatorNode::Repeat {
                 section,
                 channel_base,

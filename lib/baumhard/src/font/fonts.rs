@@ -43,9 +43,7 @@ fn load_font_sources() -> FxHashMap<AppFont, Source> {
 /// plus one `load_font_source` call per entry in [`FONT_SOURCES`].
 fn load_fonts() -> FxHashMap<AppFont, TinyVec<[ID; 8]>> {
     debug!("Waiting for font-system write lock");
-    let mut font_system = FONT_SYSTEM
-        .write()
-        .expect("Failed to retrieve font system lock");
+    let mut font_system = FONT_SYSTEM.write().expect("Failed to retrieve font system lock");
     let mut compiled_font_id_map = FxHashMap::default();
     do_for_all_sources(|x, source| {
         let font_id = font_system.db_mut().load_font_source(source.clone());
@@ -72,7 +70,7 @@ lazy_static! {
 
 /// Force lazy initialization of [`COMPILED_FONT_ID_MAP`] — and, via
 /// it, the one-time `FONT_SYSTEM` write-lock that registers every
-/// compiled-in font — and the [`FAMILY_INDEX`] that
+/// compiled-in font — and the `FAMILY_INDEX` that
 /// [`loaded_families_iter`] / [`app_font_by_family`] read.
 /// Call once at program start before any shaping / measurement
 /// path. Doing both eagerly here closes a latent re-entrant-read
@@ -191,7 +189,7 @@ fn build_family_index() -> Vec<(String, AppFont)> {
 /// allocation `list_loaded_families` did is gone, which matters on
 /// the keystroke-hot completion path. The returned `&'static str`s
 /// borrow from the `OnceLock`-cached index built by
-/// [`build_family_index`].
+/// `build_family_index`.
 ///
 /// Costs: O(1) for the cache hit; O(n) one-time on first call.
 pub fn loaded_families_iter() -> impl Iterator<Item = &'static str> {

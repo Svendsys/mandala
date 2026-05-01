@@ -28,8 +28,7 @@ fn test_tree_root_nodes_match_mindmap() {
     let result = build_mindmap_tree(&map);
 
     let mindmap_roots = map.root_nodes();
-    let tree_root_children: Vec<NodeId> =
-        result.tree.root.children(&result.tree.arena).collect();
+    let tree_root_children: Vec<NodeId> = result.tree.root.children(&result.tree.arena).collect();
 
     // Each mindmap root should be in the node_map and a child of tree root
     for root in &mindmap_roots {
@@ -94,9 +93,7 @@ fn test_parent_child_hierarchy_preserved() {
     let lord_god_tree_id = result.node_map.get("0").unwrap();
     let mindmap_children = map.children_of("0");
 
-    let tree_children: Vec<NodeId> = lord_god_tree_id
-        .children(&result.tree.arena)
-        .collect();
+    let tree_children: Vec<NodeId> = lord_god_tree_id.children(&result.tree.arena).collect();
     assert_eq!(tree_children.len(), mindmap_children.len());
 
     for child in &mindmap_children {
@@ -131,10 +128,7 @@ fn test_all_elements_are_glyph_areas() {
 
     for node_id in result.node_map.values() {
         let element = result.tree.arena.get(*node_id).unwrap().get();
-        assert!(
-            element.glyph_area().is_some(),
-            "Expected GlyphArea for node"
-        );
+        assert!(element.glyph_area().is_some(), "Expected GlyphArea for node");
     }
 }
 
@@ -150,8 +144,7 @@ fn test_text_run_font_propagates_to_color_font_region() {
         .into_iter()
         .next()
         .expect("at least one font family must be loaded");
-    let expected = fonts::app_font_by_family(&family)
-        .expect("the family we just picked must round-trip");
+    let expected = fonts::app_font_by_family(&family).expect("the family we just picked must round-trip");
 
     let mut node = synthetic_node("font-run", None, 0.0, 0.0);
     node.text = "Hi".to_string();

@@ -8,7 +8,7 @@
 
 use crate::application::document::{MindMapDocument, SelectionState};
 
-use super::{RebuildContext};
+use super::RebuildContext;
 
 /// Walk the undo stack one step back. If an animation is in flight
 /// when undo fires, fast-forward it first so the undo lands on a
@@ -127,10 +127,7 @@ pub(in crate::application::app) fn apply_open_text_edit_on_single(
 /// to the system clipboard. Cut additionally clears the source
 /// component's text where the trait supports it. Read-only on the
 /// document — no rebuild.
-pub(in crate::application::app) fn apply_copy_or_cut(
-    is_cut: bool,
-    doc: &mut MindMapDocument,
-) {
+pub(in crate::application::app) fn apply_copy_or_cut(is_cut: bool, doc: &mut MindMapDocument) {
     use crate::application::console::traits::{
         selection_targets, view_for, ClipboardContent, HandlesCopy, HandlesCut,
     };
@@ -153,9 +150,7 @@ pub(in crate::application::app) fn apply_copy_or_cut(
 /// target in the current selection. Triggers a geometry rebuild iff
 /// at least one target accepted the paste.
 pub(in crate::application::app) fn apply_paste(rc: &mut RebuildContext<'_>) {
-    use crate::application::console::traits::{
-        selection_targets, view_for, HandlesPaste, Outcome,
-    };
+    use crate::application::console::traits::{selection_targets, view_for, HandlesPaste, Outcome};
     let Some(text) = crate::application::clipboard::read_clipboard() else {
         return;
     };

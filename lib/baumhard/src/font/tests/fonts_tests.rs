@@ -280,10 +280,7 @@ fn test_list_loaded_families_is_nonempty_sorted_unique() {
 pub fn do_list_loaded_families_is_nonempty_sorted_unique() {
     fonts::init();
     let families = list_loaded_families();
-    assert!(
-        !families.is_empty(),
-        "at least one bundled family must be listed"
-    );
+    assert!(!families.is_empty(), "at least one bundled family must be listed");
     let sorted = {
         let mut copy = families.clone();
         copy.sort();

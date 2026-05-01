@@ -35,8 +35,8 @@ pub use connection::{
     ConnectionEdgeIdentity,
 };
 pub use connection_label::{
-    build_connection_label_mutator_tree, build_connection_label_tree,
-    connection_label_identity_sequence, ConnectionLabelMutator, ConnectionLabelTree,
+    build_connection_label_mutator_tree, build_connection_label_tree, connection_label_identity_sequence,
+    ConnectionLabelMutator, ConnectionLabelTree,
 };
 pub use edge_handle::{
     build_edge_handle_mutator_tree, build_edge_handle_tree, edge_handle_channel_for,
@@ -44,9 +44,8 @@ pub use edge_handle::{
 };
 pub use portal::{
     build_portal_mutator_tree, build_portal_mutator_tree_from_pairs, build_portal_tree,
-    build_portal_tree_from_pairs, portal_identity_sequence, portal_pair_data,
-    PortalColorPreviewRef, PortalIdentity, PortalMutator, PortalPairData, PortalTree,
-    SelectedEdgeRef,
+    build_portal_tree_from_pairs, portal_identity_sequence, portal_pair_data, PortalColorPreviewRef,
+    PortalIdentity, PortalMutator, PortalPairData, PortalTree, SelectedEdgeRef,
 };
 
 use node::{build_children_recursive, mindnode_to_glyph_area};
@@ -108,7 +107,11 @@ pub fn build_mindmap_tree(map: &MindMap) -> MindMapTree {
         .iter()
         .map(|(mind_id, &node_id)| (node_id, mind_id.clone()))
         .collect();
-    MindMapTree { tree, node_map, reverse_node_map }
+    MindMapTree {
+        tree,
+        node_map,
+        reverse_node_map,
+    }
 }
 
 impl MindMapTree {

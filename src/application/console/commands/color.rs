@@ -51,9 +51,7 @@ fn complete_color(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Complet
                 out.extend(prefix_filter(&["pick", "picker"], state.partial));
             }
             // `color picker` expects `on` / `off` as the next token.
-            if *index == 1
-                && matches!(state.tokens.first().map(String::as_str), Some("picker"))
-            {
+            if *index == 1 && matches!(state.tokens.first().map(String::as_str), Some("picker")) {
                 out.extend(prefix_filter(&["on", "off"], state.partial));
             }
             out
@@ -84,10 +82,7 @@ fn kv_hint(key: &str) -> Option<&'static str> {
 /// collapse axis into their one color field: `bg`/`border` on an
 /// edge both resolve to the edge's line color; `bg` on a portal
 /// resolves to the portal's fill.
-fn picker_target_for(
-    verb: &str,
-    selection: &SelectionState,
-) -> Option<ColorTarget> {
+fn picker_target_for(verb: &str, selection: &SelectionState) -> Option<ColorTarget> {
     let axis = match verb {
         "bg" => Some(NodeColorAxis::Bg),
         "text" => Some(NodeColorAxis::Text),
@@ -97,7 +92,10 @@ fn picker_target_for(
     };
     match selection {
         SelectionState::Single(id) => match axis {
-            Some(a) => Some(ColorTarget::Node { id: id.clone(), axis: a }),
+            Some(a) => Some(ColorTarget::Node {
+                id: id.clone(),
+                axis: a,
+            }),
             // `color pick` on a node defaults to bg.
             None => Some(ColorTarget::Node {
                 id: id.clone(),
@@ -175,21 +173,13 @@ fn execute_color(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             return ExecResult::ok_empty();
         }
         if matches!(verb, "pick" | "bg" | "text" | "border") {
-            return ExecResult::err(format!(
-                "color {}: nothing to pick for this selection",
-                verb
-            ));
+            return ExecResult::err(format!("color {}: nothing to pick for this selection", verb));
         }
     }
 
-    let kvs: Vec<(String, String)> = args
-        .kvs()
-        .map(|(k, v)| (k.to_string(), v.to_string()))
-        .collect();
+    let kvs: Vec<(String, String)> = args.kvs().map(|(k, v)| (k.to_string(), v.to_string())).collect();
     if kvs.is_empty() {
-        return ExecResult::err(
-            "usage: color bg|text|border[=<color>]   |   color pick",
-        );
+        return ExecResult::err("usage: color bg|text|border[=<color>]   |   color pick");
     }
 
     let report = apply_kvs(eff.document, &kvs, |view, key, value| {
@@ -291,7 +281,11 @@ mod tests {
         doc.selection = SelectionState::Single(id.clone());
         // ColorValue::parse rejects this; the trait dispatcher
         // reports `Invalid` per target. `any_applied` stays false.
-        assert!(!apply_color_axis_to_selection(&mut doc, "bg", "definitely-not-a-color"));
+        assert!(!apply_color_axis_to_selection(
+            &mut doc,
+            "bg",
+            "definitely-not-a-color"
+        ));
     }
 
     #[test]

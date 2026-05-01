@@ -3,10 +3,12 @@
 //! `border` execute path: positional dispatch + atomic kv apply.
 //!
 //! The kv form parses every recognised key into a
-//! [`BorderConfigEdits`] up front, validates each value against
-//! its typed parser, then hands the whole bundle to
-//! [`MindMapDocument::set_node_border_config`] per selected node.
-//! Validation failures abort before any node is mutated.
+//! [`crate::application::document::BorderConfigEdits`] up front,
+//! validates each value against its typed parser, then hands the
+//! whole bundle to
+//! [`crate::application::document::MindMapDocument::set_node_border_config`]
+//! per selected node. Validation failures abort before any node
+//! is mutated.
 //!
 //! ## Why parse-then-dispatch instead of `apply_kvs` / capability traits
 //!
@@ -40,7 +42,7 @@ use crate::application::console::parser::Args;
 use crate::application::console::traits::ColorValue;
 use crate::application::console::{ConsoleEffects, ExecResult};
 use crate::application::document::{
-    BorderConfigEdits, BorderEditOutcome, OptionEdit, BorderSide, SelectionState,
+    BorderConfigEdits, BorderEditOutcome, BorderSide, OptionEdit, SelectionState,
 };
 
 use super::show::execute_border_show;
@@ -90,9 +92,7 @@ pub fn execute_border(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         }
     }
     if !saw_any {
-        return ExecResult::err(
-            "usage: border on|off|show|reset | border <key>=<value> …",
-        );
+        return ExecResult::err("usage: border on|off|show|reset | border <key>=<value> …");
     }
     apply_edits(eff, edits)
 }
@@ -109,10 +109,7 @@ fn apply_visible_only(eff: &mut ConsoleEffects, on: bool) -> ExecResult {
         }
     }
     if changed == 0 {
-        return ExecResult::ok_msg(format!(
-            "border: already {}",
-            if on { "on" } else { "off" }
-        ));
+        return ExecResult::ok_msg(format!("border: already {}", if on { "on" } else { "off" }));
     }
     ExecResult::ok_msg(format!(
         "border {} on {} node(s)",
@@ -146,8 +143,7 @@ fn apply_edits(eff: &mut ConsoleEffects, edits: BorderConfigEdits) -> ExecResult
     let mut changed = 0usize;
     let mut auto_promoted: Option<String> = None;
     for id in &ids {
-        let outcome: BorderEditOutcome =
-            eff.document.set_node_border_config(id, edits.clone());
+        let outcome: BorderEditOutcome = eff.document.set_node_border_config(id, edits.clone());
         if outcome.changed {
             changed += 1;
         }
@@ -263,21 +259,11 @@ pub(crate) fn nodes_in_selection(sel: &SelectionState) -> Result<Vec<String>, Ex
     match sel {
         SelectionState::Single(id) => Ok(vec![id.clone()]),
         SelectionState::Multi(ids) => Ok(ids.clone()),
-        SelectionState::None => Err(ExecResult::err(
-            "border: no selection (select a node first)",
-        )),
-        SelectionState::Edge(_) => Err(ExecResult::err(
-            "border: not applicable to edges",
-        )),
-        SelectionState::EdgeLabel(_) => Err(ExecResult::err(
-            "border: not applicable to edge labels",
-        )),
-        SelectionState::PortalLabel(_) => Err(ExecResult::err(
-            "border: not applicable to portal labels",
-        )),
-        SelectionState::PortalText(_) => Err(ExecResult::err(
-            "border: not applicable to portal text",
-        )),
+        SelectionState::None => Err(ExecResult::err("border: no selection (select a node first)")),
+        SelectionState::Edge(_) => Err(ExecResult::err("border: not applicable to edges")),
+        SelectionState::EdgeLabel(_) => Err(ExecResult::err("border: not applicable to edge labels")),
+        SelectionState::PortalLabel(_) => Err(ExecResult::err("border: not applicable to portal labels")),
+        SelectionState::PortalText(_) => Err(ExecResult::err("border: not applicable to portal text")),
     }
 }
 
@@ -285,11 +271,7 @@ pub(crate) fn nodes_in_selection(sel: &SelectionState) -> Result<Vec<String>, Ex
 /// `edits`. Returns the same error string the user sees in the
 /// console — kept verbatim so `border top="a)"` reports the parser
 /// output ("unmatched ')'…") with a `top: ` prefix.
-pub(crate) fn stage_kv(
-    edits: &mut BorderConfigEdits,
-    key: &str,
-    value: &str,
-) -> Result<(), String> {
+pub(crate) fn stage_kv(edits: &mut BorderConfigEdits, key: &str, value: &str) -> Result<(), String> {
     match key {
         "preset" => stage_preset(edits, value),
         "font" => stage_font(edits, value),
@@ -333,10 +315,7 @@ fn stage_font(edits: &mut BorderConfigEdits, value: &str) -> Result<(), String> 
         return Ok(());
     }
     if baumhard::font::fonts::app_font_by_family(value).is_none() {
-        return Err(format!(
-            "font '{}' is not a loaded font; try `font list`",
-            value
-        ));
+        return Err(format!("font '{}' is not a loaded font; try `font list`", value));
     }
     edits.font = OptionEdit::Set(value.to_string());
     Ok(())
@@ -348,18 +327,14 @@ fn stage_size(edits: &mut BorderConfigEdits, value: &str) -> Result<(), String> 
     Ok(())
 }
 
-fn stage_padding(
-    edits: &mut BorderConfigEdits,
-    value: &str,
-) -> Result<(), String> {
+fn stage_padding(edits: &mut BorderConfigEdits, value: &str) -> Result<(), String> {
     let pt = parse_pt("padding", value)?;
     edits.padding = OptionEdit::Set(pt);
     Ok(())
 }
 
 fn stage_color(edits: &mut BorderConfigEdits, value: &str) -> Result<(), String> {
-    let cv =
-        ColorValue::parse(value).map_err(|e| format!("color: {}", e))?;
+    let cv = ColorValue::parse(value).map_err(|e| format!("color: {}", e))?;
     edits.color = match cv {
         ColorValue::Reset => OptionEdit::Clear,
         other => OptionEdit::Set(
@@ -371,10 +346,7 @@ fn stage_color(edits: &mut BorderConfigEdits, value: &str) -> Result<(), String>
     Ok(())
 }
 
-fn stage_palette(
-    edits: &mut BorderConfigEdits,
-    value: &str,
-) -> Result<(), String> {
+fn stage_palette(edits: &mut BorderConfigEdits, value: &str) -> Result<(), String> {
     if value.eq_ignore_ascii_case("off") || value.is_empty() {
         edits.color_palette = OptionEdit::Clear;
         return Ok(());
@@ -383,10 +355,7 @@ fn stage_palette(
     Ok(())
 }
 
-fn stage_field(
-    edits: &mut BorderConfigEdits,
-    value: &str,
-) -> Result<(), String> {
+fn stage_field(edits: &mut BorderConfigEdits, value: &str) -> Result<(), String> {
     if value.eq_ignore_ascii_case("off") || value.is_empty() {
         edits.color_palette_field = OptionEdit::Clear;
         return Ok(());
@@ -409,18 +378,13 @@ fn stage_field(
     Ok(())
 }
 
-fn stage_corner_or_err(
-    slot: &mut OptionEdit<String>,
-    label: &str,
-    value: &str,
-) -> Result<(), String> {
+fn stage_corner_or_err(slot: &mut OptionEdit<String>, label: &str, value: &str) -> Result<(), String> {
     // Corners pass through the same escape rules as side patterns
     // (so `\(` inside a corner means a literal `(`); we re-use
     // [`SidePattern::parse`] for that and unpack it back into a
     // single concatenated string of clusters. Any parser error
     // surfaces with the corner label.
-    let parsed =
-        SidePattern::parse(value).map_err(|e| format!("{}: {}", label, e))?;
+    let parsed = SidePattern::parse(value).map_err(|e| format!("{}: {}", label, e))?;
     let collapsed = match parsed {
         SidePattern::AtomicRepeat { cluster } => cluster.join(""),
         SidePattern::PrefixFillSuffix { .. } => {
@@ -434,10 +398,7 @@ fn stage_corner_or_err(
         // panic — interactive paths must never panic per
         // `CODE_CONVENTIONS.md` §9.
         _ => {
-            return Err(format!(
-                "{}: unsupported pattern shape for a corner",
-                label
-            ));
+            return Err(format!("{}: unsupported pattern shape for a corner", label));
         }
     };
     if collapsed.is_empty() {

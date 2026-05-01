@@ -31,19 +31,9 @@ use crate::util::geometry::almost_equal;
 /// element directly. `fonts::init()` is folded in so the bench
 /// harness keeps each `do_*` body self-contained without restating
 /// the preamble at every call site.
-fn subject_area_element(
-    text: &str,
-    scale: f32,
-    font_size: f32,
-    pos: Vec2,
-    size: Vec2,
-) -> GfxElement {
+fn subject_area_element(text: &str, scale: f32, font_size: f32, pos: Vec2, size: Vec2) -> GfxElement {
     fonts::init();
-    GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(text, scale, font_size, pos, size),
-        0,
-        0,
-    )
+    GfxElement::new_area_non_indexed_with_id(GlyphArea::new_with_str(text, scale, font_size, pos, size), 0, 0)
 }
 
 // ── Mutation::AreaDelta ────────────────────────────────────────────
@@ -56,13 +46,7 @@ fn test_mutation_area_delta_applies_field() {
 /// Construct a `GlyphArea` element, apply a `Mutation::AreaDelta`
 /// that adds to its position, and verify the position changed.
 pub fn do_mutation_area_delta_applies_field() {
-    let mut element = subject_area_element(
-        "hello",
-        1.0,
-        10.0,
-        Vec2::new(10.0, 20.0),
-        Vec2::new(100.0, 50.0),
-    );
+    let mut element = subject_area_element("hello", 1.0, 10.0, Vec2::new(10.0, 20.0), Vec2::new(100.0, 50.0));
 
     // Position starts at (10, 20).
     assert!(almost_equal(element.position().x, 10.0));
@@ -99,13 +83,7 @@ fn test_mutation_area_command_nudge_right() {
 /// Apply a `NudgeRight` command and verify the x position shifted
 /// by the expected pixel delta.
 pub fn do_mutation_area_command_nudge_right() {
-    let mut element = subject_area_element(
-        "nudge",
-        1.0,
-        10.0,
-        Vec2::new(50.0, 50.0),
-        Vec2::new(100.0, 50.0),
-    );
+    let mut element = subject_area_element("nudge", 1.0, 10.0, Vec2::new(50.0, 50.0), Vec2::new(100.0, 50.0));
 
     let original_x = element.position().x;
     let original_y = element.position().y;
@@ -257,13 +235,8 @@ fn test_instruction_rotate_while() {
 /// delivers its attached `mutation` field to the target element. The
 /// rotation instruction itself is a no-op today.
 pub fn do_instruction_rotate_while() {
-    let mut element = subject_area_element(
-        "rotate",
-        1.0,
-        10.0,
-        Vec2::new(20.0, 30.0),
-        Vec2::new(100.0, 50.0),
-    );
+    let mut element =
+        subject_area_element("rotate", 1.0, 10.0, Vec2::new(20.0, 30.0), Vec2::new(100.0, 50.0));
 
     // Build an Instruction::RotateWhile mutator with an attached
     // area delta. The RotateWhile instruction is a tree-walker
@@ -311,26 +284,14 @@ pub fn do_mutator_tree_applies_to_target() {
 
     // Replace the default void root with an area element.
     let root_element = GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "root",
-            1.0,
-            10.0,
-            Vec2::new(0.0, 0.0),
-            Vec2::new(200.0, 200.0),
-        ),
+        GlyphArea::new_with_str("root", 1.0, 10.0, Vec2::new(0.0, 0.0), Vec2::new(200.0, 200.0)),
         0,
         1,
     );
     *model.arena.get_mut(model.root).unwrap().get_mut() = root_element;
 
     let child_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "child",
-            1.0,
-            10.0,
-            Vec2::new(50.0, 60.0),
-            Vec2::new(100.0, 100.0),
-        ),
+        GlyphArea::new_with_str("child", 1.0, 10.0, Vec2::new(50.0, 60.0), Vec2::new(100.0, 100.0)),
         0,
         2,
     ));
@@ -338,10 +299,7 @@ pub fn do_mutator_tree_applies_to_target() {
 
     // -- mutator tree: root (NudgeRight 7.0, ch 0) -> child (position += (0, 11), ch 0)
     let mut mutator: MutatorTree<GfxMutator> = MutatorTree::new();
-    let root_mut = GfxMutator::new(
-        Mutation::area_command(GlyphAreaCommand::NudgeRight(7.0)),
-        0,
-    );
+    let root_mut = GfxMutator::new(Mutation::area_command(GlyphAreaCommand::NudgeRight(7.0)), 0);
     *mutator.arena.get_mut(mutator.root).unwrap().get_mut() = root_mut;
 
     let child_mut = GfxMutator::new(
@@ -396,13 +354,7 @@ fn test_mutator_macro_applies_all_mutations_in_order() {
 /// entries so the assertion proves *both* ran — a single-apply bug
 /// would leave one component short of the summed delta.
 pub fn do_mutator_macro_applies_all_mutations_in_order() {
-    let mut element = subject_area_element(
-        "macro",
-        1.0,
-        10.0,
-        Vec2::new(0.0, 0.0),
-        Vec2::new(100.0, 50.0),
-    );
+    let mut element = subject_area_element("macro", 1.0, 10.0, Vec2::new(0.0, 0.0), Vec2::new(100.0, 50.0));
 
     let first = Mutation::area_delta(DeltaGlyphArea::new(vec![
         GlyphAreaField::Operation(ApplyOperation::Add),
@@ -439,13 +391,7 @@ fn test_mutator_macro_empty_is_noop() {
 /// empty-vec `Macro` is a valid carrier even if nothing inside it
 /// fires.
 pub fn do_mutator_macro_empty_is_noop() {
-    let mut element = subject_area_element(
-        "empty",
-        1.0,
-        10.0,
-        Vec2::new(15.0, 25.0),
-        Vec2::new(100.0, 50.0),
-    );
+    let mut element = subject_area_element("empty", 1.0, 10.0, Vec2::new(15.0, 25.0), Vec2::new(100.0, 50.0));
     let before = element.position();
     let text_before = element.glyph_area().unwrap().text.clone();
 
@@ -468,13 +414,7 @@ fn test_mutator_void_is_noop_when_applied_directly() {
 /// placeholder in a `MutatorTree` can never corrupt the target that
 /// happens to align under it.
 pub fn do_mutator_void_is_noop_when_applied_directly() {
-    let mut element = subject_area_element(
-        "void",
-        1.0,
-        10.0,
-        Vec2::new(42.0, 17.0),
-        Vec2::new(100.0, 50.0),
-    );
+    let mut element = subject_area_element("void", 1.0, 10.0, Vec2::new(42.0, 17.0), Vec2::new(100.0, 50.0));
     let before = element.position();
     let text_before = element.glyph_area().unwrap().text.clone();
 
@@ -503,24 +443,12 @@ pub fn do_mutator_void_preserves_channel_alignment_in_tree_walk() {
     // -- target tree: root (ch 0) -> child_1 (ch 1) -> child_2 (ch 2)
     let mut model: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed();
     let child_1_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "ch1",
-            1.0,
-            10.0,
-            Vec2::new(10.0, 10.0),
-            Vec2::new(50.0, 50.0),
-        ),
+        GlyphArea::new_with_str("ch1", 1.0, 10.0, Vec2::new(10.0, 10.0), Vec2::new(50.0, 50.0)),
         1,
         1,
     ));
     let child_2_id = model.arena.new_node(GfxElement::new_area_non_indexed_with_id(
-        GlyphArea::new_with_str(
-            "ch2",
-            1.0,
-            10.0,
-            Vec2::new(20.0, 20.0),
-            Vec2::new(50.0, 50.0),
-        ),
+        GlyphArea::new_with_str("ch2", 1.0, 10.0, Vec2::new(20.0, 20.0), Vec2::new(50.0, 50.0)),
         2,
         2,
     ));

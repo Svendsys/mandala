@@ -102,8 +102,7 @@ fn test_clipboard_content_eq() {
 // closure that doesn't touch the doc.
 
 use crate::application::document::tests_common::{
-    first_n_testament_node_ids as first_n_node_ids,
-    load_test_doc as fresh_doc,
+    first_n_testament_node_ids as first_n_node_ids, load_test_doc as fresh_doc,
 };
 
 #[test]

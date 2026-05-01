@@ -11,7 +11,9 @@ use baumhard::mindmap::model::{Canvas, MindEdge, MindNode, NodeStyle, Position, 
 #[derive(Clone, Debug)]
 pub enum UndoAction {
     /// Stores original positions of moved nodes for restoration.
-    MoveNodes { original_positions: Vec<(String, Position)> },
+    MoveNodes {
+        original_positions: Vec<(String, Position)>,
+    },
     /// Stores full node snapshots before a custom mutation was applied.
     CustomMutation { node_snapshots: Vec<(String, MindNode)> },
     /// Stores original parent_id for each reparented node, plus a full

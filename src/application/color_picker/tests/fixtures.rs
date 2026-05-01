@@ -5,9 +5,7 @@
 //! Duplicating the fixture across every submodule would be cheaper
 //! in lines but harder to keep in sync — one source of truth here.
 
-use crate::application::color_picker::{
-    ColorPickerOverlayGeometry, CROSSHAIR_CENTER_CELL,
-};
+use crate::application::color_picker::{ColorPickerOverlayGeometry, CROSSHAIR_CENTER_CELL};
 
 pub(in crate::application) fn sample_geometry() -> ColorPickerOverlayGeometry {
     // Plausible stub advances measured at a notional 16 pt

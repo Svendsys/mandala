@@ -55,15 +55,8 @@ fn select_all_in_excludes_folded_descendants() {
     // Pick a non-leaf root and fold it.
     let root_id = first_root_id(&doc);
     let descendant_count = doc.mindmap.all_descendants(&root_id).len();
-    assert!(
-        descendant_count > 0,
-        "test fixture root must have descendants",
-    );
-    doc.mindmap
-        .nodes
-        .get_mut(&root_id)
-        .unwrap()
-        .folded = true;
+    assert!(descendant_count > 0, "test fixture root must have descendants",);
+    doc.mindmap.nodes.get_mut(&root_id).unwrap().folded = true;
     let total_visible_before_fold = doc.mindmap.nodes.len();
     let _ = select_all_in(&mut doc);
     let selected = doc.selection.selected_ids();
@@ -99,17 +92,8 @@ fn deselect_all_in_returns_false_when_already_none() {
 #[test]
 fn invert_selection_in_skips_edge_selection() {
     let mut doc = load_test_doc();
-    let edge = doc
-        .mindmap
-        .edges
-        .first()
-        .expect("fixture has edges")
-        .clone();
-    let er = crate::application::document::EdgeRef::new(
-        &edge.from_id,
-        &edge.to_id,
-        &edge.edge_type,
-    );
+    let edge = doc.mindmap.edges.first().expect("fixture has edges").clone();
+    let er = crate::application::document::EdgeRef::new(&edge.from_id, &edge.to_id, &edge.edge_type);
     doc.selection = SelectionState::Edge(er.clone());
     // Edge selections are NOT invertable — the helper preserves
     // them (selecting "every visible node" via inversion would
@@ -148,10 +132,7 @@ fn select_parent_in_walks_up_one_level() {
         .expect("fixture has a non-root node")
         .id
         .clone();
-    let parent_id = doc.mindmap.nodes[&child_id]
-        .parent_id
-        .clone()
-        .unwrap();
+    let parent_id = doc.mindmap.nodes[&child_id].parent_id.clone().unwrap();
     doc.selection = SelectionState::Single(child_id);
     assert!(select_parent_in(&mut doc));
     assert!(matches!(
@@ -249,4 +230,3 @@ fn select_sibling_in_walks_visible_neighbour() {
     // Walking back returns to the previous sibling.
     assert!(select_sibling_in(&mut doc, false));
 }
-

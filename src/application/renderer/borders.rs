@@ -26,20 +26,11 @@ pub fn measure_max_glyph_advance(
     glyphs: &[&str],
     font_size: f32,
 ) -> f32 {
-    let mut buffer = cosmic_text::Buffer::new(
-        font_system,
-        cosmic_text::Metrics::new(font_size, font_size),
-    );
+    let mut buffer = cosmic_text::Buffer::new(font_system, cosmic_text::Metrics::new(font_size, font_size));
     let attrs = Attrs::new();
     let mut max_w: f32 = 0.0;
     for g in glyphs {
-        buffer.set_text(
-            font_system,
-            g,
-            &attrs,
-            cosmic_text::Shaping::Advanced,
-            None,
-        );
+        buffer.set_text(font_system, g, &attrs, cosmic_text::Shaping::Advanced, None);
         buffer.shape_until_scroll(font_system, false);
         for run in buffer.layout_runs() {
             for glyph in run.glyphs.iter() {
@@ -82,10 +73,7 @@ pub(super) fn create_border_buffer_lh(
     pos: (f32, f32),
     bounds: (f32, f32),
 ) -> MindMapTextBuffer {
-    let mut buf = cosmic_text::Buffer::new(
-        font_system,
-        cosmic_text::Metrics::new(font_size, line_height),
-    );
+    let mut buf = cosmic_text::Buffer::new(font_system, cosmic_text::Metrics::new(font_size, line_height));
     buf.set_size(font_system, Some(bounds.0), Some(bounds.1));
     buf.set_rich_text(
         font_system,
@@ -95,7 +83,12 @@ pub(super) fn create_border_buffer_lh(
         None,
     );
     buf.shape_until_scroll(font_system, false);
-    MindMapTextBuffer { buffer: buf, pos, bounds, zoom_visibility: ZoomVisibility::unbounded() }
+    MindMapTextBuffer {
+        buffer: buf,
+        pos,
+        bounds,
+        zoom_visibility: ZoomVisibility::unbounded(),
+    }
 }
 
 /// Multi-span variant of [`create_border_buffer`] — hands cosmic-text
@@ -110,13 +103,9 @@ pub(super) fn create_border_buffer_spans(
     pos: (f32, f32),
     bounds: (f32, f32),
 ) -> MindMapTextBuffer {
-    let mut buf = cosmic_text::Buffer::new(
-        font_system,
-        cosmic_text::Metrics::new(font_size, font_size),
-    );
+    let mut buf = cosmic_text::Buffer::new(font_system, cosmic_text::Metrics::new(font_size, font_size));
     buf.set_size(font_system, Some(bounds.0), Some(bounds.1));
-    let span_refs: Vec<(&str, Attrs)> =
-        spans.iter().map(|(t, a)| (*t, a.clone())).collect();
+    let span_refs: Vec<(&str, Attrs)> = spans.iter().map(|(t, a)| (*t, a.clone())).collect();
     buf.set_rich_text(
         font_system,
         span_refs,
@@ -125,7 +114,12 @@ pub(super) fn create_border_buffer_spans(
         None,
     );
     buf.shape_until_scroll(font_system, false);
-    MindMapTextBuffer { buffer: buf, pos, bounds, zoom_visibility: ZoomVisibility::unbounded() }
+    MindMapTextBuffer {
+        buffer: buf,
+        pos,
+        bounds,
+        zoom_visibility: ZoomVisibility::unbounded(),
+    }
 }
 
 /// Like `create_border_buffer` but center-aligns the text within its
@@ -144,10 +138,7 @@ pub(super) fn create_centered_cell_buffer(
     pos: (f32, f32),
     bounds: (f32, f32),
 ) -> MindMapTextBuffer {
-    let mut buf = cosmic_text::Buffer::new(
-        font_system,
-        cosmic_text::Metrics::new(font_size, font_size),
-    );
+    let mut buf = cosmic_text::Buffer::new(font_system, cosmic_text::Metrics::new(font_size, font_size));
     buf.set_size(font_system, Some(bounds.0), Some(bounds.1));
     buf.set_rich_text(
         font_system,
@@ -157,6 +148,10 @@ pub(super) fn create_centered_cell_buffer(
         Some(cosmic_text::Align::Center),
     );
     buf.shape_until_scroll(font_system, false);
-    MindMapTextBuffer { buffer: buf, pos, bounds, zoom_visibility: ZoomVisibility::unbounded() }
+    MindMapTextBuffer {
+        buffer: buf,
+        pos,
+        bounds,
+        zoom_visibility: ZoomVisibility::unbounded(),
+    }
 }
-

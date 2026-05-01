@@ -8,9 +8,9 @@
 //! `"DoubleClick"` or `"Shift+MiddleClick"` parses into the same
 //! [`KeyBind`] struct as a keyboard binding, with the gesture's
 //! canonical lowercase name in the `key` field. Mouse handlers
-//! synthesize the same name via [`gesture_key_name`] before calling
-//! `ResolvedKeybinds::action_for_context`, so the lookup table is
-//! universal across input devices.
+//! synthesize the same name via [`MouseGesture::key_name`] before
+//! calling `ResolvedKeybinds::action_for_context`, so the lookup
+//! table is universal across input devices.
 
 use winit::keyboard::Key;
 
@@ -34,18 +34,14 @@ pub struct KeyBind {
 /// it via `<&'static str>::from(self)`, surfaced as
 /// [`MouseGesture::key_name`]. The PascalCase emit form (the
 /// shape the user types in `keybinds.json`) is the variant name
-/// itself; [`pascal_form`] returns it via the same `EnumIter`
-/// walk both directions share.
+/// itself; [`MouseGesture::pascal_form`] returns it via the same
+/// `EnumIter` walk both directions share.
 ///
 /// `LeftClick` and `RightClick` were previously reserved-but-not-
 /// dispatched; per CODE_CONVENTIONS §5 (no half-features) they were
 /// removed. A future commit that adds a real dispatch site can
 /// reintroduce the variant in the same patch as its body.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash,
-    strum_macros::EnumIter,
-    strum_macros::IntoStaticStr,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum_macros::EnumIter, strum_macros::IntoStaticStr)]
 pub enum MouseGesture {
     /// Left-button held down + cursor movement past the drag threshold,
     /// only when the press landed on empty canvas. Continuous: the bound
@@ -128,10 +124,7 @@ impl KeyBind {
                 "alt" | "option" => alt = true,
                 _ => {
                     if key.is_some() {
-                        return Err(format!(
-                            "keybind '{}' has multiple non-modifier keys",
-                            input
-                        ));
+                        return Err(format!("keybind '{}' has multiple non-modifier keys", input));
                     }
                     key = Some(part);
                 }
@@ -139,7 +132,12 @@ impl KeyBind {
         }
 
         match key {
-            Some(key) => Ok(KeyBind { key, ctrl, shift, alt }),
+            Some(key) => Ok(KeyBind {
+                key,
+                ctrl,
+                shift,
+                alt,
+            }),
             None => Err(format!("keybind '{}' has no key", input)),
         }
     }

@@ -9,12 +9,10 @@ use baumhard::gfx_structs::area::OutlineStyle;
 use super::super::areas::{PickerAreas, PickerSection};
 use super::super::make_area::{make_area, PickerAreaStyle};
 use crate::application::color_picker::{
-    hue_ring_glyphs, hue_slot_to_degrees, picker_channel, ColorPickerLayout,
-    ColorPickerOverlayGeometry, PickerHit,
+    hue_ring_glyphs, hue_slot_to_degrees, picker_channel, ColorPickerLayout, ColorPickerOverlayGeometry,
+    PickerHit,
 };
-use crate::application::color_picker_overlay::color::{
-    highlight_hovered_cell_color, rgb_to_cosmic_color,
-};
+use crate::application::color_picker_overlay::color::{highlight_hovered_cell_color, rgb_to_cosmic_color};
 use crate::application::widgets::color_picker_widget::ColorPickerWidgetSpec;
 use baumhard::util::color::hsv_to_rgb;
 

@@ -160,9 +160,7 @@ pub fn color_override_present(ctx: &ConsoleContext) -> bool {
 }
 
 pub fn edge_has_label(ctx: &ConsoleContext) -> bool {
-    with_selected_edge(ctx, |e| {
-        e.label.as_deref().map_or(false, |s| !s.is_empty())
-    })
+    with_selected_edge(ctx, |e| e.label.as_deref().map_or(false, |s| !s.is_empty()))
 }
 
 pub fn edge_has_style_override(ctx: &ConsoleContext) -> bool {
@@ -184,12 +182,12 @@ pub fn edge_conversion_would_duplicate(ctx: &ConsoleContext, new_type: &str) -> 
     };
     let from_id = ctx.document.mindmap.edges[current_idx].from_id.clone();
     let to_id = ctx.document.mindmap.edges[current_idx].to_id.clone();
-    ctx.document.mindmap.edges.iter().enumerate().any(|(i, e)| {
-        i != current_idx
-            && e.from_id == from_id
-            && e.to_id == to_id
-            && e.edge_type == new_type
-    })
+    ctx.document
+        .mindmap
+        .edges
+        .iter()
+        .enumerate()
+        .any(|(i, e)| i != current_idx && e.from_id == from_id && e.to_id == to_id && e.edge_type == new_type)
 }
 
 // ============================================================

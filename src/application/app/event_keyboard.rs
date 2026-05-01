@@ -14,8 +14,7 @@ use super::color_picker_flow::handle_color_picker_key;
 use super::console_input::handle_console_key;
 use super::input_context::InputHandlerContext;
 use super::label_edit::{
-    handle_label_edit_key, handle_portal_text_edit_key, open_label_edit,
-    open_portal_text_edit,
+    handle_label_edit_key, handle_portal_text_edit_key, open_label_edit, open_portal_text_edit,
 };
 use super::text_edit::handle_text_edit_key;
 use crate::application::document::SelectionState;
@@ -214,10 +213,7 @@ pub(super) fn handle_keyboard_input(
     // typing on a freshly-selected node. The action-first check
     // means rebinding `'a'` to a Document action keeps that
     // binding alive even when an edge label is selected.
-    if action.is_none()
-        && !ctx.modifiers.control_key()
-        && !ctx.modifiers.alt_key()
-    {
+    if action.is_none() && !ctx.modifiers.control_key() && !ctx.modifiers.alt_key() {
         if let Key::Character(ref c) = logical_key {
             // Reject empty payloads and pure-control payloads up
             // front so single-char shortcuts that the keybind table
@@ -236,8 +232,7 @@ pub(super) fn handle_keyboard_input(
                             );
                             ctx.label_edit_state.is_open()
                         }
-                        SelectionState::PortalLabel(s)
-                        | SelectionState::PortalText(s) => {
+                        SelectionState::PortalLabel(s) | SelectionState::PortalText(s) => {
                             let er = s.edge_ref();
                             open_portal_text_edit(
                                 &er,
@@ -316,7 +311,8 @@ pub(super) fn handle_keyboard_input(
         // mutations. Resolution order is documented in CONCEPTS.md §5
         // "Action dispatch": Action -> Macro -> CustomMutation.
         if let Some(k) = key_name.as_deref() {
-            let macro_id = ctx.keybinds
+            let macro_id = ctx
+                .keybinds
                 .macro_for(
                     k,
                     ctx.modifiers.control_key(),

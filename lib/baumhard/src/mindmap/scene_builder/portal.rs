@@ -32,9 +32,7 @@ use crate::mindmap::model::{
     is_portal_edge, portal_endpoint_state, Canvas, GlyphConnectionConfig, MindEdge, MindMap,
     PortalEndpointState, PORTAL_GLYPH_PRESETS,
 };
-use crate::mindmap::portal_geometry::{
-    border_outward_normal, border_point_at, default_border_t,
-};
+use crate::mindmap::portal_geometry::{border_outward_normal, border_point_at, default_border_t};
 use crate::mindmap::scene_cache::EdgeKey;
 use crate::mindmap::SELECTION_HIGHLIGHT_HEX;
 use crate::util::color::resolve_var;
@@ -145,8 +143,7 @@ pub fn resolve_portal_endpoint_style(
     // inlined so we can substitute the portal default when there's
     // no per-edge glyph_connection config.
     let z = camera_zoom.max(f32::EPSILON);
-    let target_screen =
-        (base_font_size * z).clamp(cfg.min_font_size_pt, cfg.max_font_size_pt);
+    let target_screen = (base_font_size * z).clamp(cfg.min_font_size_pt, cfg.max_font_size_pt);
     let font_size_pt = target_screen / z;
 
     // Glyph fallback. The line-body default (middle dot) renders
@@ -284,9 +281,7 @@ pub(crate) fn layout_portal_label(
     // user can pull the label further away from the border (positive)
     // or back toward it (negative). `None` falls through to a flush
     // outset, matching the pre-field behaviour.
-    let perp = endpoint_state
-        .and_then(|s| s.perpendicular_offset)
-        .unwrap_or(0.0);
+    let perp = endpoint_state.and_then(|s| s.perpendicular_offset).unwrap_or(0.0);
     // Translate from anchor to AABB top-left: shift by half-extent
     // toward the label origin, then outward along the normal so the
     // label sits just outside the border.
@@ -383,10 +378,7 @@ pub(crate) fn layout_portal_text(
     let text_support = text_half.x * abs_normal.x + text_half.y * abs_normal.y;
     let outward_offset = icon_support + padding + text_support;
     let text_center = icon_center + normal * outward_offset;
-    let top_left = Vec2::new(
-        text_center.x - bounds.x * 0.5,
-        text_center.y - bounds.y * 0.5,
-    );
+    let top_left = Vec2::new(text_center.x - bounds.x * 0.5, text_center.y - bounds.y * 0.5);
     PortalTextLayout { top_left, bounds }
 }
 

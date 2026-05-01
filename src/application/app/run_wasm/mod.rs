@@ -38,16 +38,14 @@ use std::sync::Arc;
 use baumhard::mindmap::tree_builder::MindMapTree;
 use wgpu::Instance;
 use winit::application::ApplicationHandler;
-use winit::event::{
-    ElementState, KeyEvent, MouseButton, WindowEvent,
-};
+use winit::event::{ElementState, KeyEvent, MouseButton, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::platform::web::EventLoopExtWebSys;
 use winit::window::WindowId;
 
 use super::scene_rebuild::{
-    flush_canvas_scene_buffers, update_border_tree_static,
-    update_connection_label_tree, update_connection_tree, update_portal_tree,
+    flush_canvas_scene_buffers, update_border_tree_static, update_connection_label_tree,
+    update_connection_tree, update_portal_tree,
 };
 use super::text_edit::TextEditState;
 use super::{Application, LastClick};
@@ -194,12 +192,7 @@ impl<'a> super::dispatch::macro_core::MacroDispatchTarget for WasmMacroDispatchT
     }
 
     fn apply_custom_mutation(&mut self, id: &str, node_id: &str) -> bool {
-        let cm = self
-            .input
-            .document
-            .mutation_registry
-            .get(id)
-            .cloned();
+        let cm = self.input.document.mutation_registry.get(id).cloned();
         let Some(cm) = cm else {
             log::warn!("macro step: unknown custom-mutation id '{}'", id);
             return false;
@@ -259,9 +252,7 @@ impl<'a> super::dispatch::macro_core::MacroDispatchTarget for WasmMacroDispatchT
     }
 
     fn current_selection_node_id(&self) -> Option<String> {
-        if let crate::application::document::SelectionState::Single(nid) =
-            &self.input.document.selection
-        {
+        if let crate::application::document::SelectionState::Single(nid) = &self.input.document.selection {
             Some(nid.clone())
         } else {
             None
@@ -338,12 +329,7 @@ impl ApplicationHandler for WasmApp {
         // `is_some()` check, which protects window re-creation).
     }
 
-    fn window_event(
-        &mut self,
-        _event_loop: &ActiveEventLoop,
-        _window_id: WindowId,
-        event: WindowEvent,
-    ) {
+    fn window_event(&mut self, _event_loop: &ActiveEventLoop, _window_id: WindowId, event: WindowEvent) {
         self.handle_window_event(event);
     }
 }
@@ -364,16 +350,15 @@ impl WasmApp {
             }
             WindowEvent::ModifiersChanged(m) => self.handle_modifiers_changed(m),
             WindowEvent::KeyboardInput {
-                event: KeyEvent {
-                    state: ElementState::Pressed,
-                    logical_key,
-                    ..
-                },
+                event:
+                    KeyEvent {
+                        state: ElementState::Pressed,
+                        logical_key,
+                        ..
+                    },
                 ..
             } => self.handle_keyboard_input(logical_key),
-            WindowEvent::CursorMoved { position, .. } => {
-                self.handle_cursor_moved(position)
-            }
+            WindowEvent::CursorMoved { position, .. } => self.handle_cursor_moved(position),
             WindowEvent::MouseInput {
                 state,
                 button: MouseButton::Left,
@@ -410,312 +395,294 @@ impl WasmApp {
 
 /// Run the browser event loop against `app`.
 pub(super) fn run(mut app: Application) {
-use wasm_bindgen::JsCast;
-use winit::platform::web::WindowExtWebSys;
-use baumhard::mindmap::tree_builder::MindMapTree;
+    use baumhard::mindmap::tree_builder::MindMapTree;
+    use wasm_bindgen::JsCast;
+    use winit::platform::web::WindowExtWebSys;
 
-baumhard::font::fonts::init();
+    baumhard::font::fonts::init();
 
-// Load keybindings from the WASM environment (URL query param or
-// localStorage) with a defaults fallback. Failure is non-fatal —
-// see KeybindConfig::load_for_web().
-app.options.keybind_config =
-    crate::application::keybinds::KeybindConfig::load_for_web();
+    // Load keybindings from the WASM environment (URL query param or
+    // localStorage) with a defaults fallback. Failure is non-fatal —
+    // see KeybindConfig::load_for_web().
+    app.options.keybind_config = crate::application::keybinds::KeybindConfig::load_for_web();
 
-// Attach canvas to DOM
-let canvas = app.window.canvas().expect("Failed to get canvas");
-let web_window = web_sys::window().expect("No global window");
-let document = web_window.document().expect("No document");
-let body = document.body().expect("No body");
-body.append_child(&canvas).expect("Failed to append canvas");
-canvas.set_width(
-    web_window
-        .inner_width()
-        .expect("web_window.inner_width before first frame")
-        .as_f64()
-        .expect("inner_width JsValue is f64") as u32,
-);
-canvas.set_height(
-    web_window
-        .inner_height()
-        .expect("web_window.inner_height before first frame")
-        .as_f64()
-        .expect("inner_height JsValue is f64") as u32,
-);
-let cw = canvas.width();
-let ch = canvas.height();
-log::info!("WASM: canvas sized {}x{}", cw, ch);
-if cw == 0 || ch == 0 {
-    log::warn!(
-        "WASM: canvas has zero dimension — render surface will be empty"
-    );
-}
-
-// Canvas must be focusable for keyboard events to reach winit.
-// Without tabindex, an HTMLCanvasElement never receives focus.
-canvas.set_attribute("tabindex", "0").ok();
-let _ = canvas.focus();
-
-// Re-focus on mousedown so clicking the canvas after tabbing
-// to another element restores keyboard input.
-{
-    let canvas_for_focus = canvas.clone();
-    let focus_cb = wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::Event)>::new(
-        move |_: web_sys::Event| {
-            let _ = canvas_for_focus.focus();
-        },
-    );
-    canvas
-        .add_event_listener_with_callback("mousedown", focus_cb.as_ref().unchecked_ref())
-        .ok();
-    focus_cb.forget(); // leak — lives for the page lifetime
-}
-
-// preventDefault on keydown while the text editor is open so
-// Tab/Enter/Backspace/arrows don't fire browser defaults
-// (tab-navigation, history-back, page-scroll).
-let suppress_keys: Rc<Cell<bool>> = Rc::new(Cell::new(false));
-{
-    let suppress = suppress_keys.clone();
-    let pd_cb = wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::Event)>::new(
-        move |evt: web_sys::Event| {
-            if suppress.get() {
-                evt.prevent_default();
-            }
-        },
-    );
-    canvas
-        .add_event_listener_with_callback("keydown", pd_cb.as_ref().unchecked_ref())
-        .ok();
-    pd_cb.forget();
-}
-
-let renderer_window = Arc::clone(&app.window);
-
-// On WASM, check for ?map= query parameter to override the default path
-let mindmap_path = {
+    // Attach canvas to DOM
+    let canvas = app.window.canvas().expect("Failed to get canvas");
     let web_window = web_sys::window().expect("No global window");
-    let search = web_window.location().search().unwrap_or_default();
-    let mut map_path: Option<String> = None;
-    let trimmed = search.trim_start_matches('?');
-    for pair in trimmed.split('&') {
-        if let Some(val) = pair.strip_prefix("map=") {
-            map_path = Some(val.to_string());
-        }
-    }
-    map_path.unwrap_or_else(|| app.options.mindmap_path.clone())
-};
-
-// Shared state between the rAF render loop and the winit event
-// loop. Two RefCells so input handlers can borrow InputState
-// and Renderer simultaneously without conflict.
-// `WasmInputState` and `PendingClick` are now declared at module
-// scope (above `fn run`) so cross-platform helpers can take them
-// by `&mut`. Construction of the actual instance happens later in
-// `spawn_local`.
-
-let renderer_rc: Rc<RefCell<Option<Renderer>>> = Rc::new(RefCell::new(None));
-let input_rc: Rc<RefCell<Option<WasmInputState>>> = Rc::new(RefCell::new(None));
-
-// Clone Rcs for the spawn_local init future
-let renderer_for_init = renderer_rc.clone();
-let input_for_init = input_rc.clone();
-
-// Renderer init is async on the browser (adapter + surface setup
-// are Promise-backed). Spawn as a future so the event loop doesn't
-// block waiting for wgpu.
-wasm_bindgen_futures::spawn_local(async move {
-    let instance = Instance::default();
-    let surface = instance
-        .create_surface(wgpu::SurfaceTarget::Canvas(canvas.clone()))
-        .expect("Failed to create surface");
-    let mut renderer = Renderer::new(
-        instance,
-        surface,
-        renderer_window,
-    )
-    .await;
-    log::info!("WASM: adapter + surface + renderer ready");
-
-    let size = canvas.width();
-    let height = canvas.height();
-    renderer.process_decree(RenderDecree::SetSurfaceSize(size, height));
-    log::info!("WASM: surface configured {}x{}", size, height);
-
-    // std::fs is unavailable in the browser; fetch over the page origin instead.
-    let mut doc_opt: Option<MindMapDocument> = None;
-    let mut tree_opt: Option<MindMapTree> = None;
-    // Local AppScene used only for the initial border tree
-    // build; it's then dropped, and `WasmInputState`'s own
-    // `app_scene` takes over for the live event loop.
-    let mut init_app_scene =
-        crate::application::scene_host::AppScene::new();
-    match fetch_map_json(&mindmap_path).await {
-        Ok(json) => match MindMapDocument::from_json_str(&json, Some(mindmap_path.clone())) {
-            Ok(mut doc) => {
-                // Canvas background: resolve through theme variables
-                // so `"var(--bg)"` works, then hand off to the
-                // renderer as the render-pass clear color. Mirrors
-                // run_native.rs so the WASM canvas paints against
-                // the doc's configured background instead of the
-                // default pitch black.
-                let vars = &doc.mindmap.canvas.theme_variables;
-                let resolved_bg = baumhard::util::color::resolve_var(
-                    &doc.mindmap.canvas.background_color,
-                    vars,
-                );
-                renderer.set_clear_color_from_hex(resolved_bg);
-
-                // Four-source mutation registry, matching the native
-                // path: app bundle (shipped in the binary) < user
-                // source (?mutations= query param + localStorage) <
-                // map (custom_mutations in the .mindmap.json) <
-                // inline (on individual nodes). Plus the Rust-backed
-                // handlers for layouts too structural for pure data.
-                let (app_mutations, user_mutations) =
-                    crate::application::document::mutations_loader::load_app_and_user();
-                doc.build_mutation_registry_with_app_and_user(
-                    &app_mutations,
-                    &user_mutations,
-                );
-                crate::application::document::mutations::register_builtin_handlers(
-                    &mut doc,
-                );
-
-                let mindmap_tree = doc.build_tree();
-                renderer.rebuild_buffers_from_tree(&mindmap_tree.tree);
-                renderer.fit_camera_to_tree(&mindmap_tree.tree);
-
-                let scene = doc.build_scene(renderer.camera_zoom());
-                update_connection_tree(&scene, &mut init_app_scene);
-                update_border_tree_static(&doc, &mut init_app_scene);
-                update_portal_tree(
-                    &doc,
-                    &std::collections::HashMap::new(),
-                    &mut init_app_scene,
-                    &mut renderer,
-                );
-                update_connection_label_tree(&scene, &mut init_app_scene, &mut renderer);
-                flush_canvas_scene_buffers(&mut init_app_scene, &mut renderer);
-                tree_opt = Some(mindmap_tree);
-                doc_opt = Some(doc);
-            }
-            Err(e) => log::error!(
-                "WASM: failed to construct document from '{}': {}",
-                mindmap_path, e
-            ),
-        },
-        Err(e) => log::error!("WASM: failed to fetch '{}': {}", mindmap_path, e),
-    }
-
-    renderer.process_decree(RenderDecree::StartRender);
-    log::info!("WASM: StartRender dispatched, rAF loop starting");
-
-    // Populate the shared state now that init is complete.
-    *renderer_for_init.borrow_mut() = Some(renderer);
-
-    if let Some(doc) = doc_opt {
-        // Build the macro registry — App + User tiers from the
-        // bundled JSON / `?macros=` / localStorage; Map + Inline
-        // tiers from the just-loaded document. Mirrors
-        // `run_native_init.rs:117-142` precedence and logging
-        // shape so cross-target log triage stays uniform.
-        let mut macros = crate::application::macros::MacroRegistry::new();
-        let mut app_count = 0usize;
-        for m in crate::application::macros::loader::load_app_macros() {
-            macros.insert(m, crate::application::macros::MacroSource::App);
-            app_count += 1;
-        }
-        let mut user_count = 0usize;
-        for m in crate::application::macros::loader::load_user_macros() {
-            macros.insert(m, crate::application::macros::MacroSource::User);
-            user_count += 1;
-        }
-        if app_count > 0 || user_count > 0 {
-            log::info!(
-                "loaded {} macro(s): {} app-tier, {} user-tier",
-                macros.len(),
-                app_count,
-                user_count,
-            );
-        }
-        // Document-derived tiers — Map first, then Inline. The
-        // shared `rebuild_document_macros` helper enforces the
-        // ordering so it can't drift between the native and WASM
-        // load sites.
-        crate::application::macros::loader::rebuild_document_macros(&mut macros, &doc);
-
-        *input_for_init.borrow_mut() = Some(WasmInputState {
-            document: doc,
-            mindmap_tree: tree_opt,
-            text_edit_state: TextEditState::Closed,
-            last_click: None,
-            cursor_pos: (0.0, 0.0),
-            pending_click: PendingClick::None,
-            modifiers: winit::keyboard::ModifiersState::empty(),
-            app_scene: crate::application::scene_host::AppScene::new(),
-            scene_cache: baumhard::mindmap::scene_cache::SceneConnectionCache::new(),
-            macros,
-        });
-    }
-
-    // WASM render loop via requestAnimationFrame
-    use wasm_bindgen::closure::Closure;
-    let renderer_for_raf = renderer_for_init.clone();
-    let f: Rc<RefCell<Option<Closure<dyn FnMut()>>>> =
-        Rc::new(RefCell::new(None));
-    let g = f.clone();
-
-    *g.borrow_mut() = Some(Closure::new(move || {
-        if let Some(r) = renderer_for_raf.borrow_mut().as_mut() {
-            r.process();
-        }
-        // Reschedule against the same closure we were called from.
-        // `f` is set to `Some(closure)` immediately below this
-        // `Closure::new(...)` expression and never cleared — the
-        // setup completes before any rAF fires, so inside this
-        // body the Option is always `Some`. The `None` arm is
-        // therefore unreachable in practice; rather than panic
-        // (§9), we log and let the loop halt — the browser is
-        // about to tear down the tab if this ever fires, and a
-        // dropped loop is the correct outcome in that case
-        // because the closure (`f`'s inner value) is the very
-        // thing that would have been rescheduled.
-        let closure_ref = f.borrow();
-        let Some(closure) = closure_ref.as_ref() else {
-            log::error!("RAF closure unexpectedly cleared — tab teardown in progress");
-            return;
-        };
-        request_animation_frame(closure);
-    }));
-    request_animation_frame(
-        g.borrow()
-            .as_ref()
-            .expect("render closure installed immediately above"),
+    let document = web_window.document().expect("No document");
+    let body = document.body().expect("No body");
+    body.append_child(&canvas).expect("Failed to append canvas");
+    canvas.set_width(
+        web_window
+            .inner_width()
+            .expect("web_window.inner_width before first frame")
+            .as_f64()
+            .expect("inner_width JsValue is f64") as u32,
     );
-});
+    canvas.set_height(
+        web_window
+            .inner_height()
+            .expect("web_window.inner_height before first frame")
+            .as_f64()
+            .expect("inner_height JsValue is f64") as u32,
+    );
+    let cw = canvas.width();
+    let ch = canvas.height();
+    log::info!("WASM: canvas sized {}x{}", cw, ch);
+    if cw == 0 || ch == 0 {
+        log::warn!("WASM: canvas has zero dimension — render surface will be empty");
+    }
 
-// Resolve the keybind config once. `action_for(key, ctrl, shift, alt)`
-// answers the dispatch question for every keydown.
-let keybinds: ResolvedKeybinds = app.options.keybind_config.resolve();
+    // Canvas must be focusable for keyboard events to reach winit.
+    // Without tabindex, an HTMLCanvasElement never receives focus.
+    canvas.set_attribute("tabindex", "0").ok();
+    let _ = canvas.focus();
 
-// Hand control to winit. The handler owns the renderer / input
-// cells (shared with the rAF render loop), the editor-suppress
-// flag (shared with the canvas keydown listener), and the
-// resolved keybind table. `spawn_app` returns immediately on
-// the web target — the browser's main thread keeps running and
-// dispatches events through the handler until the tab tears down.
-// The renderer (constructed inside `spawn_local`) already holds
-// an `Arc<Window>` clone made before this handler is built, so
-// the window outlives the loop without the handler needing its
-// own clone.
-let handler = WasmApp {
-    renderer: renderer_rc,
-    input: input_rc,
-    suppress_keys,
-    keybinds,
-};
-app.event_loop.spawn_app(handler);
+    // Re-focus on mousedown so clicking the canvas after tabbing
+    // to another element restores keyboard input.
+    {
+        let canvas_for_focus = canvas.clone();
+        let focus_cb =
+            wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::Event)>::new(move |_: web_sys::Event| {
+                let _ = canvas_for_focus.focus();
+            });
+        canvas
+            .add_event_listener_with_callback("mousedown", focus_cb.as_ref().unchecked_ref())
+            .ok();
+        focus_cb.forget(); // leak — lives for the page lifetime
+    }
+
+    // preventDefault on keydown while the text editor is open so
+    // Tab/Enter/Backspace/arrows don't fire browser defaults
+    // (tab-navigation, history-back, page-scroll).
+    let suppress_keys: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+    {
+        let suppress = suppress_keys.clone();
+        let pd_cb =
+            wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::Event)>::new(move |evt: web_sys::Event| {
+                if suppress.get() {
+                    evt.prevent_default();
+                }
+            });
+        canvas
+            .add_event_listener_with_callback("keydown", pd_cb.as_ref().unchecked_ref())
+            .ok();
+        pd_cb.forget();
+    }
+
+    let renderer_window = Arc::clone(&app.window);
+
+    // On WASM, check for ?map= query parameter to override the default path
+    let mindmap_path = {
+        let web_window = web_sys::window().expect("No global window");
+        let search = web_window.location().search().unwrap_or_default();
+        let mut map_path: Option<String> = None;
+        let trimmed = search.trim_start_matches('?');
+        for pair in trimmed.split('&') {
+            if let Some(val) = pair.strip_prefix("map=") {
+                map_path = Some(val.to_string());
+            }
+        }
+        map_path.unwrap_or_else(|| app.options.mindmap_path.clone())
+    };
+
+    // Shared state between the rAF render loop and the winit event
+    // loop. Two RefCells so input handlers can borrow InputState
+    // and Renderer simultaneously without conflict.
+    // `WasmInputState` and `PendingClick` are now declared at module
+    // scope (above `fn run`) so cross-platform helpers can take them
+    // by `&mut`. Construction of the actual instance happens later in
+    // `spawn_local`.
+
+    let renderer_rc: Rc<RefCell<Option<Renderer>>> = Rc::new(RefCell::new(None));
+    let input_rc: Rc<RefCell<Option<WasmInputState>>> = Rc::new(RefCell::new(None));
+
+    // Clone Rcs for the spawn_local init future
+    let renderer_for_init = renderer_rc.clone();
+    let input_for_init = input_rc.clone();
+
+    // Renderer init is async on the browser (adapter + surface setup
+    // are Promise-backed). Spawn as a future so the event loop doesn't
+    // block waiting for wgpu.
+    wasm_bindgen_futures::spawn_local(async move {
+        let instance = Instance::default();
+        let surface = instance
+            .create_surface(wgpu::SurfaceTarget::Canvas(canvas.clone()))
+            .expect("Failed to create surface");
+        let mut renderer = Renderer::new(instance, surface, renderer_window).await;
+        log::info!("WASM: adapter + surface + renderer ready");
+
+        let size = canvas.width();
+        let height = canvas.height();
+        renderer.process_decree(RenderDecree::SetSurfaceSize(size, height));
+        log::info!("WASM: surface configured {}x{}", size, height);
+
+        // std::fs is unavailable in the browser; fetch over the page origin instead.
+        let mut doc_opt: Option<MindMapDocument> = None;
+        let mut tree_opt: Option<MindMapTree> = None;
+        // Local AppScene used only for the initial border tree
+        // build; it's then dropped, and `WasmInputState`'s own
+        // `app_scene` takes over for the live event loop.
+        let mut init_app_scene = crate::application::scene_host::AppScene::new();
+        match fetch_map_json(&mindmap_path).await {
+            Ok(json) => match MindMapDocument::from_json_str(&json, Some(mindmap_path.clone())) {
+                Ok(mut doc) => {
+                    // Canvas background: resolve through theme variables
+                    // so `"var(--bg)"` works, then hand off to the
+                    // renderer as the render-pass clear color. Mirrors
+                    // run_native.rs so the WASM canvas paints against
+                    // the doc's configured background instead of the
+                    // default pitch black.
+                    let vars = &doc.mindmap.canvas.theme_variables;
+                    let resolved_bg =
+                        baumhard::util::color::resolve_var(&doc.mindmap.canvas.background_color, vars);
+                    renderer.set_clear_color_from_hex(resolved_bg);
+
+                    // Four-source mutation registry, matching the native
+                    // path: app bundle (shipped in the binary) < user
+                    // source (?mutations= query param + localStorage) <
+                    // map (custom_mutations in the .mindmap.json) <
+                    // inline (on individual nodes). Plus the Rust-backed
+                    // handlers for layouts too structural for pure data.
+                    let (app_mutations, user_mutations) =
+                        crate::application::document::mutations_loader::load_app_and_user();
+                    doc.build_mutation_registry_with_app_and_user(&app_mutations, &user_mutations);
+                    crate::application::document::mutations::register_builtin_handlers(&mut doc);
+
+                    let mindmap_tree = doc.build_tree();
+                    renderer.rebuild_buffers_from_tree(&mindmap_tree.tree);
+                    renderer.fit_camera_to_tree(&mindmap_tree.tree);
+
+                    let scene = doc.build_scene(renderer.camera_zoom());
+                    update_connection_tree(&scene, &mut init_app_scene);
+                    update_border_tree_static(&doc, &mut init_app_scene);
+                    update_portal_tree(
+                        &doc,
+                        &std::collections::HashMap::new(),
+                        &mut init_app_scene,
+                        &mut renderer,
+                    );
+                    update_connection_label_tree(&scene, &mut init_app_scene, &mut renderer);
+                    flush_canvas_scene_buffers(&mut init_app_scene, &mut renderer);
+                    tree_opt = Some(mindmap_tree);
+                    doc_opt = Some(doc);
+                }
+                Err(e) => log::error!(
+                    "WASM: failed to construct document from '{}': {}",
+                    mindmap_path,
+                    e
+                ),
+            },
+            Err(e) => log::error!("WASM: failed to fetch '{}': {}", mindmap_path, e),
+        }
+
+        renderer.process_decree(RenderDecree::StartRender);
+        log::info!("WASM: StartRender dispatched, rAF loop starting");
+
+        // Populate the shared state now that init is complete.
+        *renderer_for_init.borrow_mut() = Some(renderer);
+
+        if let Some(doc) = doc_opt {
+            // Build the macro registry — App + User tiers from the
+            // bundled JSON / `?macros=` / localStorage; Map + Inline
+            // tiers from the just-loaded document. Mirrors
+            // `run_native_init.rs:117-142` precedence and logging
+            // shape so cross-target log triage stays uniform.
+            let mut macros = crate::application::macros::MacroRegistry::new();
+            let mut app_count = 0usize;
+            for m in crate::application::macros::loader::load_app_macros() {
+                macros.insert(m, crate::application::macros::MacroSource::App);
+                app_count += 1;
+            }
+            let mut user_count = 0usize;
+            for m in crate::application::macros::loader::load_user_macros() {
+                macros.insert(m, crate::application::macros::MacroSource::User);
+                user_count += 1;
+            }
+            if app_count > 0 || user_count > 0 {
+                log::info!(
+                    "loaded {} macro(s): {} app-tier, {} user-tier",
+                    macros.len(),
+                    app_count,
+                    user_count,
+                );
+            }
+            // Document-derived tiers — Map first, then Inline. The
+            // shared `rebuild_document_macros` helper enforces the
+            // ordering so it can't drift between the native and WASM
+            // load sites.
+            crate::application::macros::loader::rebuild_document_macros(&mut macros, &doc);
+
+            *input_for_init.borrow_mut() = Some(WasmInputState {
+                document: doc,
+                mindmap_tree: tree_opt,
+                text_edit_state: TextEditState::Closed,
+                last_click: None,
+                cursor_pos: (0.0, 0.0),
+                pending_click: PendingClick::None,
+                modifiers: winit::keyboard::ModifiersState::empty(),
+                app_scene: crate::application::scene_host::AppScene::new(),
+                scene_cache: baumhard::mindmap::scene_cache::SceneConnectionCache::new(),
+                macros,
+            });
+        }
+
+        // WASM render loop via requestAnimationFrame
+        use wasm_bindgen::closure::Closure;
+        let renderer_for_raf = renderer_for_init.clone();
+        let f: Rc<RefCell<Option<Closure<dyn FnMut()>>>> = Rc::new(RefCell::new(None));
+        let g = f.clone();
+
+        *g.borrow_mut() = Some(Closure::new(move || {
+            if let Some(r) = renderer_for_raf.borrow_mut().as_mut() {
+                r.process();
+            }
+            // Reschedule against the same closure we were called from.
+            // `f` is set to `Some(closure)` immediately below this
+            // `Closure::new(...)` expression and never cleared — the
+            // setup completes before any rAF fires, so inside this
+            // body the Option is always `Some`. The `None` arm is
+            // therefore unreachable in practice; rather than panic
+            // (§9), we log and let the loop halt — the browser is
+            // about to tear down the tab if this ever fires, and a
+            // dropped loop is the correct outcome in that case
+            // because the closure (`f`'s inner value) is the very
+            // thing that would have been rescheduled.
+            let closure_ref = f.borrow();
+            let Some(closure) = closure_ref.as_ref() else {
+                log::error!("RAF closure unexpectedly cleared — tab teardown in progress");
+                return;
+            };
+            request_animation_frame(closure);
+        }));
+        request_animation_frame(
+            g.borrow()
+                .as_ref()
+                .expect("render closure installed immediately above"),
+        );
+    });
+
+    // Resolve the keybind config once. `action_for(key, ctrl, shift, alt)`
+    // answers the dispatch question for every keydown.
+    let keybinds: ResolvedKeybinds = app.options.keybind_config.resolve();
+
+    // Hand control to winit. The handler owns the renderer / input
+    // cells (shared with the rAF render loop), the editor-suppress
+    // flag (shared with the canvas keydown listener), and the
+    // resolved keybind table. `spawn_app` returns immediately on
+    // the web target — the browser's main thread keeps running and
+    // dispatches events through the handler until the tab tears down.
+    // The renderer (constructed inside `spawn_local`) already holds
+    // an `Arc<Window>` clone made before this handler is built, so
+    // the window outlives the loop without the handler needing its
+    // own clone.
+    let handler = WasmApp {
+        renderer: renderer_rc,
+        input: input_rc,
+        suppress_keys,
+        keybinds,
+    };
+    app.event_loop.spawn_app(handler);
 }
 
 /// Schedule `f` on the next browser animation frame — the

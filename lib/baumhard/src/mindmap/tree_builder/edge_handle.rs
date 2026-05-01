@@ -20,9 +20,7 @@ use crate::util::color;
 /// in-place mutator path compares channels from this function on both
 /// sides of the rebuild so the same handle kind always lands on the
 /// same arena slot. O(1).
-pub fn edge_handle_channel_for(
-    kind: crate::mindmap::scene_builder::EdgeHandleKind,
-) -> usize {
+pub fn edge_handle_channel_for(kind: crate::mindmap::scene_builder::EdgeHandleKind) -> usize {
     use crate::mindmap::scene_builder::EdgeHandleKind;
     match kind {
         EdgeHandleKind::AnchorFrom => 1,
@@ -43,19 +41,14 @@ pub fn edge_handle_channel_for(
 pub fn edge_handle_identity_sequence(
     elements: &[crate::mindmap::scene_builder::EdgeHandleElement],
 ) -> Vec<usize> {
-    elements
-        .iter()
-        .map(|e| edge_handle_channel_for(e.kind))
-        .collect()
+    elements.iter().map(|e| edge_handle_channel_for(e.kind)).collect()
 }
 
 /// Lay out one edge-handle as the `(channel, GlyphArea)` pair both
 /// the initial-build path ([`build_edge_handle_tree`]) and the
 /// in-place mutator path ([`build_edge_handle_mutator_tree`]) emit.
 /// Single source of truth — the two paths cannot drift.
-fn edge_handle_layout(
-    elem: &crate::mindmap::scene_builder::EdgeHandleElement,
-) -> (usize, GlyphArea) {
+fn edge_handle_layout(elem: &crate::mindmap::scene_builder::EdgeHandleElement) -> (usize, GlyphArea) {
     let color_rgba = color::hex_to_rgba_safe(&elem.color, [0.0, 0.9, 1.0, 1.0]);
     // Handle glyphs are centered on the position with the same
     // half-glyph offset the legacy renderer used.
@@ -64,13 +57,7 @@ fn edge_handle_layout(
     let pos = Vec2::new(elem.position.0 - half_w, elem.position.1 - half_h);
     let bounds = Vec2::new(elem.font_size_pt, elem.font_size_pt);
 
-    let mut area = GlyphArea::new_with_str(
-        &elem.glyph,
-        elem.font_size_pt,
-        elem.font_size_pt,
-        pos,
-        bounds,
-    );
+    let mut area = GlyphArea::new_with_str(&elem.glyph, elem.font_size_pt, elem.font_size_pt, pos, bounds);
     let cluster_count = crate::util::grapheme_chad::count_grapheme_clusters(&elem.glyph);
     area.regions = ColorFontRegions::single_span(cluster_count, Some(color_rgba), None);
 
@@ -93,8 +80,7 @@ pub fn build_edge_handle_tree(
 
     for elem in elements {
         let (channel, area) = edge_handle_layout(elem);
-        let element_node =
-            GfxElement::new_area_non_indexed_with_id(area, channel, unique_id);
+        let element_node = GfxElement::new_area_non_indexed_with_id(area, channel, unique_id);
         unique_id += 1;
         let leaf = tree.arena.new_node(element_node);
         tree.root.append(leaf, &mut tree.arena);

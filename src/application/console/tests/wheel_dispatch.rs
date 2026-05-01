@@ -9,9 +9,7 @@
 //! `text_color` or an edge's default to a non-existent `bg_color`.
 
 use super::fixtures::{first_node_id, load_test_doc, select_first_edge, two_testament_node_ids};
-use crate::application::console::traits::{
-    view_for, AcceptsWheelColor, ColorValue, Outcome, TargetId,
-};
+use crate::application::console::traits::{view_for, AcceptsWheelColor, ColorValue, Outcome, TargetId};
 use crate::application::document::EdgeRef;
 
 /// A node under the wheel takes its color on the **background fill**.

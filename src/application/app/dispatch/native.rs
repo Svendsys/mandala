@@ -16,9 +16,7 @@ use crate::application::document::{EdgeRef, SelectionState, UndoAction};
 use crate::application::keybinds::Action;
 
 use super::super::click::rebuild_all_with_mode;
-use super::super::color_picker_flow::{
-    close_color_picker_standalone, open_color_picker_standalone,
-};
+use super::super::color_picker_flow::{close_color_picker_standalone, open_color_picker_standalone};
 use super::super::console_input::{
     rebuild_console_overlay, save_console_history, save_document_to_bound_path,
 };
@@ -396,8 +394,7 @@ pub(in crate::application::app) fn dispatch_action(
                         );
                     }
                 }
-                ClickHit::PortalMarker { edge, endpoint }
-                | ClickHit::PortalText { edge, endpoint } => {
+                ClickHit::PortalMarker { edge, endpoint } | ClickHit::PortalText { edge, endpoint } => {
                     // Pan to the partner endpoint of the portal-mode
                     // edge — the node "on the other side."
                     let other_id = if *endpoint == edge.from_id {
@@ -411,13 +408,11 @@ pub(in crate::application::app) fn dispatch_action(
                         }
                     }
                     if let Some(doc) = ctx.document.as_mut() {
-                        doc.selection = SelectionState::Edge(
-                            crate::application::document::EdgeRef::new(
-                                &edge.from_id,
-                                &edge.to_id,
-                                &edge.edge_type,
-                            ),
-                        );
+                        doc.selection = SelectionState::Edge(crate::application::document::EdgeRef::new(
+                            &edge.from_id,
+                            &edge.to_id,
+                            &edge.edge_type,
+                        ));
                         rebuild_all(
                             doc,
                             ctx.mindmap_tree,
@@ -446,13 +441,7 @@ pub(in crate::application::app) fn dispatch_action(
                             ctx.renderer,
                             ctx.scene_cache,
                         );
-                        open_label_edit(
-                            &er,
-                            doc,
-                            ctx.label_edit_state,
-                            ctx.app_scene,
-                            ctx.renderer,
-                        );
+                        open_label_edit(&er, doc, ctx.label_edit_state, ctx.app_scene, ctx.renderer);
                     }
                 }
                 ClickHit::Empty => {
@@ -461,12 +450,12 @@ pub(in crate::application::app) fn dispatch_action(
                     // bound it (any binding counts as opt-in). Ships
                     // unbound by default — empty-canvas double-click
                     // is a no-op out of the box per user request.
-                    let edge_selected = ctx.document.as_ref()
+                    let edge_selected = ctx
+                        .document
+                        .as_ref()
                         .map(|d| matches!(d.selection, SelectionState::Edge(_)))
                         .unwrap_or(false);
-                    if !edge_selected
-                        && ctx.keybinds.has_any_binding_for(Action::CreateOrphanNodeAndEdit)
-                    {
+                    if !edge_selected && ctx.keybinds.has_any_binding_for(Action::CreateOrphanNodeAndEdit) {
                         dispatch_create_orphan_and_edit(ctx, h);
                     }
                 }
@@ -639,10 +628,7 @@ pub(in crate::application::app) fn dispatch_action(
                 Action::SaveDocumentAs(_) => "save",
                 Action::NewDocumentAt(_) => "new",
                 _ => {
-                    log::error!(
-                        "fs-variant fan-out missed inner-match variant: {:?}",
-                        action,
-                    );
+                    log::error!("fs-variant fan-out missed inner-match variant: {:?}", action,);
                     return DispatchOutcome::Handled;
                 }
             };
@@ -662,10 +648,7 @@ pub(in crate::application::app) fn dispatch_action(
                     ctx.macros,
                 );
             } else {
-                log::warn!(
-                    "{}: no document loaded; skipping '{}'",
-                    verb, line
-                );
+                log::warn!("{}: no document loaded; skipping '{}'", verb, line);
             }
             DispatchOutcome::Handled
         }
@@ -738,12 +721,16 @@ pub(in crate::application::app) fn apply_label_edit_action(
         buffer,
         cursor_grapheme_pos,
         ..
-    } = state else { return false; };
+    } = state
+    else {
+        return false;
+    };
     apply_label_edit_action_to_buffer(action, buffer, cursor_grapheme_pos)
 }
 
-// `sibling_id` lifted to `dispatch/cross_dispatch.rs` so the WASM dispatcher
-// can reach the same fold-aware navigation logic.
+// `sibling_id` lifted to `dispatch/cross_dispatch/selection/mod.rs`
+// so the WASM dispatcher can reach the same fold-aware navigation
+// logic.
 
 /// Run a macro by id against the current `InputHandlerContext`.
 /// Iterates the macro's steps in order, forwarding each through the
@@ -760,13 +747,10 @@ pub(in crate::application::app) fn apply_label_edit_action(
 /// it into two macros.
 ///
 /// Returns `true` if any step ran successfully.
-pub(in crate::application::app) fn dispatch_macro(
-    macro_id: &str,
-    ctx: &mut InputHandlerContext<'_>,
-) -> bool {
+pub(in crate::application::app) fn dispatch_macro(macro_id: &str, ctx: &mut InputHandlerContext<'_>) -> bool {
     // Body lifted to `dispatch_macro_core` (cross-platform); this
     // shim wraps `ctx` in a `NativeMacroDispatchTarget` so the
-    // native dispatch chain calls the same step loop the WASM
+    // native dispatch funnel calls the same step loop the WASM
     // dispatcher uses. The privilege gate is single-sourced there.
     let mut target = NativeMacroDispatchTarget { ctx };
     super::macro_core::dispatch_macro(macro_id, &mut target)
@@ -836,10 +820,7 @@ impl<'a, 'b> super::macro_core::MacroDispatchTarget for NativeMacroDispatchTarge
         // matches pre-Track-B behaviour where the warn arm left
         // `any_ran` unchanged.
         let Some(doc) = self.ctx.document.as_mut() else {
-            log::warn!(
-                "macro step ConsoleLine: no document loaded; skipping '{}'",
-                line,
-            );
+            log::warn!("macro step ConsoleLine: no document loaded; skipping '{}'", line,);
             return false;
         };
         crate::application::app::console_input::exec::execute_console_line(
@@ -877,7 +858,6 @@ impl<'a, 'b> super::macro_core::MacroDispatchTarget for NativeMacroDispatchTarge
     }
 }
 
-
 /// Resolve a custom-mutation key binding and apply it through the same
 /// path the click-trigger handler at `click.rs:35-64` uses: animation-
 /// aware (`start_animation` when `timing.duration_ms > 0`), and always
@@ -896,10 +876,7 @@ pub(in crate::application::app) fn dispatch_custom_mutation_for_key(
     shift: bool,
     alt: bool,
 ) -> bool {
-    let id = match ctx
-        .keybinds
-        .custom_mutation_for(key_name, ctrl, shift, alt)
-    {
+    let id = match ctx.keybinds.custom_mutation_for(key_name, ctrl, shift, alt) {
         Some(s) => s.to_string(),
         None => return false,
     };
@@ -913,14 +890,7 @@ pub(in crate::application::app) fn dispatch_custom_mutation_for_key(
         return false;
     };
     let now = super::super::now_ms() as u64;
-    let applied = apply_keybind_custom_mutation(
-        doc,
-        ctx.mindmap_tree,
-        ctx.scene_cache,
-        &cm,
-        &nid,
-        now,
-    );
+    let applied = apply_keybind_custom_mutation(doc, ctx.mindmap_tree, ctx.scene_cache, &cm, &nid, now);
     if applied {
         rebuild_all(
             doc,
@@ -936,10 +906,7 @@ pub(in crate::application::app) fn dispatch_custom_mutation_for_key(
 /// Inline helper for the empty-canvas orphan-and-edit gesture so
 /// `DoubleClickActivate` and `CreateOrphanNodeAndEdit` share one
 /// implementation.
-fn dispatch_create_orphan_and_edit(
-    ctx: &mut InputHandlerContext<'_>,
-    hit: &DispatchHit,
-) {
+fn dispatch_create_orphan_and_edit(ctx: &mut InputHandlerContext<'_>, hit: &DispatchHit) {
     if let Some(doc) = ctx.document.as_mut() {
         let new_id = doc.create_orphan_and_select(hit.canvas_pos);
         rebuild_all(

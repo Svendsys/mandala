@@ -81,19 +81,9 @@ impl ThrottledInteraction for PortalLabelInteraction {
         };
 
         if let Some(doc) = document.as_mut() {
-            let changed = apply_portal_label_drag(
-                doc,
-                &self.edge_ref,
-                &self.endpoint_node_id,
-                cursor,
-            );
+            let changed = apply_portal_label_drag(doc, &self.edge_ref, &self.endpoint_node_id, cursor);
             if changed {
-                update_portal_tree(
-                    doc,
-                    &std::collections::HashMap::new(),
-                    app_scene,
-                    renderer,
-                );
+                update_portal_tree(doc, &std::collections::HashMap::new(), app_scene, renderer);
                 flush_canvas_scene_buffers(app_scene, renderer);
             }
         }
@@ -103,7 +93,9 @@ impl ThrottledInteraction for PortalLabelInteraction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::app::throttled_interaction::test_utils::{drive_throttle_over_budget, fixture_edge};
+    use crate::application::app::throttled_interaction::test_utils::{
+        drive_throttle_over_budget, fixture_edge,
+    };
 
     fn fixture_interaction() -> PortalLabelInteraction {
         PortalLabelInteraction::new(

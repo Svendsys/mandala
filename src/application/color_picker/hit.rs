@@ -40,8 +40,9 @@ pub enum PickerHit {
 /// Hit-test a screen position against the cached picker layout. The
 /// outer gate is the wheel's circle (center, `outer_radius`), shared
 /// with the rest of the codebase via
-/// [`NodeShape::Ellipse::contains_local`] — the picker fits the same
-/// shape abstraction as any ellipse-shaped node. Inside that circle
+/// [`baumhard::gfx_structs::shape::NodeShape::contains_local`] (the
+/// `Ellipse` variant) — the picker fits the same shape abstraction
+/// as any ellipse-shaped node. Inside that circle
 /// the search order matches the visual layering: val bar → sat bar →
 /// hue ring → center preview glyph (commit). Inside-the-circle-
 /// but-not-on-any-glyph is the drag anchor for the wheel. Returns
@@ -58,10 +59,7 @@ pub fn hit_test_picker(layout: &ColorPickerLayout, x: f32, y: f32) -> PickerHit 
     // inside `contains_local` and reports `Outside`.
     let r = layout.outer_radius;
     let bounds = Vec2::new(2.0 * r, 2.0 * r);
-    let local = Vec2::new(
-        x - (layout.center.0 - r),
-        y - (layout.center.1 - r),
-    );
+    let local = Vec2::new(x - (layout.center.0 - r), y - (layout.center.1 - r));
     if !NodeShape::Ellipse.contains_local(local, bounds) {
         return PickerHit::Outside;
     }

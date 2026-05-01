@@ -9,11 +9,6 @@
 /// Timing envelope, easing, and lerp helpers for animated
 /// `CustomMutation`s.
 pub mod animation;
-/// Mindmap data model — `MindMap`, `MindNode`, `MindEdge`, palettes,
-/// canvas.
-pub mod model;
-/// `.mindmap.json` loader and saver — the serialization boundary.
-pub mod loader;
 /// Per-node glyph-border configuration plus geometry constants
 /// shared by the renderer and the border tree builder.
 pub mod border;
@@ -26,6 +21,11 @@ pub mod connection;
 /// `CustomMutation` carrier — identity, metadata, and the
 /// `MutatorNode` payload.
 pub mod custom_mutation;
+/// `.mindmap.json` loader and saver — the serialization boundary.
+pub mod loader;
+/// Mindmap data model — `MindMap`, `MindNode`, `MindEdge`, palettes,
+/// canvas.
+pub mod model;
 /// Portal-label geometry: point ↔ `border_t` on a node's rectangular
 /// border, plus the directional default orientation.
 pub mod portal_geometry;

@@ -125,18 +125,15 @@ impl SidePattern {
         while let Some(c) = chars.next() {
             match c {
                 '\\' => {
-                    let next = chars.next().ok_or_else(|| {
-                        "trailing '\\' (use \\\\ for a literal backslash)".to_string()
-                    })?;
+                    let next = chars
+                        .next()
+                        .ok_or_else(|| "trailing '\\' (use \\\\ for a literal backslash)".to_string())?;
                     let resolved = match next {
                         '(' => '(',
                         ')' => ')',
                         '\\' => '\\',
                         other => {
-                            return Err(format!(
-                                "unrecognised escape '\\{}' (use \\(, \\), \\\\)",
-                                other
-                            ));
+                            return Err(format!("unrecognised escape '\\{}' (use \\(, \\), \\\\)", other));
                         }
                     };
                     if in_fill {
@@ -147,17 +144,12 @@ impl SidePattern {
                 }
                 '(' => {
                     if in_fill {
-                        return Err(
-                            "nested '(' inside fill region; \
+                        return Err("nested '(' inside fill region; \
                              escape with \\( for a literal"
-                                .to_string(),
-                        );
+                            .to_string());
                     }
                     if have_seen_fill {
-                        return Err(
-                            "only one fill region per side; saw 2"
-                                .to_string(),
-                        );
+                        return Err("only one fill region per side; saw 2".to_string());
                     }
                     have_seen_fill = true;
                     in_fill = true;
@@ -165,10 +157,7 @@ impl SidePattern {
                 }
                 ')' => {
                     if !in_fill {
-                        return Err(
-                            "unmatched ')'; escape with \\) for a literal"
-                                .to_string(),
-                        );
+                        return Err("unmatched ')'; escape with \\) for a literal".to_string());
                     }
                     in_fill = false;
                     fill_closed = true;
@@ -275,15 +264,9 @@ impl SidePattern {
                     };
                 }
                 let between = cluster_width - static_total;
-                let copies = if fill.is_empty() {
-                    0
-                } else {
-                    between / fill.len()
-                };
-                let cluster_count =
-                    static_total + copies * fill.len();
-                let mut text =
-                    String::with_capacity(cluster_count * 2);
+                let copies = if fill.is_empty() { 0 } else { between / fill.len() };
+                let cluster_count = static_total + copies * fill.len();
+                let mut text = String::with_capacity(cluster_count * 2);
                 for g in prefix {
                     text.push_str(g);
                 }
@@ -295,10 +278,7 @@ impl SidePattern {
                 for g in suffix {
                     text.push_str(g);
                 }
-                RenderedSide {
-                    text,
-                    cluster_count,
-                }
+                RenderedSide { text, cluster_count }
             }
         }
     }
@@ -313,9 +293,7 @@ impl SidePattern {
     pub fn minimum_cluster_width(&self) -> usize {
         match self {
             SidePattern::AtomicRepeat { cluster } => cluster.len(),
-            SidePattern::PrefixFillSuffix { prefix, suffix, .. } => {
-                prefix.len() + suffix.len()
-            }
+            SidePattern::PrefixFillSuffix { prefix, suffix, .. } => prefix.len() + suffix.len(),
         }
     }
 
@@ -349,10 +327,7 @@ mod tests {
     #[test]
     fn parse_empty_yields_empty_atomic_repeat() {
         let p = SidePattern::parse("").expect("empty parses");
-        assert_eq!(
-            p,
-            SidePattern::AtomicRepeat { cluster: Vec::new() }
-        );
+        assert_eq!(p, SidePattern::AtomicRepeat { cluster: Vec::new() });
     }
 
     #[test]
@@ -360,10 +335,7 @@ mod tests {
         let p = SidePattern::parse("+=##=+").expect("parses");
         match p {
             SidePattern::AtomicRepeat { cluster } => {
-                assert_eq!(
-                    cluster,
-                    vec!["+", "=", "#", "#", "=", "+"]
-                );
+                assert_eq!(cluster, vec!["+", "=", "#", "#", "=", "+"]);
             }
             _ => panic!("expected AtomicRepeat"),
         }
@@ -373,9 +345,7 @@ mod tests {
     fn parse_prefix_fill_suffix_basic() {
         let p = SidePattern::parse("###(*)###").expect("parses");
         match p {
-            SidePattern::PrefixFillSuffix {
-                prefix, fill, suffix,
-            } => {
+            SidePattern::PrefixFillSuffix { prefix, fill, suffix } => {
                 assert_eq!(prefix, vec!["#", "#", "#"]);
                 assert_eq!(fill, vec!["*"]);
                 assert_eq!(suffix, vec!["#", "#", "#"]);
@@ -390,9 +360,7 @@ mod tests {
         // fill that itself contains escaped parens.
         let p = SidePattern::parse(r"+=#(\(\))#=+").expect("parses");
         match p {
-            SidePattern::PrefixFillSuffix {
-                prefix, fill, suffix,
-            } => {
+            SidePattern::PrefixFillSuffix { prefix, fill, suffix } => {
                 assert_eq!(prefix, vec!["+", "=", "#"]);
                 assert_eq!(fill, vec!["(", ")"]);
                 assert_eq!(suffix, vec!["#", "=", "+"]);
@@ -426,44 +394,38 @@ mod tests {
 
     #[test]
     fn parse_unrecognised_escape_errors() {
-        let err = SidePattern::parse(r"\X")
-            .expect_err("unrecognised escape errors");
+        let err = SidePattern::parse(r"\X").expect_err("unrecognised escape errors");
         assert!(err.contains("unrecognised escape"));
         assert!(err.contains(r"\\"));
     }
 
     #[test]
     fn parse_trailing_backslash_errors() {
-        let err = SidePattern::parse("end\\")
-            .expect_err("trailing backslash errors");
+        let err = SidePattern::parse("end\\").expect_err("trailing backslash errors");
         assert!(err.contains("trailing"));
     }
 
     #[test]
     fn parse_two_fill_regions_errors() {
-        let err = SidePattern::parse("a(b)c(d)e")
-            .expect_err("two fills error");
+        let err = SidePattern::parse("a(b)c(d)e").expect_err("two fills error");
         assert!(err.contains("only one fill region"));
     }
 
     #[test]
     fn parse_unbalanced_open_errors() {
-        let err = SidePattern::parse("a(b")
-            .expect_err("unbalanced ( errors");
+        let err = SidePattern::parse("a(b").expect_err("unbalanced ( errors");
         assert!(err.contains("missing ')'"));
     }
 
     #[test]
     fn parse_unbalanced_close_errors() {
-        let err = SidePattern::parse("a)b")
-            .expect_err("unbalanced ) errors");
+        let err = SidePattern::parse("a)b").expect_err("unbalanced ) errors");
         assert!(err.contains("unmatched ')'"));
     }
 
     #[test]
     fn parse_empty_fill_errors() {
-        let err = SidePattern::parse("pre()suf")
-            .expect_err("empty fill errors");
+        let err = SidePattern::parse("pre()suf").expect_err("empty fill errors");
         assert!(err.contains("empty fill"));
     }
 
@@ -472,12 +434,9 @@ mod tests {
         // Each of `é` (single codepoint), `🇺🇸` (regional indicator
         // pair = one ZWJ-like grapheme), and `é` again should count
         // as one cluster — 3 clusters total in the prefix.
-        let p =
-            SidePattern::parse("é🇺🇸é(👍)é🇺🇸é").expect("parses");
+        let p = SidePattern::parse("é🇺🇸é(👍)é🇺🇸é").expect("parses");
         match p {
-            SidePattern::PrefixFillSuffix {
-                prefix, fill, suffix,
-            } => {
+            SidePattern::PrefixFillSuffix { prefix, fill, suffix } => {
                 assert_eq!(prefix.len(), 3);
                 assert_eq!(fill.len(), 1);
                 assert_eq!(suffix.len(), 3);
@@ -517,8 +476,7 @@ mod tests {
         // Width 7, statics = 6, fill = 2 (`()`). One iteration is
         // 2 clusters; a single column wouldn't accommodate it, so
         // 0 iterations.
-        let p = SidePattern::parse(r"###(\(\))###")
-            .expect("parses");
+        let p = SidePattern::parse(r"###(\(\))###").expect("parses");
         let r = p.render(7);
         assert_eq!(r.cluster_count, 6);
         assert_eq!(r.text, "######");
@@ -527,8 +485,7 @@ mod tests {
     #[test]
     fn render_prefix_fill_suffix_three_iterations() {
         // Width 12, prefix 3 + suffix 3 + fill 2 → 3 fill iters.
-        let p = SidePattern::parse(r"###(\(\))###")
-            .expect("parses");
+        let p = SidePattern::parse(r"###(\(\))###").expect("parses");
         let r = p.render(12);
         assert_eq!(r.cluster_count, 12);
         assert_eq!(r.text, "###()()()###");
@@ -579,8 +536,7 @@ mod tests {
 
     #[test]
     fn minimum_with_one_fill_long_fill() {
-        let p = SidePattern::parse(r"+=#(\(\))#=+")
-            .expect("parses");
+        let p = SidePattern::parse(r"+=#(\(\))#=+").expect("parses");
         // statics = 6, one fill iteration = 2.
         assert_eq!(p.minimum_cluster_width(), 6);
         assert_eq!(p.minimum_with_one_fill(), 8);
@@ -591,8 +547,7 @@ mod tests {
     /// trailing-input lurker. Guards the line-182 branch.
     #[test]
     fn parse_open_immediately_closed_errors() {
-        let err = SidePattern::parse("()")
-            .expect_err("immediately-closed fill errors");
+        let err = SidePattern::parse("()").expect_err("immediately-closed fill errors");
         assert!(
             err.contains("empty fill"),
             "expected empty-fill diagnostic, got: {}",
@@ -624,15 +579,10 @@ mod tests {
     #[test]
     fn parse_zwj_emoji_as_single_cluster() {
         // 👨‍👩‍👧 — five codepoints joined by ZWJ, one cluster.
-        let p = SidePattern::parse("\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}")
-            .expect("parses");
+        let p = SidePattern::parse("\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}").expect("parses");
         match p {
             SidePattern::AtomicRepeat { cluster } => {
-                assert_eq!(
-                    cluster.len(),
-                    1,
-                    "ZWJ-joined emoji must count as one cluster"
-                );
+                assert_eq!(cluster.len(), 1, "ZWJ-joined emoji must count as one cluster");
             }
             other => panic!("expected AtomicRepeat, got {:?}", other),
         }

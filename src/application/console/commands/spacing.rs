@@ -5,7 +5,9 @@
 //! (tight / normal / wide) or a raw float in the preset's unit.
 
 use super::Command;
-use crate::application::console::completion::{prefix_filter, Completion, CompletionContext, CompletionState, kv_key_completions};
+use crate::application::console::completion::{
+    kv_key_completions, prefix_filter, Completion, CompletionContext, CompletionState,
+};
 use crate::application::console::helpers::require_edge_or_portal;
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::edge_selected;
@@ -30,9 +32,7 @@ pub const COMMAND: Command = Command {
 fn complete_spacing(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completion> {
     match &state.context {
         CompletionContext::Token { .. } => kv_key_completions(KEYS, state.partial),
-        CompletionContext::KvValue { key } if key == "value" => {
-            prefix_filter(VALUE_PRESETS, state.partial)
-        }
+        CompletionContext::KvValue { key } if key == "value" => prefix_filter(VALUE_PRESETS, state.partial),
         _ => Vec::new(),
     }
 }
@@ -46,10 +46,7 @@ fn execute_spacing(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         None => return ExecResult::err("usage: spacing value=<tight|normal|wide | <float>>"),
     };
     if resolve_spacing_value(v).is_none() {
-        return ExecResult::err(format!(
-            "'{}' must be a preset (tight|normal|wide) or a float",
-            v
-        ));
+        return ExecResult::err(format!("'{}' must be a preset (tight|normal|wide) or a float", v));
     }
     // Route through the mutation core — same setter, single
     // source of truth with the parametric `Action::SetSpacing` arm.

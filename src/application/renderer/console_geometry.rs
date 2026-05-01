@@ -190,10 +190,7 @@ impl ConsoleFrameLayout {
 /// Returns `(top, bottom, left, right)`. The box-drawing presets
 /// have `left == right`, so both side strings are the same — the
 /// caller positions them at different x offsets.
-pub fn build_console_border_strings(
-    cols: usize,
-    rows: usize,
-) -> (String, String, String, String) {
+pub fn build_console_border_strings(cols: usize, rows: usize) -> (String, String, String, String) {
     let glyphs = baumhard::mindmap::border::BorderGlyphSet::box_drawing_rounded();
     let top = glyphs.top_border(cols);
     let bottom = glyphs.bottom_border(cols);
@@ -229,14 +226,8 @@ pub fn compute_console_frame_layout(
     let inner_padding: f32 = 8.0;
     let row_height = font_size + 2.0;
 
-    let scrollback_rows = geometry
-        .scrollback
-        .len()
-        .min(MAX_CONSOLE_SCROLLBACK_ROWS);
-    let completion_rows = geometry
-        .completions
-        .len()
-        .min(MAX_CONSOLE_COMPLETION_ROWS);
+    let scrollback_rows = geometry.scrollback.len().min(MAX_CONSOLE_SCROLLBACK_ROWS);
+    let completion_rows = geometry.completions.len().min(MAX_CONSOLE_COMPLETION_ROWS);
 
     let prompt_budget = font_size * 1.4;
     // Frame vertical budget: top border + inner pad + scrollback +
@@ -254,8 +245,7 @@ pub fn compute_console_frame_layout(
     let horizontal_margin = char_width;
     let frame_width = (screen_width - horizontal_margin * 2.0).max(char_width * 4.0);
     let left = horizontal_margin;
-    let top = (screen_height - frame_height - inner_padding - font_size)
-        .max(inner_padding);
+    let top = (screen_height - frame_height - inner_padding - font_size).max(inner_padding);
 
     ConsoleFrameLayout {
         left,

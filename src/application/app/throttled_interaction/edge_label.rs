@@ -20,9 +20,7 @@ use crate::application::document::EdgeRef;
 use crate::application::frame_throttle::MutationFrequencyThrottle;
 
 use super::super::edge_label_drag::apply_edge_label_drag;
-use super::super::scene_rebuild::{
-    flush_canvas_scene_buffers, update_connection_label_tree,
-};
+use super::super::scene_rebuild::{flush_canvas_scene_buffers, update_connection_label_tree};
 use super::{DrainContext, ThrottledInteraction};
 
 /// Drag state for repositioning one line-mode edge's label along
@@ -82,11 +80,7 @@ impl ThrottledInteraction for EdgeLabelInteraction {
                 // geometry, so every edge hits the cache's fast
                 // path and only `build_label_elements` (which
                 // runs per-frame regardless) produces new work.
-                let scene = doc.build_scene_with_cache(
-                    &HashMap::new(),
-                    scene_cache,
-                    renderer.camera_zoom(),
-                );
+                let scene = doc.build_scene_with_cache(&HashMap::new(), scene_cache, renderer.camera_zoom());
                 update_connection_label_tree(&scene, app_scene, renderer);
                 flush_canvas_scene_buffers(app_scene, renderer);
             }
@@ -97,13 +91,12 @@ impl ThrottledInteraction for EdgeLabelInteraction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::app::throttled_interaction::test_utils::{drive_throttle_over_budget, fixture_edge};
+    use crate::application::app::throttled_interaction::test_utils::{
+        drive_throttle_over_budget, fixture_edge,
+    };
 
     fn fixture_interaction() -> EdgeLabelInteraction {
-        EdgeLabelInteraction::new(
-            EdgeRef::new("a", "b", "parent_child"),
-            fixture_edge(),
-        )
+        EdgeLabelInteraction::new(EdgeRef::new("a", "b", "parent_child"), fixture_edge())
     }
 
     #[test]

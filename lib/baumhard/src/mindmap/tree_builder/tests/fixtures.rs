@@ -42,12 +42,7 @@ pub(super) fn mk_star_map(n: usize) -> MindMap {
     nodes.push(synthetic_node("root", None, 0.0, 0.0));
     for i in 1..n {
         let id = format!("s{}", i);
-        nodes.push(synthetic_node(
-            &id,
-            Some("root"),
-            (i as f64) * 100.0,
-            100.0,
-        ));
+        nodes.push(synthetic_node(&id, Some("root"), (i as f64) * 100.0, 100.0));
     }
     synthetic_map(nodes, vec![])
 }

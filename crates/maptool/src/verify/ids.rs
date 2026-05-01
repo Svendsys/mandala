@@ -72,7 +72,9 @@ mod tests {
         map.nodes.insert("1".into(), node("1", None));
         map.nodes.insert("0.0".into(), node("0.0", Some("1")));
         let v = check(&map);
-        assert!(v.iter().any(|x| x.category == "ids" && x.message.contains("does not match")));
+        assert!(v
+            .iter()
+            .any(|x| x.category == "ids" && x.message.contains("does not match")));
     }
 
     #[test]
@@ -81,6 +83,8 @@ mod tests {
         // HashMap key "0" but node.id is "xyz"
         map.nodes.insert("0".into(), node("xyz", None));
         let v = check(&map);
-        assert!(v.iter().any(|x| x.category == "ids" && x.message.contains("does not match node.id")));
+        assert!(v
+            .iter()
+            .any(|x| x.category == "ids" && x.message.contains("does not match node.id")));
     }
 }

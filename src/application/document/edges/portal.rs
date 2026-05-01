@@ -2,10 +2,7 @@
 
 //! Portal edge lifecycle and portal-label mutations.
 
-
-use baumhard::mindmap::model::{
-    is_portal_edge, portal_endpoint_state_mut, PORTAL_GLYPH_PRESETS,
-};
+use baumhard::mindmap::model::{is_portal_edge, portal_endpoint_state_mut, PORTAL_GLYPH_PRESETS};
 
 use super::super::defaults::default_portal_edge;
 use super::super::types::EdgeRef;
@@ -20,33 +17,22 @@ impl MindMapDocument {
     /// the count of existing portal-mode edges, so successive portal
     /// creations look distinct at a glance. Returns the new edge's
     /// index on success.
-    pub fn create_portal_edge(
-        &mut self,
-        source_id: &str,
-        target_id: &str,
-    ) -> Option<usize> {
+    pub fn create_portal_edge(&mut self, source_id: &str, target_id: &str) -> Option<usize> {
         if source_id == target_id {
             return None;
         }
-        if !self.mindmap.nodes.contains_key(source_id)
-            || !self.mindmap.nodes.contains_key(target_id)
-        {
+        if !self.mindmap.nodes.contains_key(source_id) || !self.mindmap.nodes.contains_key(target_id) {
             return None;
         }
-        let exists = self.mindmap.edges.iter().any(|e| {
-            e.edge_type == "cross_link"
-                && e.from_id == source_id
-                && e.to_id == target_id
-        });
-        if exists {
-            return None;
-        }
-        let portal_count = self
+        let exists = self
             .mindmap
             .edges
             .iter()
-            .filter(|e| is_portal_edge(e))
-            .count();
+            .any(|e| e.edge_type == "cross_link" && e.from_id == source_id && e.to_id == target_id);
+        if exists {
+            return None;
+        }
+        let portal_count = self.mindmap.edges.iter().filter(|e| is_portal_edge(e)).count();
         let glyph = PORTAL_GLYPH_PRESETS[portal_count % PORTAL_GLYPH_PRESETS.len()];
         let edge = default_portal_edge(source_id, target_id, glyph);
         self.mindmap.edges.push(edge);
@@ -213,14 +199,9 @@ impl MindMapDocument {
     /// cascade like [`Self::resolve_portal_label_color`]) —
     /// portal text has no inheritance cascade, it's either set
     /// on the endpoint or absent.
-    pub fn portal_label_text(
-        &self,
-        edge_ref: &EdgeRef,
-        endpoint_node_id: &str,
-    ) -> Option<String> {
+    pub fn portal_label_text(&self, edge_ref: &EdgeRef, endpoint_node_id: &str) -> Option<String> {
         let edge = self.mindmap.edges.iter().find(|e| edge_ref.matches(e))?;
-        let state =
-            baumhard::mindmap::model::portal_endpoint_state(edge, endpoint_node_id)?;
+        let state = baumhard::mindmap::model::portal_endpoint_state(edge, endpoint_node_id)?;
         state.text.clone()
     }
 
@@ -232,14 +213,9 @@ impl MindMapDocument {
     /// copy: the user expects `copy` on a portal label to produce
     /// a real hex they can paste elsewhere, even when no override
     /// is set.
-    pub fn resolve_portal_label_color(
-        &self,
-        edge_ref: &EdgeRef,
-        endpoint_node_id: &str,
-    ) -> Option<String> {
+    pub fn resolve_portal_label_color(&self, edge_ref: &EdgeRef, endpoint_node_id: &str) -> Option<String> {
         let edge = self.mindmap.edges.iter().find(|e| edge_ref.matches(e))?;
-        let endpoint_state =
-            baumhard::mindmap::model::portal_endpoint_state(edge, endpoint_node_id);
+        let endpoint_state = baumhard::mindmap::model::portal_endpoint_state(edge, endpoint_node_id);
         // Camera zoom is irrelevant for color resolution — pass
         // 1.0 so the font-size clamp path doesn't branch oddly.
         let style = baumhard::mindmap::scene_builder::portal::resolve_portal_endpoint_style(

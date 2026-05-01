@@ -484,7 +484,10 @@ impl KeybindConfig {
             (Action::TextEditDeleteBack, &self.text_edit_delete_back),
             (Action::TextEditDeleteForward, &self.text_edit_delete_forward),
             (Action::TextEditDeleteWordBack, &self.text_edit_delete_word_back),
-            (Action::TextEditDeleteWordForward, &self.text_edit_delete_word_forward),
+            (
+                Action::TextEditDeleteWordForward,
+                &self.text_edit_delete_word_forward,
+            ),
             (Action::TextEditCommit, &self.text_edit_commit),
             // LabelEdit cursor primitives
             (Action::LabelEditCursorLeft, &self.label_edit_cursor_left),
@@ -570,12 +573,13 @@ impl KeybindConfig {
         // unrecognised tokens land in `Err`, which `push_parametric`
         // then warns and skips on.
         push_parametric(&mut binds, "set_color", 2, &self.set_color, |args| match args {
-            [axis, value] => axis.parse::<super::ColorAxis>().ok().map(|axis| {
-                Action::SetColor {
+            [axis, value] => axis
+                .parse::<super::ColorAxis>()
+                .ok()
+                .map(|axis| Action::SetColor {
                     axis,
                     value: value.clone(),
-                }
-            }),
+                }),
             _ => None,
         });
         // Edge structural — type / display_mode / reset.
@@ -599,16 +603,10 @@ impl KeybindConfig {
                 _ => None,
             },
         );
-        push_parametric(
-            &mut binds,
-            "reset_edge",
-            1,
-            &self.reset_edge,
-            |args| match args {
-                [kind] => Some(Action::ResetEdge(kind.clone())),
-                _ => None,
-            },
-        );
+        push_parametric(&mut binds, "reset_edge", 1, &self.reset_edge, |args| match args {
+            [kind] => Some(Action::ResetEdge(kind.clone())),
+            _ => None,
+        });
         // Font family / size / clamps + label + spacing.
         push_parametric(
             &mut binds,
@@ -622,11 +620,9 @@ impl KeybindConfig {
         );
         // Font: `args = [slot, pt]` where slot = `size|min|max`.
         push_parametric(&mut binds, "set_font", 2, &self.set_font, |args| match args {
-            [slot, value] => slot.parse::<super::FontSlot>().ok().map(|slot| {
-                Action::SetFont {
-                    slot,
-                    value: value.clone(),
-                }
+            [slot, value] => slot.parse::<super::FontSlot>().ok().map(|slot| Action::SetFont {
+                slot,
+                value: value.clone(),
             }),
             _ => None,
         });
@@ -663,24 +659,19 @@ impl KeybindConfig {
         // Zoom: `args = [bound, value]` where bound = `min|max`.
         // `clear_zoom` is a separate unit variant.
         push_parametric(&mut binds, "set_zoom", 2, &self.set_zoom, |args| match args {
-            [bound, value] => bound.parse::<super::ZoomBound>().ok().map(|bound| {
-                Action::SetZoom {
+            [bound, value] => bound
+                .parse::<super::ZoomBound>()
+                .ok()
+                .map(|bound| Action::SetZoom {
                     bound,
                     value: value.clone(),
-                }
-            }),
+                }),
             _ => None,
         });
-        push_parametric(
-            &mut binds,
-            "clear_zoom",
-            0,
-            &self.clear_zoom,
-            |args| match args {
-                [] => Some(Action::ClearZoom),
-                _ => None,
-            },
-        );
+        push_parametric(&mut binds, "clear_zoom", 0, &self.clear_zoom, |args| match args {
+            [] => Some(Action::ClearZoom),
+            _ => None,
+        });
         // Filesystem variants — NativeOnly + privilege-gated.
         push_parametric(
             &mut binds,
@@ -717,20 +708,14 @@ impl KeybindConfig {
         for (combo, mutation_id) in &self.custom_mutation_bindings {
             match KeyBind::parse(combo) {
                 Ok(k) => custom_binds.push((k, mutation_id.clone())),
-                Err(e) => warn!(
-                    "skipping invalid custom_mutation_binding '{}': {}",
-                    combo, e
-                ),
+                Err(e) => warn!("skipping invalid custom_mutation_binding '{}': {}", combo, e),
             }
         }
         let mut macro_binds: Vec<(KeyBind, String)> = Vec::new();
         for (combo, macro_id) in &self.macro_bindings {
             match KeyBind::parse(combo) {
                 Ok(k) => macro_binds.push((k, macro_id.clone())),
-                Err(e) => warn!(
-                    "skipping invalid macro_binding '{}': {}",
-                    combo, e
-                ),
+                Err(e) => warn!("skipping invalid macro_binding '{}': {}", combo, e),
             }
         }
 

@@ -49,7 +49,8 @@ fn complete_mutation(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Compl
         2 if matches!(
             state.tokens.get(1).map(String::as_str),
             Some("apply") | Some("help") | Some("inspect")
-        ) => {
+        ) =>
+        {
             // Mutation id slot. Show user-facing mutations by default
             // (internal ones are reachable but not completed — they
             // can still be typed by exact id in debugging sessions).
@@ -85,9 +86,7 @@ fn execute_mutation(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             "unknown mutation sub-command: {} (try list / apply / help / inspect)",
             other
         )),
-        None => ExecResult::err(
-            "mutation needs a sub-command (list / apply / help / inspect)",
-        ),
+        None => ExecResult::err("mutation needs a sub-command (list / apply / help / inspect)"),
     }
 }
 
@@ -113,8 +112,7 @@ fn list(args: &Args, eff: &ConsoleEffects) -> ExecResult {
         .filter(|(id, cm)| match filter {
             Some(f) => {
                 let fl = f.to_ascii_lowercase();
-                id.to_ascii_lowercase().contains(&fl)
-                    || cm.name.to_ascii_lowercase().contains(&fl)
+                id.to_ascii_lowercase().contains(&fl) || cm.name.to_ascii_lowercase().contains(&fl)
             }
             None => true,
         })
@@ -203,10 +201,7 @@ fn apply(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     ExecResult::ok_msg(format!("applied '{}' to node '{}'", id, target_id))
 }
 
-fn resolve_target_id(
-    doc: &MindMapDocument,
-    explicit: Option<&str>,
-) -> Result<String, String> {
+fn resolve_target_id(doc: &MindMapDocument, explicit: Option<&str>) -> Result<String, String> {
     if let Some(id) = explicit {
         if doc.mindmap.nodes.contains_key(id) {
             return Ok(id.to_string());
@@ -215,8 +210,7 @@ fn resolve_target_id(
     }
     match &doc.selection {
         SelectionState::Single(id) => Ok(id.clone()),
-        _ => Err("mutation apply needs a single-node selection or an explicit <node-id>"
-            .to_string()),
+        _ => Err("mutation apply needs a single-node selection or an explicit <node-id>".to_string()),
     }
 }
 
@@ -320,10 +314,7 @@ fn inspect(args: &Args, eff: &ConsoleEffects) -> ExecResult {
         format!("dispatch: {}", dispatch),
         format!("declared scope: {}", target_scope_label(&cm.target_scope)),
         format!("mutator static reach: {}", reach),
-        format!(
-            "behavior: {}",
-            behavior_label(&cm.behavior)
-        ),
+        format!("behavior: {}", behavior_label(&cm.behavior)),
     ])
 }
 
@@ -382,14 +373,8 @@ mod tests {
         sources: Vec<(&str, MutationSource)>,
     ) -> MindMapDocument {
         let mut doc = crate::application::document::tests_common::load_test_doc();
-        doc.mutation_registry = reg
-            .into_iter()
-            .map(|(k, v)| (k.to_string(), v))
-            .collect();
-        doc.mutation_sources = sources
-            .into_iter()
-            .map(|(k, v)| (k.to_string(), v))
-            .collect();
+        doc.mutation_registry = reg.into_iter().map(|(k, v)| (k.to_string(), v)).collect();
+        doc.mutation_sources = sources.into_iter().map(|(k, v)| (k.to_string(), v)).collect();
         doc
     }
 
@@ -424,10 +409,7 @@ mod tests {
 
     #[test]
     fn list_all_shows_internals() {
-        let mut doc = fixture_doc(
-            vec![("secret", make_cm("secret", vec!["internal"], "d"))],
-            vec![],
-        );
+        let mut doc = fixture_doc(vec![("secret", make_cm("secret", vec!["internal"], "d"))], vec![]);
         match run("mutation list --all", &mut doc) {
             ExecResult::Lines(ls) => assert!(ls.iter().any(|l| l.text.contains("secret"))),
             other => panic!("expected Lines, got {:?}", other),
@@ -464,10 +446,7 @@ mod tests {
 
     #[test]
     fn apply_internal_returns_err() {
-        let mut doc = fixture_doc(
-            vec![("secret", make_cm("secret", vec!["internal"], "d"))],
-            vec![],
-        );
+        let mut doc = fixture_doc(vec![("secret", make_cm("secret", vec!["internal"], "d"))], vec![]);
         match run("mutation apply secret", &mut doc) {
             ExecResult::Err(s) => assert!(s.contains("internal")),
             other => panic!("expected Err, got {:?}", other),
@@ -476,10 +455,7 @@ mod tests {
 
     #[test]
     fn apply_without_selection_returns_err() {
-        let mut doc = fixture_doc(
-            vec![("nudge", make_cm("nudge", vec!["map.node"], "d"))],
-            vec![],
-        );
+        let mut doc = fixture_doc(vec![("nudge", make_cm("nudge", vec!["map.node"], "d"))], vec![]);
         match run("mutation apply nudge", &mut doc) {
             ExecResult::Err(s) => assert!(s.contains("single-node selection")),
             other => panic!("expected Err, got {:?}", other),
@@ -518,10 +494,7 @@ mod tests {
 
     #[test]
     fn apply_uses_explicit_node_id_when_provided() {
-        let mut doc = fixture_doc(
-            vec![("nudge", make_cm("nudge", vec!["map.node"], "d"))],
-            vec![],
-        );
+        let mut doc = fixture_doc(vec![("nudge", make_cm("nudge", vec!["map.node"], "d"))], vec![]);
         // Pick the root node of testament, selection still empty.
         let node_id = first_node_id(&doc);
         let line = format!("mutation apply nudge {}", node_id);
@@ -585,10 +558,7 @@ mod tests {
     #[test]
     fn help_uses_human_readable_scope_and_behavior_labels() {
         let mut doc = fixture_doc(
-            vec![(
-                "nudge",
-                make_cm("nudge", vec!["map.node", "map.tree"], "d"),
-            )],
+            vec![("nudge", make_cm("nudge", vec!["map.node", "map.tree"], "d"))],
             vec![("nudge", MutationSource::App)],
         );
         match run("mutation help nudge", &mut doc) {
@@ -596,7 +566,10 @@ mod tests {
                 let all = joined(&ls);
                 // No `{:?}` debug-format leakage.
                 assert!(!all.contains("SelfOnly"), "help should not leak Rust enum names");
-                assert!(!all.contains("Persistent"), "help should not leak Rust enum names");
+                assert!(
+                    !all.contains("Persistent"),
+                    "help should not leak Rust enum names"
+                );
                 // Human-readable replacements.
                 assert!(all.contains("scope: self only"));
                 assert!(all.contains("behavior: persistent"));
@@ -608,10 +581,7 @@ mod tests {
     #[test]
     fn inspect_surfaces_dispatch_source_and_payload() {
         let mut doc = fixture_doc(
-            vec![(
-                "nudge",
-                make_cm("nudge", vec!["map.node"], "Nudge right"),
-            )],
+            vec![("nudge", make_cm("nudge", vec!["map.node"], "Nudge right"))],
             vec![("nudge", MutationSource::App)],
         );
         match run("mutation inspect nudge", &mut doc) {

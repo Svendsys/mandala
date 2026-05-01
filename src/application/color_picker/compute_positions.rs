@@ -47,10 +47,7 @@ pub(super) fn compute_positions(
     let mut hue_slot_positions = [(0.0_f32, 0.0_f32); HUE_SLOT_COUNT];
     for (i, slot) in hue_slot_positions.iter_mut().enumerate() {
         let angle = (i as f32 / HUE_SLOT_COUNT as f32) * TAU - FRAC_PI_2;
-        *slot = (
-            center.0 + angle.cos() * ring_r,
-            center.1 + angle.sin() * ring_r,
-        );
+        *slot = (center.0 + angle.cos() * ring_r, center.1 + angle.sin() * ring_r);
     }
 
     // ---- Crosshair sat/val bars (17 cells each) ----

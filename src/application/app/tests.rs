@@ -186,7 +186,10 @@ mod drag_helper_tests {
     /// the cursor coordinates the tests below pick.
     fn fixture_node(id: &str, x: f64, y: f64) -> MindNode {
         let mut n = default_orphan_node(id, Vec2::new(x as f32, y as f32));
-        n.size = Size { width: 100.0, height: 60.0 };
+        n.size = Size {
+            width: 100.0,
+            height: 60.0,
+        };
         n.text = "n".to_string();
         n.text_runs[0].end = 1;
         n
@@ -217,8 +220,7 @@ mod drag_helper_tests {
             "edges": [fixture_edge(true)],
         })
         .to_string();
-        MindMapDocument::from_json_str(&json, None)
-            .expect("fixture JSON must parse")
+        MindMapDocument::from_json_str(&json, None).expect("fixture JSON must parse")
     }
 
     fn line_doc() -> MindMapDocument {
@@ -233,8 +235,7 @@ mod drag_helper_tests {
             "edges": [fixture_edge(false)],
         })
         .to_string();
-        MindMapDocument::from_json_str(&json, None)
-            .expect("fixture JSON must parse")
+        MindMapDocument::from_json_str(&json, None).expect("fixture JSON must parse")
     }
 
     fn edge_ref() -> EdgeRef {
@@ -250,20 +251,28 @@ mod drag_helper_tests {
     fn test_apply_portal_label_drag_idempotent_same_cursor() {
         let mut doc = portal_doc();
         let cursor = Vec2::new(50.0, -10.0);
-        assert!(apply_portal_label_drag(&mut doc, &edge_ref(), FROM_ID, cursor),
-            "first call must change the model");
-        assert!(!apply_portal_label_drag(&mut doc, &edge_ref(), FROM_ID, cursor),
-            "repeat call with same cursor must be a no-op");
+        assert!(
+            apply_portal_label_drag(&mut doc, &edge_ref(), FROM_ID, cursor),
+            "first call must change the model"
+        );
+        assert!(
+            !apply_portal_label_drag(&mut doc, &edge_ref(), FROM_ID, cursor),
+            "repeat call with same cursor must be a no-op"
+        );
     }
 
     #[test]
     fn test_apply_edge_label_drag_idempotent_same_cursor() {
         let mut doc = line_doc();
         let cursor = Vec2::new(200.0, 10.0);
-        assert!(apply_edge_label_drag(&mut doc, &edge_ref(), cursor),
-            "first call must change the model");
-        assert!(!apply_edge_label_drag(&mut doc, &edge_ref(), cursor),
-            "repeat call with same cursor must be a no-op");
+        assert!(
+            apply_edge_label_drag(&mut doc, &edge_ref(), cursor),
+            "first call must change the model"
+        );
+        assert!(
+            !apply_edge_label_drag(&mut doc, &edge_ref(), cursor),
+            "repeat call with same cursor must be a no-op"
+        );
     }
 
     // Absolute-cursor / last-wins semantics: the drain overwrites
@@ -286,12 +295,18 @@ mod drag_helper_tests {
         apply_portal_label_drag(&mut doc_direct, &edge_ref, FROM_ID, cursor_b);
 
         let t_seq = doc_seq.mindmap.edges[0]
-            .portal_from.as_ref().and_then(|s| s.border_t);
+            .portal_from
+            .as_ref()
+            .and_then(|s| s.border_t);
         let t_direct = doc_direct.mindmap.edges[0]
-            .portal_from.as_ref().and_then(|s| s.border_t);
-        assert_eq!(t_seq, t_direct,
+            .portal_from
+            .as_ref()
+            .and_then(|s| s.border_t);
+        assert_eq!(
+            t_seq, t_direct,
             "sequential A→B must equal direct B — intermediate cursors \
-             dropped by the throttle must not affect final state");
+             dropped by the throttle must not affect final state"
+        );
     }
 
     #[test]
@@ -307,12 +322,18 @@ mod drag_helper_tests {
         let mut doc_direct = line_doc();
         apply_edge_label_drag(&mut doc_direct, &edge_ref, cursor_b);
 
-        let seq = doc_seq.mindmap.edges[0].label_config.as_ref()
+        let seq = doc_seq.mindmap.edges[0]
+            .label_config
+            .as_ref()
             .map(|c| (c.position_t, c.perpendicular_offset));
-        let direct = doc_direct.mindmap.edges[0].label_config.as_ref()
+        let direct = doc_direct.mindmap.edges[0]
+            .label_config
+            .as_ref()
             .map(|c| (c.position_t, c.perpendicular_offset));
-        assert_eq!(seq, direct,
-            "sequential A→B must equal direct B for edge-label drag");
+        assert_eq!(
+            seq, direct,
+            "sequential A→B must equal direct B for edge-label drag"
+        );
     }
 
     // Release-flush invariant: simulates the release arm. The
@@ -328,19 +349,19 @@ mod drag_helper_tests {
         let edge_ref = edge_ref();
         // Frame 1: drain runs, applies A.
         apply_portal_label_drag(&mut doc, &edge_ref, FROM_ID, Vec2::new(50.0, -10.0));
-        let t_after_a = doc.mindmap.edges[0]
-            .portal_from.as_ref().and_then(|s| s.border_t);
+        let t_after_a = doc.mindmap.edges[0].portal_from.as_ref().and_then(|s| s.border_t);
         // Frame 2: throttle skips (drain not called); cursor
         // moves to B — in prod this writes `pending_cursor`
         // only, no model touch. Simulated by not calling apply.
         // Release: flush Some(B).
         apply_portal_label_drag(&mut doc, &edge_ref, FROM_ID, Vec2::new(-10.0, 30.0));
-        let t_after_b = doc.mindmap.edges[0]
-            .portal_from.as_ref().and_then(|s| s.border_t);
-        assert!(t_after_a != t_after_b,
+        let t_after_b = doc.mindmap.edges[0].portal_from.as_ref().and_then(|s| s.border_t);
+        assert!(
+            t_after_a != t_after_b,
             "release flush must change state — otherwise the drop \
              position would silently snap back to the throttle's \
-             last drained cursor");
+             last drained cursor"
+        );
     }
 
     #[test]
@@ -348,13 +369,19 @@ mod drag_helper_tests {
         let mut doc = line_doc();
         let edge_ref = edge_ref();
         apply_edge_label_drag(&mut doc, &edge_ref, Vec2::new(200.0, 10.0));
-        let after_a = doc.mindmap.edges[0].label_config.as_ref()
+        let after_a = doc.mindmap.edges[0]
+            .label_config
+            .as_ref()
             .map(|c| (c.position_t, c.perpendicular_offset));
         apply_edge_label_drag(&mut doc, &edge_ref, Vec2::new(300.0, -20.0));
-        let after_b = doc.mindmap.edges[0].label_config.as_ref()
+        let after_b = doc.mindmap.edges[0]
+            .label_config
+            .as_ref()
             .map(|c| (c.position_t, c.perpendicular_offset));
-        assert!(after_a != after_b,
-            "release flush must change state for edge-label drag");
+        assert!(
+            after_a != after_b,
+            "release flush must change state for edge-label drag"
+        );
     }
 }
 
@@ -403,12 +430,7 @@ mod click_hit_priority_tests {
 
     #[test]
     fn click_hit_priority_portal_icon_wins_over_edge_label() {
-        let hit = click_hit_from_priority(
-            &None,
-            &None,
-            &Some((ek(), "n2".to_string())),
-            &Some(ek()),
-        );
+        let hit = click_hit_from_priority(&None, &None, &Some((ek(), "n2".to_string())), &Some(ek()));
         assert!(matches!(hit, ClickHit::PortalMarker { .. }));
     }
 

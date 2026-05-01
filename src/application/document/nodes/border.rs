@@ -61,13 +61,8 @@ impl BorderConfigEdits {
     /// Validate a side pattern string and stage it as a `Set`
     /// edit. Returns the parse error verbatim — the console verb
     /// surfaces it with a side prefix.
-    pub fn with_side_pattern(
-        &mut self,
-        side: BorderSide,
-        pattern: &str,
-    ) -> Result<(), String> {
-        SidePattern::parse(pattern)
-            .map_err(|e| format!("{}: {}", side.label(), e))?;
+    pub fn with_side_pattern(&mut self, side: BorderSide, pattern: &str) -> Result<(), String> {
+        SidePattern::parse(pattern).map_err(|e| format!("{}: {}", side.label(), e))?;
         let slot = match side {
             BorderSide::Top => &mut self.side_top,
             BorderSide::Bottom => &mut self.side_bottom,
@@ -162,11 +157,7 @@ impl MindMapDocument {
     /// verb surfaces the auto-promotion so the user knows their
     /// `preset=heavy top=…` request resulted in a `custom` border,
     /// not a `heavy` one with a side override.
-    pub fn set_node_border_config(
-        &mut self,
-        node_id: &str,
-        edits: BorderConfigEdits,
-    ) -> BorderEditOutcome {
+    pub fn set_node_border_config(&mut self, node_id: &str, edits: BorderConfigEdits) -> BorderEditOutcome {
         let canvas_default = self.mindmap.canvas.default_border.clone();
         let node = match self.mindmap.nodes.get_mut(node_id) {
             Some(n) => n,
@@ -174,10 +165,7 @@ impl MindMapDocument {
         };
         let before_style = node.style.clone();
         let before_runs = node.text_runs.clone();
-        let preset_before = before_style
-            .border
-            .as_ref()
-            .map(|c| c.preset.clone());
+        let preset_before = before_style.border.as_ref().map(|c| c.preset.clone());
 
         let mut outcome = BorderEditOutcome::default();
         let any_change = if edits.clear {
@@ -269,10 +257,7 @@ pub(super) fn apply_border_edits(
     }
 
     let had_cfg = node.style.border.is_some();
-    let cfg = node
-        .style
-        .border
-        .get_or_insert_with(default_glyph_border_config);
+    let cfg = node.style.border.get_or_insert_with(default_glyph_border_config);
     if !had_cfg {
         changed = true;
     }
@@ -288,11 +273,9 @@ pub(super) fn apply_border_edits(
     changed |= apply_option_edit(&edits.color, &mut cfg.color, |v| v.clone());
     changed |= apply_value_set(&edits.padding, &mut cfg.padding);
     changed |= apply_option_edit(&edits.color_palette, &mut cfg.color_palette, |v| v.clone());
-    changed |= apply_option_edit(
-        &edits.color_palette_field,
-        &mut cfg.color_palette_field,
-        |v| v.as_str().to_string(),
-    );
+    changed |= apply_option_edit(&edits.color_palette_field, &mut cfg.color_palette_field, |v| {
+        v.as_str().to_string()
+    });
 
     // Sides + corners: ensure the `glyphs` slot exists if any of
     // the eight glyph-string fields is being edited. The schema

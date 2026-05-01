@@ -10,7 +10,8 @@ use std::{env, error::Error, fs::File, io::Write, path::Path};
 
 const NUM_SPECIAL_FONT: usize = 1;
 const ANY_STR: &'static str = "Any";
-const DOC_ANY_STR: &'static str = "Indicates that the defining party does not give two fucks about the font used";
+const DOC_ANY_STR: &'static str =
+    "Indicates that the defining party does not give two fucks about the font used";
 
 const FONT_DIR: &'static str = "src/font/fonts";
 const FONTS_RS_FILE: &'static str = "generated_fonts_data.rs";
@@ -36,13 +37,13 @@ fn prepare_font_file(out_dir: OsString, manifest_dir: OsString) -> Result<(), Bo
     generate_font_file(out_file, &fonts)
 }
 
-fn generate_font_file(
-    out_file: impl AsRef<Path>,
-    fonts: &[(String, String)],
-) -> Result<(), Box<dyn Error>> {
+fn generate_font_file(out_file: impl AsRef<Path>, fonts: &[(String, String)]) -> Result<(), Box<dyn Error>> {
     let mut file = File::create(&out_file)?;
 
-    writeln!(file, "#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]")?;
+    writeln!(
+        file,
+        "#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]"
+    )?;
     writeln!(file, "pub enum AppFont {{")?;
     for (name, _) in fonts {
         if name.eq(ANY_STR) {
@@ -69,10 +70,7 @@ fn generate_font_file(
 
 use std::borrow::Borrow;
 
-fn collect_fonts(
-    source_dir: &str,
-    manifest_dir: &Path,
-) -> Result<Vec<(String, String)>, Box<dyn Error>> {
+fn collect_fonts(source_dir: &str, manifest_dir: &Path) -> Result<Vec<(String, String)>, Box<dyn Error>> {
     let mut fonts_map: HashMap<String, (String, String)> = HashMap::new();
     for entry in walkdir::WalkDir::new(source_dir)
         .follow_links(true)
@@ -98,9 +96,8 @@ fn collect_fonts(
             .expect("no str")
             .to_string();
 
-        let full_path: String = Cow::to_string(&manifest_dir.to_slash_lossy())
-            + "/"
-            + Cow::borrow(&path.to_slash_lossy());
+        let full_path: String =
+            Cow::to_string(&manifest_dir.to_slash_lossy()) + "/" + Cow::borrow(&path.to_slash_lossy());
         let filename_without_extension = filename.trim_end_matches(".otf").trim_end_matches(".ttf");
         let font_file_name = filename_without_extension
             .split_once("-")
@@ -119,9 +116,7 @@ fn collect_fonts(
         }
 
         if let Some((_font, existing_path)) = fonts_map.get(&font_file_name) {
-            if existing_path.ends_with(VALID_EXTENSIONS[0])
-                && filename.ends_with(VALID_EXTENSIONS[1])
-            {
+            if existing_path.ends_with(VALID_EXTENSIONS[0]) && filename.ends_with(VALID_EXTENSIONS[1]) {
                 fonts_map.insert(
                     font_file_name.clone(),
                     (font_camel_case.clone(), full_path.clone()),

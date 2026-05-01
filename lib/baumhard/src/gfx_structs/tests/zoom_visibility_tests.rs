@@ -66,7 +66,10 @@ pub fn test_min_only_is_inclusive() {
 }
 
 pub fn do_min_only_is_inclusive() {
-    let v = ZoomVisibility { min: Some(1.5), max: None };
+    let v = ZoomVisibility {
+        min: Some(1.5),
+        max: None,
+    };
     assert!(!v.contains(1.0));
     assert!(!v.contains(1.4999));
     assert!(v.contains(1.5), "min should be inclusive");
@@ -82,7 +85,10 @@ pub fn test_max_only_is_inclusive() {
 }
 
 pub fn do_max_only_is_inclusive() {
-    let v = ZoomVisibility { min: None, max: Some(0.5) };
+    let v = ZoomVisibility {
+        min: None,
+        max: Some(0.5),
+    };
     assert!(v.contains(0.05));
     assert!(v.contains(0.4999));
     assert!(v.contains(0.5), "max should be inclusive");
@@ -98,7 +104,10 @@ pub fn test_closed_window_renders_inside_band() {
 }
 
 pub fn do_closed_window_renders_inside_band() {
-    let v = ZoomVisibility { min: Some(0.5), max: Some(2.0) };
+    let v = ZoomVisibility {
+        min: Some(0.5),
+        max: Some(2.0),
+    };
     assert!(!v.contains(0.25));
     assert!(v.contains(0.5));
     assert!(v.contains(1.0));
@@ -116,7 +125,10 @@ pub fn test_single_point_band_is_inclusive() {
 }
 
 pub fn do_single_point_band_is_inclusive() {
-    let v = ZoomVisibility { min: Some(1.0), max: Some(1.0) };
+    let v = ZoomVisibility {
+        min: Some(1.0),
+        max: Some(1.0),
+    };
     assert!(v.contains(1.0));
     assert!(!v.contains(0.9999));
     assert!(!v.contains(1.0001));
@@ -133,7 +145,10 @@ pub fn test_inverted_band_never_contains() {
 }
 
 pub fn do_inverted_band_never_contains() {
-    let v = ZoomVisibility { min: Some(2.0), max: Some(0.5) };
+    let v = ZoomVisibility {
+        min: Some(2.0),
+        max: Some(0.5),
+    };
     for z in [0.05_f32, 0.5, 1.0, 2.0, 5.0] {
         assert!(!v.contains(z));
     }
@@ -155,9 +170,18 @@ pub fn test_nan_zoom_never_contains() {
 pub fn do_nan_zoom_never_contains() {
     for v in [
         ZoomVisibility::unbounded(),
-        ZoomVisibility { min: Some(0.0), max: None },
-        ZoomVisibility { min: None, max: Some(100.0) },
-        ZoomVisibility { min: Some(0.5), max: Some(2.0) },
+        ZoomVisibility {
+            min: Some(0.0),
+            max: None,
+        },
+        ZoomVisibility {
+            min: None,
+            max: Some(100.0),
+        },
+        ZoomVisibility {
+            min: Some(0.5),
+            max: Some(2.0),
+        },
     ] {
         assert!(!v.contains(f32::NAN), "NaN zoom must never render: {v:?}");
     }
@@ -181,20 +205,32 @@ pub fn do_try_new_enforces_invariants() {
     );
     assert_eq!(
         ZoomVisibility::try_new(Some(0.5), None),
-        Some(ZoomVisibility { min: Some(0.5), max: None })
+        Some(ZoomVisibility {
+            min: Some(0.5),
+            max: None
+        })
     );
     assert_eq!(
         ZoomVisibility::try_new(None, Some(2.0)),
-        Some(ZoomVisibility { min: None, max: Some(2.0) })
+        Some(ZoomVisibility {
+            min: None,
+            max: Some(2.0)
+        })
     );
     assert_eq!(
         ZoomVisibility::try_new(Some(1.0), Some(1.0)),
-        Some(ZoomVisibility { min: Some(1.0), max: Some(1.0) }),
+        Some(ZoomVisibility {
+            min: Some(1.0),
+            max: Some(1.0)
+        }),
         "single-point band is permitted — valid but always-false below/above"
     );
     assert_eq!(
         ZoomVisibility::try_new(Some(0.5), Some(2.0)),
-        Some(ZoomVisibility { min: Some(0.5), max: Some(2.0) })
+        Some(ZoomVisibility {
+            min: Some(0.5),
+            max: Some(2.0)
+        })
     );
 
     // Rejected shapes.
@@ -230,16 +266,13 @@ pub fn test_zoom_visibility_assign_round_trip() {
 }
 
 pub fn do_zoom_visibility_assign_round_trip() {
-    let mut area = GlyphArea::new_with_str(
-        "hello",
-        14.0,
-        14.0,
-        Vec2::new(0.0, 0.0),
-        Vec2::new(100.0, 20.0),
-    );
+    let mut area = GlyphArea::new_with_str("hello", 14.0, 14.0, Vec2::new(0.0, 0.0), Vec2::new(100.0, 20.0));
     assert!(area.zoom_visibility.is_default());
 
-    let window = ZoomVisibility { min: Some(1.0), max: Some(2.5) };
+    let window = ZoomVisibility {
+        min: Some(1.0),
+        max: Some(2.5),
+    };
     let delta_set = DeltaGlyphArea::new(vec![
         GlyphAreaField::ZoomVisibility(window),
         GlyphAreaField::Operation(ApplyOperation::Assign),
@@ -266,18 +299,18 @@ pub fn test_zoom_visibility_subtract_resets_to_unbounded() {
 }
 
 pub fn do_zoom_visibility_subtract_resets_to_unbounded() {
-    let mut area = GlyphArea::new_with_str(
-        "hello",
-        14.0,
-        14.0,
-        Vec2::new(0.0, 0.0),
-        Vec2::new(100.0, 20.0),
-    );
-    area.zoom_visibility = ZoomVisibility { min: Some(1.0), max: Some(2.0) };
+    let mut area = GlyphArea::new_with_str("hello", 14.0, 14.0, Vec2::new(0.0, 0.0), Vec2::new(100.0, 20.0));
+    area.zoom_visibility = ZoomVisibility {
+        min: Some(1.0),
+        max: Some(2.0),
+    };
 
     // Payload is non-default but Subtract ignores it.
     let delta = DeltaGlyphArea::new(vec![
-        GlyphAreaField::ZoomVisibility(ZoomVisibility { min: Some(0.1), max: None }),
+        GlyphAreaField::ZoomVisibility(ZoomVisibility {
+            min: Some(0.1),
+            max: None,
+        }),
         GlyphAreaField::Operation(ApplyOperation::Subtract),
     ]);
     area.apply_operation(&delta);
@@ -292,8 +325,14 @@ pub fn test_zoom_visibility_field_add_picks_rhs() {
 }
 
 pub fn do_zoom_visibility_field_add_picks_rhs() {
-    let lhs = GlyphAreaField::ZoomVisibility(ZoomVisibility { min: Some(0.5), max: None });
-    let rhs = GlyphAreaField::ZoomVisibility(ZoomVisibility { min: None, max: Some(2.0) });
+    let lhs = GlyphAreaField::ZoomVisibility(ZoomVisibility {
+        min: Some(0.5),
+        max: None,
+    });
+    let rhs = GlyphAreaField::ZoomVisibility(ZoomVisibility {
+        min: None,
+        max: Some(2.0),
+    });
     let combined = lhs + rhs.clone();
     assert_eq!(combined, rhs);
 }
@@ -309,15 +348,12 @@ pub fn test_zoom_visibility_changes_hash() {
 }
 
 pub fn do_zoom_visibility_changes_hash() {
-    let area_a = GlyphArea::new_with_str(
-        "hello",
-        14.0,
-        14.0,
-        Vec2::new(0.0, 0.0),
-        Vec2::new(100.0, 20.0),
-    );
+    let area_a = GlyphArea::new_with_str("hello", 14.0, 14.0, Vec2::new(0.0, 0.0), Vec2::new(100.0, 20.0));
     let mut area_b = area_a.clone();
-    area_b.zoom_visibility = ZoomVisibility { min: Some(1.0), max: Some(2.0) };
+    area_b.zoom_visibility = ZoomVisibility {
+        min: Some(1.0),
+        max: Some(2.0),
+    };
 
     let mut h_a = DefaultHasher::new();
     area_a.hash(&mut h_a);
@@ -342,13 +378,7 @@ pub fn test_zoom_visibility_default_is_skipped_in_json() {
 }
 
 pub fn do_zoom_visibility_default_is_skipped_in_json() {
-    let area = GlyphArea::new_with_str(
-        "hi",
-        14.0,
-        14.0,
-        Vec2::new(0.0, 0.0),
-        Vec2::new(10.0, 10.0),
-    );
+    let area = GlyphArea::new_with_str("hi", 14.0, 14.0, Vec2::new(0.0, 0.0), Vec2::new(10.0, 10.0));
     let json = serde_json::to_string(&area).expect("serialize");
     assert!(
         !json.contains("zoom_visibility"),
@@ -357,7 +387,10 @@ pub fn do_zoom_visibility_default_is_skipped_in_json() {
 
     // And a non-default window does show up.
     let mut gated = area.clone();
-    gated.zoom_visibility = ZoomVisibility { min: Some(1.0), max: None };
+    gated.zoom_visibility = ZoomVisibility {
+        min: Some(1.0),
+        max: None,
+    };
     let gated_json = serde_json::to_string(&gated).expect("serialize");
     assert!(gated_json.contains("zoom_visibility"));
     assert!(gated_json.contains("\"min\":1.0"));

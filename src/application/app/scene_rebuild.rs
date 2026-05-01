@@ -7,9 +7,7 @@
 //! a selection delta. Each `update_*_tree` dispatches between full
 //! rebuild and §B2 in-place mutator via `AppScene`'s signature.
 
-use crate::application::document::{
-    apply_tree_highlights, MindMapDocument, SelectionState, HIGHLIGHT_COLOR,
-};
+use crate::application::document::{apply_tree_highlights, MindMapDocument, SelectionState, HIGHLIGHT_COLOR};
 use crate::application::renderer::Renderer;
 
 /// Pure predicate for [`rebuild_after_selection_change`]'s
@@ -64,9 +62,7 @@ pub(in crate::application::app) fn rebuild_after_selection_change(
 #[cfg(test)]
 mod tests {
     use super::selection_change_touches_tree;
-    use crate::application::document::{
-        EdgeLabelSel, EdgeRef, PortalLabelSel, SelectionState,
-    };
+    use crate::application::document::{EdgeLabelSel, EdgeRef, PortalLabelSel, SelectionState};
     use baumhard::mindmap::scene_cache::EdgeKey;
 
     fn edge_ref() -> EdgeRef {
@@ -142,10 +138,7 @@ mod tests {
                 &prev,
                 &SelectionState::PortalText(portal())
             ));
-            assert!(selection_change_touches_tree(
-                &prev,
-                &SelectionState::None
-            ));
+            assert!(selection_change_touches_tree(&prev, &SelectionState::None));
         }
     }
 
@@ -246,8 +239,9 @@ pub(in crate::application::app) fn rebuild_scene_only(
 // =====================================================================
 
 /// Build the border tree (no drag offsets) and register it under
-/// [`CanvasRole::Borders`]. Caller must follow with
-/// [`flush_canvas_scene_buffers`] before the next render.
+/// [`crate::application::scene_host::CanvasRole::Borders`]. Caller
+/// must follow with [`flush_canvas_scene_buffers`] before the next
+/// render.
 pub(in crate::application::app) fn update_border_tree_static(
     doc: &MindMapDocument,
     app_scene: &mut crate::application::scene_host::AppScene,
@@ -256,7 +250,7 @@ pub(in crate::application::app) fn update_border_tree_static(
 }
 
 /// Build or in-place update the border tree under
-/// [`CanvasRole::Borders`].
+/// [`crate::application::scene_host::CanvasRole::Borders`].
 ///
 /// **§B2 dispatch.** The hot path this closes: when the color
 /// picker is open, every throttled `AboutToWait` drain calls
@@ -302,11 +296,12 @@ pub(in crate::application::app) fn update_border_tree_with_offsets(
 }
 
 /// Build or in-place update the portal tree under
-/// [`CanvasRole::Portals`]. Selection-cyan and color-preview
-/// override rules mirror `scene_builder::build_scene`. Hands the
-/// AABB-keyed hitbox map back to the renderer so the legacy
-/// `Renderer::hit_test_portal` keeps working until hit-test
-/// routing migrates to [`Scene::component_at`].
+/// [`crate::application::scene_host::CanvasRole::Portals`].
+/// Selection-cyan and color-preview override rules mirror
+/// `scene_builder::build_scene`. Hands the AABB-keyed hitbox map
+/// back to the renderer so the legacy `Renderer::hit_test_portal`
+/// keeps working until hit-test routing migrates to
+/// [`baumhard::gfx_structs::scene::Scene::component_at`].
 ///
 /// **§B2 dispatch.** Drag, color-preview, and selection toggle
 /// all leave the visible-portal *identity sequence* unchanged —
@@ -330,8 +325,8 @@ pub(in crate::application::app) fn update_portal_tree(
     use crate::application::scene_host::{hash_canvas_signature, CanvasDispatch, CanvasRole};
     use baumhard::mindmap::scene_builder::SelectedPortalLabel;
     use baumhard::mindmap::tree_builder::{
-        build_portal_mutator_tree_from_pairs, build_portal_tree_from_pairs,
-        portal_identity_sequence, portal_pair_data, PortalColorPreviewRef, SelectedEdgeRef,
+        build_portal_mutator_tree_from_pairs, build_portal_tree_from_pairs, portal_identity_sequence,
+        portal_pair_data, PortalColorPreviewRef, SelectedEdgeRef,
     };
 
     let selected_owned = doc
@@ -341,8 +336,7 @@ pub(in crate::application::app) fn update_portal_tree(
     let selected: Option<SelectedEdgeRef> = selected_owned
         .as_ref()
         .map(|(f, t, ty)| (f.as_str(), t.as_str(), ty.as_str()));
-    let selected_portal_label: Option<SelectedPortalLabel> =
-        doc.selection.selected_portal_label_scene_ref();
+    let selected_portal_label: Option<SelectedPortalLabel> = doc.selection.selected_portal_label_scene_ref();
 
     // The picker preview fans out to the portal pass whenever the
     // previewed edge is portal-mode. No separate Portal variant on
@@ -363,13 +357,13 @@ pub(in crate::application::app) fn update_portal_tree(
     let portal_text_edit = doc
         .portal_text_edit_preview
         .as_ref()
-        .map(|(key, endpoint, buffer)| {
-            baumhard::mindmap::scene_builder::PortalTextEditOverride {
+        .map(
+            |(key, endpoint, buffer)| baumhard::mindmap::scene_builder::PortalTextEditOverride {
                 edge_key: key,
                 endpoint_node_id: endpoint.as_str(),
                 buffer: buffer.as_str(),
-            }
-        });
+            },
+        );
 
     let pairs = portal_pair_data(
         &doc.mindmap,
@@ -400,7 +394,7 @@ pub(in crate::application::app) fn update_portal_tree(
 }
 
 /// Build or in-place update the connection tree under
-/// [`CanvasRole::Connections`].
+/// [`crate::application::scene_host::CanvasRole::Connections`].
 ///
 /// **§B2 dispatch.** Selection toggle, color preview, and theme
 /// switches change only per-glyph fields (color regions, body
@@ -420,8 +414,7 @@ pub(in crate::application::app) fn update_connection_tree(
         build_connection_mutator_tree, build_connection_tree, connection_identity_sequence,
     };
 
-    let signature =
-        hash_canvas_signature(&connection_identity_sequence(&scene.connection_elements));
+    let signature = hash_canvas_signature(&connection_identity_sequence(&scene.connection_elements));
     match app_scene.canvas_dispatch(CanvasRole::Connections, signature) {
         CanvasDispatch::InPlaceMutator => {
             let mutator = build_connection_mutator_tree(&scene.connection_elements);
@@ -436,7 +429,8 @@ pub(in crate::application::app) fn update_connection_tree(
 }
 
 /// Build or in-place update the connection-label tree under
-/// [`CanvasRole::ConnectionLabels`]. Threads the per-edge AABB
+/// [`crate::application::scene_host::CanvasRole::ConnectionLabels`].
+/// Threads the per-edge AABB
 /// hitbox map back to the renderer so `hit_test_edge_label`
 /// keeps working.
 ///
@@ -453,8 +447,7 @@ pub(in crate::application::app) fn update_connection_label_tree(
 ) {
     use crate::application::scene_host::{hash_canvas_signature, CanvasDispatch, CanvasRole};
     use baumhard::mindmap::tree_builder::{
-        build_connection_label_mutator_tree, build_connection_label_tree,
-        connection_label_identity_sequence,
+        build_connection_label_mutator_tree, build_connection_label_tree, connection_label_identity_sequence,
     };
 
     let signature = hash_canvas_signature(&connection_label_identity_sequence(
@@ -469,18 +462,14 @@ pub(in crate::application::app) fn update_connection_label_tree(
         CanvasDispatch::FullRebuild => {
             let result = build_connection_label_tree(&scene.connection_label_elements);
             renderer.set_connection_label_hitboxes(result.hitboxes);
-            app_scene.register_canvas(
-                CanvasRole::ConnectionLabels,
-                result.tree,
-                glam::Vec2::ZERO,
-            );
+            app_scene.register_canvas(CanvasRole::ConnectionLabels, result.tree, glam::Vec2::ZERO);
             app_scene.set_canvas_signature(CanvasRole::ConnectionLabels, signature);
         }
     }
 }
 
 /// Build or in-place update the edge-handle tree under
-/// [`CanvasRole::EdgeHandles`].
+/// [`crate::application::scene_host::CanvasRole::EdgeHandles`].
 ///
 /// **§B2 dispatch.** Dragging a handle moves only its position;
 /// the handle set's *identity sequence* (the
@@ -499,8 +488,7 @@ pub(in crate::application::app) fn update_edge_handle_tree(
 ) {
     use crate::application::scene_host::{hash_canvas_signature, CanvasDispatch, CanvasRole};
     use baumhard::mindmap::tree_builder::{
-        build_edge_handle_mutator_tree, build_edge_handle_tree,
-        edge_handle_identity_sequence,
+        build_edge_handle_mutator_tree, build_edge_handle_tree, edge_handle_identity_sequence,
     };
 
     let signature = hash_canvas_signature(&edge_handle_identity_sequence(&scene.edge_handles));

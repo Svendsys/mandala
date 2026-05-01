@@ -9,7 +9,7 @@
 //! threat-model defence and must be single-sourced.
 //!
 //! - **Native** impl lives in
-//!   [`super::dispatch::NativeMacroDispatchTarget`] wrapping
+//!   `super::dispatch::NativeMacroDispatchTarget` wrapping
 //!   `&mut InputHandlerContext`.
 //! - **WASM** impl lives in
 //!   `super::run_wasm::WasmMacroDispatchTarget` wrapping
@@ -118,7 +118,9 @@ pub(in crate::application::app) fn dispatch_macro<T: MacroDispatchTarget>(
                         "macro '{}' (source {:?}): Action {:?} rejected — \
                          tier may not invoke destructive / I/O Actions; \
                          aborting remaining steps",
-                        macro_id, source, action,
+                        macro_id,
+                        source,
+                        action,
                     );
                     return any_ran;
                 }
@@ -127,7 +129,10 @@ pub(in crate::application::app) fn dispatch_macro<T: MacroDispatchTarget>(
                     any_ran = true;
                 }
             }
-            MacroStep::CustomMutation { id, target: macro_target } => {
+            MacroStep::CustomMutation {
+                id,
+                target: macro_target,
+            } => {
                 let nid_opt: Option<String> = match macro_target {
                     MacroTarget::CurrentSelection => target.current_selection_node_id(),
                     MacroTarget::NodeId(s) => {
@@ -139,10 +144,7 @@ pub(in crate::application::app) fn dispatch_macro<T: MacroDispatchTarget>(
                         if target.has_node(s) {
                             Some(s.clone())
                         } else {
-                            log::warn!(
-                                "macro step CustomMutation: node id '{}' not found",
-                                s,
-                            );
+                            log::warn!("macro step CustomMutation: node id '{}' not found", s,);
                             continue;
                         }
                     }
@@ -178,7 +180,8 @@ pub(in crate::application::app) fn dispatch_macro<T: MacroDispatchTarget>(
                         "macro '{}' (source {:?}): ConsoleLine step rejected — \
                          only User-tier macros may run console verbs; \
                          aborting remaining steps",
-                        macro_id, source,
+                        macro_id,
+                        source,
                     );
                     return any_ran;
                 }
@@ -200,9 +203,7 @@ mod tests {
 
     use super::*;
     use crate::application::keybinds::Action;
-    use crate::application::macros::{
-        Macro, MacroRegistry, MacroSource, MacroStep, MacroTarget,
-    };
+    use crate::application::macros::{Macro, MacroRegistry, MacroSource, MacroStep, MacroTarget};
 
     /// Mock target: records every method invocation in order.
     /// `Default` selection → `current_selection_node_id` returns
@@ -315,9 +316,7 @@ mod tests {
             "m1",
             vec![
                 MacroStep::Action { action: Action::Undo },
-                MacroStep::ConsoleLine {
-                    line: "save".into(),
-                },
+                MacroStep::ConsoleLine { line: "save".into() },
                 MacroStep::Action {
                     action: Action::SaveDocument,
                 },
@@ -404,12 +403,7 @@ mod tests {
     fn unhandled_action_outcome_does_not_set_any_ran() {
         // Action steps that return `Unhandled` (e.g. dispatched in
         // a context where they don't apply) must NOT count as "ran".
-        let m = macro_with_steps(
-            "u5",
-            vec![MacroStep::Action {
-                action: Action::Undo,
-            }],
-        );
+        let m = macro_with_steps("u5", vec![MacroStep::Action { action: Action::Undo }]);
         let mut t = MockTarget::new(registry_with(vec![(m, MacroSource::User)]));
         t.action_outcome = DispatchOutcome::Unhandled;
         // The dispatch_action call landed on the mock, but
@@ -446,9 +440,7 @@ mod tests {
         // moves the guard into the impl + return-bool contract.
         let m = macro_with_steps(
             "u_console_skip",
-            vec![MacroStep::ConsoleLine {
-                line: "save".into(),
-            }],
+            vec![MacroStep::ConsoleLine { line: "save".into() }],
         );
         let mut t = MockTarget::new(registry_with(vec![(m, MacroSource::User)]));
         t.console_line_executed = false;

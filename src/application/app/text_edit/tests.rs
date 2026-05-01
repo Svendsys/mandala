@@ -75,7 +75,6 @@ fn test_delete_at_cursor_middle() {
     assert_eq!(cursor, 1);
 }
 
-
 #[test]
 fn test_cursor_to_line_start_single_line() {
     assert_eq!(cursor_to_line_start("abc", 2), 0);
@@ -153,7 +152,6 @@ fn test_insert_caret_empty() {
     assert_eq!(out, "|");
 }
 
-
 // -----------------------------------------------------------------
 // Baumhard Mutation round-trip: constructing and applying a
 // `Mutation::AreaDelta` with `GlyphAreaField::Text + Assign`
@@ -167,13 +165,8 @@ fn test_text_edit_mutation_assigns_via_baumhard() {
     use baumhard::core::primitives::{Applicable, ApplyOperation};
     use baumhard::gfx_structs::area::{DeltaGlyphArea, GlyphArea, GlyphAreaField};
 
-    let mut area = GlyphArea::new_with_str(
-        "initial",
-        14.0,
-        16.8,
-        Vec2::new(0.0, 0.0),
-        Vec2::new(100.0, 30.0),
-    );
+    let mut area =
+        GlyphArea::new_with_str("initial", 14.0, 16.8, Vec2::new(0.0, 0.0), Vec2::new(100.0, 30.0));
     let delta = DeltaGlyphArea::new(vec![
         GlyphAreaField::Text("updated".to_string()),
         GlyphAreaField::Operation(ApplyOperation::Assign),
@@ -187,13 +180,7 @@ fn test_text_edit_mutation_with_caret_glyph_via_baumhard() {
     use baumhard::core::primitives::{Applicable, ApplyOperation};
     use baumhard::gfx_structs::area::{DeltaGlyphArea, GlyphArea, GlyphAreaField};
 
-    let mut area = GlyphArea::new_with_str(
-        "",
-        14.0,
-        16.8,
-        Vec2::new(0.0, 0.0),
-        Vec2::new(100.0, 30.0),
-    );
+    let mut area = GlyphArea::new_with_str("", 14.0, 16.8, Vec2::new(0.0, 0.0), Vec2::new(100.0, 30.0));
     let buffer = "hello world";
     let cursor = 5;
     let display_text = insert_caret(buffer, cursor);
@@ -217,9 +204,7 @@ fn test_text_edit_mutation_with_caret_glyph_via_baumhard() {
 /// runs on the first keystroke.
 #[test]
 fn test_text_edit_preserves_multi_run_regions_on_insertion() {
-    use baumhard::core::primitives::{
-        Applicable, ApplyOperation, ColorFontRegion, ColorFontRegions, Range,
-    };
+    use baumhard::core::primitives::{Applicable, ApplyOperation, ColorFontRegion, ColorFontRegions, Range};
     use baumhard::font::fonts::AppFont;
     use baumhard::gfx_structs::area::{DeltaGlyphArea, GlyphArea, GlyphAreaField};
 
@@ -483,7 +468,9 @@ fn make_open_state(buffer: &str, cursor: usize) -> TextEditState {
 
 fn cursor_of(state: &TextEditState) -> usize {
     match state {
-        TextEditState::Open { cursor_grapheme_pos, .. } => *cursor_grapheme_pos,
+        TextEditState::Open {
+            cursor_grapheme_pos, ..
+        } => *cursor_grapheme_pos,
         TextEditState::Closed => panic!("expected Open"),
     }
 }

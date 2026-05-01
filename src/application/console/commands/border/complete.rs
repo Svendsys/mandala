@@ -9,10 +9,7 @@ use crate::application::console::completion::{
 };
 use crate::application::console::ConsoleContext;
 
-pub fn complete_border(
-    state: &CompletionState,
-    ctx: &ConsoleContext,
-) -> Vec<Completion> {
+pub fn complete_border(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Completion> {
     match &state.context {
         CompletionContext::Token { index: 0 } => verb_or_key(state.partial),
         CompletionContext::Token { .. } => key_completions(state.partial),
@@ -76,25 +73,14 @@ fn key_hint(k: &str) -> &'static str {
         "palette" => "palette name to cycle per-glyph colours, or 'off'",
         "field" => "frame | background | text | title",
         "padding" => "border-to-content padding in pixels",
-        "top" | "bottom" | "left" | "right" => {
-            "side pattern: `prefix(fill)suffix` or atomic"
-        }
+        "top" | "bottom" | "left" | "right" => "side pattern: `prefix(fill)suffix` or atomic",
         "tl" | "tr" | "bl" | "br" => "single corner glyph (escapes apply)",
         _ => "",
     }
 }
 
-fn palette_value_completions(
-    partial: &str,
-    ctx: &ConsoleContext,
-) -> Vec<Completion> {
-    let mut names: Vec<&str> = ctx
-        .document
-        .mindmap
-        .palettes
-        .keys()
-        .map(String::as_str)
-        .collect();
+fn palette_value_completions(partial: &str, ctx: &ConsoleContext) -> Vec<Completion> {
+    let mut names: Vec<&str> = ctx.document.mindmap.palettes.keys().map(String::as_str).collect();
     names.sort();
     let mut out: Vec<Completion> = names
         .into_iter()
@@ -169,7 +155,8 @@ mod tests {
             assert!(
                 labels.iter().any(|l| l == v),
                 "expected verb '{}' in completions: {:?}",
-                v, labels
+                v,
+                labels
             );
         }
         // A handful of kv keys.
@@ -177,7 +164,8 @@ mod tests {
             assert!(
                 labels.iter().any(|l| l == k),
                 "expected kv key '{}' in completions: {:?}",
-                k, labels
+                k,
+                labels
             );
         }
     }
@@ -191,7 +179,9 @@ mod tests {
         let tokens = Vec::<String>::new();
         let s = state(
             "",
-            CompletionContext::KvValue { key: "preset".to_string() },
+            CompletionContext::KvValue {
+                key: "preset".to_string(),
+            },
             &tokens,
         );
         let out = complete_border(&s, &ctx);
@@ -200,7 +190,8 @@ mod tests {
             assert!(
                 labels.iter().any(|l| l == p),
                 "expected preset '{}' in completions: {:?}",
-                p, labels
+                p,
+                labels
             );
         }
     }
@@ -215,7 +206,9 @@ mod tests {
         let tokens = Vec::<String>::new();
         let s = state(
             "",
-            CompletionContext::KvValue { key: "palette".to_string() },
+            CompletionContext::KvValue {
+                key: "palette".to_string(),
+            },
             &tokens,
         );
         let out = complete_border(&s, &ctx);
@@ -231,7 +224,8 @@ mod tests {
             assert!(
                 labels.iter().any(|l| l == &name.as_str()),
                 "expected palette '{}' in completions: {:?}",
-                name, labels
+                name,
+                labels
             );
         }
     }
@@ -244,7 +238,9 @@ mod tests {
         let tokens = Vec::<String>::new();
         let s = state(
             "",
-            CompletionContext::KvValue { key: "field".to_string() },
+            CompletionContext::KvValue {
+                key: "field".to_string(),
+            },
             &tokens,
         );
         let out = complete_border(&s, &ctx);
@@ -253,7 +249,8 @@ mod tests {
             assert!(
                 labels.iter().any(|l| l == f),
                 "expected field '{}' in completions: {:?}",
-                f, labels
+                f,
+                labels
             );
         }
     }
@@ -270,7 +267,9 @@ mod tests {
         let tokens = Vec::<String>::new();
         let s = state(
             "",
-            CompletionContext::KvValue { key: "font".to_string() },
+            CompletionContext::KvValue {
+                key: "font".to_string(),
+            },
             &tokens,
         );
         let out = complete_border(&s, &ctx);

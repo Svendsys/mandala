@@ -52,18 +52,14 @@ mod tests_reparent;
 mod tests_selection;
 
 // Cross-platform: consumers (`scene_rebuild.rs`, `event_mouse_click.rs`,
-// `run_wasm.rs`, `scene_host.rs`) compile on both targets.
+// `run_wasm/`, `scene_host.rs`) compile on both targets.
 pub use hit_test::{apply_tree_highlights, hit_test, point_in_node_aabb};
 // Native-only: consumed by drag handlers, the click router, and
 // rect-select drain — none reachable on WASM today.
 #[cfg(not(target_arch = "wasm32"))]
-pub use hit_test::{
-    apply_drag_delta, apply_drag_delta_and_collect_patches, hit_test_edge, rect_select,
-};
-pub use nodes::{BorderConfigEdits, BorderEditOutcome, OptionEdit, BorderSide};
-pub use types::{
-    AnimationInstance, EdgeLabelSel, EdgeRef, PortalLabelSel, SelectionState, HIGHLIGHT_COLOR,
-};
+pub use hit_test::{apply_drag_delta, apply_drag_delta_and_collect_patches, hit_test_edge, rect_select};
+pub use nodes::{BorderConfigEdits, BorderEditOutcome, BorderSide, OptionEdit};
+pub use types::{AnimationInstance, EdgeLabelSel, EdgeRef, PortalLabelSel, SelectionState, HIGHLIGHT_COLOR};
 // Native-only: consumed by `app/click.rs`'s reparent / connect mode
 // rendering. WASM doesn't dispatch `EnterReparentMode` /
 // `EnterConnectMode` (NativeOnly per `wasm_compatibility`).
@@ -127,8 +123,7 @@ pub struct MindMapDocument {
     /// Key shape is `(edge_key, endpoint_node_id, buffer)` —
     /// portal labels are per-endpoint, so the key needs both the
     /// owning edge and the endpoint side.
-    pub portal_text_edit_preview:
-        Option<(baumhard::mindmap::scene_cache::EdgeKey, String, String)>,
+    pub portal_text_edit_preview: Option<(baumhard::mindmap::scene_cache::EdgeKey, String, String)>,
     /// Transient color-picker hover preview. When `Some(...)`, the
     /// scene builder substitutes the preview color for the edge
     /// under the wheel — overriding both the resolved `config.color`
@@ -184,9 +179,7 @@ fn grow_node_sizes_to_fit_text(map: &mut MindMap) {
 /// first — runs are usually homogeneous today (the inline editor
 /// collapses to one), but a multi-size future shouldn't silently
 /// fall back to the smallest measurement.
-pub(super) fn grow_one_node_to_fit_text(
-    node: &mut baumhard::mindmap::model::MindNode,
-) {
+pub(super) fn grow_one_node_to_fit_text(node: &mut baumhard::mindmap::model::MindNode) {
     use baumhard::font::fonts::{
         acquire_font_system_write, app_font_by_family, measure_text_block_unbounded,
     };
@@ -260,9 +253,7 @@ pub(super) fn grow_one_node_to_fit_border(
     node: &mut baumhard::mindmap::model::MindNode,
     canvas_default: Option<&baumhard::mindmap::model::GlyphBorderConfig>,
 ) {
-    use baumhard::mindmap::border::{
-        resolve_border_style, BORDER_APPROX_CHAR_WIDTH_FRAC,
-    };
+    use baumhard::mindmap::border::{resolve_border_style, BORDER_APPROX_CHAR_WIDTH_FRAC};
     if !node.style.show_frame {
         return;
     }
@@ -271,26 +262,21 @@ pub(super) fn grow_one_node_to_fit_border(
         canvas_default,
         &node.style.frame_color,
     );
-    let approx_char_width =
-        style.font_size_pt * BORDER_APPROX_CHAR_WIDTH_FRAC;
+    let approx_char_width = style.font_size_pt * BORDER_APPROX_CHAR_WIDTH_FRAC;
     let corners = style.corner_clusters();
 
     // Soft target: include one full fill iteration on each side.
     // Hard floor: cover the static parts only.
-    let need_top = style.side_patterns.top.minimum_with_one_fill()
-        + corners.top_horizontal();
-    let need_bottom = style.side_patterns.bottom.minimum_with_one_fill()
-        + corners.bottom_horizontal();
+    let need_top = style.side_patterns.top.minimum_with_one_fill() + corners.top_horizontal();
+    let need_bottom = style.side_patterns.bottom.minimum_with_one_fill() + corners.bottom_horizontal();
     let need_left = style.side_patterns.left.minimum_with_one_fill();
     let need_right = style.side_patterns.right.minimum_with_one_fill();
 
     let need_horizontal_clusters = need_top.max(need_bottom);
     let need_vertical_clusters = need_left.max(need_right);
 
-    let need_w =
-        need_horizontal_clusters as f32 * approx_char_width;
-    let need_h =
-        need_vertical_clusters as f32 * style.font_size_pt;
+    let need_w = need_horizontal_clusters as f32 * approx_char_width;
+    let need_h = need_vertical_clusters as f32 * style.font_size_pt;
 
     let size = node.size_vec2();
     if size.x < need_w {
@@ -379,10 +365,7 @@ impl MindMapDocument {
     /// [`Self::load`] / [`Self::from_json_str`] /
     /// [`Self::new_blank`].
     #[cfg(test)]
-    pub(crate) fn from_finalized_mindmap(
-        map: MindMap,
-        file_path: Option<String>,
-    ) -> Self {
+    pub(crate) fn from_finalized_mindmap(map: MindMap, file_path: Option<String>) -> Self {
         Self::from_mindmap(map, file_path)
     }
 
@@ -470,10 +453,7 @@ impl MindMapDocument {
             _ => None,
         };
         let portal_label = self.selection.selected_portal_label_scene_ref();
-        let label_edit = self
-            .label_edit_preview
-            .as_ref()
-            .map(|(k, s)| (k, s.as_str()));
+        let label_edit = self.label_edit_preview.as_ref().map(|(k, s)| (k, s.as_str()));
         let selection = scene_builder::SceneSelectionContext {
             edge,
             edge_label,

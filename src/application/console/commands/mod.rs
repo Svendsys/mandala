@@ -85,8 +85,7 @@ pub const COMMANDS: &[Command] = &[
 pub fn command_by_name(name: &str) -> Option<&'static Command> {
     let lower = name.to_ascii_lowercase();
     COMMANDS.iter().find(|c| {
-        c.name.eq_ignore_ascii_case(&lower)
-            || c.aliases.iter().any(|a| a.eq_ignore_ascii_case(&lower))
+        c.name.eq_ignore_ascii_case(&lower) || c.aliases.iter().any(|a| a.eq_ignore_ascii_case(&lower))
     })
 }
 
@@ -119,8 +118,8 @@ mod tests {
     #[test]
     fn test_command_registry_has_every_migrated_verb() {
         let expected = [
-            "help", "anchor", "body", "border", "cap", "color", "edge", "font",
-            "fps", "spacing", "label", "mutation", "save", "open", "new", "zoom",
+            "help", "anchor", "body", "border", "cap", "color", "edge", "font", "fps", "spacing", "label",
+            "mutation", "save", "open", "new", "zoom",
         ];
         for name in expected {
             assert!(
@@ -136,9 +135,6 @@ mod tests {
         // completion so users thinking "control visibility by
         // zoom" find the command without learning the shorter
         // `zoom` verb first.
-        assert_eq!(
-            command_by_name("visibility").map(|c| c.name),
-            Some("zoom")
-        );
+        assert_eq!(command_by_name("visibility").map(|c| c.name), Some("zoom"));
     }
 }

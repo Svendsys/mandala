@@ -14,8 +14,8 @@ use std::path::Path;
 /// [`load_from_str`]. Native-only (synchronous I/O). Returns a
 /// `String` error describing the path + underlying cause.
 pub fn load_from_file(path: &Path) -> Result<MindMap, String> {
-    let content = fs::read_to_string(path)
-        .map_err(|e| format!("Failed to read file {}: {}", path.display(), e))?;
+    let content =
+        fs::read_to_string(path).map_err(|e| format!("Failed to read file {}: {}", path.display(), e))?;
     load_from_str(&content)
 }
 
@@ -31,8 +31,8 @@ pub fn load_from_str(json: &str) -> Result<MindMap, String> {
     // legacy files with a clear pointer to `maptool convert --portals`
     // so a stale file doesn't silently drop its portals — serde would
     // otherwise ignore the unknown field.
-    let raw: serde_json::Value = serde_json::from_str(json)
-        .map_err(|e| format!("Failed to parse mindmap JSON: {}", e))?;
+    let raw: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| format!("Failed to parse mindmap JSON: {}", e))?;
     if let Some(arr) = raw.get("portals").and_then(|p| p.as_array()) {
         if !arr.is_empty() {
             return Err(
@@ -42,8 +42,7 @@ pub fn load_from_str(json: &str) -> Result<MindMap, String> {
             );
         }
     }
-    serde_json::from_value(raw)
-        .map_err(|e| format!("Failed to parse mindmap JSON: {}", e))
+    serde_json::from_value(raw).map_err(|e| format!("Failed to parse mindmap JSON: {}", e))
 }
 
 /// Serialize a `MindMap` to pretty-printed JSON and write it to disk.
@@ -54,8 +53,7 @@ pub fn load_from_str(json: &str) -> Result<MindMap, String> {
 /// `BufWriter` so large maps don't have to materialize the entire
 /// JSON in memory before hitting disk.
 pub fn save_to_file(path: &Path, map: &MindMap) -> Result<(), String> {
-    let file = fs::File::create(path)
-        .map_err(|e| format!("Failed to create {}: {}", path.display(), e))?;
+    let file = fs::File::create(path).map_err(|e| format!("Failed to create {}: {}", path.display(), e))?;
     let writer = std::io::BufWriter::new(file);
     serde_json::to_writer_pretty(writer, map)
         .map_err(|e| format!("Failed to write {}: {}", path.display(), e))
@@ -91,7 +89,9 @@ mod tests {
         }
         // Verify sorted by index
         for w in roots.windows(2) {
-            assert!(crate::mindmap::model::id_sort_key(&w[0].id) <= crate::mindmap::model::id_sort_key(&w[1].id));
+            assert!(
+                crate::mindmap::model::id_sort_key(&w[0].id) <= crate::mindmap::model::id_sort_key(&w[1].id)
+            );
         }
     }
 
@@ -108,7 +108,9 @@ mod tests {
         }
         // Verify sorted by index
         for w in children.windows(2) {
-            assert!(crate::mindmap::model::id_sort_key(&w[0].id) <= crate::mindmap::model::id_sort_key(&w[1].id));
+            assert!(
+                crate::mindmap::model::id_sort_key(&w[0].id) <= crate::mindmap::model::id_sort_key(&w[1].id)
+            );
         }
     }
 
@@ -190,8 +192,12 @@ mod tests {
             let to_size = to_node.size_vec2();
 
             let conn_path = connection::build_connection_path(
-                from_pos, from_size, &edge.anchor_from,
-                to_pos, to_size, &edge.anchor_to,
+                from_pos,
+                from_size,
+                &edge.anchor_from,
+                to_pos,
+                to_size,
+                &edge.anchor_to,
                 &edge.control_points,
             );
             match conn_path {
@@ -201,7 +207,12 @@ mod tests {
 
             // Verify sampling produces non-empty result
             let samples = connection::sample_path(&conn_path, 7.2);
-            assert!(!samples.is_empty(), "Edge {}→{} produced no samples", edge.from_id, edge.to_id);
+            assert!(
+                !samples.is_empty(),
+                "Edge {}→{} produced no samples",
+                edge.from_id,
+                edge.to_id
+            );
         }
         assert_eq!(straight_count + bezier_count, 250);
         assert!(straight_count > 200, "Expected most edges to be straight");
@@ -218,12 +229,20 @@ mod tests {
 
         // All visible edges should produce connection elements
         let visible_edges = map.edges.iter().filter(|e| e.visible).count();
-        assert_eq!(scene.connection_elements.len(), visible_edges,
-            "Expected {} connection elements, got {}", visible_edges, scene.connection_elements.len());
+        assert_eq!(
+            scene.connection_elements.len(),
+            visible_edges,
+            "Expected {} connection elements, got {}",
+            visible_edges,
+            scene.connection_elements.len()
+        );
 
         // Each connection element should have glyph positions
         for elem in &scene.connection_elements {
-            assert!(!elem.glyph_positions.is_empty(), "Connection has no glyph positions");
+            assert!(
+                !elem.glyph_positions.is_empty(),
+                "Connection has no glyph positions"
+            );
             assert!(!elem.body_glyph.is_empty(), "Connection has no body glyph");
             assert!(!elem.color.is_empty(), "Connection has no color");
         }
@@ -236,11 +255,20 @@ mod tests {
         let path = test_map_path();
         let map = load_from_file(&path).unwrap();
 
-        assert!(map.custom_mutations.is_empty(), "Existing map should have no custom_mutations");
+        assert!(
+            map.custom_mutations.is_empty(),
+            "Existing map should have no custom_mutations"
+        );
 
         let node = map.nodes.get("0").unwrap();
-        assert!(node.trigger_bindings.is_empty(), "Existing node should have no trigger_bindings");
-        assert!(node.inline_mutations.is_empty(), "Existing node should have no inline_mutations");
+        assert!(
+            node.trigger_bindings.is_empty(),
+            "Existing node should have no trigger_bindings"
+        );
+        assert!(
+            node.inline_mutations.is_empty(),
+            "Existing node should have no inline_mutations"
+        );
     }
 
     #[test]
@@ -447,22 +475,17 @@ mod tests {
 
         // Verify the key is absent on disk (skip_serializing_if).
         let raw = std::fs::read_to_string(&tmp_empty).expect("read raw");
-        assert!(
-            !raw.contains("\"macros\""),
-            "empty macros must not be serialised"
-        );
+        assert!(!raw.contains("\"macros\""), "empty macros must not be serialised");
         let _ = std::fs::remove_file(&tmp_empty);
 
         // Non-empty case: round-trip preserves the JSON shape.
         let mut populated = MindMap::new_blank("macro-rt-2");
-        populated.macros = vec![
-            serde_json::json!({
-                "id": "save-and-quit",
-                "name": "Save and Quit",
-                "description": "",
-                "steps": [{"kind": "Action", "action": "SaveDocument"}]
-            }),
-        ];
+        populated.macros = vec![serde_json::json!({
+            "id": "save-and-quit",
+            "name": "Save and Quit",
+            "description": "",
+            "steps": [{"kind": "Action", "action": "SaveDocument"}]
+        })];
         let tmp_full = std::env::temp_dir().join("mandala_macros_full.mindmap.json");
         save_to_file(&tmp_full, &populated).expect("save failed");
         let reloaded_full = load_from_file(&tmp_full).expect("reload failed");
@@ -482,16 +505,17 @@ mod tests {
         // `inline_macros`. Empty case is implicitly covered by
         // `test_save_blank_map_round_trip` (every node has an
         // empty Vec).
-        use crate::mindmap::model::{
-            Canvas, MindNode, NodeLayout, NodeStyle, Position, Size,
-        };
+        use crate::mindmap::model::{Canvas, MindNode, NodeLayout, NodeStyle, Position, Size};
         use std::collections::HashMap;
 
         let node = MindNode {
             id: "0".to_string(),
             parent_id: None,
             position: Position { x: 0.0, y: 0.0 },
-            size: Size { width: 100.0, height: 50.0 },
+            size: Size {
+                width: 100.0,
+                height: 50.0,
+            },
             text: "n".to_string(),
             text_runs: Vec::new(),
             style: NodeStyle {

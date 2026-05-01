@@ -10,9 +10,7 @@
 use cosmic_text::{Color, Family, FontSystem};
 
 use crate::core::primitives::{ColorFontRegion, ColorFontRegions, Range};
-use crate::font::attrs::{
-    attrs_list_from_regions, rich_text_spans_from_regions, RegionFamilies,
-};
+use crate::font::attrs::{attrs_list_from_regions, rich_text_spans_from_regions, RegionFamilies};
 
 // ---------------------------------------------------------------------------
 // attrs_list_from_regions — `Editor::insert_string` shape
@@ -92,8 +90,7 @@ pub fn do_attrs_list_pins_family_name_when_region_carries_app_font() {
     let family = crate::font::fonts::loaded_families_iter()
         .next()
         .expect("at least one loaded family");
-    let app_font = crate::font::fonts::app_font_by_family(family)
-        .expect("first family must round-trip");
+    let app_font = crate::font::fonts::app_font_by_family(family).expect("first family must round-trip");
     let mut regions = ColorFontRegions::new_empty();
     regions.submit_region(ColorFontRegion::new(
         Range::new(0, 4),
@@ -288,8 +285,7 @@ pub fn do_rich_text_spans_pin_family_name_when_region_has_app_font() {
     let family = crate::font::fonts::loaded_families_iter()
         .next()
         .expect("at least one loaded family");
-    let app_font = crate::font::fonts::app_font_by_family(family)
-        .expect("first family must round-trip");
+    let app_font = crate::font::fonts::app_font_by_family(family).expect("first family must round-trip");
     let mut regions = ColorFontRegions::new_empty();
     regions.submit_region(ColorFontRegion::new(Range::new(0, 3), Some(app_font), None));
     let mut fs = crate::font::fonts::acquire_font_system_write(

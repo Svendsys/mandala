@@ -19,8 +19,8 @@ mod view;
 mod tests;
 
 pub use capabilities::{
-    AcceptsFontFamily, HandlesCopy, HandlesCut, HandlesPaste, HasBgColor, HasBorderColor,
-    HasLabel, HasTextColor,
+    AcceptsFontFamily, HandlesCopy, HandlesCut, HandlesPaste, HasBgColor, HasBorderColor, HasLabel,
+    HasTextColor,
 };
 // Native-only: `AcceptsWheelColor` is consulted by the inline
 // color-picker modal in `app/color_picker_flow/`, which is

@@ -6,22 +6,22 @@
 //!
 //! - [`InputContextCore`] holds the 11 fields **both** native's
 //!   `InputHandlerContext` (`input_context.rs`) and WASM's
-//!   `WasmInputState` (`run_wasm.rs`) carry — document, mindmap_tree,
+//!   `WasmInputState` (`run_wasm/`) carry — document, mindmap_tree,
 //!   app_scene, renderer, scene_cache, text_edit_state, last_click,
 //!   cursor_pos, modifiers, keybinds, macros. This is the parameter
-//!   `dispatch_action` will take after Track C lands; both targets'
-//!   keyboard handlers can construct one and call the same dispatcher.
+//!   `dispatch_action` takes post-Track-C; both targets' keyboard
+//!   handlers can construct one and call the same dispatcher.
 //! - [`NativeContextExt`] holds the 10 native-only fields (drag_state,
 //!   app_mode, console_state, console_history, label_edit_state,
 //!   portal_text_edit_state, color_picker_state, hovered_node,
 //!   cursor_is_hand, picker_hover) — modal / console / picker state
 //!   that doesn't exist in the browser. Cfg-gated to native.
 //!
-//! Native dispatchers will pass `Some(&mut ext)`; WASM passes `None`.
+//! Native dispatchers pass `Some(&mut ext)`; WASM passes `None`.
 //! Per-arm bodies pattern-match on the `Option` for the ~14 arms that
 //! genuinely need native-only state. The other ~50 arms only see
-//! `core` and become callable on both targets without per-arm
-//! cfg-gating — that's the structural-gap close Track C delivers.
+//! `core` and are callable on both targets without per-arm
+//! cfg-gating — that's the structural gap Track C closed.
 //!
 //! **Why a struct, not a trait** — the macro-target pattern from
 //! Track B (`MacroDispatchTarget`) was the right shape for a

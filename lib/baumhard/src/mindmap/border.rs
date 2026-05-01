@@ -62,8 +62,8 @@ pub struct BorderGlyphSet {
 /// extension here, plus an entry in [`BORDER_PRESETS`] (which the
 /// console's `border preset=` completion surfaces).
 const PRESET_TABLE: &[(&str, [char; 8])] = &[
-    ("light",   ['─', '─', '│', '│', '┌', '┐', '└', '┘']),
-    ("heavy",   ['━', '━', '┃', '┃', '┏', '┓', '┗', '┛']),
+    ("light", ['─', '─', '│', '│', '┌', '┐', '└', '┘']),
+    ("heavy", ['━', '━', '┃', '┃', '┏', '┓', '┗', '┛']),
     ("double", ['═', '═', '║', '║', '╔', '╗', '╚', '╝']),
     ("rounded", ['─', '─', '│', '│', '╭', '╮', '╰', '╯']),
 ];
@@ -257,10 +257,7 @@ impl PaletteField {
             Some("text") => PaletteField::Text,
             Some("title") => PaletteField::Title,
             Some(other) => {
-                log::warn!(
-                    "border color_palette_field '{}' unknown; using 'frame'",
-                    other
-                );
+                log::warn!("border color_palette_field '{}' unknown; using 'frame'", other);
                 PaletteField::Frame
             }
         }
@@ -288,8 +285,7 @@ impl PaletteField {
 
     /// Static list of recognised values (used by the console
     /// command's completion).
-    pub const ALL: &'static [&'static str] =
-        &["frame", "background", "text", "title"];
+    pub const ALL: &'static [&'static str] = &["frame", "background", "text", "title"];
 }
 
 /// Configuration for how a node's border should be rendered.
@@ -476,8 +472,7 @@ pub fn border_run_specs(
     let font_size = border_style.font_size_pt;
     let approx_char_width = font_size * BORDER_APPROX_CHAR_WIDTH_FRAC;
     let char_count = ((node_size.0 / approx_char_width) + 2.0).ceil().max(3.0) as usize;
-    let right_corner_x =
-        node_pos.0 - approx_char_width + (char_count - 1) as f32 * approx_char_width;
+    let right_corner_x = node_pos.0 - approx_char_width + (char_count - 1) as f32 * approx_char_width;
     let corner_overlap = font_size * BORDER_CORNER_OVERLAP_FRAC;
     let top_y = node_pos.1 - font_size + corner_overlap;
     let bottom_y = node_pos.1 + node_size.1 - corner_overlap;
@@ -641,36 +636,30 @@ pub fn resolve_border_style(
     // cascade.
     let chosen = cfg.or(canvas_default);
 
-    let preset_name = chosen
-        .map(|c| c.preset.as_str())
-        .unwrap_or("light");
+    let preset_name = chosen.map(|c| c.preset.as_str()).unwrap_or("light");
     let glyph_set = preset_glyph_set(preset_name);
 
     // Multi-cluster corners + side patterns: prefer the cfg's
     // `glyphs` payload when the preset is `"custom"`; otherwise
     // fall back to the preset's single-glyph defaults.
-    let (corners, side_patterns) =
-        if preset_name.eq_ignore_ascii_case("custom") {
-            let custom = chosen
-                .and_then(|c| c.glyphs.as_ref())
-                .cloned()
-                .unwrap_or_else(default_custom_glyphs);
-            corners_and_patterns_from_custom(&custom, &glyph_set)
-        } else {
-            (glyph_set.corners(), glyph_set.side_patterns())
-        };
+    let (corners, side_patterns) = if preset_name.eq_ignore_ascii_case("custom") {
+        let custom = chosen
+            .and_then(|c| c.glyphs.as_ref())
+            .cloned()
+            .unwrap_or_else(default_custom_glyphs);
+        corners_and_patterns_from_custom(&custom, &glyph_set)
+    } else {
+        (glyph_set.corners(), glyph_set.side_patterns())
+    };
 
     let font_name = chosen.and_then(|c| c.font.clone());
-    let font_size_pt = chosen
-        .map(|c| c.font_size_pt)
-        .unwrap_or(14.0);
+    let font_size_pt = chosen.map(|c| c.font_size_pt).unwrap_or(14.0);
     let color = chosen
         .and_then(|c| c.color.clone())
         .unwrap_or_else(|| frame_color_resolved.to_string());
     let color_palette = chosen.and_then(|c| c.color_palette.clone());
-    let palette_field = PaletteField::from_str_or_default(
-        chosen.and_then(|c| c.color_palette_field.as_deref()),
-    );
+    let palette_field =
+        PaletteField::from_str_or_default(chosen.and_then(|c| c.color_palette_field.as_deref()));
 
     BorderStyle {
         glyph_set,
@@ -694,28 +683,25 @@ pub fn resolve_border_style(
 ///
 /// Reachable per tree rebuild (`tree_builder/border.rs:111`),
 /// which §9 puts in interactive territory — no panic site. The
-/// fallback is statically known to exist because [`PRESET_TABLE`]
+/// fallback is statically known to exist because `PRESET_TABLE`
 /// is `const &[…; 4]` (non-empty by construction).
 pub fn preset_glyph_set(preset: &str) -> BorderGlyphSet {
     let name = preset.to_ascii_lowercase();
-    let row = PRESET_TABLE
-        .iter()
-        .find(|(n, _)| *n == name)
-        .unwrap_or_else(|| {
-            // "custom" is in `BORDER_PRESETS` but absent from the
-            // glyph table — it signals "user-supplied glyphs
-            // override these defaults," with the per-side fallback
-            // to `light`. Anything else gets a warn-log.
-            if name != CUSTOM_PRESET_NAME {
-                log::warn!("border preset '{}' unknown; using 'light'", preset);
-            }
-            &PRESET_TABLE[0]
-        });
+    let row = PRESET_TABLE.iter().find(|(n, _)| *n == name).unwrap_or_else(|| {
+        // "custom" is in `BORDER_PRESETS` but absent from the
+        // glyph table — it signals "user-supplied glyphs
+        // override these defaults," with the per-side fallback
+        // to `light`. Anything else gets a warn-log.
+        if name != CUSTOM_PRESET_NAME {
+            log::warn!("border preset '{}' unknown; using 'light'", preset);
+        }
+        &PRESET_TABLE[0]
+    });
     BorderGlyphSet::from_glyphs(row.1)
 }
 
 /// Sentinel preset name for "user-supplied glyphs override these
-/// defaults." Has no row in [`PRESET_TABLE`]; the per-side
+/// defaults." Has no row in `PRESET_TABLE`; the per-side
 /// fallback in [`preset_glyph_set`] is `light`. Repeated literal
 /// `"custom"` checks reach for this to keep the meaning single-
 /// sourced.
@@ -723,7 +709,7 @@ pub const CUSTOM_PRESET_NAME: &str = "custom";
 
 /// Every preset name accepted by the schema's
 /// `GlyphBorderConfig.preset` field — the four typed glyph rows
-/// in [`PRESET_TABLE`] plus the [`CUSTOM_PRESET_NAME`] sentinel.
+/// in `PRESET_TABLE` plus the [`CUSTOM_PRESET_NAME`] sentinel.
 /// Surfaced for the console's `border preset=` completion.
 ///
 /// Derived from `PRESET_TABLE`'s row-index → name extraction at
@@ -778,7 +764,9 @@ fn parse_side_or_fallback(s: &str, fallback: char, side: &str) -> SidePattern {
         Err(e) => {
             log::warn!(
                 "border {} pattern '{}' rejected ({}); falling back to preset",
-                side, s, e
+                side,
+                s,
+                e
             );
             parse_legacy_glyph(fallback)
         }
@@ -913,9 +901,7 @@ fn build_horizontal_text(
     let cr = count_clusters(corner_right);
     let between = cluster_width.saturating_sub(cl + cr);
     let rendered = pattern.render(between);
-    let mut s = String::with_capacity(
-        corner_left.len() + rendered.text.len() + corner_right.len(),
-    );
+    let mut s = String::with_capacity(corner_left.len() + rendered.text.len() + corner_right.len());
     s.push_str(corner_left);
     s.push_str(&rendered.text);
     s.push_str(corner_right);

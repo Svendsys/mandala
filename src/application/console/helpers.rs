@@ -13,8 +13,8 @@
 //! [`ApplyTally::finalize`] picks the right Ok/Err shape.
 //!
 //! Out of scope: the trait-dispatch path (`color`, `font`, `zoom`)
-//! already routes through [`traits::DispatchReport`] and a sibling
-//! `finalize_report`. This module exists for the bespoke
+//! already routes through [`super::traits::DispatchReport`] and a
+//! sibling `finalize_report`. This module exists for the bespoke
 //! direct-setter verbs that don't lift to that machinery.
 
 use baumhard::util::geometry::is_positive_finite;
@@ -44,14 +44,8 @@ pub fn require_edge_or_portal(eff: &ConsoleEffects) -> Result<EdgeRef, ExecResul
 /// Accepting `usage` as the empty-error message matches the prior
 /// hand-rolled shape (`"usage: anchor from=<side> to=<side>"`)
 /// without forcing a separate prefix.
-pub fn collect_kvs_or_usage(
-    args: &Args,
-    usage: &str,
-) -> Result<Vec<(String, String)>, ExecResult> {
-    let kvs: Vec<(String, String)> = args
-        .kvs()
-        .map(|(k, v)| (k.to_string(), v.to_string()))
-        .collect();
+pub fn collect_kvs_or_usage(args: &Args, usage: &str) -> Result<Vec<(String, String)>, ExecResult> {
+    let kvs: Vec<(String, String)> = args.kvs().map(|(k, v)| (k.to_string(), v.to_string())).collect();
     if kvs.is_empty() {
         return Err(ExecResult::err(usage.to_string()));
     }

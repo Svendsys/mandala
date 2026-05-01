@@ -37,8 +37,7 @@ pub trait BranchChannel {
 /// delivered event. `Arc<Mutex<_>>` because elements are cloned and
 /// moved between arenas; the wrapper keeps a single callback
 /// reachable from every clone without duplicating state.
-pub type EventSubscriber =
-    Arc<Mutex<dyn FnMut(&mut GfxElement, GlyphTreeEventInstance) + Send + Sync>>;
+pub type EventSubscriber = Arc<Mutex<dyn FnMut(&mut GfxElement, GlyphTreeEventInstance) + Send + Sync>>;
 
 /// A tree node that can receive event deliveries. Implemented by
 /// `GfxElement`, which in turn fans events out to its registered
@@ -73,7 +72,7 @@ pub struct MutatorTree<T> {
     pub root: NodeId,
 }
 
-impl <T: TreeNode + Clone> MutatorTree<T> {
+impl<T: TreeNode + Clone> MutatorTree<T> {
     /// Construct an empty mutator tree rooted at a `T::void()`
     /// node. O(1); one arena allocation for the root.
     pub fn new() -> Self {
@@ -85,10 +84,7 @@ impl <T: TreeNode + Clone> MutatorTree<T> {
     pub fn new_with(node: T) -> Self {
         let mut arena = Arena::default();
         let root = arena.new_node(node);
-        MutatorTree {
-            arena,
-            root,
-        }
+        MutatorTree { arena, root }
     }
 
     /// Borrow the arena node at `id`, or `None` if the id has been
@@ -156,10 +152,7 @@ impl Tree<GfxElement, GfxMutator> {
     // Crate-internal alt-constructor preserved as a seam for future
     // tree-construction call sites (per CODE_CONVENTIONS.md §6).
     #[allow(dead_code)]
-    pub(crate) fn new_with(
-        element: GfxElement,
-        region_params: Arc<RegionParams>,
-    ) -> Self {
+    pub(crate) fn new_with(element: GfxElement, region_params: Arc<RegionParams>) -> Self {
         let mut arena = Arena::default();
         let root = arena.new_node(element);
         Tree {
@@ -180,10 +173,7 @@ impl Tree<GfxElement, GfxMutator> {
     /// is accepted for API compatibility with the forward-compat
     /// region-indexing trajectory (§6); it is not currently wired.
     /// O(1); one arena allocation for the root.
-    pub fn new(
-        region_params: Arc<RegionParams>,
-        _scene_index_sender: Sender<RegionElementKeyPair>,
-    ) -> Self {
+    pub fn new(region_params: Arc<RegionParams>, _scene_index_sender: Sender<RegionElementKeyPair>) -> Self {
         let mut arena = Arena::default();
         let root = arena.new_node(GfxElement::void());
         Tree {
@@ -333,13 +323,7 @@ impl Tree<GfxElement, GfxMutator> {
     ///
     /// Uses `first_child` / `next_sibling` iteration to avoid
     /// allocating a `Vec` on every recursive call (§B7).
-    fn bvh_descend(
-        &self,
-        node_id: NodeId,
-        point: Vec2,
-        slack: f32,
-        best: &mut Option<(NodeId, f32)>,
-    ) {
+    fn bvh_descend(&self, node_id: NodeId, point: Vec2, slack: f32, best: &mut Option<(NodeId, f32)>) {
         let mut child_opt = self.arena.get(node_id).and_then(|n| n.first_child());
 
         while let Some(child_id) = child_opt {
@@ -375,11 +359,7 @@ impl Tree<GfxElement, GfxMutator> {
                     let min_y = pos.y - slack;
                     let max_x = pos.x + bounds.x + slack;
                     let max_y = pos.y + bounds.y + slack;
-                    if point.x >= min_x
-                        && point.x <= max_x
-                        && point.y >= min_y
-                        && point.y <= max_y
-                    {
+                    if point.x >= min_x && point.x <= max_x && point.y >= min_y && point.y <= max_y {
                         // Refine with the node's shape so a click
                         // in the AABB corner of an ellipse counts
                         // as a miss. `contains_local` sees the
@@ -392,14 +372,8 @@ impl Tree<GfxElement, GfxMutator> {
                         // `slack >= 0.0` is enforced by
                         // `descendant_near` so `slack == 0` is the
                         // exact-hit case (no-op inflation).
-                        let local = glam::Vec2::new(
-                            point.x - pos.x + slack,
-                            point.y - pos.y + slack,
-                        );
-                        let inflated = glam::Vec2::new(
-                            bounds.x + 2.0 * slack,
-                            bounds.y + 2.0 * slack,
-                        );
+                        let local = glam::Vec2::new(point.x - pos.x + slack, point.y - pos.y + slack);
+                        let inflated = glam::Vec2::new(bounds.x + 2.0 * slack, bounds.y + 2.0 * slack);
                         if area.shape.contains_local(local, inflated) {
                             // Tie-break by *original* (un-slacked) area
                             // so a physically smaller element still wins.
@@ -493,10 +467,7 @@ impl Tree<GfxElement, GfxMutator> {
     /// Recursive post-order helper: compute subtree AABB for
     /// `node_id` by first recursing into all children, then merging
     /// their results with this node's own AABB.
-    fn compute_subtree_aabb_recursive(
-        arena: &mut Arena<GfxElement>,
-        node_id: NodeId,
-    ) {
+    fn compute_subtree_aabb_recursive(arena: &mut Arena<GfxElement>, node_id: NodeId) {
         // 1. Recurse into children first (post-order).
         let mut child_opt = arena.get(node_id).and_then(|n| n.first_child());
         while let Some(cid) = child_opt {
@@ -519,9 +490,7 @@ impl Tree<GfxElement, GfxMutator> {
         let mut combined = own_aabb;
         let mut child_opt = arena.get(node_id).and_then(|n| n.first_child());
         while let Some(cid) = child_opt {
-            if let Some(child_aabb) = arena.get(cid)
-                .and_then(|n| n.get().subtree_aabb())
-            {
+            if let Some(child_aabb) = arena.get(cid).and_then(|n| n.get().subtree_aabb()) {
                 combined = Some(union_aabb(combined, child_aabb));
             }
             child_opt = arena.get(cid).and_then(|n| n.next_sibling());

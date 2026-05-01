@@ -7,10 +7,10 @@
 //! and calls `set_edge_anchor` directly.
 
 use super::Command;
-use crate::application::console::completion::{prefix_filter, Completion, CompletionContext, CompletionState, kv_key_completions};
-use crate::application::console::helpers::{
-    collect_kvs_or_usage, require_edge_or_portal, ApplyTally,
+use crate::application::console::completion::{
+    kv_key_completions, prefix_filter, Completion, CompletionContext, CompletionState,
 };
+use crate::application::console::helpers::{collect_kvs_or_usage, require_edge_or_portal, ApplyTally};
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::edge_selected;
 use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
@@ -85,11 +85,7 @@ pub(crate) fn apply_anchor_to_selection(
 /// [`apply_anchor_to_selection`] which validates internally and
 /// silently no-ops on bad input). Returns `true` on a real change.
 #[must_use = "the bool gates the scene rebuild — drop it explicitly with `let _ = …` if you don't care"]
-pub(crate) fn apply_anchor_slot_to_selection(
-    doc: &mut MindMapDocument,
-    is_from: bool,
-    side: &str,
-) -> bool {
+pub(crate) fn apply_anchor_slot_to_selection(doc: &mut MindMapDocument, is_from: bool, side: &str) -> bool {
     let Some(er) = doc.selection.selected_edge_or_portal_edge() else {
         return false;
     };

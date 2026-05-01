@@ -86,7 +86,15 @@ pub(in crate::application::app) fn open_color_picker_standalone(
     // 12-o'clock slot so the wheel opens with the ring's "start" cell
     // highlighted.
     let hsv = (0.0_f32, 1.0_f32, 1.0_f32);
-    open_picker_inner(PickerMode::Standalone, hsv, doc, state, app_scene, renderer, scene_cache);
+    open_picker_inner(
+        PickerMode::Standalone,
+        hsv,
+        doc,
+        state,
+        app_scene,
+        renderer,
+        scene_cache,
+    );
 }
 
 /// Shared picker-open core: measures glyph advances (one font-system
@@ -135,9 +143,7 @@ pub(in crate::application::app) fn open_picker_inner(
         arm_right_ink_offsets,
         preview_ink_offset,
     ) = {
-        let mut font_system = baumhard::font::fonts::acquire_font_system_write(
-            "color_picker_flow::open",
-        );
+        let mut font_system = baumhard::font::fonts::acquire_font_system_write("color_picker_flow::open");
         let mut crosshair: Vec<&str> = Vec::with_capacity(40);
         crosshair.extend(arm_top_glyphs().iter().copied());
         crosshair.extend(arm_bottom_glyphs().iter().copied());
@@ -165,10 +171,11 @@ pub(in crate::application::app) fn open_picker_inner(
         // off: both sidebearings (drives x) and baseline-relative
         // ink extent (drives y) vary glyph-to-glyph within an arm.
         let mut swash_cache = baumhard::font::SwashCache::new();
-        use baumhard::font::fonts::measure_glyph_ink_bounds;
         use crate::application::color_picker::CROSSHAIR_CENTER_CELL;
-        let mut arm_ink_offsets = |glyphs: &[&str], font: Option<baumhard::font::fonts::AppFont>|
-            -> [(f32, f32); CROSSHAIR_CENTER_CELL] {
+        use baumhard::font::fonts::measure_glyph_ink_bounds;
+        let mut arm_ink_offsets = |glyphs: &[&str],
+                                   font: Option<baumhard::font::fonts::AppFont>|
+         -> [(f32, f32); CROSSHAIR_CENTER_CELL] {
             // Spec-load tests assert each arm has exactly
             // `CROSSHAIR_CENTER_CELL` glyphs; index directly so a
             // runtime spec mismatch panics here instead of silently
@@ -183,8 +190,7 @@ pub(in crate::application::app) fn open_picker_inner(
                     measurement_font_size,
                 );
                 let dx = b.x_offset_from_advance_center() / measurement_font_size;
-                let dy = b.y_offset_from_box_center(measurement_font_size, 1.5)
-                    / measurement_font_size;
+                let dy = b.y_offset_from_box_center(measurement_font_size, 1.5) / measurement_font_size;
                 *slot = (dx, dy);
             }
             out
@@ -204,8 +210,7 @@ pub(in crate::application::app) fn open_picker_inner(
         );
         let preview = (
             preview_bounds.x_offset_from_advance_center() / measurement_font_size,
-            preview_bounds.y_offset_from_box_center(measurement_font_size, 1.5)
-                / measurement_font_size,
+            preview_bounds.y_offset_from_box_center(measurement_font_size, 1.5) / measurement_font_size,
         );
         (cell, ring, arm_top, arm_bottom, arm_left, arm_right, preview)
     };

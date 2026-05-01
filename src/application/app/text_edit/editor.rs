@@ -19,7 +19,6 @@ use crate::application::renderer::Renderer;
 use super::super::scene_rebuild::rebuild_all;
 use super::{insert_at_cursor, insert_caret, TextEditState};
 
-
 /// Open the text editor on the given node. Seeds the buffer (empty if
 /// `from_creation`, else the node's current text), and pushes the
 /// initial caret through the Baumhard mutation pipeline so the live
@@ -45,7 +44,11 @@ pub(in crate::application::app) fn open_text_edit(
         Some(n) => n.text.clone(),
         None => return,
     };
-    let buffer = if from_creation { String::new() } else { current_text };
+    let buffer = if from_creation {
+        String::new()
+    } else {
+        current_text
+    };
     let cursor_grapheme_pos = grapheme_chad::count_grapheme_clusters(&buffer);
     // Seed `buffer_regions` from the tree's current `area.regions`,
     // which the tree builder populated from the node's `text_runs`.
@@ -61,8 +64,7 @@ pub(in crate::application::app) fn open_text_edit(
     // selected, so its tree regions carry the cyan highlight we'd
     // otherwise wipe on cancel).
     let original_text = read_node_text(mindmap_tree.as_ref(), node_id).unwrap_or_default();
-    let original_regions =
-        read_node_regions(mindmap_tree.as_ref(), node_id).unwrap_or_default();
+    let original_regions = read_node_regions(mindmap_tree.as_ref(), node_id).unwrap_or_default();
     // `buffer_regions` drives region bookkeeping during typing —
     // seeded from the original regions and then mutated by each
     // keystroke via `shift_regions_after` / `shrink_regions_after`.
@@ -234,13 +236,7 @@ pub(in crate::application::app) fn close_text_edit(
         // edited node's transient caret-bearing text/regions to the
         // pre-edit snapshot. Scene elements (borders, connections,
         // etc.) were never mutated during the edit session.
-        revert_node_text_on_tree(
-            &node_id,
-            original_text,
-            original_regions,
-            mindmap_tree,
-            renderer,
-        );
+        revert_node_text_on_tree(&node_id, original_text, original_regions, mindmap_tree, renderer);
     }
 }
 
@@ -260,10 +256,8 @@ pub(in crate::application::app) fn apply_text_edit_to_tree(
     mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
     renderer: &mut Renderer,
 ) {
+    use baumhard::core::primitives::{Applicable, ApplyOperation, ColorFontRegion, Range};
     use baumhard::gfx_structs::area::{DeltaGlyphArea, GlyphAreaField};
-    use baumhard::core::primitives::{
-        Applicable, ApplyOperation, ColorFontRegion, Range,
-    };
 
     let tree = match mindmap_tree.as_mut() {
         Some(t) => t,
@@ -321,8 +315,8 @@ pub(in crate::application::app) fn apply_text_edit_to_tree(
 /// route a keystroke to the open node text editor. All
 /// keys are stolen from normal keybind dispatch — Tab and Enter
 /// produce literal characters, Esc cancels, arrows/Home/End navigate,
-/// Backspace/Delete delete, and printable chars are inserted at the
-/// cursor. Every successful mutation is pushed through
+/// Backspace and Delete remove a grapheme, and printable chars
+/// insert at the cursor. Every successful mutation is pushed through
 /// `apply_text_edit_to_tree` so the tree and renderer stay in sync.
 pub(in crate::application::app) fn handle_text_edit_key(
     key_name: &Option<String>,
@@ -339,9 +333,7 @@ pub(in crate::application::app) fn handle_text_edit_key(
     _scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
 ) {
     let name = key_name.as_deref();
-    let action = name.and_then(|n| {
-        keybinds.action_for_context(InputContext::TextEdit, n, ctrl, shift, alt)
-    });
+    let action = name.and_then(|n| keybinds.action_for_context(InputContext::TextEdit, n, ctrl, shift, alt));
     // `TextEditCommit` / `TextEditCancel` are funneled via the
     // keyboard handler's pre-filter (`event_keyboard.rs:135-153`).
     // This handler reaches only the literal-Key character + cursor
@@ -405,7 +397,8 @@ pub(in crate::application::app) fn handle_text_edit_key(
             cursor_grapheme_pos,
             buffer_regions,
             ..
-        } = text_edit_state else {
+        } = text_edit_state
+        else {
             return;
         };
         let node_id_owned = node_id.clone();
@@ -471,8 +464,7 @@ mod tests {
 
         // Snapshot pre-edit text + regions.
         let original_text = read_node_text(tree_opt.as_ref(), &node_id).unwrap();
-        let original_regions =
-            read_node_regions(tree_opt.as_ref(), &node_id).unwrap();
+        let original_regions = read_node_regions(tree_opt.as_ref(), &node_id).unwrap();
 
         // Stamp garbage onto the live tree to simulate an edit session.
         let mut garbage_regions = ColorFontRegions::new_empty();
@@ -536,4 +528,3 @@ mod tests {
         ));
     }
 }
-

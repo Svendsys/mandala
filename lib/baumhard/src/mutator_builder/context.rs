@@ -88,9 +88,7 @@ pub(super) fn default_field_from_area(area: &GlyphArea, template: &CellField) ->
     match template {
         CellField::Text => GlyphAreaField::Text(area.text.clone()),
         CellField::position => GlyphAreaField::position(area.position.x.0, area.position.y.0),
-        CellField::bounds => {
-            GlyphAreaField::bounds(area.render_bounds.x.0, area.render_bounds.y.0)
-        }
+        CellField::bounds => GlyphAreaField::bounds(area.render_bounds.x.0, area.render_bounds.y.0),
         CellField::scale => GlyphAreaField::scale(area.scale.0),
         CellField::line_height => GlyphAreaField::line_height(area.line_height.0),
         CellField::ColorFontRegions => GlyphAreaField::ColorFontRegions(area.regions.clone()),

@@ -202,7 +202,10 @@ pub fn do_predicate_matches_field_value() {
 
     // Element with different id.
     let non_matching = GfxElement::new_void_with_id(0, 99);
-    assert!(!pred.test(&non_matching), "Predicate should reject element with id 99");
+    assert!(
+        !pred.test(&non_matching),
+        "Predicate should reject element with id 99"
+    );
 }
 
 // ── Predicate degrade paths (§9: interactive-path panics → false) ───
@@ -228,13 +231,7 @@ pub fn do_predicate_text_with_greater_than_degrades_to_false() {
         )],
         always_match: false,
     };
-    let area = GlyphArea::new_with_str(
-        "y",
-        14.0,
-        14.0,
-        Vec2::new(0.0, 0.0),
-        Vec2::new(10.0, 10.0),
-    );
+    let area = GlyphArea::new_with_str("y", 14.0, 14.0, Vec2::new(0.0, 0.0), Vec2::new(10.0, 10.0));
     let elem = GfxElement::new_area_non_indexed(area, 0);
     assert!(
         !pred.test(&elem),
@@ -261,16 +258,9 @@ pub fn do_predicate_region_this_with_equals_degrades_to_false() {
     };
     // Need a GlyphArea element with a region at [0,1) so the
     // matcher reaches the inner match arm rather than early-outing.
-    let mut area = GlyphArea::new_with_str(
-        "ab",
-        14.0,
-        14.0,
-        Vec2::new(0.0, 0.0),
-        Vec2::new(10.0, 10.0),
-    );
-    area.regions.submit_region(crate::core::primitives::ColorFontRegion::new(
-        range, None, None,
-    ));
+    let mut area = GlyphArea::new_with_str("ab", 14.0, 14.0, Vec2::new(0.0, 0.0), Vec2::new(10.0, 10.0));
+    area.regions
+        .submit_region(crate::core::primitives::ColorFontRegion::new(range, None, None));
     let elem = GfxElement::new_area_non_indexed(area, 0);
     assert!(
         !pred.test(&elem),
@@ -298,16 +288,9 @@ pub fn do_predicate_region_font_with_greater_than_degrades_to_false() {
         )],
         always_match: false,
     };
-    let mut area = GlyphArea::new_with_str(
-        "ab",
-        14.0,
-        14.0,
-        Vec2::new(0.0, 0.0),
-        Vec2::new(10.0, 10.0),
-    );
-    area.regions.submit_region(crate::core::primitives::ColorFontRegion::new(
-        range, None, None,
-    ));
+    let mut area = GlyphArea::new_with_str("ab", 14.0, 14.0, Vec2::new(0.0, 0.0), Vec2::new(10.0, 10.0));
+    area.regions
+        .submit_region(crate::core::primitives::ColorFontRegion::new(range, None, None));
     let elem = GfxElement::new_area_non_indexed(area, 0);
     assert!(
         !pred.test(&elem),
@@ -325,24 +308,14 @@ pub fn do_predicate_region_color_with_less_than_degrades_to_false() {
     let range = Range::new(0, 1);
     let pred = Predicate {
         fields: vec![(
-            GfxElementField::Region(
-                range,
-                ColorFontRegionField::Color([1.0, 0.0, 0.0, 1.0]),
-            ),
+            GfxElementField::Region(range, ColorFontRegionField::Color([1.0, 0.0, 0.0, 1.0])),
             Comparator::less(),
         )],
         always_match: false,
     };
-    let mut area = GlyphArea::new_with_str(
-        "ab",
-        14.0,
-        14.0,
-        Vec2::new(0.0, 0.0),
-        Vec2::new(10.0, 10.0),
-    );
-    area.regions.submit_region(crate::core::primitives::ColorFontRegion::new(
-        range, None, None,
-    ));
+    let mut area = GlyphArea::new_with_str("ab", 14.0, 14.0, Vec2::new(0.0, 0.0), Vec2::new(10.0, 10.0));
+    area.regions
+        .submit_region(crate::core::primitives::ColorFontRegion::new(range, None, None));
     let elem = GfxElement::new_area_non_indexed(area, 0);
     assert!(
         !pred.test(&elem),
@@ -362,9 +335,7 @@ fn test_predicate_glyph_lines_with_equals_degrades_to_false() {
 pub fn do_predicate_glyph_lines_with_equals_degrades_to_false() {
     let pred = Predicate {
         fields: vec![(
-            GfxElementField::GlyphModel(GlyphModelField::GlyphLines(vec![
-                (0, GlyphLine::new()),
-            ])),
+            GfxElementField::GlyphModel(GlyphModelField::GlyphLines(vec![(0, GlyphLine::new())])),
             Comparator::equals(),
         )],
         always_match: false,
@@ -414,10 +385,7 @@ pub fn do_predicate_glyph_matrix_with_less_than_degrades_to_false() {
         always_match: false,
     };
     let elem = GfxElement::new_model_blank(0, 0);
-    assert!(
-        !pred.test(&elem),
-        "LessThan on GlyphMatrix must degrade to false",
-    );
+    assert!(!pred.test(&elem), "LessThan on GlyphMatrix must degrade to false",);
 }
 
 #[test]

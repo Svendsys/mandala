@@ -104,7 +104,10 @@ mod tests {
             id: id.to_string(),
             parent_id: parent_id.map(|s| s.to_string()),
             position: Position { x: 0.0, y: 0.0 },
-            size: Size { width: 0.0, height: 0.0 },
+            size: Size {
+                width: 0.0,
+                height: 0.0,
+            },
             text: text.to_string(),
             text_runs: Vec::new(),
             style: NodeStyle {
@@ -163,7 +166,11 @@ mod tests {
     fn test_export_root_gets_single_hash() {
         let map = load_from_file(&testament_path()).expect("load testament");
         let out = mindmap_to_markdown(&map);
-        assert!(out.starts_with("# "), "expected single-hash heading, got: {:?}", &out[..40.min(out.len())]);
+        assert!(
+            out.starts_with("# "),
+            "expected single-hash heading, got: {:?}",
+            &out[..40.min(out.len())]
+        );
         // Second char-run must not be `#` (so it's `# ` not `## `).
         let roots = map.root_nodes();
         let first_root_first_line = roots[0].text.lines().next().unwrap_or("");

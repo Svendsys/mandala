@@ -56,7 +56,10 @@ impl FreezeWatchdog {
             .name("mandala-freeze-watchdog".into())
             .spawn(move || watchdog_loop(bg_atomic, bg_epoch))
             .expect("failed to spawn freeze watchdog thread");
-        Self { last_activity_ms, epoch }
+        Self {
+            last_activity_ms,
+            epoch,
+        }
     }
 
     /// Ping the watchdog. Call once per frame at the top of

@@ -31,13 +31,7 @@ impl Renderer {
     /// attributes on every browser — the WGSL vertex stage rounds and
     /// casts to `u32` before flat-interpolating. The round-trip is
     /// lossless for the small integer range we use.
-    fn push_rect_ndc(
-        out: &mut Vec<f32>,
-        ndc_min: Vec2,
-        ndc_max: Vec2,
-        color: [f32; 4],
-        shape_id: u32,
-    ) {
+    fn push_rect_ndc(out: &mut Vec<f32>, ndc_min: Vec2, ndc_max: Vec2, color: [f32; 4], shape_id: u32) {
         // Triangle 1: TL, BL, BR
         // Triangle 2: TL, BR, TR
         //
@@ -96,7 +90,12 @@ impl Renderer {
         let vp_h_px = self.config.height as f32;
         let vp_w = self.config.width as i32;
         let vp_h = self.config.height as i32;
-        let vp_bounds = TextBounds { left: 0, top: 0, right: vp_w, bottom: vp_h };
+        let vp_bounds = TextBounds {
+            left: 0,
+            top: 0,
+            right: vp_w,
+            bottom: vp_h,
+        };
         let default_color = cosmic_text::Color::rgba(255, 255, 255, 255);
 
         // Rebuild the "main" rect batch: canvas-space node
@@ -116,9 +115,12 @@ impl Renderer {
             let screen_tl = self.camera.canvas_to_screen(rect.position);
             let screen_size = rect.size * self.camera.zoom;
             let (ndc_min, ndc_max) = Self::screen_rect_to_ndc_bounds(
-                screen_tl.x, screen_tl.y,
-                screen_size.x, screen_size.y,
-                vp_w_px, vp_h_px,
+                screen_tl.x,
+                screen_tl.y,
+                screen_size.x,
+                screen_size.y,
+                vp_w_px,
+                vp_h_px,
             );
             let color = [
                 rect.color[0] as f32 / 255.0,
@@ -142,9 +144,7 @@ impl Renderer {
         // both, if a future variant ever overlaps them).
         self.console_rect_vertices.clear();
         if let Some((left, top, w, h)) = self.console_backdrop {
-            let (ndc_min, ndc_max) = Self::screen_rect_to_ndc_bounds(
-                left, top, w, h, vp_w_px, vp_h_px,
-            );
+            let (ndc_min, ndc_max) = Self::screen_rect_to_ndc_bounds(left, top, w, h, vp_w_px, vp_h_px);
             // Pitch black. Sits cleanly against the cyan frame and
             // any canvas background without tinting the palette's
             // cyan foreground.
@@ -158,9 +158,7 @@ impl Renderer {
             );
         }
         if let Some((left, top, w, h)) = self.color_picker_backdrop {
-            let (ndc_min, ndc_max) = Self::screen_rect_to_ndc_bounds(
-                left, top, w, h, vp_w_px, vp_h_px,
-            );
+            let (ndc_min, ndc_max) = Self::screen_rect_to_ndc_bounds(left, top, w, h, vp_w_px, vp_h_px);
             // Same pitch black as the palette — the picker's hue
             // ring glyphs and crosshair cells are saturated colors
             // that pop against true black with no tinting.
@@ -195,10 +193,7 @@ impl Renderer {
         }
         if main_bytes_len > 0 {
             let bytes = unsafe {
-                std::slice::from_raw_parts(
-                    self.main_rect_vertices.as_ptr() as *const u8,
-                    main_bytes_len,
-                )
+                std::slice::from_raw_parts(self.main_rect_vertices.as_ptr() as *const u8, main_bytes_len)
             };
             self.queue.write_buffer(&self.rect_vertex_buffer, 0, bytes);
         }
@@ -209,22 +204,20 @@ impl Renderer {
                     palette_bytes_len,
                 )
             };
-            self.queue.write_buffer(
-                &self.rect_vertex_buffer,
-                main_bytes_len as u64,
-                bytes,
-            );
+            self.queue
+                .write_buffer(&self.rect_vertex_buffer, main_bytes_len as u64, bytes);
         }
         let main_vertex_count = (self.main_rect_vertices.len() / RECT_VERTEX_FLOATS) as u32;
-        let palette_vertex_count =
-            (self.console_rect_vertices.len() / RECT_VERTEX_FLOATS) as u32;
+        let palette_vertex_count = (self.console_rect_vertices.len() / RECT_VERTEX_FLOATS) as u32;
 
         // Collect "main" text areas: the mindmap + borders +
         // connections + edge handles + overlays + arena buffers.
         // Palette buffers go into a separate list so they render
         // in a second glyphon pass (with the backdrop rect
         // between them, hence the split).
-        let main_text_areas: Vec<TextArea> = self.mindmap_buffers.values()
+        let main_text_areas: Vec<TextArea> = self
+            .mindmap_buffers
+            .values()
             .chain(self.border_buffers.values().flat_map(|v| v.iter()))
             .chain(self.connection_label_buffers.values())
             .chain(self.edge_handle_buffers.iter())
@@ -248,7 +241,6 @@ impl Renderer {
             })
             .collect();
 
-
         // Palette overlay: screen-space text, drawn in its own
         // glyphon pass so the rect-pipeline backdrop can be
         // interleaved between the main text and this one. The
@@ -258,7 +250,9 @@ impl Renderer {
         // tree in `AppScene`) — it's a mutually exclusive
         // screen-space modal that shares this pass with the
         // console.
-        let palette_text_areas: Vec<TextArea> = self.console_overlay_buffers.iter()
+        let palette_text_areas: Vec<TextArea> = self
+            .console_overlay_buffers
+            .iter()
             .chain(self.overlay_scene_buffers.iter())
             .chain(self.fps_overlay_buffers.iter())
             .map(|tb| TextArea {
@@ -309,16 +303,13 @@ impl Renderer {
         drop(font_system);
 
         let frame = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(t)
-            | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+            wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             other => {
                 debug!("Failed to get the surface texture ({other:?}), can't render.");
                 return;
             }
         };
-        let view = frame
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
@@ -343,10 +334,7 @@ impl Renderer {
             // 1. Node backgrounds (rect pipeline, camera-transformed).
             if main_vertex_count > 0 {
                 pass.set_pipeline(&self.rect_pipeline);
-                pass.set_vertex_buffer(
-                    0,
-                    self.rect_vertex_buffer.slice(0..main_bytes_len as u64),
-                );
+                pass.set_vertex_buffer(0, self.rect_vertex_buffer.slice(0..main_bytes_len as u64));
                 pass.draw(0..main_vertex_count, 0..1);
             }
 
@@ -355,9 +343,7 @@ impl Renderer {
             //    overlays, all drawn on top of the node backgrounds.
             //    Interactive path: log and continue on render failure
             //    so a single bad atlas frame doesn't crash the editor.
-            if let Err(e) =
-                self.text_renderer.render(&self.atlas, &self.viewport, &mut pass)
-            {
+            if let Err(e) = self.text_renderer.render(&self.atlas, &self.viewport, &mut pass) {
                 log::warn!("text_renderer.render failed: {e}");
             }
 
@@ -368,9 +354,8 @@ impl Renderer {
                 pass.set_pipeline(&self.rect_pipeline);
                 pass.set_vertex_buffer(
                     0,
-                    self.rect_vertex_buffer.slice(
-                        main_bytes_len as u64..(main_bytes_len + palette_bytes_len) as u64,
-                    ),
+                    self.rect_vertex_buffer
+                        .slice(main_bytes_len as u64..(main_bytes_len + palette_bytes_len) as u64),
                 );
                 pass.draw(0..palette_vertex_count, 0..1);
             }

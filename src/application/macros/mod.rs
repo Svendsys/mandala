@@ -75,7 +75,7 @@ impl MacroSource {
 
     /// Whether macros from this source may invoke the given Action
     /// via a `MacroStep::Action`. Symmetric with
-    /// [`allows_console_line`]: only `User`-tier macros can fire
+    /// [`Self::allows_console_line`]: only `User`-tier macros can fire
     /// the destructive / I/O / clipboard-touching Actions, since
     /// other tiers may load from untrusted sources (a hostile
     /// `.mindmap.json` could otherwise bind `Action::SaveDocument`
@@ -117,9 +117,7 @@ pub enum MacroStep {
     /// Run a built-in `Action` against the current `InputHandlerContext`.
     /// The dispatcher routes through `dispatch_action` exactly as if
     /// the user had pressed the action's bound key.
-    Action {
-        action: Action,
-    },
+    Action { action: Action },
     /// Apply a custom mutation by id, against the resolved target.
     /// Forwards to the same path keybind-triggered custom mutations
     /// use (animation-aware, document-actions parity).
@@ -132,9 +130,7 @@ pub enum MacroStep {
     /// as if typed. Lets macros leverage every parameterised verb
     /// (e.g. `border preset=triple`) without needing a bespoke step
     /// kind.
-    ConsoleLine {
-        line: String,
-    },
+    ConsoleLine { line: String },
 }
 
 /// How a `MacroStep::CustomMutation` resolves its target node id at
@@ -327,16 +323,11 @@ impl MacroRegistry {
     /// override earlier ones). Cross-tier entries at OTHER tiers
     /// survive in their slots — this is the shadow-stacking
     /// property.
-    pub fn extend_with_tier<I: IntoIterator<Item = Macro>>(
-        &mut self,
-        macros: I,
-        source: MacroSource,
-    ) {
+    pub fn extend_with_tier<I: IntoIterator<Item = Macro>>(&mut self, macros: I, source: MacroSource) {
         for m in macros {
             self.insert(m, source);
         }
     }
 }
-
 
 mod tests;

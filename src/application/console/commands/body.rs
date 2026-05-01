@@ -4,7 +4,9 @@
 //! Edge-specific; the concept doesn't generalize beyond edges.
 
 use super::Command;
-use crate::application::console::completion::{prefix_filter, Completion, CompletionContext, CompletionState, kv_key_completions};
+use crate::application::console::completion::{
+    kv_key_completions, prefix_filter, Completion, CompletionContext, CompletionState,
+};
 use crate::application::console::helpers::require_edge_or_portal;
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::edge_selected;
@@ -59,10 +61,7 @@ pub(crate) fn glyph_for_preset(name: &str) -> Option<&'static str> {
 /// selected, the preset name is invalid, or the glyph already
 /// matches.
 #[must_use = "the bool gates the scene rebuild — drop it explicitly with `let _ = …` if you don't care"]
-pub(crate) fn apply_body_glyph_to_selection(
-    doc: &mut MindMapDocument,
-    preset: &str,
-) -> bool {
+pub(crate) fn apply_body_glyph_to_selection(doc: &mut MindMapDocument, preset: &str) -> bool {
     let Some(er) = doc.selection.selected_edge_or_portal_edge() else {
         return false;
     };

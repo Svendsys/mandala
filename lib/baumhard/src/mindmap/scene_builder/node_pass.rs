@@ -124,15 +124,10 @@ pub(super) fn build_node_elements(
         // Reuses the `resolved_border` populated above so the
         // resolver runs at most once per visible framed node.
         if let Some(border_style) = resolved_border {
-            let fallback_rgba = crate::util::color::hex_to_rgba_safe(
-                &border_style.color,
-                [1.0, 1.0, 1.0, 1.0],
-            );
-            let palette_cycle = crate::mindmap::border::resolve_palette_cycle(
-                &map.palettes,
-                &border_style,
-                fallback_rgba,
-            );
+            let fallback_rgba =
+                crate::util::color::hex_to_rgba_safe(&border_style.color, [1.0, 1.0, 1.0, 1.0]);
+            let palette_cycle =
+                crate::mindmap::border::resolve_palette_cycle(&map.palettes, &border_style, fallback_rgba);
             border_elements.push(BorderElement {
                 node_id: node.id.clone(),
                 border_style,

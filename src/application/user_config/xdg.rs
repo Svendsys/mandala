@@ -82,10 +82,7 @@ mod tests {
     fn empty_xdg_falls_through_to_home() {
         with_env(Some(""), Some("/tmp/home"), || {
             let p = xdg_mandala_path("mutations.json").unwrap();
-            assert_eq!(
-                p,
-                PathBuf::from("/tmp/home/.config/mandala/mutations.json"),
-            );
+            assert_eq!(p, PathBuf::from("/tmp/home/.config/mandala/mutations.json"),);
         });
     }
 

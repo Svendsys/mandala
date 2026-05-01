@@ -30,10 +30,7 @@ use super::context::InputContext;
 /// == "bg"` (via `IntoStaticStr`) and `"bg".parse::<ColorAxis>() ==
 /// Ok(Bg)` (via `EnumString`) — the verb-core consults these at the
 /// boundary, replacing what was three hand-rolled match blocks.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize,
-    IntoStaticStr, EnumString,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, IntoStaticStr, EnumString)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 pub enum ColorAxis {
@@ -46,10 +43,7 @@ pub enum ColorAxis {
 /// `size|min|max` kv key on the `font` console verb. Family
 /// (`SetFontFamily`) lives on its own Action because the verb
 /// dispatches it through a different code path.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize,
-    IntoStaticStr, EnumString,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, IntoStaticStr, EnumString)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 pub enum FontSlot {
@@ -64,10 +58,7 @@ pub enum FontSlot {
 /// verb-core takes a `(min, max)` pair where each half is an
 /// `OptionEdit<f32>`, and `Clear/Clear` is a meaningfully distinct
 /// operation from `Keep/Keep`.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize,
-    IntoStaticStr, EnumString,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, IntoStaticStr, EnumString)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 pub enum ZoomBound {
@@ -102,7 +93,14 @@ pub enum ZoomBound {
 /// of `Action`s/sec, switch the lookup to return `&Action` and clone
 /// at the dispatch boundary, or wrap payload strings in `Arc<str>`.
 #[derive(
-    Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, EnumDiscriminants,
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    EnumDiscriminants,
     mandala_derive::ActionClassify,
 )]
 #[strum_discriminants(
@@ -484,10 +482,7 @@ pub enum Action {
     /// Mirror `anchor from=<side> to=<side>` on the selected edge.
     /// Sides: `auto|top|right|bottom|left`. Single-edge selection.
     #[action(context = Document, wasm = Compatible)]
-    SetEdgeAnchor {
-        from: String,
-        to: String,
-    },
+    SetEdgeAnchor { from: String, to: String },
     /// Mirror `body glyph=<dot|dash|double|wave|chain>` on the
     /// selected edge.
     #[action(context = Document, wasm = Compatible)]
@@ -497,26 +492,17 @@ pub enum Action {
     /// console-only). Field names: `preset|font|size|color|palette|
     /// field|padding|top|bottom|left|right|tl|tr|bl|br`.
     #[action(context = Document, wasm = Compatible)]
-    SetBorderField {
-        field: String,
-        value: String,
-    },
+    SetBorderField { field: String, value: String },
     /// Mirror `cap from=<arrow|circle|diamond|none> to=<...>` on the
     /// selected edge.
     #[action(context = Document, wasm = Compatible)]
-    SetEdgeCap {
-        from: String,
-        to: String,
-    },
+    SetEdgeCap { from: String, to: String },
     /// Mirror `color <axis>=<color>` on the current selection.
     /// `axis` picks the field group (background, text, or border);
     /// `value` is the user-facing color string (`#rrggbb`,
     /// `var(--name)`, palette key, etc.) which the verb-core parses.
     #[action(context = Document, wasm = Compatible)]
-    SetColor {
-        axis: ColorAxis,
-        value: String,
-    },
+    SetColor { axis: ColorAxis, value: String },
     /// Mirror `edge type=<cross_link|parent_child>` on the selected
     /// edge.
     #[action(context = Document, wasm = Compatible)]
@@ -540,10 +526,7 @@ pub enum Action {
     /// applicable to edge / edge-label / portal-text channels;
     /// nodes have no screen-space clamp and no-op silently.
     #[action(context = Document, wasm = Compatible)]
-    SetFont {
-        slot: FontSlot,
-        value: String,
-    },
+    SetFont { slot: FontSlot, value: String },
     /// Mirror `label text=<text>` on the selected edge / portal
     /// label. Empty payload clears the label.
     #[action(context = Document, wasm = Compatible)]
@@ -562,10 +545,7 @@ pub enum Action {
     /// positive finite float string. Inverted bounds (`min > max`)
     /// silently no-op.
     #[action(context = Document, wasm = Compatible)]
-    SetZoom {
-        bound: ZoomBound,
-        value: String,
-    },
+    SetZoom { bound: ZoomBound, value: String },
     /// Mirror `zoom clear` — drop both `min_zoom_to_render` and
     /// `max_zoom_to_render` on the current selection. Unit
     /// variant — no payload.
@@ -609,9 +589,10 @@ pub enum Action {
 /// [`Action::wasm_compatibility`] method classifies each variant
 /// based on which target's machinery it requires.
 ///
-/// **Where this matters.** `run_wasm.rs`'s keyboard / mouse paths
-/// filter on this so a key bound to e.g. `Action::OpenConsole`
-/// silently no-ops in the browser instead of triggering a panic
+/// **Where this matters.** `run_wasm/event_keyboard.rs` and
+/// `run_wasm/event_mouse_click.rs` filter on this so a key
+/// bound to e.g. `Action::OpenConsole` silently no-ops in the
+/// browser instead of triggering a panic
 /// at the dispatch site. As WASM gains its own version of the
 /// missing modals (see `WASM_CONVERGENCE.md`), variants migrate
 /// from `NativeOnly` to `Compatible` one at a time.

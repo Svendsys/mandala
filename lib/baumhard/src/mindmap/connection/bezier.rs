@@ -40,13 +40,7 @@ pub(crate) fn cubic_bezier_tangent(t: f32, p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec
 /// [`super::closest_point_on_path`]: Newton needs `f'(t)` where
 /// `f(t) = (B(t) - cursor) · B'(t)`, which expands to include
 /// `B''(t)`. Returns the unnormalised second-derivative vector.
-pub(crate) fn cubic_bezier_second_derivative(
-    t: f32,
-    p0: Vec2,
-    p1: Vec2,
-    p2: Vec2,
-    p3: Vec2,
-) -> Vec2 {
+pub(crate) fn cubic_bezier_second_derivative(t: f32, p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2) -> Vec2 {
     // d²/dt² [ (1-t)^3 p0 + 3(1-t)^2 t p1 + 3(1-t) t^2 p2 + t^3 p3 ]
     //      = 6(1-t)(p2 - 2 p1 + p0) + 6 t (p3 - 2 p2 + p1)
     let u = 1.0 - t;
@@ -56,12 +50,7 @@ pub(crate) fn cubic_bezier_second_derivative(
 /// Total arc length of a cubic Bezier curve, approximated by walking
 /// `ARC_LENGTH_SUBDIVISIONS` straight segments between evenly-spaced
 /// parameter samples.
-pub(super) fn cubic_bezier_length(
-    start: Vec2,
-    control1: Vec2,
-    control2: Vec2,
-    end: Vec2,
-) -> f32 {
+pub(super) fn cubic_bezier_length(start: Vec2, control1: Vec2, control2: Vec2, end: Vec2) -> f32 {
     let mut length = 0.0f32;
     let mut prev = start;
     for i in 1..=ARC_LENGTH_SUBDIVISIONS {

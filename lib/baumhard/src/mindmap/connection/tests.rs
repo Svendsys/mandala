@@ -64,8 +64,12 @@ fn test_anchor_auto_picks_top() {
 #[test]
 fn test_build_straight_path() {
     let path = build_connection_path(
-        Vec2::new(0.0, 0.0), Vec2::new(100.0, 50.0), "right",  // from: right anchor
-        Vec2::new(200.0, 0.0), Vec2::new(100.0, 50.0), "left", // to: left anchor
+        Vec2::new(0.0, 0.0),
+        Vec2::new(100.0, 50.0),
+        "right", // from: right anchor
+        Vec2::new(200.0, 0.0),
+        Vec2::new(100.0, 50.0),
+        "left", // to: left anchor
         &[],
     );
     match path {
@@ -84,12 +88,21 @@ fn test_build_cubic_path() {
         ControlPoint { x: -50.0, y: 0.0 },
     ];
     let path = build_connection_path(
-        Vec2::new(0.0, 0.0), Vec2::new(100.0, 50.0), "right",
-        Vec2::new(300.0, 0.0), Vec2::new(100.0, 50.0), "left",
+        Vec2::new(0.0, 0.0),
+        Vec2::new(100.0, 50.0),
+        "right",
+        Vec2::new(300.0, 0.0),
+        Vec2::new(100.0, 50.0),
+        "left",
         &cps,
     );
     match path {
-        ConnectionPath::CubicBezier { start, control1, control2, end } => {
+        ConnectionPath::CubicBezier {
+            start,
+            control1,
+            control2,
+            end,
+        } => {
             assert_eq!(start, Vec2::new(100.0, 25.0));
             assert_eq!(end, Vec2::new(300.0, 25.0));
             // control1 = from_center + offset = (50,25) + (50,0) = (100, 25)
@@ -119,7 +132,7 @@ fn test_straight_sampling() {
     };
     let points = sample_path(&path, 10.0);
     assert_eq!(points.len(), 11); // 0, 10, 20, ..., 100
-    // First point at start
+                                  // First point at start
     assert!((points[0].position.x - 0.0).abs() < 0.01);
     // Last point at or near 100
     assert!((points[10].position.x - 100.0).abs() < 0.01);
@@ -163,7 +176,12 @@ fn test_curved_bezier_longer_than_straight() {
     };
     let straight_dist = 100.0f32;
     let arc_len = path_length(&path);
-    assert!(arc_len > straight_dist, "Arc length {} should exceed straight {}", arc_len, straight_dist);
+    assert!(
+        arc_len > straight_dist,
+        "Arc length {} should exceed straight {}",
+        arc_len,
+        straight_dist
+    );
 }
 
 #[test]
@@ -293,8 +311,12 @@ fn test_distance_to_cubic_bezier_perpendicular() {
 fn test_build_quadratic_promotion() {
     let cps = vec![ControlPoint { x: 0.0, y: 100.0 }];
     let path = build_connection_path(
-        Vec2::new(0.0, 0.0), Vec2::new(100.0, 50.0), "auto",
-        Vec2::new(200.0, 0.0), Vec2::new(100.0, 50.0), "auto",
+        Vec2::new(0.0, 0.0),
+        Vec2::new(100.0, 50.0),
+        "auto",
+        Vec2::new(200.0, 0.0),
+        Vec2::new(100.0, 50.0),
+        "auto",
         &cps,
     );
     match path {
@@ -328,9 +350,11 @@ fn test_sample_long_straight_scales_linearly_with_length() {
     // Expected: floor(20000/15) + 1 = 1334.
     assert_eq!(points.len(), 1334);
     // Way above the 256-subdivision table size — proves no clamp.
-    assert!(points.len() > 1000,
+    assert!(
+        points.len() > 1000,
         "sample count {} should scale with length, not subdivisions",
-        points.len());
+        points.len()
+    );
 }
 
 /// A long cubic bezier's sample count is linear in path length, not in
@@ -353,10 +377,18 @@ fn test_sample_long_bezier_count_bounded_by_length() {
     let expected_floor = (length / spacing) as usize;
     // Sampler emits `floor(length/spacing) + 1` points. Allow a window
     // of ±2 to tolerate FP drift at the endpoint.
-    assert!(points.len() >= expected_floor,
-        "expected at least {}, got {}", expected_floor, points.len());
-    assert!(points.len() <= expected_floor + 2,
-        "expected at most {}, got {}", expected_floor + 2, points.len());
+    assert!(
+        points.len() >= expected_floor,
+        "expected at least {}, got {}",
+        expected_floor,
+        points.len()
+    );
+    assert!(
+        points.len() <= expected_floor + 2,
+        "expected at most {}, got {}",
+        expected_floor + 2,
+        points.len()
+    );
     // Sanity: we're in the "long edge" regime the sample-count
     // invariant targets.
     assert!(points.len() > 1000);
@@ -374,9 +406,12 @@ fn test_sample_path_monotonic_along_straight() {
     let points = sample_path(&path, 10.0);
     assert!(points.len() > 2);
     for pair in points.windows(2) {
-        assert!(pair[1].position.x >= pair[0].position.x - 1e-4,
+        assert!(
+            pair[1].position.x >= pair[0].position.x - 1e-4,
             "samples not monotonic: {:?} -> {:?}",
-            pair[0].position, pair[1].position);
+            pair[0].position,
+            pair[1].position
+        );
     }
 }
 
@@ -399,8 +434,13 @@ fn test_sample_path_even_spacing_within_tolerance() {
     assert!(n >= 3);
     for i in 0..(n - 2) {
         let d = points[i + 1].position.distance(points[i].position);
-        assert!((d - spacing).abs() < 0.01,
-            "sample spacing {} at i={} deviates from {}", d, i, spacing);
+        assert!(
+            (d - spacing).abs() < 0.01,
+            "sample spacing {} at i={} deviates from {}",
+            d,
+            i,
+            spacing
+        );
     }
 }
 
@@ -414,8 +454,11 @@ fn test_sample_path_rejects_negative_spacing() {
         end: Vec2::new(100.0, 0.0),
     };
     let points = sample_path(&path, -1.0);
-    assert!(points.is_empty(),
-        "negative spacing must return empty, got {} points", points.len());
+    assert!(
+        points.is_empty(),
+        "negative spacing must return empty, got {} points",
+        points.len()
+    );
 }
 
 /// NaN spacing must not panic (NaN comparisons are always false, so
@@ -564,7 +607,11 @@ fn test_bezier_point_at_midpoint_is_influenced_by_controls() {
     let p1 = Vec2::new(10.0, 80.0);
     let p2 = Vec2::new(90.0, 80.0);
     let mid_curved = cubic_bezier_point(0.5, p0, p1, p2, p3);
-    assert!(mid_curved.y > 30.0, "curved midpoint should be pulled up by control points; got {}", mid_curved.y);
+    assert!(
+        mid_curved.y > 30.0,
+        "curved midpoint should be pulled up by control points; got {}",
+        mid_curved.y
+    );
 }
 
 #[test]
@@ -589,7 +636,11 @@ fn test_bezier_sample_produces_points() {
     let spacing = 10.0;
 
     let samples = sample_cubic_bezier(p0, p1, p2, p3, spacing);
-    assert!(samples.len() > 5, "a 100-unit curve at spacing 10 should produce >5 samples; got {}", samples.len());
+    assert!(
+        samples.len() > 5,
+        "a 100-unit curve at spacing 10 should produce >5 samples; got {}",
+        samples.len()
+    );
 
     // First sample should be at p0
     assert!(almost_equal(samples[0].position.x, 0.0));
@@ -799,9 +850,7 @@ fn closest_point_on_path_cubic_cursor_on_curve_returns_zero_perp() {
     // Pick a known t, evaluate the curve there, and ask the
     // closest-point solver for that point.
     let true_t = 0.37;
-    let on_curve = crate::mindmap::connection::bezier::cubic_bezier_point(
-        true_t, p0, p1, p2, p3,
-    );
+    let on_curve = crate::mindmap::connection::bezier::cubic_bezier_point(true_t, p0, p1, p2, p3);
     let (t, perp) = closest_point_on_path(&path, on_curve);
     assert!(
         (t - true_t).abs() < 1.0e-3,
@@ -829,9 +878,7 @@ fn closest_point_on_path_cubic_offset_cursor_produces_signed_perp() {
         end: p3,
     };
     let true_t = 0.42;
-    let on_curve = crate::mindmap::connection::bezier::cubic_bezier_point(
-        true_t, p0, p1, p2, p3,
-    );
+    let on_curve = crate::mindmap::connection::bezier::cubic_bezier_point(true_t, p0, p1, p2, p3);
     let normal = normal_at_t(&path, true_t);
     let offset = 12.0_f32;
     let cursor = on_curve + normal * offset;
@@ -899,17 +946,14 @@ fn closest_point_on_path_cubic_near_inflection_never_worse_than_seed() {
         let mut seed_best = f32::MAX;
         for i in 0..=32 {
             let t = i as f32 / 32.0;
-            let d = (crate::mindmap::connection::bezier::cubic_bezier_point(
-                t, p0, p1, p2, p3,
-            ) - cursor)
+            let d = (crate::mindmap::connection::bezier::cubic_bezier_point(t, p0, p1, p2, p3) - cursor)
                 .length_squared();
             if d < seed_best {
                 seed_best = d;
             }
         }
         let (t, _perp) = closest_point_on_path(&path, cursor);
-        let point =
-            crate::mindmap::connection::bezier::cubic_bezier_point(t, p0, p1, p2, p3);
+        let point = crate::mindmap::connection::bezier::cubic_bezier_point(t, p0, p1, p2, p3);
         let refined_dist_sq = (point - cursor).length_squared();
         assert!(
             refined_dist_sq <= seed_best + 1.0e-3,

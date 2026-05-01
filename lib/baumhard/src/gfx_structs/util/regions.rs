@@ -99,10 +99,8 @@ impl RegionParams {
     pub fn new(target_region_factor: usize, resolution: (usize, usize)) -> Self {
         assert!(!is_prime(resolution.0));
         assert!(!is_prime(resolution.1));
-        let region_factor_x =
-            Self::calculate_actual_region_factor(target_region_factor, resolution.0);
-        let region_factor_y =
-            Self::calculate_actual_region_factor(target_region_factor, resolution.1);
+        let region_factor_x = Self::calculate_actual_region_factor(target_region_factor, resolution.0);
+        let region_factor_y = Self::calculate_actual_region_factor(target_region_factor, resolution.1);
         RegionParams {
             target_region_factor: RwLock::new(target_region_factor),
             region_factor_x: RwLock::new(region_factor_x),
@@ -165,9 +163,7 @@ impl RegionParams {
         let row_start = start.1 / region_size_y;
         let row_end = end.1 / region_size_y;
 
-        let mut output = Vec::with_capacity(
-            (col_end - col_start + 1) * (row_end - row_start + 1),
-        );
+        let mut output = Vec::with_capacity((col_end - col_start + 1) * (row_end - row_start + 1));
         for row in row_start..=row_end {
             for col in col_start..=col_end {
                 output.push(row * factor_x + col);
@@ -204,10 +200,7 @@ impl RegionParams {
     ///
     /// # Costs
     /// O(1), four lock reads.
-    pub fn calculate_pixel_from_region(
-        &self,
-        region: usize,
-    ) -> Result<(usize, usize), RegionError> {
+    pub fn calculate_pixel_from_region(&self, region: usize) -> Result<(usize, usize), RegionError> {
         let num_regions = self.calc_num_regions()?;
         if region >= num_regions {
             return Err(RegionError::InvalidParameters("Region is out of bounds"));
@@ -300,10 +293,7 @@ impl RegionParams {
         *self.region_size_y.write().unwrap() = dimensions.1 / new_y_factor;
     }
 
-    pub(crate) fn calculate_actual_region_factor(
-        target_factor: usize,
-        dimension_span: usize,
-    ) -> usize {
+    pub(crate) fn calculate_actual_region_factor(target_factor: usize, dimension_span: usize) -> usize {
         if target_factor == 0 || dimension_span == 0 {
             return 1;
         }

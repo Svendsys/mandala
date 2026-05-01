@@ -252,10 +252,7 @@ pub(in crate::application::app) fn dispatch_console_action(
         // added inadvertently to a Console* binding context would
         // land here. Log per CODE_CONVENTIONS §9 (interactive paths
         // fail-safe).
-        _ => log::error!(
-            "dispatch_console_action: unrecognized action {:?}",
-            action,
-        ),
+        _ => log::error!("dispatch_console_action: unrecognized action {:?}", action,),
     }
 }
 
@@ -328,9 +325,7 @@ pub(in crate::application::app) fn submit_line(
         // contract intact regardless of whether the command
         // produces any output.
         *scroll_offset = 0;
-        if !line.trim().is_empty()
-            && history.last().map(|s| s.as_str()) != Some(line.as_str())
-        {
+        if !line.trim().is_empty() && history.last().map(|s| s.as_str()) != Some(line.as_str()) {
             history.push(line.clone());
             if history.len() > MAX_HISTORY {
                 let drop = history.len() - MAX_HISTORY;

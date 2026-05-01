@@ -3,8 +3,9 @@
 //! `border` — configure a node's glyph border.
 //!
 //! Selection-aware (per `font` / `color`): operates on the current
-//! [`SelectionState::Single`] / [`SelectionState::Multi`].
-//! Edge-adjacent selections surface a "not applicable to <kind>"
+//! [`crate::application::document::SelectionState::Single`] /
+//! [`crate::application::document::SelectionState::Multi`].
+//! Edge-adjacent selections surface a "not applicable to `<kind>`"
 //! message — borders are node-only.
 //!
 //! ## Verbs
@@ -33,13 +34,13 @@ mod show;
 mod tests;
 
 pub use complete::complete_border;
-pub use execute::execute_border;
 pub(crate) use execute::apply_border_field_to_selection;
+pub use execute::execute_border;
 
 /// kv keys recognised on the kv-form path.
 pub const KEYS: &[&str] = &[
-    "preset", "font", "size", "color", "palette", "field", "padding",
-    "top", "bottom", "left", "right", "tl", "tr", "bl", "br",
+    "preset", "font", "size", "color", "palette", "field", "padding", "top", "bottom", "left", "right", "tl",
+    "tr", "bl", "br",
 ];
 
 /// Positional verbs surfaced as token-0 completions alongside kv
@@ -63,13 +64,12 @@ pub const COMMAND: Command = Command {
     name: "border",
     aliases: &[],
     summary: "Configure the node border (preset, font, color, custom glyphs, palette)",
-    usage:
-        "border on|off|show|reset | border [preset=…] [font=…] [size=…] [color=…] \
+    usage: "border on|off|show|reset | border [preset=…] [font=…] [size=…] [color=…] \
          [palette=…] [field=…] [padding=…] [top=…] [bottom=…] [left=…] [right=…] \
          [tl=…] [tr=…] [bl=…] [br=…]",
     tags: &[
-        "border", "frame", "glyph", "preset", "corner", "side", "pattern",
-        "palette", "padding", "rounded", "heavy", "double", "light", "custom",
+        "border", "frame", "glyph", "preset", "corner", "side", "pattern", "palette", "padding", "rounded",
+        "heavy", "double", "light", "custom",
     ],
     applicable: always,
     complete: complete_border,

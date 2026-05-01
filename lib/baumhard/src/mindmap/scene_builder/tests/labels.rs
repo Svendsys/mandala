@@ -71,7 +71,10 @@ fn test_label_position_follows_label_config_position_t() {
     let x_start = pos_x(&scene_start);
     let x_end = pos_x(&scene_end);
     let x_mid = pos_x(&scene_mid);
-    assert!(x_start < x_mid, "t=0 should be left of t=0.5: {x_start} vs {x_mid}");
+    assert!(
+        x_start < x_mid,
+        "t=0 should be left of t=0.5: {x_start} vs {x_mid}"
+    );
     assert!(x_mid < x_end, "t=0.5 should be left of t=1.0: {x_mid} vs {x_end}");
 }
 
@@ -131,7 +134,10 @@ fn test_label_zoom_visibility_inherits_edge_window_when_absent() {
     let scene = build_scene(&map, 1.0);
     assert_eq!(
         scene.connection_label_elements[0].zoom_visibility,
-        ZoomVisibility { min: Some(0.5), max: Some(2.0) },
+        ZoomVisibility {
+            min: Some(0.5),
+            max: Some(2.0)
+        },
     );
 }
 
@@ -163,7 +169,10 @@ fn test_label_zoom_visibility_replace_not_intersect() {
     let scene = build_scene(&map, 1.0);
     assert_eq!(
         scene.connection_label_elements[0].zoom_visibility,
-        ZoomVisibility { min: Some(1.0), max: None },
+        ZoomVisibility {
+            min: Some(1.0),
+            max: None
+        },
         "label override must replace the edge window, not intersect it"
     );
 }
@@ -225,7 +234,10 @@ fn test_label_zoom_visibility_inherits_when_config_has_no_zoom_bounds() {
     let scene = build_scene(&map, 1.0);
     assert_eq!(
         scene.connection_label_elements[0].zoom_visibility,
-        ZoomVisibility { min: Some(0.5), max: Some(2.0) },
+        ZoomVisibility {
+            min: Some(0.5),
+            max: Some(2.0)
+        },
         "Some(config) with no zoom bounds must inherit the edge window, \
          not flip to unbounded"
     );
@@ -331,10 +343,8 @@ fn assert_label_one_grapheme_equivalent(label: &str) {
         e.label = Some(label.to_string());
         e
     };
-    let baseline_scene =
-        build_scene(&synthetic_map(nodes.clone(), vec![baseline]), 1.0);
-    let actual_scene =
-        build_scene(&synthetic_map(nodes, vec![under_test]), 1.0);
+    let baseline_scene = build_scene(&synthetic_map(nodes.clone(), vec![baseline]), 1.0);
+    let actual_scene = build_scene(&synthetic_map(nodes, vec![under_test]), 1.0);
     let baseline_w = baseline_scene.connection_label_elements[0].bounds.0;
     let actual_w = actual_scene.connection_label_elements[0].bounds.0;
     assert!(
