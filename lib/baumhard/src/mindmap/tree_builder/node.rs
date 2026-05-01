@@ -265,19 +265,13 @@ pub(super) fn append_node_sections(
 ) {
     for (section_idx, section) in node.sections.iter().enumerate() {
         // Effective channel: use the authored value when the
-        // user explicitly set one; otherwise default to the
-        // section's index. Serde's `default = 0` for
-        // `MindSection.channel` means index 0 sees value 0 by
-        // default — which is also its index — so the rule
-        // "default = section index" is equivalent to "use the
-        // value as-is" for index 0; the `if section.channel == 0`
-        // branch below kicks in only for indices > 0 where the
-        // author left the field unset.
-        let channel = if section.channel == 0 && section_idx > 0 {
-            section_idx
-        } else {
-            section.channel
-        };
+        // user explicitly set one (`Some(_)`); otherwise default
+        // to the section's index. The `Option<usize>` shape
+        // distinguishes "author wrote `0` explicitly" from
+        // "default" — pre-`Option` migration silently overrode
+        // explicit 0 for sections at idx > 0, which the author
+        // had no way to override.
+        let channel = section.channel.unwrap_or(section_idx);
 
         let section_area = mindnode_section_area(node, section, vars);
         let section_model = mindnode_section_model(section, &section_area);

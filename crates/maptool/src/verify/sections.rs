@@ -167,7 +167,7 @@ mod tests {
             text_runs: Vec::new(),
             offset,
             size,
-            channel: 0,
+            channel: None,
             trigger_bindings: Vec::new(),
         }
     }

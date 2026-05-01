@@ -183,6 +183,17 @@ pub enum TargetScope {
     Parent,
     /// Apply to all siblings of the triggering node.
     Siblings,
+    /// Apply to every section of the triggering node — bypasses
+    /// the container fan-out so text / font / region mutations
+    /// land on the section-areas only. The structural counterpart
+    /// to the `GfxElementField::Flag(SectionRoot)` predicate
+    /// gate: `SectionsOnly` selects sections by tree shape,
+    /// the predicate selects them by element flag. Channel-space
+    /// disambiguation: `SectionsOnly` won't reach a child mind-
+    /// node that shares the section's channel (the predicate
+    /// alone cannot guarantee that on a triggering node whose
+    /// scope spreads beyond `SelfOnly`).
+    SectionsOnly,
 }
 
 /// An event condition that causes a CustomMutation to fire.
@@ -334,7 +345,13 @@ impl TargetScope {
     /// mutator pairs at apply time.
     pub fn covers_reach(&self, reach: MutatorReach) -> bool {
         match self {
-            TargetScope::SelfOnly | TargetScope::Parent => reach == MutatorReach::SelfOnly,
+            // Sections of the triggering node are children of the
+            // container in the arena; a `MutatorReach::SelfOnly`
+            // mutator is the right pairing — sections-only
+            // mutations don't recurse into child mind-nodes.
+            TargetScope::SelfOnly | TargetScope::Parent | TargetScope::SectionsOnly => {
+                reach == MutatorReach::SelfOnly
+            }
             TargetScope::Children | TargetScope::Siblings => reach <= MutatorReach::Children,
             TargetScope::Descendants | TargetScope::SelfAndDescendants => true,
         }

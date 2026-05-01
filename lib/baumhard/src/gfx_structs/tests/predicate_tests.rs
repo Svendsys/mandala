@@ -13,7 +13,7 @@
 
 use glam::Vec2;
 
-use crate::core::primitives::{ColorFontRegionField, Range};
+use crate::core::primitives::{ColorFontRegionField, Flag, Flaggable, Range};
 use crate::gfx_structs::area::{GlyphArea, GlyphAreaField};
 use crate::gfx_structs::element::{GfxElement, GfxElementField};
 use crate::gfx_structs::model::{GlyphLine, GlyphMatrix, GlyphModelField};
@@ -409,5 +409,91 @@ pub fn do_predicate_glyph_area_field_on_void_degrades_to_false() {
     assert!(
         !pred.test(&void_elem),
         "GlyphAreaField predicate must degrade on elements without a GlyphArea",
+    );
+}
+
+// ── Predicate::Flag(...) ───────────────────────────────────────────
+
+#[test]
+fn test_predicate_flag_equals_matches_set_flag() {
+    do_predicate_flag_equals_matches_set_flag();
+}
+
+/// `Flag(SectionRoot)` paired with `Equals(false)` matches an
+/// element whose flag is set, and rejects one whose flag is
+/// clear. The seam that lets `IsSection` ride on the existing
+/// `HasFlag` predicate without a new variant. Uses GlyphArea
+/// elements because `set_flag` is a no-op on `Void`.
+pub fn do_predicate_flag_equals_matches_set_flag() {
+    let pred = Predicate {
+        fields: vec![(GfxElementField::Flag(Flag::SectionRoot), Comparator::equals())],
+        always_match: false,
+    };
+    let area = GlyphArea::new(16.0, 1.2, Vec2::new(0.0, 0.0), Vec2::new(10.0, 10.0));
+    let mut flagged = GfxElement::new_area_non_indexed_with_id(area.clone(), 0, 1);
+    flagged.set_flag(Flag::SectionRoot);
+    assert!(
+        pred.test(&flagged),
+        "predicate must match an element with SectionRoot set"
+    );
+    let unflagged = GfxElement::new_area_non_indexed_with_id(area, 0, 2);
+    assert!(
+        !pred.test(&unflagged),
+        "predicate must reject an element without SectionRoot"
+    );
+}
+
+#[test]
+fn test_predicate_flag_equals_negated_matches_clear_flag() {
+    do_predicate_flag_equals_negated_matches_clear_flag();
+}
+
+/// `Equals(true)` (the negation form) flips the match: clear
+/// flag matches, set flag rejects. Lets authors express
+/// "everything that is *not* a section" without a separate
+/// variant.
+pub fn do_predicate_flag_equals_negated_matches_clear_flag() {
+    let pred = Predicate {
+        fields: vec![(
+            GfxElementField::Flag(Flag::SectionRoot),
+            Comparator::Equals(true),
+        )],
+        always_match: false,
+    };
+    let area = GlyphArea::new(16.0, 1.2, Vec2::new(0.0, 0.0), Vec2::new(10.0, 10.0));
+    let mut flagged = GfxElement::new_area_non_indexed_with_id(area.clone(), 0, 1);
+    flagged.set_flag(Flag::SectionRoot);
+    assert!(
+        !pred.test(&flagged),
+        "negated equals on a set flag must reject"
+    );
+    let unflagged = GfxElement::new_area_non_indexed_with_id(area, 0, 2);
+    assert!(
+        pred.test(&unflagged),
+        "negated equals on a clear flag must match"
+    );
+}
+
+#[test]
+fn test_predicate_flag_with_greater_than_degrades_to_false() {
+    do_predicate_flag_with_greater_than_degrades_to_false();
+}
+
+/// Ordering on a presence bit has no meaning — `>` / `<` on
+/// `Flag(...)` must degrade to `false` rather than panic.
+pub fn do_predicate_flag_with_greater_than_degrades_to_false() {
+    let pred = Predicate {
+        fields: vec![(
+            GfxElementField::Flag(Flag::SectionRoot),
+            Comparator::GreaterThan(false),
+        )],
+        always_match: false,
+    };
+    let area = GlyphArea::new(16.0, 1.2, Vec2::new(0.0, 0.0), Vec2::new(10.0, 10.0));
+    let mut elem = GfxElement::new_area_non_indexed_with_id(area, 0, 1);
+    elem.set_flag(Flag::SectionRoot);
+    assert!(
+        !pred.test(&elem),
+        "GreaterThan on a Flag must degrade to false"
     );
 }

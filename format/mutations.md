@@ -80,6 +80,8 @@ Fields the shape above uses:
 - `mutations` — a flat `Vec<Mutation>` applied to every node
   covered by `target_scope`. See the [Mutation vocabulary](#mutation-vocabulary)
   section for the variants.
+- `predicate` — optional `Predicate` filter gate; defaults to none.
+  See [predicate](#predicate--top-level-filter-gate) below.
 - `target_scope` — one of `SelfOnly` / `Children` / `Descendants` /
   `SelfAndDescendants` / `Parent` / `Siblings`. Governs both what
   nodes the mutations apply to *and* the undo-snapshot window.
@@ -187,12 +189,58 @@ writes won't be reverted by `Ctrl+Z` and won't reach the saved model.
 | `SelfAndDescendants` | Anchor + all descendants. |
 | `Parent` | The anchor's parent node. |
 | `Siblings` | The anchor's siblings (excluding itself). |
+| `SectionsOnly` | Every section of the anchor — bypasses the chrome-only container fan-out so text / font / region mutations land on the section-areas only. The anchor `MindNode` is still the snapshot window (whole-node clone covers per-section state). Use this when a mutation must avoid colliding with a sibling mind-node sharing the section's channel. |
 
 For scope-helper-generated MutatorNodes (via
 `baumhard::mindmap::custom_mutation::scope::*`) the helper name
 matches the `target_scope` value — `scope::self_and_descendants(...)`
 pairs with `SelfAndDescendants`, etc. For hand-authored MutatorNodes,
 pick the smallest scope that covers every node the AST will touch.
+
+## `predicate` — top-level filter gate
+
+Optional `Predicate` that narrows the candidate elements
+*before* the mutator's `Macro` payload lands on each target.
+When present, every element in the `target_scope`-collected
+fan-out (the chrome-only container plus each section-area) is
+tested against `predicate.test(element)`; mutations only land on
+elements that match.
+
+The shape mirrors the predicates used inside
+`Instruction::RepeatWhile` — same struct, same field language —
+so authors don't learn two filtering grammars. Per-grapheme /
+per-region targeting still happens inside the mutator AST; the
+top-level `predicate` is the *element-level* filter ("does this
+GlyphArea / GlyphModel even count?").
+
+The predicate field language exposes `GfxElementField::Flag(Flag)`
+for the most common authoring shape — "match elements with this
+flag set / clear". The `Flag` variants are:
+
+| Variant | Set on |
+|---|---|
+| `Focused` | Element holds keyboard / interaction focus. |
+| `Mutable` | Element accepts user-driven mutation. |
+| `Anchored(AnchorBox)` | Element is layout-pinned. |
+| `MutationEvents` | Element generates events on mutation. |
+| `SectionRoot` | Element is part of a section subtree (section-area or section-model). |
+
+Common idioms:
+
+- `Predicate { fields: [(Flag(SectionRoot), Equals(false))], always_match: false }`
+  — "land on sections only" (filters the container out).
+  Same end-state as `target_scope: SectionsOnly` for a
+  `SelfOnly`-style mutator; the structural scope is preferred
+  when authoring intent is "sections, never the chrome".
+- `Predicate { fields: [(Flag(SectionRoot), Equals(true))], … }`
+  — the inverse: "land on the container only, skip every
+  section." Useful for chrome-only mutations (background,
+  border) that shouldn't touch the section glyphs.
+
+`predicate` is `null` (or absent) by default — every candidate
+element passes through unfiltered. The field round-trips through
+serde with `skip_serializing_if = "Option::is_none"`, so
+mutations that don't filter stay byte-identical on disk.
 
 ## `mutator` — the MutatorNode AST
 

@@ -288,14 +288,23 @@ pub struct MindSection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size: Option<Size>,
     /// Channel index for mutation routing inside the parent
-    /// node-area. Defaults to the section's index in
-    /// `MindNode.sections`. Sibling section channels collide with
-    /// any child mind-node sharing the same channel inside the
-    /// same node — by design today; a future predicate seam
-    /// (`Predicate::IsSection` / `TargetScope::SectionsOnly`) will
-    /// disambiguate without changing this field.
-    #[serde(default, skip_serializing_if = "is_zero_usize")]
-    pub channel: usize,
+    /// node-area. `None` means "let the tree builder substitute
+    /// the section's index" — which is the migration default and
+    /// what most authored sections want. `Some(0)` means "the
+    /// author explicitly chose channel 0", which the builder
+    /// honours even when the section's index is `> 0` (so
+    /// authored 0 can intentionally collide with a sibling
+    /// mind-node on channel 0 to broadcast).
+    ///
+    /// Sibling section channels still collide with any child
+    /// mind-node sharing the same channel inside the same node —
+    /// by design today. The
+    /// `TargetScope::SectionsOnly` + `GfxElementField::Flag`
+    /// predicate seam disambiguates at the mutation layer; this
+    /// field's job is just to carry the routing intent without
+    /// the `0 == default` ambiguity that the bare `usize` carried.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel: Option<usize>,
     /// Per-section trigger bindings — closes the
     /// `TriggerBindings` seam at zero data-shape cost. Today no
     /// dispatcher consults this field (whole-node bindings still
@@ -310,10 +319,6 @@ pub struct MindSection {
     /// file remains valid.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub trigger_bindings: Vec<TriggerBinding>,
-}
-
-fn is_zero_usize(v: &usize) -> bool {
-    *v == 0
 }
 
 fn is_default_position(p: &Position) -> bool {
@@ -333,7 +338,7 @@ impl MindSection {
             text_runs,
             offset: Position::default(),
             size: None,
-            channel: 0,
+            channel: None,
             trigger_bindings: Vec::new(),
         }
     }

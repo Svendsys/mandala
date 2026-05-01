@@ -102,6 +102,17 @@ pub fn at_anchor(mutations: Vec<Mutation>) -> MutatorNode {
     self_only(mutations)
 }
 
+/// Build a MutatorNode for `TargetScope::SectionsOnly`. The
+/// application layer iterates each section-area arena id directly
+/// (via `MindMapTree::section_arena_id`); the mutator anchors at
+/// each section in turn. Same shape as [`self_only`] — the
+/// "sections only" semantic lives at the `target_scope` field, not
+/// inside the AST shape, so the mutator stays a flat literal list
+/// the walker can apply at each anchor.
+pub fn sections_only(mutations: Vec<Mutation>) -> MutatorNode {
+    self_only(mutations)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

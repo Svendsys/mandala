@@ -393,6 +393,184 @@ fn test_collect_affected_node_ids_siblings_of_root_is_empty() {
     assert!(ids.is_empty());
 }
 
+/// `SectionsOnly` returns the triggering node id only — section-
+/// level fan-out happens inside `apply_to_tree`, but the undo
+/// snapshot window is still the whole `MindNode` (which carries
+/// every section). Pins the snapshot-shape contract.
+#[test]
+fn test_collect_affected_node_ids_sections_only_returns_self() {
+    let doc = load_test_doc();
+    let ids = doc.collect_affected_node_ids("0", &TS::SectionsOnly);
+    assert_eq!(ids, vec!["0"]);
+}
+
+/// `SectionsOnly` mutation lands on every section-area, not on
+/// the chrome-only container. Uses a `NudgeRight` mutator (which
+/// shifts `area.position.x`) and asserts the section-area moved
+/// while the container stayed still. Pins the structural seam:
+/// `SectionsOnly` bypasses the container fan-out by going through
+/// `tree.section_arena_id` directly.
+#[test]
+fn test_apply_custom_mutation_sections_only_targets_section_areas() {
+    use baumhard::mindmap::model::MindSection;
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    // Materialise a multi-section node so the SectionsOnly path
+    // has more than one section to walk.
+    {
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        node.sections
+            .push(MindSection::new_default("second".into(), vec![]));
+    }
+    let cm = TestNudgeMutation::new("nudge-sections", TS::SectionsOnly)
+        .magnitude(10.0)
+        .build();
+    let mut tree = doc.build_tree();
+
+    let container_x_before = {
+        let aid = tree.arena_id_for(&nid).unwrap();
+        tree.tree
+            .arena
+            .get(aid)
+            .and_then(|n| n.get().glyph_area())
+            .unwrap()
+            .position
+            .x
+            .0
+    };
+    let section0_x_before = {
+        let sid = tree.section_arena_id(&nid, 0).unwrap();
+        tree.tree
+            .arena
+            .get(sid)
+            .and_then(|n| n.get().glyph_area())
+            .unwrap()
+            .position
+            .x
+            .0
+    };
+
+    doc.apply_custom_mutation(&cm, &nid, Some(&mut tree));
+
+    let container_x_after = {
+        let aid = tree.arena_id_for(&nid).unwrap();
+        tree.tree
+            .arena
+            .get(aid)
+            .and_then(|n| n.get().glyph_area())
+            .unwrap()
+            .position
+            .x
+            .0
+    };
+    let section0_x_after = {
+        let sid = tree.section_arena_id(&nid, 0).unwrap();
+        tree.tree
+            .arena
+            .get(sid)
+            .and_then(|n| n.get().glyph_area())
+            .unwrap()
+            .position
+            .x
+            .0
+    };
+
+    assert!(
+        (container_x_after - container_x_before).abs() < 1e-3,
+        "container must NOT move under SectionsOnly (before {container_x_before}, after {container_x_after})"
+    );
+    assert!(
+        (section0_x_after - section0_x_before - 10.0).abs() < 1e-3,
+        "section-area must shift by the nudge magnitude (before {section0_x_before}, after {section0_x_after})"
+    );
+}
+
+/// Top-level `CustomMutation.predicate` filters the candidate
+/// element list before mutations land. A
+/// `Predicate { fields: [(Flag(SectionRoot), Equals(false))] }`
+/// gate on a `SelfOnly` mutation lands on every section-area
+/// child but skips the container — the same end-state as
+/// `SectionsOnly`, expressed at the predicate layer.
+#[test]
+fn test_apply_custom_mutation_predicate_gate_filters_container() {
+    use baumhard::core::primitives::Flag;
+    use baumhard::gfx_structs::element::GfxElementField;
+    use baumhard::gfx_structs::predicate::{Comparator, Predicate};
+    use baumhard::mindmap::model::MindSection;
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    {
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        node.sections
+            .push(MindSection::new_default("second".into(), vec![]));
+    }
+    let mut cm = TestNudgeMutation::new("nudge-pred", TS::SelfOnly)
+        .magnitude(7.0)
+        .build();
+    cm.predicate = Some(Predicate {
+        fields: vec![(GfxElementField::Flag(Flag::SectionRoot), Comparator::equals())],
+        always_match: false,
+    });
+    let mut tree = doc.build_tree();
+
+    let container_x_before = {
+        let aid = tree.arena_id_for(&nid).unwrap();
+        tree.tree
+            .arena
+            .get(aid)
+            .and_then(|n| n.get().glyph_area())
+            .unwrap()
+            .position
+            .x
+            .0
+    };
+    let section_x_before = {
+        let sid = tree.section_arena_id(&nid, 0).unwrap();
+        tree.tree
+            .arena
+            .get(sid)
+            .and_then(|n| n.get().glyph_area())
+            .unwrap()
+            .position
+            .x
+            .0
+    };
+
+    doc.apply_custom_mutation(&cm, &nid, Some(&mut tree));
+
+    let container_x_after = {
+        let aid = tree.arena_id_for(&nid).unwrap();
+        tree.tree
+            .arena
+            .get(aid)
+            .and_then(|n| n.get().glyph_area())
+            .unwrap()
+            .position
+            .x
+            .0
+    };
+    let section_x_after = {
+        let sid = tree.section_arena_id(&nid, 0).unwrap();
+        tree.tree
+            .arena
+            .get(sid)
+            .and_then(|n| n.get().glyph_area())
+            .unwrap()
+            .position
+            .x
+            .0
+    };
+
+    assert!(
+        (container_x_after - container_x_before).abs() < 1e-3,
+        "container must be filtered out by the SectionRoot predicate"
+    );
+    assert!(
+        (section_x_after - section_x_before - 7.0).abs() < 1e-3,
+        "section-area must still receive the mutation"
+    );
+}
+
 #[test]
 fn test_apply_custom_mutation_persistent_sets_dirty() {
     let mut doc = load_test_doc();

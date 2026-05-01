@@ -330,6 +330,7 @@ fn target_scope_label(s: &baumhard::mindmap::custom_mutation::TargetScope) -> &'
         SelfAndDescendants => "self and descendants",
         Parent => "parent",
         Siblings => "siblings",
+        SectionsOnly => "sections only",
     }
 }
 

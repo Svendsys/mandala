@@ -718,11 +718,11 @@ fn edge_locations_uses_bracket_index_stamp() {
 
 /// `MindSection` defaults round-trip cleanly on a freshly-built
 /// node. The default shape — `offset=(0,0)`, `size=None`,
-/// `channel=0`, no runs — must serialise to a minimal JSON form
-/// (only `text` is serialised) so the on-disk file stays tight
-/// for the migration-default case where every node ships exactly
-/// one default section. Pins the `skip_serializing_if` contracts
-/// on `text_runs`, `offset`, `size`, and `channel`.
+/// `channel=None`, no runs — must serialise to a minimal JSON
+/// form (only `text` is serialised) so the on-disk file stays
+/// tight for the migration-default case where every node ships
+/// exactly one default section. Pins the `skip_serializing_if`
+/// contracts on `text_runs`, `offset`, `size`, and `channel`.
 #[test]
 fn mindsection_defaults_serialize_minimally() {
     let section = MindSection::new_default("hi".into(), Vec::new());
@@ -745,7 +745,7 @@ fn mindsection_defaults_serialize_minimally() {
     assert_eq!(back.offset.x, 0.0);
     assert_eq!(back.offset.y, 0.0);
     assert!(back.size.is_none());
-    assert_eq!(back.channel, 0);
+    assert_eq!(back.channel, None);
     assert!(back.trigger_bindings.is_empty());
 }
 
@@ -763,7 +763,7 @@ fn mindsection_trigger_bindings_round_trip() {
         text_runs: Vec::new(),
         offset: Position::default(),
         size: None,
-        channel: 0,
+        channel: None,
         trigger_bindings: vec![TriggerBinding {
             trigger: Trigger::OnClick,
             mutation_id: "m_focus".into(),

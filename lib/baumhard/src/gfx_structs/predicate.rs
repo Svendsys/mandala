@@ -9,7 +9,7 @@
 //! data + O(1) evaluations; serde-serializable so the mutator DSL
 //! can persist predicates verbatim.
 
-use crate::core::primitives::ColorFontRegionField;
+use crate::core::primitives::{ColorFontRegionField, Flaggable};
 use crate::gfx_structs::area::GlyphAreaField;
 use crate::gfx_structs::area::GlyphAreaField::{Bounds, ColorFontRegions, LineHeight, Scale, Text};
 use crate::gfx_structs::element::GfxElementField::{Channel, GlyphArea, GlyphModel, Id, Region};
@@ -443,7 +443,31 @@ impl Predicate {
                     }
                     return false;
                 }
-                GfxElementField::Flag(_flag) => {} // flag predicates not yet supported
+                GfxElementField::Flag(flag) => {
+                    let is_set = element.flag_is_set(*flag);
+                    return match comparator {
+                        // `Equals(false)` ⇒ match when the flag's
+                        // presence equals the inferred reference
+                        // (`true`); `Equals(true)` ⇒ inverted (the
+                        // flag is absent). `Exists` flips on the
+                        // negation flag, mirroring the
+                        // GlyphAreaField / GlyphModelField shape.
+                        Equals(negation) => is_set != *negation,
+                        Exists(negation) => is_set != *negation,
+                        // Ordering on a presence bit is not
+                        // meaningful — degrade to non-match rather
+                        // than panic (§9).
+                        _ => {
+                            log::warn!(
+                                "predicate: unsupported Comparator {:?} on Flag({:?}) \
+                                 — treating as non-match",
+                                comparator,
+                                flag,
+                            );
+                            false
+                        }
+                    };
+                }
             }
         }
         false

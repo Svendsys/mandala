@@ -235,10 +235,10 @@ fn test_section_text_carries_zwj_emoji_and_combining_marks() {
 
 #[test]
 fn test_default_section_channel_falls_through_to_index() {
-    // Three sections, all left at the serde default channel 0:
-    // the tree builder substitutes the index for sections idx>0,
-    // so each section gets a unique channel without explicit
-    // authoring.
+    // Three sections, all left at the `Option::None` default
+    // channel: the tree builder substitutes the section's index
+    // for every `None`, so each section gets a unique channel
+    // without explicit authoring.
     let mut node = synthetic_node("n", None, 0.0, 0.0);
     node.sections = vec![
         MindSection::new_default("a".into(), vec![]),
@@ -260,6 +260,30 @@ fn test_default_section_channel_falls_through_to_index() {
             expected_channel
         );
     }
+}
+
+/// Explicit `channel: Some(0)` on a non-zero-index section is
+/// honoured — the `Option<usize>` shape disambiguates "author
+/// chose 0 deliberately" from "default fall-through to index".
+/// Pre-`Option`, the bare `usize` saw `0` from both shapes and
+/// silently overrode the explicit choice for idx > 0.
+#[test]
+fn test_explicit_channel_zero_honoured_for_non_zero_index() {
+    let mut node = synthetic_node("n", None, 0.0, 0.0);
+    let mut s1 = MindSection::new_default("explicit".into(), vec![]);
+    s1.channel = Some(0);
+    node.sections = vec![MindSection::new_default("first".into(), vec![]), s1];
+    let map = synthetic_map(vec![node], vec![]);
+    let result = build_mindmap_tree(&map);
+
+    use crate::gfx_structs::tree::BranchChannel;
+    let s1_id = result.section_arena_id("n", 1).unwrap();
+    let element = result.tree.arena.get(s1_id).unwrap().get();
+    assert_eq!(
+        element.channel(),
+        0,
+        "explicit Some(0) on idx 1 must be honoured (not silently substituted)"
+    );
 }
 
 /// `section_count_for` reports per-mind-id section counts so the

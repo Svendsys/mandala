@@ -226,6 +226,41 @@ impl MindMapDocument {
 
         let Some(mutator) = custom.mutator.as_ref() else { return };
         let Some(mutations) = flat_mutations(mutator) else { return };
+        // Top-level predicate gate (item E3). When `Some`, every
+        // candidate element must satisfy `predicate.test(element)`
+        // before mutations land on it. Lets authors write
+        // `Predicate { fields: [(Flag(SectionRoot), Equals(false))], … }`
+        // to opt the container out (sections only) without
+        // committing to the structural `TargetScope::SectionsOnly`
+        // shape, or the inverse `Equals(true)` to opt sections out.
+        // `None` keeps the old fan-out posture (apply to container
+        // and every section).
+        let predicate_gate = custom.predicate.as_ref();
+        let passes = |element: &baumhard::gfx_structs::element::GfxElement| -> bool {
+            predicate_gate.is_none_or(|p| p.test(element))
+        };
+
+        // `SectionsOnly` (item E4) bypasses the container fan-out:
+        // mutations land on every section-area directly. Channel
+        // collisions with sibling mind-nodes don't reach in here
+        // because we walk the section_map by `(triggering_node_id,
+        // section_idx)` tuples — child mind-nodes that share a
+        // channel with a section live elsewhere in the arena.
+        if custom.target_scope == TargetScope::SectionsOnly {
+            let targets = self.collect_affected_section_targets(node_id);
+            for (mind_id, section_idx) in &targets {
+                let Some(section_arena_id) = tree.section_arena_id(mind_id, *section_idx) else {
+                    continue;
+                };
+                if let Some(node) = tree.tree.arena.get_mut(section_arena_id) {
+                    if passes(node.get()) {
+                        apply_mutations_to_element(&mutations, node.get_mut());
+                    }
+                }
+            }
+            return;
+        }
+
         let affected = self.collect_affected_node_ids(node_id, &custom.target_scope);
         for id in &affected {
             let Some(container_arena_id) = tree.arena_id_for(id.as_str()) else {
@@ -234,8 +269,13 @@ impl MindMapDocument {
             // Apply to the container (carries position; text/regions
             // are empty so text-affecting mutations are visually no-op
             // here, but `area.scale` and position deltas land cleanly).
+            // Container is `SectionRoot`-clear, so a
+            // `Flag(SectionRoot, Equals(false))` predicate filters
+            // it out at this branch.
             if let Some(node) = tree.tree.arena.get_mut(container_arena_id) {
-                apply_mutations_to_element(&mutations, node.get_mut());
+                if passes(node.get()) {
+                    apply_mutations_to_element(&mutations, node.get_mut());
+                }
             }
             // Fan out across every immediate `Flag::SectionRoot` child
             // of the container — that's where `text`, `text_runs`
@@ -257,16 +297,39 @@ impl MindMapDocument {
                 .collect();
             for sid in section_arena_ids {
                 if let Some(node) = tree.tree.arena.get_mut(sid) {
-                    apply_mutations_to_element(&mutations, node.get_mut());
+                    if passes(node.get()) {
+                        apply_mutations_to_element(&mutations, node.get_mut());
+                    }
                 }
             }
         }
     }
 
+    /// Collect the section targets affected by a `SectionsOnly`
+    /// mutation: every section of `node_id`. Returns `(mind_id,
+    /// section_idx)` tuples — the right shape for `tree
+    /// .section_arena_id(...)` lookups in the apply-to-tree branch.
+    /// Empty when `node_id` doesn't exist in the model or carries
+    /// zero sections (loader-rejected at load time, but defensive
+    /// for synthesized in-memory docs).
+    fn collect_affected_section_targets(&self, node_id: &str) -> Vec<(String, usize)> {
+        let Some(node) = self.mindmap.nodes.get(node_id) else {
+            return Vec::new();
+        };
+        (0..node.sections.len())
+            .map(|idx| (node_id.to_string(), idx))
+            .collect()
+    }
+
     /// Collect the IDs of all nodes affected by a mutation with the given scope.
     pub(super) fn collect_affected_node_ids(&self, node_id: &str, scope: &TargetScope) -> Vec<String> {
         match scope {
-            TargetScope::SelfOnly => vec![node_id.to_string()],
+            // `SectionsOnly` lives on the triggering node — every
+            // affected section belongs to that one node. The
+            // node-level affected list is the snapshot window for
+            // undo (whole-`MindNode` clone covers section state),
+            // so a single entry is correct.
+            TargetScope::SelfOnly | TargetScope::SectionsOnly => vec![node_id.to_string()],
             TargetScope::Children => self
                 .mindmap
                 .children_of(node_id)
