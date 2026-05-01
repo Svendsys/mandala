@@ -52,7 +52,7 @@ pub(super) fn drain_selecting_rect(
     }
 }
 
-/// Camera (pan/zoom/resize) changed -- rebuild
+/// Camera (pan/zoom/resize) changed — rebuild
 /// connection buffers against the new viewport. On
 /// zoom, the document-side scene cache is also stale
 /// because effective font size depends on zoom, so
@@ -66,7 +66,7 @@ pub(super) fn drain_selecting_rect(
 /// their pre-drag positions for one frame. Wheel-zoom
 /// during an active drag with zero `pending_delta`
 /// leaves connections stale for one frame until the
-/// next mouse-move flush -- an acceptable tradeoff to
+/// next mouse-move flush — an acceptable tradeoff to
 /// keep the two dirty sources separate. Always take
 /// the flags (even when skipped) so they don't leak
 /// across drag frames.
@@ -89,7 +89,7 @@ pub(super) fn drain_camera_geometry_rebuild(
             update_connection_label_tree(&scene, app_scene, renderer);
             update_portal_tree(doc, &HashMap::new(), app_scene, renderer);
             // Edge handles (if an edge is selected) must
-            // also follow camera changes -- scroll-wheel
+            // also follow camera changes — scroll-wheel
             // zoom with a selected edge used to leave
             // the handles pinned to stale screen
             // positions until the next full rebuild.
@@ -103,7 +103,7 @@ pub(super) fn drain_camera_geometry_rebuild(
 /// snapshots into the model and (on completion) routes the final
 /// state through `apply_custom_mutation` so the standard model-sync
 /// + undo-push runs once. Drives `rebuild_all` only when something
-/// actually advanced -- sleeping in Poll mode when no animations
+/// actually advanced — sleeping in Poll mode when no animations
 /// are active is automatic.
 pub(super) fn drain_animation_tick(
     document: &mut Option<MindMapDocument>,

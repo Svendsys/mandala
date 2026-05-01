@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Edge structural mutations — hit-testing handles, position resets, anchor/curve toggles, edge-index lookup. Houses the shared internal helpers (`mutate_edge`, `commit_throttled_edge_drag`, `ensure_glyph_connection`) that every per-axis style setter routes through.
+//! Edge structural mutations — hit-testing handles, position resets,
+//! anchor/curve toggles, edge-index lookup. Houses the shared internal
+//! helpers (`mutate_edge`, `commit_throttled_edge_drag`,
+//! `ensure_glyph_connection`) that every per-axis style setter routes
+//! through.
 
 use glam::Vec2;
 

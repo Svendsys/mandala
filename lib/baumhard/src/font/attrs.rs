@@ -28,8 +28,7 @@
 //! This is the single owner of the `(ColorFontRegions, &mut
 //! FontSystem) → cosmic-text` bridge. New renderer-side code
 //! that needs styled spans MUST route through here rather than
-//! reinventing the bridge inline (`CODE_CONVENTIONS.md` §1; the
-//! regression PR #125 cleaned up).
+//! reinventing the bridge inline (`CODE_CONVENTIONS.md` §1).
 //!
 //! Current consumers — keep this list current when adding a new
 //! call site:
@@ -39,9 +38,7 @@
 //!   (Baumhard tree path).
 //! - `src/application/renderer/scene_buffers.rs::rebuild_border_buffers_keyed` —
 //!   per-side border rebuild for framed nodes (flat-pipeline
-//!   `BorderElement` path), routed here in PR #126's review-fix
-//!   commit after the initial commit hand-rolled the bridge in
-//!   `borders.rs::build_palette_aware_border_buffer`.
+//!   `BorderElement` path).
 
 use cosmic_text::{Attrs, AttrsList, Color, Family, FontSystem, Metrics, Style};
 use log::warn;

@@ -462,7 +462,7 @@ mod tests {
     /// `MindMap.macros` round-trips through save+load with absence
     /// preserved (skip_serializing_if = "Vec::is_empty") and
     /// non-empty content preserved exactly. Locks the on-disk
-    /// contract for the new field added in commit 5964448.
+    /// contract for the `macros` field.
     #[test]
     fn test_save_to_file_macros_round_trip() {
         // Empty case: no `macros` key written, no key on reload.
