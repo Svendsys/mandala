@@ -316,6 +316,9 @@ fn append_border_sub_tree(
     }
 }
 
+// Each parameter is an independently varying per-glyph render input
+// the tree-builder threads from the layout walk; bundling them into
+// a struct would just rename the same data with no readability win.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn append_border_run(
     tree: &mut Tree<GfxElement, GfxMutator>,

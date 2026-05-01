@@ -114,7 +114,6 @@ impl Applicable<Tree<GfxElement, GfxMutator>> for MutatorTree<GfxMutator> {
 /// optional region index) that accelerate hit-testing and the
 /// BVH descent. A `Scene` may host many trees layered on top of
 /// each other.
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct Tree<T: Clone, M: Applicable<T>> {
     /// Backing arena of element nodes.
@@ -127,11 +126,15 @@ pub struct Tree<T: Clone, M: Applicable<T>> {
     /// top.
     pub layer: usize,
     /// All child positions are relative to this
+    #[allow(dead_code)]
     position: Vec2,
     /// Children can put mutations here as a response to some event
+    #[allow(dead_code)]
     pending_mutations: Vec<Arc<MutatorTree<M>>>,
     /// We want this to be Rc eventually
+    #[allow(dead_code)]
     region_params: Option<Arc<RegionParams>>,
+    #[allow(dead_code)]
     region_index: Option<Rc<RegionIndexer>>,
     /// Memoised result of [`Tree::descendants_aabb`].
     /// `None` = not yet computed (or invalidated by a mutation);

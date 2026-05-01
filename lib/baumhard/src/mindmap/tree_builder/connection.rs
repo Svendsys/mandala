@@ -19,7 +19,6 @@ use crate::util::color;
 /// any plausible body count), body glyphs stride from 100.
 const CONN_CAP_START_CHANNEL: usize = 1;
 const CONN_BODY_BASE_CHANNEL: usize = 100;
-#[allow(dead_code)]
 const CONN_CAP_END_CHANNEL: usize = 1_000_001;
 
 /// Per-edge structural identity the in-place mutator path compares
