@@ -63,6 +63,42 @@ fn test_set_section_text_targets_specific_section() {
     assert_eq!(n.sections[1].text, "second");
 }
 
+/// §T1 Unicode-edge: `set_section_text` round-trips ZWJ-emoji,
+/// combining marks, and flag emoji byte-for-byte; the auto-
+/// regenerated text-run's `end` matches grapheme-cluster count
+/// (not codepoint or byte count). Catches the
+/// `count_grapheme_clusters` accidentally being swapped for
+/// `chars().count()` or `len()` — a regression that would
+/// silently truncate emoji text on the next render.
+#[test]
+fn test_set_section_text_grapheme_handling_for_emoji_and_combining() {
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    let zwj = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
+    let combining = "e\u{0301}";
+    let flag = "\u{1F1EF}\u{1F1F5}";
+    let combined = format!("{zwj} {combining} {flag}");
+    assert!(doc.set_section_text(&nid, 0, combined.clone()));
+    let n = doc.mindmap.nodes.get(&nid).unwrap();
+    assert_eq!(n.sections[0].text, combined, "text round-trips byte-for-byte");
+    let cluster_count = count_grapheme_clusters(&combined);
+    assert!(
+        n.sections[0].text_runs.iter().all(|r| r.end <= cluster_count),
+        "every run.end must fit within the {} grapheme clusters",
+        cluster_count
+    );
+    if let Some(run) = n.sections[0].text_runs.first() {
+        assert_eq!(
+            run.start, 0,
+            "auto-collapsed run starts at grapheme index 0"
+        );
+        assert_eq!(
+            run.end, cluster_count,
+            "auto-collapsed run ends at the cluster count, not the codepoint or byte count"
+        );
+    }
+}
+
 /// Out-of-range section index is a no-op — neither push undo
 /// nor flip dirty. Mirrors `set_node_text` no-op contract.
 #[test]

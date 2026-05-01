@@ -74,13 +74,19 @@ pub(in crate::application::app) fn apply_deselect_all(rc: &mut RebuildContext<'_
 /// selections are preserved (their `selected_ids()` is empty, so
 /// inverting would collapse to "select every visible node" —
 /// unintuitive). Hidden-by-fold nodes are filtered for the same
-/// reason as `select_all_in`. Returns `true` when the selection
-/// changed.
+/// reason as `select_all_in`. Section selections invert as if
+/// the whole owning node were selected — `selected_ids()` already
+/// returns the node id, so the inversion excludes that node and
+/// selects every other visible node, mirroring the `Single` case.
+/// Returns `true` when the selection changed.
 #[must_use = "the bool gates the scene rebuild — drop it explicitly with `let _ = …` if you don't care"]
 pub(in crate::application::app) fn invert_selection_in(doc: &mut MindMapDocument) -> bool {
     let invertable = matches!(
         doc.selection,
-        SelectionState::None | SelectionState::Single(_) | SelectionState::Multi(_)
+        SelectionState::None
+            | SelectionState::Single(_)
+            | SelectionState::Multi(_)
+            | SelectionState::Section(_)
     );
     if !invertable {
         return false;
@@ -108,13 +114,18 @@ pub(in crate::application::app) fn apply_invert_selection(rc: &mut RebuildContex
     }
 }
 
-/// Walk one step up the hierarchy from a single-node selection.
-/// No-op when the selection isn't a single node or the node has
-/// no parent. Returns `true` when the selection changed.
+/// Walk one step up the hierarchy from a single-node or section
+/// selection. Section selections collapse to the owning node first
+/// (so up-arrow on a section still climbs the tree), then walk to
+/// the parent. No-op when the selection isn't `Single` / `Section`,
+/// or when the node has no parent. Returns `true` when the
+/// selection changed.
 #[must_use = "the bool gates the scene rebuild — drop it explicitly with `let _ = …` if you don't care"]
 pub(in crate::application::app) fn select_parent_in(doc: &mut MindMapDocument) -> bool {
-    let SelectionState::Single(nid) = doc.selection.clone() else {
-        return false;
+    let nid = match &doc.selection {
+        SelectionState::Single(id) => id.clone(),
+        SelectionState::Section(s) => s.node_id.clone(),
+        _ => return false,
     };
     let Some(parent_id) = doc.mindmap.nodes.get(&nid).and_then(|n| n.parent_id.clone()) else {
         return false;
@@ -130,14 +141,17 @@ pub(in crate::application::app) fn apply_select_parent(rc: &mut RebuildContext<'
 }
 
 /// Step into the first visible child (id-sorted) of the selected
-/// single node. Folded children are skipped — keyboard navigation
+/// single node, or of the section's owning node when a section is
+/// selected. Folded children are skipped — keyboard navigation
 /// shouldn't jump into a subtree the user can't see; mirrors the
 /// fold-aware click hit-test policy. Returns `true` when the
 /// selection changed.
 #[must_use = "the bool gates the scene rebuild — drop it explicitly with `let _ = …` if you don't care"]
 pub(in crate::application::app) fn select_child_in(doc: &mut MindMapDocument) -> bool {
-    let SelectionState::Single(nid) = doc.selection.clone() else {
-        return false;
+    let nid = match &doc.selection {
+        SelectionState::Single(id) => id.clone(),
+        SelectionState::Section(s) => s.node_id.clone(),
+        _ => return false,
     };
     let Some(child_id) = doc
         .mindmap
@@ -159,14 +173,18 @@ pub(in crate::application::app) fn apply_select_child(rc: &mut RebuildContext<'_
 }
 
 /// Step to the next or previous visible sibling of the selected
-/// single node. `forward = true` walks toward the next sibling;
-/// `false` walks back. No-op when the selection isn't a single
-/// node, or when no visible neighbour exists in the requested
-/// direction. Returns `true` when the selection changed.
+/// single node — or, when a section is selected, of the section's
+/// owning node. `forward = true` walks toward the next sibling;
+/// `false` walks back. No-op when the selection is neither
+/// `Single` nor `Section`, or when no visible neighbour exists in
+/// the requested direction. Returns `true` when the selection
+/// changed.
 #[must_use = "the bool gates the scene rebuild — drop it explicitly with `let _ = …` if you don't care"]
 pub(in crate::application::app) fn select_sibling_in(doc: &mut MindMapDocument, forward: bool) -> bool {
-    let SelectionState::Single(nid) = doc.selection.clone() else {
-        return false;
+    let nid = match &doc.selection {
+        SelectionState::Single(id) => id.clone(),
+        SelectionState::Section(s) => s.node_id.clone(),
+        _ => return false,
     };
     let Some(target) = sibling_id(&doc.mindmap, &nid, forward) else {
         return false;

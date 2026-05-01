@@ -205,6 +205,113 @@ fn select_child_in_no_op_for_leaf() {
     assert!(!select_child_in(&mut doc));
 }
 
+/// Section selection collapses to the owning node first, then
+/// walks. `select_parent_in` from a `Section` whose owning node
+/// has a parent must produce `Single(parent_id)`.
+#[test]
+fn select_parent_in_handles_section_selection() {
+    use crate::application::document::SectionSel;
+    let mut doc = load_test_doc();
+    let child_id = doc
+        .mindmap
+        .nodes
+        .values()
+        .find(|n| n.parent_id.is_some())
+        .expect("fixture has a non-root node")
+        .id
+        .clone();
+    let parent_id = doc.mindmap.nodes[&child_id].parent_id.clone().unwrap();
+    doc.selection = SelectionState::Section(SectionSel::new(child_id, 0));
+    assert!(select_parent_in(&mut doc));
+    assert!(matches!(
+        doc.selection,
+        SelectionState::Single(ref s) if s == &parent_id
+    ));
+}
+
+/// `select_child_in` on a `Section` must step into the section's
+/// owning node's first visible child.
+#[test]
+fn select_child_in_handles_section_selection() {
+    use crate::application::document::SectionSel;
+    let mut doc = load_test_doc();
+    let parent_id = doc
+        .mindmap
+        .nodes
+        .values()
+        .find(|n| !doc.mindmap.children_of(&n.id).is_empty())
+        .expect("fixture has a parent node")
+        .id
+        .clone();
+    let expected_child = doc
+        .mindmap
+        .children_of(&parent_id)
+        .into_iter()
+        .find(|c| !doc.mindmap.is_hidden_by_fold(c))
+        .expect("at least one visible child")
+        .id
+        .clone();
+    doc.selection = SelectionState::Section(SectionSel::new(parent_id, 0));
+    assert!(select_child_in(&mut doc));
+    assert!(matches!(
+        doc.selection,
+        SelectionState::Single(ref s) if s == &expected_child
+    ));
+}
+
+/// `select_sibling_in` on a `Section` walks to the next sibling
+/// of the section's owning node — the section is collapsed to
+/// `Single` for the walk, matching the parent / child navigation
+/// shape so the user gets one consistent answer for "what does up
+/// / down / sibling do on a section".
+#[test]
+fn select_sibling_in_handles_section_selection() {
+    use crate::application::document::SectionSel;
+    let mut doc = load_test_doc();
+    let (start_id, expected_next) = doc
+        .mindmap
+        .nodes
+        .values()
+        .filter_map(|n| {
+            let parent = n.parent_id.as_ref()?;
+            let siblings = doc.mindmap.children_of(parent);
+            if siblings.len() < 2 {
+                return None;
+            }
+            let idx = siblings.iter().position(|s| s.id == n.id)?;
+            let next = siblings.get(idx + 1)?.id.clone();
+            Some((n.id.clone(), next))
+        })
+        .next()
+        .expect("fixture has at least one node with a next sibling");
+    doc.selection = SelectionState::Section(SectionSel::new(start_id, 0));
+    assert!(select_sibling_in(&mut doc, true));
+    assert!(matches!(
+        doc.selection,
+        SelectionState::Single(ref s) if s == &expected_next
+    ));
+}
+
+/// `invert_selection_in` treats `Section(s)` like `Single(s.node_id)`:
+/// the owning node drops out of the inversion, every other visible
+/// node is selected.
+#[test]
+fn invert_selection_in_handles_section_selection() {
+    use crate::application::document::SectionSel;
+    let mut doc = load_test_doc();
+    let pivot = first_node_id(&doc);
+    doc.selection = SelectionState::Section(SectionSel::new(pivot.clone(), 0));
+    assert!(invert_selection_in(&mut doc));
+    assert!(!doc.selection.selected_ids().iter().any(|id| **id == pivot));
+    let expected = doc
+        .mindmap
+        .nodes
+        .values()
+        .filter(|n| n.id != pivot && !doc.mindmap.is_hidden_by_fold(n))
+        .count();
+    assert_eq!(doc.selection.selected_ids().len(), expected);
+}
+
 #[test]
 fn select_sibling_in_walks_visible_neighbour() {
     let mut doc = load_test_doc();

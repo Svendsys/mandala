@@ -199,6 +199,40 @@ fn test_section_for_node_returns_index_only_for_section_areas() {
     }
 }
 
+/// §T1 Unicode-edge: a section's `text` carries grapheme-cluster
+/// units like emoji, ZWJ-joined sequences, and combining marks
+/// without truncation or shape distortion. Pre-section, the
+/// equivalent test landed on `MindNode.text`; the post-refactor
+/// shape carries the same contract on each section.
+#[test]
+fn test_section_text_carries_zwj_emoji_and_combining_marks() {
+    let mut node = synthetic_node("n", None, 0.0, 0.0);
+    // Family ZWJ-emoji (1 grapheme cluster, 5 codepoints) +
+    // combining-mark "é" composed via base 'e' + U+0301 +
+    // a flag emoji (regional indicator pair, 1 cluster).
+    let zwj = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
+    let combining = "e\u{0301}";
+    let flag = "\u{1F1EF}\u{1F1F5}";
+    let combined = format!("{zwj} {combining} {flag}");
+    node.sections[0].text = combined.clone();
+    let map = synthetic_map(vec![node], vec![]);
+    let result = build_mindmap_tree(&map);
+
+    let section_id = *result.section_map.get(&("n".to_string(), 0)).unwrap();
+    let area = result
+        .tree
+        .arena
+        .get(section_id)
+        .unwrap()
+        .get()
+        .glyph_area()
+        .unwrap();
+    assert_eq!(
+        area.text, combined,
+        "section text must round-trip ZWJ + combining + flag emoji byte-identically"
+    );
+}
+
 #[test]
 fn test_default_section_channel_falls_through_to_index() {
     // Three sections, all left at the serde default channel 0:

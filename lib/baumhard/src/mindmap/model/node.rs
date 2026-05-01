@@ -296,6 +296,20 @@ pub struct MindSection {
     /// disambiguate without changing this field.
     #[serde(default, skip_serializing_if = "is_zero_usize")]
     pub channel: usize,
+    /// Per-section trigger bindings — closes the
+    /// `TriggerBindings` seam at zero data-shape cost. Today no
+    /// dispatcher consults this field (whole-node bindings still
+    /// flow through `MindNode.trigger_bindings`); the field is
+    /// reserved so authoring tools can stamp section-targeted
+    /// `OnClick` / `OnKey` / `OnLink` bindings without a follow-up
+    /// data migration when the dispatcher wires up.
+    ///
+    /// `#[serde(default)]` + `skip_serializing_if = "Vec::is_empty"`
+    /// keeps the on-disk format byte-identical for sections that
+    /// don't carry bindings — every existing `.mindmap.json`
+    /// file remains valid.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trigger_bindings: Vec<TriggerBinding>,
 }
 
 fn is_zero_usize(v: &usize) -> bool {
@@ -320,6 +334,7 @@ impl MindSection {
             offset: Position::default(),
             size: None,
             channel: 0,
+            trigger_bindings: Vec::new(),
         }
     }
 }

@@ -135,29 +135,57 @@ pub fn hit_test_target(canvas_pos: Vec2, tree: &mut MindMapTree) -> Option<HitTa
 /// Is `canvas_pos` inside node `node_id`'s shape? Reads the tree-side
 /// glyph area so drag-preview positions count (tree is authoritative
 /// during in-flight mutations; identical to the model when idle). The
-/// check is shape-aware: rectangular nodes use AABB containment, and
-/// non-rectangular shapes (e.g. ellipse) delegate to
-/// `NodeShape::contains_local`, matching the BVH hit-test path.
+/// check is shape-aware *inside the container's own AABB*: rectangular
+/// nodes use AABB containment, and non-rectangular shapes (e.g.
+/// ellipse) delegate to `NodeShape::contains_local`, matching the BVH
+/// hit-test path.
 ///
 /// Unlike `hit_test`, this answers a point-in-specific-node question —
-/// a click over a child of `node_id` still counts as "inside" `node_id`,
-/// which is what the text editor's click-outside-commit gesture wants.
+/// a click over a child of `node_id`, or over a section that overflows
+/// the container's AABB, still counts as "inside" `node_id`. The
+/// text editor's click-outside-commit gesture relies on this: a click
+/// on a multi-section node's overflowing second section must not
+/// commit-and-close the editor on the first section.
+///
+/// Overflow path uses the cached subtree AABB (populated by
+/// `Tree::ensure_subtree_aabbs`, which the tree walker and
+/// `descendant_near` keep fresh in normal use). When the cache is
+/// dirty the function falls back to the container-only check —
+/// matches pre-section behaviour for regressions in the cache path.
 pub fn point_in_node_aabb(canvas_pos: Vec2, node_id: &str, tree: &MindMapTree) -> bool {
-    tree.arena_id_for(node_id)
-        .and_then(|nid| tree.tree.arena.get(nid))
-        .and_then(|n| n.get().glyph_area())
-        .map(|area| {
-            let x = area.position.x.0;
-            let y = area.position.y.0;
-            let w = area.render_bounds.x.0;
-            let h = area.render_bounds.y.0;
-            if canvas_pos.x < x || canvas_pos.x > x + w || canvas_pos.y < y || canvas_pos.y > y + h {
-                return false;
-            }
-            let local = Vec2::new(canvas_pos.x - x, canvas_pos.y - y);
-            area.shape.contains_local(local, Vec2::new(w, h))
-        })
-        .unwrap_or(false)
+    let Some(arena_id) = tree.arena_id_for(node_id) else {
+        return false;
+    };
+    let Some(arena_node) = tree.tree.arena.get(arena_id) else {
+        return false;
+    };
+    let element = arena_node.get();
+    let Some(area) = element.glyph_area() else {
+        return false;
+    };
+
+    let x = area.position.x.0;
+    let y = area.position.y.0;
+    let w = area.render_bounds.x.0;
+    let h = area.render_bounds.y.0;
+
+    let in_container_aabb = canvas_pos.x >= x
+        && canvas_pos.x <= x + w
+        && canvas_pos.y >= y
+        && canvas_pos.y <= y + h;
+
+    if in_container_aabb {
+        let local = Vec2::new(canvas_pos.x - x, canvas_pos.y - y);
+        return area.shape.contains_local(local, Vec2::new(w, h));
+    }
+
+    if let Some((tl, br)) = element.subtree_aabb() {
+        return canvas_pos.x >= tl.x
+            && canvas_pos.x <= br.x
+            && canvas_pos.y >= tl.y
+            && canvas_pos.y <= br.y;
+    }
+    false
 }
 
 /// Hit test edges: find the nearest visible edge within `tolerance` canvas
@@ -281,6 +309,18 @@ where
         // restricted the highlight to a specific section index
         // (Section selection), in which case only that section's
         // runs paint cyan.
+        //
+        // §B7 borrow-split note: collecting into a `Vec<NodeId>`
+        // here is the smallest correct shape, not laziness.
+        // `node_id.children(&tree.tree.arena)` borrows the arena
+        // immutably; the loop body needs `&mut tree.tree` to call
+        // `walk_tree_from`. Holding the iterator across the mutable
+        // borrow won't compile, so the fix is to materialise the
+        // section ids first and drop the immutable borrow before
+        // the mutation pass starts. The vec is `O(sections per
+        // node)` — bounded by user authoring (typically 1–4 per
+        // node), and per-mind-id-per-call, so allocation cost is
+        // negligible relative to the highlight macro itself.
         let section_ids: Vec<indextree::NodeId> = node_id
             .children(&tree.tree.arena)
             .filter(|cid| {

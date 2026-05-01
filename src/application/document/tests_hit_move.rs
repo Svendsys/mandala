@@ -878,4 +878,48 @@ fn test_rect_select_still_catches_ellipse_through_centre() {
     );
 }
 
+/// `point_in_node_aabb` consults the cached subtree AABB so a
+/// click on a section that overflows the container's AABB still
+/// counts as "inside the node". Pre-fix, the function read only
+/// the container's render_bounds, leaving overflowing sections
+/// unhittable. Anchors the documented "click-outside-commit"
+/// gesture for multi-section nodes.
+#[test]
+fn test_point_in_node_aabb_includes_overflowing_section() {
+    use super::tests_common::doc_with_one_orphan_node;
+    use baumhard::mindmap::model::{MindSection, Position, Size};
+    let mut doc = doc_with_one_orphan_node();
+    // Append a second section positioned past the container's
+    // right edge. The container's AABB is [0,0]→[240,60]; the
+    // overflow section sits at offset (300, 0) with its own
+    // 100×40 size, putting its left edge well past the container.
+    {
+        let node = doc.mindmap.nodes.get_mut("0").unwrap();
+        let mut overflow = MindSection::new_default("over".into(), vec![]);
+        overflow.offset = Position { x: 300.0, y: 0.0 };
+        overflow.size = Some(Size { width: 100.0, height: 40.0 });
+        node.sections.push(overflow);
+    }
+    let mut tree = doc.build_tree();
+    // Force the subtree-AABB cache to populate. The runtime hot
+    // path invalidates / recomputes on every render and hit-test;
+    // tests have to ask for it explicitly.
+    tree.tree.ensure_subtree_aabbs();
+
+    // A point well inside the overflow section but outside the
+    // container's own AABB.
+    let in_overflow = Vec2::new(350.0, 20.0);
+    assert!(
+        point_in_node_aabb(in_overflow, "0", &tree),
+        "point inside overflow section must register as inside node 0"
+    );
+    // A point that's outside both the container AND the overflow
+    // section's bounding box must still miss.
+    let outside_all = Vec2::new(500.0, 200.0);
+    assert!(
+        !point_in_node_aabb(outside_all, "0", &tree),
+        "point outside both container and overflow must miss"
+    );
+}
+
 // --- Custom mutation registry & application tests ---

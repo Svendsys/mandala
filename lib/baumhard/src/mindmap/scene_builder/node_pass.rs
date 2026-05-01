@@ -127,10 +127,26 @@ pub(super) fn build_node_elements(
         // Empty-text sections (a freshly-created orphan node's
         // default section before the user types anything) skip
         // emission — the same fast-path as the pre-section
-        // empty-text node behaviour.
+        // empty-text node behaviour. Sections with explicit zero /
+        // negative / non-finite size or non-finite offset also skip
+        // emission: they would render at degenerate or NaN bounds
+        // and confuse downstream renderer / hit-test math. The
+        // verifier flags these so authors can fix the source.
         for (section_idx, section) in node.sections.iter().enumerate() {
             if section.text.is_empty() {
                 continue;
+            }
+            if !section.offset.x.is_finite() || !section.offset.y.is_finite() {
+                continue;
+            }
+            if let Some(sz) = section.size.as_ref() {
+                if !sz.width.is_finite()
+                    || !sz.height.is_finite()
+                    || sz.width <= 0.0
+                    || sz.height <= 0.0
+                {
+                    continue;
+                }
             }
             let resolved_runs: Vec<TextRun> = section
                 .text_runs

@@ -733,6 +733,10 @@ fn mindsection_defaults_serialize_minimally() {
     assert!(!json.contains("offset"), "default offset must not serialise");
     assert!(!json.contains("\"size\""), "None size must not serialise");
     assert!(!json.contains("channel"), "default channel must not serialise");
+    assert!(
+        !json.contains("trigger_bindings"),
+        "empty trigger_bindings must not serialise"
+    );
 
     // Round-trip: parse the minimal JSON back; defaults must hold.
     let back: MindSection = serde_json::from_str("{\"text\":\"hi\"}").unwrap();
@@ -742,6 +746,36 @@ fn mindsection_defaults_serialize_minimally() {
     assert_eq!(back.offset.y, 0.0);
     assert!(back.size.is_none());
     assert_eq!(back.channel, 0);
+    assert!(back.trigger_bindings.is_empty());
+}
+
+/// `MindSection.trigger_bindings` is a reserved-but-not-yet-
+/// dispatched seam for per-section triggers. Authoring tools
+/// stamp it; the runtime ignores it today (whole-node bindings
+/// still live on `MindNode.trigger_bindings`). The field must
+/// round-trip through serde, and an empty bindings vec must not
+/// serialise (skip-empty contract for forward compatibility).
+#[test]
+fn mindsection_trigger_bindings_round_trip() {
+    use crate::mindmap::custom_mutation::{Trigger, TriggerBinding};
+    let section = MindSection {
+        text: "hi".into(),
+        text_runs: Vec::new(),
+        offset: Position::default(),
+        size: None,
+        channel: 0,
+        trigger_bindings: vec![TriggerBinding {
+            trigger: Trigger::OnClick,
+            mutation_id: "m_focus".into(),
+            contexts: Vec::new(),
+        }],
+    };
+    let json = serde_json::to_string(&section).expect("serialises");
+    assert!(json.contains("trigger_bindings"));
+    assert!(json.contains("m_focus"));
+    let back: MindSection = serde_json::from_str(&json).expect("round-trips");
+    assert_eq!(back.trigger_bindings.len(), 1);
+    assert_eq!(back.trigger_bindings[0].mutation_id, "m_focus");
 }
 
 /// `MindNode.display_text` joins every section's text with `'\n'`

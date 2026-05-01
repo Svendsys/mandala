@@ -207,6 +207,12 @@ pub(super) fn grow_one_node_to_fit_text(node: &mut baumhard::mindmap::model::Min
         if section.size.is_some() {
             continue;
         }
+        // Non-finite offsets contribute nothing — the verifier
+        // flags them, and a NaN propagating into floor_w / floor_h
+        // would corrupt every downstream `node.size` reader.
+        if !section.offset.x.is_finite() || !section.offset.y.is_finite() {
+            continue;
+        }
         let scale = section
             .text_runs
             .iter()
@@ -234,10 +240,11 @@ pub(super) fn grow_one_node_to_fit_text(node: &mut baumhard::mindmap::model::Min
             measure_text_block_unbounded(&mut fs, &section.text, scale, line_height, measure_font)
         };
 
-        let off_x = section.offset.x.max(0.0);
-        let off_y = section.offset.y.max(0.0);
-        let need_w = (block.width + pad_x) as f64 + off_x;
-        let need_h = (block.height + pad_y) as f64 + off_y;
+        // Pass the offset through unmodified — the prior `.max(0)`
+        // clamp silently treated leftward / upward overflow as zero,
+        // hiding the actual visible-text width.
+        let need_w = (block.width + pad_x) as f64 + section.offset.x;
+        let need_h = (block.height + pad_y) as f64 + section.offset.y;
         if need_w > floor_w {
             floor_w = need_w;
         }
