@@ -29,10 +29,12 @@ pub fn load_from_file(path: &Path) -> Result<MindMap, String> {
 /// doesn't silently lose its portals — serde would otherwise ignore
 /// the unknown field. Allocation-bounded by the input size.
 ///
-/// Cost: two serde-JSON passes — first into `serde_json::Value` for
-/// the legacy-portal probe, then `from_value` into `MindMap`.
-/// O(input_len) in both time and peak memory; pays the parse twice
-/// over to keep the legacy-detection branch off the happy path.
+/// Cost: one JSON parse into `serde_json::Value`, followed by a
+/// `from_value` walk that rebuilds the typed `MindMap` from the
+/// parsed tree (no second parse). O(input_len) in both time and
+/// peak memory — the `Value` tree is kept around until the typed
+/// conversion completes, keeping the legacy-portal probe off the
+/// typed happy path.
 pub fn load_from_str(json: &str) -> Result<MindMap, String> {
     // Pre-refactor maps stored portals in a separate `portals[]` array.
     // Post-refactor portals are edges with `display_mode = "portal"`,

@@ -33,7 +33,7 @@
 //! Current consumers — keep this list current when adding a new
 //! call site:
 //!
-//! - `src/application/renderer/tree_walker.rs:89,158` — main
+//! - `src/application/renderer/tree_walker.rs` — main
 //!   tree-to-buffer walker for nodes / connections / portals
 //!   (Baumhard tree path).
 //! - `src/application/renderer/scene_buffers.rs::rebuild_border_buffers_keyed` —
