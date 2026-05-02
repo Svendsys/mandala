@@ -392,7 +392,27 @@ impl<'a> HandlesPaste for TargetView<'a> {
             // paste round-trip on a multi-section node preserves
             // the data shape.
             TargetView::Section { doc, id, section_idx } => {
-                Outcome::applied(doc.set_section_text(id, *section_idx, content.trim_end().to_string()))
+                // Clamp `section_idx` against the current section
+                // count — a custom mutation between the click that
+                // captured the Section selection and this paste
+                // can have shrunk `node.sections`, leaving the
+                // selection's index past the end. Pre-fix the
+                // paste silently no-op'd via `set_section_text`'s
+                // bounds-check; the clamp falls back to the
+                // last-existing section so the paste lands
+                // somewhere reasonable instead of being silently
+                // discarded.
+                let section_count = doc
+                    .mindmap
+                    .nodes
+                    .get(id.as_str())
+                    .map(|n| n.sections.len())
+                    .unwrap_or(0);
+                if section_count == 0 {
+                    return Outcome::NotApplicable;
+                }
+                let target = (*section_idx).min(section_count - 1);
+                Outcome::applied(doc.set_section_text(id, target, content.trim_end().to_string()))
             }
             // Paste replaces the node's text with the clipboard
             // contents wholesale. Today's `set_node_text` writes
@@ -492,7 +512,29 @@ impl<'a> HandlesCut for TargetView<'a> {
                     Some(n) => n.display_text(),
                     None => return ClipboardContent::NotApplicable,
                 };
-                doc.set_node_text(id, String::new());
+                // Clear **every** section's text — `clipboard_copy`
+                // on this same target reads `display_text()` (every
+                // section joined by `\n`), so cut must zero the
+                // same scope. Pre-fix only `section[0]` was cleared
+                // (via `set_node_text`), leaving zombie content in
+                // `sections[1..]` that wasn't on the clipboard —
+                // copy → cut → paste produced a corrupted node
+                // with the joined text in `section[0]` and the
+                // pre-cut `sections[1..]` text still in place.
+                // Section count is preserved so subsequent
+                // section-aware paste still has the same anchor
+                // shape; structural round-trip across the joined
+                // string is lossy on section boundaries (the
+                // documented limit of `display_text()`).
+                let section_count = doc
+                    .mindmap
+                    .nodes
+                    .get(id)
+                    .map(|n| n.sections.len())
+                    .unwrap_or(0);
+                for idx in 0..section_count {
+                    doc.set_section_text(id, idx, String::new());
+                }
                 if text.is_empty() {
                     ClipboardContent::Empty
                 } else {

@@ -63,9 +63,11 @@ pub(super) fn handle_click(
             for cm in triggered {
                 if cm.timing.as_ref().is_some_and(|t| t.duration_ms > 0) {
                     // Animated: snapshot from/to and start an
-                    // instance. The AboutToWait tick interpolates
-                    // and commits the final mutation at completion.
-                    doc.start_animation(&cm, id, now_ms() as u64);
+                    // instance, threading the section_idx so a
+                    // multi-section node can host concurrent
+                    // animations on adjacent sections without
+                    // coalescing under the dedup key.
+                    doc.start_animation_at(&cm, id, hit_section, now_ms() as u64);
                 } else if let Some(tree) = mindmap_tree.as_mut() {
                     doc.apply_custom_mutation(&cm, id, Some(tree));
                     // Custom mutations can touch any cached field

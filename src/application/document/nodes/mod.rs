@@ -53,6 +53,79 @@ impl MindMapDocument {
     /// latter's contract is preserved by routing through here
     /// with `section_idx = 0`.
     ///
+    /// Section-aware setter that writes both `text` and `text_runs`
+    /// atomically, converting the live `ColorFontRegions` (the
+    /// editor's per-keystroke styling buffer) back to
+    /// `Vec<TextRun>` via the `region_to_text_run` reverse
+    /// converter (merging with the prior runs to preserve
+    /// `bold` / `italic` / `underline` / `size_pt` / `hyperlink`
+    /// the forward conversion drops).
+    ///
+    /// Used by the inline text editor's commit path
+    /// ([`crate::application::app::text_edit::editor::close_text_edit`])
+    /// so multi-color / multi-font text typed during the session
+    /// survives Esc-out. Pre-fix the commit went through
+    /// [`Self::set_section_text`] alone, which collapses
+    /// `text_runs` to a single template-inherited run — every
+    /// per-grapheme styling change vanished on commit.
+    ///
+    /// No-op (returns `false`, no undo push) when the section
+    /// doesn't exist or both `text` *and* `text_runs` would round
+    /// to the same shape.
+    pub fn set_section_text_and_runs(
+        &mut self,
+        node_id: &str,
+        section_idx: usize,
+        new_text: String,
+        new_regions: &baumhard::core::primitives::ColorFontRegions,
+    ) -> bool {
+        let node = match self.mindmap.nodes.get(node_id) {
+            Some(n) => n,
+            None => return false,
+        };
+        let Some(section) = node.sections.get(section_idx) else {
+            return false;
+        };
+        // Merge each new region with the prior run sharing its
+        // range (or the dominant overlap when ranges drifted).
+        // `region_to_text_run` lives in `document/custom.rs` and
+        // is the canonical reverse converter; reuse it here so
+        // the editor commit and the custom-mutation sync share
+        // one shape.
+        let prior_runs: Vec<&TextRun> = section.text_runs.iter().collect();
+        let new_runs: Vec<TextRun> = new_regions
+            .all_regions()
+            .iter()
+            .map(|region| {
+                let prior = super::custom::exact_or_dominant_overlap(
+                    &prior_runs,
+                    region.range.start,
+                    region.range.end,
+                );
+                super::custom::region_to_text_run(region, prior)
+            })
+            .collect();
+        if section.text == new_text && section.text_runs == new_runs {
+            return false;
+        }
+        let before_sections = node.sections.clone();
+        let canvas_default = self.mindmap.canvas.default_border.clone();
+        let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
+        if let Some(section) = node.sections.get_mut(section_idx) {
+            section.text = new_text;
+            section.text_runs = new_runs;
+            clamp_runs_to_text(section);
+        }
+        super::grow_one_node_to_fit_text(node);
+        super::grow_one_node_to_fit_border(node, canvas_default.as_ref());
+        self.undo_stack.push(UndoAction::EditNodeText {
+            node_id: node_id.to_string(),
+            before_sections,
+        });
+        self.dirty = true;
+        true
+    }
+
     /// No-op (returns `false`, no undo push) when the section
     /// doesn't exist or its text already matches.
     pub fn set_section_text(&mut self, node_id: &str, section_idx: usize, new_text: String) -> bool {

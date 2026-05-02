@@ -208,7 +208,43 @@ impl MindMapDocument {
     /// continuously; text / regions / structural fields snap at
     /// completion. `Followup` variants (`Reverse`, `Chain`, `Loop`)
     /// are recorded on the instance but not yet enacted.
+    /// Section-aware overload of [`Self::start_animation`]. When
+    /// `section_idx = Some(_)`, the re-trigger dedup key includes
+    /// the section index so adjacent sections of the same node
+    /// can host concurrent animations bound to the same mutation
+    /// id without coalescing. Section-targeted animations also
+    /// carry the index on the resulting [`AnimationInstance`] so
+    /// future per-section interpolators can lerp the right
+    /// element.
+    ///
+    /// Today the interpolation surface is whole-node `position`
+    /// only — the section-aware completion still routes through
+    /// `apply_custom_mutation` which honours `target_scope:
+    /// SectionsOnly`, so the committed final state lands on the
+    /// section. Per-frame interpolation of section-area
+    /// `position` is the named seam this signature opens for
+    /// future work.
+    pub fn start_animation_at(
+        &mut self,
+        cm: &CustomMutation,
+        target_id: &str,
+        section_idx: Option<usize>,
+        now_ms: u64,
+    ) {
+        self.start_animation_inner(cm, target_id, section_idx, now_ms);
+    }
+
     pub fn start_animation(&mut self, cm: &CustomMutation, target_id: &str, now_ms: u64) {
+        self.start_animation_inner(cm, target_id, None, now_ms);
+    }
+
+    fn start_animation_inner(
+        &mut self,
+        cm: &CustomMutation,
+        target_id: &str,
+        section_idx: Option<usize>,
+        now_ms: u64,
+    ) {
         // Invariant check the `AnimationInstance::timing()`
         // projection relies on: `cm.timing` must be Some with a
         // non-zero duration, else the caller should have taken
@@ -217,14 +253,16 @@ impl MindMapDocument {
             return;
         }
 
-        // Re-trigger the same (mutation_id, node_id) mid-flight is a
-        // silent no-op — otherwise a held button could spawn dozens
-        // of overlapping instances and the blend would overshoot.
-        if self
-            .active_animations
-            .iter()
-            .any(|a| a.mutation_id() == cm.id && a.target_id == target_id)
-        {
+        // Re-trigger the same (mutation_id, node_id, section_idx)
+        // mid-flight is a silent no-op — otherwise a held button
+        // could spawn dozens of overlapping instances and the blend
+        // would overshoot. Section_idx is part of the key so two
+        // simultaneous animations of the same mutation against
+        // different sections of the same node coexist instead of
+        // coalescing.
+        if self.active_animations.iter().any(|a| {
+            a.mutation_id() == cm.id && a.target_id == target_id && a.section_idx == section_idx
+        }) {
             return;
         }
 
@@ -254,6 +292,7 @@ impl MindMapDocument {
 
         self.active_animations.push(AnimationInstance {
             target_id: target_id.to_string(),
+            section_idx,
             from_node,
             to_node,
             start_ms: now_ms,

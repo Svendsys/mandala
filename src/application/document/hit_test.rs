@@ -398,6 +398,13 @@ pub fn apply_drag_delta(tree: &mut MindMapTree, node_id: &str, dx: f32, dy: f32,
     } else {
         apply_delta_node_and_sections(&mut tree.tree.arena, tree_node_id, dx, dy);
     }
+    // Position writes go through `area.move_position` directly,
+    // bypassing `MutatorTree::apply_to`'s wrapper that owns the
+    // cache invalidation. Mark the geometry caches dirty so the
+    // next `ensure_subtree_aabbs()` call recomputes — pre-fix the
+    // overflow-aware `point_in_node_aabb` could read a stale
+    // subtree AABB after a drag tick.
+    tree.tree.invalidate_caches();
 }
 
 /// Move a node container plus every section-area / section-model
@@ -457,6 +464,9 @@ pub fn apply_drag_delta_and_collect_patches(
         // the historical `include_descendants=false` semantic.
         collect_patches_node_and_sections(&mut tree.tree.arena, tree_node_id, dx, dy, patches);
     }
+    // Same invalidation contract as `apply_drag_delta` — position
+    // writes go through `area.move_position` directly.
+    tree.tree.invalidate_caches();
 }
 
 /// Collect drag patches for the container plus its section

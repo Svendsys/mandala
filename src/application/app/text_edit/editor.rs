@@ -248,24 +248,43 @@ pub(in crate::application::app) fn close_text_edit(
             node_id,
             section_idx,
             buffer,
+            buffer_regions,
             original_text,
             original_regions,
             ..
-        } => (node_id, section_idx, buffer, original_text, original_regions),
+        } => (
+            node_id,
+            section_idx,
+            buffer,
+            buffer_regions,
+            original_text,
+            original_regions,
+        ),
         TextEditState::Closed => return,
     };
-    let (node_id, section_idx, buffer, original_text, original_regions) = snapshot;
+    let (node_id, section_idx, buffer, buffer_regions, original_text, original_regions) = snapshot;
     if commit {
-        // Section-aware commit: the editor records the section
-        // index in `TextEditState::Open` so a `Section` selection
-        // commits to that section, not to section 0.
-        doc.set_section_text(&node_id, section_idx, buffer);
+        // Section-aware commit. The editor records both the
+        // section index *and* the per-grapheme `buffer_regions`
+        // (font / colour spans) accumulated during the session.
+        // Pre-fix the commit went through `set_section_text`
+        // alone, which collapses `text_runs` to a single
+        // template-inherited run — every per-keystroke styling
+        // change vanished on Esc-out. Now we route through
+        // `set_section_text_and_runs`, the section-aware setter
+        // that converts the live `ColorFontRegions` back to
+        // `Vec<TextRun>` (merging with the prior runs to
+        // preserve `bold` / `italic` / `underline` / `size_pt` /
+        // `hyperlink` per the `region_to_text_run` contract) and
+        // writes both fields atomically.
+        doc.set_section_text_and_runs(&node_id, section_idx, buffer, &buffer_regions);
         // Commit changed the model — pull the tree back to it.
-        // No `scene_cache.clear()` is needed: `set_section_text` writes
-        // only the text field; `node.size` is authored, not
-        // autosized, so edge endpoints don't shift and cached
-        // connection samples stay valid. If autosizing ever lands,
-        // revisit this seam.
+        // `set_section_text_and_runs` may have grown `node.size`
+        // via `grow_one_node_to_fit_text`, so connection sample
+        // caches keyed on the pre-grow geometry are stale; clear
+        // them before the rebuild. The drag drop path already
+        // does the equivalent (`event_mouse_click.rs`).
+        scene_cache.clear();
         rebuild_all(doc, mindmap_tree, app_scene, renderer, scene_cache);
     } else {
         // Cancel: model is untouched, so we only need to revert the
@@ -426,10 +445,34 @@ pub(in crate::application::app) fn handle_text_edit_key(
             }
             _ => {
                 if let Key::Character(c) = logical_key {
-                    for ch in c.as_str().chars() {
-                        if !ch.is_control() {
-                            regions.insert_regions_at(*cursor, 1);
-                            *cursor = insert_at_cursor(buffer, *cursor, ch);
+                    // Insert the payload as a single grapheme-aware
+                    // splice rather than codepoint-by-codepoint. An
+                    // IME delivering `"한"` (Hangul, three jamo /
+                    // codepoints, one cluster) or a dead-key sequence
+                    // delivering `"e\u{0301}"` would otherwise call
+                    // `insert_at_cursor` once per char and increment
+                    // `cursor` by `+1` per char — but
+                    // `count_grapheme_clusters` of the resulting
+                    // buffer collapses the codepoints into one
+                    // cluster, leaving `cursor_grapheme_pos` past
+                    // the buffer's grapheme count. Splice the whole
+                    // payload at once and advance the cursor by the
+                    // *delta* in cluster count.
+                    let payload = c.as_str();
+                    let trimmed: String = payload.chars().filter(|ch| !ch.is_control()).collect();
+                    if !trimmed.is_empty() {
+                        let pre_clusters =
+                            baumhard::util::grapheme_chad::count_grapheme_clusters(buffer);
+                        let byte =
+                            baumhard::util::grapheme_chad::find_byte_index_of_grapheme(buffer, *cursor)
+                                .unwrap_or(buffer.len());
+                        buffer.insert_str(byte, &trimmed);
+                        let post_clusters =
+                            baumhard::util::grapheme_chad::count_grapheme_clusters(buffer);
+                        let advance = post_clusters.saturating_sub(pre_clusters);
+                        if advance > 0 {
+                            regions.insert_regions_at(*cursor, advance);
+                            *cursor += advance;
                             changed = true;
                         }
                     }

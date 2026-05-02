@@ -112,15 +112,28 @@ impl Renderer {
     ///
     /// For each `(unique_id, new_pos)` pair, looks up the existing
     /// buffer entry by key and overwrites every buffer's `pos`
-    /// field — halos and main glyph share the key and all need the
-    /// same translate. Buffers for nodes not in the patch set are
-    /// left untouched; their shaped text and position remain valid.
+    /// field. Buffers for nodes not in the patch set are left
+    /// untouched; their shaped text and position remain valid.
+    ///
+    /// **Halo limitation.** When an element has an outline halo,
+    /// the walker emits one buffer per halo offset (positioned at
+    /// `area.position + (dx, dy)` per `OutlineStyle::offsets()`)
+    /// then the main glyph. This patch path overwrites every
+    /// halo's `pos` with `new_pos` — collapsing halos onto the
+    /// main glyph. Today this is latent because mindmap-tree
+    /// elements (`mindnode_container_area`, `mindnode_section_area`)
+    /// never set `area.outline`; halos live on the picker overlay
+    /// path which doesn't go through `mindmap_buffers`. If a
+    /// future feature sets `outline` on a mindmap element, drag
+    /// will visibly collapse the halos. The fix at that point is
+    /// to store per-buffer `(dx, dy)` offsets alongside `pos` and
+    /// re-derive `pos = new_pos + offset` here.
     ///
     /// # Costs
     ///
     /// O(patch_set_size × halos+1) — no text shaping, no font-system
-    /// lock, no allocation. Halos count is typically 0 for mindmap
-    /// nodes, so the constant collapses on the common path.
+    /// lock, no allocation. Halos count is 0 for mindmap nodes
+    /// today, so the constant collapses on the common path.
     pub fn patch_drag_positions(&mut self, patches: &[(usize, (f32, f32))]) {
         for &(unique_id, new_pos) in patches {
             let key = unique_id.to_string();

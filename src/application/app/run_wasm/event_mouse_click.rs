@@ -103,9 +103,22 @@ impl super::WasmApp {
             };
 
             match &click_hit {
-                ClickHit::Node(node_id) => {
+                ClickHit::Node(node_id, section_idx) => {
                     let nid = node_id.clone();
-                    input.document.selection = SelectionState::Single(nid.clone());
+                    // Preserve the section identity for double-click
+                    // → editor open. See the parallel native path
+                    // for the rationale (pre-fix the editor opened
+                    // on section 0 regardless of which section the
+                    // user pointed at).
+                    input.document.selection = match section_idx {
+                        Some(idx) => SelectionState::Section(
+                            crate::application::document::SectionSel {
+                                node_id: nid.clone(),
+                                section_idx: *idx,
+                            },
+                        ),
+                        None => SelectionState::Single(nid.clone()),
+                    };
                     rebuild_all(
                         &input.document,
                         &mut input.mindmap_tree,
@@ -317,6 +330,49 @@ impl super::WasmApp {
             }
             self.suppress_keys.set(false);
             return;
+        }
+
+        // Fire any `OnClick` triggers BEFORE the selection
+        // update so document actions (theme switches etc.) take
+        // effect before the scene rebuild below picks up the new
+        // state. Pre-fix the WASM click handler **never**
+        // dispatched triggers — every map's `OnClick`-bound
+        // mutation (whole-node and per-section) was silently
+        // dead on the web. Native does this in `click.rs`; the
+        // WASM analogue mirrors that flow with
+        // `PlatformContext::Web` filtering.
+        //
+        // Section-aware: when the click resolved to a specific
+        // section, `find_triggered_mutations_at` walks the
+        // section's `trigger_bindings` first, then the whole-
+        // node bindings — same precedence native enforces.
+        let (trigger_node_id, trigger_section_idx): (Option<String>, Option<usize>) = match &pending {
+            PendingClick::Node(id) => (Some(id.clone()), None),
+            PendingClick::Section { node_id, section_idx } => (Some(node_id.clone()), Some(*section_idx)),
+            _ => (None, None),
+        };
+        if let Some(id) = trigger_node_id.as_ref() {
+            let triggered = input.document.find_triggered_mutations_at(
+                id,
+                trigger_section_idx,
+                &baumhard::mindmap::custom_mutation::Trigger::OnClick,
+                &baumhard::mindmap::custom_mutation::PlatformContext::Web,
+            );
+            for cm in triggered {
+                if cm.timing.as_ref().is_some_and(|t| t.duration_ms > 0) {
+                    let now_ms = web_sys::window()
+                        .and_then(|w| w.performance())
+                        .map(|p| p.now() as u64)
+                        .unwrap_or(0);
+                    input
+                        .document
+                        .start_animation_at(&cm, id, trigger_section_idx, now_ms);
+                } else if let Some(tree) = input.mindmap_tree.as_mut() {
+                    input.document.apply_custom_mutation(&cm, id, Some(tree));
+                    input.scene_cache.clear();
+                }
+                input.document.apply_document_actions(&cm);
+            }
         }
 
         // Plain selection click. Snapshot the previous

@@ -165,8 +165,17 @@ pub(crate) enum ClickHit {
     /// No node and no portal marker under the cursor. Empty-canvas
     /// double-click creates a new orphan unless an edge is selected.
     Empty,
-    /// Cursor is inside node `id`'s AABB.
-    Node(String),
+    /// Cursor is inside node `id`'s AABB. `section_idx` is `Some`
+    /// when the click resolved to a specific section of a multi-
+    /// section node (mirroring `HitTarget::Section`); `None` for
+    /// single-section nodes and chrome-only hits. The
+    /// `PartialEq`-derived double-click compare honours the
+    /// section index, so two slow clicks on different sections
+    /// of the same node correctly *don't* count as a double-click,
+    /// and a genuine same-section double-click routes the
+    /// editor-open path to the targeted section instead of
+    /// silently defaulting to section 0.
+    Node(String, Option<usize>),
     /// Cursor is inside a portal **icon** marker. `edge` identifies
     /// the owning portal-mode edge; `endpoint` is the node the
     /// hit marker sits above (the double-click pan target is the
@@ -306,7 +315,13 @@ pub(super) fn compute_click_hit(
         None
     };
 
-    let click_hit = click_hit_from_priority(&hit_node, &portal_text_hit, &portal_icon_hit, &edge_label_hit);
+    let click_hit = click_hit_from_priority(
+        &hit_node,
+        hit_section_idx,
+        &portal_text_hit,
+        &portal_icon_hit,
+        &edge_label_hit,
+    );
 
     ClickHitParts {
         click_hit,
@@ -331,12 +346,13 @@ pub(super) fn compute_click_hit(
 /// ladder is the canonical tie-breaker.
 fn click_hit_from_priority(
     hit_node: &Option<String>,
+    hit_section_idx: Option<usize>,
     portal_text_hit: &Option<(baumhard::mindmap::scene_cache::EdgeKey, String)>,
     portal_icon_hit: &Option<(baumhard::mindmap::scene_cache::EdgeKey, String)>,
     edge_label_hit: &Option<baumhard::mindmap::scene_cache::EdgeKey>,
 ) -> ClickHit {
     if let Some(id) = hit_node {
-        ClickHit::Node(id.clone())
+        ClickHit::Node(id.clone(), hit_section_idx)
     } else if let Some((key, ep)) = portal_text_hit {
         ClickHit::PortalText {
             edge: key.clone(),

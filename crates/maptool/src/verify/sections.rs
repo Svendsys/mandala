@@ -57,7 +57,7 @@ fn check_node_size_finite(
 ) {
     if !node.size.width.is_finite() || !node.size.height.is_finite() {
         out.push(Violation::node(
-            "sections",
+            CATEGORY,
             node,
             format!(
                 "node.size has non-finite component (width={}, height={})",
@@ -67,14 +67,14 @@ fn check_node_size_finite(
     }
     if node.size.width.is_finite() && node.size.width <= 0.0 {
         out.push(Violation::node(
-            "sections",
+            CATEGORY,
             node,
             format!("node.size.width is not positive ({})", node.size.width),
         ));
     }
     if node.size.height.is_finite() && node.size.height <= 0.0 {
         out.push(Violation::node(
-            "sections",
+            CATEGORY,
             node,
             format!("node.size.height is not positive ({})", node.size.height),
         ));
@@ -107,7 +107,7 @@ fn check_section_channel_collisions(
     for (channel, indices) in by_channel.iter() {
         if indices.len() > 1 {
             out.push(Violation::node(
-                "sections",
+                CATEGORY,
                 node,
                 format!(
                     "channel {} shared by sections {:?}; mutations targeting that channel \
@@ -138,7 +138,7 @@ fn check_size_not_astronomical(
     let max_h = node.size.height * 100.0;
     if size.width > max_w {
         out.push(Violation::node(
-            "sections",
+            CATEGORY,
             node,
             format!(
                 "section[{}].size.width ({}) is over 100× the node's width ({}); \
@@ -149,7 +149,7 @@ fn check_size_not_astronomical(
     }
     if size.height > max_h {
         out.push(Violation::node(
-            "sections",
+            CATEGORY,
             node,
             format!(
                 "section[{}].size.height ({}) is over 100× the node's height ({}); \

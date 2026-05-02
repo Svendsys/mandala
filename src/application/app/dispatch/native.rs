@@ -372,10 +372,26 @@ pub(in crate::application::app) fn dispatch_action(
                 return DispatchOutcome::Handled;
             };
             match &h.click_hit {
-                ClickHit::Node(node_id) => {
+                ClickHit::Node(node_id, section_idx) => {
                     if let Some(doc) = ctx.document.as_mut() {
                         let nid = node_id.clone();
-                        doc.selection = SelectionState::Single(nid.clone());
+                        // Preserve the section identity so the
+                        // editor opens on the section the user
+                        // pointed at. Pre-fix this collapsed to
+                        // `SelectionState::Single` unconditionally,
+                        // and `open_text_edit` then defaulted to
+                        // `section_idx = 0` — so a double-click on
+                        // section[1] opened the editor on
+                        // section[0].
+                        doc.selection = match section_idx {
+                            Some(idx) => SelectionState::Section(
+                                crate::application::document::SectionSel {
+                                    node_id: nid.clone(),
+                                    section_idx: *idx,
+                                },
+                            ),
+                            None => SelectionState::Single(nid.clone()),
+                        };
                         rebuild_all(
                             doc,
                             ctx.mindmap_tree,

@@ -272,6 +272,15 @@ pub struct MindSection {
     /// [`Self::text_runs`]; the empty-runs / partial-runs trade-off
     /// matches the pre-refactor [`TextRun`] contract — non-empty
     /// runs render *only* the covered ranges.
+    ///
+    /// `#[serde(default)]` so a hand-edited or partially-converted
+    /// JSON file with `{"sections": [{}]}` loads as one empty
+    /// section (text = "") rather than failing the typed loader
+    /// with a confusing "missing field `text`" serde error. The
+    /// `convert --sections` migration synthesises the field
+    /// explicitly when lifting legacy node text, so on-disk
+    /// shape is unchanged for migrated files.
+    #[serde(default)]
     pub text: String,
     /// Per-grapheme styled slices — see [`TextRun`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -354,7 +363,7 @@ impl MindSection {
 /// fall through to the owning node's defaults).
 ///
 /// Plain data; no runtime cost beyond the string allocations.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TextRun {
     /// Grapheme-cluster index where this run begins (inclusive).
     pub start: usize,

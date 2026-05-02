@@ -79,7 +79,7 @@ fn warn_if_predicate_filtered_everything(
     }
 }
 
-fn region_to_text_run(region: &ColorFontRegion, prior: Option<&TextRun>) -> TextRun {
+pub(super) fn region_to_text_run(region: &ColorFontRegion, prior: Option<&TextRun>) -> TextRun {
     // Preserve `var(--name)` references when the prior run
     // shares the region's range and carries one. Without theme-
     // variables resolution at sync time we can't tell whether a
@@ -89,15 +89,20 @@ fn region_to_text_run(region: &ColorFontRegion, prior: Option<&TextRun>) -> Text
     // Same documented trade-off as the selective gate: a
     // deliberate `SetRegionColor` on a `var()`-bearing run is
     // silently swallowed here — the run keeps the variable.
-    let prior_carries_var = prior.is_some_and(|p| {
-        p.color.starts_with("var(")
+    let prior_var_color: Option<&str> = prior.and_then(|p| {
+        if p.color.starts_with("var(")
             && p.start == region.range.start
             && p.end == region.range.end
+        {
+            Some(p.color.as_str())
+        } else {
+            None
+        }
     });
-    let color = match (region.color, prior_carries_var) {
-        (_, true) => prior.expect("prior_carries_var implies Some").color.clone(),
-        (Some(rgba), false) => rgba_to_hex(rgba),
-        (None, false) => prior
+    let color = match (prior_var_color, region.color) {
+        (Some(var_color), _) => var_color.to_string(),
+        (None, Some(rgba)) => rgba_to_hex(rgba),
+        (None, None) => prior
             .map(|p| p.color.clone())
             .unwrap_or_else(|| DEFAULT_TEXT_RUN_COLOR.to_string()),
     };
@@ -332,7 +337,27 @@ impl MindMapDocument {
         use baumhard::core::primitives::{Flag, Flaggable};
 
         let Some(mutator) = custom.mutator.as_ref() else { return };
-        let Some(mutations) = flat_mutations(mutator) else { return };
+        let Some(mutations) = flat_mutations(mutator) else {
+            // Non-flat mutator AST (e.g. `scope::descendants` —
+            // `Instruction`-rooted, no Macro at the root). The
+            // current flat-apply path can't extract a mutation
+            // list from these shapes; pre-fix this returned
+            // silently and the entire apply was a no-op with no
+            // diagnostic. The richer `mutator_builder` walker
+            // path is the home for these (size-aware /
+            // predicate-filtered descendant iteration); until
+            // it's wired into `apply_custom_mutation`, warn so
+            // authors notice the silent drop instead of chasing
+            // a missing visual change.
+            log::warn!(
+                "mutation '{}': mutator AST is non-flat (root is not `Macro` with literal list); \
+                 the flat-apply path can't evaluate this shape — apply skipped. \
+                 Use `scope::self_only` / `scope::self_and_descendants` for now, \
+                 or wait for the walker-based `apply_custom_mutation` path.",
+                custom.id
+            );
+            return;
+        };
         // Top-level predicate gate (item E3). When `Some`, every
         // candidate element must satisfy `predicate.test(element)`
         // before mutations land on it. Authors typically reach for
@@ -398,6 +423,17 @@ impl MindMapDocument {
                 candidates_seen,
                 candidates_passed,
             );
+            // Invalidate the tree's `subtree_aabb` and other geometry
+            // caches — `apply_mutations_to_element` mutated arena
+            // element fields directly (bypassing
+            // `MutatorTree::apply_to`'s wrapper that owns the
+            // invalidation). Pre-fix the dirty flag stayed false
+            // so a downstream `ensure_subtree_aabbs()` call (e.g.
+            // the editor click-outside-commit's overflow-aware
+            // `point_in_node_aabb`) was a no-op against a stale
+            // cache. Same shape as `MutatorTree::apply_to`'s
+            // invalidation (`lib/baumhard/src/gfx_structs/tree.rs`).
+            tree.tree.invalidate_caches();
             return;
         }
 
@@ -468,6 +504,15 @@ impl MindMapDocument {
             candidates_seen,
             candidates_passed,
         );
+        // Same invalidation as the `SectionsOnly` branch above:
+        // `apply_mutations_to_element` writes arena element fields
+        // directly without going through `MutatorTree::apply_to`,
+        // so the tree's `subtree_aabbs_dirty` flag is unset until
+        // we explicitly mark it. Downstream callers that read
+        // `subtree_aabb()` (notably the overflow-aware
+        // `point_in_node_aabb` from the editor click-outside-commit)
+        // would otherwise hit a stale cache.
+        tree.tree.invalidate_caches();
     }
 
     /// Collect the section targets affected by a `SectionsOnly`
@@ -787,7 +832,7 @@ impl MindMapDocument {
 ///
 /// Returns `None` only when no prior run overlaps the new range
 /// at all (e.g. a fresh region inserted by the mutation).
-fn exact_or_dominant_overlap<'a>(
+pub(super) fn exact_or_dominant_overlap<'a>(
     priors: &[&'a TextRun],
     start: usize,
     end: usize,

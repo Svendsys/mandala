@@ -699,6 +699,130 @@ fn test_sync_node_from_tree_var_color_preserved_when_regions_untouched() {
     );
 }
 
+/// `SectionsOnly` position deltas persist past `rebuild_all` —
+/// `sync_node_from_tree` must write back `section.offset` from
+/// the tree-side section-area position. Pre-Tier-Review-Response-2
+/// the sync wrote `model.position` only; a `SectionsOnly`
+/// translate landed on the live tree but reverted on the next
+/// model→tree rebuild. Pin the writeback contract.
+#[test]
+fn test_sync_node_from_tree_section_offset_persists_after_rebuild() {
+    use baumhard::gfx_structs::area::GlyphAreaCommand;
+    use baumhard::gfx_structs::mutator::Mutation;
+    use baumhard::mindmap::custom_mutation::{scope, CustomMutation, MutationBehavior};
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    // Pin the model offset so we can detect the writeback.
+    let pre_offset_x = doc.mindmap.nodes.get(&nid).unwrap().sections[0].offset.x;
+    let cm = CustomMutation {
+        id: "translate-section-0".into(),
+        name: "Translate section 0".into(),
+        description: String::new(),
+        contexts: vec![],
+        mutator: Some(scope::self_only(vec![Mutation::area_command(
+            GlyphAreaCommand::NudgeRight(13.0),
+        )])),
+        target_scope: TS::SectionsOnly,
+        behavior: MB::Persistent,
+        predicate: None,
+        document_actions: vec![],
+        timing: None,
+    };
+    let mut tree = doc.build_tree();
+    doc.apply_custom_mutation(&cm, &nid, Some(&mut tree));
+
+    // Without writeback, model.section[0].offset.x stays at
+    // pre_offset_x; with writeback, it advances by 13.
+    let post_offset_x = doc.mindmap.nodes.get(&nid).unwrap().sections[0].offset.x;
+    assert!(
+        (post_offset_x - pre_offset_x - 13.0).abs() < 1e-3,
+        "section.offset.x must persist tree-side translate ({pre_offset_x} → {post_offset_x})"
+    );
+
+    // Force a rebuild and re-check the tree position derives
+    // from the persisted offset (no revert).
+    let tree2 = doc.build_tree();
+    let sid = tree2.section_arena_id(&nid, 0).unwrap();
+    let area = tree2.tree.arena.get(sid).unwrap().get().glyph_area().unwrap();
+    let node_pos_x = doc.mindmap.nodes.get(&nid).unwrap().position.x as f32;
+    let expected = node_pos_x + post_offset_x as f32;
+    assert!(
+        (area.position.x.0 - expected).abs() < 1e-3,
+        "post-rebuild section position should reflect persisted offset"
+    );
+}
+
+/// Section-level `OnClick` trigger fires before whole-node
+/// `OnClick` triggers — pin the precedence the
+/// `find_triggered_mutations_at` doc claims. Tier-D wired the
+/// dispatcher but no test exercises the override-precedence
+/// contract end-to-end.
+#[test]
+fn test_find_triggered_mutations_at_section_binding_fires_first() {
+    use baumhard::mindmap::custom_mutation::{
+        scope, CustomMutation, MutationBehavior, PlatformContext, Trigger, TriggerBinding,
+    };
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+
+    // Register two CustomMutations.
+    let node_cm = CustomMutation {
+        id: "node-handler".into(),
+        name: "Node handler".into(),
+        description: String::new(),
+        contexts: vec![],
+        mutator: Some(scope::self_only(vec![])),
+        target_scope: TS::SelfOnly,
+        behavior: MB::Persistent,
+        predicate: None,
+        document_actions: vec![],
+        timing: None,
+    };
+    let section_cm = CustomMutation {
+        id: "section-handler".into(),
+        name: "Section handler".into(),
+        description: String::new(),
+        contexts: vec![],
+        mutator: Some(scope::self_only(vec![])),
+        target_scope: TS::SectionsOnly,
+        behavior: MB::Persistent,
+        predicate: None,
+        document_actions: vec![],
+        timing: None,
+    };
+    doc.mutation_registry.insert("node-handler".into(), node_cm);
+    doc.mutation_registry.insert("section-handler".into(), section_cm);
+
+    {
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        node.trigger_bindings.push(TriggerBinding {
+            trigger: Trigger::OnClick,
+            mutation_id: "node-handler".into(),
+            contexts: vec![],
+        });
+        node.sections[0].trigger_bindings.push(TriggerBinding {
+            trigger: Trigger::OnClick,
+            mutation_id: "section-handler".into(),
+            contexts: vec![],
+        });
+    }
+
+    let triggered =
+        doc.find_triggered_mutations_at(&nid, Some(0), &Trigger::OnClick, &PlatformContext::Desktop);
+    let ids: Vec<&str> = triggered.iter().map(|cm| cm.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec!["section-handler", "node-handler"],
+        "section-level binding must fire FIRST, then whole-node"
+    );
+
+    // No section_idx: only whole-node bindings fire.
+    let triggered_node_only =
+        doc.find_triggered_mutations_at(&nid, None, &Trigger::OnClick, &PlatformContext::Desktop);
+    let ids: Vec<&str> = triggered_node_only.iter().map(|cm| cm.id.as_str()).collect();
+    assert_eq!(ids, vec!["node-handler"]);
+}
+
 /// `SectionsOnly + predicate` combo: the structural seam and
 /// the predicate gate compose — a `SectionsOnly` mutation gated
 /// by `(Flag(SectionRoot), Equals(false))` (matches set, i.e.

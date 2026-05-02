@@ -29,6 +29,16 @@ pub const HIGHLIGHT_COLOR: [f32; 4] = [0.0, 0.9, 1.0, 1.0];
 pub struct AnimationInstance {
     /// Node id this animation targets.
     pub target_id: String,
+    /// Section index when the click that triggered this animation
+    /// resolved to a specific section (multi-section node);
+    /// `None` for whole-node-targeted triggers. The re-trigger
+    /// dedup key in `start_animation` is `(mutation_id,
+    /// target_id, section_idx)` so two simultaneous animations
+    /// from different sections of the same node with the same
+    /// mutation id (e.g. a section-scoped recolour wired to
+    /// every section's `OnClick`) coexist instead of coalescing
+    /// to one.
+    pub section_idx: Option<usize>,
     /// Pre-mutation snapshot of the target node. Stored whole so
     /// any future per-field interpolator can pull the source.
     pub from_node: MindNode,

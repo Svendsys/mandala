@@ -210,7 +210,16 @@ fn resolve_target_id(doc: &MindMapDocument, explicit: Option<&str>) -> Result<St
     }
     match &doc.selection {
         SelectionState::Single(id) => Ok(id.clone()),
-        _ => Err("mutation apply needs a single-node selection or an explicit <node-id>".to_string()),
+        // Section selection: route to the section's owning node.
+        // The mutation's own `target_scope` decides whether it
+        // lands on the container, the sections, or both —
+        // resolving to the owning node is the right input shape
+        // for `apply_custom_mutation`. Pre-fix this errored out,
+        // forcing the user to deselect → re-select-as-Single
+        // before `mutation apply` would work from a section
+        // click.
+        SelectionState::Section(s) => Ok(s.node_id.clone()),
+        _ => Err("mutation apply needs a single-node or section selection, or an explicit <node-id>".to_string()),
     }
 }
 
@@ -458,7 +467,12 @@ mod tests {
     fn apply_without_selection_returns_err() {
         let mut doc = fixture_doc(vec![("nudge", make_cm("nudge", vec!["map.node"], "d"))], vec![]);
         match run("mutation apply nudge", &mut doc) {
-            ExecResult::Err(s) => assert!(s.contains("single-node selection")),
+            // Wording was widened to mention "section selection"
+            // when Tier-Review-Response-3 made section selections
+            // a valid input — the test now matches on the
+            // narrower "needs a single-node or section selection"
+            // phrase shared by both branches.
+            ExecResult::Err(s) => assert!(s.contains("single-node or section selection")),
             other => panic!("expected Err, got {:?}", other),
         }
     }

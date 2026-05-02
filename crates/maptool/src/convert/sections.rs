@@ -93,12 +93,14 @@ fn migrate_one_node(node: &mut Value) -> bool {
         return legacy_text.is_some() || legacy_runs.is_some();
     }
 
-    // Build the default section. `text` defaults to empty when
-    // absent — matches the typed loader which deserializes
-    // `text: String` from a missing key as empty via the
-    // `String::default()` Serde behaviour for fields without
-    // explicit attributes (here we explicitly synthesise the key
-    // so the typed shape doesn't surprise downstream tooling).
+    // Build the default section. `MindSection.text` carries
+    // `#[serde(default)]` so a missing key parses as empty, but
+    // we synthesise the key explicitly here to keep the on-disk
+    // shape predictable for downstream tooling (grep / show /
+    // hand-inspection). Pre-fix this comment claimed the default
+    // was implicit without `#[serde(default)]` — wrong; the
+    // attribute is now present and load-bearing for hand-edited
+    // partial-migration files.
     let mut section = Map::new();
     let text = legacy_text.unwrap_or_else(|| Value::String(String::new()));
     section.insert("text".to_string(), text);
