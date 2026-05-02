@@ -80,10 +80,26 @@ pub struct CustomMutation {
     /// Whether this mutation persists to the model or is a visual toggle.
     #[serde(default)]
     pub behavior: MutationBehavior,
-    /// Reserved gate: when consumed, will filter the scope-collected
-    /// set by matching each node's `GfxElement` against the
-    /// predicate. Today round-trips through serde but
-    /// `apply_custom_mutation` ignores it.
+    /// Top-level filter gate. When `Some`, every candidate
+    /// element collected by `target_scope` is tested against the
+    /// predicate; mutations only land on elements that match.
+    /// Wired by the application's `apply_custom_mutation` →
+    /// `apply_to_tree` path (`src/application/document/custom.rs`).
+    ///
+    /// Common idioms:
+    ///
+    /// - `Predicate { fields: [(GfxElementField::Flag(Flag::SectionRoot),
+    ///   Comparator::Equals(false))], … }` — match elements with
+    ///   `SectionRoot` set; pairs with `target_scope: SelfOnly` to
+    ///   land mutations on every section but skip the chrome-only
+    ///   container.
+    /// - The negation form (`Comparator::Equals(true)`) matches
+    ///   elements with `SectionRoot` clear (the container + child
+    ///   mind-nodes).
+    /// - `Predicate::new()` (empty fields, `always_match=false`)
+    ///   matches nothing — a footgun. The apply path warns when a
+    ///   gate filters every candidate so authors notice the
+    ///   no-op rather than chase a missing visual change.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub predicate: Option<Predicate>,
     /// Optional canvas/document-level actions that fire alongside the
@@ -357,3 +373,21 @@ impl TargetScope {
         }
     }
 }
+
+// **Note on the predicate-gate / target_scope interaction.**
+// `covers_reach` checks the AST-vs-scope pairing only — it does
+// not consult `CustomMutation.predicate`. A predicate that
+// narrows the apply-time element set (e.g. a `Flag(SectionRoot)`
+// gate that lands the mutation only on sections) does NOT reduce
+// the undo-snapshot window: the snapshot still covers every
+// node in the `target_scope`-collected set, even though only a
+// subset of those nodes' elements actually mutated. This is by
+// design — the predicate-filtered fallout is *node-scoped*, not
+// *element-scoped*, and rebuilding the model from a whole-node
+// clone trivially restores any per-element subset that landed.
+// The over-clone is wasteful but never lossy.
+//
+// The reverse direction is the bug shape `covers_reach` does
+// catch: a `MutatorReach::Children` mutator paired with
+// `target_scope: SelfOnly` would recurse into descendants the
+// snapshot didn't capture, dropping their state on undo.

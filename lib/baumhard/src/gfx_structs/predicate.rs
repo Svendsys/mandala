@@ -34,6 +34,16 @@ use serde::{Deserialize, Serialize};
 ///
 /// Costs: all comparisons are O(1); floating-point equality delegates to
 /// [`crate::util::geometry::almost_equal`] to absorb rounding.
+///
+/// **Negation flag worked example.** A
+/// `Predicate { fields: [(Flag(SectionRoot), Equals(false))], … }`
+/// matches every element whose `SectionRoot` flag is **set** —
+/// `Equals(false)` is the un-negated `==`, so the predicate
+/// passes when `is_set == true`. The negation form
+/// `Equals(true)` reads as `!=`, so it passes when `is_set == false`
+/// (every element *without* the flag). The two interpretations
+/// are easy to flip in your head — keep this example pinned at
+/// the call site if you write a new field arm.
 #[derive(Clone, Debug, Copy, Serialize, Deserialize)]
 pub enum Comparator {
     /// Equality test. `Equals(false)` means `==`; `Equals(true)` means `!=`.

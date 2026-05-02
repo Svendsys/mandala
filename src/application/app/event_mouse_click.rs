@@ -343,6 +343,22 @@ pub(super) fn handle_mouse_input(
                             let release_canvas = ctx
                                 .renderer
                                 .screen_to_canvas(ctx.cursor_pos.0 as f32, ctx.cursor_pos.1 as f32);
+                            // Refresh the subtree-AABB cache before the
+                            // overflow-aware containment check —
+                            // `point_in_node_aabb` reads
+                            // `subtree_aabb()` which returns `None`
+                            // when the cache is dirty (post-mutation
+                            // / post-tree-rebuild). A `None` falls
+                            // back to the container-only path,
+                            // regressing the multi-section overflow
+                            // gesture this branch was added to fix.
+                            // `ensure_subtree_aabbs` is O(1) on a
+                            // clean cache and O(arena) on the first
+                            // call after a mutation; either way it's
+                            // cheap relative to the click handler.
+                            if let Some(tree) = ctx.mindmap_tree.as_mut() {
+                                tree.tree.ensure_subtree_aabbs();
+                            }
                             let inside = ctx
                                 .text_edit_state
                                 .node_id()

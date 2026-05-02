@@ -46,7 +46,17 @@ pub(super) fn handle_click(
     // into the tree via `apply_custom_mutation`, which owns the
     // model-sync + undo-push for Persistent behavior.
     if let Some(id) = hit.as_ref() {
-        let triggered = doc.find_triggered_mutations(id, &Trigger::OnClick, &PlatformContext::Desktop);
+        // Pass `hit_section` so the section-aware lookup can find
+        // overrides authored on the targeted section before the
+        // whole-node bindings fire. `None` (single-section / chrome
+        // hit) skips the per-section pass entirely — pre-Tier-D
+        // behaviour.
+        let triggered = doc.find_triggered_mutations_at(
+            id,
+            hit_section,
+            &Trigger::OnClick,
+            &PlatformContext::Desktop,
+        );
         if !triggered.is_empty() {
             // `find_triggered_mutations` returned cloned CustomMutations so
             // we can iterate without holding an immutable borrow on doc.

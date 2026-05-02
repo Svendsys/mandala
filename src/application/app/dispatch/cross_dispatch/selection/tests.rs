@@ -259,11 +259,11 @@ fn select_child_in_handles_section_selection() {
     ));
 }
 
-/// `select_sibling_in` on a `Section` walks to the next sibling
-/// of the section's owning node — the section is collapsed to
-/// `Single` for the walk, matching the parent / child navigation
-/// shape so the user gets one consistent answer for "what does up
-/// / down / sibling do on a section".
+/// `select_sibling_in` on a `Section` walks between sections of
+/// the same node first; once sections are exhausted, falls
+/// through to the next mind-node sibling. Single-section nodes
+/// fall through immediately. The fall-through case keeps the
+/// pre-tier-D behaviour for migration-default nodes.
 #[test]
 fn select_sibling_in_handles_section_selection() {
     use crate::application::document::SectionSel;
@@ -289,6 +289,59 @@ fn select_sibling_in_handles_section_selection() {
     assert!(matches!(
         doc.selection,
         SelectionState::Single(ref s) if s == &expected_next
+    ));
+}
+
+/// Forward sibling walk inside a multi-section node steps to the
+/// next *section* before falling through to the next mind-node
+/// sibling. Pins the keyboard reach into every section a multi-
+/// section author authored — pre-fix the only way to select
+/// `Section(N, 1)` from `Section(N, 0)` was via click.
+#[test]
+fn select_sibling_in_walks_between_sections_forward() {
+    use crate::application::document::SectionSel;
+    use baumhard::mindmap::model::MindSection;
+    let mut doc = load_test_doc();
+    let nid = first_node_id(&doc);
+    {
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        node.sections
+            .push(MindSection::new_default("second".into(), Vec::new()));
+        node.sections
+            .push(MindSection::new_default("third".into(), Vec::new()));
+    }
+    doc.selection = SelectionState::Section(SectionSel::new(nid.clone(), 0));
+    assert!(select_sibling_in(&mut doc, true));
+    assert!(matches!(
+        doc.selection,
+        SelectionState::Section(ref s) if s.node_id == nid && s.section_idx == 1
+    ));
+    assert!(select_sibling_in(&mut doc, true));
+    assert!(matches!(
+        doc.selection,
+        SelectionState::Section(ref s) if s.node_id == nid && s.section_idx == 2
+    ));
+}
+
+/// Backward sibling walk on `Section(N, K>0)` steps to
+/// `Section(N, K-1)`; on `Section(N, 0)` falls through to the
+/// previous mind-node sibling (or no-op at root).
+#[test]
+fn select_sibling_in_walks_between_sections_backward() {
+    use crate::application::document::SectionSel;
+    use baumhard::mindmap::model::MindSection;
+    let mut doc = load_test_doc();
+    let nid = first_node_id(&doc);
+    {
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        node.sections
+            .push(MindSection::new_default("second".into(), Vec::new()));
+    }
+    doc.selection = SelectionState::Section(SectionSel::new(nid.clone(), 1));
+    assert!(select_sibling_in(&mut doc, false));
+    assert!(matches!(
+        doc.selection,
+        SelectionState::Section(ref s) if s.node_id == nid && s.section_idx == 0
     ));
 }
 

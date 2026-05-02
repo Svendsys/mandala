@@ -1036,36 +1036,28 @@ out for free. Loader rejects pre-section maps with a concrete
 pointer at `maptool convert --sections`. Full reference:
 [`format/sections.md`](./format/sections.md).
 
-**Vision.** Three named seams attach here:
+**Status.** The original three-seam roadmap has all landed:
 
-- **Per-section selection / editing.** A
-  `SelectionState::Section { node_id, idx }` variant lets a click
-  target a specific section; the inline text editor follows. This
-  is a tracked follow-up to the data-model commit.
-- **Per-section mutations.** Sections are first-class
-  `GlyphArea`s in the tree, so existing `target_scope = Descendants`
-  mutations already reach them. A future
-  `Predicate::IsSection` / `TargetScope::SectionsOnly` extension
-  lets mutations discriminate sections from sibling child mind-nodes
-  without changing the data model.
-- **Multiple `GlyphModel`s per section.** Today a section holds
-  exactly one structural model; richer composed-glyph layouts
-  (a gridded matrix beside a text run) attach as additional
-  children of the section-area when needed.
+- **Per-section selection / editing.** Shipped — a click on a
+  multi-section node lands on `SelectionState::Section { node_id,
+  section_idx }`; the inline text editor targets the specific
+  section.
+- **Per-section mutations.** Shipped — `TargetScope::SectionsOnly`
+  walks every section directly via
+  `MindMapTree::section_arena_id`, and the
+  `GfxElementField::Flag(Flag::SectionRoot)` predicate gate
+  filters by element flag from any other scope.
+- **Multiple `GlyphModel`s per section.** Still on the
+  trajectory — today a section holds exactly one structural
+  model; richer composed-glyph layouts (a gridded matrix beside
+  a text run) attach as additional children of the section-area
+  when needed.
 
-**Caveat.** Section channels share the channel space with sibling
-child mind-nodes inside the same parent container — a custom
-mutation targeting "channel 0 children" hits both the first
-section and any channel-0 child mind-node. The
-`Predicate::IsSection` seam closes this when richer authoring
-needs it.
-
-A second deferred seam: `MindSection.channel: Option<usize>`
-would let authors distinguish "explicit channel 0" from "default
-0", currently indistinguishable when the section sits at
-index > 0 (the tree builder substitutes the index in that case).
-Authors who depend on explicit channel routing should set
-non-zero values today.
+The `MindSection.channel: Option<usize>` migration also shipped:
+`None` falls through to the section's index, `Some(0)` is
+honoured even at idx > 0. Pre-`Option`, the bare `usize`
+silently overrode an author's explicit `channel: 0` on sections
+beyond the first.
 
 **Custom-mutation reach.** `apply_custom_mutation`'s flat-apply
 path resolves the targeted MindNode to its container *and* every
@@ -1073,12 +1065,14 @@ path resolves the targeted MindNode to its container *and* every
 Position-affecting mutations land on both (lockstep movement);
 text / region / scale mutations are visible only through the
 section-areas (the chrome-only container has no glyphs).
-Section text/run changes do *not* sync back to
-`MindNode.sections` — `sync_node_from_tree` covers position
-only — so the next `rebuild_all` reverts custom-mutation text
-changes. This matches the pre-section limit on the same shape;
-text-bearing custom mutations should ride on
-`set_section_text` (the persistent setter).
+`sync_node_from_tree` walks every section and writes back
+`text` / `text_runs` / `offset` / `size` through a merge-with-
+prior reverse converter — `bold` / `italic` / `underline` /
+`size_pt` / `hyperlink` survive the round trip because the
+selective gate skips sections the mutation didn't touch.
+Documented round-trip limit: `var(--name)` colour references
+collapse to their resolved hex on save (the tree-side
+`FloatRgba` carries no record of the variable).
 
 ### `MindEdge`
 

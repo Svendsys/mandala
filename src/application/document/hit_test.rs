@@ -90,30 +90,35 @@ impl HitTarget {
 /// authoring.
 pub fn hit_test_target(canvas_pos: Vec2, tree: &mut MindMapTree) -> Option<HitTarget> {
     let landed = tree.tree.descendant_at(canvas_pos)?;
-    let mind_id = tree.owning_mind_id(landed)?.to_owned();
-    if !point_in_node_aabb(canvas_pos, &mind_id, tree) {
-        return None;
-    }
-    // Climb the parent chain looking for a section identity. The
-    // depth is bounded by the section subtree's natural shape
-    // (model → section), but the loop is *not* hardcoded to a
-    // step count — a future per-component refinement that
-    // deepens a section's children resolves correctly here
-    // without a code change.
+    // Single-walk climb: at each ancestor, check first for a
+    // section identity (returns `Some` when the arena id keys
+    // into `section_map`'s reverse-lookup), then for a
+    // mind-node-container identity. Pre-fix, this function
+    // climbed twice — once via `owning_mind_id` to find the
+    // container, then again from `landed` to find the section.
+    // Folding to one walk halves the cost on the click hot path
+    // and keeps both lookups O(climb depth).
     let mut probe = landed;
     let mut hit_section: Option<(String, usize)> = None;
+    let mut mind_id: Option<String> = None;
     loop {
-        if let Some((id, idx)) = tree.section_for_node(probe) {
-            hit_section = Some((id.to_string(), idx));
-            break;
+        if hit_section.is_none() {
+            if let Some((id, idx)) = tree.section_for_node(probe) {
+                hit_section = Some((id.to_string(), idx));
+            }
         }
-        if tree.mind_id_for_node(probe).is_some() {
+        if let Some(id) = tree.mind_id_for_node(probe) {
+            mind_id = Some(id.to_string());
             break;
         }
         match tree.tree.arena.get(probe).and_then(|n| n.parent()) {
             Some(p) => probe = p,
             None => break,
         }
+    }
+    let mind_id = mind_id?;
+    if !point_in_node_aabb(canvas_pos, &mind_id, tree) {
+        return None;
     }
     // Single-section nodes fold to NodeContainer so today's
     // whole-node click semantics survive on every migrated map.

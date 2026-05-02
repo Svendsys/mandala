@@ -749,6 +749,48 @@ fn mindsection_defaults_serialize_minimally() {
     assert!(back.trigger_bindings.is_empty());
 }
 
+/// `MindSection.channel: Option<usize>` round-trip (Tier-E).
+/// Two cases that pre-`Option` were indistinguishable:
+///
+/// - `None` (the default; falls through to the section's index
+///   at tree-build time) skip-serializes — empty on disk.
+/// - `Some(0)` (explicit author override) **must** round-trip:
+///   the JSON carries `"channel": 0`, and parsing it back
+///   yields `Some(0)`, not `None`. Pre-`Option` the bare `usize`
+///   collapsed both cases to `0` and the tree builder silently
+///   substituted the section index for idx > 0.
+#[test]
+fn mindsection_channel_option_round_trip() {
+    // None ⇒ skip-serialize.
+    let none_section = MindSection::new_default("a".into(), Vec::new());
+    let none_json = serde_json::to_string(&none_section).unwrap();
+    assert!(!none_json.contains("channel"), "default channel must skip-serialize");
+    let parsed_none: MindSection = serde_json::from_str("{\"text\":\"a\"}").unwrap();
+    assert_eq!(parsed_none.channel, None, "absent field parses as None");
+
+    // Some(0) ⇒ serialize + round-trip preserves `Some(0)`.
+    let mut explicit_zero = MindSection::new_default("a".into(), Vec::new());
+    explicit_zero.channel = Some(0);
+    let zero_json = serde_json::to_string(&explicit_zero).unwrap();
+    assert!(
+        zero_json.contains("\"channel\":0"),
+        "explicit Some(0) must serialize: {zero_json}"
+    );
+    let parsed_zero: MindSection = serde_json::from_str(&zero_json).unwrap();
+    assert_eq!(
+        parsed_zero.channel,
+        Some(0),
+        "Some(0) must round-trip — pre-Option this collapsed to 0/None"
+    );
+
+    // Some(n) ⇒ standard round-trip.
+    let mut explicit_n = MindSection::new_default("a".into(), Vec::new());
+    explicit_n.channel = Some(7);
+    let n_json = serde_json::to_string(&explicit_n).unwrap();
+    let parsed_n: MindSection = serde_json::from_str(&n_json).unwrap();
+    assert_eq!(parsed_n.channel, Some(7));
+}
+
 /// `MindSection.trigger_bindings` is a reserved-but-not-yet-
 /// dispatched seam for per-section triggers. Authoring tools
 /// stamp it; the runtime ignores it today (whole-node bindings

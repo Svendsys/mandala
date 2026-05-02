@@ -87,16 +87,21 @@ fn test_set_section_text_grapheme_handling_for_emoji_and_combining() {
         "every run.end must fit within the {} grapheme clusters",
         cluster_count
     );
-    if let Some(run) = n.sections[0].text_runs.first() {
-        assert_eq!(
-            run.start, 0,
-            "auto-collapsed run starts at grapheme index 0"
-        );
-        assert_eq!(
-            run.end, cluster_count,
-            "auto-collapsed run ends at the cluster count, not the codepoint or byte count"
-        );
-    }
+    // Tightened: every run.end must EQUAL the cluster count
+    // (not just `<=`), so a regression that emits zero runs or
+    // truncates the auto-collapsed run by even one grapheme
+    // trips the test. The `<=` form would silently pass a
+    // dropped trailing emoji.
+    let runs = &n.sections[0].text_runs;
+    assert!(!runs.is_empty(), "auto-collapsed run must exist");
+    assert_eq!(
+        runs[0].start, 0,
+        "auto-collapsed run starts at grapheme index 0"
+    );
+    assert_eq!(
+        runs[0].end, cluster_count,
+        "auto-collapsed run ends at the cluster count, not the codepoint or byte count"
+    );
 }
 
 /// Out-of-range section index is a no-op — neither push undo

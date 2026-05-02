@@ -112,6 +112,7 @@ pub(super) fn shape_one_element_into_buffers(
             color,
             shape_id: area.shape.shader_id(),
             zoom_visibility: area.zoom_visibility,
+            unique_id: element.unique_id(),
         });
     }
 
@@ -193,4 +194,65 @@ pub(super) fn shape_one_element_into_buffers(
     // halos.
     let main_spans = rich_text_spans_from_regions(text, &families, scale, line_height, None);
     shape_and_yield(main_spans, 0.0, 0.0, font_system);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use baumhard::font::fonts;
+    use baumhard::gfx_structs::area::GlyphArea;
+    use glam::Vec2;
+
+    /// `shape_one_element_into_buffers` on a `Void` element
+    /// yields nothing — same fast-skip the full walker uses.
+    /// Pins the no-op contract so the keyed-reshape API can rely
+    /// on "unknown unique_id → Void → silent no-op".
+    #[test]
+    fn shape_one_element_void_yields_nothing() {
+        fonts::init();
+        let void = GfxElement::new_void_with_id(0, 0);
+        let mut font_system = fonts::acquire_font_system_write("shape_one_element_void_yields_nothing");
+        let mut buffer_count = 0usize;
+        let mut bg_count = 0usize;
+        shape_one_element_into_buffers(
+            &void,
+            Vec2::ZERO,
+            &mut font_system,
+            &mut |_uid, _buffer| buffer_count += 1,
+            &mut |_rect| bg_count += 1,
+        );
+        assert_eq!(buffer_count, 0);
+        assert_eq!(bg_count, 0);
+    }
+
+    /// `shape_one_element_into_buffers` on a non-empty
+    /// `GlyphArea` element yields exactly one buffer (the main
+    /// glyph; halos are absent because no outline is configured)
+    /// and zero background rects (no `background_color`). Pins
+    /// the per-element output count the keyed-reshape API
+    /// relies on.
+    #[test]
+    fn shape_one_element_glyph_area_yields_one_buffer() {
+        fonts::init();
+        let area = GlyphArea::new_with_str(
+            "hello",
+            16.0,
+            18.0,
+            Vec2::new(0.0, 0.0),
+            Vec2::new(100.0, 24.0),
+        );
+        let element = GfxElement::new_area_non_indexed_with_id(area, 0, 1);
+        let mut font_system = fonts::acquire_font_system_write("shape_one_element_glyph_area_yields_one_buffer");
+        let mut emitted_uids: Vec<usize> = Vec::new();
+        let mut bg_count = 0usize;
+        shape_one_element_into_buffers(
+            &element,
+            Vec2::ZERO,
+            &mut font_system,
+            &mut |uid, _buffer| emitted_uids.push(uid),
+            &mut |_rect| bg_count += 1,
+        );
+        assert_eq!(emitted_uids, vec![1], "main glyph emitted with element's unique_id");
+        assert_eq!(bg_count, 0, "no background_color → no rect");
+    }
 }

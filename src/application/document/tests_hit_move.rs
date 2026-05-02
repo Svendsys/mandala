@@ -922,4 +922,60 @@ fn test_point_in_node_aabb_includes_overflowing_section() {
     );
 }
 
+/// `collect_patches_recursive` (drag delta) only emits patches
+/// for `GlyphArea`-bearing elements; `GlyphModel` siblings of
+/// section-areas (the structural seam children) are skipped so
+/// `patch_drag_positions` doesn't pay a cold hash miss per drag
+/// tick on every section's model child. Pins the filter — a
+/// future refactor that re-flattens the conditional would
+/// silently regress drag performance and the test would fail.
+#[test]
+fn test_collect_patches_recursive_skips_glyph_model_children() {
+    use crate::application::document::apply_drag_delta_and_collect_patches;
+    use baumhard::core::primitives::{Flag, Flaggable};
+    use baumhard::mindmap::model::MindSection;
+    use crate::application::document::tests_common::doc_with_one_orphan_node;
+
+    let mut doc = doc_with_one_orphan_node();
+    {
+        // Multi-section node — 3 sections × (section-area +
+        // section-model) = 6 arena entries. Patches should
+        // count only the 3 section-areas + 1 container = 4.
+        let node = doc.mindmap.nodes.get_mut("0").unwrap();
+        node.sections.push(MindSection::new_default("two".into(), Vec::new()));
+        node.sections.push(MindSection::new_default("three".into(), Vec::new()));
+    }
+    let mut tree = doc.build_tree();
+    let mut patches: Vec<(usize, (f32, f32))> = Vec::new();
+    apply_drag_delta_and_collect_patches(&mut tree, "0", 5.0, 7.0, false, &mut patches);
+
+    // Every patch's unique_id must correspond to a GlyphArea-
+    // bearing element in the arena. GlyphModel elements (the
+    // structural section-model siblings) carry the
+    // `Flag::SectionRoot` marker but no glyph_area; verify
+    // none of those leaked into the patch list.
+    for (uid, _pos) in &patches {
+        let element = tree
+            .tree
+            .arena
+            .iter()
+            .find(|n| n.get().unique_id() == *uid)
+            .map(|n| n.get())
+            .expect("patch references a real arena entry");
+        assert!(
+            element.glyph_area().is_some(),
+            "patch with unique_id {uid} references a non-GlyphArea element ({:?})",
+            element.flag_is_set(Flag::SectionRoot)
+        );
+    }
+    // 1 container + 3 section-areas = 4 GlyphArea entries; the
+    // 3 section-models are skipped.
+    assert_eq!(
+        patches.len(),
+        4,
+        "expected 4 patches (1 container + 3 section-areas), got {}",
+        patches.len()
+    );
+}
+
 // --- Custom mutation registry & application tests ---

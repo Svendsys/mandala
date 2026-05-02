@@ -23,6 +23,12 @@ pub fn check(map: &MindMap) -> Vec<Violation> {
     let mut out = Vec::new();
 
     for (_loc, node) in map.node_locations() {
+        // Node-level finite check before walking sections —
+        // a NaN/inf at `node.size` poisons every section's
+        // AABB-containment math, so flagging here surfaces the
+        // root cause before downstream "section overflow" cascades.
+        check_node_size_finite(node, &mut out);
+        check_section_channel_collisions(node, &mut out);
         for (s_idx, section) in node.sections.iter().enumerate() {
             check_offset_finite(node, s_idx, section, &mut out);
             check_offset_non_negative(node, s_idx, section, &mut out);
@@ -31,11 +37,127 @@ pub fn check(map: &MindMap) -> Vec<Violation> {
                 check_size_finite(node, s_idx, size, &mut out);
                 check_size_positive(node, s_idx, size, &mut out);
                 check_within_node_aabb(node, s_idx, section, size, &mut out);
+                check_size_not_astronomical(node, s_idx, size, &mut out);
             }
         }
     }
 
     out
+}
+
+/// Node-level finite-size check. A NaN or infinity at
+/// `node.size.{width,height}` propagates into the tree's
+/// `render_bounds`, the renderer's `Buffer::set_size`, and every
+/// AABB / hit-test comparison in the document — without
+/// panicking. Catching it here surfaces a corrupt save before the
+/// renderer turns the node invisible-but-not-crashed.
+fn check_node_size_finite(
+    node: &baumhard::mindmap::model::MindNode,
+    out: &mut Vec<Violation>,
+) {
+    if !node.size.width.is_finite() || !node.size.height.is_finite() {
+        out.push(Violation::node(
+            "sections",
+            node,
+            format!(
+                "node.size has non-finite component (width={}, height={})",
+                node.size.width, node.size.height
+            ),
+        ));
+    }
+    if node.size.width.is_finite() && node.size.width <= 0.0 {
+        out.push(Violation::node(
+            "sections",
+            node,
+            format!("node.size.width is not positive ({})", node.size.width),
+        ));
+    }
+    if node.size.height.is_finite() && node.size.height <= 0.0 {
+        out.push(Violation::node(
+            "sections",
+            node,
+            format!("node.size.height is not positive ({})", node.size.height),
+        ));
+    }
+}
+
+/// Section channel-collision check. Two sections sharing a
+/// channel under the same parent broadcast a single mutation to
+/// both — occasionally the intent, more often a typo. Surfaced
+/// as a violation so authors notice; the apply path doesn't
+/// reject the map (the broadcast is still well-defined).
+///
+/// Closes the docstring promise on `MindNode.sections` that
+/// `verify` flags channel collisions; pre-fix the docstring
+/// promised this but no code did the check.
+fn check_section_channel_collisions(
+    node: &baumhard::mindmap::model::MindNode,
+    out: &mut Vec<Violation>,
+) {
+    use std::collections::HashMap;
+    let mut by_channel: HashMap<usize, Vec<usize>> = HashMap::new();
+    for (idx, section) in node.sections.iter().enumerate() {
+        // Apply the same effective-channel rule the tree builder
+        // uses (`section.channel.unwrap_or(idx)`) so a None on
+        // section idx 0 is logically channel 0, etc. — the
+        // collision the dispatcher will actually see.
+        let channel = section.channel.unwrap_or(idx);
+        by_channel.entry(channel).or_default().push(idx);
+    }
+    for (channel, indices) in by_channel.iter() {
+        if indices.len() > 1 {
+            out.push(Violation::node(
+                "sections",
+                node,
+                format!(
+                    "channel {} shared by sections {:?}; mutations targeting that channel \
+                     broadcast to all listed sections — usually unintentional",
+                    channel, indices
+                ),
+            ));
+        }
+    }
+}
+
+/// Catches astronomical-but-finite section sizes (e.g.
+/// `1e30` typos) that pass the finite + positive guards but
+/// would distort cosmic-text shaping and AABB math downstream.
+/// Threshold: 100× the parent node's size. Authors who genuinely
+/// want a huge intentionally-overflow section can ignore the
+/// warning; a typo surfaces immediately.
+fn check_size_not_astronomical(
+    node: &baumhard::mindmap::model::MindNode,
+    s_idx: usize,
+    size: &baumhard::mindmap::model::Size,
+    out: &mut Vec<Violation>,
+) {
+    if !node.size.width.is_finite() || !node.size.height.is_finite() {
+        return;
+    }
+    let max_w = node.size.width * 100.0;
+    let max_h = node.size.height * 100.0;
+    if size.width > max_w {
+        out.push(Violation::node(
+            "sections",
+            node,
+            format!(
+                "section[{}].size.width ({}) is over 100× the node's width ({}); \
+                 likely a typo (e.g. an extra zero)",
+                s_idx, size.width, node.size.width
+            ),
+        ));
+    }
+    if size.height > max_h {
+        out.push(Violation::node(
+            "sections",
+            node,
+            format!(
+                "section[{}].size.height ({}) is over 100× the node's height ({}); \
+                 likely a typo (e.g. an extra zero)",
+                s_idx, size.height, node.size.height
+            ),
+        ));
+    }
 }
 
 fn check_offset_finite(
@@ -320,5 +442,97 @@ mod tests {
         n.sections[0] = section(Position { x: 99.0, y: 39.0 }, None);
         map.nodes.insert("0".into(), n);
         assert!(check(&map).is_empty(), "size=None means \"fill node\"; offsets without size are not bounds-checked");
+    }
+
+    #[test]
+    fn nan_node_size_flagged() {
+        let mut map = MindMap::new_blank("t");
+        let mut n = node("0", None);
+        n.size.width = f64::NAN;
+        map.nodes.insert("0".into(), n);
+        let v = check(&map);
+        assert!(
+            v.iter()
+                .any(|x| x.category == CATEGORY && x.message.contains("node.size has non-finite")),
+            "expected non-finite-node-size violation, got {:?}",
+            v
+        );
+    }
+
+    #[test]
+    fn zero_node_size_flagged() {
+        let mut map = MindMap::new_blank("t");
+        let mut n = node("0", None);
+        n.size.width = 0.0;
+        map.nodes.insert("0".into(), n);
+        let v = check(&map);
+        assert!(v
+            .iter()
+            .any(|x| x.category == CATEGORY && x.message.contains("node.size.width is not positive")));
+    }
+
+    #[test]
+    fn channel_collision_between_sections_flagged() {
+        let mut map = MindMap::new_blank("t");
+        let mut n = node("0", None);
+        let mut s0 = MindSection::new_default(String::new(), Vec::new());
+        s0.channel = Some(2);
+        let mut s1 = MindSection::new_default(String::new(), Vec::new());
+        s1.channel = Some(2);
+        n.sections = vec![s0, s1];
+        map.nodes.insert("0".into(), n);
+        let v = check(&map);
+        assert!(
+            v.iter().any(|x| x.category == CATEGORY && x.message.contains("channel 2 shared by sections")),
+            "expected channel-collision violation, got {:?}",
+            v
+        );
+    }
+
+    #[test]
+    fn channel_default_collision_with_explicit_zero_flagged() {
+        // Section 0 defaults to channel 0; section 1 with explicit
+        // `Some(0)` is honoured as channel 0 → collision. Pre-Tier-E
+        // this case was silently overridden by the bare `usize`
+        // shape; Option<usize> exposes it for verify to flag.
+        let mut map = MindMap::new_blank("t");
+        let mut n = node("0", None);
+        let s0 = MindSection::new_default(String::new(), Vec::new()); // channel = None → effective 0
+        let mut s1 = MindSection::new_default(String::new(), Vec::new());
+        s1.channel = Some(0);
+        n.sections = vec![s0, s1];
+        map.nodes.insert("0".into(), n);
+        let v = check(&map);
+        assert!(v
+            .iter()
+            .any(|x| x.category == CATEGORY && x.message.contains("channel 0 shared by sections")));
+    }
+
+    #[test]
+    fn astronomical_section_width_flagged() {
+        let mut map = MindMap::new_blank("t");
+        let mut n = node("0", None);
+        n.sections[0] = section(
+            Position { x: 0.0, y: 0.0 },
+            Some(Size { width: 1e30, height: 30.0 }),
+        );
+        map.nodes.insert("0".into(), n);
+        let v = check(&map);
+        assert!(v.iter().any(|x| x.category == CATEGORY && x.message.contains("over 100× the node's width")));
+    }
+
+    #[test]
+    fn flush_to_node_aabb_passes_astronomical_guard() {
+        // The 100× guard must not trip on legitimate "fill or
+        // slightly-larger-than" section sizes. A section flush to
+        // the node's AABB is at the AABB-overflow boundary — fine.
+        let mut map = MindMap::new_blank("t");
+        let mut n = node("0", None);
+        n.sections[0] = section(
+            Position { x: 0.0, y: 0.0 },
+            Some(Size { width: 100.0, height: 40.0 }),
+        );
+        map.nodes.insert("0".into(), n);
+        assert!(check(&map).is_empty());
     }
 }

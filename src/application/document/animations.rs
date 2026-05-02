@@ -103,11 +103,34 @@ impl MindMapDocument {
         }
     }
 
-    /// Find custom mutations triggered by a given trigger on a specific node.
-    /// Checks the node's trigger_bindings and filters by platform context.
+    /// Find custom mutations triggered by a given trigger on a
+    /// specific node. Checks the node's trigger_bindings and
+    /// filters by platform context. When `section_idx` is
+    /// `Some(idx)` and the node has at least `idx + 1` sections,
+    /// the targeted section's
+    /// [`baumhard::mindmap::model::MindSection::trigger_bindings`]
+    /// fire **first** — the user explicitly pointed at that
+    /// section, so its overrides take precedence over the whole-
+    /// node bindings. Whole-node bindings still fire afterwards
+    /// so a section-targeted gesture doesn't accidentally drop a
+    /// node-level handler that an author wrote unconditionally.
     pub fn find_triggered_mutations(
         &self,
         node_id: &str,
+        trigger: &Trigger,
+        platform: &PlatformContext,
+    ) -> Vec<CustomMutation> {
+        self.find_triggered_mutations_at(node_id, None, trigger, platform)
+    }
+
+    /// Section-aware variant of [`Self::find_triggered_mutations`].
+    /// `section_idx = Some(_)` consults the targeted section's
+    /// per-section bindings first; `None` matches the legacy
+    /// whole-node-only flow.
+    pub fn find_triggered_mutations_at(
+        &self,
+        node_id: &str,
+        section_idx: Option<usize>,
         trigger: &Trigger,
         platform: &PlatformContext,
     ) -> Vec<CustomMutation> {
@@ -116,18 +139,31 @@ impl MindMapDocument {
             None => return vec![],
         };
         let mut results = Vec::new();
-        for binding in &node.trigger_bindings {
-            if &binding.trigger != trigger {
-                continue;
+        let dispatch = |bindings: &[baumhard::mindmap::custom_mutation::TriggerBinding],
+                        out: &mut Vec<CustomMutation>| {
+            for binding in bindings {
+                if &binding.trigger != trigger {
+                    continue;
+                }
+                if !binding.contexts.is_empty() && !binding.contexts.contains(platform) {
+                    continue;
+                }
+                if let Some(cm) = self.mutation_registry.get(&binding.mutation_id) {
+                    out.push(cm.clone());
+                }
             }
-            // Check platform context filter
-            if !binding.contexts.is_empty() && !binding.contexts.contains(platform) {
-                continue;
-            }
-            if let Some(cm) = self.mutation_registry.get(&binding.mutation_id) {
-                results.push(cm.clone());
+        };
+        // Section-level bindings fire first — the user's pointer
+        // landed on that specific section, and a section-targeted
+        // override (e.g. a different OnClick mutation per section
+        // of a multi-stratum node) should beat the catch-all node
+        // binding.
+        if let Some(idx) = section_idx {
+            if let Some(section) = node.sections.get(idx) {
+                dispatch(&section.trigger_bindings, &mut results);
             }
         }
+        dispatch(&node.trigger_bindings, &mut results);
         results
     }
 

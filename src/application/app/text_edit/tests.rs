@@ -588,3 +588,82 @@ fn test_apply_text_edit_cursor_home_end() {
     let _ = apply_text_edit_action(Action::TextEditCursorEnd, &mut s);
     assert_eq!(cursor_of(&s), 5); // end of "cd"
 }
+
+// -----------------------------------------------------------------
+// §T1 Unicode-edge tests on the keystroke path
+// -----------------------------------------------------------------
+//
+// `insert_caret` and `insert_at_cursor` operate on grapheme-cluster
+// indices. Pre-Tier-D, the codepoint vs grapheme cluster
+// distinction was tested at the model layer only; the keystroke
+// hot path that produces the `Mutation::AreaDelta` payload was
+// untested. A regression here would silently drop the caret or
+// truncate emoji on every keystroke into a multi-section node.
+
+/// A ZWJ-joined emoji family is one grapheme cluster, five
+/// codepoints. Inserting the caret one cluster *into* that
+/// family lands the caret AFTER the whole cluster, not in the
+/// middle of the codepoint sequence.
+#[test]
+fn test_insert_caret_after_zwj_emoji_family() {
+    let zwj = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
+    let combined = format!("{zwj}A");
+    // After cluster 1 (the family) — the caret lands between
+    // the family and 'A'.
+    let with_caret = insert_caret(&combined, 1);
+    let zwj_byte_len = zwj.len();
+    assert!(
+        with_caret.starts_with(zwj),
+        "caret insertion must not split the ZWJ family: {with_caret:?}"
+    );
+    assert_eq!(
+        &with_caret[zwj_byte_len..zwj_byte_len + TEXT_EDIT_CARET.len_utf8()],
+        TEXT_EDIT_CARET.to_string().as_str(),
+        "caret must sit right after the ZWJ family"
+    );
+}
+
+/// Combining-mark sequences ("e" + U+0301 = "é" as one cluster)
+/// keep the same one-cluster contract: insert the caret after
+/// cluster 0 lands AFTER the combining mark, not between base
+/// and combiner.
+#[test]
+fn test_insert_caret_after_combining_mark() {
+    let combining = "e\u{0301}";
+    let with_caret = insert_caret(combining, 1);
+    assert!(
+        with_caret.starts_with(combining),
+        "caret must not split the base + combiner: {with_caret:?}"
+    );
+}
+
+/// Inserting a fresh codepoint at a cursor positioned mid-emoji
+/// is impossible — `insert_at_cursor` operates on grapheme-
+/// cluster indices, so cursor=1 inside a one-cluster ZWJ family
+/// is past the family, not inside it. The new codepoint lands
+/// after the family.
+#[test]
+fn test_insert_at_cursor_after_zwj_emoji_family() {
+    let zwj = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
+    let mut s = String::from(zwj);
+    let new_cursor = insert_at_cursor(&mut s, 1, 'X');
+    assert!(s.starts_with(zwj));
+    assert!(s.ends_with('X'));
+    // Cursor advances by one grapheme cluster.
+    assert_eq!(new_cursor, 2);
+}
+
+/// Deleting before the cursor at cluster index 1 of a ZWJ
+/// family removes the *whole* family, not just one codepoint.
+/// Pins the grapheme-aware deletion contract on the keystroke
+/// path; pre-fix a codepoint-only delete would orphan ZWJ
+/// joiners in the buffer.
+#[test]
+fn test_delete_before_cursor_removes_whole_zwj_family() {
+    let zwj = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
+    let combined = format!("{zwj}A");
+    let mut s = String::from(combined);
+    let new_cursor = delete_before_cursor(&mut s, 1);
+    assert_eq!(s, "A", "ZWJ family must be deleted as one cluster");
+    assert_eq!(new_cursor, 0);
+}

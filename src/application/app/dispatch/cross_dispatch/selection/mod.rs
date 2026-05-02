@@ -173,18 +173,55 @@ pub(in crate::application::app) fn apply_select_child(rc: &mut RebuildContext<'_
 }
 
 /// Step to the next or previous visible sibling of the selected
-/// single node — or, when a section is selected, of the section's
-/// owning node. `forward = true` walks toward the next sibling;
-/// `false` walks back. No-op when the selection is neither
-/// `Single` nor `Section`, or when no visible neighbour exists in
-/// the requested direction. Returns `true` when the selection
-/// changed.
+/// single node — or, when a section is selected, walk **between
+/// sections of the owning node first**, then fall through to the
+/// next mind-node sibling once sections are exhausted. `forward
+/// = true` walks toward the next sibling; `false` walks back.
+/// No-op when the selection is neither `Single` nor `Section`,
+/// or when no visible neighbour exists in the requested
+/// direction. Returns `true` when the selection changed.
+///
+/// Section traversal order: forward from `Section(N, K)` lands
+/// on `Section(N, K+1)` when it exists, else on the next mind-
+/// sibling (`Single(M)`); backward from `Section(N, K)` lands on
+/// `Section(N, K-1)` when `K > 0`, else on the previous mind-
+/// sibling. Multi-section authors get keyboard reach into every
+/// section without the click-only fallback the prior behaviour
+/// imposed.
 #[must_use = "the bool gates the scene rebuild — drop it explicitly with `let _ = …` if you don't care"]
 pub(in crate::application::app) fn select_sibling_in(doc: &mut MindMapDocument, forward: bool) -> bool {
-    let nid = match &doc.selection {
-        SelectionState::Single(id) => id.clone(),
-        SelectionState::Section(s) => s.node_id.clone(),
-        _ => return false,
+    if let SelectionState::Section(sel) = &doc.selection {
+        let node_id = sel.node_id.clone();
+        let section_idx = sel.section_idx;
+        if let Some(node) = doc.mindmap.nodes.get(&node_id) {
+            let section_count = node.sections.len();
+            // Walk between sections of the same node first.
+            if forward {
+                if section_idx + 1 < section_count {
+                    doc.selection = SelectionState::Section(crate::application::document::SectionSel {
+                        node_id,
+                        section_idx: section_idx + 1,
+                    });
+                    return true;
+                }
+            } else if section_idx > 0 {
+                doc.selection = SelectionState::Section(crate::application::document::SectionSel {
+                    node_id,
+                    section_idx: section_idx - 1,
+                });
+                return true;
+            }
+        }
+        // Sections exhausted — fall through to mind-node sibling walk.
+        let Some(target) = sibling_id(&doc.mindmap, &node_id, forward) else {
+            return false;
+        };
+        doc.selection = SelectionState::Single(target);
+        return true;
+    }
+
+    let SelectionState::Single(nid) = doc.selection.clone() else {
+        return false;
     };
     let Some(target) = sibling_id(&doc.mindmap, &nid, forward) else {
         return false;

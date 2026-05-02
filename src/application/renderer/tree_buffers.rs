@@ -27,78 +27,80 @@ impl Renderer {
         // keeps the collect cost aligned with the tree rebuild
         // cadence — i.e. only when something structural changed.
         self.node_background_rects.clear();
-        let mut font_system = fonts::FONT_SYSTEM
-            .write()
-            .expect("Failed to acquire font_system lock");
+        let mut font_system = fonts::acquire_font_system_write("rebuild_buffers_from_tree");
         walk_tree_into_buffers(
             tree,
             Vec2::ZERO,
             &mut font_system,
             |unique_id, buffer| {
-                // Mindmap is the only buffer store that needs
-                // string keys (its `FxHashMap<String, _>` is shared
-                // with the edit / undo paths that address nodes by
-                // Dewey-decimal id). Stringifying here keeps the
-                // allocation off the helper's critical path so
-                // overlay / canvas-scene callers never pay it.
-                self.mindmap_buffers.insert(unique_id.to_string(), buffer);
+                // The walker emits multiple buffers per element
+                // when an outline halo is configured (one buffer
+                // per halo offset, then the main glyph). Push onto
+                // the entry's `Vec` so all of them survive in
+                // emission order — `insert`-style replace would
+                // collapse halos onto the main glyph silently.
+                self.mindmap_buffers
+                    .entry(unique_id.to_string())
+                    .or_default()
+                    .push(buffer);
             },
             |rect| self.node_background_rects.push(rect),
         );
     }
 
     /// Re-shape one element's text buffers in place, keyed by the
-    /// element's `unique_id`. Used by the per-keystroke text-edit
-    /// path on a multi-section node — pre-fix the path called
-    /// [`Self::rebuild_buffers_from_tree`] which walked the entire
-    /// arena and re-shaped every section across every node, an
-    /// O(N×sections) cost paid on every keypress. The keyed reshape
-    /// drops this to O(1) (well, O(halos+1) buffers per element).
+    /// element's arena `NodeId` and `unique_id`. Used by the per-
+    /// keystroke text-edit path on a multi-section node — pre-fix
+    /// the path called [`Self::rebuild_buffers_from_tree`] which
+    /// walked the entire arena and re-shaped every section across
+    /// every node, an O(N×sections) cost paid on every keypress.
+    /// The keyed reshape drops this to O(halos+1) buffers per
+    /// element.
     ///
-    /// Drops every existing buffer keyed by the element's
-    /// `unique_id` (the main glyph plus any halos share the same
-    /// key) before re-shaping; the re-shape pass writes the new
-    /// buffers back via `mindmap_buffers.insert`. Background rects
-    /// for *this element* are dropped from `node_background_rects`
-    /// and re-collected from the fresh element so a section whose
-    /// background colour just changed reflects the new fill.
-    /// Other elements' backgrounds are untouched — they sit on
-    /// other elements' `unique_id`s.
+    /// Drops every existing buffer keyed by `unique_id` (the main
+    /// glyph plus any halos) before re-shaping; the re-shape pass
+    /// writes the new buffers back into the same `Vec` entry.
+    /// Background rects authored by this same `unique_id` are
+    /// removed from `node_background_rects` and re-collected from
+    /// the fresh element so a section whose background colour just
+    /// changed reflects the new fill *without* leaking duplicate
+    /// stale rects per keystroke. Other elements' rects are
+    /// untouched — the filter compares `NodeBackgroundRect.unique_id`
+    /// directly.
+    ///
+    /// Silent no-op when `arena_id` doesn't resolve (e.g. the tree
+    /// was rebuilt between the caller's lookup and this call). The
+    /// caller is expected to fall back to a full
+    /// `rebuild_buffers_from_tree` if it cannot guarantee the
+    /// arena id is fresh.
     pub fn reshape_buffer_for(
         &mut self,
-        unique_id: usize,
+        arena_id: indextree::NodeId,
         tree: &Tree<GfxElement, GfxMutator>,
     ) {
-        // Find the arena element whose unique_id matches.
-        let element = tree
-            .root()
-            .descendants(&tree.arena)
-            .find_map(|node_id| {
-                tree.arena
-                    .get(node_id)
-                    .map(|n| n.get())
-                    .filter(|el| el.unique_id() == unique_id)
-            });
-        let Some(element) = element else { return };
+        let Some(element) = tree.arena.get(arena_id).map(|n| n.get()) else {
+            return;
+        };
+        let unique_id = element.unique_id();
 
-        // Drop the existing buffers + background entries keyed to
-        // this element so the re-shape pass can write fresh ones.
+        // Drop the existing buffers + background entries authored
+        // by this element so the re-shape pass can write fresh
+        // ones. Background rects use direct `unique_id` equality
+        // so other elements' rects survive the filter.
         let key = unique_id.to_string();
         self.mindmap_buffers.remove(&key);
-        // Backgrounds aren't keyed; the cheap pass is to keep
-        // every other element's rect and just append the freshly-
-        // shaped one. Drag-only paths use
-        // [`Self::rebuild_node_backgrounds_from_tree`] for the same
-        // intent; here we keep the per-element scope tight.
-        let mut font_system = fonts::FONT_SYSTEM
-            .write()
-            .expect("Failed to acquire font_system lock");
+        self.node_background_rects.retain(|rect| rect.unique_id != unique_id);
+
+        let mut font_system = fonts::acquire_font_system_write("reshape_buffer_for");
         shape_one_element_into_buffers(
             element,
             Vec2::ZERO,
             &mut font_system,
             &mut |uid, buffer| {
-                self.mindmap_buffers.insert(uid.to_string(), buffer);
+                self.mindmap_buffers
+                    .entry(uid.to_string())
+                    .or_default()
+                    .push(buffer);
             },
             &mut |rect| self.node_background_rects.push(rect),
         );
@@ -109,19 +111,23 @@ impl Renderer {
     /// common case during a drag).
     ///
     /// For each `(unique_id, new_pos)` pair, looks up the existing
-    /// buffer by key and overwrites its `pos` field. Buffers for
-    /// nodes not in the patch set are left untouched — their shaped
-    /// text and position remain valid.
+    /// buffer entry by key and overwrites every buffer's `pos`
+    /// field — halos and main glyph share the key and all need the
+    /// same translate. Buffers for nodes not in the patch set are
+    /// left untouched; their shaped text and position remain valid.
     ///
     /// # Costs
     ///
-    /// O(patch_set_size) — no text shaping, no font-system lock, no
-    /// allocation. Each patch is a single hash lookup + field write.
+    /// O(patch_set_size × halos+1) — no text shaping, no font-system
+    /// lock, no allocation. Halos count is typically 0 for mindmap
+    /// nodes, so the constant collapses on the common path.
     pub fn patch_drag_positions(&mut self, patches: &[(usize, (f32, f32))]) {
         for &(unique_id, new_pos) in patches {
             let key = unique_id.to_string();
-            if let Some(buf) = self.mindmap_buffers.get_mut(&key) {
-                buf.pos = new_pos;
+            if let Some(bufs) = self.mindmap_buffers.get_mut(&key) {
+                for buf in bufs.iter_mut() {
+                    buf.pos = new_pos;
+                }
             }
         }
     }
@@ -138,7 +144,8 @@ impl Renderer {
         self.node_background_rects.clear();
         for descendant_id in tree.root().descendants(&tree.arena) {
             let Some(node) = tree.arena.get(descendant_id) else { continue };
-            let Some(area) = node.get().glyph_area() else { continue };
+            let element = node.get();
+            let Some(area) = element.glyph_area() else { continue };
             if let Some(color) = area.background_color {
                 // Sibling of `tree_walker::walk_tree_into_buffers` —
                 // same per-edge `background_padding` inflation, same
@@ -165,6 +172,7 @@ impl Renderer {
                     color,
                     shape_id: area.shape.shader_id(),
                     zoom_visibility: area.zoom_visibility,
+                    unique_id: element.unique_id(),
                 });
             }
         }
@@ -194,9 +202,7 @@ impl Renderer {
         if ids.is_empty() {
             return;
         }
-        let mut font_system = fonts::FONT_SYSTEM
-            .write()
-            .expect("Failed to acquire font_system lock");
+        let mut font_system = fonts::acquire_font_system_write("rebuild_overlay_scene_buffers");
         for id in ids {
             let Some(entry) = app_scene.overlay_scene().get(id) else {
                 continue;
@@ -243,9 +249,7 @@ impl Renderer {
         if ids.is_empty() {
             return;
         }
-        let mut font_system = fonts::FONT_SYSTEM
-            .write()
-            .expect("Failed to acquire font_system lock");
+        let mut font_system = fonts::acquire_font_system_write("rebuild_canvas_scene_buffers");
         for id in ids {
             let Some(entry) = app_scene.canvas_scene().get(id) else {
                 continue;

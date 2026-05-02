@@ -359,10 +359,10 @@ pub(in crate::application::app) fn apply_text_edit_to_tree(
     // drops the per-keystroke cost on a multi-section node from
     // `O(N × sections)` (the old `rebuild_buffers_from_tree` over
     // the whole arena) to `O(halos+1)` for this single element.
-    // Capture the unique_id before releasing the `&mut` borrow on
-    // the arena element.
-    let unique_id = element.unique_id();
-    renderer.reshape_buffer_for(unique_id, &tree.tree);
+    // The arena id was already resolved at the top of the function;
+    // pass it through directly so the renderer skips an O(arena)
+    // descendant scan to re-find the element.
+    renderer.reshape_buffer_for(indextree_node_id, &tree.tree);
 }
 
 /// route a keystroke to the open node text editor. All

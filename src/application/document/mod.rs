@@ -52,8 +52,16 @@ mod tests_reparent;
 mod tests_selection;
 
 // Cross-platform: consumers (`scene_rebuild.rs`, `event_mouse_click.rs`,
-// `run_wasm/`, `scene_host.rs`) compile on both targets.
-pub use hit_test::{apply_tree_highlights, hit_test, hit_test_target, point_in_node_aabb, HitTarget};
+// `run_wasm/`, `scene_host.rs`) compile on both targets. The
+// plain `hit_test` (Option<String> shape) is reachable only via
+// the native click handler today; the WASM click handler routes
+// through `hit_test_target` (HitTarget enum). Gating the
+// `hit_test` re-export to non-wasm silences the
+// `#[warn(unused_imports)]` the WASM build would otherwise raise
+// for an unused-on-wasm name.
+pub use hit_test::{apply_tree_highlights, hit_test_target, point_in_node_aabb, HitTarget};
+#[cfg(not(target_arch = "wasm32"))]
+pub use hit_test::hit_test;
 // Native-only: consumed by drag handlers, the click router, and
 // rect-select drain — none reachable on WASM today.
 #[cfg(not(target_arch = "wasm32"))]

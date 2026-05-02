@@ -53,10 +53,51 @@ const DEFAULT_TEXT_RUN_SIZE_PT: u32 = 14;
 /// - Unknown `AppFont` (corrupt tree state) falls through to
 ///   the empty string, matching the loader's tolerance for
 ///   missing-font runs.
+/// Warn at apply time when a predicate gate filtered every
+/// candidate out. Catches both authoring mistakes (a bare
+/// `Predicate::new()` with no fields and `always_match=false` —
+/// matches nothing) and structurally-impossible combos (e.g.
+/// `target_scope: SectionsOnly` paired with
+/// `(Flag(SectionRoot), Equals(true))`, where the gate matches
+/// "flag clear" but every candidate has the flag set). Either
+/// produces a silent no-op without this check; the warn surfaces
+/// the issue at the dispatch site so the author can fix it
+/// rather than chase a missing visual change.
+fn warn_if_predicate_filtered_everything(
+    mutation_id: &str,
+    has_predicate: bool,
+    seen: usize,
+    passed: usize,
+) {
+    if has_predicate && seen > 0 && passed == 0 {
+        log::warn!(
+            "mutation '{}': top-level predicate filtered every candidate ({} elements seen, 0 passed); \
+             the apply path completed but no element was mutated",
+            mutation_id,
+            seen
+        );
+    }
+}
+
 fn region_to_text_run(region: &ColorFontRegion, prior: Option<&TextRun>) -> TextRun {
-    let color = match region.color {
-        Some(rgba) => rgba_to_hex(rgba),
-        None => prior
+    // Preserve `var(--name)` references when the prior run
+    // shares the region's range and carries one. Without theme-
+    // variables resolution at sync time we can't tell whether a
+    // mutation deliberately recoloured the run away from the
+    // variable; trusting the prior keeps the variable reference
+    // verbatim across mutations that didn't touch the colour.
+    // Same documented trade-off as the selective gate: a
+    // deliberate `SetRegionColor` on a `var()`-bearing run is
+    // silently swallowed here — the run keeps the variable.
+    let prior_carries_var = prior.is_some_and(|p| {
+        p.color.starts_with("var(")
+            && p.start == region.range.start
+            && p.end == region.range.end
+    });
+    let color = match (region.color, prior_carries_var) {
+        (_, true) => prior.expect("prior_carries_var implies Some").color.clone(),
+        (Some(rgba), false) => rgba_to_hex(rgba),
+        (None, false) => prior
             .map(|p| p.color.clone())
             .unwrap_or_else(|| DEFAULT_TEXT_RUN_COLOR.to_string()),
     };
@@ -294,17 +335,42 @@ impl MindMapDocument {
         let Some(mutations) = flat_mutations(mutator) else { return };
         // Top-level predicate gate (item E3). When `Some`, every
         // candidate element must satisfy `predicate.test(element)`
-        // before mutations land on it. Lets authors write
+        // before mutations land on it. Authors typically reach for
+        // this to add an element-level filter on top of the
+        // structural `target_scope` — e.g.
         // `Predicate { fields: [(Flag(SectionRoot), Equals(false))], … }`
-        // to opt the container out (sections only) without
-        // committing to the structural `TargetScope::SectionsOnly`
-        // shape, or the inverse `Equals(true)` to opt sections out.
-        // `None` keeps the old fan-out posture (apply to container
-        // and every section).
+        // matches every element with `SectionRoot` set (i.e.
+        // sections), so paired with `target_scope: SelfOnly` it
+        // lands the mutation on sections only and skips the
+        // chrome-only container. The inverse
+        // `(Flag(SectionRoot), Equals(true))` matches the
+        // container + sibling mind-nodes (anything with
+        // `SectionRoot` *clear*).
+        //
+        // **§9 footgun guard.** A bare `Predicate::new()` (`fields=[]`,
+        // `always_match=false`) matches nothing; pairing it as
+        // `predicate: Some(Predicate::new())` silently filters every
+        // candidate out, the apply path runs but no element changes.
+        // Warn so authors notice the typo at apply time. Same warn
+        // covers the "predicate filtered everything" case below
+        // (e.g. `SectionsOnly` + `(Flag(SectionRoot), Equals(true))`
+        // — structurally impossible because every `SectionsOnly`
+        // candidate has `SectionRoot` set).
         let predicate_gate = custom.predicate.as_ref();
+        if let Some(p) = predicate_gate {
+            if p.fields.is_empty() && !p.always_match {
+                log::warn!(
+                    "mutation '{}': predicate has no fields and `always_match` is false; \
+                     every candidate element will be filtered out (apply runs but produces no change)",
+                    custom.id
+                );
+            }
+        }
         let passes = |element: &baumhard::gfx_structs::element::GfxElement| -> bool {
             predicate_gate.is_none_or(|p| p.test(element))
         };
+        let mut candidates_seen: usize = 0;
+        let mut candidates_passed: usize = 0;
 
         // `SectionsOnly` (item E4) bypasses the container fan-out:
         // mutations land on every section-area directly. Channel
@@ -319,11 +385,19 @@ impl MindMapDocument {
                     continue;
                 };
                 if let Some(node) = tree.tree.arena.get_mut(section_arena_id) {
+                    candidates_seen += 1;
                     if passes(node.get()) {
+                        candidates_passed += 1;
                         apply_mutations_to_element(&mutations, node.get_mut());
                     }
                 }
             }
+            warn_if_predicate_filtered_everything(
+                &custom.id,
+                predicate_gate.is_some(),
+                candidates_seen,
+                candidates_passed,
+            );
             return;
         }
 
@@ -336,10 +410,14 @@ impl MindMapDocument {
             // are empty so text-affecting mutations are visually no-op
             // here, but `area.scale` and position deltas land cleanly).
             // Container is `SectionRoot`-clear, so a
-            // `Flag(SectionRoot, Equals(false))` predicate filters
-            // it out at this branch.
+            // `(Flag(SectionRoot), Equals(false))` predicate (matches
+            // when the flag IS set) filters the container out — only
+            // sections survive, which is the documented "sections
+            // only" idiom.
             if let Some(node) = tree.tree.arena.get_mut(container_arena_id) {
+                candidates_seen += 1;
                 if passes(node.get()) {
+                    candidates_passed += 1;
                     apply_mutations_to_element(&mutations, node.get_mut());
                 }
             }
@@ -351,6 +429,19 @@ impl MindMapDocument {
             // empty container. Mirrors `apply_tree_highlights`'s
             // walk so mutations and highlights both reach sections by
             // the same primitive.
+            //
+            // §B7 borrow-split note: collecting into a
+            // `Vec<indextree::NodeId>` here is the smallest correct
+            // shape. `container_arena_id.children(&tree.tree.arena)`
+            // borrows the arena immutably; the loop body needs
+            // `&mut tree.tree.arena.get_mut(...)` to apply the
+            // mutation. Holding the iterator across the mutable
+            // borrow won't compile, so the fix is to materialise the
+            // section ids first and drop the immutable borrow
+            // before the mutation pass starts. The vec is `O(sections
+            // per node)` — bounded by user authoring (typically 1–4
+            // per node), per affected-node-per-call, so allocation
+            // cost is negligible relative to the mutation walker.
             let section_arena_ids: Vec<indextree::NodeId> = container_arena_id
                 .children(&tree.tree.arena)
                 .filter(|cid| {
@@ -363,12 +454,20 @@ impl MindMapDocument {
                 .collect();
             for sid in section_arena_ids {
                 if let Some(node) = tree.tree.arena.get_mut(sid) {
+                    candidates_seen += 1;
                     if passes(node.get()) {
+                        candidates_passed += 1;
                         apply_mutations_to_element(&mutations, node.get_mut());
                     }
                 }
             }
         }
+        warn_if_predicate_filtered_everything(
+            &custom.id,
+            predicate_gate.is_some(),
+            candidates_seen,
+            candidates_passed,
+        );
     }
 
     /// Collect the section targets affected by a `SectionsOnly`
@@ -465,33 +564,42 @@ impl MindMapDocument {
         };
         let new_pos = (area.position.x.0 as f64, area.position.y.0 as f64);
 
-        // Gather every section's tree-side (text, regions) before
-        // we acquire `&mut` on the model. The arena lookup needs
-        // `&tree`; the model write needs `&mut self`; sequencing
-        // them avoids overlapping borrows on `self.mindmap`.
+        // Gather every section's tree-side `(text, regions, position,
+        // size)` before we acquire `&mut` on the model. The arena
+        // lookup needs `&tree`; the model write needs `&mut self`;
+        // sequencing them avoids overlapping borrows on
+        // `self.mindmap`. Capturing position + size lets us write
+        // `section.offset` / `section.size` back from the tree, so a
+        // `SectionsOnly` mutation that translates / resizes a
+        // section persists past the next `rebuild_all`.
         let section_count = self
             .mindmap
             .nodes
             .get(node_id)
             .map(|n| n.sections.len())
             .unwrap_or(0);
-        let mut section_snapshots: Vec<Option<(String, Vec<ColorFontRegion>)>> =
-            Vec::with_capacity(section_count);
+        struct SectionSnapshot {
+            text: String,
+            regions: Vec<ColorFontRegion>,
+            tree_position: (f32, f32),
+            tree_size: (f32, f32),
+        }
+        let mut section_snapshots: Vec<Option<SectionSnapshot>> = Vec::with_capacity(section_count);
         for idx in 0..section_count {
             let snapshot = tree
                 .section_arena_id(node_id, idx)
                 .and_then(|sid| tree.tree.arena.get(sid))
                 .and_then(|n| n.get().glyph_area())
-                .map(|sec_area| {
-                    (
-                        sec_area.text.clone(),
-                        sec_area
-                            .regions
-                            .all_regions()
-                            .into_iter()
-                            .copied()
-                            .collect::<Vec<ColorFontRegion>>(),
-                    )
+                .map(|sec_area| SectionSnapshot {
+                    text: sec_area.text.clone(),
+                    regions: sec_area
+                        .regions
+                        .all_regions()
+                        .into_iter()
+                        .copied()
+                        .collect::<Vec<ColorFontRegion>>(),
+                    tree_position: (sec_area.position.x.0, sec_area.position.y.0),
+                    tree_size: (sec_area.render_bounds.x.0, sec_area.render_bounds.y.0),
                 });
             section_snapshots.push(snapshot);
         }
@@ -501,92 +609,372 @@ impl MindMapDocument {
         };
         model_node.position.x = new_pos.0;
         model_node.position.y = new_pos.1;
+        let node_pos_x = new_pos.0 as f32;
+        let node_pos_y = new_pos.1 as f32;
+        let node_size_x = model_node.size.width as f32;
+        let node_size_y = model_node.size.height as f32;
 
         for (idx, snapshot) in section_snapshots.into_iter().enumerate() {
-            let Some((tree_text, tree_regions)) = snapshot else {
+            let Some(snapshot) = snapshot else {
                 continue;
             };
             let Some(section) = model_node.sections.get_mut(idx) else {
                 continue;
             };
+
+            // Write `section.offset` back from the tree's section-
+            // area position so a `SectionsOnly` translate mutation
+            // persists. The forward path computes
+            // `section_area.position = node.pos + section.offset`,
+            // so the inverse is `section.offset = section_area.position
+            // - node.pos`. Section-area position is canvas-space
+            // float; model `Position` is canvas-space f64 — same
+            // unit, just wider. Without this, a `Translate` /
+            // `MoveTo` on a section-area lands on the live tree
+            // and reverts on the next `rebuild_all`.
+            let new_offset_x = (snapshot.tree_position.0 - node_pos_x) as f64;
+            let new_offset_y = (snapshot.tree_position.1 - node_pos_y) as f64;
+            if section.offset.x != new_offset_x || section.offset.y != new_offset_y {
+                section.offset.x = new_offset_x;
+                section.offset.y = new_offset_y;
+            }
+            // Write `section.size` back when the model carries an
+            // explicit size. `None` size means "fill the parent
+            // node", which the tree resolves to the node's full
+            // render_bounds — *don't* eagerly materialise it as
+            // `Some(node.size)`, that would surprise authors who
+            // chose the inheriting shape. Materialise only when the
+            // tree's render_bounds diverges from the node's full
+            // size (i.e. the mutation explicitly resized the
+            // section, or the model already carried a Some).
+            let tree_size_diverges =
+                (snapshot.tree_size.0 - node_size_x).abs() > f32::EPSILON
+                    || (snapshot.tree_size.1 - node_size_y).abs() > f32::EPSILON;
+            if section.size.is_some() || tree_size_diverges {
+                section.size = Some(baumhard::mindmap::model::Size {
+                    width: snapshot.tree_size.0 as f64,
+                    height: snapshot.tree_size.1 as f64,
+                });
+            }
+
             // Selective gate: tree-side state matches the model
-            // snapshot? Skip the round-trip so untouched sections
-            // keep their bold / italic / underline / size_pt /
-            // hyperlink. Range / colour / font are everything the
-            // forward conversion preserves; comparing those three
-            // lets us identify sections the mutation didn't touch.
-            // Iteration is positional — the tree's
-            // `all_regions()` and the model's `text_runs` walk in
-            // grapheme order, so position-by-position equality
-            // works without sorting.
-            let model_regions_match = section.text_runs.len() == tree_regions.len()
-                && section
-                    .text_runs
-                    .iter()
-                    .zip(tree_regions.iter())
-                    .all(|(run, region)| {
-                        if run.start != region.range.start || run.end != region.range.end {
-                            return false;
-                        }
-                        // Forward path: model `color: String` → tree
-                        // `region.color: Option<FloatRgba>`; reverse
-                        // path quantises through `convert_f32_to_u8`.
-                        // Comparing tree-side hex to model-side hex
-                        // covers every channel.
-                        let region_color_hex = region.color.map(rgba_to_hex);
-                        let model_color_hex = if run.color.starts_with('#') {
-                            Some(run.color.clone())
-                        } else {
-                            // `var(--name)` references can't compare
-                            // structurally — treat as "different" so
-                            // the round-trip runs, replacing the
-                            // variable with its resolved hex (the
-                            // documented limit on
-                            // `region_to_text_run`).
-                            None
-                        };
-                        if region_color_hex != model_color_hex {
-                            return false;
-                        }
-                        // Forward path: model `font: String` → tree
-                        // `region.font: Option<AppFont>`; the reverse
-                        // path uses `family_name_of`. Empty model
-                        // font and `None` AppFont collide on
-                        // "no pin", so equate them here.
-                        let region_font_name = region.font.and_then(family_name_of);
-                        let model_font_name: Option<&str> = if run.font.is_empty() {
-                            None
-                        } else {
-                            Some(run.font.as_str())
-                        };
-                        region_font_name == model_font_name
-                    });
-            if section.text == tree_text && model_regions_match {
+            // snapshot? Skip the text/regions round-trip so
+            // untouched sections keep their bold / italic /
+            // underline / size_pt / hyperlink. Range / colour /
+            // font are everything the forward conversion
+            // preserves.
+            //
+            // **Range-keyed comparison.** Tree-side
+            // `all_regions()` returns runs in `Range` order
+            // (`BTreeSet`-keyed); model `text_runs: Vec<TextRun>`
+            // is load-order. A positional `zip` would mis-align
+            // any model whose runs were authored out of range
+            // order, trip a false mismatch, and run the lossy
+            // round-trip — silently stripping the prior styling
+            // from sections the mutation didn't touch. Build a
+            // map keyed by `(start, end)` and compare each
+            // tree-side region against the same-range prior.
+            let model_runs_by_range: rustc_hash::FxHashMap<(usize, usize), &TextRun> = section
+                .text_runs
+                .iter()
+                .map(|r| ((r.start, r.end), r))
+                .collect();
+            let model_regions_match = model_runs_by_range.len() == snapshot.regions.len()
+                && snapshot.regions.iter().all(|region| {
+                    let key = (region.range.start, region.range.end);
+                    let Some(run) = model_runs_by_range.get(&key) else {
+                        return false;
+                    };
+                    // Colour comparison is **case-insensitive on
+                    // hex**: `rgba_to_hex` always emits lowercase,
+                    // but model-side `run.color` may have been
+                    // hand-authored as `#FFFFFF` or mixed case. A
+                    // byte-equal `==` would always-mismatch those
+                    // and trigger the lossy round-trip on every
+                    // apply_to_tree call. `var(--name)` references
+                    // never structurally match a tree-side hex —
+                    // treat them as "different" so the documented
+                    // round-trip collapse runs (replacing the
+                    // variable with its resolved hex; see
+                    // `region_to_text_run`).
+                    let region_color_hex = region.color.map(rgba_to_hex);
+                    let model_color_hex = if run.color.starts_with('#') {
+                        Some(run.color.clone())
+                    } else {
+                        None
+                    };
+                    let model_is_var = run.color.starts_with("var(");
+                    let colors_equal = match (region_color_hex.as_deref(), model_color_hex.as_deref()) {
+                        (Some(a), Some(b)) => str::eq_ignore_ascii_case(a, b),
+                        (None, None) => true,
+                        // `(Some(hex), None)` with the model carrying
+                        // a `var(--…)` reference: presume the
+                        // variable resolves to the tree-side hex
+                        // and treat as equal. Without theme-variables
+                        // resolution at sync time we can't compare
+                        // structurally; trusting the model preserves
+                        // the `var()` reference across mutations
+                        // that didn't touch this section's regions.
+                        // **Documented limit**: a custom mutation
+                        // that *deliberately* recolours a
+                        // `var()`-bearing run is silently swallowed
+                        // here — the run keeps the variable, the
+                        // explicit recolour is lost. Authors who
+                        // need the recolour should switch the run
+                        // to a hex literal first or use the
+                        // `set_section_text_color` document setter.
+                        (Some(_), None) if model_is_var => true,
+                        _ => false,
+                    };
+                    if !colors_equal {
+                        return false;
+                    }
+                    // Forward path: model `font: String` → tree
+                    // `region.font: Option<AppFont>`; the reverse
+                    // path uses `family_name_of`. Empty model
+                    // font and `None` AppFont collide on
+                    // "no pin", so equate them here.
+                    let region_font_name = region.font.and_then(family_name_of);
+                    let model_font_name: Option<&str> = if run.font.is_empty() {
+                        None
+                    } else {
+                        Some(run.font.as_str())
+                    };
+                    region_font_name == model_font_name
+                });
+            if section.text == snapshot.text && model_regions_match {
                 continue;
             }
 
             // Build the new run list by merging each tree-side
-            // region with the prior run sharing the same range
-            // (grapheme-bounds key). Lookup is linear over
-            // `text_runs` — typical sections carry 1–4 runs so an
-            // O(n×m) scan is cheaper than a HashMap build.
-            let new_runs: Vec<TextRun> = tree_regions
+            // region with the prior run sharing the **same range,
+            // or the dominant overlapping range** when the
+            // mutation resized / split / shifted the run boundary.
+            // A range-strict lookup loses every prior styling
+            // (bold / italic / underline / size_pt / hyperlink)
+            // on `ChangeRegionRange`-style mutations because no
+            // prior matches the new range exactly; the overlap
+            // fallback inherits from the prior whose intersection
+            // is largest, preserving authored styling across
+            // range edits.
+            let prior_runs: Vec<&TextRun> = section.text_runs.iter().collect();
+            let new_runs: Vec<TextRun> = snapshot
+                .regions
                 .iter()
                 .map(|region| {
-                    let prior = section
-                        .text_runs
-                        .iter()
-                        .find(|r| r.start == region.range.start && r.end == region.range.end);
+                    let prior = exact_or_dominant_overlap(&prior_runs, region.range.start, region.range.end);
                     region_to_text_run(region, prior)
                 })
                 .collect();
 
-            section.text = tree_text;
+            section.text = snapshot.text;
             section.text_runs = new_runs;
             // Ensure no run extends past the new grapheme count —
             // `clamp_runs_to_text` is already idempotent on
             // already-clean run lists.
             clamp_runs_to_text(section);
         }
+    }
+}
+
+/// Find the prior `TextRun` for a tree-side region by range.
+/// Prefers exact `(start, end)` match; falls back to the prior
+/// run whose intersection with `[start, end)` is largest. Used by
+/// `sync_node_from_tree`'s reverse converter so a custom mutation
+/// that resizes / splits a region (e.g. `ChangeRegionRange`)
+/// still inherits authored styling instead of zeroing every
+/// field. Ties broken in favour of earlier `start`.
+///
+/// Returns `None` only when no prior run overlaps the new range
+/// at all (e.g. a fresh region inserted by the mutation).
+fn exact_or_dominant_overlap<'a>(
+    priors: &[&'a TextRun],
+    start: usize,
+    end: usize,
+) -> Option<&'a TextRun> {
+    if let Some(exact) = priors.iter().find(|r| r.start == start && r.end == end) {
+        return Some(exact);
+    }
+    let mut best: Option<(&'a TextRun, usize)> = None;
+    for run in priors.iter() {
+        if run.end <= start || run.start >= end {
+            continue;
+        }
+        let lo = run.start.max(start);
+        let hi = run.end.min(end);
+        if hi <= lo {
+            continue;
+        }
+        let overlap = hi - lo;
+        match best {
+            None => best = Some((run, overlap)),
+            Some((_, prev)) if overlap > prev => best = Some((run, overlap)),
+            _ => {}
+        }
+    }
+    best.map(|(r, _)| r)
+}
+
+#[cfg(test)]
+mod region_converter_tests {
+    use super::{exact_or_dominant_overlap, region_to_text_run, DEFAULT_TEXT_RUN_COLOR, DEFAULT_TEXT_RUN_SIZE_PT};
+    use baumhard::core::primitives::{ColorFontRegion, Range};
+    use baumhard::mindmap::model::TextRun;
+
+    fn run(start: usize, end: usize, color: &str, font: &str) -> TextRun {
+        TextRun {
+            start,
+            end,
+            bold: false,
+            italic: false,
+            underline: false,
+            font: font.into(),
+            size_pt: 14,
+            color: color.into(),
+            hyperlink: None,
+        }
+    }
+
+    fn styled_run(start: usize, end: usize) -> TextRun {
+        TextRun {
+            start,
+            end,
+            bold: true,
+            italic: true,
+            underline: true,
+            font: "LiberationSans".into(),
+            size_pt: 21,
+            color: "#aabbcc".into(),
+            hyperlink: Some("https://example.org".into()),
+        }
+    }
+
+    /// `region_to_text_run` with `prior=Some` and a colour /
+    /// font on the region: the merged TextRun gets the region's
+    /// colour and font; bold / italic / underline / size_pt /
+    /// hyperlink come from `prior`.
+    #[test]
+    fn region_to_text_run_merges_with_prior() {
+        let region = ColorFontRegion::new(Range::new(0, 5), None, Some([1.0, 0.0, 0.0, 1.0]));
+        let prior = styled_run(0, 5);
+        let out = region_to_text_run(&region, Some(&prior));
+        assert_eq!(out.start, 0);
+        assert_eq!(out.end, 5);
+        assert_eq!(out.color, "#ff0000");
+        assert!(out.bold);
+        assert!(out.italic);
+        assert!(out.underline);
+        assert_eq!(out.size_pt, 21);
+        assert_eq!(out.hyperlink.as_deref(), Some("https://example.org"));
+    }
+
+    /// `region_to_text_run` with `prior=None` falls back to
+    /// defaults: `bold/italic/underline = false`, `size_pt = 14`,
+    /// `hyperlink = None`, `font = ""`, `color = "#ffffff"`.
+    #[test]
+    fn region_to_text_run_falls_back_to_defaults_without_prior() {
+        let region = ColorFontRegion::new(Range::new(0, 5), None, None);
+        let out = region_to_text_run(&region, None);
+        assert!(!out.bold);
+        assert!(!out.italic);
+        assert!(!out.underline);
+        assert_eq!(out.size_pt, DEFAULT_TEXT_RUN_SIZE_PT);
+        assert_eq!(out.hyperlink, None);
+        assert_eq!(out.font, "");
+        assert_eq!(out.color, DEFAULT_TEXT_RUN_COLOR);
+    }
+
+    /// `region_to_text_run` with `prior=None` and a colour set
+    /// on the region: colour comes from `rgba_to_hex(region.color)`,
+    /// other defaults stand.
+    #[test]
+    fn region_to_text_run_uses_region_color_without_prior() {
+        let region = ColorFontRegion::new(Range::new(0, 3), None, Some([0.0, 1.0, 0.0, 1.0]));
+        let out = region_to_text_run(&region, None);
+        assert_eq!(out.color, "#00ff00");
+    }
+
+    /// `region_to_text_run` preserves a `var(--name)` reference
+    /// on the prior run when the region's range matches the
+    /// prior's range exactly. Without theme-variables resolution
+    /// at sync time, we can't structurally compare a var() to a
+    /// resolved hex; trusting the prior keeps the variable
+    /// reference verbatim across mutations that didn't touch the
+    /// colour. **Documented limit**: a custom mutation that
+    /// deliberately recolours a var()-bearing run is silently
+    /// swallowed — the run keeps the variable. Authors who need
+    /// the explicit recolour should switch the run to a hex
+    /// literal first or use the `set_section_text_color` document
+    /// setter (which bypasses the round-trip).
+    #[test]
+    fn region_to_text_run_preserves_var_color_when_range_matches() {
+        let region = ColorFontRegion::new(Range::new(0, 5), None, Some([1.0, 0.0, 0.0, 1.0]));
+        let prior_with_var = TextRun {
+            color: "var(--accent)".into(),
+            ..styled_run(0, 5)
+        };
+        let out = region_to_text_run(&region, Some(&prior_with_var));
+        assert_eq!(
+            out.color, "var(--accent)",
+            "var() reference is preserved when prior range matches"
+        );
+    }
+
+    /// `region_to_text_run` documented limit: a `var(--name)`
+    /// reference on a *partially-overlapping* prior run does NOT
+    /// transfer — the region's range diverges from the prior's,
+    /// so the heuristic that preserves var() doesn't fire.
+    /// Range-mutating mutations on var()-bearing runs collapse
+    /// to the resolved hex.
+    #[test]
+    fn region_to_text_run_loses_var_color_on_range_change() {
+        // Region [0, 3) — prior is [0, 5), ranges differ.
+        let region = ColorFontRegion::new(Range::new(0, 3), None, Some([1.0, 0.0, 0.0, 1.0]));
+        let prior_with_var = TextRun {
+            color: "var(--accent)".into(),
+            ..styled_run(0, 5)
+        };
+        let out = region_to_text_run(&region, Some(&prior_with_var));
+        assert_eq!(
+            out.color, "#ff0000",
+            "var() does NOT transfer across range changes"
+        );
+    }
+
+    /// `exact_or_dominant_overlap`: exact-range match wins over
+    /// any overlap. Pins the prefer-exact contract so range-
+    /// stable mutations (every region keeps its range) inherit
+    /// from the same prior every time.
+    #[test]
+    fn exact_overlap_match_wins_over_partial() {
+        let r1 = run(0, 5, "#aabbcc", "");
+        let r2 = run(2, 7, "#ddeeff", "");
+        let priors = vec![&r1, &r2];
+        let hit = exact_or_dominant_overlap(&priors, 0, 5).expect("exact match");
+        assert_eq!(hit.color, "#aabbcc");
+    }
+
+    /// `exact_or_dominant_overlap`: when no exact match exists,
+    /// the prior whose intersection with the new range is
+    /// **largest** wins. Pins the dominant-overlap fallback that
+    /// preserves authored styling across `ChangeRegionRange` /
+    /// resize mutations.
+    #[test]
+    fn dominant_overlap_wins_when_no_exact_match() {
+        let small = run(0, 1, "#000000", "");
+        let large = run(0, 4, "#ffffff", "");
+        let priors = vec![&small, &large];
+        let hit = exact_or_dominant_overlap(&priors, 0, 5).expect("partial overlap");
+        assert_eq!(hit.color, "#ffffff", "wider overlap wins");
+    }
+
+    /// `exact_or_dominant_overlap`: no overlap with any prior
+    /// returns `None` (e.g. a fresh region inserted by the
+    /// mutation past every existing run).
+    #[test]
+    fn no_overlap_returns_none() {
+        let r1 = run(0, 5, "#aabbcc", "");
+        let priors = vec![&r1];
+        assert!(exact_or_dominant_overlap(&priors, 10, 15).is_none());
     }
 }

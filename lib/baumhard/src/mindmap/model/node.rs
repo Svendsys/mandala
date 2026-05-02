@@ -305,13 +305,15 @@ pub struct MindSection {
     /// the `0 == default` ambiguity that the bare `usize` carried.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub channel: Option<usize>,
-    /// Per-section trigger bindings — closes the
-    /// `TriggerBindings` seam at zero data-shape cost. Today no
-    /// dispatcher consults this field (whole-node bindings still
-    /// flow through `MindNode.trigger_bindings`); the field is
-    /// reserved so authoring tools can stamp section-targeted
-    /// `OnClick` / `OnKey` / `OnLink` bindings without a follow-up
-    /// data migration when the dispatcher wires up.
+    /// Per-section trigger bindings. Wired by the application's
+    /// click dispatcher
+    /// (`MindMapDocument::find_triggered_mutations_at`): when a
+    /// click resolves to a specific section, the section's
+    /// bindings fire **first**, then the whole-node bindings on
+    /// `MindNode.trigger_bindings`. Per-section overrides let an
+    /// author bind a different `OnClick` mutation per stratum of
+    /// a multi-section node without splitting it into separate
+    /// nodes.
     ///
     /// `#[serde(default)]` + `skip_serializing_if = "Vec::is_empty"`
     /// keeps the on-disk format byte-identical for sections that

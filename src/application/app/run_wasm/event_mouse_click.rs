@@ -285,6 +285,16 @@ impl super::WasmApp {
             };
             let release_canvas =
                 renderer.screen_to_canvas(input.cursor_pos.0 as f32, input.cursor_pos.1 as f32);
+            // Refresh the subtree-AABB cache before the
+            // overflow-aware containment check — see the parallel
+            // comment in `app/event_mouse_click.rs`. Without this,
+            // a click on an overflowing second section after any
+            // mid-frame mutation registers as "outside" because
+            // `point_in_node_aabb` falls back to container-only
+            // when `subtree_aabb()` is dirty.
+            if let Some(tree) = input.mindmap_tree.as_mut() {
+                tree.tree.ensure_subtree_aabbs();
+            }
 
             let inside_edit_node = input
                 .text_edit_state
