@@ -466,6 +466,7 @@ pub(in crate::application::app) fn handle_text_edit_key(
                         let byte =
                             baumhard::util::grapheme_chad::find_byte_index_of_grapheme(buffer, *cursor)
                                 .unwrap_or(buffer.len());
+                        let bytes_inserted = trimmed.len();
                         buffer.insert_str(byte, &trimmed);
                         let post_clusters =
                             baumhard::util::grapheme_chad::count_grapheme_clusters(buffer);
@@ -473,6 +474,25 @@ pub(in crate::application::app) fn handle_text_edit_key(
                         if advance > 0 {
                             regions.insert_regions_at(*cursor, advance);
                             *cursor += advance;
+                            changed = true;
+                        } else {
+                            // Combining-mark merge case: the
+                            // payload (e.g. `\u{0301}`) merged
+                            // with the prior cluster instead of
+                            // adding a new one — `post_clusters
+                            // == pre_clusters`. The bytes are
+                            // already in `buffer`; the cluster
+                            // count didn't move, so neither does
+                            // the cursor or the region map. Mark
+                            // `changed = true` so the live tree
+                            // picks up the byte insertion (the
+                            // shaped text changes even though
+                            // grapheme positions stay aligned).
+                            // Pre-fix this branch was missed and
+                            // the buffer drifted from the tree
+                            // until the next non-merging
+                            // keystroke.
+                            let _ = bytes_inserted;
                             changed = true;
                         }
                     }

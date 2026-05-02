@@ -88,21 +88,39 @@ impl MindMapDocument {
         };
         // Merge each new region with the prior run sharing its
         // range (or the dominant overlap when ranges drifted).
-        // `region_to_text_run` lives in `document/custom.rs` and
+        // `region_to_text_run` lives in `super::custom::sync` and
         // is the canonical reverse converter; reuse it here so
         // the editor commit and the custom-mutation sync share
         // one shape.
+        //
+        // **Empty-regions guard.** A freshly-created node seeded
+        // with `ColorFontRegions::new_empty()` and a plaintext-
+        // only edit produces `new_regions.all_regions().is_empty()`.
+        // Pre-fix the merge below would emit `vec![]`, dropping
+        // every prior `text_runs` entry — including the
+        // template-inherited single run that the legacy
+        // `set_section_text` path always preserves. Fall back to
+        // [`Self::set_section_text`]'s collapse-with-template
+        // behaviour in that case so a plaintext keystroke session
+        // doesn't silently strip a section that *was* styled
+        // (e.g. a `bold` run that the user opened the editor on
+        // but didn't actively change). Authors who genuinely
+        // want every run cleared should use the document's
+        // direct-set path, not the editor commit.
+        if new_regions.all_regions().is_empty() {
+            return self.set_section_text(node_id, section_idx, new_text);
+        }
         let prior_runs: Vec<&TextRun> = section.text_runs.iter().collect();
         let new_runs: Vec<TextRun> = new_regions
             .all_regions()
             .iter()
             .map(|region| {
-                let prior = super::custom::exact_or_dominant_overlap(
+                let prior = super::custom::sync::exact_or_dominant_overlap(
                     &prior_runs,
                     region.range.start,
                     region.range.end,
                 );
-                super::custom::region_to_text_run(region, prior)
+                super::custom::sync::region_to_text_run(region, prior)
             })
             .collect();
         if section.text == new_text && section.text_runs == new_runs {

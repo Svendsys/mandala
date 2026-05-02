@@ -823,6 +823,132 @@ fn test_find_triggered_mutations_at_section_binding_fires_first() {
     assert_eq!(ids, vec!["node-handler"]);
 }
 
+/// `MoveTo` mutation against a multi-section node lands on the
+/// container only — pre-fix the section fan-out replayed every
+/// command on every section-area, and `MoveTo(x, y)` set every
+/// section's absolute position equal to the container's. The
+/// `sync_node_from_tree` round-trip then read
+/// `section.offset = section_pos - node_pos = (0, 0)` and
+/// silently collapsed every authored offset.
+#[test]
+fn test_apply_custom_mutation_move_to_does_not_collapse_section_offsets() {
+    use baumhard::gfx_structs::area::GlyphAreaCommand;
+    use baumhard::gfx_structs::mutator::Mutation;
+    use baumhard::mindmap::custom_mutation::{scope, CustomMutation, MutationBehavior};
+    use baumhard::mindmap::model::{MindSection, Position};
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    {
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        let mut s1 = MindSection::new_default("offset-section".into(), Vec::new());
+        s1.offset = Position { x: 50.0, y: 30.0 };
+        node.sections.push(s1);
+    }
+    let pre_offset = doc.mindmap.nodes.get(&nid).unwrap().sections[1].offset.clone();
+    let cm = CustomMutation {
+        id: "move-to".into(),
+        name: "MoveTo".into(),
+        description: String::new(),
+        contexts: vec![],
+        mutator: Some(scope::self_only(vec![Mutation::area_command(
+            GlyphAreaCommand::MoveTo(500.0, 600.0),
+        )])),
+        target_scope: TS::SelfOnly,
+        behavior: MB::Persistent,
+        predicate: None,
+        document_actions: vec![],
+        timing: None,
+    };
+    let mut tree = doc.build_tree();
+    doc.apply_custom_mutation(&cm, &nid, Some(&mut tree));
+    let post_offset = doc.mindmap.nodes.get(&nid).unwrap().sections[1].offset.clone();
+    assert!(
+        (post_offset.x - pre_offset.x).abs() < 1e-3 && (post_offset.y - pre_offset.y).abs() < 1e-3,
+        "section.offset must survive a MoveTo on the parent (was {:?}, now {:?})",
+        pre_offset,
+        post_offset
+    );
+}
+
+/// `find_triggered_mutations_at` dedupes by `mutation_id` so an
+/// author who bound the same mutation at both the section and
+/// the whole-node layer doesn't see double application (which
+/// would push two undo entries for one click and double the
+/// resulting delta).
+#[test]
+fn test_find_triggered_mutations_at_dedups_same_mutation_id() {
+    use baumhard::mindmap::custom_mutation::{
+        scope, CustomMutation, MutationBehavior, PlatformContext, Trigger, TriggerBinding,
+    };
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    let cm = CustomMutation {
+        id: "shared-handler".into(),
+        name: "Shared".into(),
+        description: String::new(),
+        contexts: vec![],
+        mutator: Some(scope::self_only(vec![])),
+        target_scope: TS::SelfOnly,
+        behavior: MB::Persistent,
+        predicate: None,
+        document_actions: vec![],
+        timing: None,
+    };
+    doc.mutation_registry.insert("shared-handler".into(), cm);
+    {
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        node.trigger_bindings.push(TriggerBinding {
+            trigger: Trigger::OnClick,
+            mutation_id: "shared-handler".into(),
+            contexts: vec![],
+        });
+        node.sections[0].trigger_bindings.push(TriggerBinding {
+            trigger: Trigger::OnClick,
+            mutation_id: "shared-handler".into(),
+            contexts: vec![],
+        });
+    }
+    let triggered =
+        doc.find_triggered_mutations_at(&nid, Some(0), &Trigger::OnClick, &PlatformContext::Desktop);
+    assert_eq!(triggered.len(), 1, "duplicate id must dedupe to one cm");
+    assert_eq!(triggered[0].id, "shared-handler");
+}
+
+/// `start_animation_at` keys dedup by `(mutation_id, target_id,
+/// section_idx)` — two adjacent sections of the same node
+/// bound to the same mutation id coexist as separate
+/// `AnimationInstance`s instead of coalescing under the prior
+/// `(mutation_id, target_id)`-only key.
+#[test]
+fn test_start_animation_at_does_not_dedup_across_sections() {
+    use baumhard::mindmap::animation::AnimationTiming;
+    use baumhard::mindmap::custom_mutation::{scope, CustomMutation, MutationBehavior};
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    let cm = CustomMutation {
+        id: "anim".into(),
+        name: "Anim".into(),
+        description: String::new(),
+        contexts: vec![],
+        mutator: Some(scope::self_only(vec![])),
+        target_scope: TS::SectionsOnly,
+        behavior: MB::Persistent,
+        predicate: None,
+        document_actions: vec![],
+        timing: Some(AnimationTiming { duration_ms: 500, ..AnimationTiming::default() }),
+    };
+    doc.start_animation_at(&cm, &nid, Some(0), 0);
+    doc.start_animation_at(&cm, &nid, Some(1), 0);
+    assert_eq!(
+        doc.active_animations.len(),
+        2,
+        "section_idx must be part of the dedup key"
+    );
+    // Same section + same mutation → dedupe (no duplicate).
+    doc.start_animation_at(&cm, &nid, Some(0), 0);
+    assert_eq!(doc.active_animations.len(), 2);
+}
+
 /// `SectionsOnly + predicate` combo: the structural seam and
 /// the predicate gate compose — a `SectionsOnly` mutation gated
 /// by `(Flag(SectionRoot), Equals(false))` (matches set, i.e.

@@ -276,12 +276,38 @@ pub fn apply_mutations_to_element(
 /// walker path is phased in for size-aware mutations in a separate
 /// session.
 pub fn flat_mutations(mutator: &MutatorNode) -> Option<Vec<crate::gfx_structs::mutator::Mutation>> {
-    use crate::mutator_builder::{MutationListSrc, MutatorNode as N};
+    use crate::mutator_builder::{InstructionSpec, MutationListSrc, MutatorNode as N};
+    use crate::gfx_structs::predicate::Comparator;
     match mutator {
         N::Macro {
             mutations: MutationListSrc::Literal(list),
             ..
         } => Some(list.clone()),
+        // `Instruction(RepeatWhile(always_true))` wrappers
+        // (built by `scope::descendants` and the inner branch of
+        // `scope::self_and_descendants`) carry a child Macro
+        // with the actual mutations. The flat-apply path drives
+        // the iteration via `collect_affected_node_ids` so the
+        // wrapper's repeat-while semantics are redundant — we
+        // can extract the Macro's literal list directly. Only
+        // honour `always_true` predicates: a predicate-filtered
+        // wrapper would need walker-based evaluation, which the
+        // flat-apply path can't provide; falling through to
+        // `None` makes that case warn at the apply site.
+        N::Instruction {
+            instruction: InstructionSpec::RepeatWhileAlwaysTrue,
+            children,
+            ..
+        } => children.iter().find_map(flat_mutations),
+        N::Instruction {
+            instruction: InstructionSpec::RepeatWhile(p),
+            children,
+            ..
+        } if p.always_match
+            || p.fields.iter().all(|(_, c)| matches!(c, Comparator::Equals(_))) && p.fields.is_empty() =>
+        {
+            children.iter().find_map(flat_mutations)
+        }
         _ => None,
     }
 }

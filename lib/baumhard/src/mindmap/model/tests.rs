@@ -749,6 +749,19 @@ fn mindsection_defaults_serialize_minimally() {
     assert!(back.trigger_bindings.is_empty());
 }
 
+/// `MindSection.text` carries `#[serde(default)]` so a hand-
+/// edited or partially-converted JSON file with `{"sections":
+/// [{}]}` parses cleanly with `text == ""` instead of failing
+/// the typed loader with "missing field `text`".
+#[test]
+fn mindsection_missing_text_field_defaults_to_empty() {
+    let s: MindSection = serde_json::from_str("{}").unwrap();
+    assert_eq!(s.text, "");
+    assert!(s.text_runs.is_empty());
+    assert_eq!(s.channel, None);
+    assert!(s.trigger_bindings.is_empty());
+}
+
 /// `MindSection.channel: Option<usize>` round-trip (Tier-E).
 /// Two cases that pre-`Option` were indistinguishable:
 ///

@@ -157,13 +157,20 @@ impl MindMapDocument {
         // landed on that specific section, and a section-targeted
         // override (e.g. a different OnClick mutation per section
         // of a multi-stratum node) should beat the catch-all node
-        // binding.
+        // binding. Dedup by `cm.id` after merging so an author
+        // who bound the same `mutation_id` at both layers (e.g.
+        // for platform-context splits, or carelessly) doesn't
+        // get the mutation applied twice — which would push two
+        // undo entries for one click and double the resulting
+        // delta.
         if let Some(idx) = section_idx {
             if let Some(section) = node.sections.get(idx) {
                 dispatch(&section.trigger_bindings, &mut results);
             }
         }
         dispatch(&node.trigger_bindings, &mut results);
+        let mut seen: rustc_hash::FxHashSet<String> = rustc_hash::FxHashSet::default();
+        results.retain(|cm| seen.insert(cm.id.clone()));
         results
     }
 

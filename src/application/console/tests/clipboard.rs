@@ -89,6 +89,77 @@ fn node_cut_returns_text_and_clears_node() {
     assert_eq!(doc.mindmap.nodes.get(&nid).unwrap().display_text(), "");
 }
 
+/// Multi-section node `Node`-target cut: clears EVERY section's
+/// text. Pre-fix only `section[0]` was cleared via
+/// `set_node_text`, leaving `sections[1..]` populated as zombie
+/// content not on the clipboard. Pin the loop-over-every-section
+/// behaviour so a future revert is loud.
+#[test]
+fn node_cut_clears_every_section_on_multi_section_node() {
+    use baumhard::mindmap::model::MindSection;
+    let mut doc = load_test_doc();
+    let nid = first_node_id(&doc);
+    {
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        node.sections
+            .push(MindSection::new_default("second-stratum".into(), Vec::new()));
+        node.sections
+            .push(MindSection::new_default("third-stratum".into(), Vec::new()));
+    }
+    let original = doc.mindmap.nodes.get(&nid).unwrap().display_text();
+    assert!(original.contains("second-stratum"));
+    assert!(original.contains("third-stratum"));
+
+    let tid = TargetId::Node(nid.clone());
+    let cut = {
+        let mut view = view_for(&mut doc, &tid);
+        view.clipboard_cut()
+    };
+    assert_eq!(cut, ClipboardContent::Text(original));
+    let post = doc.mindmap.nodes.get(&nid).unwrap();
+    assert_eq!(post.sections.len(), 3, "section count preserved");
+    for (idx, section) in post.sections.iter().enumerate() {
+        assert!(
+            section.text.is_empty(),
+            "section[{}].text must be empty post-cut, was {:?}",
+            idx,
+            section.text
+        );
+    }
+}
+
+/// Section paste with a stale `section_idx` (a custom mutation
+/// shrunk `node.sections` between the click that captured the
+/// Section selection and the paste) clamps to the last existing
+/// section instead of silently no-op'ing through
+/// `set_section_text`'s bounds check.
+#[test]
+fn section_paste_clamps_stale_idx_to_last_section() {
+    use crate::application::console::traits::{HandlesPaste, TargetView};
+    use baumhard::mindmap::model::MindSection;
+    let mut doc = load_test_doc();
+    let nid = first_node_id(&doc);
+    {
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        node.sections
+            .push(MindSection::new_default("second".into(), Vec::new()));
+    }
+    let id = nid.clone();
+    {
+        let mut view = TargetView::Section {
+            doc: &mut doc,
+            id,
+            section_idx: 5, // way past the end
+        };
+        let _ = view.clipboard_paste("after-clamp");
+    }
+    let post = doc.mindmap.nodes.get(&nid).unwrap();
+    assert_eq!(
+        post.sections[1].text, "after-clamp",
+        "stale paste must land in the last existing section, not silently no-op"
+    );
+}
+
 // ── Edge (body) ──────────────────────────────────────────────────
 //
 // Clipboard semantics: copy / cut return the resolved edge color

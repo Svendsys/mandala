@@ -1,0 +1,605 @@
+// SPDX-License-Identifier: MPL-2.0
+
+//! Custom-mutation infrastructure — `apply_custom_mutation` and
+//! its helpers. The bridge between the declarative
+//! `CustomMutation` shape and the document's mutation-and-undo
+//! plumbing.
+//!
+//! Layout:
+//! - This file (`mod.rs`) — the apply pipeline:
+//!   `apply_custom_mutation`, `apply_to_tree`,
+//!   `apply_document_actions`, `collect_affected_section_targets`,
+//!   `will_dispatch_to_handler`, plus the
+//!   predicate-filtered-everything warn helper.
+//! - [`sync`] — the reverse converter: `sync_node_from_tree`
+//!   pulls the live tree back into the model after a `Persistent`
+//!   mutation, with `region_to_text_run` and
+//!   `exact_or_dominant_overlap` as private merge primitives.
+
+pub(super) mod sync;
+
+use baumhard::mindmap::custom_mutation::{
+    apply_mutations_to_element, flat_mutations, mutator_reach, CustomMutation, DocumentAction,
+    MutationBehavior, TargetScope,
+};
+use baumhard::mindmap::model::MindNode;
+use baumhard::mindmap::tree_builder::MindMapTree;
+
+use super::mutations_loader::MutationSource;
+use super::undo_action::UndoAction;
+use super::MindMapDocument;
+
+/// Warn at apply time when a predicate gate filtered every
+/// candidate out. Catches both authoring mistakes (a bare
+/// `Predicate::new()` with no fields and `always_match=false` —
+/// matches nothing) and structurally-impossible combos (e.g.
+/// `target_scope: SectionsOnly` paired with
+/// `(Flag(SectionRoot), Equals(true))`, where the gate matches
+/// "flag clear" but every candidate has the flag set). Either
+/// produces a silent no-op without this check; the warn surfaces
+/// the issue at the dispatch site so the author can fix it
+/// rather than chase a missing visual change.
+/// `true` when this `Mutation` writes an *absolute* position
+/// (`MoveTo`, `Assign` on the position field). Used by the
+/// section fan-out in [`MindMapDocument::apply_to_tree`] to
+/// route absolute-position commands to the container only —
+/// applying them to every section-area would set every
+/// section's canvas position equal to the container's, which
+/// then collapses `section.offset` to `(0, 0)` after sync-back.
+/// Delta commands (`Nudge*`) and non-position mutations are NOT
+/// matched; those fan out safely.
+fn mutation_targets_absolute_position(m: &baumhard::gfx_structs::mutator::Mutation) -> bool {
+    use baumhard::core::primitives::ApplyOperation;
+    use baumhard::gfx_structs::area::GlyphAreaCommand;
+    use baumhard::gfx_structs::area_fields::{GlyphAreaField, GlyphAreaFieldType};
+    use baumhard::gfx_structs::mutator::Mutation;
+    match m {
+        Mutation::AreaCommand(cmd) => matches!(**cmd, GlyphAreaCommand::MoveTo(_, _)),
+        Mutation::AreaDelta(delta) => {
+            // `Assign` on the position field sets it absolutely;
+            // `Add` / `Sub` are deltas (safe to fan out).
+            // `DeltaGlyphArea.fields` carries the touched fields
+            // and a sibling `GlyphAreaFieldType::ApplyOperation`
+            // entry naming the global op. Inspect both.
+            if !delta.fields.contains_key(&GlyphAreaFieldType::Position) {
+                return false;
+            }
+            matches!(
+                delta.fields.get(&GlyphAreaFieldType::ApplyOperation),
+                Some(GlyphAreaField::Operation(ApplyOperation::Assign))
+            )
+        }
+        _ => false,
+    }
+}
+
+fn warn_if_predicate_filtered_everything(
+    mutation_id: &str,
+    has_predicate: bool,
+    seen: usize,
+    passed: usize,
+) {
+    if has_predicate && seen > 0 && passed == 0 {
+        log::warn!(
+            "mutation '{}': top-level predicate filtered every candidate ({} elements seen, 0 passed); \
+             the apply path completed but no element was mutated",
+            mutation_id,
+            seen
+        );
+    }
+}
+
+impl MindMapDocument {
+    /// `true` when the registered mutation at `mutation_id` will
+    /// dispatch through its Rust [`super::mutations::DynamicMutationHandler`]
+    /// at apply time. Two conditions must hold:
+    ///
+    /// - A handler is registered for this id.
+    /// - The mutation's source layer is [`MutationSource::App`] — i.e.
+    ///   the definition the user sees actually is the one the handler
+    ///   was written for. If the user / map / inline layer overrode
+    ///   the id, their declarative shape wins and the bundled handler
+    ///   is bypassed.
+    ///
+    /// This prevents a subtle hijack: a user mutation carrying the
+    /// same id as a bundled handler (e.g. `"flower-layout"`) would
+    /// otherwise win in the registry but still get executed by the
+    /// bundled Rust algorithm, silently discarding the user's
+    /// declared `mutator` and `target_scope`.
+    pub fn will_dispatch_to_handler(&self, mutation_id: &str) -> bool {
+        self.mutation_handlers.contains_key(mutation_id)
+            && self.mutation_sources.get(mutation_id) == Some(&MutationSource::App)
+    }
+
+    /// Apply a custom mutation to the tree and optionally sync to the model.
+    /// For Persistent mutations, snapshots affected nodes for undo and sets dirty flag.
+    /// For Toggle mutations, tracks active state without model sync.
+    ///
+    /// The `tree` argument is only consulted on the declarative
+    /// flat-apply path. When [`Self::will_dispatch_to_handler`]
+    /// returns `true` for `custom.id` the handler mutates the model
+    /// directly; callers that know ahead of time the handler will
+    /// fire may pass `None` and skip the (expensive) tree build
+    /// entirely. Passing `None` on the declarative path logs a
+    /// warning and is otherwise a no-op (the mutation isn't applied).
+    pub fn apply_custom_mutation(
+        &mut self,
+        custom: &CustomMutation,
+        node_id: &str,
+        mut tree: Option<&mut MindMapTree>,
+    ) {
+        // For toggle behavior, check if already active and reverse if so.
+        if custom.behavior == MutationBehavior::Toggle {
+            let key = (node_id.to_string(), custom.id.clone());
+            if self.active_toggles.contains(&key) {
+                // Second trigger: remove from active set. The tree
+                // mutation from the first trigger is *not* inverted
+                // in place — Mutations aren't guaranteed invertible.
+                // The caller is expected to rebuild the tree from
+                // the model next frame (the model is untouched
+                // because Toggle skips the persistent-path model
+                // sync). Console and event-loop callers both rebuild
+                // scene state on every dispatch so this is the
+                // conventional shape; trigger dispatchers that keep
+                // a persistent tree across events must explicitly
+                // call `build_tree()` after a toggle-off.
+                self.active_toggles.remove(&key);
+                self.dirty = true;
+                return;
+            }
+            self.active_toggles.insert(key);
+            // Toggle mutations apply to tree only (visual), no model sync.
+            if let Some(tree) = tree.as_deref_mut() {
+                self.apply_to_tree(custom, node_id, tree);
+            } else {
+                log::warn!(
+                    "apply_custom_mutation: Toggle mutation '{}' called with None tree; \
+                     visual toggle skipped. Pass Some(&mut tree) for Toggle mutations.",
+                    custom.id
+                );
+            }
+            return;
+        }
+
+        // Authoring-mistake guard: if the mutator AST walks deeper
+        // than `target_scope` snapshots, undo will silently miss
+        // the deeper edits. Log a `warn!` — still applies the
+        // mutation (the author may have their own reasons, or the
+        // warning may surface a bug worth fixing) but flags the
+        // scope mismatch so it doesn't pass unnoticed.
+        if let Some(mutator) = custom.mutator.as_ref() {
+            let reach = mutator_reach(mutator);
+            if !custom.target_scope.covers_reach(reach) {
+                log::warn!(
+                    "mutation '{}': mutator reach is {:?} but target_scope is \
+                     {:?}; undo will not capture edits beyond the declared scope",
+                    custom.id,
+                    reach,
+                    custom.target_scope
+                );
+            }
+        }
+
+        // Persistent: snapshot, apply, sync/push undo.
+        let affected_ids = self.collect_affected_node_ids(node_id, &custom.target_scope);
+        let snapshots: Vec<(String, MindNode)> = affected_ids
+            .iter()
+            .filter_map(|id| self.mindmap.nodes.get(id).map(|n| (id.clone(), n.clone())))
+            .collect();
+
+        // Handler dispatch: only fires when the mutation at this id
+        // actually came from the app bundle — a user / map / inline
+        // override of the same id keeps the declarative path so the
+        // user's mutator is honoured. See
+        // [`Self::will_dispatch_to_handler`] for the rationale.
+        if self.will_dispatch_to_handler(&custom.id) {
+            if let Some(handler) = self.mutation_handlers.get(&custom.id).copied() {
+                handler(self, node_id);
+            }
+        } else if let Some(tree) = tree.as_deref_mut() {
+            self.apply_to_tree(custom, node_id, tree);
+            for id in &affected_ids {
+                self.sync_node_from_tree(id, tree);
+            }
+        } else {
+            log::warn!(
+                "apply_custom_mutation: declarative mutation '{}' called with None tree; \
+                 flat-apply skipped. Pass Some(&mut tree) when the mutation isn't \
+                 handler-dispatched.",
+                custom.id
+            );
+            // Fall through: document_actions still push undo below,
+            // but no tree/model changes occurred.
+            return;
+        }
+
+        if !snapshots.is_empty() {
+            self.undo_stack.push(UndoAction::CustomMutation {
+                node_snapshots: snapshots,
+            });
+            self.dirty = true;
+        }
+    }
+
+    /// Apply any document-level actions carried by a custom mutation. These
+    /// operate on `self.mindmap.canvas` rather than any tree node, so they
+    /// run independently of `apply_custom_mutation`'s tree walk. When any
+    /// action would actually change state, a `CanvasSnapshot` undo entry is
+    /// pushed capturing the pre-action canvas, and the document is marked
+    /// dirty. Returns true if the canvas was modified.
+    pub fn apply_document_actions(&mut self, custom: &CustomMutation) -> bool {
+        if custom.document_actions.is_empty() {
+            return false;
+        }
+        let snapshot = self.mindmap.canvas.clone();
+        let mut changed = false;
+        for action in &custom.document_actions {
+            match action {
+                DocumentAction::SetThemeVariant(name) => {
+                    if let Some(preset) = self.mindmap.canvas.theme_variants.get(name) {
+                        let new_vars = preset.clone();
+                        if new_vars != self.mindmap.canvas.theme_variables {
+                            self.mindmap.canvas.theme_variables = new_vars;
+                            changed = true;
+                        }
+                    }
+                    // Unknown variant: silently ignored (graceful).
+                }
+                DocumentAction::SetThemeVariables(map) => {
+                    for (k, v) in map {
+                        let existing = self.mindmap.canvas.theme_variables.get(k);
+                        if existing.map(|s| s != v).unwrap_or(true) {
+                            self.mindmap.canvas.theme_variables.insert(k.clone(), v.clone());
+                            changed = true;
+                        }
+                    }
+                }
+                // `DocumentAction` is `#[non_exhaustive]` so future
+                // variants can be added without breaking dependents.
+                // Any new variant that performs file I/O, network
+                // access, or arbitrary content load MUST be gated
+                // at the macro-dispatcher site — see
+                // `MacroSource::allows_console_line` and
+                // `lib/baumhard/src/mindmap/custom_mutation/mod.rs`
+                // doc-comment on `DocumentAction`.
+                _ => {
+                    log::warn!("apply_document_actions: unknown DocumentAction variant; skipping");
+                }
+            }
+        }
+        if changed {
+            self.undo_stack
+                .push(UndoAction::CanvasSnapshot { canvas: snapshot });
+            self.dirty = true;
+        }
+        changed
+    }
+
+    /// Apply a custom mutation's payload to the Baumhard tree, iterating
+    /// every affected model node and applying the flat `Vec<Mutation>`
+    /// extracted from the MutatorNode to each target element. Mutations
+    /// without a `mutator` (document-actions-only) are no-ops here —
+    /// [`Self::apply_document_actions`] handles their canvas effects
+    /// separately. Mutations whose MutatorNode can't be reduced to a
+    /// flat list (runtime-hole-bearing, size-aware) are skipped at this
+    /// layer; a later session wires the richer `mutator_builder::build`
+    /// path for those.
+    ///
+    /// **Section fan-out.** Post-section the per-node element shape is
+    /// "chrome-only container + N section-areas + N section-models". A
+    /// pre-section custom mutation that mutated the per-node area (text,
+    /// runs, scale) used to land on the one-area-per-node entry; today
+    /// it has to fan out across every section-area, otherwise the
+    /// mutation lands on a no-glyph container with no visible effect.
+    /// Position-affecting mutations apply to *both* container and
+    /// sections so the whole node moves in lockstep (sections store
+    /// absolute canvas positions in the tree).
+    fn apply_to_tree(&self, custom: &CustomMutation, node_id: &str, tree: &mut MindMapTree) {
+        use baumhard::core::primitives::{Flag, Flaggable};
+
+        let Some(mutator) = custom.mutator.as_ref() else { return };
+        let Some(mutations) = flat_mutations(mutator) else {
+            // Non-flat mutator AST (e.g. `scope::descendants` —
+            // `Instruction`-rooted, no Macro at the root). The
+            // current flat-apply path can't extract a mutation
+            // list from these shapes; pre-fix this returned
+            // silently and the entire apply was a no-op with no
+            // diagnostic. The richer `mutator_builder` walker
+            // path is the home for these (size-aware /
+            // predicate-filtered descendant iteration); until
+            // it's wired into `apply_custom_mutation`, warn so
+            // authors notice the silent drop instead of chasing
+            // a missing visual change.
+            log::warn!(
+                "mutation '{}': mutator AST is non-flat (root is not `Macro` with literal list); \
+                 the flat-apply path can't evaluate this shape — apply skipped. \
+                 Use `scope::self_only` / `scope::self_and_descendants` for now, \
+                 or wait for the walker-based `apply_custom_mutation` path.",
+                custom.id
+            );
+            return;
+        };
+        // Top-level predicate gate (item E3). When `Some`, every
+        // candidate element must satisfy `predicate.test(element)`
+        // before mutations land on it. Authors typically reach for
+        // this to add an element-level filter on top of the
+        // structural `target_scope` — e.g.
+        // `Predicate { fields: [(Flag(SectionRoot), Equals(false))], … }`
+        // matches every element with `SectionRoot` set (i.e.
+        // sections), so paired with `target_scope: SelfOnly` it
+        // lands the mutation on sections only and skips the
+        // chrome-only container. The inverse
+        // `(Flag(SectionRoot), Equals(true))` matches the
+        // container + sibling mind-nodes (anything with
+        // `SectionRoot` *clear*).
+        //
+        // **§9 footgun guard.** A bare `Predicate::new()` (`fields=[]`,
+        // `always_match=false`) matches nothing; pairing it as
+        // `predicate: Some(Predicate::new())` silently filters every
+        // candidate out, the apply path runs but no element changes.
+        // Warn so authors notice the typo at apply time. Same warn
+        // covers the "predicate filtered everything" case below
+        // (e.g. `SectionsOnly` + `(Flag(SectionRoot), Equals(true))`
+        // — structurally impossible because every `SectionsOnly`
+        // candidate has `SectionRoot` set).
+        let predicate_gate = custom.predicate.as_ref();
+        if let Some(p) = predicate_gate {
+            if p.fields.is_empty() && !p.always_match {
+                log::warn!(
+                    "mutation '{}': predicate has no fields and `always_match` is false; \
+                     every candidate element will be filtered out (apply runs but produces no change)",
+                    custom.id
+                );
+            }
+        }
+        let passes = |element: &baumhard::gfx_structs::element::GfxElement| -> bool {
+            predicate_gate.is_none_or(|p| p.test(element))
+        };
+        let mut candidates_seen: usize = 0;
+        let mut candidates_passed: usize = 0;
+
+        // `SectionsOnly` (item E4) bypasses the container fan-out:
+        // mutations land on every section-area directly. Channel
+        // collisions with sibling mind-nodes don't reach in here
+        // because we walk the section_map by `(triggering_node_id,
+        // section_idx)` tuples — child mind-nodes that share a
+        // channel with a section live elsewhere in the arena.
+        if custom.target_scope == TargetScope::SectionsOnly {
+            let targets = self.collect_affected_section_targets(node_id);
+            for (mind_id, section_idx) in &targets {
+                let Some(section_arena_id) = tree.section_arena_id(mind_id, *section_idx) else {
+                    continue;
+                };
+                if let Some(node) = tree.tree.arena.get_mut(section_arena_id) {
+                    candidates_seen += 1;
+                    if passes(node.get()) {
+                        candidates_passed += 1;
+                        apply_mutations_to_element(&mutations, node.get_mut());
+                    }
+                }
+            }
+            warn_if_predicate_filtered_everything(
+                &custom.id,
+                predicate_gate.is_some(),
+                candidates_seen,
+                candidates_passed,
+            );
+            // Invalidate the tree's `subtree_aabb` and other geometry
+            // caches — `apply_mutations_to_element` mutated arena
+            // element fields directly (bypassing
+            // `MutatorTree::apply_to`'s wrapper that owns the
+            // invalidation). Pre-fix the dirty flag stayed false
+            // so a downstream `ensure_subtree_aabbs()` call (e.g.
+            // the editor click-outside-commit's overflow-aware
+            // `point_in_node_aabb`) was a no-op against a stale
+            // cache. Same shape as `MutatorTree::apply_to`'s
+            // invalidation (`lib/baumhard/src/gfx_structs/tree.rs`).
+            tree.tree.invalidate_caches();
+            return;
+        }
+
+        let affected = self.collect_affected_node_ids(node_id, &custom.target_scope);
+        for id in &affected {
+            let Some(container_arena_id) = tree.arena_id_for(id.as_str()) else {
+                continue;
+            };
+            // Apply to the container (carries position; text/regions
+            // are empty so text-affecting mutations are visually no-op
+            // here, but `area.scale` and position deltas land cleanly).
+            // Container is `SectionRoot`-clear, so a
+            // `(Flag(SectionRoot), Equals(false))` predicate (matches
+            // when the flag IS set) filters the container out — only
+            // sections survive, which is the documented "sections
+            // only" idiom.
+            // Snapshot the container's pre-mutation position so
+            // we can compute the implied delta below. Absolute-
+            // position commands (`MoveTo`, `Position(Assign)`)
+            // need to translate sections by the same delta to
+            // keep `section.offset` invariant; without this,
+            // sync-back would write
+            // `section.offset = old_section_pos - new_node_pos`
+            // and silently collapse the offset.
+            let pre_container_pos = tree
+                .tree
+                .arena
+                .get(container_arena_id)
+                .and_then(|n| n.get().glyph_area())
+                .map(|a| (a.position.x.0, a.position.y.0));
+
+            if let Some(node) = tree.tree.arena.get_mut(container_arena_id) {
+                candidates_seen += 1;
+                if passes(node.get()) {
+                    candidates_passed += 1;
+                    apply_mutations_to_element(&mutations, node.get_mut());
+                }
+            }
+
+            // Derive the container's post-mutation delta. If the
+            // mutations included an absolute MoveTo or position
+            // Assign, the delta will be non-zero; for delta-only
+            // commands (`Nudge*`) the section fan-out below will
+            // re-apply the same Nudge directly so this path is
+            // redundant (the section's tree-pos already moved by
+            // the same amount as the container).
+            let container_translate_delta = pre_container_pos.and_then(|(pre_x, pre_y)| {
+                tree.tree
+                    .arena
+                    .get(container_arena_id)
+                    .and_then(|n| n.get().glyph_area())
+                    .map(|a| (a.position.x.0 - pre_x, a.position.y.0 - pre_y))
+            });
+            let absolute_position_in_mutations = mutations
+                .iter()
+                .any(mutation_targets_absolute_position);
+            // Fan out across every immediate `Flag::SectionRoot` child
+            // of the container — that's where `text`, `text_runs`
+            // (regions), and per-section `scale` actually live in the
+            // post-section tree shape. Without this fan-out every
+            // text/font/region custom mutation silently no-ops on the
+            // empty container. Mirrors `apply_tree_highlights`'s
+            // walk so mutations and highlights both reach sections by
+            // the same primitive.
+            //
+            // §B7 borrow-split note: collecting into a
+            // `Vec<indextree::NodeId>` here is the smallest correct
+            // shape. `container_arena_id.children(&tree.tree.arena)`
+            // borrows the arena immutably; the loop body needs
+            // `&mut tree.tree.arena.get_mut(...)` to apply the
+            // mutation. Holding the iterator across the mutable
+            // borrow won't compile, so the fix is to materialise the
+            // section ids first and drop the immutable borrow
+            // before the mutation pass starts. The vec is `O(sections
+            // per node)` — bounded by user authoring (typically 1–4
+            // per node), per affected-node-per-call, so allocation
+            // cost is negligible relative to the mutation walker.
+            let section_arena_ids: Vec<indextree::NodeId> = container_arena_id
+                .children(&tree.tree.arena)
+                .filter(|cid| {
+                    tree.tree
+                        .arena
+                        .get(*cid)
+                        .map(|n| n.get().flag_is_set(Flag::SectionRoot))
+                        .unwrap_or(false)
+                })
+                .collect();
+            // Filter out mutations that would set absolute
+            // position before fanning to sections. Section-area
+            // canvas position is computed as
+            // `node.pos + section.offset`; an absolute
+            // `MoveTo(x, y)` lands every section at `(x, y)` —
+            // identical to the container's position — and the
+            // sync-back step then reads `section.offset =
+            // section_pos - node_pos = (0, 0)`, silently
+            // collapsing every authored offset. Delta commands
+            // (`Nudge*`) move the section by the same delta as
+            // the container, preserving offset; absolute commands
+            // need to land on the container only.
+            let section_safe_mutations: Vec<_> = mutations
+                .iter()
+                .filter(|m| !mutation_targets_absolute_position(m))
+                .cloned()
+                .collect();
+            for sid in section_arena_ids {
+                if let Some(node) = tree.tree.arena.get_mut(sid) {
+                    candidates_seen += 1;
+                    if passes(node.get()) {
+                        candidates_passed += 1;
+                        apply_mutations_to_element(&section_safe_mutations, node.get_mut());
+                        // For absolute-position mutations on the
+                        // container (filtered out of
+                        // `section_safe_mutations` above),
+                        // translate the section by the container's
+                        // implied delta so it moves *with* the
+                        // container — preserving `section.offset`
+                        // through the sync-back step. Pre-fix
+                        // sections stayed frozen and offset
+                        // collapsed.
+                        if absolute_position_in_mutations {
+                            if let Some((dx, dy)) = container_translate_delta {
+                                if let Some(area) = node.get_mut().glyph_area_mut() {
+                                    area.move_position(dx, dy);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        warn_if_predicate_filtered_everything(
+            &custom.id,
+            predicate_gate.is_some(),
+            candidates_seen,
+            candidates_passed,
+        );
+        // Same invalidation as the `SectionsOnly` branch above:
+        // `apply_mutations_to_element` writes arena element fields
+        // directly without going through `MutatorTree::apply_to`,
+        // so the tree's `subtree_aabbs_dirty` flag is unset until
+        // we explicitly mark it. Downstream callers that read
+        // `subtree_aabb()` (notably the overflow-aware
+        // `point_in_node_aabb` from the editor click-outside-commit)
+        // would otherwise hit a stale cache.
+        tree.tree.invalidate_caches();
+    }
+
+    /// Collect the section targets affected by a `SectionsOnly`
+    /// mutation: every section of `node_id`. Returns `(mind_id,
+    /// section_idx)` tuples — the right shape for `tree
+    /// .section_arena_id(...)` lookups in the apply-to-tree branch.
+    /// Empty when `node_id` doesn't exist in the model or carries
+    /// zero sections (loader-rejected at load time, but defensive
+    /// for synthesized in-memory docs).
+    fn collect_affected_section_targets(&self, node_id: &str) -> Vec<(String, usize)> {
+        let Some(node) = self.mindmap.nodes.get(node_id) else {
+            return Vec::new();
+        };
+        (0..node.sections.len())
+            .map(|idx| (node_id.to_string(), idx))
+            .collect()
+    }
+
+    /// Collect the IDs of all nodes affected by a mutation with the given scope.
+    pub(super) fn collect_affected_node_ids(&self, node_id: &str, scope: &TargetScope) -> Vec<String> {
+        match scope {
+            // `SectionsOnly` lives on the triggering node — every
+            // affected section belongs to that one node. The
+            // node-level affected list is the snapshot window for
+            // undo (whole-`MindNode` clone covers section state),
+            // so a single entry is correct.
+            TargetScope::SelfOnly | TargetScope::SectionsOnly => vec![node_id.to_string()],
+            TargetScope::Children => self
+                .mindmap
+                .children_of(node_id)
+                .iter()
+                .map(|n| n.id.clone())
+                .collect(),
+            TargetScope::Descendants => self.mindmap.all_descendants(node_id),
+            TargetScope::SelfAndDescendants => {
+                let mut ids = vec![node_id.to_string()];
+                ids.extend(self.mindmap.all_descendants(node_id));
+                ids
+            }
+            TargetScope::Parent => self
+                .mindmap
+                .nodes
+                .get(node_id)
+                .and_then(|n| n.parent_id.clone())
+                .into_iter()
+                .collect(),
+            TargetScope::Siblings => self
+                .mindmap
+                .nodes
+                .get(node_id)
+                .and_then(|n| n.parent_id.as_deref())
+                .map(|pid| {
+                    self.mindmap
+                        .children_of(pid)
+                        .iter()
+                        .filter(|n| n.id != node_id)
+                        .map(|n| n.id.clone())
+                        .collect()
+                })
+                .unwrap_or_default(),
+        }
+    }
+}
