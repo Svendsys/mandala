@@ -82,3 +82,59 @@ fn wheel_color_on_portal_mode_edge_paints_through_edge_path() {
         .unwrap_or_else(|| edge.color.clone());
     assert_eq!(effective, "#778899");
 }
+
+/// A `TargetId::Section` under the wheel routes the colour
+/// through `set_text_color` → `set_section_text_color` (sections
+/// have no bg/border chrome — text is the only axis). Only the
+/// targeted section's runs change; siblings keep their original
+/// colour. Pins Items 4 & 9 of `SECTION_INTEGRATION_PLAN.md`
+/// (Item 9's standalone-mode commit fans out via
+/// `selection_targets` → `view_for` → `apply_wheel_color`, so
+/// the routing pinned here is the same path the standalone
+/// wheel commit takes).
+#[test]
+fn wheel_color_section_writes_through_text_color() {
+    use baumhard::mindmap::model::MindSection;
+    let mut doc = load_test_doc();
+    let nid = first_node_id(&doc);
+    {
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        node.sections
+            .push(MindSection::new_default("second".into(), Vec::new()));
+        // Pin the cascade source so `set_section_text_color`'s
+        // run-rewrite predicate finds matching runs.
+        node.style.text_color = "#aaaaaa".into();
+        for section in node.sections.iter_mut() {
+            section.text_runs.clear();
+            section.text_runs.push(baumhard::mindmap::model::TextRun {
+                start: 0,
+                end: section.text.chars().count().max(1),
+                bold: false,
+                italic: false,
+                underline: false,
+                font: "LiberationSans".into(),
+                size_pt: 14,
+                color: "#aaaaaa".into(),
+                hyperlink: None,
+            });
+        }
+    }
+    let tid = TargetId::Section {
+        node_id: nid.clone(),
+        section_idx: 1,
+    };
+    let outcome = {
+        let mut view = view_for(&mut doc, &tid);
+        view.apply_wheel_color(ColorValue::Hex("#abcdef".into()))
+    };
+    assert_eq!(outcome, Outcome::Applied);
+    let node = doc.mindmap.nodes.get(&nid).unwrap();
+    assert!(
+        node.sections[0].text_runs.iter().all(|r| r.color == "#aaaaaa"),
+        "section 0 (sibling) must NOT receive the wheel colour"
+    );
+    assert!(
+        node.sections[1].text_runs.iter().all(|r| r.color == "#abcdef"),
+        "section 1 (target) must receive the wheel colour through set_section_text_color"
+    );
+}

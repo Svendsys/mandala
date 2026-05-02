@@ -106,6 +106,20 @@ will see the variable replaced with a hex literal. The
 setters bypass the round trip and preserve `var(--name)`
 references verbatim.
 
+### Console axis applicability on a section selection
+
+Sections only have a **text** colour axis (`color text=…`). The
+`bg=` and `border=` axes are node-level chrome and have no
+section-level field — running them against a `SelectionState::Section`
+returns `Outcome::NotApplicable` rather than collapsing to the
+owning node's `background_color` / `frame_color`. This applies
+both to the kv form (`color bg=#fff section=K`) and to the
+trait-dispatch form (`color bg=#fff` with the section already
+selected). Same routing behind the colour-picker modal: opening
+the picker on `color bg` / `color border` against a section
+selection surfaces the NotApplicable message instead of opening
+on the owning node.
+
 ## Channel space
 
 Sections live in the same Baumhard tree as child mind-nodes. The

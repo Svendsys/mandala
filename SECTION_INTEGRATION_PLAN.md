@@ -26,19 +26,20 @@ Legend: ✅ shipped · 🔧 in progress · ⏳ to do · ❌ deferred (out of 2A)
 | # | Item | Status |
 |---|---|---|
 | 0 | Commit this plan file to the repo at `SECTION_INTEGRATION_PLAN.md` | ✅ |
-| 1 | `HasTextColor::set_text_color` honours `Section` → `set_section_text_color` | ⏳ |
-| 2 | `HasBgColor::set_bg_color` returns `NotApplicable` for `Section` | ⏳ |
-| 3 | `HasBorderColor::set_border_color` returns `NotApplicable` for `Section` | ⏳ |
-| 4 | `AcceptsWheelColor::apply_wheel_color` routes `Section` through `set_section_text_color` for `Text` axis, `NotApplicable` for `Bg`/`Border` | ⏳ |
-| 5 | `AcceptsFontFamily::set_font_family` honours `Section` → `set_section_font_family` (wires the dead setter) | ⏳ |
-| 6 | `ColorTarget::Section { node_id, section_idx, axis: SectionColorAxis }` variant added to `color_picker/targets.rs` | ⏳ |
-| 7 | `picker_target_for` (`commands/color.rs:99-111`) emits `ColorTarget::Section` for `Section` selections | ⏳ |
-| 8 | `current_color_at` for `Section` reads the resolved per-section text colour (with cascade fallback to `node.style.text_color`) | ⏳ |
-| 9 | Standalone-mode wheel commit (`app/color_picker_flow/commit.rs`) honours `Section` target | ⏳ |
-| 10 | `apply_font_kv_to_selection` (`font.rs:478-486`) routes `Section` arm through `set_section_font_size` (Action-path lag fix) | ⏳ |
-| 11 | Tests added mirroring existing pinned shapes (see Verification) | ⏳ |
-| 12 | `./test.sh` clean | ⏳ |
-| 13 | `./test.sh --lint` clean | ⏳ |
+| 1 | `HasTextColor::set_text_color` honours `Section` → `set_section_text_color` | ✅ |
+| 2 | `HasBgColor::set_bg_color` returns `NotApplicable` for `Section` | ✅ |
+| 3 | `HasBorderColor::set_border_color` returns `NotApplicable` for `Section` | ✅ |
+| 4 | `AcceptsWheelColor::apply_wheel_color` routes `Section` through `set_section_text_color` for `Text` axis, `NotApplicable` for `Bg`/`Border` | ✅ |
+| 5 | `AcceptsFontFamily::set_font_family` honours `Section` → `set_section_font_family` (wires the dead setter) | ✅ |
+| 6 | `ColorTarget::Section { node_id, section_idx, axis: SectionColorAxis }` variant added to `color_picker/targets.rs` | ✅ |
+| 7 | `picker_target_for` (`commands/color.rs:99-111`) emits `ColorTarget::Section` for `Section` selections | ✅ |
+| 8 | `current_color_at` for `Section` reads the resolved per-section text colour (with cascade fallback to `node.style.text_color`) | ✅ |
+| 9 | Standalone-mode wheel commit (`app/color_picker_flow/commit.rs`) honours `Section` target | ✅ |
+| 10 | `apply_font_kv_to_selection` (`font.rs:478-486`) routes `Section` arm through `set_section_font_size` (Action-path lag fix) | ✅ |
+| 11 | Tests added mirroring existing pinned shapes (see Verification) | ✅ |
+| 12 | `./test.sh` clean (2004 tests pass + WASM `wasm32-unknown-unknown` type-check clean) | ✅ |
+| 13 | `./test.sh --lint` clean (clippy errors fixed; pre-existing fmt drift in `crates/maptool` and parts of `lib/baumhard` is advisory and untouched) | ✅ |
+| — | Out-of-scope cleanup unblocked by Item 13: derive `PartialEq` on `OrderedVec2` (`lib/baumhard/src/util/ordered_vec2.rs`); replace `<= 0` with `== 0` on two `u32` guards in `src/application/renderer/mod.rs:869,873`. Both pre-existed on `main`; flagged here for the audit trail. | ✅ |
 
 ## Context
 

@@ -69,7 +69,7 @@ pub(in crate::application::app) fn commit_color_picker(
     renderer: &mut Renderer,
     scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
 ) {
-    use crate::application::color_picker::{ColorPickerState, NodeColorAxis, PickerHandle};
+    use crate::application::color_picker::{ColorPickerState, NodeColorAxis, PickerHandle, SectionColorAxis};
     use baumhard::util::color::hsv_to_hex;
 
     let (handle, hue_deg, sat, val) = match state {
@@ -120,6 +120,15 @@ pub(in crate::application::app) fn commit_color_picker(
             }
             NodeColorAxis::Border => {
                 doc.set_node_border_color(&id, hex);
+            }
+        },
+        PickerHandle::Section {
+            node_id,
+            section_idx,
+            axis,
+        } => match axis {
+            SectionColorAxis::Text => {
+                doc.set_section_text_color(&node_id, section_idx, hex);
             }
         },
     }
@@ -189,6 +198,10 @@ pub(in crate::application::app) fn apply_picker_preview(
             PickerHandle::Node { .. } => {
                 // Node preview lives on the tree pipeline, not the
                 // scene pipeline — not yet wired. Commit-only for v1.
+            }
+            PickerHandle::Section { .. } => {
+                // Section text preview lives on the tree pipeline
+                // alongside Node — not yet wired. Commit-only.
             }
         }
     }

@@ -471,15 +471,23 @@ pub(crate) fn apply_font_kv_to_selection(
         _ => return false,
     };
     match doc.selection.clone() {
-        // A `Section` selection routes its parametric font edit
-        // through the whole-node setter for now — section-level
-        // size overrides are a future verb syntax (`font size=N
-        // section=K`).
-        SelectionState::Single(id) | SelectionState::Section(SectionSel { node_id: id, .. }) => {
+        // Whole-node: writes every section's runs.
+        SelectionState::Single(id) => {
             // Nodes only accept `size`; `min` / `max` are
             // NotApplicable. Mirror the verb's behaviour.
             if size.is_some() {
                 doc.set_node_font_size(&id, pt)
+            } else {
+                false
+            }
+        }
+        // Section: route through `set_section_font_size` so the
+        // Action path (keybinds / palette) matches the verb path
+        // (`font size=N section=K`) — only the targeted section's
+        // runs grow, siblings stay put.
+        SelectionState::Section(SectionSel { node_id, section_idx }) => {
+            if size.is_some() {
+                doc.set_section_font_size(&node_id, section_idx, pt)
             } else {
                 false
             }
@@ -991,6 +999,86 @@ mod tests {
         assert!(
             node.sections[1].text_runs.iter().all(|r| r.size_pt == 22),
             "section 1 must receive the new size"
+        );
+    }
+
+    /// Build a node with two sections, each pinned to a known
+    /// `font` and `size_pt` so a per-section write is observable.
+    fn doc_with_two_sections_for_font(font: &str, size: u32) -> crate::application::document::MindMapDocument {
+        use baumhard::mindmap::model::MindSection;
+        let mut doc = fixture_doc();
+        let node = doc.mindmap.nodes.get_mut("0").unwrap();
+        node.sections
+            .push(MindSection::new_default("second".into(), Vec::new()));
+        for section in node.sections.iter_mut() {
+            section.text_runs.clear();
+            section.text_runs.push(baumhard::mindmap::model::TextRun {
+                start: 0,
+                end: section.text.chars().count().max(1),
+                bold: false,
+                italic: false,
+                underline: false,
+                font: font.into(),
+                size_pt: size,
+                color: "#ffffff".into(),
+                hyperlink: None,
+            });
+        }
+        doc
+    }
+
+    /// `font set <family>` with a `SelectionState::Section` (no
+    /// explicit `section=K` kv) routes through the
+    /// `AcceptsFontFamily` trait arm to `set_section_font_family`
+    /// — only the targeted section's runs change, siblings stay
+    /// untouched. Pre-Tier-2A this collapsed to whole-node and
+    /// `set_section_font_family` was dead code. Pins Item 5 of
+    /// `SECTION_INTEGRATION_PLAN.md`.
+    #[test]
+    fn font_family_section_collapse_writes_only_section() {
+        use crate::application::document::SectionSel;
+        let family = first_loaded_family();
+        let mut doc = doc_with_two_sections_for_font("LiberationSans", 14);
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: "0".into(),
+            section_idx: 1,
+        });
+        assert_exec_ok(run(&format!("font set {}", family), &mut doc));
+        let node = doc.mindmap.nodes.get("0").unwrap();
+        assert!(
+            node.sections[0].text_runs.iter().all(|r| r.font == "LiberationSans"),
+            "section 0 (sibling) must NOT change family"
+        );
+        assert!(
+            node.sections[1].text_runs.iter().all(|r| r.font == family),
+            "section 1 (selected) must receive the new family"
+        );
+    }
+
+    /// `apply_font_kv_to_selection("size", N)` (the parametric
+    /// Action path used by keybinds and palette entries) with a
+    /// `SelectionState::Section` routes through
+    /// `set_section_font_size` so it matches the verb path's
+    /// per-section behaviour. Pre-Tier-2A this Action arm
+    /// collapsed to whole-node, lagging behind the verb. Pins
+    /// Item 10.
+    #[test]
+    fn font_size_action_section_writes_through_section_setter() {
+        use crate::application::document::SectionSel;
+        let mut doc = doc_with_two_sections_for_font("LiberationSans", 14);
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: "0".into(),
+            section_idx: 1,
+        });
+        assert!(super::apply_font_kv_to_selection(&mut doc, "size", 22.0));
+        let node = doc.mindmap.nodes.get("0").unwrap();
+        assert!(
+            node.sections[0].text_runs.iter().all(|r| r.size_pt == 14),
+            "section 0 (sibling) must NOT change size"
+        );
+        assert!(
+            node.sections[1].text_runs.iter().all(|r| r.size_pt == 22),
+            "section 1 (selected) must receive the new size"
         );
     }
 }

@@ -272,5 +272,9 @@ pub(in crate::application::app) fn seed_initial_preview(
             // and lets the user pick + commit; it just doesn't
             // hover-preview on the underlying node.
         }
+        PickerHandle::Section { .. } => {
+            // Section text preview not plumbed through the scene
+            // builder either — commit-only, same shape as Node.
+        }
     }
 }

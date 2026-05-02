@@ -13,7 +13,7 @@
 //! current selection.
 
 use super::Command;
-use crate::application::color_picker::{ColorTarget, NodeColorAxis};
+use crate::application::color_picker::{ColorTarget, NodeColorAxis, SectionColorAxis};
 use crate::application::console::completion::{
     kv_key_completions_with_hints, prefix_filter, Completion, CompletionContext, CompletionState,
 };
@@ -73,51 +73,80 @@ fn kv_hint(key: &str) -> Option<&'static str> {
     }
 }
 
+/// Outcome of resolving a positional `color` verb against the
+/// current selection. Distinguishes "open the picker on this
+/// target" from "the verb doesn't apply to this selection shape"
+/// (descriptive message) from "no selection / unknown verb" (fall
+/// through to the generic error). Lets `bg`/`border` on a section
+/// surface a clearer reason than the generic fallback.
+enum PickerTargetOutcome {
+    Open(ColorTarget),
+    NotApplicable(String),
+    Unknown,
+}
+
 /// Map a bare positional verb (`pick`, `bg`, `text`, `border`) to a
-/// concrete `ColorTarget` based on the current selection. Returns
-/// `None` if the combination isn't applicable — e.g. `color text` on
-/// a portal (portals have no text axis), or any verb with no
-/// selection.
+/// concrete `ColorTarget` based on the current selection.
 ///
 /// Node targets carry the axis directly. Edge / portal targets
 /// collapse axis into their one color field: `bg`/`border` on an
 /// edge both resolve to the edge's line color; `bg` on a portal
-/// resolves to the portal's fill.
-fn picker_target_for(verb: &str, selection: &SelectionState) -> Option<ColorTarget> {
+/// resolves to the portal's fill. Section targets honour the `text`
+/// axis and report NotApplicable for `bg` / `border` (sections have
+/// no chrome by spec — see `format/sections.md`).
+fn picker_target_for(verb: &str, selection: &SelectionState) -> PickerTargetOutcome {
     let axis = match verb {
         "bg" => Some(NodeColorAxis::Bg),
         "text" => Some(NodeColorAxis::Text),
         "border" => Some(NodeColorAxis::Border),
         "pick" => None, // axis-agnostic legacy flow
-        _ => return None,
+        _ => return PickerTargetOutcome::Unknown,
     };
     match selection {
-        // A section selection collapses through to its owning
-        // node: today's color picker is whole-node — bg / text /
-        // border are all node-level fields. Per-section text
-        // colour overrides arrive in a follow-up.
-        SelectionState::Single(id) | SelectionState::Section(SectionSel { node_id: id, .. }) => {
-            match axis {
-                Some(a) => Some(ColorTarget::Node {
-                    id: id.clone(),
-                    axis: a,
-                }),
-                // `color pick` on a node defaults to bg.
-                None => Some(ColorTarget::Node {
-                    id: id.clone(),
-                    axis: NodeColorAxis::Bg,
-                }),
-            }
-        }
+        SelectionState::Single(id) => match axis {
+            Some(a) => PickerTargetOutcome::Open(ColorTarget::Node {
+                id: id.clone(),
+                axis: a,
+            }),
+            // `color pick` on a node defaults to bg.
+            None => PickerTargetOutcome::Open(ColorTarget::Node {
+                id: id.clone(),
+                axis: NodeColorAxis::Bg,
+            }),
+        },
+        // Section selection: route the picker to the targeted
+        // section so commit lands on `set_section_text_color`,
+        // leaving sibling sections untouched. `bg`/`border` have
+        // no section-level fields (matches the kv-form
+        // `apply_section_colours` arm below) — surface a clear
+        // NotApplicable message rather than collapsing to the
+        // owning node, which would silently broaden the user's
+        // intent.
+        SelectionState::Section(SectionSel { node_id, section_idx }) => match axis {
+            Some(NodeColorAxis::Text) | None => PickerTargetOutcome::Open(ColorTarget::Section {
+                node_id: node_id.clone(),
+                section_idx: *section_idx,
+                axis: SectionColorAxis::Text,
+            }),
+            Some(NodeColorAxis::Bg) => PickerTargetOutcome::NotApplicable(
+                "color bg: not applicable to a section (section-level chrome doesn't exist)".to_string(),
+            ),
+            Some(NodeColorAxis::Border) => PickerTargetOutcome::NotApplicable(
+                "color border: not applicable to a section (section-level chrome doesn't exist)"
+                    .to_string(),
+            ),
+        },
         SelectionState::Multi(ids) => {
             // The picker is single-target; pick the first node in
             // the multi-selection. Fanout through the picker is
             // a future addition.
-            let id = ids.first()?.clone();
-            Some(ColorTarget::Node {
-                id,
-                axis: axis.unwrap_or(NodeColorAxis::Bg),
-            })
+            match ids.first() {
+                Some(id) => PickerTargetOutcome::Open(ColorTarget::Node {
+                    id: id.clone(),
+                    axis: axis.unwrap_or(NodeColorAxis::Bg),
+                }),
+                None => PickerTargetOutcome::Unknown,
+            }
         }
         SelectionState::Edge(er) => {
             // Edges (line-mode or portal-mode) have one color
@@ -125,7 +154,7 @@ fn picker_target_for(verb: &str, selection: &SelectionState) -> Option<ColorTarg
             // maps to it (edge label + line share `MindEdge.color`),
             // and for portal-mode edges `bg` is accepted as an
             // alias because "fill" reads more natural there.
-            Some(ColorTarget::Edge(er.clone()))
+            PickerTargetOutcome::Open(ColorTarget::Edge(er.clone()))
         }
         SelectionState::PortalLabel(s) | SelectionState::PortalText(s) => {
             // Portal icon or portal text — both share the same
@@ -137,15 +166,15 @@ fn picker_target_for(verb: &str, selection: &SelectionState) -> Option<ColorTarg
             // keeps the picker target resolution shape identical
             // to the `Edge` branch; per-variant routing lives in
             // the commit path.
-            Some(ColorTarget::Edge(s.edge_ref()))
+            PickerTargetOutcome::Open(ColorTarget::Edge(s.edge_ref()))
         }
         SelectionState::EdgeLabel(s) => {
             // Line-mode label: same owning-edge shape as `Edge`;
             // the commit path discriminates between edge-body and
             // label color writes via the active selection variant.
-            Some(ColorTarget::Edge(s.edge_ref.clone()))
+            PickerTargetOutcome::Open(ColorTarget::Edge(s.edge_ref.clone()))
         }
-        SelectionState::None => None,
+        SelectionState::None => PickerTargetOutcome::Unknown,
     }
 }
 
@@ -174,10 +203,16 @@ fn execute_color(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                 _ => return ExecResult::err("usage: color picker on | color picker off"),
             }
         }
-        if let Some(target) = picker_target_for(verb, &eff.document.selection) {
-            eff.open_color_picker = Some(target);
-            eff.close_console = true;
-            return ExecResult::ok_empty();
+        match picker_target_for(verb, &eff.document.selection) {
+            PickerTargetOutcome::Open(target) => {
+                eff.open_color_picker = Some(target);
+                eff.close_console = true;
+                return ExecResult::ok_empty();
+            }
+            PickerTargetOutcome::NotApplicable(msg) => {
+                return ExecResult::err(msg);
+            }
+            PickerTargetOutcome::Unknown => {}
         }
         if matches!(verb, "pick" | "bg" | "text" | "border") {
             return ExecResult::err(format!("color {}: nothing to pick for this selection", verb));
@@ -349,6 +384,7 @@ pub(super) fn finalize_report(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::console::parser::{parse, ParseResult};
     use crate::application::document::tests_common::{first_testament_node_id, load_test_doc};
 
     #[test]
@@ -439,5 +475,182 @@ mod tests {
             node.sections[1].text_runs.iter().all(|r| r.color == "#ff0000"),
             "section 1 must receive the new colour"
         );
+    }
+
+    /// Build a node with two sections (each with one run pinned to
+    /// `#aaaaaa`, matching the node's `style.text_color` default so
+    /// the cascade predicate inside `set_section_text_color` finds
+    /// runs to rewrite). Returns `(doc, node_id)`. Mirrors the
+    /// scaffolding in `color_text_section_kv_targets_specific_section`.
+    fn doc_with_two_sections() -> (crate::application::document::MindMapDocument, String) {
+        use baumhard::mindmap::model::MindSection;
+        let mut doc = load_test_doc();
+        let id = first_testament_node_id(&doc);
+        {
+            let node = doc.mindmap.nodes.get_mut(&id).unwrap();
+            node.sections
+                .push(MindSection::new_default("second".into(), Vec::new()));
+            node.style.text_color = "#aaaaaa".into();
+            for section in node.sections.iter_mut() {
+                section.text_runs.clear();
+                section.text_runs.push(baumhard::mindmap::model::TextRun {
+                    start: 0,
+                    end: section.text.chars().count().max(1),
+                    bold: false,
+                    italic: false,
+                    underline: false,
+                    font: "LiberationSans".into(),
+                    size_pt: 14,
+                    color: "#aaaaaa".into(),
+                    hyperlink: None,
+                });
+            }
+        }
+        (doc, id)
+    }
+
+    /// `color text=#…` with a `SelectionState::Section` (no explicit
+    /// `section=K` kv) routes through the `HasTextColor` trait arm
+    /// to `set_section_text_color` — only the targeted section's
+    /// runs change, siblings stay untouched. Pre-Tier-2A this
+    /// collapsed to whole-node and silently broadened the user's
+    /// intent. Pins Item 1 of `SECTION_INTEGRATION_PLAN.md`.
+    #[test]
+    fn color_text_section_collapse_writes_only_section() {
+        use crate::application::console::tests::fixtures::{assert_exec_ok, run};
+        use crate::application::document::SectionSel;
+        let (mut doc, id) = doc_with_two_sections();
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id.clone(),
+            section_idx: 1,
+        });
+        assert_exec_ok(run("color text=#00ff00", &mut doc));
+        let node = doc.mindmap.nodes.get(&id).unwrap();
+        assert!(
+            node.sections[0].text_runs.iter().all(|r| r.color == "#aaaaaa"),
+            "section 0 (sibling) must NOT receive the colour change"
+        );
+        assert!(
+            node.sections[1].text_runs.iter().all(|r| r.color == "#00ff00"),
+            "section 1 (selected) must receive the new colour"
+        );
+    }
+
+    /// `color bg=#…` with a `SelectionState::Section` reports
+    /// NotApplicable rather than collapsing to the owning node's
+    /// `background_color`. Sections have no bg-fill chrome by spec
+    /// (`format/sections.md`). Pins Item 2.
+    #[test]
+    fn color_bg_section_returns_not_applicable() {
+        use crate::application::console::tests::fixtures::{join_lines, run};
+        use crate::application::document::SectionSel;
+        let (mut doc, id) = doc_with_two_sections();
+        let original_bg = doc.mindmap.nodes.get(&id).unwrap().style.background_color.clone();
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id.clone(),
+            section_idx: 1,
+        });
+        match run("color bg=#123456", &mut doc) {
+            ExecResult::Lines(msgs) => assert!(
+                join_lines(&msgs).contains("not applicable"),
+                "expected NotApplicable surface; got {:?}",
+                msgs
+            ),
+            ExecResult::Err(s) => assert!(s.contains("not applicable"), "got Err({:?})", s),
+            other => panic!("expected Lines / Err with 'not applicable', got {:?}", other),
+        }
+        assert_eq!(
+            doc.mindmap.nodes.get(&id).unwrap().style.background_color,
+            original_bg,
+            "node bg must NOT change when bg= targets a section selection"
+        );
+    }
+
+    /// Mirror of `color_bg_section_returns_not_applicable` for the
+    /// `border` axis — sections have no frame chrome either. Pins
+    /// Item 3.
+    #[test]
+    fn color_border_section_returns_not_applicable() {
+        use crate::application::console::tests::fixtures::{join_lines, run};
+        use crate::application::document::SectionSel;
+        let (mut doc, id) = doc_with_two_sections();
+        let original_frame = doc.mindmap.nodes.get(&id).unwrap().style.frame_color.clone();
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id.clone(),
+            section_idx: 1,
+        });
+        match run("color border=#abcdef", &mut doc) {
+            ExecResult::Lines(msgs) => assert!(
+                join_lines(&msgs).contains("not applicable"),
+                "expected NotApplicable surface; got {:?}",
+                msgs
+            ),
+            ExecResult::Err(s) => assert!(s.contains("not applicable"), "got Err({:?})", s),
+            other => panic!("expected Lines / Err with 'not applicable', got {:?}", other),
+        }
+        assert_eq!(
+            doc.mindmap.nodes.get(&id).unwrap().style.frame_color,
+            original_frame,
+            "node frame must NOT change when border= targets a section selection"
+        );
+    }
+
+    /// `color text` (no value) on a `SelectionState::Section` opens
+    /// the picker bound to a `ColorTarget::Section` — the picker's
+    /// commit then writes through `set_section_text_color`. Pins
+    /// Item 7 (text-axis branch).
+    #[test]
+    fn picker_target_for_section_text_emits_section_target() {
+        use crate::application::color_picker::{ColorTarget, SectionColorAxis};
+        use crate::application::document::SectionSel;
+        let (mut doc, id) = doc_with_two_sections();
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id.clone(),
+            section_idx: 1,
+        });
+        let (cmd, toks) = match parse("color text") {
+            ParseResult::Ok { cmd, args } => (cmd, args),
+            _ => panic!("parse failed"),
+        };
+        let mut eff = ConsoleEffects::new(&mut doc);
+        let _ = (cmd.execute)(&Args::new(&toks), &mut eff);
+        match eff.open_color_picker {
+            Some(ColorTarget::Section {
+                node_id,
+                section_idx,
+                axis,
+            }) => {
+                assert_eq!(node_id, id);
+                assert_eq!(section_idx, 1);
+                assert_eq!(axis, SectionColorAxis::Text);
+            }
+            other => panic!("expected ColorTarget::Section/Text, got {:?}", other),
+        }
+    }
+
+    /// `color bg` on a `SelectionState::Section` returns
+    /// NotApplicable with a descriptive message (no picker opens,
+    /// no silent collapse to the owning node's bg axis). Pins Item
+    /// 7 (bg/border-axis branch).
+    #[test]
+    fn picker_target_for_section_bg_returns_not_applicable_message() {
+        use crate::application::console::tests::fixtures::assert_exec_err_contains;
+        use crate::application::document::SectionSel;
+        let (mut doc, id) = doc_with_two_sections();
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id,
+            section_idx: 1,
+        });
+        let (cmd, toks) = match parse("color bg") {
+            ParseResult::Ok { cmd, args } => (cmd, args),
+            _ => panic!("parse failed"),
+        };
+        let mut eff = ConsoleEffects::new(&mut doc);
+        let result = (cmd.execute)(&Args::new(&toks), &mut eff);
+        assert!(
+            eff.open_color_picker.is_none(),
+            "no picker should open for bg axis on a section selection"
+        );
+        assert_exec_err_contains(result, "not applicable");
     }
 }

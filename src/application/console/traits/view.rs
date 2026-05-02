@@ -126,15 +126,15 @@ fn edge_color_as_override(c: &ColorValue) -> Option<String> {
 impl<'a> HasBgColor for TargetView<'a> {
     fn set_bg_color(&mut self, c: ColorValue) -> Outcome {
         match self {
-            // Background fill is node-level chrome; Section
-            // selection collapses to its owning node so a `bg=#fff`
-            // on a section paints the parent node's background.
-            // Per-section background fills aren't part of the data
-            // shape today; the named seam is documented in
-            // `format/sections.md`.
-            TargetView::Node { doc, id } | TargetView::Section { doc, id, .. } => {
+            // Background fill is node-level chrome.
+            TargetView::Node { doc, id } => {
                 Outcome::applied(doc.set_node_bg_color(id, color_as_string(&c, "#141414")))
             }
+            // Sections have no bg-fill chrome by spec
+            // (`format/sections.md`). Matches `commands/color.rs`
+            // where `color bg= section=K` already returns
+            // NotApplicable.
+            TargetView::Section { .. } => Outcome::NotApplicable,
             // Edges and all edge-sub-part selections have no
             // bg-fill concept — the body, label, icon, and text
             // each have one color, routed through `set_text_color`
@@ -154,14 +154,15 @@ impl<'a> HasTextColor for TargetView<'a> {
     fn set_text_color(&mut self, c: ColorValue) -> Outcome {
         match self {
             // Whole-node `text` color rewrites the node's default
-            // and every section's matching runs (see
-            // `set_node_text_color`). Section selection collapses
-            // here too — per-section colour overrides without
-            // touching siblings is a future verb (`color text=…
-            // section=K`).
-            TargetView::Node { doc, id } | TargetView::Section { doc, id, .. } => {
+            // and every section's matching runs.
+            TargetView::Node { doc, id } => {
                 Outcome::applied(doc.set_node_text_color(id, color_as_string(&c, "#ffffff")))
             }
+            // Section: per-section text colour override, leaves
+            // sibling sections untouched.
+            TargetView::Section { doc, id, section_idx } => Outcome::applied(
+                doc.set_section_text_color(id, *section_idx, color_as_string(&c, "#ffffff")),
+            ),
             // Edge body: the edge's one color field (line + any
             // text that inherits).
             TargetView::Edge { doc, er } => {
@@ -200,11 +201,13 @@ impl<'a> HasTextColor for TargetView<'a> {
 impl<'a> HasBorderColor for TargetView<'a> {
     fn set_border_color(&mut self, c: ColorValue) -> Outcome {
         match self {
-            // Frame/border is node-level chrome; Section
-            // selection collapses to its owning node.
-            TargetView::Node { doc, id } | TargetView::Section { doc, id, .. } => {
+            // Frame/border is node-level chrome.
+            TargetView::Node { doc, id } => {
                 Outcome::applied(doc.set_node_border_color(id, color_as_string(&c, "#ffffff")))
             }
+            // Sections have no frame/border chrome by spec
+            // (`format/sections.md`).
+            TargetView::Section { .. } => Outcome::NotApplicable,
             // `border` on any edge-adjacent selection is an alias
             // for `text` — each sub-part has one color channel
             // and the axis distinction doesn't apply. Routing
@@ -242,10 +245,13 @@ impl<'a> HasBorderColor for TargetView<'a> {
 impl<'a> AcceptsWheelColor for TargetView<'a> {
     fn apply_wheel_color(&mut self, c: ColorValue) -> Outcome {
         match self {
-            // Node + Section default: background fill on the
-            // owning node (whole-node bg; per-section bg is the
-            // named seam, not authored today).
-            TargetView::Node { .. } | TargetView::Section { .. } => self.set_bg_color(c),
+            // Node default: background fill.
+            TargetView::Node { .. } => self.set_bg_color(c),
+            // Section: text is the only colour axis a section has
+            // (no bg/border chrome — see `HasBgColor`/`HasBorderColor`
+            // arms above), so the undirected wheel commit routes
+            // through `set_text_color` → `set_section_text_color`.
+            TargetView::Section { .. } => self.set_text_color(c),
             // Every edge-adjacent selection routes the wheel
             // commit through `set_border_color`, which each
             // variant maps to its own one-channel color setter
@@ -261,12 +267,13 @@ impl<'a> AcceptsWheelColor for TargetView<'a> {
 impl<'a> AcceptsFontFamily for TargetView<'a> {
     fn set_font_family(&mut self, family: Option<&str>) -> Outcome {
         match self {
-            // Node / Section: writes every `TextRun.font` across
-            // every section. Per-section font override is a future
-            // verb; today the whole-node and section-targeted
-            // fonts share one setter.
-            TargetView::Node { doc, id } | TargetView::Section { doc, id, .. } => {
-                Outcome::applied(doc.set_node_font_family(id, family))
+            // Whole-node: writes every `TextRun.font` across every
+            // section.
+            TargetView::Node { doc, id } => Outcome::applied(doc.set_node_font_family(id, family)),
+            // Section: per-section font family override, leaves
+            // sibling sections' runs alone.
+            TargetView::Section { doc, id, section_idx } => {
+                Outcome::applied(doc.set_section_font_family(id, *section_idx, family))
             }
             // Edge body: `glyph_connection.font` override.
             TargetView::Edge { doc, er } => Outcome::applied(doc.set_edge_font_family(er, family)),

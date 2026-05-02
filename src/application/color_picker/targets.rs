@@ -22,6 +22,17 @@ pub enum NodeColorAxis {
     Border,
 }
 
+/// Which visual axis on a section the picker should write to. Today
+/// sections only have a text colour axis (no bg/border chrome by
+/// spec — see `format/sections.md` and the `HasBgColor` /
+/// `HasBorderColor` trait arms in `console/traits/view.rs`).
+/// Single-variant on purpose so adding `Bg` / `Border` later (only
+/// if the data shape changes) is a non-breaking extension.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SectionColorAxis {
+    Text,
+}
+
 /// Palette-to-picker handoff value. Carries an unresolved reference
 /// to the thing the picker is about to edit — the picker resolves
 /// this once at open time into a `PickerHandle` and then forgets the
@@ -29,7 +40,20 @@ pub enum NodeColorAxis {
 #[derive(Clone, Debug, PartialEq)]
 pub enum ColorTarget {
     Edge(EdgeRef),
-    Node { id: String, axis: NodeColorAxis },
+    Node {
+        id: String,
+        axis: NodeColorAxis,
+    },
+    /// One section of one node — picker writes through
+    /// `set_section_text_color` so sibling sections stay
+    /// untouched. Only emitted when the active selection is
+    /// `SelectionState::Section` and the verb's axis maps to
+    /// `SectionColorAxis::Text`.
+    Section {
+        node_id: String,
+        section_idx: usize,
+        axis: SectionColorAxis,
+    },
 }
 
 /// Resolved handle carried inside `ColorPickerState::Open`. For
@@ -39,7 +63,20 @@ pub enum ColorTarget {
 #[derive(Clone, Debug)]
 pub enum PickerHandle {
     Edge(usize),
-    Node { id: String, axis: NodeColorAxis },
+    Node {
+        id: String,
+        axis: NodeColorAxis,
+    },
+    /// Section handle — node id + section index + axis. The
+    /// resolve step verifies the node and the section index still
+    /// exist; the index is captured at open time and held until
+    /// commit (mirrors the Edge variant's stale-index defensive
+    /// pattern).
+    Section {
+        node_id: String,
+        section_idx: usize,
+        axis: SectionColorAxis,
+    },
 }
 
 impl PickerHandle {
@@ -51,6 +88,7 @@ impl PickerHandle {
         match self {
             PickerHandle::Edge(_) => "edge",
             PickerHandle::Node { .. } => "node",
+            PickerHandle::Section { .. } => "section",
         }
     }
 
@@ -58,17 +96,19 @@ impl PickerHandle {
         match self {
             PickerHandle::Edge(_) => TargetKind::Edge,
             PickerHandle::Node { .. } => TargetKind::Node,
+            PickerHandle::Section { .. } => TargetKind::Section,
         }
     }
 }
 
 /// Coarse target kind for legacy call-sites that only need to
-/// distinguish edges / nodes without caring about the concrete id
-/// or axis.
+/// distinguish edges / nodes / sections without caring about the
+/// concrete id or axis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TargetKind {
     Edge,
     Node,
+    Section,
 }
 
 impl TargetKind {
@@ -77,6 +117,7 @@ impl TargetKind {
         match self {
             TargetKind::Edge => "edge",
             TargetKind::Node => "node",
+            TargetKind::Section => "section",
         }
     }
 }
@@ -100,6 +141,28 @@ impl ColorTarget {
                 .nodes
                 .contains_key(&id)
                 .then_some(PickerHandle::Node { id, axis }),
+            ColorTarget::Section {
+                node_id,
+                section_idx,
+                axis,
+            } => {
+                // Verify the section index still resolves — a
+                // mutation between the open trigger and resolve
+                // could have shrunk `node.sections` below the
+                // captured index. Mirrors the Edge variant's
+                // stale-ref defensive check.
+                let exists = doc
+                    .mindmap
+                    .nodes
+                    .get(&node_id)
+                    .map(|n| section_idx < n.sections.len())
+                    .unwrap_or(false);
+                exists.then_some(PickerHandle::Section {
+                    node_id,
+                    section_idx,
+                    axis,
+                })
+            }
         }
     }
 }
@@ -126,6 +189,28 @@ pub fn current_color_at(doc: &MindMapDocument, handle: &PickerHandle) -> Option<
                 NodeColorAxis::Text => n.style.text_color.clone(),
                 NodeColorAxis::Border => n.style.frame_color.clone(),
             })
+        }
+        PickerHandle::Section {
+            node_id,
+            section_idx,
+            axis,
+        } => {
+            let n = doc.mindmap.nodes.get(node_id)?;
+            let section = n.sections.get(*section_idx)?;
+            // Cascade: if every run on the section already shares
+            // one colour, that's the section's effective colour;
+            // otherwise fall back to the node's `text_color`
+            // default (the cascade source `set_section_text_color`
+            // writes against on the write side).
+            let resolved = match axis {
+                SectionColorAxis::Text => section
+                    .text_runs
+                    .first()
+                    .filter(|first| section.text_runs.iter().all(|r| r.color == first.color))
+                    .map(|r| r.color.clone())
+                    .unwrap_or_else(|| n.style.text_color.clone()),
+            };
+            Some(resolved)
         }
     }
 }
