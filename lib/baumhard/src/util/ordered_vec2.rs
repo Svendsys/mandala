@@ -18,16 +18,10 @@ use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
 /// `Hash` / `Eq` because `f32` is not totally-ordered. Arithmetic ops
 /// are component-wise; no NaN handling beyond what `OrderedFloat`
 /// provides.
-#[derive(Clone, Copy, Hash, Eq, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Hash, Eq, PartialEq, Debug, Serialize, Deserialize)]
 pub struct OrderedVec2 {
     pub x: OrderedFloat<f32>,
     pub y: OrderedFloat<f32>,
-}
-
-impl PartialEq for OrderedVec2 {
-    fn eq(&self, other: &Self) -> bool {
-        self.x == other.x && self.y == other.y
-    }
 }
 
 impl Default for OrderedVec2 {
