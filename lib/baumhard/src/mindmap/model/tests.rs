@@ -716,6 +716,139 @@ fn edge_locations_uses_bracket_index_stamp() {
     assert_eq!(stamps, vec!["edge[0]", "edge[1]", "edge[2]"]);
 }
 
+/// `MindSection` defaults round-trip cleanly on a freshly-built
+/// node. The default shape — `offset=(0,0)`, `size=None`,
+/// `channel=None`, no runs — must serialise to a minimal JSON
+/// form (only `text` is serialised) so the on-disk file stays
+/// tight for the migration-default case where every node ships
+/// exactly one default section. Pins the `skip_serializing_if`
+/// contracts on `text_runs`, `offset`, `size`, and `channel`.
+#[test]
+fn mindsection_defaults_serialize_minimally() {
+    let section = MindSection::new_default("hi".into(), Vec::new());
+    let json = serde_json::to_string(&section).expect("serialises");
+    // Only the `text` field should be present.
+    assert!(json.contains("\"text\":\"hi\""), "json: {json}");
+    assert!(!json.contains("text_runs"), "empty runs must not serialise");
+    assert!(!json.contains("offset"), "default offset must not serialise");
+    assert!(!json.contains("\"size\""), "None size must not serialise");
+    assert!(!json.contains("channel"), "default channel must not serialise");
+    assert!(
+        !json.contains("trigger_bindings"),
+        "empty trigger_bindings must not serialise"
+    );
+
+    // Round-trip: parse the minimal JSON back; defaults must hold.
+    let back: MindSection = serde_json::from_str("{\"text\":\"hi\"}").unwrap();
+    assert_eq!(back.text, "hi");
+    assert!(back.text_runs.is_empty());
+    assert_eq!(back.offset.x, 0.0);
+    assert_eq!(back.offset.y, 0.0);
+    assert!(back.size.is_none());
+    assert_eq!(back.channel, None);
+    assert!(back.trigger_bindings.is_empty());
+}
+
+/// `MindSection.text` carries `#[serde(default)]` so a hand-
+/// edited or partially-converted JSON file with `{"sections":
+/// [{}]}` parses cleanly with `text == ""` instead of failing
+/// the typed loader with "missing field `text`".
+#[test]
+fn mindsection_missing_text_field_defaults_to_empty() {
+    let s: MindSection = serde_json::from_str("{}").unwrap();
+    assert_eq!(s.text, "");
+    assert!(s.text_runs.is_empty());
+    assert_eq!(s.channel, None);
+    assert!(s.trigger_bindings.is_empty());
+}
+
+/// `MindSection.channel: Option<usize>` round-trip (Tier-E).
+/// Two cases that pre-`Option` were indistinguishable:
+///
+/// - `None` (the default; falls through to the section's index
+///   at tree-build time) skip-serializes — empty on disk.
+/// - `Some(0)` (explicit author override) **must** round-trip:
+///   the JSON carries `"channel": 0`, and parsing it back
+///   yields `Some(0)`, not `None`. Pre-`Option` the bare `usize`
+///   collapsed both cases to `0` and the tree builder silently
+///   substituted the section index for idx > 0.
+#[test]
+fn mindsection_channel_option_round_trip() {
+    // None ⇒ skip-serialize.
+    let none_section = MindSection::new_default("a".into(), Vec::new());
+    let none_json = serde_json::to_string(&none_section).unwrap();
+    assert!(!none_json.contains("channel"), "default channel must skip-serialize");
+    let parsed_none: MindSection = serde_json::from_str("{\"text\":\"a\"}").unwrap();
+    assert_eq!(parsed_none.channel, None, "absent field parses as None");
+
+    // Some(0) ⇒ serialize + round-trip preserves `Some(0)`.
+    let mut explicit_zero = MindSection::new_default("a".into(), Vec::new());
+    explicit_zero.channel = Some(0);
+    let zero_json = serde_json::to_string(&explicit_zero).unwrap();
+    assert!(
+        zero_json.contains("\"channel\":0"),
+        "explicit Some(0) must serialize: {zero_json}"
+    );
+    let parsed_zero: MindSection = serde_json::from_str(&zero_json).unwrap();
+    assert_eq!(
+        parsed_zero.channel,
+        Some(0),
+        "Some(0) must round-trip — pre-Option this collapsed to 0/None"
+    );
+
+    // Some(n) ⇒ standard round-trip.
+    let mut explicit_n = MindSection::new_default("a".into(), Vec::new());
+    explicit_n.channel = Some(7);
+    let n_json = serde_json::to_string(&explicit_n).unwrap();
+    let parsed_n: MindSection = serde_json::from_str(&n_json).unwrap();
+    assert_eq!(parsed_n.channel, Some(7));
+}
+
+/// `MindSection.trigger_bindings` is a reserved-but-not-yet-
+/// dispatched seam for per-section triggers. Authoring tools
+/// stamp it; the runtime ignores it today (whole-node bindings
+/// still live on `MindNode.trigger_bindings`). The field must
+/// round-trip through serde, and an empty bindings vec must not
+/// serialise (skip-empty contract for forward compatibility).
+#[test]
+fn mindsection_trigger_bindings_round_trip() {
+    use crate::mindmap::custom_mutation::{Trigger, TriggerBinding};
+    let section = MindSection {
+        text: "hi".into(),
+        text_runs: Vec::new(),
+        offset: Position::default(),
+        size: None,
+        channel: None,
+        trigger_bindings: vec![TriggerBinding {
+            trigger: Trigger::OnClick,
+            mutation_id: "m_focus".into(),
+            contexts: Vec::new(),
+        }],
+    };
+    let json = serde_json::to_string(&section).expect("serialises");
+    assert!(json.contains("trigger_bindings"));
+    assert!(json.contains("m_focus"));
+    let back: MindSection = serde_json::from_str(&json).expect("round-trips");
+    assert_eq!(back.trigger_bindings.len(), 1);
+    assert_eq!(back.trigger_bindings[0].mutation_id, "m_focus");
+}
+
+/// `MindNode.display_text` joins every section's text with `'\n'`
+/// — the legacy bridge for export / clipboard / copy paths that
+/// want one rendered string per node. Single-section nodes
+/// round-trip identically with the pre-section behaviour.
+#[test]
+fn mindnode_display_text_joins_sections() {
+    use crate::mindmap::test_helpers::synthetic_node_full;
+    let mut node = synthetic_node_full("n", None, 0.0, 0.0, 80.0, 40.0, false);
+    node.sections = vec![
+        MindSection::new_default("alpha".into(), Vec::new()),
+        MindSection::new_default("beta".into(), Vec::new()),
+        MindSection::new_default("gamma".into(), Vec::new()),
+    ];
+    assert_eq!(node.display_text(), "alpha\nbeta\ngamma");
+}
+
 /// Empty maps yield empty iterators — the no-op base case the
 /// checker call sites rely on (no location-stamp leakage when
 /// the map carries zero nodes / zero edges).

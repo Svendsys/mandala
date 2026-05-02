@@ -25,8 +25,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::mindmap::model::{
-    Canvas, GlyphConnectionConfig, MindEdge, MindMap, MindNode, NodeLayout, NodeStyle, Position, Size,
-    DISPLAY_MODE_PORTAL,
+    Canvas, GlyphConnectionConfig, MindEdge, MindMap, MindNode, MindSection, NodeLayout, NodeStyle, Position,
+    Size, DISPLAY_MODE_PORTAL,
 };
 
 /// Path to the canonical `maps/testament.mindmap.json` fixture
@@ -72,8 +72,7 @@ pub(crate) fn synthetic_node_full(
         parent_id: parent.map(|s| s.to_string()),
         position: Position { x, y },
         size: Size { width: w, height: h },
-        text: id.to_string(),
-        text_runs: vec![],
+        sections: vec![MindSection::new_default(id.to_string(), vec![])],
         style: NodeStyle {
             background_color: "#000".into(),
             frame_color: "#fff".into(),

@@ -80,10 +80,26 @@ pub struct CustomMutation {
     /// Whether this mutation persists to the model or is a visual toggle.
     #[serde(default)]
     pub behavior: MutationBehavior,
-    /// Reserved gate: when consumed, will filter the scope-collected
-    /// set by matching each node's `GfxElement` against the
-    /// predicate. Today round-trips through serde but
-    /// `apply_custom_mutation` ignores it.
+    /// Top-level filter gate. When `Some`, every candidate
+    /// element collected by `target_scope` is tested against the
+    /// predicate; mutations only land on elements that match.
+    /// Wired by the application's `apply_custom_mutation` →
+    /// `apply_to_tree` path (`src/application/document/custom.rs`).
+    ///
+    /// Common idioms:
+    ///
+    /// - `Predicate { fields: [(GfxElementField::Flag(Flag::SectionRoot),
+    ///   Comparator::Equals(false))], … }` — match elements with
+    ///   `SectionRoot` set; pairs with `target_scope: SelfOnly` to
+    ///   land mutations on every section but skip the chrome-only
+    ///   container.
+    /// - The negation form (`Comparator::Equals(true)`) matches
+    ///   elements with `SectionRoot` clear (the container + child
+    ///   mind-nodes).
+    /// - `Predicate::new()` (empty fields, `always_match=false`)
+    ///   matches nothing — a footgun. The apply path warns when a
+    ///   gate filters every candidate so authors notice the
+    ///   no-op rather than chase a missing visual change.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub predicate: Option<Predicate>,
     /// Optional canvas/document-level actions that fire alongside the
@@ -183,6 +199,17 @@ pub enum TargetScope {
     Parent,
     /// Apply to all siblings of the triggering node.
     Siblings,
+    /// Apply to every section of the triggering node — bypasses
+    /// the container fan-out so text / font / region mutations
+    /// land on the section-areas only. The structural counterpart
+    /// to the `GfxElementField::Flag(SectionRoot)` predicate
+    /// gate: `SectionsOnly` selects sections by tree shape,
+    /// the predicate selects them by element flag. Channel-space
+    /// disambiguation: `SectionsOnly` won't reach a child mind-
+    /// node that shares the section's channel (the predicate
+    /// alone cannot guarantee that on a triggering node whose
+    /// scope spreads beyond `SelfOnly`).
+    SectionsOnly,
 }
 
 /// An event condition that causes a CustomMutation to fire.
@@ -249,12 +276,38 @@ pub fn apply_mutations_to_element(
 /// walker path is phased in for size-aware mutations in a separate
 /// session.
 pub fn flat_mutations(mutator: &MutatorNode) -> Option<Vec<crate::gfx_structs::mutator::Mutation>> {
-    use crate::mutator_builder::{MutationListSrc, MutatorNode as N};
+    use crate::mutator_builder::{InstructionSpec, MutationListSrc, MutatorNode as N};
+    use crate::gfx_structs::predicate::Comparator;
     match mutator {
         N::Macro {
             mutations: MutationListSrc::Literal(list),
             ..
         } => Some(list.clone()),
+        // `Instruction(RepeatWhile(always_true))` wrappers
+        // (built by `scope::descendants` and the inner branch of
+        // `scope::self_and_descendants`) carry a child Macro
+        // with the actual mutations. The flat-apply path drives
+        // the iteration via `collect_affected_node_ids` so the
+        // wrapper's repeat-while semantics are redundant — we
+        // can extract the Macro's literal list directly. Only
+        // honour `always_true` predicates: a predicate-filtered
+        // wrapper would need walker-based evaluation, which the
+        // flat-apply path can't provide; falling through to
+        // `None` makes that case warn at the apply site.
+        N::Instruction {
+            instruction: InstructionSpec::RepeatWhileAlwaysTrue,
+            children,
+            ..
+        } => children.iter().find_map(flat_mutations),
+        N::Instruction {
+            instruction: InstructionSpec::RepeatWhile(p),
+            children,
+            ..
+        } if p.always_match
+            || p.fields.iter().all(|(_, c)| matches!(c, Comparator::Equals(_))) && p.fields.is_empty() =>
+        {
+            children.iter().find_map(flat_mutations)
+        }
         _ => None,
     }
 }
@@ -334,9 +387,33 @@ impl TargetScope {
     /// mutator pairs at apply time.
     pub fn covers_reach(&self, reach: MutatorReach) -> bool {
         match self {
-            TargetScope::SelfOnly | TargetScope::Parent => reach == MutatorReach::SelfOnly,
+            // Sections of the triggering node are children of the
+            // container in the arena; a `MutatorReach::SelfOnly`
+            // mutator is the right pairing — sections-only
+            // mutations don't recurse into child mind-nodes.
+            TargetScope::SelfOnly | TargetScope::Parent | TargetScope::SectionsOnly => {
+                reach == MutatorReach::SelfOnly
+            }
             TargetScope::Children | TargetScope::Siblings => reach <= MutatorReach::Children,
             TargetScope::Descendants | TargetScope::SelfAndDescendants => true,
         }
     }
 }
+
+// **Note on the predicate-gate / target_scope interaction.**
+// `covers_reach` checks the AST-vs-scope pairing only — it does
+// not consult `CustomMutation.predicate`. A predicate that
+// narrows the apply-time element set (e.g. a `Flag(SectionRoot)`
+// gate that lands the mutation only on sections) does NOT reduce
+// the undo-snapshot window: the snapshot still covers every
+// node in the `target_scope`-collected set, even though only a
+// subset of those nodes' elements actually mutated. This is by
+// design — the predicate-filtered fallout is *node-scoped*, not
+// *element-scoped*, and rebuilding the model from a whole-node
+// clone trivially restores any per-element subset that landed.
+// The over-clone is wasteful but never lossy.
+//
+// The reverse direction is the bug shape `covers_reach` does
+// catch: a `MutatorReach::Children` mutator paired with
+// `target_scope: SelfOnly` would recurse into descendants the
+// snapshot didn't capture, dropping their state on undo.

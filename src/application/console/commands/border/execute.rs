@@ -259,6 +259,9 @@ pub(crate) fn nodes_in_selection(sel: &SelectionState) -> Result<Vec<String>, Ex
     match sel {
         SelectionState::Single(id) => Ok(vec![id.clone()]),
         SelectionState::Multi(ids) => Ok(ids.clone()),
+        // Borders attach to the node, not the section — a section
+        // selection collapses to its owning node for border verbs.
+        SelectionState::Section(s) => Ok(vec![s.node_id.clone()]),
         SelectionState::None => Err(ExecResult::err("border: no selection (select a node first)")),
         SelectionState::Edge(_) => Err(ExecResult::err("border: not applicable to edges")),
         SelectionState::EdgeLabel(_) => Err(ExecResult::err("border: not applicable to edge labels")),

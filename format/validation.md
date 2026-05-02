@@ -135,7 +135,7 @@ ids @ 1.2.3: parent_id "1.0" does not match derived parent "1.2"
 references @ edge[0]: from_id "5.5" is not a node
 palettes @ 0: palette "sunset" is not defined in map.palettes
 enums @ 0: style.shape "oblong" is not a known shape
-text_runs @ 0: run[1] overlaps run[0] (start 3 < previous end 5)
+text_runs @ 0: section[0].run[1] overlaps previous run (start 3 < previous end 5)
 zoom_bounds @ edge[0]: min_zoom_to_render 2 > max_zoom_to_render 0.5
 ```
 

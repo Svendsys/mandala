@@ -62,6 +62,15 @@ Commands:
                                 Input and output paths may be the
                                 same file (the read completes
                                 before the write).
+  convert --sections <in.json> <out.json>
+                                Migrate a pre-section-refactor map
+                                whose nodes carry text / text_runs
+                                directly into the post-refactor shape
+                                where each node has a sections[] array.
+                                Each legacy node folds into a single
+                                default section; idempotent on already-
+                                migrated maps. Input and output paths
+                                may be the same file.
   verify <map.json>             Check the file against the format's
                                 structural invariants (parent_id
                                 consistency, Dewey IDs, edge and portal
@@ -141,18 +150,31 @@ fn run(args: &[String]) -> Result<(), CliError> {
             let regex = build_regex(parsed.pattern, parsed.case_insensitive)
                 .map_err(|msg| CliError::Usage(format!("apply: {msg}")))?;
             let mut map = load_map(parsed.map_path)?;
-            let ids = select_nodes(&map, &regex, parsed.target_notes);
-            if ids.is_empty() {
+            let targets = select_section_targets(&map, &regex, parsed.target_notes);
+            if targets.is_empty() {
                 return Err(CliError::NotFound(format!(
                     "no nodes matched: {}",
                     parsed.pattern
                 )));
             }
-            let changed = apply_command(&mut map, &ids, parsed.target_notes, parsed.cmd, parsed.cmd_args)?;
+            let changed = apply_command(
+                &mut map,
+                &targets,
+                parsed.target_notes,
+                parsed.cmd,
+                parsed.cmd_args,
+            )?;
             if parsed.dry_run {
-                eprintln!("dry-run: would modify {} node(s):", changed.len());
-                for id in &changed {
-                    eprintln!("  {id}");
+                eprintln!(
+                    "dry-run: would modify {} target(s):",
+                    changed.len()
+                );
+                for (id, section_idx) in &changed {
+                    if parsed.target_notes {
+                        eprintln!("  {id} (notes)");
+                    } else {
+                        eprintln!("  {id}[{section_idx}]");
+                    }
                 }
             } else if !changed.is_empty() {
                 save_map(Path::new(parsed.map_path), &map)?;
@@ -194,8 +216,17 @@ fn run(args: &[String]) -> Result<(), CliError> {
                     .ok_or_else(|| CliError::Usage("convert: missing <out.json>".into()))?;
                 convert::convert_portals(Path::new(input), Path::new(output)).map_err(CliError::Io)
             }
+            Some("--sections") => {
+                let input = args
+                    .get(2)
+                    .ok_or_else(|| CliError::Usage("convert: missing <in.json>".into()))?;
+                let output = args
+                    .get(3)
+                    .ok_or_else(|| CliError::Usage("convert: missing <out.json>".into()))?;
+                convert::convert_sections(Path::new(input), Path::new(output)).map_err(CliError::Io)
+            }
             _ => Err(CliError::Usage(
-                "convert: expected --legacy or --portals flag".into(),
+                "convert: expected --legacy, --portals, or --sections flag".into(),
             )),
         },
         "verify" => {
@@ -231,8 +262,12 @@ fn load_map(path: &str) -> Result<MindMap, CliError> {
     load_from_file(Path::new(path)).map_err(CliError::Io)
 }
 
-fn show_node<'a>(map: &'a MindMap, node_id: &str) -> Option<&'a str> {
-    map.nodes.get(node_id).map(|n| n.text.as_str())
+/// Render the joined text content of a node — every section's
+/// text in order, separated by `'\n'`. Single-section nodes (the
+/// post-section-migration default) round-trip identically with
+/// the pre-section behaviour.
+fn show_node(map: &MindMap, node_id: &str) -> Option<String> {
+    map.nodes.get(node_id).map(|n| n.display_text())
 }
 
 /// Parsed positional args for `grep`.
@@ -277,16 +312,19 @@ fn build_regex(pattern: &str, case_insensitive: bool) -> Result<Regex, String> {
         .map_err(|e| format!("invalid regex {pattern:?}: {e}"))
 }
 
-/// Return `(id, line)` for every line of `text` or `notes` matching
-/// `regex`. Sort: numeric-id-first when both parse as `u64`,
-/// lexicographic otherwise; stable, so `text` lines precede `notes`
-/// lines for a single node.
+/// Return `(id, line)` for every line of `text` (across every
+/// section) or `notes` matching `regex`. Sort: numeric-id-first
+/// when both parse as `u64`, lexicographic otherwise; stable, so
+/// section text lines precede `notes` lines for a single node and
+/// section ordering is preserved within a node.
 fn grep_nodes<'a>(map: &'a MindMap, regex: &Regex) -> Vec<(&'a str, &'a str)> {
     let mut out: Vec<(&'a str, &'a str)> = Vec::new();
     for node in map.nodes.values() {
-        for line in node.text.lines() {
-            if regex.is_match(line) {
-                out.push((node.id.as_str(), line));
+        for section in &node.sections {
+            for line in section.text.lines() {
+                if regex.is_match(line) {
+                    out.push((node.id.as_str(), line));
+                }
             }
         }
         for line in node.notes.lines() {
@@ -368,63 +406,106 @@ fn parse_apply_args(args: &[String]) -> Result<ApplyArgs<'_>, CliError> {
     })
 }
 
-/// Sorted IDs of nodes whose `notes` (when `target_notes`) or `text`
-/// has any line matching `regex`. Sort matches `grep_nodes`.
-fn select_nodes(map: &MindMap, regex: &Regex, target_notes: bool) -> Vec<String> {
-    let mut ids: Vec<String> = map
-        .nodes
-        .values()
-        .filter(|n| {
-            let target = if target_notes { &n.notes } else { &n.text };
-            target.lines().any(|line| regex.is_match(line))
-        })
-        .map(|n| n.id.clone())
-        .collect();
-    ids.sort_by(|a, b| match (a.parse::<u64>(), b.parse::<u64>()) {
-        (Ok(x), Ok(y)) => x.cmp(&y),
-        _ => a.cmp(b),
+/// Sorted `(node_id, section_idx)` tuples for sections whose text
+/// matches `regex` (when `target_notes` is false), or `(node_id, 0)`
+/// for nodes whose `notes` match. Section-aware: a multi-section
+/// node where only `sections[1]` matches yields `(id, 1)` so the
+/// apply path writes to that section, not the first one. Pre-fix
+/// the function returned only `node_id`s and `apply_command`
+/// hard-coded `sections[0]` — silent data corruption when a
+/// multi-section node had a match outside section 0.
+///
+/// `notes` matches collapse to `(id, 0)` since the section index
+/// is irrelevant to a notes-targeted apply; the apply path
+/// branches on `target_notes` and ignores the index in that case.
+///
+/// Sort: numeric on `node_id` then `section_idx` for stable
+/// output across runs.
+fn select_section_targets(
+    map: &MindMap,
+    regex: &Regex,
+    target_notes: bool,
+) -> Vec<(String, usize)> {
+    let mut targets: Vec<(String, usize)> = Vec::new();
+    for node in map.nodes.values() {
+        if target_notes {
+            if node.notes.lines().any(|line| regex.is_match(line)) {
+                targets.push((node.id.clone(), 0));
+            }
+        } else {
+            for (idx, section) in node.sections.iter().enumerate() {
+                if section.text.lines().any(|line| regex.is_match(line)) {
+                    targets.push((node.id.clone(), idx));
+                }
+            }
+        }
+    }
+    targets.sort_by(|a, b| match (a.0.parse::<u64>(), b.0.parse::<u64>()) {
+        (Ok(x), Ok(y)) => x.cmp(&y).then(a.1.cmp(&b.1)),
+        _ => a.0.cmp(&b.0).then(a.1.cmp(&b.1)),
     });
+    targets
+}
+
+/// Sorted unique node IDs from a list of `(node_id, section_idx)`
+/// targets. Currently only used by tests to assert the node-level
+/// set without restating the section_idx (the production paths in
+/// `run` use the full target list).
+#[cfg(test)]
+fn unique_node_ids(targets: &[(String, usize)]) -> Vec<String> {
+    let mut ids: Vec<String> = targets.iter().map(|(id, _)| id.clone()).collect();
+    ids.dedup();
     ids
 }
 
-/// For each node in `ids`, pipe its target field through `cmd` and
-/// replace the field with the command's stdout. When `target_notes`
-/// is false and a node's `text` actually changed, that node's
-/// `text_runs` are cleared — byte offsets would otherwise point into
-/// stale positions. When `target_notes` is true, `text_runs` are left
-/// alone (notes don't have runs).
+/// For each `(node_id, section_idx)` target in `targets`, pipe the
+/// target field through `cmd` and replace the field with the
+/// command's stdout. When `target_notes` is false, the apply path
+/// operates on the **matched section** (not hard-coded
+/// `sections[0]` as before): its text is the input, the result
+/// is written back to that section's `text`, and the section's
+/// `text_runs` are cleared (byte offsets would otherwise point
+/// into stale positions). Multi-section nodes route correctly to
+/// the section the regex matched.
 ///
-/// Returns the list of IDs whose target field was actually modified,
-/// preserving the input order. Aborts on the first subprocess failure
-/// without touching subsequent nodes — callers that then choose not to
-/// save get all-or-nothing semantics.
+/// When `target_notes` is true, `notes` is the target field and
+/// section state is left alone; `section_idx` is ignored.
+///
+/// Returns the list of `(id, section_idx)` whose target field was
+/// actually modified, preserving the input order. Aborts on the
+/// first subprocess failure without touching subsequent targets —
+/// callers that then choose not to save get all-or-nothing
+/// semantics.
 fn apply_command(
     map: &mut MindMap,
-    ids: &[String],
+    targets: &[(String, usize)],
     target_notes: bool,
     cmd: &str,
     cmd_args: &[String],
-) -> Result<Vec<String>, CliError> {
-    let mut changed: Vec<String> = Vec::new();
-    for id in ids {
+) -> Result<Vec<(String, usize)>, CliError> {
+    let mut changed: Vec<(String, usize)> = Vec::new();
+    for (id, section_idx) in targets {
         let node = map
             .nodes
             .get_mut(id)
-            .expect("id came from select_nodes, must exist in map");
+            .expect("id came from select_section_targets, must exist in map");
         let input = if target_notes {
             node.notes.clone()
         } else {
-            node.text.clone()
+            node.sections
+                .get(*section_idx)
+                .map(|s| s.text.clone())
+                .unwrap_or_default()
         };
         let new_value = run_pipe(cmd, cmd_args, &input)?;
         if new_value != input {
             if target_notes {
                 node.notes = new_value;
-            } else {
-                node.text = new_value;
-                node.text_runs.clear();
+            } else if let Some(section) = node.sections.get_mut(*section_idx) {
+                section.text = new_value;
+                section.text_runs.clear();
             }
-            changed.push(id.clone());
+            changed.push((id.clone(), *section_idx));
         }
     }
     Ok(changed)
@@ -548,7 +629,7 @@ mod tests {
     #[test]
     fn show_returns_text_for_known_id() {
         let map = testament();
-        assert_eq!(show_node(&map, "0"), Some("Lord God"));
+        assert_eq!(show_node(&map, "0").as_deref(), Some("Lord God"));
     }
 
     #[test]
@@ -633,7 +714,8 @@ mod tests {
     fn grep_returns_text_lines_before_notes_lines() {
         let mut map = testament();
         let node = map.nodes.get_mut("0").unwrap();
-        node.text = "MARK_A\nMARK_B".into();
+        node.sections[0].text = "MARK_A\nMARK_B".into();
+        node.sections[0].text_runs.clear();
         node.notes = "MARK_C".into();
 
         let hits = grep_nodes(&map, &rx("^MARK_", false));
@@ -834,41 +916,65 @@ mod tests {
         }
     }
 
-    // --- select_nodes -----------------------------------------------
+    // --- select_section_targets ------------------------------------
 
     #[test]
-    fn select_nodes_text_field_matches_hello() {
+    fn select_section_targets_text_field_matches_hello() {
         let map = apply_fixture();
-        let ids = select_nodes(&map, &rx("hello", false), false);
-        assert_eq!(ids, vec!["0".to_string(), "0.2".to_string()]);
+        let targets = select_section_targets(&map, &rx("hello", false), false);
+        assert_eq!(
+            unique_node_ids(&targets),
+            vec!["0".to_string(), "0.2".to_string()]
+        );
     }
 
     #[test]
-    fn select_nodes_text_field_ignores_notes() {
+    fn select_section_targets_text_field_ignores_notes() {
         let map = apply_fixture();
         // NOTES_TOKEN only appears in n2's notes field, not any text.
-        let ids = select_nodes(&map, &rx("NOTES_TOKEN", false), false);
-        assert!(ids.is_empty(), "text-target should ignore notes: {ids:?}");
+        let targets = select_section_targets(&map, &rx("NOTES_TOKEN", false), false);
+        assert!(targets.is_empty(), "text-target should ignore notes: {targets:?}");
     }
 
     #[test]
-    fn select_nodes_notes_field_matches_only_notes() {
+    fn select_section_targets_notes_field_matches_only_notes() {
         let map = apply_fixture();
-        let ids = select_nodes(&map, &rx("NOTES_TOKEN", false), true);
-        assert_eq!(ids, vec!["0.0".to_string()]);
+        let targets = select_section_targets(&map, &rx("NOTES_TOKEN", false), true);
+        assert_eq!(targets, vec![("0.0".to_string(), 0)]);
     }
 
     #[test]
-    fn select_nodes_case_insensitive() {
+    fn select_section_targets_case_insensitive() {
         let map = apply_fixture();
-        let ids = select_nodes(&map, &rx("HELLO", true), false);
-        assert_eq!(ids, vec!["0".to_string(), "0.2".to_string()]);
+        let targets = select_section_targets(&map, &rx("HELLO", true), false);
+        assert_eq!(
+            unique_node_ids(&targets),
+            vec!["0".to_string(), "0.2".to_string()]
+        );
     }
 
     #[test]
-    fn select_nodes_no_match_empty() {
+    fn select_section_targets_no_match_empty() {
         let map = apply_fixture();
-        assert!(select_nodes(&map, &rx("xyzzy_absent", false), false).is_empty());
+        assert!(select_section_targets(&map, &rx("xyzzy_absent", false), false).is_empty());
+    }
+
+    #[test]
+    fn select_section_targets_routes_to_matched_section_index() {
+        // Pre-fix `apply` always wrote `sections[0]` regardless of
+        // which section matched — silent data corruption on
+        // multi-section nodes. Pin the section_idx propagation:
+        // a node with `sections[0]="alpha"`, `sections[1]="match"`
+        // surfaces `(id, 1)`, not `(id, 0)`.
+        use baumhard::mindmap::model::MindSection;
+        let mut map = apply_fixture();
+        map.nodes
+            .get_mut("0.1")
+            .unwrap()
+            .sections
+            .push(MindSection::new_default("hello-from-section-1".into(), Vec::new()));
+        let targets = select_section_targets(&map, &rx("hello-from-section-1", false), false);
+        assert_eq!(targets, vec![("0.1".to_string(), 1)]);
     }
 
     // --- run_pipe ---------------------------------------------------
@@ -921,55 +1027,74 @@ mod tests {
     #[test]
     fn apply_command_text_updates_and_clears_runs() {
         let mut map = apply_fixture();
-        let ids = vec!["0".to_string(), "0.2".to_string()];
-        let changed = apply_command(&mut map, &ids, false, "tr", &["a-z".into(), "A-Z".into()]).unwrap();
-        assert_eq!(changed, vec!["0".to_string(), "0.2".to_string()]);
-        assert_eq!(map.nodes["0"].text, "HELLO WORLD");
+        let targets = vec![("0".to_string(), 0), ("0.2".to_string(), 0)];
+        let changed = apply_command(&mut map, &targets, false, "tr", &["a-z".into(), "A-Z".into()]).unwrap();
+        assert_eq!(changed, vec![("0".to_string(), 0), ("0.2".to_string(), 0)]);
+        assert_eq!(map.nodes["0"].sections[0].text, "HELLO WORLD");
         assert!(
-            map.nodes["0"].text_runs.is_empty(),
+            map.nodes["0"].sections[0].text_runs.is_empty(),
             "text_runs should be cleared when text changes"
         );
-        assert_eq!(map.nodes["0.2"].text, "HELLO AGAIN");
-        assert!(map.nodes["0.2"].text_runs.is_empty());
+        assert_eq!(map.nodes["0.2"].sections[0].text, "HELLO AGAIN");
+        assert!(map.nodes["0.2"].sections[0].text_runs.is_empty());
         // Untouched node keeps its runs.
-        assert_eq!(map.nodes["0.0"].text, "Alpha\nBeta\nGamma");
-        assert_eq!(map.nodes["0.0"].text_runs.len(), 1);
+        assert_eq!(map.nodes["0.0"].sections[0].text, "Alpha\nBeta\nGamma");
+        assert_eq!(map.nodes["0.0"].sections[0].text_runs.len(), 1);
+    }
+
+    #[test]
+    fn apply_command_writes_to_matched_section_not_section_zero() {
+        // Pre-fix the apply path hard-coded `sections[0]`. Pin the
+        // critical: a `(node_id, 1)` target writes to section 1,
+        // leaving section 0 untouched.
+        use baumhard::mindmap::model::MindSection;
+        let mut map = apply_fixture();
+        map.nodes
+            .get_mut("0.1")
+            .unwrap()
+            .sections
+            .push(MindSection::new_default("section-one-text".into(), Vec::new()));
+        let targets = vec![("0.1".to_string(), 1)];
+        let changed = apply_command(&mut map, &targets, false, "tr", &["a-z".into(), "A-Z".into()]).unwrap();
+        assert_eq!(changed, vec![("0.1".to_string(), 1)]);
+        assert_eq!(
+            map.nodes["0.1"].sections[0].text, "unchanged",
+            "section 0 must not be touched when target is section 1"
+        );
+        assert_eq!(map.nodes["0.1"].sections[1].text, "SECTION-ONE-TEXT");
     }
 
     #[test]
     fn apply_command_notes_preserves_text_and_runs() {
         let mut map = apply_fixture();
-        let original_text = map.nodes["0.0"].text.clone();
-        // TextRun doesn't implement PartialEq, so check structural fields.
-        let before_len = map.nodes["0.0"].text_runs.len();
-        let before_start = map.nodes["0.0"].text_runs[0].start;
-        let before_end = map.nodes["0.0"].text_runs[0].end;
-        let ids = vec!["0.0".to_string()];
-        let changed = apply_command(&mut map, &ids, true, "tr", &["a-z".into(), "A-Z".into()]).unwrap();
-        assert_eq!(changed, vec!["0.0".to_string()]);
+        let original_text = map.nodes["0.0"].sections[0].text.clone();
+        let before_len = map.nodes["0.0"].sections[0].text_runs.len();
+        let before_start = map.nodes["0.0"].sections[0].text_runs[0].start;
+        let before_end = map.nodes["0.0"].sections[0].text_runs[0].end;
+        let targets = vec![("0.0".to_string(), 0)];
+        let changed = apply_command(&mut map, &targets, true, "tr", &["a-z".into(), "A-Z".into()]).unwrap();
+        assert_eq!(changed, vec![("0.0".to_string(), 0)]);
         assert_eq!(map.nodes["0.0"].notes, "SECRET NOTES_TOKEN HERE");
-        assert_eq!(map.nodes["0.0"].text, original_text, "text untouched");
-        assert_eq!(map.nodes["0.0"].text_runs.len(), before_len);
-        assert_eq!(map.nodes["0.0"].text_runs[0].start, before_start);
-        assert_eq!(map.nodes["0.0"].text_runs[0].end, before_end);
+        assert_eq!(map.nodes["0.0"].sections[0].text, original_text, "text untouched");
+        assert_eq!(map.nodes["0.0"].sections[0].text_runs.len(), before_len);
+        assert_eq!(map.nodes["0.0"].sections[0].text_runs[0].start, before_start);
+        assert_eq!(map.nodes["0.0"].sections[0].text_runs[0].end, before_end);
     }
 
     #[test]
     fn apply_command_idempotent_when_output_equals_input() {
         let mut map = apply_fixture();
-        let ids = vec!["0.1".to_string()];
-        // `cat` returns input verbatim; n3's text has no trailing newline,
-        // so strip-one is a no-op and the value is unchanged.
-        let changed = apply_command(&mut map, &ids, false, "cat", &[]).unwrap();
+        let targets = vec![("0.1".to_string(), 0)];
+        let changed = apply_command(&mut map, &targets, false, "cat", &[]).unwrap();
         assert!(changed.is_empty(), "expected no change, got: {changed:?}");
-        assert_eq!(map.nodes["0.1"].text, "unchanged");
+        assert_eq!(map.nodes["0.1"].sections[0].text, "unchanged");
     }
 
     #[test]
     fn apply_command_subprocess_failure_propagates() {
         let mut map = apply_fixture();
-        let ids = vec!["0".to_string()];
-        let result = apply_command(&mut map, &ids, false, "sh", &["-c".into(), "exit 4".into()]);
+        let targets = vec![("0".to_string(), 0)];
+        let result = apply_command(&mut map, &targets, false, "sh", &["-c".into(), "exit 4".into()]);
         assert!(matches!(result, Err(CliError::Subprocess(_))));
     }
 
@@ -989,14 +1114,14 @@ mod tests {
         ]);
         assert!(run(&args).is_ok());
         let reloaded = load_from_file(tmp.path()).unwrap();
-        assert_eq!(reloaded.nodes["0"].text, "HELLO WORLD");
-        assert_eq!(reloaded.nodes["0.2"].text, "HELLO AGAIN");
-        assert!(reloaded.nodes["0"].text_runs.is_empty());
-        assert!(reloaded.nodes["0.2"].text_runs.is_empty());
+        assert_eq!(reloaded.nodes["0"].sections[0].text, "HELLO WORLD");
+        assert_eq!(reloaded.nodes["0.2"].sections[0].text, "HELLO AGAIN");
+        assert!(reloaded.nodes["0"].sections[0].text_runs.is_empty());
+        assert!(reloaded.nodes["0.2"].sections[0].text_runs.is_empty());
         // Nodes that didn't match keep their content and their runs.
-        assert_eq!(reloaded.nodes["0.0"].text, "Alpha\nBeta\nGamma");
-        assert_eq!(reloaded.nodes["0.0"].text_runs.len(), 1);
-        assert_eq!(reloaded.nodes["0.1"].text, "unchanged");
+        assert_eq!(reloaded.nodes["0.0"].sections[0].text, "Alpha\nBeta\nGamma");
+        assert_eq!(reloaded.nodes["0.0"].sections[0].text_runs.len(), 1);
+        assert_eq!(reloaded.nodes["0.1"].sections[0].text, "unchanged");
     }
 
     #[test]
@@ -1015,9 +1140,9 @@ mod tests {
         assert!(run(&args).is_ok());
         let reloaded = load_from_file(tmp.path()).unwrap();
         assert_eq!(reloaded.nodes["0.0"].notes, "SECRET NOTES_TOKEN HERE");
-        assert_eq!(reloaded.nodes["0.0"].text, "Alpha\nBeta\nGamma");
+        assert_eq!(reloaded.nodes["0.0"].sections[0].text, "Alpha\nBeta\nGamma");
         assert_eq!(
-            reloaded.nodes["0.0"].text_runs.len(),
+            reloaded.nodes["0.0"].sections[0].text_runs.len(),
             1,
             "--notes edits should leave text_runs alone"
         );
@@ -1236,13 +1361,22 @@ mod tests {
         let back = load_from_file(tmp.path()).unwrap();
         for (id, original) in &map.nodes {
             let reloaded = &back.nodes[id];
-            assert_eq!(reloaded.text, original.text, "{id}: text");
             assert_eq!(reloaded.notes, original.notes, "{id}: notes");
             assert_eq!(
-                reloaded.text_runs.len(),
-                original.text_runs.len(),
-                "{id}: runs len"
+                reloaded.sections.len(),
+                original.sections.len(),
+                "{id}: section count"
             );
+            for (s_idx, (orig_s, reloaded_s)) in
+                original.sections.iter().zip(reloaded.sections.iter()).enumerate()
+            {
+                assert_eq!(reloaded_s.text, orig_s.text, "{id}/{s_idx}: text");
+                assert_eq!(
+                    reloaded_s.text_runs.len(),
+                    orig_s.text_runs.len(),
+                    "{id}/{s_idx}: runs len"
+                );
+            }
         }
     }
 

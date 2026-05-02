@@ -120,18 +120,22 @@
         "show_shadow": false,
         "text_color": "var(--fg)"
       },
-      "text": "theme variable demo",
-      "text_runs": [
+      "sections": [
         {
-          "bold": true,
-          "color": "var(--fg)",
-          "end": 19,
-          "font": "LiberationSans",
-          "hyperlink": null,
-          "italic": false,
-          "size_pt": 36,
-          "start": 0,
-          "underline": false
+          "text": "theme variable demo",
+          "text_runs": [
+            {
+              "bold": true,
+              "color": "var(--fg)",
+              "end": 19,
+              "font": "LiberationSans",
+              "hyperlink": null,
+              "italic": false,
+              "size_pt": 36,
+              "start": 0,
+              "underline": false
+            }
+          ]
         }
       ]
     },
@@ -165,18 +169,22 @@
         "show_shadow": false,
         "text_color": "var(--fg)"
       },
-      "text": "colors follow the theme",
-      "text_runs": [
+      "sections": [
         {
-          "bold": false,
-          "color": "var(--fg)",
-          "end": 23,
-          "font": "LiberationSans",
-          "hyperlink": null,
-          "italic": false,
-          "size_pt": 22,
-          "start": 0,
-          "underline": false
+          "text": "colors follow the theme",
+          "text_runs": [
+            {
+              "bold": false,
+              "color": "var(--fg)",
+              "end": 23,
+              "font": "LiberationSans",
+              "hyperlink": null,
+              "italic": false,
+              "size_pt": 22,
+              "start": 0,
+              "underline": false
+            }
+          ]
         }
       ]
     },
@@ -210,18 +218,22 @@
         "show_shadow": false,
         "text_color": "var(--fg)"
       },
-      "text": "edges follow the theme",
-      "text_runs": [
+      "sections": [
         {
-          "bold": false,
-          "color": "var(--fg)",
-          "end": 22,
-          "font": "LiberationSans",
-          "hyperlink": null,
-          "italic": false,
-          "size_pt": 22,
-          "start": 0,
-          "underline": false
+          "text": "edges follow the theme",
+          "text_runs": [
+            {
+              "bold": false,
+              "color": "var(--fg)",
+              "end": 22,
+              "font": "LiberationSans",
+              "hyperlink": null,
+              "italic": false,
+              "size_pt": 22,
+              "start": 0,
+              "underline": false
+            }
+          ]
         }
       ]
     },
@@ -255,24 +267,28 @@
         "show_shadow": false,
         "text_color": "var(--fg)"
       },
-      "text": "[ dark ]",
-      "text_runs": [
-        {
-          "bold": true,
-          "color": "var(--fg)",
-          "end": 8,
-          "font": "LiberationSans",
-          "hyperlink": null,
-          "italic": false,
-          "size_pt": 22,
-          "start": 0,
-          "underline": false
-        }
-      ],
       "trigger_bindings": [
         {
           "mutation_id": "switch-dark",
           "trigger": "OnClick"
+        }
+      ],
+      "sections": [
+        {
+          "text": "[ dark ]",
+          "text_runs": [
+            {
+              "bold": true,
+              "color": "var(--fg)",
+              "end": 8,
+              "font": "LiberationSans",
+              "hyperlink": null,
+              "italic": false,
+              "size_pt": 22,
+              "start": 0,
+              "underline": false
+            }
+          ]
         }
       ]
     },
@@ -306,24 +322,28 @@
         "show_shadow": false,
         "text_color": "var(--fg)"
       },
-      "text": "[ light ]",
-      "text_runs": [
-        {
-          "bold": true,
-          "color": "var(--fg)",
-          "end": 9,
-          "font": "LiberationSans",
-          "hyperlink": null,
-          "italic": false,
-          "size_pt": 22,
-          "start": 0,
-          "underline": false
-        }
-      ],
       "trigger_bindings": [
         {
           "mutation_id": "switch-light",
           "trigger": "OnClick"
+        }
+      ],
+      "sections": [
+        {
+          "text": "[ light ]",
+          "text_runs": [
+            {
+              "bold": true,
+              "color": "var(--fg)",
+              "end": 9,
+              "font": "LiberationSans",
+              "hyperlink": null,
+              "italic": false,
+              "size_pt": 22,
+              "start": 0,
+              "underline": false
+            }
+          ]
         }
       ]
     },
@@ -357,24 +377,28 @@
         "show_shadow": false,
         "text_color": "var(--fg)"
       },
-      "text": "[ forest ]",
-      "text_runs": [
-        {
-          "bold": true,
-          "color": "var(--fg)",
-          "end": 10,
-          "font": "LiberationSans",
-          "hyperlink": null,
-          "italic": false,
-          "size_pt": 22,
-          "start": 0,
-          "underline": false
-        }
-      ],
       "trigger_bindings": [
         {
           "mutation_id": "switch-forest",
           "trigger": "OnClick"
+        }
+      ],
+      "sections": [
+        {
+          "text": "[ forest ]",
+          "text_runs": [
+            {
+              "bold": true,
+              "color": "var(--fg)",
+              "end": 10,
+              "font": "LiberationSans",
+              "hyperlink": null,
+              "italic": false,
+              "size_pt": 22,
+              "start": 0,
+              "underline": false
+            }
+          ]
         }
       ]
     }

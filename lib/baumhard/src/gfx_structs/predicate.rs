@@ -9,7 +9,7 @@
 //! data + O(1) evaluations; serde-serializable so the mutator DSL
 //! can persist predicates verbatim.
 
-use crate::core::primitives::ColorFontRegionField;
+use crate::core::primitives::{ColorFontRegionField, Flaggable};
 use crate::gfx_structs::area::GlyphAreaField;
 use crate::gfx_structs::area::GlyphAreaField::{Bounds, ColorFontRegions, LineHeight, Scale, Text};
 use crate::gfx_structs::element::GfxElementField::{Channel, GlyphArea, GlyphModel, Id, Region};
@@ -34,6 +34,16 @@ use serde::{Deserialize, Serialize};
 ///
 /// Costs: all comparisons are O(1); floating-point equality delegates to
 /// [`crate::util::geometry::almost_equal`] to absorb rounding.
+///
+/// **Negation flag worked example.** A
+/// `Predicate { fields: [(Flag(SectionRoot), Equals(false))], … }`
+/// matches every element whose `SectionRoot` flag is **set** —
+/// `Equals(false)` is the un-negated `==`, so the predicate
+/// passes when `is_set == true`. The negation form
+/// `Equals(true)` reads as `!=`, so it passes when `is_set == false`
+/// (every element *without* the flag). The two interpretations
+/// are easy to flip in your head — keep this example pinned at
+/// the call site if you write a new field arm.
 #[derive(Clone, Debug, Copy, Serialize, Deserialize)]
 pub enum Comparator {
     /// Equality test. `Equals(false)` means `==`; `Equals(true)` means `!=`.
@@ -443,7 +453,31 @@ impl Predicate {
                     }
                     return false;
                 }
-                GfxElementField::Flag(_flag) => {} // flag predicates not yet supported
+                GfxElementField::Flag(flag) => {
+                    let is_set = element.flag_is_set(*flag);
+                    return match comparator {
+                        // `Equals(false)` ⇒ match when the flag's
+                        // presence equals the inferred reference
+                        // (`true`); `Equals(true)` ⇒ inverted (the
+                        // flag is absent). `Exists` flips on the
+                        // negation flag, mirroring the
+                        // GlyphAreaField / GlyphModelField shape.
+                        Equals(negation) => is_set != *negation,
+                        Exists(negation) => is_set != *negation,
+                        // Ordering on a presence bit is not
+                        // meaningful — degrade to non-match rather
+                        // than panic (§9).
+                        _ => {
+                            log::warn!(
+                                "predicate: unsupported Comparator {:?} on Flag({:?}) \
+                                 — treating as non-match",
+                                comparator,
+                                flag,
+                            );
+                            false
+                        }
+                    };
+                }
             }
         }
         false

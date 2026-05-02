@@ -6,7 +6,7 @@
 
 #![cfg(test)]
 
-use baumhard::mindmap::model::{MindEdge, MindNode, NodeLayout, NodeStyle, Position, Size};
+use baumhard::mindmap::model::{MindEdge, MindNode, MindSection, NodeLayout, NodeStyle, Position, Size};
 
 pub fn node(id: &str, parent_id: Option<&str>) -> MindNode {
     MindNode {
@@ -17,8 +17,7 @@ pub fn node(id: &str, parent_id: Option<&str>) -> MindNode {
             width: 100.0,
             height: 40.0,
         },
-        text: String::new(),
-        text_runs: vec![],
+        sections: vec![MindSection::new_default(String::new(), Vec::new())],
         style: NodeStyle {
             background_color: "#141414".into(),
             frame_color: "#30b082".into(),

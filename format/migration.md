@@ -28,6 +28,25 @@ the write begins). Each legacy `PortalPair` becomes a `MindEdge`
 with `edge_type = "cross_link"`, `display_mode = "portal"`, and the
 original glyph / color / font carried into `glyph_connection`.
 
+## Also: migrating node text into sections
+
+The post-section data shape moves a node's `text` and `text_runs`
+fields onto the node's first
+[`MindSection`](./sections.md). The current loader refuses
+to read a file that still carries node-level `text` / `text_runs`;
+migrate with:
+
+```
+maptool convert --sections <input.json> <output.json>
+```
+
+Each legacy node becomes a node with one default
+`MindSection { text, text_runs }` and no other surface change. The
+migration is idempotent (re-running on an already-converted map is
+a no-op) and runs automatically inside `convert --legacy` for
+miMind imports, so a single legacy hop produces a post-section
+file in one step.
+
 ## The legacy-format command
 
 ```

@@ -15,14 +15,35 @@ use glam::Vec2;
 fn test_hit_test_direct_hit() {
     let mut tree = load_test_tree();
     // "Lord God" node (id: 0) — get its position from the tree
-    let node_id = tree.node_map.get("0").unwrap();
-    let area = tree.tree.arena.get(*node_id).unwrap().get().glyph_area().unwrap();
+    let node_id = tree.arena_id_for("0").unwrap();
+    let area = tree.tree.arena.get(node_id).unwrap().get().glyph_area().unwrap();
     let center = Vec2::new(
         area.position.x.0 + area.render_bounds.x.0 / 2.0,
         area.position.y.0 + area.render_bounds.y.0 / 2.0,
     );
     let result = hit_test(center, &mut tree);
     assert_eq!(result, Some("0".to_string()));
+}
+
+/// `hit_test_target` collapses single-section nodes (the
+/// migration default) to `HitTarget::NodeContainer` — clicking
+/// anywhere inside a node with one default section gives the
+/// pre-section whole-node hit semantic.
+#[test]
+fn test_hit_test_target_single_section_collapses_to_node() {
+    let mut tree = load_test_tree();
+    let node_id = tree.arena_id_for("0").unwrap();
+    let area = tree.tree.arena.get(node_id).unwrap().get().glyph_area().unwrap();
+    let center = Vec2::new(
+        area.position.x.0 + area.render_bounds.x.0 / 2.0,
+        area.position.y.0 + area.render_bounds.y.0 / 2.0,
+    );
+    match hit_test_target(center, &mut tree) {
+        Some(HitTarget::NodeContainer { node_id }) => {
+            assert_eq!(node_id, "0");
+        }
+        other => panic!("expected NodeContainer, got {other:?}"),
+    }
 }
 
 #[test]
@@ -40,31 +61,30 @@ fn test_hit_test_returns_smallest_on_overlap() {
     // "Lord God" (0) has children — find one whose bounds overlap
     let parent_id_str = "0";
     let parent_size = {
-        let nid = tree.node_map.get(parent_id_str).unwrap();
-        let area = tree.tree.arena.get(*nid).unwrap().get().glyph_area().unwrap();
+        let nid = tree.arena_id_for(parent_id_str).unwrap();
+        let area = tree.tree.arena.get(nid).unwrap().get().glyph_area().unwrap();
         area.render_bounds.x.0 * area.render_bounds.y.0
     };
 
     // Collect candidate (mind_id, center) pairs first to release
     // the immutable borrow on tree.node_map before calling
     // hit_test (which needs &mut tree).
-    let candidate: Option<(String, Vec2)> = tree
-        .node_map
-        .iter()
-        .filter(|(id, _)| id.as_str() != parent_id_str)
-        .find_map(|(mind_id, &nid)| {
-            let a = tree.tree.arena.get(nid)?.get().glyph_area()?;
-            let child_size = a.render_bounds.x.0 * a.render_bounds.y.0;
-            let child_center = Vec2::new(
-                a.position.x.0 + a.render_bounds.x.0 / 2.0,
-                a.position.y.0 + a.render_bounds.y.0 / 2.0,
-            );
-            if child_size < parent_size && point_in_node_aabb(child_center, parent_id_str, &tree) {
-                Some((mind_id.clone(), child_center))
-            } else {
-                None
-            }
-        });
+    let candidate: Option<(String, Vec2)> =
+        tree.node_ids()
+            .filter(|(id, _)| *id != parent_id_str)
+            .find_map(|(mind_id, nid)| {
+                let a = tree.tree.arena.get(nid)?.get().glyph_area()?;
+                let child_size = a.render_bounds.x.0 * a.render_bounds.y.0;
+                let child_center = Vec2::new(
+                    a.position.x.0 + a.render_bounds.x.0 / 2.0,
+                    a.position.y.0 + a.render_bounds.y.0 / 2.0,
+                );
+                if child_size < parent_size && point_in_node_aabb(child_center, parent_id_str, &tree) {
+                    Some((mind_id.to_string(), child_center))
+                } else {
+                    None
+                }
+            });
 
     if let Some((expected_id, center)) = candidate {
         let result = hit_test(center, &mut tree);
@@ -90,6 +110,23 @@ fn test_selection_state_is_selected() {
     assert!(multi.is_selected("123"));
     assert!(multi.is_selected("456"));
     assert!(!multi.is_selected("789"));
+
+    // Section selection counts as "this owning node is selected" —
+    // every per-node consumer (highlight, drag, chrome) gets the
+    // natural answer.
+    let section = SelectionState::Section(SectionSel::new("123", 1));
+    assert!(section.is_selected("123"));
+    assert!(!section.is_selected("456"));
+    assert_eq!(section.selected_ids(), vec!["123"]);
+    let s = section
+        .selected_section()
+        .expect("Section variant carries SectionSel");
+    assert_eq!(s.node_id, "123");
+    assert_eq!(s.section_idx, 1);
+    // Other selection variants return `None` from
+    // `selected_section()`.
+    assert!(none.selected_section().is_none());
+    assert!(single.selected_section().is_none());
 }
 
 #[test]
@@ -125,10 +162,19 @@ fn test_selection_state_from_ids_many_elements_is_multi_preserving_order() {
 #[test]
 fn test_apply_tree_highlights_via_walker() {
     let mut tree = load_test_tree();
-    let node_id = *tree.node_map.get("0").unwrap();
+    // Post-refactor: regions live on the section-area, not the
+    // container. Read through the section_map.
+    let section_id = tree.section_arena_id("0", 0).unwrap();
 
-    // Before highlight: original color (white)
-    let area = tree.tree.arena.get(node_id).unwrap().get().glyph_area().unwrap();
+    // Before highlight: original color (white).
+    let area = tree
+        .tree
+        .arena
+        .get(section_id)
+        .unwrap()
+        .get()
+        .glyph_area()
+        .unwrap();
     let original_color = area.regions.all_regions()[0].color.unwrap();
     assert!(
         (original_color[0] - 1.0).abs() < 0.01,
@@ -136,10 +182,17 @@ fn test_apply_tree_highlights_via_walker() {
     );
 
     // Apply highlight via the new mutator-driven path.
-    apply_tree_highlights(&mut tree, std::iter::once(("0", HIGHLIGHT_COLOR)));
+    apply_tree_highlights(&mut tree, std::iter::once(("0", None, HIGHLIGHT_COLOR)));
 
-    // After highlight: cyan
-    let area = tree.tree.arena.get(node_id).unwrap().get().glyph_area().unwrap();
+    // After highlight: cyan on section-area's regions.
+    let area = tree
+        .tree
+        .arena
+        .get(section_id)
+        .unwrap()
+        .get()
+        .glyph_area()
+        .unwrap();
     let highlighted_color = area.regions.all_regions()[0].color.unwrap();
     assert!((highlighted_color[0] - HIGHLIGHT_COLOR[0]).abs() < 0.01);
     assert!((highlighted_color[1] - HIGHLIGHT_COLOR[1]).abs() < 0.01);
@@ -151,8 +204,13 @@ fn test_apply_tree_highlights_does_not_affect_others() {
     let mut tree = load_test_tree();
 
     // Pick a different node and copy its regions before mutation.
-    let other_id = tree.node_map.keys().find(|k| *k != "0").unwrap().clone();
-    let other_node_id = *tree.node_map.get(&other_id).unwrap();
+    let other_id = tree
+        .node_ids()
+        .map(|(k, _)| k)
+        .find(|k| *k != "0")
+        .unwrap()
+        .to_string();
+    let other_node_id = tree.arena_id_for(&other_id).unwrap();
     let before = tree
         .tree
         .arena
@@ -164,7 +222,7 @@ fn test_apply_tree_highlights_does_not_affect_others() {
         .regions
         .clone();
 
-    apply_tree_highlights(&mut tree, std::iter::once(("0", HIGHLIGHT_COLOR)));
+    apply_tree_highlights(&mut tree, std::iter::once(("0", None, HIGHLIGHT_COLOR)));
 
     let after = tree
         .tree
@@ -185,14 +243,22 @@ fn test_apply_tree_highlights_later_pair_overrides_earlier() {
     // previously-applied selection-cyan on the same node. Verify the
     // last-write-wins semantics of apply_tree_highlights.
     let mut tree = load_test_tree();
-    let node_id = *tree.node_map.get("0").unwrap();
+    // Regions live on the section-area, not the container.
+    let section_id = tree.section_arena_id("0", 0).unwrap();
 
     apply_tree_highlights(
         &mut tree,
-        vec![("0", HIGHLIGHT_COLOR), ("0", REPARENT_SOURCE_COLOR)],
+        vec![("0", None, HIGHLIGHT_COLOR), ("0", None, REPARENT_SOURCE_COLOR)],
     );
 
-    let area = tree.tree.arena.get(node_id).unwrap().get().glyph_area().unwrap();
+    let area = tree
+        .tree
+        .arena
+        .get(section_id)
+        .unwrap()
+        .get()
+        .glyph_area()
+        .unwrap();
     let c = area.regions.all_regions()[0].color.unwrap();
     assert!((c[0] - REPARENT_SOURCE_COLOR[0]).abs() < 0.01);
     assert!((c[1] - REPARENT_SOURCE_COLOR[1]).abs() < 0.01);
@@ -552,7 +618,7 @@ fn test_apply_drag_delta() {
     let mut tree = doc.build_tree();
     let node_id = "0";
 
-    let tree_nid = *tree.node_map.get(node_id).unwrap();
+    let tree_nid = tree.arena_id_for(node_id).unwrap();
     let orig_x = tree
         .tree
         .arena
@@ -614,7 +680,7 @@ fn test_apply_drag_delta_with_descendants() {
     let child_ids: Vec<String> = doc.mindmap.all_descendants(node_id);
     assert!(!child_ids.is_empty());
     let child_id = &child_ids[0];
-    let child_tree_nid = *tree.node_map.get(child_id).unwrap();
+    let child_tree_nid = tree.arena_id_for(child_id).unwrap();
     let child_orig_x = tree
         .tree
         .arena
@@ -685,7 +751,7 @@ fn test_apply_move_multiple_no_double_movement() {
 fn test_rect_select_finds_nodes_in_region() {
     let tree = load_test_tree();
     // Get position/bounds of "Lord God" to build a rect that contains it
-    let node_id = *tree.node_map.get("0").unwrap();
+    let node_id = tree.arena_id_for("0").unwrap();
     let area = tree.tree.arena.get(node_id).unwrap().get().glyph_area().unwrap();
     let x = area.position.x.0;
     let y = area.position.y.0;
@@ -724,14 +790,14 @@ fn test_rect_select_misses_distant_nodes() {
 
 fn set_node_shape_ellipse(tree: &mut baumhard::mindmap::tree_builder::MindMapTree, node_id: &str) {
     use baumhard::gfx_structs::shape::NodeShape;
-    let nid = *tree.node_map.get(node_id).expect("node exists");
+    let nid = tree.arena_id_for(node_id).expect("node exists");
     let node = tree.tree.arena.get_mut(nid).expect("arena has node");
     let area = node.get_mut().glyph_area_mut().expect("node is a GlyphArea");
     area.shape = NodeShape::Ellipse;
 }
 
 fn node_bounds(tree: &baumhard::mindmap::tree_builder::MindMapTree, node_id: &str) -> (Vec2, Vec2) {
-    let nid = *tree.node_map.get(node_id).unwrap();
+    let nid = tree.arena_id_for(node_id).unwrap();
     let area = tree.tree.arena.get(nid).unwrap().get().glyph_area().unwrap();
     (
         Vec2::new(area.position.x.0, area.position.y.0),
@@ -809,6 +875,106 @@ fn test_rect_select_still_catches_ellipse_through_centre() {
     assert!(
         hits.contains(&"0".to_string()),
         "Rect-select crossing the ellipse centre must hit"
+    );
+}
+
+/// `point_in_node_aabb` consults the cached subtree AABB so a
+/// click on a section that overflows the container's AABB still
+/// counts as "inside the node". Pre-fix, the function read only
+/// the container's render_bounds, leaving overflowing sections
+/// unhittable. Anchors the documented "click-outside-commit"
+/// gesture for multi-section nodes.
+#[test]
+fn test_point_in_node_aabb_includes_overflowing_section() {
+    use super::tests_common::doc_with_one_orphan_node;
+    use baumhard::mindmap::model::{MindSection, Position, Size};
+    let mut doc = doc_with_one_orphan_node();
+    // Append a second section positioned past the container's
+    // right edge. The container's AABB is [0,0]→[240,60]; the
+    // overflow section sits at offset (300, 0) with its own
+    // 100×40 size, putting its left edge well past the container.
+    {
+        let node = doc.mindmap.nodes.get_mut("0").unwrap();
+        let mut overflow = MindSection::new_default("over".into(), vec![]);
+        overflow.offset = Position { x: 300.0, y: 0.0 };
+        overflow.size = Some(Size { width: 100.0, height: 40.0 });
+        node.sections.push(overflow);
+    }
+    let mut tree = doc.build_tree();
+    // Force the subtree-AABB cache to populate. The runtime hot
+    // path invalidates / recomputes on every render and hit-test;
+    // tests have to ask for it explicitly.
+    tree.tree.ensure_subtree_aabbs();
+
+    // A point well inside the overflow section but outside the
+    // container's own AABB.
+    let in_overflow = Vec2::new(350.0, 20.0);
+    assert!(
+        point_in_node_aabb(in_overflow, "0", &tree),
+        "point inside overflow section must register as inside node 0"
+    );
+    // A point that's outside both the container AND the overflow
+    // section's bounding box must still miss.
+    let outside_all = Vec2::new(500.0, 200.0);
+    assert!(
+        !point_in_node_aabb(outside_all, "0", &tree),
+        "point outside both container and overflow must miss"
+    );
+}
+
+/// `collect_patches_recursive` (drag delta) only emits patches
+/// for `GlyphArea`-bearing elements; `GlyphModel` siblings of
+/// section-areas (the structural seam children) are skipped so
+/// `patch_drag_positions` doesn't pay a cold hash miss per drag
+/// tick on every section's model child. Pins the filter — a
+/// future refactor that re-flattens the conditional would
+/// silently regress drag performance and the test would fail.
+#[test]
+fn test_collect_patches_recursive_skips_glyph_model_children() {
+    use crate::application::document::apply_drag_delta_and_collect_patches;
+    use baumhard::core::primitives::{Flag, Flaggable};
+    use baumhard::mindmap::model::MindSection;
+    use crate::application::document::tests_common::doc_with_one_orphan_node;
+
+    let mut doc = doc_with_one_orphan_node();
+    {
+        // Multi-section node — 3 sections × (section-area +
+        // section-model) = 6 arena entries. Patches should
+        // count only the 3 section-areas + 1 container = 4.
+        let node = doc.mindmap.nodes.get_mut("0").unwrap();
+        node.sections.push(MindSection::new_default("two".into(), Vec::new()));
+        node.sections.push(MindSection::new_default("three".into(), Vec::new()));
+    }
+    let mut tree = doc.build_tree();
+    let mut patches: Vec<(usize, (f32, f32))> = Vec::new();
+    apply_drag_delta_and_collect_patches(&mut tree, "0", 5.0, 7.0, false, &mut patches);
+
+    // Every patch's unique_id must correspond to a GlyphArea-
+    // bearing element in the arena. GlyphModel elements (the
+    // structural section-model siblings) carry the
+    // `Flag::SectionRoot` marker but no glyph_area; verify
+    // none of those leaked into the patch list.
+    for (uid, _pos) in &patches {
+        let element = tree
+            .tree
+            .arena
+            .iter()
+            .find(|n| n.get().unique_id() == *uid)
+            .map(|n| n.get())
+            .expect("patch references a real arena entry");
+        assert!(
+            element.glyph_area().is_some(),
+            "patch with unique_id {uid} references a non-GlyphArea element ({:?})",
+            element.flag_is_set(Flag::SectionRoot)
+        );
+    }
+    // 1 container + 3 section-areas = 4 GlyphArea entries; the
+    // 3 section-models are skipped.
+    assert_eq!(
+        patches.len(),
+        4,
+        "expected 4 patches (1 container + 3 section-areas), got {}",
+        patches.len()
     );
 }
 

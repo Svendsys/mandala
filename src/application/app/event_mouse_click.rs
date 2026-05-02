@@ -186,6 +186,7 @@ pub(super) fn handle_mouse_input(
                 let super::ClickHitParts {
                     click_hit,
                     hit_node,
+                    hit_section_idx,
                     portal_text_hit,
                     portal_icon_hit,
                     edge_label_hit,
@@ -318,6 +319,7 @@ pub(super) fn handle_mouse_input(
                 *ctx.drag_state = DragState::Pending {
                     start_pos: cursor_pos_val,
                     hit_node,
+                    hit_section_idx,
                     hit_edge_handle,
                     hit_portal_label,
                     hit_edge_label: edge_label_hit,
@@ -327,6 +329,7 @@ pub(super) fn handle_mouse_input(
                 match std::mem::replace(ctx.drag_state, DragState::None) {
                     DragState::Pending {
                         hit_node,
+                        hit_section_idx,
                         hit_edge_label,
                         ..
                     } => {
@@ -340,6 +343,22 @@ pub(super) fn handle_mouse_input(
                             let release_canvas = ctx
                                 .renderer
                                 .screen_to_canvas(ctx.cursor_pos.0 as f32, ctx.cursor_pos.1 as f32);
+                            // Refresh the subtree-AABB cache before the
+                            // overflow-aware containment check —
+                            // `point_in_node_aabb` reads
+                            // `subtree_aabb()` which returns `None`
+                            // when the cache is dirty (post-mutation
+                            // / post-tree-rebuild). A `None` falls
+                            // back to the container-only path,
+                            // regressing the multi-section overflow
+                            // gesture this branch was added to fix.
+                            // `ensure_subtree_aabbs` is O(1) on a
+                            // clean cache and O(arena) on the first
+                            // call after a mutation; either way it's
+                            // cheap relative to the click handler.
+                            if let Some(tree) = ctx.mindmap_tree.as_mut() {
+                                tree.tree.ensure_subtree_aabbs();
+                            }
                             let inside = ctx
                                 .text_edit_state
                                 .node_id()
@@ -486,6 +505,7 @@ pub(super) fn handle_mouse_input(
                         if !entered_label_select {
                             handle_click(
                                 hit_node,
+                                hit_section_idx,
                                 cursor_pos_val,
                                 ctx.modifiers.shift_key(),
                                 ctx.document,

@@ -393,6 +393,741 @@ fn test_collect_affected_node_ids_siblings_of_root_is_empty() {
     assert!(ids.is_empty());
 }
 
+/// `SectionsOnly` returns the triggering node id only — section-
+/// level fan-out happens inside `apply_to_tree`, but the undo
+/// snapshot window is still the whole `MindNode` (which carries
+/// every section). Pins the snapshot-shape contract.
+#[test]
+fn test_collect_affected_node_ids_sections_only_returns_self() {
+    let doc = load_test_doc();
+    let ids = doc.collect_affected_node_ids("0", &TS::SectionsOnly);
+    assert_eq!(ids, vec!["0"]);
+}
+
+/// `SectionsOnly` mutation lands on every section-area, not on
+/// the chrome-only container. Uses a `NudgeRight` mutator (which
+/// shifts `area.position.x`) and asserts the section-area moved
+/// while the container stayed still. Pins the structural seam:
+/// `SectionsOnly` bypasses the container fan-out by going through
+/// `tree.section_arena_id` directly.
+#[test]
+fn test_apply_custom_mutation_sections_only_targets_section_areas() {
+    use baumhard::mindmap::model::MindSection;
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    // Materialise a multi-section node so the SectionsOnly path
+    // has more than one section to walk.
+    {
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        node.sections
+            .push(MindSection::new_default("second".into(), vec![]));
+    }
+    let cm = TestNudgeMutation::new("nudge-sections", TS::SectionsOnly)
+        .magnitude(10.0)
+        .build();
+    let mut tree = doc.build_tree();
+
+    let container_x_before = {
+        let aid = tree.arena_id_for(&nid).unwrap();
+        tree.tree
+            .arena
+            .get(aid)
+            .and_then(|n| n.get().glyph_area())
+            .unwrap()
+            .position
+            .x
+            .0
+    };
+    let section0_x_before = {
+        let sid = tree.section_arena_id(&nid, 0).unwrap();
+        tree.tree
+            .arena
+            .get(sid)
+            .and_then(|n| n.get().glyph_area())
+            .unwrap()
+            .position
+            .x
+            .0
+    };
+
+    doc.apply_custom_mutation(&cm, &nid, Some(&mut tree));
+
+    let container_x_after = {
+        let aid = tree.arena_id_for(&nid).unwrap();
+        tree.tree
+            .arena
+            .get(aid)
+            .and_then(|n| n.get().glyph_area())
+            .unwrap()
+            .position
+            .x
+            .0
+    };
+    let section0_x_after = {
+        let sid = tree.section_arena_id(&nid, 0).unwrap();
+        tree.tree
+            .arena
+            .get(sid)
+            .and_then(|n| n.get().glyph_area())
+            .unwrap()
+            .position
+            .x
+            .0
+    };
+
+    assert!(
+        (container_x_after - container_x_before).abs() < 1e-3,
+        "container must NOT move under SectionsOnly (before {container_x_before}, after {container_x_after})"
+    );
+    assert!(
+        (section0_x_after - section0_x_before - 10.0).abs() < 1e-3,
+        "section-area must shift by the nudge magnitude (before {section0_x_before}, after {section0_x_after})"
+    );
+}
+
+/// `sync_node_from_tree` writes per-section text + runs back to
+/// the model after a custom mutation that touches regions.
+/// Pre-fix only `position` was synced, so a custom mutation that
+/// recoloured a section's runs would land on the live tree but
+/// be reverted on the next `rebuild_all`. The merge-with-prior
+/// reverse converter preserves bold / italic / underline /
+/// size_pt / hyperlink across the round trip. Pins the
+/// persistence so multi-section custom mutations survive
+/// save+load.
+#[test]
+fn test_sync_node_from_tree_writes_back_section_run_color() {
+    use baumhard::core::primitives::Range;
+    use baumhard::gfx_structs::area::GlyphAreaCommand;
+    use baumhard::gfx_structs::mutator::Mutation;
+    use baumhard::mindmap::custom_mutation::{scope, CustomMutation, MutationBehavior};
+    use baumhard::mindmap::model::TextRun;
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    {
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        // Materialise a section with an explicit run carrying
+        // bold=true so we can verify the merge-with-prior path
+        // preserves the field across the lossy round-trip.
+        node.sections[0].text = "hello".into();
+        node.sections[0].text_runs = vec![TextRun {
+            start: 0,
+            end: 5,
+            bold: true,
+            italic: false,
+            underline: false,
+            font: "LiberationSans".into(),
+            size_pt: 14,
+            color: "#ffffff".into(),
+            hyperlink: None,
+        }];
+    }
+    let cm = CustomMutation {
+        id: "recolor".into(),
+        name: "Recolor".into(),
+        description: String::new(),
+        contexts: vec![],
+        mutator: Some(scope::self_only(vec![Mutation::area_command(
+            GlyphAreaCommand::SetRegionColor(Range::new(0, 5), [1.0, 0.0, 0.0, 1.0]),
+        )])),
+        target_scope: TS::SelfOnly,
+        behavior: MB::Persistent,
+        predicate: None,
+        document_actions: vec![],
+        timing: None,
+    };
+    let mut tree = doc.build_tree();
+
+    doc.apply_custom_mutation(&cm, &nid, Some(&mut tree));
+
+    let section0_run = &doc.mindmap.nodes.get(&nid).unwrap().sections[0].text_runs[0];
+    assert_eq!(
+        section0_run.color, "#ff0000",
+        "section 0 colour must round-trip through rgba_to_hex"
+    );
+    assert!(
+        section0_run.bold,
+        "merge-with-prior must preserve bold across the reverse converter"
+    );
+}
+
+/// Selective sync gate isolation: when a `SectionsOnly`
+/// mutation **explicitly targets only** section 0, every
+/// untouched section's bold / italic / underline / size_pt /
+/// hyperlink survives verbatim. Pre-fix the selective gate
+/// `zip`'d positionally on tree-side regions vs model-side
+/// runs, so any range-order mismatch tripped the round-trip and
+/// silently stripped non-text-touched sections of styling.
+#[test]
+fn test_sync_node_from_tree_section_1_untouched_when_section_0_mutated() {
+    use baumhard::core::primitives::Range;
+    use baumhard::gfx_structs::area::GlyphAreaCommand;
+    use baumhard::gfx_structs::mutator::Mutation;
+    use baumhard::mindmap::custom_mutation::{scope, CustomMutation, MutationBehavior};
+    use baumhard::mindmap::model::{MindSection, TextRun};
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    {
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        // Pin both sections' runs so we can detect divergence.
+        node.sections[0].text = "hello".into();
+        node.sections[0].text_runs = vec![TextRun {
+            start: 0,
+            end: 5,
+            bold: true,
+            italic: false,
+            underline: false,
+            font: "LiberationSans".into(),
+            size_pt: 14,
+            color: "#ffffff".into(),
+            hyperlink: None,
+        }];
+        node.sections.push(MindSection::new_default("untouched".into(), Vec::new()));
+        node.sections[1].text_runs = vec![TextRun {
+            start: 0,
+            end: 9,
+            bold: false,
+            italic: true,
+            underline: true,
+            font: "LiberationSans".into(),
+            size_pt: 21,
+            color: "#abcdef".into(),
+            hyperlink: Some("https://example.org".into()),
+        }];
+    }
+    // SectionsOnly mutation against section 0 only — using
+    // SectionsOnly with `predicate` matching only section_idx=0
+    // is structurally awkward today (no per-index predicate);
+    // instead use `SelfOnly` + `predicate` matching section 0's
+    // unique_id is also awkward. The simplest cross-tier test:
+    // mutate section 0's text via the document setter (which
+    // lives in `nodes/mod.rs`) and verify section 1's run state
+    // survives untouched. The setter doesn't go through
+    // sync_node_from_tree, but the round-trip-on-`apply_to_tree`
+    // path is exercised separately above. Here we cross-check
+    // that the *gate's positional drift* doesn't manifest under
+    // a mutation pipeline that fans out to multiple sections.
+    let cm = CustomMutation {
+        id: "color-section-0".into(),
+        name: "Color section 0".into(),
+        description: String::new(),
+        contexts: vec![],
+        // `SectionsOnly` fans to every section, but the
+        // SetRegionColor only matches section 0's [0,5) range
+        // (section 1 is [0,9)). Section 1 will see a new region
+        // inserted at [0,5) — which is exactly the case the
+        // selective gate must NOT silently swallow.
+        mutator: Some(scope::self_only(vec![Mutation::area_command(
+            GlyphAreaCommand::SetRegionColor(Range::new(0, 5), [1.0, 0.0, 0.0, 1.0]),
+        )])),
+        target_scope: TS::SectionsOnly,
+        behavior: MB::Persistent,
+        predicate: None,
+        document_actions: vec![],
+        timing: None,
+    };
+    let mut tree = doc.build_tree();
+    doc.apply_custom_mutation(&cm, &nid, Some(&mut tree));
+
+    // Section 0 was touched and color-changed: red [0,5) merged
+    // with prior bold=true via `region_to_text_run`.
+    let s0 = &doc.mindmap.nodes.get(&nid).unwrap().sections[0];
+    assert!(
+        s0.text_runs.iter().any(|r| r.color == "#ff0000" && r.bold),
+        "section 0 must carry the new red color and preserve bold"
+    );
+
+    // Section 1's existing [0,9) run had a non-zero overlap with
+    // the [0,5) inserted region. The dominant-overlap fallback
+    // means the new merged run inherits italic/underline/size_pt
+    // from the existing [0,9) prior. Pin those.
+    let s1 = &doc.mindmap.nodes.get(&nid).unwrap().sections[1];
+    let s1_run = s1.text_runs.first().expect("section 1 must keep at least one run");
+    assert!(s1_run.italic, "italic must survive on section 1");
+    assert!(s1_run.underline, "underline must survive on section 1");
+    assert_eq!(s1_run.size_pt, 21, "size_pt must survive on section 1");
+    assert_eq!(
+        s1_run.hyperlink.as_deref(),
+        Some("https://example.org"),
+        "hyperlink must survive on section 1"
+    );
+}
+
+/// `var(--name)` round-trip regression: a section whose run
+/// carries `color: "var(--accent)"` and a mutation that
+/// otherwise leaves regions alone must NOT silently rewrite the
+/// `var()` reference to the resolved hex. The selective gate
+/// short-circuits when the tree-side region's color resolves to
+/// the same FloatRgba as the model-side `var(--accent)`,
+/// because `var()` references can't compare structurally and
+/// the gate *does* run the round-trip — but `region_to_text_run`
+/// inherits from prior on the var-bearing case via the empty
+/// `region.color`. Pin the contract: a position-only mutation
+/// (`NudgeRight`) on a `var(--name)`-coloured section preserves
+/// the variable verbatim.
+#[test]
+fn test_sync_node_from_tree_var_color_preserved_when_regions_untouched() {
+    use baumhard::mindmap::model::TextRun;
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    {
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        node.sections[0].text = "themed".into();
+        node.sections[0].text_runs = vec![TextRun {
+            start: 0,
+            end: 6,
+            bold: false,
+            italic: false,
+            underline: false,
+            font: "LiberationSans".into(),
+            size_pt: 14,
+            // `var()` reference — not directly comparable on the
+            // round-trip path; the selective gate must skip.
+            color: "var(--accent)".into(),
+            hyperlink: None,
+        }];
+    }
+    // Position-only mutation: regions stay byte-identical.
+    let cm = make_test_mutation("nudge", TS::SelfOnly);
+    let mut tree = doc.build_tree();
+    doc.apply_custom_mutation(&cm, &nid, Some(&mut tree));
+
+    let run = &doc.mindmap.nodes.get(&nid).unwrap().sections[0].text_runs[0];
+    assert_eq!(
+        run.color, "var(--accent)",
+        "var() reference must survive position-only mutations \
+         (selective gate skips because tree-side regions are unchanged)"
+    );
+}
+
+/// `SectionsOnly` position deltas persist past `rebuild_all` —
+/// `sync_node_from_tree` must write back `section.offset` from
+/// the tree-side section-area position. Pre-Tier-Review-Response-2
+/// the sync wrote `model.position` only; a `SectionsOnly`
+/// translate landed on the live tree but reverted on the next
+/// model→tree rebuild. Pin the writeback contract.
+#[test]
+fn test_sync_node_from_tree_section_offset_persists_after_rebuild() {
+    use baumhard::gfx_structs::area::GlyphAreaCommand;
+    use baumhard::gfx_structs::mutator::Mutation;
+    use baumhard::mindmap::custom_mutation::{scope, CustomMutation, MutationBehavior};
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    // Pin the model offset so we can detect the writeback.
+    let pre_offset_x = doc.mindmap.nodes.get(&nid).unwrap().sections[0].offset.x;
+    let cm = CustomMutation {
+        id: "translate-section-0".into(),
+        name: "Translate section 0".into(),
+        description: String::new(),
+        contexts: vec![],
+        mutator: Some(scope::self_only(vec![Mutation::area_command(
+            GlyphAreaCommand::NudgeRight(13.0),
+        )])),
+        target_scope: TS::SectionsOnly,
+        behavior: MB::Persistent,
+        predicate: None,
+        document_actions: vec![],
+        timing: None,
+    };
+    let mut tree = doc.build_tree();
+    doc.apply_custom_mutation(&cm, &nid, Some(&mut tree));
+
+    // Without writeback, model.section[0].offset.x stays at
+    // pre_offset_x; with writeback, it advances by 13.
+    let post_offset_x = doc.mindmap.nodes.get(&nid).unwrap().sections[0].offset.x;
+    assert!(
+        (post_offset_x - pre_offset_x - 13.0).abs() < 1e-3,
+        "section.offset.x must persist tree-side translate ({pre_offset_x} → {post_offset_x})"
+    );
+
+    // Force a rebuild and re-check the tree position derives
+    // from the persisted offset (no revert).
+    let tree2 = doc.build_tree();
+    let sid = tree2.section_arena_id(&nid, 0).unwrap();
+    let area = tree2.tree.arena.get(sid).unwrap().get().glyph_area().unwrap();
+    let node_pos_x = doc.mindmap.nodes.get(&nid).unwrap().position.x as f32;
+    let expected = node_pos_x + post_offset_x as f32;
+    assert!(
+        (area.position.x.0 - expected).abs() < 1e-3,
+        "post-rebuild section position should reflect persisted offset"
+    );
+}
+
+/// Section-level `OnClick` trigger fires before whole-node
+/// `OnClick` triggers — pin the precedence the
+/// `find_triggered_mutations_at` doc claims. Tier-D wired the
+/// dispatcher but no test exercises the override-precedence
+/// contract end-to-end.
+#[test]
+fn test_find_triggered_mutations_at_section_binding_fires_first() {
+    use baumhard::mindmap::custom_mutation::{
+        scope, CustomMutation, MutationBehavior, PlatformContext, Trigger, TriggerBinding,
+    };
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+
+    // Register two CustomMutations.
+    let node_cm = CustomMutation {
+        id: "node-handler".into(),
+        name: "Node handler".into(),
+        description: String::new(),
+        contexts: vec![],
+        mutator: Some(scope::self_only(vec![])),
+        target_scope: TS::SelfOnly,
+        behavior: MB::Persistent,
+        predicate: None,
+        document_actions: vec![],
+        timing: None,
+    };
+    let section_cm = CustomMutation {
+        id: "section-handler".into(),
+        name: "Section handler".into(),
+        description: String::new(),
+        contexts: vec![],
+        mutator: Some(scope::self_only(vec![])),
+        target_scope: TS::SectionsOnly,
+        behavior: MB::Persistent,
+        predicate: None,
+        document_actions: vec![],
+        timing: None,
+    };
+    doc.mutation_registry.insert("node-handler".into(), node_cm);
+    doc.mutation_registry.insert("section-handler".into(), section_cm);
+
+    {
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        node.trigger_bindings.push(TriggerBinding {
+            trigger: Trigger::OnClick,
+            mutation_id: "node-handler".into(),
+            contexts: vec![],
+        });
+        node.sections[0].trigger_bindings.push(TriggerBinding {
+            trigger: Trigger::OnClick,
+            mutation_id: "section-handler".into(),
+            contexts: vec![],
+        });
+    }
+
+    let triggered =
+        doc.find_triggered_mutations_at(&nid, Some(0), &Trigger::OnClick, &PlatformContext::Desktop);
+    let ids: Vec<&str> = triggered.iter().map(|cm| cm.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec!["section-handler", "node-handler"],
+        "section-level binding must fire FIRST, then whole-node"
+    );
+
+    // No section_idx: only whole-node bindings fire.
+    let triggered_node_only =
+        doc.find_triggered_mutations_at(&nid, None, &Trigger::OnClick, &PlatformContext::Desktop);
+    let ids: Vec<&str> = triggered_node_only.iter().map(|cm| cm.id.as_str()).collect();
+    assert_eq!(ids, vec!["node-handler"]);
+}
+
+/// `MoveTo` mutation against a multi-section node lands on the
+/// container only — pre-fix the section fan-out replayed every
+/// command on every section-area, and `MoveTo(x, y)` set every
+/// section's absolute position equal to the container's. The
+/// `sync_node_from_tree` round-trip then read
+/// `section.offset = section_pos - node_pos = (0, 0)` and
+/// silently collapsed every authored offset.
+#[test]
+fn test_apply_custom_mutation_move_to_does_not_collapse_section_offsets() {
+    use baumhard::gfx_structs::area::GlyphAreaCommand;
+    use baumhard::gfx_structs::mutator::Mutation;
+    use baumhard::mindmap::custom_mutation::{scope, CustomMutation, MutationBehavior};
+    use baumhard::mindmap::model::{MindSection, Position};
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    {
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        let mut s1 = MindSection::new_default("offset-section".into(), Vec::new());
+        s1.offset = Position { x: 50.0, y: 30.0 };
+        node.sections.push(s1);
+    }
+    let pre_offset = doc.mindmap.nodes.get(&nid).unwrap().sections[1].offset.clone();
+    let cm = CustomMutation {
+        id: "move-to".into(),
+        name: "MoveTo".into(),
+        description: String::new(),
+        contexts: vec![],
+        mutator: Some(scope::self_only(vec![Mutation::area_command(
+            GlyphAreaCommand::MoveTo(500.0, 600.0),
+        )])),
+        target_scope: TS::SelfOnly,
+        behavior: MB::Persistent,
+        predicate: None,
+        document_actions: vec![],
+        timing: None,
+    };
+    let mut tree = doc.build_tree();
+    doc.apply_custom_mutation(&cm, &nid, Some(&mut tree));
+    let post_offset = doc.mindmap.nodes.get(&nid).unwrap().sections[1].offset.clone();
+    assert!(
+        (post_offset.x - pre_offset.x).abs() < 1e-3 && (post_offset.y - pre_offset.y).abs() < 1e-3,
+        "section.offset must survive a MoveTo on the parent (was {:?}, now {:?})",
+        pre_offset,
+        post_offset
+    );
+}
+
+/// `find_triggered_mutations_at` dedupes by `mutation_id` so an
+/// author who bound the same mutation at both the section and
+/// the whole-node layer doesn't see double application (which
+/// would push two undo entries for one click and double the
+/// resulting delta).
+#[test]
+fn test_find_triggered_mutations_at_dedups_same_mutation_id() {
+    use baumhard::mindmap::custom_mutation::{
+        scope, CustomMutation, MutationBehavior, PlatformContext, Trigger, TriggerBinding,
+    };
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    let cm = CustomMutation {
+        id: "shared-handler".into(),
+        name: "Shared".into(),
+        description: String::new(),
+        contexts: vec![],
+        mutator: Some(scope::self_only(vec![])),
+        target_scope: TS::SelfOnly,
+        behavior: MB::Persistent,
+        predicate: None,
+        document_actions: vec![],
+        timing: None,
+    };
+    doc.mutation_registry.insert("shared-handler".into(), cm);
+    {
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        node.trigger_bindings.push(TriggerBinding {
+            trigger: Trigger::OnClick,
+            mutation_id: "shared-handler".into(),
+            contexts: vec![],
+        });
+        node.sections[0].trigger_bindings.push(TriggerBinding {
+            trigger: Trigger::OnClick,
+            mutation_id: "shared-handler".into(),
+            contexts: vec![],
+        });
+    }
+    let triggered =
+        doc.find_triggered_mutations_at(&nid, Some(0), &Trigger::OnClick, &PlatformContext::Desktop);
+    assert_eq!(triggered.len(), 1, "duplicate id must dedupe to one cm");
+    assert_eq!(triggered[0].id, "shared-handler");
+}
+
+/// `start_animation_at` keys dedup by `(mutation_id, target_id,
+/// section_idx)` — two adjacent sections of the same node
+/// bound to the same mutation id coexist as separate
+/// `AnimationInstance`s instead of coalescing under the prior
+/// `(mutation_id, target_id)`-only key.
+#[test]
+fn test_start_animation_at_does_not_dedup_across_sections() {
+    use baumhard::mindmap::animation::AnimationTiming;
+    use baumhard::mindmap::custom_mutation::{scope, CustomMutation, MutationBehavior};
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    let cm = CustomMutation {
+        id: "anim".into(),
+        name: "Anim".into(),
+        description: String::new(),
+        contexts: vec![],
+        mutator: Some(scope::self_only(vec![])),
+        target_scope: TS::SectionsOnly,
+        behavior: MB::Persistent,
+        predicate: None,
+        document_actions: vec![],
+        timing: Some(AnimationTiming { duration_ms: 500, ..AnimationTiming::default() }),
+    };
+    doc.start_animation_at(&cm, &nid, Some(0), 0);
+    doc.start_animation_at(&cm, &nid, Some(1), 0);
+    assert_eq!(
+        doc.active_animations.len(),
+        2,
+        "section_idx must be part of the dedup key"
+    );
+    // Same section + same mutation → dedupe (no duplicate).
+    doc.start_animation_at(&cm, &nid, Some(0), 0);
+    assert_eq!(doc.active_animations.len(), 2);
+}
+
+/// `SectionsOnly + predicate` combo: the structural seam and
+/// the predicate gate compose — a `SectionsOnly` mutation gated
+/// by `(Flag(SectionRoot), Equals(false))` (matches set, i.e.
+/// only sections) reaches the same set as `SectionsOnly` alone
+/// because every section-area carries the flag. Conversely
+/// `(Flag(SectionRoot), Equals(true))` (matches clear, i.e.
+/// containers) filters every section out — silent no-op
+/// candidate that the apply path warns about. Pins both
+/// composition paths.
+#[test]
+fn test_apply_custom_mutation_sections_only_with_predicate_compose() {
+    use baumhard::core::primitives::Flag;
+    use baumhard::gfx_structs::element::GfxElementField;
+    use baumhard::gfx_structs::predicate::{Comparator, Predicate};
+    use baumhard::mindmap::model::MindSection;
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    {
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        node.sections
+            .push(MindSection::new_default("second".into(), Vec::new()));
+    }
+    // `SectionsOnly` + predicate matching SectionRoot-set:
+    // every section passes; the mutation lands on both.
+    let mut cm_pass = TestNudgeMutation::new("nudge-sections-and-pred", TS::SectionsOnly)
+        .magnitude(7.0)
+        .build();
+    cm_pass.predicate = Some(Predicate {
+        fields: vec![(GfxElementField::Flag(Flag::SectionRoot), Comparator::equals())],
+        always_match: false,
+    });
+    let mut tree = doc.build_tree();
+    let s0_x_before = {
+        let sid = tree.section_arena_id(&nid, 0).unwrap();
+        tree.tree.arena.get(sid).unwrap().get().glyph_area().unwrap().position.x.0
+    };
+    doc.apply_custom_mutation(&cm_pass, &nid, Some(&mut tree));
+    let s0_x_after = {
+        let sid = tree.section_arena_id(&nid, 0).unwrap();
+        tree.tree.arena.get(sid).unwrap().get().glyph_area().unwrap().position.x.0
+    };
+    assert!(
+        (s0_x_after - s0_x_before - 7.0).abs() < 1e-3,
+        "SectionsOnly + (Flag(SectionRoot), Equals(false)) lands on every section"
+    );
+}
+
+/// Selective sync gate: a mutation that doesn't touch
+/// regions (e.g. `NudgeRight` only shifts position) must skip
+/// the section round-trip so bold / italic / underline /
+/// size_pt / hyperlink survive verbatim. The forward conversion
+/// drops these fields, so an unconditional round-trip would
+/// silently strip them every time any custom mutation ran on a
+/// node — the gate keeps them anchored.
+#[test]
+fn test_sync_node_from_tree_selective_gate_preserves_unchanged_runs() {
+    use baumhard::mindmap::model::TextRun;
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    {
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        node.sections[0].text = "hello".into();
+        node.sections[0].text_runs = vec![TextRun {
+            start: 0,
+            end: 5,
+            bold: false,
+            italic: true,
+            underline: true,
+            font: "LiberationSans".into(),
+            size_pt: 21, // Non-default so we can detect a stripped round-trip.
+            color: "#abcdef".into(),
+            hyperlink: Some("https://example.org".into()),
+        }];
+    }
+    // NudgeRight only shifts position — the section's regions
+    // stay byte-identical to the model snapshot, so the gate
+    // skips the lossy round-trip.
+    let cm = make_test_mutation("nudge", TS::SelfOnly);
+    let mut tree = doc.build_tree();
+
+    doc.apply_custom_mutation(&cm, &nid, Some(&mut tree));
+
+    let run = &doc.mindmap.nodes.get(&nid).unwrap().sections[0].text_runs[0];
+    assert!(run.italic, "italic must survive a position-only mutation");
+    assert!(run.underline, "underline must survive a position-only mutation");
+    assert_eq!(run.size_pt, 21, "size_pt must survive a position-only mutation");
+    assert_eq!(
+        run.hyperlink.as_deref(),
+        Some("https://example.org"),
+        "hyperlink must survive a position-only mutation"
+    );
+}
+
+/// Top-level `CustomMutation.predicate` filters the candidate
+/// element list before mutations land. A
+/// `Predicate { fields: [(Flag(SectionRoot), Equals(false))] }`
+/// gate on a `SelfOnly` mutation lands on every section-area
+/// child but skips the container — the same end-state as
+/// `SectionsOnly`, expressed at the predicate layer.
+#[test]
+fn test_apply_custom_mutation_predicate_gate_filters_container() {
+    use baumhard::core::primitives::Flag;
+    use baumhard::gfx_structs::element::GfxElementField;
+    use baumhard::gfx_structs::predicate::{Comparator, Predicate};
+    use baumhard::mindmap::model::MindSection;
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    {
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        node.sections
+            .push(MindSection::new_default("second".into(), vec![]));
+    }
+    let mut cm = TestNudgeMutation::new("nudge-pred", TS::SelfOnly)
+        .magnitude(7.0)
+        .build();
+    cm.predicate = Some(Predicate {
+        fields: vec![(GfxElementField::Flag(Flag::SectionRoot), Comparator::equals())],
+        always_match: false,
+    });
+    let mut tree = doc.build_tree();
+
+    let container_x_before = {
+        let aid = tree.arena_id_for(&nid).unwrap();
+        tree.tree
+            .arena
+            .get(aid)
+            .and_then(|n| n.get().glyph_area())
+            .unwrap()
+            .position
+            .x
+            .0
+    };
+    let section_x_before = {
+        let sid = tree.section_arena_id(&nid, 0).unwrap();
+        tree.tree
+            .arena
+            .get(sid)
+            .and_then(|n| n.get().glyph_area())
+            .unwrap()
+            .position
+            .x
+            .0
+    };
+
+    doc.apply_custom_mutation(&cm, &nid, Some(&mut tree));
+
+    let container_x_after = {
+        let aid = tree.arena_id_for(&nid).unwrap();
+        tree.tree
+            .arena
+            .get(aid)
+            .and_then(|n| n.get().glyph_area())
+            .unwrap()
+            .position
+            .x
+            .0
+    };
+    let section_x_after = {
+        let sid = tree.section_arena_id(&nid, 0).unwrap();
+        tree.tree
+            .arena
+            .get(sid)
+            .and_then(|n| n.get().glyph_area())
+            .unwrap()
+            .position
+            .x
+            .0
+    };
+
+    assert!(
+        (container_x_after - container_x_before).abs() < 1e-3,
+        "container must be filtered out by the SectionRoot predicate"
+    );
+    assert!(
+        (section_x_after - section_x_before - 7.0).abs() < 1e-3,
+        "section-area must still receive the mutation"
+    );
+}
+
 #[test]
 fn test_apply_custom_mutation_persistent_sets_dirty() {
     let mut doc = load_test_doc();

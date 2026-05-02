@@ -9,7 +9,7 @@ use super::fixtures::*;
 fn test_build_tree_scale_1000_node_chain() {
     let map = mk_chain_map(1000);
     let result = build_mindmap_tree(&map);
-    assert_eq!(result.node_map.len(), 1000);
+    assert_eq!(result.node_count(), 1000);
     // The spine root is the only root, so the tree's root has one
     // child (the Void -> first chain node).
     let roots: Vec<_> = result.tree.root.children(&result.tree.arena).collect();
@@ -17,7 +17,7 @@ fn test_build_tree_scale_1000_node_chain() {
     // Every chain node is reachable via the node_map.
     for i in 0..1000 {
         let id = format!("c{}", i);
-        assert!(result.node_map.contains_key(&id), "missing node {}", id);
+        assert!(result.contains_node(&id), "missing node {}", id);
     }
 }
 
@@ -30,11 +30,19 @@ fn test_build_tree_scale_1000_node_chain() {
 fn test_build_tree_wide_fan_out_500() {
     let map = mk_star_map(500);
     let result = build_mindmap_tree(&map);
-    assert_eq!(result.node_map.len(), 500);
-    // Root is "root", all others are direct children.
-    let root_tree_id = result.node_map.get("root").unwrap();
-    let children: Vec<_> = root_tree_id.children(&result.tree.arena).collect();
-    assert_eq!(children.len(), 499);
+    assert_eq!(result.node_count(), 500);
+    // Root is "root", all others are direct children. Post-section
+    // refactor the root container also has a section-area child;
+    // count only the immediate children that are themselves
+    // node-container arena ids in `node_map`.
+    let root_tree_id = result.arena_id_for("root").unwrap();
+    let containers_in_node_map: std::collections::HashSet<indextree::NodeId> =
+        result.node_ids().map(|(_, id)| id).collect();
+    let child_node_count = root_tree_id
+        .children(&result.tree.arena)
+        .filter(|cid| containers_in_node_map.contains(cid))
+        .count();
+    assert_eq!(child_node_count, 499);
 }
 
 /// A 500-node deep spine must build without a stack overflow. The
@@ -45,13 +53,26 @@ fn test_build_tree_wide_fan_out_500() {
 fn test_build_tree_deep_chain_no_stack_overflow() {
     let map = mk_chain_map(500);
     let result = build_mindmap_tree(&map);
-    assert_eq!(result.node_map.len(), 500);
-    // Walk from the root down the spine and confirm depth == 500.
-    let mut current = *result.node_map.get("c0").unwrap();
+    assert_eq!(result.node_count(), 500);
+    // Walk from c0 down the spine via `node_map`-keyed children
+    // (post-section refactor `first_child` may be a section-area
+    // rather than the next chain node, so filtering to container
+    // ids keeps the depth measurement structural).
+    let containers_in_node_map: std::collections::HashSet<indextree::NodeId> =
+        result.node_ids().map(|(_, id)| id).collect();
+    let mut current = result.arena_id_for("c0").unwrap();
     let mut depth = 1;
-    while let Some(child) = current.children(&result.tree.arena).next() {
-        current = child;
-        depth += 1;
+    loop {
+        let next_container = current
+            .children(&result.tree.arena)
+            .find(|cid| containers_in_node_map.contains(cid));
+        match next_container {
+            Some(c) => {
+                current = c;
+                depth += 1;
+            }
+            None => break,
+        }
     }
     assert_eq!(depth, 500);
 }

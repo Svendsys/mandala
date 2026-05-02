@@ -66,6 +66,17 @@ pub(super) enum PendingClick {
     None,
     Empty,
     Node(String),
+    /// Cursor landed on a specific section inside a multi-section
+    /// node at mouse-down. Committed at mouse-up into
+    /// `SelectionState::Section { node_id, section_idx }` so
+    /// per-section verbs (text edit, font, color) target only
+    /// that section. Single-section nodes route through `Node`
+    /// instead, preserving the whole-node click semantic for
+    /// migrated maps.
+    Section {
+        node_id: String,
+        section_idx: usize,
+    },
     /// Cursor landed on a portal **icon** at mouse-down. Committed
     /// at mouse-up into a `SelectionState::PortalLabel`. Carries
     /// both the owning-edge key and the endpoint id the marker
@@ -567,13 +578,19 @@ pub(super) fn run(mut app: Application) {
                     tree_opt = Some(mindmap_tree);
                     doc_opt = Some(doc);
                 }
-                Err(e) => log::error!(
-                    "WASM: failed to construct document from '{}': {}",
-                    mindmap_path,
-                    e
-                ),
+                Err(e) => {
+                    log::error!(
+                        "WASM: failed to construct document from '{}': {}",
+                        mindmap_path,
+                        e
+                    );
+                    show_load_error_overlay(&mindmap_path, &e.to_string());
+                }
             },
-            Err(e) => log::error!("WASM: failed to fetch '{}': {}", mindmap_path, e),
+            Err(e) => {
+                log::error!("WASM: failed to fetch '{}': {}", mindmap_path, e);
+                show_load_error_overlay(&mindmap_path, &e);
+            }
         }
 
         renderer.process_decree(RenderDecree::StartRender);
@@ -730,4 +747,47 @@ async fn fetch_map_json(url: &str) -> Result<String, String> {
         .map_err(|e| format!("reading response body failed: {:?}", e))?
         .as_string()
         .ok_or_else(|| "response body was not a string".to_string())
+}
+
+/// Surface a map-load failure as a DOM overlay rather than only
+/// `console.log`. The legacy WASM failure mode ("blank canvas
+/// when the map is pre-section") leaves users with no visible
+/// hint that anything went wrong; this overlay names the file
+/// and the loader error so the `maptool convert --sections`
+/// migration pointer is copyable. Idempotent — calling twice
+/// replaces the existing overlay's text.
+fn show_load_error_overlay(map_path: &str, error: &str) {
+    use wasm_bindgen::JsCast;
+    let Some(window) = web_sys::window() else { return };
+    let Some(document) = window.document() else { return };
+    let Some(body) = document.body() else { return };
+
+    const OVERLAY_ID: &str = "mandala-map-load-error";
+    let overlay = match document.get_element_by_id(OVERLAY_ID) {
+        Some(existing) => existing,
+        None => {
+            let Ok(div) = document.create_element("div") else { return };
+            let _ = div.set_attribute("id", OVERLAY_ID);
+            let style = "position:fixed;top:1rem;left:1rem;right:1rem;\
+                         z-index:9999;padding:1rem;\
+                         background:#1a1a1a;color:#ff6b6b;\
+                         border:1px solid #ff6b6b;border-radius:4px;\
+                         font-family:monospace;font-size:14px;\
+                         white-space:pre-wrap;user-select:text;";
+            let _ = div.set_attribute("style", style);
+            if body.append_child(&div).is_err() {
+                return;
+            }
+            div
+        }
+    };
+    if let Some(html_elem) = overlay.dyn_ref::<web_sys::HtmlElement>() {
+        let text = format!(
+            "Failed to load map '{}'.\n\nError: {}\n\n\
+             If this is a pre-section map, run:\n\
+             maptool convert --sections <path>",
+            map_path, error
+        );
+        html_elem.set_inner_text(&text);
+    }
 }

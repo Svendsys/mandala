@@ -18,13 +18,13 @@ fn test_double_click_same_target_within_window_fires() {
     let prev = LastClick {
         time: 1000.0,
         screen_pos: (100.0, 100.0),
-        hit: ClickHit::Node("node-a".to_string()),
+        hit: ClickHit::Node("node-a".to_string(), None),
     };
     assert!(is_double_click(
         &prev,
         1100.0,
         (101.0, 100.0),
-        &ClickHit::Node("node-a".to_string()),
+        &ClickHit::Node("node-a".to_string(), None),
     ));
 }
 
@@ -33,13 +33,13 @@ fn test_double_click_different_targets_does_not_fire() {
     let prev = LastClick {
         time: 1000.0,
         screen_pos: (100.0, 100.0),
-        hit: ClickHit::Node("node-a".to_string()),
+        hit: ClickHit::Node("node-a".to_string(), None),
     };
     assert!(!is_double_click(
         &prev,
         1100.0,
         (100.0, 100.0),
-        &ClickHit::Node("node-b".to_string()),
+        &ClickHit::Node("node-b".to_string(), None),
     ));
 }
 
@@ -113,6 +113,7 @@ fn test_double_click_just_under_boundary_fires() {
 fn test_double_click_guard_skips_same_target_when_editor_open() {
     let editor = TextEditState::Open {
         node_id: "node-A".to_string(),
+        section_idx: 0,
         buffer: "in progress".to_string(),
         cursor_grapheme_pos: 11,
         buffer_regions: baumhard::core::primitives::ColorFontRegions::new_empty(),
@@ -131,6 +132,7 @@ fn test_double_click_guard_skips_same_target_when_editor_open() {
 fn test_double_click_guard_allows_different_target_when_editor_open() {
     let editor = TextEditState::Open {
         node_id: "node-A".to_string(),
+        section_idx: 0,
         buffer: "in progress".to_string(),
         cursor_grapheme_pos: 11,
         buffer_regions: baumhard::core::primitives::ColorFontRegions::new_empty(),
@@ -190,8 +192,8 @@ mod drag_helper_tests {
             width: 100.0,
             height: 60.0,
         };
-        n.text = "n".to_string();
-        n.text_runs[0].end = 1;
+        n.sections[0].text = "n".to_string();
+        n.sections[0].text_runs[0].end = 1;
         n
     }
 
@@ -406,17 +408,38 @@ mod click_hit_priority_tests {
     fn click_hit_priority_node_wins_over_all_others() {
         let hit = click_hit_from_priority(
             &Some("node-x".to_string()),
+            None,
             &Some((ek(), "n1".to_string())),
             &Some((ek(), "n2".to_string())),
             &Some(ek()),
         );
-        assert_eq!(hit, ClickHit::Node("node-x".to_string()));
+        assert_eq!(hit, ClickHit::Node("node-x".to_string(), None));
+    }
+
+    /// Section-aware double-click: a click on `Section(N, K)`
+    /// produces `ClickHit::Node(N, Some(K))`. Two clicks on
+    /// different sections of the same node compare unequal under
+    /// `PartialEq` and therefore *don't* fire `is_double_click`,
+    /// pinning the regression Tier-D introduced (the section idx
+    /// was resolved by `compute_click_hit` but dropped before the
+    /// double-click compare and the editor open).
+    #[test]
+    fn click_hit_priority_node_carries_section_idx() {
+        let hit = click_hit_from_priority(
+            &Some("node-x".to_string()),
+            Some(2),
+            &None,
+            &None,
+            &None,
+        );
+        assert_eq!(hit, ClickHit::Node("node-x".to_string(), Some(2)));
     }
 
     #[test]
     fn click_hit_priority_portal_text_wins_over_icon_and_label() {
         let hit = click_hit_from_priority(
             &None,
+            None,
             &Some((ek(), "n1".to_string())),
             &Some((ek(), "n2".to_string())),
             &Some(ek()),
@@ -430,19 +453,62 @@ mod click_hit_priority_tests {
 
     #[test]
     fn click_hit_priority_portal_icon_wins_over_edge_label() {
-        let hit = click_hit_from_priority(&None, &None, &Some((ek(), "n2".to_string())), &Some(ek()));
+        let hit = click_hit_from_priority(
+            &None,
+            None,
+            &None,
+            &Some((ek(), "n2".to_string())),
+            &Some(ek()),
+        );
         assert!(matches!(hit, ClickHit::PortalMarker { .. }));
     }
 
     #[test]
     fn click_hit_priority_edge_label_wins_when_alone() {
-        let hit = click_hit_from_priority(&None, &None, &None, &Some(ek()));
+        let hit = click_hit_from_priority(&None, None, &None, &None, &Some(ek()));
         assert!(matches!(hit, ClickHit::EdgeLabel(_)));
     }
 
     #[test]
     fn click_hit_priority_all_none_yields_empty() {
-        let hit = click_hit_from_priority(&None, &None, &None, &None);
+        let hit = click_hit_from_priority(&None, None, &None, &None, &None);
         assert_eq!(hit, ClickHit::Empty);
+    }
+
+    /// Same-node, different-section "double-click" must NOT fire.
+    /// Pre-fix the section index was discarded inside `ClickHit::Node`,
+    /// so two slow clicks on adjacent sections of the same node
+    /// were collapsed into one double-click event by the
+    /// `PartialEq` compare in `is_double_click`.
+    #[test]
+    fn double_click_different_section_of_same_node_does_not_fire() {
+        let prev = LastClick {
+            time: 1000.0,
+            screen_pos: (100.0, 100.0),
+            hit: ClickHit::Node("node-a".to_string(), Some(0)),
+        };
+        assert!(!is_double_click(
+            &prev,
+            1100.0,
+            (101.0, 100.0),
+            &ClickHit::Node("node-a".to_string(), Some(1)),
+        ));
+    }
+
+    /// Same-section double-click must fire — section index
+    /// equality is the genuine same-target signal.
+    #[test]
+    fn double_click_same_section_fires() {
+        let prev = LastClick {
+            time: 1000.0,
+            screen_pos: (100.0, 100.0),
+            hit: ClickHit::Node("node-a".to_string(), Some(1)),
+        };
+        assert!(is_double_click(
+            &prev,
+            1100.0,
+            (101.0, 100.0),
+            &ClickHit::Node("node-a".to_string(), Some(1)),
+        ));
     }
 }

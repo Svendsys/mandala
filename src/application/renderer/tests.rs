@@ -555,6 +555,7 @@ fn background_rect_culled_when_zoom_outside_window() {
             min: Some(1.0),
             max: Some(2.0),
         },
+        unique_id: 0,
     };
 
     // Inside the window: visible.
@@ -588,6 +589,7 @@ fn background_rect_with_unbounded_window_renders_at_every_zoom() {
         color: [64, 64, 64, 255],
         shape_id: NodeShape::Rectangle.shader_id(),
         zoom_visibility: ZoomVisibility::unbounded(),
+        unique_id: 0,
     };
 
     for z in [0.05_f32, 0.5, 1.0, 2.5, 5.0] {
@@ -622,6 +624,7 @@ fn background_rect_off_viewport_still_culled_with_matching_zoom() {
             min: Some(1.0),
             max: Some(2.0),
         },
+        unique_id: 0,
     };
     assert!(
         !rect.visible_at(&camera),

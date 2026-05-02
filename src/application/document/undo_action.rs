@@ -5,7 +5,7 @@
 //! `undo()` dispatch lives in `undo.rs` and branches on these
 //! variants.
 
-use baumhard::mindmap::model::{Canvas, MindEdge, MindNode, NodeStyle, Position, TextRun};
+use baumhard::mindmap::model::{Canvas, MindEdge, MindNode, MindSection, NodeStyle, Position};
 
 /// An undoable action that can be reversed.
 #[derive(Clone, Debug)]
@@ -39,26 +39,28 @@ pub enum UndoAction {
     /// A new node was created (via `apply_create_orphan_node`). Undo
     /// removes the node from `mindmap.nodes` by id.
     CreateNode { node_id: String },
-    /// The `text` (and possibly `text_runs`) of a node was edited in
-    /// place via `set_node_text`. Undo restores the pre-edit `text` and
-    /// `text_runs` on the node, if it still exists.
+    /// A node's text content was edited in place via `set_node_text`
+    /// (post-section-refactor: writes through to the node's first
+    /// [`MindSection`]). The full pre-edit `sections` array is
+    /// snapshotted so undo restores text *and* per-run formatting on
+    /// every section, not just the one that was edited.
     EditNodeText {
         node_id: String,
-        before_text: String,
-        before_runs: Vec<TextRun>,
+        before_sections: Vec<MindSection>,
     },
     /// A node's visual style was edited in place (bg / border / text
     /// color / font size). Captures the pre-edit `NodeStyle` plus the
-    /// `text_runs` snapshot, since `set_node_text_color` and
-    /// `set_node_font_size` may rewrite run colors / sizes on top of
-    /// the style change. Undo restores both fields. Separate from
-    /// `EditNodeText` because the round-trip contract is different
-    /// (text is untouched; runs are touched only on text-color /
-    /// font-size edits).
+    /// full `sections` snapshot — `set_node_text_color`,
+    /// `set_node_font_size`, and `set_node_font_family` rewrite per-
+    /// run colours / sizes / fonts on top of the style change, and
+    /// the section-resident runs need to come back wholesale on undo.
+    /// Separate from `EditNodeText` because the round-trip contract
+    /// is different (text is untouched here; only the section
+    /// formatting is).
     EditNodeStyle {
         node_id: String,
         before_style: NodeStyle,
-        before_runs: Vec<TextRun>,
+        before_sections: Vec<MindSection>,
     },
     /// A node's zoom-visibility window (`min_zoom_to_render` /
     /// `max_zoom_to_render`) was edited. Kept as its own variant —

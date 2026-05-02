@@ -223,6 +223,71 @@ pub fn app_font_by_family(name: &str) -> Option<AppFont> {
         .map(|(_, app_font)| *app_font)
 }
 
+/// Reverse lookup: family name string for a given `AppFont`, or
+/// `None` when the font isn't represented in the loaded
+/// `FAMILY_INDEX`. Returns the *first* family name registered
+/// for the variant (alphabetical-by-name, matching
+/// `loaded_families_iter`'s order); when a single AppFont
+/// surfaces multiple aliases (localised names, postscript names),
+/// only the first is returned.
+///
+/// Used by the post-mutation reverse converter in
+/// `document/custom.rs::region_to_text_run` — a tree-side
+/// `ColorFontRegion.font: Option<AppFont>` rolls back into the
+/// model's `TextRun.font: String` shape. `None` falls through to
+/// the empty string at that site, matching the pre-section
+/// behaviour for runs without a family pin.
+///
+/// Costs: O(n) over `FAMILY_INDEX`, but `n` is the small set of
+/// compiled-in families (~30 today), so the scan is cheaper than
+/// a `HashMap` build. No allocation; the borrowed `&'static str`
+/// borrows from the `OnceLock`-cached index that lives for the
+/// process lifetime.
+pub fn family_name_of(app_font: AppFont) -> Option<&'static str> {
+    FAMILY_INDEX
+        .get_or_init(build_family_index)
+        .iter()
+        .find(|(_, family_app_font)| *family_app_font == app_font)
+        .map(|(name, _)| name.as_str())
+}
+
+/// Live fontdb lookup: return the face-canonical family name
+/// for `app_font` by consulting the font_system database
+/// directly. Returns the **first** family alias the face
+/// declares (`face.families.first()`), which is what cosmic-text
+/// expects when `Attrs::new().family(Family::Name(...))` is used
+/// to pin a face for shaping. Does not allocate when the lookup
+/// misses (`?` short-circuits).
+///
+/// Distinct from [`family_name_of`]: that helper consults the
+/// `OnceLock`-cached [`FAMILY_INDEX`] (alphabetically-sorted, no
+/// `font_system` needed) and is the right shape for the post-
+/// mutation reverse converter. `face_family_name_for_pin` is the
+/// shape every shaping path wants — same name string the face
+/// stores natively, so the cosmic-text `Family::Name` match
+/// can't drift.
+///
+/// Single helper for the three call sites
+/// (`measure_glyph_ink_bounds`, `measure_text_block_unbounded`,
+/// `font/attrs.rs::resolve_font_family`) that previously
+/// hand-rolled the same `COMPILED_FONT_ID_MAP → face → families.first()`
+/// chain. The four `?` short-circuits (missing AppFont, empty
+/// id list, fontdb face miss, empty families list) all silently
+/// fall back to the cosmic-text default — same monospace
+/// fallback the shaper uses if the family pin fails to resolve,
+/// so the floor we measure matches what the user will eventually
+/// see. `build_family_index` warns and skips the same misses on
+/// the index-build side; the asymmetry is deliberate (warn once
+/// at build, degrade gracefully at every shape).
+pub(crate) fn face_family_name_for_pin(
+    font_system: &cosmic_text::FontSystem,
+    app_font: AppFont,
+) -> Option<String> {
+    let ids = COMPILED_FONT_ID_MAP.get(&app_font)?;
+    let face = font_system.db().face(*ids.first()?)?;
+    Some(face.families.first()?.0.clone())
+}
+
 /// Wall-clock ceiling for a `FONT_SYSTEM` write acquisition. Mandala
 /// is single-threaded (see `CLAUDE.md`), so in healthy operation the
 /// lock is always free when a caller asks for it. Any wait longer
@@ -423,11 +488,7 @@ pub fn measure_glyph_ink_bounds(
     // glyphs shape against the intended face instead of cosmic-text's
     // default fallback. The family name string must outlive `attrs`,
     // so we hold it in a local binding.
-    let family_name: Option<String> = font.and_then(|app_font| {
-        let ids = COMPILED_FONT_ID_MAP.get(&app_font)?;
-        let face = font_system.db().face(ids[0])?;
-        Some(face.families.first()?.0.clone())
-    });
+    let family_name: Option<String> = font.and_then(|app_font| face_family_name_for_pin(font_system, app_font));
     let attrs = match family_name.as_deref() {
         Some(name) => Attrs::new().family(Family::Name(name)),
         None => Attrs::new(),
@@ -551,20 +612,7 @@ pub fn measure_text_block_unbounded(
     // cosmic-text's default monospace and the box undersizes by
     // 30–60%. The family-name string must outlive `attrs`, so
     // we hold it in a local binding.
-    //
-    // The four `?` short-circuits (missing AppFont, empty id list,
-    // fontdb face miss, empty families list) all silently fall
-    // back to the cosmic-text default — same monospace fallback
-    // the shaper uses if the family pin fails to resolve, so the
-    // floor we measure matches what the user will eventually see.
-    // `build_family_index` warns and skips the same misses on the
-    // index-build side; the asymmetry is deliberate (warn once at
-    // build, degrade gracefully at every measure).
-    let family_name: Option<String> = font.and_then(|app_font| {
-        let ids = COMPILED_FONT_ID_MAP.get(&app_font)?;
-        let face = font_system.db().face(*ids.first()?)?;
-        Some(face.families.first()?.0.clone())
-    });
+    let family_name: Option<String> = font.and_then(|app_font| face_family_name_for_pin(font_system, app_font));
     let attrs = match family_name.as_deref() {
         Some(name) => Attrs::new().family(Family::Name(name)),
         None => Attrs::new(),

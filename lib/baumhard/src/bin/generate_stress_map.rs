@@ -53,7 +53,7 @@ use std::fs;
 use std::process::ExitCode;
 
 use baumhard::mindmap::model::{
-    Canvas, MindEdge, MindMap, MindNode, NodeLayout, NodeStyle, Position, Size, TextRun,
+    Canvas, MindEdge, MindMap, MindNode, MindSection, NodeLayout, NodeStyle, Position, Size, TextRun,
 };
 use baumhard::util::grapheme_chad::count_grapheme_clusters;
 use rand::rngs::StdRng;
@@ -232,8 +232,7 @@ fn make_node(id: String, parent_id: Option<String>, x: f64, y: f64, depth: usize
             width: NODE_WIDTH,
             height: NODE_HEIGHT,
         },
-        text,
-        text_runs,
+        sections: vec![MindSection::new_default(text, text_runs)],
         style: NodeStyle {
             background_color: "#141414".to_string(),
             frame_color,

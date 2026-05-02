@@ -52,14 +52,24 @@ mod tests_reparent;
 mod tests_selection;
 
 // Cross-platform: consumers (`scene_rebuild.rs`, `event_mouse_click.rs`,
-// `run_wasm/`, `scene_host.rs`) compile on both targets.
-pub use hit_test::{apply_tree_highlights, hit_test, point_in_node_aabb};
+// `run_wasm/`, `scene_host.rs`) compile on both targets. The
+// plain `hit_test` (Option<String> shape) is reachable only via
+// the native click handler today; the WASM click handler routes
+// through `hit_test_target` (HitTarget enum). Gating the
+// `hit_test` re-export to non-wasm silences the
+// `#[warn(unused_imports)]` the WASM build would otherwise raise
+// for an unused-on-wasm name.
+pub use hit_test::{apply_tree_highlights, hit_test_target, point_in_node_aabb, HitTarget};
+#[cfg(not(target_arch = "wasm32"))]
+pub use hit_test::hit_test;
 // Native-only: consumed by drag handlers, the click router, and
 // rect-select drain — none reachable on WASM today.
 #[cfg(not(target_arch = "wasm32"))]
 pub use hit_test::{apply_drag_delta, apply_drag_delta_and_collect_patches, hit_test_edge, rect_select};
 pub use nodes::{BorderConfigEdits, BorderEditOutcome, BorderSide, OptionEdit};
-pub use types::{AnimationInstance, EdgeLabelSel, EdgeRef, PortalLabelSel, SelectionState, HIGHLIGHT_COLOR};
+pub use types::{
+    AnimationInstance, EdgeLabelSel, EdgeRef, PortalLabelSel, SectionSel, SelectionState, HIGHLIGHT_COLOR,
+};
 // Native-only: consumed by `app/click.rs`'s reparent / connect mode
 // rendering. WASM doesn't dispatch `EnterReparentMode` /
 // `EnterConnectMode` (NativeOnly per `wasm_compatibility`).
@@ -184,48 +194,77 @@ pub(super) fn grow_one_node_to_fit_text(node: &mut baumhard::mindmap::model::Min
         acquire_font_system_write, app_font_by_family, measure_text_block_unbounded,
     };
 
-    let scale = node
-        .text_runs
-        .iter()
-        .map(|r| r.size_pt as f32)
-        .fold(0.0_f32, f32::max);
-    let scale = if scale > 0.0 { scale } else { 14.0 };
-    let line_height = scale * 1.2;
-    let pad_x = scale * 1.5;
-    let pad_y = scale * 0.5;
+    // Walk every section, measure its text under its dominant
+    // run, and combine the per-section floors into one node-level
+    // floor. Sections with explicit `size` carry their own
+    // intrinsic bounds and don't grow the node — only `None`-size
+    // sections (the migration-default "fill the parent" shape)
+    // pull on the node's AABB.
+    //
+    // §B5 lock-scope discipline: each section's measurement
+    // acquires + drops the `FONT_SYSTEM` write guard
+    // independently. A single guard around the whole loop would
+    // be one fewer ceremony per node, but parallel cargo-test
+    // workers thrashed the lock when a test wrote two sections
+    // through `set_section_text` and the surrounding test threads
+    // all wanted the same guard — narrower scopes drain faster
+    // than fewer-but-longer ones under contention.
+    let mut floor_w: f64 = 0.0;
+    let mut floor_h: f64 = 0.0;
+    for section in &node.sections {
+        if section.size.is_some() {
+            continue;
+        }
+        // Non-finite offsets contribute nothing — the verifier
+        // flags them, and a NaN propagating into floor_w / floor_h
+        // would corrupt every downstream `node.size` reader.
+        if !section.offset.x.is_finite() || !section.offset.y.is_finite() {
+            continue;
+        }
+        let scale = section
+            .text_runs
+            .iter()
+            .map(|r| r.size_pt as f32)
+            .fold(0.0_f32, f32::max);
+        let scale = if scale > 0.0 { scale } else { 14.0 };
+        let line_height = scale * 1.2;
+        let pad_x = scale * 1.5;
+        let pad_y = scale * 0.5;
 
-    // Pin the family of the run with the largest size so the
-    // measurement reflects whatever face occupies the widest row.
-    // Empty sentinel / unknown family resolves to None, which
-    // lands on cosmic-text's default monospace — same fallback the
-    // shaper uses, so the floor matches what the user will see.
-    let measure_font = node
-        .text_runs
-        .iter()
-        .max_by(|a, b| a.size_pt.cmp(&b.size_pt))
-        .and_then(|r| {
-            if r.font.is_empty() {
-                None
-            } else {
-                app_font_by_family(&r.font)
-            }
-        });
+        let measure_font = section
+            .text_runs
+            .iter()
+            .max_by(|a, b| a.size_pt.cmp(&b.size_pt))
+            .and_then(|r| {
+                if r.font.is_empty() {
+                    None
+                } else {
+                    app_font_by_family(&r.font)
+                }
+            });
 
-    // Per-node lock scope: a renderer frame scheduled during
-    // document load can interleave between nodes rather than
-    // waiting for every measurement. §B5.
-    let block = {
-        let mut fs = acquire_font_system_write("grow_one_node_to_fit_text");
-        measure_text_block_unbounded(&mut fs, &node.text, scale, line_height, measure_font)
-    };
+        let block = {
+            let mut fs = acquire_font_system_write("grow_one_node_to_fit_text");
+            measure_text_block_unbounded(&mut fs, &section.text, scale, line_height, measure_font)
+        };
 
-    let need_w = (block.width + pad_x) as f64;
-    let need_h = (block.height + pad_y) as f64;
-    if node.size.width < need_w {
-        node.size.width = need_w;
+        // Pass the offset through unmodified — the prior `.max(0)`
+        // clamp silently treated leftward / upward overflow as zero,
+        // hiding the actual visible-text width.
+        let need_w = (block.width + pad_x) as f64 + section.offset.x;
+        let need_h = (block.height + pad_y) as f64 + section.offset.y;
+        if need_w > floor_w {
+            floor_w = need_w;
+        }
+        if need_h > floor_h {
+            floor_h = need_h;
+        }
     }
-    if node.size.height < need_h {
-        node.size.height = need_h;
+    if node.size.width < floor_w {
+        node.size.width = floor_w;
+    }
+    if node.size.height < floor_h {
+        node.size.height = floor_h;
     }
 }
 

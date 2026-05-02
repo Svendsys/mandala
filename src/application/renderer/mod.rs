@@ -312,7 +312,17 @@ pub struct Renderer {
     fps_ring: FrameIntervalRing,
 
     camera: Camera2D,
-    mindmap_buffers: FxHashMap<String, MindMapTextBuffer>,
+    /// Mindmap text buffers keyed by `GfxElement::unique_id`
+    /// (stringified for use as a `FxHashMap` key alongside the
+    /// edit / undo paths' Dewey-decimal addressing). The value is
+    /// a `Vec<MindMapTextBuffer>` because the tree walker emits
+    /// **multiple buffers per element** when an outline halo is
+    /// configured: one buffer per halo offset emitted before the
+    /// main glyph, all sharing the same `unique_id`. Pre-vec the
+    /// store collapsed every halo onto the main glyph (last-write-
+    /// wins via `insert`); the vec preserves emission order so
+    /// halos stay behind the main glyph at render time.
+    mindmap_buffers: FxHashMap<String, Vec<MindMapTextBuffer>>,
     /// Per-node border glyph buffers, keyed by `node_id`. Each entry is a
     /// `Vec` of 4 buffers (top/bottom/left/right) matching the layout in
     /// `rebuild_border_buffers_keyed`. Keyed so unchanged borders survive
@@ -460,6 +470,14 @@ pub(super) struct NodeBackgroundRect {
     /// (both bounds `None`) renders at every zoom — existing nodes
     /// pay nothing.
     pub zoom_visibility: baumhard::gfx_structs::zoom_visibility::ZoomVisibility,
+    /// `GfxElement::unique_id` of the source element. Lets keyed
+    /// reshape paths ([`Renderer::reshape_buffer_for`]) drop the
+    /// stale rect for a single element before re-collecting it
+    /// — otherwise repeated keystrokes leak duplicate rects per
+    /// edit. Always populated by the tree walker; tests synthesise
+    /// rects with any sentinel value (matching by `unique_id`
+    /// during reshape is the only consumer today).
+    pub unique_id: usize,
 }
 
 impl NodeBackgroundRect {

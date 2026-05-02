@@ -32,7 +32,7 @@ use crate::application::app::{
     compute_click_hit, dispatch, is_double_click, now_ms, ClickHit, ClickHitParts, LastClick,
 };
 use crate::application::document::{
-    point_in_node_aabb, EdgeLabelSel, EdgeRef, PortalLabelSel, SelectionState,
+    point_in_node_aabb, EdgeLabelSel, EdgeRef, PortalLabelSel, SectionSel, SelectionState,
 };
 use crate::application::keybinds::Action;
 
@@ -77,6 +77,7 @@ impl super::WasmApp {
         let ClickHitParts {
             click_hit,
             hit_node,
+            hit_section_idx,
             portal_text_hit,
             portal_icon_hit,
             edge_label_hit,
@@ -102,9 +103,22 @@ impl super::WasmApp {
             };
 
             match &click_hit {
-                ClickHit::Node(node_id) => {
+                ClickHit::Node(node_id, section_idx) => {
                     let nid = node_id.clone();
-                    input.document.selection = SelectionState::Single(nid.clone());
+                    // Preserve the section identity for double-click
+                    // → editor open. See the parallel native path
+                    // for the rationale (pre-fix the editor opened
+                    // on section 0 regardless of which section the
+                    // user pointed at).
+                    input.document.selection = match section_idx {
+                        Some(idx) => SelectionState::Section(
+                            crate::application::document::SectionSel {
+                                node_id: nid.clone(),
+                                section_idx: *idx,
+                            },
+                        ),
+                        None => SelectionState::Single(nid.clone()),
+                    };
                     rebuild_all(
                         &input.document,
                         &mut input.mindmap_tree,
@@ -221,7 +235,19 @@ impl super::WasmApp {
         }
 
         input.pending_click = if let Some(id) = hit_node.clone() {
-            PendingClick::Node(id)
+            // Multi-section nodes opt into per-section click
+            // routing — the press records the section index so
+            // mouse-up commits a `SelectionState::Section`
+            // selection. Single-section nodes route through
+            // `Node` to preserve today's whole-node click
+            // semantic on every migrated map.
+            match hit_section_idx {
+                Some(section_idx) => PendingClick::Section {
+                    node_id: id,
+                    section_idx,
+                },
+                None => PendingClick::Node(id),
+            }
         } else if let Some((key, endpoint)) = portal_text_hit.clone() {
             // Portal **text** click — committed to
             // `SelectionState::PortalText` on mouse-up.
@@ -272,6 +298,16 @@ impl super::WasmApp {
             };
             let release_canvas =
                 renderer.screen_to_canvas(input.cursor_pos.0 as f32, input.cursor_pos.1 as f32);
+            // Refresh the subtree-AABB cache before the
+            // overflow-aware containment check — see the parallel
+            // comment in `app/event_mouse_click.rs`. Without this,
+            // a click on an overflowing second section after any
+            // mid-frame mutation registers as "outside" because
+            // `point_in_node_aabb` falls back to container-only
+            // when `subtree_aabb()` is dirty.
+            if let Some(tree) = input.mindmap_tree.as_mut() {
+                tree.tree.ensure_subtree_aabbs();
+            }
 
             let inside_edit_node = input
                 .text_edit_state
@@ -296,6 +332,49 @@ impl super::WasmApp {
             return;
         }
 
+        // Fire any `OnClick` triggers BEFORE the selection
+        // update so document actions (theme switches etc.) take
+        // effect before the scene rebuild below picks up the new
+        // state. Pre-fix the WASM click handler **never**
+        // dispatched triggers — every map's `OnClick`-bound
+        // mutation (whole-node and per-section) was silently
+        // dead on the web. Native does this in `click.rs`; the
+        // WASM analogue mirrors that flow with
+        // `PlatformContext::Web` filtering.
+        //
+        // Section-aware: when the click resolved to a specific
+        // section, `find_triggered_mutations_at` walks the
+        // section's `trigger_bindings` first, then the whole-
+        // node bindings — same precedence native enforces.
+        let (trigger_node_id, trigger_section_idx): (Option<String>, Option<usize>) = match &pending {
+            PendingClick::Node(id) => (Some(id.clone()), None),
+            PendingClick::Section { node_id, section_idx } => (Some(node_id.clone()), Some(*section_idx)),
+            _ => (None, None),
+        };
+        if let Some(id) = trigger_node_id.as_ref() {
+            let triggered = input.document.find_triggered_mutations_at(
+                id,
+                trigger_section_idx,
+                &baumhard::mindmap::custom_mutation::Trigger::OnClick,
+                &baumhard::mindmap::custom_mutation::PlatformContext::Web,
+            );
+            for cm in triggered {
+                if cm.timing.as_ref().is_some_and(|t| t.duration_ms > 0) {
+                    let now_ms = web_sys::window()
+                        .and_then(|w| w.performance())
+                        .map(|p| p.now() as u64)
+                        .unwrap_or(0);
+                    input
+                        .document
+                        .start_animation_at(&cm, id, trigger_section_idx, now_ms);
+                } else if let Some(tree) = input.mindmap_tree.as_mut() {
+                    input.document.apply_custom_mutation(&cm, id, Some(tree));
+                    input.scene_cache.clear();
+                }
+                input.document.apply_document_actions(&cm);
+            }
+        }
+
         // Plain selection click. Snapshot the previous
         // selection so `rebuild_after_selection_change`
         // can pick between `rebuild_all` (needed when
@@ -306,6 +385,9 @@ impl super::WasmApp {
         let prev_selection = input.document.selection.clone();
         input.document.selection = match pending {
             PendingClick::Node(node_id) => SelectionState::Single(node_id),
+            PendingClick::Section { node_id, section_idx } => {
+                SelectionState::Section(SectionSel { node_id, section_idx })
+            }
             PendingClick::PortalMarker {
                 edge_key,
                 endpoint_node_id,

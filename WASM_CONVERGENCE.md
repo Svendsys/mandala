@@ -392,6 +392,22 @@ overlay, …) — tracked in TODO.md.
   needs its own `event_*.rs` sibling once wired. Touch is
   mobile-budget-binding (§4); IME is required for non-Latin
   text editing in the inline node-text editor.
+- **Surfaced map-load error overlay (landed).** The post-section
+  loader rejects pre-migration maps with a concrete `maptool
+  convert --sections` pointer. Tier-G shipped
+  `show_load_error_overlay` in
+  `src/application/app/run_wasm/mod.rs`: an idempotent DOM
+  overlay that surfaces the file path, the loader / fetch
+  error, and a copyable migration command in monospace. The
+  data-shape rejection itself is cross-platform; the
+  browser-side parity step is now the migration path entry
+  below (in-app `maptool convert --sections` substitute).
+- **Maptool migration on WASM.** `maptool convert --sections`
+  is native-only by construction (the binary doesn't ship to
+  the browser). A browser-only authoring flow that loads a
+  legacy map needs an in-app migration path or a documented
+  desktop-side hop; today only the latter exists. See
+  `format/sections.md` "Migration".
 
 ## Per-arm event-handler shape divergence
 

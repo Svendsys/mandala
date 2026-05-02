@@ -10,7 +10,7 @@ fn test_background_color_opaque_hex_populates_field() {
     let mut map = synthetic_map(vec![synthetic_node("n", None, 0.0, 0.0)], vec![]);
     map.nodes.get_mut("n").unwrap().style.background_color = "#ff8800".into();
     let result = build_mindmap_tree(&map);
-    let area = glyph_area_of(&result.tree, *result.node_map.get("n").unwrap());
+    let area = glyph_area_of(&result.tree, result.arena_id_for("n").unwrap());
     assert_eq!(area.background_color, Some([255, 136, 0, 255]));
 }
 
@@ -19,7 +19,7 @@ fn test_background_color_empty_string_becomes_none() {
     let mut map = synthetic_map(vec![synthetic_node("n", None, 0.0, 0.0)], vec![]);
     map.nodes.get_mut("n").unwrap().style.background_color = "".into();
     let result = build_mindmap_tree(&map);
-    let area = glyph_area_of(&result.tree, *result.node_map.get("n").unwrap());
+    let area = glyph_area_of(&result.tree, result.arena_id_for("n").unwrap());
     assert!(area.background_color.is_none());
 }
 
@@ -29,7 +29,7 @@ fn test_background_color_fully_transparent_becomes_none() {
     // `#00000000` is the conventional "no fill" opt-out.
     map.nodes.get_mut("n").unwrap().style.background_color = "#00000000".into();
     let result = build_mindmap_tree(&map);
-    let area = glyph_area_of(&result.tree, *result.node_map.get("n").unwrap());
+    let area = glyph_area_of(&result.tree, result.arena_id_for("n").unwrap());
     assert!(area.background_color.is_none());
 }
 
@@ -41,7 +41,7 @@ fn test_background_color_resolves_theme_variable() {
         .insert("--panel".into(), "#112233".into());
     map.nodes.get_mut("n").unwrap().style.background_color = "var(--panel)".into();
     let result = build_mindmap_tree(&map);
-    let area = glyph_area_of(&result.tree, *result.node_map.get("n").unwrap());
+    let area = glyph_area_of(&result.tree, result.arena_id_for("n").unwrap());
     assert_eq!(area.background_color, Some([17, 34, 51, 255]));
 }
 
@@ -54,7 +54,7 @@ fn test_background_color_malformed_hex_degrades_to_none() {
     // `None`. Keeps a typo from crashing the render.
     map.nodes.get_mut("n").unwrap().style.background_color = "not-a-color".into();
     let result = build_mindmap_tree(&map);
-    let area = glyph_area_of(&result.tree, *result.node_map.get("n").unwrap());
+    let area = glyph_area_of(&result.tree, result.arena_id_for("n").unwrap());
     assert!(area.background_color.is_none());
 }
 
@@ -77,7 +77,7 @@ fn test_framed_node_carries_visible_stroke_background_padding() {
     let map = synthetic_map(vec![synthetic_node("n", None, 0.0, 0.0)], vec![]);
     // `synthetic_node` defaults `show_frame: true`, size 80×40.
     let result = build_mindmap_tree(&map);
-    let area = glyph_area_of(&result.tree, *result.node_map.get("n").unwrap());
+    let area = glyph_area_of(&result.tree, result.arena_id_for("n").unwrap());
     let fs = 14.0_f32;
     let acw = fs * BORDER_APPROX_CHAR_WIDTH_FRAC;
     let overlap = fs * BORDER_CORNER_OVERLAP_FRAC;
@@ -151,7 +151,7 @@ fn test_pad_right_equals_pad_left_when_nw_is_acw_aligned() {
     let aligned_w = 10.0 * acw;
     map.nodes.get_mut("n").unwrap().size.width = aligned_w as f64;
     let result = build_mindmap_tree(&map);
-    let area = glyph_area_of(&result.tree, *result.node_map.get("n").unwrap());
+    let area = glyph_area_of(&result.tree, result.arena_id_for("n").unwrap());
     let pad = area.background_padding;
     let expected = 0.5 * acw;
     assert!(
@@ -171,7 +171,7 @@ fn test_frameless_node_keeps_zero_background_padding() {
     let mut map = synthetic_map(vec![synthetic_node("n", None, 0.0, 0.0)], vec![]);
     map.nodes.get_mut("n").unwrap().style.show_frame = false;
     let result = build_mindmap_tree(&map);
-    let area = glyph_area_of(&result.tree, *result.node_map.get("n").unwrap());
+    let area = glyph_area_of(&result.tree, result.arena_id_for("n").unwrap());
     assert!(area.background_padding.is_zero());
 }
 
@@ -185,6 +185,6 @@ fn test_background_color_three_digit_hex_works() {
     // regress this.
     map.nodes.get_mut("n").unwrap().style.background_color = "#000".into();
     let result = build_mindmap_tree(&map);
-    let area = glyph_area_of(&result.tree, *result.node_map.get("n").unwrap());
+    let area = glyph_area_of(&result.tree, result.arena_id_for("n").unwrap());
     assert_eq!(area.background_color, Some([0, 0, 0, 255]));
 }

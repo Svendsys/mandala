@@ -26,6 +26,32 @@ use crate::util::color::resolve_var;
 
 use super::{BorderElement, TextElement};
 
+/// Compute the absolute (canvas-space) position + size of a
+/// [`MindSection`](crate::mindmap::model::MindSection) given its
+/// owning node's already-resolved `(pos_x, pos_y)` + `(size_x,
+/// size_y)`. Pulls in the section's `offset` (always present;
+/// defaults to `(0, 0)`) and `size` (`None` = fill the parent).
+///
+/// Inlined so per-section iteration stays branchless on the
+/// happy path — most authored sections fill the node, so the
+/// `size.is_none()` branch is the predicted side.
+#[inline]
+fn section_aabb(
+    section: &crate::mindmap::model::MindSection,
+    node_pos_x: f32,
+    node_pos_y: f32,
+    node_size_x: f32,
+    node_size_y: f32,
+) -> ((f32, f32), (f32, f32)) {
+    let pos_x = node_pos_x + section.offset.x as f32;
+    let pos_y = node_pos_y + section.offset.y as f32;
+    let (size_x, size_y) = match &section.size {
+        Some(sz) => (sz.width as f32, sz.height as f32),
+        None => (node_size_x, node_size_y),
+    };
+    ((pos_x, pos_y), (size_x, size_y))
+}
+
 /// Walk every visible node and emit its text element + border
 /// element + clip AABB. Returns the three collections in a tuple —
 /// the connection pass downstream consumes `node_aabbs` for its
@@ -97,11 +123,32 @@ pub(super) fn build_node_elements(
         };
         node_aabbs.push((clip_pos, clip_size));
 
-        // Text element (skip empty text nodes). Resolve each text run's
-        // color through theme variables so the renderer downstream never
-        // sees a `var(--name)` literal.
-        if !node.text.is_empty() {
-            let resolved_runs: Vec<TextRun> = node
+        // One TextElement per section with non-empty text.
+        // Empty-text sections (a freshly-created orphan node's
+        // default section before the user types anything) skip
+        // emission — the same fast-path as the pre-section
+        // empty-text node behaviour. Sections with explicit zero /
+        // negative / non-finite size or non-finite offset also skip
+        // emission: they would render at degenerate or NaN bounds
+        // and confuse downstream renderer / hit-test math. The
+        // verifier flags these so authors can fix the source.
+        for (section_idx, section) in node.sections.iter().enumerate() {
+            if section.text.is_empty() {
+                continue;
+            }
+            if !section.offset.x.is_finite() || !section.offset.y.is_finite() {
+                continue;
+            }
+            if let Some(sz) = section.size.as_ref() {
+                if !sz.width.is_finite()
+                    || !sz.height.is_finite()
+                    || sz.width <= 0.0
+                    || sz.height <= 0.0
+                {
+                    continue;
+                }
+            }
+            let resolved_runs: Vec<TextRun> = section
                 .text_runs
                 .iter()
                 .map(|run| {
@@ -110,12 +157,14 @@ pub(super) fn build_node_elements(
                     r
                 })
                 .collect();
+            let ((sx, sy), (sw, sh)) = section_aabb(section, pos_x, pos_y, size_x, size_y);
             text_elements.push(TextElement {
                 node_id: node.id.clone(),
-                text: node.text.clone(),
+                section_idx,
+                text: section.text.clone(),
                 text_runs: resolved_runs,
-                position: (pos_x, pos_y),
-                size: (size_x, size_y),
+                position: (sx, sy),
+                size: (sw, sh),
             });
         }
 

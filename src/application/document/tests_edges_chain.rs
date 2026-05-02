@@ -10,7 +10,7 @@ use super::tests_common::{
 use super::*;
 
 use baumhard::mindmap::model::{
-    Canvas, MindNode, NodeLayout, NodeStyle, Position, Size, TextRun, PORTAL_GLYPH_PRESETS,
+    Canvas, MindNode, MindSection, NodeLayout, NodeStyle, Position, Size, TextRun, PORTAL_GLYPH_PRESETS,
 };
 use baumhard::util::grapheme_chad::count_grapheme_clusters;
 
@@ -73,8 +73,7 @@ fn synthetic_single_node_map(text: &str, w: f64, h: f64) -> MindMap {
         parent_id: None,
         position: Position { x: 0.0, y: 0.0 },
         size: Size { width: w, height: h },
-        text: text.to_string(),
-        text_runs,
+        sections: vec![MindSection::new_default(text.to_string(), text_runs)],
         style: NodeStyle {
             background_color: "#141414".to_string(),
             frame_color: "#30b082".to_string(),

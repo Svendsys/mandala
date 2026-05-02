@@ -593,6 +593,25 @@ pub enum Flag {
     Anchored(AnchorBox),
     /// If set in an element, all mutations should also create a corresponding event
     MutationEvents,
+    /// Marks every element belonging to a *section* subtree — both
+    /// the section-area `GlyphArea` and the structural section-model
+    /// `GlyphModel` grandchild that sits beneath it (see
+    /// [`crate::mindmap::model::MindSection`]). The flag is *not*
+    /// limited to the literal "root" of a section despite the
+    /// variant name; spreading it across both elements lets
+    /// arena-walking consumers (`apply_drag_delta`,
+    /// `apply_tree_highlights`) recurse on a flag check without
+    /// re-deriving section identity per step. The container area
+    /// of a mindmap node and any child mind-node areas inside the
+    /// same parent are *not* flagged.
+    ///
+    /// Click-routing, scene-builder iteration, and per-section
+    /// style mutations filter on this flag. Flag-only — payload-
+    /// free; the section's index inside its owning node lives on
+    /// the document-side
+    /// [`crate::mindmap::tree_builder::MindMapTree`] reverse-lookup
+    /// tables, not on the flag itself.
+    SectionRoot,
 }
 
 /// Up to four [`Anchor`]s applied to a single element, describing

@@ -1,12 +1,19 @@
 # Text Runs
 
-`text_runs` is a list of formatting spans applied to a node's `text`.
+`text_runs` is a list of formatting spans applied to a
+[`MindSection`](./sections.md)'s `text`. Post-section refactor
+they live on the section, not on the node directly — every
+`MindNode.sections[i].text_runs` is its own independent run table.
 
 ```json
 {
-  "text": "Hello world",
-  "text_runs": [
-    { "start": 0, "end": 5, "bold": true, "font": "LiberationSans", "size_pt": 14, "color": "#ffffff" }
+  "sections": [
+    {
+      "text": "Hello world",
+      "text_runs": [
+        { "start": 0, "end": 5, "bold": true, "font": "LiberationSans", "size_pt": 14, "color": "#ffffff" }
+      ]
+    }
   ]
 }
 ```
@@ -17,14 +24,14 @@ optional `hyperlink`.
 
 ## Why runs are optional
 
-`text_runs` defaults to an empty array when absent. A node with empty runs
-renders its entire text using the node's base style (`style.text_color`,
-a default font, a default size).
+`text_runs` defaults to an empty array when absent. A section with
+empty runs renders its entire text using the owning node's base
+style (`style.text_color`, a default font, a default size).
 
 This matters for hand-authoring. A simple node becomes:
 
 ```json
-"0": { "id": "0", "text": "Hello", "style": { "text_color": "#ffffff", ... }, ... }
+"0": { "id": "0", "sections": [{"text": "Hello"}], "style": { "text_color": "#ffffff", ... }, ... }
 ```
 
 No noise. No need to declare a run that just repeats the style.

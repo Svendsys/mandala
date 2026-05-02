@@ -59,11 +59,12 @@ impl<'a> ChildIndex<'a> {
 fn emit_level(index: &ChildIndex, nodes: &[&MindNode], depth: usize, out: &mut String) {
     for node in nodes {
         let children = index.children_of(&node.id);
-        if node.text.trim().is_empty() {
+        let text = node.display_text();
+        if text.trim().is_empty() {
             emit_level(index, children, depth, out);
             continue;
         }
-        let mut lines = node.text.lines();
+        let mut lines = text.lines();
         let first = lines.next().unwrap_or("");
         for _ in 0..depth {
             out.push('#');
@@ -85,7 +86,7 @@ mod tests {
     use super::*;
     use baumhard::mindmap::loader::load_from_file;
     use baumhard::mindmap::model::{
-        Canvas, MindMap, MindNode, NodeLayout, NodeStyle, Position, Size, TextRun,
+        Canvas, MindMap, MindNode, MindSection, NodeLayout, NodeStyle, Position, Size, TextRun,
     };
     use std::collections::HashMap;
     use std::path::PathBuf;
@@ -108,8 +109,7 @@ mod tests {
                 width: 0.0,
                 height: 0.0,
             },
-            text: text.to_string(),
-            text_runs: Vec::new(),
+            sections: vec![MindSection::new_default(text.to_string(), Vec::new())],
             style: NodeStyle {
                 background_color: "#000000".to_string(),
                 frame_color: "#ffffff".to_string(),
@@ -173,7 +173,8 @@ mod tests {
         );
         // Second char-run must not be `#` (so it's `# ` not `## `).
         let roots = map.root_nodes();
-        let first_root_first_line = roots[0].text.lines().next().unwrap_or("");
+        let first_root_text = roots[0].display_text();
+        let first_root_first_line = first_root_text.lines().next().unwrap_or("");
         let expected_first_line = format!("# {first_root_first_line}\n");
         assert!(out.starts_with(&expected_first_line), "unexpected first heading");
     }
@@ -211,7 +212,7 @@ mod tests {
     fn test_export_ignores_notes_and_runs() {
         let mut node = make_node("r", None, "Visible");
         node.notes = "HIDDEN_NOTES_STRING".to_string();
-        node.text_runs = vec![TextRun {
+        node.sections[0].text_runs = vec![TextRun {
             start: 0,
             end: 7,
             bold: true,

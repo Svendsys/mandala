@@ -35,18 +35,22 @@
         "show_shadow": false,
         "text_color": "#ffffff"
       },
-      "text": "hello world",
-      "text_runs": [
+      "sections": [
         {
-          "bold": true,
-          "color": "#ffffff",
-          "end": 11,
-          "font": "LiberationSans",
-          "hyperlink": null,
-          "italic": false,
-          "size_pt": 14,
-          "start": 0,
-          "underline": false
+          "text": "hello world",
+          "text_runs": [
+            {
+              "bold": true,
+              "color": "#ffffff",
+              "end": 11,
+              "font": "LiberationSans",
+              "hyperlink": null,
+              "italic": false,
+              "size_pt": 14,
+              "start": 0,
+              "underline": false
+            }
+          ]
         }
       ]
     },
@@ -80,18 +84,22 @@
         "show_shadow": false,
         "text_color": "#ffffff"
       },
-      "text": "Alpha\nBeta\nGamma",
-      "text_runs": [
+      "sections": [
         {
-          "bold": false,
-          "color": "#ffffff",
-          "end": 5,
-          "font": "LiberationSans",
-          "hyperlink": null,
-          "italic": true,
-          "size_pt": 14,
-          "start": 0,
-          "underline": false
+          "text": "Alpha\nBeta\nGamma",
+          "text_runs": [
+            {
+              "bold": false,
+              "color": "#ffffff",
+              "end": 5,
+              "font": "LiberationSans",
+              "hyperlink": null,
+              "italic": true,
+              "size_pt": 14,
+              "start": 0,
+              "underline": false
+            }
+          ]
         }
       ]
     },
@@ -125,8 +133,11 @@
         "show_shadow": false,
         "text_color": "#ffffff"
       },
-      "text": "unchanged",
-      "text_runs": []
+      "sections": [
+        {
+          "text": "unchanged"
+        }
+      ]
     },
     "0.2": {
       "channel": 0,
@@ -158,18 +169,22 @@
         "show_shadow": false,
         "text_color": "#ffffff"
       },
-      "text": "hello again",
-      "text_runs": [
+      "sections": [
         {
-          "bold": false,
-          "color": "#ffffff",
-          "end": 11,
-          "font": "LiberationSans",
-          "hyperlink": null,
-          "italic": false,
-          "size_pt": 14,
-          "start": 0,
-          "underline": true
+          "text": "hello again",
+          "text_runs": [
+            {
+              "bold": false,
+              "color": "#ffffff",
+              "end": 11,
+              "font": "LiberationSans",
+              "hyperlink": null,
+              "italic": false,
+              "size_pt": 14,
+              "start": 0,
+              "underline": true
+            }
+          ]
         }
       ]
     }

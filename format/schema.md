@@ -56,8 +56,9 @@ Complete field reference for every type in `.mindmap.json`.
   "parent_id": "1",
   "position": { "x": 0.0, "y": 0.0 },
   "size": { "width": 240.0, "height": 60.0 },
-  "text": "Hello",
-  "text_runs": [],
+  "sections": [
+    { "text": "Hello", "text_runs": [] }
+  ],
   "style": { ... },
   "layout": { ... },
   "folded": false,
@@ -75,8 +76,7 @@ Complete field reference for every type in `.mindmap.json`.
 | `parent_id` | string\|null | Parent reference; `null` for roots |
 | `position.x`, `position.y` | number | Absolute canvas coordinates |
 | `size.width`, `size.height` | number | Pixel dimensions |
-| `text` | string | Plain text content (may contain `\n`) |
-| `text_runs` | array | Formatting spans — see [text-runs.md](./text-runs.md); defaults to empty |
+| `sections` | array | The user-data strata of this node — one or more positioned text-bearing surfaces inside the node AABB. Every renderable node has at least one section. Pre-section maps (`text` / `text_runs` directly on the node) are migrated by `maptool convert --sections`. See [sections.md](./sections.md). |
 | `style` | object | Visual styling (colors, shape, border) |
 | `layout` | object | How this node's *children* are arranged |
 | `folded` | bool | If `true`, hide the subtree below this node |
@@ -129,6 +129,29 @@ Complete field reference for every type in `.mindmap.json`.
 | `direction` | string | `"auto"`, `"up"`, `"down"`, `"left"`, `"right"`, `"balanced"` |
 | `spacing` | number | Sibling gap in pixels |
 
+## MindSection
+
+```json
+{
+  "text": "Hello",
+  "text_runs": [],
+  "offset": { "x": 0.0, "y": 0.0 },
+  "size": { "width": 240.0, "height": 60.0 },
+  "channel": 0
+}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `text` | string | Plain text content (may contain `\n`) |
+| `text_runs` | array | Formatting spans inside this section — see [text-runs.md](./text-runs.md); defaults to empty |
+| `offset.x`, `offset.y` | number | Top-left of the section AABB *relative to the owning node's `position`*, in canvas units. Defaults to `(0, 0)` (flush against the node's top-left). |
+| `size` | object\|null | Section AABB. `null` (the default) means "fill the parent node"; an explicit width/height overrides. |
+| `channel` | integer | Mutation channel inside the parent node-area; defaults to the section's index in `MindNode.sections`. |
+
+See [sections.md](./sections.md) for the section concept and
+[text-runs.md](./text-runs.md) for the per-grapheme-run coverage rules.
+
 ## TextRun
 
 ```json
@@ -145,7 +168,9 @@ Complete field reference for every type in `.mindmap.json`.
 }
 ```
 
-See [text-runs.md](./text-runs.md) for coverage rules.
+See [text-runs.md](./text-runs.md) for coverage rules. Runs are
+addressed *relative to the owning section's `text`* — there is no
+node-level `text_runs` after the section refactor.
 
 ## ColorSchema (on a node)
 

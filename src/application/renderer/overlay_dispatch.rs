@@ -64,9 +64,7 @@ impl Renderer {
         match app_scene.overlay_dispatch(OverlayRole::Console, signature) {
             OverlayDispatch::InPlaceMutator => {
                 let mutator = {
-                    let mut font_system = fonts::FONT_SYSTEM
-                        .write()
-                        .expect("Failed to acquire font_system lock");
+                    let mut font_system = fonts::acquire_font_system_write("overlay_dispatch");
                     build_console_overlay_mutator(geometry, &layout, &mut font_system)
                 };
                 app_scene.apply_overlay_mutator(OverlayRole::Console, &mutator);
@@ -77,9 +75,7 @@ impl Renderer {
                 // Tree construction itself doesn't shape; that
                 // happens during the overlay-scene walk below.
                 let tree = {
-                    let mut font_system = fonts::FONT_SYSTEM
-                        .write()
-                        .expect("Failed to acquire font_system lock");
+                    let mut font_system = fonts::acquire_font_system_write("overlay_dispatch");
                     build_console_overlay_tree(geometry, &layout, &mut font_system)
                 };
                 app_scene.register_overlay(OverlayRole::Console, tree, glam::Vec2::ZERO);

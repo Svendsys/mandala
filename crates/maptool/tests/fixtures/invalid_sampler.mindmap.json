@@ -1,18 +1,26 @@
 {
   "version": "1.0",
   "name": "invalid_sampler",
-  "canvas": { "background_color": "#000000" },
+  "canvas": {
+    "background_color": "#000000"
+  },
   "palettes": {
-    "empty_palette": { "groups": [] }
+    "empty_palette": {
+      "groups": []
+    }
   },
   "nodes": {
     "0": {
       "id": "0",
       "parent_id": null,
-      "position": { "x": 0.0, "y": 0.0 },
-      "size": { "width": 100.0, "height": 40.0 },
-      "text": "root",
-      "text_runs": [],
+      "position": {
+        "x": 0.0,
+        "y": 0.0
+      },
+      "size": {
+        "width": 100.0,
+        "height": 40.0
+      },
       "style": {
         "background_color": "#141414",
         "frame_color": "#30b082",
@@ -23,19 +31,37 @@
         "show_frame": false,
         "show_shadow": false
       },
-      "layout": { "type": "map", "direction": "auto", "spacing": 0.0 },
+      "layout": {
+        "type": "map",
+        "direction": "auto",
+        "spacing": 0.0
+      },
       "folded": false,
       "notes": "",
-      "color_schema": { "palette": "nonexistent", "level": 0, "starts_at_root": true, "connections_colored": true },
-      "channel": 0
+      "color_schema": {
+        "palette": "nonexistent",
+        "level": 0,
+        "starts_at_root": true,
+        "connections_colored": true
+      },
+      "channel": 0,
+      "sections": [
+        {
+          "text": "root"
+        }
+      ]
     },
     "0.0": {
       "id": "0.0",
       "parent_id": "ghost",
-      "position": { "x": 0.0, "y": 0.0 },
-      "size": { "width": 100.0, "height": 40.0 },
-      "text": "orphan",
-      "text_runs": [],
+      "position": {
+        "x": 0.0,
+        "y": 0.0
+      },
+      "size": {
+        "width": 100.0,
+        "height": 40.0
+      },
       "style": {
         "background_color": "#141414",
         "frame_color": "#30b082",
@@ -46,19 +72,32 @@
         "show_frame": false,
         "show_shadow": false
       },
-      "layout": { "type": "map", "direction": "auto", "spacing": 0.0 },
+      "layout": {
+        "type": "map",
+        "direction": "auto",
+        "spacing": 0.0
+      },
       "folded": false,
       "notes": "",
       "color_schema": null,
-      "channel": 0
+      "channel": 0,
+      "sections": [
+        {
+          "text": "orphan"
+        }
+      ]
     },
     "1": {
       "id": "DIFFERENT",
       "parent_id": null,
-      "position": { "x": 0.0, "y": 0.0 },
-      "size": { "width": 100.0, "height": 40.0 },
-      "text": "key mismatch",
-      "text_runs": [],
+      "position": {
+        "x": 0.0,
+        "y": 0.0
+      },
+      "size": {
+        "width": 100.0,
+        "height": 40.0
+      },
       "style": {
         "background_color": "#141414",
         "frame_color": "#30b082",
@@ -69,11 +108,20 @@
         "show_frame": false,
         "show_shadow": false
       },
-      "layout": { "type": "map", "direction": "auto", "spacing": 0.0 },
+      "layout": {
+        "type": "map",
+        "direction": "auto",
+        "spacing": 0.0
+      },
       "folded": false,
       "notes": "",
       "color_schema": null,
-      "channel": 0
+      "channel": 0,
+      "sections": [
+        {
+          "text": "key mismatch"
+        }
+      ]
     }
   },
   "edges": [

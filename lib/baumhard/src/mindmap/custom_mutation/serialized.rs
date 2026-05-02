@@ -60,7 +60,8 @@ impl From<CustomMutationIn> for CustomMutation {
                     TargetScope::SelfOnly
                     | TargetScope::Children
                     | TargetScope::Parent
-                    | TargetScope::Siblings => scope::self_only(v.mutations),
+                    | TargetScope::Siblings
+                    | TargetScope::SectionsOnly => scope::self_only(v.mutations),
                     TargetScope::Descendants => scope::descendants(v.mutations),
                     TargetScope::SelfAndDescendants => scope::self_and_descendants(v.mutations),
                 })

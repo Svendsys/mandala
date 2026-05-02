@@ -160,6 +160,13 @@ pub(super) fn handle_cursor_moved(
         DragState::Pending {
             start_pos,
             hit_node,
+            // Section index isn't consumed during the drag-threshold
+            // promotion below — drag transitions select the whole
+            // node (`MovingNode`) regardless of which section the
+            // press landed on. `_` keeps the destructure exhaustive
+            // without claiming the field is unused at the data
+            // level.
+            hit_section_idx: _,
             hit_edge_handle,
             hit_portal_label,
             hit_edge_label,
@@ -279,12 +286,14 @@ pub(super) fn handle_cursor_moved(
                             doc.selection = SelectionState::Single(node_id.clone());
                             if let Some(tree) = ctx.mindmap_tree.as_mut() {
                                 let mut new_tree = doc.build_tree();
+                                let only_section_idx =
+                                    doc.selection.selected_section().map(|s| s.section_idx);
                                 apply_tree_highlights(
                                     &mut new_tree,
                                     doc.selection
                                         .selected_ids()
                                         .into_iter()
-                                        .map(|id| (id, HIGHLIGHT_COLOR)),
+                                        .map(|id| (id, only_section_idx, HIGHLIGHT_COLOR)),
                                 );
                                 ctx.renderer.rebuild_buffers_from_tree(&new_tree.tree);
                                 *tree = new_tree;

@@ -232,7 +232,7 @@ fn test_delete_node_undo_restores_node_edges_and_children() {
     // Node is back.
     let restored = doc.mindmap.nodes.get(&target).expect("node should be restored");
     assert_eq!(restored.id, orig_node.id);
-    assert_eq!(restored.text, orig_node.text);
+    assert_eq!(restored.display_text(), orig_node.display_text());
     // Edges are fully restored — same count AND same order.
     // Ordering matters: earlier versions of `delete_node` stored
     // post-removal indices, which silently reordered edges that
@@ -537,7 +537,10 @@ fn test_create_orphan_node_adds_to_map() {
     assert!(node.parent_id.is_none(), "orphan should have no parent");
     assert_eq!(node.position.x, 123.0);
     assert_eq!(node.position.y, 456.0);
-    assert!(!node.text.is_empty(), "orphan should have placeholder text");
+    assert!(
+        !node.sections[0].text.is_empty(),
+        "orphan should have placeholder text"
+    );
 }
 
 #[test]

@@ -10,8 +10,10 @@ mod enums;
 mod ids;
 mod palettes;
 mod portals;
+mod sections;
 
 pub use portals::convert_portals;
+pub use sections::convert_sections;
 
 use serde_json::Value;
 use std::path::Path;
@@ -44,7 +46,10 @@ pub fn convert_legacy(input_path: &Path, output_path: &Path) -> Result<(), Strin
 
     // Order matters: IDs first so the rest can rewrite references;
     // enums before palettes so `theme_id` is gone before the palette
-    // hoist; cleanup last so it can drop `index` once IDs encode it.
+    // hoist; cleanup before the section fold so any legacy `text` /
+    // `text_runs` survives the cleanup pass and gets folded into a
+    // `sections[]` array at the end. Sections last so an
+    // already-cleaned tree converges on the post-section shape.
     let nodes = root
         .get("nodes")
         .and_then(|v| v.as_object())
@@ -54,6 +59,11 @@ pub fn convert_legacy(input_path: &Path, output_path: &Path) -> Result<(), Strin
     enums::convert_enums(&mut root);
     palettes::hoist_palettes(&mut root);
     cleanup::cleanup_nodes(&mut root);
+    if let Some(nodes) = nodes_obj_mut(&mut root) {
+        for (_id, node) in nodes.iter_mut() {
+            sections::migrate_one_node_legacy(node);
+        }
+    }
 
     let json = serde_json::to_string_pretty(&root).map_err(|e| format!("failed to serialize: {e}"))?;
 

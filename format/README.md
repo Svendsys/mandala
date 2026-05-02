@@ -18,6 +18,7 @@ Each of these documents one decision, with the reasoning:
 - [`palettes.md`](./palettes.md) — map-level palette definitions
 - [`channels.md`](./channels.md) — the `channel` field and mutation targeting
 - [`enums.md`](./enums.md) — named string enums over integer codes
+- [`sections.md`](./sections.md) — node sections (where the text lives post-refactor)
 - [`text-runs.md`](./text-runs.md) — rich text formatting
 - [`border-patterns.md`](./border-patterns.md) — side-pattern grammar
   for `GlyphBorderConfig.glyphs` (atomic-repeat vs.
@@ -49,8 +50,9 @@ Each of these documents one decision, with the reasoning:
       "parent_id": null,
       "position": { "x": 0.0, "y": 0.0 },
       "size": { "width": 200.0, "height": 60.0 },
-      "text": "Hello",
-      "text_runs": [],
+      "sections": [
+        { "text": "Hello" }
+      ],
       "style": {
         "background_color": "#141414",
         "frame_color": "#30b082",

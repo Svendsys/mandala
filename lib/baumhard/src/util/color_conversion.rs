@@ -157,6 +157,35 @@ pub fn hsv_to_hex(h: f32, s: f32, v: f32) -> String {
     format!("#{:02x}{:02x}{:02x}", u[0], u[1], u[2])
 }
 
+/// Convert a `FloatRgba` quad into a `#RRGGBB` (or `#RRGGBBAA`)
+/// hex string in the same lowercase shape stored in
+/// `MindEdge.color` and `TextRun.color`. Drops the alpha
+/// channel only when α >= 1.0 (saturated opaque); otherwise
+/// emits the eight-char form so model-side state survives the
+/// round-trip.
+///
+/// Forward conversion through `convert_f32_to_u8`, identical to
+/// `hsv_to_hex`'s shape — every model-side `#RRGGBB` site uses
+/// the same quantisation path. Used by the section-mutation
+/// reverse converter (`region_to_text_run`) where a tree-side
+/// `ColorFontRegion.color: FloatRgba` rolls back into the
+/// model's `TextRun.color: String`.
+///
+/// Lossy on `var(--name)` references — by construction. The
+/// forward path resolves variables before shaping; this reverse
+/// path can't recover the original variable name without an
+/// additional reverse-lookup table. Document this limit at the
+/// reverse-converter call site so authors know what survives a
+/// custom-mutation round-trip.
+pub fn rgba_to_hex(rgba: FloatRgba) -> String {
+    let u = convert_f32_to_u8(&rgba);
+    if rgba[3] >= 1.0 {
+        format!("#{:02x}{:02x}{:02x}", u[0], u[1], u[2])
+    } else {
+        format!("#{:02x}{:02x}{:02x}{:02x}", u[0], u[1], u[2], u[3])
+    }
+}
+
 /// Parse a hex color string into HSV, returning `None` on any parse
 /// failure. Delegates to `hex_to_rgba_safe` with a sentinel fallback
 /// whose alpha channel we can't collide with (negative alpha), then

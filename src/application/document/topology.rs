@@ -174,6 +174,11 @@ impl MindMapDocument {
         let kind = match &self.selection {
             SelectionState::Edge(e) => Some(DelKind::Edge(e.clone())),
             SelectionState::Single(id) => Some(DelKind::Node(id.clone())),
+            // Delete on a section-selection deletes the *whole
+            // owning node*. Per-section deletion (a future verb
+            // like `section delete`) is the dedicated entry
+            // point; the bare Delete keystroke targets the node.
+            SelectionState::Section(s) => Some(DelKind::Node(s.node_id.clone())),
             SelectionState::Multi(ids) => Some(DelKind::Nodes(ids.clone())),
             // Delete on any edge-sub-part selection (label, icon,
             // text) targets the owning edge — the sub-parts are

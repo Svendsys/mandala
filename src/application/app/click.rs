@@ -12,7 +12,7 @@ use baumhard::mindmap::custom_mutation::{PlatformContext, Trigger};
 use super::scene_rebuild::{rebuild_all, rebuild_scene_only};
 use super::{now_ms, AppMode, EDGE_HIT_TOLERANCE_PX};
 use crate::application::document::{
-    apply_tree_highlights, hit_test_edge, MindMapDocument, SelectionState, HIGHLIGHT_COLOR,
+    apply_tree_highlights, hit_test_edge, MindMapDocument, SectionSel, SelectionState, HIGHLIGHT_COLOR,
     REPARENT_SOURCE_COLOR, REPARENT_TARGET_COLOR,
 };
 use crate::application::renderer::Renderer;
@@ -26,6 +26,7 @@ use crate::application::renderer::Renderer;
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn handle_click(
     hit: Option<String>,
+    hit_section: Option<usize>,
     cursor_pos: (f64, f64),
     shift_pressed: bool,
     document: &mut Option<MindMapDocument>,
@@ -45,16 +46,28 @@ pub(super) fn handle_click(
     // into the tree via `apply_custom_mutation`, which owns the
     // model-sync + undo-push for Persistent behavior.
     if let Some(id) = hit.as_ref() {
-        let triggered = doc.find_triggered_mutations(id, &Trigger::OnClick, &PlatformContext::Desktop);
+        // Pass `hit_section` so the section-aware lookup can find
+        // overrides authored on the targeted section before the
+        // whole-node bindings fire. `None` (single-section / chrome
+        // hit) skips the per-section pass entirely — pre-Tier-D
+        // behaviour.
+        let triggered = doc.find_triggered_mutations_at(
+            id,
+            hit_section,
+            &Trigger::OnClick,
+            &PlatformContext::Desktop,
+        );
         if !triggered.is_empty() {
             // `find_triggered_mutations` returned cloned CustomMutations so
             // we can iterate without holding an immutable borrow on doc.
             for cm in triggered {
                 if cm.timing.as_ref().is_some_and(|t| t.duration_ms > 0) {
                     // Animated: snapshot from/to and start an
-                    // instance. The AboutToWait tick interpolates
-                    // and commits the final mutation at completion.
-                    doc.start_animation(&cm, id, now_ms() as u64);
+                    // instance, threading the section_idx so a
+                    // multi-section node can host concurrent
+                    // animations on adjacent sections without
+                    // coalescing under the dedup key.
+                    doc.start_animation_at(&cm, id, hit_section, now_ms() as u64);
                 } else if let Some(tree) = mindmap_tree.as_mut() {
                     doc.apply_custom_mutation(&cm, id, Some(tree));
                     // Custom mutations can touch any cached field
@@ -70,8 +83,21 @@ pub(super) fn handle_click(
 
     // Update selection state
     match (&hit, shift_pressed) {
+        // Click on a specific section in a multi-section node:
+        // route to `SelectionState::Section` so per-section verbs
+        // (text edit, font, color) target that section. Single-
+        // section nodes always have `hit_section = None` from
+        // `hit_test_target`, falling through to the
+        // whole-node-Single arm below.
         (Some(id), false) => {
-            doc.selection = SelectionState::Single(id.clone());
+            if let Some(section_idx) = hit_section {
+                doc.selection = SelectionState::Section(SectionSel {
+                    node_id: id.clone(),
+                    section_idx,
+                });
+            } else {
+                doc.selection = SelectionState::Single(id.clone());
+            }
         }
         (Some(id), true) => {
             // Shift+click: toggle node in/out of multi-selection.
@@ -82,12 +108,15 @@ pub(super) fn handle_click(
                 // shift+click on a node — promote the node to a
                 // fresh single selection, the same as clicking
                 // from a `None` or `Edge` state. Covers all four
-                // edge-side variants (body, label, icon, text).
+                // edge-side variants (body, label, icon, text)
+                // plus a `Section` (no shift+click multi-select
+                // semantics for sections; promote to whole-node).
                 SelectionState::None
                 | SelectionState::Edge(_)
                 | SelectionState::EdgeLabel(_)
                 | SelectionState::PortalLabel(_)
-                | SelectionState::PortalText(_) => {
+                | SelectionState::PortalText(_)
+                | SelectionState::Section(_) => {
                     doc.selection = SelectionState::Single(id.clone());
                 }
                 SelectionState::Single(existing) => {
@@ -179,28 +208,33 @@ pub(super) fn rebuild_all_with_mode(
     // hovered target (green). This matches the previous behavior
     // where reparent_source_highlight was documented to override
     // selection_highlight on conflict.
-    let mut highlights: Vec<(&str, [f32; 4])> = doc
+    // Highlight tuples are `(node_id, section_idx?, color)`. A
+    // Section selection narrows the highlight to the selected
+    // section only; mode-driven Reparent / Connect highlights
+    // always paint every section (the gesture is whole-node).
+    let only_section_idx = doc.selection.selected_section().map(|s| s.section_idx);
+    let mut highlights: Vec<(&str, Option<usize>, [f32; 4])> = doc
         .selection
         .selected_ids()
         .into_iter()
-        .map(|id| (id, HIGHLIGHT_COLOR))
+        .map(|id| (id, only_section_idx, HIGHLIGHT_COLOR))
         .collect();
     match app_mode {
         AppMode::Reparent { sources } => {
             for s in sources {
-                highlights.push((s.as_str(), REPARENT_SOURCE_COLOR));
+                highlights.push((s.as_str(), None, REPARENT_SOURCE_COLOR));
             }
             if let Some(h) = hovered_node {
                 if !sources.iter().any(|s| s == h) {
-                    highlights.push((h, REPARENT_TARGET_COLOR));
+                    highlights.push((h, None, REPARENT_TARGET_COLOR));
                 }
             }
         }
         AppMode::Connect { source } => {
-            highlights.push((source.as_str(), REPARENT_SOURCE_COLOR));
+            highlights.push((source.as_str(), None, REPARENT_SOURCE_COLOR));
             if let Some(h) = hovered_node {
                 if h != source {
-                    highlights.push((h, REPARENT_TARGET_COLOR));
+                    highlights.push((h, None, REPARENT_TARGET_COLOR));
                 }
             }
         }

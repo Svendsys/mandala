@@ -165,8 +165,17 @@ pub(crate) enum ClickHit {
     /// No node and no portal marker under the cursor. Empty-canvas
     /// double-click creates a new orphan unless an edge is selected.
     Empty,
-    /// Cursor is inside node `id`'s AABB.
-    Node(String),
+    /// Cursor is inside node `id`'s AABB. `section_idx` is `Some`
+    /// when the click resolved to a specific section of a multi-
+    /// section node (mirroring `HitTarget::Section`); `None` for
+    /// single-section nodes and chrome-only hits. The
+    /// `PartialEq`-derived double-click compare honours the
+    /// section index, so two slow clicks on different sections
+    /// of the same node correctly *don't* count as a double-click,
+    /// and a genuine same-section double-click routes the
+    /// editor-open path to the targeted section instead of
+    /// silently defaulting to section 0.
+    Node(String, Option<usize>),
     /// Cursor is inside a portal **icon** marker. `edge` identifies
     /// the owning portal-mode edge; `endpoint` is the node the
     /// hit marker sits above (the double-click pan target is the
@@ -247,6 +256,11 @@ fn is_double_click(
 pub(super) struct ClickHitParts {
     pub(super) click_hit: ClickHit,
     pub(super) hit_node: Option<String>,
+    /// Section index inside `hit_node`, when the click landed on a
+    /// specific section in a multi-section node. `None` for clicks
+    /// on single-section nodes (chrome semantics) and for empty-canvas
+    /// clicks.
+    pub(super) hit_section_idx: Option<usize>,
     pub(super) portal_text_hit: Option<(baumhard::mindmap::scene_cache::EdgeKey, String)>,
     pub(super) portal_icon_hit: Option<(baumhard::mindmap::scene_cache::EdgeKey, String)>,
     pub(super) edge_label_hit: Option<baumhard::mindmap::scene_cache::EdgeKey>,
@@ -274,7 +288,16 @@ pub(super) fn compute_click_hit(
     mindmap_tree: Option<&mut baumhard::mindmap::tree_builder::MindMapTree>,
     renderer: &crate::application::renderer::Renderer,
 ) -> ClickHitParts {
-    let hit_node = mindmap_tree.and_then(|tree| crate::application::document::hit_test(canvas_pos, tree));
+    let (hit_node, hit_section_idx) = match mindmap_tree {
+        Some(tree) => match crate::application::document::hit_test_target(canvas_pos, tree) {
+            Some(crate::application::document::HitTarget::NodeContainer { node_id }) => (Some(node_id), None),
+            Some(crate::application::document::HitTarget::Section { node_id, section_idx }) => {
+                (Some(node_id), Some(section_idx))
+            }
+            None => (None, None),
+        },
+        None => (None, None),
+    };
 
     let portal_text_hit = if hit_node.is_none() {
         renderer.hit_test_portal_text(canvas_pos)
@@ -292,11 +315,18 @@ pub(super) fn compute_click_hit(
         None
     };
 
-    let click_hit = click_hit_from_priority(&hit_node, &portal_text_hit, &portal_icon_hit, &edge_label_hit);
+    let click_hit = click_hit_from_priority(
+        &hit_node,
+        hit_section_idx,
+        &portal_text_hit,
+        &portal_icon_hit,
+        &edge_label_hit,
+    );
 
     ClickHitParts {
         click_hit,
         hit_node,
+        hit_section_idx,
         portal_text_hit,
         portal_icon_hit,
         edge_label_hit,
@@ -316,12 +346,13 @@ pub(super) fn compute_click_hit(
 /// ladder is the canonical tie-breaker.
 fn click_hit_from_priority(
     hit_node: &Option<String>,
+    hit_section_idx: Option<usize>,
     portal_text_hit: &Option<(baumhard::mindmap::scene_cache::EdgeKey, String)>,
     portal_icon_hit: &Option<(baumhard::mindmap::scene_cache::EdgeKey, String)>,
     edge_label_hit: &Option<baumhard::mindmap::scene_cache::EdgeKey>,
 ) -> ClickHit {
     if let Some(id) = hit_node {
-        ClickHit::Node(id.clone())
+        ClickHit::Node(id.clone(), hit_section_idx)
     } else if let Some((key, ep)) = portal_text_hit {
         ClickHit::PortalText {
             edge: key.clone(),
@@ -426,6 +457,13 @@ enum DragState {
     Pending {
         start_pos: (f64, f64),
         hit_node: Option<String>,
+        /// Index inside `hit_node.sections` when the press landed
+        /// on a specific section in a multi-section node. `None`
+        /// for empty-canvas, single-section, or non-node hits.
+        /// Threads through to `handle_click` on the release path
+        /// so the post-press selection update can reach for
+        /// `SelectionState::Section` when appropriate.
+        hit_section_idx: Option<usize>,
         /// If an edge was selected at mouse-down time and the cursor
         /// landed on one of that edge's grab-handles, this records
         /// which handle the user is about to drag. Populated in

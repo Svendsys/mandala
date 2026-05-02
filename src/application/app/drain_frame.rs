@@ -40,12 +40,15 @@ pub(super) fn drain_selecting_rect(
         let mut new_tree = doc.build_tree();
         let hits = rect_select(sc, cc, &new_tree);
         let preview_selection = SelectionState::from_ids(hits);
+        // Rect-select preview always whole-node; `from_ids` never
+        // produces a `Section` selection so the section narrowing
+        // would be `None` here.
         apply_tree_highlights(
             &mut new_tree,
             preview_selection
                 .selected_ids()
                 .into_iter()
-                .map(|id| (id, HIGHLIGHT_COLOR)),
+                .map(|id| (id, None, HIGHLIGHT_COLOR)),
         );
         renderer.rebuild_buffers_from_tree(&new_tree.tree);
         *mindmap_tree = Some(new_tree);

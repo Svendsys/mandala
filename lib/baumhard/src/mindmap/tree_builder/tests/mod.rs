@@ -21,6 +21,10 @@
 //!   voids, cap filters, identity drift, mutator round-trips.
 //! - [`edge_handle`] — edge-handle tree: channel ordering, mutator
 //!   round-trip, identity shift on midpoint→CP transitions.
+//! - [`sections`] — post-section-refactor invariants: container vs.
+//!   section-area vs. section-model layering, `Flag::SectionRoot`,
+//!   `section_map` round-trips, multi-section iteration order, and
+//!   the `owning_mind_id` climb across the three layers.
 
 mod fixtures;
 
@@ -31,3 +35,4 @@ mod node_background;
 mod node_basic;
 mod node_scale;
 mod portal;
+mod sections;

@@ -987,23 +987,92 @@ entries.
 
 ### `MindNode`
 
-**Summary.** One node — text, position, size, style, layout hint,
-palette binding, channel, and trigger bindings.
+**Summary.** One node — position, size, style, layout hint,
+palette binding, channel, trigger bindings, and one or more
+[`MindSection`](#mindsection)s carrying the text content.
 
 **What it's for.** The unit of content. Each node renders as a
-shape with text inside, optionally framed by a glyph border, and
-participates in the parent-child tree through its `parent_id`.
-Beyond the obvious display fields, it carries a `channel` for
-mutation routing, a `color_schema` referencing a palette, optional
-`text_runs` for rich text, optional `trigger_bindings` mapping
-input to custom mutations, optional `inline_mutations` (the
-lowest-precedence mutation source), and optional zoom-bounds.
+shape with one or more text-bearing **sections** inside,
+optionally framed by a glyph border, and participates in the
+parent-child tree through its `parent_id`. Post-section refactor
+the node owns visual chrome (background, frame, shape, border,
+shadow) and structural pieces (`channel`, `color_schema`,
+`trigger_bindings`, `inline_mutations`, zoom-bounds); the
+user-typed text lives on its sections.
 
 **Under the hood.** `lib/baumhard/src/mindmap/model/node.rs`. Full
 field reference in [`format/schema.md`](./format/schema.md). Author
 owns non-overlap of node AABBs; the model does no collision
 checking. The tree builder excludes folded subtrees from the
-display tree; the underlying data persists either way.
+display tree; the underlying data persists either way. The node
+container materialises as a chrome-only `GfxElement::GlyphArea`
+in the runtime tree, with the section subtree appended as
+children — see [tree builder](#tree-builder).
+
+### `MindSection`
+
+**Summary.** A positioned text-bearing surface inside a
+`MindNode` — the post-section data shape's home for `text` and
+`text_runs`. Every renderable node has at least one section.
+
+**What it's for.** The user-facing strata of data. A node is a
+*container*; a section is *what the user typed*. Sections give
+the architecture room to grow per-stratum styling, per-stratum
+mutations, and per-stratum interaction without making the node
+itself bigger. For migrated maps the typical shape is one default
+section per node (offset `(0, 0)`, fills the parent); authors who
+want multiple strata of data on one node opt in by appending
+extra sections.
+
+**Under the hood.** `lib/baumhard/src/mindmap/model/node.rs:MindSection`.
+Plain data — `text`, `text_runs`, `offset`, optional `size`,
+`channel`. In the runtime tree each section becomes a
+`GfxElement::GlyphArea` child of the owning node's container area,
+plus a structural `GfxElement::GlyphModel` grandchild that exists
+as a future per-component-mutation seam (the renderer skips it).
+The renderer's tree walker shapes each section-area into its own
+`cosmic_text::Buffer` keyed by `unique_id`, so multiplicity falls
+out for free. Loader rejects pre-section maps with a concrete
+pointer at `maptool convert --sections`. Full reference:
+[`format/sections.md`](./format/sections.md).
+
+**Status.** The original three-seam roadmap has all landed:
+
+- **Per-section selection / editing.** Shipped — a click on a
+  multi-section node lands on `SelectionState::Section { node_id,
+  section_idx }`; the inline text editor targets the specific
+  section.
+- **Per-section mutations.** Shipped — `TargetScope::SectionsOnly`
+  walks every section directly via
+  `MindMapTree::section_arena_id`, and the
+  `GfxElementField::Flag(Flag::SectionRoot)` predicate gate
+  filters by element flag from any other scope.
+- **Multiple `GlyphModel`s per section.** Still on the
+  trajectory — today a section holds exactly one structural
+  model; richer composed-glyph layouts (a gridded matrix beside
+  a text run) attach as additional children of the section-area
+  when needed.
+
+The `MindSection.channel: Option<usize>` migration also shipped:
+`None` falls through to the section's index, `Some(0)` is
+honoured even at idx > 0. Pre-`Option`, the bare `usize`
+silently overrode an author's explicit `channel: 0` on sections
+beyond the first.
+
+**Custom-mutation reach.** `apply_custom_mutation`'s flat-apply
+path resolves the targeted MindNode to its container *and* every
+`Flag::SectionRoot` child, applying the mutation list to each.
+Position-affecting mutations land on both (lockstep movement);
+text / region / scale mutations are visible only through the
+section-areas (the chrome-only container has no glyphs).
+`sync_node_from_tree` walks every section and writes back
+`text` / `text_runs` / `offset` / `size` through a merge-with-
+prior reverse converter — `bold` / `italic` / `underline` /
+`size_pt` / `hyperlink` survive the round trip because the
+selective gate skips sections the mutation didn't touch.
+Documented round-trip limit: `var(--name)` colour references
+collapse to their resolved hex on save (the tree-side
+`FloatRgba` carries no record of the variable).
 
 ### `MindEdge`
 
@@ -1374,22 +1443,30 @@ build.
 
 **Summary.** Projects a `MindMap` into a Baumhard
 `Tree<GfxElement, GfxMutator>` mirroring the parent-child
-structure, with sibling order
-`(channel, id_sort_key)`.
+structure, with each `MindNode` materialising as a three-deep
+subtree (container + section-areas + section-models).
 
 **What it's for.** Mutations need a `Tree` to walk against. The
 tree builder constructs it from the model: each visible
-`MindNode` becomes a `GfxElement::GlyphArea`, parent-child
-relationships become tree edges, channels are preserved. Per-role
-sub-builders cover borders, portals, connections, edge labels,
-and edge handles, each producing its own tree (and matching
-mutator-tree) so per-role mutations stay scoped.
+`MindNode` becomes a chrome-only container `GfxElement::GlyphArea`
+plus one `GfxElement::GlyphArea` per section (carrying the
+section's text + theme-resolved regions) plus a structural
+`GfxElement::GlyphModel` grandchild per section-area as a
+future-mutation seam. Parent-child relationships become tree
+edges; channels are preserved. Per-role sub-builders cover
+borders, portals, connections, edge labels, and edge handles,
+each producing its own tree (and matching mutator-tree) so
+per-role mutations stay scoped.
 
 **Under the hood.**
 `lib/baumhard/src/mindmap/tree_builder/mod.rs`. Returns a
-`MindMapTree` with `node_map: HashMap<String, NodeId>` and the
-reverse map for cheap lookups in either direction. Folded nodes
-are excluded.
+`MindMapTree` with `node_map: HashMap<String, NodeId>` (mind id →
+container arena id), `section_map: HashMap<(String, usize), NodeId>`
+(mind id + section index → section-area arena id), reverse maps
+for both, and an `owning_mind_id` helper that climbs up to three
+arena edges (model → section → container) to find the owning
+mind-node. Section-areas (and section-models) carry
+`Flag::SectionRoot`. Folded nodes are excluded.
 
 ### Scene builder
 
@@ -1791,9 +1868,9 @@ those are all on `InitState`.
 
 ### `SelectionState`
 
-**Summary.** A tagged union of what the user has selected: nothing,
-a node, multiple nodes, an edge body, an edge label, a portal
-icon, or a portal text.
+**Summary.** A tagged union of what the user has selected:
+nothing, a node, multiple nodes, one section of one node, an
+edge body, an edge label, a portal icon, or a portal text.
 
 **What it's for.** Selection variants are mutually exclusive by
 construction — at most one thing is selected at a time. The
@@ -1804,11 +1881,19 @@ command sets. The renderer uses it to apply the cyan highlight
 to the right element.
 
 **Under the hood.**
-`src/application/document/types.rs:99-148`. Variants:
+`src/application/document/types.rs`. Variants:
 
 - `None`
 - `Single(node_id)` — one node
 - `Multi(Vec<node_id>)` — multiple nodes
+- `Section(SectionSel)` — one [`MindSection`](#mindsection) of
+  one node, identified by `(node_id, section_idx)`. Surfaces
+  when the user clicks on a section-area in a *multi-section*
+  node (single-section migrated nodes still route through
+  `Single` so today's whole-node verbs keep firing on the whole
+  node target). Per-section verbs (`set_section_text` and
+  friends) consult `selected_section()` to bypass the
+  whole-node collapse.
 - `Edge(EdgeRef)` — the whole edge body
 - `EdgeLabel(EdgeLabelSel)` — the text label of a line-mode edge
 - `PortalLabel(PortalLabelSel)` — a portal endpoint icon
@@ -2789,6 +2874,9 @@ its full treatment above.
   [§5: MindMapDocument](#mindmapdocument).
 - **`MindNode`** — one mindmap node. See
   [§3: MindNode](#mindnode).
+- **`MindSection`** — one stratum of user data inside a
+  `MindNode`; the post-section data shape's home for `text` and
+  `text_runs`. See [§3: MindSection](#mindsection).
 - **model / view separation** — document owns data, renderer owns
   GPU resources. See
   [§1: Model / view separation](#model--view-separation).

@@ -102,6 +102,16 @@ pub fn at_anchor(mutations: Vec<Mutation>) -> MutatorNode {
     self_only(mutations)
 }
 
+// `TargetScope::SectionsOnly` mutators don't need a dedicated
+// constructor — the "sections only" semantic lives at the
+// `target_scope` field, not inside the AST shape. Authors that
+// want a mutator anchored at each section reach for
+// [`self_only`] (or [`at_anchor`] for explicit-intent code).
+// The application layer iterates `MindMapTree::section_arena_id`
+// per `(node_id, section_idx)` and anchors the same flat
+// `Macro` payload at each. A `scope::sections_only` synonym
+// would be a §10 dual-shape duplicate of `self_only`.
+
 #[cfg(test)]
 mod tests {
     use super::*;

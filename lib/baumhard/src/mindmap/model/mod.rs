@@ -17,8 +17,8 @@ pub use edge::{
     DISPLAY_MODE_PORTAL, PORTAL_GLYPH_PRESETS,
 };
 pub use node::{
-    ColorGroup, ColorSchema, CustomBorderGlyphs, GlyphBorderConfig, MindNode, NodeLayout, NodeStyle,
-    Position, Size, TextRun,
+    ColorGroup, ColorSchema, CustomBorderGlyphs, GlyphBorderConfig, MindNode, MindSection, NodeLayout,
+    NodeStyle, Position, Size, TextRun,
 };
 pub use palette::Palette;
 
