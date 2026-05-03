@@ -221,7 +221,7 @@ impl MindNode {
 /// sits inside its owning node. Units are arbitrary canvas pixels
 /// (the camera transforms to screen space at render time). Plain
 /// data; no runtime cost.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Position {
     /// Canvas-space x coordinate (or node-local offset for sections).
     #[serde(default)]
@@ -235,7 +235,7 @@ pub struct Position {
 /// strictly positive in practice but not checked at type level —
 /// scene-builder code guards against zero-size nodes on its own.
 /// Plain data; no runtime cost.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Size {
     /// Width in canvas units.
     pub width: f64,

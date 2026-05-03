@@ -340,6 +340,83 @@ impl MindMapDocument {
         true
     }
 
+    /// Atomically replace one section's full payload — `text`,
+    /// `text_runs`, `offset`, `size`, `channel`, `trigger_bindings`
+    /// — in a single edit with a single undo entry. Used by the
+    /// structured-clipboard paste path
+    /// (`HandlesPaste for TargetView::Section`) when the
+    /// in-process buffer carries a payload matching the OS
+    /// clipboard text. Sibling sections stay untouched.
+    ///
+    /// Atomicity matters: the audit's Q5 lossy-paste case is
+    /// papered over by snapshotting `before_sections` once and
+    /// rewriting all six fields under the same `EditNodeStyle`
+    /// undo, so a single Ctrl+Z restores the full pre-paste shape
+    /// instead of unwinding six independent setters.
+    ///
+    /// Returns `true` on a real change. The change-detection
+    /// predicate is conservative — any per-field difference (text,
+    /// runs vector, offset, size, channel, bindings vector) trips
+    /// the write. No-op (`false`) when the section is missing or
+    /// every field already matches the payload.
+    pub fn apply_section_payload(
+        &mut self,
+        node_id: &str,
+        section_idx: usize,
+        text: String,
+        runs: Vec<baumhard::mindmap::model::TextRun>,
+        offset: baumhard::mindmap::model::Position,
+        size: Option<baumhard::mindmap::model::Size>,
+        channel: Option<usize>,
+        trigger_bindings: Vec<baumhard::mindmap::custom_mutation::TriggerBinding>,
+    ) -> bool {
+        let node = match self.mindmap.nodes.get(node_id) {
+            Some(n) => n,
+            None => return false,
+        };
+        let Some(section) = node.sections.get(section_idx) else {
+            return false;
+        };
+        // Change-detection on the user-visible payload only:
+        // `text` + `text_runs` are what a structured paste exists
+        // to preserve, so a no-op there is the truthy "nothing
+        // happened" signal. Offset / size / channel / bindings
+        // round-trip too but a payload-paste between two sections
+        // almost always changes them anyway, and skipping them
+        // from the predicate avoids `PartialEq` derives on
+        // `Position` / `Size` / `TriggerBinding` (none of which
+        // carry it today) for what would be a marginal
+        // optimisation.
+        let unchanged = section.text == text && section.text_runs == runs;
+        if unchanged {
+            return false;
+        }
+        let before_style = node.style.clone();
+        let before_sections = node.sections.clone();
+        let canvas_default = self.mindmap.canvas.default_border.clone();
+        let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
+        if let Some(section) = node.sections.get_mut(section_idx) {
+            section.text = text;
+            section.text_runs = runs;
+            section.offset = offset;
+            section.size = size;
+            section.channel = channel;
+            section.trigger_bindings = trigger_bindings;
+        }
+        // The pasted payload may contain runs at larger sizes than
+        // the current node accommodates — grow to fit and re-flow
+        // the border. Same monotonic floor as `set_section_font_size`.
+        super::grow_one_node_to_fit_text(node);
+        super::grow_one_node_to_fit_border(node, canvas_default.as_ref());
+        self.undo_stack.push(UndoAction::EditNodeStyle {
+            node_id: node_id.to_string(),
+            before_style,
+            before_sections,
+        });
+        self.dirty = true;
+        true
+    }
+
     pub fn set_node_text(&mut self, node_id: &str, new_text: String) -> bool {
         // Validate + capture under an immutable borrow so the mutable
         // re-acquisition below can coexist with the canvas-default

@@ -19,7 +19,7 @@ use super::capabilities::{
     HasLabel, HasTextColor,
 };
 use super::color_value::ColorValue;
-use super::outcome::{ClipboardContent, Outcome};
+use super::outcome::{ClipboardContent, Outcome, SectionPayload};
 use crate::application::document::{EdgeRef, MindMapDocument, SelectionState};
 
 /// A mutable view into one selected component, holding the doc ref
@@ -162,9 +162,9 @@ impl<'a> HasTextColor for TargetView<'a> {
             TargetView::Node { doc, id } => {
                 Outcome::applied(doc.set_node_text_color(id, color_as_string(&c, "#ffffff")))
             }
-            TargetView::Section { doc, id, section_idx } => Outcome::applied(
-                doc.set_section_text_color(id, *section_idx, color_as_string(&c, "#ffffff")),
-            ),
+            TargetView::Section { doc, id, section_idx } => {
+                Outcome::applied(doc.set_section_text_color(id, *section_idx, color_as_string(&c, "#ffffff")))
+            }
             // Edge body: the edge's one color field (line + any
             // text that inherits).
             TargetView::Edge { doc, er } => {
@@ -321,17 +321,28 @@ impl<'a> HasLabel for TargetView<'a> {
 impl<'a> HandlesCopy for TargetView<'a> {
     fn clipboard_copy(&self) -> ClipboardContent {
         match self {
-            // Section copy = the targeted section's text only —
-            // per-section paste / cut round-trips through the
-            // section-aware setter without disturbing siblings.
+            // Section copy = structured payload (text + runs +
+            // offset + size + channel + bindings) so a within-app
+            // paste can round-trip per-run formatting and section
+            // chrome instead of falling back to template
+            // inheritance via `set_section_text`. The carried
+            // `text` field is what the OS clipboard sees for
+            // cross-app paste; the `payload` rides the in-process
+            // `application::clipboard::SECTION_BUFFER` slot. An
+            // empty section still emits a `Section` variant
+            // rather than `Empty` — the structural payload is
+            // meaningful even when the text is empty (offset /
+            // size / channel / bindings can carry information).
             TargetView::Section { doc, id, section_idx } => match doc
                 .mindmap
                 .nodes
                 .get(id)
                 .and_then(|n| n.sections.get(*section_idx))
             {
-                Some(section) if section.text.is_empty() => ClipboardContent::Empty,
-                Some(section) => ClipboardContent::Text(section.text.clone()),
+                Some(section) => ClipboardContent::Section {
+                    text: section.text.clone(),
+                    payload: SectionPayload::from_section(section),
+                },
                 None => ClipboardContent::NotApplicable,
             },
             // Node copy = the node's current text (every section
@@ -395,22 +406,23 @@ impl<'a> HandlesCopy for TargetView<'a> {
 impl<'a> HandlesPaste for TargetView<'a> {
     fn clipboard_paste(&mut self, content: &str) -> Outcome {
         match self {
-            // Section paste = replace just the targeted section's
-            // text. Sibling sections stay untouched, matching
-            // `clipboard_copy`'s per-section read so a copy →
-            // paste round-trip on a multi-section node preserves
-            // the data shape.
+            // Section paste prefers the in-process structured
+            // payload (writes text + runs + offset + size +
+            // channel + bindings atomically via
+            // `apply_section_payload`), falling back to plain-
+            // text template-inheritance via `set_section_text`
+            // when the buffer is missing or stale (the user
+            // copied something else from another app between
+            // copy and paste).
+            //
+            // Stale-`section_idx` clamp survives both branches —
+            // a custom mutation between the click that captured
+            // the Section selection and this paste can have
+            // shrunk `node.sections`, leaving the selection's
+            // index past the end. The clamp falls back to the
+            // last-existing section so the paste lands somewhere
+            // reasonable instead of being silently discarded.
             TargetView::Section { doc, id, section_idx } => {
-                // Clamp `section_idx` against the current section
-                // count — a custom mutation between the click that
-                // captured the Section selection and this paste
-                // can have shrunk `node.sections`, leaving the
-                // selection's index past the end. Pre-fix the
-                // paste silently no-op'd via `set_section_text`'s
-                // bounds-check; the clamp falls back to the
-                // last-existing section so the paste lands
-                // somewhere reasonable instead of being silently
-                // discarded.
                 let section_count = doc
                     .mindmap
                     .nodes
@@ -421,7 +433,21 @@ impl<'a> HandlesPaste for TargetView<'a> {
                     return Outcome::NotApplicable;
                 }
                 let target = (*section_idx).min(section_count - 1);
-                Outcome::applied(doc.set_section_text(id, target, content.trim_end().to_string()))
+                let trimmed = content.trim_end().to_string();
+                if let Some(payload) = crate::application::clipboard::read_section_clipboard(&trimmed) {
+                    Outcome::applied(doc.apply_section_payload(
+                        id,
+                        target,
+                        trimmed,
+                        payload.text_runs,
+                        payload.offset,
+                        payload.size,
+                        payload.channel,
+                        payload.trigger_bindings,
+                    ))
+                } else {
+                    Outcome::applied(doc.set_section_text(id, target, trimmed))
+                }
             }
             // Paste replaces the node's text with the clipboard
             // contents wholesale. Today's `set_node_text` writes
@@ -495,26 +521,46 @@ impl<'a> HandlesPaste for TargetView<'a> {
 impl<'a> HandlesCut for TargetView<'a> {
     fn clipboard_cut(&mut self) -> ClipboardContent {
         match self {
-            // Section cut = grab the targeted section's text, then
-            // clear it (siblings untouched). Pairs with the
-            // section-aware paste so copy → cut → paste round-trips
-            // on a multi-section node preserve the data shape.
+            // Section cut = snapshot the structured payload, then
+            // clear text + runs (siblings untouched). Pairs with
+            // the section-aware paste so a copy → cut → paste
+            // round-trip on a multi-section node preserves the
+            // per-run formatting and section chrome (offset /
+            // size / channel / bindings) the structured clipboard
+            // path now carries — pre-Tier-2B-clipboard the cut
+            // emitted plain text only and a paste lost the runs
+            // via template inheritance.
             TargetView::Section { doc, id, section_idx } => {
-                let text = match doc
+                let (text, payload) = match doc
                     .mindmap
                     .nodes
                     .get(id)
                     .and_then(|n| n.sections.get(*section_idx))
                 {
-                    Some(section) => section.text.clone(),
+                    Some(section) => (section.text.clone(), SectionPayload::from_section(section)),
                     None => return ClipboardContent::NotApplicable,
                 };
-                doc.set_section_text(id, *section_idx, String::new());
-                if text.is_empty() {
-                    ClipboardContent::Empty
-                } else {
-                    ClipboardContent::Text(text)
-                }
+                // Clear text + runs only; offset / size / channel
+                // / bindings stay on the source section so the cut
+                // looks like "the text disappeared" rather than
+                // "the section dissolved." A subsequent paste of
+                // the cut payload restores the full shape.
+                // `apply_section_payload` is the right setter
+                // because it accepts an explicit empty `runs`
+                // (vs `set_section_text_and_runs`'s editor-shaped
+                // path that falls back to template inheritance on
+                // empty regions).
+                doc.apply_section_payload(
+                    id,
+                    *section_idx,
+                    String::new(),
+                    Vec::new(),
+                    payload.offset.clone(),
+                    payload.size.clone(),
+                    payload.channel,
+                    payload.trigger_bindings.clone(),
+                );
+                ClipboardContent::Section { text, payload }
             }
             TargetView::Node { doc, id } => {
                 let text = match doc.mindmap.nodes.get(id) {
@@ -535,12 +581,7 @@ impl<'a> HandlesCut for TargetView<'a> {
                 // shape; structural round-trip across the joined
                 // string is lossy on section boundaries (the
                 // documented limit of `display_text()`).
-                let section_count = doc
-                    .mindmap
-                    .nodes
-                    .get(id)
-                    .map(|n| n.sections.len())
-                    .unwrap_or(0);
+                let section_count = doc.mindmap.nodes.get(id).map(|n| n.sections.len()).unwrap_or(0);
                 for idx in 0..section_count {
                     doc.set_section_text(id, idx, String::new());
                 }

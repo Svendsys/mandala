@@ -29,7 +29,7 @@ pub use capabilities::{
 pub use capabilities::AcceptsWheelColor;
 pub use color_value::ColorValue;
 pub use dispatch::{apply_kvs, apply_to_targets, DispatchReport};
-pub use outcome::{ClipboardContent, Outcome};
+pub use outcome::{ClipboardContent, Outcome, SectionPayload};
 // Re-exported as the surface type of `view_for` / `selection_targets`;
 // the lint can't see implicit reach-through usage.
 #[allow(unused_imports)]

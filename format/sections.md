@@ -143,6 +143,29 @@ discard it). Custom-mutation writes still collapse var refs to
 hex on round-trip (`FloatRgba` carries no record of the variable);
 that constraint is unchanged.
 
+### Structured clipboard
+
+Section copy / cut emit `ClipboardContent::Section { text,
+payload }` carrying the full per-section snapshot
+(`text_runs` + `offset` + `size` + `channel` +
+`trigger_bindings`). The plain `text` rides the OS clipboard via
+`arboard` so cross-app paste sees a sensible string; the
+structured `payload` rides an in-process `SECTION_BUFFER` slot
+in `application/clipboard.rs` so a within-app section→section
+paste round-trips per-run formatting and section chrome via
+`apply_section_payload`.
+
+The two halves stay coherent through a consistency check on
+read: the structured payload is consulted only when the OS
+clipboard's current text matches the buffer's snapshot, so a
+user who copies from another app between Mandala copy and paste
+falls through to the plain-text branch (template inheritance via
+`set_section_text` — runs collapse to a single template-inherited
+run) automatically. Cut clears text and runs only; offset / size
+/ channel / bindings stay on the source section so the cut reads
+as "the text disappeared" rather than "the section dissolved",
+and a paste of the cut payload restores the full original shape.
+
 ## Channel space
 
 Sections live in the same Baumhard tree as child mind-nodes. The

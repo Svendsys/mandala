@@ -146,9 +146,24 @@ pub(in crate::application::app) fn apply_copy_or_cut(is_cut: bool, doc: &mut Min
         } else {
             view.clipboard_copy()
         };
-        if let ClipboardContent::Text(text) = content {
-            crate::application::clipboard::write_clipboard(&text);
-            break;
+        match content {
+            ClipboardContent::Text(text) => {
+                crate::application::clipboard::write_clipboard(&text);
+                break;
+            }
+            // Section variant: dual-write. Plain text goes to the
+            // OS clipboard so cross-app paste sees something
+            // sensible; the structured payload rides the
+            // in-process buffer keyed by the same text so a
+            // within-app section→section paste round-trips
+            // per-run formatting + section chrome (offset / size
+            // / channel / bindings) via `apply_section_payload`.
+            ClipboardContent::Section { text, payload } => {
+                crate::application::clipboard::write_clipboard(&text);
+                crate::application::clipboard::write_section_clipboard(text, payload);
+                break;
+            }
+            ClipboardContent::Empty | ClipboardContent::NotApplicable => {}
         }
     }
 }

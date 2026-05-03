@@ -52,6 +52,15 @@ Legend: ✅ shipped · 🔧 in progress · ⏳ to do · ❌ deferred (out of 2A)
 | R10 | **Tier 2A.5 — Audit gap 2 pin.** `section_paste_collapses_runs_inheriting_first_run_template` (`console/tests/clipboard.rs`) pins the documented lossy behaviour of `set_section_text` on the unstructured paste path: pasting plain text into a multi-run section collapses to one run that inherits the first original run's `font` / `size_pt` / `color` / `bold`. Reduces regression risk when Tier 2B's structured `ClipboardContent::Section` payload lands. | ✅ |
 | R11 | **Tier 2A.5 — A5: `format/sections.md`** updated with the new picker var-preserve semantics (bit-exact HSV equality is the "did the user touch it?" signal). | ✅ |
 | — | Tier 2A.5 — Audit gaps 1 & 3 closed without code: gap 1 (no `HasFontSize` trait — font size dispatch goes through `apply_font_kv_to_selection` directly, already covered by Item 10); gap 3 (picker-open path on Section + bg/border returns NotApplicable — already pinned by `picker_target_for_section_bg_returns_not_applicable_message`). | ✅ |
+| B1 | **Tier 2B-clipboard — `ClipboardContent::Section { text, payload }` variant + `SectionPayload`** struct (text_runs, offset, size, channel, trigger_bindings) in `console/traits/outcome.rs`. The `text` rides the OS clipboard; the `payload` rides the in-process structured buffer for within-app section→section round-trip. | ✅ |
+| B2 | **Tier 2B-clipboard — In-process structured buffer** in `application/clipboard.rs`: `static SECTION_BUFFER: Mutex<Option<SectionBufferEntry>>` + `write_section_clipboard` + `read_section_clipboard(probe_text)`. Read returns the buffered payload only when `probe_text` matches the buffer's text snapshot — guards against the user copying from another app between Mandala copy and paste (buffer self-invalidates). | ✅ |
+| B3 | **Tier 2B-clipboard — `apply_section_payload`** atomic document setter in `document/nodes/mod.rs`: replaces text + runs + offset + size + channel + bindings under a single `EditNodeStyle` undo entry, so a single Ctrl+Z restores the full pre-paste shape. Triggers the same monotonic `grow_one_node_to_fit_text` / `_border` floor as the other section setters. | ✅ |
+| B4 | **Tier 2B-clipboard — `HandlesCopy` for `Section`** emits `ClipboardContent::Section { ... }` via `SectionPayload::from_section`. Was `Text` / `Empty` only. | ✅ |
+| B5 | **Tier 2B-clipboard — `HandlesPaste` for `Section`** consults `read_section_clipboard(content)` first; on hit calls `apply_section_payload` (per-run formatting + section chrome preserved); on miss falls back to today's `set_section_text` (template inheritance — pinned by `section_paste_collapses_runs_inheriting_first_run_template`). The stale-`section_idx` clamp survives both branches. | ✅ |
+| B6 | **Tier 2B-clipboard — `HandlesCut` for `Section`** snapshots the structured payload, then clears text + runs only (offset / size / channel / bindings stay on the source section so the cut reads as "the text disappeared" rather than "the section dissolved"). Pairs with the structured paste so cut→paste round-trips full shape. | ✅ |
+| B7 | **Tier 2B-clipboard — `apply_copy_or_cut`** in `cross_dispatch/lifecycle.rs` dual-writes for the `Section` variant: plain text to the OS clipboard via `write_clipboard`, structured payload to the in-process buffer via `write_section_clipboard`. Cross-app paste sees plain text; within-app paste sees the structured payload. | ✅ |
+| B8 | **Tier 2B-clipboard — Tests:** `section_copy_emits_structured_payload`, `section_paste_with_matching_buffer_preserves_runs`, `section_paste_with_mismatched_buffer_falls_back_to_plain`, `section_cut_emits_structured_payload_and_clears_text_runs_only`, `apply_section_payload_round_trips_through_undo`. The two pre-existing Tier 2A.5 paste tests (`section_paste_collapses_runs_inheriting_first_run_template`, `section_paste_clamps_stale_idx_to_last_section`) gained a `section_clipboard_test_guard` so they don't race with the new structured tests on the shared `SECTION_BUFFER` global. | ✅ |
+| B9 | **Tier 2B-clipboard — Lint debt unblocked:** added `PartialEq` to `Position`, `Size` (`lib/baumhard/src/mindmap/model/node.rs`), and `TriggerBinding` (`lib/baumhard/src/mindmap/custom_mutation/mod.rs`) so `SectionPayload` and `ClipboardContent` can derive `PartialEq` cleanly. All three are pure data structs; the derive matches what hand-written impls would produce. | ✅ |
 
 ## Context
 
@@ -351,7 +360,18 @@ Test locations: `console/tests/color.rs`, `console/tests/font.rs`,
 
 ## Out of scope — captured for future iterations
 
-### Tier 2B (deferred)
+### Tier 2B — partial: clipboard shipped, gestures pending
+
+**Tier 2B-clipboard ✅ shipped** — captured in plan rows B1-B9.
+Structured `ClipboardContent::Section { text, payload }` with
+`String` fallback now round-trips per-run formatting and section
+chrome through both verb and Action paste paths via the
+in-process `SECTION_BUFFER` slot.
+
+**Tier 2B-gesture ⏳ remaining** — drag, resize, and the partial
+auto-fit gap. These share infrastructure (`set_section_offset` /
+`set_section_size` setters with AABB validation, plus event-loop
+state) so they sequence as a single follow-up:
 
 - Section drag — `DragState::MovingSection` /
   `ThrottledDrag::MovingSection`; threshold-cross promotion at
@@ -360,8 +380,6 @@ Test locations: `console/tests/color.rs`, `console/tests/font.rs`,
 - `set_section_offset` / `set_section_size` document setters with
   AABB validation.
 - Console verbs `section move <dx> <dy>` / `section resize <w> <h>`.
-- Structured `ClipboardContent::Section { text, text_runs, offset,
-  size, channel, trigger_bindings }` payload with `String` fallback.
 - Auto-fit covers `Some`-sized sections (`document/mod.rs:215`).
 
 ### Tier 2C (deferred — larger product changes)
