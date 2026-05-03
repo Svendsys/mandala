@@ -174,10 +174,8 @@ pub fn point_in_node_aabb(canvas_pos: Vec2, node_id: &str, tree: &MindMapTree) -
     let w = area.render_bounds.x.0;
     let h = area.render_bounds.y.0;
 
-    let in_container_aabb = canvas_pos.x >= x
-        && canvas_pos.x <= x + w
-        && canvas_pos.y >= y
-        && canvas_pos.y <= y + h;
+    let in_container_aabb =
+        canvas_pos.x >= x && canvas_pos.x <= x + w && canvas_pos.y >= y && canvas_pos.y <= y + h;
 
     if in_container_aabb {
         let local = Vec2::new(canvas_pos.x - x, canvas_pos.y - y);
@@ -185,10 +183,7 @@ pub fn point_in_node_aabb(canvas_pos: Vec2, node_id: &str, tree: &MindMapTree) -
     }
 
     if let Some((tl, br)) = element.subtree_aabb() {
-        return canvas_pos.x >= tl.x
-            && canvas_pos.x <= br.x
-            && canvas_pos.y >= tl.y
-            && canvas_pos.y <= br.y;
+        return canvas_pos.x >= tl.x && canvas_pos.x <= br.x && canvas_pos.y >= tl.y && canvas_pos.y <= br.y;
     }
     false
 }

@@ -138,6 +138,12 @@ pub(in crate::application::app) fn apply_copy_or_cut(is_cut: bool, doc: &mut Min
     use crate::application::console::traits::{
         selection_targets, view_for, ClipboardContent, HandlesCopy, HandlesCut,
     };
+    // The loop breaks on the first target that produces non-empty
+    // content because `selection_targets` emits at most one
+    // clipboard-eligible target per concrete selection shape today
+    // (`Single`/`Section`/`Edge`/...); `Multi` emits node-only
+    // targets that all share `display_text`, so taking the first
+    // is correct rather than aggregating.
     let targets = selection_targets(&doc.selection);
     for tid in &targets {
         let mut view = view_for(doc, tid);
@@ -151,13 +157,8 @@ pub(in crate::application::app) fn apply_copy_or_cut(is_cut: bool, doc: &mut Min
                 crate::application::clipboard::write_clipboard(&text);
                 break;
             }
-            // Section variant: dual-write. Plain text goes to the
-            // OS clipboard so cross-app paste sees something
-            // sensible; the structured payload rides the
-            // in-process buffer keyed by the same text so a
-            // within-app section→section paste round-trips
-            // per-run formatting + section chrome (offset / size
-            // / channel / bindings) via `apply_section_payload`.
+            // Dual-write: OS clipboard for cross-app paste,
+            // in-process buffer for within-app structured paste.
             ClipboardContent::Section { text, payload } => {
                 crate::application::clipboard::write_clipboard(&text);
                 crate::application::clipboard::write_section_clipboard(text, payload);

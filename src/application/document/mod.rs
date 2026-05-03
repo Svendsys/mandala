@@ -59,14 +59,14 @@ mod tests_selection;
 // `hit_test` re-export to non-wasm silences the
 // `#[warn(unused_imports)]` the WASM build would otherwise raise
 // for an unused-on-wasm name.
-pub use hit_test::{apply_tree_highlights, hit_test_target, point_in_node_aabb, HitTarget};
 #[cfg(not(target_arch = "wasm32"))]
 pub use hit_test::hit_test;
+pub use hit_test::{apply_tree_highlights, hit_test_target, point_in_node_aabb, HitTarget};
 // Native-only: consumed by drag handlers, the click router, and
 // rect-select drain — none reachable on WASM today.
 #[cfg(not(target_arch = "wasm32"))]
 pub use hit_test::{apply_drag_delta, apply_drag_delta_and_collect_patches, hit_test_edge, rect_select};
-pub use nodes::{BorderConfigEdits, BorderEditOutcome, BorderSide, OptionEdit};
+pub use nodes::{BorderConfigEdits, BorderEditOutcome, BorderSide, OptionEdit, SectionPayload};
 pub use types::{
     AnimationInstance, EdgeLabelSel, EdgeRef, PortalLabelSel, SectionSel, SelectionState, HIGHLIGHT_COLOR,
 };

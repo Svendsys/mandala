@@ -94,10 +94,7 @@ fn test_set_section_text_grapheme_handling_for_emoji_and_combining() {
     // dropped trailing emoji.
     let runs = &n.sections[0].text_runs;
     assert!(!runs.is_empty(), "auto-collapsed run must exist");
-    assert_eq!(
-        runs[0].start, 0,
-        "auto-collapsed run starts at grapheme index 0"
-    );
+    assert_eq!(runs[0].start, 0, "auto-collapsed run starts at grapheme index 0");
     assert_eq!(
         runs[0].end, cluster_count,
         "auto-collapsed run ends at the cluster count, not the codepoint or byte count"

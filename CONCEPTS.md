@@ -2479,13 +2479,22 @@ integration.
 
 **What it's for.** Selection-routed clipboard: each
 [`SelectionState`](#selectionstate) variant has its own channel.
-Copying a node copies its style and text; copying an edge
-copies the body colour; copying an edge label copies the label
-colour; copying a portal label copies the icon colour; copying
-a portal text copies the text colour. The font channel mirrors
-this routing for `font size= min= max=` writes.
+Copying a node copies its style and text; copying a section
+copies a structured payload (text + per-run formatting + offset
+/ size / channel / bindings); copying an edge copies the body
+colour; copying an edge label copies the label colour; copying
+a portal label copies the icon colour; copying a portal text
+copies the text colour. The font channel mirrors this routing
+for `font size= min= max=` writes.
 
-**Under the hood.** `src/application/clipboard.rs:1-40`.
+**Under the hood.** `src/application/clipboard.rs`. The OS
+clipboard layer (native `arboard`, WASM stub) carries plain
+text. A thread-local in-process `SECTION_BUFFER` slot carries
+the structured `SectionPayload` for within-app section→section
+round-trip; on paste, the payload is consulted only when its
+`text` snapshot matches the OS clipboard's current text exactly
+(consistency check; falls through to plain text when the user
+copied from another app between Mandala copy and paste).
 Failures (permission denied, unavailable) log via `log::warn!`
 and return `None` — interactive paths must not panic. WASM
 stubs warn-and-noop pending the browser's async clipboard API.

@@ -61,6 +61,17 @@ Legend: ✅ shipped · 🔧 in progress · ⏳ to do · ❌ deferred (out of 2A)
 | B7 | **Tier 2B-clipboard — `apply_copy_or_cut`** in `cross_dispatch/lifecycle.rs` dual-writes for the `Section` variant: plain text to the OS clipboard via `write_clipboard`, structured payload to the in-process buffer via `write_section_clipboard`. Cross-app paste sees plain text; within-app paste sees the structured payload. | ✅ |
 | B8 | **Tier 2B-clipboard — Tests:** `section_copy_emits_structured_payload`, `section_paste_with_matching_buffer_preserves_runs`, `section_paste_with_mismatched_buffer_falls_back_to_plain`, `section_cut_emits_structured_payload_and_clears_text_runs_only`, `apply_section_payload_round_trips_through_undo`. The two pre-existing Tier 2A.5 paste tests (`section_paste_collapses_runs_inheriting_first_run_template`, `section_paste_clamps_stale_idx_to_last_section`) gained a `section_clipboard_test_guard` so they don't race with the new structured tests on the shared `SECTION_BUFFER` global. | ✅ |
 | B9 | **Tier 2B-clipboard — Lint debt unblocked:** added `PartialEq` to `Position`, `Size` (`lib/baumhard/src/mindmap/model/node.rs`), and `TriggerBinding` (`lib/baumhard/src/mindmap/custom_mutation/mod.rs`) so `SectionPayload` and `ClipboardContent` can derive `PartialEq` cleanly. All three are pure data structs; the derive matches what hand-written impls would produce. | ✅ |
+| B10 | **Tier 2B-clipboard review fix-up — C1 (CRITICAL):** the paste path's `content.trim_end()` was probed against the buffer, but the buffer was written with the untrimmed `section.text`. Sections whose text ended in `\n` (trivially produced by the inline editor's Enter key) silently fell through to the lossy plain-text branch. Probe with the untrimmed `content` so the consistency check is honest. Pinned by `section_paste_buffer_match_survives_trailing_newline`. | ✅ |
+| B11 | **Review fix-up — C2:** `apply_section_payload` calls `clamp_runs_to_text(section)` after the field assignment so a future caller passing mismatched `(text, runs)` doesn't leave out-of-bounds runs. The copy site never produces such input today; defensive only. | ✅ |
+| B12 | **Review fix-up — C3+X1:** widened `apply_section_payload`'s change-detection predicate to compare every field (text + runs + offset + size + channel + bindings). The pre-fix predicate compared text + runs only, so a paste that changed only chrome silently no-op'd against the atomic-setter promise. Now-redundant comment about "PartialEq derives ... none of which carry it today" dropped (B9 derived them). | ✅ |
+| B13 | **Review fix-up — V3:** `SectionPayload` moved from `console/traits/outcome.rs` to `document/nodes/mod.rs` (re-exported from `document::`). The trait layer now imports it via the document layer. `apply_section_payload`'s 8-parameter signature collapsed to `(node_id, section_idx, text, &SectionPayload)`. Cuts call sites to two lines. | ✅ |
+| B14 | **Review fix-up — V4:** the in-process `SECTION_BUFFER` migrated from `static Mutex<Option<…>>` to `thread_local! { static … : RefCell<Option<…>> }`. The editor's event loop is single-threaded; the previous `Mutex` doc-comment conceded this but claimed concurrency safety the rest of the architecture doesn't honour. `thread_local` is honest and gives parallel `cargo test` workers separate slots automatically. | ✅ |
+| B15 | **Review fix-up — V5+V6:** `section_clipboard_test_guard` removed (unnecessary now that `thread_local` provides cross-thread isolation). `clear_section_clipboard_for_tests` survives for within-thread isolation across `cargo test`'s reused worker threads; tests that need a clean buffer call it explicitly. | ✅ |
+| B16 | **Review fix-up — V2:** the six near-identical `MindSection::new_default(...) + text_runs = vec![TextRun {...}]` test scaffolds in `console/tests/clipboard.rs` collapsed to use the shared `make_two_section_node_with_pinned_runs` helper (extracted in Tier 2A.5 row R3). | ✅ |
+| B17 | **Review fix-up — V1:** aggressive comment trim in `view.rs`, `lifecycle.rs`, `outcome.rs`, `clipboard.rs`, and `clipboard.rs::tests`. Dropped inline "Tier 2B" / "pre-Tier-2B-clipboard" / "Pre-fix" plan-tracker references (CLAUDE.md rule); shrunk multi-paragraph "what" comments to single-sentence "why" comments. | ✅ |
+| B18 | **Review fix-up — X2:** `CONCEPTS.md §6 Clipboard` extended with the Section variant + the `SECTION_BUFFER` mechanism and consistency-check semantics; the stale `clipboard.rs:1-40` line range citation refreshed to the current shape. | ✅ |
+| B19 | **Review fix-up — V7+V8:** plan tracker line 111 ("per-run / offset / size / channel fidelity is Tier 2B") replaced with a forward reference to B1-B9. `format/sections.md`'s structured-clipboard subsection rewritten to drop the implementation reference (`apply_section_payload`) and to mention the no-trim-on-either-side semantics that close the trailing-newline round-trip case. | ✅ |
+| B20 | **Review fix-up — cosmetic:** `apply_copy_or_cut` gains a one-line comment explaining why `break`-on-first is correct (selection_targets emits at most one clipboard-eligible target per shape today; `Multi` is node-only). | ✅ |
 
 ## Context
 
@@ -106,9 +117,9 @@ must not regress them.
   `set_section_font_size` (`commands/font.rs:333`); pinned by
   `font_size_section_kv_targets_specific_section`.
 - ✅ Clipboard traits (`HandlesCopy/Paste/Cut`) honour
-  `TargetView::Section` for the `text` field
-  (`view.rs:312-599`); pinned by `console/tests/clipboard.rs:131-161`.
-  *Note: per-run / offset / size / channel fidelity is Tier 2B.*
+  `TargetView::Section` for the `text` field; per-run / offset /
+  size / channel / bindings fidelity then shipped as Tier 2B-clipboard
+  (rows B1-B9 below).
 - ✅ `selection_targets` emits `TargetId::Section` for the dispatcher
   (`view.rs:669-672`).
 - ✅ Five section-aware document setters exist

@@ -267,9 +267,11 @@ impl MindMapDocument {
         // simultaneous animations of the same mutation against
         // different sections of the same node coexist instead of
         // coalescing.
-        if self.active_animations.iter().any(|a| {
-            a.mutation_id() == cm.id && a.target_id == target_id && a.section_idx == section_idx
-        }) {
+        if self
+            .active_animations
+            .iter()
+            .any(|a| a.mutation_id() == cm.id && a.target_id == target_id && a.section_idx == section_idx)
+        {
             return;
         }
 

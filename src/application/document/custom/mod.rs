@@ -73,12 +73,7 @@ fn mutation_targets_absolute_position(m: &baumhard::gfx_structs::mutator::Mutati
     }
 }
 
-fn warn_if_predicate_filtered_everything(
-    mutation_id: &str,
-    has_predicate: bool,
-    seen: usize,
-    passed: usize,
-) {
+fn warn_if_predicate_filtered_everything(mutation_id: &str, has_predicate: bool, seen: usize, passed: usize) {
     if has_predicate && seen > 0 && passed == 0 {
         log::warn!(
             "mutation '{}': top-level predicate filtered every candidate ({} elements seen, 0 passed); \
@@ -448,9 +443,7 @@ impl MindMapDocument {
                     .and_then(|n| n.get().glyph_area())
                     .map(|a| (a.position.x.0 - pre_x, a.position.y.0 - pre_y))
             });
-            let absolute_position_in_mutations = mutations
-                .iter()
-                .any(mutation_targets_absolute_position);
+            let absolute_position_in_mutations = mutations.iter().any(mutation_targets_absolute_position);
             // Fan out across every immediate `Flag::SectionRoot` child
             // of the container — that's where `text`, `text_runs`
             // (regions), and per-section `scale` actually live in the

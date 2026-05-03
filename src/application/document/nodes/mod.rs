@@ -33,6 +33,35 @@ mod option_edit;
 pub use border::{BorderConfigEdits, BorderEditOutcome, BorderSide};
 pub use option_edit::OptionEdit;
 
+/// Snapshot of a `MindSection`'s user-facing fields, used by the
+/// structured-clipboard path (`ClipboardContent::Section` carries
+/// it, the in-process buffer in `application/clipboard.rs` stashes
+/// it, `apply_section_payload` writes it back). Decoupled from the
+/// trait layer so callers can build payloads without depending on
+/// `console::traits::outcome`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SectionPayload {
+    pub text_runs: Vec<TextRun>,
+    pub offset: baumhard::mindmap::model::Position,
+    pub size: Option<baumhard::mindmap::model::Size>,
+    pub channel: Option<usize>,
+    pub trigger_bindings: Vec<baumhard::mindmap::custom_mutation::TriggerBinding>,
+}
+
+impl SectionPayload {
+    /// Snapshot a `MindSection` into a payload (deep-clone each
+    /// field). Cheap — every contained type is `Clone`.
+    pub fn from_section(section: &baumhard::mindmap::model::MindSection) -> Self {
+        Self {
+            text_runs: section.text_runs.clone(),
+            offset: section.offset.clone(),
+            size: section.size.clone(),
+            channel: section.channel,
+            trigger_bindings: section.trigger_bindings.clone(),
+        }
+    }
+}
+
 impl MindMapDocument {
     /// Replace a node's `text` and collapse its `text_runs` to a single
     /// run inheriting the first original run's formatting (font,
@@ -340,35 +369,17 @@ impl MindMapDocument {
         true
     }
 
-    /// Atomically replace one section's full payload — `text`,
-    /// `text_runs`, `offset`, `size`, `channel`, `trigger_bindings`
-    /// — in a single edit with a single undo entry. Used by the
-    /// structured-clipboard paste path
-    /// (`HandlesPaste for TargetView::Section`) when the
-    /// in-process buffer carries a payload matching the OS
-    /// clipboard text. Sibling sections stay untouched.
-    ///
-    /// Atomicity matters: the audit's Q5 lossy-paste case is
-    /// papered over by snapshotting `before_sections` once and
-    /// rewriting all six fields under the same `EditNodeStyle`
-    /// undo, so a single Ctrl+Z restores the full pre-paste shape
-    /// instead of unwinding six independent setters.
-    ///
-    /// Returns `true` on a real change. The change-detection
-    /// predicate is conservative — any per-field difference (text,
-    /// runs vector, offset, size, channel, bindings vector) trips
-    /// the write. No-op (`false`) when the section is missing or
-    /// every field already matches the payload.
+    /// Atomically replace one section's full payload (text +
+    /// runs + offset + size + channel + bindings) under a single
+    /// `EditNodeStyle` undo entry — a single Ctrl+Z restores the
+    /// pre-write shape. Returns `true` on a real change; no-op
+    /// when the section is missing or every field matches.
     pub fn apply_section_payload(
         &mut self,
         node_id: &str,
         section_idx: usize,
         text: String,
-        runs: Vec<baumhard::mindmap::model::TextRun>,
-        offset: baumhard::mindmap::model::Position,
-        size: Option<baumhard::mindmap::model::Size>,
-        channel: Option<usize>,
-        trigger_bindings: Vec<baumhard::mindmap::custom_mutation::TriggerBinding>,
+        payload: &SectionPayload,
     ) -> bool {
         let node = match self.mindmap.nodes.get(node_id) {
             Some(n) => n,
@@ -377,17 +388,12 @@ impl MindMapDocument {
         let Some(section) = node.sections.get(section_idx) else {
             return false;
         };
-        // Change-detection on the user-visible payload only:
-        // `text` + `text_runs` are what a structured paste exists
-        // to preserve, so a no-op there is the truthy "nothing
-        // happened" signal. Offset / size / channel / bindings
-        // round-trip too but a payload-paste between two sections
-        // almost always changes them anyway, and skipping them
-        // from the predicate avoids `PartialEq` derives on
-        // `Position` / `Size` / `TriggerBinding` (none of which
-        // carry it today) for what would be a marginal
-        // optimisation.
-        let unchanged = section.text == text && section.text_runs == runs;
+        let unchanged = section.text == text
+            && section.text_runs == payload.text_runs
+            && section.offset == payload.offset
+            && section.size == payload.size
+            && section.channel == payload.channel
+            && section.trigger_bindings == payload.trigger_bindings;
         if unchanged {
             return false;
         }
@@ -397,15 +403,17 @@ impl MindMapDocument {
         let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
         if let Some(section) = node.sections.get_mut(section_idx) {
             section.text = text;
-            section.text_runs = runs;
-            section.offset = offset;
-            section.size = size;
-            section.channel = channel;
-            section.trigger_bindings = trigger_bindings;
+            section.text_runs = payload.text_runs.clone();
+            section.offset = payload.offset.clone();
+            section.size = payload.size.clone();
+            section.channel = payload.channel;
+            section.trigger_bindings = payload.trigger_bindings.clone();
+            // Defensive: a future caller might pass mismatched
+            // (text, runs) — the copy site never does, but the
+            // public setter shouldn't trust its input enough to
+            // leave runs whose ranges exceed the new text length.
+            clamp_runs_to_text(section);
         }
-        // The pasted payload may contain runs at larger sizes than
-        // the current node accommodates — grow to fit and re-flow
-        // the border. Same monotonic floor as `set_section_font_size`.
         super::grow_one_node_to_fit_text(node);
         super::grow_one_node_to_fit_border(node, canvas_default.as_ref());
         self.undo_stack.push(UndoAction::EditNodeStyle {

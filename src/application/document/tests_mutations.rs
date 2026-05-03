@@ -581,7 +581,8 @@ fn test_sync_node_from_tree_section_1_untouched_when_section_0_mutated() {
             color: "#ffffff".into(),
             hyperlink: None,
         }];
-        node.sections.push(MindSection::new_default("untouched".into(), Vec::new()));
+        node.sections
+            .push(MindSection::new_default("untouched".into(), Vec::new()));
         node.sections[1].text_runs = vec![TextRun {
             start: 0,
             end: 9,
@@ -641,7 +642,10 @@ fn test_sync_node_from_tree_section_1_untouched_when_section_0_mutated() {
     // means the new merged run inherits italic/underline/size_pt
     // from the existing [0,9) prior. Pin those.
     let s1 = &doc.mindmap.nodes.get(&nid).unwrap().sections[1];
-    let s1_run = s1.text_runs.first().expect("section 1 must keep at least one run");
+    let s1_run = s1
+        .text_runs
+        .first()
+        .expect("section 1 must keep at least one run");
     assert!(s1_run.italic, "italic must survive on section 1");
     assert!(s1_run.underline, "underline must survive on section 1");
     assert_eq!(s1_run.size_pt, 21, "size_pt must survive on section 1");
@@ -935,7 +939,10 @@ fn test_start_animation_at_does_not_dedup_across_sections() {
         behavior: MB::Persistent,
         predicate: None,
         document_actions: vec![],
-        timing: Some(AnimationTiming { duration_ms: 500, ..AnimationTiming::default() }),
+        timing: Some(AnimationTiming {
+            duration_ms: 500,
+            ..AnimationTiming::default()
+        }),
     };
     doc.start_animation_at(&cm, &nid, Some(0), 0);
     doc.start_animation_at(&cm, &nid, Some(1), 0);
@@ -983,12 +990,30 @@ fn test_apply_custom_mutation_sections_only_with_predicate_compose() {
     let mut tree = doc.build_tree();
     let s0_x_before = {
         let sid = tree.section_arena_id(&nid, 0).unwrap();
-        tree.tree.arena.get(sid).unwrap().get().glyph_area().unwrap().position.x.0
+        tree.tree
+            .arena
+            .get(sid)
+            .unwrap()
+            .get()
+            .glyph_area()
+            .unwrap()
+            .position
+            .x
+            .0
     };
     doc.apply_custom_mutation(&cm_pass, &nid, Some(&mut tree));
     let s0_x_after = {
         let sid = tree.section_arena_id(&nid, 0).unwrap();
-        tree.tree.arena.get(sid).unwrap().get().glyph_area().unwrap().position.x.0
+        tree.tree
+            .arena
+            .get(sid)
+            .unwrap()
+            .get()
+            .glyph_area()
+            .unwrap()
+            .position
+            .x
+            .0
     };
     assert!(
         (s0_x_after - s0_x_before - 7.0).abs() < 1e-3,

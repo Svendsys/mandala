@@ -897,7 +897,10 @@ fn test_point_in_node_aabb_includes_overflowing_section() {
         let node = doc.mindmap.nodes.get_mut("0").unwrap();
         let mut overflow = MindSection::new_default("over".into(), vec![]);
         overflow.offset = Position { x: 300.0, y: 0.0 };
-        overflow.size = Some(Size { width: 100.0, height: 40.0 });
+        overflow.size = Some(Size {
+            width: 100.0,
+            height: 40.0,
+        });
         node.sections.push(overflow);
     }
     let mut tree = doc.build_tree();
@@ -932,9 +935,9 @@ fn test_point_in_node_aabb_includes_overflowing_section() {
 #[test]
 fn test_collect_patches_recursive_skips_glyph_model_children() {
     use crate::application::document::apply_drag_delta_and_collect_patches;
+    use crate::application::document::tests_common::doc_with_one_orphan_node;
     use baumhard::core::primitives::{Flag, Flaggable};
     use baumhard::mindmap::model::MindSection;
-    use crate::application::document::tests_common::doc_with_one_orphan_node;
 
     let mut doc = doc_with_one_orphan_node();
     {
@@ -942,8 +945,10 @@ fn test_collect_patches_recursive_skips_glyph_model_children() {
         // section-model) = 6 arena entries. Patches should
         // count only the 3 section-areas + 1 container = 4.
         let node = doc.mindmap.nodes.get_mut("0").unwrap();
-        node.sections.push(MindSection::new_default("two".into(), Vec::new()));
-        node.sections.push(MindSection::new_default("three".into(), Vec::new()));
+        node.sections
+            .push(MindSection::new_default("two".into(), Vec::new()));
+        node.sections
+            .push(MindSection::new_default("three".into(), Vec::new()));
     }
     let mut tree = doc.build_tree();
     let mut patches: Vec<(usize, (f32, f32))> = Vec::new();
