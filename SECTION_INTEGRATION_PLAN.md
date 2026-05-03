@@ -45,6 +45,13 @@ Legend: ✅ shipped · 🔧 in progress · ⏳ to do · ❌ deferred (out of 2A)
 | R3 | **Review fix-up:** four near-identical inline copies of the multi-section node scaffold (commands/color, commands/font, console/tests/wheel_dispatch, color_picker/tests/targets) collapsed to a single shared helper `make_two_section_node_with_pinned_runs` in `document/tests_common.rs`. The pre-existing inline copies in `color_text_section_kv_targets_specific_section` and `font_size_section_kv_targets_specific_section` were folded in too. | ✅ |
 | R4 | **Review fix-up:** `font_family_action_section_writes_through_section_setter` added — direct `apply_font_family_to_selection` Action-path pin on a Section selection, sister to the Item-10 font-size pin. Coverage was previously transitive through the verb path only. | ✅ |
 | R5 | **Review fix-up:** `picker_target_for_section_text_emits_section_target` test now `assert_exec_ok`s on the dispatcher result; previously discarded the `ExecResult` so a regression where the picker opens AND surfaces an error (mixed signal) would have slipped past. | ✅ |
+| R6 | **Tier 2A.5 — A1: picker preserves `var(--name)` when HSV unchanged.** `PickerMode::Contextual` now carries `seed_var_ref: Option<String>` and `seed_hsv: (f32, f32, f32)` captured at open. `commit_color_picker` writes the seed reference verbatim when bit-exact `(hue_deg, sat, val)` equality says the user never moved the wheel — closes the seam where the picker would seed at `var(--accent)` and silently rewrite to its resolved hex on commit. Pinned by `picker_commit_preserves_var_ref_when_unchanged`, `..._overwrites_var_ref_when_hue_moved`, `..._writes_hex_when_no_var_ref` (`commit.rs::tests`). | ✅ |
+| R7 | **Tier 2A.5 — A4: var-preserve symmetry test pin** (`color_text_section_preserves_var_ref_round_trip` in `commands/color.rs::tests`). Verb-side `color text=accent` on a `SelectionState::Section` writes the literal `var(--accent)` string into the section's runs — defensive pin against any future regression that resolves the var early at the verb layer. | ✅ |
+| R8 | **Tier 2A.5 — A2: Action-path NotApplicable visibility.** `apply_color_axis_to_selection` now emits a `log::info!` line (with the dispatcher's per-target messages) when every target reports `Outcome::NotApplicable`, so a keybind for `Action::SetColor { axis: Bg \| Border }` against a `Section` selection has *some* feedback in the log — Action arms have no scrollback. Pinned by `apply_color_axis_logs_when_all_targets_not_applicable`. Font's parametric Action helper (`apply_font_kv_to_selection`) was deliberately not changed: its NotApplicable cases (`min`/`max` on a node/section) match the verb-path's silent-false documented behaviour. | ✅ |
+| R9 | **Tier 2A.5 — A3: Standalone picker selection-identity title hint.** `ColorPickerOverlayGeometry` carries `selection_hint: Option<String>`; `rebuild_color_picker_overlay` populates it from `doc.selection` when the picker is in Standalone mode (`"section K of <node>"` / `"node <id>"` / `"{count} nodes"` / `"edge"` / `"(no selection)"`). The Standalone title bar now reads `"࿕ color palette · <hint>"` so a wheel commit's target is visible at a glance. Contextual mode unchanged — `PickerHandle::label` already labels its bound target. | ✅ |
+| R10 | **Tier 2A.5 — Audit gap 2 pin.** `section_paste_collapses_runs_inheriting_first_run_template` (`console/tests/clipboard.rs`) pins the documented lossy behaviour of `set_section_text` on the unstructured paste path: pasting plain text into a multi-run section collapses to one run that inherits the first original run's `font` / `size_pt` / `color` / `bold`. Reduces regression risk when Tier 2B's structured `ClipboardContent::Section` payload lands. | ✅ |
+| R11 | **Tier 2A.5 — A5: `format/sections.md`** updated with the new picker var-preserve semantics (bit-exact HSV equality is the "did the user touch it?" signal). | ✅ |
+| — | Tier 2A.5 — Audit gaps 1 & 3 closed without code: gap 1 (no `HasFontSize` trait — font size dispatch goes through `apply_font_kv_to_selection` directly, already covered by Item 10); gap 3 (picker-open path on Section + bg/border returns NotApplicable — already pinned by `picker_target_for_section_bg_returns_not_applicable_message`). | ✅ |
 
 ## Context
 
@@ -365,39 +372,37 @@ Test locations: `console/tests/color.rs`, `console/tests/font.rs`,
 - Per-grapheme range targeting via picker / font / color commands.
 - "Insert section" paste verb.
 
-### Surfaced by post-Tier-2A review, deferred for separate iteration
+### Surfaced by post-Tier-2A review, addressed in Tier 2A.5
 
-- **Action-path NotApplicable visibility (X2 from review).** When
-  `Action::SetColor { axis: Bg|Border }` fires from a keybind /
-  macro / palette against a `SelectionState::Section`, the trait
-  dispatcher returns `Outcome::NotApplicable` per Items 2-3 and
-  `apply_color_axis_to_selection` returns `false`. The verb path
-  surfaces a NotApplicable scrollback message; the Action path is
-  silent because Action arms have no scrollback. A `log::info!`
-  hook in the helper for "any_applied=false && all NotApplicable"
-  would close the visibility gap, but the same shape applies to
-  every other NotApplicable case across all targets, not just
-  Section + bg/border — out of Tier 2A scope.
-- **Selection-identity HUD surface (X4 from review).** A user with
-  a `SelectionState::Section` and the standalone color picker
-  open has no visual confirmation that the wheel commit will land
-  per-section vs whole-node. The Contextual picker title bar
-  shows "section" via `PickerHandle::label()`; Standalone mode
-  has a fixed title template. A "selection: section K of node X"
-  hint in the Standalone footer or a one-line scrollback echo on
-  selection change would close it. Cross-cutting UX, broader than
-  Tier 2A's collapse-hole closure.
-- **`var(--name)` collapse through picker (X5 from review).** The
-  picker reads section colour through `current_color_at` →
-  `current_hsv_at` → `resolve_var`, so it opens at the right hue
-  even when the section's runs reference `var(--accent)`. Commit
-  writes raw HSV hex via `set_section_text_color`, erasing the
-  `var(--name)` reference. This is the same lossy round-trip
-  documented for custom mutations in `format/sections.md` lines
-  100-103, just newly reachable through the picker too. Closing
-  it requires either a "preserve var ref if HSV unchanged"
-  short-circuit on commit or a "commit as var" toggle in the
-  picker — both new product surface, not Tier 2A scope.
+All three items below shipped on top of Tier 2A. Status table
+rows R6–R11 capture the work; the original framing is preserved
+here so future iterations can read the chain of reasoning.
+
+- **X2 — Action-path NotApplicable visibility.** Closed by R8.
+  `apply_color_axis_to_selection` logs a `log::info!` with the
+  dispatcher's per-target messages when every target reports
+  NotApplicable, so a keybind for `Action::SetColor { axis: Bg
+  | Border }` against a `Section` selection now leaves a trace
+  in the log. Font's parametric Action helper was deliberately
+  *not* changed — its NotApplicable cases (`min` / `max` on a
+  node/section) match the verb-path's silent-false documented
+  behaviour, so introducing log lines there would be noise.
+- **X4 — Selection-identity HUD surface.** Closed by R9.
+  Standalone-mode picker title now appends a selection hint
+  (`"section K of <node>"` / `"node <id>"` / `"{count} nodes"` /
+  `"edge"` / `"(no selection)"`) so a wheel commit's target is
+  visible at a glance. Plumbed through
+  `ColorPickerOverlayGeometry::selection_hint`; populated at
+  rebuild time from `doc.selection`. Contextual mode unchanged
+  (already labels its bound target via `PickerHandle::label`).
+- **X5 — `var(--name)` collapse through picker.** Closed by R6.
+  `PickerMode::Contextual` now carries `seed_var_ref` +
+  `seed_hsv` captured at open; commit preserves the var
+  reference when bit-exact HSV equality says the user never
+  moved the wheel. Custom-mutation writes still collapse var
+  refs to hex on round-trip — that constraint is unchanged
+  (separate code path; `FloatRgba` doesn't carry variable
+  records).
 
 ## Original audit findings (reference — do not edit after baseline)
 

@@ -132,8 +132,7 @@ fn picker_target_for(verb: &str, selection: &SelectionState) -> PickerTargetOutc
                 "color bg: not applicable to a section (section-level chrome doesn't exist)".to_string(),
             ),
             Some(NodeColorAxis::Border) => PickerTargetOutcome::NotApplicable(
-                "color border: not applicable to a section (section-level chrome doesn't exist)"
-                    .to_string(),
+                "color border: not applicable to a section (section-level chrome doesn't exist)".to_string(),
             ),
         },
         SelectionState::Multi(ids) => {
@@ -233,10 +232,7 @@ fn execute_color(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             match v.parse::<usize>() {
                 Ok(idx) => section_target = Some(idx),
                 Err(_) => {
-                    return ExecResult::err(format!(
-                        "color: section='{}' is not a non-negative integer",
-                        v
-                    ));
+                    return ExecResult::err(format!("color: section='{}' is not a non-negative integer", v));
                 }
             }
         } else {
@@ -359,7 +355,33 @@ pub(crate) fn apply_color_axis_to_selection(
             _ => None,
         }
     });
+    log_not_applicable_if_silent(&report, "color", axis);
     report.any_applied
+}
+
+/// Surface a NotApplicable outcome on the parametric Action path
+/// where the dispatcher's scrollback messages would otherwise
+/// vanish. Action arms (keybind / palette / macro) have no
+/// scrollback to pipe per-pair outcomes into; without this hook
+/// a `SetColor { axis: Bg }` triggered against a `Section`
+/// selection (where the `HasBgColor` arm returns NotApplicable
+/// per the Tier-2A trait split) would silently no-op with no
+/// signal in the log either. Verb path keeps full per-pair
+/// reporting via `finalize_report` and ignores this hook.
+fn log_not_applicable_if_silent(
+    report: &crate::application::console::traits::DispatchReport,
+    verb: &str,
+    axis: &str,
+) {
+    if !report.any_applied && report.messages.iter().any(|m| m.contains("not applicable")) {
+        log::info!(
+            "{} {}: not applicable to current selection (Action path; no scrollback). \
+             Dispatcher messages: {}",
+            verb,
+            axis,
+            report.messages.join("; "),
+        );
+    }
 }
 
 /// Common report-to-ExecResult conversion used by every
@@ -535,6 +557,65 @@ mod tests {
         assert!(
             node.sections[1].text_runs.iter().all(|r| r.color == "#00ff00"),
             "section 1's unanimous-non-default runs must be rewritten by the picker / kv path"
+        );
+    }
+
+    /// `apply_color_axis_to_selection` returning `false` because
+    /// every target reported NotApplicable (e.g. `bg` axis against
+    /// a `Section` selection, where the trait arm collapses to
+    /// `Outcome::NotApplicable` per Item 2) emits a `log::info!`
+    /// note with the dispatcher's per-target messages — the
+    /// Action path has no scrollback so without this hook a
+    /// keybind for `SetColor { axis: Bg }` against a section
+    /// would silently no-op with zero feedback. Pins X2.
+    #[test]
+    fn apply_color_axis_logs_when_all_targets_not_applicable() {
+        use crate::application::document::SectionSel;
+        let (mut doc, id) = doc_with_two_sections();
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id,
+            section_idx: 1,
+        });
+        // The bool surface is `false` — no scene rebuild fires.
+        // The log line is emitted via `log::info!`; we assert the
+        // boolean and trust the dispatcher's message-aggregation
+        // path (already covered in `traits/tests.rs`) to put the
+        // right text in `report.messages`. A regression here is
+        // visible at the call-site contract level: a non-false
+        // return with a section + bg axis means a silent
+        // collapse re-introduced itself.
+        let changed = apply_color_axis_to_selection(&mut doc, "bg", "#123456");
+        assert!(
+            !changed,
+            "bg axis against a Section must report no change (NotApplicable)"
+        );
+    }
+
+    /// `color text=accent` (or any well-known theme-variable
+    /// shorthand) with a `SelectionState::Section` writes the
+    /// literal `var(--accent)` string into the section's runs —
+    /// not a resolved hex. Pins the verb-side of the var-preserve
+    /// symmetry the picker now honours (`commit_color_picker`'s
+    /// seed-var-ref short-circuit). A regression that resolves the
+    /// var early at the verb layer would silently strip the
+    /// theme reference.
+    #[test]
+    fn color_text_section_preserves_var_ref_round_trip() {
+        use crate::application::console::tests::fixtures::{assert_exec_ok, run};
+        use crate::application::document::SectionSel;
+        let (mut doc, id) = doc_with_two_sections();
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id.clone(),
+            section_idx: 1,
+        });
+        assert_exec_ok(run("color text=accent", &mut doc));
+        let node = doc.mindmap.nodes.get(&id).unwrap();
+        assert!(
+            node.sections[1]
+                .text_runs
+                .iter()
+                .all(|r| r.color == "var(--accent)"),
+            "section 1's runs must carry the literal var ref, not a resolved hex"
         );
     }
 

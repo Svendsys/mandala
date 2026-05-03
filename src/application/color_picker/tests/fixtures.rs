@@ -33,6 +33,7 @@ pub(in crate::application) fn sample_geometry() -> ColorPickerOverlayGeometry {
         arm_left_ink_offsets: [(0.0, 0.0); CROSSHAIR_CENTER_CELL],
         arm_right_ink_offsets: [(0.0, 0.0); CROSSHAIR_CENTER_CELL],
         preview_ink_offset: (0.0, 0.0),
+        selection_hint: None,
     }
 }
 

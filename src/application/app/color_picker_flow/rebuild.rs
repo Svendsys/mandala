@@ -31,14 +31,26 @@ use super::geometry::compute_picker_geometry;
 #[cfg(not(target_arch = "wasm32"))]
 pub(in crate::application::app) fn rebuild_color_picker_overlay(
     state: &mut crate::application::color_picker::ColorPickerState,
-    _doc: &MindMapDocument,
+    doc: &MindMapDocument,
     app_scene: &mut crate::application::scene_host::AppScene,
     renderer: &mut Renderer,
 ) {
     use crate::application::color_picker::{ColorPickerState, PickerDynamicApplyKey};
     use crate::application::scene_host::OverlayRole;
     let surface_size = (renderer.surface_width() as f32, renderer.surface_height() as f32);
-    let Some((geometry, layout_changed)) = compute_picker_geometry(state, surface_size) else {
+    // Selection hint surfaces "section K of <node>" / "node <id>" /
+    // "{count} nodes" / "edge" / "(no selection)" in the Standalone
+    // picker title so the user can see at a glance what a wheel
+    // commit will land on. Contextual mode skips this — the title
+    // already shows the bound target's label
+    // (`PickerHandle::label`).
+    let selection_hint = if state.is_standalone() {
+        Some(standalone_selection_hint(&doc.selection))
+    } else {
+        None
+    };
+    let Some((geometry, layout_changed)) = compute_picker_geometry(state, surface_size, selection_hint)
+    else {
         renderer.rebuild_color_picker_overlay_buffers(app_scene, None);
         return;
     };
@@ -88,5 +100,35 @@ pub(in crate::application::app) fn rebuild_color_picker_overlay(
         // First build doubles as the layout phase; seed the cache so
         // the next stable-geometry frame short-circuits.
         *last_dynamic_apply = Some(apply_key);
+    }
+}
+
+/// One-line selection identity for the Standalone picker title. The
+/// shapes are deliberately narrow:
+/// - `Section` → `"section K of <node_id>"`
+/// - `Single`  → `"node <id>"`
+/// - `Multi`   → `"<count> nodes"`
+/// - `Edge`    → `"edge"`
+/// - `EdgeLabel` / `PortalLabel` / `PortalText` → kind-only label
+/// - `None`    → `"(no selection)"`
+///
+/// The Standalone wheel commit fans out via `selection_targets` →
+/// `apply_wheel_color`, so what the user sees in the title bar is
+/// exactly what will receive the commit. Mirrors
+/// `PickerHandle::label` for the bound-target case but adds the
+/// indices the dynamic shape needs to make a section commit
+/// distinguishable from its owning-node commit at a glance.
+#[cfg(not(target_arch = "wasm32"))]
+fn standalone_selection_hint(selection: &crate::application::document::SelectionState) -> String {
+    use crate::application::document::SelectionState;
+    match selection {
+        SelectionState::None => "(no selection)".to_string(),
+        SelectionState::Single(id) => format!("node {}", id),
+        SelectionState::Multi(ids) => format!("{} nodes", ids.len()),
+        SelectionState::Section(s) => format!("section {} of {}", s.section_idx, s.node_id),
+        SelectionState::Edge(_) => "edge".to_string(),
+        SelectionState::EdgeLabel(_) => "edge label".to_string(),
+        SelectionState::PortalLabel(_) => "portal label".to_string(),
+        SelectionState::PortalText(_) => "portal text".to_string(),
     }
 }

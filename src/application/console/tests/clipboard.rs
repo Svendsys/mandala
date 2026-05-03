@@ -128,6 +128,80 @@ fn node_cut_clears_every_section_on_multi_section_node() {
     }
 }
 
+/// Section paste collapses the section's `text_runs` to a single
+/// run, inheriting the first original run's `font` / `size_pt` /
+/// `color` / `bold` / `italic` / `underline`. Pre-Tier-2B the
+/// clipboard payload is `String`-only; structured per-run paste
+/// is captured in the plan tracker. This test pins the CURRENT
+/// lossy behaviour so a future structured payload doesn't
+/// regress to the unstructured branch silently — the assertion
+/// is "if you paste plain text into a section that had multi-run
+/// formatting, you lose the per-run structure but keep the
+/// first-run template's formatting on the new single run."
+#[test]
+fn section_paste_collapses_runs_inheriting_first_run_template() {
+    use crate::application::console::traits::{HandlesPaste, TargetView};
+    use baumhard::mindmap::model::{MindSection, TextRun};
+    let mut doc = load_test_doc();
+    let nid = first_node_id(&doc);
+    {
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        node.sections
+            .push(MindSection::new_default("second".into(), Vec::new()));
+        // Section 1 starts with two distinctly-formatted runs.
+        // The first run's template (font="LiberationSans" / 18pt
+        // bold / "#ff0000") is what `set_section_text` should
+        // inherit onto the post-paste single run.
+        node.sections[1].text = "before".into();
+        node.sections[1].text_runs = vec![
+            TextRun {
+                start: 0,
+                end: 3,
+                bold: true,
+                italic: false,
+                underline: false,
+                font: "LiberationSans".into(),
+                size_pt: 18,
+                color: "#ff0000".into(),
+                hyperlink: None,
+            },
+            TextRun {
+                start: 3,
+                end: 6,
+                bold: false,
+                italic: true,
+                underline: false,
+                font: "Other".into(),
+                size_pt: 24,
+                color: "#00ff00".into(),
+                hyperlink: None,
+            },
+        ];
+    }
+    let id = nid.clone();
+    {
+        let mut view = TargetView::Section {
+            doc: &mut doc,
+            id,
+            section_idx: 1,
+        };
+        let _ = view.clipboard_paste("pasted");
+    }
+    let section = &doc.mindmap.nodes.get(&nid).unwrap().sections[1];
+    assert_eq!(section.text, "pasted");
+    assert_eq!(
+        section.text_runs.len(),
+        1,
+        "paste collapses multi-run sections to a single run (lossy by spec until Tier 2B)"
+    );
+    let r = &section.text_runs[0];
+    assert_eq!(r.font, "LiberationSans", "inherits first-run font");
+    assert_eq!(r.size_pt, 18, "inherits first-run size_pt");
+    assert_eq!(r.color, "#ff0000", "inherits first-run color");
+    assert!(r.bold, "inherits first-run bold flag");
+    assert!(!r.italic, "second-run italic flag must NOT bleed in");
+}
+
 /// Section paste with a stale `section_idx` (a custom mutation
 /// shrunk `node.sections` between the click that captured the
 /// Section selection and the paste) clamps to the last existing

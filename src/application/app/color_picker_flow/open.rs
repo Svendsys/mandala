@@ -28,7 +28,8 @@ pub(in crate::application::app) fn open_color_picker_contextual(
     renderer: &mut Renderer,
     scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
 ) {
-    use crate::application::color_picker::{current_hsv_at, PickerMode};
+    use crate::application::color_picker::{current_color_at, current_hsv_at, PickerMode};
+    use baumhard::util::color::resolve_var;
 
     // Resolve the target to a picker handle up front. If the
     // edge / portal / node was deleted between the open trigger
@@ -47,6 +48,20 @@ pub(in crate::application::app) fn open_color_picker_contextual(
     // color so the picker opens right where the user already is.
     let hsv = current_hsv_at(doc, &handle);
 
+    // Capture the raw colour string the seed came from. When it's a
+    // `var(--name)` reference (i.e. resolution non-identity), keep
+    // it so the commit path can preserve the variable when the user
+    // doesn't move the wheel. Plain-hex seeds need no preservation
+    // and store `None`.
+    let seed_var_ref = current_color_at(doc, &handle).and_then(|raw| {
+        let resolved = resolve_var(&raw, &doc.mindmap.canvas.theme_variables);
+        if resolved == raw {
+            None
+        } else {
+            Some(raw)
+        }
+    });
+
     // Seed the document preview so the initial render already shows
     // the same HSV the picker opened at. Overwritten on the next
     // hover frame, but this avoids a one-frame flash of the original
@@ -57,7 +72,11 @@ pub(in crate::application::app) fn open_color_picker_contextual(
     seed_initial_preview(doc, &handle, hsv.0, hsv.1, hsv.2);
 
     open_picker_inner(
-        PickerMode::Contextual { handle },
+        PickerMode::Contextual {
+            handle,
+            seed_var_ref,
+            seed_hsv: hsv,
+        },
         hsv,
         doc,
         state,

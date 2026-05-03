@@ -131,11 +131,17 @@ colour, instead of the picker silently no-op'ing because the
 runs no longer match the node default.
 
 `var(--name)` references on section runs survive the kv / trait
-write paths verbatim (see "Documented round-trip limit" above)
-but are collapsed to a resolved hex when committed through the
-colour-picker wheel — the wheel emits an HSV → hex sample with
-no record of any prior variable reference, the same lossy round
-trip the custom-mutation path has.
+write paths verbatim (see "Documented round-trip limit" above).
+The colour picker preserves them too, but only when the user
+**doesn't move the wheel** from its open seed. Bit-exact equality
+on `(hue_deg, sat, val)` is the "did the user touch it?" signal:
+an open-and-close cycle with no interaction commits the original
+`var(--accent)` literal back; any cell click or keyboard nudge
+flips the commit to the new HSV's hex (the new colour was
+explicitly chosen, so honouring the old reference would silently
+discard it). Custom-mutation writes still collapse var refs to
+hex on round-trip (`FloatRgba` carries no record of the variable);
+that constraint is unchanged.
 
 ## Channel space
 

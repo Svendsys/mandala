@@ -72,14 +72,26 @@ pub(in crate::application::app) fn commit_color_picker(
     use crate::application::color_picker::{ColorPickerState, NodeColorAxis, PickerHandle, SectionColorAxis};
     use baumhard::util::color::hsv_to_hex;
 
-    let (handle, hue_deg, sat, val) = match state {
+    let (handle, hue_deg, sat, val, seed_var_ref, seed_hsv) = match state {
         ColorPickerState::Open {
-            mode: crate::application::color_picker::PickerMode::Contextual { handle },
+            mode:
+                crate::application::color_picker::PickerMode::Contextual {
+                    handle,
+                    seed_var_ref,
+                    seed_hsv,
+                },
             hue_deg,
             sat,
             val,
             ..
-        } => (handle.clone(), *hue_deg, *sat, *val),
+        } => (
+            handle.clone(),
+            *hue_deg,
+            *sat,
+            *val,
+            seed_var_ref.clone(),
+            *seed_hsv,
+        ),
         // Standalone mode has no bound target — commit is handled by
         // `commit_color_picker_to_selection` instead; this function
         // is Contextual-only. Being reached in Standalone mode means
@@ -100,6 +112,7 @@ pub(in crate::application::app) fn commit_color_picker(
     doc.color_picker_preview = None;
 
     let hex = hsv_to_hex(hue_deg, sat, val);
+    let to_write = pick_committed_value(seed_var_ref.as_deref(), seed_hsv, (hue_deg, sat, val), &hex);
     match handle {
         PickerHandle::Edge(index) => {
             let er = doc
@@ -108,18 +121,18 @@ pub(in crate::application::app) fn commit_color_picker(
                 .get(index)
                 .map(|e| EdgeRef::new(&e.from_id, &e.to_id, &e.edge_type));
             if let Some(er) = er {
-                doc.set_edge_color(&er, Some(&hex));
+                doc.set_edge_color(&er, Some(&to_write));
             }
         }
         PickerHandle::Node { id, axis } => match axis {
             NodeColorAxis::Bg => {
-                doc.set_node_bg_color(&id, hex);
+                doc.set_node_bg_color(&id, to_write);
             }
             NodeColorAxis::Text => {
-                doc.set_node_text_color(&id, hex);
+                doc.set_node_text_color(&id, to_write);
             }
             NodeColorAxis::Border => {
-                doc.set_node_border_color(&id, hex);
+                doc.set_node_border_color(&id, to_write);
             }
         },
         PickerHandle::Section {
@@ -128,7 +141,7 @@ pub(in crate::application::app) fn commit_color_picker(
             axis,
         } => match axis {
             SectionColorAxis::Text => {
-                doc.set_section_text_color(&node_id, section_idx, hex);
+                doc.set_section_text_color(&node_id, section_idx, to_write);
             }
         },
     }
@@ -173,7 +186,9 @@ pub(in crate::application::app) fn apply_picker_preview(
             ..
         } => {
             let handle = match mode {
-                crate::application::color_picker::PickerMode::Contextual { handle } => Some(handle.clone()),
+                crate::application::color_picker::PickerMode::Contextual { handle, .. } => {
+                    Some(handle.clone())
+                }
                 // Standalone mode has no bound target — nothing to
                 // preview on the scene. The ࿕ glyph in the wheel
                 // still shows the current HSV (rendered by the picker
@@ -290,5 +305,91 @@ pub(in crate::application::app) fn commit_color_picker_to_selection(
         // next frame. The picker itself stays open — no state change
         // needed on `state`.
         rebuild_all(doc, mindmap_tree, app_scene, renderer, scene_cache);
+    }
+}
+
+/// Bit-exact equality on a `(hue, sat, val)` triple. Compares
+/// `f32::to_bits()` per channel so two HSV values that came from
+/// the same source (e.g. seed-time `current_hsv_at` vs. an
+/// untouched picker's still-seeded `(hue_deg, sat, val)`) test
+/// equal even on the path where ordinary `f32` `==` would be
+/// fragile under NaN. Used by `commit_color_picker` as the "did
+/// the user move the wheel?" signal — anything that mutates
+/// `(hue_deg, sat, val)` (cell click, keyboard nudge) flips the
+/// answer; pure rendering or hover preview leaves it.
+fn hsv_bits_equal(a: (f32, f32, f32), b: (f32, f32, f32)) -> bool {
+    a.0.to_bits() == b.0.to_bits() && a.1.to_bits() == b.1.to_bits() && a.2.to_bits() == b.2.to_bits()
+}
+
+/// Decide the colour string a Contextual picker commit writes.
+/// When the user never moved the wheel from its open seed AND
+/// the seed was a `var(--name)` reference, the reference is
+/// preserved verbatim — otherwise the freshly-rendered hex from
+/// the current HSV wins. Pure function so the var-preserve
+/// invariant tests don't have to construct the full
+/// Renderer/AppScene stack `commit_color_picker` needs.
+pub(super) fn pick_committed_value(
+    seed_var_ref: Option<&str>,
+    seed_hsv: (f32, f32, f32),
+    current_hsv: (f32, f32, f32),
+    committed_hex: &str,
+) -> String {
+    if hsv_bits_equal(current_hsv, seed_hsv) {
+        if let Some(raw) = seed_var_ref {
+            return raw.to_string();
+        }
+    }
+    committed_hex.to_string()
+}
+
+#[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
+mod tests {
+    use super::pick_committed_value;
+
+    /// User never moved the wheel from its open seed AND the seed
+    /// was a `var(--accent)` reference — commit preserves the
+    /// reference verbatim instead of writing the resolved hex.
+    /// Pins A1's primary semantics (Contextual mode).
+    #[test]
+    fn picker_commit_preserves_var_ref_when_unchanged() {
+        let seed_hsv = (24.0_f32, 0.8_f32, 0.95_f32);
+        let untouched = seed_hsv;
+        let committed_hex = "#f3a020";
+        let written = pick_committed_value(Some("var(--accent)"), seed_hsv, untouched, committed_hex);
+        assert_eq!(
+            written, "var(--accent)",
+            "untouched picker on a var-ref seed must preserve the reference"
+        );
+    }
+
+    /// User moved the wheel — commit writes the new hex even if
+    /// the seed was a var ref. The reference is no longer "what
+    /// the user picked"; honouring it would silently discard the
+    /// new colour.
+    #[test]
+    fn picker_commit_overwrites_var_ref_when_hue_moved() {
+        let seed_hsv = (24.0_f32, 0.8_f32, 0.95_f32);
+        let moved = (180.0_f32, 0.8_f32, 0.95_f32); // hue rotated
+        let committed_hex = "#20a8f3";
+        let written = pick_committed_value(Some("var(--accent)"), seed_hsv, moved, committed_hex);
+        assert_eq!(
+            written, "#20a8f3",
+            "moved picker must write the new hex regardless of the seed's var ref"
+        );
+    }
+
+    /// Plain-hex seed (no var ref) commits the new hex always —
+    /// nothing to preserve, the unchanged-HSV case still writes
+    /// the round-tripped hex (which is the same hex the seed
+    /// would resolve to anyway, so the model field stays at its
+    /// pre-open value modulo round-trip noise).
+    #[test]
+    fn picker_commit_writes_hex_when_no_var_ref() {
+        let seed_hsv = (24.0_f32, 0.8_f32, 0.95_f32);
+        let written_unchanged = pick_committed_value(None, seed_hsv, seed_hsv, "#f3a020");
+        let written_moved = pick_committed_value(None, seed_hsv, (180.0, 0.8, 0.95), "#20a8f3");
+        assert_eq!(written_unchanged, "#f3a020");
+        assert_eq!(written_moved, "#20a8f3");
     }
 }
