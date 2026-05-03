@@ -309,9 +309,17 @@ fn test_set_node_text_color_preserves_per_run_overrides() {
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
     // Seed the node with a known default and two runs: one
-    // matching the default, one hand-colored.
+    // matching the default, one hand-colored. Pin
+    // `sections[0].text` to a string of known grapheme count so
+    // the runs (`0..3`, `3..6`) survive the `clamp_runs_to_text`
+    // pass `set_node_text_color` runs — without this, the second
+    // run gets dropped when `first_testament_node_id` happens to
+    // pick a node whose section text is shorter than 4 graphemes
+    // (HashMap iteration order varies per process, so the test
+    // was intermittently flaky).
     {
         let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        node.sections[0].text = "abcdef".into();
         node.style.text_color = "#dddddd".into();
         node.sections[0].text_runs = vec![
             TextRun {
