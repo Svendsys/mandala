@@ -151,6 +151,48 @@ pub(in crate::application) fn doc_with_one_edge() -> (MindMapDocument, super::Ed
     (doc, er)
 }
 
+/// Materialise `node_id` into a two-section node with one pinned
+/// text run per section. Sets the node's `style.text_color` to
+/// `text_color_default` so the cascade source the section colour
+/// setter consults (and the colour picker reads) resolves against
+/// a known anchor. Each section's single run carries the colour
+/// at the matching index in `section_run_colors`; both share
+/// `font` and `size_pt`. The pre-existing first section's `text`
+/// field is preserved (only its runs are replaced).
+///
+/// Used across the Tier 2A section-routing tests that previously
+/// re-implemented this scaffold in four near-identical inline
+/// copies (commands/color, commands/font, console/tests/
+/// wheel_dispatch, color_picker/tests/targets).
+pub(in crate::application) fn make_two_section_node_with_pinned_runs(
+    doc: &mut MindMapDocument,
+    node_id: &str,
+    text_color_default: &str,
+    section_run_colors: [&str; 2],
+    font: &str,
+    size_pt: u32,
+) {
+    use baumhard::mindmap::model::{MindSection, TextRun};
+    let node = doc.mindmap.nodes.get_mut(node_id).expect("node id exists in doc");
+    node.sections
+        .push(MindSection::new_default("second".into(), Vec::new()));
+    node.style.text_color = text_color_default.into();
+    for (i, section) in node.sections.iter_mut().enumerate() {
+        section.text_runs.clear();
+        section.text_runs.push(TextRun {
+            start: 0,
+            end: section.text.chars().count().max(1),
+            bold: false,
+            italic: false,
+            underline: false,
+            font: font.into(),
+            size_pt,
+            color: section_run_colors[i].into(),
+            hyperlink: None,
+        });
+    }
+}
+
 /// Pick the first visible edge and return its EdgeRef + a guaranteed
 /// on-path sample point. Used by hit-test edge tests.
 pub(super) fn pick_test_edge(doc: &MindMapDocument) -> (super::EdgeRef, glam::Vec2) {

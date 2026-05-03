@@ -115,10 +115,27 @@ returns `Outcome::NotApplicable` rather than collapsing to the
 owning node's `background_color` / `frame_color`. This applies
 both to the kv form (`color bg=#fff section=K`) and to the
 trait-dispatch form (`color bg=#fff` with the section already
-selected). Same routing behind the colour-picker modal: opening
-the picker on `color bg` / `color border` against a section
-selection surfaces the NotApplicable message instead of opening
-on the owning node.
+selected). The colour-picker modal follows the same rule:
+opening the picker on `color bg` / `color border` against a
+section selection surfaces the NotApplicable message rather
+than opening the picker on the owning node's chrome axis.
+
+The picker's read seed (`current_color_at` for a section handle)
+and the write predicate (`set_section_text_color`) are
+**cascade-symmetric**: if every run on the section shares one
+colour that is the section's effective colour and is the
+predicate the write rewrites against, otherwise both fall back
+to `node.style.text_color`. So a uniformly customized section
+opens the picker at its current colour and commits to a new
+colour, instead of the picker silently no-op'ing because the
+runs no longer match the node default.
+
+`var(--name)` references on section runs survive the kv / trait
+write paths verbatim (see "Documented round-trip limit" above)
+but are collapsed to a resolved hex when committed through the
+colour-picker wheel — the wheel emits an HSV → hex sample with
+no record of any prior variable reference, the same lossy round
+trip the custom-mutation path has.
 
 ## Channel space
 

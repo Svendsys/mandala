@@ -10,35 +10,28 @@
 //! visible colour pre-seeded (same UX as the Node and Edge arms).
 
 use crate::application::color_picker::{current_color_at, ColorTarget, PickerHandle, SectionColorAxis};
-use crate::application::document::tests_common::{first_testament_node_id, load_test_doc};
+use crate::application::document::tests_common::{
+    first_testament_node_id, load_test_doc, make_two_section_node_with_pinned_runs,
+};
 
-/// Build a node with two sections: section 0's runs all share
-/// `#111111`, section 1's runs all share `#222222`. Returns
-/// `(doc, node_id)`.
+/// Build a node with two sections, each carrying a distinct
+/// uniform run colour so the cascade-primary read on either
+/// section returns a different value (`#111111` for section 0,
+/// `#222222` for section 1). Returns `(doc, node_id)`.
 fn doc_with_two_uniform_sections() -> (crate::application::document::MindMapDocument, String) {
-    use baumhard::mindmap::model::MindSection;
     let mut doc = load_test_doc();
     let id = first_testament_node_id(&doc);
-    {
-        let node = doc.mindmap.nodes.get_mut(&id).unwrap();
-        node.sections
-            .push(MindSection::new_default("second".into(), Vec::new()));
-        for (i, section) in node.sections.iter_mut().enumerate() {
-            let colour = if i == 0 { "#111111" } else { "#222222" };
-            section.text_runs.clear();
-            section.text_runs.push(baumhard::mindmap::model::TextRun {
-                start: 0,
-                end: section.text.chars().count().max(1),
-                bold: false,
-                italic: false,
-                underline: false,
-                font: "LiberationSans".into(),
-                size_pt: 14,
-                color: colour.into(),
-                hyperlink: None,
-            });
-        }
-    }
+    // text_color_default is set to one of the per-section colours
+    // so the section-1 cascade falls back to it cleanly when a
+    // disagreement test appends a contrarian run.
+    make_two_section_node_with_pinned_runs(
+        &mut doc,
+        &id,
+        "#abcdef",
+        ["#111111", "#222222"],
+        "LiberationSans",
+        14,
+    );
     (doc, id)
 }
 

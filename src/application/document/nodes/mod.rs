@@ -192,12 +192,27 @@ impl MindMapDocument {
 
     /// Set the text colour on one section's runs, mirroring the
     /// whole-node [`Self::set_node_text_color`] but bounded to a
-    /// single section. Per-run colour overrides authored on
-    /// matching colours (`run.color == old_default`) are rewritten;
-    /// runs the user explicitly coloured by hand keep their
-    /// override. The owning node's `style.text_color` is *not*
-    /// touched — that's the node-level default and a per-section
-    /// override doesn't change its meaning.
+    /// single section. The rewrite predicate matches the
+    /// **cascade source** the colour picker reads on the same
+    /// section (`current_color_at` in
+    /// `src/application/color_picker/targets.rs`): if every run on
+    /// the section unanimously shares one colour, that colour is
+    /// the predicate; otherwise the node's `style.text_color`
+    /// default is. Read-side and write-side stay symmetric so a
+    /// picker pick on a section whose runs unanimously carry a
+    /// non-default colour actually rewrites them — pre-fix the
+    /// write looked only for runs matching the node default and
+    /// silently no-op'd when the section was uniformly customized,
+    /// which made the picker close with no visible change.
+    ///
+    /// Mixed-colour sections still have their non-predicate runs
+    /// preserved (a user-authored explicit colour on one run
+    /// survives a section-level rewrite), matching the existing
+    /// "respect explicit per-run overrides" behaviour.
+    ///
+    /// The owning node's `style.text_color` is *not* touched —
+    /// that's the node-level default and a per-section override
+    /// doesn't change its meaning.
     ///
     /// No-op when the section is missing or every targeted run
     /// already carries the new colour.
@@ -209,11 +224,16 @@ impl MindMapDocument {
         let Some(section) = node.sections.get(section_idx) else {
             return false;
         };
-        let old_default = node.style.text_color.clone();
+        let predicate_color = section
+            .text_runs
+            .first()
+            .filter(|first| section.text_runs.iter().all(|r| r.color == first.color))
+            .map(|r| r.color.clone())
+            .unwrap_or_else(|| node.style.text_color.clone());
         let any_run_changes = section
             .text_runs
             .iter()
-            .any(|r| r.color == old_default && r.color != color);
+            .any(|r| r.color == predicate_color && r.color != color);
         if !any_run_changes {
             return false;
         }
@@ -222,7 +242,7 @@ impl MindMapDocument {
         let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
         if let Some(section) = node.sections.get_mut(section_idx) {
             for run in section.text_runs.iter_mut() {
-                if run.color == old_default {
+                if run.color == predicate_color {
                     run.color = color.clone();
                 }
             }

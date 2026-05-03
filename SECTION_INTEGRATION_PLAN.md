@@ -32,14 +32,19 @@ Legend: ✅ shipped · 🔧 in progress · ⏳ to do · ❌ deferred (out of 2A)
 | 4 | `AcceptsWheelColor::apply_wheel_color` routes `Section` through `set_section_text_color` for `Text` axis, `NotApplicable` for `Bg`/`Border` | ✅ |
 | 5 | `AcceptsFontFamily::set_font_family` honours `Section` → `set_section_font_family` (wires the dead setter) | ✅ |
 | 6 | `ColorTarget::Section { node_id, section_idx, axis: SectionColorAxis }` variant added to `color_picker/targets.rs` | ✅ |
-| 7 | `picker_target_for` (`commands/color.rs:99-111`) emits `ColorTarget::Section` for `Section` selections | ✅ |
+| 7 | `picker_target_for` in `commands/color.rs` emits `ColorTarget::Section` for `Section` selections | ✅ |
 | 8 | `current_color_at` for `Section` reads the resolved per-section text colour (with cascade fallback to `node.style.text_color`) | ✅ |
 | 9 | Standalone-mode wheel commit (`app/color_picker_flow/commit.rs`) honours `Section` target | ✅ |
-| 10 | `apply_font_kv_to_selection` (`font.rs:478-486`) routes `Section` arm through `set_section_font_size` (Action-path lag fix) | ✅ |
+| 10 | `apply_font_kv_to_selection` Section arm in `font.rs` routes through `set_section_font_size` (Action-path lag fix) | ✅ |
 | 11 | Tests added mirroring existing pinned shapes (see Verification) | ✅ |
 | 12 | `./test.sh` clean (2004 tests pass + WASM `wasm32-unknown-unknown` type-check clean) | ✅ |
 | 13 | `./test.sh --lint` clean (clippy errors fixed; pre-existing fmt drift in `crates/maptool` and parts of `lib/baumhard` is advisory and untouched) | ✅ |
-| — | Out-of-scope cleanup unblocked by Item 13: derive `PartialEq` on `OrderedVec2` (`lib/baumhard/src/util/ordered_vec2.rs`); replace `<= 0` with `== 0` on two `u32` guards in `src/application/renderer/mod.rs:869,873`. Both pre-existed on `main`; flagged here for the audit trail. | ✅ |
+| — | Out-of-scope cleanup unblocked by Item 13: derive `PartialEq` on `OrderedVec2` (`lib/baumhard/src/util/ordered_vec2.rs`); replace `<= 0` with `== 0` on two `u32` guards in `src/application/renderer/mod.rs`. Both pre-existed on `main`; flagged here for the audit trail. | ✅ |
+| R1 | **Review fix-up (post-Tier-2A):** read/write asymmetry in `set_section_text_color` — write predicate now matches the picker's read cascade so a section whose runs unanimously carry a non-default colour is rewritable from the picker / kv path (pre-fix the write looked only for runs matching `node.style.text_color` and silently no-op'd, leaving the picker to close with no visible change). Pinned by `color_text_section_rewrites_unanimous_non_default_runs` in `commands/color.rs::tests`. | ✅ |
+| R2 | **Review fix-up:** stale doc comments on `TargetView::Section` and `selection_targets` (`console/traits/view.rs`) refreshed to reflect post-Tier-2A trait dispatch (color/font route per-section; bg/border/zoom return NotApplicable). | ✅ |
+| R3 | **Review fix-up:** four near-identical inline copies of the multi-section node scaffold (commands/color, commands/font, console/tests/wheel_dispatch, color_picker/tests/targets) collapsed to a single shared helper `make_two_section_node_with_pinned_runs` in `document/tests_common.rs`. The pre-existing inline copies in `color_text_section_kv_targets_specific_section` and `font_size_section_kv_targets_specific_section` were folded in too. | ✅ |
+| R4 | **Review fix-up:** `font_family_action_section_writes_through_section_setter` added — direct `apply_font_family_to_selection` Action-path pin on a Section selection, sister to the Item-10 font-size pin. Coverage was previously transitive through the verb path only. | ✅ |
+| R5 | **Review fix-up:** `picker_target_for_section_text_emits_section_target` test now `assert_exec_ok`s on the dispatcher result; previously discarded the `ExecResult` so a regression where the picker opens AND surfaces an error (mixed signal) would have slipped past. | ✅ |
 
 ## Context
 
@@ -359,6 +364,40 @@ Test locations: `console/tests/color.rs`, `console/tests/font.rs`,
 - Auto-fit shrink path / `node fit-to-content` verb.
 - Per-grapheme range targeting via picker / font / color commands.
 - "Insert section" paste verb.
+
+### Surfaced by post-Tier-2A review, deferred for separate iteration
+
+- **Action-path NotApplicable visibility (X2 from review).** When
+  `Action::SetColor { axis: Bg|Border }` fires from a keybind /
+  macro / palette against a `SelectionState::Section`, the trait
+  dispatcher returns `Outcome::NotApplicable` per Items 2-3 and
+  `apply_color_axis_to_selection` returns `false`. The verb path
+  surfaces a NotApplicable scrollback message; the Action path is
+  silent because Action arms have no scrollback. A `log::info!`
+  hook in the helper for "any_applied=false && all NotApplicable"
+  would close the visibility gap, but the same shape applies to
+  every other NotApplicable case across all targets, not just
+  Section + bg/border — out of Tier 2A scope.
+- **Selection-identity HUD surface (X4 from review).** A user with
+  a `SelectionState::Section` and the standalone color picker
+  open has no visual confirmation that the wheel commit will land
+  per-section vs whole-node. The Contextual picker title bar
+  shows "section" via `PickerHandle::label()`; Standalone mode
+  has a fixed title template. A "selection: section K of node X"
+  hint in the Standalone footer or a one-line scrollback echo on
+  selection change would close it. Cross-cutting UX, broader than
+  Tier 2A's collapse-hole closure.
+- **`var(--name)` collapse through picker (X5 from review).** The
+  picker reads section colour through `current_color_at` →
+  `current_hsv_at` → `resolve_var`, so it opens at the right hue
+  even when the section's runs reference `var(--accent)`. Commit
+  writes raw HSV hex via `set_section_text_color`, erasing the
+  `var(--name)` reference. This is the same lossy round-trip
+  documented for custom mutations in `format/sections.md` lines
+  100-103, just newly reachable through the picker too. Closing
+  it requires either a "preserve var ref if HSV unchanged"
+  short-circuit on commit or a "commit as var" toggle in the
+  picker — both new product surface, not Tier 2A scope.
 
 ## Original audit findings (reference — do not edit after baseline)
 

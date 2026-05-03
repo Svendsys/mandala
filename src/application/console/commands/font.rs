@@ -966,29 +966,7 @@ mod tests {
     /// size, sections at other indices stay untouched.
     #[test]
     fn font_size_section_kv_targets_specific_section() {
-        use baumhard::mindmap::model::MindSection;
-        let mut doc = fixture_doc();
-        // Materialise a multi-section node and pin every section's
-        // runs to size 14 so we can detect which index changed.
-        {
-            let node = doc.mindmap.nodes.get_mut("0").unwrap();
-            node.sections
-                .push(MindSection::new_default("second".into(), Vec::new()));
-            for section in node.sections.iter_mut() {
-                section.text_runs.clear();
-                section.text_runs.push(baumhard::mindmap::model::TextRun {
-                    start: 0,
-                    end: section.text.chars().count().max(1),
-                    bold: false,
-                    italic: false,
-                    underline: false,
-                    font: "LiberationSans".into(),
-                    size_pt: 14,
-                    color: "#ffffff".into(),
-                    hyperlink: None,
-                });
-            }
-        }
+        let mut doc = doc_with_two_sections_for_font("LiberationSans", 14);
         doc.selection = SelectionState::Single("0".into());
         assert_exec_ok(run("font size=22 section=1", &mut doc));
         let node = doc.mindmap.nodes.get("0").unwrap();
@@ -1002,28 +980,14 @@ mod tests {
         );
     }
 
-    /// Build a node with two sections, each pinned to a known
-    /// `font` and `size_pt` so a per-section write is observable.
+    /// Build a node "0" with two sections, both pinned to the
+    /// given `font` and `size_pt` so a per-section font/size write
+    /// is observable. Thin wrapper around the shared
+    /// `make_two_section_node_with_pinned_runs` helper.
     fn doc_with_two_sections_for_font(font: &str, size: u32) -> crate::application::document::MindMapDocument {
-        use baumhard::mindmap::model::MindSection;
+        use crate::application::document::tests_common::make_two_section_node_with_pinned_runs;
         let mut doc = fixture_doc();
-        let node = doc.mindmap.nodes.get_mut("0").unwrap();
-        node.sections
-            .push(MindSection::new_default("second".into(), Vec::new()));
-        for section in node.sections.iter_mut() {
-            section.text_runs.clear();
-            section.text_runs.push(baumhard::mindmap::model::TextRun {
-                start: 0,
-                end: section.text.chars().count().max(1),
-                bold: false,
-                italic: false,
-                underline: false,
-                font: font.into(),
-                size_pt: size,
-                color: "#ffffff".into(),
-                hyperlink: None,
-            });
-        }
+        make_two_section_node_with_pinned_runs(&mut doc, "0", "#ffffff", ["#ffffff", "#ffffff"], font, size);
         doc
     }
 
@@ -1079,6 +1043,35 @@ mod tests {
         assert!(
             node.sections[1].text_runs.iter().all(|r| r.size_pt == 22),
             "section 1 (selected) must receive the new size"
+        );
+    }
+
+    /// `apply_font_family_to_selection(family)` (the parametric
+    /// Action path) with a `SelectionState::Section` routes
+    /// through `AcceptsFontFamily` → `set_section_font_family` —
+    /// the same per-section behaviour the verb path lands. Sister
+    /// pin to `font_size_action_section_writes_through_section_setter`
+    /// so both Action arms (size + family) have direct-call
+    /// coverage on a Section selection, not just transitive
+    /// coverage through the verb.
+    #[test]
+    fn font_family_action_section_writes_through_section_setter() {
+        use crate::application::document::SectionSel;
+        let family = first_loaded_family();
+        let mut doc = doc_with_two_sections_for_font("LiberationSans", 14);
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: "0".into(),
+            section_idx: 1,
+        });
+        assert!(super::apply_font_family_to_selection(&mut doc, &family));
+        let node = doc.mindmap.nodes.get("0").unwrap();
+        assert!(
+            node.sections[0].text_runs.iter().all(|r| r.font == "LiberationSans"),
+            "section 0 (sibling) must NOT change family"
+        );
+        assert!(
+            node.sections[1].text_runs.iter().all(|r| r.font == family),
+            "section 1 (selected) must receive the new family"
         );
     }
 }

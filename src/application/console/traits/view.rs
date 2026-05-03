@@ -35,8 +35,12 @@ pub enum TargetView<'a> {
     /// dispatch routes here from `SelectionState::Section`. Copy
     /// reads `section.text` only (vs whole-node `display_text`
     /// for `Node`), paste / cut write through `set_section_text`
-    /// to the indexed section. Style verbs (color, font) collapse
-    /// to whole-node behaviour at the dispatch site.
+    /// to the indexed section. Color (text axis) and font
+    /// (size + family) write per-section through the matching
+    /// `set_section_*` setters; bg / border / zoom remain
+    /// node-level (sections have no chrome by spec — see
+    /// `format/sections.md`) and the Section arms in those traits
+    /// return `Outcome::NotApplicable`.
     Section {
         doc: &'a mut MindMapDocument,
         id: String,
@@ -158,8 +162,6 @@ impl<'a> HasTextColor for TargetView<'a> {
             TargetView::Node { doc, id } => {
                 Outcome::applied(doc.set_node_text_color(id, color_as_string(&c, "#ffffff")))
             }
-            // Section: per-section text colour override, leaves
-            // sibling sections untouched.
             TargetView::Section { doc, id, section_idx } => Outcome::applied(
                 doc.set_section_text_color(id, *section_idx, color_as_string(&c, "#ffffff")),
             ),
@@ -666,13 +668,13 @@ pub fn selection_targets(sel: &SelectionState) -> Vec<TargetId> {
         SelectionState::Single(id) => vec![TargetId::Node(id.clone())],
         SelectionState::Multi(ids) => ids.iter().cloned().map(TargetId::Node).collect(),
         // A section selection routes to a dedicated `Section`
-        // target so clipboard copy / cut / paste land on the
-        // selected section's `text` instead of collapsing to
-        // whole-node behaviour. Style-and-layout verbs (color,
-        // font, border, zoom) that are inherently node-level
-        // continue to consult `selection_targets` as well, and
-        // their dispatch arms collapse `Section` back to the
-        // owning node — see the per-verb arms in `console/commands/`.
+        // target. Per-trait behaviour at the dispatch site:
+        // clipboard copy / cut / paste land on the section's
+        // `text`; color (text axis) and font (size + family) write
+        // per-section through the matching `set_section_*`
+        // setters; bg / border / zoom return `NotApplicable` for
+        // the Section arm because sections have no chrome by spec
+        // (see `format/sections.md`).
         SelectionState::Section(s) => vec![TargetId::Section {
             node_id: s.node_id.clone(),
             section_idx: s.section_idx,

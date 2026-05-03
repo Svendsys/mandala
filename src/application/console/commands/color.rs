@@ -437,33 +437,7 @@ mod tests {
     #[test]
     fn color_text_section_kv_targets_specific_section() {
         use crate::application::console::tests::fixtures::{assert_exec_ok, run};
-        use baumhard::mindmap::model::MindSection;
-        let mut doc = load_test_doc();
-        let id = first_testament_node_id(&doc);
-        {
-            let node = doc.mindmap.nodes.get_mut(&id).unwrap();
-            node.sections
-                .push(MindSection::new_default("second".into(), Vec::new()));
-            // `set_section_text_color` writes only over runs whose
-            // colour matches the node's `style.text_color` default —
-            // pin the node default to `#aaaaaa` so the test's
-            // synthetic runs match the predicate.
-            node.style.text_color = "#aaaaaa".into();
-            for section in node.sections.iter_mut() {
-                section.text_runs.clear();
-                section.text_runs.push(baumhard::mindmap::model::TextRun {
-                    start: 0,
-                    end: section.text.chars().count().max(1),
-                    bold: false,
-                    italic: false,
-                    underline: false,
-                    font: "LiberationSans".into(),
-                    size_pt: 14,
-                    color: "#aaaaaa".into(),
-                    hyperlink: None,
-                });
-            }
-        }
+        let (mut doc, id) = doc_with_two_sections();
         doc.selection = SelectionState::Single(id.clone());
         assert_exec_ok(run("color text=#ff0000 section=1", &mut doc));
         let node = doc.mindmap.nodes.get(&id).unwrap();
@@ -477,35 +451,22 @@ mod tests {
         );
     }
 
-    /// Build a node with two sections (each with one run pinned to
-    /// `#aaaaaa`, matching the node's `style.text_color` default so
-    /// the cascade predicate inside `set_section_text_color` finds
-    /// runs to rewrite). Returns `(doc, node_id)`. Mirrors the
-    /// scaffolding in `color_text_section_kv_targets_specific_section`.
+    /// Build a node with two sections, both pinned to the cascade
+    /// default `#aaaaaa`, returning `(doc, node_id)`. Thin wrapper
+    /// around the shared `make_two_section_node_with_pinned_runs`
+    /// helper.
     fn doc_with_two_sections() -> (crate::application::document::MindMapDocument, String) {
-        use baumhard::mindmap::model::MindSection;
+        use crate::application::document::tests_common::make_two_section_node_with_pinned_runs;
         let mut doc = load_test_doc();
         let id = first_testament_node_id(&doc);
-        {
-            let node = doc.mindmap.nodes.get_mut(&id).unwrap();
-            node.sections
-                .push(MindSection::new_default("second".into(), Vec::new()));
-            node.style.text_color = "#aaaaaa".into();
-            for section in node.sections.iter_mut() {
-                section.text_runs.clear();
-                section.text_runs.push(baumhard::mindmap::model::TextRun {
-                    start: 0,
-                    end: section.text.chars().count().max(1),
-                    bold: false,
-                    italic: false,
-                    underline: false,
-                    font: "LiberationSans".into(),
-                    size_pt: 14,
-                    color: "#aaaaaa".into(),
-                    hyperlink: None,
-                });
-            }
-        }
+        make_two_section_node_with_pinned_runs(
+            &mut doc,
+            &id,
+            "#aaaaaa",
+            ["#aaaaaa", "#aaaaaa"],
+            "LiberationSans",
+            14,
+        );
         (doc, id)
     }
 
@@ -533,6 +494,47 @@ mod tests {
         assert!(
             node.sections[1].text_runs.iter().all(|r| r.color == "#00ff00"),
             "section 1 (selected) must receive the new colour"
+        );
+    }
+
+    /// `set_section_text_color` rewrite predicate matches the
+    /// **cascade source** the picker reads (unanimous run colour
+    /// when present; node default otherwise). A section whose runs
+    /// unanimously carry a non-default colour is therefore
+    /// rewritable from the picker / kv-form path. Pre-fix the
+    /// write only matched runs equal to `node.style.text_color` and
+    /// silently no-op'd when the section was uniformly customized,
+    /// closing the read/write seam where the picker would seed to
+    /// the displayed colour and the user's pick would silently
+    /// vanish on commit.
+    #[test]
+    fn color_text_section_rewrites_unanimous_non_default_runs() {
+        use crate::application::console::tests::fixtures::{assert_exec_ok, run};
+        use crate::application::document::tests_common::make_two_section_node_with_pinned_runs;
+        let mut doc = load_test_doc();
+        let id = first_testament_node_id(&doc);
+        // node default is #aaaaaa but section 1's runs unanimously
+        // carry #abcdef — a uniformly customized section. Pre-fix
+        // this case silently no-op'd because the write predicate
+        // looked for runs matching the node default and found none.
+        make_two_section_node_with_pinned_runs(
+            &mut doc,
+            &id,
+            "#aaaaaa",
+            ["#aaaaaa", "#abcdef"],
+            "LiberationSans",
+            14,
+        );
+        doc.selection = SelectionState::Single(id.clone());
+        assert_exec_ok(run("color text=#00ff00 section=1", &mut doc));
+        let node = doc.mindmap.nodes.get(&id).unwrap();
+        assert!(
+            node.sections[0].text_runs.iter().all(|r| r.color == "#aaaaaa"),
+            "section 0 (untouched) must keep the cascade default"
+        );
+        assert!(
+            node.sections[1].text_runs.iter().all(|r| r.color == "#00ff00"),
+            "section 1's unanimous-non-default runs must be rewritten by the picker / kv path"
         );
     }
 
@@ -602,6 +604,7 @@ mod tests {
     #[test]
     fn picker_target_for_section_text_emits_section_target() {
         use crate::application::color_picker::{ColorTarget, SectionColorAxis};
+        use crate::application::console::tests::fixtures::assert_exec_ok;
         use crate::application::document::SectionSel;
         let (mut doc, id) = doc_with_two_sections();
         doc.selection = SelectionState::Section(SectionSel {
@@ -613,7 +616,9 @@ mod tests {
             _ => panic!("parse failed"),
         };
         let mut eff = ConsoleEffects::new(&mut doc);
-        let _ = (cmd.execute)(&Args::new(&toks), &mut eff);
+        // assert_exec_ok catches a regression where the picker
+        // opens AND the command surfaces an error (mixed signal).
+        assert_exec_ok((cmd.execute)(&Args::new(&toks), &mut eff));
         match eff.open_color_picker {
             Some(ColorTarget::Section {
                 node_id,
