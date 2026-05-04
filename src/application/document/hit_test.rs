@@ -492,6 +492,42 @@ pub fn apply_section_drag_delta_and_collect_patches(
     tree.tree.invalidate_caches();
 }
 
+/// Per-frame tree mutation for the section-resize gesture: write
+/// the in-progress `(canvas_position, canvas_size)` to the
+/// targeted section-area's `GlyphArea`. The renderer's
+/// `rebuild_buffers_from_tree` reshapes the section's text against
+/// the new bounds on the next pass, so the user sees the section
+/// resize live (text reflow + handle tracking).
+///
+/// **Tree-only.** The model is unchanged until release-commit
+/// where `set_section_aabb` writes the final state under one
+/// `EditNodeStyle` undo entry. Drag callers must NOT route
+/// per-frame writes through the model setter — that would explode
+/// the undo stack.
+///
+/// No-op for missing nodes / sections (the section's arena id is
+/// looked up by `(mind_id, section_idx)` — `None` when either is
+/// out of range).
+pub fn apply_section_resize_to_tree(
+    tree: &mut MindMapTree,
+    node_id: &str,
+    section_idx: usize,
+    new_position: Vec2,
+    new_size: Vec2,
+) {
+    let section_root = match tree.section_arena_id(node_id, section_idx) {
+        Some(id) => id,
+        None => return,
+    };
+    if let Some(node) = tree.tree.arena.get_mut(section_root) {
+        if let Some(area) = node.get_mut().glyph_area_mut() {
+            area.set_position((new_position.x, new_position.y));
+            area.set_bounds((new_size.x, new_size.y));
+        }
+    }
+    tree.tree.invalidate_caches();
+}
+
 /// Hit-test the 8 resize handles of a `Some`-sized section at
 /// `canvas_pos`. Returns the closest handle whose canvas-space
 /// center is within `tolerance` of the cursor, or `None` if no
@@ -510,6 +546,9 @@ pub fn hit_test_section_resize_handle(
     tolerance: f32,
 ) -> Option<ResizeHandleSide> {
     let node = map.nodes.get(node_id)?;
+    if map.is_hidden_by_fold(node) {
+        return None;
+    }
     let section = node.sections.get(section_idx)?;
     let section_size = section.size.as_ref()?;
     let section_pos = Vec2::new(

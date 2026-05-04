@@ -17,7 +17,7 @@ use super::input_context::InputHandlerContext;
 use super::portal_label_drag::apply_portal_label_drag;
 use super::scene_rebuild::{rebuild_after_selection_change, rebuild_all, rebuild_scene_only};
 use super::throttled_interaction::ThrottledDrag;
-use super::{is_double_click, now_ms, AppMode, DragState, LastClick, EDGE_HANDLE_HIT_TOLERANCE_PX};
+use super::{is_double_click, now_ms, AppMode, DragState, LastClick, HANDLE_HIT_TOLERANCE_PX};
 use crate::application::console::ConsoleState;
 use crate::application::document::{apply_drag_delta, rect_select, SelectionState, UndoAction};
 use crate::application::keybinds::Action;
@@ -286,7 +286,7 @@ pub(super) fn handle_mouse_input(
                 let hit_edge_handle = match ctx.document.as_ref() {
                     Some(doc) => match &doc.selection {
                         SelectionState::Edge(er) => {
-                            let tol = EDGE_HANDLE_HIT_TOLERANCE_PX * ctx.renderer.canvas_per_pixel();
+                            let tol = HANDLE_HIT_TOLERANCE_PX * ctx.renderer.canvas_per_pixel();
                             doc.hit_test_edge_handle(canvas_pos, er, tol)
                                 .map(|(kind, _pos)| (er.clone(), kind))
                         }
@@ -304,7 +304,7 @@ pub(super) fn handle_mouse_input(
                 let hit_section_resize_handle = match ctx.document.as_ref() {
                     Some(doc) => match &doc.selection {
                         SelectionState::Section(s) => {
-                            let tol = EDGE_HANDLE_HIT_TOLERANCE_PX * ctx.renderer.canvas_per_pixel();
+                            let tol = HANDLE_HIT_TOLERANCE_PX * ctx.renderer.canvas_per_pixel();
                             crate::application::document::hit_test_section_resize_handle(
                                 &doc.mindmap,
                                 canvas_pos,
@@ -639,45 +639,27 @@ pub(super) fn handle_mouse_input(
                         }
                     }
                     DragState::Throttled(ThrottledDrag::SectionResize(i)) => {
-                        // Single setter call on release; mirrors
-                        // the `MovingSection` arm above. AABB
-                        // overflow / non-positive size rejection
-                        // logs and falls through to `rebuild_all`,
-                        // which rebuilds the tree from the
-                        // unchanged model and snaps the section
-                        // back to its pre-drag offset/size.
+                        // Single atomic setter call on release.
+                        // `set_section_aabb` validates the
+                        // post-mutation `(offset, size)` against
+                        // the parent — so a W-grow gesture that
+                        // shrinks `offset.x` and grows `size.width`
+                        // by the same delta passes the right-edge
+                        // guard that the two-step
+                        // `set_section_size` + `set_section_offset`
+                        // path rejected (intermediate state had
+                        // new size at old offset, overflowing).
+                        // Rejection (NaN, negative, overflow,
+                        // astronomical) logs and falls through to
+                        // `rebuild_all` from the unchanged model —
+                        // section snaps back to pre-drag AABB.
                         if let Some(doc) = ctx.document.as_mut() {
                             let (new_offset, new_size) = i.resolve(i.total_delta);
-                            // Order matters: write size first,
-                            // then offset. `set_section_offset`'s
-                            // AABB check uses the section's
-                            // *current* size; if we wrote offset
-                            // first under an unchanged size, a
-                            // shrink-from-NW gesture might fail
-                            // the right/bottom-edge check before
-                            // the size shrunk. Writing size first
-                            // means the offset write sees the new
-                            // (smaller) size and the AABB
-                            // arithmetic balances.
-                            let size_result = doc.set_section_size(&i.node_id, i.section_idx, Some(new_size));
-                            match size_result {
-                                Ok(true) => {
-                                    let offset_result = doc.set_section_offset(
-                                        &i.node_id,
-                                        i.section_idx,
-                                        new_offset.x,
-                                        new_offset.y,
-                                    );
-                                    if let Err(msg) = offset_result {
-                                        log::info!(
-                                            "section resize release rejected (offset): {} (snapping back)",
-                                            msg
-                                        );
-                                    }
-                                }
+                            match doc.set_section_aabb(&i.node_id, i.section_idx, new_offset, new_size) {
+                                Ok(true) => {}
                                 Ok(false) => {
                                     log::debug!(
-                                        "section resize committed no-op size on '{}' section[{}]",
+                                        "section resize committed no-op on '{}' section[{}]",
                                         i.node_id,
                                         i.section_idx
                                     );

@@ -5,13 +5,13 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use baumhard::mindmap::model::{Position, Size};
-use baumhard::mindmap::scene_builder::ResizeHandleSide;
+use baumhard::mindmap::scene_builder::{build_section_resize_handles, ResizeHandleSide};
 use glam::Vec2;
 
-use crate::application::document::apply_section_drag_delta_and_collect_patches;
+use crate::application::document::apply_section_resize_to_tree;
 use crate::application::frame_throttle::MutationFrequencyThrottle;
 
-use super::super::scene_rebuild::flush_canvas_scene_buffers;
+use super::super::scene_rebuild::{flush_canvas_scene_buffers, update_section_resize_handle_tree_from_slice};
 use super::{DrainContext, ThrottledInteraction};
 
 /// Per-frame drains apply a side-aware delta to the section's
@@ -113,48 +113,49 @@ impl ThrottledInteraction for SectionResizeInteraction {
 
     fn drain(&mut self, ctx: DrainContext<'_>) {
         let DrainContext {
+            document,
             mindmap_tree,
             app_scene,
             renderer,
             ..
         } = ctx;
 
-        if let Some(tree) = mindmap_tree.as_mut() {
-            // The drain reaches the tree by translating the
-            // section's existing position by the section-side
-            // dx/dy. For sides whose `axis_factors.x = -1` the
-            // offset moves with the cursor on x; same on y. For
-            // E/S sides only the size changes — the section's
-            // top-left stays put, so no tree-position patch is
-            // needed beyond what the size change reflows.
-            //
-            // The tree carries the section AABB through the
-            // section-area `GlyphArea`'s position + bounds. We
-            // don't currently have a per-frame "set bounds"
-            // helper for sections (text reflow on bounds change
-            // is the renderer's job), so the per-frame drain
-            // here only patches position via the existing
-            // section-drag helper, and the size change lands
-            // wholesale on release. Mid-drag the user sees the
-            // section corner track the cursor for any side
-            // that moves the offset; pure E/S/SE drags show
-            // their growth at release.
-            let (fx, fy) = self.side.axis_factors();
-            let dx_to_apply = if fx == -1 { self.pending_delta.x } else { 0.0 };
-            let dy_to_apply = if fy == -1 { self.pending_delta.y } else { 0.0 };
-            if dx_to_apply != 0.0 || dy_to_apply != 0.0 {
-                let mut patches = Vec::new();
-                apply_section_drag_delta_and_collect_patches(
+        // Per-frame: write the in-progress (offset, size) to the
+        // section-area's `GlyphArea`, refresh the 8 handle
+        // positions to track the new AABB, and rebuild buffers
+        // so cosmic-text reflows the section content against
+        // the new bounds. Tree-only — model writes happen at
+        // release via `set_section_aabb`. The section's
+        // canvas-space position derives from the *current
+        // model* node.position plus the in-progress offset, so
+        // a concurrent node move doesn't desynchronise mid-drag.
+        if let (Some(doc), Some(tree)) = (document.as_ref(), mindmap_tree.as_mut()) {
+            let (new_offset, new_size) = self.resolve(self.total_delta);
+            let node_pos = doc
+                .mindmap
+                .nodes
+                .get(&self.node_id)
+                .map(|n| (n.position.x as f32, n.position.y as f32));
+            if let Some((nx, ny)) = node_pos {
+                let canvas_pos = Vec2::new(nx + new_offset.x as f32, ny + new_offset.y as f32);
+                let canvas_size = Vec2::new(new_size.width as f32, new_size.height as f32);
+                apply_section_resize_to_tree(
                     tree,
                     &self.node_id,
                     self.section_idx,
-                    dx_to_apply,
-                    dy_to_apply,
-                    &mut patches,
+                    canvas_pos,
+                    canvas_size,
                 );
-                renderer.patch_drag_positions(&patches);
+                renderer.rebuild_buffers_from_tree(&tree.tree);
+                let elements = build_section_resize_handles(
+                    &self.node_id,
+                    self.section_idx,
+                    canvas_pos,
+                    Some(canvas_size),
+                );
+                update_section_resize_handle_tree_from_slice(&elements, app_scene);
+                flush_canvas_scene_buffers(app_scene, renderer);
             }
-            flush_canvas_scene_buffers(app_scene, renderer);
         }
 
         self.pending_delta = Vec2::ZERO;

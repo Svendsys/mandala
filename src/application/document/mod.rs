@@ -67,7 +67,7 @@ pub use hit_test::{apply_tree_highlights, hit_test_target, point_in_node_aabb, H
 #[cfg(not(target_arch = "wasm32"))]
 pub use hit_test::{
     apply_drag_delta, apply_drag_delta_and_collect_patches, apply_section_drag_delta_and_collect_patches,
-    hit_test_edge, hit_test_section_resize_handle, rect_select,
+    apply_section_resize_to_tree, hit_test_edge, hit_test_section_resize_handle, rect_select,
 };
 pub use nodes::{BorderConfigEdits, BorderEditOutcome, BorderSide, OptionEdit, SectionPayload};
 pub use types::{

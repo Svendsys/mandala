@@ -254,6 +254,131 @@ fn test_set_section_size_idempotent_no_op() {
     assert!(doc.undo_stack.is_empty(), "no-op must not push undo");
 }
 
+// ── set_section_aabb (atomic offset+size for the resize gesture) ──
+
+/// `set_section_aabb` accepts a W-grow gesture's final state —
+/// section pinned at `offset.x = 90` with `size.width = 10` inside
+/// a 100-wide node, gesture shrinks `offset.x` to 85 and grows
+/// `size.width` to 15. Atomic validation against the **post-
+/// mutation** AABB passes. The pre-fix `set_section_size` then
+/// `set_section_offset` two-step rejected this transition because
+/// `set_section_size(15)` validated against the *unchanged*
+/// `offset.x = 90`, computing `right = 90 + 15 = 105 > 100`.
+#[test]
+fn test_set_section_aabb_accepts_w_grow_against_right_edge() {
+    use baumhard::mindmap::model::{Position, Size};
+    let (mut doc, id) = super::tests_common::pinned_two_section_node();
+    // Reposition section[1] to be flush against the right edge.
+    {
+        let node = doc.mindmap.nodes.get_mut(&id).unwrap();
+        node.sections[1].offset = Position { x: 90.0, y: 10.0 };
+        node.sections[1].size = Some(Size {
+            width: 10.0,
+            height: 30.0,
+        });
+    }
+    doc.undo_stack.clear();
+    doc.dirty = false;
+    // W-grow: offset.x 90 → 85, size.width 10 → 15. Right edge
+    // stays at 100.
+    let result = doc.set_section_aabb(
+        &id,
+        1,
+        Position { x: 85.0, y: 10.0 },
+        Size {
+            width: 15.0,
+            height: 30.0,
+        },
+    );
+    assert_eq!(result, Ok(true));
+    let n = &doc.mindmap.nodes[&id];
+    assert_eq!(n.sections[1].offset.x, 85.0);
+    assert_eq!(n.sections[1].size.as_ref().unwrap().width, 15.0);
+}
+
+/// `set_section_aabb` rejects post-mutation overflow with the
+/// verify-mirror message — same shape as `set_section_size` /
+/// `set_section_offset`.
+#[test]
+fn test_set_section_aabb_rejects_post_mutation_overflow() {
+    use baumhard::mindmap::model::{Position, Size};
+    let (mut doc, id) = super::tests_common::pinned_two_section_node();
+    let result = doc.set_section_aabb(
+        &id,
+        1,
+        Position { x: 50.0, y: 10.0 },
+        Size {
+            width: 200.0,
+            height: 30.0,
+        },
+    );
+    assert!(result.is_err_and(|m| m.contains("extends past node right edge")));
+}
+
+#[test]
+fn test_set_section_aabb_rejects_negative_offset() {
+    use baumhard::mindmap::model::{Position, Size};
+    let (mut doc, id) = super::tests_common::pinned_two_section_node();
+    let result = doc.set_section_aabb(
+        &id,
+        1,
+        Position { x: -5.0, y: 10.0 },
+        Size {
+            width: 50.0,
+            height: 30.0,
+        },
+    );
+    assert!(result.is_err_and(|m| m.contains("offset.x is negative")));
+}
+
+#[test]
+fn test_set_section_aabb_rejects_non_positive_size() {
+    use baumhard::mindmap::model::{Position, Size};
+    let (mut doc, id) = super::tests_common::pinned_two_section_node();
+    let result = doc.set_section_aabb(
+        &id,
+        1,
+        Position { x: 10.0, y: 10.0 },
+        Size {
+            width: 0.0,
+            height: 30.0,
+        },
+    );
+    assert!(result.is_err_and(|m| m.contains("is not positive")));
+}
+
+#[test]
+fn test_set_section_aabb_idempotent_no_op() {
+    use baumhard::mindmap::model::{Position, Size};
+    let (mut doc, id) = super::tests_common::pinned_two_section_node();
+    let same_offset = Position { x: 10.0, y: 10.0 };
+    let same_size = Size {
+        width: 50.0,
+        height: 30.0,
+    };
+    let undo_before = doc.undo_stack.len();
+    assert_eq!(doc.set_section_aabb(&id, 1, same_offset, same_size), Ok(false));
+    assert_eq!(doc.undo_stack.len(), undo_before, "no-op must not push undo");
+}
+
+#[test]
+fn test_set_section_aabb_writes_through_one_undo_entry() {
+    use baumhard::mindmap::model::{Position, Size};
+    let (mut doc, id) = super::tests_common::pinned_two_section_node();
+    doc.undo_stack.clear();
+    let result = doc.set_section_aabb(
+        &id,
+        1,
+        Position { x: 20.0, y: 15.0 },
+        Size {
+            width: 40.0,
+            height: 25.0,
+        },
+    );
+    assert_eq!(result, Ok(true));
+    assert_eq!(doc.undo_stack.len(), 1, "one undo entry per atomic AABB write");
+}
+
 // ── Auto-fit on Some-sized sections ────────────────────────────
 //
 // `grow_one_node_to_fit_text` contributes the larger of measured

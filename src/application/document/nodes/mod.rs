@@ -604,6 +604,119 @@ impl MindMapDocument {
         Ok(true)
     }
 
+    /// Set one section's `(offset, size)` atomically under a single
+    /// `EditNodeStyle` undo entry. Validates the **post-mutation**
+    /// AABB against `node.size`, so a gesture that simultaneously
+    /// shifts `offset` and grows `size` (e.g. dragging the W handle
+    /// of a section pinned to the right edge — `offset.x` shrinks
+    /// and `size.width` grows so the right edge stays put) passes
+    /// the right/bottom-edge guards that would have failed if size
+    /// were validated against the pre-mutation offset.
+    ///
+    /// Used by the section-resize release-commit. The two-step
+    /// `set_section_size` + `set_section_offset` path the resize
+    /// gesture used originally rejected legal AABB transitions
+    /// when the intermediate state (new size at old offset, or
+    /// new offset at old size) overflowed the parent.
+    pub fn set_section_aabb(
+        &mut self,
+        node_id: &str,
+        section_idx: usize,
+        new_offset: baumhard::mindmap::model::Position,
+        new_size: baumhard::mindmap::model::Size,
+    ) -> Result<bool, String> {
+        if !new_offset.x.is_finite() || !new_offset.y.is_finite() {
+            return Err(format!(
+                "section[{}].offset has non-finite component (x={}, y={})",
+                section_idx, new_offset.x, new_offset.y
+            ));
+        }
+        if new_offset.x < 0.0 {
+            return Err(format!(
+                "section[{}].offset.x is negative ({})",
+                section_idx, new_offset.x
+            ));
+        }
+        if new_offset.y < 0.0 {
+            return Err(format!(
+                "section[{}].offset.y is negative ({})",
+                section_idx, new_offset.y
+            ));
+        }
+        if !new_size.width.is_finite() || !new_size.height.is_finite() {
+            return Err(format!(
+                "section[{}].size has non-finite component (width={}, height={})",
+                section_idx, new_size.width, new_size.height
+            ));
+        }
+        if new_size.width <= 0.0 {
+            return Err(format!(
+                "section[{}].size.width is not positive ({})",
+                section_idx, new_size.width
+            ));
+        }
+        if new_size.height <= 0.0 {
+            return Err(format!(
+                "section[{}].size.height is not positive ({})",
+                section_idx, new_size.height
+            ));
+        }
+        let node = match self.mindmap.nodes.get(node_id) {
+            Some(n) => n,
+            None => return Ok(false),
+        };
+        let Some(section) = node.sections.get(section_idx) else {
+            return Ok(false);
+        };
+        check_node_size_finite_positive(node, section_idx)?;
+        if new_size.width > node.size.width * 100.0 {
+            return Err(format!(
+                "section[{}].size.width ({}) is over 100× the node's width ({}); \
+                 likely a typo (e.g. an extra zero)",
+                section_idx, new_size.width, node.size.width
+            ));
+        }
+        if new_size.height > node.size.height * 100.0 {
+            return Err(format!(
+                "section[{}].size.height ({}) is over 100× the node's height ({}); \
+                 likely a typo (e.g. an extra zero)",
+                section_idx, new_size.height, node.size.height
+            ));
+        }
+        let right = new_offset.x + new_size.width;
+        let bottom = new_offset.y + new_size.height;
+        if right > node.size.width {
+            return Err(format!(
+                "section[{}] extends past node right edge ({} > {})",
+                section_idx, right, node.size.width
+            ));
+        }
+        if bottom > node.size.height {
+            return Err(format!(
+                "section[{}] extends past node bottom edge ({} > {})",
+                section_idx, bottom, node.size.height
+            ));
+        }
+        let same_offset = section.offset.x == new_offset.x && section.offset.y == new_offset.y;
+        let same_size = section.size.as_ref() == Some(&new_size);
+        if same_offset && same_size {
+            return Ok(false);
+        }
+        let canvas_default = self.mindmap.canvas.default_border.clone();
+        self.mutate_section_with_style_undo(node_id, section_idx, |s| {
+            s.offset = new_offset;
+            s.size = Some(new_size);
+        });
+        let node = self
+            .mindmap
+            .nodes
+            .get_mut(node_id)
+            .expect("just confirmed exists");
+        super::grow_one_node_to_fit_text(node);
+        super::grow_one_node_to_fit_border(node, canvas_default.as_ref());
+        Ok(true)
+    }
+
     pub fn set_node_text(&mut self, node_id: &str, new_text: String) -> bool {
         // Validate + capture under an immutable borrow so the mutable
         // re-acquisition below can coexist with the canvas-default

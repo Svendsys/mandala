@@ -109,8 +109,11 @@ impl fmt::Display for ResizeHandleSide {
 /// family since the handle set is small (8) and only exists for
 /// the currently-selected `Some`-sized section.
 pub struct SectionResizeHandleElement {
+    /// Owning MindNode id — same id every per-node element keys on.
     pub node_id: String,
+    /// Index into [`MindNode.sections`](crate::mindmap::model::MindNode::sections).
     pub section_idx: usize,
+    /// Which of the 8 handles this element represents.
     pub side: ResizeHandleSide,
     /// Canvas-space center of the handle.
     pub position: (f32, f32),

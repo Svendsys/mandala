@@ -341,10 +341,15 @@ impl InitState {
         // self.drag_state`. Used to suppress the camera-driven
         // geometry rebuild while a node is being dragged (the
         // drag's own per-frame mutator already keeps the scene
-        // current). `MovingSection` deliberately doesn't qualify —
-        // section drag never moves the parent node, so the camera
-        // rebuild is harmless and skipping it would just delay
-        // the next legitimate camera-zoom resample.
+        // current). `MovingSection` and `SectionResize`
+        // deliberately don't qualify — they never move the parent
+        // node, so the camera rebuild is harmless and skipping
+        // would just delay the next legitimate camera-zoom
+        // resample. The resize drain mutates section AABB in the
+        // tree per-frame, but a competing camera-rebuild walks
+        // model-side state (`build_scene_with_cache`) and won't
+        // observe the in-progress tree mutation — the next drain
+        // re-applies it.
         let is_moving_node = matches!(
             self.drag_state,
             DragState::Throttled(super::throttled_interaction::ThrottledDrag::MovingNode(_)),

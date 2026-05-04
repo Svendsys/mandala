@@ -280,8 +280,8 @@ pub(super) fn handle_cursor_moved(
                     if let Some(doc) = ctx.document.as_ref() {
                         if let Some(node) = doc.mindmap.nodes.get(&node_id) {
                             if let Some(section) = node.sections.get(section_idx) {
-                                if let Some(start_size) = section.size.clone() {
-                                    let start_offset = section.offset.clone();
+                                if let Some(start_size) = section.size {
+                                    let start_offset = section.offset;
                                     ctx.scene_cache.clear();
                                     *ctx.drag_state = DragState::Throttled(ThrottledDrag::SectionResize(
                                         SectionResizeInteraction::new(

@@ -148,12 +148,13 @@ fn now_ms() -> f64 {
 #[cfg(not(target_arch = "wasm32"))]
 const EDGE_HIT_TOLERANCE_PX: f32 = 8.0;
 
-/// Screen-space click tolerance (in pixels) for edge grab-handle hit
-/// testing. Slightly larger than the edge-path tolerance above
-/// because handles are point-like and need a bit more grab-area
-/// to feel forgiving.
+/// Screen-space click tolerance (in pixels) for grab-handle hit
+/// testing — applies uniformly to edge handles and section
+/// resize handles. Slightly larger than the edge-path tolerance
+/// above because handles are point-like and need a bit more
+/// grab-area to feel forgiving.
 #[cfg(not(target_arch = "wasm32"))]
-const EDGE_HANDLE_HIT_TOLERANCE_PX: f32 = 12.0;
+const HANDLE_HIT_TOLERANCE_PX: f32 = 12.0;
 
 /// What a single click targeted. Used by [`LastClick`] + the
 /// double-click detector so a portal-marker double-click (navigate)

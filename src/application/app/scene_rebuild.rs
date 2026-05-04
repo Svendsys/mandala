@@ -534,22 +534,31 @@ pub(in crate::application::app) fn update_section_resize_handle_tree(
     scene: &baumhard::mindmap::scene_builder::RenderScene,
     app_scene: &mut crate::application::scene_host::AppScene,
 ) {
+    update_section_resize_handle_tree_from_slice(&scene.section_resize_handles, app_scene);
+}
+
+/// Same as [`update_section_resize_handle_tree`] but takes the
+/// element slice directly. Used by the resize drain to refresh
+/// handle positions per-frame against the in-progress AABB
+/// without round-tripping through a full `RenderScene` build.
+pub(in crate::application::app) fn update_section_resize_handle_tree_from_slice(
+    elements: &[baumhard::mindmap::scene_builder::SectionResizeHandleElement],
+    app_scene: &mut crate::application::scene_host::AppScene,
+) {
     use crate::application::scene_host::{hash_canvas_signature, CanvasDispatch, CanvasRole};
     use baumhard::mindmap::tree_builder::{
         build_section_resize_handle_mutator_tree, build_section_resize_handle_tree,
         section_resize_handle_identity_sequence,
     };
 
-    let signature = hash_canvas_signature(&section_resize_handle_identity_sequence(
-        &scene.section_resize_handles,
-    ));
+    let signature = hash_canvas_signature(&section_resize_handle_identity_sequence(elements));
     match app_scene.canvas_dispatch(CanvasRole::SectionResizeHandles, signature) {
         CanvasDispatch::InPlaceMutator => {
-            let mutator = build_section_resize_handle_mutator_tree(&scene.section_resize_handles);
+            let mutator = build_section_resize_handle_mutator_tree(elements);
             app_scene.apply_canvas_mutator(CanvasRole::SectionResizeHandles, &mutator);
         }
         CanvasDispatch::FullRebuild => {
-            let tree = build_section_resize_handle_tree(&scene.section_resize_handles);
+            let tree = build_section_resize_handle_tree(elements);
             app_scene.register_canvas(CanvasRole::SectionResizeHandles, tree, glam::Vec2::ZERO);
             app_scene.set_canvas_signature(CanvasRole::SectionResizeHandles, signature);
         }

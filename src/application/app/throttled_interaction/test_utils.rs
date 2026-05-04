@@ -3,7 +3,8 @@
 //! Shared helpers and the trait-default test macro for the
 //! throttled-interaction implementors.
 //!
-//! Five impls under this module (`MovingNodeInteraction`,
+//! Seven impls under this module (`MovingNodeInteraction`,
+//! `MovingSectionInteraction`, `SectionResizeInteraction`,
 //! `EdgeHandleInteraction`, `EdgeLabelInteraction`,
 //! `PortalLabelInteraction`, `ColorPickerHoverInteraction`) all
 //! inherit the `should_perform_drain` ordering invariant from

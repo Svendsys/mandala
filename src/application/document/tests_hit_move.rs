@@ -818,6 +818,62 @@ fn test_apply_section_drag_delta_moves_only_target_section() {
     assert!(!patches.is_empty(), "drag must emit at least one buffer patch");
 }
 
+/// `apply_section_resize_to_tree` writes the in-progress AABB
+/// directly to the section-area's `GlyphArea`. Verify the
+/// position and bounds round-trip through the helper.
+#[test]
+fn test_apply_section_resize_to_tree_writes_position_and_bounds() {
+    use crate::application::document::apply_section_resize_to_tree;
+    use crate::application::document::tests_common::pinned_two_section_node;
+    use glam::Vec2;
+
+    let (doc, id) = pinned_two_section_node();
+    let mut tree = doc.build_tree();
+    let new_pos = Vec2::new(100.0, 50.0);
+    let new_size = Vec2::new(40.0, 20.0);
+    apply_section_resize_to_tree(&mut tree, &id, 1, new_pos, new_size);
+    let arena_id = tree.section_arena_id(&id, 1).unwrap();
+    let area = tree
+        .tree
+        .arena
+        .get(arena_id)
+        .and_then(|n| n.get().glyph_area())
+        .unwrap();
+    assert!((area.position.x.0 - 100.0).abs() < 0.001);
+    assert!((area.position.y.0 - 50.0).abs() < 0.001);
+    assert!((area.render_bounds.x.0 - 40.0).abs() < 0.001);
+    assert!((area.render_bounds.y.0 - 20.0).abs() < 0.001);
+}
+
+/// Out-of-range section index is a no-op; helper returns without
+/// panicking, tree unchanged.
+#[test]
+fn test_apply_section_resize_to_tree_unknown_section_no_op() {
+    use crate::application::document::apply_section_resize_to_tree;
+    use crate::application::document::tests_common::pinned_two_section_node;
+    use glam::Vec2;
+
+    let (doc, id) = pinned_two_section_node();
+    let mut tree = doc.build_tree();
+    let arena_id = tree.section_arena_id(&id, 1).unwrap();
+    let area_before = tree
+        .tree
+        .arena
+        .get(arena_id)
+        .and_then(|n| n.get().glyph_area())
+        .map(|a| (a.position.x.0, a.position.y.0))
+        .unwrap();
+    apply_section_resize_to_tree(&mut tree, &id, 99, Vec2::new(0.0, 0.0), Vec2::new(10.0, 10.0));
+    let area_after = tree
+        .tree
+        .arena
+        .get(arena_id)
+        .and_then(|n| n.get().glyph_area())
+        .map(|a| (a.position.x.0, a.position.y.0))
+        .unwrap();
+    assert_eq!(area_before, area_after, "tree must be untouched on unknown idx");
+}
+
 /// Out-of-range section index is a no-op; the helper returns
 /// without panicking and emits no patches.
 #[test]
@@ -1287,6 +1343,39 @@ fn test_hit_test_section_resize_handle_lands_on_n_edge_midpoint() {
     assert_eq!(
         hit_test_section_resize_handle(&doc.mindmap, n, &id, 1, 4.0),
         Some(ResizeHandleSide::N)
+    );
+}
+
+/// A section under a folded ancestor surfaces no resize handles
+/// (scene-builder gates on `is_hidden_by_fold`); the hit-test
+/// must mirror that gate so a stale `Section` selection that
+/// survived a fold can't capture phantom handle presses.
+#[test]
+fn test_hit_test_section_resize_handle_returns_none_for_hidden_by_fold() {
+    use crate::application::document::hit_test_section_resize_handle;
+    use crate::application::document::tests_common::pinned_two_section_node;
+    use glam::Vec2;
+
+    let (mut doc, id) = pinned_two_section_node();
+    // Find an ancestor and fold it so the target node is hidden.
+    let parent_id = doc.mindmap.nodes[&id].parent_id.clone();
+    if let Some(pid) = parent_id {
+        if let Some(p) = doc.mindmap.nodes.get_mut(&pid) {
+            p.folded = true;
+        }
+    } else {
+        // No parent — fold the node itself; `is_hidden_by_fold`
+        // returns false for the folded node itself but true for
+        // its descendants. For the no-parent case fold isn't
+        // visible; skip the assertion.
+        return;
+    }
+    let node = &doc.mindmap.nodes[&id];
+    let np = &node.position;
+    let se = Vec2::new(np.x as f32 + 60.0, np.y as f32 + 40.0);
+    assert!(
+        hit_test_section_resize_handle(&doc.mindmap, se, &id, 1, 4.0).is_none(),
+        "fold-hidden section must not surface handles"
     );
 }
 
