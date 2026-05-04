@@ -425,6 +425,175 @@ impl MindMapDocument {
         true
     }
 
+    /// Set one section's `offset` (relative to the owning node's
+    /// `position`) under a single `EditNodeStyle` undo entry.
+    /// Validates against the same rules `maptool verify`'s
+    /// `verify::sections::check` enforces — finite, non-negative,
+    /// and (when the section's size is `Some`) the new offset
+    /// keeps the section's AABB inside the node. Rejection
+    /// messages mirror those in `crates/maptool/src/verify/sections.rs`
+    /// so a verb-rejected move and a `verify` violation read
+    /// identically.
+    ///
+    /// Drag callers must NOT invoke this per-frame — gather the
+    /// delta in a `MovingSectionInteraction`-shaped state and call
+    /// once on release. Per-frame calls would push one undo entry
+    /// per frame and explode the stack (mirrors the existing
+    /// `MovingNode` discipline).
+    ///
+    /// Returns `Ok(true)` on a real change, `Ok(false)` when the
+    /// section is missing or already at the target offset, and
+    /// `Err(msg)` on a validation failure with the mirror message.
+    pub fn set_section_offset(
+        &mut self,
+        node_id: &str,
+        section_idx: usize,
+        x: f64,
+        y: f64,
+    ) -> Result<bool, String> {
+        if !x.is_finite() || !y.is_finite() {
+            return Err(format!(
+                "section[{}].offset has non-finite component (x={}, y={})",
+                section_idx, x, y
+            ));
+        }
+        if x < 0.0 {
+            return Err(format!("section[{}].offset.x is negative ({})", section_idx, x));
+        }
+        if y < 0.0 {
+            return Err(format!("section[{}].offset.y is negative ({})", section_idx, y));
+        }
+        let node = match self.mindmap.nodes.get(node_id) {
+            Some(n) => n,
+            None => return Ok(false),
+        };
+        let Some(section) = node.sections.get(section_idx) else {
+            return Ok(false);
+        };
+        if let Some(size) = section.size.as_ref() {
+            let right = x + size.width;
+            let bottom = y + size.height;
+            if right > node.size.width {
+                return Err(format!(
+                    "section[{}] extends past node right edge ({} > {})",
+                    section_idx, right, node.size.width
+                ));
+            }
+            if bottom > node.size.height {
+                return Err(format!(
+                    "section[{}] extends past node bottom edge ({} > {})",
+                    section_idx, bottom, node.size.height
+                ));
+            }
+        }
+        if section.offset.x == x && section.offset.y == y {
+            return Ok(false);
+        }
+        let before_style = node.style.clone();
+        let before_sections = node.sections.clone();
+        let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
+        if let Some(section) = node.sections.get_mut(section_idx) {
+            section.offset.x = x;
+            section.offset.y = y;
+        }
+        self.undo_stack.push(UndoAction::EditNodeStyle {
+            node_id: node_id.to_string(),
+            before_style,
+            before_sections,
+        });
+        self.dirty = true;
+        Ok(true)
+    }
+
+    /// Set one section's `size`. `None` means "fill the parent
+    /// node" (the section's AABB is derived from `node.size` at
+    /// projection time); `Some(Size)` pins a specific AABB.
+    /// Validates against the same rules `verify::sections::check`
+    /// enforces — finite, strictly positive, within the parent's
+    /// AABB given the section's current offset, and not over 100×
+    /// the parent's dimension (typo guard).
+    ///
+    /// Drag callers must NOT invoke this per-frame; same discipline
+    /// as `set_section_offset`.
+    pub fn set_section_size(
+        &mut self,
+        node_id: &str,
+        section_idx: usize,
+        size: Option<baumhard::mindmap::model::Size>,
+    ) -> Result<bool, String> {
+        let node = match self.mindmap.nodes.get(node_id) {
+            Some(n) => n,
+            None => return Ok(false),
+        };
+        let Some(section) = node.sections.get(section_idx) else {
+            return Ok(false);
+        };
+        if let Some(s) = size.as_ref() {
+            if !s.width.is_finite() || !s.height.is_finite() {
+                return Err(format!(
+                    "section[{}].size has non-finite component (width={}, height={})",
+                    section_idx, s.width, s.height
+                ));
+            }
+            if s.width <= 0.0 {
+                return Err(format!(
+                    "section[{}].size.width is not positive ({})",
+                    section_idx, s.width
+                ));
+            }
+            if s.height <= 0.0 {
+                return Err(format!(
+                    "section[{}].size.height is not positive ({})",
+                    section_idx, s.height
+                ));
+            }
+            if node.size.width.is_finite() && s.width > node.size.width * 100.0 {
+                return Err(format!(
+                    "section[{}].size.width ({}) is over 100× the node's width ({}); \
+                     likely a typo (e.g. an extra zero)",
+                    section_idx, s.width, node.size.width
+                ));
+            }
+            if node.size.height.is_finite() && s.height > node.size.height * 100.0 {
+                return Err(format!(
+                    "section[{}].size.height ({}) is over 100× the node's height ({}); \
+                     likely a typo (e.g. an extra zero)",
+                    section_idx, s.height, node.size.height
+                ));
+            }
+            let right = section.offset.x + s.width;
+            let bottom = section.offset.y + s.height;
+            if right > node.size.width {
+                return Err(format!(
+                    "section[{}] extends past node right edge ({} > {})",
+                    section_idx, right, node.size.width
+                ));
+            }
+            if bottom > node.size.height {
+                return Err(format!(
+                    "section[{}] extends past node bottom edge ({} > {})",
+                    section_idx, bottom, node.size.height
+                ));
+            }
+        }
+        if section.size == size {
+            return Ok(false);
+        }
+        let before_style = node.style.clone();
+        let before_sections = node.sections.clone();
+        let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
+        if let Some(section) = node.sections.get_mut(section_idx) {
+            section.size = size;
+        }
+        self.undo_stack.push(UndoAction::EditNodeStyle {
+            node_id: node_id.to_string(),
+            before_style,
+            before_sections,
+        });
+        self.dirty = true;
+        Ok(true)
+    }
+
     pub fn set_node_text(&mut self, node_id: &str, new_text: String) -> bool {
         // Validate + capture under an immutable borrow so the mutable
         // re-acquisition below can coexist with the canvas-default

@@ -196,10 +196,10 @@ pub(super) fn grow_one_node_to_fit_text(node: &mut baumhard::mindmap::model::Min
 
     // Walk every section, measure its text under its dominant
     // run, and combine the per-section floors into one node-level
-    // floor. Sections with explicit `size` carry their own
-    // intrinsic bounds and don't grow the node — only `None`-size
-    // sections (the migration-default "fill the parent" shape)
-    // pull on the node's AABB.
+    // floor. Each section contributes the larger of its measured
+    // text bounds and (when set) its user-pinned `size` plus its
+    // offset — `Some`-sized sections survive when text fits, and
+    // text overflow grows the parent so nothing visually clips.
     //
     // §B5 lock-scope discipline: each section's measurement
     // acquires + drops the `FONT_SYSTEM` write guard
@@ -212,9 +212,6 @@ pub(super) fn grow_one_node_to_fit_text(node: &mut baumhard::mindmap::model::Min
     let mut floor_w: f64 = 0.0;
     let mut floor_h: f64 = 0.0;
     for section in &node.sections {
-        if section.size.is_some() {
-            continue;
-        }
         // Non-finite offsets contribute nothing — the verifier
         // flags them, and a NaN propagating into floor_w / floor_h
         // would corrupt every downstream `node.size` reader.
@@ -248,11 +245,27 @@ pub(super) fn grow_one_node_to_fit_text(node: &mut baumhard::mindmap::model::Min
             measure_text_block_unbounded(&mut fs, &section.text, scale, line_height, measure_font)
         };
 
+        // Section dimension contribution: text needs `block + pad`
+        // at minimum, but a `Some`-size section also pins a user-
+        // set floor (the author wrote "this section is at least
+        // this big"). Take the max so user intent survives when
+        // text fits, and overflow still grows the parent so
+        // nothing visually clips.
+        let mut section_w = (block.width + pad_x) as f64;
+        let mut section_h = (block.height + pad_y) as f64;
+        if let Some(s) = section.size.as_ref() {
+            if s.width.is_finite() && s.width > section_w {
+                section_w = s.width;
+            }
+            if s.height.is_finite() && s.height > section_h {
+                section_h = s.height;
+            }
+        }
         // Pass the offset through unmodified — the prior `.max(0)`
         // clamp silently treated leftward / upward overflow as zero,
         // hiding the actual visible-text width.
-        let need_w = (block.width + pad_x) as f64 + section.offset.x;
-        let need_h = (block.height + pad_y) as f64 + section.offset.y;
+        let need_w = section_w + section.offset.x;
+        let need_h = section_h + section.offset.y;
         if need_w > floor_w {
             floor_w = need_w;
         }

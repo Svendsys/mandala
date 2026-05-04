@@ -214,10 +214,7 @@ fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             "section" => match v.parse::<usize>() {
                 Ok(idx) => section_target = Some(idx),
                 Err(_) => {
-                    return ExecResult::err(format!(
-                        "font: section='{}' is not a non-negative integer",
-                        v
-                    ));
+                    return ExecResult::err(format!("font: section='{}' is not a non-negative integer", v));
                 }
             },
             other => return ExecResult::err(format!("unknown key '{}'", other)),
@@ -984,7 +981,10 @@ mod tests {
     /// given `font` and `size_pt` so a per-section font/size write
     /// is observable. Thin wrapper around the shared
     /// `make_two_section_node_with_pinned_runs` helper.
-    fn doc_with_two_sections_for_font(font: &str, size: u32) -> crate::application::document::MindMapDocument {
+    fn doc_with_two_sections_for_font(
+        font: &str,
+        size: u32,
+    ) -> crate::application::document::MindMapDocument {
         use crate::application::document::tests_common::make_two_section_node_with_pinned_runs;
         let mut doc = fixture_doc();
         make_two_section_node_with_pinned_runs(&mut doc, "0", "#ffffff", ["#ffffff", "#ffffff"], font, size);
@@ -1010,7 +1010,10 @@ mod tests {
         assert_exec_ok(run(&format!("font set {}", family), &mut doc));
         let node = doc.mindmap.nodes.get("0").unwrap();
         assert!(
-            node.sections[0].text_runs.iter().all(|r| r.font == "LiberationSans"),
+            node.sections[0]
+                .text_runs
+                .iter()
+                .all(|r| r.font == "LiberationSans"),
             "section 0 (sibling) must NOT change family"
         );
         assert!(
@@ -1066,7 +1069,10 @@ mod tests {
         assert!(super::apply_font_family_to_selection(&mut doc, &family));
         let node = doc.mindmap.nodes.get("0").unwrap();
         assert!(
-            node.sections[0].text_runs.iter().all(|r| r.font == "LiberationSans"),
+            node.sections[0]
+                .text_runs
+                .iter()
+                .all(|r| r.font == "LiberationSans"),
             "section 0 (sibling) must NOT change family"
         );
         assert!(

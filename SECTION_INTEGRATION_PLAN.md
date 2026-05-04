@@ -72,6 +72,14 @@ Legend: ✅ shipped · 🔧 in progress · ⏳ to do · ❌ deferred (out of 2A)
 | B18 | **Review fix-up — X2:** `CONCEPTS.md §6 Clipboard` extended with the Section variant + the `SECTION_BUFFER` mechanism and consistency-check semantics; the stale `clipboard.rs:1-40` line range citation refreshed to the current shape. | ✅ |
 | B19 | **Review fix-up — V7+V8:** plan tracker line 111 ("per-run / offset / size / channel fidelity is Tier 2B") replaced with a forward reference to B1-B9. `format/sections.md`'s structured-clipboard subsection rewritten to drop the implementation reference (`apply_section_payload`) and to mention the no-trim-on-either-side semantics that close the trailing-newline round-trip case. | ✅ |
 | B20 | **Review fix-up — cosmetic:** `apply_copy_or_cut` gains a one-line comment explaining why `break`-on-first is correct (selection_targets emits at most one clipboard-eligible target per shape today; `Multi` is node-only). | ✅ |
+| G1 | **Tier 2B-setters — `set_section_offset(node_id, idx, x, y) -> Result<bool, String>`** (`document/nodes/mod.rs`). Validates against the same rules `crates/maptool/src/verify/sections.rs` enforces — finite, non-negative, AABB-contained when size is `Some`. Rejection messages byte-equal to verify's. Single `EditNodeStyle` undo entry. Pinned by 6 tests in `tests_nodes.rs` (writes + undo, idempotent no-op, NaN/inf reject, negative reject, AABB-overflow reject, unknown-section returns Ok(false)). | ✅ |
+| G2 | **Tier 2B-setters — `set_section_size(node_id, idx, Option<Size>) -> Result<bool, String>`** (`document/nodes/mod.rs`). Same validation surface (finite, strictly positive, AABB-contained, not 100× node — typo guard); `None` always valid (revert to fill-parent). Pinned by 6 tests (writes + undo, None resets, zero/negative reject, overflow reject, astronomical reject, idempotent no-op). | ✅ |
+| G3 | **Tier 2B-setters — verb-side `Outcome::Invalid` messaging** mirrors `verify::sections::check`. Implemented as `Result<bool, String>` returns from G1/G2 that the verb file translates to `ExecResult::err`. Unified message body so a verb-rejected edit and a `verify` violation read identically. Covered transitively in G4/G5 verb tests. | ✅ |
+| G4 | **Tier 2B-setters — console verb `section move <dx> <dy> [section=<idx>]`** in new file `console/commands/section.rs`. `dx`/`dy` are positional `f64`s (deltas relative to current offset). The `section=<idx>` kv is required when the active selection is `Single` (no implicit default); a `Section` selection supplies the index. Pinned by 7 tests (writes via section selection, kv overrides selection, single-selection without kv rejected, overflow reject with verify-mirror message, negative-offset reject, dx parse error, no-change ok-msg). | ✅ |
+| G5 | **Tier 2B-setters — console verb `section resize <w> <h> [section=<idx>]` and `section resize none`.** `none` flips back to `Option::None` (fill-parent) — the only console-side path to that state today, closing the spec gap. Pinned by 6 tests (writes, none clears, overflow reject, zero reject, astronomical reject, undo round-trip). | ✅ |
+| G6 | **Tier 2B-setters — auto-fit covers `Some`-sized sections** (`document/mod.rs::grow_one_node_to_fit_text`). Predicate now contributes the **larger of** measured text bounds and (when set) user-pinned `size` to the node-floor calculation, so user intent ("at least this big") survives when text fits AND text overflow still grows the parent (nothing visually clips). Pinned by 3 tests in `tests_nodes.rs` (overflow grows parent, user-size survives when text fits, None-sized regression). | ✅ |
+| G7 | **Tier 2B-setters — docs.** `format/sections.md` gains a "Position and size verbs" subsection describing `section move` / `section resize` semantics + selection-shape requirements + the verify-message mirroring. `format/validation.md` gains a "Section bounds" subsection capturing the rules `verify::sections` enforces, with cross-link to the verbs. | ✅ |
+| — | **UX-consistency gap surfaced:** sections now have verbs for color / font / clipboard / move / resize, but **drag and resize gestures still hit the whole node** (`event_cursor_moved.rs:160-173` discards `hit_section_idx`). Tier 2B-drag and Tier 2B-resize close the gesture half. Flagged in the new `format/sections.md` "Position and size verbs" paragraph until the gestures land. | ⏳ |
 
 ## Context
 
@@ -371,27 +379,48 @@ Test locations: `console/tests/color.rs`, `console/tests/font.rs`,
 
 ## Out of scope — captured for future iterations
 
-### Tier 2B — partial: clipboard shipped, gestures pending
+### Tier 2B — partial: clipboard + setters shipped, gestures pending
 
-**Tier 2B-clipboard ✅ shipped** — captured in plan rows B1-B9.
-Structured `ClipboardContent::Section { text, payload }` with
-`String` fallback now round-trips per-run formatting and section
-chrome through both verb and Action paste paths via the
-in-process `SECTION_BUFFER` slot.
+**Tier 2B-clipboard ✅ shipped** — rows B1-B20. Structured
+`ClipboardContent::Section { text, payload }` with `String`
+fallback round-trips per-run formatting and section chrome
+through verb and Action paste paths via the in-process
+`SECTION_BUFFER` slot.
 
-**Tier 2B-gesture ⏳ remaining** — drag, resize, and the partial
-auto-fit gap. These share infrastructure (`set_section_offset` /
-`set_section_size` setters with AABB validation, plus event-loop
-state) so they sequence as a single follow-up:
+**Tier 2B-setters ✅ shipped** — rows G1-G7. `set_section_offset`
+/ `set_section_size` document setters with full AABB validation
+mirroring `maptool verify`. Console verbs `section move` /
+`section resize` (including `section resize none` for the
+fill-parent flip). Auto-fit predicate covers `Some`-sized
+sections with size-as-floor semantics. Move/resize gestures
+remain — verb-only path closes the verb half of the
+UX-consistency gap.
 
-- Section drag — `DragState::MovingSection` /
-  `ThrottledDrag::MovingSection`; threshold-cross promotion at
-  `event_cursor_moved.rs:160-173` keeps `hit_section_idx`.
-- Section resize handles for `section.size`.
-- `set_section_offset` / `set_section_size` document setters with
-  AABB validation.
-- Console verbs `section move <dx> <dy>` / `section resize <w> <h>`.
-- Auto-fit covers `Some`-sized sections (`document/mod.rs:215`).
+**Tier 2B-drag ⏳ remaining** — promote section hits at the
+threshold-cross instead of discarding `hit_section_idx`:
+
+- `DragState::Throttled(ThrottledDrag::MovingSection { node_id,
+  section_idx, ... })` variant + `MovingSectionInteraction`
+  struct mirroring `moving_node.rs`.
+- Threshold-cross promotion at `event_cursor_moved.rs:160-173`
+  consumes the currently-discarded `hit_section_idx` (line 169)
+  and routes Section-hits to `MovingSection`, falling back to
+  `MovingNode` when the selection is `Single` or the node is
+  single-section.
+- Drain calls `set_section_offset`. **Release pushes a single**
+  `EditNodeStyle{before_sections}` undo entry (NOT per-frame —
+  the setters' docstring already pins this discipline).
+
+**Tier 2B-resize ⏳ remaining** — render handles + hit-test +
+gesture state. New surface area, separate review session:
+
+- `HitTarget::SectionResizeHandle { node_id, section_idx, side }`
+  variant in `document/hit_test.rs`; only emitted for sections
+  with `size.is_some()` (single-section nodes' folded
+  `NodeContainer` rule still wins).
+- Renderer-side handle markers per `Some`-sized section.
+- `DragState::Throttled(ThrottledDrag::ResizingSection)`
+  analogous to `EdgeHandle`. Drain calls `set_section_size`.
 
 ### Tier 2C (deferred — larger product changes)
 
@@ -399,7 +428,16 @@ state) so they sequence as a single follow-up:
 - Manual node-resize gesture + `set_node_size` setter.
 - Auto-fit shrink path / `node fit-to-content` verb.
 - Per-grapheme range targeting via picker / font / color commands.
-- "Insert section" paste verb.
+
+### Dropped from the original Tier 2C scope
+
+- ~~"Insert section" paste verb.~~ Obsoleted by Tier 2B-clipboard:
+  the structured `ClipboardContent::Section` payload already
+  round-trips section→section via `apply_section_payload`, and
+  pasting plain text into a non-section spot is covered by
+  `set_section_text`'s template-collapse. There is no UX gap a
+  dedicated "insert section" verb would fill that the structured
+  paste doesn't already cover.
 
 ### Surfaced by post-Tier-2A review, addressed in Tier 2A.5
 

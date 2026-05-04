@@ -106,6 +106,29 @@ will see the variable replaced with a hex literal. The
 setters bypass the round trip and preserve `var(--name)`
 references verbatim.
 
+### Position and size verbs
+
+`section move <dx> <dy> [section=<idx>]` shifts the section's
+`offset` by `(dx, dy)` relative to the owning node's `position`.
+`section resize <w> <h> [section=<idx>]` pins `section.size` to
+`Some({w, h})`; `section resize none` flips it back to `None`
+(fill-parent — the migration default). The `section=<idx>` kv is
+required when the active selection is a single node (no implicit
+default — authors who want section 0 specifically should say
+so); a `SelectionState::Section` selection supplies the index
+unless the kv overrides it.
+
+Both verbs validate against the rules `maptool verify`'s
+[`verify::sections`](./validation.md) enforces — finite +
+non-negative offset, finite + strictly positive size, AABB
+contained within the parent node's bounds, no astronomical
+typos. Rejection messages are byte-equal to verify's so a
+verb-rejected edit and a `verify` violation read identically.
+Move and resize gestures (drag handles) are queued for a
+future iteration; until then, position/size edits are verb-
+only even though selection / colour / font edits all work
+through gestures already.
+
 ### Console axis applicability on a section selection
 
 Sections only have a **text** colour axis (`color text=…`). The
