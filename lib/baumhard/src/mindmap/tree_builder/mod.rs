@@ -21,6 +21,7 @@ mod connection;
 mod connection_label;
 mod edge_handle;
 mod node;
+mod node_resize_handle;
 mod portal;
 mod section_resize_handle;
 
@@ -47,6 +48,10 @@ pub use portal::{
     build_portal_mutator_tree, build_portal_mutator_tree_from_pairs, build_portal_tree,
     build_portal_tree_from_pairs, portal_identity_sequence, portal_pair_data, PortalColorPreviewRef,
     PortalIdentity, PortalMutator, PortalPairData, PortalTree, SelectedEdgeRef,
+};
+pub use node_resize_handle::{
+    build_node_resize_handle_mutator_tree, build_node_resize_handle_tree,
+    node_resize_handle_identity_sequence,
 };
 pub use section_resize_handle::{
     build_section_resize_handle_mutator_tree, build_section_resize_handle_tree,

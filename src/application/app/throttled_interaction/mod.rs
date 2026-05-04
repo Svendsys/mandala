@@ -31,6 +31,7 @@ pub(in crate::application::app) mod edge_handle;
 pub(in crate::application::app) mod edge_label;
 pub(in crate::application::app) mod moving_node;
 pub(in crate::application::app) mod moving_section;
+pub(in crate::application::app) mod node_resize;
 pub(in crate::application::app) mod portal_label;
 pub(in crate::application::app) mod section_resize;
 #[cfg(test)]
@@ -41,6 +42,7 @@ pub(in crate::application::app) use edge_handle::EdgeHandleInteraction;
 pub(in crate::application::app) use edge_label::EdgeLabelInteraction;
 pub(in crate::application::app) use moving_node::MovingNodeInteraction;
 pub(in crate::application::app) use moving_section::MovingSectionInteraction;
+pub(in crate::application::app) use node_resize::NodeResizeInteraction;
 pub(in crate::application::app) use portal_label::PortalLabelInteraction;
 pub(in crate::application::app) use section_resize::SectionResizeInteraction;
 
@@ -72,6 +74,7 @@ pub(in crate::application::app) enum ThrottledDrag {
     MovingNode(MovingNodeInteraction),
     MovingSection(MovingSectionInteraction),
     SectionResize(SectionResizeInteraction),
+    NodeResize(NodeResizeInteraction),
     EdgeHandle(EdgeHandleInteraction),
     PortalLabel(PortalLabelInteraction),
     EdgeLabel(EdgeLabelInteraction),
@@ -87,6 +90,7 @@ impl ThrottledDrag {
             Self::MovingNode(i) => i,
             Self::MovingSection(i) => i,
             Self::SectionResize(i) => i,
+            Self::NodeResize(i) => i,
             Self::EdgeHandle(i) => i,
             Self::PortalLabel(i) => i,
             Self::EdgeLabel(i) => i,

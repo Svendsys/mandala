@@ -74,8 +74,8 @@ Complete field reference for every type in `.mindmap.json`.
 |---|---|---|
 | `id` | string | Dewey-decimal structural ID — see [ids.md](./ids.md) |
 | `parent_id` | string\|null | Parent reference; `null` for roots |
-| `position.x`, `position.y` | number | Absolute canvas coordinates |
-| `size.width`, `size.height` | number | Pixel dimensions |
+| `position.x`, `position.y` | number | Absolute canvas coordinates. May be negative (nodes float freely on the canvas with no parent AABB constraint). |
+| `size.width`, `size.height` | number | Pixel dimensions. Must be finite and strictly positive — `set_node_size` and `set_node_aabb` reject zero / negative / non-finite components, and `set_node_size` flags >100× the prior axis as a likely typo. The `node resize <w> <h>` console verb and the drag-to-resize gesture both route through these setters. |
 | `sections` | array | The user-data strata of this node — one or more positioned text-bearing surfaces inside the node AABB. Every renderable node has at least one section. Pre-section maps (`text` / `text_runs` directly on the node) are migrated by `maptool convert --sections`. See [sections.md](./sections.md). |
 | `style` | object | Visual styling (colors, shape, border) |
 | `layout` | object | How this node's *children* are arranged |

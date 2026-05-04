@@ -478,12 +478,14 @@ via full `rebuild_all`. New scene-builder element
 consistency gap entirely — drag and resize gestures both ship
 for sections.
 
-### Tier 2C (deferred — larger product changes)
+### Tier 2C — work items
 
-- `SelectionState::MultiSection`.
-- Manual node-resize gesture + `set_node_size` setter.
-- Auto-fit shrink path / `node fit-to-content` verb.
-- Per-grapheme range targeting via picker / font / color commands.
+| # | Description | Status |
+|---|---|---|
+| N1 | **Manual node-resize gesture + `set_node_size` setter.** Shipped — `set_node_size` and `set_node_aabb` setters write through one new `EditNodeAabb` undo entry; `node resize <w> <h>` console verb (lifts to owning node from a section selection); 8 resize handles emit on `Single(node_id)` selection (corners + edge midpoints, layer 52); threshold-cross promotion to `ThrottledDrag::NodeResize` between `EdgeHandle` and `SectionResize` arms; per-frame drain writes tree position+bounds and refreshes handle positions for live mid-drag feedback; release commits via `set_node_aabb` with single undo entry; `is_drag_with_tree_mutation` extended to suppress animation-tick during the drag. New baumhard `NodeResizeHandleElement` + `build_node_resize_handles` + tree builder; new `CanvasRole::NodeResizeHandles`; new `apply_node_resize_to_tree` helper. **35 new tests**: 8 setter tests (size + aabb), 4 hit-test tests, 2 tree-mutation tests, 4 console-verb tests, 12 interaction tests (every `resolve()` direction + has_pending + reset + macro suite), plus 5 baumhard scene-builder tests pinning handle positions. | ✅ |
+| N2 | **Auto-fit shrink path / `node fit-to-content` verb.** | ⏳ |
+| N3 | **`SelectionState::MultiSection`.** | ⏳ |
+| N4 | **Per-grapheme range targeting via picker / font / color commands.** | ⏳ |
 
 ### Dropped from the original Tier 2C scope
 

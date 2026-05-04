@@ -85,6 +85,16 @@ impl MindMapDocument {
                         node.sections = before_sections;
                     }
                 }
+                UndoAction::EditNodeAabb {
+                    node_id,
+                    before_position,
+                    before_size,
+                } => {
+                    if let Some(node) = self.mindmap.nodes.get_mut(&node_id) {
+                        node.position = before_position;
+                        node.size = before_size;
+                    }
+                }
                 UndoAction::EditNodeZoom {
                     node_id,
                     before_min,

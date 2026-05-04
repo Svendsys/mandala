@@ -240,6 +240,7 @@ pub(in crate::application::app) fn rebuild_scene_only(
     update_portal_tree(doc, &std::collections::HashMap::new(), app_scene, renderer);
     update_edge_handle_tree(&scene, app_scene);
     update_section_resize_handle_tree(&scene, app_scene);
+    update_node_resize_handle_tree(&scene, app_scene);
     update_connection_label_tree(&scene, app_scene, renderer);
     flush_canvas_scene_buffers(app_scene, renderer);
 }
@@ -535,6 +536,46 @@ pub(in crate::application::app) fn update_section_resize_handle_tree(
     app_scene: &mut crate::application::scene_host::AppScene,
 ) {
     update_section_resize_handle_tree_from_slice(&scene.section_resize_handles, app_scene);
+}
+
+/// Build or in-place update the node-resize-handle tree under
+/// [`crate::application::scene_host::CanvasRole::NodeResizeHandles`].
+/// Sibling of `update_section_resize_handle_tree`; same §B2
+/// dispatch. Selection-gated 0 ↔ 8 transitions take the full-
+/// rebuild arm; a steady drag stays on the in-place mutator arm.
+pub(in crate::application::app) fn update_node_resize_handle_tree(
+    scene: &baumhard::mindmap::scene_builder::RenderScene,
+    app_scene: &mut crate::application::scene_host::AppScene,
+) {
+    update_node_resize_handle_tree_from_slice(&scene.node_resize_handles, app_scene);
+}
+
+/// Same as [`update_node_resize_handle_tree`] but takes the
+/// element slice directly. Used by the resize drain to refresh
+/// handle positions per-frame against the in-progress AABB
+/// without round-tripping through a full `RenderScene` build.
+pub(in crate::application::app) fn update_node_resize_handle_tree_from_slice(
+    elements: &[baumhard::mindmap::scene_builder::NodeResizeHandleElement],
+    app_scene: &mut crate::application::scene_host::AppScene,
+) {
+    use crate::application::scene_host::{hash_canvas_signature, CanvasDispatch, CanvasRole};
+    use baumhard::mindmap::tree_builder::{
+        build_node_resize_handle_mutator_tree, build_node_resize_handle_tree,
+        node_resize_handle_identity_sequence,
+    };
+
+    let signature = hash_canvas_signature(&node_resize_handle_identity_sequence(elements));
+    match app_scene.canvas_dispatch(CanvasRole::NodeResizeHandles, signature) {
+        CanvasDispatch::InPlaceMutator => {
+            let mutator = build_node_resize_handle_mutator_tree(elements);
+            app_scene.apply_canvas_mutator(CanvasRole::NodeResizeHandles, &mutator);
+        }
+        CanvasDispatch::FullRebuild => {
+            let tree = build_node_resize_handle_tree(elements);
+            app_scene.register_canvas(CanvasRole::NodeResizeHandles, tree, glam::Vec2::ZERO);
+            app_scene.set_canvas_signature(CanvasRole::NodeResizeHandles, signature);
+        }
+    }
 }
 
 /// Same as [`update_section_resize_handle_tree`] but takes the

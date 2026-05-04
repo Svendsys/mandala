@@ -318,6 +318,26 @@ pub(super) fn handle_mouse_input(
                     },
                     None => None,
                 };
+                // Node resize handle press capture — when a node
+                // is `Single`-selected, the cursor may land on
+                // one of its 8 handles. Same shape / tolerance
+                // as edge + section handles.
+                let hit_node_resize_handle = match ctx.document.as_ref() {
+                    Some(doc) => match &doc.selection {
+                        SelectionState::Single(id) => {
+                            let tol = HANDLE_HIT_TOLERANCE_PX * ctx.renderer.canvas_per_pixel();
+                            crate::application::document::hit_test_node_resize_handle(
+                                &doc.mindmap,
+                                canvas_pos,
+                                id,
+                                tol,
+                            )
+                            .map(|side| (id.clone(), side))
+                        }
+                        _ => None,
+                    },
+                    None => None,
+                };
                 // Portal-label drag capture. Takes precedence
                 // over `hit_node` at threshold-cross time so
                 // pressing a marker and dragging slides the label
@@ -348,6 +368,7 @@ pub(super) fn handle_mouse_input(
                     hit_portal_label,
                     hit_edge_label: edge_label_hit,
                     hit_section_resize_handle,
+                    hit_node_resize_handle,
                 };
             } else {
                 // Released
@@ -628,6 +649,35 @@ pub(super) fn handle_mouse_input(
                             // (and therefore stale scene-cache
                             // samples) regardless of which
                             // arm above ran.
+                            ctx.scene_cache.clear();
+                            rebuild_all(
+                                doc,
+                                ctx.mindmap_tree,
+                                ctx.app_scene,
+                                ctx.renderer,
+                                ctx.scene_cache,
+                            );
+                        }
+                    }
+                    DragState::Throttled(ThrottledDrag::NodeResize(i)) => {
+                        // Single atomic setter call on release.
+                        // `set_node_aabb` validates the new
+                        // (position, size) pair and writes both
+                        // under one `EditNodeAabb` undo entry.
+                        // Rejection (NaN, non-positive, astronomical)
+                        // logs and falls through to `rebuild_all`
+                        // — node snaps back to pre-drag AABB.
+                        if let Some(doc) = ctx.document.as_mut() {
+                            let (new_position, new_size) = i.resolve(i.total_delta);
+                            match doc.set_node_aabb(&i.node_id, new_position, new_size) {
+                                Ok(true) => {}
+                                Ok(false) => {
+                                    log::debug!("node resize committed no-op on '{}'", i.node_id);
+                                }
+                                Err(msg) => {
+                                    log::info!("node resize release rejected: {} (snapping back)", msg);
+                                }
+                            }
                             ctx.scene_cache.clear();
                             rebuild_all(
                                 doc,

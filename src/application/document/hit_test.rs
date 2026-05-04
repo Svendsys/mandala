@@ -18,7 +18,7 @@ use baumhard::gfx_structs::tree::MutatorTree;
 use baumhard::gfx_structs::tree_walker::walk_tree_from;
 use baumhard::mindmap::connection;
 use baumhard::mindmap::model::MindMap;
-use baumhard::mindmap::scene_builder::{build_section_resize_handles, ResizeHandleSide};
+use baumhard::mindmap::scene_builder::{build_node_resize_handles, build_section_resize_handles, ResizeHandleSide};
 use baumhard::mindmap::tree_builder::MindMapTree;
 
 use super::types::EdgeRef;
@@ -523,6 +523,95 @@ pub fn apply_section_resize_to_tree(
         if let Some(area) = node.get_mut().glyph_area_mut() {
             area.set_position((new_position.x, new_position.y));
             area.set_bounds((new_size.x, new_size.y));
+        }
+    }
+    tree.tree.invalidate_caches();
+}
+
+/// Hit-test the 8 resize handles of a node at `canvas_pos`.
+/// Returns the closest handle whose canvas-space center is within
+/// `tolerance` of the cursor, or `None` if no handle is in range.
+/// Sibling of [`hit_test_section_resize_handle`]; same shape,
+/// different domain.
+///
+/// Returns `None` for missing nodes, hidden-by-fold nodes, and
+/// nodes whose `size` has any non-finite or non-positive
+/// component (those don't render handles).
+pub fn hit_test_node_resize_handle(
+    map: &MindMap,
+    canvas_pos: Vec2,
+    node_id: &str,
+    tolerance: f32,
+) -> Option<ResizeHandleSide> {
+    let node = map.nodes.get(node_id)?;
+    if map.is_hidden_by_fold(node) {
+        return None;
+    }
+    let handles = build_node_resize_handles(node_id, node.pos_vec2(), node.size_vec2());
+
+    let mut best: Option<(ResizeHandleSide, f32)> = None;
+    for h in handles {
+        let pos = Vec2::new(h.position.0, h.position.1);
+        let dist = canvas_pos.distance(pos);
+        if dist > tolerance {
+            continue;
+        }
+        if best.as_ref().map_or(true, |(_, d)| dist < *d) {
+            best = Some((h.side, dist));
+        }
+    }
+    best.map(|(s, _)| s)
+}
+
+/// Per-frame tree mutation for the node-resize gesture: write the
+/// in-progress `(canvas_position, canvas_size)` to the node's
+/// container `GlyphArea` and to every section-area's position.
+/// The renderer's `rebuild_buffers_from_tree` reshapes against
+/// the new bounds on the next pass, so the user sees the node
+/// resize live.
+///
+/// **Tree-only.** The model is unchanged until release-commit
+/// where `set_node_aabb` writes the final state under one
+/// `EditNodeAabb` undo entry.
+///
+/// Section-area positions follow the node's position delta — the
+/// tree carries section AABB positions in absolute canvas
+/// coordinates, so a node move that doesn't shift sections leaves
+/// them visually detached. Section *bounds* aren't recomputed
+/// here; release-commit's full `rebuild_all` re-derives them from
+/// the model. Mid-drag, section content stays at the pre-drag
+/// size — acceptable since the user's eye tracks the node frame.
+pub fn apply_node_resize_to_tree(
+    tree: &mut MindMapTree,
+    node_id: &str,
+    new_position: Vec2,
+    new_size: Vec2,
+    position_delta: Vec2,
+) {
+    let container_id = match tree.arena_id_for(node_id) {
+        Some(id) => id,
+        None => return,
+    };
+    if let Some(node) = tree.tree.arena.get_mut(container_id) {
+        if let Some(area) = node.get_mut().glyph_area_mut() {
+            area.set_position((new_position.x, new_position.y));
+            area.set_bounds((new_size.x, new_size.y));
+        }
+    }
+    // Shift section-area positions by the same position delta the
+    // container moved by — sections store absolute canvas coords
+    // and would visibly detach otherwise. `move_position` is the
+    // delta-based mutator; safe to call with `(0, 0)` for the
+    // pure-grow case (E/S/SE handles).
+    if position_delta.x != 0.0 || position_delta.y != 0.0 {
+        let child_ids: Vec<indextree::NodeId> = container_id.children(&tree.tree.arena).collect();
+        for child in child_ids {
+            apply_delta_recursive(
+                &mut tree.tree.arena,
+                child,
+                position_delta.x,
+                position_delta.y,
+            );
         }
     }
     tree.tree.invalidate_caches();

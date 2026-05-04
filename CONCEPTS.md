@@ -1073,13 +1073,13 @@ pointer at `maptool convert --sections`. Full reference:
 
   **Animation interleaving.** While any drag that mutates the
   tree per-frame is in flight (`MovingNode`, `MovingSection`,
-  `SectionResize`), `drain_animation_tick` is suppressed in
-  `run_native::drain_frame`. The animation tick routes through
-  `apply_custom_mutation` → `sync_node_from_tree`, which would
-  otherwise observe the in-progress mid-drag tree position and
-  write it to the model + undo stack — corrupting both the
-  gesture and the animation. Edge / portal-label drags don't
-  qualify; they touch the document directly, not the tree.
+  `SectionResize`, `NodeResize`), `drain_animation_tick` is
+  suppressed in `run_native::drain_frame`. The animation tick
+  routes through `apply_custom_mutation` → `sync_node_from_tree`,
+  which would otherwise observe the in-progress mid-drag tree
+  position and write it to the model + undo stack — corrupting
+  both the gesture and the animation. Edge / portal-label drags
+  don't qualify; they touch the document directly, not the tree.
   Animations resume on the next frame after release.
 - **Multiple `GlyphModel`s per section.** Still on the
   trajectory — today a section holds exactly one structural
@@ -1998,16 +1998,17 @@ always win over larger AABBs.
 
 ### `ThrottledInteraction` and `ThrottledDrag`
 
-**Summary.** A trait + six-variant enum providing one uniform
+**Summary.** A trait + seven-variant enum providing one uniform
 shell for continuous, high-rate-input drag types.
 
 **What it's for.** Dragging a node, a section, a section's
-resize handle, an edge handle, a portal label, and an edge label
-all follow the same per-frame pattern: accumulate input deltas,
-ask the throttle whether to drain, apply if drain, otherwise
-wait. The trait factors that accept-and-drain dance into one
-place; new throttled drags attach as one struct + one trait
-impl + one enum variant without growing the dispatch.
+resize handle, a node's resize handle, an edge handle, a portal
+label, and an edge label all follow the same per-frame pattern:
+accumulate input deltas, ask the throttle whether to drain,
+apply if drain, otherwise wait. The trait factors that
+accept-and-drain dance into one place; new throttled drags
+attach as one struct + one trait impl + one enum variant
+without growing the dispatch.
 
 **Under the hood.**
 `src/application/app/throttled_interaction/mod.rs`.
@@ -2022,8 +2023,12 @@ Variants:
   handle of a `Some`-sized selected section. Threshold-cross
   promotes here when the press lands on one of the 8 handles
   (corners + edge midpoints); release commits a single
-  `(offset, size)` write through `set_section_size` +
-  `set_section_offset`.
+  `(offset, size)` write through `set_section_aabb`.
+- `NodeResize(NodeResizeInteraction)` — drags one resize handle
+  of a `Single`-selected node. Threshold-cross promotes here
+  when the press lands on one of the node's 8 handles; release
+  commits a single `(position, size)` write through
+  `set_node_aabb`.
 - `EdgeHandle(EdgeHandleInteraction)`
 - `PortalLabel(PortalLabelInteraction)`
 - `EdgeLabel(EdgeLabelInteraction)`
@@ -2600,8 +2605,8 @@ chosen at compile time (Desktop on native, Web on WASM); the
 The following are native-only today, with reasons:
 
 - **Drag gestures** — pan, move-node, move-section,
-  section-resize, edge-handle, portal-label, rect-select,
-  edge-label. The whole `DragState`
+  section-resize, node-resize, edge-handle, portal-label,
+  rect-select, edge-label. The whole `DragState`
   enum is native-gated; the cross-platform story will be
   touch-first recognisers feeding the same `ThrottledDrag`
   variants.

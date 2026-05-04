@@ -16,7 +16,7 @@ use super::input_context::InputHandlerContext;
 use super::scene_rebuild::{rebuild_after_selection_change, rebuild_all};
 use super::throttled_interaction::{
     EdgeHandleInteraction, EdgeLabelInteraction, MovingNodeInteraction, MovingSectionInteraction,
-    PortalLabelInteraction, SectionResizeInteraction, ThrottledDrag,
+    NodeResizeInteraction, PortalLabelInteraction, SectionResizeInteraction, ThrottledDrag,
 };
 use super::{AppMode, DragState};
 use crate::application::common::RenderDecree;
@@ -131,6 +131,11 @@ pub(super) fn handle_cursor_moved(
             i.total_delta += delta;
             i.pending_delta += delta;
         }
+        DragState::Throttled(ThrottledDrag::NodeResize(i)) => {
+            let delta = canvas_delta(ctx.renderer, prev_pos, cursor_pos_val);
+            i.total_delta += delta;
+            i.pending_delta += delta;
+        }
         DragState::Throttled(ThrottledDrag::EdgeLabel(i)) => {
             // Overwrite discipline: store the latest cursor —
             // `EdgeLabelInteraction::drain` projects it onto the
@@ -158,6 +163,7 @@ pub(super) fn handle_cursor_moved(
             hit_portal_label,
             hit_edge_label,
             hit_section_resize_handle,
+            hit_node_resize_handle,
         } => {
             let dist_x = cursor_pos_val.0 - start_pos.0;
             let dist_y = cursor_pos_val.1 - start_pos.1;
@@ -264,6 +270,39 @@ pub(super) fn handle_cursor_moved(
                                 EdgeHandleInteraction::new(edge_ref, handle_kind, original, start_handle_pos),
                             ));
                             return;
+                        }
+                    }
+                }
+                if let Some((node_id, side)) = hit_node_resize_handle.take() {
+                    // Snapshot the node's pre-drag (position, size)
+                    // so the drain math + release commit derive
+                    // from a stable base. Skip if the node vanished
+                    // between press and threshold (deletion mid-
+                    // press) or had its size go non-finite /
+                    // non-positive (selection-gating means we
+                    // shouldn't see this; defensive against
+                    // model mutations through the console mid-
+                    // press).
+                    if let Some(doc) = ctx.document.as_ref() {
+                        if let Some(node) = doc.mindmap.nodes.get(&node_id) {
+                            if node.size.width.is_finite()
+                                && node.size.height.is_finite()
+                                && node.size.width > 0.0
+                                && node.size.height > 0.0
+                            {
+                                let start_position = node.position;
+                                let start_size = node.size;
+                                ctx.scene_cache.clear();
+                                *ctx.drag_state = DragState::Throttled(ThrottledDrag::NodeResize(
+                                    NodeResizeInteraction::new(
+                                        node_id,
+                                        side,
+                                        start_position,
+                                        start_size,
+                                    ),
+                                ));
+                                return;
+                            }
                         }
                     }
                 }

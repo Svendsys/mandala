@@ -24,6 +24,7 @@ pub mod help;
 pub mod label;
 pub mod mutation;
 pub mod new;
+pub mod node;
 pub mod open;
 pub mod save;
 pub mod section;
@@ -79,6 +80,7 @@ pub const COMMANDS: &[Command] = &[
     save::COMMAND,
     open::COMMAND,
     new::COMMAND,
+    node::COMMAND,
     section::COMMAND,
     zoom::COMMAND,
 ];

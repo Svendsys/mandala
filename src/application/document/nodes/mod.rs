@@ -729,6 +729,106 @@ impl MindMapDocument {
         Ok(true)
     }
 
+    /// Set a node's `size` under a single `EditNodeAabb` undo
+    /// entry. Validates finite + strictly positive components and
+    /// rejects astronomical typos (>100× the prior dimension on
+    /// the same axis). Position stays unchanged. Used by the
+    /// `node resize <w> <h>` console verb.
+    ///
+    /// Drag callers must NOT invoke this per-frame; gather delta
+    /// in a gesture-state shape and call once on release via
+    /// [`Self::set_node_aabb`] which atomically writes both
+    /// position and size.
+    pub fn set_node_size(
+        &mut self,
+        node_id: &str,
+        new_size: baumhard::mindmap::model::Size,
+    ) -> Result<bool, String> {
+        validate_node_size(new_size)?;
+        let node = match self.mindmap.nodes.get(node_id) {
+            Some(n) => n,
+            None => return Ok(false),
+        };
+        if new_size.width > node.size.width * 100.0 {
+            return Err(format!(
+                "node.size.width ({}) is over 100× the prior width ({}); \
+                 likely a typo (e.g. an extra zero)",
+                new_size.width, node.size.width
+            ));
+        }
+        if new_size.height > node.size.height * 100.0 {
+            return Err(format!(
+                "node.size.height ({}) is over 100× the prior height ({}); \
+                 likely a typo (e.g. an extra zero)",
+                new_size.height, node.size.height
+            ));
+        }
+        if node.size == new_size {
+            return Ok(false);
+        }
+        let before_position = node.position;
+        let before_size = node.size;
+        let n = self.mindmap.nodes.get_mut(node_id).expect("just confirmed exists");
+        n.size = new_size;
+        self.undo_stack.push(UndoAction::EditNodeAabb {
+            node_id: node_id.to_string(),
+            before_position,
+            before_size,
+        });
+        self.dirty = true;
+        Ok(true)
+    }
+
+    /// Set a node's `(position, size)` atomically under a single
+    /// `EditNodeAabb` undo entry. Used by the node-resize gesture's
+    /// release-commit — corner / edge handles whose `axis_factors`
+    /// shrink size by the same delta they shift offset by need
+    /// the AABB written in lockstep so the undo stack carries one
+    /// pre-edit pair, not two interleaved entries.
+    pub fn set_node_aabb(
+        &mut self,
+        node_id: &str,
+        new_position: baumhard::mindmap::model::Position,
+        new_size: baumhard::mindmap::model::Size,
+    ) -> Result<bool, String> {
+        validate_node_position(new_position)?;
+        validate_node_size(new_size)?;
+        let node = match self.mindmap.nodes.get(node_id) {
+            Some(n) => n,
+            None => return Ok(false),
+        };
+        if new_size.width > node.size.width * 100.0 {
+            return Err(format!(
+                "node.size.width ({}) is over 100× the prior width ({}); \
+                 likely a typo (e.g. an extra zero)",
+                new_size.width, node.size.width
+            ));
+        }
+        if new_size.height > node.size.height * 100.0 {
+            return Err(format!(
+                "node.size.height ({}) is over 100× the prior height ({}); \
+                 likely a typo (e.g. an extra zero)",
+                new_size.height, node.size.height
+            ));
+        }
+        let same_position = node.position.x == new_position.x && node.position.y == new_position.y;
+        if same_position && node.size == new_size {
+            return Ok(false);
+        }
+        let before_position = node.position;
+        let before_size = node.size;
+        let n = self.mindmap.nodes.get_mut(node_id).expect("just confirmed exists");
+        n.position = new_position;
+        n.size = new_size;
+        self.undo_stack.push(UndoAction::EditNodeAabb {
+            node_id: node_id.to_string(),
+            before_position,
+            before_size,
+        });
+        self.dirty = true;
+        Ok(true)
+    }
+
     pub fn set_node_text(&mut self, node_id: &str, new_text: String) -> bool {
         // Validate + capture under an immutable borrow so the mutable
         // re-acquisition below can coexist with the canvas-default
@@ -1065,6 +1165,42 @@ fn check_node_size_finite_positive(
     }
     if node.size.height <= 0.0 {
         return Err(format!("node.size.height is not positive ({})", node.size.height));
+    }
+    Ok(())
+}
+
+/// Validate a candidate `(width, height)` for a node — finite +
+/// strictly positive components. The astronomical-typo guard is
+/// per-setter (it compares against the prior node size on the
+/// same axis) and lives at the call site, not here. Returns the
+/// same rejection messages `verify::sections` emits for the
+/// node-level size check.
+fn validate_node_size(size: baumhard::mindmap::model::Size) -> Result<(), String> {
+    if !size.width.is_finite() || !size.height.is_finite() {
+        return Err(format!(
+            "node.size has non-finite component (width={}, height={})",
+            size.width, size.height
+        ));
+    }
+    if size.width <= 0.0 {
+        return Err(format!("node.size.width is not positive ({})", size.width));
+    }
+    if size.height <= 0.0 {
+        return Err(format!("node.size.height is not positive ({})", size.height));
+    }
+    Ok(())
+}
+
+/// Validate a candidate `(x, y)` for a node — finite components
+/// only. Nodes float freely on the canvas (no parent AABB), so
+/// negative coordinates are legal — a node can sit at a negative
+/// canvas-x to the left of the origin.
+fn validate_node_position(pos: baumhard::mindmap::model::Position) -> Result<(), String> {
+    if !pos.x.is_finite() || !pos.y.is_finite() {
+        return Err(format!(
+            "node.position has non-finite component (x={}, y={})",
+            pos.x, pos.y
+        ));
     }
     Ok(())
 }

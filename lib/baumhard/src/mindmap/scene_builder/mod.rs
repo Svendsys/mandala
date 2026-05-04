@@ -61,6 +61,12 @@ pub struct RenderScene {
     /// `None`-sized sections (fill-parent) emit zero handles
     /// because there's no per-section AABB to stretch.
     pub section_resize_handles: Vec<SectionResizeHandleElement>,
+    /// Resize handles rendered on top of the *selected* node.
+    /// Always empty unless the scene was built with a
+    /// `selected_node_for_resize` matching a node with finite +
+    /// positive size. 8 handles when populated (corners + edge
+    /// midpoints).
+    pub node_resize_handles: Vec<NodeResizeHandleElement>,
     /// Labels attached to edges whose `label` field is non-empty.
     /// One element per labeled edge, positioned along the connection
     /// path at `label_config.position_t` (defaulting to 0.5), shifted
@@ -283,6 +289,7 @@ mod connection;
 mod edge_handle;
 mod label;
 mod node_pass;
+mod node_resize_handle;
 /// Portal-marker emission — one `PortalElement` per endpoint of
 /// each `display_mode = "portal"` edge, attached to its owning
 /// node's border at the point facing the opposite endpoint.
@@ -297,6 +304,7 @@ pub use builder::{
     build_scene_with_offsets_selection_and_overrides, PortalTextEditOverride, SceneSelectionContext,
 };
 pub use edge_handle::build_edge_handles;
+pub use node_resize_handle::{build_node_resize_handles, NodeResizeHandleElement};
 pub use portal::SelectedPortalLabel;
 pub use section_resize_handle::{
     build_section_resize_handles, ResizeHandleSide, SectionResizeHandleElement,

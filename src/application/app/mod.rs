@@ -498,6 +498,14 @@ enum DragState {
         /// a section drag.
         hit_section_resize_handle:
             Option<(String, usize, baumhard::mindmap::scene_builder::ResizeHandleSide)>,
+        /// If a node is currently `Single`-selected and the
+        /// cursor landed on one of its 8 resize handles, this
+        /// records `(node_id, side)` so a drag past threshold
+        /// transitions to `Throttled(NodeResize)`. Takes
+        /// precedence over `hit_node` — clicking a handle on
+        /// a selected node is a resize, not a re-selection or
+        /// a move-node drag.
+        hit_node_resize_handle: Option<(String, baumhard::mindmap::scene_builder::ResizeHandleSide)>,
     },
     /// Dragging to pan the camera (started on empty space).
     /// Unthrottled — emits a `CameraPan` decree directly, no

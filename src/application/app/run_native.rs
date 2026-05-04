@@ -338,36 +338,35 @@ impl InitState {
         // Only the moving-node drag needs to suppress the camera
         // rebuild (it handles offset geometry itself each drain).
         // Snapshot this before the drive() borrow takes `&mut
-        // self.drag_state`. Used to suppress the camera-driven
-        // geometry rebuild while a node is being dragged (the
+        // self.drag_state`. Suppresses the camera-driven
+        // geometry rebuild while a node is being moved (the
         // drag's own per-frame mutator already keeps the scene
-        // current). `MovingSection` and `SectionResize`
-        // deliberately don't qualify — they never move the parent
-        // node, so the camera rebuild is harmless and skipping
-        // would just delay the next legitimate camera-zoom
-        // resample. The resize drain mutates section AABB in the
-        // tree per-frame, but a competing camera-rebuild walks
-        // model-side state (`build_scene_with_cache`) and won't
-        // observe the in-progress tree mutation — the next drain
-        // re-applies it.
+        // current; the camera rebuild would interleave with
+        // stale model-side state). `MovingSection` /
+        // `SectionResize` / `NodeResize` deliberately don't
+        // qualify — sections don't move the parent, and node
+        // resize gestures' tree mutations are re-applied by
+        // the next drain after any competing rebuild.
         let is_moving_node = matches!(
             self.drag_state,
             DragState::Throttled(super::throttled_interaction::ThrottledDrag::MovingNode(_)),
         );
 
         // Suppress the animation tick during drags that mutate
-        // the tree per-frame. An animation tick on the same
-        // frame routes through `sync_node_from_tree`, which
-        // would observe the in-progress mid-drag state and
-        // write it to the model + undo stack. Edge / portal-
-        // label drags don't qualify — they touch the document,
-        // not the tree.
+        // the tree per-frame (`MovingNode`, `MovingSection`,
+        // `SectionResize`, `NodeResize`). An animation tick on
+        // the same frame routes through `sync_node_from_tree`,
+        // which would observe the in-progress mid-drag state
+        // and write it to the model + undo stack. Edge /
+        // portal-label drags don't qualify — they touch the
+        // document, not the tree.
         let is_drag_with_tree_mutation = matches!(
             self.drag_state,
             DragState::Throttled(
                 super::throttled_interaction::ThrottledDrag::MovingNode(_)
                     | super::throttled_interaction::ThrottledDrag::MovingSection(_)
-                    | super::throttled_interaction::ThrottledDrag::SectionResize(_),
+                    | super::throttled_interaction::ThrottledDrag::SectionResize(_)
+                    | super::throttled_interaction::ThrottledDrag::NodeResize(_),
             ),
         );
 

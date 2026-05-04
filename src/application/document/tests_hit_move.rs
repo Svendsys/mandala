@@ -1396,4 +1396,119 @@ fn test_hit_test_section_resize_handle_misses_outside_tolerance() {
     );
 }
 
+// --- Node resize-handle hit + tree-mutation tests ---
+
+#[test]
+fn test_hit_test_node_resize_handle_lands_on_se_corner() {
+    use crate::application::document::hit_test_node_resize_handle;
+    use crate::application::document::tests_common::pinned_two_section_node;
+    use baumhard::mindmap::scene_builder::ResizeHandleSide;
+    use glam::Vec2;
+
+    let (doc, id) = pinned_two_section_node();
+    let node = &doc.mindmap.nodes[&id];
+    let np = &node.position;
+    let nw = &node.size;
+    let se = Vec2::new(np.x as f32 + nw.width as f32, np.y as f32 + nw.height as f32);
+    assert_eq!(
+        hit_test_node_resize_handle(&doc.mindmap, se, &id, 4.0),
+        Some(ResizeHandleSide::SE)
+    );
+}
+
+#[test]
+fn test_hit_test_node_resize_handle_misses_outside_tolerance() {
+    use crate::application::document::hit_test_node_resize_handle;
+    use crate::application::document::tests_common::pinned_two_section_node;
+    use glam::Vec2;
+
+    let (doc, id) = pinned_two_section_node();
+    let node = &doc.mindmap.nodes[&id];
+    let np = &node.position;
+    let nw = &node.size;
+    let center = Vec2::new(
+        np.x as f32 + nw.width as f32 * 0.5,
+        np.y as f32 + nw.height as f32 * 0.5,
+    );
+    assert!(
+        hit_test_node_resize_handle(&doc.mindmap, center, &id, 4.0).is_none(),
+        "center of node must not hit any handle"
+    );
+}
+
+#[test]
+fn test_hit_test_node_resize_handle_returns_none_for_missing_node() {
+    use crate::application::document::hit_test_node_resize_handle;
+    use crate::application::document::tests_common::pinned_two_section_node;
+    use glam::Vec2;
+
+    let (doc, _id) = pinned_two_section_node();
+    assert!(
+        hit_test_node_resize_handle(&doc.mindmap, Vec2::ZERO, "nope", 100.0).is_none(),
+        "missing node id must return None"
+    );
+}
+
+#[test]
+fn test_hit_test_node_resize_handle_returns_none_for_hidden_by_fold() {
+    use crate::application::document::hit_test_node_resize_handle;
+    use crate::application::document::tests_common::pinned_two_section_node;
+    use glam::Vec2;
+
+    let (mut doc, id) = pinned_two_section_node();
+    let parent_id = doc.mindmap.nodes[&id].parent_id.clone();
+    if let Some(pid) = parent_id {
+        if let Some(p) = doc.mindmap.nodes.get_mut(&pid) {
+            p.folded = true;
+        }
+    } else {
+        return;
+    }
+    let node = &doc.mindmap.nodes[&id];
+    let se = Vec2::new(
+        node.position.x as f32 + node.size.width as f32,
+        node.position.y as f32 + node.size.height as f32,
+    );
+    assert!(
+        hit_test_node_resize_handle(&doc.mindmap, se, &id, 4.0).is_none(),
+        "fold-hidden node must not surface handles"
+    );
+}
+
+#[test]
+fn test_apply_node_resize_to_tree_writes_position_and_bounds() {
+    use crate::application::document::apply_node_resize_to_tree;
+    use crate::application::document::tests_common::pinned_two_section_node;
+    use glam::Vec2;
+
+    let (doc, id) = pinned_two_section_node();
+    let mut tree = doc.build_tree();
+    let new_pos = Vec2::new(500.0, 200.0);
+    let new_size = Vec2::new(150.0, 70.0);
+    apply_node_resize_to_tree(&mut tree, &id, new_pos, new_size, Vec2::ZERO);
+    let arena_id = tree.arena_id_for(&id).unwrap();
+    let area = tree
+        .tree
+        .arena
+        .get(arena_id)
+        .and_then(|n| n.get().glyph_area())
+        .unwrap();
+    assert!((area.position.x.0 - 500.0).abs() < 0.001);
+    assert!((area.position.y.0 - 200.0).abs() < 0.001);
+    assert!((area.render_bounds.x.0 - 150.0).abs() < 0.001);
+    assert!((area.render_bounds.y.0 - 70.0).abs() < 0.001);
+}
+
+#[test]
+fn test_apply_node_resize_to_tree_unknown_node_no_op() {
+    use crate::application::document::apply_node_resize_to_tree;
+    use crate::application::document::tests_common::pinned_two_section_node;
+    use glam::Vec2;
+
+    let (doc, _id) = pinned_two_section_node();
+    let mut tree = doc.build_tree();
+    // No panic; tree untouched.
+    apply_node_resize_to_tree(&mut tree, "nope", Vec2::ZERO, Vec2::new(10.0, 10.0), Vec2::ZERO);
+}
+
 // --- Custom mutation registry & application tests ---

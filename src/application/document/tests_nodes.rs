@@ -329,6 +329,178 @@ fn test_set_section_offset_accepts_zero_on_none_sized_section() {
     assert_eq!(result, Ok(false));
 }
 
+// ── set_node_size / set_node_aabb (atomic node resize) ───────────
+
+#[test]
+fn test_set_node_size_writes_and_round_trips_through_undo() {
+    use baumhard::mindmap::model::Size;
+    let mut doc = load_test_doc();
+    let id = first_testament_node_id(&doc);
+    let before = doc.mindmap.nodes[&id].size;
+    assert_eq!(
+        doc.set_node_size(
+            &id,
+            Size {
+                width: 80.0,
+                height: 40.0
+            }
+        ),
+        Ok(true)
+    );
+    let after = doc.mindmap.nodes[&id].size;
+    assert_eq!(after.width, 80.0);
+    assert_eq!(after.height, 40.0);
+    assert!(doc.undo());
+    assert_eq!(doc.mindmap.nodes[&id].size, before, "undo restores prior size");
+}
+
+#[test]
+fn test_set_node_size_idempotent_no_op() {
+    use baumhard::mindmap::model::Size;
+    let mut doc = load_test_doc();
+    let id = first_testament_node_id(&doc);
+    let same = doc.mindmap.nodes[&id].size;
+    let undo_before = doc.undo_stack.len();
+    assert_eq!(doc.set_node_size(&id, same), Ok(false));
+    assert_eq!(doc.undo_stack.len(), undo_before);
+}
+
+#[test]
+fn test_set_node_size_rejects_non_finite() {
+    use baumhard::mindmap::model::Size;
+    let mut doc = load_test_doc();
+    let id = first_testament_node_id(&doc);
+    assert!(doc
+        .set_node_size(
+            &id,
+            Size {
+                width: f64::NAN,
+                height: 10.0
+            }
+        )
+        .is_err_and(|m| m.contains("non-finite")));
+    assert!(doc
+        .set_node_size(
+            &id,
+            Size {
+                width: 10.0,
+                height: f64::INFINITY
+            }
+        )
+        .is_err_and(|m| m.contains("non-finite")));
+}
+
+#[test]
+fn test_set_node_size_rejects_non_positive() {
+    use baumhard::mindmap::model::Size;
+    let mut doc = load_test_doc();
+    let id = first_testament_node_id(&doc);
+    assert!(doc
+        .set_node_size(
+            &id,
+            Size {
+                width: 0.0,
+                height: 10.0
+            }
+        )
+        .is_err_and(|m| m.contains("is not positive")));
+    assert!(doc
+        .set_node_size(
+            &id,
+            Size {
+                width: 10.0,
+                height: -5.0
+            }
+        )
+        .is_err_and(|m| m.contains("is not positive")));
+}
+
+#[test]
+fn test_set_node_size_rejects_astronomical_typo() {
+    use baumhard::mindmap::model::Size;
+    let mut doc = load_test_doc();
+    let id = first_testament_node_id(&doc);
+    let prior = doc.mindmap.nodes[&id].size;
+    let huge = Size {
+        width: prior.width * 200.0,
+        height: 10.0,
+    };
+    assert!(doc.set_node_size(&id, huge).is_err_and(|m| m.contains("over 100×")));
+}
+
+/// `set_node_aabb` writes both fields atomically and pushes one
+/// `EditNodeAabb` undo entry. Used by the resize gesture's
+/// release-commit.
+#[test]
+fn test_set_node_aabb_writes_position_and_size_atomically() {
+    use baumhard::mindmap::model::{Position, Size};
+    let mut doc = load_test_doc();
+    let id = first_testament_node_id(&doc);
+    let before_pos = doc.mindmap.nodes[&id].position;
+    let before_size = doc.mindmap.nodes[&id].size;
+    let new_pos = Position {
+        x: before_pos.x + 10.0,
+        y: before_pos.y + 5.0,
+    };
+    let new_size = Size {
+        width: 60.0,
+        height: 30.0,
+    };
+    let undo_before = doc.undo_stack.len();
+    assert_eq!(doc.set_node_aabb(&id, new_pos, new_size), Ok(true));
+    assert_eq!(doc.mindmap.nodes[&id].position, new_pos);
+    assert_eq!(doc.mindmap.nodes[&id].size, new_size);
+    assert_eq!(doc.undo_stack.len(), undo_before + 1);
+    // Undo restores both.
+    assert!(doc.undo());
+    assert_eq!(doc.mindmap.nodes[&id].position, before_pos);
+    assert_eq!(doc.mindmap.nodes[&id].size, before_size);
+}
+
+#[test]
+fn test_set_node_aabb_idempotent_no_op() {
+    let mut doc = load_test_doc();
+    let id = first_testament_node_id(&doc);
+    let same_pos = doc.mindmap.nodes[&id].position;
+    let same_size = doc.mindmap.nodes[&id].size;
+    let undo_before = doc.undo_stack.len();
+    assert_eq!(doc.set_node_aabb(&id, same_pos, same_size), Ok(false));
+    assert_eq!(doc.undo_stack.len(), undo_before);
+}
+
+#[test]
+fn test_set_node_aabb_accepts_negative_position() {
+    use baumhard::mindmap::model::{Position, Size};
+    let mut doc = load_test_doc();
+    let id = first_testament_node_id(&doc);
+    // Nodes float freely on canvas; negative positions are legal.
+    let result = doc.set_node_aabb(
+        &id,
+        Position { x: -50.0, y: -20.0 },
+        Size {
+            width: 60.0,
+            height: 30.0,
+        },
+    );
+    assert_eq!(result, Ok(true));
+}
+
+#[test]
+fn test_set_node_aabb_rejects_non_finite_position() {
+    use baumhard::mindmap::model::{Position, Size};
+    let mut doc = load_test_doc();
+    let id = first_testament_node_id(&doc);
+    let result = doc.set_node_aabb(
+        &id,
+        Position { x: f64::NAN, y: 0.0 },
+        Size {
+            width: 60.0,
+            height: 30.0,
+        },
+    );
+    assert!(result.is_err_and(|m| m.contains("non-finite")));
+}
+
 // ── set_section_aabb (atomic offset+size for the resize gesture) ──
 
 /// `set_section_aabb` accepts a W-grow gesture's final state —
