@@ -140,6 +140,18 @@ pub(super) struct InitState {
     /// (`run_native_init::build`) from `~/.config/mandala/macros.json`;
     /// queried at dispatch time via `keybinds.macro_for(...)`.
     pub(super) macros: crate::application::macros::MacroRegistry,
+    /// Wall-clock at which the current tree-mutating drag began
+    /// suppressing the animation tick — `Some(now_ms)` while a
+    /// `MovingNode` / `MovingSection` / `SectionResize` /
+    /// `NodeResize` drag is in flight, `None` otherwise. On
+    /// release we shift each active animation's `start_ms`
+    /// forward by the drag duration so the post-release tick
+    /// resumes the animation where the drag froze it, instead
+    /// of snapping to its `to` state on the first post-release
+    /// frame (the `tick_animations` body computes `elapsed = now
+    /// - start_ms`, and without the shift the wall-clock-elapsed
+    /// during the drag would land past `total`).
+    pub(super) anim_pause_start_ms: Option<u64>,
 }
 
 impl InitState {
@@ -431,6 +443,29 @@ impl InitState {
             &mut self.renderer,
             &mut self.scene_cache,
         );
+
+        // Animation pause/resume — when entering a tree-mutating
+        // drag, capture wall-clock; when exiting, shift each
+        // active animation's `start_ms` forward by the drag
+        // duration so the post-release tick resumes the
+        // animation where it froze instead of snapping to its
+        // `to` state. Without this, a multi-second drag would
+        // leave an in-flight animation observing
+        // `elapsed >= total` on the first post-release frame.
+        let now = super::now_ms() as u64;
+        match (is_drag_with_tree_mutation, self.anim_pause_start_ms) {
+            (true, None) => {
+                self.anim_pause_start_ms = Some(now);
+            }
+            (false, Some(pause_start)) => {
+                let pause_duration = now.saturating_sub(pause_start);
+                if let Some(doc) = self.document.as_mut() {
+                    doc.shift_active_animations_start_ms(pause_duration);
+                }
+                self.anim_pause_start_ms = None;
+            }
+            _ => {}
+        }
 
         if !is_drag_with_tree_mutation {
             drain_frame::drain_animation_tick(

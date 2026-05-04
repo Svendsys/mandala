@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Cursor-move dispatch. Owns drag-state transitions (pending →
-//! Panning / MovingNode / SelectingRect / DraggingEdgeHandle /
-//! DraggingPortalLabel), Reparent/Connect hover highlights, and
-//! the button-cursor swap for trigger-bearing nodes.
+//! Cursor-move dispatch. Owns drag-state transitions (Pending →
+//! Panning / SelectingRect / Throttled(...) — where the throttled
+//! variants are MovingNode, MovingSection, SectionResize,
+//! NodeResize, EdgeHandle, PortalLabel, EdgeLabel), Reparent /
+//! Connect hover highlights, and the button-cursor swap for
+//! trigger-bearing nodes.
 
 #![cfg(not(target_arch = "wasm32"))]
 
@@ -182,6 +184,15 @@ pub(super) fn handle_cursor_moved(
                 // Portal-text is intentionally missing: dragging
                 // a portal's text sub-part isn't a supported
                 // gesture — the icon carries the drag.
+                // Specific-gesture arms (edge-label / portal-label /
+                // edge-handle / node-resize-handle / section-resize-
+                // handle) each abort with `return` on validation miss
+                // rather than fall through to less-specific arms.
+                // The user pressed a handle; if the handle's target
+                // is gone (deleted mid-press, mutated through the
+                // console, etc.), aborting the promotion is the
+                // honest UX — falling through to MovingNode would
+                // silently pivot the gesture from resize to move.
                 if let Some(edge_key) = hit_edge_label.take() {
                     if let Some(doc) = ctx.document.as_mut() {
                         let edge_ref = crate::application::document::EdgeRef::new(
@@ -192,10 +203,18 @@ pub(super) fn handle_cursor_moved(
                         if let Some(original) =
                             doc.mindmap.edges.iter().find(|e| edge_ref.matches(e)).cloned()
                         {
+                            // Capture `prev` BEFORE the assignment —
+                            // post-write capture would always read
+                            // the new EdgeLabel selection back, so
+                            // `rebuild_after_selection_change` would
+                            // see prev == new and pick scene-only
+                            // even from a `Single(node)` start. The
+                            // node's tree-text highlight would then
+                            // stay painted cyan through the drag.
+                            let prev = doc.selection.clone();
                             doc.selection = SelectionState::EdgeLabel(
                                 crate::application::document::EdgeLabelSel::new(edge_ref.clone()),
                             );
-                            let prev = doc.selection.clone();
                             ctx.scene_cache.clear();
                             *ctx.drag_state = DragState::Throttled(ThrottledDrag::EdgeLabel(
                                 EdgeLabelInteraction::new(edge_ref, original),
@@ -220,6 +239,10 @@ pub(super) fn handle_cursor_moved(
                             return;
                         }
                     }
+                    // EdgeLabel hit consumed, validation missed
+                    // (edge deleted mid-press / `as_mut` failed) —
+                    // abort rather than fall through to MovingNode.
+                    return;
                 }
                 if let Some((edge_key, endpoint)) = hit_portal_label.take() {
                     if let Some(doc) = ctx.document.as_mut() {
@@ -249,6 +272,9 @@ pub(super) fn handle_cursor_moved(
                             return;
                         }
                     }
+                    // PortalLabel hit consumed, validation missed
+                    // — abort rather than fall through.
+                    return;
                 }
                 if let Some((edge_ref, handle_kind)) = hit_edge_handle.take() {
                     // Grab the pre-edit snapshot + start
@@ -272,6 +298,9 @@ pub(super) fn handle_cursor_moved(
                             return;
                         }
                     }
+                    // EdgeHandle hit consumed, validation missed
+                    // — abort rather than fall through.
+                    return;
                 }
                 if let Some((node_id, side)) = hit_node_resize_handle.take() {
                     // Snapshot the node's pre-drag (position, size)
@@ -305,6 +334,11 @@ pub(super) fn handle_cursor_moved(
                             }
                         }
                     }
+                    // NodeResize handle consumed, validation missed
+                    // (node deleted / non-finite size) — abort
+                    // rather than fall through to MovingNode on
+                    // the same `hit_node`.
+                    return;
                 }
                 if let Some((node_id, section_idx, side)) = hit_section_resize_handle.take() {
                     // Snapshot the section's pre-drag offset/size
@@ -336,6 +370,10 @@ pub(super) fn handle_cursor_moved(
                             }
                         }
                     }
+                    // SectionResize handle consumed, validation
+                    // missed — abort rather than fall through to
+                    // MovingNode/MovingSection on the same press.
+                    return;
                 }
                 if let Some(node_id) = hit_node.take() {
                     // Multi-section + non-shift hits drag only the

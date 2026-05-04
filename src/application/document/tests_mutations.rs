@@ -1293,6 +1293,52 @@ fn test_start_animation_no_op_for_duplicate_in_flight() {
     assert_eq!(doc.active_animations.len(), 1);
 }
 
+/// `shift_active_animations_start_ms` advances every active
+/// instance's `start_ms` by the requested delta. Used by the
+/// drag-pause path to re-sync animation wall-clock with the
+/// post-release real time, so a multi-second drag during which
+/// `tick_animations` was suppressed doesn't snap the animation
+/// to its `to` state on the first post-release frame.
+#[test]
+fn test_shift_active_animations_start_ms_advances_lerp() {
+    let mut doc = load_test_doc();
+    let cm = make_animated_mutation("anim-pause", 1000);
+    let node_id = first_testament_node_id(&doc);
+    let orig_x = doc.mindmap.nodes.get(&node_id).unwrap().position.x;
+
+    doc.start_animation(&cm, &node_id, 0);
+    // Without the shift, ticking at t=1500 completes (elapsed=1500
+    // > total=1000). With a shift of 1500, the effective elapsed
+    // becomes 0 — the animation hasn't started ticking yet.
+    doc.shift_active_animations_start_ms(1500);
+    let advanced = doc.tick_animations(1500, None);
+    assert!(advanced);
+    assert!(
+        doc.has_active_animations(),
+        "after shifting start_ms past now, animation should still be in flight"
+    );
+    // Position should still be at original (no progress yet).
+    let current_x = doc.mindmap.nodes.get(&node_id).unwrap().position.x;
+    assert!(
+        (current_x - orig_x).abs() < 1.0,
+        "shifted animation hasn't progressed yet; expected ~{}, got {}",
+        orig_x,
+        current_x
+    );
+}
+
+#[test]
+fn test_shift_active_animations_start_ms_zero_is_noop() {
+    let mut doc = load_test_doc();
+    let cm = make_animated_mutation("anim-pause-zero", 1000);
+    let node_id = first_testament_node_id(&doc);
+    doc.start_animation(&cm, &node_id, 0);
+    let start_before = doc.active_animations[0].start_ms;
+    doc.shift_active_animations_start_ms(0);
+    let start_after = doc.active_animations[0].start_ms;
+    assert_eq!(start_before, start_after, "zero-shift must be a no-op");
+}
+
 #[test]
 fn test_tick_animations_advances_position() {
     let mut doc = load_test_doc();

@@ -188,5 +188,6 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
         picker_hover: super::throttled_interaction::ColorPickerHoverInteraction::new(),
         keybinds,
         macros,
+        anim_pause_start_ms: None,
     }
 }

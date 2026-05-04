@@ -4,12 +4,13 @@
 
 #![cfg(not(target_arch = "wasm32"))]
 
+use baumhard::mindmap::scene_builder::build_section_resize_handles;
 use glam::Vec2;
 
 use crate::application::document::apply_section_drag_delta_and_collect_patches;
 use crate::application::frame_throttle::MutationFrequencyThrottle;
 
-use super::super::scene_rebuild::flush_canvas_scene_buffers;
+use super::super::scene_rebuild::{flush_canvas_scene_buffers, update_section_resize_handle_tree_from_slice};
 use super::{DrainContext, ThrottledInteraction};
 
 /// Per-frame drains mutate the section's tree subtree only; the
@@ -63,6 +64,7 @@ impl ThrottledInteraction for MovingSectionInteraction {
 
     fn drain(&mut self, ctx: DrainContext<'_>) {
         let DrainContext {
+            document,
             mindmap_tree,
             app_scene,
             renderer,
@@ -80,6 +82,38 @@ impl ThrottledInteraction for MovingSectionInteraction {
                 &mut patches,
             );
             renderer.patch_drag_positions(&patches);
+            // The section was Section-selected at threshold-cross
+            // (otherwise no `MovingSection` promotion), so the
+            // selection-gated resize handles render at the
+            // pre-drag offset. Refresh their positions in lockstep
+            // with the section's tree-side movement; without this
+            // the 8 handles freeze in place while the section
+            // visibly slides under them.
+            if let Some(doc) = document.as_ref() {
+                if let Some(node) = doc.mindmap.nodes.get(&self.node_id) {
+                    if let Some(section) = node.sections.get(self.section_idx) {
+                        let canvas_pos = Vec2::new(
+                            node.position.x as f32
+                                + section.offset.x as f32
+                                + self.total_delta.x,
+                            node.position.y as f32
+                                + section.offset.y as f32
+                                + self.total_delta.y,
+                        );
+                        let canvas_size = section
+                            .size
+                            .as_ref()
+                            .map(|s| Vec2::new(s.width as f32, s.height as f32));
+                        let elements = build_section_resize_handles(
+                            &self.node_id,
+                            self.section_idx,
+                            canvas_pos,
+                            canvas_size,
+                        );
+                        update_section_resize_handle_tree_from_slice(&elements, app_scene);
+                    }
+                }
+            }
             // Container/connections/borders/portals untouched —
             // those anchor to `node.position` which the section
             // drag doesn't change.

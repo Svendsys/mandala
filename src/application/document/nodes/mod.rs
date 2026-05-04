@@ -96,18 +96,6 @@ impl MindMapDocument {
         self.dirty = true;
     }
 
-    /// Replace a node's `text` and collapse its `text_runs` to a single
-    /// run inheriting the first original run's formatting (font,
-    /// size_pt, color, bold, italic, underline). If the original had
-    /// no runs, a white 24pt Liberation Sans run is synthesized —
-    /// mirrors `default_orphan_node`.
-    ///
-    /// Returns `true` if the value actually changed. No-op / no undo
-    /// push on unchanged text, matching `set_edge_label`'s contract.
-    ///
-    /// **Collapse caveat**: authored multi-run nodes lose their per-span
-    /// formatting on any edit — a future per-run splitter would preserve
-    /// it, but until then the editor path is single-run.
     /// Replace one section's `text` and collapse its `text_runs`
     /// to a single run inheriting the first original run's
     /// formatting. Returns `true` when the value actually changed.
@@ -732,9 +720,16 @@ impl MindMapDocument {
 
     /// Set a node's `size` under a single `EditNodeAabb` undo
     /// entry. Validates finite + strictly positive components and
-    /// rejects astronomical typos (>100× the prior dimension on
-    /// the same axis). Position stays unchanged. Used by the
-    /// `node resize <w> <h>` console verb.
+    /// rejects astronomical typos against `MAX_NODE_AXIS`. Position
+    /// stays unchanged. Used by the `node resize <w> <h>` console
+    /// verb.
+    ///
+    /// Idempotent: the no-op gate runs against the *post-grow*
+    /// `n.size` (so a framed node whose border-grow inflates
+    /// past `new_size` still no-ops on repeated calls; pre-fix
+    /// the gate compared the pre-mutation size against
+    /// `new_size`, missing on every framed-node call after the
+    /// first and stacking undo entries).
     ///
     /// Drag callers must NOT invoke this per-frame; gather delta
     /// in a gesture-state shape and call once on release via
@@ -747,28 +742,26 @@ impl MindMapDocument {
     ) -> Result<bool, String> {
         validate_node_size(new_size)?;
         check_node_size_typo(new_size)?;
-        let node = match self.mindmap.nodes.get(node_id) {
-            Some(n) => n,
-            None => return Ok(false),
-        };
-        if node.size == new_size {
+        if !self.mindmap.nodes.contains_key(node_id) {
             return Ok(false);
         }
-        let before_position = node.position;
-        let before_size = node.size;
+        let before_position = self.mindmap.nodes[node_id].position;
+        let before_size = self.mindmap.nodes[node_id].size;
         let canvas_default = self.mindmap.canvas.default_border.clone();
         let n = self.mindmap.nodes.get_mut(node_id).expect("just confirmed exists");
         n.size = new_size;
-        // Floor-respect pass: every other size-affecting setter
-        // (text / font / section size) calls these so the node's
-        // measured-text floor stays coherent. Without it,
-        // shrinking a node below the text floor lets the next
-        // unrelated edit silently bounce the size back up via
-        // `grow_one_node_to_fit_text`. Auto-fit-shrink is
-        // explicitly Tier 2C-N2 — until then, "shrink rejected
-        // up-front by the floor" is the consistent shape.
+        // Floor-respect pass.
         super::grow_one_node_to_fit_text(n);
         super::grow_one_node_to_fit_border(n, canvas_default.as_ref());
+        // Idempotent gate AFTER the grow passes — a framed
+        // node's post-grow size can exceed the bare `new_size`,
+        // so comparing pre-mutation against `new_size` would
+        // miss on every call after the first. Comparing the
+        // post-mutation `n.size` against `before_size` catches
+        // the no-op case for both bare and framed nodes.
+        if n.size == before_size {
+            return Ok(false);
+        }
         self.undo_stack.push(UndoAction::EditNodeAabb {
             node_id: node_id.to_string(),
             before_position,
@@ -784,6 +777,10 @@ impl MindMapDocument {
     /// shrink size by the same delta they shift offset by need
     /// the AABB written in lockstep so the undo stack carries one
     /// pre-edit pair, not two interleaved entries.
+    ///
+    /// Same post-grow no-op-gate discipline as
+    /// [`Self::set_node_size`] — see there for the framed-node
+    /// idempotency rationale.
     pub fn set_node_aabb(
         &mut self,
         node_id: &str,
@@ -793,24 +790,26 @@ impl MindMapDocument {
         validate_node_position(new_position)?;
         validate_node_size(new_size)?;
         check_node_size_typo(new_size)?;
-        let node = match self.mindmap.nodes.get(node_id) {
-            Some(n) => n,
-            None => return Ok(false),
-        };
-        let same_position = node.position.x == new_position.x && node.position.y == new_position.y;
-        if same_position && node.size == new_size {
+        if !self.mindmap.nodes.contains_key(node_id) {
             return Ok(false);
         }
-        let before_position = node.position;
-        let before_size = node.size;
+        let before_position = self.mindmap.nodes[node_id].position;
+        let before_size = self.mindmap.nodes[node_id].size;
         let canvas_default = self.mindmap.canvas.default_border.clone();
         let n = self.mindmap.nodes.get_mut(node_id).expect("just confirmed exists");
         n.position = new_position;
         n.size = new_size;
-        // Same floor-respect pass as `set_node_size` — see
-        // there for the rationale.
+        // Same floor-respect pass as `set_node_size`.
         super::grow_one_node_to_fit_text(n);
         super::grow_one_node_to_fit_border(n, canvas_default.as_ref());
+        // Post-grow no-op gate — see `set_node_size` for the
+        // framed-node idempotency rationale. Position is
+        // unaffected by the grow passes, so the comparison
+        // against `before_position` is exact.
+        let same_position = n.position.x == before_position.x && n.position.y == before_position.y;
+        if same_position && n.size == before_size {
+            return Ok(false);
+        }
         self.undo_stack.push(UndoAction::EditNodeAabb {
             node_id: node_id.to_string(),
             before_position,

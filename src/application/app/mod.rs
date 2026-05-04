@@ -435,15 +435,15 @@ enum AppMode {
 
 /// Tracks the current drag interaction state.
 ///
-/// The four continuous, high-rate-input-driven drag variants
-/// (`MovingNode`, `EdgeHandle`, `PortalLabel`, `EdgeLabel`) are
-/// collapsed behind the `Throttled` tag. Each carries its
-/// pending-state and adaptive throttle as an interaction struct
-/// implementing [`throttled_interaction::ThrottledInteraction`];
-/// the per-frame drain in
-/// [`run_native::InitState::drain_frame`] dispatches through
-/// [`ThrottledDrag::as_dyn_mut`] without naming the active kind.
-/// Adding a new throttled drag is a new variant on
+/// Continuous, high-rate-input-driven drag variants
+/// (`MovingNode`, `MovingSection`, `SectionResize`, `NodeResize`,
+/// `EdgeHandle`, `PortalLabel`, `EdgeLabel`) are collapsed behind
+/// the `Throttled` tag. Each carries its pending-state and
+/// adaptive throttle as an interaction struct implementing
+/// [`throttled_interaction::ThrottledInteraction`]; the per-frame
+/// drain in [`run_native::InitState::drain_frame`] dispatches
+/// through [`ThrottledDrag::as_dyn_mut`] without naming the
+/// active kind. Adding a new throttled drag is a new variant on
 /// `ThrottledDrag` + a struct + a trait impl; nothing about this
 /// enum needs to grow.
 ///

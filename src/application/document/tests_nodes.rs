@@ -381,9 +381,20 @@ fn test_set_node_size_idempotent_no_op() {
     use baumhard::mindmap::model::Size;
     let mut doc = load_test_doc();
     let id = first_testament_node_id(&doc);
-    let same = doc.mindmap.nodes[&id].size;
+    // Land at a known size above the text floor first — the
+    // post-grow no-op gate compares the post-mutation size
+    // against the pre-mutation size, so the second call must
+    // match the post-grow shape of the first.
+    let target = Size {
+        width: 800.0,
+        height: 400.0,
+    };
+    assert_eq!(doc.set_node_size(&id, target), Ok(true));
     let undo_before = doc.undo_stack.len();
-    assert_eq!(doc.set_node_size(&id, same), Ok(false));
+    // Second call with the same target — post-grow size will
+    // match (no border-grow on this fixture's unframed root),
+    // so the gate fires and we return Ok(false).
+    assert_eq!(doc.set_node_size(&id, target), Ok(false));
     assert_eq!(doc.undo_stack.len(), undo_before);
 }
 
@@ -437,6 +448,63 @@ fn test_set_node_size_rejects_non_positive() {
         .is_err_and(|m| m.contains("is not positive")));
 }
 
+/// Framed-node idempotency: `set_node_size` on a framed
+/// node, where `grow_one_node_to_fit_border` inflates the
+/// post-write size, must still no-op on a repeated identical
+/// call. Pre-fix the no-op gate compared `new_size` against
+/// pre-mutation `node.size`, missed on every post-first call,
+/// and stacked `EditNodeAabb` undo entries.
+#[test]
+fn test_set_node_size_idempotent_on_framed_node() {
+    use baumhard::mindmap::model::Size;
+    let mut doc = load_test_doc();
+    let id = first_testament_node_id(&doc);
+    doc.mindmap.nodes.get_mut(&id).unwrap().style.show_frame = true;
+    doc.undo_stack.clear();
+    let target = Size {
+        width: 800.0,
+        height: 400.0,
+    };
+    assert_eq!(doc.set_node_size(&id, target), Ok(true));
+    let after_first = doc.mindmap.nodes[&id].size;
+    let undo_after_first = doc.undo_stack.len();
+    // Second identical call must be a no-op even though the
+    // border-grow likely inflated the post-write size past
+    // `target`.
+    assert_eq!(doc.set_node_size(&id, target), Ok(false));
+    assert_eq!(
+        doc.undo_stack.len(),
+        undo_after_first,
+        "framed-node set_node_size must not stack undo entries"
+    );
+    assert_eq!(doc.mindmap.nodes[&id].size, after_first);
+}
+
+/// Same framed-idempotency contract for `set_node_aabb`.
+#[test]
+fn test_set_node_aabb_idempotent_on_framed_node() {
+    use baumhard::mindmap::model::{Position, Size};
+    let mut doc = load_test_doc();
+    let id = first_testament_node_id(&doc);
+    doc.mindmap.nodes.get_mut(&id).unwrap().style.show_frame = true;
+    doc.undo_stack.clear();
+    let target_pos = Position { x: 100.0, y: 100.0 };
+    let target_size = Size {
+        width: 800.0,
+        height: 400.0,
+    };
+    assert_eq!(doc.set_node_aabb(&id, target_pos, target_size), Ok(true));
+    let after_first = doc.mindmap.nodes[&id].size;
+    let undo_after_first = doc.undo_stack.len();
+    assert_eq!(doc.set_node_aabb(&id, target_pos, target_size), Ok(false));
+    assert_eq!(
+        doc.undo_stack.len(),
+        undo_after_first,
+        "framed-node set_node_aabb must not stack undo entries"
+    );
+    assert_eq!(doc.mindmap.nodes[&id].size, after_first);
+}
+
 #[test]
 fn test_set_node_size_rejects_astronomical_typo() {
     use baumhard::mindmap::model::Size;
@@ -486,12 +554,19 @@ fn test_set_node_aabb_writes_position_and_size_atomically() {
 
 #[test]
 fn test_set_node_aabb_idempotent_no_op() {
+    use baumhard::mindmap::model::{Position, Size};
     let mut doc = load_test_doc();
     let id = first_testament_node_id(&doc);
-    let same_pos = doc.mindmap.nodes[&id].position;
-    let same_size = doc.mindmap.nodes[&id].size;
+    // Land above the text floor first — same shape as the
+    // sibling `set_node_size` idempotency test.
+    let target_pos = Position { x: 100.0, y: 100.0 };
+    let target_size = Size {
+        width: 800.0,
+        height: 400.0,
+    };
+    assert_eq!(doc.set_node_aabb(&id, target_pos, target_size), Ok(true));
     let undo_before = doc.undo_stack.len();
-    assert_eq!(doc.set_node_aabb(&id, same_pos, same_size), Ok(false));
+    assert_eq!(doc.set_node_aabb(&id, target_pos, target_size), Ok(false));
     assert_eq!(doc.undo_stack.len(), undo_before);
 }
 

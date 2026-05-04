@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! `node resize <w> <h>` — sets a node's `size` atomically.
+//! `node resize <w> <h>` and `node fit` — node-size verbs.
 //!
 //! Validation messages mirror the document-side `set_node_size`
-//! setter: finite + strictly positive components, astronomical-typo
-//! guard (>100× the prior dimension on the same axis).
-//! Position stays unchanged — this verb writes size only; the
-//! drag gesture's release path uses `set_node_aabb` for the
-//! atomic `(position, size)` write.
+//! and `fit_node_to_content` setters: finite + strictly positive
+//! components and an absolute astronomical-typo ceiling
+//! (`MAX_NODE_AXIS = 1_000_000`). Position stays unchanged for
+//! `resize`; the drag gesture's release path uses `set_node_aabb`
+//! for the atomic `(position, size)` write. `fit` reaches a
+//! state the ambient `grow_*` passes can't (shrink to text floor).
 
 use super::Command;
 use crate::application::console::completion::{prefix_filter, Completion, CompletionContext, CompletionState};
