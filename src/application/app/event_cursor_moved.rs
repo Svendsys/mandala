@@ -330,14 +330,20 @@ pub(super) fn handle_cursor_moved(
                         return;
                     }
                     // Whole-node drag fall-through: ensure the
-                    // dragged node is selected. Note: a Section
-                    // selection on this same node satisfies
-                    // `is_selected`, so a shift+drag started on a
-                    // section keeps the Section selection while
-                    // moving the whole node — release rebuild
-                    // restores coherence.
+                    // dragged node is selected as a *node*, not a
+                    // section sub-selection. A Section selection
+                    // on the dragged node satisfies `is_selected`
+                    // but leaves the picker hint and per-section
+                    // verbs reading "Section[K]" while the user
+                    // bodily moves the parent — incoherent. Demote
+                    // a same-node Section selection to Single
+                    // here so mid-drag UX matches the gesture
+                    // (release rebuild lands the same coherent
+                    // shape).
                     if let Some(doc) = ctx.document.as_mut() {
-                        if !doc.selection.is_selected(&node_id) {
+                        let needs_demote = matches!(&doc.selection,
+                            SelectionState::Section(s) if s.node_id == node_id);
+                        if needs_demote || !doc.selection.is_selected(&node_id) {
                             doc.selection = SelectionState::Single(node_id.clone());
                             rebuild_selection_highlight(doc, ctx.mindmap_tree, ctx.renderer);
                         }

@@ -254,6 +254,35 @@ fn test_set_section_size_idempotent_no_op() {
     assert!(doc.undo_stack.is_empty(), "no-op must not push undo");
 }
 
+/// `set_section_offset` rejects non-zero offset on a `None`-
+/// sized (fill-parent) section — the section's effective size
+/// is `node.size`, so any non-zero offset stretches past the
+/// node's right / bottom edge. Mirrors the verify rule.
+#[test]
+fn test_set_section_offset_rejects_nonzero_on_none_sized_section() {
+    let (mut doc, id) = super::tests_common::pinned_two_section_node();
+    // Section[0] is None-sized (fill-parent); the fixture only
+    // pins section[1]'s explicit Some-size.
+    assert!(
+        doc.mindmap.nodes[&id].sections[0].size.is_none(),
+        "fixture invariant"
+    );
+    let result = doc.set_section_offset(&id, 0, 5.0, 0.0);
+    assert!(result.is_err_and(|m| m.contains("extends past node right edge")));
+}
+
+#[test]
+fn test_set_section_offset_accepts_zero_on_none_sized_section() {
+    let (mut doc, id) = super::tests_common::pinned_two_section_node();
+    assert!(
+        doc.mindmap.nodes[&id].sections[0].size.is_none(),
+        "fixture invariant"
+    );
+    // Already at (0,0) → no-op false; not an error.
+    let result = doc.set_section_offset(&id, 0, 0.0, 0.0);
+    assert_eq!(result, Ok(false));
+}
+
 // ── set_section_aabb (atomic offset+size for the resize gesture) ──
 
 /// `set_section_aabb` accepts a W-grow gesture's final state —

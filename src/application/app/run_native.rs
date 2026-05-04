@@ -355,6 +355,26 @@ impl InitState {
             DragState::Throttled(super::throttled_interaction::ThrottledDrag::MovingNode(_)),
         );
 
+        // Suppress the animation tick when a section gesture
+        // is in flight. The resize / move-section drains
+        // mutate the section's tree-side AABB per-frame; if
+        // an animation tick fires on the same frame it
+        // routes through `apply_custom_mutation` →
+        // `sync_node_from_tree`, which observes the
+        // in-progress tree position and writes it to the
+        // model + undo stack — corrupting both the gesture
+        // and the animation. Animations resume on the next
+        // frame after release. Rare interleaving (one of the
+        // last deferred items from the Tier 2B-resize
+        // review).
+        let is_section_drag = matches!(
+            self.drag_state,
+            DragState::Throttled(
+                super::throttled_interaction::ThrottledDrag::MovingSection(_)
+                    | super::throttled_interaction::ThrottledDrag::SectionResize(_),
+            ),
+        );
+
         // Destructure the fields the two throttled-drive call sites
         // share so their `DrainContext` literals can reborrow via
         // `&mut *x` instead of re-spelling `&mut self.X` six times
@@ -417,13 +437,15 @@ impl InitState {
             &mut self.scene_cache,
         );
 
-        drain_frame::drain_animation_tick(
-            &mut self.document,
-            &mut self.mindmap_tree,
-            &mut self.app_scene,
-            &mut self.renderer,
-            &mut self.scene_cache,
-        );
+        if !is_section_drag {
+            drain_frame::drain_animation_tick(
+                &mut self.document,
+                &mut self.mindmap_tree,
+                &mut self.app_scene,
+                &mut self.renderer,
+                &mut self.scene_cache,
+            );
+        }
 
         // Drive the render loop each frame
         self.renderer.process();

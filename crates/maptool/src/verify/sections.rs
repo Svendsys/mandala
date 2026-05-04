@@ -33,10 +33,20 @@ pub fn check(map: &MindMap) -> Vec<Violation> {
             check_offset_finite(node, s_idx, section, &mut out);
             check_offset_non_negative(node, s_idx, section, &mut out);
 
+            // AABB containment uses the section's *effective*
+            // size — `Some(sz)` honours the explicit pin,
+            // `None` falls back to `node.size` (fill-parent).
+            // Pre-fix the `None` arm skipped the check
+            // entirely, leaving fill-parent sections at
+            // non-zero offset to overflow the node visually.
+            // The fill-parent semantic is "starts at offset
+            // (0, 0), stretches to fill"; non-zero offset on
+            // a `None`-sized section is degenerate.
+            let effective_size = section.size.clone().unwrap_or_else(|| node.size.clone());
+            check_within_node_aabb(node, s_idx, section, &effective_size, &mut out);
             if let Some(size) = section.size.as_ref() {
                 check_size_finite(node, s_idx, size, &mut out);
                 check_size_positive(node, s_idx, size, &mut out);
-                check_within_node_aabb(node, s_idx, section, size, &mut out);
                 check_size_not_astronomical(node, s_idx, size, &mut out);
             }
         }
@@ -435,13 +445,36 @@ mod tests {
         assert!(off.message.contains("section[1]"), "expected section index 1 in message: {}", off.message);
     }
 
+    /// `None`-sized sections (fill-parent) are bounds-checked
+    /// against the *effective* size = `node.size`. A non-zero
+    /// offset on a fill-parent section means the section
+    /// stretches past the node's right / bottom edge, so
+    /// verify flags it. Pre-fix the `None` arm skipped the
+    /// check entirely, leaving fill-parent sections free to
+    /// visually escape the parent.
     #[test]
-    fn unset_size_skips_aabb_check() {
+    fn unset_size_at_zero_offset_clean() {
         let mut map = MindMap::new_blank("t");
         let mut n = node("0", None);
-        n.sections[0] = section(Position { x: 99.0, y: 39.0 }, None);
+        n.sections[0] = section(Position { x: 0.0, y: 0.0 }, None);
         map.nodes.insert("0".into(), n);
-        assert!(check(&map).is_empty(), "size=None means \"fill node\"; offsets without size are not bounds-checked");
+        assert!(check(&map).is_empty(), "fill-parent at (0,0) is the canonical shape");
+    }
+
+    #[test]
+    fn unset_size_at_nonzero_offset_overflows() {
+        let mut map = MindMap::new_blank("t");
+        let mut n = node("0", None);
+        // node.size is the default (100, 40 — see `node()` helper).
+        // Offset (5, 0) + effective size (100, 40) = right 105 > 100.
+        n.sections[0] = section(Position { x: 5.0, y: 0.0 }, None);
+        map.nodes.insert("0".into(), n);
+        let v = check(&map);
+        assert!(
+            v.iter().any(|x| x.message.contains("extends past node right edge")),
+            "fill-parent at non-zero offset must flag right-edge overflow, got {:?}",
+            v
+        );
     }
 
     #[test]

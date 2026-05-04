@@ -1062,12 +1062,25 @@ pointer at `maptool convert --sections`. Full reference:
 - **Per-section drag-to-resize gesture.** Shipped — selecting a
   `Some`-sized section surfaces 8 resize handles (corners + edge
   midpoints); dragging a handle promotes to
-  `ThrottledDrag::SectionResize`. Per-frame mutates the section's
-  tree position; release-commit writes the final
-  `(offset, size)` through `set_section_size` then
-  `set_section_offset` under a single `EditNodeStyle` undo entry.
-  Same AABB / non-positive size / astronomical size rejection
-  with model-side snap-back as the move gesture.
+  `ThrottledDrag::SectionResize`. Per-frame writes the
+  in-progress `(canvas_pos, canvas_size)` to the section-area's
+  `GlyphArea` directly (cosmic-text reflows mid-drag); release-
+  commit writes the final `(offset, size)` through
+  `set_section_aabb` (atomic post-mutation AABB validation,
+  single `EditNodeStyle` undo entry). Same AABB / non-positive
+  size / astronomical size rejection with model-side snap-back
+  as the move gesture.
+
+  **Animation interleaving.** While a `MovingSection` or
+  `SectionResize` drag is in flight, `drain_animation_tick` is
+  suppressed in `run_native::drain_frame`. The animation tick
+  routes through `apply_custom_mutation` →
+  `sync_node_from_tree`, which observes the in-progress
+  mid-drag tree position; without the suppression, a
+  `target_scope: SectionsOnly` animation firing on the same
+  frame would write the in-progress AABB to the model and
+  push an unintended undo entry. Animations resume on the
+  next frame after release.
 - **Multiple `GlyphModel`s per section.** Still on the
   trajectory — today a section holds exactly one structural
   model; richer composed-glyph layouts (a gridded matrix beside

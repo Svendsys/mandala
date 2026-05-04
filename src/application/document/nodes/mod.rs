@@ -481,21 +481,30 @@ impl MindMapDocument {
             return Ok(false);
         };
         check_node_size_finite_positive(node, section_idx)?;
-        if let Some(size) = section.size.as_ref() {
-            let right = x + size.width;
-            let bottom = y + size.height;
-            if right > node.size.width {
-                return Err(format!(
-                    "section[{}] extends past node right edge ({} > {})",
-                    section_idx, right, node.size.width
-                ));
-            }
-            if bottom > node.size.height {
-                return Err(format!(
-                    "section[{}] extends past node bottom edge ({} > {})",
-                    section_idx, bottom, node.size.height
-                ));
-            }
+        // AABB containment uses the section's *effective* size:
+        // `Some(sz)` honours the explicit pin; `None` falls back
+        // to `node.size` (fill-parent). Mirrors the verify rule —
+        // a `None`-sized section at a non-zero offset stretches
+        // past the node's right / bottom edge and visually
+        // escapes the parent.
+        let effective_size = section
+            .size
+            .as_ref()
+            .map(|s| (s.width, s.height))
+            .unwrap_or((node.size.width, node.size.height));
+        let right = x + effective_size.0;
+        let bottom = y + effective_size.1;
+        if right > node.size.width {
+            return Err(format!(
+                "section[{}] extends past node right edge ({} > {})",
+                section_idx, right, node.size.width
+            ));
+        }
+        if bottom > node.size.height {
+            return Err(format!(
+                "section[{}] extends past node bottom edge ({} > {})",
+                section_idx, bottom, node.size.height
+            ));
         }
         if section.offset.x == x && section.offset.y == y {
             return Ok(false);
