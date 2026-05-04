@@ -39,6 +39,24 @@ pub struct NodeResizeHandleElement {
     pub font_size_pt: f32,
 }
 
+impl crate::mindmap::tree_builder::HandleVisual for NodeResizeHandleElement {
+    fn position(&self) -> (f32, f32) {
+        self.position
+    }
+    fn glyph(&self) -> &str {
+        &self.glyph
+    }
+    fn color(&self) -> &str {
+        &self.color
+    }
+    fn font_size_pt(&self) -> f32 {
+        self.font_size_pt
+    }
+    fn channel(&self) -> usize {
+        self.side.channel()
+    }
+}
+
 /// Build the 8-handle set for a single selected node. Returns an
 /// empty vector when `node_size` has any non-finite or non-positive
 /// component — those nodes can't host a meaningful resize gesture

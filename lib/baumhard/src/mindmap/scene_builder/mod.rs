@@ -303,7 +303,7 @@ pub use builder::{
     build_scene, build_scene_with_cache, build_scene_with_offsets,
     build_scene_with_offsets_selection_and_overrides, PortalTextEditOverride, SceneSelectionContext,
 };
-pub use edge_handle::build_edge_handles;
+pub use edge_handle::{build_edge_handles, edge_handle_channel_for};
 pub use node_resize_handle::{build_node_resize_handles, NodeResizeHandleElement};
 pub use portal::SelectedPortalLabel;
 pub use section_resize_handle::{

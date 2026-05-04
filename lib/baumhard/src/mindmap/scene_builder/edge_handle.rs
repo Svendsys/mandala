@@ -2,20 +2,53 @@
 
 //! Edge-handle emission for the currently-selected edge. One
 //! function, called at most once per scene build (single-edge
-//! selection). Mirrors `tree_builder/edge_handle.rs` — same role,
-//! different crate surface (here we emit `EdgeHandleElement`s that
-//! the renderer later projects into the `EdgeHandles` canvas
-//! tree).
+//! selection). Emits `EdgeHandleElement`s the generic handle
+//! tree-builder (`tree_builder::handle`) projects into the
+//! `EdgeHandles` canvas tree.
 
 use glam::Vec2;
 
 use crate::mindmap::connection;
 use crate::mindmap::scene_cache::EdgeKey;
+use crate::mindmap::tree_builder::HandleVisual;
 
 use super::{
     EdgeHandleElement, EdgeHandleKind, EDGE_HANDLE_FONT_SIZE_PT, EDGE_HANDLE_GLYPH,
     EDGE_MIDPOINT_HANDLE_GLYPH, SELECTED_EDGE_COLOR,
 };
+
+/// Map a handle kind to its stable tree channel. Anchors take 1/2,
+/// the midpoint takes 3, and control points stride from 100 by
+/// index so adding a CP never collides with the fixed anchor
+/// channels. The in-place mutator path compares channels from
+/// this function on both sides of the rebuild so the same handle
+/// kind always lands on the same arena slot. O(1).
+pub fn edge_handle_channel_for(kind: EdgeHandleKind) -> usize {
+    match kind {
+        EdgeHandleKind::AnchorFrom => 1,
+        EdgeHandleKind::AnchorTo => 2,
+        EdgeHandleKind::Midpoint => 3,
+        EdgeHandleKind::ControlPoint(n) => 100 + n,
+    }
+}
+
+impl HandleVisual for EdgeHandleElement {
+    fn position(&self) -> (f32, f32) {
+        self.position
+    }
+    fn glyph(&self) -> &str {
+        &self.glyph
+    }
+    fn color(&self) -> &str {
+        &self.color
+    }
+    fn font_size_pt(&self) -> f32 {
+        self.font_size_pt
+    }
+    fn channel(&self) -> usize {
+        edge_handle_channel_for(self.kind)
+    }
+}
 
 /// Build the grab-handle set for a single selected edge, given the
 /// current (offset-applied) positions and sizes of its endpoint

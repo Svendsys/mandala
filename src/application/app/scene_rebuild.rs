@@ -504,23 +504,11 @@ pub(in crate::application::app) fn update_edge_handle_tree(
     scene: &baumhard::mindmap::scene_builder::RenderScene,
     app_scene: &mut crate::application::scene_host::AppScene,
 ) {
-    use crate::application::scene_host::{hash_canvas_signature, CanvasDispatch, CanvasRole};
-    use baumhard::mindmap::tree_builder::{
-        build_edge_handle_mutator_tree, build_edge_handle_tree, edge_handle_identity_sequence,
-    };
-
-    let signature = hash_canvas_signature(&edge_handle_identity_sequence(&scene.edge_handles));
-    match app_scene.canvas_dispatch(CanvasRole::EdgeHandles, signature) {
-        CanvasDispatch::InPlaceMutator => {
-            let mutator = build_edge_handle_mutator_tree(&scene.edge_handles);
-            app_scene.apply_canvas_mutator(CanvasRole::EdgeHandles, &mutator);
-        }
-        CanvasDispatch::FullRebuild => {
-            let tree = build_edge_handle_tree(&scene.edge_handles);
-            app_scene.register_canvas(CanvasRole::EdgeHandles, tree, glam::Vec2::ZERO);
-            app_scene.set_canvas_signature(CanvasRole::EdgeHandles, signature);
-        }
-    }
+    update_handle_canvas_role(
+        crate::application::scene_host::CanvasRole::EdgeHandles,
+        &scene.edge_handles,
+        app_scene,
+    );
 }
 
 /// Build or in-place update the section-resize-handle tree under
@@ -558,24 +546,11 @@ pub(in crate::application::app) fn update_node_resize_handle_tree_from_slice(
     elements: &[baumhard::mindmap::scene_builder::NodeResizeHandleElement],
     app_scene: &mut crate::application::scene_host::AppScene,
 ) {
-    use crate::application::scene_host::{hash_canvas_signature, CanvasDispatch, CanvasRole};
-    use baumhard::mindmap::tree_builder::{
-        build_node_resize_handle_mutator_tree, build_node_resize_handle_tree,
-        node_resize_handle_identity_sequence,
-    };
-
-    let signature = hash_canvas_signature(&node_resize_handle_identity_sequence(elements));
-    match app_scene.canvas_dispatch(CanvasRole::NodeResizeHandles, signature) {
-        CanvasDispatch::InPlaceMutator => {
-            let mutator = build_node_resize_handle_mutator_tree(elements);
-            app_scene.apply_canvas_mutator(CanvasRole::NodeResizeHandles, &mutator);
-        }
-        CanvasDispatch::FullRebuild => {
-            let tree = build_node_resize_handle_tree(elements);
-            app_scene.register_canvas(CanvasRole::NodeResizeHandles, tree, glam::Vec2::ZERO);
-            app_scene.set_canvas_signature(CanvasRole::NodeResizeHandles, signature);
-        }
-    }
+    update_handle_canvas_role(
+        crate::application::scene_host::CanvasRole::NodeResizeHandles,
+        elements,
+        app_scene,
+    );
 }
 
 /// Same as [`update_section_resize_handle_tree`] but takes the
@@ -586,22 +561,41 @@ pub(in crate::application::app) fn update_section_resize_handle_tree_from_slice(
     elements: &[baumhard::mindmap::scene_builder::SectionResizeHandleElement],
     app_scene: &mut crate::application::scene_host::AppScene,
 ) {
-    use crate::application::scene_host::{hash_canvas_signature, CanvasDispatch, CanvasRole};
+    update_handle_canvas_role(
+        crate::application::scene_host::CanvasRole::SectionResizeHandles,
+        elements,
+        app_scene,
+    );
+}
+
+/// Generic §B2 dispatch for any handle-bearing canvas role —
+/// edge handles, section resize handles, node resize handles.
+/// Each role's `update_*_handle_tree*` wrapper picks the
+/// `CanvasRole` and the element slice; this fn routes through
+/// the trait-generic `build_handle_tree` /
+/// `build_handle_mutator_tree` / `handle_identity_sequence` so
+/// the §5-flagged triplication of three-near-identical
+/// per-domain dispatchers collapses to one source of truth.
+fn update_handle_canvas_role<E: baumhard::mindmap::tree_builder::HandleVisual>(
+    role: crate::application::scene_host::CanvasRole,
+    elements: &[E],
+    app_scene: &mut crate::application::scene_host::AppScene,
+) {
+    use crate::application::scene_host::{hash_canvas_signature, CanvasDispatch};
     use baumhard::mindmap::tree_builder::{
-        build_section_resize_handle_mutator_tree, build_section_resize_handle_tree,
-        section_resize_handle_identity_sequence,
+        build_handle_mutator_tree, build_handle_tree, handle_identity_sequence,
     };
 
-    let signature = hash_canvas_signature(&section_resize_handle_identity_sequence(elements));
-    match app_scene.canvas_dispatch(CanvasRole::SectionResizeHandles, signature) {
+    let signature = hash_canvas_signature(&handle_identity_sequence(elements));
+    match app_scene.canvas_dispatch(role, signature) {
         CanvasDispatch::InPlaceMutator => {
-            let mutator = build_section_resize_handle_mutator_tree(elements);
-            app_scene.apply_canvas_mutator(CanvasRole::SectionResizeHandles, &mutator);
+            let mutator = build_handle_mutator_tree(elements);
+            app_scene.apply_canvas_mutator(role, &mutator);
         }
         CanvasDispatch::FullRebuild => {
-            let tree = build_section_resize_handle_tree(elements);
-            app_scene.register_canvas(CanvasRole::SectionResizeHandles, tree, glam::Vec2::ZERO);
-            app_scene.set_canvas_signature(CanvasRole::SectionResizeHandles, signature);
+            let tree = build_handle_tree(elements);
+            app_scene.register_canvas(role, tree, glam::Vec2::ZERO);
+            app_scene.set_canvas_signature(role, signature);
         }
     }
 }

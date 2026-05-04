@@ -125,6 +125,24 @@ pub struct SectionResizeHandleElement {
     pub font_size_pt: f32,
 }
 
+impl crate::mindmap::tree_builder::HandleVisual for SectionResizeHandleElement {
+    fn position(&self) -> (f32, f32) {
+        self.position
+    }
+    fn glyph(&self) -> &str {
+        &self.glyph
+    }
+    fn color(&self) -> &str {
+        &self.color
+    }
+    fn font_size_pt(&self) -> f32 {
+        self.font_size_pt
+    }
+    fn channel(&self) -> usize {
+        self.side.channel()
+    }
+}
+
 /// Glyph used for section resize handles. A small open square reads
 /// distinctly from the edge-handle diamond / midpoint hook so the
 /// two families are visually disambiguated when they coexist on a
