@@ -315,6 +315,14 @@ mod tests {
     #[test]
     fn section_resize_none_clears_size() {
         let (mut doc, id) = pinned_two_section_node();
+        // The fixture pins section[1] at offset (10, 10) with
+        // an explicit size; `section resize none` flatten-to-
+        // fill-parent is only legal at offset (0, 0) post the
+        // effective-size fix, so reset offset first.
+        {
+            let node = doc.mindmap.nodes.get_mut(&id).unwrap();
+            node.sections[1].offset = baumhard::mindmap::model::Position { x: 0.0, y: 0.0 };
+        }
         doc.selection = SelectionState::Section(SectionSel {
             node_id: id.clone(),
             section_idx: 1,

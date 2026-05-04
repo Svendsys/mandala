@@ -355,22 +355,18 @@ impl InitState {
             DragState::Throttled(super::throttled_interaction::ThrottledDrag::MovingNode(_)),
         );
 
-        // Suppress the animation tick when a section gesture
-        // is in flight. The resize / move-section drains
-        // mutate the section's tree-side AABB per-frame; if
-        // an animation tick fires on the same frame it
-        // routes through `apply_custom_mutation` →
-        // `sync_node_from_tree`, which observes the
-        // in-progress tree position and writes it to the
-        // model + undo stack — corrupting both the gesture
-        // and the animation. Animations resume on the next
-        // frame after release. Rare interleaving (one of the
-        // last deferred items from the Tier 2B-resize
-        // review).
-        let is_section_drag = matches!(
+        // Suppress the animation tick during drags that mutate
+        // the tree per-frame. An animation tick on the same
+        // frame routes through `sync_node_from_tree`, which
+        // would observe the in-progress mid-drag state and
+        // write it to the model + undo stack. Edge / portal-
+        // label drags don't qualify — they touch the document,
+        // not the tree.
+        let is_drag_with_tree_mutation = matches!(
             self.drag_state,
             DragState::Throttled(
-                super::throttled_interaction::ThrottledDrag::MovingSection(_)
+                super::throttled_interaction::ThrottledDrag::MovingNode(_)
+                    | super::throttled_interaction::ThrottledDrag::MovingSection(_)
                     | super::throttled_interaction::ThrottledDrag::SectionResize(_),
             ),
         );
@@ -437,7 +433,7 @@ impl InitState {
             &mut self.scene_cache,
         );
 
-        if !is_section_drag {
+        if !is_drag_with_tree_mutation {
             drain_frame::drain_animation_tick(
                 &mut self.document,
                 &mut self.mindmap_tree,

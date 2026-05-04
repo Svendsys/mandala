@@ -353,6 +353,17 @@ impl MindSection {
             trigger_bindings: Vec::new(),
         }
     }
+
+    /// Effective size of this section for AABB containment math —
+    /// the explicit `size` pin when set, otherwise `node_size`
+    /// (fill-parent fallback, the migration default). Sole source
+    /// of truth shared by the document-side setters
+    /// (`set_section_offset` / `set_section_size`) and
+    /// `maptool verify`'s containment rule, so the two cannot
+    /// drift on what "fill-parent" means.
+    pub fn effective_size(&self, node_size: Size) -> Size {
+        self.size.unwrap_or(node_size)
+    }
 }
 
 /// A styled slice of a section's `text`, matching miMind's text-run

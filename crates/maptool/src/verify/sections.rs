@@ -39,10 +39,7 @@ pub fn check(map: &MindMap) -> Vec<Violation> {
             // Pre-fix the `None` arm skipped the check
             // entirely, leaving fill-parent sections at
             // non-zero offset to overflow the node visually.
-            // The fill-parent semantic is "starts at offset
-            // (0, 0), stretches to fill"; non-zero offset on
-            // a `None`-sized section is degenerate.
-            let effective_size = section.size.clone().unwrap_or_else(|| node.size.clone());
+            let effective_size = section.effective_size(node.size);
             check_within_node_aabb(node, s_idx, section, &effective_size, &mut out);
             if let Some(size) = section.size.as_ref() {
                 check_size_finite(node, s_idx, size, &mut out);

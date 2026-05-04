@@ -749,6 +749,40 @@ fn mindsection_defaults_serialize_minimally() {
     assert!(back.trigger_bindings.is_empty());
 }
 
+/// `MindSection::effective_size` returns the explicit pin when
+/// set and falls back to `node_size` for fill-parent
+/// (`size = None`). Single source of truth shared by the
+/// document-side setters and `maptool verify`'s containment
+/// rule — drift between them would re-open the C3 hole the
+/// helper was extracted to close.
+#[test]
+fn mindsection_effective_size_falls_back_to_node_size_when_none() {
+    let node_size = Size {
+        width: 200.0,
+        height: 100.0,
+    };
+    let none_section = MindSection::new_default("a".into(), Vec::new());
+    assert_eq!(
+        none_section.effective_size(node_size),
+        node_size,
+        "fill-parent inherits node.size"
+    );
+
+    let mut pinned = MindSection::new_default("a".into(), Vec::new());
+    pinned.size = Some(Size {
+        width: 50.0,
+        height: 30.0,
+    });
+    assert_eq!(
+        pinned.effective_size(node_size),
+        Size {
+            width: 50.0,
+            height: 30.0
+        },
+        "Some-sized honours the explicit pin"
+    );
+}
+
 /// `MindSection.text` carries `#[serde(default)]` so a hand-
 /// edited or partially-converted JSON file with `{"sections":
 /// [{}]}` parses cleanly with `text == ""` instead of failing

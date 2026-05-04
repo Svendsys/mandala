@@ -194,6 +194,13 @@ fn test_set_section_size_writes_and_round_trips_through_undo() {
 #[test]
 fn test_set_section_size_none_restores_fill_parent() {
     let (mut doc, id) = super::tests_common::pinned_two_section_node();
+    // Flatten-to-fill-parent is only legal at offset (0, 0)
+    // post the C3 effective-size fix; the fixture pins
+    // section[1] at offset (10, 10), so reset before flattening.
+    {
+        let node = doc.mindmap.nodes.get_mut(&id).unwrap();
+        node.sections[1].offset = baumhard::mindmap::model::Position { x: 0.0, y: 0.0 };
+    }
     assert_eq!(doc.set_section_size(&id, 1, None), Ok(true));
     assert!(doc.mindmap.nodes.get(&id).unwrap().sections[1].size.is_none());
 }
@@ -252,6 +259,45 @@ fn test_set_section_size_idempotent_no_op() {
     });
     assert_eq!(doc.set_section_size(&id, 1, same), Ok(false));
     assert!(doc.undo_stack.is_empty(), "no-op must not push undo");
+}
+
+/// `set_section_size(None)` rejects when the section's existing
+/// offset is non-zero — flatten-to-fill-parent on a section
+/// pinned at `(5, 0)` would produce an effective AABB
+/// `((5, 0), node.size)` that overflows the parent's right
+/// edge. Closes the symmetric hole to `set_section_offset`'s
+/// effective-size check.
+#[test]
+fn test_set_section_size_rejects_none_when_offset_nonzero() {
+    let (mut doc, id) = super::tests_common::pinned_two_section_node();
+    // Move section[1] so it has an explicit non-zero offset
+    // *and* an explicit size that fits at that offset.
+    {
+        let node = doc.mindmap.nodes.get_mut(&id).unwrap();
+        node.sections[1].offset = baumhard::mindmap::model::Position { x: 5.0, y: 0.0 };
+        node.sections[1].size = Some(baumhard::mindmap::model::Size {
+            width: 50.0,
+            height: 30.0,
+        });
+    }
+    // Flatten to fill-parent — effective AABB becomes
+    // ((5, 0), (200, 100)) — right=205 > node 200.
+    assert!(doc
+        .set_section_size(&id, 1, None)
+        .is_err_and(|m| m.contains("extends past node right edge")));
+}
+
+/// `set_section_size(None)` accepts when offset is `(0, 0)` —
+/// the canonical fill-parent shape.
+#[test]
+fn test_set_section_size_accepts_none_at_zero_offset() {
+    let (mut doc, id) = super::tests_common::pinned_two_section_node();
+    {
+        let node = doc.mindmap.nodes.get_mut(&id).unwrap();
+        node.sections[1].offset = baumhard::mindmap::model::Position { x: 0.0, y: 0.0 };
+    }
+    assert_eq!(doc.set_section_size(&id, 1, None), Ok(true));
+    assert!(doc.mindmap.nodes[&id].sections[1].size.is_none());
 }
 
 /// `set_section_offset` rejects non-zero offset on a `None`-

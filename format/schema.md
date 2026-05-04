@@ -146,7 +146,7 @@ Complete field reference for every type in `.mindmap.json`.
 | `text` | string | Plain text content (may contain `\n`) |
 | `text_runs` | array | Formatting spans inside this section — see [text-runs.md](./text-runs.md); defaults to empty |
 | `offset.x`, `offset.y` | number | Top-left of the section AABB *relative to the owning node's `position`*, in canvas units. Defaults to `(0, 0)` (flush against the node's top-left). |
-| `size` | object\|null | Section AABB. `null` (the default) means "fill the parent node"; an explicit width/height overrides. |
+| `size` | object\|null | Section AABB. `null` (the default) means "fill the parent node"; an explicit width/height overrides. AABB containment uses the *effective* size (`null` ⇒ `node.size`), so a `null`-sized section is only valid at `offset = (0, 0)` — any non-zero offset stretches past the parent's right / bottom edge and `maptool verify` flags it. See [sections.md](./sections.md#effective-size-for-aabb-containment). |
 | `channel` | integer | Mutation channel inside the parent node-area; defaults to the section's index in `MindNode.sections`. |
 
 See [sections.md](./sections.md) for the section concept and

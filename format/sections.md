@@ -125,17 +125,27 @@ contained within the parent node's bounds, no astronomical
 typos. Rejection messages are byte-equal to verify's so a
 verb-rejected edit and a `verify` violation read identically.
 
-**Effective size for AABB containment.** `Some(sz)` honours
-the explicit pin; `None` (fill-parent — the migration default)
-falls back to `node.size` for the containment check. A
-`None`-sized section's effective AABB is therefore
-`(offset, node.size)`, so any non-zero `offset` makes the
-section stretch past the node's right / bottom edge — verify
-flags it, the setter rejects it. Pre-fix the `None` arm
-skipped the check entirely, leaving fill-parent sections free
-to visually escape the parent (a degenerate state authors
-could reach through `section move` or the drag gesture
-without any error feedback).
+### Effective size for AABB containment
+
+`Some(sz)` honours the explicit pin; `None` (fill-parent —
+the migration default) falls back to `node.size` for the
+containment check. A `None`-sized section's effective AABB
+is therefore `(offset, node.size)`, so any non-zero `offset`
+makes the section stretch past the node's right / bottom
+edge — verify flags it, both `set_section_offset` and
+`set_section_size` reject it. Pre-fix the `None` arm
+skipped the check entirely, leaving fill-parent sections
+free to visually escape the parent (a degenerate state
+authors could reach through `section move`, `section
+resize none`, or the drag gesture without any error
+feedback).
+
+The shared
+[`MindSection::effective_size`](../lib/baumhard/src/mindmap/model/node.rs)
+helper is the single source of truth — both the document-side
+setters and `verify::sections::check_within_node_aabb` route
+through it, so the two cannot drift on what "fill-parent"
+means.
 
 **Drag-to-move gesture.** Click and drag on a section of a
 multi-section node — past the drag-threshold the press promotes

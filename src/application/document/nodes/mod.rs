@@ -481,19 +481,15 @@ impl MindMapDocument {
             return Ok(false);
         };
         check_node_size_finite_positive(node, section_idx)?;
-        // AABB containment uses the section's *effective* size:
+        // AABB containment uses `MindSection::effective_size` —
         // `Some(sz)` honours the explicit pin; `None` falls back
-        // to `node.size` (fill-parent). Mirrors the verify rule —
-        // a `None`-sized section at a non-zero offset stretches
-        // past the node's right / bottom edge and visually
-        // escapes the parent.
-        let effective_size = section
-            .size
-            .as_ref()
-            .map(|s| (s.width, s.height))
-            .unwrap_or((node.size.width, node.size.height));
-        let right = x + effective_size.0;
-        let bottom = y + effective_size.1;
+        // to `node.size` (fill-parent). One source of truth
+        // shared with `verify::sections`, so a `None`-sized
+        // section at non-zero offset is rejected with the
+        // verify-mirror message.
+        let effective_size = section.effective_size(node.size);
+        let right = x + effective_size.width;
+        let bottom = y + effective_size.height;
         if right > node.size.width {
             return Err(format!(
                 "section[{}] extends past node right edge ({} > {})",
@@ -581,20 +577,27 @@ impl MindMapDocument {
                     section_idx, s.height, node.size.height
                 ));
             }
-            let right = section.offset.x + s.width;
-            let bottom = section.offset.y + s.height;
-            if right > node.size.width {
-                return Err(format!(
-                    "section[{}] extends past node right edge ({} > {})",
-                    section_idx, right, node.size.width
-                ));
-            }
-            if bottom > node.size.height {
-                return Err(format!(
-                    "section[{}] extends past node bottom edge ({} > {})",
-                    section_idx, bottom, node.size.height
-                ));
-            }
+        }
+        // AABB containment with the *post-mutation* effective
+        // size — `size.unwrap_or(node.size)`. Closes the symmetric
+        // hole to the C3 fix on `set_section_offset`: a flatten-
+        // to-fill-parent (`set_section_size(None)`) on a section
+        // whose existing offset is non-zero would otherwise
+        // commit a state verify rejects.
+        let effective = size.unwrap_or(node.size);
+        let right = section.offset.x + effective.width;
+        let bottom = section.offset.y + effective.height;
+        if right > node.size.width {
+            return Err(format!(
+                "section[{}] extends past node right edge ({} > {})",
+                section_idx, right, node.size.width
+            ));
+        }
+        if bottom > node.size.height {
+            return Err(format!(
+                "section[{}] extends past node bottom edge ({} > {})",
+                section_idx, bottom, node.size.height
+            ));
         }
         if section.size == size {
             return Ok(false);

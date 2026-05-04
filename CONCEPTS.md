@@ -1071,16 +1071,16 @@ pointer at `maptool convert --sections`. Full reference:
   size / astronomical size rejection with model-side snap-back
   as the move gesture.
 
-  **Animation interleaving.** While a `MovingSection` or
-  `SectionResize` drag is in flight, `drain_animation_tick` is
-  suppressed in `run_native::drain_frame`. The animation tick
-  routes through `apply_custom_mutation` →
-  `sync_node_from_tree`, which observes the in-progress
-  mid-drag tree position; without the suppression, a
-  `target_scope: SectionsOnly` animation firing on the same
-  frame would write the in-progress AABB to the model and
-  push an unintended undo entry. Animations resume on the
-  next frame after release.
+  **Animation interleaving.** While any drag that mutates the
+  tree per-frame is in flight (`MovingNode`, `MovingSection`,
+  `SectionResize`), `drain_animation_tick` is suppressed in
+  `run_native::drain_frame`. The animation tick routes through
+  `apply_custom_mutation` → `sync_node_from_tree`, which would
+  otherwise observe the in-progress mid-drag tree position and
+  write it to the model + undo stack — corrupting both the
+  gesture and the animation. Edge / portal-label drags don't
+  qualify; they touch the document directly, not the tree.
+  Animations resume on the next frame after release.
 - **Multiple `GlyphModel`s per section.** Still on the
   trajectory — today a section holds exactly one structural
   model; richer composed-glyph layouts (a gridded matrix beside
