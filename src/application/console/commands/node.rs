@@ -16,14 +16,14 @@ use crate::application::console::predicates::always;
 use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
 use crate::application::document::SelectionState;
 
-pub const VERBS: &[&str] = &["resize", "fit-to-content"];
+pub const VERBS: &[&str] = &["resize", "fit"];
 
 pub const COMMAND: Command = Command {
     name: "node",
     aliases: &[],
     summary: "Resize the selected node atomically, or fit it to its content",
-    usage: "node resize <w> <h> | node fit-to-content",
-    tags: &["node", "resize", "size", "fit", "shrink"],
+    usage: "node resize <w> <h> | node fit",
+    tags: &["node", "resize", "size", "fit", "shrink", "content"],
     applicable: always,
     complete: complete_node,
     execute: execute_node,
@@ -39,28 +39,26 @@ fn complete_node(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completi
 fn execute_node(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     let verb = match args.positional(0) {
         Some(v) => v,
-        None => return ExecResult::err("usage: node resize <w> <h> | node fit-to-content"),
+        None => return ExecResult::err("usage: node resize <w> <h> | node fit"),
     };
     match verb {
         "resize" => execute_resize(args, eff),
-        "fit-to-content" => execute_fit_to_content(eff),
+        "fit" => execute_fit(eff),
         other => ExecResult::err(format!("node: unknown subverb '{}'", other)),
     }
 }
 
-fn execute_fit_to_content(eff: &mut ConsoleEffects) -> ExecResult {
+fn execute_fit(eff: &mut ConsoleEffects) -> ExecResult {
     let node_id = match &eff.document.selection {
         SelectionState::Single(id) => id.clone(),
         SelectionState::Section(s) => s.node_id.clone(),
         _ => {
-            return ExecResult::err(
-                "node fit-to-content: requires a single-node or section selection",
-            );
+            return ExecResult::err("node fit: requires a single-node or section selection");
         }
     };
     match eff.document.fit_node_to_content(&node_id) {
         Ok(true) => ExecResult::ok_msg(format!("node '{}' fitted to content", node_id)),
-        Ok(false) => ExecResult::ok_msg("node fit-to-content: already at floor".to_string()),
+        Ok(false) => ExecResult::ok_msg("node fit: already at floor".to_string()),
         Err(msg) => ExecResult::err(msg),
     }
 }
@@ -162,12 +160,12 @@ mod tests {
         assert_exec_err_contains(run("node resize 50 50", &mut doc), "single-node or section");
     }
 
-    /// `node fit-to-content` shrinks an over-sized node to its
+    /// `node fit` shrinks an over-sized node to its
     /// measured-text floor — the path that lets the user
     /// recover from a manual resize that pinned the node larger
     /// than its content.
     #[test]
-    fn node_fit_to_content_shrinks_oversized_node() {
+    fn node_fit_shrinks_oversized_node() {
         use baumhard::mindmap::model::Size;
         let mut doc = load_test_doc();
         let id = first_testament_node_id(&doc);
@@ -179,7 +177,7 @@ mod tests {
         };
         doc.undo_stack.clear();
         doc.selection = SelectionState::Single(id.clone());
-        assert_exec_ok(run("node fit-to-content", &mut doc));
+        assert_exec_ok(run("node fit", &mut doc));
         let after = doc.mindmap.nodes[&id].size;
         assert!(
             after.width < 5000.0 && after.height < 5000.0,
@@ -193,15 +191,15 @@ mod tests {
     }
 
     #[test]
-    fn node_fit_to_content_no_op_when_already_at_floor() {
+    fn node_fit_no_op_when_already_at_floor() {
         let mut doc = load_test_doc();
         let id = first_testament_node_id(&doc);
         doc.selection = SelectionState::Single(id.clone());
         // First call lands at the floor.
-        assert_exec_ok(run("node fit-to-content", &mut doc));
+        assert_exec_ok(run("node fit", &mut doc));
         let undo_after_first = doc.undo_stack.len();
         // Second call is a no-op.
-        assert_exec_ok(run("node fit-to-content", &mut doc));
+        assert_exec_ok(run("node fit", &mut doc));
         assert_eq!(
             doc.undo_stack.len(),
             undo_after_first,
@@ -210,7 +208,7 @@ mod tests {
     }
 
     #[test]
-    fn node_fit_to_content_with_section_selection_uses_owning_node() {
+    fn node_fit_with_section_selection_uses_owning_node() {
         use crate::application::document::SectionSel;
         use baumhard::mindmap::model::Size;
         let mut doc = load_test_doc();
@@ -223,15 +221,15 @@ mod tests {
             node_id: id.clone(),
             section_idx: 0,
         });
-        assert_exec_ok(run("node fit-to-content", &mut doc));
+        assert_exec_ok(run("node fit", &mut doc));
         let after = doc.mindmap.nodes[&id].size;
         assert!(after.width < 5000.0);
     }
 
     #[test]
-    fn node_fit_to_content_requires_node_or_section_selection() {
+    fn node_fit_requires_node_or_section_selection() {
         let mut doc = load_test_doc();
         doc.selection = SelectionState::None;
-        assert_exec_err_contains(run("node fit-to-content", &mut doc), "single-node or section");
+        assert_exec_err_contains(run("node fit", &mut doc), "single-node or section");
     }
 }

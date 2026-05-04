@@ -528,6 +528,48 @@ fn test_set_node_aabb_rejects_non_finite_position() {
     assert!(result.is_err_and(|m| m.contains("non-finite")));
 }
 
+// ── compute_one_node_text_floor (the shared floor helper) ────────
+
+/// Pinned section size dominates measured text in the floor
+/// computation. Locks the "size as floor" contract directly on
+/// the helper, not just through its consumers.
+#[test]
+fn test_compute_one_node_text_floor_pinned_size_acts_as_floor() {
+    use super::compute_one_node_text_floor;
+    use baumhard::mindmap::model::Size;
+    let (mut doc, id) = super::tests_common::pinned_two_section_node();
+    // Pin section[1] way past any text floor.
+    doc.mindmap.nodes.get_mut(&id).unwrap().sections[1].size = Some(Size {
+        width: 500.0,
+        height: 200.0,
+    });
+    let node = &doc.mindmap.nodes[&id];
+    let (w, h) = compute_one_node_text_floor(node);
+    // section[1]'s offset+size = (10+500, 10+200) = (510, 210).
+    assert!(w >= 510.0, "pinned width must propagate, got {}", w);
+    assert!(h >= 210.0, "pinned height must propagate, got {}", h);
+}
+
+/// A non-finite section offset is skipped — the verifier flags
+/// it elsewhere, and a NaN propagating into the floor would
+/// corrupt every downstream `node.size` reader.
+#[test]
+fn test_compute_one_node_text_floor_skips_non_finite_offset() {
+    use super::compute_one_node_text_floor;
+    let mut doc = load_test_doc();
+    let id = first_testament_node_id(&doc);
+    {
+        let n = doc.mindmap.nodes.get_mut(&id).unwrap();
+        n.sections[0].offset = baumhard::mindmap::model::Position {
+            x: f64::NAN,
+            y: 0.0,
+        };
+    }
+    let (w, h) = compute_one_node_text_floor(&doc.mindmap.nodes[&id]);
+    assert!(w.is_finite());
+    assert!(h.is_finite());
+}
+
 // ── fit_node_to_content (auto-fit shrink path) ──────────────────
 
 /// `fit_node_to_content` shrinks an over-sized node to its
@@ -539,7 +581,6 @@ fn test_fit_node_to_content_shrinks_to_floor() {
     use baumhard::mindmap::model::Size;
     let mut doc = load_test_doc();
     let id = first_testament_node_id(&doc);
-    let before = doc.mindmap.nodes[&id].size;
     doc.mindmap.nodes.get_mut(&id).unwrap().size = Size {
         width: 5000.0,
         height: 5000.0,
@@ -551,13 +592,9 @@ fn test_fit_node_to_content_shrinks_to_floor() {
         after.width < 5000.0 && after.height < 5000.0,
         "fit-to-content must shrink the node"
     );
-    // Undo restores the prior size.
+    // Undo restores the prior (over-sized) state.
     assert!(doc.undo());
     assert_eq!(doc.mindmap.nodes[&id].size.width, 5000.0);
-    // (`before` is not the same as 5000.0 — we mutated directly,
-    // so the undo only tracks the post-mutation snapshot. Sanity
-    // check that the original-original was different.)
-    assert!(before.width < 5000.0);
 }
 
 #[test]
@@ -588,8 +625,13 @@ fn test_fit_node_to_content_pinned_section_size_acts_as_floor() {
     let (mut doc, id) = super::tests_common::pinned_two_section_node();
     // section[1] is pinned at (10, 10) size 50×30 — its
     // contribution to the floor is offset+size = (60, 40).
-    // The node should fit-to AT LEAST that, plus whatever
-    // text-driven size section[0] requires.
+    // The fit-to-content target is the max of the pinned-section
+    // floor and section[0]'s text-driven size; assert that the
+    // pinned axis floor survives. (Section[0] may pull width
+    // past 60 via testament text, so we assert >= rather than
+    // == on width; height has no large contributor in section[0]
+    // beyond default padding so the pinned 40 is the dominant
+    // axis there.)
     doc.mindmap.nodes.get_mut(&id).unwrap().size = Size {
         width: 5000.0,
         height: 5000.0,
@@ -602,6 +644,95 @@ fn test_fit_node_to_content_pinned_section_size_acts_as_floor() {
         "pinned section[1]'s offset+size contribution must survive, got {}×{}",
         after.width,
         after.height,
+    );
+}
+
+/// Idempotency must hold for **framed** nodes too. Pre-fix, a
+/// framed node's `grow_one_node_to_fit_border` pulled `n.size`
+/// past the bare text floor, so the no-op gate (which compared
+/// against the bare floor) missed on every call after the
+/// first — repeated `fit_node_to_content` calls stacked
+/// `EditNodeAabb` undo entries. Post-fix, the gate compares the
+/// *post-border-grow* size against `before_size`, which holds
+/// across calls.
+#[test]
+fn test_fit_node_to_content_idempotent_on_framed_node() {
+    let mut doc = load_test_doc();
+    let id = first_testament_node_id(&doc);
+    // Force the testament root to wear a frame.
+    doc.mindmap.nodes.get_mut(&id).unwrap().style.show_frame = true;
+    doc.undo_stack.clear();
+    // First call lands at the framed floor.
+    assert_eq!(doc.fit_node_to_content(&id), Ok(true));
+    let undo_after_first = doc.undo_stack.len();
+    let size_after_first = doc.mindmap.nodes[&id].size;
+    // Second call must be a no-op even though the border-grow
+    // pulled the post-floor size up past the bare text floor.
+    assert_eq!(doc.fit_node_to_content(&id), Ok(false));
+    assert_eq!(
+        doc.undo_stack.len(),
+        undo_after_first,
+        "framed-node fit-to-content must not stack undo entries"
+    );
+    assert_eq!(doc.mindmap.nodes[&id].size, size_after_first);
+}
+
+/// `fit_node_to_content` rejects with the verify-mirror-style
+/// message when the floor is non-finite — exercises the
+/// finite-check guard added in the self-audit fixup. We force
+/// the rejection by clearing every section's text and runs;
+/// `compute_one_node_text_floor` then yields a (pad-only,
+/// pad-only) tuple. Empty-text sections still produce a finite
+/// positive floor (pad), so this test in practice exercises the
+/// idempotent-`<=0` rejection only when the loader-rejected
+/// "every section empty" state is forced through the model
+/// directly. Synthesize the unreachable state here to pin the
+/// rejection-path coverage.
+#[test]
+fn test_fit_node_to_content_rejects_unmeasurable_floor() {
+    let mut doc = load_test_doc();
+    let id = first_testament_node_id(&doc);
+    // Construct an unreachable-via-loader state: a single
+    // section with NaN offset. `compute_one_node_text_floor`
+    // skips non-finite-offset sections, so floor stays (0, 0).
+    {
+        let n = doc.mindmap.nodes.get_mut(&id).unwrap();
+        n.sections.clear();
+        n.sections.push(baumhard::mindmap::model::MindSection::new_default(
+            "x".into(),
+            Vec::new(),
+        ));
+        n.sections[0].offset = baumhard::mindmap::model::Position {
+            x: f64::NAN,
+            y: 0.0,
+        };
+    }
+    let result = doc.fit_node_to_content(&id);
+    assert!(
+        result.is_err_and(|m| m.contains("no measurable text")),
+        "expected unmeasurable-floor error"
+    );
+}
+
+/// Pinned `section.size` past the absolute typo ceiling
+/// (`MAX_NODE_AXIS = 1_000_000`) propagates through the floor.
+/// `fit_node_to_content` must route the candidate through
+/// `check_node_size_typo` like the sibling node-size setters,
+/// so the typo is caught even when it arrives via a pinned
+/// section rather than a direct setter argument.
+#[test]
+fn test_fit_node_to_content_rejects_astronomical_pinned_section() {
+    use baumhard::mindmap::model::Size;
+    let (mut doc, id) = super::tests_common::pinned_two_section_node();
+    // Pin section[1] to a width that exceeds the typo ceiling.
+    doc.mindmap.nodes.get_mut(&id).unwrap().sections[1].size = Some(Size {
+        width: 2_000_000.0,
+        height: 30.0,
+    });
+    let result = doc.fit_node_to_content(&id);
+    assert!(
+        result.is_err_and(|m| m.contains("exceeds the")),
+        "pinned-section typo must be caught at fit-to-content"
     );
 }
 

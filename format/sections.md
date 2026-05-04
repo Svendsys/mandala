@@ -187,7 +187,7 @@ The auto-fit pass only **grows** the parent node's `size` (it
 never shrinks). To explicitly shrink a node back to its
 measured-text floor — useful after a manual `node resize`
 that pinned the node larger than its content — use the
-`node fit-to-content` console verb. The verb routes through
+`node fit` console verb. The verb routes through
 `MindMapDocument::fit_node_to_content`, which computes the
 same floor the auto-fit pass uses (via the shared
 `compute_one_node_text_floor` helper) and writes it
@@ -195,8 +195,23 @@ unconditionally as the new `node.size`, then re-applies
 `grow_one_node_to_fit_border` so the rendered border has
 room. Pinned-section contributions to the floor survive
 verbatim — a `Some`-sized section's `(offset, size)` is part
-of the measured floor, so fit-to-content respects user intent
+of the measured floor, so `node fit` respects user intent
 on every individual section just like the grow path does.
+
+**Ambient auto-shrink is deliberately not part of the design.**
+After "Hello World" → "Hi" the node stays at the longer
+text's floor; the user reaches for `node fit` to recover
+the slack. Asymmetric with the auto-grow side, but the
+alternative — shrinking the node automatically on every
+text-edit that frees space — fights with manually-set sizes
+and produces janky resize-on-every-keystroke behavior.
+
+**Section-side shrink path** is `section resize none` (flatten
+to fill-parent). A per-section `fit-to-content` is
+intentionally absent — section text floor is folded into the
+parent's `compute_one_node_text_floor`, so a `node fit` on a
+multi-section node already reflows every section to its
+content-driven floor.
 
 Custom mutations (`target_scope: SectionsOnly` with
 `AreaCommand::SetBounds` / `MoveTo` / `NudgeRight`) **bypass**

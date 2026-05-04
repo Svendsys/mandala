@@ -203,19 +203,13 @@ pub(super) fn grow_one_node_to_fit_text(node: &mut baumhard::mindmap::model::Min
     }
 }
 
-/// Compute the measured-text floor for a single node — the minimum
-/// `(width, height)` that guarantees no section's text visually
-/// clips. Pure function (no mutation): the same floor that
-/// [`grow_one_node_to_fit_text`] uses internally as the lower
-/// bound, lifted out so [`MindMapDocument::fit_node_to_content`]
-/// can write it unconditionally rather than max-wins-style.
-///
-/// Walks every section, measures its text under its dominant
-/// run, and combines the per-section floors into one node-level
-/// floor. Each section contributes the larger of its measured
-/// text bounds and (when set) its user-pinned `size` plus its
-/// offset — `Some`-sized sections survive when text fits, and
-/// text overflow grows the parent so nothing visually clips.
+/// Pure floor-compute extracted from [`grow_one_node_to_fit_text`]
+/// so the explicit-shrink path
+/// [`MindMapDocument::fit_node_to_content`] can read the floor
+/// without triggering the max-wins-grow side effect. Each
+/// section contributes the larger of its measured text and its
+/// pinned `size + offset` — pin survives when text fits;
+/// overflow grows the parent so nothing visually clips.
 pub(super) fn compute_one_node_text_floor(node: &baumhard::mindmap::model::MindNode) -> (f64, f64) {
     use baumhard::font::fonts::{
         acquire_font_system_write, app_font_by_family, measure_text_block_unbounded,
