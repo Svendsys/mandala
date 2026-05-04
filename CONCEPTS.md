@@ -1047,6 +1047,13 @@ pointer at `maptool convert --sections`. Full reference:
   `MindMapTree::section_arena_id`, and the
   `GfxElementField::Flag(Flag::SectionRoot)` predicate gate
   filters by element flag from any other scope.
+- **Per-section move / resize verbs.** Shipped — `section move
+  <dx> <dy>` and `section resize <w> <h>` (plus `section resize
+  none` to flip back to fill-parent) write through
+  `set_section_offset` / `set_section_size` with AABB validation
+  that mirrors `maptool verify`'s rules. Drag/resize gestures
+  remain queued; verbs cover the authoring surface today. See
+  [`format/sections.md`'s "Position and size verbs"](./format/sections.md).
 - **Multiple `GlyphModel`s per section.** Still on the
   trajectory — today a section holds exactly one structural
   model; richer composed-glyph layouts (a gridded matrix beside
@@ -1891,9 +1898,14 @@ to the right element.
   when the user clicks on a section-area in a *multi-section*
   node (single-section migrated nodes still route through
   `Single` so today's whole-node verbs keep firing on the whole
-  node target). Per-section verbs (`set_section_text` and
-  friends) consult `selected_section()` to bypass the
-  whole-node collapse.
+  node target). Per-section setters cover text
+  (`set_section_text`, `set_section_text_and_runs`), colour
+  (`set_section_text_color`), font (`set_section_font_size`,
+  `set_section_font_family`), position + size
+  (`set_section_offset`, `set_section_size`), and the
+  structured-clipboard payload (`apply_section_payload`); the
+  trait dispatcher and the `section move` / `section resize`
+  console verbs route here from a `SelectionState::Section`.
 - `Edge(EdgeRef)` — the whole edge body
 - `EdgeLabel(EdgeLabelSel)` — the text label of a line-mode edge
 - `PortalLabel(PortalLabelSel)` — a portal endpoint icon

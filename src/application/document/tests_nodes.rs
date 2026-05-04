@@ -101,47 +101,16 @@ fn test_set_section_text_grapheme_handling_for_emoji_and_combining() {
     );
 }
 
-// ── Section offset / size setters (Tier 2B-setters) ────────────
+// ── Section offset / size setters ──────────────────────────────
 //
-// `set_section_offset` and `set_section_size` validate against the
-// same rules `crates/maptool/src/verify/sections.rs` enforces;
-// rejection messages are byte-equal to verify's so a verb-rejected
-// edit and a `verify` violation read identically.
-
-/// Helper: set up a parent node with two sections, the second
-/// pinned at offset (10,10) size 50×30 inside a 200×100 node.
-/// Used by every setter test below so AABB-validation expectations
-/// stay deterministic.
-fn doc_with_pinned_two_section_node() -> (super::MindMapDocument, String) {
-    use super::tests_common::make_two_section_node_with_pinned_runs;
-    let mut doc = load_test_doc();
-    let id = first_testament_node_id(&doc);
-    make_two_section_node_with_pinned_runs(
-        &mut doc,
-        &id,
-        "#ffffff",
-        ["#ffffff", "#ffffff"],
-        "LiberationSans",
-        14,
-    );
-    {
-        let node = doc.mindmap.nodes.get_mut(&id).unwrap();
-        node.size.width = 200.0;
-        node.size.height = 100.0;
-        node.sections[1].offset = baumhard::mindmap::model::Position { x: 10.0, y: 10.0 };
-        node.sections[1].size = Some(baumhard::mindmap::model::Size {
-            width: 50.0,
-            height: 30.0,
-        });
-    }
-    doc.undo_stack.clear();
-    doc.dirty = false;
-    (doc, id)
-}
+// Validation rules + rejection messages mirror
+// `crates/maptool/src/verify/sections.rs`. Shared fixture lives
+// at `tests_common::pinned_two_section_node`.
 
 #[test]
 fn test_set_section_offset_writes_and_round_trips_through_undo() {
-    let (mut doc, id) = doc_with_pinned_two_section_node();
+    use super::tests_common::pinned_two_section_node;
+    let (mut doc, id) = pinned_two_section_node();
     assert_eq!(doc.set_section_offset(&id, 1, 20.0, 25.0), Ok(true));
     let s = &doc.mindmap.nodes.get(&id).unwrap().sections[1];
     assert_eq!(s.offset.x, 20.0);
@@ -154,7 +123,7 @@ fn test_set_section_offset_writes_and_round_trips_through_undo() {
 
 #[test]
 fn test_set_section_offset_idempotent_no_op() {
-    let (mut doc, id) = doc_with_pinned_two_section_node();
+    let (mut doc, id) = super::tests_common::pinned_two_section_node();
     assert_eq!(doc.set_section_offset(&id, 1, 10.0, 10.0), Ok(false));
     assert!(doc.undo_stack.is_empty(), "no-op must not push undo");
     assert!(!doc.dirty);
@@ -162,7 +131,7 @@ fn test_set_section_offset_idempotent_no_op() {
 
 #[test]
 fn test_set_section_offset_rejects_nan_and_inf() {
-    let (mut doc, id) = doc_with_pinned_two_section_node();
+    let (mut doc, id) = super::tests_common::pinned_two_section_node();
     assert!(doc
         .set_section_offset(&id, 1, f64::NAN, 0.0)
         .is_err_and(|m| m.contains("non-finite")));
@@ -173,7 +142,7 @@ fn test_set_section_offset_rejects_nan_and_inf() {
 
 #[test]
 fn test_set_section_offset_rejects_negative_with_verify_mirror_message() {
-    let (mut doc, id) = doc_with_pinned_two_section_node();
+    let (mut doc, id) = super::tests_common::pinned_two_section_node();
     assert!(doc
         .set_section_offset(&id, 1, -1.0, 0.0)
         .is_err_and(|m| m.contains("section[1].offset.x is negative")));
@@ -184,7 +153,7 @@ fn test_set_section_offset_rejects_negative_with_verify_mirror_message() {
 
 #[test]
 fn test_set_section_offset_rejects_aabb_overflow_with_verify_mirror_message() {
-    let (mut doc, id) = doc_with_pinned_two_section_node();
+    let (mut doc, id) = super::tests_common::pinned_two_section_node();
     // section[1] size 50×30; offset (160,0) → right=210 > 200.
     assert!(doc
         .set_section_offset(&id, 1, 160.0, 0.0)
@@ -197,13 +166,13 @@ fn test_set_section_offset_rejects_aabb_overflow_with_verify_mirror_message() {
 
 #[test]
 fn test_set_section_offset_unknown_section_returns_false() {
-    let (mut doc, id) = doc_with_pinned_two_section_node();
+    let (mut doc, id) = super::tests_common::pinned_two_section_node();
     assert_eq!(doc.set_section_offset(&id, 99, 0.0, 0.0), Ok(false));
 }
 
 #[test]
 fn test_set_section_size_writes_and_round_trips_through_undo() {
-    let (mut doc, id) = doc_with_pinned_two_section_node();
+    let (mut doc, id) = super::tests_common::pinned_two_section_node();
     let new_size = Some(baumhard::mindmap::model::Size {
         width: 80.0,
         height: 40.0,
@@ -224,14 +193,14 @@ fn test_set_section_size_writes_and_round_trips_through_undo() {
 
 #[test]
 fn test_set_section_size_none_restores_fill_parent() {
-    let (mut doc, id) = doc_with_pinned_two_section_node();
+    let (mut doc, id) = super::tests_common::pinned_two_section_node();
     assert_eq!(doc.set_section_size(&id, 1, None), Ok(true));
     assert!(doc.mindmap.nodes.get(&id).unwrap().sections[1].size.is_none());
 }
 
 #[test]
 fn test_set_section_size_rejects_zero_and_negative_with_verify_mirror_message() {
-    let (mut doc, id) = doc_with_pinned_two_section_node();
+    let (mut doc, id) = super::tests_common::pinned_two_section_node();
     let zero = Some(baumhard::mindmap::model::Size {
         width: 0.0,
         height: 30.0,
@@ -250,7 +219,7 @@ fn test_set_section_size_rejects_zero_and_negative_with_verify_mirror_message() 
 
 #[test]
 fn test_set_section_size_rejects_overflow_with_verify_mirror_message() {
-    let (mut doc, id) = doc_with_pinned_two_section_node();
+    let (mut doc, id) = super::tests_common::pinned_two_section_node();
     // Offset (10,10) + width 200 = 210 > node.size.width 200.
     let overflow = Some(baumhard::mindmap::model::Size {
         width: 200.0,
@@ -263,7 +232,7 @@ fn test_set_section_size_rejects_overflow_with_verify_mirror_message() {
 
 #[test]
 fn test_set_section_size_rejects_astronomical_with_verify_mirror_message() {
-    let (mut doc, id) = doc_with_pinned_two_section_node();
+    let (mut doc, id) = super::tests_common::pinned_two_section_node();
     // node 200×100, 100× = 20000. 25000 trips the typo guard.
     let huge = Some(baumhard::mindmap::model::Size {
         width: 25000.0,
@@ -276,7 +245,7 @@ fn test_set_section_size_rejects_astronomical_with_verify_mirror_message() {
 
 #[test]
 fn test_set_section_size_idempotent_no_op() {
-    let (mut doc, id) = doc_with_pinned_two_section_node();
+    let (mut doc, id) = super::tests_common::pinned_two_section_node();
     let same = Some(baumhard::mindmap::model::Size {
         width: 50.0,
         height: 30.0,
@@ -285,11 +254,11 @@ fn test_set_section_size_idempotent_no_op() {
     assert!(doc.undo_stack.is_empty(), "no-op must not push undo");
 }
 
-// ── Auto-fit on Some-sized sections (G6) ─────────────────────────
+// ── Auto-fit on Some-sized sections ────────────────────────────
 //
-// Pre-Tier-2B-setters, `grow_one_node_to_fit_text` skipped
-// `Some`-sized sections entirely. Now the user-set size is a floor
-// but text overflow still grows the parent — both intents survive.
+// `grow_one_node_to_fit_text` contributes the larger of measured
+// text and (when set) user-pinned size to the floor — user intent
+// survives when text fits, text overflow still grows the parent.
 
 #[test]
 fn test_auto_fit_some_sized_section_grows_parent_when_text_overflows() {
@@ -313,9 +282,15 @@ fn test_auto_fit_some_sized_section_grows_parent_when_text_overflows() {
     }
     let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
     grow_one_node_to_fit_text(node);
+    // 500 'x' characters at 14pt should produce a measured text
+    // block of hundreds of pixels (well over 100). A regression
+    // that drops "grow to fit text" to "grow by 1 unit per call"
+    // would pass the loose `> 10.0` form; this lower bound traps
+    // it.
     assert!(
-        node.size.width > 10.0,
-        "Some-sized section's text overflow must grow the parent"
+        node.size.width >= 100.0,
+        "500-char text must grow parent past 100; got {}",
+        node.size.width
     );
 }
 
@@ -327,8 +302,6 @@ fn test_auto_fit_some_sized_section_keeps_user_size_when_text_fits() {
     {
         let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
         node.sections.clear();
-        // Empty text — auto-fit's text contribution is just padding.
-        // The user-pinned 200×80 floor must survive.
         node.sections
             .push(baumhard::mindmap::model::MindSection::new_default(
                 String::new(),
@@ -355,6 +328,41 @@ fn test_auto_fit_some_sized_section_keeps_user_size_when_text_fits() {
     );
 }
 
+/// `Some`-sized section where text *also* fits within the user
+/// size: ensures the floor takes max(text, user-size) — a
+/// regression that always picks user-size and ignores text would
+/// pass the previous two tests but fail here.
+#[test]
+fn test_auto_fit_some_sized_section_text_dominates_when_larger() {
+    use super::grow_one_node_to_fit_text;
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    {
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        node.sections.clear();
+        node.sections
+            .push(baumhard::mindmap::model::MindSection::new_default(
+                "x".repeat(500),
+                Vec::new(),
+            ));
+        // User pinned 50×50, but text needs much more — text
+        // wins.
+        node.sections[0].size = Some(baumhard::mindmap::model::Size {
+            width: 50.0,
+            height: 50.0,
+        });
+        node.size.width = 50.0;
+        node.size.height = 50.0;
+    }
+    let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+    grow_one_node_to_fit_text(node);
+    assert!(
+        node.size.width >= 100.0,
+        "text must dominate the floor when larger than user size; got {}",
+        node.size.width
+    );
+}
+
 #[test]
 fn test_auto_fit_none_sized_section_unchanged_regression() {
     use super::grow_one_node_to_fit_text;
@@ -375,8 +383,9 @@ fn test_auto_fit_none_sized_section_unchanged_regression() {
     let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
     grow_one_node_to_fit_text(node);
     assert!(
-        node.size.width > 10.0,
-        "None-sized section's auto-fit behaviour must not regress"
+        node.size.width >= 100.0,
+        "None-sized section auto-fit must grow parent past 100; got {}",
+        node.size.width
     );
 }
 

@@ -193,6 +193,37 @@ pub(in crate::application) fn make_two_section_node_with_pinned_runs(
     }
 }
 
+/// Build a 200×100 testament-rooted node with two sections, the
+/// second pinned at offset (10,10) size 50×30 — the deterministic
+/// AABB-validation fixture every section-position/size test needs.
+/// Resets `undo_stack` and `dirty` so the test starts clean (the
+/// helper's mutations don't push undo, but loaders may).
+pub(in crate::application) fn pinned_two_section_node() -> (MindMapDocument, String) {
+    let mut doc = load_test_doc();
+    let id = first_testament_node_id(&doc);
+    make_two_section_node_with_pinned_runs(
+        &mut doc,
+        &id,
+        "#ffffff",
+        ["#ffffff", "#ffffff"],
+        "LiberationSans",
+        14,
+    );
+    {
+        let node = doc.mindmap.nodes.get_mut(&id).unwrap();
+        node.size.width = 200.0;
+        node.size.height = 100.0;
+        node.sections[1].offset = baumhard::mindmap::model::Position { x: 10.0, y: 10.0 };
+        node.sections[1].size = Some(baumhard::mindmap::model::Size {
+            width: 50.0,
+            height: 30.0,
+        });
+    }
+    doc.undo_stack.clear();
+    doc.dirty = false;
+    (doc, id)
+}
+
 /// Pick the first visible edge and return its EdgeRef + a guaranteed
 /// on-path sample point. Used by hit-test edge tests.
 pub(super) fn pick_test_edge(doc: &MindMapDocument) -> (super::EdgeRef, glam::Vec2) {

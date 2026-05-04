@@ -63,6 +63,38 @@ impl SectionPayload {
 }
 
 impl MindMapDocument {
+    /// Snapshot + mutate + undo plumbing shared by every section
+    /// setter that uses the `EditNodeStyle` undo envelope. The
+    /// caller verifies the section exists and that the edit is a
+    /// real change, then hands the actual field write here as a
+    /// closure; this fn snapshots `node.style` + `node.sections`
+    /// into a single undo entry, runs the closure under a mutable
+    /// borrow, and flips `dirty`. Callers that need post-write
+    /// auto-fit (`grow_one_node_to_fit_text` / `_border`) re-
+    /// acquire the node and run them; helper deliberately stays
+    /// out of that decision so colour-only setters
+    /// (`set_section_text_color`) skip the cost.
+    fn mutate_section_with_style_undo<F>(&mut self, node_id: &str, section_idx: usize, mutate: F)
+    where
+        F: FnOnce(&mut baumhard::mindmap::model::MindSection),
+    {
+        let node = self
+            .mindmap
+            .nodes
+            .get(node_id)
+            .expect("caller verified node exists");
+        let before_style = node.style.clone();
+        let before_sections = node.sections.clone();
+        let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
+        mutate(&mut node.sections[section_idx]);
+        self.undo_stack.push(UndoAction::EditNodeStyle {
+            node_id: node_id.to_string(),
+            before_style,
+            before_sections,
+        });
+        self.dirty = true;
+    }
+
     /// Replace a node's `text` and collapse its `text_runs` to a single
     /// run inheriting the first original run's formatting (font,
     /// size_pt, color, bold, italic, underline). If the original had
@@ -266,22 +298,13 @@ impl MindMapDocument {
         if !any_run_changes {
             return false;
         }
-        let before_style = node.style.clone();
-        let before_sections = node.sections.clone();
-        let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
-        if let Some(section) = node.sections.get_mut(section_idx) {
-            for run in section.text_runs.iter_mut() {
+        self.mutate_section_with_style_undo(node_id, section_idx, |s| {
+            for run in s.text_runs.iter_mut() {
                 if run.color == predicate_color {
                     run.color = color.clone();
                 }
             }
-        }
-        self.undo_stack.push(UndoAction::EditNodeStyle {
-            node_id: node_id.to_string(),
-            before_style,
-            before_sections,
         });
-        self.dirty = true;
         true
     }
 
@@ -305,23 +328,19 @@ impl MindMapDocument {
         if already {
             return false;
         }
-        let before_style = node.style.clone();
-        let before_sections = node.sections.clone();
         let canvas_default = self.mindmap.canvas.default_border.clone();
-        let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
-        if let Some(section) = node.sections.get_mut(section_idx) {
-            for run in section.text_runs.iter_mut() {
+        self.mutate_section_with_style_undo(node_id, section_idx, |s| {
+            for run in s.text_runs.iter_mut() {
                 run.size_pt = size_u;
             }
-        }
+        });
+        let node = self
+            .mindmap
+            .nodes
+            .get_mut(node_id)
+            .expect("just confirmed exists");
         super::grow_one_node_to_fit_text(node);
         super::grow_one_node_to_fit_border(node, canvas_default.as_ref());
-        self.undo_stack.push(UndoAction::EditNodeStyle {
-            node_id: node_id.to_string(),
-            before_style,
-            before_sections,
-        });
-        self.dirty = true;
         true
     }
 
@@ -349,23 +368,20 @@ impl MindMapDocument {
         if already {
             return false;
         }
-        let before_style = node.style.clone();
-        let before_sections = node.sections.clone();
         let canvas_default = self.mindmap.canvas.default_border.clone();
-        let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
-        if let Some(section) = node.sections.get_mut(section_idx) {
-            for run in section.text_runs.iter_mut() {
-                run.font = target.to_string();
+        let target_owned = target.to_string();
+        self.mutate_section_with_style_undo(node_id, section_idx, |s| {
+            for run in s.text_runs.iter_mut() {
+                run.font = target_owned.clone();
             }
-        }
+        });
+        let node = self
+            .mindmap
+            .nodes
+            .get_mut(node_id)
+            .expect("just confirmed exists");
         super::grow_one_node_to_fit_text(node);
         super::grow_one_node_to_fit_border(node, canvas_default.as_ref());
-        self.undo_stack.push(UndoAction::EditNodeStyle {
-            node_id: node_id.to_string(),
-            before_style,
-            before_sections,
-        });
-        self.dirty = true;
         true
     }
 
@@ -397,53 +413,47 @@ impl MindMapDocument {
         if unchanged {
             return false;
         }
-        let before_style = node.style.clone();
-        let before_sections = node.sections.clone();
         let canvas_default = self.mindmap.canvas.default_border.clone();
-        let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
-        if let Some(section) = node.sections.get_mut(section_idx) {
-            section.text = text;
-            section.text_runs = payload.text_runs.clone();
-            section.offset = payload.offset.clone();
-            section.size = payload.size.clone();
-            section.channel = payload.channel;
-            section.trigger_bindings = payload.trigger_bindings.clone();
+        let payload = payload.clone();
+        self.mutate_section_with_style_undo(node_id, section_idx, |s| {
+            s.text = text;
+            s.text_runs = payload.text_runs;
+            s.offset = payload.offset;
+            s.size = payload.size;
+            s.channel = payload.channel;
+            s.trigger_bindings = payload.trigger_bindings;
             // Defensive: a future caller might pass mismatched
             // (text, runs) — the copy site never does, but the
             // public setter shouldn't trust its input enough to
             // leave runs whose ranges exceed the new text length.
-            clamp_runs_to_text(section);
-        }
+            clamp_runs_to_text(s);
+        });
+        let node = self
+            .mindmap
+            .nodes
+            .get_mut(node_id)
+            .expect("just confirmed exists");
         super::grow_one_node_to_fit_text(node);
         super::grow_one_node_to_fit_border(node, canvas_default.as_ref());
-        self.undo_stack.push(UndoAction::EditNodeStyle {
-            node_id: node_id.to_string(),
-            before_style,
-            before_sections,
-        });
-        self.dirty = true;
         true
     }
 
     /// Set one section's `offset` (relative to the owning node's
     /// `position`) under a single `EditNodeStyle` undo entry.
     /// Validates against the same rules `maptool verify`'s
-    /// `verify::sections::check` enforces — finite, non-negative,
-    /// and (when the section's size is `Some`) the new offset
-    /// keeps the section's AABB inside the node. Rejection
-    /// messages mirror those in `crates/maptool/src/verify/sections.rs`
-    /// so a verb-rejected move and a `verify` violation read
-    /// identically.
+    /// Set one section's `offset` (relative to the owning node's
+    /// `position`). Validates against `verify::sections::check`'s
+    /// rules; rejection messages are byte-equal so a verb-rejected
+    /// move and a `verify` violation read identically. Node-level
+    /// finite/positive checks (`node.size has non-finite component`,
+    /// `node.size.{width,height} is not positive`) are upstream-only
+    /// — verify catches a corrupt node-size on next reload, and the
+    /// AABB compares here treat NaN node-size as "skip" (NaN-compares
+    /// always return false), so a corrupt save can't trigger a
+    /// false-positive overflow rejection here.
     ///
-    /// Drag callers must NOT invoke this per-frame — gather the
-    /// delta in a `MovingSectionInteraction`-shaped state and call
-    /// once on release. Per-frame calls would push one undo entry
-    /// per frame and explode the stack (mirrors the existing
-    /// `MovingNode` discipline).
-    ///
-    /// Returns `Ok(true)` on a real change, `Ok(false)` when the
-    /// section is missing or already at the target offset, and
-    /// `Err(msg)` on a validation failure with the mirror message.
+    /// Drag callers must NOT invoke this per-frame; gather delta in
+    /// a gesture-state shape and call once on release.
     pub fn set_section_offset(
         &mut self,
         node_id: &str,
@@ -470,6 +480,7 @@ impl MindMapDocument {
         let Some(section) = node.sections.get(section_idx) else {
             return Ok(false);
         };
+        check_node_size_finite_positive(node, section_idx)?;
         if let Some(size) = section.size.as_ref() {
             let right = x + size.width;
             let bottom = y + size.height;
@@ -489,32 +500,31 @@ impl MindMapDocument {
         if section.offset.x == x && section.offset.y == y {
             return Ok(false);
         }
-        let before_style = node.style.clone();
-        let before_sections = node.sections.clone();
-        let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
-        if let Some(section) = node.sections.get_mut(section_idx) {
-            section.offset.x = x;
-            section.offset.y = y;
-        }
-        self.undo_stack.push(UndoAction::EditNodeStyle {
-            node_id: node_id.to_string(),
-            before_style,
-            before_sections,
+        let canvas_default = self.mindmap.canvas.default_border.clone();
+        self.mutate_section_with_style_undo(node_id, section_idx, |s| {
+            s.offset.x = x;
+            s.offset.y = y;
         });
-        self.dirty = true;
+        // Re-acquire node and run the floor passes — moving a
+        // `None`-sized section can shift its measured-text floor
+        // contribution beyond the current node.size, leaving the
+        // node under its floor for the next unrelated edit. Every
+        // other section setter (text, font, payload) calls these
+        // for the same invariant.
+        let node = self
+            .mindmap
+            .nodes
+            .get_mut(node_id)
+            .expect("just confirmed exists");
+        super::grow_one_node_to_fit_text(node);
+        super::grow_one_node_to_fit_border(node, canvas_default.as_ref());
         Ok(true)
     }
 
-    /// Set one section's `size`. `None` means "fill the parent
-    /// node" (the section's AABB is derived from `node.size` at
-    /// projection time); `Some(Size)` pins a specific AABB.
-    /// Validates against the same rules `verify::sections::check`
-    /// enforces — finite, strictly positive, within the parent's
-    /// AABB given the section's current offset, and not over 100×
-    /// the parent's dimension (typo guard).
-    ///
-    /// Drag callers must NOT invoke this per-frame; same discipline
-    /// as `set_section_offset`.
+    /// Set one section's `size`. `None` means fill-parent;
+    /// `Some(Size)` pins an explicit AABB. Same verify-mirroring
+    /// validation discipline as [`Self::set_section_offset`]; same
+    /// no-per-frame contract for drag callers.
     pub fn set_section_size(
         &mut self,
         node_id: &str,
@@ -528,6 +538,7 @@ impl MindMapDocument {
         let Some(section) = node.sections.get(section_idx) else {
             return Ok(false);
         };
+        check_node_size_finite_positive(node, section_idx)?;
         if let Some(s) = size.as_ref() {
             if !s.width.is_finite() || !s.height.is_finite() {
                 return Err(format!(
@@ -547,14 +558,14 @@ impl MindMapDocument {
                     section_idx, s.height
                 ));
             }
-            if node.size.width.is_finite() && s.width > node.size.width * 100.0 {
+            if s.width > node.size.width * 100.0 {
                 return Err(format!(
                     "section[{}].size.width ({}) is over 100× the node's width ({}); \
                      likely a typo (e.g. an extra zero)",
                     section_idx, s.width, node.size.width
                 ));
             }
-            if node.size.height.is_finite() && s.height > node.size.height * 100.0 {
+            if s.height > node.size.height * 100.0 {
                 return Err(format!(
                     "section[{}].size.height ({}) is over 100× the node's height ({}); \
                      likely a typo (e.g. an extra zero)",
@@ -579,18 +590,17 @@ impl MindMapDocument {
         if section.size == size {
             return Ok(false);
         }
-        let before_style = node.style.clone();
-        let before_sections = node.sections.clone();
-        let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
-        if let Some(section) = node.sections.get_mut(section_idx) {
-            section.size = size;
-        }
-        self.undo_stack.push(UndoAction::EditNodeStyle {
-            node_id: node_id.to_string(),
-            before_style,
-            before_sections,
+        let canvas_default = self.mindmap.canvas.default_border.clone();
+        self.mutate_section_with_style_undo(node_id, section_idx, |s| {
+            s.size = size;
         });
-        self.dirty = true;
+        let node = self
+            .mindmap
+            .nodes
+            .get_mut(node_id)
+            .expect("just confirmed exists");
+        super::grow_one_node_to_fit_text(node);
+        super::grow_one_node_to_fit_border(node, canvas_default.as_ref());
         Ok(true)
     }
 
@@ -908,6 +918,32 @@ impl MindMapDocument {
 /// Cost: O(runs.len() * text grapheme count) — one
 /// `count_grapheme_clusters` call per section, plus a linear pass
 /// over the runs. Trivial for typical single-run sections.
+/// Verify-parity guard for the section-position/size setters: a
+/// corrupt save with `node.size.{width,height}` non-finite or
+/// non-positive is caught upstream by `verify::sections::check`,
+/// but if the loader hands such a node to a setter and the AABB
+/// compares silently NaN-skip, the setter would write into a node
+/// that shouldn't accept any size at all. Return the same
+/// rejection messages verify produces.
+fn check_node_size_finite_positive(
+    node: &baumhard::mindmap::model::MindNode,
+    _section_idx: usize,
+) -> Result<(), String> {
+    if !node.size.width.is_finite() || !node.size.height.is_finite() {
+        return Err(format!(
+            "node.size has non-finite component (width={}, height={})",
+            node.size.width, node.size.height
+        ));
+    }
+    if node.size.width <= 0.0 {
+        return Err(format!("node.size.width is not positive ({})", node.size.width));
+    }
+    if node.size.height <= 0.0 {
+        return Err(format!("node.size.height is not positive ({})", node.size.height));
+    }
+    Ok(())
+}
+
 pub(super) fn clamp_runs_to_text(section: &mut baumhard::mindmap::model::MindSection) {
     let max_end = baumhard::util::grapheme_chad::count_grapheme_clusters(&section.text);
     section.text_runs.retain_mut(|run| {

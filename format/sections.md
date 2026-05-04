@@ -129,6 +129,25 @@ future iteration; until then, position/size edits are verb-
 only even though selection / colour / font edits all work
 through gestures already.
 
+After a position or size edit, the parent node's auto-fit
+floor recomputes against **the larger of** measured text
+bounds and (when set) user-pinned `size` plus `offset` — user
+intent ("this section is at least this big") survives when
+text fits, and text overflow still grows the parent so nothing
+visually clips. Pre-Tier-2B the auto-fit pass skipped
+`Some`-sized sections entirely; that gap is closed.
+
+Custom mutations (`target_scope: SectionsOnly` with
+`AreaCommand::SetBounds` / `MoveTo` / `NudgeRight`) **bypass**
+the AABB validation the verbs enforce — they write directly
+through the tree-bridge sync path
+(`document/custom/sync::sync_node_from_tree`). Authoring
+through custom mutations can therefore produce out-of-AABB
+sections that `maptool verify` rejects but the document
+accepts. Run `maptool verify` after any mutation-driven
+position/size authoring to catch the violations the verbs
+would have refused.
+
 ### Console axis applicability on a section selection
 
 Sections only have a **text** colour axis (`color text=…`). The

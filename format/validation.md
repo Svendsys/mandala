@@ -93,7 +93,11 @@ For every `MindNode.sections[i]`:
   strictly positive (sub-check, since a corrupt node-size
   cascades into every section's AABB math)
 - No two sections share the same effective channel under the same
-  parent — the effective channel is `section.channel.unwrap_or(section_idx)`
+  parent — the effective channel is `section.channel.unwrap_or(section_idx)`.
+  Surfaced as a *warning*, not a hard rejection: the broadcast
+  is well-defined (a mutation targeting the shared channel hits
+  every listed section), and authors who deliberately want
+  broadcast can ignore it. Most cases are typos.
 
 **Why**: an out-of-bounds section silently overflows its parent
 container at render time and breaks hit-testing; a NaN at the
