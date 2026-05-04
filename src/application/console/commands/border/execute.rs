@@ -263,19 +263,9 @@ pub(crate) fn nodes_in_selection(sel: &SelectionState) -> Result<Vec<String>, Ex
         // selection collapses to its owning node for border verbs.
         SelectionState::Section(s) => Ok(vec![s.node_id.clone()]),
         // Multi-section: collapse to the deduplicated set of
-        // owning nodes. Same shape as `Multi(ids)` — every
-        // border verb fans out per-node, and two sections of
-        // the same node should produce one node-target.
-        SelectionState::MultiSection(secs) => {
-            let mut seen = std::collections::HashSet::new();
-            let mut out = Vec::with_capacity(secs.len());
-            for s in secs {
-                if seen.insert(s.node_id.clone()) {
-                    out.push(s.node_id.clone());
-                }
-            }
-            Ok(out)
-        }
+        // owning nodes via the shared
+        // `dedup_owning_node_ids` helper.
+        SelectionState::MultiSection(_) => Ok(sel.dedup_owning_node_ids()),
         SelectionState::None => Err(ExecResult::err("border: no selection (select a node first)")),
         SelectionState::Edge(_) => Err(ExecResult::err("border: not applicable to edges")),
         SelectionState::EdgeLabel(_) => Err(ExecResult::err("border: not applicable to edge labels")),

@@ -246,13 +246,32 @@ impl SelectionState {
     }
 
     /// Build a section-set selection from a flat list of
-    /// `SectionSel`. Empty becomes [`SelectionState::None`], a
-    /// single entry becomes [`Self::Section`], anything longer
-    /// becomes [`Self::MultiSection`]. Same empty-vs-single-vs-many
-    /// split as [`Self::from_ids`] — keeps the invariant
-    /// `MultiSection.len() >= 2` in one place.
+    /// `SectionSel`, deduplicating by `(node_id, section_idx)`
+    /// in first-seen order. Empty becomes
+    /// [`SelectionState::None`], a single entry becomes
+    /// [`Self::Section`], anything longer becomes
+    /// [`Self::MultiSection`]. Keeps two invariants in one
+    /// place: `MultiSection.len() >= 2` and "every entry is
+    /// unique" — downstream consumers (`selection_targets`
+    /// fan-out, highlight pipeline, font / colour fan-out)
+    /// implicitly assume uniqueness; duplicates would inflate
+    /// fan-out counts and potentially write the same setter
+    /// twice on the same section.
+    ///
+    /// Cost: O(n) with a transient `HashSet` of (node_id ref,
+    /// section_idx) — bounded by the input length, which is
+    /// in turn bounded by user authoring (typically ≤ 10).
     pub fn from_sections(secs: Vec<SectionSel>) -> Self {
-        let mut iter = secs.into_iter();
+        let mut seen: std::collections::HashSet<(String, usize)> =
+            std::collections::HashSet::with_capacity(secs.len());
+        let mut deduped: Vec<SectionSel> = Vec::with_capacity(secs.len());
+        for s in secs {
+            let key = (s.node_id.clone(), s.section_idx);
+            if seen.insert(key) {
+                deduped.push(s);
+            }
+        }
+        let mut iter = deduped.into_iter();
         match iter.next() {
             None => SelectionState::None,
             Some(first) => match iter.next() {
@@ -338,6 +357,25 @@ impl SelectionState {
             SelectionState::MultiSection(secs) => secs.as_slice(),
             _ => &[],
         }
+    }
+
+    /// Owning-node ids for every selected target, deduplicated
+    /// by `node_id` in first-seen order, returned as `Vec<String>`
+    /// for callers that need owned strings (most node-fanout
+    /// verb arms — `border` / `zoom` / `topology` Delete).
+    /// `Multi` and `MultiSection` both dedup correctly:
+    /// `Multi(["a", "a", "b"])` → `["a", "b"]`,
+    /// `MultiSection([a/0, a/1, b/0])` → `["a", "b"]`. Other
+    /// variants return their natural single owner (or empty).
+    pub fn dedup_owning_node_ids(&self) -> Vec<String> {
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for id in self.selected_ids() {
+            if seen.insert(id.to_string()) {
+                out.push(id.to_string());
+            }
+        }
+        out
     }
 
     /// Returns the selected edge, if any. The other edge-adjacent

@@ -258,6 +258,79 @@ fn test_other_selections_have_empty_selected_sections() {
     );
 }
 
+/// `from_sections` deduplicates by `(node_id, section_idx)`
+/// in first-seen order — pins the uniqueness invariant the
+/// downstream consumers (selection_targets, font fan-out,
+/// highlight pipeline) implicitly assume.
+#[test]
+fn test_from_sections_dedups_by_node_and_idx() {
+    use crate::application::document::{SectionSel, SelectionState};
+    let secs = vec![
+        SectionSel::new("a", 0),
+        SectionSel::new("a", 0), // duplicate of above
+        SectionSel::new("a", 1),
+        SectionSel::new("a", 0), // another duplicate of first
+        SectionSel::new("b", 0),
+    ];
+    match SelectionState::from_sections(secs) {
+        SelectionState::MultiSection(out) => {
+            assert_eq!(out.len(), 3);
+            assert_eq!(out[0], SectionSel::new("a", 0));
+            assert_eq!(out[1], SectionSel::new("a", 1));
+            assert_eq!(out[2], SectionSel::new("b", 0));
+        }
+        other => panic!("expected MultiSection, got {:?}", other),
+    }
+}
+
+/// `from_sections` of `[a/0, a/0, a/0]` — all duplicates of one
+/// — collapses to `Section(a/0)` after dedup. Pins that the
+/// many → one collapse fires correctly when the input has
+/// many entries that all dedup down to a single unique entry.
+#[test]
+fn test_from_sections_all_duplicates_collapses_to_section() {
+    use crate::application::document::{SectionSel, SelectionState};
+    let secs = vec![
+        SectionSel::new("a", 0),
+        SectionSel::new("a", 0),
+        SectionSel::new("a", 0),
+    ];
+    assert!(matches!(
+        SelectionState::from_sections(secs),
+        SelectionState::Section(_)
+    ));
+}
+
+/// `dedup_owning_node_ids` deduplicates owning-node ids across
+/// every selection variant. Pins the helper that border / zoom
+/// / topology Delete all route through.
+#[test]
+fn test_dedup_owning_node_ids_across_variants() {
+    use crate::application::document::{SectionSel, SelectionState};
+    // Multi with duplicates — first-seen wins.
+    let multi = SelectionState::Multi(vec!["a".into(), "a".into(), "b".into()]);
+    assert_eq!(multi.dedup_owning_node_ids(), vec!["a".to_string(), "b".to_string()]);
+
+    // MultiSection with two sections of one node + one of
+    // another — dedup'd to two unique node ids.
+    let multi_sec = SelectionState::MultiSection(vec![
+        SectionSel::new("a", 0),
+        SectionSel::new("a", 1),
+        SectionSel::new("b", 0),
+    ]);
+    assert_eq!(
+        multi_sec.dedup_owning_node_ids(),
+        vec!["a".to_string(), "b".to_string()]
+    );
+
+    // Single → vec of one.
+    let single = SelectionState::Single("x".into());
+    assert_eq!(single.dedup_owning_node_ids(), vec!["x".to_string()]);
+
+    // None → empty.
+    assert!(SelectionState::None.dedup_owning_node_ids().is_empty());
+}
+
 #[test]
 fn test_apply_tree_highlights_via_walker() {
     let mut tree = load_test_tree();

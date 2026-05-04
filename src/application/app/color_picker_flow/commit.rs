@@ -141,7 +141,25 @@ pub(in crate::application::app) fn commit_color_picker(
             axis,
         } => match axis {
             SectionColorAxis::Text => {
-                doc.set_section_text_color(&node_id, section_idx, to_write);
+                // The picker handle binds to a single section
+                // (the first section in a MultiSection at open
+                // time, per `commands/color::picker_target_outcome`).
+                // For a `MultiSection` selection, fan the commit
+                // out across every selected section so the
+                // colour applies to all, not just the bound
+                // handle. Single `Section` selection: same
+                // single-section path as before.
+                let targets: Vec<(String, usize)> = match &doc.selection {
+                    crate::application::document::SelectionState::MultiSection(secs) => {
+                        secs.iter()
+                            .map(|s| (s.node_id.clone(), s.section_idx))
+                            .collect()
+                    }
+                    _ => vec![(node_id.clone(), section_idx)],
+                };
+                for (nid, idx) in &targets {
+                    doc.set_section_text_color(nid, *idx, to_write.clone());
+                }
             }
         },
     }

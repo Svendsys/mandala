@@ -255,15 +255,14 @@ pub(crate) fn apply_zoom_to_selection(
             }
             changed
         }
-        // Multi-section: zoom-bounds attach to nodes, so dedup
-        // to the set of owning nodes and apply per-node.
-        SelectionState::MultiSection(secs) => {
-            let mut seen = std::collections::HashSet::new();
+        // Multi-section: zoom-bounds attach to nodes, so route
+        // through the shared `dedup_owning_node_ids` helper to
+        // apply once per unique owning node.
+        SelectionState::MultiSection(_) => {
+            let ids = doc.selection.dedup_owning_node_ids();
             let mut changed = false;
-            for s in &secs {
-                if seen.insert(s.node_id.clone()) {
-                    changed |= doc.set_node_zoom_visibility(&s.node_id, min.clone(), max.clone());
-                }
+            for id in &ids {
+                changed |= doc.set_node_zoom_visibility(id, min.clone(), max.clone());
             }
             changed
         }

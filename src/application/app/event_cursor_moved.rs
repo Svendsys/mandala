@@ -22,7 +22,7 @@ use super::throttled_interaction::{
 };
 use super::{AppMode, DragState};
 use crate::application::common::RenderDecree;
-use crate::application::document::{apply_tree_highlights, hit_test, SelectionState, HIGHLIGHT_COLOR};
+use crate::application::document::{apply_tree_highlights, hit_test, SelectionState};
 
 pub(super) fn handle_cursor_moved(
     position: PhysicalPosition<f64>,
@@ -388,9 +388,25 @@ pub(super) fn handle_cursor_moved(
                         ctx.modifiers.shift_key(),
                     ) {
                         if let Some(doc) = ctx.document.as_mut() {
-                            let already_selected = matches!(&doc.selection,
-                                SelectionState::Section(s)
-                                    if s.node_id == node_id && s.section_idx == section_idx);
+                            // The pressed section is "already
+                            // selected" both for a single-section
+                            // `Section(s)` selection that targets
+                            // it AND for a `MultiSection` set
+                            // that contains it. The MultiSection
+                            // case is load-bearing: without it,
+                            // the press would silently overwrite
+                            // the user's multi-set with a single
+                            // `Section(...)` and the surrounding
+                            // selection would vanish.
+                            let already_selected = match &doc.selection {
+                                SelectionState::Section(s) => {
+                                    s.node_id == node_id && s.section_idx == section_idx
+                                }
+                                SelectionState::MultiSection(secs) => secs.iter().any(|s| {
+                                    s.node_id == node_id && s.section_idx == section_idx
+                                }),
+                                _ => false,
+                            };
                             if !already_selected {
                                 doc.selection =
                                     SelectionState::Section(crate::application::document::SectionSel {
@@ -418,8 +434,21 @@ pub(super) fn handle_cursor_moved(
                     // (release rebuild lands the same coherent
                     // shape).
                     if let Some(doc) = ctx.document.as_mut() {
-                        let needs_demote = matches!(&doc.selection,
-                            SelectionState::Section(s) if s.node_id == node_id);
+                        // Demote both single-section and multi-
+                        // section selections to a fresh `Single`
+                        // when promoting to a whole-node drag —
+                        // the user's gesture is "move this node",
+                        // not "operate on these sections", and
+                        // mid-drag the picker hint + per-section
+                        // verbs would otherwise read out the
+                        // stale section selection.
+                        let needs_demote = match &doc.selection {
+                            SelectionState::Section(s) => s.node_id == node_id,
+                            SelectionState::MultiSection(secs) => {
+                                secs.iter().any(|s| s.node_id == node_id)
+                            }
+                            _ => false,
+                        };
                         if needs_demote || !doc.selection.is_selected(&node_id) {
                             doc.selection = SelectionState::Single(node_id.clone());
                             rebuild_selection_highlight(doc, ctx.mindmap_tree, ctx.renderer);
@@ -556,27 +585,11 @@ fn rebuild_selection_highlight(
 ) {
     if let Some(tree) = mindmap_tree.as_mut() {
         let mut new_tree = doc.build_tree();
-        // Section / MultiSection narrow the highlight to the
-        // selected sections only; whole-node selections paint
-        // every section (None section_idx). See
-        // `scene_rebuild::selection_highlight_entries` for the
-        // canonical mapping; this site's iteration is inlined to
-        // keep the cross-module borrow shape tight.
-        let highlights: Vec<(&str, Option<usize>, [f32; 4])> = match &doc.selection {
-            SelectionState::Section(s) => {
-                vec![(s.node_id.as_str(), Some(s.section_idx), HIGHLIGHT_COLOR)]
-            }
-            SelectionState::MultiSection(secs) => secs
-                .iter()
-                .map(|s| (s.node_id.as_str(), Some(s.section_idx), HIGHLIGHT_COLOR))
-                .collect(),
-            _ => doc
-                .selection
-                .selected_ids()
-                .into_iter()
-                .map(|id| (id, None, HIGHLIGHT_COLOR))
-                .collect(),
-        };
+        // Routes through the canonical
+        // `selection_highlight_entries` helper — Section /
+        // MultiSection narrow the highlight to the selected
+        // sections, whole-node selections paint every section.
+        let highlights = super::scene_rebuild::selection_highlight_entries(&doc.selection);
         apply_tree_highlights(&mut new_tree, highlights);
         renderer.rebuild_buffers_from_tree(&new_tree.tree);
         *tree = new_tree;

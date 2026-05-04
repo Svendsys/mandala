@@ -103,6 +103,17 @@ fn resolve_section_idx(args: &Args, selection: &SelectionState) -> Result<usize,
         (SelectionState::Single(_), None) => {
             Err("section: select a specific section (multi-section node) or pass section=<idx>".into())
         }
+        // Section move / resize is single-target by design (each
+        // gesture writes one section's offset / size). Fan-out
+        // across a MultiSection would imply each section moves
+        // by the same delta — semantically valid for `move` but
+        // ambiguous for `resize` (different starting sizes
+        // produce different post-resize shapes per section). For
+        // both, surface a clearer error than the generic
+        // "requires a node or section" pre-N3 message.
+        (SelectionState::MultiSection(_), None) => Err(
+            "section: multi-section selection — single-target only; pass section=<idx> or click one section first".into(),
+        ),
         _ => Err("section: requires a node or section selection".into()),
     }
 }
@@ -111,6 +122,11 @@ fn resolve_node_id(selection: &SelectionState) -> Result<String, String> {
     match selection {
         SelectionState::Single(id) => Ok(id.clone()),
         SelectionState::Section(SectionSel { node_id, .. }) => Ok(node_id.clone()),
+        // MultiSection: parallel error to `resolve_section_idx`'s
+        // MultiSection arm. The verbs are single-target; pick one.
+        SelectionState::MultiSection(_) => Err(
+            "section: multi-section selection — single-target only; pass section=<idx> or click one section first".into(),
+        ),
         _ => Err("section: requires a node or section selection".into()),
     }
 }

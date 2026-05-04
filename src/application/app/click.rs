@@ -12,7 +12,7 @@ use baumhard::mindmap::custom_mutation::{PlatformContext, Trigger};
 use super::scene_rebuild::{rebuild_all, rebuild_scene_only};
 use super::{now_ms, AppMode, EDGE_HIT_TOLERANCE_PX};
 use crate::application::document::{
-    apply_tree_highlights, hit_test_edge, MindMapDocument, SectionSel, SelectionState, HIGHLIGHT_COLOR,
+    apply_tree_highlights, hit_test_edge, MindMapDocument, SectionSel, SelectionState,
     REPARENT_SOURCE_COLOR, REPARENT_TARGET_COLOR,
 };
 use crate::application::renderer::Renderer;
@@ -252,20 +252,12 @@ pub(super) fn rebuild_all_with_mode(
     // Section / MultiSection narrow the highlight to the
     // selected sections only; mode-driven Reparent / Connect
     // highlights always paint every section (the gesture is
-    // whole-node).
-    let mut highlights: Vec<(&str, Option<usize>, [f32; 4])> = match &doc.selection {
-        SelectionState::Section(s) => vec![(s.node_id.as_str(), Some(s.section_idx), HIGHLIGHT_COLOR)],
-        SelectionState::MultiSection(secs) => secs
-            .iter()
-            .map(|s| (s.node_id.as_str(), Some(s.section_idx), HIGHLIGHT_COLOR))
-            .collect(),
-        _ => doc
-            .selection
-            .selected_ids()
-            .into_iter()
-            .map(|id| (id, None, HIGHLIGHT_COLOR))
-            .collect(),
-    };
+    // whole-node). Routes through the canonical
+    // `selection_highlight_entries` helper so the three
+    // selection-rebuild sites (here, `rebuild_all`, and the
+    // threshold-cross promotion's `rebuild_selection_highlight`)
+    // share one mapping.
+    let mut highlights = super::scene_rebuild::selection_highlight_entries(&doc.selection);
     match app_mode {
         AppMode::Reparent { sources } => {
             for s in sources {

@@ -138,13 +138,18 @@ pub(in crate::application::app) fn apply_copy_or_cut(is_cut: bool, doc: &mut Min
     use crate::application::console::traits::{
         selection_targets, view_for, ClipboardContent, HandlesCopy, HandlesCut,
     };
-    // The loop breaks on the first target that produces non-empty
-    // content because `selection_targets` emits at most one
-    // clipboard-eligible target per concrete selection shape today
-    // (`Single`/`Section`/`Edge`/...); `Multi` emits node-only
-    // targets that all share `display_text`, so taking the first
-    // is correct rather than aggregating.
+    // `selection_targets` emits one target per node for `Multi`
+    // and one target per section for `MultiSection`; everything
+    // else emits exactly one. We accumulate Section payloads
+    // across the loop so a `MultiSection` cut/copy reaches every
+    // section instead of stopping at the first (the pre-N3 path
+    // broke on the first non-empty match — correct then because
+    // every Multi-shape produced single-target clipboard
+    // content, broken now because `MultiSection` produces N).
     let targets = selection_targets(&doc.selection);
+    let mut section_texts: Vec<String> = Vec::new();
+    let mut first_section_payload: Option<crate::application::document::SectionPayload> = None;
+    let mut first_text: Option<String> = None;
     for tid in &targets {
         let mut view = view_for(doc, tid);
         let content = if is_cut {
@@ -154,17 +159,51 @@ pub(in crate::application::app) fn apply_copy_or_cut(is_cut: bool, doc: &mut Min
         };
         match content {
             ClipboardContent::Text(text) => {
-                crate::application::clipboard::write_clipboard(&text);
+                // Plain text targets (Single / Multi-node /
+                // Edge / EdgeLabel / PortalLabel / PortalText)
+                // remain single-shot. `Multi(ids)` emits N text
+                // targets that all share `display_text`; taking
+                // the first is the pre-N3 contract.
+                if first_text.is_none() {
+                    first_text = Some(text);
+                }
                 break;
             }
-            // Dual-write: OS clipboard for cross-app paste,
-            // in-process buffer for within-app structured paste.
             ClipboardContent::Section { text, payload } => {
-                crate::application::clipboard::write_clipboard(&text);
-                crate::application::clipboard::write_section_clipboard(text, payload);
-                break;
+                if section_texts.is_empty() {
+                    first_section_payload = Some(payload);
+                }
+                section_texts.push(text);
+                // Continue iterating — for cut, every section
+                // must have its text/runs cleared, not just the
+                // first.
             }
             ClipboardContent::Empty | ClipboardContent::NotApplicable => {}
+        }
+    }
+    if let Some(text) = first_text {
+        crate::application::clipboard::write_clipboard(&text);
+        return;
+    }
+    if !section_texts.is_empty() {
+        // OS clipboard gets the joined plain text so cross-app
+        // paste sees every selected section's content. Within-
+        // app structured paste rides the in-process buffer; a
+        // single-section copy round-trips per-run formatting +
+        // section chrome via the structured payload, but a
+        // multi-section copy falls back to text-only since
+        // there's no `MultiSection` payload variant today
+        // (deferred — would need a fan-out paste path on the
+        // section-target clipboard read).
+        let joined = section_texts.join("\n");
+        crate::application::clipboard::write_clipboard(&joined);
+        if section_texts.len() == 1 {
+            if let Some(payload) = first_section_payload {
+                crate::application::clipboard::write_section_clipboard(
+                    section_texts.into_iter().next().expect("len == 1"),
+                    payload,
+                );
+            }
         }
     }
 }

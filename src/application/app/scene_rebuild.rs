@@ -209,7 +209,7 @@ pub(in crate::application::app) fn rebuild_all(
 /// only the selected sections (and a multi-section set on
 /// one node tints just those sections, leaving sibling
 /// sections untouched).
-fn selection_highlight_entries(
+pub(in crate::application::app) fn selection_highlight_entries(
     selection: &SelectionState,
 ) -> Vec<(&str, Option<usize>, [f32; 4])> {
     match selection {
