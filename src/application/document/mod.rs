@@ -194,17 +194,33 @@ fn grow_node_sizes_to_fit_text(map: &mut MindMap) {
 /// collapses to one), but a multi-size future shouldn't silently
 /// fall back to the smallest measurement.
 pub(super) fn grow_one_node_to_fit_text(node: &mut baumhard::mindmap::model::MindNode) {
+    let (floor_w, floor_h) = compute_one_node_text_floor(node);
+    if node.size.width < floor_w {
+        node.size.width = floor_w;
+    }
+    if node.size.height < floor_h {
+        node.size.height = floor_h;
+    }
+}
+
+/// Compute the measured-text floor for a single node — the minimum
+/// `(width, height)` that guarantees no section's text visually
+/// clips. Pure function (no mutation): the same floor that
+/// [`grow_one_node_to_fit_text`] uses internally as the lower
+/// bound, lifted out so [`MindMapDocument::fit_node_to_content`]
+/// can write it unconditionally rather than max-wins-style.
+///
+/// Walks every section, measures its text under its dominant
+/// run, and combines the per-section floors into one node-level
+/// floor. Each section contributes the larger of its measured
+/// text bounds and (when set) its user-pinned `size` plus its
+/// offset — `Some`-sized sections survive when text fits, and
+/// text overflow grows the parent so nothing visually clips.
+pub(super) fn compute_one_node_text_floor(node: &baumhard::mindmap::model::MindNode) -> (f64, f64) {
     use baumhard::font::fonts::{
         acquire_font_system_write, app_font_by_family, measure_text_block_unbounded,
     };
 
-    // Walk every section, measure its text under its dominant
-    // run, and combine the per-section floors into one node-level
-    // floor. Each section contributes the larger of its measured
-    // text bounds and (when set) its user-pinned `size` plus its
-    // offset — `Some`-sized sections survive when text fits, and
-    // text overflow grows the parent so nothing visually clips.
-    //
     // §B5 lock-scope discipline: each section's measurement
     // acquires + drops the `FONT_SYSTEM` write guard
     // independently. A single guard around the whole loop would
@@ -245,7 +261,7 @@ pub(super) fn grow_one_node_to_fit_text(node: &mut baumhard::mindmap::model::Min
             });
 
         let block = {
-            let mut fs = acquire_font_system_write("grow_one_node_to_fit_text");
+            let mut fs = acquire_font_system_write("compute_one_node_text_floor");
             measure_text_block_unbounded(&mut fs, &section.text, scale, line_height, measure_font)
         };
 
@@ -277,12 +293,7 @@ pub(super) fn grow_one_node_to_fit_text(node: &mut baumhard::mindmap::model::Min
             floor_h = need_h;
         }
     }
-    if node.size.width < floor_w {
-        node.size.width = floor_w;
-    }
-    if node.size.height < floor_h {
-        node.size.height = floor_h;
-    }
+    (floor_w, floor_h)
 }
 
 /// Grow every framed node's size to also accommodate its border's

@@ -528,6 +528,83 @@ fn test_set_node_aabb_rejects_non_finite_position() {
     assert!(result.is_err_and(|m| m.contains("non-finite")));
 }
 
+// ── fit_node_to_content (auto-fit shrink path) ──────────────────
+
+/// `fit_node_to_content` shrinks an over-sized node to its
+/// measured-text floor and pushes one `EditNodeAabb` undo
+/// entry. The path that lets users recover from a manual resize
+/// that pinned the node larger than its content.
+#[test]
+fn test_fit_node_to_content_shrinks_to_floor() {
+    use baumhard::mindmap::model::Size;
+    let mut doc = load_test_doc();
+    let id = first_testament_node_id(&doc);
+    let before = doc.mindmap.nodes[&id].size;
+    doc.mindmap.nodes.get_mut(&id).unwrap().size = Size {
+        width: 5000.0,
+        height: 5000.0,
+    };
+    doc.undo_stack.clear();
+    assert_eq!(doc.fit_node_to_content(&id), Ok(true));
+    let after = doc.mindmap.nodes[&id].size;
+    assert!(
+        after.width < 5000.0 && after.height < 5000.0,
+        "fit-to-content must shrink the node"
+    );
+    // Undo restores the prior size.
+    assert!(doc.undo());
+    assert_eq!(doc.mindmap.nodes[&id].size.width, 5000.0);
+    // (`before` is not the same as 5000.0 — we mutated directly,
+    // so the undo only tracks the post-mutation snapshot. Sanity
+    // check that the original-original was different.)
+    assert!(before.width < 5000.0);
+}
+
+#[test]
+fn test_fit_node_to_content_idempotent_no_op() {
+    let mut doc = load_test_doc();
+    let id = first_testament_node_id(&doc);
+    // First call lands at the floor.
+    assert_eq!(doc.fit_node_to_content(&id), Ok(true));
+    let undo_after_first = doc.undo_stack.len();
+    // Second call is a no-op.
+    assert_eq!(doc.fit_node_to_content(&id), Ok(false));
+    assert_eq!(
+        doc.undo_stack.len(),
+        undo_after_first,
+        "second fit-to-content must not push another undo entry"
+    );
+}
+
+#[test]
+fn test_fit_node_to_content_unknown_node_returns_false() {
+    let mut doc = load_test_doc();
+    assert_eq!(doc.fit_node_to_content("nope"), Ok(false));
+}
+
+#[test]
+fn test_fit_node_to_content_pinned_section_size_acts_as_floor() {
+    use baumhard::mindmap::model::Size;
+    let (mut doc, id) = super::tests_common::pinned_two_section_node();
+    // section[1] is pinned at (10, 10) size 50×30 — its
+    // contribution to the floor is offset+size = (60, 40).
+    // The node should fit-to AT LEAST that, plus whatever
+    // text-driven size section[0] requires.
+    doc.mindmap.nodes.get_mut(&id).unwrap().size = Size {
+        width: 5000.0,
+        height: 5000.0,
+    };
+    doc.undo_stack.clear();
+    assert_eq!(doc.fit_node_to_content(&id), Ok(true));
+    let after = doc.mindmap.nodes[&id].size;
+    assert!(
+        after.width >= 60.0 && after.height >= 40.0,
+        "pinned section[1]'s offset+size contribution must survive, got {}×{}",
+        after.width,
+        after.height,
+    );
+}
+
 // ── set_section_aabb (atomic offset+size for the resize gesture) ──
 
 /// `set_section_aabb` accepts a W-grow gesture's final state —

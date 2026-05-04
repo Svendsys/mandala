@@ -183,6 +183,21 @@ text fits, and text overflow still grows the parent so nothing
 visually clips. Pre-Tier-2B the auto-fit pass skipped
 `Some`-sized sections entirely; that gap is closed.
 
+The auto-fit pass only **grows** the parent node's `size` (it
+never shrinks). To explicitly shrink a node back to its
+measured-text floor — useful after a manual `node resize`
+that pinned the node larger than its content — use the
+`node fit-to-content` console verb. The verb routes through
+`MindMapDocument::fit_node_to_content`, which computes the
+same floor the auto-fit pass uses (via the shared
+`compute_one_node_text_floor` helper) and writes it
+unconditionally as the new `node.size`, then re-applies
+`grow_one_node_to_fit_border` so the rendered border has
+room. Pinned-section contributions to the floor survive
+verbatim — a `Some`-sized section's `(offset, size)` is part
+of the measured floor, so fit-to-content respects user intent
+on every individual section just like the grow path does.
+
 Custom mutations (`target_scope: SectionsOnly` with
 `AreaCommand::SetBounds` / `MoveTo` / `NudgeRight`) **bypass**
 the AABB validation the verbs enforce — they write directly

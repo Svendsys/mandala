@@ -23,6 +23,7 @@
 
 use baumhard::mindmap::model::{NodeStyle, TextRun};
 
+use super::compute_one_node_text_floor;
 use super::grow_one_node_to_fit_border;
 use super::undo_action::UndoAction;
 use super::MindMapDocument;
@@ -809,6 +810,73 @@ impl MindMapDocument {
         // Same floor-respect pass as `set_node_size` — see
         // there for the rationale.
         super::grow_one_node_to_fit_text(n);
+        super::grow_one_node_to_fit_border(n, canvas_default.as_ref());
+        self.undo_stack.push(UndoAction::EditNodeAabb {
+            node_id: node_id.to_string(),
+            before_position,
+            before_size,
+        });
+        self.dirty = true;
+        Ok(true)
+    }
+
+    /// Shrink (or grow) a node's `size` to its measured-text
+    /// floor — the minimum AABB that guarantees no section's
+    /// text visually clips. Wraps `compute_one_node_text_floor`
+    /// + `grow_one_node_to_fit_border` so the user's
+    /// `node fit-to-content` verb explicitly reaches a state
+    /// the ambient `grow_*` passes only achieve from below.
+    /// Pushes one `EditNodeAabb` undo entry; no-op when the
+    /// node already sits at its floor.
+    ///
+    /// Auto-fit's "size as floor" semantic stays intact: a
+    /// section with a `Some(size)` pin contributes that size as
+    /// its lower bound, so a fit-to-content on a node with
+    /// pinned sections lands at the larger of measured-text and
+    /// the union of pinned section AABBs (plus padding) — user
+    /// intent survives.
+    ///
+    /// Frame-bearing nodes' `grow_one_node_to_fit_border` runs
+    /// after the text floor write so the rendered border has
+    /// room. Without this the border would visually clip on
+    /// the first frame after fit-to-content shrinks below the
+    /// border's measured-padding floor.
+    pub fn fit_node_to_content(&mut self, node_id: &str) -> Result<bool, String> {
+        let node = match self.mindmap.nodes.get(node_id) {
+            Some(n) => n,
+            None => return Ok(false),
+        };
+        let (floor_w, floor_h) = compute_one_node_text_floor(node);
+        // Defensive: a node with no sections (unreachable per
+        // the section-migration invariant, but the loader's
+        // empty-sections rejection happens at parse time, not
+        // at every setter call) would compute a (0, 0) floor.
+        // Refuse the write so we don't push an undo entry that
+        // collapses the node to nothing.
+        if floor_w <= 0.0 || floor_h <= 0.0 {
+            return Err(format!(
+                "node '{}' has no measurable text — fit-to-content has no target floor",
+                node_id
+            ));
+        }
+        let new_size = baumhard::mindmap::model::Size {
+            width: floor_w,
+            height: floor_h,
+        };
+        // No-op when already at the floor — same idempotent
+        // contract as the other size setters.
+        if node.size == new_size {
+            return Ok(false);
+        }
+        let before_position = node.position;
+        let before_size = node.size;
+        let canvas_default = self.mindmap.canvas.default_border.clone();
+        let n = self.mindmap.nodes.get_mut(node_id).expect("just confirmed exists");
+        n.size = new_size;
+        // Border floor pass — but NOT the text floor pass: this
+        // setter is *the* shrink path, so re-applying the text
+        // grow-floor here would make the operation a no-op for
+        // any node whose floor `grow_*` already set.
         super::grow_one_node_to_fit_border(n, canvas_default.as_ref());
         self.undo_stack.push(UndoAction::EditNodeAabb {
             node_id: node_id.to_string(),
