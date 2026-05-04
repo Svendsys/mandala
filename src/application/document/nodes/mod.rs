@@ -745,31 +745,29 @@ impl MindMapDocument {
         new_size: baumhard::mindmap::model::Size,
     ) -> Result<bool, String> {
         validate_node_size(new_size)?;
+        check_node_size_typo(new_size)?;
         let node = match self.mindmap.nodes.get(node_id) {
             Some(n) => n,
             None => return Ok(false),
         };
-        if new_size.width > node.size.width * 100.0 {
-            return Err(format!(
-                "node.size.width ({}) is over 100× the prior width ({}); \
-                 likely a typo (e.g. an extra zero)",
-                new_size.width, node.size.width
-            ));
-        }
-        if new_size.height > node.size.height * 100.0 {
-            return Err(format!(
-                "node.size.height ({}) is over 100× the prior height ({}); \
-                 likely a typo (e.g. an extra zero)",
-                new_size.height, node.size.height
-            ));
-        }
         if node.size == new_size {
             return Ok(false);
         }
         let before_position = node.position;
         let before_size = node.size;
+        let canvas_default = self.mindmap.canvas.default_border.clone();
         let n = self.mindmap.nodes.get_mut(node_id).expect("just confirmed exists");
         n.size = new_size;
+        // Floor-respect pass: every other size-affecting setter
+        // (text / font / section size) calls these so the node's
+        // measured-text floor stays coherent. Without it,
+        // shrinking a node below the text floor lets the next
+        // unrelated edit silently bounce the size back up via
+        // `grow_one_node_to_fit_text`. Auto-fit-shrink is
+        // explicitly Tier 2C-N2 — until then, "shrink rejected
+        // up-front by the floor" is the consistent shape.
+        super::grow_one_node_to_fit_text(n);
+        super::grow_one_node_to_fit_border(n, canvas_default.as_ref());
         self.undo_stack.push(UndoAction::EditNodeAabb {
             node_id: node_id.to_string(),
             before_position,
@@ -793,33 +791,25 @@ impl MindMapDocument {
     ) -> Result<bool, String> {
         validate_node_position(new_position)?;
         validate_node_size(new_size)?;
+        check_node_size_typo(new_size)?;
         let node = match self.mindmap.nodes.get(node_id) {
             Some(n) => n,
             None => return Ok(false),
         };
-        if new_size.width > node.size.width * 100.0 {
-            return Err(format!(
-                "node.size.width ({}) is over 100× the prior width ({}); \
-                 likely a typo (e.g. an extra zero)",
-                new_size.width, node.size.width
-            ));
-        }
-        if new_size.height > node.size.height * 100.0 {
-            return Err(format!(
-                "node.size.height ({}) is over 100× the prior height ({}); \
-                 likely a typo (e.g. an extra zero)",
-                new_size.height, node.size.height
-            ));
-        }
         let same_position = node.position.x == new_position.x && node.position.y == new_position.y;
         if same_position && node.size == new_size {
             return Ok(false);
         }
         let before_position = node.position;
         let before_size = node.size;
+        let canvas_default = self.mindmap.canvas.default_border.clone();
         let n = self.mindmap.nodes.get_mut(node_id).expect("just confirmed exists");
         n.position = new_position;
         n.size = new_size;
+        // Same floor-respect pass as `set_node_size` — see
+        // there for the rationale.
+        super::grow_one_node_to_fit_text(n);
+        super::grow_one_node_to_fit_border(n, canvas_default.as_ref());
         self.undo_stack.push(UndoAction::EditNodeAabb {
             node_id: node_id.to_string(),
             before_position,
@@ -1187,6 +1177,31 @@ fn validate_node_size(size: baumhard::mindmap::model::Size) -> Result<(), String
     }
     if size.height <= 0.0 {
         return Err(format!("node.size.height is not positive ({})", size.height));
+    }
+    Ok(())
+}
+
+/// Astronomical-typo guard for a candidate node `Size` — fixed
+/// absolute bound rather than a multiplier against the prior
+/// size, so a gesture that legitimately enlarges a tiny node by
+/// many factors at release isn't silently rejected. The bound
+/// (`MAX_NODE_AXIS`) is large enough to swallow any sane canvas
+/// extent and small enough to flag an extra zero or two as the
+/// "extra zero" canonical typo.
+const MAX_NODE_AXIS: f64 = 1_000_000.0;
+
+fn check_node_size_typo(size: baumhard::mindmap::model::Size) -> Result<(), String> {
+    if size.width > MAX_NODE_AXIS {
+        return Err(format!(
+            "node.size.width ({}) exceeds the {} ceiling; likely a typo (e.g. an extra zero)",
+            size.width, MAX_NODE_AXIS
+        ));
+    }
+    if size.height > MAX_NODE_AXIS {
+        return Err(format!(
+            "node.size.height ({}) exceeds the {} ceiling; likely a typo (e.g. an extra zero)",
+            size.height, MAX_NODE_AXIS
+        ));
     }
     Ok(())
 }

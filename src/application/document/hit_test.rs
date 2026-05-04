@@ -565,22 +565,27 @@ pub fn hit_test_node_resize_handle(
 
 /// Per-frame tree mutation for the node-resize gesture: write the
 /// in-progress `(canvas_position, canvas_size)` to the node's
-/// container `GlyphArea` and to every section-area's position.
+/// container `GlyphArea` and shift every `Flag::SectionRoot` child
+/// by `position_delta` so section content tracks the moving frame.
 /// The renderer's `rebuild_buffers_from_tree` reshapes against
 /// the new bounds on the next pass, so the user sees the node
 /// resize live.
 ///
 /// **Tree-only.** The model is unchanged until release-commit
 /// where `set_node_aabb` writes the final state under one
-/// `EditNodeAabb` undo entry.
+/// `EditNodeAabb` undo entry. Drag callers must NOT route per-
+/// frame writes through the model setter — that would explode
+/// the undo stack.
 ///
-/// Section-area positions follow the node's position delta — the
-/// tree carries section AABB positions in absolute canvas
-/// coordinates, so a node move that doesn't shift sections leaves
-/// them visually detached. Section *bounds* aren't recomputed
-/// here; release-commit's full `rebuild_all` re-derives them from
-/// the model. Mid-drag, section content stays at the pre-drag
-/// size — acceptable since the user's eye tracks the node frame.
+/// Child mind-node containers are deliberately left in place —
+/// resizing a parent should not visually translate its
+/// descendants. Sections however *do* track the move because the
+/// tree stores section positions in absolute canvas coordinates;
+/// a parent's resize that shifts its origin (NW / N / W / NE /
+/// SW handles) would visibly detach sections without the shift.
+/// Mid-drag the section *bounds* stay at pre-drag values — the
+/// release-commit's full `rebuild_all` re-derives them from the
+/// model.
 pub fn apply_node_resize_to_tree(
     tree: &mut MindMapTree,
     node_id: &str,
@@ -598,20 +603,31 @@ pub fn apply_node_resize_to_tree(
             area.set_bounds((new_size.x, new_size.y));
         }
     }
-    // Shift section-area positions by the same position delta the
-    // container moved by — sections store absolute canvas coords
-    // and would visibly detach otherwise. `move_position` is the
-    // delta-based mutator; safe to call with `(0, 0)` for the
-    // pure-grow case (E/S/SE handles).
+    // Sections-only walk — the existing helper filters by
+    // `Flag::SectionRoot`, so child mind-node containers stay
+    // put. Move-this-node-only semantics, same primitive
+    // `apply_drag_delta` uses for the `MovingNode` drag.
     if position_delta.x != 0.0 || position_delta.y != 0.0 {
-        let child_ids: Vec<indextree::NodeId> = container_id.children(&tree.tree.arena).collect();
-        for child in child_ids {
-            apply_delta_recursive(
-                &mut tree.tree.arena,
-                child,
-                position_delta.x,
-                position_delta.y,
-            );
+        // Shift only the section children — the container's own
+        // position was already written above via `set_position`,
+        // so we walk children directly rather than calling the
+        // sibling helper that would re-shift the container.
+        let mut child = tree
+            .tree
+            .arena
+            .get(container_id)
+            .and_then(|n| n.first_child());
+        while let Some(cid) = child {
+            child = tree.tree.arena.get(cid).and_then(|n| n.next_sibling());
+            let is_section = tree
+                .tree
+                .arena
+                .get(cid)
+                .map(|n| n.get().flag_is_set(Flag::SectionRoot))
+                .unwrap_or(false);
+            if is_section {
+                apply_delta_recursive(&mut tree.tree.arena, cid, position_delta.x, position_delta.y);
+            }
         }
     }
     tree.tree.invalidate_caches();

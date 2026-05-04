@@ -196,6 +196,28 @@ mod tests {
         assert_eq!(size.height, 75.0);
     }
 
+    /// NE handle: x grows, y shifts position and shrinks.
+    #[test]
+    fn test_resolve_ne_combines_x_grow_and_y_shrink() {
+        let i = fixture(ResizeHandleSide::NE);
+        let (pos, size) = i.resolve(Vec2::new(8.0, 6.0));
+        assert_eq!(pos.x, 100.0);
+        assert_eq!(pos.y, 56.0);
+        assert_eq!(size.width, 208.0);
+        assert_eq!(size.height, 74.0);
+    }
+
+    /// SW handle: x shifts position and shrinks, y grows.
+    #[test]
+    fn test_resolve_sw_combines_x_shrink_and_y_grow() {
+        let i = fixture(ResizeHandleSide::SW);
+        let (pos, size) = i.resolve(Vec2::new(5.0, 7.0));
+        assert_eq!(pos.x, 105.0);
+        assert_eq!(pos.y, 50.0);
+        assert_eq!(size.width, 195.0);
+        assert_eq!(size.height, 87.0);
+    }
+
     #[test]
     fn test_resolve_e_grows_x_axis_only() {
         let i = fixture(ResizeHandleSide::E);

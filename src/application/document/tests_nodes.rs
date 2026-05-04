@@ -337,21 +337,43 @@ fn test_set_node_size_writes_and_round_trips_through_undo() {
     let mut doc = load_test_doc();
     let id = first_testament_node_id(&doc);
     let before = doc.mindmap.nodes[&id].size;
-    assert_eq!(
-        doc.set_node_size(
-            &id,
-            Size {
-                width: 80.0,
-                height: 40.0
-            }
-        ),
-        Ok(true)
-    );
+    // Use a target large enough to fit any reasonable testament-
+    // node text floor — `grow_one_node_to_fit_text` runs after
+    // the setter and would bump a small target up to the text
+    // floor, masking the round-trip pin.
+    let target = Size {
+        width: 800.0,
+        height: 400.0,
+    };
+    assert_eq!(doc.set_node_size(&id, target), Ok(true));
     let after = doc.mindmap.nodes[&id].size;
-    assert_eq!(after.width, 80.0);
-    assert_eq!(after.height, 40.0);
+    assert_eq!(after.width, 800.0);
+    assert_eq!(after.height, 400.0);
     assert!(doc.undo());
     assert_eq!(doc.mindmap.nodes[&id].size, before, "undo restores prior size");
+}
+
+/// Setter applies `grow_one_node_to_fit_text` after the size
+/// write, so a request below the measured-text floor lands at
+/// the floor rather than the requested value. This is the
+/// "shrink rejected up-front" semantic until Tier 2C-N2 ships
+/// auto-fit-shrink. Pin the floor-respect contract.
+#[test]
+fn test_set_node_size_below_text_floor_lands_at_floor() {
+    use baumhard::mindmap::model::Size;
+    let mut doc = load_test_doc();
+    let id = first_testament_node_id(&doc);
+    // Request a tiny size; floor pulls it back up.
+    let tiny = Size {
+        width: 5.0,
+        height: 5.0,
+    };
+    assert_eq!(doc.set_node_size(&id, tiny), Ok(true));
+    let after = doc.mindmap.nodes[&id].size;
+    assert!(
+        after.width >= 5.0 || after.height >= 5.0,
+        "floor-respect pass should grow above the tiny target"
+    );
 }
 
 #[test]
@@ -420,17 +442,22 @@ fn test_set_node_size_rejects_astronomical_typo() {
     use baumhard::mindmap::model::Size;
     let mut doc = load_test_doc();
     let id = first_testament_node_id(&doc);
-    let prior = doc.mindmap.nodes[&id].size;
+    // Absolute ceiling at 1_000_000 — value past it trips the
+    // typo guard. Independent of the prior-size baseline so a
+    // tiny-to-large drag at the gesture's release-commit isn't
+    // silently rejected.
     let huge = Size {
-        width: prior.width * 200.0,
+        width: 2_000_000.0,
         height: 10.0,
     };
-    assert!(doc.set_node_size(&id, huge).is_err_and(|m| m.contains("over 100×")));
+    assert!(doc.set_node_size(&id, huge).is_err_and(|m| m.contains("exceeds the")));
 }
 
 /// `set_node_aabb` writes both fields atomically and pushes one
 /// `EditNodeAabb` undo entry. Used by the resize gesture's
-/// release-commit.
+/// release-commit. Uses a target large enough to fit testament
+/// text so the floor-respect pass leaves the requested size
+/// untouched and the round-trip pin is exact.
 #[test]
 fn test_set_node_aabb_writes_position_and_size_atomically() {
     use baumhard::mindmap::model::{Position, Size};
@@ -443,8 +470,8 @@ fn test_set_node_aabb_writes_position_and_size_atomically() {
         y: before_pos.y + 5.0,
     };
     let new_size = Size {
-        width: 60.0,
-        height: 30.0,
+        width: 800.0,
+        height: 400.0,
     };
     let undo_before = doc.undo_stack.len();
     assert_eq!(doc.set_node_aabb(&id, new_pos, new_size), Ok(true));

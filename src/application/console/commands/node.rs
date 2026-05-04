@@ -89,10 +89,12 @@ mod tests {
         let mut doc = load_test_doc();
         let id = first_testament_node_id(&doc);
         doc.selection = SelectionState::Single(id.clone());
-        assert_exec_ok(run("node resize 100 50", &mut doc));
+        // Use a target large enough to fit testament text so the
+        // floor-respect pass doesn't rewrite the requested size.
+        assert_exec_ok(run("node resize 800 400", &mut doc));
         let n = &doc.mindmap.nodes[&id];
-        assert_eq!(n.size.width, 100.0);
-        assert_eq!(n.size.height, 50.0);
+        assert_eq!(n.size.width, 800.0);
+        assert_eq!(n.size.height, 400.0);
     }
 
     #[test]
@@ -108,13 +110,12 @@ mod tests {
     fn node_resize_rejects_astronomical_typo() {
         let mut doc = load_test_doc();
         let id = first_testament_node_id(&doc);
-        let prior = doc.mindmap.nodes[&id].size.width;
         doc.selection = SelectionState::Single(id);
-        // 200× the prior should trip the typo guard.
-        let huge = prior * 200.0;
+        // Absolute ceiling at 1_000_000 — values past it trip
+        // the typo guard. Independent of the prior-size baseline.
         assert_exec_err_contains(
-            run(&format!("node resize {} 50", huge), &mut doc),
-            "over 100×",
+            run("node resize 2000000 50", &mut doc),
+            "exceeds the",
         );
     }
 
@@ -124,15 +125,16 @@ mod tests {
         let mut doc = load_test_doc();
         let id = first_testament_node_id(&doc);
         // Simulate a section selection on this node — the verb
-        // should resize the node, not the section.
+        // should resize the node, not the section. Use a target
+        // large enough to fit testament text floor.
         doc.selection = SelectionState::Section(SectionSel {
             node_id: id.clone(),
             section_idx: 0,
         });
-        assert_exec_ok(run("node resize 80 40", &mut doc));
+        assert_exec_ok(run("node resize 800 400", &mut doc));
         let n = &doc.mindmap.nodes[&id];
-        assert_eq!(n.size.width, 80.0);
-        assert_eq!(n.size.height, 40.0);
+        assert_eq!(n.size.width, 800.0);
+        assert_eq!(n.size.height, 400.0);
     }
 
     #[test]

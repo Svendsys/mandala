@@ -1499,6 +1499,71 @@ fn test_apply_node_resize_to_tree_writes_position_and_bounds() {
     assert!((area.render_bounds.y.0 - 70.0).abs() < 0.001);
 }
 
+/// Non-zero `position_delta` shifts the node's section children
+/// but leaves child mind-node containers in place. Pre-fix the
+/// helper walked every descendant including child mind-nodes,
+/// so a NW-handle drag visually translated the entire descendant
+/// subtree mid-drag.
+#[test]
+fn test_apply_node_resize_to_tree_shifts_sections_but_not_child_nodes() {
+    use crate::application::document::apply_node_resize_to_tree;
+    use crate::application::document::tests_common::pinned_two_section_node;
+    use glam::Vec2;
+
+    let (doc, id) = pinned_two_section_node();
+    // Pick a child mind-node id (any non-`id` node in the testament map)
+    // and snapshot its tree-side position pre-resize.
+    let child_id = doc
+        .mindmap
+        .nodes
+        .keys()
+        .find(|k| k.as_str() != id)
+        .expect("testament map has more than one node")
+        .clone();
+
+    let mut tree = doc.build_tree();
+    let child_arena_id = tree.arena_id_for(&child_id).unwrap();
+    let child_pos_before = tree
+        .tree
+        .arena
+        .get(child_arena_id)
+        .and_then(|n| n.get().glyph_area())
+        .map(|a| (a.position.x.0, a.position.y.0))
+        .unwrap();
+
+    let new_pos = Vec2::new(500.0, 200.0);
+    let new_size = Vec2::new(150.0, 70.0);
+    let position_delta = Vec2::new(50.0, 25.0);
+    apply_node_resize_to_tree(&mut tree, &id, new_pos, new_size, position_delta);
+
+    // Child mind-node should be untouched — even when it's not
+    // a descendant of `id`, the helper should never have walked
+    // its arena entry. Pin the invariant.
+    let child_pos_after = tree
+        .tree
+        .arena
+        .get(child_arena_id)
+        .and_then(|n| n.get().glyph_area())
+        .map(|a| (a.position.x.0, a.position.y.0))
+        .unwrap();
+    assert_eq!(
+        child_pos_before, child_pos_after,
+        "node resize must not visually translate other mind-nodes' tree state"
+    );
+
+    // The resized node's container *did* move.
+    let resized_arena_id = tree.arena_id_for(&id).unwrap();
+    let resized_pos = tree
+        .tree
+        .arena
+        .get(resized_arena_id)
+        .and_then(|n| n.get().glyph_area())
+        .map(|a| (a.position.x.0, a.position.y.0))
+        .unwrap();
+    assert!((resized_pos.0 - 500.0).abs() < 0.001);
+    assert!((resized_pos.1 - 200.0).abs() < 0.001);
+}
+
 #[test]
 fn test_apply_node_resize_to_tree_unknown_node_no_op() {
     use crate::application::document::apply_node_resize_to_tree;
