@@ -1,0 +1,304 @@
+// SPDX-License-Identifier: MPL-2.0
+
+//! Throttled drag-to-resize state for one section's `(offset, size)`.
+
+#![cfg(not(target_arch = "wasm32"))]
+
+use baumhard::mindmap::model::{Position, Size};
+use baumhard::mindmap::scene_builder::ResizeHandleSide;
+use glam::Vec2;
+
+use crate::application::document::apply_section_drag_delta_and_collect_patches;
+use crate::application::frame_throttle::MutationFrequencyThrottle;
+
+use super::super::scene_rebuild::flush_canvas_scene_buffers;
+use super::{DrainContext, ThrottledInteraction};
+
+/// Per-frame drains apply a side-aware delta to the section's
+/// `offset` and `size` in the tree only; the model is unchanged
+/// until release-commit, where `set_section_size` (and possibly
+/// `set_section_offset` for N/W/NW/NE/SW handles) writes the
+/// final state under a single `EditNodeStyle` undo entry.
+pub(in crate::application::app) struct SectionResizeInteraction {
+    pub node_id: String,
+    pub section_idx: usize,
+    pub side: ResizeHandleSide,
+    /// Section's `offset` at drag start; release-commit folds
+    /// `total_delta` through `axis_factors` to compute the final
+    /// offset.
+    pub start_offset: Position,
+    /// Section's `size` at drag start. Always `Some` — the
+    /// pre-drag selection-gate filtered out fill-parent
+    /// (`None`-sized) sections, since they have no AABB to
+    /// resize.
+    pub start_size: Size,
+    /// Accumulated total delta across the entire drag.
+    pub total_delta: Vec2,
+    /// Delta accumulated since the last successful drain.
+    pub pending_delta: Vec2,
+    /// Per-interaction adaptive throttle.
+    pub throttle: MutationFrequencyThrottle,
+}
+
+impl SectionResizeInteraction {
+    pub(in crate::application::app) fn new(
+        node_id: String,
+        section_idx: usize,
+        side: ResizeHandleSide,
+        start_offset: Position,
+        start_size: Size,
+    ) -> Self {
+        Self {
+            node_id,
+            section_idx,
+            side,
+            start_offset,
+            start_size,
+            total_delta: Vec2::ZERO,
+            pending_delta: Vec2::ZERO,
+            throttle: MutationFrequencyThrottle::with_default_budget(),
+        }
+    }
+
+    /// Resolve a cumulative cursor delta into the resulting
+    /// `(offset, size)` after applying this side's axis factors.
+    ///
+    /// Encodes the resize math as a pure function so both the
+    /// per-frame drain and the release-commit arm derive the
+    /// same shape from one place.
+    ///
+    /// **Coordinate convention.** The W / N / NW / NE / SW sides
+    /// shift `offset` toward the cursor by the cursor's signed
+    /// component on that axis and shrink the size by the same
+    /// amount, so the opposite edge stays put. The E / S / SE
+    /// sides only grow the size; offset stays at `start_offset`.
+    pub fn resolve(&self, total_delta: Vec2) -> (Position, Size) {
+        let (fx, fy) = self.side.axis_factors();
+        let dx = total_delta.x as f64;
+        let dy = total_delta.y as f64;
+
+        // X axis: -1 grows offset by dx and shrinks size by dx;
+        //          0 leaves both alone;
+        //         +1 grows size by dx, leaves offset at start.
+        let (off_x, size_w) = match fx {
+            -1 => (self.start_offset.x + dx, self.start_size.width - dx),
+            0 => (self.start_offset.x, self.start_size.width),
+            1 => (self.start_offset.x, self.start_size.width + dx),
+            _ => unreachable!("axis_factors only emits -1/0/+1"),
+        };
+        let (off_y, size_h) = match fy {
+            -1 => (self.start_offset.y + dy, self.start_size.height - dy),
+            0 => (self.start_offset.y, self.start_size.height),
+            1 => (self.start_offset.y, self.start_size.height + dy),
+            _ => unreachable!("axis_factors only emits -1/0/+1"),
+        };
+        (
+            Position { x: off_x, y: off_y },
+            Size {
+                width: size_w,
+                height: size_h,
+            },
+        )
+    }
+}
+
+impl ThrottledInteraction for SectionResizeInteraction {
+    fn has_pending(&self) -> bool {
+        self.pending_delta != Vec2::ZERO
+    }
+
+    fn throttle(&mut self) -> &mut MutationFrequencyThrottle {
+        &mut self.throttle
+    }
+
+    fn drain(&mut self, ctx: DrainContext<'_>) {
+        let DrainContext {
+            mindmap_tree,
+            app_scene,
+            renderer,
+            ..
+        } = ctx;
+
+        if let Some(tree) = mindmap_tree.as_mut() {
+            // The drain reaches the tree by translating the
+            // section's existing position by the section-side
+            // dx/dy. For sides whose `axis_factors.x = -1` the
+            // offset moves with the cursor on x; same on y. For
+            // E/S sides only the size changes — the section's
+            // top-left stays put, so no tree-position patch is
+            // needed beyond what the size change reflows.
+            //
+            // The tree carries the section AABB through the
+            // section-area `GlyphArea`'s position + bounds. We
+            // don't currently have a per-frame "set bounds"
+            // helper for sections (text reflow on bounds change
+            // is the renderer's job), so the per-frame drain
+            // here only patches position via the existing
+            // section-drag helper, and the size change lands
+            // wholesale on release. Mid-drag the user sees the
+            // section corner track the cursor for any side
+            // that moves the offset; pure E/S/SE drags show
+            // their growth at release.
+            let (fx, fy) = self.side.axis_factors();
+            let dx_to_apply = if fx == -1 { self.pending_delta.x } else { 0.0 };
+            let dy_to_apply = if fy == -1 { self.pending_delta.y } else { 0.0 };
+            if dx_to_apply != 0.0 || dy_to_apply != 0.0 {
+                let mut patches = Vec::new();
+                apply_section_drag_delta_and_collect_patches(
+                    tree,
+                    &self.node_id,
+                    self.section_idx,
+                    dx_to_apply,
+                    dy_to_apply,
+                    &mut patches,
+                );
+                renderer.patch_drag_positions(&patches);
+            }
+            flush_canvas_scene_buffers(app_scene, renderer);
+        }
+
+        self.pending_delta = Vec2::ZERO;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::app::throttled_interaction::test_utils::{
+        drive_throttle_over_budget, trait_default_tests_for_throttled_interaction,
+    };
+
+    fn fixture(side: ResizeHandleSide) -> SectionResizeInteraction {
+        SectionResizeInteraction::new(
+            "n".to_string(),
+            0,
+            side,
+            Position { x: 10.0, y: 20.0 },
+            Size {
+                width: 100.0,
+                height: 50.0,
+            },
+        )
+    }
+
+    #[test]
+    fn test_new_initialises_fields_with_zero_deltas() {
+        let i = fixture(ResizeHandleSide::SE);
+        assert_eq!(i.node_id, "n");
+        assert_eq!(i.section_idx, 0);
+        assert_eq!(i.side, ResizeHandleSide::SE);
+        assert_eq!(i.start_offset.x, 10.0);
+        assert_eq!(i.start_offset.y, 20.0);
+        assert_eq!(i.start_size.width, 100.0);
+        assert_eq!(i.start_size.height, 50.0);
+        assert_eq!(i.pending_delta, Vec2::ZERO);
+        assert_eq!(i.total_delta, Vec2::ZERO);
+        assert_eq!(i.throttle.current_n(), 1);
+    }
+
+    /// SE handle: drag right + down → size grows, offset
+    /// unchanged.
+    #[test]
+    fn test_resolve_se_grows_size_only() {
+        let i = fixture(ResizeHandleSide::SE);
+        let (off, size) = i.resolve(Vec2::new(20.0, 10.0));
+        assert_eq!(off.x, 10.0);
+        assert_eq!(off.y, 20.0);
+        assert_eq!(size.width, 120.0);
+        assert_eq!(size.height, 60.0);
+    }
+
+    /// NW handle: drag right + down → offset grows, size
+    /// shrinks (so the SE corner stays put).
+    #[test]
+    fn test_resolve_nw_shifts_offset_and_shrinks_size() {
+        let i = fixture(ResizeHandleSide::NW);
+        let (off, size) = i.resolve(Vec2::new(5.0, 4.0));
+        assert_eq!(off.x, 15.0);
+        assert_eq!(off.y, 24.0);
+        assert_eq!(size.width, 95.0);
+        assert_eq!(size.height, 46.0);
+    }
+
+    /// N handle: only y axis moves.
+    #[test]
+    fn test_resolve_n_moves_y_axis_only() {
+        let i = fixture(ResizeHandleSide::N);
+        let (off, size) = i.resolve(Vec2::new(10.0, 5.0));
+        // x axis is untouched (factor 0).
+        assert_eq!(off.x, 10.0);
+        assert_eq!(size.width, 100.0);
+        // y: offset grows by dy, size shrinks by dy.
+        assert_eq!(off.y, 25.0);
+        assert_eq!(size.height, 45.0);
+    }
+
+    /// E handle: only x axis grows.
+    #[test]
+    fn test_resolve_e_grows_x_axis_only() {
+        let i = fixture(ResizeHandleSide::E);
+        let (off, size) = i.resolve(Vec2::new(7.0, 3.0));
+        assert_eq!(off.x, 10.0);
+        assert_eq!(off.y, 20.0);
+        assert_eq!(size.width, 107.0);
+        assert_eq!(size.height, 50.0);
+    }
+
+    /// NE handle: x grows, y shifts offset and shrinks.
+    #[test]
+    fn test_resolve_ne_combines_x_grow_and_y_shrink() {
+        let i = fixture(ResizeHandleSide::NE);
+        let (off, size) = i.resolve(Vec2::new(8.0, 6.0));
+        assert_eq!(off.x, 10.0);
+        assert_eq!(off.y, 26.0);
+        assert_eq!(size.width, 108.0);
+        assert_eq!(size.height, 44.0);
+    }
+
+    /// SW handle: x shifts offset and shrinks, y grows.
+    #[test]
+    fn test_resolve_sw_combines_x_shrink_and_y_grow() {
+        let i = fixture(ResizeHandleSide::SW);
+        let (off, size) = i.resolve(Vec2::new(5.0, 7.0));
+        assert_eq!(off.x, 15.0);
+        assert_eq!(off.y, 20.0);
+        assert_eq!(size.width, 95.0);
+        assert_eq!(size.height, 57.0);
+    }
+
+    #[test]
+    fn test_has_pending_false_for_zero_delta() {
+        let i = fixture(ResizeHandleSide::SE);
+        assert!(!i.has_pending());
+    }
+
+    #[test]
+    fn test_has_pending_true_for_nonzero_delta() {
+        let mut i = fixture(ResizeHandleSide::SE);
+        i.pending_delta = Vec2::new(1.0, 0.0);
+        assert!(i.has_pending());
+    }
+
+    #[test]
+    fn test_reset_resets_only_throttle() {
+        let mut i = fixture(ResizeHandleSide::SE);
+        i.pending_delta = Vec2::new(11.0, 13.0);
+        i.total_delta = Vec2::new(17.0, 19.0);
+        drive_throttle_over_budget(&mut i.throttle);
+        assert!(i.throttle.current_n() > 1);
+
+        i.reset();
+
+        assert_eq!(i.throttle.current_n(), 1);
+        assert_eq!(i.pending_delta, Vec2::new(11.0, 13.0));
+        assert_eq!(i.total_delta, Vec2::new(17.0, 19.0));
+        assert_eq!(i.side, ResizeHandleSide::SE);
+    }
+
+    trait_default_tests_for_throttled_interaction! {
+        build = || fixture(ResizeHandleSide::SE),
+        set_pending = |i: &mut SectionResizeInteraction| {
+            i.pending_delta = Vec2::new(1.0, 0.0);
+        },
+    }
+}

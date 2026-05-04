@@ -32,6 +32,7 @@ pub(in crate::application::app) mod edge_label;
 pub(in crate::application::app) mod moving_node;
 pub(in crate::application::app) mod moving_section;
 pub(in crate::application::app) mod portal_label;
+pub(in crate::application::app) mod section_resize;
 #[cfg(test)]
 mod test_utils;
 
@@ -41,6 +42,7 @@ pub(in crate::application::app) use edge_label::EdgeLabelInteraction;
 pub(in crate::application::app) use moving_node::MovingNodeInteraction;
 pub(in crate::application::app) use moving_section::MovingSectionInteraction;
 pub(in crate::application::app) use portal_label::PortalLabelInteraction;
+pub(in crate::application::app) use section_resize::SectionResizeInteraction;
 
 /// Mutable references into the persistent app state every drain
 /// body reaches for. Built once in
@@ -69,6 +71,7 @@ pub(in crate::application::app) struct DrainContext<'a> {
 pub(in crate::application::app) enum ThrottledDrag {
     MovingNode(MovingNodeInteraction),
     MovingSection(MovingSectionInteraction),
+    SectionResize(SectionResizeInteraction),
     EdgeHandle(EdgeHandleInteraction),
     PortalLabel(PortalLabelInteraction),
     EdgeLabel(EdgeLabelInteraction),
@@ -83,6 +86,7 @@ impl ThrottledDrag {
         match self {
             Self::MovingNode(i) => i,
             Self::MovingSection(i) => i,
+            Self::SectionResize(i) => i,
             Self::EdgeHandle(i) => i,
             Self::PortalLabel(i) => i,
             Self::EdgeLabel(i) => i,

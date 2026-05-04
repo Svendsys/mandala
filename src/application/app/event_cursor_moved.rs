@@ -16,7 +16,7 @@ use super::input_context::InputHandlerContext;
 use super::scene_rebuild::{rebuild_after_selection_change, rebuild_all};
 use super::throttled_interaction::{
     EdgeHandleInteraction, EdgeLabelInteraction, MovingNodeInteraction, MovingSectionInteraction,
-    PortalLabelInteraction, ThrottledDrag,
+    PortalLabelInteraction, SectionResizeInteraction, ThrottledDrag,
 };
 use super::{AppMode, DragState};
 use crate::application::common::RenderDecree;
@@ -126,6 +126,11 @@ pub(super) fn handle_cursor_moved(
             i.total_delta += delta;
             i.pending_delta += delta;
         }
+        DragState::Throttled(ThrottledDrag::SectionResize(i)) => {
+            let delta = canvas_delta(ctx.renderer, prev_pos, cursor_pos_val);
+            i.total_delta += delta;
+            i.pending_delta += delta;
+        }
         DragState::Throttled(ThrottledDrag::EdgeLabel(i)) => {
             // Overwrite discipline: store the latest cursor —
             // `EdgeLabelInteraction::drain` projects it onto the
@@ -152,6 +157,7 @@ pub(super) fn handle_cursor_moved(
             hit_edge_handle,
             hit_portal_label,
             hit_edge_label,
+            hit_section_resize_handle,
         } => {
             let dist_x = cursor_pos_val.0 - start_pos.0;
             let dist_y = cursor_pos_val.1 - start_pos.1;
@@ -258,6 +264,37 @@ pub(super) fn handle_cursor_moved(
                                 EdgeHandleInteraction::new(edge_ref, handle_kind, original, start_handle_pos),
                             ));
                             return;
+                        }
+                    }
+                }
+                if let Some((node_id, section_idx, side)) = hit_section_resize_handle.take() {
+                    // Snapshot the section's pre-drag offset/size
+                    // so the drain math + release commit derive
+                    // from a stable base. Skip the gesture if the
+                    // section vanished between press and threshold
+                    // (deletion mid-drag) or its size went `None`
+                    // (selection-gating means we shouldn't see this
+                    // in practice, but the per-frame dispatch
+                    // shouldn't crash on a model the user mutated
+                    // through the console mid-press).
+                    if let Some(doc) = ctx.document.as_ref() {
+                        if let Some(node) = doc.mindmap.nodes.get(&node_id) {
+                            if let Some(section) = node.sections.get(section_idx) {
+                                if let Some(start_size) = section.size.clone() {
+                                    let start_offset = section.offset.clone();
+                                    ctx.scene_cache.clear();
+                                    *ctx.drag_state = DragState::Throttled(ThrottledDrag::SectionResize(
+                                        SectionResizeInteraction::new(
+                                            node_id,
+                                            section_idx,
+                                            side,
+                                            start_offset,
+                                            start_size,
+                                        ),
+                                    ));
+                                    return;
+                                }
+                            }
                         }
                     }
                 }

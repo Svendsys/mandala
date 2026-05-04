@@ -442,7 +442,7 @@ enum AppMode {
 /// the per-frame drain in
 /// [`run_native::InitState::drain_frame`] dispatches through
 /// [`ThrottledDrag::as_dyn_mut`] without naming the active kind.
-/// Adding a fifth throttled drag is a new variant on
+/// Adding a new throttled drag is a new variant on
 /// `ThrottledDrag` + a struct + a trait impl; nothing about this
 /// enum needs to grow.
 ///
@@ -488,6 +488,15 @@ enum DragState {
         /// `hit_node` — a label hovering over a node behind
         /// it should move as a label, not a node.
         hit_edge_label: Option<baumhard::mindmap::scene_cache::EdgeKey>,
+        /// If a section is currently selected and the cursor
+        /// landed on one of its 8 resize handles, this records
+        /// `(node_id, section_idx, side)` so a drag past
+        /// threshold transitions to `Throttled(SectionResize)`.
+        /// Takes precedence over `hit_node` — a handle sits on
+        /// the section's edge and clicking it is a resize, not
+        /// a section drag.
+        hit_section_resize_handle:
+            Option<(String, usize, baumhard::mindmap::scene_builder::ResizeHandleSide)>,
     },
     /// Dragging to pan the camera (started on empty space).
     /// Unthrottled — emits a `CameraPan` decree directly, no

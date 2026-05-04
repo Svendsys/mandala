@@ -239,6 +239,7 @@ pub(in crate::application::app) fn rebuild_scene_only(
     update_border_tree_static(doc, app_scene);
     update_portal_tree(doc, &std::collections::HashMap::new(), app_scene, renderer);
     update_edge_handle_tree(&scene, app_scene);
+    update_section_resize_handle_tree(&scene, app_scene);
     update_connection_label_tree(&scene, app_scene, renderer);
     flush_canvas_scene_buffers(app_scene, renderer);
 }
@@ -517,6 +518,40 @@ pub(in crate::application::app) fn update_edge_handle_tree(
             let tree = build_edge_handle_tree(&scene.edge_handles);
             app_scene.register_canvas(CanvasRole::EdgeHandles, tree, glam::Vec2::ZERO);
             app_scene.set_canvas_signature(CanvasRole::EdgeHandles, signature);
+        }
+    }
+}
+
+/// Build or in-place update the section-resize-handle tree under
+/// [`crate::application::scene_host::CanvasRole::SectionResizeHandles`].
+/// Sibling of `update_edge_handle_tree`; same §B2 dispatch shape.
+///
+/// Resize handle counts are 0 (no Section selection / fill-parent
+/// section) or 8 (Some-sized selected section), so the identity-
+/// sequence-based dispatch flips between the two on selection
+/// transitions and stays stable during a resize drag.
+pub(in crate::application::app) fn update_section_resize_handle_tree(
+    scene: &baumhard::mindmap::scene_builder::RenderScene,
+    app_scene: &mut crate::application::scene_host::AppScene,
+) {
+    use crate::application::scene_host::{hash_canvas_signature, CanvasDispatch, CanvasRole};
+    use baumhard::mindmap::tree_builder::{
+        build_section_resize_handle_mutator_tree, build_section_resize_handle_tree,
+        section_resize_handle_identity_sequence,
+    };
+
+    let signature = hash_canvas_signature(&section_resize_handle_identity_sequence(
+        &scene.section_resize_handles,
+    ));
+    match app_scene.canvas_dispatch(CanvasRole::SectionResizeHandles, signature) {
+        CanvasDispatch::InPlaceMutator => {
+            let mutator = build_section_resize_handle_mutator_tree(&scene.section_resize_handles);
+            app_scene.apply_canvas_mutator(CanvasRole::SectionResizeHandles, &mutator);
+        }
+        CanvasDispatch::FullRebuild => {
+            let tree = build_section_resize_handle_tree(&scene.section_resize_handles);
+            app_scene.register_canvas(CanvasRole::SectionResizeHandles, tree, glam::Vec2::ZERO);
+            app_scene.set_canvas_signature(CanvasRole::SectionResizeHandles, signature);
         }
     }
 }

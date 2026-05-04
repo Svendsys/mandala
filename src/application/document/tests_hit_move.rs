@@ -1221,4 +1221,90 @@ fn test_collect_patches_recursive_skips_glyph_model_children() {
     );
 }
 
+// --- Section resize-handle hit tests ---
+
+#[test]
+fn test_hit_test_section_resize_handle_returns_none_for_none_sized_section() {
+    use crate::application::document::hit_test_section_resize_handle;
+    use crate::application::document::tests_common::doc_with_one_orphan_node;
+    use glam::Vec2;
+
+    let doc = doc_with_one_orphan_node();
+    // Default orphan section has `size = None` — fill-parent
+    // sections emit no resize handles, so the hit-test must
+    // return `None` regardless of cursor position.
+    let result = hit_test_section_resize_handle(&doc.mindmap, Vec2::new(0.0, 0.0), "0", 0, 100.0);
+    assert!(result.is_none(), "fill-parent section must not surface handles");
+}
+
+#[test]
+fn test_hit_test_section_resize_handle_returns_none_for_missing_node_or_section() {
+    use crate::application::document::hit_test_section_resize_handle;
+    use crate::application::document::tests_common::pinned_two_section_node;
+    use glam::Vec2;
+
+    let (doc, _id) = pinned_two_section_node();
+    assert!(
+        hit_test_section_resize_handle(&doc.mindmap, Vec2::ZERO, "nope", 0, 100.0).is_none(),
+        "missing node id must return None"
+    );
+    let (doc, id) = pinned_two_section_node();
+    assert!(
+        hit_test_section_resize_handle(&doc.mindmap, Vec2::ZERO, &id, 99, 100.0).is_none(),
+        "out-of-range section_idx must return None"
+    );
+}
+
+#[test]
+fn test_hit_test_section_resize_handle_lands_on_se_corner() {
+    use crate::application::document::hit_test_section_resize_handle;
+    use crate::application::document::tests_common::pinned_two_section_node;
+    use baumhard::mindmap::scene_builder::ResizeHandleSide;
+    use glam::Vec2;
+
+    let (doc, id) = pinned_two_section_node();
+    let node = &doc.mindmap.nodes[&id];
+    // pinned_two_section_node fixes section[1] at offset (10,10)
+    // size 50×30. SE corner is at canvas (node.pos + (60, 40)).
+    let np = &node.position;
+    let se = Vec2::new(np.x as f32 + 60.0, np.y as f32 + 40.0);
+    let result = hit_test_section_resize_handle(&doc.mindmap, se, &id, 1, 4.0);
+    assert_eq!(result, Some(ResizeHandleSide::SE));
+}
+
+#[test]
+fn test_hit_test_section_resize_handle_lands_on_n_edge_midpoint() {
+    use crate::application::document::hit_test_section_resize_handle;
+    use crate::application::document::tests_common::pinned_two_section_node;
+    use baumhard::mindmap::scene_builder::ResizeHandleSide;
+    use glam::Vec2;
+
+    let (doc, id) = pinned_two_section_node();
+    let node = &doc.mindmap.nodes[&id];
+    // N midpoint at offset (10+25, 10) = (35, 10) relative to node.
+    let np = &node.position;
+    let n = Vec2::new(np.x as f32 + 35.0, np.y as f32 + 10.0);
+    assert_eq!(
+        hit_test_section_resize_handle(&doc.mindmap, n, &id, 1, 4.0),
+        Some(ResizeHandleSide::N)
+    );
+}
+
+#[test]
+fn test_hit_test_section_resize_handle_misses_outside_tolerance() {
+    use crate::application::document::hit_test_section_resize_handle;
+    use crate::application::document::tests_common::pinned_two_section_node;
+    use glam::Vec2;
+
+    let (doc, id) = pinned_two_section_node();
+    let node = &doc.mindmap.nodes[&id];
+    // Cursor is centered on the section AABB — far from every
+    // corner / edge handle.
+    let center = Vec2::new(node.position.x as f32 + 35.0, node.position.y as f32 + 25.0);
+    assert!(
+        hit_test_section_resize_handle(&doc.mindmap, center, &id, 1, 4.0).is_none(),
+        "center of section must not hit any handle"
+    );
+}
+
 // --- Custom mutation registry & application tests ---

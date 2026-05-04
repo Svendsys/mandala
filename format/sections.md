@@ -133,8 +133,25 @@ written once at release through `set_section_offset`, with the
 same AABB validation as the verb (overflow snaps the section
 back to its pre-drag offset and logs a message). Single-section
 nodes still drag whole-node — mirrors the hit-test fold to
-`HitTarget::NodeContainer`. Section resize handles are queued
-for a future iteration.
+`HitTarget::NodeContainer`.
+
+**Drag-to-resize gesture.** Selecting a `Some`-sized section
+emits 8 resize handles on top of it — four corners plus four
+edge midpoints (N / E / S / W). Click and drag a handle past
+the drag-threshold to resize the section: corner handles move
+both axes; edge-midpoint handles move only the perpendicular
+axis. NW / N / NE / SW / W handles shift `offset` toward the
+cursor while shrinking `size`, so the opposite edge stays put;
+SE / E / S handles only grow `size` from the existing
+top-left. Per-frame the section's tree position tracks the
+cursor; the model is written at release through
+`set_section_size` followed by `set_section_offset`, both under
+a single `EditNodeStyle` undo entry. AABB-overflow,
+non-positive size, or astronomical-size rejection logs and
+falls through to a model-side rebuild that snaps the section
+back. `None`-sized (fill-parent) sections emit no handles —
+their dimensions are owned by the parent's auto-fit floor, not
+by an authored AABB.
 
 After a position or size edit, the parent node's auto-fit
 floor recomputes against **the larger of** measured text

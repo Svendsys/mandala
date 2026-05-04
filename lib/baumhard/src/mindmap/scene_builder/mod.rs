@@ -54,6 +54,13 @@ pub struct RenderScene {
     /// points, and (for straight edges only) a midpoint handle that
     /// triggers the "curve a straight line" gesture when dragged.
     pub edge_handles: Vec<EdgeHandleElement>,
+    /// Resize handles rendered on top of the *selected* `Some`-
+    /// sized section. Always empty unless the scene was built
+    /// with a `selected_section` matching a `Some`-sized section.
+    /// 8 handles when populated (corners + edge midpoints);
+    /// `None`-sized sections (fill-parent) emit zero handles
+    /// because there's no per-section AABB to stretch.
+    pub section_resize_handles: Vec<SectionResizeHandleElement>,
     /// Labels attached to edges whose `label` field is non-empty.
     /// One element per labeled edge, positioned along the connection
     /// path at `label_config.position_t` (defaulting to 0.5), shifted
@@ -280,6 +287,7 @@ mod node_pass;
 /// each `display_mode = "portal"` edge, attached to its owning
 /// node's border at the point facing the opposite endpoint.
 pub mod portal;
+mod section_resize_handle;
 
 #[cfg(test)]
 mod tests;
@@ -290,3 +298,7 @@ pub use builder::{
 };
 pub use edge_handle::build_edge_handles;
 pub use portal::SelectedPortalLabel;
+pub use section_resize_handle::{
+    build_section_resize_handles, ResizeHandleSide, SectionResizeHandleElement,
+    SECTION_RESIZE_HANDLE_FONT_SIZE_PT, SECTION_RESIZE_HANDLE_GLYPH,
+};

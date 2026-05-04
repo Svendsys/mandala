@@ -18,6 +18,7 @@ use baumhard::gfx_structs::tree::MutatorTree;
 use baumhard::gfx_structs::tree_walker::walk_tree_from;
 use baumhard::mindmap::connection;
 use baumhard::mindmap::model::MindMap;
+use baumhard::mindmap::scene_builder::{build_section_resize_handles, ResizeHandleSide};
 use baumhard::mindmap::tree_builder::MindMapTree;
 
 use super::types::EdgeRef;
@@ -489,6 +490,47 @@ pub fn apply_section_drag_delta_and_collect_patches(
     };
     collect_patches_recursive(&mut tree.tree.arena, section_root, dx, dy, patches);
     tree.tree.invalidate_caches();
+}
+
+/// Hit-test the 8 resize handles of a `Some`-sized section at
+/// `canvas_pos`. Returns the closest handle whose canvas-space
+/// center is within `tolerance` of the cursor, or `None` if no
+/// handle is in range. Mirrors
+/// [`super::MindMapDocument::hit_test_edge_handle`] — same
+/// "compute live positions, scan within tolerance" shape.
+///
+/// Returns `None` for `None`-sized sections (fill-parent — no
+/// handles emitted) and for missing nodes / sections. Bounded
+/// cost: 8 distance comparisons per call.
+pub fn hit_test_section_resize_handle(
+    map: &MindMap,
+    canvas_pos: Vec2,
+    node_id: &str,
+    section_idx: usize,
+    tolerance: f32,
+) -> Option<ResizeHandleSide> {
+    let node = map.nodes.get(node_id)?;
+    let section = node.sections.get(section_idx)?;
+    let section_size = section.size.as_ref()?;
+    let section_pos = Vec2::new(
+        node.position.x as f32 + section.offset.x as f32,
+        node.position.y as f32 + section.offset.y as f32,
+    );
+    let size = Vec2::new(section_size.width as f32, section_size.height as f32);
+    let handles = build_section_resize_handles(node_id, section_idx, section_pos, Some(size));
+
+    let mut best: Option<(ResizeHandleSide, f32)> = None;
+    for h in handles {
+        let pos = Vec2::new(h.position.0, h.position.1);
+        let dist = canvas_pos.distance(pos);
+        if dist > tolerance {
+            continue;
+        }
+        if best.as_ref().map_or(true, |(_, d)| dist < *d) {
+            best = Some((h.side, dist));
+        }
+    }
+    best.map(|(s, _)| s)
 }
 
 /// Collect drag patches for the container plus its section

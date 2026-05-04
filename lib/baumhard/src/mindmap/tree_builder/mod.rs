@@ -22,6 +22,7 @@ mod connection_label;
 mod edge_handle;
 mod node;
 mod portal;
+mod section_resize_handle;
 
 #[cfg(test)]
 mod tests;
@@ -46,6 +47,10 @@ pub use portal::{
     build_portal_mutator_tree, build_portal_mutator_tree_from_pairs, build_portal_tree,
     build_portal_tree_from_pairs, portal_identity_sequence, portal_pair_data, PortalColorPreviewRef,
     PortalIdentity, PortalMutator, PortalPairData, PortalTree, SelectedEdgeRef,
+};
+pub use section_resize_handle::{
+    build_section_resize_handle_mutator_tree, build_section_resize_handle_tree,
+    section_resize_handle_identity_sequence,
 };
 
 use node::{append_node_sections, build_children_recursive, mindnode_container_area};

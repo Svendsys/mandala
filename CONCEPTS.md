@@ -1058,7 +1058,16 @@ pointer at `maptool convert --sections`. Full reference:
   drag (`ThrottledDrag::MovingSection`); per-frame mutates the
   section's tree subtree, release-commit writes through
   `set_section_offset` once. AABB overflow snaps the section
-  back. Resize handles are still queued.
+  back.
+- **Per-section drag-to-resize gesture.** Shipped — selecting a
+  `Some`-sized section surfaces 8 resize handles (corners + edge
+  midpoints); dragging a handle promotes to
+  `ThrottledDrag::SectionResize`. Per-frame mutates the section's
+  tree position; release-commit writes the final
+  `(offset, size)` through `set_section_size` then
+  `set_section_offset` under a single `EditNodeStyle` undo entry.
+  Same AABB / non-positive size / astronomical size rejection
+  with model-side snap-back as the move gesture.
 - **Multiple `GlyphModel`s per section.** Still on the
   trajectory — today a section holds exactly one structural
   model; richer composed-glyph layouts (a gridded matrix beside
@@ -1976,16 +1985,16 @@ always win over larger AABBs.
 
 ### `ThrottledInteraction` and `ThrottledDrag`
 
-**Summary.** A trait + five-variant enum providing one uniform
+**Summary.** A trait + six-variant enum providing one uniform
 shell for continuous, high-rate-input drag types.
 
-**What it's for.** Dragging a node, a section, an edge handle, a
-portal label, and an edge label all follow the same per-frame
-pattern: accumulate input deltas, ask the throttle whether to
-drain, apply if drain, otherwise wait. The trait factors that
-accept-and-drain dance into one place; new throttled drags
-attach as one struct + one trait impl + one enum variant
-without growing the dispatch.
+**What it's for.** Dragging a node, a section, a section's
+resize handle, an edge handle, a portal label, and an edge label
+all follow the same per-frame pattern: accumulate input deltas,
+ask the throttle whether to drain, apply if drain, otherwise
+wait. The trait factors that accept-and-drain dance into one
+place; new throttled drags attach as one struct + one trait
+impl + one enum variant without growing the dispatch.
 
 **Under the hood.**
 `src/application/app/throttled_interaction/mod.rs`.
@@ -1996,6 +2005,12 @@ Variants:
 - `MovingSection(MovingSectionInteraction)` — drags one section's
   `offset` relative to its owning node; threshold-cross promotes
   here when the press lands on a section of a multi-section node.
+- `SectionResize(SectionResizeInteraction)` — drags one resize
+  handle of a `Some`-sized selected section. Threshold-cross
+  promotes here when the press lands on one of the 8 handles
+  (corners + edge midpoints); release commits a single
+  `(offset, size)` write through `set_section_size` +
+  `set_section_offset`.
 - `EdgeHandle(EdgeHandleInteraction)`
 - `PortalLabel(PortalLabelInteraction)`
 - `EdgeLabel(EdgeLabelInteraction)`
@@ -2571,8 +2586,9 @@ chosen at compile time (Desktop on native, Web on WASM); the
 
 The following are native-only today, with reasons:
 
-- **Drag gestures** — pan, move-node, move-section, edge-handle,
-  portal-label, rect-select, edge-label. The whole `DragState`
+- **Drag gestures** — pan, move-node, move-section,
+  section-resize, edge-handle, portal-label, rect-select,
+  edge-label. The whole `DragState`
   enum is native-gated; the cross-platform story will be
   touch-first recognisers feeding the same `ThrottledDrag`
   variants.

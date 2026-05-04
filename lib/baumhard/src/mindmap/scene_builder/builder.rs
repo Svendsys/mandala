@@ -25,6 +25,7 @@ use super::label::build_label_elements;
 use super::node_pass::build_node_elements;
 use super::portal::build_portal_elements;
 use super::portal::SelectedPortalLabel;
+use super::section_resize_handle::{build_section_resize_handles, SectionResizeHandleElement};
 use super::{EdgeColorPreview, PortalColorPreview, RenderScene};
 
 /// Bundle of "what is the user currently pointing at?" inputs
@@ -66,6 +67,12 @@ pub struct SceneSelectionContext<'a> {
     /// in-progress buffer + caret for the committed label text
     /// on the named edge, so label edits render live.
     pub label_edit: Option<(&'a EdgeKey, &'a str)>,
+    /// Selected section identity — `(node_id, section_idx)` —
+    /// driving section-resize-handle emission. When `Some` and
+    /// the named section has `Some` size, the scene includes 8
+    /// handles for the section. `None` (the default) emits no
+    /// section handles.
+    pub selected_section: Option<(&'a str, usize)>,
 }
 
 /// Substitution pair for the portal-text inline edit preview.
@@ -182,6 +189,7 @@ pub fn build_scene_with_cache(
         edge_label: selected_edge_label,
         portal_label: selected_portal_label,
         label_edit: label_edit_override,
+        selected_section,
     } = selection;
     // The per-edge sample spacing depends on the effective font size,
     // which depends on `camera_zoom`. Flush cached samples if the
@@ -241,13 +249,62 @@ pub fn build_scene_with_cache(
         camera_zoom,
     );
 
+    // Section resize handles — only emitted for the currently-
+    // selected section, and only when it has `Some` size (a
+    // fill-parent section has no per-section AABB to stretch).
+    // Selection-gated here, mirroring edge-handle "only on
+    // selected edge" precedent.
+    let section_resize_handles = build_selected_section_handles(map, offsets, selected_section);
+
     RenderScene {
         text_elements,
         border_elements,
         connection_elements,
         portal_elements,
         edge_handles,
+        section_resize_handles,
         connection_label_elements,
         background_color: resolve_var(&map.canvas.background_color, &map.canvas.theme_variables).to_string(),
     }
+}
+
+/// Resolve `selected_section` into the `(canvas-pos, canvas-size)`
+/// of the section's AABB and dispatch to
+/// [`build_section_resize_handles`]. Returns `Vec::new()` when no
+/// section is selected, the named node / section is missing or
+/// hidden, or the section is `None`-sized (fill-parent).
+fn build_selected_section_handles(
+    map: &MindMap,
+    offsets: &HashMap<String, (f32, f32)>,
+    selected_section: Option<(&str, usize)>,
+) -> Vec<SectionResizeHandleElement> {
+    let (node_id, section_idx) = match selected_section {
+        Some(s) => s,
+        None => return Vec::new(),
+    };
+    let node = match map.nodes.get(node_id) {
+        Some(n) => n,
+        None => return Vec::new(),
+    };
+    if map.is_hidden_by_fold(node) {
+        return Vec::new();
+    }
+    let section = match node.sections.get(section_idx) {
+        Some(s) => s,
+        None => return Vec::new(),
+    };
+    let (ox, oy) = offsets.get(&node.id).copied().unwrap_or((0.0, 0.0));
+    let node_pos = node.pos_vec2();
+    let section_pos = glam::Vec2::new(
+        node_pos.x + ox + section.offset.x as f32,
+        node_pos.y + oy + section.offset.y as f32,
+    );
+    let section_size = section
+        .size
+        .as_ref()
+        .map(|s| glam::Vec2::new(s.width as f32, s.height as f32));
+    // `None` size returns Vec::new() inside the builder — skip the
+    // emission and the eventual scene-tree register/mutator
+    // dispatch deals with the empty payload identically.
+    build_section_resize_handles(node_id, section_idx, section_pos, section_size)
 }

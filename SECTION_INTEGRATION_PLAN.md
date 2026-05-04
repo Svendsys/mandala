@@ -79,7 +79,7 @@ Legend: ✅ shipped · 🔧 in progress · ⏳ to do · ❌ deferred (out of 2A)
 | G5 | **Tier 2B-setters — console verb `section resize <w> <h> [section=<idx>]` and `section resize none`.** `none` flips back to `Option::None` (fill-parent) — the only console-side path to that state today, closing the spec gap. Pinned by 6 tests (writes, none clears, overflow reject, zero reject, astronomical reject, undo round-trip). | ✅ |
 | G6 | **Tier 2B-setters — auto-fit covers `Some`-sized sections** (`document/mod.rs::grow_one_node_to_fit_text`). Predicate now contributes the **larger of** measured text bounds and (when set) user-pinned `size` to the node-floor calculation, so user intent ("at least this big") survives when text fits AND text overflow still grows the parent (nothing visually clips). Pinned by 3 tests in `tests_nodes.rs` (overflow grows parent, user-size survives when text fits, None-sized regression). | ✅ |
 | G7 | **Tier 2B-setters — docs.** `format/sections.md` gains a "Position and size verbs" subsection describing `section move` / `section resize` semantics + selection-shape requirements + the verify-message mirroring. `format/validation.md` gains a "Section bounds" subsection capturing the rules `verify::sections` enforces, with cross-link to the verbs. | ✅ |
-| — | **UX-consistency gap (partially closed):** Tier 2B-setters and Tier 2B-drag close the verb + move-gesture halves; **resize-handle gestures still hit the whole node** because no resize-handle hit-test surface exists yet. Tier 2B-resize closes the remaining half. Flagged in the `format/sections.md` "Drag-to-move gesture" paragraph until handles land. | 🔧 |
+| — | **UX-consistency gap (closed):** Tier 2B-setters, Tier 2B-drag, and Tier 2B-resize close all three halves — verbs, move gesture, resize gesture. Sections are now fully first-class for selection, colour, font, clipboard, drag-to-move, and drag-to-resize. | ✅ |
 | G8 | **Tier 2B-setters review fix-up — C1 (CRITICAL):** floor-invariant gap. Pre-fix `set_section_offset` / `set_section_size` skipped the post-write `grow_one_node_to_fit_text` / `_border` calls that every other section setter makes; a `None`-sized section moved past existing node bounds left the parent under its measured-text floor, triggering a confusing growth on the next unrelated edit. Both setters now run the floor passes. | ✅ |
 | G9 | **Review fix-up — C2:** out-of-range `section=K` errors at the verb layer rather than silently returning "no change" (which was indistinguishable from a successful idempotent set). `execute_section` now bounds-checks against `node.sections.len()` before delegating. Pinned by `section_move_out_of_range_section_kv_errors`. | ✅ |
 | G10 | **Review fix-up — C3+X5:** `set_section_offset` / `set_section_size` now reject when the parent `node.size` is non-finite or non-positive, mirroring `verify::sections::check`'s node-level guards. Closes the verify→setter parity asymmetry the cross-cutting reviewer surfaced. New free fn `check_node_size_finite_positive` in `nodes/mod.rs`. | ✅ |
@@ -112,6 +112,20 @@ Legend: ✅ shipped · 🔧 in progress · ⏳ to do · ❌ deferred (out of 2A)
 | D20 | **Review fix-up — X6: `run_native.rs` `is_moving_node` comment.** Explains why `MovingSection` deliberately doesn't qualify for the camera-driven geometry rebuild suppression — section drag never moves the parent node, so the camera rebuild is harmless. | ✅ |
 | D21 | **Review fix-up — V7: stale line ranges dropped** from D2 + D7 plan rows and `format/sections.md`'s drag paragraph. Line-range refs rot the moment a sibling commit lands; semantic anchors (`hit_test_target`'s single-section fold) survive. | ✅ |
 | — | **Surfaced by review, deferred:** **(C3)** `set_section_offset` only AABB-validates when `section.size.is_some()`. A `None`-sized section (the migration default — fill-parent) can be dragged anywhere; release accepts; the section visually escapes the parent. Pre-existing in the setter; drag is the first ergonomic way to trigger it. Either tighten the setter to clamp against `node.size` even for `None`-sized sections, or document. **(X7)** Animation interleaving: a `target_scope: SectionsOnly` custom mutation running concurrently with a section drag may write through `sync_node_from_tree` to the section's mid-drag tree position, leaking the intermediate offset into the undo stack. Rare; needs interleaving repro to prove. **(C5)** Shift+drag-on-section keeps `Section` selection while moving the whole node mid-drag (release rebuild restores coherence). Worth a guard or comment in a future pass. | ⏳ |
+| R1 | **Tier 2B-resize — `ResizeHandleSide` enum** with 8 variants (`NW, N, NE, E, SE, S, SW, W`) plus `axis_factors() -> (i8, i8)`, `channel() -> usize`, `Display`, and `all() -> [Self; 8]`. Lives at `lib/baumhard/src/mindmap/scene_builder/section_resize_handle.rs` (not the document layer the original plan suggested — baumhard is the right home since the scene builder is the consumer that emits handle elements). | ✅ |
+| R2 | **`SectionResizeHandleElement` struct** in the same baumhard module, plus `build_section_resize_handles(node_id, section_idx, section_pos, section_size)` that emits 8 elements per `Some`-sized section (corners + edge midpoints) and `Vec::new()` for `None`-sized fill-parent sections. | ✅ |
+| R3 | **`RenderScene.section_resize_handles: Vec<SectionResizeHandleElement>`** field added to `RenderScene` in `lib/baumhard/src/mindmap/scene_builder/mod.rs`. | ✅ |
+| R4 | **Selection-gated emission** via `SceneSelectionContext.selected_section: Option<(&str, usize)>` threaded into `build_scene_with_cache`. The app layer's `assemble_scene_overrides` populates it when `doc.selection` is `SelectionState::Section`; the builder resolves the section's AABB in canvas space (offsets applied) and dispatches to `build_section_resize_handles`. | ✅ |
+| R5 | **`CanvasRole::SectionResizeHandles`** + `layers::SECTION_RESIZE_HANDLES = 51` (one above edge handles so resize handles win on the rare pixel overlap). `AppScene` slot, role-slot helpers, and `register_canvas` layer match arm wired. | ✅ |
+| R6 | **Tree builder** `build_section_resize_handle_tree` + `_mutator_tree` + `section_resize_handle_identity_sequence` in `lib/baumhard/src/mindmap/tree_builder/section_resize_handle.rs`. Same shape as `edge_handle.rs` — single-source-of-truth `section_resize_handle_layout` fn keeps the build + mutator paths from drifting. Identity is per-side channel sequence; selection-gated 0 ↔ 8 transitions take the full-rebuild arm, drag stays on the in-place mutator arm. | ✅ |
+| R7 | **`update_section_resize_handle_tree`** in `app/scene_rebuild.rs` mirroring `update_edge_handle_tree`'s §B2 dispatch (signature → `InPlaceMutator` / `FullRebuild`). Called from `rebuild_scene_only` so every selection change / drag frame keeps the handle tree fresh. | ✅ |
+| R8 | **`hit_test_section_resize_handle(map, canvas_pos, node_id, section_idx, tolerance)`** in `document/hit_test.rs` (sibling of `hit_test_edge_handle`). Reuses `build_section_resize_handles` to compute live positions; bounded-cost 8 distance comparisons; returns `Option<ResizeHandleSide>`. `None`-sized sections + missing nodes / sections all return `None` cleanly. | ✅ |
+| R9 | **`DragState::Pending.hit_section_resize_handle: Option<(String, usize, ResizeHandleSide)>`** field. Press-time hit test in `event_mouse_click.rs` populates when `doc.selection` is `SelectionState::Section`, using `EDGE_HANDLE_HIT_TOLERANCE_PX * canvas_per_pixel()` (handles are point-like; same forgiving tolerance as edge handles). | ✅ |
+| R10 | **`SectionResizeInteraction`** in new file `app/throttled_interaction/section_resize.rs`. Carries `node_id`, `section_idx`, `side`, `start_offset` (`Position`), `start_size` (`Size`), `total_delta`, `pending_delta`, `throttle`. `resolve(total_delta) -> (Position, Size)` is a pure function that folds the cursor delta through `axis_factors` — used by both the per-frame drain (for offset shifts on W/N/NW/NE/SW handles) and the release-commit arm. | ✅ |
+| R11 | **`SectionResize(SectionResizeInteraction)` variant** on `ThrottledDrag` + threshold-cross promotion in `event_cursor_moved.rs` between `EdgeHandle` and `MovingSection`/`MovingNode` arms (handles win over the section / node behind them, mirroring edge-handle precedence). Snapshot section's pre-drag `(offset, size)` for the drain-side resolve math. | ✅ |
+| R12 | **Release-commit arm** in `event_mouse_click.rs`. Order: `set_section_size` first, then `set_section_offset` — the offset's AABB check uses the section's current size, so writing size first lets a shrink-from-NW gesture pass arithmetic that would have failed under the old size. AABB / non-positive-size rejection logs and falls through to `rebuild_all` from model — section snaps back. | ✅ |
+| R13 | **Tests.** 5 hit-test pins in `tests_hit_move.rs` (`None`-sized returns None, missing node/section returns None, SE corner hit, N edge-mid hit, center-of-section misses every handle). 12 unit tests inside `section_resize_handle.rs::tests` + `section_resize.rs::tests` covering axis-factor pinning per side, 8-handle position math, channel uniqueness, every variant's `resolve()` math (SE / NW / N / E / NE / SW), throttle defaults, has_pending, reset semantics, and the trait-default macro suite. | ✅ |
+| R14 | **Tier 2B-resize — docs.** `format/sections.md`'s "Drag-to-move gesture" paragraph extended with a "Drag-to-resize gesture" paragraph. Plan tracker rows R1-R14 + UX-gap row flipped from 🔧 to ✅. | ✅ |
 
 `MindNode` now owns `sections: Vec<MindSection>` (see
 `lib/baumhard/src/mindmap/model/node.rs:61` and `:270`). Each section
@@ -432,16 +446,24 @@ AABB-overflow snap-back. Selection state preserved through
 drag so picker hint, per-section verbs, and structured-clipboard
 pickup all stay coherent.
 
-**Tier 2B-resize ⏳ remaining** — render handles + hit-test +
-gesture state. New surface area, separate review session:
-
-- `HitTarget::SectionResizeHandle { node_id, section_idx, side }`
-  variant in `document/hit_test.rs`; only emitted for sections
-  with `size.is_some()` (single-section nodes' folded
-  `NodeContainer` rule still wins).
-- Renderer-side handle markers per `Some`-sized section.
-- `DragState::Throttled(ThrottledDrag::ResizingSection)`
-  analogous to `EdgeHandle`. Drain calls `set_section_size`.
+**Tier 2B-resize ✅ shipped** — rows R1-R14. 8 resize handles
+emit on top of the currently-selected `Some`-sized section
+(corners + edge midpoints), gated on `SelectionState::Section` +
+`size.is_some()`. Threshold-cross promotes
+`DragState::Pending.hit_section_resize_handle` to
+`Throttled(SectionResize)`; per-frame drain shifts the section's
+tree-side `offset` for handles whose `axis_factors.x = -1` /
+`axis_factors.y = -1` (W / N / NW / NE / SW); release-commit
+writes the final `(offset, size)` through `set_section_size` +
+`set_section_offset` under a single `EditNodeStyle` undo entry.
+AABB-overflow / non-positive-size rejection logs and snaps back
+via full `rebuild_all`. New scene-builder element
+(`SectionResizeHandleElement`), new tree-builder
+(`build_section_resize_handle_tree` /
+`_mutator_tree`), new canvas role
+(`CanvasRole::SectionResizeHandles` at layer 51). Closes the UX-
+consistency gap entirely — drag and resize gestures both ship
+for sections.
 
 ### Tier 2C (deferred — larger product changes)
 

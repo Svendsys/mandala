@@ -67,7 +67,7 @@ pub use hit_test::{apply_tree_highlights, hit_test_target, point_in_node_aabb, H
 #[cfg(not(target_arch = "wasm32"))]
 pub use hit_test::{
     apply_drag_delta, apply_drag_delta_and_collect_patches, apply_section_drag_delta_and_collect_patches,
-    hit_test_edge, rect_select,
+    hit_test_edge, hit_test_section_resize_handle, rect_select,
 };
 pub use nodes::{BorderConfigEdits, BorderEditOutcome, BorderSide, OptionEdit, SectionPayload};
 pub use types::{
@@ -509,11 +509,23 @@ impl MindMapDocument {
         };
         let portal_label = self.selection.selected_portal_label_scene_ref();
         let label_edit = self.label_edit_preview.as_ref().map(|(k, s)| (k, s.as_str()));
+        // Section selection drives resize-handle emission. The
+        // scene builder resolves the named section's AABB and
+        // emits 8 handles when the section has `Some` size; a
+        // `None`-sized (fill-parent) section emits nothing because
+        // there's no per-section AABB to stretch.
+        let selected_section = match &self.selection {
+            crate::application::document::SelectionState::Section(s) => {
+                Some((s.node_id.as_str(), s.section_idx))
+            }
+            _ => None,
+        };
         let selection = scene_builder::SceneSelectionContext {
             edge,
             edge_label,
             portal_label,
             label_edit,
+            selected_section,
         };
         let (edge_preview, portal_preview) = match &self.color_picker_preview {
             Some(ColorPickerPreview::Edge { key, color }) => (
