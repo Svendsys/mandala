@@ -852,8 +852,12 @@ impl MindMapDocument {
         // empty-sections rejection happens at parse time, not
         // at every setter call) would compute a (0, 0) floor.
         // Refuse the write so we don't push an undo entry that
-        // collapses the node to nothing.
-        if floor_w <= 0.0 || floor_h <= 0.0 {
+        // collapses the node to nothing. The finite-check
+        // covers a NaN floor leaking from a bad-font-measure
+        // path — `f64::NAN <= 0.0` is false, so the simple
+        // `<= 0.0` check would let NaN through and corrupt
+        // every downstream `node.size` reader.
+        if !floor_w.is_finite() || !floor_h.is_finite() || floor_w <= 0.0 || floor_h <= 0.0 {
             return Err(format!(
                 "node '{}' has no measurable text — fit-to-content has no target floor",
                 node_id
