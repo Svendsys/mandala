@@ -132,9 +132,9 @@ section's `offset` updates per-frame in the tree; the model is
 written once at release through `set_section_offset`, with the
 same AABB validation as the verb (overflow snaps the section
 back to its pre-drag offset and logs a message). Single-section
-nodes still drag whole-node — mirrors the hit-test fold at
-`document/hit_test.rs:91-138`. Section resize handles are
-queued for a future iteration.
+nodes still drag whole-node — mirrors the hit-test fold to
+`HitTarget::NodeContainer`. Section resize handles are queued
+for a future iteration.
 
 After a position or size edit, the parent node's auto-fit
 floor recomputes against **the larger of** measured text

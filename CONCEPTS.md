@@ -1051,9 +1051,14 @@ pointer at `maptool convert --sections`. Full reference:
   <dx> <dy>` and `section resize <w> <h>` (plus `section resize
   none` to flip back to fill-parent) write through
   `set_section_offset` / `set_section_size` with AABB validation
-  that mirrors `maptool verify`'s rules. Drag/resize gestures
-  remain queued; verbs cover the authoring surface today. See
+  that mirrors `maptool verify`'s rules. See
   [`format/sections.md`'s "Position and size verbs"](./format/sections.md).
+- **Per-section drag-to-move gesture.** Shipped — click + drag on
+  a section of a multi-section node promotes to a section-only
+  drag (`ThrottledDrag::MovingSection`); per-frame mutates the
+  section's tree subtree, release-commit writes through
+  `set_section_offset` once. AABB overflow snaps the section
+  back. Resize handles are still queued.
 - **Multiple `GlyphModel`s per section.** Still on the
   trajectory — today a section holds exactly one structural
   model; richer composed-glyph layouts (a gridded matrix beside
@@ -1971,23 +1976,26 @@ always win over larger AABBs.
 
 ### `ThrottledInteraction` and `ThrottledDrag`
 
-**Summary.** A trait + four-variant enum providing one uniform
+**Summary.** A trait + five-variant enum providing one uniform
 shell for continuous, high-rate-input drag types.
 
-**What it's for.** Dragging a node, an edge handle, a portal
-label, and an edge label all follow the same per-frame pattern:
-accumulate input deltas, ask the throttle whether to drain,
-apply if drain, otherwise wait. The trait factors that
+**What it's for.** Dragging a node, a section, an edge handle, a
+portal label, and an edge label all follow the same per-frame
+pattern: accumulate input deltas, ask the throttle whether to
+drain, apply if drain, otherwise wait. The trait factors that
 accept-and-drain dance into one place; new throttled drags
 attach as one struct + one trait impl + one enum variant
 without growing the dispatch.
 
 **Under the hood.**
-`src/application/app/throttled_interaction/mod.rs:78-125`.
+`src/application/app/throttled_interaction/mod.rs`.
 Trait methods: `has_pending`, `throttle`, `drain(ctx)`, `reset`.
 Variants:
 
 - `MovingNode(MovingNodeInteraction)`
+- `MovingSection(MovingSectionInteraction)` — drags one section's
+  `offset` relative to its owning node; threshold-cross promotes
+  here when the press lands on a section of a multi-section node.
 - `EdgeHandle(EdgeHandleInteraction)`
 - `PortalLabel(PortalLabelInteraction)`
 - `EdgeLabel(EdgeLabelInteraction)`
@@ -2563,10 +2571,11 @@ chosen at compile time (Desktop on native, Web on WASM); the
 
 The following are native-only today, with reasons:
 
-- **Drag gestures** — pan, move-node, edge-handle, portal-label,
-  rect-select, edge-label. The whole `DragState` enum is
-  native-gated; the cross-platform story will be touch-first
-  recognisers feeding the same `ThrottledDrag` variants.
+- **Drag gestures** — pan, move-node, move-section, edge-handle,
+  portal-label, rect-select, edge-label. The whole `DragState`
+  enum is native-gated; the cross-platform story will be
+  touch-first recognisers feeding the same `ThrottledDrag`
+  variants.
 - **`AppMode::Reparent` / `AppMode::Connect`** — modal
   selection state and click routing; not yet wired on WASM.
 - **Modals: console, glyph-wheel color picker, edge-label

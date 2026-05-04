@@ -1,11 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Throttled interaction for the section drag gesture — drag-to-
-//! move a single section's `offset` relative to its owning node.
-//! Mirrors `MovingNodeInteraction`'s shape; the only differences
-//! are: targets one section (not a node-set), uses
-//! `apply_section_drag_delta_and_collect_patches` (tree-only,
-//! per-frame), and commits via `set_section_offset` at release.
+//! Throttled drag-to-move state for one section's `offset`.
 
 #![cfg(not(target_arch = "wasm32"))]
 
@@ -17,12 +12,12 @@ use crate::application::frame_throttle::MutationFrequencyThrottle;
 use super::super::scene_rebuild::flush_canvas_scene_buffers;
 use super::{DrainContext, ThrottledInteraction};
 
-/// Drag-to-move state for one section of one node. Per-frame
-/// drains apply the accumulated `pending_delta` to the section's
-/// tree subtree (text and structural children) and patch the
-/// renderer's buffers in place; the model is unchanged until
-/// release-commit, where `set_section_offset` writes the final
-/// offset and pushes a single `EditNodeStyle` undo entry.
+/// Per-frame drains mutate the section's tree subtree only; the
+/// model is unchanged until release-commit, where
+/// `set_section_offset` writes the final offset and pushes a
+/// single `EditNodeStyle` undo entry. Drag callers that bypass
+/// this discipline and call the setter per-frame would explode
+/// the undo stack.
 pub(in crate::application::app) struct MovingSectionInteraction {
     pub node_id: String,
     pub section_idx: usize,
@@ -85,11 +80,9 @@ impl ThrottledInteraction for MovingSectionInteraction {
                 &mut patches,
             );
             renderer.patch_drag_positions(&patches);
-            // Section drag doesn't move the owning node's container,
-            // so connections / borders / portals don't need a
-            // scene-cache rebuild — those are anchored to the
-            // node's `position`, which is unchanged. Section text
-            // buffer position is patched in place above.
+            // Container/connections/borders/portals untouched —
+            // those anchor to `node.position` which the section
+            // drag doesn't change.
             flush_canvas_scene_buffers(app_scene, renderer);
         }
 
@@ -126,6 +119,36 @@ mod tests {
         let mut i = MovingSectionInteraction::new("n".into(), 0, (0.0, 0.0));
         i.pending_delta = Vec2::new(3.0, -2.0);
         assert!(i.has_pending());
+    }
+
+    #[test]
+    fn test_has_pending_true_for_tiny_nonzero_delta() {
+        // Strict `!= ZERO` — a sub-pixel accumulator from one
+        // high-frequency cursor tick must still count as pending,
+        // because the sum across skipped frames is the contract
+        // `drive()` relies on.
+        let mut i = MovingSectionInteraction::new("n".into(), 0, (0.0, 0.0));
+        i.pending_delta = Vec2::new(1e-6, 0.0);
+        assert!(i.has_pending());
+    }
+
+    #[test]
+    fn test_reset_resets_only_throttle() {
+        let mut i = MovingSectionInteraction::new("n".into(), 1, (5.0, 7.0));
+        i.pending_delta = Vec2::new(11.0, 13.0);
+        i.total_delta = Vec2::new(17.0, 19.0);
+        drive_throttle_over_budget(&mut i.throttle);
+        assert!(i.throttle.current_n() > 1);
+
+        i.reset();
+
+        assert_eq!(i.throttle.current_n(), 1);
+        // Pending / total / identity survive — reset is throttle-only.
+        assert_eq!(i.pending_delta, Vec2::new(11.0, 13.0));
+        assert_eq!(i.total_delta, Vec2::new(17.0, 19.0));
+        assert_eq!(i.node_id, "n");
+        assert_eq!(i.section_idx, 1);
+        assert_eq!(i.start_offset, (5.0, 7.0));
     }
 
     #[test]

@@ -575,22 +575,34 @@ pub(super) fn handle_mouse_input(
                         }
                     }
                     DragState::Throttled(ThrottledDrag::MovingSection(i)) => {
-                        // Section drag release: write the new
-                        // offset via the AABB-validating model
-                        // setter and push a single undo entry.
-                        // On rejection (drag took the section
-                        // past the parent's bounds), the model
-                        // stays at its pre-drag offset and the
-                        // full rebuild snaps the section back.
+                        // Single setter call on release; AABB
+                        // overflow rejection logs and falls
+                        // through to `rebuild_all`, which
+                        // rebuilds the tree from the unchanged
+                        // model and snaps the section back.
                         if let Some(doc) = ctx.document.as_mut() {
                             let new_x = i.start_offset.0 + i.total_delta.x as f64;
                             let new_y = i.start_offset.1 + i.total_delta.y as f64;
                             match doc.set_section_offset(&i.node_id, i.section_idx, new_x, new_y) {
-                                Ok(_) => {}
+                                Ok(true) => {}
+                                Ok(false) => {
+                                    log::debug!(
+                                        "section drag committed no-op offset on '{}' section[{}]",
+                                        i.node_id,
+                                        i.section_idx
+                                    );
+                                }
                                 Err(msg) => {
                                     log::info!("section drag release rejected: {} (snapping back)", msg);
                                 }
                             }
+                            // Unconditional clear so the
+                            // rebuild_all path resamples from
+                            // the authoritative model — the
+                            // per-frame drain mutated the tree
+                            // (and therefore stale scene-cache
+                            // samples) regardless of which
+                            // arm above ran.
                             ctx.scene_cache.clear();
                             rebuild_all(
                                 doc,

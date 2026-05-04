@@ -110,47 +110,19 @@ pub(super) fn handle_cursor_moved(
                 .process_decree(RenderDecree::CameraPan(dx as f32, dy as f32));
         }
         DragState::Throttled(ThrottledDrag::MovingNode(i)) => {
-            // Convert screen delta to canvas delta and accumulate.
-            // Actual mutation + rebuild happens in AboutToWait
-            // behind the shared `ThrottledInteraction::drive` gate.
-            let old_canvas = ctx
-                .renderer
-                .screen_to_canvas(prev_pos.0 as f32, prev_pos.1 as f32);
-            let new_canvas = ctx
-                .renderer
-                .screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
-            let delta = new_canvas - old_canvas;
-
+            // Per-frame mutation + rebuild happens in AboutToWait
+            // behind `ThrottledInteraction::drive`'s adaptive gate.
+            let delta = canvas_delta(ctx.renderer, prev_pos, cursor_pos_val);
             i.total_delta += delta;
             i.pending_delta += delta;
         }
         DragState::Throttled(ThrottledDrag::MovingSection(i)) => {
-            // Same accumulation pattern as `MovingNode` — section
-            // drag's per-frame tree mutation + scene flush happens
-            // in `AboutToWait` behind the throttle gate.
-            let old_canvas = ctx
-                .renderer
-                .screen_to_canvas(prev_pos.0 as f32, prev_pos.1 as f32);
-            let new_canvas = ctx
-                .renderer
-                .screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
-            let delta = new_canvas - old_canvas;
-
+            let delta = canvas_delta(ctx.renderer, prev_pos, cursor_pos_val);
             i.total_delta += delta;
             i.pending_delta += delta;
         }
         DragState::Throttled(ThrottledDrag::EdgeHandle(i)) => {
-            // Same accumulation pattern as `MovingNode` — actual
-            // edge mutation + buffer rebuild happens in
-            // `AboutToWait` behind the adaptive throttle.
-            let old_canvas = ctx
-                .renderer
-                .screen_to_canvas(prev_pos.0 as f32, prev_pos.1 as f32);
-            let new_canvas = ctx
-                .renderer
-                .screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
-            let delta = new_canvas - old_canvas;
-
+            let delta = canvas_delta(ctx.renderer, prev_pos, cursor_pos_val);
             i.total_delta += delta;
             i.pending_delta += delta;
         }
@@ -290,41 +262,28 @@ pub(super) fn handle_cursor_moved(
                     }
                 }
                 if let Some(node_id) = hit_node.take() {
-                    // Section-drag promotion path: a press on a
-                    // section of a *multi-section* node (where the
-                    // hit-test fold already routes single-section
-                    // hits to `NodeContainer`) drags only that
-                    // section's offset. Single-section nodes and
-                    // shift+drag (multi-select) fall through to the
-                    // existing whole-node `MovingNode` path.
-                    let section_for_drag = match (*hit_section_idx, ctx.modifiers.shift_key()) {
-                        (Some(idx), false) => ctx
-                            .document
-                            .as_ref()
-                            .and_then(|doc| doc.mindmap.nodes.get(&node_id))
-                            .filter(|n| n.sections.len() > 1)
-                            .and_then(|n| n.sections.get(idx).map(|s| (idx, s.offset.x, s.offset.y))),
-                        _ => None,
-                    };
-                    if let Some((section_idx, ox, oy)) = section_for_drag {
+                    // Multi-section + non-shift hits drag only the
+                    // pressed section's offset; everything else
+                    // (single-section, shift-multi-select) falls
+                    // through to whole-node drag, mirroring
+                    // `hit_test_target`'s single-section fold.
+                    if let Some((section_idx, ox, oy)) = resolve_section_drag_target(
+                        ctx.document.as_ref(),
+                        &node_id,
+                        *hit_section_idx,
+                        ctx.modifiers.shift_key(),
+                    ) {
                         if let Some(doc) = ctx.document.as_mut() {
-                            // Set / refresh `SelectionState::Section`
-                            // so the picker hint, per-section verbs,
-                            // and clipboard pickup all stay coherent
-                            // through the drag.
-                            doc.selection =
-                                SelectionState::Section(crate::application::document::SectionSel {
-                                    node_id: node_id.clone(),
-                                    section_idx,
-                                });
-                            if let Some(tree) = ctx.mindmap_tree.as_mut() {
-                                let mut new_tree = doc.build_tree();
-                                apply_tree_highlights(
-                                    &mut new_tree,
-                                    std::iter::once((node_id.as_str(), Some(section_idx), HIGHLIGHT_COLOR)),
-                                );
-                                ctx.renderer.rebuild_buffers_from_tree(&new_tree.tree);
-                                *tree = new_tree;
+                            let already_selected = matches!(&doc.selection,
+                                SelectionState::Section(s)
+                                    if s.node_id == node_id && s.section_idx == section_idx);
+                            if !already_selected {
+                                doc.selection =
+                                    SelectionState::Section(crate::application::document::SectionSel {
+                                        node_id: node_id.clone(),
+                                        section_idx,
+                                    });
+                                rebuild_selection_highlight(doc, ctx.mindmap_tree, ctx.renderer);
                             }
                         }
                         ctx.scene_cache.clear();
@@ -333,24 +292,17 @@ pub(super) fn handle_cursor_moved(
                         ));
                         return;
                     }
-                    // Ensure the dragged node is selected
+                    // Whole-node drag fall-through: ensure the
+                    // dragged node is selected. Note: a Section
+                    // selection on this same node satisfies
+                    // `is_selected`, so a shift+drag started on a
+                    // section keeps the Section selection while
+                    // moving the whole node — release rebuild
+                    // restores coherence.
                     if let Some(doc) = ctx.document.as_mut() {
                         if !doc.selection.is_selected(&node_id) {
                             doc.selection = SelectionState::Single(node_id.clone());
-                            if let Some(tree) = ctx.mindmap_tree.as_mut() {
-                                let mut new_tree = doc.build_tree();
-                                let only_section_idx =
-                                    doc.selection.selected_section().map(|s| s.section_idx);
-                                apply_tree_highlights(
-                                    &mut new_tree,
-                                    doc.selection
-                                        .selected_ids()
-                                        .into_iter()
-                                        .map(|id| (id, only_section_idx, HIGHLIGHT_COLOR)),
-                                );
-                                ctx.renderer.rebuild_buffers_from_tree(&new_tree.tree);
-                                *tree = new_tree;
-                            }
+                            rebuild_selection_highlight(doc, ctx.mindmap_tree, ctx.renderer);
                         }
                     }
                     // Shift+drag: move all selected nodes together
@@ -427,5 +379,141 @@ pub(super) fn handle_cursor_moved(
                 .screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
         }
         DragState::None => {}
+    }
+}
+
+/// Compute the canvas-space delta between two screen positions.
+/// Used by every accumulating drag arm; the camera transform
+/// (zoom + pan) lives in the renderer, so a screen → canvas
+/// conversion at both ends is the only honest way to derive a
+/// delta that survives an interleaved camera pan.
+fn canvas_delta(
+    renderer: &crate::application::renderer::Renderer,
+    prev: (f64, f64),
+    curr: (f64, f64),
+) -> glam::Vec2 {
+    let prev_canvas = renderer.screen_to_canvas(prev.0 as f32, prev.1 as f32);
+    let curr_canvas = renderer.screen_to_canvas(curr.0 as f32, curr.1 as f32);
+    curr_canvas - prev_canvas
+}
+
+/// Decide whether a press on `node_id` with `hit_section_idx` and
+/// the given shift modifier should promote to section drag rather
+/// than the default whole-node drag. Returns `Some((idx, ox, oy))`
+/// when the section's offset can be captured for the drag
+/// `start_offset`; `None` when the press should fall through to
+/// the existing whole-node path.
+///
+/// The multi-section + non-shift gate mirrors `hit_test_target`'s
+/// single-section fold: single-section nodes never produce a
+/// `Section` hit; shift is reserved for multi-node selection so
+/// shift+drag-on-section deliberately falls through to whole-node.
+pub(super) fn resolve_section_drag_target(
+    doc: Option<&crate::application::document::MindMapDocument>,
+    node_id: &str,
+    hit_section_idx: Option<usize>,
+    shift: bool,
+) -> Option<(usize, f64, f64)> {
+    if shift {
+        return None;
+    }
+    let idx = hit_section_idx?;
+    let node = doc?.mindmap.nodes.get(node_id)?;
+    if node.sections.len() <= 1 {
+        return None;
+    }
+    node.sections.get(idx).map(|s| (idx, s.offset.x, s.offset.y))
+}
+
+/// Rebuild the tree's selection highlight from the current
+/// `doc.selection`. Shared by the section-drag and whole-node
+/// drag promotion arms — both set selection then need the tree
+/// + renderer buffers refreshed to reflect the new highlight.
+fn rebuild_selection_highlight(
+    doc: &mut crate::application::document::MindMapDocument,
+    mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
+    renderer: &mut crate::application::renderer::Renderer,
+) {
+    if let Some(tree) = mindmap_tree.as_mut() {
+        let mut new_tree = doc.build_tree();
+        let only_section_idx = doc.selection.selected_section().map(|s| s.section_idx);
+        apply_tree_highlights(
+            &mut new_tree,
+            doc.selection
+                .selected_ids()
+                .into_iter()
+                .map(|id| (id, only_section_idx, HIGHLIGHT_COLOR)),
+        );
+        renderer.rebuild_buffers_from_tree(&new_tree.tree);
+        *tree = new_tree;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_section_drag_target;
+    use crate::application::document::tests_common::{load_test_doc, pinned_two_section_node};
+
+    /// Multi-section node + non-shift + valid section_idx → drag
+    /// the section. Pins the threshold-cross promotion gate.
+    #[test]
+    fn resolve_section_drag_target_multi_section_non_shift_returns_some() {
+        let (doc, id) = pinned_two_section_node();
+        let result = resolve_section_drag_target(Some(&doc), &id, Some(1), false);
+        assert!(result.is_some(), "multi-section + non-shift must promote");
+        let (idx, _, _) = result.unwrap();
+        assert_eq!(idx, 1);
+    }
+
+    /// `section_idx=0` on a multi-section node also drags — the
+    /// gate is `sections.len() > 1`, not `idx > 0`. Closes the
+    /// review's test gap.
+    #[test]
+    fn resolve_section_drag_target_section_zero_on_multi_section_returns_some() {
+        let (doc, id) = pinned_two_section_node();
+        let result = resolve_section_drag_target(Some(&doc), &id, Some(0), false);
+        assert!(result.is_some(), "section_idx=0 on multi-section must promote");
+    }
+
+    /// Single-section node falls to whole-node drag — mirrors
+    /// `hit_test_target`'s single-section fold to `NodeContainer`.
+    #[test]
+    fn resolve_section_drag_target_single_section_returns_none() {
+        let mut doc = load_test_doc();
+        // `first_testament_node_id` returns a node that may have
+        // multiple sections under some test orderings; force
+        // single-section by clearing extras.
+        let nid = doc.mindmap.nodes.keys().next().unwrap().clone();
+        if let Some(n) = doc.mindmap.nodes.get_mut(&nid) {
+            n.sections.truncate(1);
+        }
+        let result = resolve_section_drag_target(Some(&doc), &nid, Some(0), false);
+        assert!(result.is_none(), "single-section node must NOT promote");
+    }
+
+    /// Shift+drag-on-section falls to whole-node drag (multi-
+    /// select discipline). Pins the second half of the gate.
+    #[test]
+    fn resolve_section_drag_target_shift_returns_none() {
+        let (doc, id) = pinned_two_section_node();
+        let result = resolve_section_drag_target(Some(&doc), &id, Some(1), true);
+        assert!(result.is_none(), "shift+drag must fall to whole-node");
+    }
+
+    /// Out-of-range section index → fall-through (no panic, no
+    /// mis-promotion).
+    #[test]
+    fn resolve_section_drag_target_out_of_range_returns_none() {
+        let (doc, id) = pinned_two_section_node();
+        let result = resolve_section_drag_target(Some(&doc), &id, Some(99), false);
+        assert!(result.is_none());
+    }
+
+    /// `None` document or `None` hit_section_idx → fall-through.
+    #[test]
+    fn resolve_section_drag_target_no_doc_or_idx_returns_none() {
+        assert!(resolve_section_drag_target(None, "0", Some(0), false).is_none());
+        let (doc, id) = pinned_two_section_node();
+        assert!(resolve_section_drag_target(Some(&doc), &id, None, false).is_none());
     }
 }

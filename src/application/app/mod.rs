@@ -502,9 +502,9 @@ enum DragState {
         /// Canvas-space corner at current cursor position.
         current_canvas: Vec2,
     },
-    /// One of the four throttled, mutation-heavy drag gestures —
-    /// see [`ThrottledDrag`] for variants. All four share the
-    /// same adaptive-throttle shell via
+    /// One of the throttled, mutation-heavy drag gestures —
+    /// see [`ThrottledDrag`] for variants. All share the same
+    /// adaptive-throttle shell via
     /// [`throttled_interaction::ThrottledInteraction`].
     Throttled(ThrottledDrag),
 }

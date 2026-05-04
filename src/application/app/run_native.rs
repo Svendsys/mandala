@@ -338,7 +338,13 @@ impl InitState {
         // Only the moving-node drag needs to suppress the camera
         // rebuild (it handles offset geometry itself each drain).
         // Snapshot this before the drive() borrow takes `&mut
-        // self.drag_state`.
+        // self.drag_state`. Used to suppress the camera-driven
+        // geometry rebuild while a node is being dragged (the
+        // drag's own per-frame mutator already keeps the scene
+        // current). `MovingSection` deliberately doesn't qualify —
+        // section drag never moves the parent node, so the camera
+        // rebuild is harmless and skipping it would just delay
+        // the next legitimate camera-zoom resample.
         let is_moving_node = matches!(
             self.drag_state,
             DragState::Throttled(super::throttled_interaction::ThrottledDrag::MovingNode(_)),

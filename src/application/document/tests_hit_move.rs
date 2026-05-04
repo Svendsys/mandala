@@ -868,10 +868,46 @@ fn test_section_drag_release_writes_through_set_section_offset() {
 /// commit error-recovery path.
 #[test]
 fn test_section_drag_release_aabb_overflow_rejects_and_preserves_model() {
+    use crate::application::document::apply_section_drag_delta_and_collect_patches;
     use crate::application::document::tests_common::pinned_two_section_node;
     let (mut doc, id) = pinned_two_section_node();
-    // Fixture: 200×100 node, section[1] at offset (10,10) size 50×30.
-    // Drag +200 on x → would-be offset (210, 10), right edge 260 > 200.
+
+    // Simulate the drag: build the tree, mutate it per-frame as
+    // the gesture would, then attempt the release-commit.
+    let mut tree = doc.build_tree();
+    let s1_root = tree.section_arena_id(&id, 1).unwrap();
+    let original_section_pos = tree
+        .tree
+        .arena
+        .get(s1_root)
+        .unwrap()
+        .get()
+        .glyph_area()
+        .unwrap()
+        .position
+        .x
+        .0;
+    // Drag the tree past the parent's right edge (delta=+200,
+    // would-be offset (210, 10), right edge 260 > 200).
+    let mut patches = Vec::new();
+    apply_section_drag_delta_and_collect_patches(&mut tree, &id, 1, 200.0, 0.0, &mut patches);
+    let dragged_pos = tree
+        .tree
+        .arena
+        .get(s1_root)
+        .unwrap()
+        .get()
+        .glyph_area()
+        .unwrap()
+        .position
+        .x
+        .0;
+    assert!(
+        (dragged_pos - (original_section_pos + 200.0)).abs() < 0.001,
+        "tree mid-drag must reflect the per-frame mutation"
+    );
+
+    // Release-commit: setter rejects.
     let result = doc.set_section_offset(&id, 1, 210.0, 10.0);
     assert!(
         result
@@ -882,14 +918,36 @@ fn test_section_drag_release_aabb_overflow_rejects_and_preserves_model() {
         "AABB overflow must reject with the verify-mirror message; got {:?}",
         result
     );
-    // Model unchanged — drag's tree mutations are tree-only;
-    // model rejection means the section's offset stays at (10, 10).
+    // Model unchanged — section's offset stays at (10, 10).
     let s = &doc.mindmap.nodes.get(&id).unwrap().sections[1];
     assert!(
         (s.offset.x - 10.0).abs() < 0.001,
         "model must not have moved on rejected release"
     );
-    assert!((s.offset.y - 10.0).abs() < 0.001);
+
+    // Snap-back: simulate `rebuild_all`'s model→tree rebuild.
+    // The release path calls `rebuild_all` (which walks
+    // `doc.build_tree()` from the unchanged model). Build a fresh
+    // tree and assert section[1] sits back at its pre-drag offset.
+    let restored_tree = doc.build_tree();
+    let s1_restored = restored_tree.section_arena_id(&id, 1).unwrap();
+    let restored_pos = restored_tree
+        .tree
+        .arena
+        .get(s1_restored)
+        .unwrap()
+        .get()
+        .glyph_area()
+        .unwrap()
+        .position
+        .x
+        .0;
+    assert!(
+        (restored_pos - original_section_pos).abs() < 0.001,
+        "rebuild_all from unchanged model must snap section back: original={}, restored={}",
+        original_section_pos,
+        restored_pos
+    );
 }
 
 #[test]
