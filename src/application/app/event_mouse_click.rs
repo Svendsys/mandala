@@ -574,6 +574,33 @@ pub(super) fn handle_mouse_input(
                             );
                         }
                     }
+                    DragState::Throttled(ThrottledDrag::MovingSection(i)) => {
+                        // Section drag release: write the new
+                        // offset via the AABB-validating model
+                        // setter and push a single undo entry.
+                        // On rejection (drag took the section
+                        // past the parent's bounds), the model
+                        // stays at its pre-drag offset and the
+                        // full rebuild snaps the section back.
+                        if let Some(doc) = ctx.document.as_mut() {
+                            let new_x = i.start_offset.0 + i.total_delta.x as f64;
+                            let new_y = i.start_offset.1 + i.total_delta.y as f64;
+                            match doc.set_section_offset(&i.node_id, i.section_idx, new_x, new_y) {
+                                Ok(_) => {}
+                                Err(msg) => {
+                                    log::info!("section drag release rejected: {} (snapping back)", msg);
+                                }
+                            }
+                            ctx.scene_cache.clear();
+                            rebuild_all(
+                                doc,
+                                ctx.mindmap_tree,
+                                ctx.app_scene,
+                                ctx.renderer,
+                                ctx.scene_cache,
+                            );
+                        }
+                    }
                     DragState::Throttled(ThrottledDrag::EdgeHandle(i)) => {
                         // The drain loop has been writing
                         // each new edge state directly

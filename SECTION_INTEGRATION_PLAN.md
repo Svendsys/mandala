@@ -90,6 +90,16 @@ Legend: ✅ shipped · 🔧 in progress · ⏳ to do · ❌ deferred (out of 2A)
 | G15 | **Review fix-up — X1+X3+X4 docs:** `format/sections.md` "Position and size verbs" subsection extended with the auto-fit "size as floor" semantic and the custom-mutation AABB-bypass note; `format/validation.md` channel-collision rule clarified as a warning (not a hard rejection); `CONCEPTS.md §MindSection` shipped-list extended with a per-section move/resize bullet, and the `Section(SectionSel)` `SelectionState` entry now enumerates every per-section setter (text + colour + font + position + size + structured payload) instead of "set_section_text and friends". | ✅ |
 | — | **Surfaced by review, deferred:** `Action::SetSectionOffset { dx, dy }` / `Action::SetSectionSize { w, h }` parametric Action arms (let keybinds / macros / palette nudge a section like `Action::SetColor` / `SetFont` already do for colour/font). Verbs work today; the parametric path is a separate feature. Queued with Tier 2B-drag / Tier 2B-resize. | ⏳ |
 | — | **Verified by inspection:** the byte-equal verify-mirror message claim (correctness reviewer walked all 9 messages including the Unicode `×` character and confirmed equality vs `crates/maptool/src/verify/sections.rs`). Adding a cross-crate equality test was considered and skipped — the inspection plus the substring-matching tests at both ends pin the contract sufficiently. | ✅ |
+| D1 | **Tier 2B-drag — capture `hit_section_idx`** at the threshold-cross promotion in `app/event_cursor_moved.rs`. Was destructured as `_`; now consumed by D2's branch. | ✅ |
+| D2 | **Tier 2B-drag — branch promotion** to `MovingSection` when `hit_section_idx.is_some()` AND the node has > 1 section AND the user isn't shift-dragging (multi-select). Single-section nodes and shift+drag still promote to `MovingNode`, mirroring `hit_test.rs:91-138`'s fold. | ✅ |
+| D3 | **Tier 2B-drag — `MovingSection(MovingSectionInteraction)` variant** on `ThrottledDrag` (`app/throttled_interaction/mod.rs`). | ✅ |
+| D4 | **Tier 2B-drag — `MovingSectionInteraction`** in new file `app/throttled_interaction/moving_section.rs`. Mirrors `MovingNodeInteraction`'s shape: `node_id`, `section_idx`, `start_offset`, `total_delta`, `pending_delta`, `throttle`. `ThrottledInteraction::drain` calls the new tree helper, patches buffer positions in place via `patch_drag_positions`, flushes canvas scene, clears `pending_delta`. **No model writes per-frame** — release-commit discipline mirrors `MovingNodeInteraction`. | ✅ |
+| D5 | **Tier 2B-drag — `apply_section_drag_delta_and_collect_patches`** tree-mutation helper in `document/hit_test.rs` (sibling of `apply_drag_delta_and_collect_patches`). Walks the targeted section's subtree via `tree.section_arena_id(node_id, idx)` and calls `collect_patches_recursive` on it; invalidates caches like the existing helper. Container and sibling sections untouched. | ✅ |
+| D6 | **Tier 2B-drag — cursor-move accumulation arm** for `ThrottledDrag::MovingSection` mirrors the existing `MovingNode` arm (`event_cursor_moved.rs:111-125`): convert screen delta to canvas, `total_delta += delta`, `pending_delta += delta`. | ✅ |
+| D7 | **Tier 2B-drag — release-commit arm** in `event_mouse_click.rs:519-576`-adjacent. Single call to `doc.set_section_offset(&i.node_id, i.section_idx, i.start_offset.0 + i.total_delta.x as f64, i.start_offset.1 + i.total_delta.y as f64)`. AABB-overflow rejection logs and falls through to `rebuild_all` from model — section snaps back to its pre-drag offset because the model never accepted the in-progress drag. Single `EditNodeStyle` undo entry pushed by the setter. | ✅ |
+| D8 | **Tier 2B-drag — selection-state preservation.** The existing `MovingNode` branch unconditionally sets `SelectionState::Single(node_id)` at threshold-cross; the new `MovingSection` branch instead sets `SelectionState::Section { node_id, section_idx }` so the picker hint (R9), per-section verbs (G1-G7), and structured-clipboard pickup (B1-B9) stay coherent through the drag. The selected-section highlight is rebuilt at threshold-cross via `apply_tree_highlights`. | ✅ |
+| D9 | **Tier 2B-drag — tests.** 4 new pinned tests in `tests_hit_move.rs`: `test_apply_section_drag_delta_moves_only_target_section` (target moves, container + sibling untouched), `test_apply_section_drag_delta_unknown_section_no_op` (out-of-range clean), `test_section_drag_release_writes_through_set_section_offset` (release-commit shape + undo), `test_section_drag_release_aabb_overflow_rejects_and_preserves_model` (snap-back path). Plus the trait-default test suite the new `MovingSectionInteraction` inherits via `trait_default_tests_for_throttled_interaction!`. | ✅ |
+| D10 | **Tier 2B-drag — docs.** `format/sections.md`'s "Position and size verbs" paragraph rewritten — drag now wired, only resize handles still queued. Plan tracker rows D1-D10. | ✅ |
 
 ## Context
 
@@ -389,7 +399,7 @@ Test locations: `console/tests/color.rs`, `console/tests/font.rs`,
 
 ## Out of scope — captured for future iterations
 
-### Tier 2B — partial: clipboard + setters shipped, gestures pending
+### Tier 2B — partial: clipboard + setters + drag shipped, resize pending
 
 **Tier 2B-clipboard ✅ shipped** — rows B1-B20. Structured
 `ClipboardContent::Section { text, payload }` with `String`
@@ -397,29 +407,20 @@ fallback round-trips per-run formatting and section chrome
 through verb and Action paste paths via the in-process
 `SECTION_BUFFER` slot.
 
-**Tier 2B-setters ✅ shipped** — rows G1-G7. `set_section_offset`
+**Tier 2B-setters ✅ shipped** — rows G1-G15. `set_section_offset`
 / `set_section_size` document setters with full AABB validation
 mirroring `maptool verify`. Console verbs `section move` /
 `section resize` (including `section resize none` for the
 fill-parent flip). Auto-fit predicate covers `Some`-sized
-sections with size-as-floor semantics. Move/resize gestures
-remain — verb-only path closes the verb half of the
-UX-consistency gap.
+sections with size-as-floor semantics.
 
-**Tier 2B-drag ⏳ remaining** — promote section hits at the
-threshold-cross instead of discarding `hit_section_idx`:
-
-- `DragState::Throttled(ThrottledDrag::MovingSection { node_id,
-  section_idx, ... })` variant + `MovingSectionInteraction`
-  struct mirroring `moving_node.rs`.
-- Threshold-cross promotion at `event_cursor_moved.rs:160-173`
-  consumes the currently-discarded `hit_section_idx` (line 169)
-  and routes Section-hits to `MovingSection`, falling back to
-  `MovingNode` when the selection is `Single` or the node is
-  single-section.
-- Drain calls `set_section_offset`. **Release pushes a single**
-  `EditNodeStyle{before_sections}` undo entry (NOT per-frame —
-  the setters' docstring already pins this discipline).
+**Tier 2B-drag ✅ shipped** — rows D1-D10. Section drag is now a
+first-class throttled interaction (`MovingSectionInteraction`),
+threshold-cross consumes `hit_section_idx` (was discarded), and
+release-commit writes through `set_section_offset` with
+AABB-overflow snap-back. Selection state preserved through
+drag so picker hint, per-section verbs, and structured-clipboard
+pickup all stay coherent.
 
 **Tier 2B-resize ⏳ remaining** — render handles + hit-test +
 gesture state. New surface area, separate review session:

@@ -65,7 +65,10 @@ pub use hit_test::{apply_tree_highlights, hit_test_target, point_in_node_aabb, H
 // Native-only: consumed by drag handlers, the click router, and
 // rect-select drain — none reachable on WASM today.
 #[cfg(not(target_arch = "wasm32"))]
-pub use hit_test::{apply_drag_delta, apply_drag_delta_and_collect_patches, hit_test_edge, rect_select};
+pub use hit_test::{
+    apply_drag_delta, apply_drag_delta_and_collect_patches, apply_section_drag_delta_and_collect_patches,
+    hit_test_edge, rect_select,
+};
 pub use nodes::{BorderConfigEdits, BorderEditOutcome, BorderSide, OptionEdit, SectionPayload};
 pub use types::{
     AnimationInstance, EdgeLabelSel, EdgeRef, PortalLabelSel, SectionSel, SelectionState, HIGHLIGHT_COLOR,

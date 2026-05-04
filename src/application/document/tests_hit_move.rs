@@ -712,6 +712,186 @@ fn test_apply_drag_delta_with_descendants() {
     );
 }
 
+/// `apply_section_drag_delta_and_collect_patches` moves only the
+/// targeted section's subtree — the owning node's container area
+/// stays put, sibling sections stay put. Pins the per-frame
+/// section-drag tree mutation that the `MovingSectionInteraction`
+/// drain depends on.
+#[test]
+fn test_apply_section_drag_delta_moves_only_target_section() {
+    use crate::application::document::apply_section_drag_delta_and_collect_patches;
+    use crate::application::document::tests_common::pinned_two_section_node;
+    let (doc, id) = pinned_two_section_node();
+    let mut tree = doc.build_tree();
+
+    let container_nid = tree.arena_id_for(&id).unwrap();
+    let s0_nid = tree.section_arena_id(&id, 0).unwrap();
+    let s1_nid = tree.section_arena_id(&id, 1).unwrap();
+    let container_x = tree
+        .tree
+        .arena
+        .get(container_nid)
+        .unwrap()
+        .get()
+        .glyph_area()
+        .unwrap()
+        .position
+        .x
+        .0;
+    let s0_x = tree
+        .tree
+        .arena
+        .get(s0_nid)
+        .unwrap()
+        .get()
+        .glyph_area()
+        .unwrap()
+        .position
+        .x
+        .0;
+    let s1_x = tree
+        .tree
+        .arena
+        .get(s1_nid)
+        .unwrap()
+        .get()
+        .glyph_area()
+        .unwrap()
+        .position
+        .x
+        .0;
+
+    let mut patches = Vec::new();
+    apply_section_drag_delta_and_collect_patches(&mut tree, &id, 1, 17.0, 0.0, &mut patches);
+
+    // Target section moved by +17 on x.
+    let s1_new_x = tree
+        .tree
+        .arena
+        .get(s1_nid)
+        .unwrap()
+        .get()
+        .glyph_area()
+        .unwrap()
+        .position
+        .x
+        .0;
+    assert!(
+        (s1_new_x - (s1_x + 17.0)).abs() < 0.001,
+        "section[1] must move by +17"
+    );
+
+    // Container untouched.
+    let container_new_x = tree
+        .tree
+        .arena
+        .get(container_nid)
+        .unwrap()
+        .get()
+        .glyph_area()
+        .unwrap()
+        .position
+        .x
+        .0;
+    assert!(
+        (container_new_x - container_x).abs() < 0.001,
+        "container must NOT move during section drag"
+    );
+
+    // Sibling section[0] untouched.
+    let s0_new_x = tree
+        .tree
+        .arena
+        .get(s0_nid)
+        .unwrap()
+        .get()
+        .glyph_area()
+        .unwrap()
+        .position
+        .x
+        .0;
+    assert!(
+        (s0_new_x - s0_x).abs() < 0.001,
+        "sibling section[0] must NOT move"
+    );
+
+    assert!(!patches.is_empty(), "drag must emit at least one buffer patch");
+}
+
+/// Out-of-range section index is a no-op; the helper returns
+/// without panicking and emits no patches.
+#[test]
+fn test_apply_section_drag_delta_unknown_section_no_op() {
+    use crate::application::document::apply_section_drag_delta_and_collect_patches;
+    use crate::application::document::tests_common::pinned_two_section_node;
+    let (doc, id) = pinned_two_section_node();
+    let mut tree = doc.build_tree();
+    let mut patches = Vec::new();
+    apply_section_drag_delta_and_collect_patches(&mut tree, &id, 99, 5.0, 5.0, &mut patches);
+    assert!(patches.is_empty(), "unknown section_idx → no patches");
+}
+
+/// Drag-release shape: simulate `MovingSectionInteraction`'s
+/// release-commit by combining `start_offset` with `total_delta`
+/// and calling `set_section_offset`. Verify the model accepts,
+/// the offset lands at `start + delta`, and undo restores the
+/// pre-drag offset. Pins the release-commit contract event-loop
+/// integration depends on.
+#[test]
+fn test_section_drag_release_writes_through_set_section_offset() {
+    use crate::application::document::tests_common::pinned_two_section_node;
+    let (mut doc, id) = pinned_two_section_node();
+    // Fixture pins section[1] at offset (10, 10).
+    let start_x = 10.0_f64;
+    let start_y = 10.0_f64;
+    // Simulate a drag that accumulated total_delta = (15, 7).
+    let delta_x = 15.0_f64;
+    let delta_y = 7.0_f64;
+    let result = doc.set_section_offset(&id, 1, start_x + delta_x, start_y + delta_y);
+    assert_eq!(result, Ok(true));
+    let s = &doc.mindmap.nodes.get(&id).unwrap().sections[1];
+    assert!((s.offset.x - 25.0).abs() < 0.001);
+    assert!((s.offset.y - 17.0).abs() < 0.001);
+    assert!(doc.undo());
+    let restored = &doc.mindmap.nodes.get(&id).unwrap().sections[1];
+    assert!(
+        (restored.offset.x - 10.0).abs() < 0.001,
+        "undo restores prior offset"
+    );
+    assert!((restored.offset.y - 10.0).abs() < 0.001);
+}
+
+/// AABB-overflow on drag release: the setter rejects with the
+/// verify-mirror message, the model is unchanged, and a full
+/// `rebuild_all` (simulated here by re-reading the model) snaps
+/// the section back to its original offset. Pins the release-
+/// commit error-recovery path.
+#[test]
+fn test_section_drag_release_aabb_overflow_rejects_and_preserves_model() {
+    use crate::application::document::tests_common::pinned_two_section_node;
+    let (mut doc, id) = pinned_two_section_node();
+    // Fixture: 200×100 node, section[1] at offset (10,10) size 50×30.
+    // Drag +200 on x → would-be offset (210, 10), right edge 260 > 200.
+    let result = doc.set_section_offset(&id, 1, 210.0, 10.0);
+    assert!(
+        result
+            .as_ref()
+            .err()
+            .map(|m| m.contains("extends past node right edge"))
+            .unwrap_or(false),
+        "AABB overflow must reject with the verify-mirror message; got {:?}",
+        result
+    );
+    // Model unchanged — drag's tree mutations are tree-only;
+    // model rejection means the section's offset stays at (10, 10).
+    let s = &doc.mindmap.nodes.get(&id).unwrap().sections[1];
+    assert!(
+        (s.offset.x - 10.0).abs() < 0.001,
+        "model must not have moved on rejected release"
+    );
+    assert!((s.offset.y - 10.0).abs() < 0.001);
+}
+
 #[test]
 fn test_dedup_subtree_roots() {
     let doc = load_test_doc();

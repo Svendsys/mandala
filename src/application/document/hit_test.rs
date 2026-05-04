@@ -464,6 +464,33 @@ pub fn apply_drag_delta_and_collect_patches(
     tree.tree.invalidate_caches();
 }
 
+/// Per-frame tree mutation for the section-drag gesture: move only
+/// the targeted section's subtree (the section-area `GlyphArea` plus
+/// its structural `GlyphModel` grand-descendants), leaving the
+/// owning node's container and sibling sections untouched.
+///
+/// Mirrors [`apply_drag_delta_and_collect_patches`]'s patch-emission
+/// shape so the renderer's `patch_drag_positions` can update buffer
+/// positions in place — no text reshaping, no font-system lock.
+/// Per-frame safe; release-commit syncs the model via
+/// `set_section_offset` (which AABB-validates and pushes a single
+/// undo entry).
+pub fn apply_section_drag_delta_and_collect_patches(
+    tree: &mut MindMapTree,
+    node_id: &str,
+    section_idx: usize,
+    dx: f32,
+    dy: f32,
+    patches: &mut Vec<(usize, (f32, f32))>,
+) {
+    let section_root = match tree.section_arena_id(node_id, section_idx) {
+        Some(id) => id,
+        None => return,
+    };
+    collect_patches_recursive(&mut tree.tree.arena, section_root, dx, dy, patches);
+    tree.tree.invalidate_caches();
+}
+
 /// Collect drag patches for the container plus its section
 /// descendants only — siblings that carry `Flag::SectionRoot`
 /// recurse, child mind-nodes are skipped.

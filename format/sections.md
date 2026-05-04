@@ -124,10 +124,17 @@ non-negative offset, finite + strictly positive size, AABB
 contained within the parent node's bounds, no astronomical
 typos. Rejection messages are byte-equal to verify's so a
 verb-rejected edit and a `verify` violation read identically.
-Move and resize gestures (drag handles) are queued for a
-future iteration; until then, position/size edits are verb-
-only even though selection / colour / font edits all work
-through gestures already.
+
+**Drag-to-move gesture.** Click and drag on a section of a
+multi-section node — past the drag-threshold the press promotes
+to a section-only drag rather than a whole-node drag. The
+section's `offset` updates per-frame in the tree; the model is
+written once at release through `set_section_offset`, with the
+same AABB validation as the verb (overflow snaps the section
+back to its pre-drag offset and logs a message). Single-section
+nodes still drag whole-node — mirrors the hit-test fold at
+`document/hit_test.rs:91-138`. Section resize handles are
+queued for a future iteration.
 
 After a position or size edit, the parent node's auto-fit
 floor recomputes against **the larger of** measured text

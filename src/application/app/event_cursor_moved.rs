@@ -15,7 +15,8 @@ use super::color_picker_flow::handle_color_picker_mouse_move;
 use super::input_context::InputHandlerContext;
 use super::scene_rebuild::{rebuild_after_selection_change, rebuild_all};
 use super::throttled_interaction::{
-    EdgeHandleInteraction, EdgeLabelInteraction, MovingNodeInteraction, PortalLabelInteraction, ThrottledDrag,
+    EdgeHandleInteraction, EdgeLabelInteraction, MovingNodeInteraction, MovingSectionInteraction,
+    PortalLabelInteraction, ThrottledDrag,
 };
 use super::{AppMode, DragState};
 use crate::application::common::RenderDecree;
@@ -123,6 +124,21 @@ pub(super) fn handle_cursor_moved(
             i.total_delta += delta;
             i.pending_delta += delta;
         }
+        DragState::Throttled(ThrottledDrag::MovingSection(i)) => {
+            // Same accumulation pattern as `MovingNode` — section
+            // drag's per-frame tree mutation + scene flush happens
+            // in `AboutToWait` behind the throttle gate.
+            let old_canvas = ctx
+                .renderer
+                .screen_to_canvas(prev_pos.0 as f32, prev_pos.1 as f32);
+            let new_canvas = ctx
+                .renderer
+                .screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
+            let delta = new_canvas - old_canvas;
+
+            i.total_delta += delta;
+            i.pending_delta += delta;
+        }
         DragState::Throttled(ThrottledDrag::EdgeHandle(i)) => {
             // Same accumulation pattern as `MovingNode` — actual
             // edge mutation + buffer rebuild happens in
@@ -160,13 +176,7 @@ pub(super) fn handle_cursor_moved(
         DragState::Pending {
             start_pos,
             hit_node,
-            // Section index isn't consumed during the drag-threshold
-            // promotion below — drag transitions select the whole
-            // node (`MovingNode`) regardless of which section the
-            // press landed on. `_` keeps the destructure exhaustive
-            // without claiming the field is unused at the data
-            // level.
-            hit_section_idx: _,
+            hit_section_idx,
             hit_edge_handle,
             hit_portal_label,
             hit_edge_label,
@@ -280,6 +290,49 @@ pub(super) fn handle_cursor_moved(
                     }
                 }
                 if let Some(node_id) = hit_node.take() {
+                    // Section-drag promotion path: a press on a
+                    // section of a *multi-section* node (where the
+                    // hit-test fold already routes single-section
+                    // hits to `NodeContainer`) drags only that
+                    // section's offset. Single-section nodes and
+                    // shift+drag (multi-select) fall through to the
+                    // existing whole-node `MovingNode` path.
+                    let section_for_drag = match (*hit_section_idx, ctx.modifiers.shift_key()) {
+                        (Some(idx), false) => ctx
+                            .document
+                            .as_ref()
+                            .and_then(|doc| doc.mindmap.nodes.get(&node_id))
+                            .filter(|n| n.sections.len() > 1)
+                            .and_then(|n| n.sections.get(idx).map(|s| (idx, s.offset.x, s.offset.y))),
+                        _ => None,
+                    };
+                    if let Some((section_idx, ox, oy)) = section_for_drag {
+                        if let Some(doc) = ctx.document.as_mut() {
+                            // Set / refresh `SelectionState::Section`
+                            // so the picker hint, per-section verbs,
+                            // and clipboard pickup all stay coherent
+                            // through the drag.
+                            doc.selection =
+                                SelectionState::Section(crate::application::document::SectionSel {
+                                    node_id: node_id.clone(),
+                                    section_idx,
+                                });
+                            if let Some(tree) = ctx.mindmap_tree.as_mut() {
+                                let mut new_tree = doc.build_tree();
+                                apply_tree_highlights(
+                                    &mut new_tree,
+                                    std::iter::once((node_id.as_str(), Some(section_idx), HIGHLIGHT_COLOR)),
+                                );
+                                ctx.renderer.rebuild_buffers_from_tree(&new_tree.tree);
+                                *tree = new_tree;
+                            }
+                        }
+                        ctx.scene_cache.clear();
+                        *ctx.drag_state = DragState::Throttled(ThrottledDrag::MovingSection(
+                            MovingSectionInteraction::new(node_id, section_idx, (ox, oy)),
+                        ));
+                        return;
+                    }
                     // Ensure the dragged node is selected
                     if let Some(doc) = ctx.document.as_mut() {
                         if !doc.selection.is_selected(&node_id) {
