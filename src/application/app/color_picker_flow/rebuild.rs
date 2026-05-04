@@ -126,6 +126,7 @@ fn standalone_selection_hint(selection: &crate::application::document::Selection
         SelectionState::Single(id) => format!("node {}", id),
         SelectionState::Multi(ids) => format!("{} nodes", ids.len()),
         SelectionState::Section(s) => format!("section {} of {}", s.section_idx, s.node_id),
+        SelectionState::MultiSection(secs) => format!("{} sections", secs.len()),
         SelectionState::Edge(_) => "edge".to_string(),
         SelectionState::EdgeLabel(_) => "edge label".to_string(),
         SelectionState::PortalLabel(_) => "portal label".to_string(),

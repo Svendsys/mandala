@@ -159,6 +159,105 @@ fn test_selection_state_from_ids_many_elements_is_multi_preserving_order() {
     }
 }
 
+// ── SelectionState::MultiSection (N3) ────────────────────────────
+
+#[test]
+fn test_selection_state_from_sections_empty_is_none() {
+    use crate::application::document::SelectionState;
+    let sel = SelectionState::from_sections(vec![]);
+    assert!(matches!(sel, SelectionState::None));
+}
+
+#[test]
+fn test_selection_state_from_sections_one_is_section() {
+    use crate::application::document::{SectionSel, SelectionState};
+    let sel = SelectionState::from_sections(vec![SectionSel::new("0", 1)]);
+    assert!(matches!(sel, SelectionState::Section(_)));
+}
+
+#[test]
+fn test_selection_state_from_sections_many_is_multisection_preserving_order() {
+    use crate::application::document::{SectionSel, SelectionState};
+    let secs = vec![
+        SectionSel::new("0", 1),
+        SectionSel::new("1", 0),
+        SectionSel::new("2", 3),
+    ];
+    match SelectionState::from_sections(secs.clone()) {
+        SelectionState::MultiSection(out) => assert_eq!(out, secs),
+        other => panic!("expected MultiSection, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_multisection_is_selected_matches_any_section_node() {
+    use crate::application::document::{SectionSel, SelectionState};
+    let sel = SelectionState::MultiSection(vec![
+        SectionSel::new("a", 0),
+        SectionSel::new("b", 2),
+    ]);
+    assert!(sel.is_selected("a"));
+    assert!(sel.is_selected("b"));
+    assert!(!sel.is_selected("c"));
+}
+
+#[test]
+fn test_multisection_selected_ids_dedups_per_node() {
+    use crate::application::document::{SectionSel, SelectionState};
+    // Two sections of node "a" + one section of node "b" → unique
+    // node-ids = [a, b]. First-seen wins on order.
+    let sel = SelectionState::MultiSection(vec![
+        SectionSel::new("a", 0),
+        SectionSel::new("a", 1),
+        SectionSel::new("b", 0),
+    ]);
+    assert_eq!(sel.selected_ids(), vec!["a", "b"]);
+}
+
+#[test]
+fn test_multisection_selected_section_returns_none() {
+    use crate::application::document::{SectionSel, SelectionState};
+    // `selected_section()` is the single-target accessor — it
+    // returns None for MultiSection so verbs that need a single
+    // section target route through `selected_sections()` instead.
+    let sel = SelectionState::MultiSection(vec![
+        SectionSel::new("a", 0),
+        SectionSel::new("a", 1),
+    ]);
+    assert!(sel.selected_section().is_none());
+}
+
+#[test]
+fn test_multisection_selected_sections_returns_all() {
+    use crate::application::document::{SectionSel, SelectionState};
+    let secs = vec![SectionSel::new("a", 0), SectionSel::new("b", 1)];
+    let sel = SelectionState::MultiSection(secs.clone());
+    assert_eq!(sel.selected_sections(), secs.as_slice());
+}
+
+#[test]
+fn test_section_selected_sections_returns_singleton() {
+    use crate::application::document::{SectionSel, SelectionState};
+    let s = SectionSel::new("a", 1);
+    let sel = SelectionState::Section(s.clone());
+    assert_eq!(sel.selected_sections(), &[s]);
+}
+
+#[test]
+fn test_other_selections_have_empty_selected_sections() {
+    use crate::application::document::{EdgeRef, SelectionState};
+    assert_eq!(SelectionState::None.selected_sections(), &[]);
+    assert_eq!(SelectionState::Single("a".into()).selected_sections(), &[]);
+    assert_eq!(
+        SelectionState::Multi(vec!["a".into(), "b".into()]).selected_sections(),
+        &[]
+    );
+    assert_eq!(
+        SelectionState::Edge(EdgeRef::new("a", "b", "child")).selected_sections(),
+        &[]
+    );
+}
+
 #[test]
 fn test_apply_tree_highlights_via_walker() {
     let mut tree = load_test_tree();

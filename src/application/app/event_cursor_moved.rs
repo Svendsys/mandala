@@ -556,14 +556,28 @@ fn rebuild_selection_highlight(
 ) {
     if let Some(tree) = mindmap_tree.as_mut() {
         let mut new_tree = doc.build_tree();
-        let only_section_idx = doc.selection.selected_section().map(|s| s.section_idx);
-        apply_tree_highlights(
-            &mut new_tree,
-            doc.selection
+        // Section / MultiSection narrow the highlight to the
+        // selected sections only; whole-node selections paint
+        // every section (None section_idx). See
+        // `scene_rebuild::selection_highlight_entries` for the
+        // canonical mapping; this site's iteration is inlined to
+        // keep the cross-module borrow shape tight.
+        let highlights: Vec<(&str, Option<usize>, [f32; 4])> = match &doc.selection {
+            SelectionState::Section(s) => {
+                vec![(s.node_id.as_str(), Some(s.section_idx), HIGHLIGHT_COLOR)]
+            }
+            SelectionState::MultiSection(secs) => secs
+                .iter()
+                .map(|s| (s.node_id.as_str(), Some(s.section_idx), HIGHLIGHT_COLOR))
+                .collect(),
+            _ => doc
+                .selection
                 .selected_ids()
                 .into_iter()
-                .map(|id| (id, only_section_idx, HIGHLIGHT_COLOR)),
-        );
+                .map(|id| (id, None, HIGHLIGHT_COLOR))
+                .collect(),
+        };
+        apply_tree_highlights(&mut new_tree, highlights);
         renderer.rebuild_buffers_from_tree(&new_tree.tree);
         *tree = new_tree;
     }

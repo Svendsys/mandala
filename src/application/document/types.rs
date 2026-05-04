@@ -165,6 +165,18 @@ pub enum SelectionState {
     /// the section variant is the seam that surfaces when richer
     /// authoring needs the discrimination.
     Section(SectionSel),
+    /// Two or more sections — possibly across distinct nodes —
+    /// each addressed by `(node_id, section_idx)`. Per-section
+    /// verbs (`color text=…`, `font size=…`, `font family=…`)
+    /// fan out via [`super::super::console::traits::view::selection_targets`]
+    /// and apply to every section in the set. Resize and move
+    /// gestures stay single-target — a `MultiSection` selection
+    /// emits no resize handles, and threshold-cross promotion
+    /// from a multi-section press collapses to one entry. The
+    /// invariant `len() >= 2` is upheld by [`Self::from_sections`];
+    /// callers that may produce 0 / 1 entries should route
+    /// through that constructor.
+    MultiSection(Vec<SectionSel>),
     Edge(EdgeRef),
     /// Line-mode label selection: the edge's text label sits
     /// along the connection path and is selected independently
@@ -233,6 +245,29 @@ impl SelectionState {
         }
     }
 
+    /// Build a section-set selection from a flat list of
+    /// `SectionSel`. Empty becomes [`SelectionState::None`], a
+    /// single entry becomes [`Self::Section`], anything longer
+    /// becomes [`Self::MultiSection`]. Same empty-vs-single-vs-many
+    /// split as [`Self::from_ids`] — keeps the invariant
+    /// `MultiSection.len() >= 2` in one place.
+    pub fn from_sections(secs: Vec<SectionSel>) -> Self {
+        let mut iter = secs.into_iter();
+        match iter.next() {
+            None => SelectionState::None,
+            Some(first) => match iter.next() {
+                None => SelectionState::Section(first),
+                Some(second) => {
+                    let mut all = Vec::with_capacity(2 + iter.size_hint().0);
+                    all.push(first);
+                    all.push(second);
+                    all.extend(iter);
+                    SelectionState::MultiSection(all)
+                }
+            },
+        }
+    }
+
     pub fn is_selected(&self, node_id: &str) -> bool {
         match self {
             SelectionState::None => false,
@@ -243,6 +278,7 @@ impl SelectionState {
             // chrome rendering, child filter) gets the natural
             // "this node is the one in focus" answer.
             SelectionState::Section(s) => s.node_id == node_id,
+            SelectionState::MultiSection(secs) => secs.iter().any(|s| s.node_id == node_id),
             SelectionState::Edge(_)
             | SelectionState::EdgeLabel(_)
             | SelectionState::PortalLabel(_)
@@ -256,6 +292,20 @@ impl SelectionState {
             SelectionState::Single(id) => vec![id.as_str()],
             SelectionState::Multi(ids) => ids.iter().map(|s| s.as_str()).collect(),
             SelectionState::Section(s) => vec![s.node_id.as_str()],
+            SelectionState::MultiSection(secs) => {
+                // Deduplicate node_ids so per-node consumers
+                // (highlight, chrome) don't get duplicate work
+                // when two sections of the same node are
+                // selected. Order-preserving: first-seen wins.
+                let mut seen = std::collections::HashSet::new();
+                let mut out = Vec::with_capacity(secs.len());
+                for s in secs {
+                    if seen.insert(s.node_id.as_str()) {
+                        out.push(s.node_id.as_str());
+                    }
+                }
+                out
+            }
             SelectionState::Edge(_)
             | SelectionState::EdgeLabel(_)
             | SelectionState::PortalLabel(_)
@@ -263,15 +313,30 @@ impl SelectionState {
         }
     }
 
-    /// Borrow the inner [`SectionSel`] for a section selection,
-    /// or `None` for any other variant. Per-section verbs
-    /// (`set_section_text` and friends) consult this accessor to
-    /// route an edit at the section index instead of the
-    /// whole-node default.
+    /// Borrow the inner [`SectionSel`] for a `Section` selection,
+    /// or `None` for any other variant — *including*
+    /// [`Self::MultiSection`]. Per-section verbs that need a
+    /// single section target consult this; verbs that fan out
+    /// over every selected section route through
+    /// [`super::super::console::traits::view::selection_targets`]
+    /// instead.
     pub fn selected_section(&self) -> Option<&SectionSel> {
         match self {
             SelectionState::Section(s) => Some(s),
             _ => None,
+        }
+    }
+
+    /// Borrow every selected section as a slice. Returns a
+    /// single-element slice for [`Self::Section`], the inner
+    /// vec for [`Self::MultiSection`], and an empty slice for
+    /// every other variant. Used by `selection_targets` to fan
+    /// out per-section verbs.
+    pub fn selected_sections(&self) -> &[SectionSel] {
+        match self {
+            SelectionState::Section(s) => std::slice::from_ref(s),
+            SelectionState::MultiSection(secs) => secs.as_slice(),
+            _ => &[],
         }
     }
 

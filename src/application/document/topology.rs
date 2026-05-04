@@ -179,6 +179,19 @@ impl MindMapDocument {
             // like `section delete`) is the dedicated entry
             // point; the bare Delete keystroke targets the node.
             SelectionState::Section(s) => Some(DelKind::Node(s.node_id.clone())),
+            // MultiSection delete targets the deduplicated set
+            // of owning nodes — same shape as Multi(ids), but
+            // sourced from the section selection.
+            SelectionState::MultiSection(secs) => {
+                let mut seen = std::collections::HashSet::new();
+                let mut ids = Vec::with_capacity(secs.len());
+                for s in secs {
+                    if seen.insert(s.node_id.clone()) {
+                        ids.push(s.node_id.clone());
+                    }
+                }
+                Some(DelKind::Nodes(ids))
+            }
             SelectionState::Multi(ids) => Some(DelKind::Nodes(ids.clone())),
             // Delete on any edge-sub-part selection (label, icon,
             // text) targets the owning edge — the sub-parts are

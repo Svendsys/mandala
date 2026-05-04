@@ -676,6 +676,18 @@ pub fn selection_targets(sel: &SelectionState) -> Vec<TargetId> {
             node_id: s.node_id.clone(),
             section_idx: s.section_idx,
         }],
+        // Multi-section fans out to one `Section` target per
+        // entry — every per-section verb (colour text axis,
+        // font size / family, clipboard text) applies to each.
+        // `bg=` / `border=` continue to return `NotApplicable`
+        // per the section spec (no chrome on sections).
+        SelectionState::MultiSection(secs) => secs
+            .iter()
+            .map(|s| TargetId::Section {
+                node_id: s.node_id.clone(),
+                section_idx: s.section_idx,
+            })
+            .collect(),
         SelectionState::Edge(er) => vec![TargetId::Edge(er.clone())],
         SelectionState::EdgeLabel(s) => vec![TargetId::EdgeLabel(s.edge_ref.clone())],
         SelectionState::PortalLabel(s) => vec![TargetId::PortalLabel {

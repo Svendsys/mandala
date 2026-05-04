@@ -190,24 +190,42 @@ pub(in crate::application::app) fn rebuild_all(
     scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
 ) {
     let mut new_tree = doc.build_tree();
-    // For a `Section` selection, restrict the highlight to the
-    // selected section only — visual feedback matches what the
-    // user pointed at. `Single` / `Multi` continue to highlight
-    // every section of the selected nodes (the whole-node
-    // semantic).
-    let only_section_idx = doc.selection.selected_section().map(|s| s.section_idx);
-    apply_tree_highlights(
-        &mut new_tree,
-        doc.selection
-            .selected_ids()
-            .into_iter()
-            .map(|id| (id, only_section_idx, HIGHLIGHT_COLOR)),
-    );
+    apply_tree_highlights(&mut new_tree, selection_highlight_entries(&doc.selection));
     renderer.rebuild_buffers_from_tree(&new_tree.tree);
 
     rebuild_scene_only(doc, app_scene, renderer, scene_cache);
 
     *mindmap_tree = Some(new_tree);
+}
+
+/// Map a [`SelectionState`] to the highlight entries
+/// `apply_tree_highlights` consumes — one
+/// `(node_id, only_section_idx, color)` triple per highlighted
+/// region. Single / Multi yield whole-node entries (None
+/// section index — every section of the named node tints).
+/// Section yields a single entry restricted to the targeted
+/// section. MultiSection yields one entry per `(node_id,
+/// section_idx)` pair, so a multi-section set highlights
+/// only the selected sections (and a multi-section set on
+/// one node tints just those sections, leaving sibling
+/// sections untouched).
+fn selection_highlight_entries(
+    selection: &SelectionState,
+) -> Vec<(&str, Option<usize>, [f32; 4])> {
+    match selection {
+        SelectionState::Section(s) => {
+            vec![(s.node_id.as_str(), Some(s.section_idx), HIGHLIGHT_COLOR)]
+        }
+        SelectionState::MultiSection(secs) => secs
+            .iter()
+            .map(|s| (s.node_id.as_str(), Some(s.section_idx), HIGHLIGHT_COLOR))
+            .collect(),
+        _ => selection
+            .selected_ids()
+            .into_iter()
+            .map(|id| (id, None, HIGHLIGHT_COLOR))
+            .collect(),
+    }
 }
 
 /// Narrower cousin of `rebuild_all` that rebuilds only the flat

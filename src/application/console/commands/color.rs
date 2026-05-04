@@ -147,6 +147,30 @@ fn picker_target_for(verb: &str, selection: &SelectionState) -> PickerTargetOutc
                 None => PickerTargetOutcome::Unknown,
             }
         }
+        // Multi-section: same single-target picker shape as
+        // `Multi(ids)` — opens on the first selected section's
+        // text axis (the only section-level colour axis;
+        // `bg` / `border` are NotApplicable for sections).
+        // Per-section fanout commit happens through the
+        // selection_targets dispatch on close, not here.
+        SelectionState::MultiSection(secs) => match secs.first() {
+            Some(SectionSel { node_id, section_idx }) => match axis {
+                Some(NodeColorAxis::Text) | None => PickerTargetOutcome::Open(ColorTarget::Section {
+                    node_id: node_id.clone(),
+                    section_idx: *section_idx,
+                    axis: SectionColorAxis::Text,
+                }),
+                Some(NodeColorAxis::Bg) => PickerTargetOutcome::NotApplicable(
+                    "color bg: not applicable to a section (section-level chrome doesn't exist)"
+                        .to_string(),
+                ),
+                Some(NodeColorAxis::Border) => PickerTargetOutcome::NotApplicable(
+                    "color border: not applicable to a section (section-level chrome doesn't exist)"
+                        .to_string(),
+                ),
+            },
+            None => PickerTargetOutcome::Unknown,
+        },
         SelectionState::Edge(er) => {
             // Edges (line-mode or portal-mode) have one color
             // field. `border` maps to it, `text` also currently

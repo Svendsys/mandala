@@ -261,6 +261,31 @@ discard it). Custom-mutation writes still collapse var refs to
 hex on round-trip (`FloatRgba` carries no record of the variable);
 that constraint is unchanged.
 
+### Multi-section selection
+
+Shift+click on a section extends the current selection
+(`Section` ↔ `MultiSection`): each shift+click toggles the
+targeted section in / out of the set. Cross-node section sets
+are legal — `MultiSection(Vec<SectionSel>)` is dedup'd by
+`(node_id, section_idx)`. Per-section verbs (`color text=…`,
+`font size=…`, `font family=…`) fan out via the trait
+dispatcher's `selection_targets` to apply to every section in
+the set; `bg=` / `border=` continue to return `NotApplicable`
+per the section spec (no chrome on sections). Per-section
+gestures (drag-to-move, drag-to-resize) stay single-target —
+a `MultiSection` selection emits no resize handles and a
+press on a section in the set still promotes to the existing
+single-section gesture. The `section move` / `section resize`
+console verbs require a single-section context (or an
+explicit `section=K` kv); `MultiSection` is fan-out-only at
+the trait dispatch layer.
+
+A click without shift on a section resets to the single-
+section `Section(SectionSel)` shape; a click without shift on
+a node resets to `Single(node_id)`. Building a multi-section
+selection therefore always starts with a plain click, then
+extends with shift+clicks.
+
 ### Structured clipboard
 
 Section copy / cut produce a structured payload carrying the

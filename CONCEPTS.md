@@ -1933,6 +1933,19 @@ to the right element.
   structured-clipboard payload (`apply_section_payload`); the
   trait dispatcher and the `section move` / `section resize`
   console verbs route here from a `SelectionState::Section`.
+- `MultiSection(Vec<SectionSel>)` — two or more sections,
+  possibly across distinct nodes. Built by shift+click on a
+  section while another section (or section-set) is selected;
+  each shift+click toggles the targeted section in / out of the
+  set. Per-section verbs (colour text, font size / family) fan
+  out via `selection_targets` and apply to every section in the
+  set. Per-section gestures (drag-to-move, drag-to-resize) stay
+  single-target — a `MultiSection` selection emits no resize
+  handles and a press on a section in the set falls through to
+  the existing single-section gesture path. The `section
+  move` / `section resize` verbs target the single-section
+  selected (or take an explicit `section=K` kv); `MultiSection`
+  is fan-out-only at the trait dispatch layer.
 - `Edge(EdgeRef)` — the whole edge body
 - `EdgeLabel(EdgeLabelSel)` — the text label of a line-mode edge
 - `PortalLabel(PortalLabelSel)` — a portal endpoint icon

@@ -185,7 +185,7 @@ fn execute_zoom(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     let kind: &str = match &doc.selection {
         SelectionState::Single(_) => "node",
         // Zoom-bounds attach to the node, not the section.
-        SelectionState::Section(_) => "node",
+        SelectionState::Section(_) | SelectionState::MultiSection(_) => "node",
         SelectionState::Edge(_) => "edge",
         SelectionState::EdgeLabel(_) => "edge label",
         SelectionState::PortalLabel(_) => "portal label",
@@ -252,6 +252,18 @@ pub(crate) fn apply_zoom_to_selection(
             let mut changed = false;
             for id in &ids {
                 changed |= doc.set_node_zoom_visibility(id, min, max);
+            }
+            changed
+        }
+        // Multi-section: zoom-bounds attach to nodes, so dedup
+        // to the set of owning nodes and apply per-node.
+        SelectionState::MultiSection(secs) => {
+            let mut seen = std::collections::HashSet::new();
+            let mut changed = false;
+            for s in &secs {
+                if seen.insert(s.node_id.clone()) {
+                    changed |= doc.set_node_zoom_visibility(&s.node_id, min.clone(), max.clone());
+                }
             }
             changed
         }

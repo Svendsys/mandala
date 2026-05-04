@@ -100,23 +100,62 @@ pub(super) fn handle_click(
             }
         }
         (Some(id), true) => {
-            // Shift+click: toggle node in/out of multi-selection.
-            // Shift+click on an edge selection promotes the clicked node
-            // to a fresh single selection (no edge multi-select).
+            // Shift+click: toggle node — or section, when the
+            // hit lands on a specific section in a multi-section
+            // node — in/out of the multi-selection.
+            if let Some(section_idx) = hit_section {
+                // Section-side shift+click: extends Section ↔
+                // MultiSection. Cross-node section sets are
+                // legal; the dedup'd-by-(node_id, section_idx)
+                // identity is the load-bearing invariant.
+                let new_sec = SectionSel {
+                    node_id: id.clone(),
+                    section_idx,
+                };
+                match &doc.selection {
+                    SelectionState::Section(existing) if existing == &new_sec => {
+                        // Toggle off — same section re-clicked.
+                        doc.selection = SelectionState::None;
+                    }
+                    SelectionState::Section(existing) => {
+                        doc.selection =
+                            SelectionState::MultiSection(vec![existing.clone(), new_sec]);
+                    }
+                    SelectionState::MultiSection(existing) => {
+                        let mut secs = existing.clone();
+                        if let Some(pos) = secs.iter().position(|s| s == &new_sec) {
+                            secs.remove(pos);
+                            doc.selection = SelectionState::from_sections(secs);
+                        } else {
+                            secs.push(new_sec);
+                            doc.selection = SelectionState::MultiSection(secs);
+                        }
+                    }
+                    _ => {
+                        // From any non-section state, shift+click
+                        // on a section starts a fresh `Section`
+                        // selection — gives the user a clean path
+                        // to build a MultiSection by additional
+                        // shift+clicks.
+                        doc.selection = SelectionState::Section(new_sec);
+                    }
+                }
+            } else {
+            // Whole-node shift+click — existing behaviour
+            // (toggle node in/out of Multi).
             match &doc.selection {
-                // Any edge-adjacent selection shouldn't absorb a
-                // shift+click on a node — promote the node to a
-                // fresh single selection, the same as clicking
-                // from a `None` or `Edge` state. Covers all four
-                // edge-side variants (body, label, icon, text)
-                // plus a `Section` (no shift+click multi-select
-                // semantics for sections; promote to whole-node).
+                // Any non-Single selection collapses to a fresh
+                // Single on shift+click of a different node —
+                // the user's intent is "start tracking this
+                // node" rather than "extend whatever set was
+                // here."
                 SelectionState::None
                 | SelectionState::Edge(_)
                 | SelectionState::EdgeLabel(_)
                 | SelectionState::PortalLabel(_)
                 | SelectionState::PortalText(_)
-                | SelectionState::Section(_) => {
+                | SelectionState::Section(_)
+                | SelectionState::MultiSection(_) => {
                     doc.selection = SelectionState::Single(id.clone());
                 }
                 SelectionState::Single(existing) => {
@@ -136,6 +175,7 @@ pub(super) fn handle_click(
                         doc.selection = SelectionState::Multi(ids);
                     }
                 }
+            }
             }
         }
         (None, false) => {
@@ -209,16 +249,23 @@ pub(super) fn rebuild_all_with_mode(
     // where reparent_source_highlight was documented to override
     // selection_highlight on conflict.
     // Highlight tuples are `(node_id, section_idx?, color)`. A
-    // Section selection narrows the highlight to the selected
-    // section only; mode-driven Reparent / Connect highlights
-    // always paint every section (the gesture is whole-node).
-    let only_section_idx = doc.selection.selected_section().map(|s| s.section_idx);
-    let mut highlights: Vec<(&str, Option<usize>, [f32; 4])> = doc
-        .selection
-        .selected_ids()
-        .into_iter()
-        .map(|id| (id, only_section_idx, HIGHLIGHT_COLOR))
-        .collect();
+    // Section / MultiSection narrow the highlight to the
+    // selected sections only; mode-driven Reparent / Connect
+    // highlights always paint every section (the gesture is
+    // whole-node).
+    let mut highlights: Vec<(&str, Option<usize>, [f32; 4])> = match &doc.selection {
+        SelectionState::Section(s) => vec![(s.node_id.as_str(), Some(s.section_idx), HIGHLIGHT_COLOR)],
+        SelectionState::MultiSection(secs) => secs
+            .iter()
+            .map(|s| (s.node_id.as_str(), Some(s.section_idx), HIGHLIGHT_COLOR))
+            .collect(),
+        _ => doc
+            .selection
+            .selected_ids()
+            .into_iter()
+            .map(|id| (id, None, HIGHLIGHT_COLOR))
+            .collect(),
+    };
     match app_mode {
         AppMode::Reparent { sources } => {
             for s in sources {

@@ -288,6 +288,32 @@ fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             }
             ExecResult::lines(lines)
         }
+        SelectionState::MultiSection(secs) => {
+            // Fanout: apply size to each section's runs. `min` /
+            // `max` are NotApplicable for sections — surface a
+            // single message rather than one per section.
+            let mut changed = 0usize;
+            for s in &secs {
+                if let Some(pt) = size {
+                    if doc.set_section_font_size(&s.node_id, s.section_idx, pt) {
+                        changed += 1;
+                    }
+                }
+            }
+            let applicable_msg = (min.is_some() || max.is_some())
+                .then(|| "min/max: sections have no screen-space clamps".to_string());
+            if changed == 0 && applicable_msg.is_none() {
+                return ExecResult::ok_msg("font: no change");
+            }
+            let mut lines = Vec::new();
+            if changed > 0 {
+                lines.push(format!("font: applied to {} section(s)", changed));
+            }
+            if let Some(m) = applicable_msg {
+                lines.push(m);
+            }
+            ExecResult::lines(lines)
+        }
         SelectionState::Edge(er) => {
             let changed = doc.set_edge_font(&er, size, min, max);
             finalize("edge", changed)
@@ -496,6 +522,16 @@ pub(crate) fn apply_font_kv_to_selection(
             let mut changed = false;
             for id in &ids {
                 changed |= doc.set_node_font_size(id, pt);
+            }
+            changed
+        }
+        SelectionState::MultiSection(secs) => {
+            if size.is_none() {
+                return false;
+            }
+            let mut changed = false;
+            for s in &secs {
+                changed |= doc.set_section_font_size(&s.node_id, s.section_idx, pt);
             }
             changed
         }

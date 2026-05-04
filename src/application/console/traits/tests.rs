@@ -65,6 +65,30 @@ fn test_selection_targets_for_each_variant() {
     assert!(matches!(out.as_slice(), [TargetId::Edge(_)]));
 }
 
+/// `selection_targets` fans `MultiSection` out to one
+/// `TargetId::Section` per entry — each per-section verb
+/// (color text, font size / family) applies to every section.
+#[test]
+fn test_selection_targets_multisection_fans_out_per_entry() {
+    use crate::application::document::SectionSel;
+    let secs = vec![
+        SectionSel::new("a", 0),
+        SectionSel::new("a", 2),
+        SectionSel::new("b", 1),
+    ];
+    let out = selection_targets(&SelectionState::MultiSection(secs.clone()));
+    assert_eq!(out.len(), 3);
+    for (i, target) in out.iter().enumerate() {
+        match target {
+            TargetId::Section { node_id, section_idx } => {
+                assert_eq!(node_id, &secs[i].node_id);
+                assert_eq!(*section_idx, secs[i].section_idx);
+            }
+            _ => panic!("expected TargetId::Section, got non-section variant"),
+        }
+    }
+}
+
 #[test]
 fn test_clipboard_content_variants() {
     let text = ClipboardContent::Text("#ff0000".into());
