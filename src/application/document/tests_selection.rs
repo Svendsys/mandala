@@ -400,57 +400,24 @@ fn test_dedup_owning_node_ids_preserves_first_seen_order() {
     );
 }
 
-// ── SelectionState::SectionRange (N4-C.a) ────────────────────────
+// ── SelectionState::SectionRange ────────────────────────────────
 
 #[test]
-fn test_section_range_is_selected_returns_owning_node() {
-    let sel = SelectionState::SectionRange {
-        sel: SectionSel::new("a", 1),
-        range: (3, 7),
-    };
-    assert!(sel.is_selected("a"));
-    assert!(!sel.is_selected("b"));
-}
-
-#[test]
-fn test_section_range_selected_ids_returns_owning_node() {
-    let sel = SelectionState::SectionRange {
-        sel: SectionSel::new("a", 1),
-        range: (3, 7),
-    };
-    assert_eq!(sel.selected_ids(), vec!["a"]);
-}
-
-#[test]
-fn test_section_range_selected_section_returns_inner_sel() {
-    let sel = SelectionState::SectionRange {
-        sel: SectionSel::new("a", 1),
-        range: (3, 7),
-    };
-    let s = sel
-        .selected_section()
-        .expect("SectionRange exposes its inner SectionSel");
-    assert_eq!(s.node_id, "a");
-    assert_eq!(s.section_idx, 1);
-}
-
-#[test]
-fn test_section_range_selected_sections_returns_singleton() {
+fn test_section_range_accessors_route_to_owning_section() {
     let target = SectionSel::new("a", 1);
     let sel = SelectionState::SectionRange {
         sel: target.clone(),
         range: (3, 7),
     };
+    assert!(sel.is_selected("a"));
+    assert!(!sel.is_selected("b"));
+    assert_eq!(sel.selected_ids(), vec!["a"]);
     assert_eq!(sel.selected_sections(), &[target]);
-}
-
-#[test]
-fn test_section_range_selected_range_returns_pair() {
-    let sel = SelectionState::SectionRange {
-        sel: SectionSel::new("a", 1),
-        range: (3, 7),
-    };
+    assert_eq!(sel.dedup_owning_node_ids(), vec!["a".to_string()]);
     assert_eq!(sel.selected_range(), Some((3, 7)));
+    let s = sel.selected_section().expect("inner SectionSel");
+    assert_eq!(s.node_id, "a");
+    assert_eq!(s.section_idx, 1);
 }
 
 #[test]
@@ -463,13 +430,4 @@ fn test_other_variants_selected_range_is_none() {
     assert!(SelectionState::MultiSection(vec![SectionSel::new("a", 0), SectionSel::new("b", 0)])
         .selected_range()
         .is_none());
-}
-
-#[test]
-fn test_section_range_dedup_owning_node_ids_returns_owning_node() {
-    let sel = SelectionState::SectionRange {
-        sel: SectionSel::new("a", 1),
-        range: (3, 7),
-    };
-    assert_eq!(sel.dedup_owning_node_ids(), vec!["a".to_string()]);
 }

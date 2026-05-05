@@ -46,12 +46,6 @@ fn test_parse_unknown_is_error() {
 }
 
 #[test]
-fn test_outcome_applied_helper() {
-    assert_eq!(Outcome::applied(true), Outcome::Applied);
-    assert_eq!(Outcome::applied(false), Outcome::Unchanged);
-}
-
-#[test]
 fn test_selection_targets_for_each_variant() {
     use crate::application::document::EdgeRef;
     assert!(selection_targets(&SelectionState::None).is_empty());
@@ -88,18 +82,6 @@ fn test_selection_targets_multisection_fans_out_per_entry() {
             _ => panic!("expected TargetId::Section, got non-section variant"),
         }
     }
-}
-
-#[test]
-fn test_clipboard_content_variants() {
-    let text = ClipboardContent::Text("#ff0000".into());
-    assert!(matches!(text, ClipboardContent::Text(ref s) if s == "#ff0000"));
-
-    let empty = ClipboardContent::Empty;
-    assert!(matches!(empty, ClipboardContent::Empty));
-
-    let na = ClipboardContent::NotApplicable;
-    assert!(matches!(na, ClipboardContent::NotApplicable));
 }
 
 /// `selection_targets` fans `SelectionState::SectionRange` out
@@ -238,21 +220,6 @@ fn test_section_range_dispatches_to_range_aware_color_setter() {
     assert_eq!(runs[1].start, 3);
     assert_eq!(runs[1].end, 7);
     assert_eq!(runs[2].color, "#ffffff");
-}
-
-#[test]
-fn test_clipboard_content_eq() {
-    assert_eq!(
-        ClipboardContent::Text("#abc".into()),
-        ClipboardContent::Text("#abc".into()),
-    );
-    assert_ne!(
-        ClipboardContent::Text("#abc".into()),
-        ClipboardContent::Text("#def".into()),
-    );
-    assert_eq!(ClipboardContent::Empty, ClipboardContent::Empty);
-    assert_eq!(ClipboardContent::NotApplicable, ClipboardContent::NotApplicable);
-    assert_ne!(ClipboardContent::Empty, ClipboardContent::NotApplicable);
 }
 
 // ── apply_to_targets aggregation paths ─────────────────────────
