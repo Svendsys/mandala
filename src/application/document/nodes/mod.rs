@@ -690,18 +690,6 @@ impl MindMapDocument {
         x: f64,
         y: f64,
     ) -> Result<bool, String> {
-        if !x.is_finite() || !y.is_finite() {
-            return Err(format!(
-                "section[{}].offset has non-finite component (x={}, y={})",
-                section_idx, x, y
-            ));
-        }
-        if x < 0.0 {
-            return Err(format!("section[{}].offset.x is negative ({})", section_idx, x));
-        }
-        if y < 0.0 {
-            return Err(format!("section[{}].offset.y is negative ({})", section_idx, y));
-        }
         let node = match self.mindmap.nodes.get(node_id) {
             Some(n) => n,
             None => return Ok(false),
@@ -709,29 +697,9 @@ impl MindMapDocument {
         let Some(section) = node.sections.get(section_idx) else {
             return Ok(false);
         };
-        check_node_size_finite_positive(node, section_idx)?;
-        // AABB containment uses `MindSection::effective_size` —
-        // `Some(sz)` honours the explicit pin; `None` falls back
-        // to `node.size` (fill-parent). One source of truth
-        // shared with `verify::sections`, so a `None`-sized
-        // section at non-zero offset is rejected with the
-        // verify-mirror message.
-        let effective_size = section.effective_size(node.size);
-        let right = x + effective_size.width;
-        let bottom = y + effective_size.height;
-        if right > node.size.width {
-            return Err(format!(
-                "section[{}] extends past node right edge ({} > {})",
-                section_idx, right, node.size.width
-            ));
-        }
-        if bottom > node.size.height {
-            return Err(format!(
-                "section[{}] extends past node bottom edge ({} > {})",
-                section_idx, bottom, node.size.height
-            ));
-        }
-        if section.offset.x == x && section.offset.y == y {
+        let new_offset = baumhard::mindmap::model::Position { x, y };
+        validate_section_aabb(node.size, section_idx, new_offset, section.size)?;
+        if section.offset == new_offset {
             return Ok(false);
         }
         let canvas_default = self.mindmap.canvas.default_border.clone();
@@ -772,62 +740,7 @@ impl MindMapDocument {
         let Some(section) = node.sections.get(section_idx) else {
             return Ok(false);
         };
-        check_node_size_finite_positive(node, section_idx)?;
-        if let Some(s) = size.as_ref() {
-            if !s.width.is_finite() || !s.height.is_finite() {
-                return Err(format!(
-                    "section[{}].size has non-finite component (width={}, height={})",
-                    section_idx, s.width, s.height
-                ));
-            }
-            if s.width <= 0.0 {
-                return Err(format!(
-                    "section[{}].size.width is not positive ({})",
-                    section_idx, s.width
-                ));
-            }
-            if s.height <= 0.0 {
-                return Err(format!(
-                    "section[{}].size.height is not positive ({})",
-                    section_idx, s.height
-                ));
-            }
-            if s.width > node.size.width * 100.0 {
-                return Err(format!(
-                    "section[{}].size.width ({}) is over 100× the node's width ({}); \
-                     likely a typo (e.g. an extra zero)",
-                    section_idx, s.width, node.size.width
-                ));
-            }
-            if s.height > node.size.height * 100.0 {
-                return Err(format!(
-                    "section[{}].size.height ({}) is over 100× the node's height ({}); \
-                     likely a typo (e.g. an extra zero)",
-                    section_idx, s.height, node.size.height
-                ));
-            }
-        }
-        // AABB containment with the *post-mutation* effective
-        // size — `size.unwrap_or(node.size)`. Closes the symmetric
-        // hole to the C3 fix on `set_section_offset`: a flatten-
-        // to-fill-parent (`set_section_size(None)`) on a section
-        // whose existing offset is non-zero would otherwise
-        // commit a state verify rejects.
-        let effective = size.unwrap_or(node.size);
-        let right = section.offset.x + effective.width;
-        let bottom = section.offset.y + effective.height;
-        if right > node.size.width {
-            return Err(format!(
-                "section[{}] extends past node right edge ({} > {})",
-                section_idx, right, node.size.width
-            ));
-        }
-        if bottom > node.size.height {
-            return Err(format!(
-                "section[{}] extends past node bottom edge ({} > {})",
-                section_idx, bottom, node.size.height
-            ));
-        }
+        validate_section_aabb(node.size, section_idx, section.offset, size)?;
         if section.size == size {
             return Ok(false);
         }
@@ -866,42 +779,6 @@ impl MindMapDocument {
         new_offset: baumhard::mindmap::model::Position,
         new_size: baumhard::mindmap::model::Size,
     ) -> Result<bool, String> {
-        if !new_offset.x.is_finite() || !new_offset.y.is_finite() {
-            return Err(format!(
-                "section[{}].offset has non-finite component (x={}, y={})",
-                section_idx, new_offset.x, new_offset.y
-            ));
-        }
-        if new_offset.x < 0.0 {
-            return Err(format!(
-                "section[{}].offset.x is negative ({})",
-                section_idx, new_offset.x
-            ));
-        }
-        if new_offset.y < 0.0 {
-            return Err(format!(
-                "section[{}].offset.y is negative ({})",
-                section_idx, new_offset.y
-            ));
-        }
-        if !new_size.width.is_finite() || !new_size.height.is_finite() {
-            return Err(format!(
-                "section[{}].size has non-finite component (width={}, height={})",
-                section_idx, new_size.width, new_size.height
-            ));
-        }
-        if new_size.width <= 0.0 {
-            return Err(format!(
-                "section[{}].size.width is not positive ({})",
-                section_idx, new_size.width
-            ));
-        }
-        if new_size.height <= 0.0 {
-            return Err(format!(
-                "section[{}].size.height is not positive ({})",
-                section_idx, new_size.height
-            ));
-        }
         let node = match self.mindmap.nodes.get(node_id) {
             Some(n) => n,
             None => return Ok(false),
@@ -909,38 +786,8 @@ impl MindMapDocument {
         let Some(section) = node.sections.get(section_idx) else {
             return Ok(false);
         };
-        check_node_size_finite_positive(node, section_idx)?;
-        if new_size.width > node.size.width * 100.0 {
-            return Err(format!(
-                "section[{}].size.width ({}) is over 100× the node's width ({}); \
-                 likely a typo (e.g. an extra zero)",
-                section_idx, new_size.width, node.size.width
-            ));
-        }
-        if new_size.height > node.size.height * 100.0 {
-            return Err(format!(
-                "section[{}].size.height ({}) is over 100× the node's height ({}); \
-                 likely a typo (e.g. an extra zero)",
-                section_idx, new_size.height, node.size.height
-            ));
-        }
-        let right = new_offset.x + new_size.width;
-        let bottom = new_offset.y + new_size.height;
-        if right > node.size.width {
-            return Err(format!(
-                "section[{}] extends past node right edge ({} > {})",
-                section_idx, right, node.size.width
-            ));
-        }
-        if bottom > node.size.height {
-            return Err(format!(
-                "section[{}] extends past node bottom edge ({} > {})",
-                section_idx, bottom, node.size.height
-            ));
-        }
-        let same_offset = section.offset.x == new_offset.x && section.offset.y == new_offset.y;
-        let same_size = section.size.as_ref() == Some(&new_size);
-        if same_offset && same_size {
+        validate_section_aabb(node.size, section_idx, new_offset, Some(new_size))?;
+        if section.offset == new_offset && section.size == Some(new_size) {
             return Ok(false);
         }
         let canvas_default = self.mindmap.canvas.default_border.clone();
@@ -1452,31 +1299,8 @@ impl MindMapDocument {
 /// compares silently NaN-skip, the setter would write into a node
 /// that shouldn't accept any size at all. Return the same
 /// rejection messages verify produces.
-fn check_node_size_finite_positive(
-    node: &baumhard::mindmap::model::MindNode,
-    _section_idx: usize,
-) -> Result<(), String> {
-    if !node.size.width.is_finite() || !node.size.height.is_finite() {
-        return Err(format!(
-            "node.size has non-finite component (width={}, height={})",
-            node.size.width, node.size.height
-        ));
-    }
-    if node.size.width <= 0.0 {
-        return Err(format!("node.size.width is not positive ({})", node.size.width));
-    }
-    if node.size.height <= 0.0 {
-        return Err(format!("node.size.height is not positive ({})", node.size.height));
-    }
-    Ok(())
-}
-
-/// Validate a candidate `(width, height)` for a node — finite +
-/// strictly positive components. The astronomical-typo guard is
-/// per-setter (it compares against the prior node size on the
-/// same axis) and lives at the call site, not here. Returns the
-/// same rejection messages `verify::sections` emits for the
-/// node-level size check.
+/// Finite + strictly-positive guard on a candidate node `Size`.
+/// Same rejection messages `verify::sections` emits.
 fn validate_node_size(size: baumhard::mindmap::model::Size) -> Result<(), String> {
     if !size.width.is_finite() || !size.height.is_finite() {
         return Err(format!(
@@ -1489,6 +1313,90 @@ fn validate_node_size(size: baumhard::mindmap::model::Size) -> Result<(), String
     }
     if size.height <= 0.0 {
         return Err(format!("node.size.height is not positive ({})", size.height));
+    }
+    Ok(())
+}
+
+/// Validate a candidate post-mutation section AABB against its
+/// parent's size. Folds finite/positive guards on both node and
+/// section, the 100× typo guard, and right/bottom edge
+/// containment. `size = None` means fill-parent (effective size
+/// = node_size for the containment check). Mirrors
+/// `verify::sections` rejection messages so model invariants are
+/// pinned at write time.
+fn validate_section_aabb(
+    node_size: baumhard::mindmap::model::Size,
+    section_idx: usize,
+    offset: baumhard::mindmap::model::Position,
+    size: Option<baumhard::mindmap::model::Size>,
+) -> Result<(), String> {
+    validate_node_size(node_size)?;
+    if !offset.x.is_finite() || !offset.y.is_finite() {
+        return Err(format!(
+            "section[{}].offset has non-finite component (x={}, y={})",
+            section_idx, offset.x, offset.y
+        ));
+    }
+    if offset.x < 0.0 {
+        return Err(format!(
+            "section[{}].offset.x is negative ({})",
+            section_idx, offset.x
+        ));
+    }
+    if offset.y < 0.0 {
+        return Err(format!(
+            "section[{}].offset.y is negative ({})",
+            section_idx, offset.y
+        ));
+    }
+    if let Some(s) = size {
+        if !s.width.is_finite() || !s.height.is_finite() {
+            return Err(format!(
+                "section[{}].size has non-finite component (width={}, height={})",
+                section_idx, s.width, s.height
+            ));
+        }
+        if s.width <= 0.0 {
+            return Err(format!(
+                "section[{}].size.width is not positive ({})",
+                section_idx, s.width
+            ));
+        }
+        if s.height <= 0.0 {
+            return Err(format!(
+                "section[{}].size.height is not positive ({})",
+                section_idx, s.height
+            ));
+        }
+        if s.width > node_size.width * 100.0 {
+            return Err(format!(
+                "section[{}].size.width ({}) is over 100× the node's width ({}); \
+                 likely a typo (e.g. an extra zero)",
+                section_idx, s.width, node_size.width
+            ));
+        }
+        if s.height > node_size.height * 100.0 {
+            return Err(format!(
+                "section[{}].size.height ({}) is over 100× the node's height ({}); \
+                 likely a typo (e.g. an extra zero)",
+                section_idx, s.height, node_size.height
+            ));
+        }
+    }
+    let effective = size.unwrap_or(node_size);
+    let right = offset.x + effective.width;
+    let bottom = offset.y + effective.height;
+    if right > node_size.width {
+        return Err(format!(
+            "section[{}] extends past node right edge ({} > {})",
+            section_idx, right, node_size.width
+        ));
+    }
+    if bottom > node_size.height {
+        return Err(format!(
+            "section[{}] extends past node bottom edge ({} > {})",
+            section_idx, bottom, node_size.height
+        ));
     }
     Ok(())
 }
