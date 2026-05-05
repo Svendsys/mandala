@@ -1,13 +1,20 @@
-# Runs ./test.sh on every push and pull request. The script itself
-# owns the test logic (native cargo test + workspace-wide wasm32
-# cargo check); this workflow is a transport for invoking it so the
-# dual-target discipline in CODE_CONVENTIONS.md §2 is enforced
-# remotely, not just aspirationally locally.
+# Runs ./test.sh on every main push and every pull request. The
+# script itself owns the test logic (native cargo test + workspace-
+# wide wasm32 cargo check); this workflow is a transport for invoking
+# it so the dual-target discipline in CODE_CONVENTIONS.md §2 is
+# enforced remotely, not just aspirationally locally.
+#
+# `push: branches: [main]` (rather than bare `push:`) prevents the
+# duplicate-run flake: without the constraint, a push to a PR branch
+# fires both `push` and `pull_request` events, spawning two identical
+# `test` runs at the same SHA that race for runner / cache resources.
+# Mirrors `license-headers.yml`'s trigger shape.
 
 name: tests
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 jobs:
