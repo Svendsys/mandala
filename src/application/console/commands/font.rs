@@ -1158,9 +1158,7 @@ mod tests {
     /// explicit `section=K` kv) routes through the
     /// `AcceptsFontFamily` trait arm to `set_section_font_family`
     /// — only the targeted section's runs change, siblings stay
-    /// untouched. Pre-Tier-2A this collapsed to whole-node and
-    /// `set_section_font_family` was dead code. Pins Item 5 of
-    /// `SECTION_INTEGRATION_PLAN.md`.
+    /// untouched.
     #[test]
     fn font_family_section_collapse_writes_only_section() {
         use crate::application::document::SectionSel;

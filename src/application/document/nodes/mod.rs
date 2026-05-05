@@ -1,25 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Per-node mutations and the shared edit-shape primitives they
-//! route through. The setters in this directory cover everything
-//! the user-facing console can write to a single `MindNode`:
-//! text + per-run formatting, background / frame / text colour,
-//! font face, font size, zoom-visibility window, and the bundled
-//! frame-config edits in [`border`]. Every setter follows the
-//! same pattern — capture the prior state into an [`UndoAction`]
-//! envelope, mutate, set `dirty`, return whether anything actually
-//! changed — so the console layer can phrase "no-op" vs. "applied"
-//! uniformly without re-reading the model.
-//!
-//! The split into sub-modules tracks concept, not size:
-//! [`option_edit`] owns the triple-state edit primitive
-//! ([`OptionEdit`]) and the field-level fold helpers
-//! (`apply_option_edit` / `apply_value_set` / `apply_string_set`)
-//! that consume it; [`border`] owns the border-config bundle
-//! ([`BorderConfigEdits`]) and the apply pipeline that lands it on
-//! `MindNode.style.border`. What's left in this `mod.rs` is the
-//! suite of single-field text/color/font/zoom setters plus the
-//! private `set_node_style_field` helper they share.
+//! Per-node and per-section setters. Each captures prior state
+//! into an `UndoAction`, mutates, sets `dirty`, and returns
+//! whether anything changed.
 
 use baumhard::mindmap::model::{NodeStyle, TextRun};
 
@@ -99,30 +82,11 @@ impl MindMapDocument {
 
     /// Replace one section's `text` and collapse its `text_runs`
     /// to a single run inheriting the first original run's
-    /// formatting. Returns `true` when the value actually changed.
-    /// Section-aware sibling of [`Self::set_node_text`] — the
-    /// latter's contract is preserved by routing through here
-    /// with `section_idx = 0`.
-    ///
-    /// Section-aware setter that writes both `text` and `text_runs`
-    /// atomically, converting the live `ColorFontRegions` (the
-    /// editor's per-keystroke styling buffer) back to
-    /// `Vec<TextRun>` via the `region_to_text_run` reverse
-    /// converter (merging with the prior runs to preserve
-    /// `bold` / `italic` / `underline` / `size_pt` / `hyperlink`
-    /// the forward conversion drops).
-    ///
-    /// Used by the inline text editor's commit path
-    /// ([`crate::application::app::text_edit::editor::close_text_edit`])
-    /// so multi-color / multi-font text typed during the session
-    /// survives Esc-out. Pre-fix the commit went through
-    /// [`Self::set_section_text`] alone, which collapses
-    /// `text_runs` to a single template-inherited run — every
-    /// per-grapheme styling change vanished on commit.
-    ///
-    /// No-op (returns `false`, no undo push) when the section
-    /// doesn't exist or both `text` *and* `text_runs` would round
-    /// to the same shape.
+    /// Write both `text` and `text_runs` atomically, merging the
+    /// editor's `ColorFontRegions` back to `Vec<TextRun>` via
+    /// `region_to_text_run` so per-run attributes the regions
+    /// don't carry (bold / italic / underline / hyperlink) survive
+    /// the round trip.
     pub fn set_section_text_and_runs(
         &mut self,
         node_id: &str,
@@ -137,27 +101,9 @@ impl MindMapDocument {
         let Some(section) = node.sections.get(section_idx) else {
             return false;
         };
-        // Merge each new region with the prior run sharing its
-        // range (or the dominant overlap when ranges drifted).
-        // `region_to_text_run` lives in `super::custom::sync` and
-        // is the canonical reverse converter; reuse it here so
-        // the editor commit and the custom-mutation sync share
-        // one shape.
-        //
-        // **Empty-regions guard.** A freshly-created node seeded
-        // with `ColorFontRegions::new_empty()` and a plaintext-
-        // only edit produces `new_regions.all_regions().is_empty()`.
-        // Pre-fix the merge below would emit `vec![]`, dropping
-        // every prior `text_runs` entry — including the
-        // template-inherited single run that the legacy
-        // `set_section_text` path always preserves. Fall back to
-        // [`Self::set_section_text`]'s collapse-with-template
-        // behaviour in that case so a plaintext keystroke session
-        // doesn't silently strip a section that *was* styled
-        // (e.g. a `bold` run that the user opened the editor on
-        // but didn't actively change). Authors who genuinely
-        // want every run cleared should use the document's
-        // direct-set path, not the editor commit.
+        // Empty regions: fall back to `set_section_text` so a
+        // plaintext-only edit doesn't wipe template-inherited
+        // runs the editor never touched.
         if new_regions.all_regions().is_empty() {
             return self.set_section_text(node_id, section_idx, new_text);
         }
@@ -241,32 +187,11 @@ impl MindMapDocument {
         true
     }
 
-    /// Set the text colour on one section's runs, mirroring the
-    /// whole-node [`Self::set_node_text_color`] but bounded to a
-    /// single section. The rewrite predicate matches the
-    /// **cascade source** the colour picker reads on the same
-    /// section (`current_color_at` in
-    /// `src/application/color_picker/targets.rs`): if every run on
-    /// the section unanimously shares one colour, that colour is
-    /// the predicate; otherwise the node's `style.text_color`
-    /// default is. Read-side and write-side stay symmetric so a
-    /// picker pick on a section whose runs unanimously carry a
-    /// non-default colour actually rewrites them — pre-fix the
-    /// write looked only for runs matching the node default and
-    /// silently no-op'd when the section was uniformly customized,
-    /// which made the picker close with no visible change.
-    ///
-    /// Mixed-colour sections still have their non-predicate runs
-    /// preserved (a user-authored explicit colour on one run
-    /// survives a section-level rewrite), matching the existing
-    /// "respect explicit per-run overrides" behaviour.
-    ///
-    /// The owning node's `style.text_color` is *not* touched —
-    /// that's the node-level default and a per-section override
-    /// doesn't change its meaning.
-    ///
-    /// No-op when the section is missing or every targeted run
-    /// already carries the new colour.
+    /// Rewrite every run on the section that matches the cascade
+    /// predicate (unanimous run colour, or the node's
+    /// `style.text_color` default) to `color`. Mixed-colour
+    /// sections preserve their non-predicate runs. The node's own
+    /// `style.text_color` is never touched.
     pub fn set_section_text_color(&mut self, node_id: &str, section_idx: usize, color: String) -> bool {
         let node = match self.mindmap.nodes.get(node_id) {
             Some(n) => n,
@@ -698,20 +623,11 @@ impl MindMapDocument {
         Ok(true)
     }
 
-    /// Set one section's `(offset, size)` atomically under a single
-    /// `EditNodeStyle` undo entry. Validates the **post-mutation**
-    /// AABB against `node.size`, so a gesture that simultaneously
-    /// shifts `offset` and grows `size` (e.g. dragging the W handle
-    /// of a section pinned to the right edge — `offset.x` shrinks
-    /// and `size.width` grows so the right edge stays put) passes
-    /// the right/bottom-edge guards that would have failed if size
-    /// were validated against the pre-mutation offset.
-    ///
-    /// Used by the section-resize release-commit. The two-step
-    /// `set_section_size` + `set_section_offset` path the resize
-    /// gesture used originally rejected legal AABB transitions
-    /// when the intermediate state (new size at old offset, or
-    /// new offset at old size) overflowed the parent.
+    /// Atomically set one section's `(offset, size)` under a
+    /// single `EditNodeStyle` undo entry. Validates the
+    /// **post-mutation** AABB so a gesture that shifts offset and
+    /// grows size in the same frame doesn't fail on the
+    /// intermediate state.
     pub fn set_section_aabb(
         &mut self,
         node_id: &str,

@@ -1,11 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Section resize-handle emission for the currently-selected
-//! section. Sibling of [`super::edge_handle`] — same role pattern,
-//! different domain. One function emits 8 handles per `Some`-sized
-//! section when the user has selected it; `None`-sized sections
-//! (fill-parent — the migration default) get no handles since
-//! there's no per-section AABB to stretch.
+//! Section resize-handle emission. Emits 8 handles per
+//! `Some`-sized selected section; `None`-sized (fill-parent)
+//! sections have no AABB to stretch and produce no handles.
 
 use std::fmt;
 

@@ -1,18 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! `TargetView` — the enum that holds a mutable doc reference plus
-//! enough identity to find the component each iteration. All
-//! capability-trait impls live here; selection materialization
-//! (`selection_targets`, `view_for`) sits with the view since each
-//! is a single-line constructor.
-//!
-//! Three target shapes: `Node`, `Edge`, and `PortalLabel`.
-//! Portal-mode edges go through the `Edge` shape just like
-//! line-mode edges — `display_mode` is a render flag, not a
-//! separate entity, so trait dispatch doesn't split on it.
-//! `PortalLabel` is its own variant because its trait impls
-//! route to the per-endpoint `PortalEndpointState` instead of
-//! the owning edge's fields.
+//! `TargetView` — enum holding a mutable doc reference plus
+//! enough identity to find the targeted component. Capability-
+//! trait impls and selection materialization live here.
 
 use super::capabilities::{
     AcceptsFontFamily, AcceptsWheelColor, HandlesCopy, HandlesCut, HandlesPaste, HasBgColor, HasBorderColor,
@@ -341,12 +331,9 @@ impl<'a> HandlesCopy for TargetView<'a> {
         match self {
             // Section: structured payload (`text` to OS clipboard,
             // `payload` to in-process buffer). Empty text still
-            // Section: structured payload (`text` to OS clipboard,
-            // `payload` to in-process buffer). Empty text still
             // emits `Section` because chrome may carry information.
-            // Range-aware copy is deferred to N4-D — when `range`
-            // is set today, we fall back to whole-section copy
-            // (the documented N4-C.a contract). The semantic is
+            // Range-aware copy: when `range` is set, we fall
+            // back to whole-section copy. The semantic is
             // safe for copy (non-destructive) but Cut+Paste below
             // explicitly reject the range to prevent surprise.
             TargetView::Section { doc, id, section_idx, .. } => match doc

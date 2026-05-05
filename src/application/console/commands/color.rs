@@ -599,9 +599,7 @@ mod tests {
     /// `color text=#…` with a `SelectionState::Section` (no explicit
     /// `section=K` kv) routes through the `HasTextColor` trait arm
     /// to `set_section_text_color` — only the targeted section's
-    /// runs change, siblings stay untouched. Pre-Tier-2A this
-    /// collapsed to whole-node and silently broadened the user's
-    /// intent. Pins Item 1 of `SECTION_INTEGRATION_PLAN.md`.
+    /// runs change, siblings stay untouched.
     #[test]
     fn color_text_section_collapse_writes_only_section() {
         use crate::application::console::tests::fixtures::{assert_exec_ok, run};

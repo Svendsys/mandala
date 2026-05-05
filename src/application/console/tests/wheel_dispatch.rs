@@ -87,8 +87,7 @@ fn wheel_color_on_portal_mode_edge_paints_through_edge_path() {
 /// through `set_text_color` → `set_section_text_color` (sections
 /// have no bg/border chrome — text is the only axis). Only the
 /// targeted section's runs change; siblings keep their original
-/// colour. Pins Items 4 & 9 of `SECTION_INTEGRATION_PLAN.md`
-/// (Item 9's standalone-mode commit fans out via
+/// colour. Standalone-mode commit fans out via
 /// `selection_targets` → `view_for` → `apply_wheel_color`, so
 /// the routing pinned here is the same path the standalone
 /// wheel commit takes).

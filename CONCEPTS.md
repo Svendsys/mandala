@@ -1038,38 +1038,31 @@ pointer at `maptool convert --sections`. Full reference:
 
 **Status.** The original three-seam roadmap has all landed:
 
-- **Per-section selection / editing.** Shipped — a click on a
-  multi-section node lands on `SelectionState::Section { node_id,
-  section_idx }`; the inline text editor targets the specific
-  section.
-- **Per-section mutations.** Shipped — `TargetScope::SectionsOnly`
-  walks every section directly via
-  `MindMapTree::section_arena_id`, and the
-  `GfxElementField::Flag(Flag::SectionRoot)` predicate gate
-  filters by element flag from any other scope.
-- **Per-section move / resize verbs.** Shipped — `section move
-  <dx> <dy>` and `section resize <w> <h>` (plus `section resize
-  none` to flip back to fill-parent) write through
-  `set_section_offset` / `set_section_size` with AABB validation
-  that mirrors `maptool verify`'s rules. See
-  [`format/sections.md`'s "Position and size verbs"](./format/sections.md).
-- **Per-section drag-to-move gesture.** Shipped — click + drag on
-  a section of a multi-section node promotes to a section-only
-  drag (`ThrottledDrag::MovingSection`); per-frame mutates the
-  section's tree subtree, release-commit writes through
-  `set_section_offset` once. AABB overflow snaps the section
-  back.
-- **Per-section drag-to-resize gesture.** Shipped — selecting a
-  `Some`-sized section surfaces 8 resize handles (corners + edge
-  midpoints); dragging a handle promotes to
-  `ThrottledDrag::SectionResize`. Per-frame writes the
+- **Per-section selection / editing.** A click on a multi-section
+  node lands on `SelectionState::Section { node_id, section_idx }`;
+  the inline text editor targets the specific section.
+- **Per-section mutations.** `TargetScope::SectionsOnly` walks
+  every section via `MindMapTree::section_arena_id`; the
+  `GfxElementField::Flag(Flag::SectionRoot)` predicate filters by
+  element flag from any other scope.
+- **Per-section move / resize verbs.** `section move <dx> <dy>` /
+  `section resize <w> <h>` (plus `section resize none` for
+  fill-parent) write through `set_section_offset` /
+  `set_section_size` with AABB validation that mirrors
+  `maptool verify`. See
+  [`format/sections.md`](./format/sections.md).
+- **Per-section drag-to-move gesture.** Click + drag on a section
+  of a multi-section node promotes to a section-only drag
+  (`ThrottledDrag::MovingSection`); per-frame mutates the section
+  subtree, release-commit writes through `set_section_offset`
+  once. AABB overflow snaps the section back.
+- **Per-section drag-to-resize gesture.** Selecting a `Some`-sized
+  section surfaces 8 resize handles. Dragging a handle promotes
+  to `ThrottledDrag::SectionResize`; per-frame writes the
   in-progress `(canvas_pos, canvas_size)` to the section-area's
-  `GlyphArea` directly (cosmic-text reflows mid-drag); release-
-  commit writes the final `(offset, size)` through
-  `set_section_aabb` (atomic post-mutation AABB validation,
-  single `EditNodeStyle` undo entry). Same AABB / non-positive
-  size / astronomical size rejection with model-side snap-back
-  as the move gesture.
+  `GlyphArea` (cosmic-text reflows mid-drag); release-commit
+  writes through `set_section_aabb` (atomic post-mutation AABB
+  validation, single `EditNodeStyle` undo entry).
 
   **Animation interleaving.** While any drag that mutates the
   tree per-frame is in flight (`MovingNode`, `MovingSection`,

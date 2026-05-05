@@ -1,15 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Node resize-handle emission for the currently-selected node.
-//! Sibling of [`super::section_resize_handle`] — same role pattern,
-//! different domain. Emits 8 handles (corners + edge midpoints) on
-//! top of the selected node when its size is finite + positive;
-//! produces zero handles otherwise.
-//!
-//! Handle placement is on the node's `(position, size)` AABB. Unlike
-//! sections, nodes have no parent AABB to fit inside, so the resize
-//! validation rules (in `set_node_aabb`) only check finite + positive
-//! + non-astronomical — there's no "extends past parent" guard.
+//! Node resize-handle emission. Emits 8 handles (corners + edge
+//! midpoints) on the selected node when its size is finite +
+//! positive; zero handles otherwise. Nodes have no parent AABB
+//! containment guard.
 
 use glam::Vec2;
 

@@ -2,12 +2,6 @@
 
 //! `targets.rs` unit tests — `ColorTarget` resolution and
 //! `current_color_at` cascade for each `PickerHandle` shape.
-//!
-//! The Section arms are the primary surface added by Tier 2A of
-//! `SECTION_INTEGRATION_PLAN.md`; the existing Edge / Node arms are
-//! covered indirectly through the integration tests. These tests
-//! pin the per-section read cascade so the picker opens with the
-//! visible colour pre-seeded (same UX as the Node and Edge arms).
 
 use crate::application::color_picker::{current_color_at, ColorTarget, PickerHandle, SectionColorAxis};
 use crate::application::document::tests_common::{
@@ -36,8 +30,8 @@ fn doc_with_two_uniform_sections() -> (crate::application::document::MindMapDocu
 }
 
 /// `current_color_at` on a Section handle returns the unanimous
-/// run colour when every run on the section shares one. Pins
-/// Item 8 of `SECTION_INTEGRATION_PLAN.md` (cascade primary).
+/// run colour when every run on the section shares one (cascade
+/// primary).
 #[test]
 fn current_color_at_section_reads_unanimous_run_color() {
     let (doc, id) = doc_with_two_uniform_sections();

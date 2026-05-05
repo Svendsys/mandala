@@ -1,15 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Pure manipulation primitives for `Vec<TextRun>` — the foundation
-//! N4 (per-grapheme range targeting) builds on. Preserves the
-//! format invariants from `format/text-runs.md` (sorted ascending,
-//! half-open `[start, end)`, no overlaps, gaps allowed). Linear
-//! time over runs, no `unsafe`, debug-asserts the invariants on
-//! every public entry.
-//!
-//! Stays path-qualified (no glob re-export) because `slice` and
-//! `split_at` collide with inherent `[T]` methods. Callers must
-//! clamp indices to `count_grapheme_clusters(text)` — these
+//! Pure manipulation primitives for `Vec<TextRun>`. Preserves the
+//! `format/text-runs.md` invariants (sorted ascending, half-open
+//! `[start, end)`, no overlaps, gaps allowed). Linear-time, no
+//! `unsafe`, debug-asserts invariants on every public entry.
+//! Callers clamp indices to grapheme-cluster counts; these
 //! primitives don't see the section text.
 
 use super::node::TextRun;
