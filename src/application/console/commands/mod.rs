@@ -26,6 +26,7 @@ pub mod mutation;
 pub mod new;
 pub mod node;
 pub mod open;
+pub mod range_kv;
 pub mod save;
 pub mod section;
 pub mod spacing;

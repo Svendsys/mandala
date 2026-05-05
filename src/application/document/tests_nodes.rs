@@ -1727,3 +1727,187 @@ fn finalize_grows_nodes_to_fit_border_static_parts() {
         n.size.width,
     );
 }
+
+// ── Range-targeted section setters (Tier 2C-N4-B) ─────────────────
+
+/// Set a colour on `[range_start, range_end)` inside one section
+/// — pins the simplest happy path (range entirely inside one run).
+#[test]
+fn test_set_section_text_color_range_inside_one_run() {
+    use crate::application::document::tests_common::pinned_two_section_node;
+    let (mut doc, id) = pinned_two_section_node();
+    // Section 0 starts with one run covering the whole text.
+    // Apply blue to a sub-range and verify the section now has
+    // three runs: original-colour | blue | original-colour.
+    let total = doc.mindmap.nodes.get(&id).unwrap().sections[0]
+        .text
+        .chars()
+        .count();
+    assert!(total >= 3, "fixture section text must be long enough to range");
+    let applied = doc.set_section_text_color_range(&id, 0, 1, total - 1, "#abcdef".into());
+    assert!(applied);
+    let runs = &doc.mindmap.nodes.get(&id).unwrap().sections[0].text_runs;
+    assert_eq!(runs.len(), 3, "expected three runs after range carve-out");
+    assert_eq!(runs[1].color, "#abcdef");
+}
+
+/// Range that exactly matches an existing run's color is a
+/// no-op — the range setter detects pre/post equality and pops
+/// the spurious undo entry.
+#[test]
+fn test_set_section_text_color_range_no_op_no_undo() {
+    use crate::application::document::tests_common::pinned_two_section_node;
+    let (mut doc, id) = pinned_two_section_node();
+    let original_color = doc.mindmap.nodes.get(&id).unwrap().sections[0].text_runs[0]
+        .color
+        .clone();
+    let undo_before = doc.undo_stack.len();
+    let applied = doc.set_section_text_color_range(&id, 0, 1, 3, original_color);
+    assert!(!applied, "no-op write must return false");
+    assert_eq!(
+        doc.undo_stack.len(),
+        undo_before,
+        "no-op write must not push an undo entry"
+    );
+}
+
+/// Range setter clamps `range_end` to the section's grapheme
+/// count. A range of `[2, 9999)` on a 10-grapheme section
+/// behaves like `[2, 10)`.
+#[test]
+fn test_set_section_text_color_range_clamps_end_to_grapheme_count() {
+    use crate::application::document::tests_common::pinned_two_section_node;
+    let (mut doc, id) = pinned_two_section_node();
+    let total = count_grapheme_clusters(&doc.mindmap.nodes.get(&id).unwrap().sections[0].text);
+    let applied = doc.set_section_text_color_range(&id, 0, 1, total + 100, "#abcdef".into());
+    assert!(applied, "clamped range must still apply");
+    let runs = &doc.mindmap.nodes.get(&id).unwrap().sections[0].text_runs;
+    let last = runs.last().expect("at least one run");
+    assert!(
+        last.end <= total,
+        "post-mutation runs must respect grapheme count: last.end={} > total={}",
+        last.end,
+        total
+    );
+}
+
+/// Range with empty bounds (`start == end`) is a no-op and
+/// doesn't push an undo entry.
+#[test]
+fn test_set_section_text_color_range_empty_returns_false() {
+    use crate::application::document::tests_common::pinned_two_section_node;
+    let (mut doc, id) = pinned_two_section_node();
+    let undo_before = doc.undo_stack.len();
+    assert!(!doc.set_section_text_color_range(&id, 0, 5, 5, "#abcdef".into()));
+    assert!(!doc.set_section_text_color_range(&id, 0, 7, 3, "#abcdef".into()));
+    assert_eq!(doc.undo_stack.len(), undo_before);
+}
+
+/// Range setter on a missing section returns false without
+/// crashing or pushing undo.
+#[test]
+fn test_set_section_text_color_range_missing_section_returns_false() {
+    use crate::application::document::tests_common::pinned_two_section_node;
+    let (mut doc, id) = pinned_two_section_node();
+    assert!(!doc.set_section_text_color_range(&id, 99, 0, 5, "#abcdef".into()));
+    assert!(!doc.set_section_text_color_range("does-not-exist", 0, 0, 5, "#abcdef".into()));
+}
+
+/// Range setter pushes one undo entry and Ctrl+Z restores the
+/// pre-write run set byte-for-byte.
+#[test]
+fn test_set_section_text_color_range_undo_round_trip() {
+    use crate::application::document::tests_common::pinned_two_section_node;
+    let (mut doc, id) = pinned_two_section_node();
+    let pre = doc.mindmap.nodes.get(&id).unwrap().sections[0]
+        .text_runs
+        .clone();
+    let total = count_grapheme_clusters(&doc.mindmap.nodes.get(&id).unwrap().sections[0].text);
+    assert!(doc.set_section_text_color_range(&id, 0, 1, total - 1, "#abcdef".into()));
+    assert!(doc.undo());
+    let post = &doc.mindmap.nodes.get(&id).unwrap().sections[0].text_runs;
+    assert_eq!(post, &pre, "undo must restore pre-write runs");
+}
+
+/// Range setter for font size carries through the
+/// `grow_one_node_to_fit_text` re-measure. A larger size on a
+/// sub-range can grow the node's AABB.
+#[test]
+fn test_set_section_font_size_range_triggers_grow() {
+    use crate::application::document::tests_common::pinned_two_section_node;
+    let (mut doc, id) = pinned_two_section_node();
+    let pre_w = doc.mindmap.nodes.get(&id).unwrap().size.width;
+    let total = count_grapheme_clusters(&doc.mindmap.nodes.get(&id).unwrap().sections[0].text);
+    // Apply a much larger font to the whole section's range —
+    // forces the grow pass and the post-write width should be
+    // at least the pre-write width.
+    assert!(doc.set_section_font_size_range(&id, 0, 0, total, 96.0));
+    let post_w = doc.mindmap.nodes.get(&id).unwrap().size.width;
+    assert!(post_w >= pre_w, "grow pass must monotonically widen the node");
+}
+
+/// Range setter for font family clears / pins per-grapheme.
+/// Pin: applying a family different from the section's runs
+/// changes the in-range runs' `font` field.
+#[test]
+fn test_set_section_font_family_range_writes_in_range_only() {
+    use crate::application::document::tests_common::pinned_two_section_node;
+    let (mut doc, id) = pinned_two_section_node();
+    let total = count_grapheme_clusters(&doc.mindmap.nodes.get(&id).unwrap().sections[0].text);
+    assert!(total >= 5, "fixture text must be long enough");
+    let original_font = doc.mindmap.nodes.get(&id).unwrap().sections[0].text_runs[0]
+        .font
+        .clone();
+    let target_font = if original_font == "DejaVuSans" {
+        "LiberationSans".to_string()
+    } else {
+        "DejaVuSans".to_string()
+    };
+    assert!(doc.set_section_font_family_range(&id, 0, 1, 4, Some(&target_font)));
+    let runs = &doc.mindmap.nodes.get(&id).unwrap().sections[0].text_runs;
+    // Find the in-range run and the out-of-range runs.
+    let in_range: Vec<_> = runs.iter().filter(|r| r.start >= 1 && r.end <= 4).collect();
+    let out_of_range: Vec<_> = runs.iter().filter(|r| r.end <= 1 || r.start >= 4).collect();
+    assert!(!in_range.is_empty(), "expected at least one in-range run");
+    for r in in_range {
+        assert_eq!(r.font, target_font);
+    }
+    for r in out_of_range {
+        assert_eq!(r.font, original_font);
+    }
+}
+
+/// Gap-fill: applying a colour on a range that falls in a gap
+/// (no covering run) inserts a fresh run carrying the colour.
+/// Pins the foundation gap N4-A.1's `insert_run` primitive
+/// closes — without it, the user's "make graphemes 5..8 blue"
+/// would silently no-op when no run covers that range.
+#[test]
+fn test_set_section_text_color_range_fills_gap() {
+    use crate::application::document::tests_common::pinned_two_section_node;
+    let (mut doc, id) = pinned_two_section_node();
+    // Truncate the existing run to leave a gap, then apply a
+    // range on the gap.
+    let total = count_grapheme_clusters(&doc.mindmap.nodes.get(&id).unwrap().sections[0].text);
+    assert!(total >= 8, "fixture text must be long enough");
+    {
+        let n = doc.mindmap.nodes.get_mut(&id).unwrap();
+        let s = &mut n.sections[0];
+        s.text_runs.truncate(1);
+        if let Some(first) = s.text_runs.first_mut() {
+            first.end = 3;
+        }
+    }
+    let runs_before = doc.mindmap.nodes.get(&id).unwrap().sections[0]
+        .text_runs
+        .len();
+    assert!(doc.set_section_text_color_range(&id, 0, 5, 8, "#123456".into()));
+    let runs = &doc.mindmap.nodes.get(&id).unwrap().sections[0].text_runs;
+    assert!(
+        runs.len() > runs_before,
+        "gap-fill must add at least one run"
+    );
+    let new_run = runs.iter().find(|r| r.start == 5 && r.end == 8);
+    assert!(new_run.is_some(), "expected a new run covering [5, 8)");
+    assert_eq!(new_run.unwrap().color, "#123456");
+}

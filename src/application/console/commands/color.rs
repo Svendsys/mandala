@@ -242,14 +242,18 @@ fn execute_color(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         }
     }
 
-    // Split out the optional `section=N` from the colour kvs. When
-    // present, the verb routes per-section through
-    // `set_section_text_color` rather than the whole-node trait
-    // dispatcher — that's the only setter today that accepts a
-    // section index. `bg` / `border` aren't section-level fields,
-    // so an explicit `section=N` paired with them surfaces a
-    // NotApplicable error rather than silently ignoring the index.
+    // Split out optional `section=N` and `range=A..B` from the
+    // colour kvs. When `section` is present, the verb routes
+    // per-section through `set_section_text_color` rather than
+    // the whole-node trait dispatcher — that's the only setter
+    // today that accepts a section index. When `range` is
+    // additionally present, it routes through the range-aware
+    // sibling `set_section_text_color_range` introduced in N4-B.
+    // `range` without `section` is a usage error: ranges target
+    // grapheme indices inside one section's text, so the section
+    // must be specified first.
     let mut section_target: Option<usize> = None;
+    let mut range_target: Option<(usize, usize)> = None;
     let mut colour_kvs: Vec<(String, String)> = Vec::new();
     for (k, v) in args.kvs() {
         if k == "section" {
@@ -258,6 +262,11 @@ fn execute_color(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                 Err(_) => {
                     return ExecResult::err(format!("color: section='{}' is not a non-negative integer", v));
                 }
+            }
+        } else if k == "range" {
+            match super::range_kv::parse_range_kv(v) {
+                Ok(pair) => range_target = Some(pair),
+                Err(msg) => return ExecResult::err(format!("color: range='{}' — {}", v, msg)),
             }
         } else {
             colour_kvs.push((k.to_string(), v.to_string()));
@@ -269,9 +278,14 @@ fn execute_color(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     if colour_kvs.is_empty() {
         return ExecResult::err("color: section=N requires at least one colour axis (e.g. text=#ff0000)");
     }
+    if range_target.is_some() && section_target.is_none() {
+        return ExecResult::err(
+            "color: range=A..B requires section=N — ranges target grapheme indices inside one section",
+        );
+    }
 
     if let Some(idx) = section_target {
-        return apply_section_colours(eff.document, idx, &colour_kvs);
+        return apply_section_colours(eff.document, idx, range_target, &colour_kvs);
     }
 
     let report = apply_kvs(eff.document, &colour_kvs, |view, key, value| {
@@ -299,6 +313,7 @@ fn execute_color(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
 fn apply_section_colours(
     doc: &mut crate::application::document::MindMapDocument,
     section_idx: usize,
+    range: Option<(usize, usize)>,
     kvs: &[(String, String)],
 ) -> ExecResult {
     let node_id = match doc.selection.clone() {
@@ -323,7 +338,13 @@ fn apply_section_colours(
                     ColorValue::Var(name) => format!("var(--{})", name),
                     ColorValue::Reset => "#ffffff".to_string(),
                 };
-                if doc.set_section_text_color(&node_id, section_idx, resolved) {
+                let applied = match range {
+                    Some((rs, re)) => {
+                        doc.set_section_text_color_range(&node_id, section_idx, rs, re, resolved)
+                    }
+                    None => doc.set_section_text_color(&node_id, section_idx, resolved),
+                };
+                if applied {
                     any_applied = true;
                 }
             }
@@ -337,7 +358,11 @@ fn apply_section_colours(
         }
     }
     if any_applied && messages.is_empty() {
-        return ExecResult::ok_msg(format!("color applied to section {}", section_idx));
+        let scope = match range {
+            Some((rs, re)) => format!("section {} range {}..{}", section_idx, rs, re),
+            None => format!("section {}", section_idx),
+        };
+        return ExecResult::ok_msg(format!("color applied to {}", scope));
     }
     if any_applied {
         return ExecResult::lines(messages);

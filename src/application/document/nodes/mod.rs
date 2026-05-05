@@ -374,6 +374,257 @@ impl MindMapDocument {
         true
     }
 
+    // ── Range-targeted section setters (N4-B) ────────────────────
+    //
+    // Range-aware mirrors of the three uniform-rewrite section
+    // setters above. Each accepts `[range_start, range_end)`
+    // grapheme indices and routes through
+    // `baumhard::mindmap::model::text_run_ops::mutate_in_range`,
+    // which handles split → mutate-in-range → gap-fill → merge.
+    // Console verb path uses these directly (see
+    // `commands/color.rs::apply_section_colours` and
+    // `commands/font.rs`); picker / shift+click trait dispatch
+    // routes are deferred to N4-C alongside the
+    // `SelectionState::SectionRange` variant.
+
+    /// Set the text colour on a sub-range of one section's text.
+    /// Bounded sibling of [`Self::set_section_text_color`] — that
+    /// setter rewrites every run uniformly, this one targets
+    /// `[range_start, range_end)` graphemes only. Ranges that
+    /// partially or wholly cross uncovered gaps fill the gap
+    /// with a fresh run inheriting the section / node cascade
+    /// defaults plus the new colour, so the user's "make these
+    /// graphemes red" intent is honoured even where no run
+    /// exists today.
+    ///
+    /// `range_end` is clamped to the section's grapheme count;
+    /// callers don't need to pre-clamp. No-op when the section
+    /// is missing, the range is empty after clamping, or the
+    /// post-mutation runs are unchanged from the pre-mutation
+    /// runs.
+    pub fn set_section_text_color_range(
+        &mut self,
+        node_id: &str,
+        section_idx: usize,
+        range_start: usize,
+        range_end: usize,
+        color: String,
+    ) -> bool {
+        let (clamped_end, template) = match self
+            .clamp_range_and_build_template(node_id, section_idx, range_end)
+        {
+            Some(pair) => pair,
+            None => return false,
+        };
+        if range_start >= clamped_end {
+            return false;
+        }
+        let mut template = template;
+        template.color = color.clone();
+        let pre = self
+            .mindmap
+            .nodes
+            .get(node_id)
+            .and_then(|n| n.sections.get(section_idx))
+            .map(|s| s.text_runs.clone())
+            .unwrap_or_default();
+        self.mutate_section_with_style_undo(node_id, section_idx, |s| {
+            baumhard::mindmap::model::text_run_ops::mutate_in_range(
+                &mut s.text_runs,
+                range_start,
+                clamped_end,
+                &template,
+                |r| r.color = color.clone(),
+            );
+        });
+        // Detect no-op-after-mutation and unwind the spurious
+        // undo entry. The pre/post compare keeps the undo stack
+        // honest — a range-targeted "set to current colour"
+        // shouldn't push undo.
+        let post = self
+            .mindmap
+            .nodes
+            .get(node_id)
+            .and_then(|n| n.sections.get(section_idx))
+            .map(|s| s.text_runs.clone())
+            .unwrap_or_default();
+        if pre == post {
+            self.undo_stack.pop();
+            return false;
+        }
+        true
+    }
+
+    /// Set the font size on a sub-range of one section's text.
+    /// Triggers the same monotonic `grow_one_node_to_fit_text`
+    /// floor as the whole-section setter — a larger run on one
+    /// range can grow the node.
+    pub fn set_section_font_size_range(
+        &mut self,
+        node_id: &str,
+        section_idx: usize,
+        range_start: usize,
+        range_end: usize,
+        size_pt: f32,
+    ) -> bool {
+        let size_u = size_pt.round().max(1.0) as u32;
+        let (clamped_end, template) = match self
+            .clamp_range_and_build_template(node_id, section_idx, range_end)
+        {
+            Some(pair) => pair,
+            None => return false,
+        };
+        if range_start >= clamped_end {
+            return false;
+        }
+        let mut template = template;
+        template.size_pt = size_u;
+        let pre = self
+            .mindmap
+            .nodes
+            .get(node_id)
+            .and_then(|n| n.sections.get(section_idx))
+            .map(|s| s.text_runs.clone())
+            .unwrap_or_default();
+        let canvas_default = self.mindmap.canvas.default_border.clone();
+        self.mutate_section_with_style_undo(node_id, section_idx, |s| {
+            baumhard::mindmap::model::text_run_ops::mutate_in_range(
+                &mut s.text_runs,
+                range_start,
+                clamped_end,
+                &template,
+                |r| r.size_pt = size_u,
+            );
+        });
+        let post = self
+            .mindmap
+            .nodes
+            .get(node_id)
+            .and_then(|n| n.sections.get(section_idx))
+            .map(|s| s.text_runs.clone())
+            .unwrap_or_default();
+        if pre == post {
+            self.undo_stack.pop();
+            return false;
+        }
+        let node = self
+            .mindmap
+            .nodes
+            .get_mut(node_id)
+            .expect("just confirmed exists");
+        super::grow_one_node_to_fit_text(node);
+        super::grow_one_node_to_fit_border(node, canvas_default.as_ref());
+        true
+    }
+
+    /// Set the font family on a sub-range of one section's text.
+    /// `Some(name)` pins each in-range run to that family;
+    /// `None` clears the pin (empty string = inherit cascade).
+    /// Triggers the same `grow_one_node_to_fit_text` re-measure
+    /// as the whole-section setter — face changes can shift
+    /// advance widths.
+    pub fn set_section_font_family_range(
+        &mut self,
+        node_id: &str,
+        section_idx: usize,
+        range_start: usize,
+        range_end: usize,
+        family: Option<&str>,
+    ) -> bool {
+        let target = family.unwrap_or("").to_string();
+        let (clamped_end, template) = match self
+            .clamp_range_and_build_template(node_id, section_idx, range_end)
+        {
+            Some(pair) => pair,
+            None => return false,
+        };
+        if range_start >= clamped_end {
+            return false;
+        }
+        let mut template = template;
+        template.font = target.clone();
+        let pre = self
+            .mindmap
+            .nodes
+            .get(node_id)
+            .and_then(|n| n.sections.get(section_idx))
+            .map(|s| s.text_runs.clone())
+            .unwrap_or_default();
+        let canvas_default = self.mindmap.canvas.default_border.clone();
+        let target_for_closure = target;
+        self.mutate_section_with_style_undo(node_id, section_idx, |s| {
+            baumhard::mindmap::model::text_run_ops::mutate_in_range(
+                &mut s.text_runs,
+                range_start,
+                clamped_end,
+                &template,
+                |r| r.font = target_for_closure.clone(),
+            );
+        });
+        let post = self
+            .mindmap
+            .nodes
+            .get(node_id)
+            .and_then(|n| n.sections.get(section_idx))
+            .map(|s| s.text_runs.clone())
+            .unwrap_or_default();
+        if pre == post {
+            self.undo_stack.pop();
+            return false;
+        }
+        let node = self
+            .mindmap
+            .nodes
+            .get_mut(node_id)
+            .expect("just confirmed exists");
+        super::grow_one_node_to_fit_text(node);
+        super::grow_one_node_to_fit_border(node, canvas_default.as_ref());
+        true
+    }
+
+    /// Pre-flight for the three range-aware setters: validates
+    /// the section exists, clamps `range_end` to the section's
+    /// grapheme count, and builds the gap-fill template from
+    /// the section / node cascade. Returns
+    /// `Some((clamped_end, template))` on success or `None`
+    /// when the node / section is missing or the section's
+    /// text is empty.
+    ///
+    /// Template strategy: clone the section's first run if any
+    /// (carries the section's effective font / size / style
+    /// attributes); otherwise build from `node.style.text_color`
+    /// + the workspace defaults baked into
+    /// `defaults::default_orphan_node`. Caller overwrites the
+    /// one attribute it's setting before passing the template
+    /// to `mutate_in_range`.
+    fn clamp_range_and_build_template(
+        &self,
+        node_id: &str,
+        section_idx: usize,
+        range_end: usize,
+    ) -> Option<(usize, baumhard::mindmap::model::TextRun)> {
+        let node = self.mindmap.nodes.get(node_id)?;
+        let section = node.sections.get(section_idx)?;
+        let total = baumhard::util::grapheme_chad::count_grapheme_clusters(&section.text);
+        let clamped_end = range_end.min(total);
+        let template = section
+            .text_runs
+            .first()
+            .cloned()
+            .unwrap_or_else(|| baumhard::mindmap::model::TextRun {
+                start: 0,
+                end: 0,
+                bold: false,
+                italic: false,
+                underline: false,
+                font: "LiberationSans".to_string(),
+                size_pt: 24,
+                color: node.style.text_color.clone(),
+                hyperlink: None,
+            });
+        Some((clamped_end, template))
+    }
+
     /// Atomically replace one section's full payload (text +
     /// runs + offset + size + channel + bindings) under a single
     /// `EditNodeStyle` undo entry — a single Ctrl+Z restores the

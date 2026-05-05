@@ -183,6 +183,88 @@ pub fn merge_adjacent_equal(runs: &mut Vec<TextRun>) {
     runs.truncate(write + 1);
 }
 
+/// Apply an attribute change to every grapheme in
+/// `[range_start, range_end)`. The canonical entry point N4-B's
+/// range-targeted setters (`set_section_text_color_range`,
+/// `_font_size_range`, `_font_family_range`) route through.
+///
+/// Algorithm:
+/// 1. `split_at(runs, range_start)` and `split_at(runs, range_end)`
+///    so every run is exact-aligned to the range bounds (each
+///    intersecting run is fully inside or fully outside the
+///    range).
+/// 2. Walk runs whose `[start, end)` lies entirely inside the
+///    range and apply `mutate` — the caller's per-run attribute
+///    change.
+/// 3. Detect gaps inside the range (uncovered grapheme ranges);
+///    fill each by inserting a clone of `template_for_gap` with
+///    `start`/`end` set to the gap bounds.
+/// 4. `merge_adjacent_equal(runs)` to coalesce neighbours that
+///    share style after the rewrite.
+///
+/// `template_for_gap` carries the cascade defaults (font /
+/// size_pt / bold / italic / underline / hyperlink) plus the
+/// new attribute the caller is applying — gap-fill runs render
+/// as if they had been part of the section's default style with
+/// the user's attribute applied. The `start` / `end` fields on
+/// the template are overwritten with each gap's bounds and so
+/// can carry any placeholder values.
+///
+/// No-op when `range_start >= range_end`, when both bounds fall
+/// past the end of every run, or when both bounds land in the
+/// same gap with no runs to mutate (the gap-fill still fires in
+/// that case).
+pub fn mutate_in_range<F>(
+    runs: &mut Vec<TextRun>,
+    range_start: usize,
+    range_end: usize,
+    template_for_gap: &TextRun,
+    mut mutate: F,
+) where
+    F: FnMut(&mut TextRun),
+{
+    if range_start >= range_end {
+        return;
+    }
+    split_at(runs, range_start);
+    split_at(runs, range_end);
+
+    for run in runs.iter_mut() {
+        if run.start >= range_start && run.end <= range_end {
+            mutate(run);
+        }
+    }
+
+    // Detect gaps inside [range_start, range_end). Walk in-range
+    // runs in order; any uncovered span becomes a gap to fill.
+    let mut gaps: Vec<(usize, usize)> = Vec::new();
+    let mut prev_end = range_start;
+    for run in runs.iter() {
+        if run.end <= range_start {
+            continue;
+        }
+        if run.start >= range_end {
+            break;
+        }
+        if run.start > prev_end {
+            gaps.push((prev_end, run.start));
+        }
+        prev_end = run.end;
+    }
+    if prev_end < range_end {
+        gaps.push((prev_end, range_end));
+    }
+
+    for (gap_start, gap_end) in gaps {
+        let mut filler = template_for_gap.clone();
+        filler.start = gap_start;
+        filler.end = gap_end;
+        insert_run(runs, filler);
+    }
+
+    merge_adjacent_equal(runs);
+}
+
 /// Coalesce predicate for [`merge_adjacent_equal`].
 fn style_eq(a: &TextRun, b: &TextRun) -> bool {
     a.bold == b.bold
@@ -566,5 +648,114 @@ mod tests {
         assert_eq!(runs[0].start, 0);
         assert_eq!(runs[0].end, 10);
         assert_eq!(runs[0].color, "red");
+    }
+
+    // ── mutate_in_range ──────────────────────────────────────────
+
+    /// Range entirely inside one run: split at both ends, mutate
+    /// the middle, merge. Pins the simplest composition path.
+    #[test]
+    fn test_mutate_in_range_inside_one_run() {
+        let mut runs = vec![run(0, 10, "red")];
+        let template = run(0, 0, "blue");
+        mutate_in_range(&mut runs, 3, 7, &template, |r| r.color = "blue".into());
+        assert_eq!(runs.len(), 3);
+        assert_eq!(runs[0], run(0, 3, "red"));
+        assert_eq!(runs[1], run(3, 7, "blue"));
+        assert_eq!(runs[2], run(7, 10, "red"));
+    }
+
+    /// Range crosses run boundaries: split + mutate every fully-
+    /// in-range run + merge. The two original runs share a
+    /// boundary, so after mutation they're adjacent same-style
+    /// and merge collapses them.
+    #[test]
+    fn test_mutate_in_range_crosses_boundary_merges() {
+        let mut runs = vec![run(0, 5, "red"), run(5, 10, "green")];
+        let template = run(0, 0, "blue");
+        mutate_in_range(&mut runs, 2, 8, &template, |r| r.color = "blue".into());
+        // Expect: [0..2 red, 2..8 blue, 8..10 green]
+        assert_eq!(runs.len(), 3);
+        assert_eq!(runs[0], run(0, 2, "red"));
+        assert_eq!(runs[1], run(2, 8, "blue"));
+        assert_eq!(runs[2], run(8, 10, "green"));
+    }
+
+    /// Range falls entirely in a gap: only the gap-fill fires,
+    /// no existing run is mutated.
+    #[test]
+    fn test_mutate_in_range_fills_pure_gap() {
+        let mut runs = vec![run(0, 3, "red"), run(15, 20, "green")];
+        let template = run(0, 0, "blue");
+        mutate_in_range(&mut runs, 5, 10, &template, |r| r.color = "blue".into());
+        // Expect: [0..3 red, 5..10 blue, 15..20 green] (gap-fill).
+        assert_eq!(runs.len(), 3);
+        assert_eq!(runs[0], run(0, 3, "red"));
+        assert_eq!(runs[1], run(5, 10, "blue"));
+        assert_eq!(runs[2], run(15, 20, "green"));
+    }
+
+    /// Range partially overlaps a gap: existing run mutated +
+    /// gap-fill for the uncovered portion. Pins the
+    /// no-grapheme-left-behind property.
+    #[test]
+    fn test_mutate_in_range_fills_partial_gap() {
+        let mut runs = vec![run(0, 5, "red")];
+        let template = run(0, 0, "blue");
+        // [3, 8) overlaps run [0, 5) on [3, 5) and gap on [5, 8).
+        mutate_in_range(&mut runs, 3, 8, &template, |r| r.color = "blue".into());
+        // Expect: [0..3 red, 3..8 blue] (3..5 mutated, 5..8 gap-fill,
+        // adjacent same-style merge).
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0], run(0, 3, "red"));
+        assert_eq!(runs[1], run(3, 8, "blue"));
+    }
+
+    /// Range that already exactly matches a run — closure runs
+    /// but no boundary changes. Idempotent in the no-mutate case.
+    #[test]
+    fn test_mutate_in_range_exact_match_idempotent_when_no_op() {
+        let mut runs = vec![run(0, 5, "red"), run(5, 10, "blue")];
+        let template = run(0, 0, "green");
+        mutate_in_range(&mut runs, 5, 10, &template, |r| r.color = r.color.clone());
+        // No actual mutation — runs unchanged after merge.
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0], run(0, 5, "red"));
+        assert_eq!(runs[1], run(5, 10, "blue"));
+    }
+
+    /// Empty range (`start >= end`) is a no-op.
+    #[test]
+    fn test_mutate_in_range_empty_range_is_noop() {
+        let mut runs = vec![run(0, 10, "red")];
+        let template = run(0, 0, "blue");
+        let before = runs.clone();
+        mutate_in_range(&mut runs, 5, 5, &template, |r| r.color = "blue".into());
+        mutate_in_range(&mut runs, 7, 3, &template, |r| r.color = "blue".into());
+        assert_eq!(runs, before);
+    }
+
+    /// Range past the end of every run with no existing runs:
+    /// the gap-fill fires, producing a fresh single run.
+    #[test]
+    fn test_mutate_in_range_fills_when_runs_empty() {
+        let mut runs: Vec<TextRun> = Vec::new();
+        let template = run(0, 0, "blue");
+        mutate_in_range(&mut runs, 0, 5, &template, |r| r.color = "blue".into());
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0], run(0, 5, "blue"));
+    }
+
+    /// User applies the same colour the runs already carry —
+    /// after the mutate-then-merge dance, the runs collapse
+    /// back to their original shape.
+    #[test]
+    fn test_mutate_in_range_no_change_recoalesces() {
+        let mut runs = vec![run(0, 10, "red")];
+        let template = run(0, 0, "red");
+        mutate_in_range(&mut runs, 3, 7, &template, |r| r.color = "red".into());
+        // Mutation was a no-op; merge collapses splits.
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0], run(0, 10, "red"));
     }
 }

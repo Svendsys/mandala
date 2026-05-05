@@ -195,6 +195,7 @@ fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     let mut min: Option<f32> = None;
     let mut max: Option<f32> = None;
     let mut section_target: Option<usize> = None;
+    let mut range_target: Option<(usize, usize)> = None;
     let mut saw_any = false;
     for (k, v) in args.kvs() {
         saw_any = true;
@@ -217,8 +218,22 @@ fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                     return ExecResult::err(format!("font: section='{}' is not a non-negative integer", v));
                 }
             },
+            "range" => match super::range_kv::parse_range_kv(v) {
+                Ok(pair) => range_target = Some(pair),
+                Err(msg) => return ExecResult::err(format!("font: range='{}' — {}", v, msg)),
+            },
             other => return ExecResult::err(format!("unknown key '{}'", other)),
         }
+    }
+    if range_target.is_some() && section_target.is_none() {
+        return ExecResult::err(
+            "font: range=A..B requires section=N — ranges target grapheme indices inside one section",
+        );
+    }
+    if range_target.is_some() && (min.is_some() || max.is_some()) {
+        return ExecResult::err(
+            "font: min/max not applicable to a section range (per-grapheme clamps don't exist)",
+        );
     }
     if !saw_any {
         return ExecResult::err(
@@ -251,7 +266,7 @@ fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         // section's runs; absent, the write applies to every
         // section on the node.
         SelectionState::Single(id) => match section_target {
-            Some(idx) => section_font_outcome(doc, &id, idx, size, min, max),
+            Some(idx) => section_font_outcome(doc, &id, idx, size, min, max, range_target),
             None => node_font_outcome(doc, &id, size, min, max),
         },
         SelectionState::Section(s) => {
@@ -259,7 +274,7 @@ fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             // the active section index; otherwise fall through to
             // the section the user pointed at.
             let idx = section_target.unwrap_or(s.section_idx);
-            section_font_outcome(doc, &s.node_id, idx, size, min, max)
+            section_font_outcome(doc, &s.node_id, idx, size, min, max, range_target)
         }
         SelectionState::Multi(ids) => {
             // Fanout: apply size to each node; collect a single
@@ -349,11 +364,16 @@ fn section_font_outcome(
     size: Option<f32>,
     min: Option<f32>,
     max: Option<f32>,
+    range: Option<(usize, usize)>,
 ) -> ExecResult {
     let mut messages = Vec::new();
     let mut any_applied = false;
     if let Some(pt) = size {
-        if doc.set_section_font_size(id, section_idx, pt) {
+        let applied = match range {
+            Some((rs, re)) => doc.set_section_font_size_range(id, section_idx, rs, re, pt),
+            None => doc.set_section_font_size(id, section_idx, pt),
+        };
+        if applied {
             any_applied = true;
         }
     }
@@ -367,7 +387,11 @@ fn section_font_outcome(
         return ExecResult::lines(messages);
     }
     if any_applied {
-        ExecResult::ok_msg(format!("font applied to section {}", section_idx))
+        let scope = match range {
+            Some((rs, re)) => format!("section {} range {}..{}", section_idx, rs, re),
+            None => format!("section {}", section_idx),
+        };
+        ExecResult::ok_msg(format!("font applied to {}", scope))
     } else {
         ExecResult::ok_msg("font: no change")
     }
@@ -424,11 +448,11 @@ fn execute_font_set(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     // and keeps the surface forgiving.
     let positionals: Vec<&str> = args.positionals().collect();
     if positionals.len() < 2 {
-        return ExecResult::err("usage: font set <family>");
+        return ExecResult::err("usage: font set <family> [section=N] [range=A..B]");
     }
     let family = positionals[1..].join(" ");
     if family.is_empty() {
-        return ExecResult::err("usage: font set <family>");
+        return ExecResult::err("usage: font set <family> [section=N] [range=A..B]");
     }
     // Validate against the loaded family list. Exact-match per
     // `app_font_by_family` semantics — the completion popup feeds
@@ -439,6 +463,69 @@ fn execute_font_set(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             "font: '{}' is not a loaded font; try `font list`",
             family
         ));
+    }
+    // Extract optional `section=N` + `range=A..B`. Both bypass
+    // the trait dispatcher and call the dedicated range / per-
+    // section setters directly — the trait surface doesn't
+    // carry per-section / per-range routing today (deferred to
+    // N4-C alongside `SelectionState::SectionRange`).
+    let mut section_target: Option<usize> = None;
+    let mut range_target: Option<(usize, usize)> = None;
+    for (k, v) in args.kvs() {
+        match k {
+            "section" => match v.parse::<usize>() {
+                Ok(idx) => section_target = Some(idx),
+                Err(_) => {
+                    return ExecResult::err(format!(
+                        "font: section='{}' is not a non-negative integer",
+                        v
+                    ));
+                }
+            },
+            "range" => match super::range_kv::parse_range_kv(v) {
+                Ok(pair) => range_target = Some(pair),
+                Err(msg) => return ExecResult::err(format!("font: range='{}' — {}", v, msg)),
+            },
+            other => return ExecResult::err(format!("font set: unknown key '{}'", other)),
+        }
+    }
+    if range_target.is_some() && section_target.is_none() {
+        return ExecResult::err(
+            "font: range=A..B requires section=N — ranges target grapheme indices inside one section",
+        );
+    }
+    if let (Some(idx), Some((rs, re))) = (section_target, range_target) {
+        let node_id = match eff.document.selection.clone() {
+            SelectionState::Single(id) => id,
+            SelectionState::Section(s) => s.node_id,
+            _ => return ExecResult::err("font: section=N requires a node or section selection"),
+        };
+        let applied = eff
+            .document
+            .set_section_font_family_range(&node_id, idx, rs, re, Some(&family));
+        return if applied {
+            ExecResult::ok_msg(format!(
+                "font set: {} on section {} range {}..{}",
+                family, idx, rs, re
+            ))
+        } else {
+            ExecResult::ok_msg("font: no change")
+        };
+    }
+    if let Some(idx) = section_target {
+        let node_id = match eff.document.selection.clone() {
+            SelectionState::Single(id) => id,
+            SelectionState::Section(s) => s.node_id,
+            _ => return ExecResult::err("font: section=N requires a node or section selection"),
+        };
+        let applied = eff
+            .document
+            .set_section_font_family(&node_id, idx, Some(&family));
+        return if applied {
+            ExecResult::ok_msg(format!("font set: {} on section {}", family, idx))
+        } else {
+            ExecResult::ok_msg("font: no change")
+        };
     }
     let report = apply_to_targets(eff.document, |view| view.set_font_family(Some(&family)));
     if report.all_failed {
