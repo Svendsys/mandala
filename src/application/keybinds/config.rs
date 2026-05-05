@@ -189,6 +189,15 @@ pub struct KeybindConfig {
     pub set_zoom: Vec<ParametricBinding>,
     /// Unit variant — `args` is ignored, only `combo` matters.
     pub clear_zoom: Vec<ParametricBinding>,
+    /// `args = [dx, dy]` parsed as f64. Maps to
+    /// [`Action::SetSectionOffsetDelta`].
+    pub set_section_offset_delta: Vec<ParametricBinding>,
+    /// `args = [w, h]` parsed as f64. Maps to
+    /// [`Action::SetSectionSizeAbs`].
+    pub set_section_size_abs: Vec<ParametricBinding>,
+    /// Unit variant — `args` ignored. Maps to
+    /// [`Action::SetSectionSizeFillParent`].
+    pub set_section_size_fill_parent: Vec<ParametricBinding>,
     /// Filesystem-touching parametric variants — NativeOnly +
     /// denylisted from non-User macro tiers (see
     /// `MacroSource::allows_action`).
@@ -382,6 +391,9 @@ impl Default for KeybindConfig {
             set_spacing: vec![],
             set_zoom: vec![],
             clear_zoom: vec![],
+            set_section_offset_delta: vec![],
+            set_section_size_abs: vec![],
+            set_section_size_fill_parent: vec![],
             open_document: vec![],
             save_document_as: vec![],
             new_document_at: vec![],
@@ -690,6 +702,42 @@ impl KeybindConfig {
             [] => Some(Action::ClearZoom),
             _ => None,
         });
+        push_parametric(
+            &mut binds,
+            "set_section_offset_delta",
+            2,
+            &self.set_section_offset_delta,
+            |args| match args {
+                [dx, dy] => Some(Action::SetSectionOffsetDelta {
+                    dx: dx.clone(),
+                    dy: dy.clone(),
+                }),
+                _ => None,
+            },
+        );
+        push_parametric(
+            &mut binds,
+            "set_section_size_abs",
+            2,
+            &self.set_section_size_abs,
+            |args| match args {
+                [w, h] => Some(Action::SetSectionSizeAbs {
+                    w: w.clone(),
+                    h: h.clone(),
+                }),
+                _ => None,
+            },
+        );
+        push_parametric(
+            &mut binds,
+            "set_section_size_fill_parent",
+            0,
+            &self.set_section_size_fill_parent,
+            |args| match args {
+                [] => Some(Action::SetSectionSizeFillParent),
+                _ => None,
+            },
+        );
         // Filesystem variants — NativeOnly + privilege-gated.
         push_parametric(
             &mut binds,

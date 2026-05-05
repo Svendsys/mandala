@@ -576,6 +576,23 @@ pub enum Action {
     /// variant — no payload.
     #[action(context = Document, wasm = Compatible)]
     ClearZoom,
+    /// Mirror `section move <dx> <dy>` — nudge the selected
+    /// section by `(dx, dy)` canvas units. Keybind / macro path
+    /// for the per-frame-safe section move. AABB rejection on
+    /// overflow surfaces as a `log::warn!` and no-op. `dx` /
+    /// `dy` are parsed at dispatch time (Action enum needs
+    /// Hash + Eq, so f64 can't ride directly).
+    #[action(context = Document, wasm = Compatible)]
+    SetSectionOffsetDelta { dx: String, dy: String },
+    /// Mirror `section resize <w> <h>` — pin the selected
+    /// section's size to `(w, h)`. Same AABB validation as the
+    /// verb path. `w` / `h` are parsed at dispatch time.
+    #[action(context = Document, wasm = Compatible)]
+    SetSectionSizeAbs { w: String, h: String },
+    /// Mirror `section resize none` — flip the selected section
+    /// back to fill-parent (`size = None`).
+    #[action(context = Document, wasm = Compatible)]
+    SetSectionSizeFillParent,
     /// Mirror `open <path>` — replace the current document with the
     /// one loaded from `path`. **NativeOnly** + **destructive**:
     /// touches the filesystem. Denylisted for non-User macro tiers

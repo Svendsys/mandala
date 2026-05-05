@@ -310,6 +310,30 @@ pub(in crate::application::app) fn dispatch_compatible(
             });
         }
         Action::ClearZoom => with_doc_rebuild(core, |rc| super::cross_dispatch::apply_clear_zoom(rc)),
+        Action::SetSectionOffsetDelta { dx, dy } => {
+            let (Some(dx_v), Some(dy_v)) = (dx.parse::<f64>().ok(), dy.parse::<f64>().ok()) else {
+                log::warn!("SetSectionOffsetDelta: invalid dx='{}' or dy='{}'", dx, dy);
+                return DispatchOutcome::Handled;
+            };
+            with_doc_rebuild(core, |rc| {
+                super::cross_dispatch::apply_set_section_offset_delta(dx_v, dy_v, rc)
+            });
+        }
+        Action::SetSectionSizeAbs { w, h } => {
+            let (Some(w_v), Some(h_v)) = (w.parse::<f64>().ok(), h.parse::<f64>().ok()) else {
+                log::warn!("SetSectionSizeAbs: invalid w='{}' or h='{}'", w, h);
+                return DispatchOutcome::Handled;
+            };
+            with_doc_rebuild(core, |rc| {
+                super::cross_dispatch::apply_set_section_size(
+                    Some(baumhard::mindmap::model::Size { width: w_v, height: h_v }),
+                    rc,
+                )
+            });
+        }
+        Action::SetSectionSizeFillParent => with_doc_rebuild(core, |rc| {
+            super::cross_dispatch::apply_set_section_size(None, rc)
+        }),
         // ── Clipboard ─────────────────────────────────────────
         // Compatible because `clipboard::{read,write}_clipboard`
         // are logged stubs on WASM (pending async-clipboard) and
