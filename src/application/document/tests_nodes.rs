@@ -355,24 +355,25 @@ fn test_set_node_size_writes_and_round_trips_through_undo() {
 
 /// Setter applies `grow_one_node_to_fit_text` after the size
 /// write, so a request below the measured-text floor lands at
-/// the floor rather than the requested value. This is the
-/// "shrink rejected up-front" semantic until Tier 2C-N2 ships
-/// auto-fit-shrink. Pin the floor-respect contract.
+/// the floor rather than the requested value.
 #[test]
 fn test_set_node_size_below_text_floor_lands_at_floor() {
     use baumhard::mindmap::model::Size;
     let mut doc = load_test_doc();
     let id = first_testament_node_id(&doc);
-    // Request a tiny size; floor pulls it back up.
     let tiny = Size {
         width: 5.0,
         height: 5.0,
     };
     assert_eq!(doc.set_node_size(&id, tiny), Ok(true));
     let after = doc.mindmap.nodes[&id].size;
+    // Both axes must clear the requested tiny floor — a
+    // regression that grows only one axis is the exact bug
+    // shape we're guarding against.
     assert!(
-        after.width >= 5.0 || after.height >= 5.0,
-        "floor-respect pass should grow above the tiny target"
+        after.width > 5.0 && after.height > 5.0,
+        "floor-respect must grow both axes above the tiny target ({}x{})",
+        after.width, after.height
     );
 }
 

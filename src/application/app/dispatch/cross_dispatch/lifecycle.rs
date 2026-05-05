@@ -253,7 +253,7 @@ pub(in crate::application::app) fn apply_paste(rc: &mut RebuildContext<'_>) {
     };
     let targets = selection_targets(&rc.document.selection);
     let fragments = split_paste_for_targets(&text, targets.len());
-    if fragments.is_none() && targets.len() > 1 {
+    if is_broadcast_paste(fragments.is_none(), targets.len()) {
         crate::application::clipboard::clear_section_clipboard();
     }
     let mut any_applied = false;
@@ -286,6 +286,14 @@ pub(in crate::application::app) fn apply_paste(rc: &mut RebuildContext<'_>) {
 /// happens to match by coincidence will round-trip; that's
 /// indistinguishable from a Mandala copy by content alone, so the
 /// behaviour matches what the user typed on the source side.
+/// True when a paste must clear the structured section buffer:
+/// fragments couldn't be split per-target AND there's more than
+/// one target. Without the clear, a stale single-section payload
+/// would broadcast its non-text fields to every target.
+fn is_broadcast_paste(fragments_is_none: bool, target_count: usize) -> bool {
+    fragments_is_none && target_count > 1
+}
+
 fn split_paste_for_targets(text: &str, target_count: usize) -> Option<Vec<&str>> {
     if target_count <= 1 {
         return None;
@@ -507,77 +515,18 @@ mod tests {
     /// broadcast path, every per-target `clipboard_paste`
     /// would byte-equal-probe the stale buffer and apply the
     /// same `SectionPayload` (offset / size / channel /
-    /// trigger_bindings) to every target — silent data
-    /// corruption with two distinct sections ending up at the
-    /// same offset.
-    ///
-    /// Pins the cross-tier interaction the PR-wide review
-    /// flagged: the section-payload buffer must not survive
-    /// into a broadcast paste.
+    /// `is_broadcast_paste` predicate that gates the
+    /// structured-buffer clear inside `apply_paste`. True only
+    /// when fragments couldn't be split AND there are 2+
+    /// targets — a stale single-section payload would otherwise
+    /// broadcast its non-text fields to every target.
     #[test]
-    fn test_paste_broadcast_clears_stale_section_buffer() {
-        use crate::application::clipboard::{
-            read_section_clipboard, write_section_clipboard,
-        };
-        use crate::application::document::SectionPayload;
-
-        clear_section_clipboard();
-        // Seed a stale single-section payload that would
-        // otherwise survive into the broadcast path.
-        let payload = SectionPayload {
-            text_runs: Vec::new(),
-            offset: baumhard::mindmap::model::Position { x: 99.0, y: 99.0 },
-            size: None,
-            channel: None,
-            trigger_bindings: Vec::new(),
-        };
-        write_section_clipboard("anything".into(), payload);
-        assert!(read_section_clipboard("anything").is_some());
-
-        // Simulate `apply_paste`'s broadcast guard: when
-        // fragments is None AND targets.len() > 1, clear the
-        // structured buffer up-front.
-        let fragments: Option<Vec<&str>> = None;
-        let target_count: usize = 2;
-        if fragments.is_none() && target_count > 1 {
-            clear_section_clipboard();
-        }
-        assert!(
-            read_section_clipboard("anything").is_none(),
-            "broadcast guard must clear the structured buffer"
-        );
-    }
-
-    /// Single-target paste does NOT clear the structured
-    /// buffer — the buffer is exactly what the within-app
-    /// section→section round-trip relies on. Pins that the
-    /// broadcast guard's `targets.len() > 1` predicate is
-    /// load-bearing.
-    #[test]
-    fn test_paste_single_target_preserves_structured_buffer() {
-        use crate::application::clipboard::{
-            read_section_clipboard, write_section_clipboard,
-        };
-        use crate::application::document::SectionPayload;
-
-        clear_section_clipboard();
-        let payload = SectionPayload {
-            text_runs: Vec::new(),
-            offset: baumhard::mindmap::model::Position { x: 0.0, y: 0.0 },
-            size: None,
-            channel: None,
-            trigger_bindings: Vec::new(),
-        };
-        write_section_clipboard("probe".into(), payload);
-
-        let fragments: Option<Vec<&str>> = None;
-        let target_count: usize = 1;
-        if fragments.is_none() && target_count > 1 {
-            clear_section_clipboard();
-        }
-        assert!(
-            read_section_clipboard("probe").is_some(),
-            "single-target paste must preserve structured buffer"
-        );
+    fn test_is_broadcast_paste_predicate() {
+        use super::is_broadcast_paste;
+        assert!(is_broadcast_paste(true, 2));
+        assert!(is_broadcast_paste(true, 5));
+        assert!(!is_broadcast_paste(true, 1));
+        assert!(!is_broadcast_paste(false, 2));
+        assert!(!is_broadcast_paste(false, 1));
     }
 }
