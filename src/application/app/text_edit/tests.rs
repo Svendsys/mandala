@@ -832,3 +832,79 @@ fn test_lift_anchor_returns_none_when_anchor_equals_cursor() {
     let lifted = lift_anchor_to_section_range(Some(5), 5, "node-1", 0);
     assert!(lifted.is_none());
 }
+
+// ── Literal-char insertion clears anchor (N4-C.b.2.1) ────────────
+
+/// Typing a printable character while a shift-select range is
+/// active drops the anchor. Without this the editor close path
+/// would lift a stale `(anchor, cursor)` pair pointing at
+/// shifted-around graphemes — N4-C.b.2.1 Major #1.
+#[test]
+fn test_literal_char_typing_clears_anchor() {
+    use super::editor::apply_literal_char_insert;
+    use winit::keyboard::Key;
+    let mut s = open_editor_state("abcdef", 3);
+    // Seed an anchor by pretending the user shift-selected
+    // forward by one grapheme.
+    if let TextEditState::Open {
+        selection_anchor, ..
+    } = &mut s
+    {
+        *selection_anchor = Some(2);
+    }
+    // Now type a literal `x`.
+    let changed = apply_literal_char_insert(
+        None,
+        &Key::Character("x".into()),
+        &mut s,
+    );
+    assert!(changed);
+    let (_, anchor) = cursor_and_anchor(&s);
+    assert_eq!(anchor, None, "literal-char typing must clear anchor");
+}
+
+/// Pressing Enter while a shift-select range is active drops
+/// the anchor (mirror of the printable-char branch).
+#[test]
+fn test_literal_enter_clears_anchor() {
+    use super::editor::apply_literal_char_insert;
+    use winit::keyboard::Key;
+    let mut s = open_editor_state("abcdef", 3);
+    if let TextEditState::Open {
+        selection_anchor, ..
+    } = &mut s
+    {
+        *selection_anchor = Some(2);
+    }
+    let changed = apply_literal_char_insert(
+        Some("enter"),
+        &Key::Named(winit::keyboard::NamedKey::Enter),
+        &mut s,
+    );
+    assert!(changed);
+    let (_, anchor) = cursor_and_anchor(&s);
+    assert_eq!(anchor, None, "literal-Enter must clear anchor");
+}
+
+/// Pressing Tab while a shift-select range is active drops the
+/// anchor.
+#[test]
+fn test_literal_tab_clears_anchor() {
+    use super::editor::apply_literal_char_insert;
+    use winit::keyboard::Key;
+    let mut s = open_editor_state("abcdef", 3);
+    if let TextEditState::Open {
+        selection_anchor, ..
+    } = &mut s
+    {
+        *selection_anchor = Some(2);
+    }
+    let changed = apply_literal_char_insert(
+        Some("tab"),
+        &Key::Named(winit::keyboard::NamedKey::Tab),
+        &mut s,
+    );
+    assert!(changed);
+    let (_, anchor) = cursor_and_anchor(&s);
+    assert_eq!(anchor, None, "literal-Tab must clear anchor");
+}

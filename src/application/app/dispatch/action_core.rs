@@ -372,6 +372,12 @@ pub(in crate::application::app) fn dispatch_compatible(
         | Action::TextEditCursorDown
         | Action::TextEditCursorHome
         | Action::TextEditCursorEnd
+        | Action::TextEditCursorLeftSelect
+        | Action::TextEditCursorRightSelect
+        | Action::TextEditCursorUpSelect
+        | Action::TextEditCursorDownSelect
+        | Action::TextEditCursorHomeSelect
+        | Action::TextEditCursorEndSelect
         | Action::TextEditDeleteBack
         | Action::TextEditDeleteForward
         | Action::TextEditWordLeft

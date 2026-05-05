@@ -392,7 +392,24 @@ fn section_font_outcome(
     let mut any_applied = false;
     if let Some(pt) = size {
         let applied = match range {
-            Some((rs, re)) => doc.set_section_font_size_range(id, section_idx, rs, re, pt),
+            Some((rs, re)) => {
+                let ok = doc.set_section_font_size_range(id, section_idx, rs, re, pt);
+                if !ok {
+                    // Mirror the picker path's stale-range diagnostic
+                    // (see `color_picker_flow::commit`). Pre-flight
+                    // already catches `rs >= total`; a `false` here
+                    // means `range_end` extends past the section's
+                    // grapheme count or the section was deleted.
+                    log::warn!(
+                        "font verb on section {} of node {} \
+                         range {}..{} produced no change \
+                         (range may extend past the section's \
+                         grapheme count or section was deleted)",
+                        section_idx, id, rs, re
+                    );
+                }
+                ok
+            }
             None => doc.set_section_font_size(id, section_idx, pt),
         };
         if applied {

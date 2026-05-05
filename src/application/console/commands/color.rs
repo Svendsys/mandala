@@ -378,7 +378,28 @@ fn apply_section_colours(
                 };
                 let applied = match range {
                     Some((rs, re)) => {
-                        doc.set_section_text_color_range(&node_id, section_idx, rs, re, resolved)
+                        let ok = doc.set_section_text_color_range(
+                            &node_id, section_idx, rs, re, resolved,
+                        );
+                        if !ok {
+                            // Mirror the picker path's stale-range
+                            // diagnostic: the pre-flight `rs >= total`
+                            // check above already rejects ranges past
+                            // the section's grapheme count, so a
+                            // `false` here means either the node /
+                            // section was deleted concurrently or
+                            // `range_end` exceeds total. Surface so
+                            // it doesn't silently land as
+                            // "color: no change".
+                            log::warn!(
+                                "color verb on section {} of node {} \
+                                 range {}..{} produced no change \
+                                 (range may extend past the section's \
+                                 grapheme count or section was deleted)",
+                                section_idx, node_id, rs, re
+                            );
+                        }
+                        ok
                     }
                     None => doc.set_section_text_color(&node_id, section_idx, resolved),
                 };

@@ -329,7 +329,17 @@ impl super::WasmApp {
                 let _ = dispatch::action_core::dispatch_compatible(&Action::TextEditCommit, &mut core);
             }
             self.suppress_keys.set(false);
-            return;
+            // Fall through to the click-target selection
+            // update below — same as native's
+            // `event_mouse_click.rs` flow (commit then
+            // `handle_click`). Without this, the
+            // editor-commit path's `lift_anchor_to_section_range`
+            // leaves `SelectionState::SectionRange` standing
+            // even though the user clicked away to a different
+            // node. Drop the renderer borrow first so the
+            // re-borrow at the bottom of this function
+            // doesn't panic.
+            drop(renderer_borrow);
         }
 
         // Fire any `OnClick` triggers BEFORE the selection
