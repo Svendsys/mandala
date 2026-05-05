@@ -119,6 +119,7 @@ fn test_double_click_guard_skips_same_target_when_editor_open() {
         buffer_regions: baumhard::core::primitives::ColorFontRegions::new_empty(),
         original_text: String::new(),
         original_regions: baumhard::core::primitives::ColorFontRegions::new_empty(),
+        selection_anchor: None,
     };
     let hit = Some("node-A".to_string());
     let already_editing = editor
@@ -138,6 +139,7 @@ fn test_double_click_guard_allows_different_target_when_editor_open() {
         buffer_regions: baumhard::core::primitives::ColorFontRegions::new_empty(),
         original_text: String::new(),
         original_regions: baumhard::core::primitives::ColorFontRegions::new_empty(),
+        selection_anchor: None,
     };
     let hit = Some("node-B".to_string());
     let already_editing = editor

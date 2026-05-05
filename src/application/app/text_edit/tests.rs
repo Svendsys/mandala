@@ -310,6 +310,7 @@ fn test_text_edit_state_node_id_round_trip() {
         buffer_regions: baumhard::core::primitives::ColorFontRegions::new_empty(),
         original_text: String::new(),
         original_regions: baumhard::core::primitives::ColorFontRegions::new_empty(),
+        selection_anchor: None,
     };
     assert_eq!(open.node_id(), Some("n-42"));
     assert!(open.is_open());
@@ -465,6 +466,7 @@ fn make_open_state(buffer: &str, cursor: usize) -> TextEditState {
         buffer_regions: baumhard::core::primitives::ColorFontRegions::new_empty(),
         original_text: String::new(),
         original_regions: baumhard::core::primitives::ColorFontRegions::new_empty(),
+        selection_anchor: None,
     }
 }
 
@@ -666,4 +668,167 @@ fn test_delete_before_cursor_removes_whole_zwj_family() {
     let new_cursor = delete_before_cursor(&mut s, 1);
     assert_eq!(s, "A", "ZWJ family must be deleted as one cluster");
     assert_eq!(new_cursor, 0);
+}
+
+// ── Shift-select anchor lifecycle (N4-C.b.2) ─────────────────────
+
+/// Helper: build an open editor state with a specific buffer
+/// and cursor position, no anchor set yet.
+fn open_editor_state(buffer: &str, cursor: usize) -> TextEditState {
+    TextEditState::Open {
+        node_id: "n-1".into(),
+        section_idx: 0,
+        buffer: buffer.into(),
+        cursor_grapheme_pos: cursor,
+        buffer_regions: baumhard::core::primitives::ColorFontRegions::new_empty(),
+        original_text: buffer.into(),
+        original_regions: baumhard::core::primitives::ColorFontRegions::new_empty(),
+        selection_anchor: None,
+    }
+}
+
+/// Read `(cursor, anchor)` out of an open editor state for
+/// assertion convenience. Panics on `Closed`.
+fn cursor_and_anchor(state: &TextEditState) -> (usize, Option<usize>) {
+    match state {
+        TextEditState::Open {
+            cursor_grapheme_pos,
+            selection_anchor,
+            ..
+        } => (*cursor_grapheme_pos, *selection_anchor),
+        _ => panic!("editor closed"),
+    }
+}
+
+/// First shift-cursor action seeds the anchor at the
+/// pre-action cursor position and moves the cursor.
+#[test]
+fn test_shift_cursor_seeds_anchor_at_pre_action_cursor() {
+    use crate::application::keybinds::Action;
+    let mut s = open_editor_state("abcdef", 3);
+    apply_text_edit_action(Action::TextEditCursorRightSelect, &mut s);
+    let (cursor, anchor) = cursor_and_anchor(&s);
+    assert_eq!(cursor, 4);
+    assert_eq!(anchor, Some(3));
+}
+
+/// Subsequent shift-cursor actions extend the cursor without
+/// disturbing the anchor.
+#[test]
+fn test_subsequent_shift_cursor_preserves_anchor() {
+    use crate::application::keybinds::Action;
+    let mut s = open_editor_state("abcdef", 3);
+    apply_text_edit_action(Action::TextEditCursorRightSelect, &mut s);
+    apply_text_edit_action(Action::TextEditCursorRightSelect, &mut s);
+    let (cursor, anchor) = cursor_and_anchor(&s);
+    assert_eq!(cursor, 5);
+    assert_eq!(anchor, Some(3));
+}
+
+/// Non-shift cursor action collapses the selection: the anchor
+/// drops to `None` and the cursor moves normally.
+#[test]
+fn test_non_shift_cursor_clears_anchor() {
+    use crate::application::keybinds::Action;
+    let mut s = open_editor_state("abcdef", 3);
+    apply_text_edit_action(Action::TextEditCursorRightSelect, &mut s);
+    apply_text_edit_action(Action::TextEditCursorLeft, &mut s);
+    let (cursor, anchor) = cursor_and_anchor(&s);
+    assert_eq!(cursor, 3);
+    assert_eq!(anchor, None);
+}
+
+/// Text edits (delete / type) clear the anchor — range-aware
+/// editing is deferred. Pin the simpler "anchor only lives
+/// across cursor-key sequences" invariant so it doesn't drift.
+#[test]
+fn test_text_edit_action_clears_anchor() {
+    use crate::application::keybinds::Action;
+    let mut s = open_editor_state("abcdef", 3);
+    apply_text_edit_action(Action::TextEditCursorRightSelect, &mut s);
+    apply_text_edit_action(Action::TextEditDeleteBack, &mut s);
+    let (_, anchor) = cursor_and_anchor(&s);
+    assert_eq!(anchor, None);
+}
+
+/// Shift-cursor on the anchor's own position is a degenerate
+/// case: anchor is set, cursor moves backward, post-action
+/// `cursor < anchor` is the canonical "selection from anchor
+/// down to cursor" shape. Pin both directions to confirm the
+/// (anchor, cursor) pair commutes correctly.
+#[test]
+fn test_shift_cursor_left_seeds_anchor_above_cursor() {
+    use crate::application::keybinds::Action;
+    let mut s = open_editor_state("abcdef", 3);
+    apply_text_edit_action(Action::TextEditCursorLeftSelect, &mut s);
+    let (cursor, anchor) = cursor_and_anchor(&s);
+    assert_eq!(cursor, 2);
+    assert_eq!(anchor, Some(3));
+}
+
+/// Shift+Home seeds anchor and jumps cursor to start of line.
+#[test]
+fn test_shift_home_seeds_anchor_at_line_start() {
+    use crate::application::keybinds::Action;
+    let mut s = open_editor_state("abcdef", 4);
+    apply_text_edit_action(Action::TextEditCursorHomeSelect, &mut s);
+    let (cursor, anchor) = cursor_and_anchor(&s);
+    assert_eq!(cursor, 0);
+    assert_eq!(anchor, Some(4));
+}
+
+// ── Editor close → SectionRange lift (N4-C.b.2) ──────────────────
+
+/// `lift_anchor_to_section_range` returns `Some(SectionRange)`
+/// when an anchor is set and differs from cursor. The range is
+/// the half-open `[min, max)` regardless of which side is the
+/// anchor — pin both `cursor > anchor` and `cursor < anchor`
+/// shapes.
+#[test]
+fn test_lift_anchor_returns_section_range_when_anchor_below_cursor() {
+    use super::editor::lift_anchor_to_section_range;
+    use crate::application::document::SelectionState;
+    let lifted =
+        lift_anchor_to_section_range(Some(3), 7, "node-1", 2).expect("anchor != cursor → lift");
+    match lifted {
+        SelectionState::SectionRange { sel, range } => {
+            assert_eq!(sel.node_id, "node-1");
+            assert_eq!(sel.section_idx, 2);
+            assert_eq!(range, (3, 7));
+        }
+        _ => panic!("expected SectionRange"),
+    }
+}
+
+#[test]
+fn test_lift_anchor_returns_section_range_when_anchor_above_cursor() {
+    use super::editor::lift_anchor_to_section_range;
+    use crate::application::document::SelectionState;
+    let lifted =
+        lift_anchor_to_section_range(Some(7), 3, "node-1", 2).expect("anchor != cursor → lift");
+    match lifted {
+        SelectionState::SectionRange { range, .. } => assert_eq!(range, (3, 7)),
+        _ => panic!("expected SectionRange"),
+    }
+}
+
+/// `lift_anchor_to_section_range` returns `None` when the
+/// anchor is unset (no shift-select happened during the editor
+/// session) — the existing `Section` selection from open time
+/// stays in place.
+#[test]
+fn test_lift_anchor_returns_none_when_anchor_unset() {
+    use super::editor::lift_anchor_to_section_range;
+    let lifted = lift_anchor_to_section_range(None, 7, "node-1", 0);
+    assert!(lifted.is_none());
+}
+
+/// `lift_anchor_to_section_range` returns `None` when the
+/// anchor coincides with the cursor — the user pressed shift-
+/// arrow then arrowed back, collapsing the selection.
+#[test]
+fn test_lift_anchor_returns_none_when_anchor_equals_cursor() {
+    use super::editor::lift_anchor_to_section_range;
+    let lifted = lift_anchor_to_section_range(Some(5), 5, "node-1", 0);
+    assert!(lifted.is_none());
 }

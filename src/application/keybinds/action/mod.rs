@@ -406,6 +406,31 @@ pub enum Action {
     /// Jump cursor to the end of the current line.
     #[action(context = TextEdit, wasm = Compatible)]
     TextEditCursorEnd,
+
+    // ── TextEdit shift-select cursor primitives (TextEdit
+    // context). Same as their non-`Select` siblings, but they
+    // additionally seed the editor's `selection_anchor` (if
+    // unset) so the (anchor, cursor) pair defines a sub-range
+    // that lifts to `SelectionState::SectionRange` on close.
+    /// Extend selection one grapheme left.
+    #[action(context = TextEdit, wasm = Compatible)]
+    TextEditCursorLeftSelect,
+    /// Extend selection one grapheme right.
+    #[action(context = TextEdit, wasm = Compatible)]
+    TextEditCursorRightSelect,
+    /// Extend selection one visual line up.
+    #[action(context = TextEdit, wasm = Compatible)]
+    TextEditCursorUpSelect,
+    /// Extend selection one visual line down.
+    #[action(context = TextEdit, wasm = Compatible)]
+    TextEditCursorDownSelect,
+    /// Extend selection to the start of the current line.
+    #[action(context = TextEdit, wasm = Compatible)]
+    TextEditCursorHomeSelect,
+    /// Extend selection to the end of the current line.
+    #[action(context = TextEdit, wasm = Compatible)]
+    TextEditCursorEndSelect,
+
     /// Move cursor one word left.
     #[action(context = TextEdit, wasm = Compatible)]
     TextEditWordLeft,

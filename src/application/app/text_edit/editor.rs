@@ -95,6 +95,7 @@ pub(in crate::application::app) fn open_text_edit(
         buffer_regions: buffer_regions.clone(),
         original_text,
         original_regions,
+        selection_anchor: None,
     };
     // Push the initial (caret-only for creation, or "existing text +
     // caret at end" for edit) through the Baumhard mutation pipeline.
@@ -234,6 +235,38 @@ pub(in crate::application::app) fn revert_node_text_on_tree(
 ///   needed. This skips the `doc.build_tree()` walk and the full
 ///   `rebuild_scene_only` (connections, borders, portals, labels,
 ///   edge handles), which matters on maps with many nodes.
+/// Decide whether the editor's `(anchor, cursor)` pair should
+/// promote the document selection to `SelectionState::SectionRange`
+/// at close time. Pure function — extracted from `close_text_edit`'s
+/// inline logic so the lift contract can be unit-tested without
+/// the full renderer / tree / scene plumbing.
+///
+/// Returns `Some(new_sel)` when `anchor.is_some()` AND
+/// `anchor != cursor` — the range is the half-open
+/// `[min(anchor, cursor), max(anchor, cursor))`. Returns `None`
+/// when the anchor is unset or coincides with the cursor (no
+/// shift-select happened, or the shift-select collapsed back).
+pub(in crate::application::app) fn lift_anchor_to_section_range(
+    selection_anchor: Option<usize>,
+    cursor_grapheme_pos: usize,
+    node_id: &str,
+    section_idx: usize,
+) -> Option<crate::application::document::SelectionState> {
+    let anchor = selection_anchor?;
+    if anchor == cursor_grapheme_pos {
+        return None;
+    }
+    let start = anchor.min(cursor_grapheme_pos);
+    let end = anchor.max(cursor_grapheme_pos);
+    Some(crate::application::document::SelectionState::SectionRange {
+        sel: crate::application::document::SectionSel {
+            node_id: node_id.to_string(),
+            section_idx,
+        },
+        range: (start, end),
+    })
+}
+
 pub(in crate::application::app) fn close_text_edit(
     commit: bool,
     doc: &mut MindMapDocument,
@@ -248,21 +281,47 @@ pub(in crate::application::app) fn close_text_edit(
             node_id,
             section_idx,
             buffer,
+            cursor_grapheme_pos,
             buffer_regions,
             original_text,
             original_regions,
-            ..
+            selection_anchor,
         } => (
             node_id,
             section_idx,
             buffer,
+            cursor_grapheme_pos,
             buffer_regions,
             original_text,
             original_regions,
+            selection_anchor,
         ),
         TextEditState::Closed => return,
     };
-    let (node_id, section_idx, buffer, buffer_regions, original_text, original_regions) = snapshot;
+    let (
+        node_id,
+        section_idx,
+        buffer,
+        cursor_grapheme_pos,
+        buffer_regions,
+        original_text,
+        original_regions,
+        selection_anchor,
+    ) = snapshot;
+    // Editor close lifts a non-empty shift-select anchor to
+    // `SelectionState::SectionRange` so per-section verbs
+    // (color text, font size, font family) target only the
+    // shift-selected graphemes. Lift on both commit AND cancel
+    // — the anchor reflects the user's range intent regardless
+    // of whether they kept their typing edits.
+    if let Some(new_sel) = lift_anchor_to_section_range(
+        selection_anchor,
+        cursor_grapheme_pos,
+        &node_id,
+        section_idx,
+    ) {
+        doc.selection = new_sel;
+    }
     if commit {
         // Section-aware commit. The editor records both the
         // section index *and* the per-grapheme `buffer_regions`
