@@ -317,27 +317,15 @@ pub(in crate::application::app) fn dispatch_compatible(
         // on both targets.
         Action::Copy => {
             if let Some(doc) = core.document.as_deref_mut() {
-                let any_accepted = super::cross_dispatch::apply_copy_or_cut(false, doc);
-                if !any_accepted {
-                    super::cross_dispatch::log_clipboard_skip_for_section_range(
-                        &doc.selection,
-                        "Copy",
-                    );
-                }
+                let _ = super::cross_dispatch::apply_copy_or_cut(false, doc);
             }
         }
-        // Cut mutates the source component's text — the dispatcher
-        // routes through `with_doc_rebuild` and gates the rebuild
-        // on at least one target accepting the cut, mirroring the
-        // `apply_paste` shape.
+        // Cut mutates the source component's text — gate the
+        // rebuild on at least one target accepting the cut,
+        // mirroring the `apply_paste` shape.
         Action::Cut => with_doc_rebuild(core, |rc| {
             if super::cross_dispatch::apply_copy_or_cut(true, rc.document) {
                 rc.rebuild_after_geometry_change();
-            } else {
-                super::cross_dispatch::log_clipboard_skip_for_section_range(
-                    &rc.document.selection,
-                    "Cut",
-                );
             }
         }),
         Action::Paste => with_doc_rebuild(core, |rc| super::cross_dispatch::apply_paste(rc)),

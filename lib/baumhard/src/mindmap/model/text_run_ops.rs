@@ -199,6 +199,46 @@ pub fn mutate_in_range<F>(
     merge_adjacent_equal(runs);
 }
 
+/// Splice over `[start, end)`: drop runs (or partials) inside
+/// the range, shift later runs by `replacement_len -
+/// (end - start)`, and (when `replacement_len > 0`) insert one
+/// fresh run carrying `template`'s style at `[start,
+/// start + replacement_len)`. The canonical entry point for
+/// range-aware Cut (`replacement_len = 0`) and range-aware
+/// Paste (`replacement_len = grapheme_count(content)`).
+pub fn splice_range(
+    runs: &mut Vec<TextRun>,
+    start: usize,
+    end: usize,
+    replacement_len: usize,
+    template: &TextRun,
+) {
+    debug_assert_invariants(runs);
+    if start > end {
+        return;
+    }
+    split_at(runs, start);
+    split_at(runs, end);
+    runs.retain(|r| r.end <= start || r.start >= end);
+    let removed = end - start;
+    if replacement_len != removed {
+        let shift_pos = replacement_len as i64 - removed as i64;
+        for run in runs.iter_mut() {
+            if run.start >= end {
+                run.start = (run.start as i64 + shift_pos) as usize;
+                run.end = (run.end as i64 + shift_pos) as usize;
+            }
+        }
+    }
+    if replacement_len > 0 {
+        let mut filler = template.clone();
+        filler.start = start;
+        filler.end = start + replacement_len;
+        insert_run(runs, filler);
+    }
+    merge_adjacent_equal(runs);
+}
+
 /// Coalesce predicate for [`merge_adjacent_equal`].
 fn style_eq(a: &TextRun, b: &TextRun) -> bool {
     a.bold == b.bold
@@ -727,5 +767,58 @@ mod tests {
             hyperlink: None,
         }];
         let _ = find_run_containing(&runs, 0);
+    }
+
+    #[test]
+    fn test_splice_range_cut_drops_in_range_and_shifts_later_runs_left() {
+        let mut runs = vec![run(0, 3, "red"), run(3, 8, "blue"), run(8, 12, "green")];
+        let template = run(0, 0, "red");
+        splice_range(&mut runs, 3, 8, 0, &template);
+        assert_eq!(runs.len(), 2);
+        assert_eq!((runs[0].start, runs[0].end, runs[0].color.as_str()), (0, 3, "red"));
+        assert_eq!((runs[1].start, runs[1].end, runs[1].color.as_str()), (3, 7, "green"));
+    }
+
+    #[test]
+    fn test_splice_range_paste_inserts_template_run_and_shifts_later_runs_right() {
+        let mut runs = vec![run(0, 3, "red"), run(3, 8, "blue"), run(8, 12, "green")];
+        let template = run(0, 0, "yellow");
+        splice_range(&mut runs, 3, 8, 7, &template);
+        assert_eq!(runs.len(), 3);
+        assert_eq!((runs[0].start, runs[0].end, runs[0].color.as_str()), (0, 3, "red"));
+        assert_eq!((runs[1].start, runs[1].end, runs[1].color.as_str()), (3, 10, "yellow"));
+        assert_eq!((runs[2].start, runs[2].end, runs[2].color.as_str()), (10, 14, "green"));
+    }
+
+    #[test]
+    fn test_splice_range_cut_partial_overlap_collapses_via_merge() {
+        // Both halves of the cut neighbour are style-equal so
+        // `merge_adjacent_equal` collapses them into one.
+        let mut runs = vec![run(0, 10, "red")];
+        let template = run(0, 0, "red");
+        splice_range(&mut runs, 3, 7, 0, &template);
+        assert_eq!(runs, vec![run(0, 6, "red")]);
+    }
+
+    #[test]
+    fn test_splice_range_cut_partial_overlap_keeps_distinct_styles_separate() {
+        // Distinct styles on the two halves don't merge.
+        let mut runs = vec![run(0, 5, "red"), run(5, 10, "blue")];
+        let template = run(0, 0, "red");
+        splice_range(&mut runs, 3, 7, 0, &template);
+        assert_eq!(runs.len(), 2);
+        assert_eq!((runs[0].start, runs[0].end, runs[0].color.as_str()), (0, 3, "red"));
+        assert_eq!((runs[1].start, runs[1].end, runs[1].color.as_str()), (3, 6, "blue"));
+    }
+
+    #[test]
+    fn test_splice_range_paste_into_gap_inserts_template_run() {
+        let mut runs = vec![run(0, 3, "red"), run(8, 12, "green")];
+        let template = run(0, 0, "yellow");
+        splice_range(&mut runs, 5, 5, 4, &template);
+        assert_eq!(runs.len(), 3);
+        assert_eq!((runs[0].start, runs[0].end), (0, 3));
+        assert_eq!((runs[1].start, runs[1].end, runs[1].color.as_str()), (5, 9, "yellow"));
+        assert_eq!((runs[2].start, runs[2].end), (12, 16));
     }
 }

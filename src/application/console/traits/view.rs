@@ -409,20 +409,15 @@ impl<'a> HandlesCopy for TargetView<'a> {
 impl<'a> HandlesPaste for TargetView<'a> {
     fn clipboard_paste(&mut self, content: &str) -> Outcome {
         match self {
-            // Section: structured payload via the in-process
-            // buffer when its snapshot matches the untrimmed probe
-            // (a section's text can end in `\n` from the inline
-            // editor; trimming on read would miss those
-            // round-trips). Fall through to plain-text template
-            // inheritance otherwise. Stale-`section_idx` clamp
-            // survives both branches.
-            // Range-aware paste deferred to N4-D — return
-            // `NotApplicable` for SectionRange so the user sees
-            // a clear error instead of a whole-section overwrite
-            // that destroys their out-of-range graphemes.
+            // Section paste. Range-aware: when the selection is
+            // SectionRange, replace only the in-range graphemes
+            // with `content` (shifting later runs accordingly).
+            // Whole-section: structured payload via the in-process
+            // buffer when its snapshot matches the untrimmed
+            // probe; falls back to plain-text template inheritance.
             TargetView::Section { doc, id, section_idx, range } => {
-                if range.is_some() {
-                    return Outcome::NotApplicable;
+                if let Some((rs, re)) = *range {
+                    return paste_section_range(doc, id, *section_idx, rs, re, content);
                 }
                 let section_count = doc
                     .mindmap
@@ -516,16 +511,12 @@ impl<'a> HandlesCut for TargetView<'a> {
             // clear text + runs while preserving offset / size /
             // channel / bindings on the source section so the cut
             // reads as "the text disappeared" rather than "the
-            // section dissolved."
-            // Cut on `SectionRange` (range.is_some()) refuses
-            // rather than wiping the whole section — range-aware
-            // cut is deferred to N4-D. Returning `NotApplicable`
-            // surfaces a clear console error instead of silently
-            // destroying the user's section. (The whole-section
-            // arm is unchanged.)
+            // section dissolved." Range-aware cut removes only the
+            // in-range graphemes, returns them as plain text, and
+            // shifts later runs left.
             TargetView::Section { doc, id, section_idx, range } => {
-                if range.is_some() {
-                    return ClipboardContent::NotApplicable;
+                if let Some((rs, re)) = *range {
+                    return cut_section_range(doc, id, *section_idx, rs, re);
                 }
                 let (text, payload) = match doc
                     .mindmap
@@ -774,4 +765,141 @@ pub fn view_for<'a>(doc: &'a mut MindMapDocument, id: &TargetId) -> TargetView<'
             endpoint_node_id: endpoint_node_id.clone(),
         },
     }
+}
+
+/// Range-aware Cut: drop the in-range graphemes from one
+/// section's text + runs, return them as plain text. Pure
+/// `ClipboardContent::Text` rather than `Section { text, payload }`
+/// because the structured payload's geometry / channel /
+/// trigger_bindings belong to the *whole* section, not a
+/// sub-range. No-op when the section is missing or the range is
+/// empty after clamping.
+fn cut_section_range(
+    doc: &mut MindMapDocument,
+    node_id: &str,
+    section_idx: usize,
+    range_start: usize,
+    range_end: usize,
+) -> ClipboardContent {
+    use baumhard::util::grapheme_chad;
+    let Some(node) = doc.mindmap.nodes.get(node_id) else {
+        return ClipboardContent::NotApplicable;
+    };
+    let Some(section) = node.sections.get(section_idx) else {
+        return ClipboardContent::NotApplicable;
+    };
+    let total = grapheme_chad::count_grapheme_clusters(&section.text);
+    let clamped_end = range_end.min(total);
+    if range_start >= clamped_end {
+        return ClipboardContent::Empty;
+    }
+    let byte_start = grapheme_chad::find_byte_index_of_grapheme(&section.text, range_start)
+        .unwrap_or(section.text.len());
+    let byte_end = grapheme_chad::find_byte_index_of_grapheme(&section.text, clamped_end)
+        .unwrap_or(section.text.len());
+    let cut_text = section.text[byte_start..byte_end].to_string();
+    let mut new_text = String::with_capacity(section.text.len() - (byte_end - byte_start));
+    new_text.push_str(&section.text[..byte_start]);
+    new_text.push_str(&section.text[byte_end..]);
+    let mut new_runs = section.text_runs.clone();
+    let template = section
+        .text_runs
+        .first()
+        .cloned()
+        .unwrap_or_else(|| baumhard::mindmap::model::TextRun {
+            start: 0,
+            end: 0,
+            bold: false,
+            italic: false,
+            underline: false,
+            font: "LiberationSans".to_string(),
+            size_pt: 24,
+            color: node.style.text_color.clone(),
+            hyperlink: None,
+        });
+    baumhard::mindmap::model::text_run_ops::splice_range(
+        &mut new_runs,
+        range_start,
+        clamped_end,
+        0,
+        &template,
+    );
+    let payload = SectionPayload {
+        text_runs: new_runs,
+        offset: section.offset.clone(),
+        size: section.size.clone(),
+        channel: section.channel,
+        trigger_bindings: section.trigger_bindings.clone(),
+    };
+    doc.apply_section_payload(node_id, section_idx, new_text, &payload);
+    ClipboardContent::Text(cut_text)
+}
+
+/// Range-aware Paste: replace the in-range graphemes of one
+/// section's text with `content`, threading style from the
+/// section's first run (cascade source). Returns `Outcome::Applied`
+/// on a real change, `Outcome::NotApplicable` when the section
+/// is missing.
+fn paste_section_range(
+    doc: &mut MindMapDocument,
+    node_id: &str,
+    section_idx: usize,
+    range_start: usize,
+    range_end: usize,
+    content: &str,
+) -> Outcome {
+    use baumhard::util::grapheme_chad;
+    let Some(node) = doc.mindmap.nodes.get(node_id) else {
+        return Outcome::NotApplicable;
+    };
+    let Some(section) = node.sections.get(section_idx) else {
+        return Outcome::NotApplicable;
+    };
+    let total = grapheme_chad::count_grapheme_clusters(&section.text);
+    let clamped_end = range_end.min(total);
+    if range_start > clamped_end {
+        return Outcome::NotApplicable;
+    }
+    let byte_start = grapheme_chad::find_byte_index_of_grapheme(&section.text, range_start)
+        .unwrap_or(section.text.len());
+    let byte_end = grapheme_chad::find_byte_index_of_grapheme(&section.text, clamped_end)
+        .unwrap_or(section.text.len());
+    let mut new_text = String::with_capacity(
+        section.text.len() - (byte_end - byte_start) + content.len(),
+    );
+    new_text.push_str(&section.text[..byte_start]);
+    new_text.push_str(content);
+    new_text.push_str(&section.text[byte_end..]);
+    let content_grapheme_count = grapheme_chad::count_grapheme_clusters(content);
+    let mut new_runs = section.text_runs.clone();
+    let template = section
+        .text_runs
+        .first()
+        .cloned()
+        .unwrap_or_else(|| baumhard::mindmap::model::TextRun {
+            start: 0,
+            end: 0,
+            bold: false,
+            italic: false,
+            underline: false,
+            font: "LiberationSans".to_string(),
+            size_pt: 24,
+            color: node.style.text_color.clone(),
+            hyperlink: None,
+        });
+    baumhard::mindmap::model::text_run_ops::splice_range(
+        &mut new_runs,
+        range_start,
+        clamped_end,
+        content_grapheme_count,
+        &template,
+    );
+    let payload = SectionPayload {
+        text_runs: new_runs,
+        offset: section.offset.clone(),
+        size: section.size.clone(),
+        channel: section.channel,
+        trigger_bindings: section.trigger_bindings.clone(),
+    };
+    Outcome::applied(doc.apply_section_payload(node_id, section_idx, new_text, &payload))
 }

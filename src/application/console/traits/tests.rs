@@ -122,49 +122,45 @@ fn test_selection_targets_section_carries_no_range() {
 
 /// **Cut on `TargetView::Section { range: Some(_), .. }`
 /// returns NotApplicable.** Range-aware cut would otherwise
-/// silently destroy the whole section's text — a real
-/// destructive-class bug the integration reviewer caught.
+/// **Cut on `TargetView::Section { range: Some(_), .. }`
+/// returns the in-range graphemes as plain text and removes
+/// them from the section.**
 #[test]
-fn test_section_range_cut_returns_not_applicable() {
+fn test_section_range_cut_returns_in_range_text_and_shrinks_section() {
     use crate::application::document::tests_common::pinned_two_section_node;
-
     let (mut doc, id) = pinned_two_section_node();
+    doc.set_section_text(&id, 0, "abcdefgh".into());
     let mut view = TargetView::Section {
         doc: &mut doc,
         id: id.clone(),
         section_idx: 0,
-        range: Some((1, 3)),
+        range: Some((2, 5)),
     };
     let outcome = view.clipboard_cut();
-    assert!(matches!(outcome, ClipboardContent::NotApplicable));
-    // Section text must remain intact (the destructive write
-    // path is gated).
-    assert!(!doc.mindmap.nodes.get(&id).unwrap().sections[0].text.is_empty());
+    let ClipboardContent::Text(text) = outcome else {
+        panic!("expected Text, got {:?}", outcome);
+    };
+    assert_eq!(text, "cde");
+    assert_eq!(doc.mindmap.nodes[&id].sections[0].text, "abfgh");
 }
 
 /// **Paste on `TargetView::Section { range: Some(_), .. }`
-/// returns NotApplicable.** Whole-section overwrite on a
-/// sub-range selection would lose the user's out-of-range
-/// graphemes.
+/// replaces the in-range graphemes with the clipboard
+/// content.**
 #[test]
-fn test_section_range_paste_returns_not_applicable() {
+fn test_section_range_paste_replaces_in_range_text() {
     use crate::application::document::tests_common::pinned_two_section_node;
-
     let (mut doc, id) = pinned_two_section_node();
-    let original = doc.mindmap.nodes.get(&id).unwrap().sections[0].text.clone();
+    doc.set_section_text(&id, 0, "abcdefgh".into());
     let mut view = TargetView::Section {
         doc: &mut doc,
         id: id.clone(),
         section_idx: 0,
-        range: Some((1, 3)),
+        range: Some((2, 5)),
     };
-    let outcome = view.clipboard_paste("REPLACEMENT");
-    assert!(matches!(outcome, Outcome::NotApplicable));
-    // Section text must remain unchanged.
-    assert_eq!(
-        doc.mindmap.nodes.get(&id).unwrap().sections[0].text,
-        original
-    );
+    let outcome = view.clipboard_paste("XYZW");
+    assert!(matches!(outcome, Outcome::Applied));
+    assert_eq!(doc.mindmap.nodes[&id].sections[0].text, "abXYZWfgh");
 }
 
 /// **Dispatcher routes range to the range-aware setter.** A
