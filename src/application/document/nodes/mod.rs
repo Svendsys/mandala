@@ -406,55 +406,16 @@ impl MindMapDocument {
         range_end: usize,
         color: String,
     ) -> bool {
-        let (clamped_end, template) = match self
-            .clamp_range_and_build_template(node_id, section_idx, range_end)
-        {
-            Some(pair) => pair,
-            None => return false,
-        };
-        if range_start >= clamped_end {
-            return false;
-        }
-        let mut template = template;
-        template.color = color.clone();
-        let pre = self
-            .mindmap
-            .nodes
-            .get(node_id)
-            .and_then(|n| n.sections.get(section_idx))
-            .map(|s| s.text_runs.clone())
-            .unwrap_or_default();
-        self.mutate_section_with_style_undo(node_id, section_idx, |s| {
-            baumhard::mindmap::model::text_run_ops::mutate_in_range(
-                &mut s.text_runs,
-                range_start,
-                clamped_end,
-                &template,
-                |r| r.color = color.clone(),
-            );
-        });
-        // Detect no-op-after-mutation and unwind the spurious
-        // undo entry. The pre/post compare keeps the undo stack
-        // honest — a range-targeted "set to current colour"
-        // shouldn't push undo.
-        let post = self
-            .mindmap
-            .nodes
-            .get(node_id)
-            .and_then(|n| n.sections.get(section_idx))
-            .map(|s| s.text_runs.clone())
-            .unwrap_or_default();
-        if pre == post {
-            self.undo_stack.pop();
-            return false;
-        }
-        true
+        // Text colour doesn't affect glyph advance — no grow.
+        self.mutate_section_runs_in_range(
+            node_id, section_idx, range_start, range_end, false,
+            |r| r.color = color.clone(),
+        )
     }
 
     /// Set the font size on a sub-range of one section's text.
-    /// Triggers the same monotonic `grow_one_node_to_fit_text`
-    /// floor as the whole-section setter — a larger run on one
-    /// range can grow the node.
+    /// Triggers `grow_one_node_to_fit_text` — larger runs can
+    /// grow the node.
     pub fn set_section_font_size_range(
         &mut self,
         node_id: &str,
@@ -467,61 +428,16 @@ impl MindMapDocument {
             return false;
         }
         let size_u = size_pt.round().max(1.0) as u32;
-        let (clamped_end, template) = match self
-            .clamp_range_and_build_template(node_id, section_idx, range_end)
-        {
-            Some(pair) => pair,
-            None => return false,
-        };
-        if range_start >= clamped_end {
-            return false;
-        }
-        let mut template = template;
-        template.size_pt = size_u;
-        let pre = self
-            .mindmap
-            .nodes
-            .get(node_id)
-            .and_then(|n| n.sections.get(section_idx))
-            .map(|s| s.text_runs.clone())
-            .unwrap_or_default();
-        let canvas_default = self.mindmap.canvas.default_border.clone();
-        self.mutate_section_with_style_undo(node_id, section_idx, |s| {
-            baumhard::mindmap::model::text_run_ops::mutate_in_range(
-                &mut s.text_runs,
-                range_start,
-                clamped_end,
-                &template,
-                |r| r.size_pt = size_u,
-            );
-        });
-        let post = self
-            .mindmap
-            .nodes
-            .get(node_id)
-            .and_then(|n| n.sections.get(section_idx))
-            .map(|s| s.text_runs.clone())
-            .unwrap_or_default();
-        if pre == post {
-            self.undo_stack.pop();
-            return false;
-        }
-        let node = self
-            .mindmap
-            .nodes
-            .get_mut(node_id)
-            .expect("just confirmed exists");
-        super::grow_one_node_to_fit_text(node);
-        super::grow_one_node_to_fit_border(node, canvas_default.as_ref());
-        true
+        self.mutate_section_runs_in_range(
+            node_id, section_idx, range_start, range_end, true,
+            move |r| r.size_pt = size_u,
+        )
     }
 
     /// Set the font family on a sub-range of one section's text.
-    /// `Some(name)` pins each in-range run to that family;
-    /// `None` clears the pin (empty string = inherit cascade).
-    /// Triggers the same `grow_one_node_to_fit_text` re-measure
-    /// as the whole-section setter — face changes can shift
-    /// advance widths.
+    /// `Some(name)` pins each in-range run; `None` clears the pin
+    /// (empty string = inherit cascade). Triggers grow — face
+    /// changes shift advance widths.
     pub fn set_section_font_family_range(
         &mut self,
         node_id: &str,
@@ -531,7 +447,31 @@ impl MindMapDocument {
         family: Option<&str>,
     ) -> bool {
         let target = family.unwrap_or("").to_string();
-        let (clamped_end, template) = match self
+        self.mutate_section_runs_in_range(
+            node_id, section_idx, range_start, range_end, true,
+            move |r| r.font = target.clone(),
+        )
+    }
+
+    /// Per-attribute range-aware setter shell. Clamps the range,
+    /// snapshots pre-runs, applies `mutate_run` to every in-range
+    /// run (and to the template that fills uncovered gaps), pops
+    /// the undo entry on no-op-after-mutation, and optionally
+    /// runs the text/border grow passes for attributes that can
+    /// change advance widths.
+    fn mutate_section_runs_in_range<F>(
+        &mut self,
+        node_id: &str,
+        section_idx: usize,
+        range_start: usize,
+        range_end: usize,
+        grow_after: bool,
+        mut mutate_run: F,
+    ) -> bool
+    where
+        F: FnMut(&mut baumhard::mindmap::model::TextRun),
+    {
+        let (clamped_end, mut template) = match self
             .clamp_range_and_build_template(node_id, section_idx, range_end)
         {
             Some(pair) => pair,
@@ -540,8 +480,7 @@ impl MindMapDocument {
         if range_start >= clamped_end {
             return false;
         }
-        let mut template = template;
-        template.font = target.clone();
+        mutate_run(&mut template);
         let pre = self
             .mindmap
             .nodes
@@ -550,14 +489,13 @@ impl MindMapDocument {
             .map(|s| s.text_runs.clone())
             .unwrap_or_default();
         let canvas_default = self.mindmap.canvas.default_border.clone();
-        let target_for_closure = target;
         self.mutate_section_with_style_undo(node_id, section_idx, |s| {
             baumhard::mindmap::model::text_run_ops::mutate_in_range(
                 &mut s.text_runs,
                 range_start,
                 clamped_end,
                 &template,
-                |r| r.font = target_for_closure.clone(),
+                &mut mutate_run,
             );
         });
         let post = self
@@ -571,13 +509,15 @@ impl MindMapDocument {
             self.undo_stack.pop();
             return false;
         }
-        let node = self
-            .mindmap
-            .nodes
-            .get_mut(node_id)
-            .expect("just confirmed exists");
-        super::grow_one_node_to_fit_text(node);
-        super::grow_one_node_to_fit_border(node, canvas_default.as_ref());
+        if grow_after {
+            let node = self
+                .mindmap
+                .nodes
+                .get_mut(node_id)
+                .expect("just confirmed exists");
+            super::grow_one_node_to_fit_text(node);
+            super::grow_one_node_to_fit_border(node, canvas_default.as_ref());
+        }
         true
     }
 
