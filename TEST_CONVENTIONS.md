@@ -282,8 +282,3 @@ When in doubt, write the test. An untested fundamental is technical
 debt (§T1, §T7), and a featureful path with no error-case coverage is
 half a feature.
 
-The bias is: more tests, sooner. A test that turns out redundant is
-cheap to delete; a regression that ships because no test was written
-is expensive to recover from. Test more than feels necessary —
-fundamentals especially — and let the suite be the thing that lets
-the next session move quickly.

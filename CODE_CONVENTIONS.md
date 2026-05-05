@@ -296,8 +296,6 @@ industrial cost/benefit reasoning. This is not license for speculation.
   the palette cannot scroll off-screen during zoom` is signal.
 - **Do not document the self-evident.** Excessive documentation of
   obvious code dilutes the comments that matter.
-- **Do not touch documentation on code you did not change.** That churn
-  is noise.
 
 ## §9 Error handling
 
