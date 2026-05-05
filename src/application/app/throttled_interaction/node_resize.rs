@@ -51,39 +51,9 @@ impl NodeResizeInteraction {
         }
     }
 
-    /// Resolve a cumulative cursor delta into the resulting
-    /// `(position, size)` after applying this side's axis factors.
-    /// Pure function — both the per-frame drain and the release-
-    /// commit derive from one place.
-    ///
-    /// **Coordinate convention.** The W / N / NW / NE / SW sides
-    /// shift `position` toward the cursor and shrink `size` by the
-    /// same amount, so the opposite edge stays put. The E / S / SE
-    /// sides only grow `size`; position stays at `start_position`.
     pub fn resolve(&self, total_delta: Vec2) -> (Position, Size) {
-        let (fx, fy) = self.side.axis_factors();
-        let dx = total_delta.x as f64;
-        let dy = total_delta.y as f64;
-
-        let (pos_x, size_w) = match fx {
-            -1 => (self.start_position.x + dx, self.start_size.width - dx),
-            0 => (self.start_position.x, self.start_size.width),
-            1 => (self.start_position.x, self.start_size.width + dx),
-            _ => unreachable!("axis_factors only emits -1/0/+1"),
-        };
-        let (pos_y, size_h) = match fy {
-            -1 => (self.start_position.y + dy, self.start_size.height - dy),
-            0 => (self.start_position.y, self.start_size.height),
-            1 => (self.start_position.y, self.start_size.height + dy),
-            _ => unreachable!("axis_factors only emits -1/0/+1"),
-        };
-        (
-            Position { x: pos_x, y: pos_y },
-            Size {
-                width: size_w,
-                height: size_h,
-            },
-        )
+        self.side
+            .resolve_aabb(self.start_position, self.start_size, total_delta)
     }
 }
 

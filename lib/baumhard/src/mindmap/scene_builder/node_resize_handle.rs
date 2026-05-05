@@ -14,7 +14,8 @@
 use glam::Vec2;
 
 use super::section_resize_handle::{
-    ResizeHandleSide, SECTION_RESIZE_HANDLE_FONT_SIZE_PT, SECTION_RESIZE_HANDLE_GLYPH,
+    resize_handle_positions, ResizeHandleSide, SECTION_RESIZE_HANDLE_FONT_SIZE_PT,
+    SECTION_RESIZE_HANDLE_GLYPH,
 };
 use super::SELECTED_EDGE_COLOR;
 
@@ -66,28 +67,9 @@ pub fn build_node_resize_handles(
     node_pos: Vec2,
     node_size: Vec2,
 ) -> Vec<NodeResizeHandleElement> {
-    if !node_size.x.is_finite() || !node_size.y.is_finite() || node_size.x <= 0.0 || node_size.y <= 0.0 {
+    let Some(positions) = resize_handle_positions(node_pos, node_size) else {
         return Vec::new();
-    }
-
-    let (x, y) = (node_pos.x, node_pos.y);
-    let (w, h) = (node_size.x, node_size.y);
-    let cx = x + w * 0.5;
-    let cy = y + h * 0.5;
-    let right = x + w;
-    let bottom = y + h;
-
-    let positions = [
-        (ResizeHandleSide::NW, (x, y)),
-        (ResizeHandleSide::N, (cx, y)),
-        (ResizeHandleSide::NE, (right, y)),
-        (ResizeHandleSide::E, (right, cy)),
-        (ResizeHandleSide::SE, (right, bottom)),
-        (ResizeHandleSide::S, (cx, bottom)),
-        (ResizeHandleSide::SW, (x, bottom)),
-        (ResizeHandleSide::W, (x, cy)),
-    ];
-
+    };
     positions
         .into_iter()
         .map(|(side, position)| NodeResizeHandleElement {

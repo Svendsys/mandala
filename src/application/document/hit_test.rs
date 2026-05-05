@@ -531,9 +531,6 @@ pub fn apply_section_resize_to_tree(
 /// Hit-test the 8 resize handles of a node at `canvas_pos`.
 /// Returns the closest handle whose canvas-space center is within
 /// `tolerance` of the cursor, or `None` if no handle is in range.
-/// Sibling of [`hit_test_section_resize_handle`]; same shape,
-/// different domain.
-///
 /// Returns `None` for missing nodes, hidden-by-fold nodes, and
 /// nodes whose `size` has any non-finite or non-positive
 /// component (those don't render handles).
@@ -548,16 +545,24 @@ pub fn hit_test_node_resize_handle(
         return None;
     }
     let handles = build_node_resize_handles(node_id, node.pos_vec2(), node.size_vec2());
+    nearest_handle_within(handles.iter().map(|h| (h.side, h.position)), canvas_pos, tolerance)
+}
 
+/// Pick the closest handle whose canvas-space position is within
+/// `tolerance` of `canvas_pos`. Bounded cost: 8 comparisons.
+fn nearest_handle_within(
+    handles: impl IntoIterator<Item = (ResizeHandleSide, (f32, f32))>,
+    canvas_pos: Vec2,
+    tolerance: f32,
+) -> Option<ResizeHandleSide> {
     let mut best: Option<(ResizeHandleSide, f32)> = None;
-    for h in handles {
-        let pos = Vec2::new(h.position.0, h.position.1);
-        let dist = canvas_pos.distance(pos);
+    for (side, (hx, hy)) in handles {
+        let dist = canvas_pos.distance(Vec2::new(hx, hy));
         if dist > tolerance {
             continue;
         }
         if best.as_ref().map_or(true, |(_, d)| dist < *d) {
-            best = Some((h.side, dist));
+            best = Some((side, dist));
         }
     }
     best.map(|(s, _)| s)
@@ -662,19 +667,7 @@ pub fn hit_test_section_resize_handle(
     );
     let size = Vec2::new(section_size.width as f32, section_size.height as f32);
     let handles = build_section_resize_handles(node_id, section_idx, section_pos, Some(size));
-
-    let mut best: Option<(ResizeHandleSide, f32)> = None;
-    for h in handles {
-        let pos = Vec2::new(h.position.0, h.position.1);
-        let dist = canvas_pos.distance(pos);
-        if dist > tolerance {
-            continue;
-        }
-        if best.as_ref().map_or(true, |(_, d)| dist < *d) {
-            best = Some((h.side, dist));
-        }
-    }
-    best.map(|(s, _)| s)
+    nearest_handle_within(handles.iter().map(|h| (h.side, h.position)), canvas_pos, tolerance)
 }
 
 /// Collect drag patches for the container plus its section

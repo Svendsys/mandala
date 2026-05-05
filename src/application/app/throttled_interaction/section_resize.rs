@@ -60,45 +60,9 @@ impl SectionResizeInteraction {
         }
     }
 
-    /// Resolve a cumulative cursor delta into the resulting
-    /// `(offset, size)` after applying this side's axis factors.
-    ///
-    /// Encodes the resize math as a pure function so both the
-    /// per-frame drain and the release-commit arm derive the
-    /// same shape from one place.
-    ///
-    /// **Coordinate convention.** The W / N / NW / NE / SW sides
-    /// shift `offset` toward the cursor by the cursor's signed
-    /// component on that axis and shrink the size by the same
-    /// amount, so the opposite edge stays put. The E / S / SE
-    /// sides only grow the size; offset stays at `start_offset`.
     pub fn resolve(&self, total_delta: Vec2) -> (Position, Size) {
-        let (fx, fy) = self.side.axis_factors();
-        let dx = total_delta.x as f64;
-        let dy = total_delta.y as f64;
-
-        // X axis: -1 grows offset by dx and shrinks size by dx;
-        //          0 leaves both alone;
-        //         +1 grows size by dx, leaves offset at start.
-        let (off_x, size_w) = match fx {
-            -1 => (self.start_offset.x + dx, self.start_size.width - dx),
-            0 => (self.start_offset.x, self.start_size.width),
-            1 => (self.start_offset.x, self.start_size.width + dx),
-            _ => unreachable!("axis_factors only emits -1/0/+1"),
-        };
-        let (off_y, size_h) = match fy {
-            -1 => (self.start_offset.y + dy, self.start_size.height - dy),
-            0 => (self.start_offset.y, self.start_size.height),
-            1 => (self.start_offset.y, self.start_size.height + dy),
-            _ => unreachable!("axis_factors only emits -1/0/+1"),
-        };
-        (
-            Position { x: off_x, y: off_y },
-            Size {
-                width: size_w,
-                height: size_h,
-            },
-        )
+        self.side
+            .resolve_aabb(self.start_offset, self.start_size, total_delta)
     }
 }
 

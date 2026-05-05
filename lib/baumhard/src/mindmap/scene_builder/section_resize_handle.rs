@@ -68,6 +68,46 @@ impl ResizeHandleSide {
         ]
     }
 
+    /// Resolve a cumulative cursor delta into the new
+    /// `(offset, size)` after applying this side's axis factors
+    /// to a starting AABB. Pure function — both per-frame drains
+    /// (node + section resize) and the release-commit arms call
+    /// this so the resize math has one canonical source.
+    ///
+    /// Coordinate convention. W / N / NW / NE / SW shift the
+    /// offset toward the cursor and shrink the size by the same
+    /// amount, so the opposite edge stays put. E / S / SE only
+    /// grow the size; offset stays at `start_offset`.
+    pub fn resolve_aabb(
+        &self,
+        start_offset: crate::mindmap::model::Position,
+        start_size: crate::mindmap::model::Size,
+        total_delta: Vec2,
+    ) -> (crate::mindmap::model::Position, crate::mindmap::model::Size) {
+        let (fx, fy) = self.axis_factors();
+        let dx = total_delta.x as f64;
+        let dy = total_delta.y as f64;
+        let (off_x, size_w) = match fx {
+            -1 => (start_offset.x + dx, start_size.width - dx),
+            0 => (start_offset.x, start_size.width),
+            1 => (start_offset.x, start_size.width + dx),
+            _ => unreachable!("axis_factors only emits -1/0/+1"),
+        };
+        let (off_y, size_h) = match fy {
+            -1 => (start_offset.y + dy, start_size.height - dy),
+            0 => (start_offset.y, start_size.height),
+            1 => (start_offset.y, start_size.height + dy),
+            _ => unreachable!("axis_factors only emits -1/0/+1"),
+        };
+        (
+            crate::mindmap::model::Position { x: off_x, y: off_y },
+            crate::mindmap::model::Size {
+                width: size_w,
+                height: size_h,
+            },
+        )
+    }
+
     /// Stable per-side channel for the in-place mutator dispatch.
     /// Picked to avoid colliding with `edge_handle_channel_for`'s
     /// 1/2/3/100+ space — sections live in a separate canvas role
@@ -154,35 +194,24 @@ pub const SECTION_RESIZE_HANDLE_GLYPH: &str = "\u{25A1}"; // □
 /// weight so the eye reads them as a unified "grab here" idiom.
 pub const SECTION_RESIZE_HANDLE_FONT_SIZE_PT: f32 = 14.0;
 
-/// Build the 8-handle set for a single selected section, given the
-/// section's already-resolved (offset-applied) canvas-space AABB.
-/// Called at most once per scene build (for the selected section
-/// only), so the cost is trivial and needs no cache.
-///
-/// Returns an empty vector when `size` is `None` (fill-parent
-/// sections have no per-section AABB to stretch — the parent's
-/// auto-fit floor owns their dimensions). Callers must not invoke
-/// this on a deselected section; selection-gating lives in
-/// [`super::builder::build_scene_with_cache`].
-pub fn build_section_resize_handles(
-    node_id: &str,
-    section_idx: usize,
-    section_pos: Vec2,
-    section_size: Option<Vec2>,
-) -> Vec<SectionResizeHandleElement> {
-    let size = match section_size {
-        Some(s) => s,
-        None => return Vec::new(),
-    };
-
-    let (x, y) = (section_pos.x, section_pos.y);
+/// The 8 resize-handle positions around an AABB. Returns `None`
+/// when the size is non-finite or non-positive — no meaningful
+/// handles can be drawn. Single source of truth for the position
+/// layout shared by node and section resize-handle builders.
+pub fn resize_handle_positions(
+    pos: Vec2,
+    size: Vec2,
+) -> Option<[(ResizeHandleSide, (f32, f32)); 8]> {
+    if !size.x.is_finite() || !size.y.is_finite() || size.x <= 0.0 || size.y <= 0.0 {
+        return None;
+    }
+    let (x, y) = (pos.x, pos.y);
     let (w, h) = (size.x, size.y);
     let cx = x + w * 0.5;
     let cy = y + h * 0.5;
     let right = x + w;
     let bottom = y + h;
-
-    let positions = [
+    Some([
         (ResizeHandleSide::NW, (x, y)),
         (ResizeHandleSide::N, (cx, y)),
         (ResizeHandleSide::NE, (right, y)),
@@ -191,8 +220,23 @@ pub fn build_section_resize_handles(
         (ResizeHandleSide::S, (cx, bottom)),
         (ResizeHandleSide::SW, (x, bottom)),
         (ResizeHandleSide::W, (x, cy)),
-    ];
+    ])
+}
 
+/// Build the 8-handle set for a single selected section, given the
+/// section's already-resolved (offset-applied) canvas-space AABB.
+/// Returns an empty vector for `None` (fill-parent) or non-finite /
+/// non-positive sizes.
+pub fn build_section_resize_handles(
+    node_id: &str,
+    section_idx: usize,
+    section_pos: Vec2,
+    section_size: Option<Vec2>,
+) -> Vec<SectionResizeHandleElement> {
+    let Some(size) = section_size else { return Vec::new() };
+    let Some(positions) = resize_handle_positions(section_pos, size) else {
+        return Vec::new();
+    };
     positions
         .into_iter()
         .map(|(side, position)| SectionResizeHandleElement {
