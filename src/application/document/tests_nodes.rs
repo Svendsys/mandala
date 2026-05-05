@@ -1736,15 +1736,10 @@ fn finalize_grows_nodes_to_fit_border_static_parts() {
 fn test_set_section_text_color_range_inside_one_run() {
     use crate::application::document::tests_common::pinned_two_section_node;
     let (mut doc, id) = pinned_two_section_node();
-    // Section 0 starts with one run covering the whole text.
+    set_section_zero_text_and_single_run(&mut doc, &id, "abcdefghij", "LiberationSans");
     // Apply blue to a sub-range and verify the section now has
     // three runs: original-colour | blue | original-colour.
-    let total = doc.mindmap.nodes.get(&id).unwrap().sections[0]
-        .text
-        .chars()
-        .count();
-    assert!(total >= 3, "fixture section text must be long enough to range");
-    let applied = doc.set_section_text_color_range(&id, 0, 1, total - 1, "#abcdef".into());
+    let applied = doc.set_section_text_color_range(&id, 0, 1, 9, "#abcdef".into());
     assert!(applied);
     let runs = &doc.mindmap.nodes.get(&id).unwrap().sections[0].text_runs;
     assert_eq!(runs.len(), 3, "expected three runs after range carve-out");
@@ -1758,9 +1753,8 @@ fn test_set_section_text_color_range_inside_one_run() {
 fn test_set_section_text_color_range_no_op_no_undo() {
     use crate::application::document::tests_common::pinned_two_section_node;
     let (mut doc, id) = pinned_two_section_node();
-    let original_color = doc.mindmap.nodes.get(&id).unwrap().sections[0].text_runs[0]
-        .color
-        .clone();
+    set_section_zero_text_and_single_run(&mut doc, &id, "abcdefghij", "LiberationSans");
+    let original_color = "#ffffff".to_string();
     let undo_before = doc.undo_stack.len();
     let applied = doc.set_section_text_color_range(&id, 0, 1, 3, original_color);
     assert!(!applied, "no-op write must return false");
@@ -1778,7 +1772,8 @@ fn test_set_section_text_color_range_no_op_no_undo() {
 fn test_set_section_text_color_range_clamps_end_to_grapheme_count() {
     use crate::application::document::tests_common::pinned_two_section_node;
     let (mut doc, id) = pinned_two_section_node();
-    let total = count_grapheme_clusters(&doc.mindmap.nodes.get(&id).unwrap().sections[0].text);
+    set_section_zero_text_and_single_run(&mut doc, &id, "abcdefghij", "LiberationSans");
+    let total = 10usize;
     let applied = doc.set_section_text_color_range(&id, 0, 1, total + 100, "#abcdef".into());
     assert!(applied, "clamped range must still apply");
     let runs = &doc.mindmap.nodes.get(&id).unwrap().sections[0].text_runs;
@@ -1819,11 +1814,11 @@ fn test_set_section_text_color_range_missing_section_returns_false() {
 fn test_set_section_text_color_range_undo_round_trip() {
     use crate::application::document::tests_common::pinned_two_section_node;
     let (mut doc, id) = pinned_two_section_node();
+    set_section_zero_text_and_single_run(&mut doc, &id, "abcdefghij", "LiberationSans");
     let pre = doc.mindmap.nodes.get(&id).unwrap().sections[0]
         .text_runs
         .clone();
-    let total = count_grapheme_clusters(&doc.mindmap.nodes.get(&id).unwrap().sections[0].text);
-    assert!(doc.set_section_text_color_range(&id, 0, 1, total - 1, "#abcdef".into()));
+    assert!(doc.set_section_text_color_range(&id, 0, 1, 9, "#abcdef".into()));
     assert!(doc.undo());
     let post = &doc.mindmap.nodes.get(&id).unwrap().sections[0].text_runs;
     assert_eq!(post, &pre, "undo must restore pre-write runs");
@@ -1836,12 +1831,12 @@ fn test_set_section_text_color_range_undo_round_trip() {
 fn test_set_section_font_size_range_triggers_grow() {
     use crate::application::document::tests_common::pinned_two_section_node;
     let (mut doc, id) = pinned_two_section_node();
+    set_section_zero_text_and_single_run(&mut doc, &id, "abcdefghij", "LiberationSans");
     let pre_w = doc.mindmap.nodes.get(&id).unwrap().size.width;
-    let total = count_grapheme_clusters(&doc.mindmap.nodes.get(&id).unwrap().sections[0].text);
     // Apply a much larger font to the whole section's range —
     // forces the grow pass and the post-write width should be
     // at least the pre-write width.
-    assert!(doc.set_section_font_size_range(&id, 0, 0, total, 96.0));
+    assert!(doc.set_section_font_size_range(&id, 0, 0, 10, 96.0));
     let post_w = doc.mindmap.nodes.get(&id).unwrap().size.width;
     assert!(post_w >= pre_w, "grow pass must monotonically widen the node");
 }
@@ -1853,16 +1848,12 @@ fn test_set_section_font_size_range_triggers_grow() {
 fn test_set_section_font_family_range_writes_in_range_only() {
     use crate::application::document::tests_common::pinned_two_section_node;
     let (mut doc, id) = pinned_two_section_node();
-    let total = count_grapheme_clusters(&doc.mindmap.nodes.get(&id).unwrap().sections[0].text);
-    assert!(total >= 5, "fixture text must be long enough");
-    let original_font = doc.mindmap.nodes.get(&id).unwrap().sections[0].text_runs[0]
-        .font
-        .clone();
-    let target_font = if original_font == "DejaVuSans" {
-        "LiberationSans".to_string()
-    } else {
-        "DejaVuSans".to_string()
-    };
+    // Override section[0].text + run to a known length so the
+    // test isn't sensitive to which testament node `pinned_…`
+    // happens to pick (HashMap iteration order isn't stable).
+    set_section_zero_text_and_single_run(&mut doc, &id, "abcdefghij", "DejaVuSans");
+    let original_font = "DejaVuSans".to_string();
+    let target_font = "LiberationSans".to_string();
     assert!(doc.set_section_font_family_range(&id, 0, 1, 4, Some(&target_font)));
     let runs = &doc.mindmap.nodes.get(&id).unwrap().sections[0].text_runs;
     // Find the in-range run and the out-of-range runs.
@@ -1886,17 +1877,15 @@ fn test_set_section_font_family_range_writes_in_range_only() {
 fn test_set_section_text_color_range_fills_gap() {
     use crate::application::document::tests_common::pinned_two_section_node;
     let (mut doc, id) = pinned_two_section_node();
-    // Truncate the existing run to leave a gap, then apply a
-    // range on the gap.
-    let total = count_grapheme_clusters(&doc.mindmap.nodes.get(&id).unwrap().sections[0].text);
-    assert!(total >= 8, "fixture text must be long enough");
+    // Override section[0].text + run to a known length so the
+    // test isn't sensitive to HashMap iteration order picking a
+    // testament node with short section text.
+    set_section_zero_text_and_single_run(&mut doc, &id, "abcdefghij", "LiberationSans");
     {
         let n = doc.mindmap.nodes.get_mut(&id).unwrap();
         let s = &mut n.sections[0];
-        s.text_runs.truncate(1);
-        if let Some(first) = s.text_runs.first_mut() {
-            first.end = 3;
-        }
+        // Shrink the run to [0, 3) so [3, 10) is a gap.
+        s.text_runs[0].end = 3;
     }
     let runs_before = doc.mindmap.nodes.get(&id).unwrap().sections[0]
         .text_runs
@@ -1910,4 +1899,38 @@ fn test_set_section_text_color_range_fills_gap() {
     let new_run = runs.iter().find(|r| r.start == 5 && r.end == 8);
     assert!(new_run.is_some(), "expected a new run covering [5, 8)");
     assert_eq!(new_run.unwrap().color, "#123456");
+}
+
+/// Test helper: overwrite section[0]'s text with a known string
+/// and replace its runs with a single full-coverage run carrying
+/// the given font. Used by range-setter tests that need a
+/// deterministic grapheme count — `first_testament_node_id` runs
+/// over `HashMap` iteration order, which isn't stable across
+/// test orderings, so the fixture's text length varies.
+fn set_section_zero_text_and_single_run(
+    doc: &mut MindMapDocument,
+    node_id: &str,
+    text: &str,
+    font: &str,
+) {
+    let total = count_grapheme_clusters(text);
+    let n = doc.mindmap.nodes.get_mut(node_id).expect("node exists");
+    let s = &mut n.sections[0];
+    s.text = text.to_string();
+    s.text_runs.clear();
+    s.text_runs.push(TextRun {
+        start: 0,
+        end: total,
+        bold: false,
+        italic: false,
+        underline: false,
+        font: font.to_string(),
+        size_pt: 14,
+        color: "#ffffff".to_string(),
+        hyperlink: None,
+    });
+    // Reset undo so the round-trip test can probe `undo()` on
+    // the range mutation alone.
+    doc.undo_stack.clear();
+    doc.dirty = false;
 }
