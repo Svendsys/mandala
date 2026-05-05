@@ -117,24 +117,31 @@ pub(in crate::application::app) fn apply_invert_selection(rc: &mut RebuildContex
 }
 
 /// Walk one step up the hierarchy from a single-node or section
-/// selection. Section selections collapse to the owning node first
-/// (so up-arrow on a section still climbs the tree), then walk to
-/// the parent. No-op when the selection isn't `Single` / `Section`,
-/// or when the node has no parent. Returns `true` when the
-/// selection changed.
+/// selection. Section selections collapse to the owning node first.
+/// MultiSection collapses to its first section's owning node before
+/// the walk. Returns `true` when the selection changed.
 #[must_use = "the bool gates the scene rebuild — drop it explicitly with `let _ = …` if you don't care"]
 pub(in crate::application::app) fn select_parent_in(doc: &mut MindMapDocument) -> bool {
-    let nid = match &doc.selection {
-        SelectionState::Single(id) => id.clone(),
-        SelectionState::Section(s) => s.node_id.clone(),
-        SelectionState::SectionRange { sel, .. } => sel.node_id.clone(),
-        _ => return false,
+    let Some(nid) = primary_owning_node_id(&doc.selection) else {
+        return false;
     };
     let Some(parent_id) = doc.mindmap.nodes.get(&nid).and_then(|n| n.parent_id.clone()) else {
         return false;
     };
     doc.selection = SelectionState::Single(parent_id);
     true
+}
+
+/// Owning-node id when the selection points at one or more
+/// graphemes inside one or more sections — i.e. `Single`,
+/// `Section`, `SectionRange`, or `MultiSection` (collapsed to
+/// the first selected section's owning node). Used by the
+/// nav-verb family so MultiSection has predictable up/down/sibling
+/// behaviour rather than silently no-op'ing.
+fn primary_owning_node_id(sel: &SelectionState) -> Option<String> {
+    sel.primary_node_id()
+        .map(str::to_string)
+        .or_else(|| sel.selected_sections().first().map(|s| s.node_id.clone()))
 }
 
 pub(in crate::application::app) fn apply_select_parent(rc: &mut RebuildContext<'_>) {
@@ -151,11 +158,8 @@ pub(in crate::application::app) fn apply_select_parent(rc: &mut RebuildContext<'
 /// selection changed.
 #[must_use = "the bool gates the scene rebuild — drop it explicitly with `let _ = …` if you don't care"]
 pub(in crate::application::app) fn select_child_in(doc: &mut MindMapDocument) -> bool {
-    let nid = match &doc.selection {
-        SelectionState::Single(id) => id.clone(),
-        SelectionState::Section(s) => s.node_id.clone(),
-        SelectionState::SectionRange { sel, .. } => sel.node_id.clone(),
-        _ => return false,
+    let Some(nid) = primary_owning_node_id(&doc.selection) else {
+        return false;
     };
     let Some(child_id) = doc
         .mindmap
@@ -229,7 +233,9 @@ pub(in crate::application::app) fn select_sibling_in(doc: &mut MindMapDocument, 
         return true;
     }
 
-    let SelectionState::Single(nid) = doc.selection.clone() else {
+    // Single — and MultiSection collapses-to-first-section's
+    // owning node before walking siblings.
+    let Some(nid) = primary_owning_node_id(&doc.selection) else {
         return false;
     };
     let Some(target) = sibling_id(&doc.mindmap, &nid, forward) else {

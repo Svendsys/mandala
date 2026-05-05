@@ -13,7 +13,8 @@
 #![cfg(test)]
 
 use super::*;
-use crate::application::document::tests_common::load_test_doc;
+use crate::application::document::tests_common::{load_test_doc, pinned_two_section_node};
+use crate::application::document::SectionSel;
 
 fn first_node_id(doc: &MindMapDocument) -> String {
     doc.mindmap
@@ -449,4 +450,73 @@ fn select_sibling_in_walks_visible_neighbour() {
     assert!(select_sibling_in(&mut doc, true));
     // Walking back returns to the previous sibling.
     assert!(select_sibling_in(&mut doc, false));
+}
+
+// ── MultiSection collapse-to-first nav ───────────────────────────
+
+/// Up-arrow on a MultiSection collapses to the first section's
+/// owning node and walks to its parent (or no-ops at root).
+#[test]
+fn select_parent_in_collapses_multisection_to_first_owning_node() {
+    let (mut doc, id) = pinned_two_section_node();
+    // Two-section node has no parent in the fixture; pin that
+    // up-arrow on MultiSection no-ops cleanly (rather than
+    // silently no-op'ing for the wrong reason).
+    doc.selection = SelectionState::MultiSection(vec![
+        SectionSel::new(&id, 0),
+        SectionSel::new(&id, 1),
+    ]);
+    assert!(!select_parent_in(&mut doc));
+}
+
+/// Down-arrow on a MultiSection produces the same outcome and
+/// post-state as down-arrow on Single(first_section.node_id) —
+/// pinning the "collapse to first owning node" contract. Run on
+/// two parallel docs constructed from the same fixture.
+#[test]
+fn select_child_in_multisection_matches_single_on_first_owning_node() {
+    let (mut doc_a, id) = pinned_two_section_node();
+    let (mut doc_b, _) = pinned_two_section_node();
+    doc_a.selection = SelectionState::MultiSection(vec![
+        SectionSel::new(&id, 0),
+        SectionSel::new(&id, 1),
+    ]);
+    doc_b.selection = SelectionState::Single(id.clone());
+    let outcome_a = select_child_in(&mut doc_a);
+    let outcome_b = select_child_in(&mut doc_b);
+    assert_eq!(outcome_a, outcome_b);
+    // When the collapse landed on a child, both docs end on the
+    // same `Single(child_id)`. When neither moved, both land on
+    // the original selections (which the start-state set).
+    if outcome_a {
+        assert!(matches!(doc_a.selection, SelectionState::Single(_)));
+        assert!(matches!(doc_b.selection, SelectionState::Single(_)));
+    }
+}
+
+/// Sibling navigation on a MultiSection collapses to the first
+/// section's owning node and walks the node's siblings.
+#[test]
+fn select_sibling_in_collapses_multisection_to_first_owning_node() {
+    let mut doc = load_test_doc();
+    // Pick a node with at least one sibling.
+    let (start_id, _) = doc
+        .mindmap
+        .nodes
+        .values()
+        .filter_map(|n| {
+            let parent_id = n.parent_id.clone()?;
+            let siblings = doc.mindmap.children_of(&parent_id);
+            if siblings.len() < 2 {
+                return None;
+            }
+            let idx = siblings.iter().position(|s| s.id == n.id)?;
+            let next = siblings.get(idx + 1)?.id.clone();
+            Some((n.id.clone(), next))
+        })
+        .next()
+        .expect("fixture has at least one node with a next sibling");
+    doc.selection = SelectionState::MultiSection(vec![SectionSel::new(&start_id, 0)]);
+    assert!(select_sibling_in(&mut doc, true));
+    assert!(matches!(doc.selection, SelectionState::Single(_)));
 }
