@@ -7,8 +7,9 @@
 
 #![cfg(not(target_arch = "wasm32"))]
 
-use baumhard::mindmap::custom_mutation::{PlatformContext, Trigger};
+use baumhard::mindmap::custom_mutation::PlatformContext;
 
+use super::click_triggers::fire_onclick_triggers;
 use super::scene_rebuild::{rebuild_all, rebuild_scene_only};
 use super::{now_ms, AppMode, EDGE_HIT_TOLERANCE_PX};
 use crate::application::document::{
@@ -40,45 +41,14 @@ pub(super) fn handle_click(
         None => return,
     };
 
-    // Fire any OnClick triggers before the selection update so that
-    // document actions (theme switches etc.) take effect before the
-    // scene rebuild below picks up the new state. Node mutations go
-    // into the tree via `apply_custom_mutation`, which owns the
-    // model-sync + undo-push for Persistent behavior.
+    // OnClick triggers fire before the selection update so that
+    // document actions (theme switches etc.) take effect before
+    // the scene rebuild below picks up the new state.
     if let Some(id) = hit.as_ref() {
-        // Pass `hit_section` so the section-aware lookup can find
-        // overrides authored on the targeted section before the
-        // whole-node bindings fire. `None` (single-section / chrome
-        // hit) skips the per-section pass entirely — pre-Tier-D
-        // behaviour.
-        let triggered = doc.find_triggered_mutations_at(
-            id,
-            hit_section,
-            &Trigger::OnClick,
-            &PlatformContext::Desktop,
+        fire_onclick_triggers(
+            doc, mindmap_tree, scene_cache, id, hit_section,
+            PlatformContext::Desktop, now_ms() as u64,
         );
-        if !triggered.is_empty() {
-            // `find_triggered_mutations` returned cloned CustomMutations so
-            // we can iterate without holding an immutable borrow on doc.
-            for cm in triggered {
-                if cm.timing.as_ref().is_some_and(|t| t.duration_ms > 0) {
-                    // Animated: snapshot from/to and start an
-                    // instance, threading the section_idx so a
-                    // multi-section node can host concurrent
-                    // animations on adjacent sections without
-                    // coalescing under the dedup key.
-                    doc.start_animation_at(&cm, id, hit_section, now_ms() as u64);
-                } else if let Some(tree) = mindmap_tree.as_mut() {
-                    doc.apply_custom_mutation(&cm, id, Some(tree));
-                    // Custom mutations can touch any cached field
-                    // (node positions, edge colors, glyph_connection
-                    // font). Match the keyboard-triggered-mutation
-                    // site (event_keyboard.rs) that already clears.
-                    scene_cache.clear();
-                }
-                doc.apply_document_actions(&cm);
-            }
-        }
     }
 
     // Update selection state

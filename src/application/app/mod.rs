@@ -52,6 +52,7 @@ pub(crate) mod dispatch;
 // See CLAUDE.md "Dual-target status".
 #[cfg(not(target_arch = "wasm32"))]
 mod click;
+mod click_triggers;
 #[cfg(not(target_arch = "wasm32"))]
 mod color_picker_flow;
 #[cfg(not(target_arch = "wasm32"))]
