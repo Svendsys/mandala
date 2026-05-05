@@ -185,3 +185,124 @@ fn current_color_at_section_range_reads_in_range_runs() {
         "non-unanimous in-range runs fall back to node default"
     );
 }
+
+/// **Gap coverage check.** A range that covers a single run
+/// AND a gap (uncovered grapheme range) must NOT report the
+/// run's colour as the picker seed — the gap's effective
+/// colour is the node default, so the range is non-unanimous.
+/// Pre-fix the trivial `iter().all` on a one-element slice
+/// would have passed and seeded the picker with the run's
+/// colour. Pin the fall-back-to-default behaviour.
+#[test]
+fn current_color_at_section_range_falls_back_when_range_crosses_gap() {
+    use baumhard::mindmap::model::TextRun;
+    let (mut doc, id) = doc_with_two_uniform_sections();
+    // Replace section 1's runs: ONE run at [3..6 red], rest of
+    // [0..10) is gap. Range [0..8) covers the gap [0,3),
+    // run [3,6) red, gap [6,8) — mixed coverage → fall back.
+    {
+        let s = &mut doc.mindmap.nodes.get_mut(&id).unwrap().sections[1];
+        s.text = "abcdefghij".into();
+        s.text_runs.clear();
+        s.text_runs.push(TextRun {
+            start: 3,
+            end: 6,
+            bold: false,
+            italic: false,
+            underline: false,
+            font: "LiberationSans".into(),
+            size_pt: 14,
+            color: "#ff0000".into(),
+            hyperlink: None,
+        });
+    }
+    let handle = PickerHandle::Section {
+        node_id: id,
+        section_idx: 1,
+        axis: SectionColorAxis::Text,
+        range: Some((0, 8)),
+    };
+    assert_eq!(
+        current_color_at(&doc, &handle).as_deref(),
+        Some("#abcdef"),
+        "range that crosses a gap must fall back to node default, \
+         not seed with the partial run's colour"
+    );
+}
+
+/// Range entirely in a gap (no covering run) → falls back.
+#[test]
+fn current_color_at_section_range_falls_back_when_range_in_pure_gap() {
+    use baumhard::mindmap::model::TextRun;
+    let (mut doc, id) = doc_with_two_uniform_sections();
+    {
+        let s = &mut doc.mindmap.nodes.get_mut(&id).unwrap().sections[1];
+        s.text = "abcdefghij".into();
+        s.text_runs.clear();
+        // Single run far from the queried range — [0..3) is
+        // entirely gap.
+        s.text_runs.push(TextRun {
+            start: 7,
+            end: 10,
+            bold: false,
+            italic: false,
+            underline: false,
+            font: "LiberationSans".into(),
+            size_pt: 14,
+            color: "#00ff00".into(),
+            hyperlink: None,
+        });
+    }
+    let handle = PickerHandle::Section {
+        node_id: id,
+        section_idx: 1,
+        axis: SectionColorAxis::Text,
+        range: Some((0, 3)),
+    };
+    assert_eq!(
+        current_color_at(&doc, &handle).as_deref(),
+        Some("#abcdef"),
+        "range entirely in a gap must fall back to node default"
+    );
+}
+
+/// Range covering multiple consecutive runs with the same
+/// colour reads unanimous. Pins the `iter().all` branch with
+/// `len > 1` (today's other range tests cover only `len == 1`
+/// and the disagree case).
+#[test]
+fn current_color_at_section_range_unanimous_across_multiple_adjacent_runs() {
+    use baumhard::mindmap::model::TextRun;
+    let (mut doc, id) = doc_with_two_uniform_sections();
+    {
+        let s = &mut doc.mindmap.nodes.get_mut(&id).unwrap().sections[1];
+        s.text = "abcdefghij".into();
+        s.text_runs.clear();
+        // Two adjacent runs covering [0..6), both yellow. Range
+        // [0..6) → two runs, both same colour → unanimous.
+        for (start, end) in [(0, 3), (3, 6)] {
+            s.text_runs.push(TextRun {
+                start,
+                end,
+                bold: false,
+                italic: false,
+                underline: false,
+                font: "LiberationSans".into(),
+                size_pt: 14,
+                color: "#ffff00".into(),
+                hyperlink: None,
+            });
+        }
+    }
+    let handle = PickerHandle::Section {
+        node_id: id,
+        section_idx: 1,
+        axis: SectionColorAxis::Text,
+        range: Some((0, 6)),
+    };
+    assert_eq!(
+        current_color_at(&doc, &handle).as_deref(),
+        Some("#ffff00"),
+        "unanimous colour across multiple fully-covering adjacent runs"
+    );
+}

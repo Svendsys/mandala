@@ -155,13 +155,28 @@ pub(in crate::application::app) fn commit_color_picker(
                 // Single-section / Section commit fans through
                 // `section_commit_targets` as before.
                 if let Some((rs, re)) = range {
-                    doc.set_section_text_color_range(
+                    let applied = doc.set_section_text_color_range(
                         &node_id,
                         section_idx,
                         rs,
                         re,
                         to_write.clone(),
                     );
+                    if !applied {
+                        // Stale handle: section may have shrunk
+                        // below `range_end`, or the node /
+                        // section was deleted between picker
+                        // open and commit. Surface a `log::warn!`
+                        // so the user sees the keystroke didn't
+                        // silently eat their commit.
+                        log::warn!(
+                            "color picker commit on section {} of node {} \
+                             range {}..{} produced no change \
+                             (section may have shrunk below the range \
+                             or been deleted since picker open)",
+                            section_idx, node_id, rs, re
+                        );
+                    }
                 } else {
                     let targets = section_commit_targets(&doc.selection, &node_id, section_idx);
                     for s in &targets {

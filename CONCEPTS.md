@@ -1952,17 +1952,24 @@ to the right element.
   is fan-out-only at the trait dispatch layer.
 - `SectionRange { sel, range }` — one section with a sub-range
   of its grapheme indices. Produced by the inline text editor's
-  shift-select anchor on close: when the user shifts-arrow / shift-
-  click inside a section, the editor lifts the (cursor, anchor)
-  pair into this variant's `range = (start, end)` and per-section
-  verbs route range-aware setters (`set_section_text_color_range`,
-  `set_section_font_size_range`, `set_section_font_family_range`)
-  through it. Accessors that only care about the owning section
-  (`selected_section`, `is_selected`, `selected_ids`) treat it
-  identically to `Section`. Clipboard verbs (`Copy` / `Cut` /
-  `Paste`) explicitly reject the variant rather than silently
-  apply whole-section semantics — range-aware clipboard is
-  deferred to a future tier.
+  shift-select anchor on close: when the user shifts-arrow /
+  shift-click inside a section, the editor lifts the (cursor,
+  anchor) pair into this variant's `range = (start, end)` and
+  per-section verbs route range-aware setters
+  (`set_section_text_color_range`, `set_section_font_size_range`,
+  `set_section_font_family_range`) through it. Accessors that
+  only care about the owning section (`selected_section`,
+  `is_selected`, `selected_ids`) treat it identically to
+  `Section`. **Clipboard contract:** `Cut` and `Paste` return
+  `NotApplicable` rather than silently destroy out-of-range
+  graphemes — the action arm logs `log::warn!` to surface the
+  skip; `Copy` falls through to whole-section copy because it's
+  non-destructive. Range-aware clipboard is deferred to a future
+  tier. **Picker contract:** `ColorTarget::Section` and
+  `PickerHandle::Section` carry the sub-range, so commit calls
+  `set_section_text_color_range` directly (bypassing the
+  `MultiSection` fan-out — different sections' lengths make
+  cross-section sub-range semantics incoherent).
 - `Edge(EdgeRef)` — the whole edge body
 - `EdgeLabel(EdgeLabelSel)` — the text label of a line-mode edge
 - `PortalLabel(PortalLabelSel)` — a portal endpoint icon

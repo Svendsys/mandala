@@ -16,6 +16,27 @@ use super::RebuildContext;
 /// inline editor.
 const MULTI_TARGET_SEPARATOR: &str = "\n\n";
 
+/// Surface a `log::warn!` when a clipboard verb skipped a
+/// `SelectionState::SectionRange` selection because the trait
+/// dispatcher returned `NotApplicable` (range-aware clipboard is
+/// deferred to N4-D). Without this hook the keyboard shortcut
+/// looks like a silent eat — the verb dispatcher returned `false`
+/// and no rebuild fires, but the user has no signal. Used by
+/// `Action::Copy` / `Cut` / `Paste` arms.
+pub(in crate::application::app) fn log_clipboard_skip_for_section_range(
+    selection: &SelectionState,
+    verb: &str,
+) {
+    if matches!(selection, SelectionState::SectionRange { .. }) {
+        log::warn!(
+            "{verb} on a sub-range selection is not yet supported \
+             (range-aware clipboard deferred to a future tier); \
+             clear the range with arrow-without-shift to use \
+             whole-section clipboard verbs."
+        );
+    }
+}
+
 /// Walk the undo stack one step back. If an animation is in flight
 /// when undo fires, fast-forward it first so the undo lands on a
 /// settled scene state rather than mid-transition (otherwise the
@@ -248,6 +269,8 @@ pub(in crate::application::app) fn apply_paste(rc: &mut RebuildContext<'_>) {
     }
     if any_applied {
         rc.rebuild_after_geometry_change();
+    } else {
+        log_clipboard_skip_for_section_range(&rc.document.selection, "Paste");
     }
 }
 

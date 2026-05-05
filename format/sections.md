@@ -290,6 +290,49 @@ a node resets to `Single(node_id)`. Building a multi-section
 selection therefore always starts with a plain click, then
 extends with shift+clicks.
 
+### Section sub-range selection
+
+A section can also be selected with a grapheme-level sub-range
+via `SelectionState::SectionRange { sel, range: (start, end) }`.
+The half-open `[start, end)` range targets a contiguous run of
+graphemes inside one section's text; per-section verbs route to
+range-aware setters (`set_section_text_color_range`,
+`set_section_font_size_range`, `set_section_font_family_range`).
+
+Two producers of `SectionRange`:
+
+- **Console verbs** with `range=A..B` kv:
+  `color text=#abc section=N range=2..7` /
+  `font size=14 section=N range=2..7` /
+  `font set <family> section=N range=2..7`. The verb path
+  bypasses the trait dispatcher and calls the range setter
+  directly; `range=A..B` requires `section=N` and rejects
+  empty / inverted / non-numeric input with a clear error.
+- **Editor shift-select anchor** (deferred): the inline text
+  editor's shift-arrow / shift-click anchor lifts the
+  `(cursor, anchor)` pair into `SectionRange` on close. (In
+  development as Tier 2C-N4-C.b.2.)
+
+**Clipboard contract.** `Cut` and `Paste` return
+`Outcome::NotApplicable` rather than silently destroy
+out-of-range graphemes; the action arm logs a `log::warn!`
+line surfacing the skip. `Copy` falls through to whole-section
+copy because it's non-destructive. Range-aware clipboard
+semantics (sub-range cut, splice-paste) are deferred to a
+future tier.
+
+**Picker contract.** `color text` (no value) on a `SectionRange`
+selection opens the picker with the sub-range plumbed through
+`ColorTarget::Section { range }` → `PickerHandle::Section
+{ range }`. The picker's `current_color_at` cascade scans
+in-range runs only (via `text_run_ops::slice`); a range that
+crosses a gap or contains disagreeing runs falls back to
+`node.style.text_color`. Commit calls
+`set_section_text_color_range` directly, bypassing the
+`MultiSection` fan-out — different sections' lengths make
+cross-section sub-range semantics incoherent. Section live
+preview during wheel hover is deferred (commit-only today).
+
 ### Structured clipboard
 
 Section copy / cut produce a structured payload carrying the

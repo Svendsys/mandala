@@ -210,24 +210,55 @@ pub fn current_color_at(doc: &MindMapDocument, handle: &PickerHandle) -> Option<
         } => {
             let n = doc.mindmap.nodes.get(node_id)?;
             let section = n.sections.get(*section_idx)?;
-            // Cascade: when `range` is set, scan only the in-range
-            // runs (via `text_run_ops::slice`) — partial-coverage
-            // sub-ranges fall back to the node's `text_color`
-            // default. Otherwise scan the whole section.
-            let runs_to_scan: Vec<baumhard::mindmap::model::TextRun> = match range {
-                Some((rs, re)) => baumhard::mindmap::model::text_run_ops::slice(
-                    &section.text_runs,
-                    *rs,
-                    *re,
-                ),
-                None => section.text_runs.clone(),
-            };
             let resolved = match axis {
-                SectionColorAxis::Text => runs_to_scan
-                    .first()
-                    .filter(|first| runs_to_scan.iter().all(|r| r.color == first.color))
-                    .map(|r| r.color.clone())
-                    .unwrap_or_else(|| n.style.text_color.clone()),
+                SectionColorAxis::Text => match range {
+                    Some((rs, re)) => {
+                        let in_range =
+                            baumhard::mindmap::model::text_run_ops::slice(
+                                &section.text_runs,
+                                *rs,
+                                *re,
+                            );
+                        // Coverage check: the in-range slice must
+                        // span the entire `[rs, re)` with no gaps
+                        // for "unanimous" to be meaningful — a
+                        // partially-covered range mixes the
+                        // covered run's colour with the gap's
+                        // node-default fall-through, so the
+                        // user's effective colour in the range
+                        // is *not* unanimous. Without this
+                        // check, a single in-range run would
+                        // pass the trivial `iter().all` and
+                        // seed the picker with the wrong colour.
+                        let fully_covered = in_range
+                            .first()
+                            .is_some_and(|first| first.start == *rs)
+                            && in_range.last().is_some_and(|last| last.end == *re)
+                            && in_range
+                                .windows(2)
+                                .all(|w| w[0].end == w[1].start);
+                        let unanimous = fully_covered
+                            && in_range
+                                .first()
+                                .is_some_and(|first| {
+                                    in_range.iter().all(|r| r.color == first.color)
+                                });
+                        if unanimous {
+                            in_range
+                                .first()
+                                .map(|r| r.color.clone())
+                                .unwrap_or_else(|| n.style.text_color.clone())
+                        } else {
+                            n.style.text_color.clone()
+                        }
+                    }
+                    None => section
+                        .text_runs
+                        .first()
+                        .filter(|first| section.text_runs.iter().all(|r| r.color == first.color))
+                        .map(|r| r.color.clone())
+                        .unwrap_or_else(|| n.style.text_color.clone()),
+                },
             };
             Some(resolved)
         }
