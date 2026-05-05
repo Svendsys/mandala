@@ -12,6 +12,21 @@
 //! vector's growth, and no `unsafe`. With N typically under 20
 //! per section, every helper runs in linear time over the run
 //! vector.
+//!
+//! **Call-site discipline.** Helpers stay path-qualified
+//! (`text_run_ops::split_at`, not glob-imported) because `slice`
+//! and `split_at` collide with the inherent `[T]` methods of the
+//! same name — `runs.split_at(idx)` calls the inherent method
+//! and returns `(&[T], &[T])`, while
+//! `text_run_ops::split_at(&mut runs, idx)` mutates in place.
+//! Forcing the module prefix at every call site keeps the
+//! distinction visible.
+//!
+//! **Caller responsibilities.** Helpers operate on the run
+//! vector alone; they don't know the section's text length.
+//! Callers must clamp `start` / `end` to
+//! `count_grapheme_clusters(text)` before calling — these
+//! primitives won't detect a text-overrun.
 
 use super::node::TextRun;
 
@@ -58,10 +73,11 @@ pub fn find_run_starting_at(runs: &[TextRun], grapheme_idx: usize) -> Option<usi
 /// exact run set covering `[start, end)`, mutates each in place,
 /// then `merge_adjacent_equal` to coalesce neighbours that
 /// became identical.
+///
+/// Cost: O(N) — one linear find plus one `Vec::insert` shift.
 pub fn split_at(runs: &mut Vec<TextRun>, grapheme_idx: usize) -> bool {
-    let target_idx = match find_run_containing(runs, grapheme_idx) {
-        Some(i) => i,
-        None => return false,
+    let Some(target_idx) = find_run_containing(runs, grapheme_idx) else {
+        return false;
     };
     // Boundary already at start of the run — no split needed.
     if runs[target_idx].start == grapheme_idx {
@@ -72,6 +88,39 @@ pub fn split_at(runs: &mut Vec<TextRun>, grapheme_idx: usize) -> bool {
     right.start = grapheme_idx;
     runs.insert(target_idx + 1, right);
     true
+}
+
+/// Insert `run` into `runs` at the sorted position implied by
+/// its `start`. Returns the index where the insertion landed.
+/// Caller-supplied invariants: `run.start < run.end`, and
+/// `[run.start, run.end)` does not overlap any existing run
+/// (i.e. the caller has identified a gap or an empty
+/// `runs`). Range-targeted setters use this when the target
+/// `[start, end)` falls in an uncovered gap and a fresh run
+/// needs to materialise the user's chosen attributes there.
+///
+/// Pairs with [`merge_adjacent_equal`]: after inserting, run
+/// the merge pass to coalesce the new run with neighbours that
+/// share its style.
+///
+/// Debug builds assert non-overlap to catch caller bugs early;
+/// release builds trust the precondition.
+///
+/// Cost: O(N) — one linear find for the insertion index plus
+/// one `Vec::insert` shift.
+pub fn insert_run(runs: &mut Vec<TextRun>, run: TextRun) -> usize {
+    debug_assert!(run.start < run.end, "insert_run: empty run");
+    debug_assert!(
+        runs.iter()
+            .all(|r| r.end <= run.start || r.start >= run.end),
+        "insert_run: overlap with existing run"
+    );
+    let pos = runs
+        .iter()
+        .position(|r| r.start >= run.end)
+        .unwrap_or(runs.len());
+    runs.insert(pos, run);
+    pos
 }
 
 /// Clone every run that intersects `[start, end)`, with each
@@ -134,10 +183,7 @@ pub fn merge_adjacent_equal(runs: &mut Vec<TextRun>) {
     runs.truncate(write + 1);
 }
 
-/// Two runs share every style attribute (the seven fields a
-/// `TextRun` carries beyond `start` / `end`). Used by
-/// [`merge_adjacent_equal`] to decide whether two adjacent runs
-/// should coalesce.
+/// Coalesce predicate for [`merge_adjacent_equal`].
 fn style_eq(a: &TextRun, b: &TextRun) -> bool {
     a.bold == b.bold
         && a.italic == b.italic
@@ -277,6 +323,74 @@ mod tests {
         let mut runs = vec![run(0, 20, "red")];
         split_at(&mut runs, 7);
         assert_eq!(find_run_starting_at(&runs, 7), Some(1));
+    }
+
+    /// Calling `split_at` at the same idx a second time is a
+    /// no-op — the boundary already exists from the first call.
+    /// Pins the idempotency property a range-targeted setter
+    /// relies on when both `range.start` and `range.end` happen
+    /// to land on existing boundaries.
+    #[test]
+    fn test_split_at_is_idempotent_at_same_idx() {
+        let mut runs = vec![run(0, 10, "red")];
+        assert!(split_at(&mut runs, 5));
+        assert!(!split_at(&mut runs, 5));
+        assert_eq!(runs.len(), 2);
+    }
+
+    // ── insert_run ───────────────────────────────────────────────
+
+    #[test]
+    fn test_insert_run_into_empty() {
+        let mut runs: Vec<TextRun> = Vec::new();
+        let pos = insert_run(&mut runs, run(0, 5, "red"));
+        assert_eq!(pos, 0);
+        assert_eq!(runs.len(), 1);
+    }
+
+    #[test]
+    fn test_insert_run_into_gap_preserves_sort_order() {
+        let mut runs = vec![run(0, 5, "red"), run(15, 20, "blue")];
+        let pos = insert_run(&mut runs, run(7, 12, "green"));
+        assert_eq!(pos, 1);
+        assert_eq!(runs.len(), 3);
+        assert_eq!(runs[0].end, 5);
+        assert_eq!(runs[1].start, 7);
+        assert_eq!(runs[1].end, 12);
+        assert_eq!(runs[1].color, "green");
+        assert_eq!(runs[2].start, 15);
+    }
+
+    #[test]
+    fn test_insert_run_at_end() {
+        let mut runs = vec![run(0, 5, "red")];
+        let pos = insert_run(&mut runs, run(10, 15, "blue"));
+        assert_eq!(pos, 1);
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[1].start, 10);
+    }
+
+    #[test]
+    fn test_insert_run_followed_by_merge_coalesces_with_neighbour() {
+        // Range-targeted setter use case: insert a fresh run
+        // into a gap, then merge with an adjacent same-style
+        // neighbour. The fresh run's `start` matches the
+        // neighbour's `end` so the merge fires.
+        let mut runs = vec![run(0, 5, "red")];
+        insert_run(&mut runs, run(5, 10, "red"));
+        merge_adjacent_equal(&mut runs);
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].start, 0);
+        assert_eq!(runs[0].end, 10);
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "overlap")]
+    fn test_insert_run_panics_on_overlap_in_debug() {
+        let mut runs = vec![run(0, 10, "red")];
+        // [5, 15) overlaps [0, 10) — debug_assert fires.
+        insert_run(&mut runs, run(5, 15, "blue"));
     }
 
     // ── slice ────────────────────────────────────────────────────

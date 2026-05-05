@@ -166,9 +166,9 @@ axis. NW / N / NE / SW / W handles shift `offset` toward the
 cursor while shrinking `size`, so the opposite edge stays put;
 SE / E / S handles only grow `size` from the existing
 top-left. Per-frame the section's tree position tracks the
-cursor; the model is written at release through
-`set_section_size` followed by `set_section_offset`, both under
-a single `EditNodeStyle` undo entry. AABB-overflow,
+cursor; the model is written at release through the atomic
+`set_section_aabb` setter (one snapshot, one undo entry,
+both `offset` and `size` validated together). AABB-overflow,
 non-positive size, or astronomical-size rejection logs and
 falls through to a model-side rebuild that snaps the section
 back. `None`-sized (fill-parent) sections emit no handles —

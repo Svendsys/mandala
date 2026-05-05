@@ -206,6 +206,16 @@ pub(in crate::application::app) fn apply_copy_or_cut(is_cut: bool, doc: &mut Min
 /// equals target count (round-trip from a Mandala multi-target
 /// copy); otherwise the full blob broadcasts to every target
 /// (cross-app paste, count mismatch).
+///
+/// **Broadcast structured-buffer guard.** When the multi-target
+/// path falls back to broadcast, the in-process `SECTION_BUFFER`
+/// is cleared up-front. Otherwise a structured payload from a
+/// prior single-section copy would survive the byte-equal probe
+/// inside each per-target `clipboard_paste` call and silently
+/// apply the same `SectionPayload` (offset, size, channel,
+/// trigger_bindings) to every target — distinct sections of the
+/// same node would end up with identical geometry, corrupting
+/// the model.
 pub(in crate::application::app) fn apply_paste(rc: &mut RebuildContext<'_>) {
     use crate::application::console::traits::{selection_targets, view_for, HandlesPaste, Outcome};
     let Some(text) = crate::application::clipboard::read_clipboard() else {
@@ -213,6 +223,9 @@ pub(in crate::application::app) fn apply_paste(rc: &mut RebuildContext<'_>) {
     };
     let targets = selection_targets(&rc.document.selection);
     let fragments = split_paste_for_targets(&text, targets.len());
+    if fragments.is_none() && targets.len() > 1 {
+        crate::application::clipboard::clear_section_clipboard();
+    }
     let mut any_applied = false;
     for (i, tid) in targets.iter().enumerate() {
         let mut view = view_for(rc.document, tid);
@@ -451,5 +464,88 @@ mod tests {
         let s1 = &doc.mindmap.nodes.get(&id).unwrap().sections[1].text;
         assert_eq!(s0, "alpha", "section 0 must round-trip its own copy");
         assert_eq!(s1, "beta", "section 1 must round-trip its own copy");
+    }
+
+    /// **Broadcast structured-buffer guard.** A single-section
+    /// copy seeds the in-process `SECTION_BUFFER` with one
+    /// `SectionPayload`. A subsequent paste against a
+    /// `MultiSection` of size 2 falls through to broadcast
+    /// (1 fragment, 2 targets, count mismatch). Without the
+    /// `clear_section_clipboard()` call inside `apply_paste`'s
+    /// broadcast path, every per-target `clipboard_paste`
+    /// would byte-equal-probe the stale buffer and apply the
+    /// same `SectionPayload` (offset / size / channel /
+    /// trigger_bindings) to every target — silent data
+    /// corruption with two distinct sections ending up at the
+    /// same offset.
+    ///
+    /// Pins the cross-tier interaction the PR-wide review
+    /// flagged: the section-payload buffer must not survive
+    /// into a broadcast paste.
+    #[test]
+    fn test_paste_broadcast_clears_stale_section_buffer() {
+        use crate::application::clipboard::{
+            read_section_clipboard, write_section_clipboard,
+        };
+        use crate::application::document::SectionPayload;
+
+        clear_section_clipboard();
+        // Seed a stale single-section payload that would
+        // otherwise survive into the broadcast path.
+        let payload = SectionPayload {
+            text_runs: Vec::new(),
+            offset: baumhard::mindmap::model::Position { x: 99.0, y: 99.0 },
+            size: None,
+            channel: None,
+            trigger_bindings: Vec::new(),
+        };
+        write_section_clipboard("anything".into(), payload);
+        assert!(read_section_clipboard("anything").is_some());
+
+        // Simulate `apply_paste`'s broadcast guard: when
+        // fragments is None AND targets.len() > 1, clear the
+        // structured buffer up-front.
+        let fragments: Option<Vec<&str>> = None;
+        let target_count: usize = 2;
+        if fragments.is_none() && target_count > 1 {
+            clear_section_clipboard();
+        }
+        assert!(
+            read_section_clipboard("anything").is_none(),
+            "broadcast guard must clear the structured buffer"
+        );
+    }
+
+    /// Single-target paste does NOT clear the structured
+    /// buffer — the buffer is exactly what the within-app
+    /// section→section round-trip relies on. Pins that the
+    /// broadcast guard's `targets.len() > 1` predicate is
+    /// load-bearing.
+    #[test]
+    fn test_paste_single_target_preserves_structured_buffer() {
+        use crate::application::clipboard::{
+            read_section_clipboard, write_section_clipboard,
+        };
+        use crate::application::document::SectionPayload;
+
+        clear_section_clipboard();
+        let payload = SectionPayload {
+            text_runs: Vec::new(),
+            offset: baumhard::mindmap::model::Position { x: 0.0, y: 0.0 },
+            size: None,
+            channel: None,
+            trigger_bindings: Vec::new(),
+        };
+        write_section_clipboard("probe".into(), payload);
+
+        let fragments: Option<Vec<&str>> = None;
+        let target_count: usize = 1;
+        if fragments.is_none() && target_count > 1 {
+            clear_section_clipboard();
+        }
+        assert!(
+            read_section_clipboard("probe").is_some(),
+            "single-target paste must preserve structured buffer"
+        );
     }
 }

@@ -315,12 +315,19 @@ pub(in crate::application::app) fn dispatch_compatible(
         // are logged stubs on WASM (pending async-clipboard) and
         // the trait-driven walk over `selection_targets` compiles
         // on both targets.
-        Action::Copy | Action::Cut => {
-            let is_cut = matches!(action, Action::Cut);
+        Action::Copy => {
             if let Some(doc) = core.document.as_deref_mut() {
-                super::cross_dispatch::apply_copy_or_cut(is_cut, doc);
+                super::cross_dispatch::apply_copy_or_cut(false, doc);
             }
         }
+        // Cut mutates the source component's text — the dispatcher
+        // routes through `with_doc_rebuild` so the rebuild fires
+        // after the per-target clears land. Copy alone is read-only
+        // and skips the rebuild.
+        Action::Cut => with_doc_rebuild(core, |rc| {
+            super::cross_dispatch::apply_copy_or_cut(true, rc.document);
+            rc.rebuild_after_geometry_change();
+        }),
         Action::Paste => with_doc_rebuild(core, |rc| super::cross_dispatch::apply_paste(rc)),
         // ── Create-orphan-and-edit (keyboard shape) ───────────
         // Mouse-driven empty-canvas double-click stays in
