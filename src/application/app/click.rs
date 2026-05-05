@@ -155,7 +155,8 @@ pub(super) fn handle_click(
                 | SelectionState::PortalLabel(_)
                 | SelectionState::PortalText(_)
                 | SelectionState::Section(_)
-                | SelectionState::MultiSection(_) => {
+                | SelectionState::MultiSection(_)
+                | SelectionState::SectionRange { .. } => {
                     doc.selection = SelectionState::Single(id.clone());
                 }
                 SelectionState::Single(existing) => {

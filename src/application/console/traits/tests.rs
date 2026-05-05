@@ -5,7 +5,7 @@
 
 use super::*;
 use crate::application::console::constants::{VAR_ACCENT, VAR_EDGE, VAR_FG};
-use crate::application::document::SelectionState;
+use crate::application::document::{SectionSel, SelectionState};
 
 #[test]
 fn test_parse_hex_ok() {
@@ -80,9 +80,10 @@ fn test_selection_targets_multisection_fans_out_per_entry() {
     assert_eq!(out.len(), 3);
     for (i, target) in out.iter().enumerate() {
         match target {
-            TargetId::Section { node_id, section_idx } => {
+            TargetId::Section { node_id, section_idx, range } => {
                 assert_eq!(node_id, &secs[i].node_id);
                 assert_eq!(*section_idx, secs[i].section_idx);
+                assert!(range.is_none(), "MultiSection fan-out has no sub-range");
             }
             _ => panic!("expected TargetId::Section, got non-section variant"),
         }
@@ -99,6 +100,97 @@ fn test_clipboard_content_variants() {
 
     let na = ClipboardContent::NotApplicable;
     assert!(matches!(na, ClipboardContent::NotApplicable));
+}
+
+/// `selection_targets` fans `SelectionState::SectionRange` out
+/// to a single `TargetId::Section { range: Some(_), .. }` — the
+/// range threads into the dispatcher's `TargetView::Section`
+/// arm, where range-aware setters consult it.
+#[test]
+fn test_selection_targets_section_range_carries_range() {
+    let sel = SelectionState::SectionRange {
+        sel: SectionSel::new("a", 1),
+        range: (3, 7),
+    };
+    let out = selection_targets(&sel);
+    assert_eq!(out.len(), 1);
+    match &out[0] {
+        TargetId::Section { node_id, section_idx, range } => {
+            assert_eq!(node_id, "a");
+            assert_eq!(*section_idx, 1);
+            assert_eq!(*range, Some((3, 7)));
+        }
+        _ => panic!("expected TargetId::Section"),
+    }
+}
+
+/// `Section` and `MultiSection` continue to fan out with
+/// `range: None` — pin the back-compat invariant the trait
+/// dispatcher relies on.
+#[test]
+fn test_selection_targets_section_carries_no_range() {
+    let sel = SelectionState::Section(SectionSel::new("a", 0));
+    let out = selection_targets(&sel);
+    assert_eq!(out.len(), 1);
+    match &out[0] {
+        TargetId::Section { range, .. } => assert!(range.is_none()),
+        _ => panic!("expected TargetId::Section"),
+    }
+}
+
+/// **Dispatcher routes range to the range-aware setter.** A
+/// `TargetView::Section { range: Some(_), .. }` color write
+/// must hit `set_section_text_color_range` (which only mutates
+/// in-range runs), not the whole-section setter. Pin by
+/// constructing a `Section` selection extended with a sub-range,
+/// dispatching `apply_wheel_color`, and asserting only the
+/// in-range runs changed colour.
+#[test]
+fn test_section_range_dispatches_to_range_aware_color_setter() {
+    use crate::application::document::tests_common::pinned_two_section_node;
+    use crate::application::document::SelectionState;
+
+    let (mut doc, id) = pinned_two_section_node();
+    // Set up a known 10-grapheme section with a single run.
+    {
+        let n = doc.mindmap.nodes.get_mut(&id).unwrap();
+        let s = &mut n.sections[0];
+        s.text = "abcdefghij".into();
+        s.text_runs.clear();
+        s.text_runs.push(baumhard::mindmap::model::TextRun {
+            start: 0,
+            end: 10,
+            bold: false,
+            italic: false,
+            underline: false,
+            font: "LiberationSans".into(),
+            size_pt: 14,
+            color: "#ffffff".into(),
+            hyperlink: None,
+        });
+    }
+    doc.selection = SelectionState::SectionRange {
+        sel: SectionSel::new(&id, 0),
+        range: (3, 7),
+    };
+
+    let targets = selection_targets(&doc.selection);
+    assert_eq!(targets.len(), 1);
+    for tid in &targets {
+        let mut view = view_for(&mut doc, tid);
+        let outcome = view.set_text_color(ColorValue::Hex("#abcdef".into()));
+        assert!(matches!(outcome, Outcome::Applied));
+    }
+
+    // The mutation should split the original [0..10) run into
+    // three: [0..3 white, 3..7 #abcdef, 7..10 white].
+    let runs = &doc.mindmap.nodes.get(&id).unwrap().sections[0].text_runs;
+    assert_eq!(runs.len(), 3, "expected three runs after range carve-out");
+    assert_eq!(runs[0].color, "#ffffff");
+    assert_eq!(runs[1].color, "#abcdef");
+    assert_eq!(runs[1].start, 3);
+    assert_eq!(runs[1].end, 7);
+    assert_eq!(runs[2].color, "#ffffff");
 }
 
 #[test]

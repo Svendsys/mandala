@@ -185,7 +185,7 @@ fn section_paste_collapses_runs_inheriting_first_run_template() {
     }
     let id = nid.clone();
     {
-        let mut view = TargetView::Section {
+        let mut view = TargetView::Section { range: None,
             doc: &mut doc,
             id,
             section_idx: 1,
@@ -227,7 +227,7 @@ fn section_paste_clamps_stale_idx_to_last_section() {
     }
     let id = nid.clone();
     {
-        let mut view = TargetView::Section {
+        let mut view = TargetView::Section { range: None,
             doc: &mut doc,
             id,
             section_idx: 5, // way past the end
@@ -259,7 +259,7 @@ fn section_copy_emits_structured_payload() {
         "LiberationSans",
         18,
     );
-    let tid = TargetId::Section {
+    let tid = TargetId::Section { range: None,
         node_id: nid.clone(),
         section_idx: 1,
     };
@@ -310,7 +310,7 @@ fn section_paste_with_matching_buffer_preserves_runs() {
 
     let id = nid.clone();
     {
-        let mut view = TargetView::Section {
+        let mut view = TargetView::Section { range: None,
             doc: &mut doc,
             id,
             section_idx: 1,
@@ -365,7 +365,7 @@ fn section_paste_buffer_match_survives_trailing_newline() {
 
     let id = nid.clone();
     {
-        let mut view = TargetView::Section {
+        let mut view = TargetView::Section { range: None,
             doc: &mut doc,
             id,
             section_idx: 1,
@@ -415,7 +415,7 @@ fn section_paste_with_mismatched_buffer_falls_back_to_plain() {
 
     let id = nid.clone();
     {
-        let mut view = TargetView::Section {
+        let mut view = TargetView::Section { range: None,
             doc: &mut doc,
             id,
             section_idx: 1,
@@ -452,7 +452,7 @@ fn section_cut_emits_structured_payload_and_clears_text_runs_only() {
     }
     let id = nid.clone();
     let cut = {
-        let mut view = TargetView::Section {
+        let mut view = TargetView::Section { range: None,
             doc: &mut doc,
             id,
             section_idx: 1,

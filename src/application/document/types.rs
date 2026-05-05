@@ -177,6 +177,16 @@ pub enum SelectionState {
     /// callers that may produce 0 / 1 entries should route
     /// through that constructor.
     MultiSection(Vec<SectionSel>),
+    /// One section with a sub-range of its grapheme indices —
+    /// the editor's shift-select anchor lifts the cursor +
+    /// anchor pair into this variant on close. Per-section
+    /// verbs (`color text=…`, `font size=…`, `font family=…`)
+    /// see the range and route to the range-aware setter
+    /// (`set_section_text_color_range` etc.); accessors that
+    /// only care about the owning section (`selected_section`,
+    /// `selected_ids`, `is_selected`) treat it identically to
+    /// [`Self::Section`].
+    SectionRange { sel: SectionSel, range: (usize, usize) },
     Edge(EdgeRef),
     /// Line-mode label selection: the edge's text label sits
     /// along the connection path and is selected independently
@@ -292,12 +302,9 @@ impl SelectionState {
             SelectionState::None => false,
             SelectionState::Single(id) => id == node_id,
             SelectionState::Multi(ids) => ids.contains(&node_id.to_string()),
-            // A section selection counts the owning node as
-            // selected — every per-node consumer (highlight,
-            // chrome rendering, child filter) gets the natural
-            // "this node is the one in focus" answer.
             SelectionState::Section(s) => s.node_id == node_id,
             SelectionState::MultiSection(secs) => secs.iter().any(|s| s.node_id == node_id),
+            SelectionState::SectionRange { sel, .. } => sel.node_id == node_id,
             SelectionState::Edge(_)
             | SelectionState::EdgeLabel(_)
             | SelectionState::PortalLabel(_)
@@ -312,10 +319,6 @@ impl SelectionState {
             SelectionState::Multi(ids) => ids.iter().map(|s| s.as_str()).collect(),
             SelectionState::Section(s) => vec![s.node_id.as_str()],
             SelectionState::MultiSection(secs) => {
-                // Deduplicate node_ids so per-node consumers
-                // (highlight, chrome) don't get duplicate work
-                // when two sections of the same node are
-                // selected. Order-preserving: first-seen wins.
                 let mut seen = std::collections::HashSet::new();
                 let mut out = Vec::with_capacity(secs.len());
                 for s in secs {
@@ -325,6 +328,7 @@ impl SelectionState {
                 }
                 out
             }
+            SelectionState::SectionRange { sel, .. } => vec![sel.node_id.as_str()],
             SelectionState::Edge(_)
             | SelectionState::EdgeLabel(_)
             | SelectionState::PortalLabel(_)
@@ -332,30 +336,43 @@ impl SelectionState {
         }
     }
 
-    /// Borrow the inner [`SectionSel`] for a `Section` selection,
+    /// Borrow the inner [`SectionSel`] for a section-bearing
+    /// selection ([`Self::Section`] or [`Self::SectionRange`]),
     /// or `None` for any other variant — *including*
-    /// [`Self::MultiSection`]. Per-section verbs that need a
-    /// single section target consult this; verbs that fan out
-    /// over every selected section route through
-    /// [`super::super::console::traits::view::selection_targets`]
-    /// instead.
+    /// [`Self::MultiSection`]. Verbs that need a single section
+    /// target consult this; verbs that fan out over every
+    /// selected section route through `selection_targets`.
     pub fn selected_section(&self) -> Option<&SectionSel> {
         match self {
             SelectionState::Section(s) => Some(s),
+            SelectionState::SectionRange { sel, .. } => Some(sel),
             _ => None,
         }
     }
 
     /// Borrow every selected section as a slice. Returns a
-    /// single-element slice for [`Self::Section`], the inner
-    /// vec for [`Self::MultiSection`], and an empty slice for
-    /// every other variant. Used by `selection_targets` to fan
-    /// out per-section verbs.
+    /// single-element slice for [`Self::Section`] /
+    /// [`Self::SectionRange`], the inner vec for
+    /// [`Self::MultiSection`], and an empty slice for every
+    /// other variant. Used by `selection_targets` to fan out
+    /// per-section verbs.
     pub fn selected_sections(&self) -> &[SectionSel] {
         match self {
             SelectionState::Section(s) => std::slice::from_ref(s),
             SelectionState::MultiSection(secs) => secs.as_slice(),
+            SelectionState::SectionRange { sel, .. } => std::slice::from_ref(sel),
             _ => &[],
+        }
+    }
+
+    /// Sub-range carried by [`Self::SectionRange`], or `None`
+    /// for every other variant. Per-section verbs route
+    /// range-targeted setters through this when the user has
+    /// shift-selected a sub-range inside a section.
+    pub fn selected_range(&self) -> Option<(usize, usize)> {
+        match self {
+            SelectionState::SectionRange { range, .. } => Some(*range),
+            _ => None,
         }
     }
 

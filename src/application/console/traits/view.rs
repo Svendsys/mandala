@@ -45,6 +45,14 @@ pub enum TargetView<'a> {
         doc: &'a mut MindMapDocument,
         id: String,
         section_idx: usize,
+        /// Optional sub-range `[start, end)` over the section's
+        /// grapheme indices. `Some(range)` routes per-section
+        /// style dispatch (color text, font size, font family)
+        /// to the range-aware setter; clipboard ops fall back
+        /// to whole-section semantics (range-aware paste is
+        /// deferred to N4-D). `None` = whole-section, the
+        /// pre-N4-C semantic.
+        range: Option<(usize, usize)>,
     },
     /// Line-mode edge body target. Color operations write the
     /// edge's `color` / `glyph_connection.color`; clipboard
@@ -162,8 +170,13 @@ impl<'a> HasTextColor for TargetView<'a> {
             TargetView::Node { doc, id } => {
                 Outcome::applied(doc.set_node_text_color(id, color_as_string(&c, "#ffffff")))
             }
-            TargetView::Section { doc, id, section_idx } => {
-                Outcome::applied(doc.set_section_text_color(id, *section_idx, color_as_string(&c, "#ffffff")))
+            TargetView::Section { doc, id, section_idx, range } => {
+                let color_str = color_as_string(&c, "#ffffff");
+                let applied = match range {
+                    Some((rs, re)) => doc.set_section_text_color_range(id, *section_idx, *rs, *re, color_str),
+                    None => doc.set_section_text_color(id, *section_idx, color_str),
+                };
+                Outcome::applied(applied)
             }
             // Edge body: the edge's one color field (line + any
             // text that inherits).
@@ -273,9 +286,14 @@ impl<'a> AcceptsFontFamily for TargetView<'a> {
             // section.
             TargetView::Node { doc, id } => Outcome::applied(doc.set_node_font_family(id, family)),
             // Section: per-section font family override, leaves
-            // sibling sections' runs alone.
-            TargetView::Section { doc, id, section_idx } => {
-                Outcome::applied(doc.set_section_font_family(id, *section_idx, family))
+            // sibling sections' runs alone. With a `range` set,
+            // routes to the range-aware setter instead.
+            TargetView::Section { doc, id, section_idx, range } => {
+                let applied = match range {
+                    Some((rs, re)) => doc.set_section_font_family_range(id, *section_idx, *rs, *re, family),
+                    None => doc.set_section_font_family(id, *section_idx, family),
+                };
+                Outcome::applied(applied)
             }
             // Edge body: `glyph_connection.font` override.
             TargetView::Edge { doc, er } => Outcome::applied(doc.set_edge_font_family(er, family)),
@@ -324,7 +342,7 @@ impl<'a> HandlesCopy for TargetView<'a> {
             // Section: structured payload (`text` to OS clipboard,
             // `payload` to in-process buffer). Empty text still
             // emits `Section` because chrome may carry information.
-            TargetView::Section { doc, id, section_idx } => match doc
+            TargetView::Section { doc, id, section_idx, .. } => match doc
                 .mindmap
                 .nodes
                 .get(id)
@@ -404,7 +422,7 @@ impl<'a> HandlesPaste for TargetView<'a> {
             // round-trips). Fall through to plain-text template
             // inheritance otherwise. Stale-`section_idx` clamp
             // survives both branches.
-            TargetView::Section { doc, id, section_idx } => {
+            TargetView::Section { doc, id, section_idx, .. } => {
                 let section_count = doc
                     .mindmap
                     .nodes
@@ -498,7 +516,7 @@ impl<'a> HandlesCut for TargetView<'a> {
             // channel / bindings on the source section so the cut
             // reads as "the text disappeared" rather than "the
             // section dissolved."
-            TargetView::Section { doc, id, section_idx } => {
+            TargetView::Section { doc, id, section_idx, .. } => {
                 let (text, payload) = match doc
                     .mindmap
                     .nodes
@@ -646,6 +664,12 @@ pub enum TargetId {
     Section {
         node_id: String,
         section_idx: usize,
+        /// Optional sub-range `[start, end)` over the section's
+        /// grapheme indices — emitted when `selection_targets`
+        /// fans `SelectionState::SectionRange` out. The trait
+        /// dispatcher's `TargetView::Section { range, .. }`
+        /// arm consults it.
+        range: Option<(usize, usize)>,
     },
     Edge(EdgeRef),
     EdgeLabel(EdgeRef),
@@ -675,19 +699,28 @@ pub fn selection_targets(sel: &SelectionState) -> Vec<TargetId> {
         SelectionState::Section(s) => vec![TargetId::Section {
             node_id: s.node_id.clone(),
             section_idx: s.section_idx,
+            range: None,
         }],
         // Multi-section fans out to one `Section` target per
         // entry — every per-section verb (colour text axis,
         // font size / family, clipboard text) applies to each.
-        // `bg=` / `border=` continue to return `NotApplicable`
-        // per the section spec (no chrome on sections).
         SelectionState::MultiSection(secs) => secs
             .iter()
             .map(|s| TargetId::Section {
                 node_id: s.node_id.clone(),
                 section_idx: s.section_idx,
+                range: None,
             })
             .collect(),
+        // SectionRange routes through the same `Section`
+        // target so per-section verbs reuse one dispatch arm;
+        // the carried range threads to range-aware setters
+        // inside the dispatcher.
+        SelectionState::SectionRange { sel, range } => vec![TargetId::Section {
+            node_id: sel.node_id.clone(),
+            section_idx: sel.section_idx,
+            range: Some(*range),
+        }],
         SelectionState::Edge(er) => vec![TargetId::Edge(er.clone())],
         SelectionState::EdgeLabel(s) => vec![TargetId::EdgeLabel(s.edge_ref.clone())],
         SelectionState::PortalLabel(s) => vec![TargetId::PortalLabel {
@@ -706,10 +739,11 @@ pub fn selection_targets(sel: &SelectionState) -> Vec<TargetId> {
 pub fn view_for<'a>(doc: &'a mut MindMapDocument, id: &TargetId) -> TargetView<'a> {
     match id {
         TargetId::Node(nid) => TargetView::Node { doc, id: nid.clone() },
-        TargetId::Section { node_id, section_idx } => TargetView::Section {
+        TargetId::Section { node_id, section_idx, range } => TargetView::Section {
             doc,
             id: node_id.clone(),
             section_idx: *section_idx,
+            range: *range,
         },
         TargetId::Edge(er) => TargetView::Edge { doc, er: er.clone() },
         TargetId::EdgeLabel(er) => TargetView::EdgeLabel { doc, er: er.clone() },

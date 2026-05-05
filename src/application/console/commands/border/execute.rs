@@ -262,6 +262,7 @@ pub(crate) fn nodes_in_selection(sel: &SelectionState) -> Result<Vec<String>, Ex
         // Borders attach to the node, not the section — a section
         // selection collapses to its owning node for border verbs.
         SelectionState::Section(s) => Ok(vec![s.node_id.clone()]),
+        SelectionState::SectionRange { sel: s, .. } => Ok(vec![s.node_id.clone()]),
         // Multi-section: collapse to the deduplicated set of
         // owning nodes via the shared
         // `dedup_owning_node_ids` helper.

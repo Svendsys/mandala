@@ -179,6 +179,11 @@ impl MindMapDocument {
             // like `section delete`) is the dedicated entry
             // point; the bare Delete keystroke targets the node.
             SelectionState::Section(s) => Some(DelKind::Node(s.node_id.clone())),
+            // SectionRange: same shape as Section — the bare
+            // Delete keystroke targets the owning node, not
+            // the sub-range (range deletion would be a
+            // dedicated verb).
+            SelectionState::SectionRange { sel, .. } => Some(DelKind::Node(sel.node_id.clone())),
             // MultiSection delete targets the deduplicated set
             // of owning nodes — routes through the shared
             // `dedup_owning_node_ids` helper.

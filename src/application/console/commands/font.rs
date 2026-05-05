@@ -347,6 +347,15 @@ fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             let changed = doc.set_portal_text_font(&s.edge_ref(), &s.endpoint_node_id, size, min, max);
             finalize("portal text", changed)
         }
+        SelectionState::SectionRange { sel, range } => {
+            // SectionRange: route to the section, layering an
+            // explicit `range=A..B` from the kv parser on top of
+            // the selection's own range when both are set
+            // (kv wins — explicit user input).
+            let idx = section_target.unwrap_or(sel.section_idx);
+            let effective_range = range_target.or(Some(range));
+            section_font_outcome(doc, &sel.node_id, idx, size, min, max, effective_range)
+        }
         SelectionState::None => ExecResult::err("font: no selection"),
     }
 }
@@ -640,6 +649,12 @@ pub(crate) fn apply_font_kv_to_selection(
         SelectionState::PortalLabel(s) => doc.set_edge_font(&s.edge_ref(), size, min, max),
         SelectionState::PortalText(s) => {
             doc.set_portal_text_font(&s.edge_ref(), &s.endpoint_node_id, size, min, max)
+        }
+        SelectionState::SectionRange { sel, range } => {
+            if size.is_none() {
+                return false;
+            }
+            doc.set_section_font_size_range(&sel.node_id, sel.section_idx, range.0, range.1, pt)
         }
         SelectionState::None => false,
     }

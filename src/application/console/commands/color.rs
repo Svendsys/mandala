@@ -171,6 +171,24 @@ fn picker_target_for(verb: &str, selection: &SelectionState) -> PickerTargetOutc
             },
             None => PickerTargetOutcome::Unknown,
         },
+        // SectionRange: route the picker to the targeted section
+        // exactly like `Section` — the picker handle today
+        // doesn't carry the sub-range, so commit lands on the
+        // whole section's text color. N4-C.b will extend the
+        // picker handle with the range.
+        SelectionState::SectionRange { sel: SectionSel { node_id, section_idx }, .. } => match axis {
+            Some(NodeColorAxis::Text) | None => PickerTargetOutcome::Open(ColorTarget::Section {
+                node_id: node_id.clone(),
+                section_idx: *section_idx,
+                axis: SectionColorAxis::Text,
+            }),
+            Some(NodeColorAxis::Bg) => PickerTargetOutcome::NotApplicable(
+                "color bg: not applicable to a section (section-level chrome doesn't exist)".to_string(),
+            ),
+            Some(NodeColorAxis::Border) => PickerTargetOutcome::NotApplicable(
+                "color border: not applicable to a section (section-level chrome doesn't exist)".to_string(),
+            ),
+        },
         SelectionState::Edge(er) => {
             // Edges (line-mode or portal-mode) have one color
             // field. `border` maps to it, `text` also currently
