@@ -335,7 +335,8 @@ Workspace-level commitment:
 
 - **Extensive unit testing is a directive, not a nice-to-have.**
 - **Fundamentals get the heaviest coverage** (mutations, undo, Unicode,
-  geometry, loader edges, platform-shared logic).
+  geometry, loader edges, platform-shared logic). Don't waste tests on 
+  "locking in" trivial stuff. 
 - **New mutations and undo variants ship with tests in the same commit;
   new Baumhard primitives ship with a `do_*()` test and a criterion
   bench in the same commit.**
