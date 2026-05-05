@@ -312,7 +312,7 @@ pub(super) fn handle_cursor_moved(
                     // shouldn't see this; defensive against
                     // model mutations through the console mid-
                     // press).
-                    if let Some(doc) = ctx.document.as_ref() {
+                    if let Some(doc) = ctx.document.as_mut() {
                         if let Some(node) = doc.mindmap.nodes.get(&node_id) {
                             if node.size.width.is_finite()
                                 && node.size.height.is_finite()
@@ -321,6 +321,23 @@ pub(super) fn handle_cursor_moved(
                             {
                                 let start_position = node.position;
                                 let start_size = node.size;
+                                // Same demote-on-press as the
+                                // whole-node move arm — a
+                                // `MultiSection`/`Section` selection
+                                // on the resized node would otherwise
+                                // leave mid-drag picker hints reading
+                                // a section state while the user
+                                // bodily resizes the parent.
+                                if let Some(new_sel) =
+                                    selection_after_node_drag_press(&doc.selection, &node_id)
+                                {
+                                    doc.selection = new_sel;
+                                    rebuild_selection_highlight(
+                                        doc,
+                                        ctx.mindmap_tree,
+                                        ctx.renderer,
+                                    );
+                                }
                                 ctx.scene_cache.clear();
                                 *ctx.drag_state = DragState::Throttled(ThrottledDrag::NodeResize(
                                     NodeResizeInteraction::new(
@@ -350,11 +367,32 @@ pub(super) fn handle_cursor_moved(
                     // in practice, but the per-frame dispatch
                     // shouldn't crash on a model the user mutated
                     // through the console mid-press).
-                    if let Some(doc) = ctx.document.as_ref() {
+                    if let Some(doc) = ctx.document.as_mut() {
                         if let Some(node) = doc.mindmap.nodes.get(&node_id) {
                             if let Some(section) = node.sections.get(section_idx) {
                                 if let Some(start_size) = section.size {
                                     let start_offset = section.offset;
+                                    // Same demote-on-press as the
+                                    // section-move arm — a
+                                    // `MultiSection` containing the
+                                    // resized section demotes to
+                                    // `Section(node, idx)` so the
+                                    // mid-drag picker hint matches
+                                    // the in-flight gesture.
+                                    if let Some(new_sel) =
+                                        selection_after_section_drag_press(
+                                            &doc.selection,
+                                            &node_id,
+                                            section_idx,
+                                        )
+                                    {
+                                        doc.selection = new_sel;
+                                        rebuild_selection_highlight(
+                                            doc,
+                                            ctx.mindmap_tree,
+                                            ctx.renderer,
+                                        );
+                                    }
                                     ctx.scene_cache.clear();
                                     *ctx.drag_state = DragState::Throttled(ThrottledDrag::SectionResize(
                                         SectionResizeInteraction::new(
@@ -376,15 +414,10 @@ pub(super) fn handle_cursor_moved(
                     return;
                 }
                 if let Some(node_id) = hit_node.take() {
-                    // Capture the pre-demote owning-node set
-                    // before any selection mutation below
-                    // narrows it. Used by the shift+drag harvest
-                    // — without this snapshot, the section /
-                    // multi-section demote that runs on whole-
-                    // node drag promotion would shrink the set
-                    // to one before the harvest reads it,
-                    // silently dropping every other selected
-                    // node from the drag scope.
+                    // Snapshot before demote — shift+drag
+                    // harvest reads from this so the demote
+                    // below doesn't shrink the multi-set scope
+                    // to one.
                     let pre_demote_ids: Vec<String> = ctx
                         .document
                         .as_ref()
@@ -642,7 +675,7 @@ mod tests {
     /// Multi-section node + non-shift + valid section_idx → drag
     /// the section. Pins the threshold-cross promotion gate.
     #[test]
-    fn resolve_section_drag_target_multi_section_non_shift_returns_some() {
+    fn test_resolve_section_drag_target_multi_section_non_shift_returns_some() {
         let (doc, id) = pinned_two_section_node();
         let result = resolve_section_drag_target(Some(&doc), &id, Some(1), false);
         assert!(result.is_some(), "multi-section + non-shift must promote");
@@ -654,7 +687,7 @@ mod tests {
     /// gate is `sections.len() > 1`, not `idx > 0`. Closes the
     /// review's test gap.
     #[test]
-    fn resolve_section_drag_target_section_zero_on_multi_section_returns_some() {
+    fn test_resolve_section_drag_target_section_zero_on_multi_section_returns_some() {
         let (doc, id) = pinned_two_section_node();
         let result = resolve_section_drag_target(Some(&doc), &id, Some(0), false);
         assert!(result.is_some(), "section_idx=0 on multi-section must promote");
@@ -663,7 +696,7 @@ mod tests {
     /// Single-section node falls to whole-node drag — mirrors
     /// `hit_test_target`'s single-section fold to `NodeContainer`.
     #[test]
-    fn resolve_section_drag_target_single_section_returns_none() {
+    fn test_resolve_section_drag_target_single_section_returns_none() {
         let mut doc = load_test_doc();
         // `first_testament_node_id` returns a node that may have
         // multiple sections under some test orderings; force
@@ -679,7 +712,7 @@ mod tests {
     /// Shift+drag-on-section falls to whole-node drag (multi-
     /// select discipline). Pins the second half of the gate.
     #[test]
-    fn resolve_section_drag_target_shift_returns_none() {
+    fn test_resolve_section_drag_target_shift_returns_none() {
         let (doc, id) = pinned_two_section_node();
         let result = resolve_section_drag_target(Some(&doc), &id, Some(1), true);
         assert!(result.is_none(), "shift+drag must fall to whole-node");
@@ -688,7 +721,7 @@ mod tests {
     /// Out-of-range section index → fall-through (no panic, no
     /// mis-promotion).
     #[test]
-    fn resolve_section_drag_target_out_of_range_returns_none() {
+    fn test_resolve_section_drag_target_out_of_range_returns_none() {
         let (doc, id) = pinned_two_section_node();
         let result = resolve_section_drag_target(Some(&doc), &id, Some(99), false);
         assert!(result.is_none());
@@ -696,7 +729,7 @@ mod tests {
 
     /// `None` document or `None` hit_section_idx → fall-through.
     #[test]
-    fn resolve_section_drag_target_no_doc_or_idx_returns_none() {
+    fn test_resolve_section_drag_target_no_doc_or_idx_returns_none() {
         assert!(resolve_section_drag_target(None, "0", Some(0), false).is_none());
         let (doc, id) = pinned_two_section_node();
         assert!(resolve_section_drag_target(Some(&doc), &id, None, false).is_none());
@@ -709,7 +742,7 @@ mod tests {
     /// section drag started on its own selection doesn't trigger
     /// a redundant tree highlight rebuild.
     #[test]
-    fn section_drag_press_on_already_selected_section_returns_none() {
+    fn test_section_drag_press_on_already_selected_section_returns_none() {
         let prev = SelectionState::Section(SectionSel::new("a", 1));
         assert!(selection_after_section_drag_press(&prev, "a", 1).is_none());
     }
@@ -720,7 +753,7 @@ mod tests {
     /// whole-node-arm demote (a multi-section selection on the
     /// dragged node demotes to `Single(node_id)`).
     #[test]
-    fn section_drag_press_demotes_multisection_to_section() {
+    fn test_section_drag_press_demotes_multisection_to_section() {
         let prev = SelectionState::MultiSection(vec![
             SectionSel::new("a", 0),
             SectionSel::new("a", 1),
@@ -737,7 +770,7 @@ mod tests {
     /// rewrites the selection to the new pair — narrows from one
     /// section to another when the user clicks a sibling section.
     #[test]
-    fn section_drag_press_rewrites_when_different_section() {
+    fn test_section_drag_press_rewrites_when_different_section() {
         let prev = SelectionState::Section(SectionSel::new("a", 0));
         let new = selection_after_section_drag_press(&prev, "a", 1).expect("rewrite");
         assert!(matches!(
@@ -750,7 +783,7 @@ mod tests {
     /// id is a no-op — the dragged node is already the selected
     /// node, no rewrite + no highlight churn needed.
     #[test]
-    fn node_drag_press_on_single_same_node_returns_none() {
+    fn test_node_drag_press_on_single_same_node_returns_none() {
         let prev = SelectionState::Single("a".into());
         assert!(selection_after_node_drag_press(&prev, "a").is_none());
     }
@@ -759,7 +792,7 @@ mod tests {
     /// node is a no-op — the multi-set is preserved so the
     /// shift+drag harvest below sees every selected node.
     #[test]
-    fn node_drag_press_on_multi_containing_node_returns_none() {
+    fn test_node_drag_press_on_multi_containing_node_returns_none() {
         let prev = SelectionState::Multi(vec!["a".into(), "b".into()]);
         assert!(selection_after_node_drag_press(&prev, "a").is_none());
     }
@@ -768,7 +801,7 @@ mod tests {
     /// demotes to `Single(node)` — the gesture is to move the
     /// parent node, not operate on the section.
     #[test]
-    fn node_drag_press_demotes_same_node_section() {
+    fn test_node_drag_press_demotes_section_to_single() {
         let prev = SelectionState::Section(SectionSel::new("a", 1));
         let new = selection_after_node_drag_press(&prev, "a").expect("rewrite");
         assert!(matches!(new, SelectionState::Single(id) if id == "a"));
@@ -778,7 +811,7 @@ mod tests {
     /// node demotes to `Single(node)`. Pins the parallel of the
     /// section-drag arm's demote.
     #[test]
-    fn node_drag_press_demotes_multisection_to_single() {
+    fn test_node_drag_press_demotes_multisection_to_single() {
         let prev = SelectionState::MultiSection(vec![
             SectionSel::new("a", 0),
             SectionSel::new("b", 0),
@@ -791,7 +824,7 @@ mod tests {
     /// dragged node rewrites to `Single(node)` — the user clicked
     /// to grab a fresh node, the prior selection is reset.
     #[test]
-    fn node_drag_press_replaces_when_node_not_selected() {
+    fn test_node_drag_press_replaces_when_node_not_selected() {
         let prev = SelectionState::Single("b".into());
         let new = selection_after_node_drag_press(&prev, "a").expect("rewrite");
         assert!(matches!(new, SelectionState::Single(id) if id == "a"));
@@ -805,7 +838,7 @@ mod tests {
     /// pre-demote capture the demote runs *before* the harvest
     /// and the drag scope shrinks to one node.
     #[test]
-    fn multisection_pre_demote_snapshot_preserves_all_nodes() {
+    fn test_multisection_pre_demote_snapshot_preserves_all_nodes() {
         let prev = SelectionState::MultiSection(vec![
             SectionSel::new("a", 0),
             SectionSel::new("b", 1),

@@ -273,9 +273,13 @@ dispatcher's `selection_targets` to apply to every section in
 the set; `bg=` / `border=` continue to return `NotApplicable`
 per the section spec (no chrome on sections). Per-section
 gestures (drag-to-move, drag-to-resize) stay single-target —
-a `MultiSection` selection emits no resize handles and a
-press on a section in the set still promotes to the existing
-single-section gesture. The `section move` / `section resize`
+a `MultiSection` selection emits no resize handles, and a
+press on a section in the set **demotes** the selection down
+to `Section(node, idx)` at threshold-cross so mid-drag picker
+hints + per-section verbs reflect the in-flight gesture's
+actual target rather than the prior multi-set. The
+whole-node move and node-resize arms demote the same way (to
+`Single(node)`). The `section move` / `section resize`
 console verbs require a single-section context (or an
 explicit `section=K` kv); `MultiSection` is fan-out-only at
 the trait dispatch layer.

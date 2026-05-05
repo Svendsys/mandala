@@ -140,13 +140,13 @@ fn node_cut_clears_every_section_on_multi_section_node() {
 /// first-run template's formatting on the new single run."
 #[test]
 fn section_paste_collapses_runs_inheriting_first_run_template() {
-    use crate::application::clipboard::clear_section_clipboard_for_tests;
+    use crate::application::clipboard::clear_section_clipboard;
     use crate::application::console::traits::{HandlesPaste, TargetView};
     use baumhard::mindmap::model::{MindSection, TextRun};
     // Clear so a prior test on the same worker thread doesn't
     // leak a buffer entry matching our probe and route us through
     // `apply_section_payload` instead of the lossy fall-back.
-    clear_section_clipboard_for_tests();
+    clear_section_clipboard();
     let mut doc = load_test_doc();
     let nid = first_node_id(&doc);
     {
@@ -214,10 +214,10 @@ fn section_paste_collapses_runs_inheriting_first_run_template() {
 /// `set_section_text`'s bounds check.
 #[test]
 fn section_paste_clamps_stale_idx_to_last_section() {
-    use crate::application::clipboard::clear_section_clipboard_for_tests;
+    use crate::application::clipboard::clear_section_clipboard;
     use crate::application::console::traits::{HandlesPaste, TargetView};
     use baumhard::mindmap::model::MindSection;
-    clear_section_clipboard_for_tests();
+    clear_section_clipboard();
     let mut doc = load_test_doc();
     let nid = first_node_id(&doc);
     {
@@ -280,12 +280,12 @@ fn section_copy_emits_structured_payload() {
 /// preserved). Closes audit Q5 for the within-app path.
 #[test]
 fn section_paste_with_matching_buffer_preserves_runs() {
-    use crate::application::clipboard::{clear_section_clipboard_for_tests, write_section_clipboard};
+    use crate::application::clipboard::{clear_section_clipboard, write_section_clipboard};
     use crate::application::console::traits::TargetView;
     use crate::application::document::tests_common::make_two_section_node_with_pinned_runs;
     use crate::application::document::SectionPayload;
     use baumhard::mindmap::model::TextRun;
-    clear_section_clipboard_for_tests();
+    clear_section_clipboard();
     let mut doc = load_test_doc();
     let nid = first_node_id(&doc);
     make_two_section_node_with_pinned_runs(&mut doc, &nid, "#ffffff", ["#ffffff", "#ffffff"], "Seed", 14);
@@ -335,12 +335,12 @@ fn section_paste_with_matching_buffer_preserves_runs() {
 /// whose text ended in whitespace.
 #[test]
 fn section_paste_buffer_match_survives_trailing_newline() {
-    use crate::application::clipboard::{clear_section_clipboard_for_tests, write_section_clipboard};
+    use crate::application::clipboard::{clear_section_clipboard, write_section_clipboard};
     use crate::application::console::traits::TargetView;
     use crate::application::document::tests_common::make_two_section_node_with_pinned_runs;
     use crate::application::document::SectionPayload;
     use baumhard::mindmap::model::TextRun;
-    clear_section_clipboard_for_tests();
+    clear_section_clipboard();
     let mut doc = load_test_doc();
     let nid = first_node_id(&doc);
     make_two_section_node_with_pinned_runs(&mut doc, &nid, "#ffffff", ["#ffffff", "#ffffff"], "Seed", 14);
@@ -385,12 +385,12 @@ fn section_paste_buffer_match_survives_trailing_newline() {
 /// template inheritance from the destination's first run.
 #[test]
 fn section_paste_with_mismatched_buffer_falls_back_to_plain() {
-    use crate::application::clipboard::{clear_section_clipboard_for_tests, write_section_clipboard};
+    use crate::application::clipboard::{clear_section_clipboard, write_section_clipboard};
     use crate::application::console::traits::TargetView;
     use crate::application::document::tests_common::make_two_section_node_with_pinned_runs;
     use crate::application::document::SectionPayload;
     use baumhard::mindmap::model::TextRun;
-    clear_section_clipboard_for_tests();
+    clear_section_clipboard();
     let mut doc = load_test_doc();
     let nid = first_node_id(&doc);
     make_two_section_node_with_pinned_runs(&mut doc, &nid, "#ffffff", ["#ffffff", "#ffffff"], "Seed", 14);

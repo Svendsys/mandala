@@ -10,6 +10,12 @@ use crate::application::document::{MindMapDocument, SelectionState};
 
 use super::RebuildContext;
 
+/// Joiner between multi-target clipboard fragments. Doubled `\n`
+/// so the paste path can split unambiguously even when an
+/// individual section's text contains `\n` line breaks from the
+/// inline editor.
+const MULTI_TARGET_SEPARATOR: &str = "\n\n";
+
 /// Walk the undo stack one step back. If an animation is in flight
 /// when undo fires, fast-forward it first so the undo lands on a
 /// settled scene state rather than mid-transition (otherwise the
@@ -135,28 +141,17 @@ pub(in crate::application::app) fn apply_open_text_edit_on_single(
 /// component's text where the trait supports it. Read-only on the
 /// document — no rebuild.
 ///
-/// **Multi-target join discipline.** Both `Multi(ids)` (one
-/// `Text` per node) and `MultiSection` (one `Section` per entry)
-/// fan out to every target. Their texts are joined with the
-/// `MULTI_TARGET_SEPARATOR` (`"\n\n"`) so the paste path can
-/// reverse the split by counting separators — single `\n` would
-/// collide with intra-section line breaks the inline editor
-/// produces. Cross-app paste sees the joined blob.
-///
-/// **Stale-buffer guard.** The in-process structured buffer is
-/// cleared up-front: a multi-section copy has no payload variant
-/// today (deferred — would need a `MultiSection` payload), so a
-/// stale single-section payload from a prior copy would otherwise
-/// win the byte-equal probe on the next paste and silently
-/// substitute one section's structured content for the joined
-/// blob.
+/// Multi-target selections (`Multi(ids)`, `MultiSection`) fan out
+/// over every target and join the produced texts with
+/// `MULTI_TARGET_SEPARATOR` so the paste path can reverse-split by
+/// counting separators. The in-process structured buffer is
+/// cleared up-front because a multi-section copy has no payload
+/// variant today; a stale single-section payload from a prior
+/// copy would otherwise win the byte-equal probe on the next paste.
 pub(in crate::application::app) fn apply_copy_or_cut(is_cut: bool, doc: &mut MindMapDocument) {
     use crate::application::console::traits::{
         selection_targets, view_for, ClipboardContent, HandlesCopy, HandlesCut,
     };
-    // Reset the structured buffer before we know what kind of
-    // copy this is — only single-section copy will rewrite it
-    // below, every other branch leaves it cleared.
     crate::application::clipboard::clear_section_clipboard();
 
     let targets = selection_targets(&doc.selection);
@@ -172,11 +167,6 @@ pub(in crate::application::app) fn apply_copy_or_cut(is_cut: bool, doc: &mut Min
         };
         match content {
             ClipboardContent::Text(text) => {
-                // Multi(ids) emits N text targets — one per node.
-                // Accumulate so the joined blob carries every
-                // node's display_text instead of first-wins. For
-                // Single / Edge / EdgeLabel / PortalLabel /
-                // PortalText this is a single push.
                 text_payloads.push(text);
             }
             ClipboardContent::Section { text, payload } => {
@@ -207,28 +197,15 @@ pub(in crate::application::app) fn apply_copy_or_cut(is_cut: bool, doc: &mut Min
     }
 }
 
-/// Separator used between targets in a multi-target copy. Doubled
-/// `\n` so the paste path can split unambiguously even when an
-/// individual section's text contains `\n` line breaks from the
-/// inline editor. A single `\n` would be ambiguous and collapse
-/// "section A line 1\nsection A line 2" + "section B" into three
-/// fragments instead of two on round-trip.
-const MULTI_TARGET_SEPARATOR: &str = "\n\n";
-
 /// Read the system clipboard and paste into every clipboard-eligible
 /// target in the current selection. Triggers a geometry rebuild iff
 /// at least one target accepted the paste.
 ///
-/// **Multi-target round-trip.** When the selection produces
-/// multiple targets (`Multi(ids)` or `MultiSection`), the OS
-/// clipboard is split on `MULTI_TARGET_SEPARATOR` (`"\n\n"`,
-/// matching the join in `apply_copy_or_cut`). When the split
-/// count equals the target count, fragments zip 1:1 with targets
-/// so a copy(N) → paste(N) round-trips per-target. Otherwise
-/// (single OS-clipboard fragment, or count mismatch) the full
-/// blob broadcasts to every target — preserves cross-app paste
-/// behaviour where the user copies plain text from another app
-/// and pastes it into a multi-target Mandala selection.
+/// For multi-target selections, the OS clipboard is split on
+/// `MULTI_TARGET_SEPARATOR` and zipped 1:1 when fragment count
+/// equals target count (round-trip from a Mandala multi-target
+/// copy); otherwise the full blob broadcasts to every target
+/// (cross-app paste, count mismatch).
 pub(in crate::application::app) fn apply_paste(rc: &mut RebuildContext<'_>) {
     use crate::application::console::traits::{selection_targets, view_for, HandlesPaste, Outcome};
     let Some(text) = crate::application::clipboard::read_clipboard() else {
@@ -281,7 +258,7 @@ fn split_paste_for_targets(text: &str, target_count: usize) -> Option<Vec<&str>>
 mod tests {
     use super::{apply_copy_or_cut, split_paste_for_targets, MULTI_TARGET_SEPARATOR};
     use crate::application::clipboard::{
-        clear_section_clipboard_for_tests, read_section_clipboard, write_section_clipboard,
+        clear_section_clipboard, read_section_clipboard, write_section_clipboard,
     };
     use crate::application::document::tests_common::pinned_two_section_node;
     use crate::application::document::{SectionPayload, SectionSel, SelectionState};
@@ -290,7 +267,7 @@ mod tests {
     /// intra-section editor line breaks are the whole reason the
     /// joiner moved to two newlines.
     #[test]
-    fn multi_target_separator_is_doubled_newline() {
+    fn test_multi_target_separator_is_doubled_newline() {
         assert_eq!(MULTI_TARGET_SEPARATOR, "\n\n");
     }
 
@@ -299,7 +276,7 @@ mod tests {
     /// receiving a `"foo\n\nbar"` blob writes the whole blob, not
     /// just `"foo"`.
     #[test]
-    fn single_target_skips_split() {
+    fn test_single_target_skips_split() {
         assert!(split_paste_for_targets("foo\n\nbar", 1).is_none());
         assert!(split_paste_for_targets("foo", 1).is_none());
     }
@@ -307,7 +284,7 @@ mod tests {
     /// Multi-target with matching fragment count zips: the round
     /// trip from a 3-target copy lands one fragment per target.
     #[test]
-    fn matching_fragment_count_zips() {
+    fn test_matching_fragment_count_zips() {
         let frags = split_paste_for_targets("a\n\nb\n\nc", 3).expect("zip");
         assert_eq!(frags, vec!["a", "b", "c"]);
     }
@@ -315,7 +292,7 @@ mod tests {
     /// Mismatched fragment count broadcasts (e.g. cross-app paste
     /// of plain text into a multi-section selection).
     #[test]
-    fn mismatched_fragment_count_broadcasts() {
+    fn test_mismatched_fragment_count_broadcasts() {
         // 1 fragment, 3 targets — broadcast.
         assert!(split_paste_for_targets("plain text", 3).is_none());
         // 2 fragments, 3 targets — broadcast.
@@ -328,7 +305,7 @@ mod tests {
     /// section whose text is empty round-trips to an empty paste,
     /// not a dropped target.
     #[test]
-    fn empty_fragment_preserved_in_zip() {
+    fn test_empty_fragment_preserved_in_zip() {
         let frags = split_paste_for_targets("a\n\n\n\nc", 3).expect("zip");
         assert_eq!(frags, vec!["a", "", "c"]);
     }
@@ -340,8 +317,8 @@ mod tests {
     /// blob. Pins that `apply_copy_or_cut` clears the in-process
     /// buffer up-front.
     #[test]
-    fn multi_section_copy_clears_stale_section_buffer() {
-        clear_section_clipboard_for_tests();
+    fn test_multi_section_copy_clears_stale_section_buffer() {
+        clear_section_clipboard();
         // Seed a stale buffer with a probe text the multi-section
         // copy below will NOT regenerate.
         let seed_payload = SectionPayload {
@@ -376,8 +353,8 @@ mod tests {
     /// formatting. Pins that the up-front clear doesn't break the
     /// single-section structured path.
     #[test]
-    fn single_section_copy_writes_structured_buffer() {
-        clear_section_clipboard_for_tests();
+    fn test_single_section_copy_writes_structured_buffer() {
+        clear_section_clipboard();
         let (mut doc, id) = pinned_two_section_node();
         doc.selection = SelectionState::Section(SectionSel::new(&id, 1));
         let probe_text = doc.mindmap.nodes.get(&id).unwrap().sections[1].text.clone();
@@ -394,8 +371,8 @@ mod tests {
     /// no-payload-on-multi contract that the stale-buffer guard
     /// relies on.
     #[test]
-    fn multi_section_copy_skips_structured_buffer() {
-        clear_section_clipboard_for_tests();
+    fn test_multi_section_copy_skips_structured_buffer() {
+        clear_section_clipboard();
         let (mut doc, id) = pinned_two_section_node();
         doc.selection = SelectionState::MultiSection(vec![
             SectionSel::new(&id, 0),
@@ -407,5 +384,72 @@ mod tests {
             read_section_clipboard(&s0_text).is_none(),
             "multi-section copy must not populate the structured buffer"
         );
+    }
+
+    /// **End-to-end multi-section round-trip.** Copy two sections
+    /// (joined to OS clipboard with `\n\n`), then drive the
+    /// per-target paste machinery against a *different*
+    /// `MultiSection` set with the same cardinality and verify
+    /// each section receives the correct fragment 1:1. Pins the
+    /// copy → split → paste contract end-to-end (the helper
+    /// tests pin each leg in isolation; this fills the
+    /// integration gap the cross-cutting reviewer flagged).
+    ///
+    /// `apply_paste` is bypassed because it needs a full
+    /// `RebuildContext` (renderer, scene, tree) — we inline the
+    /// pure parts here: `read_clipboard`, `selection_targets`,
+    /// `split_paste_for_targets`, and `view.clipboard_paste` per
+    /// target. That's the same plumbing `apply_paste` calls; the
+    /// only piece skipped is the rebuild side-effect.
+    #[test]
+    fn test_multi_section_copy_paste_round_trip() {
+        use crate::application::clipboard::read_clipboard;
+        use crate::application::console::traits::{
+            selection_targets, view_for, HandlesPaste, Outcome,
+        };
+
+        clear_section_clipboard();
+        let (mut doc, id) = pinned_two_section_node();
+        // Make the section texts asymmetric so a swap or
+        // first-wins bug would be visible in the assertions.
+        doc.mindmap.nodes.get_mut(&id).unwrap().sections[0].text = "alpha".into();
+        doc.mindmap.nodes.get_mut(&id).unwrap().sections[1].text = "beta".into();
+        doc.selection = SelectionState::MultiSection(vec![
+            SectionSel::new(&id, 0),
+            SectionSel::new(&id, 1),
+        ]);
+        apply_copy_or_cut(false, &mut doc);
+
+        // Mutate the source sections to make sure the paste
+        // overwrites with the captured clipboard content rather
+        // than no-op'ing because they happen to match.
+        doc.mindmap.nodes.get_mut(&id).unwrap().sections[0].text = "wiped".into();
+        doc.mindmap.nodes.get_mut(&id).unwrap().sections[1].text = "wiped".into();
+
+        // Drive the same paste plumbing `apply_paste` runs.
+        let Some(text) = read_clipboard() else {
+            // CI without a real clipboard — `arboard` returned
+            // nothing on read. Skip rather than fail; the
+            // helper-level tests still pin the contract.
+            return;
+        };
+        let targets = selection_targets(&doc.selection);
+        assert_eq!(targets.len(), 2);
+        let fragments = super::split_paste_for_targets(&text, targets.len())
+            .expect("count matches → zip applies");
+        for (i, tid) in targets.iter().enumerate() {
+            let mut view = view_for(&mut doc, tid);
+            assert_eq!(
+                view.clipboard_paste(fragments[i]),
+                Outcome::Applied,
+                "per-target paste must apply"
+            );
+        }
+
+        // Round-trip lands fragments 1:1.
+        let s0 = &doc.mindmap.nodes.get(&id).unwrap().sections[0].text;
+        let s1 = &doc.mindmap.nodes.get(&id).unwrap().sections[1].text;
+        assert_eq!(s0, "alpha", "section 0 must round-trip its own copy");
+        assert_eq!(s1, "beta", "section 1 must round-trip its own copy");
     }
 }

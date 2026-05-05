@@ -1941,8 +1941,12 @@ to the right element.
   out via `selection_targets` and apply to every section in the
   set. Per-section gestures (drag-to-move, drag-to-resize) stay
   single-target — a `MultiSection` selection emits no resize
-  handles and a press on a section in the set falls through to
-  the existing single-section gesture path. The `section
+  handles, and a press on a section in the set **demotes** the
+  selection down to `Section(node, idx)` at threshold-cross so
+  mid-drag picker hints + per-section verbs reflect the
+  in-flight gesture's actual target rather than the prior
+  multi-set. Whole-node move and node-resize gestures demote
+  the same way (to `Single(node)`). The `section
   move` / `section resize` verbs target the single-section
   selected (or take an explicit `section=K` kv); `MultiSection`
   is fan-out-only at the trait dispatch layer.

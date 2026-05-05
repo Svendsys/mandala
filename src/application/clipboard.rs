@@ -68,14 +68,14 @@ pub fn write_section_clipboard(text: String, payload: SectionPayload) {
     });
 }
 
-/// Drop the in-process structured section buffer. Called by the
-/// multi-section copy/cut path before iterating: a multi-section
-/// copy has no `MultiSection` payload variant today (only the
-/// joined plain text on the OS clipboard), so a leftover
-/// single-section payload from a prior copy would otherwise win
-/// the byte-equal probe on the next paste — silently substituting
-/// the OS clipboard's joined blob with one section's structured
-/// content.
+/// Drop the in-process structured section buffer. Called by
+/// `apply_copy_or_cut` before iterating (a stale single-section
+/// payload from a prior copy would otherwise win the byte-equal
+/// probe on the next paste — silently substituting the OS
+/// clipboard's joined blob with one section's structured
+/// content), and by tests between cases (parallel `cargo test`
+/// workers reuse threads, so a prior test's seed would
+/// otherwise leak into a later one's consistency-check probe).
 pub fn clear_section_clipboard() {
     SECTION_BUFFER.with(|slot| *slot.borrow_mut() = None);
 }
@@ -91,12 +91,3 @@ pub fn read_section_clipboard(probe_text: &str) -> Option<SectionPayload> {
     })
 }
 
-/// Reset the in-process structured section buffer between tests.
-/// Each test thread carries its own slot via `thread_local`, but
-/// `cargo test` reuses worker threads across tests, so a prior
-/// test's seed could otherwise leak into a later one's
-/// consistency-check probe and bypass the fall-back branch.
-#[cfg(test)]
-pub fn clear_section_clipboard_for_tests() {
-    SECTION_BUFFER.with(|slot| *slot.borrow_mut() = None);
-}

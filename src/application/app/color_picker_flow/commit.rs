@@ -339,12 +339,26 @@ fn hsv_bits_equal(a: (f32, f32, f32), b: (f32, f32, f32)) -> bool {
 /// handle is authoritative when the current selection isn't a
 /// multi-node set, even if the user changed selection between
 /// open and commit.
+///
+/// `Multi` is dedup'd by id in first-seen order — `from_ids`
+/// doesn't enforce uniqueness, and a stale dup would otherwise
+/// produce a redundant setter call (idempotent on the colour
+/// value but doc-state churn / extra undo work).
 pub(super) fn node_commit_targets(
     sel: &crate::application::document::SelectionState,
     handle_id: &str,
 ) -> Vec<String> {
     match sel {
-        crate::application::document::SelectionState::Multi(ids) => ids.clone(),
+        crate::application::document::SelectionState::Multi(ids) => {
+            let mut seen = std::collections::HashSet::with_capacity(ids.len());
+            let mut out = Vec::with_capacity(ids.len());
+            for id in ids {
+                if seen.insert(id.as_str()) {
+                    out.push(id.clone());
+                }
+            }
+            out
+        }
         _ => vec![handle_id.to_string()],
     }
 }
@@ -416,7 +430,7 @@ mod tests {
     /// reference verbatim instead of writing the resolved hex.
     /// Pins A1's primary semantics (Contextual mode).
     #[test]
-    fn picker_commit_preserves_var_ref_when_unchanged() {
+    fn test_picker_commit_preserves_var_ref_when_unchanged() {
         let seed_hsv = (24.0_f32, 0.8_f32, 0.95_f32);
         let untouched = seed_hsv;
         let committed_hex = "#f3a020";
@@ -432,7 +446,7 @@ mod tests {
     /// the user picked"; honouring it would silently discard the
     /// new colour.
     #[test]
-    fn picker_commit_overwrites_var_ref_when_hue_moved() {
+    fn test_picker_commit_overwrites_var_ref_when_hue_moved() {
         let seed_hsv = (24.0_f32, 0.8_f32, 0.95_f32);
         let moved = (180.0_f32, 0.8_f32, 0.95_f32); // hue rotated
         let committed_hex = "#20a8f3";
@@ -449,7 +463,7 @@ mod tests {
     /// would resolve to anyway, so the model field stays at its
     /// pre-open value modulo round-trip noise).
     #[test]
-    fn picker_commit_writes_hex_when_no_var_ref() {
+    fn test_picker_commit_writes_hex_when_no_var_ref() {
         let seed_hsv = (24.0_f32, 0.8_f32, 0.95_f32);
         let written_unchanged = pick_committed_value(None, seed_hsv, seed_hsv, "#f3a020");
         let written_moved = pick_committed_value(None, seed_hsv, (180.0, 0.8, 0.95), "#20a8f3");
@@ -464,7 +478,7 @@ mod tests {
     /// to N3.2 the node arm wrote only to the bound handle's id,
     /// silently dropping every other selected node.
     #[test]
-    fn node_commit_targets_fans_out_for_multi_selection() {
+    fn test_node_commit_targets_fans_out_for_multi_selection() {
         let sel = SelectionState::Multi(vec!["a".into(), "b".into(), "c".into()]);
         let targets = node_commit_targets(&sel, "a");
         assert_eq!(
@@ -476,7 +490,7 @@ mod tests {
     /// `Single(id)` selection writes to the bound handle (which
     /// equals the selected node by construction).
     #[test]
-    fn node_commit_targets_uses_handle_for_single() {
+    fn test_node_commit_targets_uses_handle_for_single() {
         let sel = SelectionState::Single("a".into());
         let targets = node_commit_targets(&sel, "a");
         assert_eq!(targets, vec!["a".to_string()]);
@@ -488,7 +502,7 @@ mod tests {
     /// picker doesn't silently drop the colour onto a node the
     /// user no longer has selected.
     #[test]
-    fn node_commit_targets_falls_back_to_handle_when_selection_diverged() {
+    fn test_node_commit_targets_falls_back_to_handle_when_selection_diverged() {
         let sel = SelectionState::Section(SectionSel::new("z", 0));
         let targets = node_commit_targets(&sel, "a");
         assert_eq!(targets, vec!["a".to_string()]);
@@ -497,7 +511,7 @@ mod tests {
     /// `MultiSection` selection drives section-commit fan-out
     /// across every entry — pins the existing fan-out path.
     #[test]
-    fn section_commit_targets_fans_out_for_multi_section() {
+    fn test_section_commit_targets_fans_out_for_multi_section() {
         let sel = SelectionState::MultiSection(vec![
             SectionSel::new("a", 0),
             SectionSel::new("b", 1),
@@ -515,7 +529,7 @@ mod tests {
     /// between open and commit), the handle is unioned in so the
     /// bound section never silently drops out of the commit.
     #[test]
-    fn section_commit_targets_unions_handle_when_diverged() {
+    fn test_section_commit_targets_unions_handle_when_diverged() {
         let sel = SelectionState::MultiSection(vec![
             SectionSel::new("a", 0),
             SectionSel::new("b", 1),
@@ -534,7 +548,7 @@ mod tests {
     /// `Section(s)` selection collapses to a single section, the
     /// handle being the same section is dedup'd.
     #[test]
-    fn section_commit_targets_section_selection_no_dup() {
+    fn test_section_commit_targets_section_selection_no_dup() {
         let sel = SelectionState::Section(SectionSel::new("a", 1));
         let targets = section_commit_targets(&sel, "a", 1);
         assert_eq!(targets, vec![SectionSel::new("a", 1)]);
@@ -543,7 +557,7 @@ mod tests {
     /// Non-section / non-multi-section selections fall back to
     /// the bound handle alone.
     #[test]
-    fn section_commit_targets_falls_back_to_handle_for_other_states() {
+    fn test_section_commit_targets_falls_back_to_handle_for_other_states() {
         let sel = SelectionState::None;
         let targets = section_commit_targets(&sel, "a", 1);
         assert_eq!(targets, vec![SectionSel::new("a", 1)]);
