@@ -41,7 +41,7 @@ fn doc_with_two_uniform_sections() -> (crate::application::document::MindMapDocu
 #[test]
 fn current_color_at_section_reads_unanimous_run_color() {
     let (doc, id) = doc_with_two_uniform_sections();
-    let handle = PickerHandle::Section {
+    let handle = PickerHandle::Section { range: None,
         node_id: id,
         section_idx: 1,
         axis: SectionColorAxis::Text,
@@ -78,7 +78,7 @@ fn current_color_at_section_falls_back_to_node_default_on_run_disagreement() {
             hyperlink: None,
         });
     }
-    let handle = PickerHandle::Section {
+    let handle = PickerHandle::Section { range: None,
         node_id: id,
         section_idx: 1,
         axis: SectionColorAxis::Text,
@@ -97,13 +97,13 @@ fn current_color_at_section_falls_back_to_node_default_on_run_disagreement() {
 #[test]
 fn color_target_section_resolves_to_picker_handle() {
     let (doc, id) = doc_with_two_uniform_sections();
-    let target = ColorTarget::Section {
+    let target = ColorTarget::Section { range: None,
         node_id: id.clone(),
         section_idx: 1,
         axis: SectionColorAxis::Text,
     };
     match target.resolve(&doc) {
-        Some(PickerHandle::Section {
+        Some(PickerHandle::Section { range: None,
             node_id,
             section_idx,
             axis,
@@ -123,10 +123,65 @@ fn color_target_section_resolves_to_picker_handle() {
 #[test]
 fn color_target_section_resolves_to_none_when_index_out_of_range() {
     let (doc, id) = doc_with_two_uniform_sections();
-    let target = ColorTarget::Section {
+    let target = ColorTarget::Section { range: None,
         node_id: id,
         section_idx: 99,
         axis: SectionColorAxis::Text,
     };
     assert!(target.resolve(&doc).is_none());
+}
+
+/// `current_color_at` over a sub-range scans only the in-range
+/// runs. With section 1 set up so different ranges yield
+/// different unanimous colours, the picker reads each correctly.
+/// Pins the N4-C.b.1 range-aware seed.
+#[test]
+fn current_color_at_section_range_reads_in_range_runs() {
+    use baumhard::mindmap::model::TextRun;
+    let (mut doc, id) = doc_with_two_uniform_sections();
+    // Replace section 1's runs: [0..3 #aaaaaa, 3..7 #bbbbbb, 7..10 #cccccc]
+    {
+        let s = &mut doc.mindmap.nodes.get_mut(&id).unwrap().sections[1];
+        s.text = "abcdefghij".into();
+        s.text_runs.clear();
+        for (start, end, color) in [(0, 3, "#aaaaaa"), (3, 7, "#bbbbbb"), (7, 10, "#cccccc")] {
+            s.text_runs.push(TextRun {
+                start,
+                end,
+                bold: false,
+                italic: false,
+                underline: false,
+                font: "LiberationSans".into(),
+                size_pt: 14,
+                color: color.into(),
+                hyperlink: None,
+            });
+        }
+    }
+    // Range [3, 7) = the middle run only → unanimous #bbbbbb.
+    let handle_in_range = PickerHandle::Section {
+        node_id: id.clone(),
+        section_idx: 1,
+        axis: SectionColorAxis::Text,
+        range: Some((3, 7)),
+    };
+    assert_eq!(
+        current_color_at(&doc, &handle_in_range).as_deref(),
+        Some("#bbbbbb"),
+        "range-restricted cascade reads only the in-range run's colour"
+    );
+    // Range [0, 7) = first two runs disagree (#aaaaaa, #bbbbbb)
+    // → cascade falls back to node.style.text_color (the
+    // fixture's default is "#abcdef").
+    let handle_disagree = PickerHandle::Section {
+        node_id: id,
+        section_idx: 1,
+        axis: SectionColorAxis::Text,
+        range: Some((0, 7)),
+    };
+    assert_eq!(
+        current_color_at(&doc, &handle_disagree).as_deref(),
+        Some("#abcdef"),
+        "non-unanimous in-range runs fall back to node default"
+    );
 }

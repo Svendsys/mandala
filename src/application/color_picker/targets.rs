@@ -53,6 +53,12 @@ pub enum ColorTarget {
         node_id: String,
         section_idx: usize,
         axis: SectionColorAxis,
+        /// Optional sub-range over the section's grapheme
+        /// indices. Set when the active selection is
+        /// `SelectionState::SectionRange`; unset for whole-section
+        /// `Section`. The picker's commit path routes through
+        /// `set_section_text_color_range` when present.
+        range: Option<(usize, usize)>,
     },
 }
 
@@ -71,11 +77,15 @@ pub enum PickerHandle {
     /// resolve step verifies the node and the section index still
     /// exist; the index is captured at open time and held until
     /// commit (mirrors the Edge variant's stale-index defensive
-    /// pattern).
+    /// pattern). `range` carries the sub-range from a
+    /// `SelectionState::SectionRange` selection at open time;
+    /// the commit routes through `set_section_text_color_range`
+    /// when present.
     Section {
         node_id: String,
         section_idx: usize,
         axis: SectionColorAxis,
+        range: Option<(usize, usize)>,
     },
 }
 
@@ -145,6 +155,7 @@ impl ColorTarget {
                 node_id,
                 section_idx,
                 axis,
+                range,
             } => {
                 // Verify the section index still resolves — a
                 // mutation between the open trigger and resolve
@@ -161,6 +172,7 @@ impl ColorTarget {
                     node_id,
                     section_idx,
                     axis,
+                    range,
                 })
             }
         }
@@ -194,19 +206,26 @@ pub fn current_color_at(doc: &MindMapDocument, handle: &PickerHandle) -> Option<
             node_id,
             section_idx,
             axis,
+            range,
         } => {
             let n = doc.mindmap.nodes.get(node_id)?;
             let section = n.sections.get(*section_idx)?;
-            // Cascade: if every run on the section already shares
-            // one colour, that's the section's effective colour;
-            // otherwise fall back to the node's `text_color`
-            // default (the cascade source `set_section_text_color`
-            // writes against on the write side).
+            // Cascade: when `range` is set, scan only the in-range
+            // runs (via `text_run_ops::slice`) — partial-coverage
+            // sub-ranges fall back to the node's `text_color`
+            // default. Otherwise scan the whole section.
+            let runs_to_scan: Vec<baumhard::mindmap::model::TextRun> = match range {
+                Some((rs, re)) => baumhard::mindmap::model::text_run_ops::slice(
+                    &section.text_runs,
+                    *rs,
+                    *re,
+                ),
+                None => section.text_runs.clone(),
+            };
             let resolved = match axis {
-                SectionColorAxis::Text => section
-                    .text_runs
+                SectionColorAxis::Text => runs_to_scan
                     .first()
-                    .filter(|first| section.text_runs.iter().all(|r| r.color == first.color))
+                    .filter(|first| runs_to_scan.iter().all(|r| r.color == first.color))
                     .map(|r| r.color.clone())
                     .unwrap_or_else(|| n.style.text_color.clone()),
             };

@@ -127,6 +127,7 @@ fn picker_target_for(verb: &str, selection: &SelectionState) -> PickerTargetOutc
                 node_id: node_id.clone(),
                 section_idx: *section_idx,
                 axis: SectionColorAxis::Text,
+                range: None,
             }),
             Some(NodeColorAxis::Bg) => PickerTargetOutcome::NotApplicable(
                 "color bg: not applicable to a section (section-level chrome doesn't exist)".to_string(),
@@ -159,6 +160,7 @@ fn picker_target_for(verb: &str, selection: &SelectionState) -> PickerTargetOutc
                     node_id: node_id.clone(),
                     section_idx: *section_idx,
                     axis: SectionColorAxis::Text,
+                    range: None,
                 }),
                 Some(NodeColorAxis::Bg) => PickerTargetOutcome::NotApplicable(
                     "color bg: not applicable to a section (section-level chrome doesn't exist)"
@@ -172,15 +174,14 @@ fn picker_target_for(verb: &str, selection: &SelectionState) -> PickerTargetOutc
             None => PickerTargetOutcome::Unknown,
         },
         // SectionRange: route the picker to the targeted section
-        // exactly like `Section` — the picker handle today
-        // doesn't carry the sub-range, so commit lands on the
-        // whole section's text color. N4-C.b will extend the
-        // picker handle with the range.
-        SelectionState::SectionRange { sel: SectionSel { node_id, section_idx }, .. } => match axis {
+        // AND plumb the sub-range so the commit fires through
+        // `set_section_text_color_range`.
+        SelectionState::SectionRange { sel: SectionSel { node_id, section_idx }, range } => match axis {
             Some(NodeColorAxis::Text) | None => PickerTargetOutcome::Open(ColorTarget::Section {
                 node_id: node_id.clone(),
                 section_idx: *section_idx,
                 axis: SectionColorAxis::Text,
+                range: Some(*range),
             }),
             Some(NodeColorAxis::Bg) => PickerTargetOutcome::NotApplicable(
                 "color bg: not applicable to a section (section-level chrome doesn't exist)".to_string(),
@@ -791,12 +792,51 @@ mod tests {
                 node_id,
                 section_idx,
                 axis,
+                range,
             }) => {
                 assert_eq!(node_id, id);
                 assert_eq!(section_idx, 1);
                 assert_eq!(axis, SectionColorAxis::Text);
+                assert!(range.is_none(), "Section selection has no sub-range");
             }
             other => panic!("expected ColorTarget::Section/Text, got {:?}", other),
+        }
+    }
+
+    /// `color text` on a `SelectionState::SectionRange` opens
+    /// the picker bound to a `ColorTarget::Section` carrying the
+    /// sub-range. The commit path then routes through
+    /// `set_section_text_color_range`. Pins the N4-C.b.1
+    /// extension.
+    #[test]
+    fn picker_target_for_section_range_carries_range() {
+        use crate::application::color_picker::{ColorTarget, SectionColorAxis};
+        use crate::application::console::tests::fixtures::assert_exec_ok;
+        use crate::application::document::SectionSel;
+        let (mut doc, id) = doc_with_two_sections();
+        doc.selection = SelectionState::SectionRange {
+            sel: SectionSel { node_id: id.clone(), section_idx: 1 },
+            range: (3, 7),
+        };
+        let (cmd, toks) = match parse("color text") {
+            ParseResult::Ok { cmd, args } => (cmd, args),
+            _ => panic!("parse failed"),
+        };
+        let mut eff = ConsoleEffects::new(&mut doc);
+        assert_exec_ok((cmd.execute)(&Args::new(&toks), &mut eff));
+        match eff.open_color_picker {
+            Some(ColorTarget::Section {
+                node_id,
+                section_idx,
+                axis,
+                range,
+            }) => {
+                assert_eq!(node_id, id);
+                assert_eq!(section_idx, 1);
+                assert_eq!(axis, SectionColorAxis::Text);
+                assert_eq!(range, Some((3, 7)));
+            }
+            other => panic!("expected ColorTarget::Section/Text with range, got {:?}", other),
         }
     }
 

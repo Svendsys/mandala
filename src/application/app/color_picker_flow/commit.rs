@@ -144,11 +144,29 @@ pub(in crate::application::app) fn commit_color_picker(
             node_id,
             section_idx,
             axis,
+            range,
         } => match axis {
             SectionColorAxis::Text => {
-                let targets = section_commit_targets(&doc.selection, &node_id, section_idx);
-                for s in &targets {
-                    doc.set_section_text_color(&s.node_id, s.section_idx, to_write.clone());
+                // When the bound handle carries a sub-range, the
+                // commit is range-targeted and skips the
+                // MultiSection fan-out — sub-range semantics on
+                // a multi-section selection don't compose
+                // (different sections have different lengths).
+                // Single-section / Section commit fans through
+                // `section_commit_targets` as before.
+                if let Some((rs, re)) = range {
+                    doc.set_section_text_color_range(
+                        &node_id,
+                        section_idx,
+                        rs,
+                        re,
+                        to_write.clone(),
+                    );
+                } else {
+                    let targets = section_commit_targets(&doc.selection, &node_id, section_idx);
+                    for s in &targets {
+                        doc.set_section_text_color(&s.node_id, s.section_idx, to_write.clone());
+                    }
                 }
             }
         },
