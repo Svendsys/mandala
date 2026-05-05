@@ -317,16 +317,17 @@ pub(in crate::application::app) fn dispatch_compatible(
         // on both targets.
         Action::Copy => {
             if let Some(doc) = core.document.as_deref_mut() {
-                super::cross_dispatch::apply_copy_or_cut(false, doc);
+                let _ = super::cross_dispatch::apply_copy_or_cut(false, doc);
             }
         }
         // Cut mutates the source component's text — the dispatcher
-        // routes through `with_doc_rebuild` so the rebuild fires
-        // after the per-target clears land. Copy alone is read-only
-        // and skips the rebuild.
+        // routes through `with_doc_rebuild` and gates the rebuild
+        // on at least one target accepting the cut, mirroring the
+        // `apply_paste` shape.
         Action::Cut => with_doc_rebuild(core, |rc| {
-            super::cross_dispatch::apply_copy_or_cut(true, rc.document);
-            rc.rebuild_after_geometry_change();
+            if super::cross_dispatch::apply_copy_or_cut(true, rc.document) {
+                rc.rebuild_after_geometry_change();
+            }
         }),
         Action::Paste => with_doc_rebuild(core, |rc| super::cross_dispatch::apply_paste(rc)),
         // ── Create-orphan-and-edit (keyboard shape) ───────────

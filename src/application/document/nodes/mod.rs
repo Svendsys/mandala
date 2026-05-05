@@ -41,6 +41,7 @@ pub use option_edit::OptionEdit;
 /// trait layer so callers can build payloads without depending on
 /// `console::traits::outcome`.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct SectionPayload {
     pub text_runs: Vec<TextRun>,
     pub offset: baumhard::mindmap::model::Position,
@@ -374,18 +375,10 @@ impl MindMapDocument {
         true
     }
 
-    // ── Range-targeted section setters (N4-B) ────────────────────
+    // ── Range-targeted section setters ─────────────────────────
     //
-    // Range-aware mirrors of the three uniform-rewrite section
-    // setters above. Each accepts `[range_start, range_end)`
-    // grapheme indices and routes through
-    // `baumhard::mindmap::model::text_run_ops::mutate_in_range`,
-    // which handles split → mutate-in-range → gap-fill → merge.
-    // Console verb path uses these directly (see
-    // `commands/color.rs::apply_section_colours` and
-    // `commands/font.rs`); picker / shift+click trait dispatch
-    // routes are deferred to N4-C alongside the
-    // `SelectionState::SectionRange` variant.
+    // Range-aware mirrors of the uniform setters above; route
+    // through `text_run_ops::mutate_in_range`.
 
     /// Set the text colour on a sub-range of one section's text.
     /// Bounded sibling of [`Self::set_section_text_color`] — that
@@ -467,6 +460,9 @@ impl MindMapDocument {
         range_end: usize,
         size_pt: f32,
     ) -> bool {
+        if !size_pt.is_finite() {
+            return false;
+        }
         let size_u = size_pt.round().max(1.0) as u32;
         let (clamped_end, template) = match self
             .clamp_range_and_build_template(node_id, section_idx, range_end)
@@ -582,21 +578,11 @@ impl MindMapDocument {
         true
     }
 
-    /// Pre-flight for the three range-aware setters: validates
-    /// the section exists, clamps `range_end` to the section's
-    /// grapheme count, and builds the gap-fill template from
-    /// the section / node cascade. Returns
-    /// `Some((clamped_end, template))` on success or `None`
-    /// when the node / section is missing or the section's
-    /// text is empty.
-    ///
-    /// Template strategy: clone the section's first run if any
-    /// (carries the section's effective font / size / style
-    /// attributes); otherwise build from `node.style.text_color`
-    /// + the workspace defaults baked into
-    /// `defaults::default_orphan_node`. Caller overwrites the
-    /// one attribute it's setting before passing the template
-    /// to `mutate_in_range`.
+    /// Range-setter pre-flight: clamps `range_end` to the
+    /// section's grapheme count and builds the gap-fill
+    /// template from the section's first run (cascade source)
+    /// or hardcoded defaults when the section has no runs.
+    /// Caller overwrites the one attribute it's setting.
     fn clamp_range_and_build_template(
         &self,
         node_id: &str,

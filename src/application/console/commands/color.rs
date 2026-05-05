@@ -321,6 +321,24 @@ fn apply_section_colours(
         SelectionState::Section(SectionSel { node_id, .. }) => node_id,
         _ => return ExecResult::err("color: section=N requires a node or section selection"),
     };
+    // Surface a clear error when `range_start` is past the
+    // section's grapheme count — without this pre-flight the
+    // setter silently no-ops and the verb prints "color: no
+    // change", indistinguishable from "you set red on already-
+    // red text".
+    if let Some((rs, _re)) = range {
+        if let Some(node) = doc.mindmap.nodes.get(&node_id) {
+            if let Some(section) = node.sections.get(section_idx) {
+                let total = baumhard::util::grapheme_chad::count_grapheme_clusters(&section.text);
+                if rs >= total {
+                    return ExecResult::err(format!(
+                        "color: range_start={} is past the section's grapheme count ({})",
+                        rs, total
+                    ));
+                }
+            }
+        }
+    }
     let mut messages = Vec::new();
     let mut any_applied = false;
     for (k, v) in kvs {

@@ -1,46 +1,40 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Pure manipulation primitives for `Vec<TextRun>` — the foundation
-//! N4 (per-grapheme range targeting) builds on. Each helper preserves
-//! the format invariants documented in `format/text-runs.md`: runs
-//! are sorted ascending, half-open `[start, end)` grapheme indices,
-//! no overlaps, gaps allowed (uncovered ranges inherit section /
-//! node defaults).
+//! N4 (per-grapheme range targeting) builds on. Preserves the
+//! format invariants from `format/text-runs.md` (sorted ascending,
+//! half-open `[start, end)`, no overlaps, gaps allowed). Linear
+//! time over runs, no `unsafe`, debug-asserts the invariants on
+//! every public entry.
 //!
-//! All operations are pure functions over `&[TextRun]` or
-//! `&mut Vec<TextRun>`; no I/O, no allocation beyond the result
-//! vector's growth, and no `unsafe`. With N typically under 20
-//! per section, every helper runs in linear time over the run
-//! vector.
-//!
-//! **Call-site discipline.** Helpers stay path-qualified
-//! (`text_run_ops::split_at`, not glob-imported) because `slice`
-//! and `split_at` collide with the inherent `[T]` methods of the
-//! same name — `runs.split_at(idx)` calls the inherent method
-//! and returns `(&[T], &[T])`, while
-//! `text_run_ops::split_at(&mut runs, idx)` mutates in place.
-//! Forcing the module prefix at every call site keeps the
-//! distinction visible.
-//!
-//! **Caller responsibilities.** Helpers operate on the run
-//! vector alone; they don't know the section's text length.
-//! Callers must clamp `start` / `end` to
-//! `count_grapheme_clusters(text)` before calling — these
-//! primitives won't detect a text-overrun.
+//! Stays path-qualified (no glob re-export) because `slice` and
+//! `split_at` collide with inherent `[T]` methods. Callers must
+//! clamp indices to `count_grapheme_clusters(text)` — these
+//! primitives don't see the section text.
 
 use super::node::TextRun;
 
-/// Index in `runs` of the run whose `[start, end)` contains
-/// `grapheme_idx`, or `None` when `grapheme_idx` falls in a gap
-/// or past the end. The half-open convention means a run
-/// boundary at `idx == run.end` does **not** count — that
-/// position belongs to the next run (or to a gap, if there is
-/// one).
-///
-/// Linear scan with an early-out when a run's `start` exceeds
-/// the index — runs are sorted ascending so anything past that
-/// point can't contain `grapheme_idx`.
+/// Debug-only invariant check: runs sorted ascending, no
+/// overlaps, every `start < end`. Every public helper calls this
+/// first so caller drift surfaces in tests; release builds
+/// trust the precondition.
+#[inline]
+fn debug_assert_invariants(runs: &[TextRun]) {
+    debug_assert!(
+        runs.iter().all(|r| r.start < r.end),
+        "text_run_ops: zero-length or inverted run"
+    );
+    debug_assert!(
+        runs.windows(2).all(|w| w[0].end <= w[1].start),
+        "text_run_ops: runs out of order or overlapping"
+    );
+}
+
+/// Index of the run containing `grapheme_idx`, or `None` when
+/// it falls in a gap or past the end. Half-open: `idx == run.end`
+/// is not contained.
 pub fn find_run_containing(runs: &[TextRun], grapheme_idx: usize) -> Option<usize> {
+    debug_assert_invariants(runs);
     for (i, run) in runs.iter().enumerate() {
         if run.start > grapheme_idx {
             return None;
@@ -52,30 +46,20 @@ pub fn find_run_containing(runs: &[TextRun], grapheme_idx: usize) -> Option<usiz
     None
 }
 
-/// Index in `runs` of the run whose `start` equals `grapheme_idx`,
-/// or `None` when no run begins exactly there. Pairs with
-/// [`split_at`]: after `split_at(runs, idx)` succeeds, the
-/// right-hand half lives at the index this returns.
+/// Index of the run whose `start == grapheme_idx`. Locates the
+/// right half after a successful [`split_at`].
 pub fn find_run_starting_at(runs: &[TextRun], grapheme_idx: usize) -> Option<usize> {
+    debug_assert_invariants(runs);
     runs.iter().position(|r| r.start == grapheme_idx)
 }
 
-/// Ensure a run boundary at `grapheme_idx` by splitting the run
-/// that straddles it (if any) into two adjacent runs sharing
-/// every style attribute. Returns `true` when a split was
-/// performed; `false` when `grapheme_idx` already sits on a
-/// boundary, falls in a gap, or lies past the end of every run
-/// (all of those are no-ops because the boundary either already
-/// exists or is meaningless to introduce).
-///
-/// Pairs with [`merge_adjacent_equal`]: a range-targeted setter
-/// calls `split_at(start)` + `split_at(end)` to carve out the
-/// exact run set covering `[start, end)`, mutates each in place,
-/// then `merge_adjacent_equal` to coalesce neighbours that
-/// became identical.
-///
-/// Cost: O(N) — one linear find plus one `Vec::insert` shift.
+/// Carve a boundary at `grapheme_idx` by splitting the
+/// straddling run into two adjacent runs sharing all style
+/// attributes. Returns `true` on a real split; `false` when
+/// the boundary already exists, the index falls in a gap, or
+/// past every run.
 pub fn split_at(runs: &mut Vec<TextRun>, grapheme_idx: usize) -> bool {
+    debug_assert_invariants(runs);
     let Some(target_idx) = find_run_containing(runs, grapheme_idx) else {
         return false;
     };
@@ -90,25 +74,12 @@ pub fn split_at(runs: &mut Vec<TextRun>, grapheme_idx: usize) -> bool {
     true
 }
 
-/// Insert `run` into `runs` at the sorted position implied by
-/// its `start`. Returns the index where the insertion landed.
-/// Caller-supplied invariants: `run.start < run.end`, and
-/// `[run.start, run.end)` does not overlap any existing run
-/// (i.e. the caller has identified a gap or an empty
-/// `runs`). Range-targeted setters use this when the target
-/// `[start, end)` falls in an uncovered gap and a fresh run
-/// needs to materialise the user's chosen attributes there.
-///
-/// Pairs with [`merge_adjacent_equal`]: after inserting, run
-/// the merge pass to coalesce the new run with neighbours that
-/// share its style.
-///
-/// Debug builds assert non-overlap to catch caller bugs early;
-/// release builds trust the precondition.
-///
-/// Cost: O(N) — one linear find for the insertion index plus
-/// one `Vec::insert` shift.
+/// Insert `run` at its sorted position; returns the insertion
+/// index. Caller guarantees `run.start < run.end` and non-overlap
+/// (debug-asserted). Used by range-targeted setters to fill an
+/// uncovered gap inside a target range.
 pub fn insert_run(runs: &mut Vec<TextRun>, run: TextRun) -> usize {
+    debug_assert_invariants(runs);
     debug_assert!(run.start < run.end, "insert_run: empty run");
     debug_assert!(
         runs.iter()
@@ -123,16 +94,11 @@ pub fn insert_run(runs: &mut Vec<TextRun>, run: TextRun) -> usize {
     pos
 }
 
-/// Clone every run that intersects `[start, end)`, with each
-/// returned run's `start` and `end` clamped to the slice
-/// bounds. Original-coordinate output (not re-based to
-/// `slice_start`) — the caller scanning attributes
-/// (`current_color_at` over a range, "is every run in this
-/// range bold?") doesn't need re-basing.
-///
-/// Empty result when `start >= end`, when the range falls in a
-/// gap entirely, or when no runs overlap.
+/// Clone every run intersecting `[start, end)`, clamped to
+/// the slice bounds. Original-coordinate output for attribute
+/// scans over the range. Output is not re-merged.
 pub fn slice(runs: &[TextRun], slice_start: usize, slice_end: usize) -> Vec<TextRun> {
+    debug_assert_invariants(runs);
     if slice_start >= slice_end {
         return Vec::new();
     }
@@ -156,15 +122,12 @@ pub fn slice(runs: &[TextRun], slice_start: usize, slice_end: usize) -> Vec<Text
     out
 }
 
-/// Coalesce neighbouring runs that share every style attribute
-/// AND meet at a common boundary (`runs[i].end == runs[i+1].start`).
-/// Runs separated by a gap stay separate even when their
-/// attributes match — the gap carries semantic information
-/// (uncovered grapheme ranges fall through to section / node
-/// defaults, which may differ from the runs' attributes).
-///
-/// Single forward pass; cost is O(N) over `runs.len()`.
+/// Coalesce style-equal neighbours that meet at a common
+/// boundary. Gap-separated equals stay separate — the gap
+/// carries semantic information (uncovered ranges fall
+/// through to section / node defaults).
 pub fn merge_adjacent_equal(runs: &mut Vec<TextRun>) {
+    debug_assert_invariants(runs);
     if runs.len() < 2 {
         return;
     }
@@ -184,36 +147,12 @@ pub fn merge_adjacent_equal(runs: &mut Vec<TextRun>) {
 }
 
 /// Apply an attribute change to every grapheme in
-/// `[range_start, range_end)`. The canonical entry point N4-B's
-/// range-targeted setters (`set_section_text_color_range`,
-/// `_font_size_range`, `_font_family_range`) route through.
+/// `[range_start, range_end)`. The canonical entry point for
+/// range-targeted setters: split → mutate → gap-fill → merge.
 ///
-/// Algorithm:
-/// 1. `split_at(runs, range_start)` and `split_at(runs, range_end)`
-///    so every run is exact-aligned to the range bounds (each
-///    intersecting run is fully inside or fully outside the
-///    range).
-/// 2. Walk runs whose `[start, end)` lies entirely inside the
-///    range and apply `mutate` — the caller's per-run attribute
-///    change.
-/// 3. Detect gaps inside the range (uncovered grapheme ranges);
-///    fill each by inserting a clone of `template_for_gap` with
-///    `start`/`end` set to the gap bounds.
-/// 4. `merge_adjacent_equal(runs)` to coalesce neighbours that
-///    share style after the rewrite.
-///
-/// `template_for_gap` carries the cascade defaults (font /
-/// size_pt / bold / italic / underline / hyperlink) plus the
-/// new attribute the caller is applying — gap-fill runs render
-/// as if they had been part of the section's default style with
-/// the user's attribute applied. The `start` / `end` fields on
-/// the template are overwritten with each gap's bounds and so
-/// can carry any placeholder values.
-///
-/// No-op when `range_start >= range_end`, when both bounds fall
-/// past the end of every run, or when both bounds land in the
-/// same gap with no runs to mutate (the gap-fill still fires in
-/// that case).
+/// `template_for_gap` carries the cascade defaults plus the
+/// caller's attribute; its `start`/`end` are overwritten per
+/// gap. No-op when `range_start >= range_end`.
 pub fn mutate_in_range<F>(
     runs: &mut Vec<TextRun>,
     range_start: usize,
@@ -757,5 +696,41 @@ mod tests {
         // Mutation was a no-op; merge collapses splits.
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0], run(0, 10, "red"));
+    }
+
+    // ── Invariant guards ─────────────────────────────────────────
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "out of order")]
+    fn test_invariants_panic_on_unsorted_input() {
+        let runs = vec![run(5, 10, "red"), run(0, 3, "blue")];
+        let _ = find_run_containing(&runs, 0);
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "overlapping")]
+    fn test_invariants_panic_on_overlapping_input() {
+        let runs = vec![run(0, 5, "red"), run(3, 8, "blue")];
+        let _ = find_run_containing(&runs, 0);
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "zero-length")]
+    fn test_invariants_panic_on_zero_length_run() {
+        let runs = vec![run(0, 5, "red"), TextRun {
+            start: 5,
+            end: 5,
+            bold: false,
+            italic: false,
+            underline: false,
+            font: "Sans".into(),
+            size_pt: 12,
+            color: "blue".into(),
+            hyperlink: None,
+        }];
+        let _ = find_run_containing(&runs, 0);
     }
 }

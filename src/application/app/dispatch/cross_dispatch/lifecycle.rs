@@ -148,7 +148,7 @@ pub(in crate::application::app) fn apply_open_text_edit_on_single(
 /// cleared up-front because a multi-section copy has no payload
 /// variant today; a stale single-section payload from a prior
 /// copy would otherwise win the byte-equal probe on the next paste.
-pub(in crate::application::app) fn apply_copy_or_cut(is_cut: bool, doc: &mut MindMapDocument) {
+pub(in crate::application::app) fn apply_copy_or_cut(is_cut: bool, doc: &mut MindMapDocument) -> bool {
     use crate::application::console::traits::{
         selection_targets, view_for, ClipboardContent, HandlesCopy, HandlesCut,
     };
@@ -158,6 +158,7 @@ pub(in crate::application::app) fn apply_copy_or_cut(is_cut: bool, doc: &mut Min
     let mut text_payloads: Vec<String> = Vec::new();
     let mut section_texts: Vec<String> = Vec::new();
     let mut first_section_payload: Option<crate::application::document::SectionPayload> = None;
+    let mut any_target_accepted = false;
     for tid in &targets {
         let mut view = view_for(doc, tid);
         let content = if is_cut {
@@ -168,12 +169,14 @@ pub(in crate::application::app) fn apply_copy_or_cut(is_cut: bool, doc: &mut Min
         match content {
             ClipboardContent::Text(text) => {
                 text_payloads.push(text);
+                any_target_accepted = true;
             }
             ClipboardContent::Section { text, payload } => {
                 if section_texts.is_empty() {
                     first_section_payload = Some(payload);
                 }
                 section_texts.push(text);
+                any_target_accepted = true;
             }
             ClipboardContent::Empty | ClipboardContent::NotApplicable => {}
         }
@@ -181,7 +184,7 @@ pub(in crate::application::app) fn apply_copy_or_cut(is_cut: bool, doc: &mut Min
     if !text_payloads.is_empty() {
         let joined = text_payloads.join(MULTI_TARGET_SEPARATOR);
         crate::application::clipboard::write_clipboard(&joined);
-        return;
+        return any_target_accepted;
     }
     if !section_texts.is_empty() {
         let joined = section_texts.join(MULTI_TARGET_SEPARATOR);
@@ -195,6 +198,7 @@ pub(in crate::application::app) fn apply_copy_or_cut(is_cut: bool, doc: &mut Min
             }
         }
     }
+    any_target_accepted
 }
 
 /// Read the system clipboard and paste into every clipboard-eligible

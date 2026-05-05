@@ -17,7 +17,7 @@
 /// form. Rejects empty halves, non-numeric components, and
 /// `start >= end` (an empty or inverted range is a usage error
 /// — the verb path lifts this to an `ExecResult::err`).
-pub fn parse_range_kv(value: &str) -> Result<(usize, usize), String> {
+pub(super) fn parse_range_kv(value: &str) -> Result<(usize, usize), String> {
     let (start_str, end_str) = match value.split_once("..") {
         Some(pair) => pair,
         None => return Err("expected `start..end` (e.g. `range=2..7`)".to_string()),

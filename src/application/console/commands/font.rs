@@ -366,6 +366,19 @@ fn section_font_outcome(
     max: Option<f32>,
     range: Option<(usize, usize)>,
 ) -> ExecResult {
+    if let Some((rs, _re)) = range {
+        if let Some(node) = doc.mindmap.nodes.get(id) {
+            if let Some(section) = node.sections.get(section_idx) {
+                let total = baumhard::util::grapheme_chad::count_grapheme_clusters(&section.text);
+                if rs >= total {
+                    return ExecResult::err(format!(
+                        "font: range_start={} is past the section's grapheme count ({})",
+                        rs, total
+                    ));
+                }
+            }
+        }
+    }
     let mut messages = Vec::new();
     let mut any_applied = false;
     if let Some(pt) = size {
