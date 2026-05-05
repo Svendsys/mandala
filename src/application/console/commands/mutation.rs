@@ -219,6 +219,7 @@ fn resolve_target_id(doc: &MindMapDocument, explicit: Option<&str>) -> Result<St
         // before `mutation apply` would work from a section
         // click.
         SelectionState::Section(s) => Ok(s.node_id.clone()),
+        SelectionState::SectionRange { sel, .. } => Ok(sel.node_id.clone()),
         _ => Err(
             "mutation apply needs a single-node or section selection, or an explicit <node-id>".to_string(),
         ),

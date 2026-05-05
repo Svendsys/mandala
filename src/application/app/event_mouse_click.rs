@@ -301,9 +301,13 @@ pub(super) fn handle_mouse_input(
                 // section / node behind it at threshold-cross
                 // time. `None`-sized sections (fill-parent) emit
                 // no handles, so this branch produces `None`.
+                // Section AND SectionRange both expose an inner
+                // SectionSel via `selected_section()`. Range-aware
+                // selections still emit resize handles on the
+                // owning section.
                 let hit_section_resize_handle = match ctx.document.as_ref() {
-                    Some(doc) => match &doc.selection {
-                        SelectionState::Section(s) => {
+                    Some(doc) => match doc.selection.selected_section() {
+                        Some(s) => {
                             let tol = HANDLE_HIT_TOLERANCE_PX * ctx.renderer.canvas_per_pixel();
                             crate::application::document::hit_test_section_resize_handle(
                                 &doc.mindmap,
@@ -314,7 +318,7 @@ pub(super) fn handle_mouse_input(
                             )
                             .map(|side| (s.node_id.clone(), s.section_idx, side))
                         }
-                        _ => None,
+                        None => None,
                     },
                     None => None,
                 };

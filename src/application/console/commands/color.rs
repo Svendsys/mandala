@@ -337,6 +337,7 @@ fn apply_section_colours(
     let node_id = match doc.selection.clone() {
         SelectionState::Single(id) => id,
         SelectionState::Section(SectionSel { node_id, .. }) => node_id,
+        SelectionState::SectionRange { sel: SectionSel { node_id, .. }, .. } => node_id,
         _ => return ExecResult::err("color: section=N requires a node or section selection"),
     };
     // Surface a clear error when `range_start` is past the

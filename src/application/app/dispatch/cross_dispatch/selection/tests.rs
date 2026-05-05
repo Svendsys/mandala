@@ -154,6 +154,35 @@ fn select_parent_in_no_op_at_root() {
     ));
 }
 
+/// `select_parent_in` walks up from a `SectionRange` selection
+/// to the section's owning node's parent — same shape as the
+/// `Section` arm. Pins the missed-arm fix from the N4-C.a
+/// review (N4-C.a's wildcard `_ => return false` would have
+/// no-op'd here).
+#[test]
+fn select_parent_in_walks_up_from_section_range() {
+    use crate::application::document::SectionSel;
+    let mut doc = load_test_doc();
+    let child_id = doc
+        .mindmap
+        .nodes
+        .values()
+        .find(|n| n.parent_id.is_some())
+        .expect("fixture has a non-root node")
+        .id
+        .clone();
+    let parent_id = doc.mindmap.nodes[&child_id].parent_id.clone().unwrap();
+    doc.selection = SelectionState::SectionRange {
+        sel: SectionSel::new(&child_id, 0),
+        range: (1, 3),
+    };
+    assert!(select_parent_in(&mut doc));
+    assert!(matches!(
+        doc.selection,
+        SelectionState::Single(ref s) if s == &parent_id
+    ));
+}
+
 #[test]
 fn select_parent_in_no_op_for_multi_selection() {
     let mut doc = load_test_doc();

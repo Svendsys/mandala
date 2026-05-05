@@ -87,6 +87,8 @@ pub(in crate::application::app) fn invert_selection_in(doc: &mut MindMapDocument
             | SelectionState::Single(_)
             | SelectionState::Multi(_)
             | SelectionState::Section(_)
+            | SelectionState::MultiSection(_)
+            | SelectionState::SectionRange { .. }
     );
     if !invertable {
         return false;
@@ -125,6 +127,7 @@ pub(in crate::application::app) fn select_parent_in(doc: &mut MindMapDocument) -
     let nid = match &doc.selection {
         SelectionState::Single(id) => id.clone(),
         SelectionState::Section(s) => s.node_id.clone(),
+        SelectionState::SectionRange { sel, .. } => sel.node_id.clone(),
         _ => return false,
     };
     let Some(parent_id) = doc.mindmap.nodes.get(&nid).and_then(|n| n.parent_id.clone()) else {
@@ -151,6 +154,7 @@ pub(in crate::application::app) fn select_child_in(doc: &mut MindMapDocument) ->
     let nid = match &doc.selection {
         SelectionState::Single(id) => id.clone(),
         SelectionState::Section(s) => s.node_id.clone(),
+        SelectionState::SectionRange { sel, .. } => sel.node_id.clone(),
         _ => return false,
     };
     let Some(child_id) = doc
@@ -190,8 +194,13 @@ pub(in crate::application::app) fn apply_select_child(rc: &mut RebuildContext<'_
 /// imposed.
 #[must_use = "the bool gates the scene rebuild — drop it explicitly with `let _ = …` if you don't care"]
 pub(in crate::application::app) fn select_sibling_in(doc: &mut MindMapDocument, forward: bool) -> bool {
-    if let SelectionState::Section(sel) = &doc.selection {
-        let node_id = sel.node_id.clone();
+    // Section and SectionRange both expose an inner SectionSel
+    // via `selected_section()`; route both through the same
+    // section-walk logic. SectionRange's range is dropped on
+    // sibling navigation — moving to a sibling section is a
+    // fresh selection, not a range carry-over.
+    if let Some(sel) = doc.selection.selected_section().cloned() {
+        let node_id = sel.node_id;
         let section_idx = sel.section_idx;
         if let Some(node) = doc.mindmap.nodes.get(&node_id) {
             let section_count = node.sections.len();

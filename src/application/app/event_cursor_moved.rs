@@ -632,6 +632,7 @@ pub(super) fn selection_after_node_drag_press(
     let needs_demote = match prev {
         SelectionState::Section(s) => s.node_id == node_id,
         SelectionState::MultiSection(secs) => secs.iter().any(|s| s.node_id == node_id),
+        SelectionState::SectionRange { sel, .. } => sel.node_id == node_id,
         _ => false,
     };
     if needs_demote || !prev.is_selected(node_id) {
@@ -803,6 +804,20 @@ mod tests {
     #[test]
     fn test_node_drag_press_demotes_section_to_single() {
         let prev = SelectionState::Section(SectionSel::new("a", 1));
+        let new = selection_after_node_drag_press(&prev, "a").expect("rewrite");
+        assert!(matches!(new, SelectionState::Single(id) if id == "a"));
+    }
+
+    /// Whole-node press on a `SectionRange` whose owning node
+    /// matches demotes to `Single(node)` — same shape as the
+    /// `Section` arm. Pins the missed-arm fix from the N4-C.a
+    /// review.
+    #[test]
+    fn test_node_drag_press_demotes_section_range_to_single() {
+        let prev = SelectionState::SectionRange {
+            sel: SectionSel::new("a", 1),
+            range: (3, 7),
+        };
         let new = selection_after_node_drag_press(&prev, "a").expect("rewrite");
         assert!(matches!(new, SelectionState::Single(id) if id == "a"));
     }

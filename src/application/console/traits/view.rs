@@ -341,7 +341,14 @@ impl<'a> HandlesCopy for TargetView<'a> {
         match self {
             // Section: structured payload (`text` to OS clipboard,
             // `payload` to in-process buffer). Empty text still
+            // Section: structured payload (`text` to OS clipboard,
+            // `payload` to in-process buffer). Empty text still
             // emits `Section` because chrome may carry information.
+            // Range-aware copy is deferred to N4-D — when `range`
+            // is set today, we fall back to whole-section copy
+            // (the documented N4-C.a contract). The semantic is
+            // safe for copy (non-destructive) but Cut+Paste below
+            // explicitly reject the range to prevent surprise.
             TargetView::Section { doc, id, section_idx, .. } => match doc
                 .mindmap
                 .nodes
@@ -422,7 +429,14 @@ impl<'a> HandlesPaste for TargetView<'a> {
             // round-trips). Fall through to plain-text template
             // inheritance otherwise. Stale-`section_idx` clamp
             // survives both branches.
-            TargetView::Section { doc, id, section_idx, .. } => {
+            // Range-aware paste deferred to N4-D — return
+            // `NotApplicable` for SectionRange so the user sees
+            // a clear error instead of a whole-section overwrite
+            // that destroys their out-of-range graphemes.
+            TargetView::Section { doc, id, section_idx, range } => {
+                if range.is_some() {
+                    return Outcome::NotApplicable;
+                }
                 let section_count = doc
                     .mindmap
                     .nodes
@@ -516,7 +530,16 @@ impl<'a> HandlesCut for TargetView<'a> {
             // channel / bindings on the source section so the cut
             // reads as "the text disappeared" rather than "the
             // section dissolved."
-            TargetView::Section { doc, id, section_idx, .. } => {
+            // Cut on `SectionRange` (range.is_some()) refuses
+            // rather than wiping the whole section — range-aware
+            // cut is deferred to N4-D. Returning `NotApplicable`
+            // surfaces a clear console error instead of silently
+            // destroying the user's section. (The whole-section
+            // arm is unchanged.)
+            TargetView::Section { doc, id, section_idx, range } => {
+                if range.is_some() {
+                    return ClipboardContent::NotApplicable;
+                }
                 let (text, payload) = match doc
                     .mindmap
                     .nodes

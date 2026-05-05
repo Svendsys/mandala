@@ -53,6 +53,7 @@ fn execute_fit(eff: &mut ConsoleEffects) -> ExecResult {
     let node_id = match &eff.document.selection {
         SelectionState::Single(id) => id.clone(),
         SelectionState::Section(s) => s.node_id.clone(),
+        SelectionState::SectionRange { sel, .. } => sel.node_id.clone(),
         _ => {
             return ExecResult::err("node fit: requires a single-node or section selection");
         }
@@ -72,6 +73,7 @@ fn execute_resize(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         // the typing path frictionless when the user has a
         // section selected and wants to resize the parent node.
         SelectionState::Section(s) => s.node_id.clone(),
+        SelectionState::SectionRange { sel, .. } => sel.node_id.clone(),
         _ => {
             return ExecResult::err("node resize: requires a single-node or section selection");
         }

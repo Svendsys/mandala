@@ -35,7 +35,11 @@ pub(in crate::application::app) fn selection_change_touches_tree(
         // stale highlight.
         matches!(
             sel,
-            SelectionState::Single(_) | SelectionState::Multi(_) | SelectionState::Section(_)
+            SelectionState::Single(_)
+                | SelectionState::Multi(_)
+                | SelectionState::Section(_)
+                | SelectionState::MultiSection(_)
+                | SelectionState::SectionRange { .. }
         )
     }
     touches_tree(prev) || touches_tree(new)
@@ -220,6 +224,13 @@ pub(in crate::application::app) fn selection_highlight_entries(
             .iter()
             .map(|s| (s.node_id.as_str(), Some(s.section_idx), HIGHLIGHT_COLOR))
             .collect(),
+        // Range-aware sub-grapheme highlight is deferred to a
+        // future tier; for now narrow the highlight to the
+        // owning section (same shape as `Section`) so the user
+        // can see which section their range targets.
+        SelectionState::SectionRange { sel, .. } => {
+            vec![(sel.node_id.as_str(), Some(sel.section_idx), HIGHLIGHT_COLOR)]
+        }
         _ => selection
             .selected_ids()
             .into_iter()

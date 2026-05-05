@@ -113,6 +113,11 @@ pub(in crate::application::app) fn apply_open_text_edit_on_single(
     let id = match rc.document.selection.clone() {
         SelectionState::Single(id) => id,
         SelectionState::Section(s) => s.node_id,
+        // SectionRange exposes its inner SectionSel; the editor
+        // re-opens on the owning section. The carried sub-range
+        // doesn't yet plumb into the editor's caret-anchor on
+        // open (deferred to N4-C.b's full editor wiring).
+        SelectionState::SectionRange { sel, .. } => sel.node_id,
         _ => return false,
     };
     super::super::super::text_edit::open_text_edit(

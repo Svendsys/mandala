@@ -100,6 +100,9 @@ fn resolve_section_idx(args: &Args, selection: &SelectionState) -> Result<usize,
     match (selection, kv_idx) {
         (_, Some(idx)) => Ok(idx),
         (SelectionState::Section(SectionSel { section_idx, .. }), None) => Ok(*section_idx),
+        (SelectionState::SectionRange { sel: SectionSel { section_idx, .. }, .. }, None) => {
+            Ok(*section_idx)
+        }
         (SelectionState::Single(_), None) => {
             Err("section: select a specific section (multi-section node) or pass section=<idx>".into())
         }
@@ -122,6 +125,9 @@ fn resolve_node_id(selection: &SelectionState) -> Result<String, String> {
     match selection {
         SelectionState::Single(id) => Ok(id.clone()),
         SelectionState::Section(SectionSel { node_id, .. }) => Ok(node_id.clone()),
+        SelectionState::SectionRange { sel: SectionSel { node_id, .. }, .. } => {
+            Ok(node_id.clone())
+        }
         // MultiSection: parallel error to `resolve_section_idx`'s
         // MultiSection arm. The verbs are single-target; pick one.
         SelectionState::MultiSection(_) => Err(

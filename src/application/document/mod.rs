@@ -520,12 +520,15 @@ impl MindMapDocument {
         // emits 8 handles when the section has `Some` size; a
         // `None`-sized (fill-parent) section emits nothing because
         // there's no per-section AABB to stretch.
-        let selected_section = match &self.selection {
-            crate::application::document::SelectionState::Section(s) => {
-                Some((s.node_id.as_str(), s.section_idx))
-            }
-            _ => None,
-        };
+        // Section AND SectionRange both surface a single owning
+        // section to the scene-builder via `selected_section()`
+        // — the carried sub-range doesn't change handle
+        // emission (handles attach to the section AABB, not the
+        // grapheme range).
+        let selected_section = self
+            .selection
+            .selected_section()
+            .map(|s| (s.node_id.as_str(), s.section_idx));
         // Single-node selection drives node-resize-handle
         // emission. Multi / Section / Edge / etc. produce no
         // node handles. The `Single`-only gate matches the

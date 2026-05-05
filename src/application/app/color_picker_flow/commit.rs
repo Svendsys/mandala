@@ -386,6 +386,7 @@ pub(super) fn section_commit_targets(
     let mut out: Vec<SectionSel> = match sel {
         SelectionState::MultiSection(secs) => secs.clone(),
         SelectionState::Section(s) => vec![s.clone()],
+        SelectionState::SectionRange { sel: s, .. } => vec![s.clone()],
         _ => Vec::new(),
     };
     let handle_target = SectionSel {

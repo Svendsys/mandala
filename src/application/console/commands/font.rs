@@ -520,6 +520,7 @@ fn execute_font_set(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         let node_id = match eff.document.selection.clone() {
             SelectionState::Single(id) => id,
             SelectionState::Section(s) => s.node_id,
+            SelectionState::SectionRange { sel, .. } => sel.node_id,
             _ => return ExecResult::err("font: section=N requires a node or section selection"),
         };
         let applied = eff
@@ -538,6 +539,7 @@ fn execute_font_set(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         let node_id = match eff.document.selection.clone() {
             SelectionState::Single(id) => id,
             SelectionState::Section(s) => s.node_id,
+            SelectionState::SectionRange { sel, .. } => sel.node_id,
             _ => return ExecResult::err("font: section=N requires a node or section selection"),
         };
         let applied = eff

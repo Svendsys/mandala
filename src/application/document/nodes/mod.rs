@@ -306,6 +306,9 @@ impl MindMapDocument {
     /// — sections share the node's AABB, so a larger run on one
     /// section can grow the node.
     pub fn set_section_font_size(&mut self, node_id: &str, section_idx: usize, size_pt: f32) -> bool {
+        if !size_pt.is_finite() {
+            return false;
+        }
         let size_u = size_pt.round().max(1.0) as u32;
         let node = match self.mindmap.nodes.get(node_id) {
             Some(n) => n,
@@ -1280,6 +1283,9 @@ impl MindMapDocument {
     /// `size_pt` is rounded to the nearest positive integer; values
     /// below 1 clamp to 1.
     pub fn set_node_font_size(&mut self, node_id: &str, size_pt: f32) -> bool {
+        if !size_pt.is_finite() {
+            return false;
+        }
         let size_u = size_pt.round().max(1.0) as u32;
         let node = match self.mindmap.nodes.get(node_id) {
             Some(n) => n,
