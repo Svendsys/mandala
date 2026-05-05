@@ -126,20 +126,8 @@ pub(in crate::application::app) fn apply_open_text_edit_on_single(
     rc: &mut RebuildContext<'_>,
     text_edit_state: &mut super::super::super::text_edit::TextEditState,
 ) -> bool {
-    // Section selection routes to its owning node's text editor —
-    // the editor today edits the section identified by the
-    // selection's `section_idx` (the inner editor consults
-    // `selected_section()`); this dispatch shim only needs to
-    // resolve the owning node id for the entry point.
-    let id = match rc.document.selection.clone() {
-        SelectionState::Single(id) => id,
-        SelectionState::Section(s) => s.node_id,
-        // SectionRange exposes its inner SectionSel; the editor
-        // re-opens on the owning section. The carried sub-range
-        // doesn't yet plumb into the editor's caret-anchor on
-        // open (deferred to N4-C.b's full editor wiring).
-        SelectionState::SectionRange { sel, .. } => sel.node_id,
-        _ => return false,
+    let Some(id) = rc.document.selection.primary_node_id().map(str::to_string) else {
+        return false;
     };
     super::super::super::text_edit::open_text_edit(
         &id,

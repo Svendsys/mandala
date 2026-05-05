@@ -276,11 +276,9 @@ fn execute_color(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     let mut colour_kvs: Vec<(String, String)> = Vec::new();
     for (k, v) in args.kvs() {
         if k == "section" {
-            match v.parse::<usize>() {
+            match super::range_kv::parse_section_kv("color", v) {
                 Ok(idx) => section_target = Some(idx),
-                Err(_) => {
-                    return ExecResult::err(format!("color: section='{}' is not a non-negative integer", v));
-                }
+                Err(msg) => return ExecResult::err(msg),
             }
         } else if k == "range" {
             match super::range_kv::parse_range_kv(v) {
@@ -335,11 +333,9 @@ fn apply_section_colours(
     range: Option<(usize, usize)>,
     kvs: &[(String, String)],
 ) -> ExecResult {
-    let node_id = match doc.selection.clone() {
-        SelectionState::Single(id) => id,
-        SelectionState::Section(SectionSel { node_id, .. }) => node_id,
-        SelectionState::SectionRange { sel: SectionSel { node_id, .. }, .. } => node_id,
-        _ => return ExecResult::err("color: section=N requires a node or section selection"),
+    let node_id = match doc.selection.primary_node_id() {
+        Some(id) => id.to_string(),
+        None => return ExecResult::err("color: section=N requires a node or section selection"),
     };
     // Surface a clear error when `range_start` is past the
     // section's grapheme count — without this pre-flight the

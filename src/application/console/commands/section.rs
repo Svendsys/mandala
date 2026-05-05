@@ -122,28 +122,21 @@ fn resolve_section_idx(args: &Args, selection: &SelectionState) -> Result<usize,
 }
 
 fn resolve_node_id(selection: &SelectionState) -> Result<String, String> {
-    match selection {
-        SelectionState::Single(id) => Ok(id.clone()),
-        SelectionState::Section(SectionSel { node_id, .. }) => Ok(node_id.clone()),
-        SelectionState::SectionRange { sel: SectionSel { node_id, .. }, .. } => {
-            Ok(node_id.clone())
-        }
-        // MultiSection: parallel error to `resolve_section_idx`'s
-        // MultiSection arm. The verbs are single-target; pick one.
-        SelectionState::MultiSection(_) => Err(
-            "section: multi-section selection — single-target only; pass section=<idx> or click one section first".into(),
-        ),
-        _ => Err("section: requires a node or section selection".into()),
+    if let Some(id) = selection.primary_node_id() {
+        return Ok(id.to_string());
     }
+    if matches!(selection, SelectionState::MultiSection(_)) {
+        return Err(
+            "section: multi-section selection — single-target only; pass section=<idx> or click one section first".into(),
+        );
+    }
+    Err("section: requires a node or section selection".into())
 }
 
 fn parse_section_kv(args: &Args) -> Result<Option<usize>, String> {
     for (k, v) in args.kvs() {
         if k == "section" {
-            return v
-                .parse::<usize>()
-                .map(Some)
-                .map_err(|_| format!("section: section='{}' is not a non-negative integer", v));
+            return super::range_kv::parse_section_kv("section", v).map(Some);
         }
     }
     Ok(None)

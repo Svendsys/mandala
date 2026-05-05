@@ -212,11 +212,9 @@ fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                 Ok(pt) => max = Some(pt),
                 Err(e) => return e,
             },
-            "section" => match v.parse::<usize>() {
+            "section" => match super::range_kv::parse_section_kv("font", v) {
                 Ok(idx) => section_target = Some(idx),
-                Err(_) => {
-                    return ExecResult::err(format!("font: section='{}' is not a non-negative integer", v));
-                }
+                Err(msg) => return ExecResult::err(msg),
             },
             "range" => match super::range_kv::parse_range_kv(v) {
                 Ok(pair) => range_target = Some(pair),
@@ -512,14 +510,9 @@ fn execute_font_set(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     let mut range_target: Option<(usize, usize)> = None;
     for (k, v) in args.kvs() {
         match k {
-            "section" => match v.parse::<usize>() {
+            "section" => match super::range_kv::parse_section_kv("font", v) {
                 Ok(idx) => section_target = Some(idx),
-                Err(_) => {
-                    return ExecResult::err(format!(
-                        "font: section='{}' is not a non-negative integer",
-                        v
-                    ));
-                }
+                Err(msg) => return ExecResult::err(msg),
             },
             "range" => match super::range_kv::parse_range_kv(v) {
                 Ok(pair) => range_target = Some(pair),

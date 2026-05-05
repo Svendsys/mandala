@@ -40,6 +40,16 @@ pub(super) fn parse_range_kv(value: &str) -> Result<(usize, usize), String> {
     Ok((start, end))
 }
 
+/// Parse a `section=N` kv value into a non-negative integer.
+/// Used by `color` / `font` / `section` verbs. Verb name is
+/// prepended to the error message so the caller doesn't have to
+/// re-format. Returns `Err` on negative or non-numeric input.
+pub(super) fn parse_section_kv(verb: &str, value: &str) -> Result<usize, String> {
+    value
+        .parse::<usize>()
+        .map_err(|_| format!("{}: section='{}' is not a non-negative integer", verb, value))
+}
+
 #[cfg(test)]
 mod tests {
     use super::parse_range_kv;

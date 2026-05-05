@@ -365,6 +365,20 @@ impl SelectionState {
         }
     }
 
+    /// Owning-node id when the selection points at exactly one
+    /// node — `Single`, `Section`, or `SectionRange`. `None` for
+    /// `Multi`, `MultiSection`, edge / portal variants, and
+    /// `None`. Per-section verbs that need a single owning node
+    /// call this rather than re-implementing the match.
+    pub fn primary_node_id(&self) -> Option<&str> {
+        match self {
+            SelectionState::Single(id) => Some(id),
+            SelectionState::Section(s) => Some(&s.node_id),
+            SelectionState::SectionRange { sel, .. } => Some(&sel.node_id),
+            _ => None,
+        }
+    }
+
     /// Sub-range carried by [`Self::SectionRange`], or `None`
     /// for every other variant. Per-section verbs route
     /// range-targeted setters through this when the user has
