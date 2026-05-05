@@ -308,10 +308,15 @@ Two producers of `SectionRange`:
   bypasses the trait dispatcher and calls the range setter
   directly; `range=A..B` requires `section=N` and rejects
   empty / inverted / non-numeric input with a clear error.
-- **Editor shift-select anchor** (deferred): the inline text
-  editor's shift-arrow / shift-click anchor lifts the
-  `(cursor, anchor)` pair into `SectionRange` on close. (In
-  development as Tier 2C-N4-C.b.2.)
+- **Editor shift-select anchor**: the inline text editor's
+  `Shift+Arrow*` / `Shift+Home` / `Shift+End` keystrokes seed an
+  anchor at the pre-action cursor position; subsequent shift-cursor
+  moves extend the cursor while preserving the anchor. On editor
+  close (commit or cancel), `lift_anchor_to_section_range` promotes
+  a non-empty `(anchor, cursor)` pair to
+  `SelectionState::SectionRange { range: (min, max) }`. Non-shift
+  cursor moves and any text edit (typing / delete) clear the anchor
+  — range-aware editing (typing-replaces-selection) is deferred.
 
 **Clipboard contract.** `Cut` and `Paste` return
 `Outcome::NotApplicable` rather than silently destroy
