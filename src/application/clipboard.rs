@@ -68,6 +68,18 @@ pub fn write_section_clipboard(text: String, payload: SectionPayload) {
     });
 }
 
+/// Drop the in-process structured section buffer. Called by the
+/// multi-section copy/cut path before iterating: a multi-section
+/// copy has no `MultiSection` payload variant today (only the
+/// joined plain text on the OS clipboard), so a leftover
+/// single-section payload from a prior copy would otherwise win
+/// the byte-equal probe on the next paste — silently substituting
+/// the OS clipboard's joined blob with one section's structured
+/// content.
+pub fn clear_section_clipboard() {
+    SECTION_BUFFER.with(|slot| *slot.borrow_mut() = None);
+}
+
 /// Return the buffered payload only when its text snapshot
 /// matches `probe_text` exactly. Mismatch (or empty buffer)
 /// returns `None`, leaving the caller to fall back to plain text.

@@ -376,6 +376,21 @@ pub(super) fn handle_cursor_moved(
                     return;
                 }
                 if let Some(node_id) = hit_node.take() {
+                    // Capture the pre-demote owning-node set
+                    // before any selection mutation below
+                    // narrows it. Used by the shift+drag harvest
+                    // — without this snapshot, the section /
+                    // multi-section demote that runs on whole-
+                    // node drag promotion would shrink the set
+                    // to one before the harvest reads it,
+                    // silently dropping every other selected
+                    // node from the drag scope.
+                    let pre_demote_ids: Vec<String> = ctx
+                        .document
+                        .as_ref()
+                        .map(|d| d.selection.dedup_owning_node_ids())
+                        .unwrap_or_default();
+
                     // Multi-section + non-shift hits drag only the
                     // pressed section's offset; everything else
                     // (single-section, shift-multi-select) falls
@@ -388,31 +403,12 @@ pub(super) fn handle_cursor_moved(
                         ctx.modifiers.shift_key(),
                     ) {
                         if let Some(doc) = ctx.document.as_mut() {
-                            // The pressed section is "already
-                            // selected" both for a single-section
-                            // `Section(s)` selection that targets
-                            // it AND for a `MultiSection` set
-                            // that contains it. The MultiSection
-                            // case is load-bearing: without it,
-                            // the press would silently overwrite
-                            // the user's multi-set with a single
-                            // `Section(...)` and the surrounding
-                            // selection would vanish.
-                            let already_selected = match &doc.selection {
-                                SelectionState::Section(s) => {
-                                    s.node_id == node_id && s.section_idx == section_idx
-                                }
-                                SelectionState::MultiSection(secs) => secs.iter().any(|s| {
-                                    s.node_id == node_id && s.section_idx == section_idx
-                                }),
-                                _ => false,
-                            };
-                            if !already_selected {
-                                doc.selection =
-                                    SelectionState::Section(crate::application::document::SectionSel {
-                                        node_id: node_id.clone(),
-                                        section_idx,
-                                    });
+                            if let Some(new_sel) = selection_after_section_drag_press(
+                                &doc.selection,
+                                &node_id,
+                                section_idx,
+                            ) {
+                                doc.selection = new_sel;
                                 rebuild_selection_highlight(doc, ctx.mindmap_tree, ctx.renderer);
                             }
                         }
@@ -434,42 +430,26 @@ pub(super) fn handle_cursor_moved(
                     // (release rebuild lands the same coherent
                     // shape).
                     if let Some(doc) = ctx.document.as_mut() {
-                        // Demote both single-section and multi-
-                        // section selections to a fresh `Single`
-                        // when promoting to a whole-node drag —
-                        // the user's gesture is "move this node",
-                        // not "operate on these sections", and
-                        // mid-drag the picker hint + per-section
-                        // verbs would otherwise read out the
-                        // stale section selection.
-                        let needs_demote = match &doc.selection {
-                            SelectionState::Section(s) => s.node_id == node_id,
-                            SelectionState::MultiSection(secs) => {
-                                secs.iter().any(|s| s.node_id == node_id)
-                            }
-                            _ => false,
-                        };
-                        if needs_demote || !doc.selection.is_selected(&node_id) {
-                            doc.selection = SelectionState::Single(node_id.clone());
+                        if let Some(new_sel) =
+                            selection_after_node_drag_press(&doc.selection, &node_id)
+                        {
+                            doc.selection = new_sel;
                             rebuild_selection_highlight(doc, ctx.mindmap_tree, ctx.renderer);
                         }
                     }
-                    // Shift+drag: move all selected nodes together
+                    // Shift+drag: move all selected nodes together.
+                    // Read from the pre-demote snapshot — the
+                    // demote above may have just narrowed the
+                    // doc selection to `Single(node_id)`, which
+                    // would silently drop every other node from
+                    // a `Multi` / `MultiSection` set out of the
+                    // drag scope.
                     let node_ids = if ctx.modifiers.shift_key() {
-                        if let Some(doc) = ctx.document.as_ref() {
-                            let mut ids: Vec<String> = doc
-                                .selection
-                                .selected_ids()
-                                .iter()
-                                .map(|s| s.to_string())
-                                .collect();
-                            if !ids.contains(&node_id) {
-                                ids.push(node_id);
-                            }
-                            ids
-                        } else {
-                            vec![node_id]
+                        let mut ids = pre_demote_ids;
+                        if !ids.contains(&node_id) {
+                            ids.push(node_id);
                         }
+                        ids
                     } else {
                         vec![node_id]
                     };
@@ -574,6 +554,60 @@ pub(super) fn resolve_section_drag_target(
     node.sections.get(idx).map(|s| (idx, s.offset.x, s.offset.y))
 }
 
+/// Decide what the selection should become when a section drag
+/// promotes from `Pending` to `Throttled(MovingSection)`. Returns
+/// `Some(new_sel)` when the selection needs to be rewritten;
+/// `None` when the press lands exactly on the already-selected
+/// `Section(node_id, section_idx)` and no rewrite is needed.
+///
+/// **Demote discipline.** The gesture is "move this section",
+/// so the selection narrows to a single `Section`. A pre-existing
+/// `MultiSection` set IS demoted — mirroring the whole-node arm
+/// (`selection_after_node_drag_press`) which collapses the same
+/// multi-section state to `Single(node_id)`. Without the demote
+/// the picker hint + per-section verbs would read out a
+/// multi-section state mid-drag while the user bodily moves a
+/// single section.
+pub(super) fn selection_after_section_drag_press(
+    prev: &SelectionState,
+    node_id: &str,
+    section_idx: usize,
+) -> Option<SelectionState> {
+    let target = crate::application::document::SectionSel {
+        node_id: node_id.to_string(),
+        section_idx,
+    };
+    if matches!(prev, SelectionState::Section(s) if s == &target) {
+        return None;
+    }
+    Some(SelectionState::Section(target))
+}
+
+/// Decide what the selection should become when a whole-node
+/// drag promotes from `Pending` to `Throttled(MovingNode)`.
+/// Returns `Some(new_sel)` when the selection needs rewriting;
+/// `None` to keep the existing selection (the dragged node is
+/// already part of a `Multi(ids)` / `Single(node_id)` set).
+///
+/// `Section` / `MultiSection` selections that touch the dragged
+/// node demote to `Single(node_id)` — the gesture is "move this
+/// node", not "operate on these sections".
+pub(super) fn selection_after_node_drag_press(
+    prev: &SelectionState,
+    node_id: &str,
+) -> Option<SelectionState> {
+    let needs_demote = match prev {
+        SelectionState::Section(s) => s.node_id == node_id,
+        SelectionState::MultiSection(secs) => secs.iter().any(|s| s.node_id == node_id),
+        _ => false,
+    };
+    if needs_demote || !prev.is_selected(node_id) {
+        Some(SelectionState::Single(node_id.to_string()))
+    } else {
+        None
+    }
+}
+
 /// Rebuild the tree's selection highlight from the current
 /// `doc.selection`. Shared by the section-drag and whole-node
 /// drag promotion arms — both set selection then need the tree
@@ -598,8 +632,12 @@ fn rebuild_selection_highlight(
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_section_drag_target;
+    use super::{
+        resolve_section_drag_target, selection_after_node_drag_press,
+        selection_after_section_drag_press,
+    };
     use crate::application::document::tests_common::{load_test_doc, pinned_two_section_node};
+    use crate::application::document::{SectionSel, SelectionState};
 
     /// Multi-section node + non-shift + valid section_idx → drag
     /// the section. Pins the threshold-cross promotion gate.
@@ -662,5 +700,127 @@ mod tests {
         assert!(resolve_section_drag_target(None, "0", Some(0), false).is_none());
         let (doc, id) = pinned_two_section_node();
         assert!(resolve_section_drag_target(Some(&doc), &id, None, false).is_none());
+    }
+
+    // ── Selection-after-press helpers ────────────────────────────
+
+    /// Pressing on the already-selected `Section(node, idx)` does
+    /// not rewrite the selection — pins the no-op early-out so a
+    /// section drag started on its own selection doesn't trigger
+    /// a redundant tree highlight rebuild.
+    #[test]
+    fn section_drag_press_on_already_selected_section_returns_none() {
+        let prev = SelectionState::Section(SectionSel::new("a", 1));
+        assert!(selection_after_section_drag_press(&prev, "a", 1).is_none());
+    }
+
+    /// **Demote-on-press for MultiSection.** Pressing on a section
+    /// that lives inside a `MultiSection` set demotes the entire
+    /// set down to a single `Section`. Pins the parallel of the
+    /// whole-node-arm demote (a multi-section selection on the
+    /// dragged node demotes to `Single(node_id)`).
+    #[test]
+    fn section_drag_press_demotes_multisection_to_section() {
+        let prev = SelectionState::MultiSection(vec![
+            SectionSel::new("a", 0),
+            SectionSel::new("a", 1),
+            SectionSel::new("b", 0),
+        ]);
+        let new = selection_after_section_drag_press(&prev, "a", 1).expect("rewrite");
+        match new {
+            SelectionState::Section(s) => assert_eq!(s, SectionSel::new("a", 1)),
+            other => panic!("expected Section, got {:?}", other),
+        }
+    }
+
+    /// `Section(node, k)` press on a different `(node, j)` pair
+    /// rewrites the selection to the new pair — narrows from one
+    /// section to another when the user clicks a sibling section.
+    #[test]
+    fn section_drag_press_rewrites_when_different_section() {
+        let prev = SelectionState::Section(SectionSel::new("a", 0));
+        let new = selection_after_section_drag_press(&prev, "a", 1).expect("rewrite");
+        assert!(matches!(
+            new,
+            SelectionState::Section(s) if s == SectionSel::new("a", 1)
+        ));
+    }
+
+    /// Whole-node press on a `Single(node)` matching the dragged
+    /// id is a no-op — the dragged node is already the selected
+    /// node, no rewrite + no highlight churn needed.
+    #[test]
+    fn node_drag_press_on_single_same_node_returns_none() {
+        let prev = SelectionState::Single("a".into());
+        assert!(selection_after_node_drag_press(&prev, "a").is_none());
+    }
+
+    /// Whole-node press on a `Multi(ids)` containing the dragged
+    /// node is a no-op — the multi-set is preserved so the
+    /// shift+drag harvest below sees every selected node.
+    #[test]
+    fn node_drag_press_on_multi_containing_node_returns_none() {
+        let prev = SelectionState::Multi(vec!["a".into(), "b".into()]);
+        assert!(selection_after_node_drag_press(&prev, "a").is_none());
+    }
+
+    /// Whole-node press on a `Section(node)` for the same node
+    /// demotes to `Single(node)` — the gesture is to move the
+    /// parent node, not operate on the section.
+    #[test]
+    fn node_drag_press_demotes_same_node_section() {
+        let prev = SelectionState::Section(SectionSel::new("a", 1));
+        let new = selection_after_node_drag_press(&prev, "a").expect("rewrite");
+        assert!(matches!(new, SelectionState::Single(id) if id == "a"));
+    }
+
+    /// Whole-node press on a `MultiSection` containing the dragged
+    /// node demotes to `Single(node)`. Pins the parallel of the
+    /// section-drag arm's demote.
+    #[test]
+    fn node_drag_press_demotes_multisection_to_single() {
+        let prev = SelectionState::MultiSection(vec![
+            SectionSel::new("a", 0),
+            SectionSel::new("b", 0),
+        ]);
+        let new = selection_after_node_drag_press(&prev, "a").expect("rewrite");
+        assert!(matches!(new, SelectionState::Single(id) if id == "a"));
+    }
+
+    /// Whole-node press on a selection that doesn't include the
+    /// dragged node rewrites to `Single(node)` — the user clicked
+    /// to grab a fresh node, the prior selection is reset.
+    #[test]
+    fn node_drag_press_replaces_when_node_not_selected() {
+        let prev = SelectionState::Single("b".into());
+        let new = selection_after_node_drag_press(&prev, "a").expect("rewrite");
+        assert!(matches!(new, SelectionState::Single(id) if id == "a"));
+    }
+
+    /// **Pre-demote snapshot for shift+drag harvest.** A
+    /// `MultiSection` set's `dedup_owning_node_ids()` is what the
+    /// shift+drag harvest reads — pin that this snapshot
+    /// preserves every owning node when a single section's drag
+    /// would otherwise demote the set down to one. Without this
+    /// pre-demote capture the demote runs *before* the harvest
+    /// and the drag scope shrinks to one node.
+    #[test]
+    fn multisection_pre_demote_snapshot_preserves_all_nodes() {
+        let prev = SelectionState::MultiSection(vec![
+            SectionSel::new("a", 0),
+            SectionSel::new("b", 1),
+            SectionSel::new("c", 0),
+        ]);
+        // What the call site captures BEFORE the demote runs.
+        let captured = prev.dedup_owning_node_ids();
+        // Now simulate the demote (whole-node press path).
+        let after_demote = selection_after_node_drag_press(&prev, "a")
+            .map(|s| s.dedup_owning_node_ids())
+            .unwrap_or_else(|| prev.dedup_owning_node_ids());
+        // The captured snapshot has every node; the post-demote
+        // selection has only the dragged node. The shift+drag
+        // arm reads the captured snapshot, not the post-demote.
+        assert_eq!(captured, vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+        assert_eq!(after_demote, vec!["a".to_string()]);
     }
 }

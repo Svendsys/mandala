@@ -368,10 +368,12 @@ impl SelectionState {
     /// `MultiSection([a/0, a/1, b/0])` → `["a", "b"]`. Other
     /// variants return their natural single owner (or empty).
     pub fn dedup_owning_node_ids(&self) -> Vec<String> {
-        let mut seen = std::collections::HashSet::new();
-        let mut out = Vec::new();
-        for id in self.selected_ids() {
-            if seen.insert(id.to_string()) {
+        let ids = self.selected_ids();
+        let mut seen: std::collections::HashSet<&str> =
+            std::collections::HashSet::with_capacity(ids.len());
+        let mut out = Vec::with_capacity(ids.len());
+        for id in ids {
+            if seen.insert(id) {
                 out.push(id.to_string());
             }
         }

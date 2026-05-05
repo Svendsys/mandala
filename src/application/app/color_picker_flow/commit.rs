@@ -124,41 +124,31 @@ pub(in crate::application::app) fn commit_color_picker(
                 doc.set_edge_color(&er, Some(&to_write));
             }
         }
-        PickerHandle::Node { id, axis } => match axis {
-            NodeColorAxis::Bg => {
-                doc.set_node_bg_color(&id, to_write);
+        PickerHandle::Node { id, axis } => {
+            let targets = node_commit_targets(&doc.selection, &id);
+            for nid in &targets {
+                match axis {
+                    NodeColorAxis::Bg => {
+                        doc.set_node_bg_color(nid, to_write.clone());
+                    }
+                    NodeColorAxis::Text => {
+                        doc.set_node_text_color(nid, to_write.clone());
+                    }
+                    NodeColorAxis::Border => {
+                        doc.set_node_border_color(nid, to_write.clone());
+                    }
+                }
             }
-            NodeColorAxis::Text => {
-                doc.set_node_text_color(&id, to_write);
-            }
-            NodeColorAxis::Border => {
-                doc.set_node_border_color(&id, to_write);
-            }
-        },
+        }
         PickerHandle::Section {
             node_id,
             section_idx,
             axis,
         } => match axis {
             SectionColorAxis::Text => {
-                // The picker handle binds to a single section
-                // (the first section in a MultiSection at open
-                // time, per `commands/color::picker_target_outcome`).
-                // For a `MultiSection` selection, fan the commit
-                // out across every selected section so the
-                // colour applies to all, not just the bound
-                // handle. Single `Section` selection: same
-                // single-section path as before.
-                let targets: Vec<(String, usize)> = match &doc.selection {
-                    crate::application::document::SelectionState::MultiSection(secs) => {
-                        secs.iter()
-                            .map(|s| (s.node_id.clone(), s.section_idx))
-                            .collect()
-                    }
-                    _ => vec![(node_id.clone(), section_idx)],
-                };
-                for (nid, idx) in &targets {
-                    doc.set_section_text_color(nid, *idx, to_write.clone());
+                let targets = section_commit_targets(&doc.selection, &node_id, section_idx);
+                for s in &targets {
+                    doc.set_section_text_color(&s.node_id, s.section_idx, to_write.clone());
                 }
             }
         },
@@ -339,6 +329,61 @@ fn hsv_bits_equal(a: (f32, f32, f32), b: (f32, f32, f32)) -> bool {
     a.0.to_bits() == b.0.to_bits() && a.1.to_bits() == b.1.to_bits() && a.2.to_bits() == b.2.to_bits()
 }
 
+/// Compute the node-id list a `PickerHandle::Node` commit fans
+/// out to. The picker handle binds to a single node at open time
+/// (the first node in a `Multi` per
+/// `commands/color::picker_target_outcome`); for a `Multi(ids)`
+/// selection, the commit applies the chosen colour to every
+/// selected node. Single / Section / MultiSection / Edge / non-
+/// node selections fall back to the bound handle's `id` — the
+/// handle is authoritative when the current selection isn't a
+/// multi-node set, even if the user changed selection between
+/// open and commit.
+pub(super) fn node_commit_targets(
+    sel: &crate::application::document::SelectionState,
+    handle_id: &str,
+) -> Vec<String> {
+    match sel {
+        crate::application::document::SelectionState::Multi(ids) => ids.clone(),
+        _ => vec![handle_id.to_string()],
+    }
+}
+
+/// Compute the section list a `PickerHandle::Section` commit
+/// fans out to. The handle binds to a single section at open
+/// time (the first in a `MultiSection`); the current selection
+/// drives fan-out — `MultiSection` writes to every entry,
+/// `Section` writes to that one section, and any other selection
+/// shape falls back to the bound handle.
+///
+/// **Handle-as-fallback union.** If the selection changed
+/// between open and commit (user clicked elsewhere, then pressed
+/// the picker's commit key) the bound handle's `(node_id,
+/// section_idx)` is unioned in so the bound section never
+/// silently drops out of the commit set. Dedup'd by
+/// `(node_id, section_idx)` so the bound section that already
+/// lives in the `MultiSection` set isn't written twice.
+pub(super) fn section_commit_targets(
+    sel: &crate::application::document::SelectionState,
+    handle_node_id: &str,
+    handle_section_idx: usize,
+) -> Vec<crate::application::document::SectionSel> {
+    use crate::application::document::{SectionSel, SelectionState};
+    let mut out: Vec<SectionSel> = match sel {
+        SelectionState::MultiSection(secs) => secs.clone(),
+        SelectionState::Section(s) => vec![s.clone()],
+        _ => Vec::new(),
+    };
+    let handle_target = SectionSel {
+        node_id: handle_node_id.to_string(),
+        section_idx: handle_section_idx,
+    };
+    if !out.iter().any(|s| s == &handle_target) {
+        out.push(handle_target);
+    }
+    out
+}
+
 /// Decide the colour string a Contextual picker commit writes.
 /// When the user never moved the wheel from its open seed AND
 /// the seed was a `var(--name)` reference, the reference is
@@ -363,7 +408,8 @@ pub(super) fn pick_committed_value(
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]
 mod tests {
-    use super::pick_committed_value;
+    use super::{node_commit_targets, pick_committed_value, section_commit_targets};
+    use crate::application::document::{SectionSel, SelectionState};
 
     /// User never moved the wheel from its open seed AND the seed
     /// was a `var(--accent)` reference — commit preserves the
@@ -409,5 +455,101 @@ mod tests {
         let written_moved = pick_committed_value(None, seed_hsv, (180.0, 0.8, 0.95), "#20a8f3");
         assert_eq!(written_unchanged, "#f3a020");
         assert_eq!(written_moved, "#20a8f3");
+    }
+
+    // ── Fan-out helpers ──────────────────────────────────────────
+
+    /// `Multi(ids)` selection drives node-commit fan-out across
+    /// every selected node. Pins the class-parallel fix: prior
+    /// to N3.2 the node arm wrote only to the bound handle's id,
+    /// silently dropping every other selected node.
+    #[test]
+    fn node_commit_targets_fans_out_for_multi_selection() {
+        let sel = SelectionState::Multi(vec!["a".into(), "b".into(), "c".into()]);
+        let targets = node_commit_targets(&sel, "a");
+        assert_eq!(
+            targets,
+            vec!["a".to_string(), "b".to_string(), "c".to_string()]
+        );
+    }
+
+    /// `Single(id)` selection writes to the bound handle (which
+    /// equals the selected node by construction).
+    #[test]
+    fn node_commit_targets_uses_handle_for_single() {
+        let sel = SelectionState::Single("a".into());
+        let targets = node_commit_targets(&sel, "a");
+        assert_eq!(targets, vec!["a".to_string()]);
+    }
+
+    /// **Handle-as-fallback.** If the user changed selection
+    /// between picker open and commit (now `Section`, was
+    /// `Single` when bound), the bound handle's id wins — the
+    /// picker doesn't silently drop the colour onto a node the
+    /// user no longer has selected.
+    #[test]
+    fn node_commit_targets_falls_back_to_handle_when_selection_diverged() {
+        let sel = SelectionState::Section(SectionSel::new("z", 0));
+        let targets = node_commit_targets(&sel, "a");
+        assert_eq!(targets, vec!["a".to_string()]);
+    }
+
+    /// `MultiSection` selection drives section-commit fan-out
+    /// across every entry — pins the existing fan-out path.
+    #[test]
+    fn section_commit_targets_fans_out_for_multi_section() {
+        let sel = SelectionState::MultiSection(vec![
+            SectionSel::new("a", 0),
+            SectionSel::new("b", 1),
+        ]);
+        let targets = section_commit_targets(&sel, "a", 0);
+        // Bound handle (a, 0) is already in the set — no dup.
+        assert_eq!(
+            targets,
+            vec![SectionSel::new("a", 0), SectionSel::new("b", 1)]
+        );
+    }
+
+    /// **Handle-union fix.** When the bound handle's section is
+    /// NOT already in the `MultiSection` set (selection changed
+    /// between open and commit), the handle is unioned in so the
+    /// bound section never silently drops out of the commit.
+    #[test]
+    fn section_commit_targets_unions_handle_when_diverged() {
+        let sel = SelectionState::MultiSection(vec![
+            SectionSel::new("a", 0),
+            SectionSel::new("b", 1),
+        ]);
+        let targets = section_commit_targets(&sel, "c", 5);
+        assert_eq!(
+            targets,
+            vec![
+                SectionSel::new("a", 0),
+                SectionSel::new("b", 1),
+                SectionSel::new("c", 5),
+            ]
+        );
+    }
+
+    /// `Section(s)` selection collapses to a single section, the
+    /// handle being the same section is dedup'd.
+    #[test]
+    fn section_commit_targets_section_selection_no_dup() {
+        let sel = SelectionState::Section(SectionSel::new("a", 1));
+        let targets = section_commit_targets(&sel, "a", 1);
+        assert_eq!(targets, vec![SectionSel::new("a", 1)]);
+    }
+
+    /// Non-section / non-multi-section selections fall back to
+    /// the bound handle alone.
+    #[test]
+    fn section_commit_targets_falls_back_to_handle_for_other_states() {
+        let sel = SelectionState::None;
+        let targets = section_commit_targets(&sel, "a", 1);
+        assert_eq!(targets, vec![SectionSel::new("a", 1)]);
+
+        let sel = SelectionState::Single("a".into());
+        let targets = section_commit_targets(&sel, "a", 1);
+        assert_eq!(targets, vec![SectionSel::new("a", 1)]);
     }
 }

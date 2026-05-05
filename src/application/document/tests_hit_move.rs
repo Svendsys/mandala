@@ -331,6 +331,27 @@ fn test_dedup_owning_node_ids_across_variants() {
     assert!(SelectionState::None.dedup_owning_node_ids().is_empty());
 }
 
+/// `dedup_owning_node_ids` order-preserves first-seen across a
+/// `MultiSection` set whose section ordering interleaves nodes —
+/// pins the order property the section-shift+drag harvest relies
+/// on (the snapshot's first entry is the visually-first selected
+/// node).
+#[test]
+fn test_dedup_owning_node_ids_preserves_first_seen_order() {
+    use crate::application::document::{SectionSel, SelectionState};
+    let sel = SelectionState::MultiSection(vec![
+        SectionSel::new("b", 0),
+        SectionSel::new("a", 1),
+        SectionSel::new("b", 1), // dup of b — drops
+        SectionSel::new("c", 0),
+        SectionSel::new("a", 0), // dup of a — drops
+    ]);
+    assert_eq!(
+        sel.dedup_owning_node_ids(),
+        vec!["b".to_string(), "a".to_string(), "c".to_string()]
+    );
+}
+
 #[test]
 fn test_apply_tree_highlights_via_walker() {
     let mut tree = load_test_tree();
