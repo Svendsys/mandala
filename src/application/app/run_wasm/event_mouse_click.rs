@@ -24,6 +24,7 @@
 use winit::event::ElementState;
 
 use super::PendingClick;
+use crate::application::app::click_triggers::fire_onclick_triggers;
 use crate::application::app::scene_rebuild::{
     rebuild_after_selection_change, rebuild_all, rebuild_scene_only,
 };
@@ -362,18 +363,14 @@ impl super::WasmApp {
             _ => (None, None),
         };
         if let Some(id) = trigger_node_id.as_ref() {
-            let now_ms = web_sys::window()
-                .and_then(|w| w.performance())
-                .map(|p| p.now() as u64)
-                .unwrap_or(0);
-            super::super::click_triggers::fire_onclick_triggers(
+            fire_onclick_triggers(
                 &mut input.document,
                 &mut input.mindmap_tree,
                 &mut input.scene_cache,
                 id,
                 trigger_section_idx,
                 baumhard::mindmap::custom_mutation::PlatformContext::Web,
-                now_ms,
+                now_ms() as u64,
             );
         }
 

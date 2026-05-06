@@ -222,19 +222,6 @@ pub(in crate::application::app) fn revert_node_text_on_tree(
     }
 }
 
-/// commit or cancel the open text editor.
-///
-/// - **Commit**: writes the final buffer back to the model via
-///   `set_node_text` (no-op on unchanged text, handles its own undo
-///   push), then `rebuild_all` to pull the tree back to the freshly
-///   mutated model.
-/// - **Cancel**: applies the `(original_text, original_regions)`
-///   snapshot captured at open time as a `DeltaGlyphArea` to the
-///   edited node. The model is untouched during editing, so the rest
-///   of the tree + scene are already in sync — no `rebuild_all` is
-///   needed. This skips the `doc.build_tree()` walk and the full
-///   `rebuild_scene_only` (connections, borders, portals, labels,
-///   edge handles), which matters on maps with many nodes.
 /// Decide whether the editor's `(anchor, cursor)` pair should
 /// promote the document selection to `SelectionState::SectionRange`
 /// at close time. Pure function — extracted from `close_text_edit`'s
@@ -267,6 +254,13 @@ pub(in crate::application::app) fn lift_anchor_to_section_range(
     })
 }
 
+/// Commit or cancel the open text editor. Commit writes the
+/// buffer through `set_section_text_and_runs` and rebuilds; cancel
+/// reverts only the edited section's transient text/regions to
+/// the pre-edit snapshot (model was untouched during editing, so
+/// the rest of the tree stays in sync). Commit also lifts a
+/// non-empty shift-select anchor to `SelectionState::SectionRange`
+/// via `lift_anchor_to_section_range`.
 pub(in crate::application::app) fn close_text_edit(
     commit: bool,
     doc: &mut MindMapDocument,

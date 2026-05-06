@@ -151,11 +151,12 @@ pub(in crate::application::app) fn apply_select_parent(rc: &mut RebuildContext<'
 }
 
 /// Step into the first visible child (id-sorted) of the selected
-/// single node, or of the section's owning node when a section is
-/// selected. Folded children are skipped — keyboard navigation
-/// shouldn't jump into a subtree the user can't see; mirrors the
-/// fold-aware click hit-test policy. Returns `true` when the
-/// selection changed.
+/// single node, or of the section's owning node when a section /
+/// SectionRange is selected. MultiSection collapses to its first
+/// section's owning node before the walk; sections in any other
+/// node are silently dropped. Folded children are skipped to
+/// match the fold-aware click hit-test policy. Returns `true`
+/// when the selection changed.
 #[must_use = "the bool gates the scene rebuild — drop it explicitly with `let _ = …` if you don't care"]
 pub(in crate::application::app) fn select_child_in(doc: &mut MindMapDocument) -> bool {
     let Some(nid) = primary_owning_node_id(&doc.selection) else {
@@ -185,9 +186,11 @@ pub(in crate::application::app) fn apply_select_child(rc: &mut RebuildContext<'_
 /// sections of the owning node first**, then fall through to the
 /// next mind-node sibling once sections are exhausted. `forward
 /// = true` walks toward the next sibling; `false` walks back.
-/// No-op when the selection is neither `Single` nor `Section`,
-/// or when no visible neighbour exists in the requested
-/// direction. Returns `true` when the selection changed.
+/// MultiSection collapses to its first section's owning node
+/// before walking siblings; sections in other nodes are silently
+/// dropped. No-op for `None` / `Multi` / edge / portal variants,
+/// or when no visible neighbour exists in the requested direction.
+/// Returns `true` when the selection changed.
 ///
 /// Section traversal order: forward from `Section(N, K)` lands
 /// on `Section(N, K+1)` when it exists, else on the next mind-

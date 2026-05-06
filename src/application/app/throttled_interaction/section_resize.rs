@@ -102,7 +102,19 @@ impl ThrottledInteraction for SectionResizeInteraction {
                 .map(|n| (n.position.x as f32, n.position.y as f32));
             if let Some((nx, ny)) = node_pos {
                 let canvas_pos = Vec2::new(nx + new_offset.x as f32, ny + new_offset.y as f32);
-                let canvas_size = Vec2::new(new_size.width as f32, new_size.height as f32);
+                // Clamp at MIN_DRAG_SIZE_PX. The user can drag past
+                // the start size on N/W/NW/SW handles, producing
+                // negative size from `resolve_aabb`. Per-frame
+                // writes to GlyphArea use the clamped value so
+                // cosmic-text doesn't see a negative bound; the
+                // release-commit's `set_section_aabb` validator
+                // remains the source of truth for what the model
+                // accepts.
+                const MIN_DRAG_SIZE_PX: f32 = 1.0;
+                let canvas_size = Vec2::new(
+                    (new_size.width as f32).max(MIN_DRAG_SIZE_PX),
+                    (new_size.height as f32).max(MIN_DRAG_SIZE_PX),
+                );
                 apply_section_resize_to_tree(
                     tree,
                     &self.node_id,

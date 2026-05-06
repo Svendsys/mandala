@@ -77,20 +77,19 @@ pub(in crate::application::app) fn apply_set_spacing(input: &str, rc: &mut Rebui
 
 /// Resolve the (node_id, section_idx) the section-targeted
 /// Action variants apply to. Section / SectionRange use their
-/// inner SectionSel; MultiSection collapses to the first;
-/// Single targets section 0 of the selected node.
+/// inner SectionSel; MultiSection collapses to the first.
+/// `Single` is rejected — section verbs require an explicit
+/// section selection (matches the console verb path's contract;
+/// a node may have its title at section 0 and body at section 1
+/// and a silent "default to 0" would nudge the wrong section).
 fn target_section(
     sel: &crate::application::document::SelectionState,
 ) -> Option<(String, usize)> {
-    use crate::application::document::SelectionState;
     if let Some(s) = sel.selected_section() {
         return Some((s.node_id.clone(), s.section_idx));
     }
     if let Some(first) = sel.selected_sections().first() {
         return Some((first.node_id.clone(), first.section_idx));
-    }
-    if let SelectionState::Single(id) = sel {
-        return Some((id.clone(), 0));
     }
     None
 }
@@ -144,6 +143,17 @@ pub(in crate::application::app) fn apply_set_section_size(
         log::warn!("SetSectionSize: no section selected");
         return;
     };
+    let exists = rc
+        .document
+        .mindmap
+        .nodes
+        .get(&node_id)
+        .map(|n| n.sections.get(idx).is_some())
+        .unwrap_or(false);
+    if !exists {
+        log::warn!("SetSectionSize: section[{}] not found on node '{}'", idx, node_id);
+        return;
+    }
     apply_with_rebuild(rc, |doc| {
         match doc.set_section_size(&node_id, idx, size) {
             Ok(changed) => changed,

@@ -469,38 +469,57 @@ fn select_parent_in_collapses_multisection_to_first_owning_node() {
     assert!(!select_parent_in(&mut doc));
 }
 
-/// Down-arrow on a MultiSection produces the same outcome and
-/// post-state as down-arrow on Single(first_section.node_id) —
-/// pinning the "collapse to first owning node" contract. Run on
-/// two parallel docs constructed from the same fixture.
+/// Down-arrow on a MultiSection produces the same post-state as
+/// down-arrow on `Single(first_section.node_id)` — pinning the
+/// "collapse to first owning node" contract. Uses load_test_doc
+/// (which has the testament hierarchy with parent/child relations)
+/// and selects a node with at least one visible child so the
+/// collapse + walk path is actually exercised.
 #[test]
 fn select_child_in_multisection_matches_single_on_first_owning_node() {
-    let (mut doc_a, id) = pinned_two_section_node();
-    let (mut doc_b, _) = pinned_two_section_node();
-    doc_a.selection = SelectionState::MultiSection(vec![
-        SectionSel::new(&id, 0),
-        SectionSel::new(&id, 1),
-    ]);
-    doc_b.selection = SelectionState::Single(id.clone());
-    let outcome_a = select_child_in(&mut doc_a);
-    let outcome_b = select_child_in(&mut doc_b);
-    assert_eq!(outcome_a, outcome_b);
-    // When the collapse landed on a child, both docs end on the
-    // same `Single(child_id)`. When neither moved, both land on
-    // the original selections (which the start-state set).
-    if outcome_a {
-        assert!(matches!(doc_a.selection, SelectionState::Single(_)));
-        assert!(matches!(doc_b.selection, SelectionState::Single(_)));
-    }
+    let mut doc_a = load_test_doc();
+    let mut doc_b = load_test_doc();
+    let parent_with_child = doc_a
+        .mindmap
+        .nodes
+        .values()
+        .filter_map(|n| {
+            doc_a
+                .mindmap
+                .children_of(&n.id)
+                .iter()
+                .find(|c| !doc_a.mindmap.is_hidden_by_fold(c))
+                .map(|c| (n.id.clone(), c.id.clone()))
+        })
+        .min()
+        .expect("fixture has at least one node with a visible child");
+    let parent_id = parent_with_child.0;
+    let expected_child = parent_with_child.1;
+    doc_a.selection =
+        SelectionState::MultiSection(vec![SectionSel::new(&parent_id, 0), SectionSel::new(&parent_id, 1)]);
+    doc_b.selection = SelectionState::Single(parent_id);
+    assert!(select_child_in(&mut doc_a));
+    assert!(select_child_in(&mut doc_b));
+    let landed_a = match &doc_a.selection {
+        SelectionState::Single(id) => id.clone(),
+        other => panic!("expected Single, got {:?}", other),
+    };
+    let landed_b = match &doc_b.selection {
+        SelectionState::Single(id) => id.clone(),
+        other => panic!("expected Single, got {:?}", other),
+    };
+    assert_eq!(landed_a, expected_child);
+    assert_eq!(landed_b, expected_child);
 }
 
 /// Sibling navigation on a MultiSection collapses to the first
 /// section's owning node and walks the node's siblings.
+/// Deterministic by `min()` so the test doesn't pick whichever
+/// HashMap iteration surfaced first.
 #[test]
 fn select_sibling_in_collapses_multisection_to_first_owning_node() {
     let mut doc = load_test_doc();
-    // Pick a node with at least one sibling.
-    let (start_id, _) = doc
+    let (start_id, expected_next) = doc
         .mindmap
         .nodes
         .values()
@@ -514,9 +533,14 @@ fn select_sibling_in_collapses_multisection_to_first_owning_node() {
             let next = siblings.get(idx + 1)?.id.clone();
             Some((n.id.clone(), next))
         })
-        .next()
+        .min()
         .expect("fixture has at least one node with a next sibling");
-    doc.selection = SelectionState::MultiSection(vec![SectionSel::new(&start_id, 0)]);
+    doc.selection =
+        SelectionState::MultiSection(vec![SectionSel::new(&start_id, 0), SectionSel::new(&start_id, 1)]);
     assert!(select_sibling_in(&mut doc, true));
-    assert!(matches!(doc.selection, SelectionState::Single(_)));
+    let landed = match &doc.selection {
+        SelectionState::Single(id) => id.clone(),
+        other => panic!("expected Single, got {:?}", other),
+    };
+    assert_eq!(landed, expected_next);
 }

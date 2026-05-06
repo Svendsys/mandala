@@ -120,11 +120,9 @@ fn test_selection_targets_section_carries_no_range() {
     }
 }
 
-/// **Cut on `TargetView::Section { range: Some(_), .. }`
-/// returns NotApplicable.** Range-aware cut would otherwise
-/// **Cut on `TargetView::Section { range: Some(_), .. }`
-/// returns the in-range graphemes as plain text and removes
-/// them from the section.**
+/// Cut on a `TargetView::Section { range: Some(_), .. }` returns
+/// the in-range graphemes as plain text and removes them from
+/// the section's text.
 #[test]
 fn test_section_range_cut_returns_in_range_text_and_shrinks_section() {
     use crate::application::document::tests_common::pinned_two_section_node;
@@ -161,6 +159,65 @@ fn test_section_range_paste_replaces_in_range_text() {
     let outcome = view.clipboard_paste("XYZW");
     assert!(matches!(outcome, Outcome::Applied));
     assert_eq!(doc.mindmap.nodes[&id].sections[0].text, "abXYZWfgh");
+}
+
+/// Range-aware Cut on a multi-byte grapheme cluster — pin that
+/// the byte/grapheme indexing handles emoji correctly. The
+/// regional-indicator pair `🇺🇸` is one extended grapheme but
+/// 8 UTF-8 bytes; cutting it must not split mid-cluster.
+#[test]
+fn test_section_range_cut_handles_emoji_grapheme() {
+    use crate::application::document::tests_common::pinned_two_section_node;
+    let (mut doc, id) = pinned_two_section_node();
+    doc.set_section_text(&id, 0, "a\u{1F1FA}\u{1F1F8}b".into()); // "a🇺🇸b" — 3 graphemes
+    let mut view = TargetView::Section {
+        doc: &mut doc,
+        id: id.clone(),
+        section_idx: 0,
+        range: Some((1, 2)),
+    };
+    let outcome = view.clipboard_cut();
+    let ClipboardContent::Text(text) = outcome else {
+        panic!("expected Text, got {:?}", outcome);
+    };
+    assert_eq!(text, "\u{1F1FA}\u{1F1F8}");
+    assert_eq!(doc.mindmap.nodes[&id].sections[0].text, "ab");
+}
+
+/// Range-aware Cut with `range_start >= clamped_end` (degenerate
+/// empty range) returns Empty without modifying the section.
+#[test]
+fn test_section_range_cut_empty_range_returns_empty_no_change() {
+    use crate::application::document::tests_common::pinned_two_section_node;
+    let (mut doc, id) = pinned_two_section_node();
+    doc.set_section_text(&id, 0, "abcde".into());
+    let before = doc.mindmap.nodes[&id].sections[0].text.clone();
+    let mut view = TargetView::Section {
+        doc: &mut doc,
+        id: id.clone(),
+        section_idx: 0,
+        range: Some((3, 3)),
+    };
+    let outcome = view.clipboard_cut();
+    assert!(matches!(outcome, ClipboardContent::Empty));
+    assert_eq!(doc.mindmap.nodes[&id].sections[0].text, before);
+}
+
+/// Range-aware Paste with `range_end > total` clamps end to total.
+#[test]
+fn test_section_range_paste_clamps_end_past_total() {
+    use crate::application::document::tests_common::pinned_two_section_node;
+    let (mut doc, id) = pinned_two_section_node();
+    doc.set_section_text(&id, 0, "abcde".into());
+    let mut view = TargetView::Section {
+        doc: &mut doc,
+        id: id.clone(),
+        section_idx: 0,
+        range: Some((3, 999)),
+    };
+    let outcome = view.clipboard_paste("XY");
+    assert!(matches!(outcome, Outcome::Applied));
+    assert_eq!(doc.mindmap.nodes[&id].sections[0].text, "abcXY");
 }
 
 /// **Dispatcher routes range to the range-aware setter.** A

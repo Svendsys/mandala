@@ -18,7 +18,7 @@ use crate::application::document::MindMapDocument;
 /// Document-actions on the trigger apply unconditionally
 /// afterwards. Clears the scene-connection cache when any
 /// instant mutation lands so the next rebuild re-samples.
-pub(super) fn fire_onclick_triggers(
+pub(in crate::application::app) fn fire_onclick_triggers(
     doc: &mut MindMapDocument,
     mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
     scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,

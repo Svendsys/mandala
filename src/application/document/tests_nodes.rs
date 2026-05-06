@@ -250,6 +250,42 @@ fn test_set_section_size_rejects_astronomical_with_verify_mirror_message() {
         .is_err_and(|m| m.contains("over 100× the node's width")));
 }
 
+/// Symmetric height-axis pin for the astronomical-typo guard —
+/// ensures both width and height branches are reached.
+#[test]
+fn test_set_section_size_rejects_astronomical_height_with_verify_mirror_message() {
+    let (mut doc, id) = super::tests_common::pinned_two_section_node();
+    let huge = Some(baumhard::mindmap::model::Size {
+        width: 30.0,
+        height: 25000.0,
+    });
+    assert!(doc
+        .set_section_size(&id, 1, huge)
+        .is_err_and(|m| m.contains("over 100× the node's height")));
+}
+
+/// Non-finite size component rejected by `validate_section_aabb`.
+/// Pin both width and height branches so a regression that drops
+/// one ships visibly.
+#[test]
+fn test_set_section_size_rejects_non_finite_components() {
+    let (mut doc, id) = super::tests_common::pinned_two_section_node();
+    let nan_w = Some(baumhard::mindmap::model::Size {
+        width: f64::NAN,
+        height: 30.0,
+    });
+    assert!(doc
+        .set_section_size(&id, 1, nan_w)
+        .is_err_and(|m| m.contains("size has non-finite component")));
+    let inf_h = Some(baumhard::mindmap::model::Size {
+        width: 30.0,
+        height: f64::INFINITY,
+    });
+    assert!(doc
+        .set_section_size(&id, 1, inf_h)
+        .is_err_and(|m| m.contains("size has non-finite component")));
+}
+
 #[test]
 fn test_set_section_size_idempotent_no_op() {
     let (mut doc, id) = super::tests_common::pinned_two_section_node();

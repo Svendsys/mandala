@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Per-node and per-section setters. Each captures prior state
-//! into an `UndoAction`, mutates, sets `dirty`, and returns
-//! whether anything changed.
+//! Per-node and per-section-geometry setters and node-style
+//! helpers. Section text / colour / font / runs / payload
+//! setters live in `section_text.rs`. Each setter captures prior
+//! state into an `UndoAction`, mutates, sets `dirty`, and
+//! returns whether anything changed.
 
 use baumhard::mindmap::model::{NodeStyle, TextRun};
 
@@ -41,8 +43,8 @@ impl SectionPayload {
     pub fn from_section(section: &baumhard::mindmap::model::MindSection) -> Self {
         Self {
             text_runs: section.text_runs.clone(),
-            offset: section.offset.clone(),
-            size: section.size.clone(),
+            offset: section.offset,
+            size: section.size,
             channel: section.channel,
             trigger_bindings: section.trigger_bindings.clone(),
         }

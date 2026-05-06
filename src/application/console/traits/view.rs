@@ -872,21 +872,42 @@ fn paste_section_range(
     new_text.push_str(&section.text[byte_end..]);
     let content_grapheme_count = grapheme_chad::count_grapheme_clusters(content);
     let mut new_runs = section.text_runs.clone();
-    let template = section
-        .text_runs
-        .first()
-        .cloned()
-        .unwrap_or_else(|| baumhard::mindmap::model::TextRun {
-            start: 0,
-            end: 0,
-            bold: false,
-            italic: false,
-            underline: false,
-            font: "LiberationSans".to_string(),
-            size_pt: 24,
-            color: node.style.text_color.clone(),
-            hyperlink: None,
-        });
+    // Inherit style from the run at the insertion point — for a
+    // paste in the middle of `[(0,3) red, (3,8) blue]` at idx 5
+    // the new content takes blue, not red. Falls back to the
+    // section's first run for boundary cases (insertion at a
+    // gap), and to a hardcoded default when the section has no
+    // runs.
+    let template = baumhard::mindmap::model::text_run_ops::find_run_containing(
+        &section.text_runs,
+        range_start,
+    )
+    .or_else(|| {
+        // At a run boundary `find_run_containing` returns None;
+        // prefer the run ending at the boundary (left neighbour)
+        // since the user is conceptually typing "after" it.
+        if range_start == 0 {
+            None
+        } else {
+            baumhard::mindmap::model::text_run_ops::find_run_containing(
+                &section.text_runs,
+                range_start - 1,
+            )
+        }
+    })
+    .map(|idx| section.text_runs[idx].clone())
+    .or_else(|| section.text_runs.first().cloned())
+    .unwrap_or_else(|| baumhard::mindmap::model::TextRun {
+        start: 0,
+        end: 0,
+        bold: false,
+        italic: false,
+        underline: false,
+        font: "LiberationSans".to_string(),
+        size_pt: 24,
+        color: node.style.text_color.clone(),
+        hyperlink: None,
+    });
     baumhard::mindmap::model::text_run_ops::splice_range(
         &mut new_runs,
         range_start,
