@@ -13,7 +13,7 @@
 //! current selection.
 
 use super::Command;
-use crate::application::color_picker::{ColorTarget, NodeColorAxis};
+use crate::application::color_picker::{ColorTarget, NodeColorAxis, SectionColorAxis};
 use crate::application::console::completion::{
     kv_key_completions_with_hints, prefix_filter, Completion, CompletionContext, CompletionState,
 };
@@ -73,59 +73,130 @@ fn kv_hint(key: &str) -> Option<&'static str> {
     }
 }
 
+/// Outcome of resolving a positional `color` verb against the
+/// current selection. Distinguishes "open the picker on this
+/// target" from "the verb doesn't apply to this selection shape"
+/// (descriptive message) from "no selection / unknown verb" (fall
+/// through to the generic error). Lets `bg`/`border` on a section
+/// surface a clearer reason than the generic fallback.
+enum PickerTargetOutcome {
+    Open(ColorTarget),
+    NotApplicable(String),
+    Unknown,
+}
+
 /// Map a bare positional verb (`pick`, `bg`, `text`, `border`) to a
-/// concrete `ColorTarget` based on the current selection. Returns
-/// `None` if the combination isn't applicable — e.g. `color text` on
-/// a portal (portals have no text axis), or any verb with no
-/// selection.
+/// concrete `ColorTarget` based on the current selection.
 ///
 /// Node targets carry the axis directly. Edge / portal targets
 /// collapse axis into their one color field: `bg`/`border` on an
 /// edge both resolve to the edge's line color; `bg` on a portal
-/// resolves to the portal's fill.
-fn picker_target_for(verb: &str, selection: &SelectionState) -> Option<ColorTarget> {
+/// resolves to the portal's fill. Section targets honour the `text`
+/// axis and report NotApplicable for `bg` / `border` (sections have
+/// no chrome by spec — see `format/sections.md`).
+fn picker_target_for(verb: &str, selection: &SelectionState) -> PickerTargetOutcome {
     let axis = match verb {
         "bg" => Some(NodeColorAxis::Bg),
         "text" => Some(NodeColorAxis::Text),
         "border" => Some(NodeColorAxis::Border),
         "pick" => None, // axis-agnostic legacy flow
-        _ => return None,
+        _ => return PickerTargetOutcome::Unknown,
     };
     match selection {
-        // A section selection collapses through to its owning
-        // node: today's color picker is whole-node — bg / text /
-        // border are all node-level fields. Per-section text
-        // colour overrides arrive in a follow-up.
-        SelectionState::Single(id) | SelectionState::Section(SectionSel { node_id: id, .. }) => {
-            match axis {
-                Some(a) => Some(ColorTarget::Node {
-                    id: id.clone(),
-                    axis: a,
-                }),
-                // `color pick` on a node defaults to bg.
-                None => Some(ColorTarget::Node {
-                    id: id.clone(),
-                    axis: NodeColorAxis::Bg,
-                }),
-            }
-        }
+        SelectionState::Single(id) => match axis {
+            Some(a) => PickerTargetOutcome::Open(ColorTarget::Node {
+                id: id.clone(),
+                axis: a,
+            }),
+            // `color pick` on a node defaults to bg.
+            None => PickerTargetOutcome::Open(ColorTarget::Node {
+                id: id.clone(),
+                axis: NodeColorAxis::Bg,
+            }),
+        },
+        // Section selection: route the picker to the targeted
+        // section so commit lands on `set_section_text_color`,
+        // leaving sibling sections untouched. `bg`/`border` have
+        // no section-level fields (matches the kv-form
+        // `apply_section_colours` arm below) — surface a clear
+        // NotApplicable message rather than collapsing to the
+        // owning node, which would silently broaden the user's
+        // intent.
+        SelectionState::Section(SectionSel { node_id, section_idx }) => match axis {
+            Some(NodeColorAxis::Text) | None => PickerTargetOutcome::Open(ColorTarget::Section {
+                node_id: node_id.clone(),
+                section_idx: *section_idx,
+                axis: SectionColorAxis::Text,
+                range: None,
+            }),
+            Some(NodeColorAxis::Bg) => PickerTargetOutcome::NotApplicable(
+                "color bg: not applicable to a section (section-level chrome doesn't exist)".to_string(),
+            ),
+            Some(NodeColorAxis::Border) => PickerTargetOutcome::NotApplicable(
+                "color border: not applicable to a section (section-level chrome doesn't exist)".to_string(),
+            ),
+        },
         SelectionState::Multi(ids) => {
             // The picker is single-target; pick the first node in
             // the multi-selection. Fanout through the picker is
             // a future addition.
-            let id = ids.first()?.clone();
-            Some(ColorTarget::Node {
-                id,
-                axis: axis.unwrap_or(NodeColorAxis::Bg),
-            })
+            match ids.first() {
+                Some(id) => PickerTargetOutcome::Open(ColorTarget::Node {
+                    id: id.clone(),
+                    axis: axis.unwrap_or(NodeColorAxis::Bg),
+                }),
+                None => PickerTargetOutcome::Unknown,
+            }
         }
+        // Multi-section: same single-target picker shape as
+        // `Multi(ids)` — opens on the first selected section's
+        // text axis (the only section-level colour axis;
+        // `bg` / `border` are NotApplicable for sections).
+        // Per-section fanout commit happens through the
+        // selection_targets dispatch on close, not here.
+        SelectionState::MultiSection(secs) => match secs.first() {
+            Some(SectionSel { node_id, section_idx }) => match axis {
+                Some(NodeColorAxis::Text) | None => PickerTargetOutcome::Open(ColorTarget::Section {
+                    node_id: node_id.clone(),
+                    section_idx: *section_idx,
+                    axis: SectionColorAxis::Text,
+                    range: None,
+                }),
+                Some(NodeColorAxis::Bg) => PickerTargetOutcome::NotApplicable(
+                    "color bg: not applicable to a section (section-level chrome doesn't exist)"
+                        .to_string(),
+                ),
+                Some(NodeColorAxis::Border) => PickerTargetOutcome::NotApplicable(
+                    "color border: not applicable to a section (section-level chrome doesn't exist)"
+                        .to_string(),
+                ),
+            },
+            None => PickerTargetOutcome::Unknown,
+        },
+        // SectionRange: route the picker to the targeted section
+        // AND plumb the sub-range so the commit fires through
+        // `set_section_text_color_range`.
+        SelectionState::SectionRange { sel: SectionSel { node_id, section_idx }, range } => match axis {
+            Some(NodeColorAxis::Text) | None => PickerTargetOutcome::Open(ColorTarget::Section {
+                node_id: node_id.clone(),
+                section_idx: *section_idx,
+                axis: SectionColorAxis::Text,
+                range: Some(*range),
+            }),
+            Some(NodeColorAxis::Bg) => PickerTargetOutcome::NotApplicable(
+                "color bg: not applicable to a section (section-level chrome doesn't exist)".to_string(),
+            ),
+            Some(NodeColorAxis::Border) => PickerTargetOutcome::NotApplicable(
+                "color border: not applicable to a section (section-level chrome doesn't exist)".to_string(),
+            ),
+        },
         SelectionState::Edge(er) => {
             // Edges (line-mode or portal-mode) have one color
             // field. `border` maps to it, `text` also currently
             // maps to it (edge label + line share `MindEdge.color`),
             // and for portal-mode edges `bg` is accepted as an
             // alias because "fill" reads more natural there.
-            Some(ColorTarget::Edge(er.clone()))
+            PickerTargetOutcome::Open(ColorTarget::Edge(er.clone()))
         }
         SelectionState::PortalLabel(s) | SelectionState::PortalText(s) => {
             // Portal icon or portal text — both share the same
@@ -137,15 +208,15 @@ fn picker_target_for(verb: &str, selection: &SelectionState) -> Option<ColorTarg
             // keeps the picker target resolution shape identical
             // to the `Edge` branch; per-variant routing lives in
             // the commit path.
-            Some(ColorTarget::Edge(s.edge_ref()))
+            PickerTargetOutcome::Open(ColorTarget::Edge(s.edge_ref()))
         }
         SelectionState::EdgeLabel(s) => {
             // Line-mode label: same owning-edge shape as `Edge`;
             // the commit path discriminates between edge-body and
             // label color writes via the active selection variant.
-            Some(ColorTarget::Edge(s.edge_ref.clone()))
+            PickerTargetOutcome::Open(ColorTarget::Edge(s.edge_ref.clone()))
         }
-        SelectionState::None => None,
+        SelectionState::None => PickerTargetOutcome::Unknown,
     }
 }
 
@@ -174,35 +245,45 @@ fn execute_color(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                 _ => return ExecResult::err("usage: color picker on | color picker off"),
             }
         }
-        if let Some(target) = picker_target_for(verb, &eff.document.selection) {
-            eff.open_color_picker = Some(target);
-            eff.close_console = true;
-            return ExecResult::ok_empty();
+        match picker_target_for(verb, &eff.document.selection) {
+            PickerTargetOutcome::Open(target) => {
+                eff.open_color_picker = Some(target);
+                eff.close_console = true;
+                return ExecResult::ok_empty();
+            }
+            PickerTargetOutcome::NotApplicable(msg) => {
+                return ExecResult::err(msg);
+            }
+            PickerTargetOutcome::Unknown => {}
         }
         if matches!(verb, "pick" | "bg" | "text" | "border") {
             return ExecResult::err(format!("color {}: nothing to pick for this selection", verb));
         }
     }
 
-    // Split out the optional `section=N` from the colour kvs. When
-    // present, the verb routes per-section through
-    // `set_section_text_color` rather than the whole-node trait
-    // dispatcher — that's the only setter today that accepts a
-    // section index. `bg` / `border` aren't section-level fields,
-    // so an explicit `section=N` paired with them surfaces a
-    // NotApplicable error rather than silently ignoring the index.
+    // Split out optional `section=N` and `range=A..B` from the
+    // colour kvs. When `section` is present, the verb routes
+    // per-section through `set_section_text_color` rather than
+    // the whole-node trait dispatcher — that's the only setter
+    // today that accepts a section index. When `range` is
+    // additionally present, it routes through the range-aware
+    // sibling `set_section_text_color_range` introduced in N4-B.
+    // `range` without `section` is a usage error: ranges target
+    // grapheme indices inside one section's text, so the section
+    // must be specified first.
     let mut section_target: Option<usize> = None;
+    let mut range_target: Option<(usize, usize)> = None;
     let mut colour_kvs: Vec<(String, String)> = Vec::new();
     for (k, v) in args.kvs() {
         if k == "section" {
-            match v.parse::<usize>() {
+            match super::range_kv::parse_section_kv("color", v) {
                 Ok(idx) => section_target = Some(idx),
-                Err(_) => {
-                    return ExecResult::err(format!(
-                        "color: section='{}' is not a non-negative integer",
-                        v
-                    ));
-                }
+                Err(msg) => return ExecResult::err(msg),
+            }
+        } else if k == "range" {
+            match super::range_kv::parse_range_kv(v) {
+                Ok(pair) => range_target = Some(pair),
+                Err(msg) => return ExecResult::err(format!("color: range='{}' — {}", v, msg)),
             }
         } else {
             colour_kvs.push((k.to_string(), v.to_string()));
@@ -214,9 +295,14 @@ fn execute_color(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     if colour_kvs.is_empty() {
         return ExecResult::err("color: section=N requires at least one colour axis (e.g. text=#ff0000)");
     }
+    if range_target.is_some() && section_target.is_none() {
+        return ExecResult::err(
+            "color: range=A..B requires section=N — ranges target grapheme indices inside one section",
+        );
+    }
 
     if let Some(idx) = section_target {
-        return apply_section_colours(eff.document, idx, &colour_kvs);
+        return apply_section_colours(eff.document, idx, range_target, &colour_kvs);
     }
 
     let report = apply_kvs(eff.document, &colour_kvs, |view, key, value| {
@@ -244,13 +330,31 @@ fn execute_color(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
 fn apply_section_colours(
     doc: &mut crate::application::document::MindMapDocument,
     section_idx: usize,
+    range: Option<(usize, usize)>,
     kvs: &[(String, String)],
 ) -> ExecResult {
-    let node_id = match doc.selection.clone() {
-        SelectionState::Single(id) => id,
-        SelectionState::Section(SectionSel { node_id, .. }) => node_id,
-        _ => return ExecResult::err("color: section=N requires a node or section selection"),
+    let node_id = match doc.selection.primary_node_id() {
+        Some(id) => id.to_string(),
+        None => return ExecResult::err("color: section=N requires a node or section selection"),
     };
+    // Surface a clear error when `range_start` is past the
+    // section's grapheme count — without this pre-flight the
+    // setter silently no-ops and the verb prints "color: no
+    // change", indistinguishable from "you set red on already-
+    // red text".
+    if let Some((rs, _re)) = range {
+        if let Some(node) = doc.mindmap.nodes.get(&node_id) {
+            if let Some(section) = node.sections.get(section_idx) {
+                let total = baumhard::util::grapheme_chad::count_grapheme_clusters(&section.text);
+                if rs >= total {
+                    return ExecResult::err(format!(
+                        "color: range_start={} is past the section's grapheme count ({})",
+                        rs, total
+                    ));
+                }
+            }
+        }
+    }
     let mut messages = Vec::new();
     let mut any_applied = false;
     for (k, v) in kvs {
@@ -268,7 +372,34 @@ fn apply_section_colours(
                     ColorValue::Var(name) => format!("var(--{})", name),
                     ColorValue::Reset => "#ffffff".to_string(),
                 };
-                if doc.set_section_text_color(&node_id, section_idx, resolved) {
+                let applied = match range {
+                    Some((rs, re)) => {
+                        let ok = doc.set_section_text_color_range(
+                            &node_id, section_idx, rs, re, resolved,
+                        );
+                        if !ok {
+                            // Mirror the picker path's stale-range
+                            // diagnostic: the pre-flight `rs >= total`
+                            // check above already rejects ranges past
+                            // the section's grapheme count, so a
+                            // `false` here means either the node /
+                            // section was deleted concurrently or
+                            // `range_end` exceeds total. Surface so
+                            // it doesn't silently land as
+                            // "color: no change".
+                            log::warn!(
+                                "color verb on section {} of node {} \
+                                 range {}..{} produced no change \
+                                 (range may extend past the section's \
+                                 grapheme count or section was deleted)",
+                                section_idx, node_id, rs, re
+                            );
+                        }
+                        ok
+                    }
+                    None => doc.set_section_text_color(&node_id, section_idx, resolved),
+                };
+                if applied {
                     any_applied = true;
                 }
             }
@@ -282,7 +413,11 @@ fn apply_section_colours(
         }
     }
     if any_applied && messages.is_empty() {
-        return ExecResult::ok_msg(format!("color applied to section {}", section_idx));
+        let scope = match range {
+            Some((rs, re)) => format!("section {} range {}..{}", section_idx, rs, re),
+            None => format!("section {}", section_idx),
+        };
+        return ExecResult::ok_msg(format!("color applied to {}", scope));
     }
     if any_applied {
         return ExecResult::lines(messages);
@@ -324,7 +459,33 @@ pub(crate) fn apply_color_axis_to_selection(
             _ => None,
         }
     });
+    log_not_applicable_if_silent(&report, "color", axis);
     report.any_applied
+}
+
+/// Surface a NotApplicable outcome on the parametric Action path
+/// where the dispatcher's scrollback messages would otherwise
+/// vanish. Action arms (keybind / palette / macro) have no
+/// scrollback to pipe per-pair outcomes into; without this hook
+/// a `SetColor { axis: Bg }` triggered against a `Section`
+/// selection (where the `HasBgColor` arm returns NotApplicable
+/// per the Tier-2A trait split) would silently no-op with no
+/// signal in the log either. Verb path keeps full per-pair
+/// reporting via `finalize_report` and ignores this hook.
+fn log_not_applicable_if_silent(
+    report: &crate::application::console::traits::DispatchReport,
+    verb: &str,
+    axis: &str,
+) {
+    if !report.any_applied && report.messages.iter().any(|m| m.contains("not applicable")) {
+        log::info!(
+            "{} {}: not applicable to current selection (Action path; no scrollback). \
+             Dispatcher messages: {}",
+            verb,
+            axis,
+            report.messages.join("; "),
+        );
+    }
 }
 
 /// Common report-to-ExecResult conversion used by every
@@ -349,6 +510,7 @@ pub(super) fn finalize_report(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::console::parser::{parse, ParseResult};
     use crate::application::document::tests_common::{first_testament_node_id, load_test_doc};
 
     #[test]
@@ -401,33 +563,7 @@ mod tests {
     #[test]
     fn color_text_section_kv_targets_specific_section() {
         use crate::application::console::tests::fixtures::{assert_exec_ok, run};
-        use baumhard::mindmap::model::MindSection;
-        let mut doc = load_test_doc();
-        let id = first_testament_node_id(&doc);
-        {
-            let node = doc.mindmap.nodes.get_mut(&id).unwrap();
-            node.sections
-                .push(MindSection::new_default("second".into(), Vec::new()));
-            // `set_section_text_color` writes only over runs whose
-            // colour matches the node's `style.text_color` default —
-            // pin the node default to `#aaaaaa` so the test's
-            // synthetic runs match the predicate.
-            node.style.text_color = "#aaaaaa".into();
-            for section in node.sections.iter_mut() {
-                section.text_runs.clear();
-                section.text_runs.push(baumhard::mindmap::model::TextRun {
-                    start: 0,
-                    end: section.text.chars().count().max(1),
-                    bold: false,
-                    italic: false,
-                    underline: false,
-                    font: "LiberationSans".into(),
-                    size_pt: 14,
-                    color: "#aaaaaa".into(),
-                    hyperlink: None,
-                });
-            }
-        }
+        let (mut doc, id) = doc_with_two_sections();
         doc.selection = SelectionState::Single(id.clone());
         assert_exec_ok(run("color text=#ff0000 section=1", &mut doc));
         let node = doc.mindmap.nodes.get(&id).unwrap();
@@ -439,5 +575,309 @@ mod tests {
             node.sections[1].text_runs.iter().all(|r| r.color == "#ff0000"),
             "section 1 must receive the new colour"
         );
+    }
+
+    /// Build a node with two sections, both pinned to the cascade
+    /// default `#aaaaaa`, returning `(doc, node_id)`. Thin wrapper
+    /// around the shared `make_two_section_node_with_pinned_runs`
+    /// helper.
+    fn doc_with_two_sections() -> (crate::application::document::MindMapDocument, String) {
+        use crate::application::document::tests_common::make_two_section_node_with_pinned_runs;
+        let mut doc = load_test_doc();
+        let id = first_testament_node_id(&doc);
+        make_two_section_node_with_pinned_runs(
+            &mut doc,
+            &id,
+            "#aaaaaa",
+            ["#aaaaaa", "#aaaaaa"],
+            "LiberationSans",
+            14,
+        );
+        (doc, id)
+    }
+
+    /// `color text=#…` with a `SelectionState::Section` (no explicit
+    /// `section=K` kv) routes through the `HasTextColor` trait arm
+    /// to `set_section_text_color` — only the targeted section's
+    /// runs change, siblings stay untouched.
+    #[test]
+    fn color_text_section_collapse_writes_only_section() {
+        use crate::application::console::tests::fixtures::{assert_exec_ok, run};
+        use crate::application::document::SectionSel;
+        let (mut doc, id) = doc_with_two_sections();
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id.clone(),
+            section_idx: 1,
+        });
+        assert_exec_ok(run("color text=#00ff00", &mut doc));
+        let node = doc.mindmap.nodes.get(&id).unwrap();
+        assert!(
+            node.sections[0].text_runs.iter().all(|r| r.color == "#aaaaaa"),
+            "section 0 (sibling) must NOT receive the colour change"
+        );
+        assert!(
+            node.sections[1].text_runs.iter().all(|r| r.color == "#00ff00"),
+            "section 1 (selected) must receive the new colour"
+        );
+    }
+
+    /// `set_section_text_color` rewrite predicate matches the
+    /// **cascade source** the picker reads (unanimous run colour
+    /// when present; node default otherwise). A section whose runs
+    /// unanimously carry a non-default colour is therefore
+    /// rewritable from the picker / kv-form path. Pre-fix the
+    /// write only matched runs equal to `node.style.text_color` and
+    /// silently no-op'd when the section was uniformly customized,
+    /// closing the read/write seam where the picker would seed to
+    /// the displayed colour and the user's pick would silently
+    /// vanish on commit.
+    #[test]
+    fn color_text_section_rewrites_unanimous_non_default_runs() {
+        use crate::application::console::tests::fixtures::{assert_exec_ok, run};
+        use crate::application::document::tests_common::make_two_section_node_with_pinned_runs;
+        let mut doc = load_test_doc();
+        let id = first_testament_node_id(&doc);
+        // node default is #aaaaaa but section 1's runs unanimously
+        // carry #abcdef — a uniformly customized section. Pre-fix
+        // this case silently no-op'd because the write predicate
+        // looked for runs matching the node default and found none.
+        make_two_section_node_with_pinned_runs(
+            &mut doc,
+            &id,
+            "#aaaaaa",
+            ["#aaaaaa", "#abcdef"],
+            "LiberationSans",
+            14,
+        );
+        doc.selection = SelectionState::Single(id.clone());
+        assert_exec_ok(run("color text=#00ff00 section=1", &mut doc));
+        let node = doc.mindmap.nodes.get(&id).unwrap();
+        assert!(
+            node.sections[0].text_runs.iter().all(|r| r.color == "#aaaaaa"),
+            "section 0 (untouched) must keep the cascade default"
+        );
+        assert!(
+            node.sections[1].text_runs.iter().all(|r| r.color == "#00ff00"),
+            "section 1's unanimous-non-default runs must be rewritten by the picker / kv path"
+        );
+    }
+
+    /// `apply_color_axis_to_selection` returning `false` because
+    /// every target reported NotApplicable (e.g. `bg` axis against
+    /// a `Section` selection, where the trait arm collapses to
+    /// `Outcome::NotApplicable` per Item 2) emits a `log::info!`
+    /// note with the dispatcher's per-target messages — the
+    /// Action path has no scrollback so without this hook a
+    /// keybind for `SetColor { axis: Bg }` against a section
+    /// would silently no-op with zero feedback. Pins X2.
+    #[test]
+    fn apply_color_axis_logs_when_all_targets_not_applicable() {
+        use crate::application::document::SectionSel;
+        let (mut doc, id) = doc_with_two_sections();
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id,
+            section_idx: 1,
+        });
+        // The bool surface is `false` — no scene rebuild fires.
+        // The log line is emitted via `log::info!`; we assert the
+        // boolean and trust the dispatcher's message-aggregation
+        // path (already covered in `traits/tests.rs`) to put the
+        // right text in `report.messages`. A regression here is
+        // visible at the call-site contract level: a non-false
+        // return with a section + bg axis means a silent
+        // collapse re-introduced itself.
+        let changed = apply_color_axis_to_selection(&mut doc, "bg", "#123456");
+        assert!(
+            !changed,
+            "bg axis against a Section must report no change (NotApplicable)"
+        );
+    }
+
+    /// `color text=accent` (or any well-known theme-variable
+    /// shorthand) with a `SelectionState::Section` writes the
+    /// literal `var(--accent)` string into the section's runs —
+    /// not a resolved hex. Pins the verb-side of the var-preserve
+    /// symmetry the picker now honours (`commit_color_picker`'s
+    /// seed-var-ref short-circuit). A regression that resolves the
+    /// var early at the verb layer would silently strip the
+    /// theme reference.
+    #[test]
+    fn color_text_section_preserves_var_ref_round_trip() {
+        use crate::application::console::tests::fixtures::{assert_exec_ok, run};
+        use crate::application::document::SectionSel;
+        let (mut doc, id) = doc_with_two_sections();
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id.clone(),
+            section_idx: 1,
+        });
+        assert_exec_ok(run("color text=accent", &mut doc));
+        let node = doc.mindmap.nodes.get(&id).unwrap();
+        assert!(
+            node.sections[1]
+                .text_runs
+                .iter()
+                .all(|r| r.color == "var(--accent)"),
+            "section 1's runs must carry the literal var ref, not a resolved hex"
+        );
+    }
+
+    /// `color bg=#…` with a `SelectionState::Section` reports
+    /// NotApplicable rather than collapsing to the owning node's
+    /// `background_color`. Sections have no bg-fill chrome by spec
+    /// (`format/sections.md`). Pins Item 2.
+    #[test]
+    fn color_bg_section_returns_not_applicable() {
+        use crate::application::console::tests::fixtures::{join_lines, run};
+        use crate::application::document::SectionSel;
+        let (mut doc, id) = doc_with_two_sections();
+        let original_bg = doc.mindmap.nodes.get(&id).unwrap().style.background_color.clone();
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id.clone(),
+            section_idx: 1,
+        });
+        match run("color bg=#123456", &mut doc) {
+            ExecResult::Lines(msgs) => assert!(
+                join_lines(&msgs).contains("not applicable"),
+                "expected NotApplicable surface; got {:?}",
+                msgs
+            ),
+            ExecResult::Err(s) => assert!(s.contains("not applicable"), "got Err({:?})", s),
+            other => panic!("expected Lines / Err with 'not applicable', got {:?}", other),
+        }
+        assert_eq!(
+            doc.mindmap.nodes.get(&id).unwrap().style.background_color,
+            original_bg,
+            "node bg must NOT change when bg= targets a section selection"
+        );
+    }
+
+    /// Mirror of `color_bg_section_returns_not_applicable` for the
+    /// `border` axis — sections have no frame chrome either. Pins
+    /// Item 3.
+    #[test]
+    fn color_border_section_returns_not_applicable() {
+        use crate::application::console::tests::fixtures::{join_lines, run};
+        use crate::application::document::SectionSel;
+        let (mut doc, id) = doc_with_two_sections();
+        let original_frame = doc.mindmap.nodes.get(&id).unwrap().style.frame_color.clone();
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id.clone(),
+            section_idx: 1,
+        });
+        match run("color border=#abcdef", &mut doc) {
+            ExecResult::Lines(msgs) => assert!(
+                join_lines(&msgs).contains("not applicable"),
+                "expected NotApplicable surface; got {:?}",
+                msgs
+            ),
+            ExecResult::Err(s) => assert!(s.contains("not applicable"), "got Err({:?})", s),
+            other => panic!("expected Lines / Err with 'not applicable', got {:?}", other),
+        }
+        assert_eq!(
+            doc.mindmap.nodes.get(&id).unwrap().style.frame_color,
+            original_frame,
+            "node frame must NOT change when border= targets a section selection"
+        );
+    }
+
+    /// `color text` (no value) on a `SelectionState::Section` opens
+    /// the picker bound to a `ColorTarget::Section` — the picker's
+    /// commit then writes through `set_section_text_color`. Pins
+    /// Item 7 (text-axis branch).
+    #[test]
+    fn picker_target_for_section_text_emits_section_target() {
+        use crate::application::color_picker::{ColorTarget, SectionColorAxis};
+        use crate::application::console::tests::fixtures::assert_exec_ok;
+        use crate::application::document::SectionSel;
+        let (mut doc, id) = doc_with_two_sections();
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id.clone(),
+            section_idx: 1,
+        });
+        let (cmd, toks) = match parse("color text") {
+            ParseResult::Ok { cmd, args } => (cmd, args),
+            _ => panic!("parse failed"),
+        };
+        let mut eff = ConsoleEffects::new(&mut doc);
+        // assert_exec_ok catches a regression where the picker
+        // opens AND the command surfaces an error (mixed signal).
+        assert_exec_ok((cmd.execute)(&Args::new(&toks), &mut eff));
+        match eff.open_color_picker {
+            Some(ColorTarget::Section {
+                node_id,
+                section_idx,
+                axis,
+                range,
+            }) => {
+                assert_eq!(node_id, id);
+                assert_eq!(section_idx, 1);
+                assert_eq!(axis, SectionColorAxis::Text);
+                assert!(range.is_none(), "Section selection has no sub-range");
+            }
+            other => panic!("expected ColorTarget::Section/Text, got {:?}", other),
+        }
+    }
+
+    /// `color text` on a `SelectionState::SectionRange` opens
+    /// the picker bound to a `ColorTarget::Section` carrying the
+    /// sub-range. The commit path then routes through
+    /// `set_section_text_color_range`. Pins the N4-C.b.1
+    /// extension.
+    #[test]
+    fn picker_target_for_section_range_carries_range() {
+        use crate::application::color_picker::{ColorTarget, SectionColorAxis};
+        use crate::application::console::tests::fixtures::assert_exec_ok;
+        use crate::application::document::SectionSel;
+        let (mut doc, id) = doc_with_two_sections();
+        doc.selection = SelectionState::SectionRange {
+            sel: SectionSel { node_id: id.clone(), section_idx: 1 },
+            range: (3, 7),
+        };
+        let (cmd, toks) = match parse("color text") {
+            ParseResult::Ok { cmd, args } => (cmd, args),
+            _ => panic!("parse failed"),
+        };
+        let mut eff = ConsoleEffects::new(&mut doc);
+        assert_exec_ok((cmd.execute)(&Args::new(&toks), &mut eff));
+        match eff.open_color_picker {
+            Some(ColorTarget::Section {
+                node_id,
+                section_idx,
+                axis,
+                range,
+            }) => {
+                assert_eq!(node_id, id);
+                assert_eq!(section_idx, 1);
+                assert_eq!(axis, SectionColorAxis::Text);
+                assert_eq!(range, Some((3, 7)));
+            }
+            other => panic!("expected ColorTarget::Section/Text with range, got {:?}", other),
+        }
+    }
+
+    /// `color bg` on a `SelectionState::Section` returns
+    /// NotApplicable with a descriptive message (no picker opens,
+    /// no silent collapse to the owning node's bg axis). Pins Item
+    /// 7 (bg/border-axis branch).
+    #[test]
+    fn picker_target_for_section_bg_returns_not_applicable_message() {
+        use crate::application::console::tests::fixtures::assert_exec_err_contains;
+        use crate::application::document::SectionSel;
+        let (mut doc, id) = doc_with_two_sections();
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id,
+            section_idx: 1,
+        });
+        let (cmd, toks) = match parse("color bg") {
+            ParseResult::Ok { cmd, args } => (cmd, args),
+            _ => panic!("parse failed"),
+        };
+        let mut eff = ConsoleEffects::new(&mut doc);
+        let result = (cmd.execute)(&Args::new(&toks), &mut eff);
+        assert!(
+            eff.open_color_picker.is_none(),
+            "no picker should open for bg axis on a section selection"
+        );
+        assert_exec_err_contains(result, "not applicable");
     }
 }

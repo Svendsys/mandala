@@ -267,9 +267,11 @@ impl MindMapDocument {
         // simultaneous animations of the same mutation against
         // different sections of the same node coexist instead of
         // coalescing.
-        if self.active_animations.iter().any(|a| {
-            a.mutation_id() == cm.id && a.target_id == target_id && a.section_idx == section_idx
-        }) {
+        if self
+            .active_animations
+            .iter()
+            .any(|a| a.mutation_id() == cm.id && a.target_id == target_id && a.section_idx == section_idx)
+        {
             return;
         }
 
@@ -385,6 +387,22 @@ impl MindMapDocument {
     /// `AboutToWait` work and rebuilding the scene.
     pub fn has_active_animations(&self) -> bool {
         !self.active_animations.is_empty()
+    }
+
+    /// Shift every active animation's `start_ms` forward by
+    /// `by_ms` so the lerp picks up where it left off after a
+    /// suppression interval (e.g. a tree-mutating drag during
+    /// which `tick_animations` was skipped). Without this the
+    /// next post-suppression tick observes a wall-clock-elapsed
+    /// >= `total` and snaps the animation to its `to` state in
+    /// one frame.
+    pub fn shift_active_animations_start_ms(&mut self, by_ms: u64) {
+        if by_ms == 0 {
+            return;
+        }
+        for anim in self.active_animations.iter_mut() {
+            anim.start_ms = anim.start_ms.saturating_add(by_ms);
+        }
     }
 
     /// Fast-forward every active animation to its `to` state and

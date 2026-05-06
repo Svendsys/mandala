@@ -221,7 +221,7 @@ impl MindNode {
 /// sits inside its owning node. Units are arbitrary canvas pixels
 /// (the camera transforms to screen space at render time). Plain
 /// data; no runtime cost.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct Position {
     /// Canvas-space x coordinate (or node-local offset for sections).
     #[serde(default)]
@@ -235,7 +235,7 @@ pub struct Position {
 /// strictly positive in practice but not checked at type level —
 /// scene-builder code guards against zero-size nodes on its own.
 /// Plain data; no runtime cost.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Size {
     /// Width in canvas units.
     pub width: f64,
@@ -352,6 +352,17 @@ impl MindSection {
             channel: None,
             trigger_bindings: Vec::new(),
         }
+    }
+
+    /// Effective size of this section for AABB containment math —
+    /// the explicit `size` pin when set, otherwise `node_size`
+    /// (fill-parent fallback, the migration default). Sole source
+    /// of truth shared by the document-side setters
+    /// (`set_section_offset` / `set_section_size`) and
+    /// `maptool verify`'s containment rule, so the two cannot
+    /// drift on what "fill-parent" means.
+    pub fn effective_size(&self, node_size: Size) -> Size {
+        self.size.unwrap_or(node_size)
     }
 }
 

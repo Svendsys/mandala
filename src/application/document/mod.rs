@@ -59,14 +59,18 @@ mod tests_selection;
 // `hit_test` re-export to non-wasm silences the
 // `#[warn(unused_imports)]` the WASM build would otherwise raise
 // for an unused-on-wasm name.
-pub use hit_test::{apply_tree_highlights, hit_test_target, point_in_node_aabb, HitTarget};
 #[cfg(not(target_arch = "wasm32"))]
 pub use hit_test::hit_test;
+pub use hit_test::{apply_tree_highlights, hit_test_target, point_in_node_aabb, HitTarget};
 // Native-only: consumed by drag handlers, the click router, and
 // rect-select drain — none reachable on WASM today.
 #[cfg(not(target_arch = "wasm32"))]
-pub use hit_test::{apply_drag_delta, apply_drag_delta_and_collect_patches, hit_test_edge, rect_select};
-pub use nodes::{BorderConfigEdits, BorderEditOutcome, BorderSide, OptionEdit};
+pub use hit_test::{
+    apply_drag_delta, apply_drag_delta_and_collect_patches, apply_node_resize_to_tree,
+    apply_section_drag_delta_and_collect_patches, apply_section_resize_to_tree, hit_test_edge,
+    hit_test_node_resize_handle, hit_test_section_resize_handle, rect_select,
+};
+pub use nodes::{BorderConfigEdits, BorderEditOutcome, BorderSide, OptionEdit, SectionPayload};
 pub use types::{
     AnimationInstance, EdgeLabelSel, EdgeRef, PortalLabelSel, SectionSel, SelectionState, HIGHLIGHT_COLOR,
 };
@@ -190,17 +194,27 @@ fn grow_node_sizes_to_fit_text(map: &mut MindMap) {
 /// collapses to one), but a multi-size future shouldn't silently
 /// fall back to the smallest measurement.
 pub(super) fn grow_one_node_to_fit_text(node: &mut baumhard::mindmap::model::MindNode) {
+    let (floor_w, floor_h) = compute_one_node_text_floor(node);
+    if node.size.width < floor_w {
+        node.size.width = floor_w;
+    }
+    if node.size.height < floor_h {
+        node.size.height = floor_h;
+    }
+}
+
+/// Pure floor-compute extracted from [`grow_one_node_to_fit_text`]
+/// so the explicit-shrink path
+/// [`MindMapDocument::fit_node_to_content`] can read the floor
+/// without triggering the max-wins-grow side effect. Each
+/// section contributes the larger of its measured text and its
+/// pinned `size + offset` — pin survives when text fits;
+/// overflow grows the parent so nothing visually clips.
+pub(super) fn compute_one_node_text_floor(node: &baumhard::mindmap::model::MindNode) -> (f64, f64) {
     use baumhard::font::fonts::{
         acquire_font_system_write, app_font_by_family, measure_text_block_unbounded,
     };
 
-    // Walk every section, measure its text under its dominant
-    // run, and combine the per-section floors into one node-level
-    // floor. Sections with explicit `size` carry their own
-    // intrinsic bounds and don't grow the node — only `None`-size
-    // sections (the migration-default "fill the parent" shape)
-    // pull on the node's AABB.
-    //
     // §B5 lock-scope discipline: each section's measurement
     // acquires + drops the `FONT_SYSTEM` write guard
     // independently. A single guard around the whole loop would
@@ -212,9 +226,6 @@ pub(super) fn grow_one_node_to_fit_text(node: &mut baumhard::mindmap::model::Min
     let mut floor_w: f64 = 0.0;
     let mut floor_h: f64 = 0.0;
     for section in &node.sections {
-        if section.size.is_some() {
-            continue;
-        }
         // Non-finite offsets contribute nothing — the verifier
         // flags them, and a NaN propagating into floor_w / floor_h
         // would corrupt every downstream `node.size` reader.
@@ -244,15 +255,31 @@ pub(super) fn grow_one_node_to_fit_text(node: &mut baumhard::mindmap::model::Min
             });
 
         let block = {
-            let mut fs = acquire_font_system_write("grow_one_node_to_fit_text");
+            let mut fs = acquire_font_system_write("compute_one_node_text_floor");
             measure_text_block_unbounded(&mut fs, &section.text, scale, line_height, measure_font)
         };
 
+        // Section dimension contribution: text needs `block + pad`
+        // at minimum, but a `Some`-size section also pins a user-
+        // set floor (the author wrote "this section is at least
+        // this big"). Take the max so user intent survives when
+        // text fits, and overflow still grows the parent so
+        // nothing visually clips.
+        let mut section_w = (block.width + pad_x) as f64;
+        let mut section_h = (block.height + pad_y) as f64;
+        if let Some(s) = section.size.as_ref() {
+            if s.width.is_finite() && s.width > section_w {
+                section_w = s.width;
+            }
+            if s.height.is_finite() && s.height > section_h {
+                section_h = s.height;
+            }
+        }
         // Pass the offset through unmodified — the prior `.max(0)`
         // clamp silently treated leftward / upward overflow as zero,
         // hiding the actual visible-text width.
-        let need_w = (block.width + pad_x) as f64 + section.offset.x;
-        let need_h = (block.height + pad_y) as f64 + section.offset.y;
+        let need_w = section_w + section.offset.x;
+        let need_h = section_h + section.offset.y;
         if need_w > floor_w {
             floor_w = need_w;
         }
@@ -260,12 +287,7 @@ pub(super) fn grow_one_node_to_fit_text(node: &mut baumhard::mindmap::model::Min
             floor_h = need_h;
         }
     }
-    if node.size.width < floor_w {
-        node.size.width = floor_w;
-    }
-    if node.size.height < floor_h {
-        node.size.height = floor_h;
-    }
+    (floor_w, floor_h)
 }
 
 /// Grow every framed node's size to also accommodate its border's
@@ -493,11 +515,36 @@ impl MindMapDocument {
         };
         let portal_label = self.selection.selected_portal_label_scene_ref();
         let label_edit = self.label_edit_preview.as_ref().map(|(k, s)| (k, s.as_str()));
+        // Section selection drives resize-handle emission. The
+        // scene builder resolves the named section's AABB and
+        // emits 8 handles when the section has `Some` size; a
+        // `None`-sized (fill-parent) section emits nothing because
+        // there's no per-section AABB to stretch.
+        // Section AND SectionRange both surface a single owning
+        // section to the scene-builder via `selected_section()`
+        // — the carried sub-range doesn't change handle
+        // emission (handles attach to the section AABB, not the
+        // grapheme range).
+        let selected_section = self
+            .selection
+            .selected_section()
+            .map(|s| (s.node_id.as_str(), s.section_idx));
+        // Single-node selection drives node-resize-handle
+        // emission. Multi / Section / Edge / etc. produce no
+        // node handles. The `Single`-only gate matches the
+        // resize gesture's contract — multi-node resize is
+        // a Tier 2C+ concern.
+        let selected_node_for_resize = match &self.selection {
+            crate::application::document::SelectionState::Single(id) => Some(id.as_str()),
+            _ => None,
+        };
         let selection = scene_builder::SceneSelectionContext {
             edge,
             edge_label,
             portal_label,
             label_edit,
+            selected_section,
+            selected_node_for_resize,
         };
         let (edge_preview, portal_preview) = match &self.color_picker_preview {
             Some(ColorPickerPreview::Edge { key, color }) => (

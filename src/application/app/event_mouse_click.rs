@@ -17,7 +17,7 @@ use super::input_context::InputHandlerContext;
 use super::portal_label_drag::apply_portal_label_drag;
 use super::scene_rebuild::{rebuild_after_selection_change, rebuild_all, rebuild_scene_only};
 use super::throttled_interaction::ThrottledDrag;
-use super::{is_double_click, now_ms, AppMode, DragState, LastClick, EDGE_HANDLE_HIT_TOLERANCE_PX};
+use super::{is_double_click, now_ms, AppMode, DragState, LastClick, HANDLE_HIT_TOLERANCE_PX};
 use crate::application::console::ConsoleState;
 use crate::application::document::{apply_drag_delta, rect_select, SelectionState, UndoAction};
 use crate::application::keybinds::Action;
@@ -286,9 +286,57 @@ pub(super) fn handle_mouse_input(
                 let hit_edge_handle = match ctx.document.as_ref() {
                     Some(doc) => match &doc.selection {
                         SelectionState::Edge(er) => {
-                            let tol = EDGE_HANDLE_HIT_TOLERANCE_PX * ctx.renderer.canvas_per_pixel();
+                            let tol = HANDLE_HIT_TOLERANCE_PX * ctx.renderer.canvas_per_pixel();
                             doc.hit_test_edge_handle(canvas_pos, er, tol)
                                 .map(|(kind, _pos)| (er.clone(), kind))
+                        }
+                        _ => None,
+                    },
+                    None => None,
+                };
+                // If a `Some`-sized section is currently selected,
+                // check whether the cursor is over one of its 8
+                // resize handles. Same precedence shape as
+                // `hit_edge_handle` — the handle wins over the
+                // section / node behind it at threshold-cross
+                // time. `None`-sized sections (fill-parent) emit
+                // no handles, so this branch produces `None`.
+                // Section AND SectionRange both expose an inner
+                // SectionSel via `selected_section()`. Range-aware
+                // selections still emit resize handles on the
+                // owning section.
+                let hit_section_resize_handle = match ctx.document.as_ref() {
+                    Some(doc) => match doc.selection.selected_section() {
+                        Some(s) => {
+                            let tol = HANDLE_HIT_TOLERANCE_PX * ctx.renderer.canvas_per_pixel();
+                            crate::application::document::hit_test_section_resize_handle(
+                                &doc.mindmap,
+                                canvas_pos,
+                                &s.node_id,
+                                s.section_idx,
+                                tol,
+                            )
+                            .map(|side| (s.node_id.clone(), s.section_idx, side))
+                        }
+                        None => None,
+                    },
+                    None => None,
+                };
+                // Node resize handle press capture — when a node
+                // is `Single`-selected, the cursor may land on
+                // one of its 8 handles. Same shape / tolerance
+                // as edge + section handles.
+                let hit_node_resize_handle = match ctx.document.as_ref() {
+                    Some(doc) => match &doc.selection {
+                        SelectionState::Single(id) => {
+                            let tol = HANDLE_HIT_TOLERANCE_PX * ctx.renderer.canvas_per_pixel();
+                            crate::application::document::hit_test_node_resize_handle(
+                                &doc.mindmap,
+                                canvas_pos,
+                                id,
+                                tol,
+                            )
+                            .map(|side| (id.clone(), side))
                         }
                         _ => None,
                     },
@@ -323,6 +371,8 @@ pub(super) fn handle_mouse_input(
                     hit_edge_handle,
                     hit_portal_label,
                     hit_edge_label: edge_label_hit,
+                    hit_section_resize_handle,
+                    hit_node_resize_handle,
                 };
             } else {
                 // Released
@@ -565,6 +615,114 @@ pub(super) fn handle_mouse_input(
                             }
 
                             // Full rebuild from model
+                            rebuild_all(
+                                doc,
+                                ctx.mindmap_tree,
+                                ctx.app_scene,
+                                ctx.renderer,
+                                ctx.scene_cache,
+                            );
+                        }
+                    }
+                    DragState::Throttled(ThrottledDrag::MovingSection(i)) => {
+                        // Single setter call on release; AABB
+                        // overflow rejection logs and falls
+                        // through to `rebuild_all`, which
+                        // rebuilds the tree from the unchanged
+                        // model and snaps the section back.
+                        if let Some(doc) = ctx.document.as_mut() {
+                            let new_x = i.start_offset.0 + i.total_delta.x as f64;
+                            let new_y = i.start_offset.1 + i.total_delta.y as f64;
+                            match doc.set_section_offset(&i.node_id, i.section_idx, new_x, new_y) {
+                                Ok(true) => {}
+                                Ok(false) => {
+                                    log::debug!(
+                                        "section drag committed no-op offset on '{}' section[{}]",
+                                        i.node_id,
+                                        i.section_idx
+                                    );
+                                }
+                                Err(msg) => {
+                                    log::info!("section drag release rejected: {} (snapping back)", msg);
+                                }
+                            }
+                            // Unconditional clear so the
+                            // rebuild_all path resamples from
+                            // the authoritative model — the
+                            // per-frame drain mutated the tree
+                            // (and therefore stale scene-cache
+                            // samples) regardless of which
+                            // arm above ran.
+                            ctx.scene_cache.clear();
+                            rebuild_all(
+                                doc,
+                                ctx.mindmap_tree,
+                                ctx.app_scene,
+                                ctx.renderer,
+                                ctx.scene_cache,
+                            );
+                        }
+                    }
+                    DragState::Throttled(ThrottledDrag::NodeResize(i)) => {
+                        // Single atomic setter call on release.
+                        // `set_node_aabb` validates the new
+                        // (position, size) pair and writes both
+                        // under one `EditNodeAabb` undo entry.
+                        // Rejection (NaN, non-positive, astronomical)
+                        // logs and falls through to `rebuild_all`
+                        // — node snaps back to pre-drag AABB.
+                        if let Some(doc) = ctx.document.as_mut() {
+                            let (new_position, new_size) = i.resolve(i.total_delta);
+                            match doc.set_node_aabb(&i.node_id, new_position, new_size) {
+                                Ok(true) => {}
+                                Ok(false) => {
+                                    log::debug!("node resize committed no-op on '{}'", i.node_id);
+                                }
+                                Err(msg) => {
+                                    log::info!("node resize release rejected: {} (snapping back)", msg);
+                                }
+                            }
+                            ctx.scene_cache.clear();
+                            rebuild_all(
+                                doc,
+                                ctx.mindmap_tree,
+                                ctx.app_scene,
+                                ctx.renderer,
+                                ctx.scene_cache,
+                            );
+                        }
+                    }
+                    DragState::Throttled(ThrottledDrag::SectionResize(i)) => {
+                        // Single atomic setter call on release.
+                        // `set_section_aabb` validates the
+                        // post-mutation `(offset, size)` against
+                        // the parent — so a W-grow gesture that
+                        // shrinks `offset.x` and grows `size.width`
+                        // by the same delta passes the right-edge
+                        // guard that the two-step
+                        // `set_section_size` + `set_section_offset`
+                        // path rejected (intermediate state had
+                        // new size at old offset, overflowing).
+                        // Rejection (NaN, negative, overflow,
+                        // astronomical) logs and falls through to
+                        // `rebuild_all` from the unchanged model —
+                        // section snaps back to pre-drag AABB.
+                        if let Some(doc) = ctx.document.as_mut() {
+                            let (new_offset, new_size) = i.resolve(i.total_delta);
+                            match doc.set_section_aabb(&i.node_id, i.section_idx, new_offset, new_size) {
+                                Ok(true) => {}
+                                Ok(false) => {
+                                    log::debug!(
+                                        "section resize committed no-op on '{}' section[{}]",
+                                        i.node_id,
+                                        i.section_idx
+                                    );
+                                }
+                                Err(msg) => {
+                                    log::info!("section resize release rejected: {} (snapping back)", msg);
+                                }
+                            }
+                            ctx.scene_cache.clear();
                             rebuild_all(
                                 doc,
                                 ctx.mindmap_tree,

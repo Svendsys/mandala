@@ -866,11 +866,11 @@ impl Renderer {
 
     #[inline]
     fn update_surface_size(&mut self, width: u32, height: u32) {
-        if width <= 0 {
+        if width == 0 {
             error!("Width has to be higher than 0 but was {}", width);
             return;
         }
-        if height <= 0 {
+        if height == 0 {
             error!("Height has to be higher than 0 but was {}", height);
             return;
         }

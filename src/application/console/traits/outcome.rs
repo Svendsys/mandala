@@ -33,6 +33,14 @@ impl Outcome {
 #[derive(Clone, Debug, PartialEq)]
 pub enum ClipboardContent {
     Text(String),
+    /// Structured per-section payload bundled with the plain
+    /// `text` the OS clipboard carries. The structured `payload`
+    /// rides the in-process buffer for within-app round-trip so
+    /// per-run formatting and section chrome survive.
+    Section {
+        text: String,
+        payload: crate::application::document::SectionPayload,
+    },
     /// Copy supported but nothing to provide (e.g. empty field).
     Empty,
     NotApplicable,

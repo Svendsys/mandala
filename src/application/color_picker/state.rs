@@ -29,7 +29,19 @@ use super::targets::PickerHandle;
 #[derive(Debug, Clone)]
 pub enum PickerMode {
     /// Target-bound picker. Commit writes to this handle and closes.
-    Contextual { handle: PickerHandle },
+    /// `seed_var_ref` is `Some(raw)` when the target's pre-open
+    /// colour was a `var(--name)` reference, `None` for plain hex
+    /// seeds; `seed_hsv` is the HSV the picker opened at. Together
+    /// they let the commit preserve the variable reference when the
+    /// user didn't move the wheel — without these, every contextual
+    /// commit silently collapsed any prior `var(--accent)` to its
+    /// resolved hex (`format/sections.md`'s round-trip caveat
+    /// extended to the picker too).
+    Contextual {
+        handle: PickerHandle,
+        seed_var_ref: Option<String>,
+        seed_hsv: (f32, f32, f32),
+    },
     /// Persistent palette. Commit writes to the document's current
     /// selection (zero, one, or many items); the wheel stays open.
     Standalone,
@@ -246,7 +258,7 @@ impl ColorPickerState {
     pub fn contextual_handle(&self) -> Option<&PickerHandle> {
         match self {
             ColorPickerState::Open {
-                mode: PickerMode::Contextual { handle },
+                mode: PickerMode::Contextual { handle, .. },
                 ..
             } => Some(handle),
             _ => None,

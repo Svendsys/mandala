@@ -98,68 +98,6 @@ fn test_hit_test_returns_smallest_on_overlap() {
 }
 
 #[test]
-fn test_selection_state_is_selected() {
-    let none = SelectionState::None;
-    assert!(!none.is_selected("123"));
-
-    let single = SelectionState::Single("123".to_string());
-    assert!(single.is_selected("123"));
-    assert!(!single.is_selected("456"));
-
-    let multi = SelectionState::Multi(vec!["123".to_string(), "456".to_string()]);
-    assert!(multi.is_selected("123"));
-    assert!(multi.is_selected("456"));
-    assert!(!multi.is_selected("789"));
-
-    // Section selection counts as "this owning node is selected" —
-    // every per-node consumer (highlight, drag, chrome) gets the
-    // natural answer.
-    let section = SelectionState::Section(SectionSel::new("123", 1));
-    assert!(section.is_selected("123"));
-    assert!(!section.is_selected("456"));
-    assert_eq!(section.selected_ids(), vec!["123"]);
-    let s = section
-        .selected_section()
-        .expect("Section variant carries SectionSel");
-    assert_eq!(s.node_id, "123");
-    assert_eq!(s.section_idx, 1);
-    // Other selection variants return `None` from
-    // `selected_section()`.
-    assert!(none.selected_section().is_none());
-    assert!(single.selected_section().is_none());
-}
-
-#[test]
-fn test_selection_state_from_ids_empty_is_none() {
-    assert!(matches!(SelectionState::from_ids(vec![]), SelectionState::None));
-}
-
-#[test]
-fn test_selection_state_from_ids_single_element_is_single() {
-    match SelectionState::from_ids(vec!["alpha".to_string()]) {
-        SelectionState::Single(id) => assert_eq!(id, "alpha"),
-        other => panic!("expected Single, got {other:?}"),
-    }
-}
-
-#[test]
-fn test_selection_state_from_ids_two_elements_is_multi_preserving_order() {
-    match SelectionState::from_ids(vec!["a".to_string(), "b".to_string()]) {
-        SelectionState::Multi(ids) => assert_eq!(ids, vec!["a".to_string(), "b".to_string()]),
-        other => panic!("expected Multi, got {other:?}"),
-    }
-}
-
-#[test]
-fn test_selection_state_from_ids_many_elements_is_multi_preserving_order() {
-    let input = vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string()];
-    match SelectionState::from_ids(input.clone()) {
-        SelectionState::Multi(ids) => assert_eq!(ids, input),
-        other => panic!("expected Multi, got {other:?}"),
-    }
-}
-
-#[test]
 fn test_apply_tree_highlights_via_walker() {
     let mut tree = load_test_tree();
     // Post-refactor: regions live on the section-area, not the
@@ -712,6 +650,300 @@ fn test_apply_drag_delta_with_descendants() {
     );
 }
 
+/// `apply_section_drag_delta_and_collect_patches` moves only the
+/// targeted section's subtree — the owning node's container area
+/// stays put, sibling sections stay put. Pins the per-frame
+/// section-drag tree mutation that the `MovingSectionInteraction`
+/// drain depends on.
+#[test]
+fn test_apply_section_drag_delta_moves_only_target_section() {
+    use crate::application::document::apply_section_drag_delta_and_collect_patches;
+    use crate::application::document::tests_common::pinned_two_section_node;
+    let (doc, id) = pinned_two_section_node();
+    let mut tree = doc.build_tree();
+
+    let container_nid = tree.arena_id_for(&id).unwrap();
+    let s0_nid = tree.section_arena_id(&id, 0).unwrap();
+    let s1_nid = tree.section_arena_id(&id, 1).unwrap();
+    let container_x = tree
+        .tree
+        .arena
+        .get(container_nid)
+        .unwrap()
+        .get()
+        .glyph_area()
+        .unwrap()
+        .position
+        .x
+        .0;
+    let s0_x = tree
+        .tree
+        .arena
+        .get(s0_nid)
+        .unwrap()
+        .get()
+        .glyph_area()
+        .unwrap()
+        .position
+        .x
+        .0;
+    let s1_x = tree
+        .tree
+        .arena
+        .get(s1_nid)
+        .unwrap()
+        .get()
+        .glyph_area()
+        .unwrap()
+        .position
+        .x
+        .0;
+
+    let mut patches = Vec::new();
+    apply_section_drag_delta_and_collect_patches(&mut tree, &id, 1, 17.0, 0.0, &mut patches);
+
+    // Target section moved by +17 on x.
+    let s1_new_x = tree
+        .tree
+        .arena
+        .get(s1_nid)
+        .unwrap()
+        .get()
+        .glyph_area()
+        .unwrap()
+        .position
+        .x
+        .0;
+    assert!(
+        (s1_new_x - (s1_x + 17.0)).abs() < 0.001,
+        "section[1] must move by +17"
+    );
+
+    // Container untouched.
+    let container_new_x = tree
+        .tree
+        .arena
+        .get(container_nid)
+        .unwrap()
+        .get()
+        .glyph_area()
+        .unwrap()
+        .position
+        .x
+        .0;
+    assert!(
+        (container_new_x - container_x).abs() < 0.001,
+        "container must NOT move during section drag"
+    );
+
+    // Sibling section[0] untouched.
+    let s0_new_x = tree
+        .tree
+        .arena
+        .get(s0_nid)
+        .unwrap()
+        .get()
+        .glyph_area()
+        .unwrap()
+        .position
+        .x
+        .0;
+    assert!(
+        (s0_new_x - s0_x).abs() < 0.001,
+        "sibling section[0] must NOT move"
+    );
+
+    assert!(!patches.is_empty(), "drag must emit at least one buffer patch");
+}
+
+/// `apply_section_resize_to_tree` writes the in-progress AABB
+/// directly to the section-area's `GlyphArea`. Verify the
+/// position and bounds round-trip through the helper.
+#[test]
+fn test_apply_section_resize_to_tree_writes_position_and_bounds() {
+    use crate::application::document::apply_section_resize_to_tree;
+    use crate::application::document::tests_common::pinned_two_section_node;
+    use glam::Vec2;
+
+    let (doc, id) = pinned_two_section_node();
+    let mut tree = doc.build_tree();
+    let new_pos = Vec2::new(100.0, 50.0);
+    let new_size = Vec2::new(40.0, 20.0);
+    apply_section_resize_to_tree(&mut tree, &id, 1, new_pos, new_size);
+    let arena_id = tree.section_arena_id(&id, 1).unwrap();
+    let area = tree
+        .tree
+        .arena
+        .get(arena_id)
+        .and_then(|n| n.get().glyph_area())
+        .unwrap();
+    assert!((area.position.x.0 - 100.0).abs() < 0.001);
+    assert!((area.position.y.0 - 50.0).abs() < 0.001);
+    assert!((area.render_bounds.x.0 - 40.0).abs() < 0.001);
+    assert!((area.render_bounds.y.0 - 20.0).abs() < 0.001);
+}
+
+/// Out-of-range section index is a no-op; helper returns without
+/// panicking, tree unchanged.
+#[test]
+fn test_apply_section_resize_to_tree_unknown_section_no_op() {
+    use crate::application::document::apply_section_resize_to_tree;
+    use crate::application::document::tests_common::pinned_two_section_node;
+    use glam::Vec2;
+
+    let (doc, id) = pinned_two_section_node();
+    let mut tree = doc.build_tree();
+    let arena_id = tree.section_arena_id(&id, 1).unwrap();
+    let area_before = tree
+        .tree
+        .arena
+        .get(arena_id)
+        .and_then(|n| n.get().glyph_area())
+        .map(|a| (a.position.x.0, a.position.y.0))
+        .unwrap();
+    apply_section_resize_to_tree(&mut tree, &id, 99, Vec2::new(0.0, 0.0), Vec2::new(10.0, 10.0));
+    let area_after = tree
+        .tree
+        .arena
+        .get(arena_id)
+        .and_then(|n| n.get().glyph_area())
+        .map(|a| (a.position.x.0, a.position.y.0))
+        .unwrap();
+    assert_eq!(area_before, area_after, "tree must be untouched on unknown idx");
+}
+
+/// Out-of-range section index is a no-op; the helper returns
+/// without panicking and emits no patches.
+#[test]
+fn test_apply_section_drag_delta_unknown_section_no_op() {
+    use crate::application::document::apply_section_drag_delta_and_collect_patches;
+    use crate::application::document::tests_common::pinned_two_section_node;
+    let (doc, id) = pinned_two_section_node();
+    let mut tree = doc.build_tree();
+    let mut patches = Vec::new();
+    apply_section_drag_delta_and_collect_patches(&mut tree, &id, 99, 5.0, 5.0, &mut patches);
+    assert!(patches.is_empty(), "unknown section_idx → no patches");
+}
+
+/// Drag-release shape: simulate `MovingSectionInteraction`'s
+/// release-commit by combining `start_offset` with `total_delta`
+/// and calling `set_section_offset`. Verify the model accepts,
+/// the offset lands at `start + delta`, and undo restores the
+/// pre-drag offset. Pins the release-commit contract event-loop
+/// integration depends on.
+#[test]
+fn test_section_drag_release_writes_through_set_section_offset() {
+    use crate::application::document::tests_common::pinned_two_section_node;
+    let (mut doc, id) = pinned_two_section_node();
+    // Fixture pins section[1] at offset (10, 10).
+    let start_x = 10.0_f64;
+    let start_y = 10.0_f64;
+    // Simulate a drag that accumulated total_delta = (15, 7).
+    let delta_x = 15.0_f64;
+    let delta_y = 7.0_f64;
+    let result = doc.set_section_offset(&id, 1, start_x + delta_x, start_y + delta_y);
+    assert_eq!(result, Ok(true));
+    let s = &doc.mindmap.nodes.get(&id).unwrap().sections[1];
+    assert!((s.offset.x - 25.0).abs() < 0.001);
+    assert!((s.offset.y - 17.0).abs() < 0.001);
+    assert!(doc.undo());
+    let restored = &doc.mindmap.nodes.get(&id).unwrap().sections[1];
+    assert!(
+        (restored.offset.x - 10.0).abs() < 0.001,
+        "undo restores prior offset"
+    );
+    assert!((restored.offset.y - 10.0).abs() < 0.001);
+}
+
+/// AABB-overflow on drag release: the setter rejects with the
+/// verify-mirror message, the model is unchanged, and a full
+/// `rebuild_all` (simulated here by re-reading the model) snaps
+/// the section back to its original offset. Pins the release-
+/// commit error-recovery path.
+#[test]
+fn test_section_drag_release_aabb_overflow_rejects_and_preserves_model() {
+    use crate::application::document::apply_section_drag_delta_and_collect_patches;
+    use crate::application::document::tests_common::pinned_two_section_node;
+    let (mut doc, id) = pinned_two_section_node();
+
+    // Simulate the drag: build the tree, mutate it per-frame as
+    // the gesture would, then attempt the release-commit.
+    let mut tree = doc.build_tree();
+    let s1_root = tree.section_arena_id(&id, 1).unwrap();
+    let original_section_pos = tree
+        .tree
+        .arena
+        .get(s1_root)
+        .unwrap()
+        .get()
+        .glyph_area()
+        .unwrap()
+        .position
+        .x
+        .0;
+    // Drag the tree past the parent's right edge (delta=+200,
+    // would-be offset (210, 10), right edge 260 > 200).
+    let mut patches = Vec::new();
+    apply_section_drag_delta_and_collect_patches(&mut tree, &id, 1, 200.0, 0.0, &mut patches);
+    let dragged_pos = tree
+        .tree
+        .arena
+        .get(s1_root)
+        .unwrap()
+        .get()
+        .glyph_area()
+        .unwrap()
+        .position
+        .x
+        .0;
+    assert!(
+        (dragged_pos - (original_section_pos + 200.0)).abs() < 0.001,
+        "tree mid-drag must reflect the per-frame mutation"
+    );
+
+    // Release-commit: setter rejects.
+    let result = doc.set_section_offset(&id, 1, 210.0, 10.0);
+    assert!(
+        result
+            .as_ref()
+            .err()
+            .map(|m| m.contains("extends past node right edge"))
+            .unwrap_or(false),
+        "AABB overflow must reject with the verify-mirror message; got {:?}",
+        result
+    );
+    // Model unchanged — section's offset stays at (10, 10).
+    let s = &doc.mindmap.nodes.get(&id).unwrap().sections[1];
+    assert!(
+        (s.offset.x - 10.0).abs() < 0.001,
+        "model must not have moved on rejected release"
+    );
+
+    // Snap-back: simulate `rebuild_all`'s model→tree rebuild.
+    // The release path calls `rebuild_all` (which walks
+    // `doc.build_tree()` from the unchanged model). Build a fresh
+    // tree and assert section[1] sits back at its pre-drag offset.
+    let restored_tree = doc.build_tree();
+    let s1_restored = restored_tree.section_arena_id(&id, 1).unwrap();
+    let restored_pos = restored_tree
+        .tree
+        .arena
+        .get(s1_restored)
+        .unwrap()
+        .get()
+        .glyph_area()
+        .unwrap()
+        .position
+        .x
+        .0;
+    assert!(
+        (restored_pos - original_section_pos).abs() < 0.001,
+        "rebuild_all from unchanged model must snap section back: original={}, restored={}",
+        original_section_pos,
+        restored_pos
+    );
+}
+
 #[test]
 fn test_dedup_subtree_roots() {
     let doc = load_test_doc();
@@ -897,7 +1129,10 @@ fn test_point_in_node_aabb_includes_overflowing_section() {
         let node = doc.mindmap.nodes.get_mut("0").unwrap();
         let mut overflow = MindSection::new_default("over".into(), vec![]);
         overflow.offset = Position { x: 300.0, y: 0.0 };
-        overflow.size = Some(Size { width: 100.0, height: 40.0 });
+        overflow.size = Some(Size {
+            width: 100.0,
+            height: 40.0,
+        });
         node.sections.push(overflow);
     }
     let mut tree = doc.build_tree();
@@ -932,9 +1167,9 @@ fn test_point_in_node_aabb_includes_overflowing_section() {
 #[test]
 fn test_collect_patches_recursive_skips_glyph_model_children() {
     use crate::application::document::apply_drag_delta_and_collect_patches;
+    use crate::application::document::tests_common::doc_with_one_orphan_node;
     use baumhard::core::primitives::{Flag, Flaggable};
     use baumhard::mindmap::model::MindSection;
-    use crate::application::document::tests_common::doc_with_one_orphan_node;
 
     let mut doc = doc_with_one_orphan_node();
     {
@@ -942,8 +1177,10 @@ fn test_collect_patches_recursive_skips_glyph_model_children() {
         // section-model) = 6 arena entries. Patches should
         // count only the 3 section-areas + 1 container = 4.
         let node = doc.mindmap.nodes.get_mut("0").unwrap();
-        node.sections.push(MindSection::new_default("two".into(), Vec::new()));
-        node.sections.push(MindSection::new_default("three".into(), Vec::new()));
+        node.sections
+            .push(MindSection::new_default("two".into(), Vec::new()));
+        node.sections
+            .push(MindSection::new_default("three".into(), Vec::new()));
     }
     let mut tree = doc.build_tree();
     let mut patches: Vec<(usize, (f32, f32))> = Vec::new();
@@ -976,6 +1213,305 @@ fn test_collect_patches_recursive_skips_glyph_model_children() {
         "expected 4 patches (1 container + 3 section-areas), got {}",
         patches.len()
     );
+}
+
+// --- Section resize-handle hit tests ---
+
+#[test]
+fn test_hit_test_section_resize_handle_returns_none_for_none_sized_section() {
+    use crate::application::document::hit_test_section_resize_handle;
+    use crate::application::document::tests_common::doc_with_one_orphan_node;
+    use glam::Vec2;
+
+    let doc = doc_with_one_orphan_node();
+    // Default orphan section has `size = None` — fill-parent
+    // sections emit no resize handles, so the hit-test must
+    // return `None` regardless of cursor position.
+    let result = hit_test_section_resize_handle(&doc.mindmap, Vec2::new(0.0, 0.0), "0", 0, 100.0);
+    assert!(result.is_none(), "fill-parent section must not surface handles");
+}
+
+#[test]
+fn test_hit_test_section_resize_handle_returns_none_for_missing_node_or_section() {
+    use crate::application::document::hit_test_section_resize_handle;
+    use crate::application::document::tests_common::pinned_two_section_node;
+    use glam::Vec2;
+
+    let (doc, _id) = pinned_two_section_node();
+    assert!(
+        hit_test_section_resize_handle(&doc.mindmap, Vec2::ZERO, "nope", 0, 100.0).is_none(),
+        "missing node id must return None"
+    );
+    let (doc, id) = pinned_two_section_node();
+    assert!(
+        hit_test_section_resize_handle(&doc.mindmap, Vec2::ZERO, &id, 99, 100.0).is_none(),
+        "out-of-range section_idx must return None"
+    );
+}
+
+#[test]
+fn test_hit_test_section_resize_handle_lands_on_se_corner() {
+    use crate::application::document::hit_test_section_resize_handle;
+    use crate::application::document::tests_common::pinned_two_section_node;
+    use baumhard::mindmap::scene_builder::ResizeHandleSide;
+    use glam::Vec2;
+
+    let (doc, id) = pinned_two_section_node();
+    let node = &doc.mindmap.nodes[&id];
+    // pinned_two_section_node fixes section[1] at offset (10,10)
+    // size 50×30. SE corner is at canvas (node.pos + (60, 40)).
+    let np = &node.position;
+    let se = Vec2::new(np.x as f32 + 60.0, np.y as f32 + 40.0);
+    let result = hit_test_section_resize_handle(&doc.mindmap, se, &id, 1, 4.0);
+    assert_eq!(result, Some(ResizeHandleSide::SE));
+}
+
+#[test]
+fn test_hit_test_section_resize_handle_lands_on_n_edge_midpoint() {
+    use crate::application::document::hit_test_section_resize_handle;
+    use crate::application::document::tests_common::pinned_two_section_node;
+    use baumhard::mindmap::scene_builder::ResizeHandleSide;
+    use glam::Vec2;
+
+    let (doc, id) = pinned_two_section_node();
+    let node = &doc.mindmap.nodes[&id];
+    // N midpoint at offset (10+25, 10) = (35, 10) relative to node.
+    let np = &node.position;
+    let n = Vec2::new(np.x as f32 + 35.0, np.y as f32 + 10.0);
+    assert_eq!(
+        hit_test_section_resize_handle(&doc.mindmap, n, &id, 1, 4.0),
+        Some(ResizeHandleSide::N)
+    );
+}
+
+/// A section under a folded ancestor surfaces no resize handles
+/// (scene-builder gates on `is_hidden_by_fold`); the hit-test
+/// must mirror that gate so a stale `Section` selection that
+/// survived a fold can't capture phantom handle presses.
+#[test]
+fn test_hit_test_section_resize_handle_returns_none_for_hidden_by_fold() {
+    use crate::application::document::hit_test_section_resize_handle;
+    use crate::application::document::tests_common::pinned_two_section_node;
+    use glam::Vec2;
+
+    let (mut doc, id) = pinned_two_section_node();
+    // Find an ancestor and fold it so the target node is hidden.
+    let parent_id = doc.mindmap.nodes[&id].parent_id.clone();
+    if let Some(pid) = parent_id {
+        if let Some(p) = doc.mindmap.nodes.get_mut(&pid) {
+            p.folded = true;
+        }
+    } else {
+        // No parent — fold the node itself; `is_hidden_by_fold`
+        // returns false for the folded node itself but true for
+        // its descendants. For the no-parent case fold isn't
+        // visible; skip the assertion.
+        return;
+    }
+    let node = &doc.mindmap.nodes[&id];
+    let np = &node.position;
+    let se = Vec2::new(np.x as f32 + 60.0, np.y as f32 + 40.0);
+    assert!(
+        hit_test_section_resize_handle(&doc.mindmap, se, &id, 1, 4.0).is_none(),
+        "fold-hidden section must not surface handles"
+    );
+}
+
+#[test]
+fn test_hit_test_section_resize_handle_misses_outside_tolerance() {
+    use crate::application::document::hit_test_section_resize_handle;
+    use crate::application::document::tests_common::pinned_two_section_node;
+    use glam::Vec2;
+
+    let (doc, id) = pinned_two_section_node();
+    let node = &doc.mindmap.nodes[&id];
+    // Cursor is centered on the section AABB — far from every
+    // corner / edge handle.
+    let center = Vec2::new(node.position.x as f32 + 35.0, node.position.y as f32 + 25.0);
+    assert!(
+        hit_test_section_resize_handle(&doc.mindmap, center, &id, 1, 4.0).is_none(),
+        "center of section must not hit any handle"
+    );
+}
+
+// --- Node resize-handle hit + tree-mutation tests ---
+
+#[test]
+fn test_hit_test_node_resize_handle_lands_on_se_corner() {
+    use crate::application::document::hit_test_node_resize_handle;
+    use crate::application::document::tests_common::pinned_two_section_node;
+    use baumhard::mindmap::scene_builder::ResizeHandleSide;
+    use glam::Vec2;
+
+    let (doc, id) = pinned_two_section_node();
+    let node = &doc.mindmap.nodes[&id];
+    let np = &node.position;
+    let nw = &node.size;
+    let se = Vec2::new(np.x as f32 + nw.width as f32, np.y as f32 + nw.height as f32);
+    assert_eq!(
+        hit_test_node_resize_handle(&doc.mindmap, se, &id, 4.0),
+        Some(ResizeHandleSide::SE)
+    );
+}
+
+#[test]
+fn test_hit_test_node_resize_handle_misses_outside_tolerance() {
+    use crate::application::document::hit_test_node_resize_handle;
+    use crate::application::document::tests_common::pinned_two_section_node;
+    use glam::Vec2;
+
+    let (doc, id) = pinned_two_section_node();
+    let node = &doc.mindmap.nodes[&id];
+    let np = &node.position;
+    let nw = &node.size;
+    let center = Vec2::new(
+        np.x as f32 + nw.width as f32 * 0.5,
+        np.y as f32 + nw.height as f32 * 0.5,
+    );
+    assert!(
+        hit_test_node_resize_handle(&doc.mindmap, center, &id, 4.0).is_none(),
+        "center of node must not hit any handle"
+    );
+}
+
+#[test]
+fn test_hit_test_node_resize_handle_returns_none_for_missing_node() {
+    use crate::application::document::hit_test_node_resize_handle;
+    use crate::application::document::tests_common::pinned_two_section_node;
+    use glam::Vec2;
+
+    let (doc, _id) = pinned_two_section_node();
+    assert!(
+        hit_test_node_resize_handle(&doc.mindmap, Vec2::ZERO, "nope", 100.0).is_none(),
+        "missing node id must return None"
+    );
+}
+
+#[test]
+fn test_hit_test_node_resize_handle_returns_none_for_hidden_by_fold() {
+    use crate::application::document::hit_test_node_resize_handle;
+    use crate::application::document::tests_common::pinned_two_section_node;
+    use glam::Vec2;
+
+    let (mut doc, id) = pinned_two_section_node();
+    let parent_id = doc.mindmap.nodes[&id].parent_id.clone();
+    if let Some(pid) = parent_id {
+        if let Some(p) = doc.mindmap.nodes.get_mut(&pid) {
+            p.folded = true;
+        }
+    } else {
+        return;
+    }
+    let node = &doc.mindmap.nodes[&id];
+    let se = Vec2::new(
+        node.position.x as f32 + node.size.width as f32,
+        node.position.y as f32 + node.size.height as f32,
+    );
+    assert!(
+        hit_test_node_resize_handle(&doc.mindmap, se, &id, 4.0).is_none(),
+        "fold-hidden node must not surface handles"
+    );
+}
+
+#[test]
+fn test_apply_node_resize_to_tree_writes_position_and_bounds() {
+    use crate::application::document::apply_node_resize_to_tree;
+    use crate::application::document::tests_common::pinned_two_section_node;
+    use glam::Vec2;
+
+    let (doc, id) = pinned_two_section_node();
+    let mut tree = doc.build_tree();
+    let new_pos = Vec2::new(500.0, 200.0);
+    let new_size = Vec2::new(150.0, 70.0);
+    apply_node_resize_to_tree(&mut tree, &id, new_pos, new_size, Vec2::ZERO);
+    let arena_id = tree.arena_id_for(&id).unwrap();
+    let area = tree
+        .tree
+        .arena
+        .get(arena_id)
+        .and_then(|n| n.get().glyph_area())
+        .unwrap();
+    assert!((area.position.x.0 - 500.0).abs() < 0.001);
+    assert!((area.position.y.0 - 200.0).abs() < 0.001);
+    assert!((area.render_bounds.x.0 - 150.0).abs() < 0.001);
+    assert!((area.render_bounds.y.0 - 70.0).abs() < 0.001);
+}
+
+/// Non-zero `position_delta` shifts the node's section children
+/// but leaves child mind-node containers in place. Pre-fix the
+/// helper walked every descendant including child mind-nodes,
+/// so a NW-handle drag visually translated the entire descendant
+/// subtree mid-drag.
+#[test]
+fn test_apply_node_resize_to_tree_shifts_sections_but_not_child_nodes() {
+    use crate::application::document::apply_node_resize_to_tree;
+    use crate::application::document::tests_common::pinned_two_section_node;
+    use glam::Vec2;
+
+    let (doc, id) = pinned_two_section_node();
+    // Pick a child mind-node id (any non-`id` node in the testament map)
+    // and snapshot its tree-side position pre-resize.
+    let child_id = doc
+        .mindmap
+        .nodes
+        .keys()
+        .find(|k| k.as_str() != id)
+        .expect("testament map has more than one node")
+        .clone();
+
+    let mut tree = doc.build_tree();
+    let child_arena_id = tree.arena_id_for(&child_id).unwrap();
+    let child_pos_before = tree
+        .tree
+        .arena
+        .get(child_arena_id)
+        .and_then(|n| n.get().glyph_area())
+        .map(|a| (a.position.x.0, a.position.y.0))
+        .unwrap();
+
+    let new_pos = Vec2::new(500.0, 200.0);
+    let new_size = Vec2::new(150.0, 70.0);
+    let position_delta = Vec2::new(50.0, 25.0);
+    apply_node_resize_to_tree(&mut tree, &id, new_pos, new_size, position_delta);
+
+    // Child mind-node should be untouched — even when it's not
+    // a descendant of `id`, the helper should never have walked
+    // its arena entry. Pin the invariant.
+    let child_pos_after = tree
+        .tree
+        .arena
+        .get(child_arena_id)
+        .and_then(|n| n.get().glyph_area())
+        .map(|a| (a.position.x.0, a.position.y.0))
+        .unwrap();
+    assert_eq!(
+        child_pos_before, child_pos_after,
+        "node resize must not visually translate other mind-nodes' tree state"
+    );
+
+    // The resized node's container *did* move.
+    let resized_arena_id = tree.arena_id_for(&id).unwrap();
+    let resized_pos = tree
+        .tree
+        .arena
+        .get(resized_arena_id)
+        .and_then(|n| n.get().glyph_area())
+        .map(|a| (a.position.x.0, a.position.y.0))
+        .unwrap();
+    assert!((resized_pos.0 - 500.0).abs() < 0.001);
+    assert!((resized_pos.1 - 200.0).abs() < 0.001);
+}
+
+#[test]
+fn test_apply_node_resize_to_tree_unknown_node_no_op() {
+    use crate::application::document::apply_node_resize_to_tree;
+    use crate::application::document::tests_common::pinned_two_section_node;
+    use glam::Vec2;
+
+    let (doc, _id) = pinned_two_section_node();
+    let mut tree = doc.build_tree();
+    // No panic; tree untouched.
+    apply_node_resize_to_tree(&mut tree, "nope", Vec2::ZERO, Vec2::new(10.0, 10.0), Vec2::ZERO);
 }
 
 // --- Custom mutation registry & application tests ---

@@ -35,7 +35,11 @@ pub(in crate::application::app) fn selection_change_touches_tree(
         // stale highlight.
         matches!(
             sel,
-            SelectionState::Single(_) | SelectionState::Multi(_) | SelectionState::Section(_)
+            SelectionState::Single(_)
+                | SelectionState::Multi(_)
+                | SelectionState::Section(_)
+                | SelectionState::MultiSection(_)
+                | SelectionState::SectionRange { .. }
         )
     }
     touches_tree(prev) || touches_tree(new)
@@ -190,24 +194,49 @@ pub(in crate::application::app) fn rebuild_all(
     scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
 ) {
     let mut new_tree = doc.build_tree();
-    // For a `Section` selection, restrict the highlight to the
-    // selected section only — visual feedback matches what the
-    // user pointed at. `Single` / `Multi` continue to highlight
-    // every section of the selected nodes (the whole-node
-    // semantic).
-    let only_section_idx = doc.selection.selected_section().map(|s| s.section_idx);
-    apply_tree_highlights(
-        &mut new_tree,
-        doc.selection
-            .selected_ids()
-            .into_iter()
-            .map(|id| (id, only_section_idx, HIGHLIGHT_COLOR)),
-    );
+    apply_tree_highlights(&mut new_tree, selection_highlight_entries(&doc.selection));
     renderer.rebuild_buffers_from_tree(&new_tree.tree);
 
     rebuild_scene_only(doc, app_scene, renderer, scene_cache);
 
     *mindmap_tree = Some(new_tree);
+}
+
+/// Map a [`SelectionState`] to the highlight entries
+/// `apply_tree_highlights` consumes — one
+/// `(node_id, only_section_idx, color)` triple per highlighted
+/// region. Single / Multi yield whole-node entries (None
+/// section index — every section of the named node tints).
+/// Section yields a single entry restricted to the targeted
+/// section. MultiSection yields one entry per `(node_id,
+/// section_idx)` pair, so a multi-section set highlights
+/// only the selected sections (and a multi-section set on
+/// one node tints just those sections, leaving sibling
+/// sections untouched).
+pub(in crate::application::app) fn selection_highlight_entries(
+    selection: &SelectionState,
+) -> Vec<(&str, Option<usize>, [f32; 4])> {
+    match selection {
+        SelectionState::Section(s) => {
+            vec![(s.node_id.as_str(), Some(s.section_idx), HIGHLIGHT_COLOR)]
+        }
+        SelectionState::MultiSection(secs) => secs
+            .iter()
+            .map(|s| (s.node_id.as_str(), Some(s.section_idx), HIGHLIGHT_COLOR))
+            .collect(),
+        // Range-aware sub-grapheme highlight is deferred to a
+        // future tier; for now narrow the highlight to the
+        // owning section (same shape as `Section`) so the user
+        // can see which section their range targets.
+        SelectionState::SectionRange { sel, .. } => {
+            vec![(sel.node_id.as_str(), Some(sel.section_idx), HIGHLIGHT_COLOR)]
+        }
+        _ => selection
+            .selected_ids()
+            .into_iter()
+            .map(|id| (id, None, HIGHLIGHT_COLOR))
+            .collect(),
+    }
 }
 
 /// Narrower cousin of `rebuild_all` that rebuilds only the flat
@@ -239,6 +268,8 @@ pub(in crate::application::app) fn rebuild_scene_only(
     update_border_tree_static(doc, app_scene);
     update_portal_tree(doc, &std::collections::HashMap::new(), app_scene, renderer);
     update_edge_handle_tree(&scene, app_scene);
+    update_section_resize_handle_tree(&scene, app_scene);
+    update_node_resize_handle_tree(&scene, app_scene);
     update_connection_label_tree(&scene, app_scene, renderer);
     flush_canvas_scene_buffers(app_scene, renderer);
 }
@@ -502,21 +533,98 @@ pub(in crate::application::app) fn update_edge_handle_tree(
     scene: &baumhard::mindmap::scene_builder::RenderScene,
     app_scene: &mut crate::application::scene_host::AppScene,
 ) {
-    use crate::application::scene_host::{hash_canvas_signature, CanvasDispatch, CanvasRole};
+    update_handle_canvas_role(
+        crate::application::scene_host::CanvasRole::EdgeHandles,
+        &scene.edge_handles,
+        app_scene,
+    );
+}
+
+/// Build or in-place update the section-resize-handle tree under
+/// [`crate::application::scene_host::CanvasRole::SectionResizeHandles`].
+/// Sibling of `update_edge_handle_tree`; same §B2 dispatch shape.
+///
+/// Resize handle counts are 0 (no Section selection / fill-parent
+/// section) or 8 (Some-sized selected section), so the identity-
+/// sequence-based dispatch flips between the two on selection
+/// transitions and stays stable during a resize drag.
+pub(in crate::application::app) fn update_section_resize_handle_tree(
+    scene: &baumhard::mindmap::scene_builder::RenderScene,
+    app_scene: &mut crate::application::scene_host::AppScene,
+) {
+    update_section_resize_handle_tree_from_slice(&scene.section_resize_handles, app_scene);
+}
+
+/// Build or in-place update the node-resize-handle tree under
+/// [`crate::application::scene_host::CanvasRole::NodeResizeHandles`].
+/// Sibling of `update_section_resize_handle_tree`; same §B2
+/// dispatch. Selection-gated 0 ↔ 8 transitions take the full-
+/// rebuild arm; a steady drag stays on the in-place mutator arm.
+pub(in crate::application::app) fn update_node_resize_handle_tree(
+    scene: &baumhard::mindmap::scene_builder::RenderScene,
+    app_scene: &mut crate::application::scene_host::AppScene,
+) {
+    update_node_resize_handle_tree_from_slice(&scene.node_resize_handles, app_scene);
+}
+
+/// Same as [`update_node_resize_handle_tree`] but takes the
+/// element slice directly. Used by the resize drain to refresh
+/// handle positions per-frame against the in-progress AABB
+/// without round-tripping through a full `RenderScene` build.
+pub(in crate::application::app) fn update_node_resize_handle_tree_from_slice(
+    elements: &[baumhard::mindmap::scene_builder::NodeResizeHandleElement],
+    app_scene: &mut crate::application::scene_host::AppScene,
+) {
+    update_handle_canvas_role(
+        crate::application::scene_host::CanvasRole::NodeResizeHandles,
+        elements,
+        app_scene,
+    );
+}
+
+/// Same as [`update_section_resize_handle_tree`] but takes the
+/// element slice directly. Used by the resize drain to refresh
+/// handle positions per-frame against the in-progress AABB
+/// without round-tripping through a full `RenderScene` build.
+pub(in crate::application::app) fn update_section_resize_handle_tree_from_slice(
+    elements: &[baumhard::mindmap::scene_builder::SectionResizeHandleElement],
+    app_scene: &mut crate::application::scene_host::AppScene,
+) {
+    update_handle_canvas_role(
+        crate::application::scene_host::CanvasRole::SectionResizeHandles,
+        elements,
+        app_scene,
+    );
+}
+
+/// Generic §B2 dispatch for any handle-bearing canvas role —
+/// edge handles, section resize handles, node resize handles.
+/// Each role's `update_*_handle_tree*` wrapper picks the
+/// `CanvasRole` and the element slice; this fn routes through
+/// the trait-generic `build_handle_tree` /
+/// `build_handle_mutator_tree` / `handle_identity_sequence` so
+/// the §5-flagged triplication of three-near-identical
+/// per-domain dispatchers collapses to one source of truth.
+fn update_handle_canvas_role<E: baumhard::mindmap::tree_builder::HandleVisual>(
+    role: crate::application::scene_host::CanvasRole,
+    elements: &[E],
+    app_scene: &mut crate::application::scene_host::AppScene,
+) {
+    use crate::application::scene_host::{hash_canvas_signature, CanvasDispatch};
     use baumhard::mindmap::tree_builder::{
-        build_edge_handle_mutator_tree, build_edge_handle_tree, edge_handle_identity_sequence,
+        build_handle_mutator_tree, build_handle_tree, handle_identity_sequence,
     };
 
-    let signature = hash_canvas_signature(&edge_handle_identity_sequence(&scene.edge_handles));
-    match app_scene.canvas_dispatch(CanvasRole::EdgeHandles, signature) {
+    let signature = hash_canvas_signature(&handle_identity_sequence(elements));
+    match app_scene.canvas_dispatch(role, signature) {
         CanvasDispatch::InPlaceMutator => {
-            let mutator = build_edge_handle_mutator_tree(&scene.edge_handles);
-            app_scene.apply_canvas_mutator(CanvasRole::EdgeHandles, &mutator);
+            let mutator = build_handle_mutator_tree(elements);
+            app_scene.apply_canvas_mutator(role, &mutator);
         }
         CanvasDispatch::FullRebuild => {
-            let tree = build_edge_handle_tree(&scene.edge_handles);
-            app_scene.register_canvas(CanvasRole::EdgeHandles, tree, glam::Vec2::ZERO);
-            app_scene.set_canvas_signature(CanvasRole::EdgeHandles, signature);
+            let tree = build_handle_tree(elements);
+            app_scene.register_canvas(role, tree, glam::Vec2::ZERO);
+            app_scene.set_canvas_signature(role, signature);
         }
     }
 }

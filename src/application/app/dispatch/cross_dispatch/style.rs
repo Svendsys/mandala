@@ -74,3 +74,93 @@ pub(in crate::application::app) fn apply_set_spacing(input: &str, rc: &mut Rebui
         crate::application::console::commands::spacing::apply_spacing_to_selection(doc, input)
     });
 }
+
+/// Resolve the (node_id, section_idx) the section-targeted
+/// Action variants apply to. Section / SectionRange use their
+/// inner SectionSel; MultiSection collapses to the first.
+/// `Single` is rejected — section verbs require an explicit
+/// section selection (matches the console verb path's contract;
+/// a node may have its title at section 0 and body at section 1
+/// and a silent "default to 0" would nudge the wrong section).
+fn target_section(
+    sel: &crate::application::document::SelectionState,
+) -> Option<(String, usize)> {
+    if let Some(s) = sel.selected_section() {
+        return Some((s.node_id.clone(), s.section_idx));
+    }
+    if let Some(first) = sel.selected_sections().first() {
+        return Some((first.node_id.clone(), first.section_idx));
+    }
+    None
+}
+
+/// Nudge the selected section by `(dx, dy)` canvas units.
+/// AABB rejection on overflow surfaces as a `log::warn!` and
+/// no-op (the model setter returns `Err`). Mirror of
+/// `section move <dx> <dy>` for the keybind / macro path.
+pub(in crate::application::app) fn apply_set_section_offset_delta(
+    dx: f64,
+    dy: f64,
+    rc: &mut RebuildContext<'_>,
+) {
+    let Some((node_id, idx)) = target_section(&rc.document.selection) else {
+        log::warn!("SetSectionOffsetDelta: no section selected");
+        return;
+    };
+    let (cx, cy) = match rc
+        .document
+        .mindmap
+        .nodes
+        .get(&node_id)
+        .and_then(|n| n.sections.get(idx))
+        .map(|s| (s.offset.x, s.offset.y))
+    {
+        Some(p) => p,
+        None => {
+            log::warn!("SetSectionOffsetDelta: section[{}] not found on node '{}'", idx, node_id);
+            return;
+        }
+    };
+    apply_with_rebuild(rc, |doc| {
+        match doc.set_section_offset(&node_id, idx, cx + dx, cy + dy) {
+            Ok(changed) => changed,
+            Err(msg) => {
+                log::warn!("SetSectionOffsetDelta: {}", msg);
+                false
+            }
+        }
+    });
+}
+
+/// Pin the selected section's size to `(w, h)` (or fill-parent
+/// when `size = None`). Mirror of `section resize <w> <h>` /
+/// `section resize none` for the keybind / macro path.
+pub(in crate::application::app) fn apply_set_section_size(
+    size: Option<baumhard::mindmap::model::Size>,
+    rc: &mut RebuildContext<'_>,
+) {
+    let Some((node_id, idx)) = target_section(&rc.document.selection) else {
+        log::warn!("SetSectionSize: no section selected");
+        return;
+    };
+    let exists = rc
+        .document
+        .mindmap
+        .nodes
+        .get(&node_id)
+        .map(|n| n.sections.get(idx).is_some())
+        .unwrap_or(false);
+    if !exists {
+        log::warn!("SetSectionSize: section[{}] not found on node '{}'", idx, node_id);
+        return;
+    }
+    apply_with_rebuild(rc, |doc| {
+        match doc.set_section_size(&node_id, idx, size) {
+            Ok(changed) => changed,
+            Err(msg) => {
+                log::warn!("SetSectionSize: {}", msg);
+                false
+            }
+        }
+    });
+}

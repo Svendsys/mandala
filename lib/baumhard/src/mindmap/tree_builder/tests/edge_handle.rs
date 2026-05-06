@@ -7,11 +7,11 @@ use super::super::*;
 #[test]
 fn edge_handle_channels_preserve_ordering_and_distinctness() {
     use crate::mindmap::scene_builder::EdgeHandleKind;
-    let from = edge_handle_channel_for(EdgeHandleKind::AnchorFrom);
-    let to = edge_handle_channel_for(EdgeHandleKind::AnchorTo);
-    let mid = edge_handle_channel_for(EdgeHandleKind::Midpoint);
-    let cp0 = edge_handle_channel_for(EdgeHandleKind::ControlPoint(0));
-    let cp1 = edge_handle_channel_for(EdgeHandleKind::ControlPoint(1));
+    let from = crate::mindmap::scene_builder::edge_handle_channel_for(EdgeHandleKind::AnchorFrom);
+    let to = crate::mindmap::scene_builder::edge_handle_channel_for(EdgeHandleKind::AnchorTo);
+    let mid = crate::mindmap::scene_builder::edge_handle_channel_for(EdgeHandleKind::Midpoint);
+    let cp0 = crate::mindmap::scene_builder::edge_handle_channel_for(EdgeHandleKind::ControlPoint(0));
+    let cp1 = crate::mindmap::scene_builder::edge_handle_channel_for(EdgeHandleKind::ControlPoint(1));
     assert!(from < to, "AnchorFrom < AnchorTo");
     assert!(to < mid, "AnchorTo < Midpoint");
     assert!(to < cp0, "AnchorTo < ControlPoint(0)");
@@ -24,7 +24,7 @@ fn edge_handle_channels_preserve_ordering_and_distinctness() {
 
 /// Round-trip: a tree built from handle set A, with the mutator
 /// computed from handle set B applied, reads identical to a
-/// fresh `build_edge_handle_tree(B)` — provided B has the same
+/// fresh `build_handle_tree(B)` — provided B has the same
 /// identity sequence as A (same kind ordering). Pins the §B2
 /// "mutation, not rebuild" promise for the drag hot path: only
 /// positions move during a handle drag, so identity stays
@@ -55,16 +55,16 @@ fn edge_handle_mutator_round_trip_matches_full_rebuild() {
         mk(EdgeHandleKind::Midpoint, 57.0, -2.0),
     ];
     assert_eq!(
-        edge_handle_identity_sequence(&set_a),
-        edge_handle_identity_sequence(&set_b),
+        handle_identity_sequence(&set_a),
+        handle_identity_sequence(&set_b),
         "drag preserves identity sequence; only positions move"
     );
 
-    let mut tree_a = build_edge_handle_tree(&set_a);
-    let mutator = build_edge_handle_mutator_tree(&set_b);
+    let mut tree_a = build_handle_tree(&set_a);
+    let mutator = build_handle_mutator_tree(&set_b);
     mutator.apply_to(&mut tree_a);
 
-    let expected = build_edge_handle_tree(&set_b);
+    let expected = build_handle_tree(&set_b);
     let actual_leaves: Vec<NodeId> = tree_a.root.children(&tree_a.arena).collect();
     let expected_leaves: Vec<NodeId> = expected.root.children(&expected.arena).collect();
     assert_eq!(actual_leaves.len(), expected_leaves.len());
@@ -113,8 +113,8 @@ fn edge_handle_identity_sequence_changes_on_midpoint_to_cp() {
         mk(EdgeHandleKind::ControlPoint(0)),
     ];
     assert_ne!(
-        edge_handle_identity_sequence(&straight),
-        edge_handle_identity_sequence(&curved)
+        handle_identity_sequence(&straight),
+        handle_identity_sequence(&curved)
     );
 }
 
@@ -137,7 +137,7 @@ fn edge_handle_region_sized_by_grapheme_cluster_count_not_codepoints() {
         color: "#00E5FF".into(),
         font_size_pt: 14.0,
     };
-    let tree = build_edge_handle_tree(&[elem]);
+    let tree = build_handle_tree(&[elem]);
     let handle = tree.root.children(&tree.arena).next().unwrap();
     let area = tree.arena.get(handle).unwrap().get().glyph_area().unwrap();
     let regions = area.regions.all_regions();

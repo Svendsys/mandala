@@ -69,10 +69,7 @@ pub(crate) fn region_to_text_run(region: &ColorFontRegion, prior: Option<&TextRu
     // deliberate `SetRegionColor` on a `var()`-bearing run is
     // silently swallowed here — the run keeps the variable.
     let prior_var_color: Option<&str> = prior.and_then(|p| {
-        if p.color.starts_with("var(")
-            && p.start == region.range.start
-            && p.end == region.range.end
-        {
+        if p.color.starts_with("var(") && p.start == region.range.start && p.end == region.range.end {
             Some(p.color.as_str())
         } else {
             None
@@ -260,9 +257,8 @@ impl MindMapDocument {
             // tree's render_bounds diverges from the node's full
             // size (i.e. the mutation explicitly resized the
             // section, or the model already carried a Some).
-            let tree_size_diverges =
-                (snapshot.tree_size.0 - node_size_x).abs() > f32::EPSILON
-                    || (snapshot.tree_size.1 - node_size_y).abs() > f32::EPSILON;
+            let tree_size_diverges = (snapshot.tree_size.0 - node_size_x).abs() > f32::EPSILON
+                || (snapshot.tree_size.1 - node_size_y).abs() > f32::EPSILON;
             if section.size.is_some() || tree_size_diverges {
                 section.size = Some(baumhard::mindmap::model::Size {
                     width: snapshot.tree_size.0 as f64,
@@ -287,11 +283,8 @@ impl MindMapDocument {
             // from sections the mutation didn't touch. Build a
             // map keyed by `(start, end)` and compare each
             // tree-side region against the same-range prior.
-            let model_runs_by_range: rustc_hash::FxHashMap<(usize, usize), &TextRun> = section
-                .text_runs
-                .iter()
-                .map(|r| ((r.start, r.end), r))
-                .collect();
+            let model_runs_by_range: rustc_hash::FxHashMap<(usize, usize), &TextRun> =
+                section.text_runs.iter().map(|r| ((r.start, r.end), r)).collect();
             let model_regions_match = model_runs_by_range.len() == snapshot.regions.len()
                 && snapshot.regions.iter().all(|region| {
                     let key = (region.range.start, region.range.end);
@@ -379,7 +372,9 @@ impl MindMapDocument {
 
 #[cfg(test)]
 mod region_converter_tests {
-    use super::{exact_or_dominant_overlap, region_to_text_run, DEFAULT_TEXT_RUN_COLOR, DEFAULT_TEXT_RUN_SIZE_PT};
+    use super::{
+        exact_or_dominant_overlap, region_to_text_run, DEFAULT_TEXT_RUN_COLOR, DEFAULT_TEXT_RUN_SIZE_PT,
+    };
     use baumhard::core::primitives::{ColorFontRegion, Range};
     use baumhard::mindmap::model::TextRun;
 

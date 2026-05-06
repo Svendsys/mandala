@@ -5,7 +5,7 @@
 //! `undo()` dispatch lives in `undo.rs` and branches on these
 //! variants.
 
-use baumhard::mindmap::model::{Canvas, MindEdge, MindNode, MindSection, NodeStyle, Position};
+use baumhard::mindmap::model::{Canvas, MindEdge, MindNode, MindSection, NodeStyle, Position, Size};
 
 /// An undoable action that can be reversed.
 #[derive(Clone, Debug)]
@@ -77,6 +77,18 @@ pub enum UndoAction {
     /// the whole thing is cheaper than tracking field-level diffs, and
     /// trivially correct.
     CanvasSnapshot { canvas: Canvas },
+    /// A node's AABB (`position` + `size`) was atomically rewritten
+    /// — the release-commit of a node-resize drag, or the
+    /// `node resize` console verb. Captures the pre-edit pair so
+    /// undo restores both fields in lockstep. Separate from
+    /// `MoveNodes` (which captures multiple node positions but not
+    /// sizes) and from `EditNodeStyle` (which captures style +
+    /// sections but not the node's own AABB).
+    EditNodeAabb {
+        node_id: String,
+        before_position: Position,
+        before_size: Size,
+    },
     /// A node was deleted. Restored by re-inserting the node, re-inserting
     /// every edge that touched it at its original `mindmap.edges` index,
     /// and restoring the `parent_id` of every child that was orphaned by

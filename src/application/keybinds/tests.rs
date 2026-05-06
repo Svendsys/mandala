@@ -296,6 +296,24 @@ fn test_wasm_compatibility_navigation_actions_are_compatible() {
 }
 
 #[test]
+fn test_wasm_compatibility_section_aabb_actions_are_compatible() {
+    use crate::application::keybinds::WasmCompatibility::Compatible;
+    for a in [
+        Action::SetSectionOffsetDelta {
+            dx: "1".into(),
+            dy: "0".into(),
+        },
+        Action::SetSectionSizeAbs {
+            w: "100".into(),
+            h: "50".into(),
+        },
+        Action::SetSectionSizeFillParent,
+    ] {
+        assert_eq!(a.wasm_compatibility(), Compatible, "{:?} should be Compatible", a);
+    }
+}
+
+#[test]
 fn test_wasm_compatibility_selection_actions_are_compatible() {
     use crate::application::keybinds::WasmCompatibility::Compatible;
     for a in [
@@ -468,6 +486,12 @@ fn test_wasm_compatibility_text_edit_primitives_are_compatible() {
         Action::TextEditCursorDown,
         Action::TextEditCursorHome,
         Action::TextEditCursorEnd,
+        Action::TextEditCursorLeftSelect,
+        Action::TextEditCursorRightSelect,
+        Action::TextEditCursorUpSelect,
+        Action::TextEditCursorDownSelect,
+        Action::TextEditCursorHomeSelect,
+        Action::TextEditCursorEndSelect,
         Action::TextEditWordLeft,
         Action::TextEditWordRight,
         Action::TextEditDeleteBack,

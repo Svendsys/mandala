@@ -62,29 +62,40 @@ pub(super) fn load_test_tree() -> MindMapTree {
     load_test_doc().build_tree()
 }
 
-/// Pick the first node id the testament map's loader exposes
-/// from its `nodes` HashMap. Stable within one process because
-/// the cached fixture clone is the same `MindMap` every call.
-/// Used by tests that just need *some* node to operate on; tests
-/// that want the well-known root specifically should index by
-/// `"0"` directly so the dependency on the testament shape is
-/// visible at the call site.
+/// Pick the lexicographically smallest node id from the
+/// testament map. Deterministic across `cargo test` invocations
+/// regardless of `HashMap` seed (the natural `String` ordering
+/// + `min()` win is stable). Tests that want the well-known
+/// root specifically should still index by `"0"` directly so
+/// the dependency on the testament shape is visible at the
+/// call site.
+///
+/// Earlier shape (`keys().next()`) tripped a real CI flake at
+/// HEAD `002bf18` — `HashMap` uses a per-instance random hash
+/// seed, so different test runs picked different testament
+/// nodes with different section text lengths, and any test
+/// asserting properties of the picked node's content was a
+/// latent flake.
 pub(in crate::application) fn first_testament_node_id(doc: &MindMapDocument) -> String {
     doc.mindmap
         .nodes
         .keys()
-        .next()
+        .min()
         .cloned()
         .expect("testament map has nodes")
 }
 
-/// Pick the first `n` node ids from the testament map. Used by
-/// multi-selection fanout tests that want a `Multi(ids)`
-/// selection of arbitrary cardinality without picking specific
-/// ids. Panics if the map has fewer than `n` nodes — the testament
-/// fixture is large enough that any reasonable `n` succeeds.
+/// Pick the lexicographically smallest `n` node ids from the
+/// testament map. Used by multi-selection fan-out tests that
+/// want a `Multi(ids)` selection of arbitrary cardinality
+/// without picking specific ids. Sorted for deterministic
+/// output regardless of `HashMap` seed — see
+/// [`first_testament_node_id`] for the flake history. Panics
+/// if the map has fewer than `n` nodes.
 pub(in crate::application) fn first_n_testament_node_ids(doc: &MindMapDocument, n: usize) -> Vec<String> {
-    let ids: Vec<String> = doc.mindmap.nodes.keys().take(n).cloned().collect();
+    let mut ids: Vec<String> = doc.mindmap.nodes.keys().cloned().collect();
+    ids.sort();
+    ids.truncate(n);
     assert!(
         ids.len() == n,
         "testament map has {} nodes; needed {}",
@@ -96,12 +107,11 @@ pub(in crate::application) fn first_n_testament_node_ids(doc: &MindMapDocument, 
 
 /// Pick two distinct node ids in `(a, b)` form — the shape
 /// portal-edge / cross-link tests want when they need a
-/// from-and-to pair without caring which specific nodes those are.
+/// from-and-to pair without caring which specific nodes those
+/// are. Deterministic across `HashMap` seeds.
 pub(in crate::application) fn two_testament_node_ids(doc: &MindMapDocument) -> (String, String) {
-    let mut iter = doc.mindmap.nodes.keys();
-    let a = iter.next().expect("testament map has at least one node").clone();
-    let b = iter.next().expect("testament map has at least two nodes").clone();
-    (a, b)
+    let ids = first_n_testament_node_ids(doc, 2);
+    (ids[0].clone(), ids[1].clone())
 }
 
 /// Build a fresh blank `MindMapDocument` carrying a single
@@ -149,6 +159,79 @@ pub(in crate::application) fn doc_with_one_edge() -> (MindMapDocument, super::Ed
     let er = super::EdgeRef::new(&edge.from_id, &edge.to_id, &edge.edge_type);
     doc.mindmap.edges.push(edge);
     (doc, er)
+}
+
+/// Materialise `node_id` into a two-section node with one pinned
+/// text run per section. Sets the node's `style.text_color` to
+/// `text_color_default` so the cascade source the section colour
+/// setter consults (and the colour picker reads) resolves against
+/// a known anchor. Each section's single run carries the colour
+/// at the matching index in `section_run_colors`; both share
+/// `font` and `size_pt`. The pre-existing first section's `text`
+/// field is preserved (only its runs are replaced).
+///
+/// Used across the Tier 2A section-routing tests that previously
+/// re-implemented this scaffold in four near-identical inline
+/// copies (commands/color, commands/font, console/tests/
+/// wheel_dispatch, color_picker/tests/targets).
+pub(in crate::application) fn make_two_section_node_with_pinned_runs(
+    doc: &mut MindMapDocument,
+    node_id: &str,
+    text_color_default: &str,
+    section_run_colors: [&str; 2],
+    font: &str,
+    size_pt: u32,
+) {
+    use baumhard::mindmap::model::{MindSection, TextRun};
+    let node = doc.mindmap.nodes.get_mut(node_id).expect("node id exists in doc");
+    node.sections
+        .push(MindSection::new_default("second".into(), Vec::new()));
+    node.style.text_color = text_color_default.into();
+    for (i, section) in node.sections.iter_mut().enumerate() {
+        section.text_runs.clear();
+        section.text_runs.push(TextRun {
+            start: 0,
+            end: section.text.chars().count().max(1),
+            bold: false,
+            italic: false,
+            underline: false,
+            font: font.into(),
+            size_pt,
+            color: section_run_colors[i].into(),
+            hyperlink: None,
+        });
+    }
+}
+
+/// Build a 200×100 testament-rooted node with two sections, the
+/// second pinned at offset (10,10) size 50×30 — the deterministic
+/// AABB-validation fixture every section-position/size test needs.
+/// Resets `undo_stack` and `dirty` so the test starts clean (the
+/// helper's mutations don't push undo, but loaders may).
+pub(in crate::application) fn pinned_two_section_node() -> (MindMapDocument, String) {
+    let mut doc = load_test_doc();
+    let id = first_testament_node_id(&doc);
+    make_two_section_node_with_pinned_runs(
+        &mut doc,
+        &id,
+        "#ffffff",
+        ["#ffffff", "#ffffff"],
+        "LiberationSans",
+        14,
+    );
+    {
+        let node = doc.mindmap.nodes.get_mut(&id).unwrap();
+        node.size.width = 200.0;
+        node.size.height = 100.0;
+        node.sections[1].offset = baumhard::mindmap::model::Position { x: 10.0, y: 10.0 };
+        node.sections[1].size = Some(baumhard::mindmap::model::Size {
+            width: 50.0,
+            height: 30.0,
+        });
+    }
+    doc.undo_stack.clear();
+    doc.dirty = false;
+    (doc, id)
 }
 
 /// Pick the first visible edge and return its EdgeRef + a guaranteed

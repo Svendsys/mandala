@@ -24,6 +24,7 @@
 use winit::event::ElementState;
 
 use super::PendingClick;
+use crate::application::app::click_triggers::fire_onclick_triggers;
 use crate::application::app::scene_rebuild::{
     rebuild_after_selection_change, rebuild_all, rebuild_scene_only,
 };
@@ -329,7 +330,17 @@ impl super::WasmApp {
                 let _ = dispatch::action_core::dispatch_compatible(&Action::TextEditCommit, &mut core);
             }
             self.suppress_keys.set(false);
-            return;
+            // Fall through to the click-target selection
+            // update below — same as native's
+            // `event_mouse_click.rs` flow (commit then
+            // `handle_click`). Without this, the
+            // editor-commit path's `lift_anchor_to_section_range`
+            // leaves `SelectionState::SectionRange` standing
+            // even though the user clicked away to a different
+            // node. Drop the renderer borrow first so the
+            // re-borrow at the bottom of this function
+            // doesn't panic.
+            drop(renderer_borrow);
         }
 
         // Fire any `OnClick` triggers BEFORE the selection
@@ -352,27 +363,15 @@ impl super::WasmApp {
             _ => (None, None),
         };
         if let Some(id) = trigger_node_id.as_ref() {
-            let triggered = input.document.find_triggered_mutations_at(
+            fire_onclick_triggers(
+                &mut input.document,
+                &mut input.mindmap_tree,
+                &mut input.scene_cache,
                 id,
                 trigger_section_idx,
-                &baumhard::mindmap::custom_mutation::Trigger::OnClick,
-                &baumhard::mindmap::custom_mutation::PlatformContext::Web,
+                baumhard::mindmap::custom_mutation::PlatformContext::Web,
+                now_ms() as u64,
             );
-            for cm in triggered {
-                if cm.timing.as_ref().is_some_and(|t| t.duration_ms > 0) {
-                    let now_ms = web_sys::window()
-                        .and_then(|w| w.performance())
-                        .map(|p| p.now() as u64)
-                        .unwrap_or(0);
-                    input
-                        .document
-                        .start_animation_at(&cm, id, trigger_section_idx, now_ms);
-                } else if let Some(tree) = input.mindmap_tree.as_mut() {
-                    input.document.apply_custom_mutation(&cm, id, Some(tree));
-                    input.scene_cache.clear();
-                }
-                input.document.apply_document_actions(&cm);
-            }
         }
 
         // Plain selection click. Snapshot the previous

@@ -70,6 +70,15 @@ pub(in crate::application::app) enum TextEditState {
         /// selection-highlight regions that the last `rebuild_all`
         /// stamped into the node).
         original_regions: baumhard::core::primitives::ColorFontRegions,
+        /// Shift-select anchor: where the user first held shift
+        /// when extending a selection. `None` = no active sub-
+        /// range selection (cursor moves are unanchored, plain
+        /// keystroke). `Some(idx)` = the (anchor, cursor) pair
+        /// defines a `[min, max)` grapheme range; on close, if
+        /// `anchor != cursor`, the range lifts to
+        /// `SelectionState::SectionRange` so per-section verbs
+        /// (color, font) target only those graphemes.
+        selection_anchor: Option<usize>,
     },
 }
 
@@ -222,6 +231,7 @@ pub(in crate::application::app) fn apply_text_edit_action(
         buffer,
         cursor_grapheme_pos,
         buffer_regions,
+        selection_anchor,
         ..
     } = state
     else {
@@ -230,27 +240,51 @@ pub(in crate::application::app) fn apply_text_edit_action(
     let cursor = cursor_grapheme_pos;
     let before = *cursor;
     let len_before = buffer.len();
+    // Classify the action against the shift-select state:
+    //  - `extends_anchor` keeps the anchor live and seeds it
+    //    from `before` if it wasn't set yet (the user pressed
+    //    a shift-cursor key for the first time).
+    //  - `clears_anchor` collapses any active range — non-shift
+    //    cursor moves and any text edit (typing / delete) drop
+    //    the anchor. Range-aware text editing (typing replaces
+    //    the selection) is deferred; clearing the anchor on
+    //    edits matches the simpler "anchor only lives across
+    //    cursor-key sequences" invariant.
+    let extends_anchor = matches!(
+        action,
+        Action::TextEditCursorLeftSelect
+            | Action::TextEditCursorRightSelect
+            | Action::TextEditCursorUpSelect
+            | Action::TextEditCursorDownSelect
+            | Action::TextEditCursorHomeSelect
+            | Action::TextEditCursorEndSelect
+    );
+    if extends_anchor && selection_anchor.is_none() {
+        *selection_anchor = Some(before);
+    } else if !extends_anchor {
+        *selection_anchor = None;
+    }
     match action {
-        Action::TextEditCursorLeft => {
+        Action::TextEditCursorLeft | Action::TextEditCursorLeftSelect => {
             if *cursor > 0 {
                 *cursor -= 1;
             }
         }
-        Action::TextEditCursorRight => {
+        Action::TextEditCursorRight | Action::TextEditCursorRightSelect => {
             if *cursor < grapheme_chad::count_grapheme_clusters(buffer) {
                 *cursor += 1;
             }
         }
-        Action::TextEditCursorUp => {
+        Action::TextEditCursorUp | Action::TextEditCursorUpSelect => {
             *cursor = move_cursor_up_line(buffer, *cursor);
         }
-        Action::TextEditCursorDown => {
+        Action::TextEditCursorDown | Action::TextEditCursorDownSelect => {
             *cursor = move_cursor_down_line(buffer, *cursor);
         }
-        Action::TextEditCursorHome => {
+        Action::TextEditCursorHome | Action::TextEditCursorHomeSelect => {
             *cursor = cursor_to_line_start(buffer, *cursor);
         }
-        Action::TextEditCursorEnd => {
+        Action::TextEditCursorEnd | Action::TextEditCursorEndSelect => {
             *cursor = cursor_to_line_end(buffer, *cursor);
         }
         Action::TextEditDeleteBack => {

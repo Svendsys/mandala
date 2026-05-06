@@ -95,6 +95,7 @@ pub(in crate::application::app) fn open_text_edit(
         buffer_regions: buffer_regions.clone(),
         original_text,
         original_regions,
+        selection_anchor: None,
     };
     // Push the initial (caret-only for creation, or "existing text +
     // caret at end" for edit) through the Baumhard mutation pipeline.
@@ -221,19 +222,45 @@ pub(in crate::application::app) fn revert_node_text_on_tree(
     }
 }
 
-/// commit or cancel the open text editor.
+/// Decide whether the editor's `(anchor, cursor)` pair should
+/// promote the document selection to `SelectionState::SectionRange`
+/// at close time. Pure function — extracted from `close_text_edit`'s
+/// inline logic so the lift contract can be unit-tested without
+/// the full renderer / tree / scene plumbing.
 ///
-/// - **Commit**: writes the final buffer back to the model via
-///   `set_node_text` (no-op on unchanged text, handles its own undo
-///   push), then `rebuild_all` to pull the tree back to the freshly
-///   mutated model.
-/// - **Cancel**: applies the `(original_text, original_regions)`
-///   snapshot captured at open time as a `DeltaGlyphArea` to the
-///   edited node. The model is untouched during editing, so the rest
-///   of the tree + scene are already in sync — no `rebuild_all` is
-///   needed. This skips the `doc.build_tree()` walk and the full
-///   `rebuild_scene_only` (connections, borders, portals, labels,
-///   edge handles), which matters on maps with many nodes.
+/// Returns `Some(new_sel)` when `anchor.is_some()` AND
+/// `anchor != cursor` — the range is the half-open
+/// `[min(anchor, cursor), max(anchor, cursor))`. Returns `None`
+/// when the anchor is unset or coincides with the cursor (no
+/// shift-select happened, or the shift-select collapsed back).
+pub(in crate::application::app) fn lift_anchor_to_section_range(
+    selection_anchor: Option<usize>,
+    cursor_grapheme_pos: usize,
+    node_id: &str,
+    section_idx: usize,
+) -> Option<crate::application::document::SelectionState> {
+    let anchor = selection_anchor?;
+    if anchor == cursor_grapheme_pos {
+        return None;
+    }
+    let start = anchor.min(cursor_grapheme_pos);
+    let end = anchor.max(cursor_grapheme_pos);
+    Some(crate::application::document::SelectionState::SectionRange {
+        sel: crate::application::document::SectionSel {
+            node_id: node_id.to_string(),
+            section_idx,
+        },
+        range: (start, end),
+    })
+}
+
+/// Commit or cancel the open text editor. Commit writes the
+/// buffer through `set_section_text_and_runs` and rebuilds; cancel
+/// reverts only the edited section's transient text/regions to
+/// the pre-edit snapshot (model was untouched during editing, so
+/// the rest of the tree stays in sync). Commit also lifts a
+/// non-empty shift-select anchor to `SelectionState::SectionRange`
+/// via `lift_anchor_to_section_range`.
 pub(in crate::application::app) fn close_text_edit(
     commit: bool,
     doc: &mut MindMapDocument,
@@ -248,21 +275,52 @@ pub(in crate::application::app) fn close_text_edit(
             node_id,
             section_idx,
             buffer,
+            cursor_grapheme_pos,
             buffer_regions,
             original_text,
             original_regions,
-            ..
+            selection_anchor,
         } => (
             node_id,
             section_idx,
             buffer,
+            cursor_grapheme_pos,
             buffer_regions,
             original_text,
             original_regions,
+            selection_anchor,
         ),
         TextEditState::Closed => return,
     };
-    let (node_id, section_idx, buffer, buffer_regions, original_text, original_regions) = snapshot;
+    let (
+        node_id,
+        section_idx,
+        buffer,
+        cursor_grapheme_pos,
+        buffer_regions,
+        original_text,
+        original_regions,
+        selection_anchor,
+    ) = snapshot;
+    // Editor close lifts a non-empty shift-select anchor to
+    // `SelectionState::SectionRange` so per-section verbs
+    // (color text, font size, font family) target only the
+    // shift-selected graphemes. **Commit only** — on cancel
+    // the model reverts to `original_text`, which may have
+    // fewer graphemes than the (anchor, cursor) pair was
+    // selected over. Lifting a SectionRange that points past
+    // the post-revert grapheme count would silently no-op on
+    // every downstream consumer (picker / verb).
+    if commit {
+        if let Some(new_sel) = lift_anchor_to_section_range(
+            selection_anchor,
+            cursor_grapheme_pos,
+            &node_id,
+            section_idx,
+        ) {
+            doc.selection = new_sel;
+        }
+    }
     if commit {
         // Section-aware commit. The editor records both the
         // section index *and* the per-grapheme `buffer_regions`
@@ -384,6 +442,108 @@ pub(in crate::application::app) fn apply_text_edit_to_tree(
     renderer.reshape_buffer_for(indextree_node_id, &tree.tree);
 }
 
+/// Apply a literal-character keystroke (Enter, Tab, or printable
+/// chars from a `Key::Character` payload) to the open editor
+/// state. Returns `true` if the buffer / cursor / regions changed.
+/// Mirrors the no-Action fall-through path of
+/// `handle_text_edit_key`: every successful insertion clears the
+/// shift-select anchor so a subsequent close lifts only what the
+/// user actually selected (range-aware "typing replaces selection"
+/// is deferred — clearing matches the simpler invariant). Pure
+/// state-mutation, no renderer / tree side effects.
+pub(in crate::application::app) fn apply_literal_char_insert(
+    name: Option<&str>,
+    logical_key: &Key,
+    text_edit_state: &mut TextEditState,
+) -> bool {
+    let (buffer, cursor, regions, anchor) = match text_edit_state {
+        TextEditState::Open {
+            buffer,
+            cursor_grapheme_pos,
+            buffer_regions,
+            selection_anchor,
+            ..
+        } => (buffer, cursor_grapheme_pos, buffer_regions, selection_anchor),
+        TextEditState::Closed => return false,
+    };
+    match name {
+        Some("enter") => {
+            regions.insert_regions_at(*cursor, 1);
+            *cursor = insert_at_cursor(buffer, *cursor, '\n');
+            *anchor = None;
+            true
+        }
+        Some("tab") => {
+            regions.insert_regions_at(*cursor, 1);
+            *cursor = insert_at_cursor(buffer, *cursor, '\t');
+            *anchor = None;
+            true
+        }
+        _ => {
+            if let Key::Character(c) = logical_key {
+                // Insert the payload as a single grapheme-aware
+                // splice rather than codepoint-by-codepoint. An
+                // IME delivering `"한"` (Hangul, three jamo /
+                // codepoints, one cluster) or a dead-key sequence
+                // delivering `"e\u{0301}"` would otherwise call
+                // `insert_at_cursor` once per char and increment
+                // `cursor` by `+1` per char — but
+                // `count_grapheme_clusters` of the resulting
+                // buffer collapses the codepoints into one
+                // cluster, leaving `cursor_grapheme_pos` past
+                // the buffer's grapheme count. Route through
+                // `grapheme_chad::insert_str_at_grapheme` (which
+                // walks the cluster boundary and calls
+                // `String::insert_str`), then derive the cursor
+                // advance from the pre/post cluster-count delta
+                // so the combining-mark merge case is handled
+                // uniformly with the additive case.
+                let payload = c.as_str();
+                let trimmed: String = payload.chars().filter(|ch| !ch.is_control()).collect();
+                if !trimmed.is_empty() {
+                    let pre_clusters =
+                        baumhard::util::grapheme_chad::count_grapheme_clusters(buffer);
+                    baumhard::util::grapheme_chad::insert_str_at_grapheme(
+                        buffer, *cursor, &trimmed,
+                    );
+                    let post_clusters =
+                        baumhard::util::grapheme_chad::count_grapheme_clusters(buffer);
+                    let advance = post_clusters.saturating_sub(pre_clusters);
+                    // Any successful insertion (including the
+                    // combining-mark merge case) collapses the
+                    // shift-select anchor.
+                    *anchor = None;
+                    if advance > 0 {
+                        regions.insert_regions_at(*cursor, advance);
+                        *cursor += advance;
+                        true
+                    } else {
+                        // Combining-mark merge case: the payload
+                        // (e.g. `\u{0301}`) merged with the prior
+                        // cluster instead of adding a new one —
+                        // `post_clusters == pre_clusters`. The
+                        // bytes are already in `buffer`; the
+                        // cluster count didn't move, so neither
+                        // does the cursor or the region map. Mark
+                        // changed so the live tree picks up the
+                        // byte insertion (the shaped text changes
+                        // even though grapheme positions stay
+                        // aligned). Pre-fix this branch was
+                        // missed and the buffer drifted from the
+                        // tree until the next non-merging
+                        // keystroke.
+                        true
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        }
+    }
+}
+
 /// route a keystroke to the open node text editor. All
 /// keys are stolen from normal keybind dispatch — Tab and Enter
 /// produce literal characters, Esc cancels, arrows/Home/End navigate,
@@ -417,89 +577,11 @@ pub(in crate::application::app) fn handle_text_edit_key(
     // `Some`, we route through `apply_text_edit_action`. If it
     // returned `None`, fall through to the literal-character path
     // (which handles `Enter` / `Tab` / printable chars uniformly).
-    let mut changed = false;
-    if let Some(a) = action {
-        changed = super::apply_text_edit_action(a, text_edit_state);
+    let changed = if let Some(a) = action {
+        super::apply_text_edit_action(a, text_edit_state)
     } else {
-        // No Action matched — insert literal `\n` for Enter, `\t` for
-        // Tab, or printable chars. Pre-existing behaviour preserved.
-        let (buffer, cursor, regions) = match text_edit_state {
-            TextEditState::Open {
-                buffer,
-                cursor_grapheme_pos,
-                buffer_regions,
-                ..
-            } => (buffer, cursor_grapheme_pos, buffer_regions),
-            TextEditState::Closed => return,
-        };
-        match name {
-            Some("enter") => {
-                regions.insert_regions_at(*cursor, 1);
-                *cursor = insert_at_cursor(buffer, *cursor, '\n');
-                changed = true;
-            }
-            Some("tab") => {
-                regions.insert_regions_at(*cursor, 1);
-                *cursor = insert_at_cursor(buffer, *cursor, '\t');
-                changed = true;
-            }
-            _ => {
-                if let Key::Character(c) = logical_key {
-                    // Insert the payload as a single grapheme-aware
-                    // splice rather than codepoint-by-codepoint. An
-                    // IME delivering `"한"` (Hangul, three jamo /
-                    // codepoints, one cluster) or a dead-key sequence
-                    // delivering `"e\u{0301}"` would otherwise call
-                    // `insert_at_cursor` once per char and increment
-                    // `cursor` by `+1` per char — but
-                    // `count_grapheme_clusters` of the resulting
-                    // buffer collapses the codepoints into one
-                    // cluster, leaving `cursor_grapheme_pos` past
-                    // the buffer's grapheme count. Splice the whole
-                    // payload at once and advance the cursor by the
-                    // *delta* in cluster count.
-                    let payload = c.as_str();
-                    let trimmed: String = payload.chars().filter(|ch| !ch.is_control()).collect();
-                    if !trimmed.is_empty() {
-                        let pre_clusters =
-                            baumhard::util::grapheme_chad::count_grapheme_clusters(buffer);
-                        let byte =
-                            baumhard::util::grapheme_chad::find_byte_index_of_grapheme(buffer, *cursor)
-                                .unwrap_or(buffer.len());
-                        let bytes_inserted = trimmed.len();
-                        buffer.insert_str(byte, &trimmed);
-                        let post_clusters =
-                            baumhard::util::grapheme_chad::count_grapheme_clusters(buffer);
-                        let advance = post_clusters.saturating_sub(pre_clusters);
-                        if advance > 0 {
-                            regions.insert_regions_at(*cursor, advance);
-                            *cursor += advance;
-                            changed = true;
-                        } else {
-                            // Combining-mark merge case: the
-                            // payload (e.g. `\u{0301}`) merged
-                            // with the prior cluster instead of
-                            // adding a new one — `post_clusters
-                            // == pre_clusters`. The bytes are
-                            // already in `buffer`; the cluster
-                            // count didn't move, so neither does
-                            // the cursor or the region map. Mark
-                            // `changed = true` so the live tree
-                            // picks up the byte insertion (the
-                            // shaped text changes even though
-                            // grapheme positions stay aligned).
-                            // Pre-fix this branch was missed and
-                            // the buffer drifted from the tree
-                            // until the next non-merging
-                            // keystroke.
-                            let _ = bytes_inserted;
-                            changed = true;
-                        }
-                    }
-                }
-            }
-        }
-    }
+        apply_literal_char_insert(name, logical_key, text_edit_state)
+    };
 
     if changed {
         // Text editing only mutates the live tree during typing; the

@@ -406,6 +406,31 @@ pub enum Action {
     /// Jump cursor to the end of the current line.
     #[action(context = TextEdit, wasm = Compatible)]
     TextEditCursorEnd,
+
+    // ── TextEdit shift-select cursor primitives (TextEdit
+    // context). Same as their non-`Select` siblings, but they
+    // additionally seed the editor's `selection_anchor` (if
+    // unset) so the (anchor, cursor) pair defines a sub-range
+    // that lifts to `SelectionState::SectionRange` on close.
+    /// Extend selection one grapheme left.
+    #[action(context = TextEdit, wasm = Compatible)]
+    TextEditCursorLeftSelect,
+    /// Extend selection one grapheme right.
+    #[action(context = TextEdit, wasm = Compatible)]
+    TextEditCursorRightSelect,
+    /// Extend selection one visual line up.
+    #[action(context = TextEdit, wasm = Compatible)]
+    TextEditCursorUpSelect,
+    /// Extend selection one visual line down.
+    #[action(context = TextEdit, wasm = Compatible)]
+    TextEditCursorDownSelect,
+    /// Extend selection to the start of the current line.
+    #[action(context = TextEdit, wasm = Compatible)]
+    TextEditCursorHomeSelect,
+    /// Extend selection to the end of the current line.
+    #[action(context = TextEdit, wasm = Compatible)]
+    TextEditCursorEndSelect,
+
     /// Move cursor one word left.
     #[action(context = TextEdit, wasm = Compatible)]
     TextEditWordLeft,
@@ -551,6 +576,23 @@ pub enum Action {
     /// variant — no payload.
     #[action(context = Document, wasm = Compatible)]
     ClearZoom,
+    /// Mirror `section move <dx> <dy>` — nudge the selected
+    /// section by `(dx, dy)` canvas units. Keybind / macro path
+    /// for the per-frame-safe section move. AABB rejection on
+    /// overflow surfaces as a `log::warn!` and no-op. `dx` /
+    /// `dy` are parsed at dispatch time (Action enum needs
+    /// Hash + Eq, so f64 can't ride directly).
+    #[action(context = Document, wasm = Compatible)]
+    SetSectionOffsetDelta { dx: String, dy: String },
+    /// Mirror `section resize <w> <h>` — pin the selected
+    /// section's size to `(w, h)`. Same AABB validation as the
+    /// verb path. `w` / `h` are parsed at dispatch time.
+    #[action(context = Document, wasm = Compatible)]
+    SetSectionSizeAbs { w: String, h: String },
+    /// Mirror `section resize none` — flip the selected section
+    /// back to fill-parent (`size = None`).
+    #[action(context = Document, wasm = Compatible)]
+    SetSectionSizeFillParent,
     /// Mirror `open <path>` — replace the current document with the
     /// one loaded from `path`. **NativeOnly** + **destructive**:
     /// touches the filesystem. Denylisted for non-User macro tiers

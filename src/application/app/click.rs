@@ -7,12 +7,13 @@
 
 #![cfg(not(target_arch = "wasm32"))]
 
-use baumhard::mindmap::custom_mutation::{PlatformContext, Trigger};
+use baumhard::mindmap::custom_mutation::PlatformContext;
 
+use super::click_triggers::fire_onclick_triggers;
 use super::scene_rebuild::{rebuild_all, rebuild_scene_only};
 use super::{now_ms, AppMode, EDGE_HIT_TOLERANCE_PX};
 use crate::application::document::{
-    apply_tree_highlights, hit_test_edge, MindMapDocument, SectionSel, SelectionState, HIGHLIGHT_COLOR,
+    apply_tree_highlights, hit_test_edge, MindMapDocument, SectionSel, SelectionState,
     REPARENT_SOURCE_COLOR, REPARENT_TARGET_COLOR,
 };
 use crate::application::renderer::Renderer;
@@ -40,45 +41,14 @@ pub(super) fn handle_click(
         None => return,
     };
 
-    // Fire any OnClick triggers before the selection update so that
-    // document actions (theme switches etc.) take effect before the
-    // scene rebuild below picks up the new state. Node mutations go
-    // into the tree via `apply_custom_mutation`, which owns the
-    // model-sync + undo-push for Persistent behavior.
+    // OnClick triggers fire before the selection update so that
+    // document actions (theme switches etc.) take effect before
+    // the scene rebuild below picks up the new state.
     if let Some(id) = hit.as_ref() {
-        // Pass `hit_section` so the section-aware lookup can find
-        // overrides authored on the targeted section before the
-        // whole-node bindings fire. `None` (single-section / chrome
-        // hit) skips the per-section pass entirely — pre-Tier-D
-        // behaviour.
-        let triggered = doc.find_triggered_mutations_at(
-            id,
-            hit_section,
-            &Trigger::OnClick,
-            &PlatformContext::Desktop,
+        fire_onclick_triggers(
+            doc, mindmap_tree, scene_cache, id, hit_section,
+            PlatformContext::Desktop, now_ms() as u64,
         );
-        if !triggered.is_empty() {
-            // `find_triggered_mutations` returned cloned CustomMutations so
-            // we can iterate without holding an immutable borrow on doc.
-            for cm in triggered {
-                if cm.timing.as_ref().is_some_and(|t| t.duration_ms > 0) {
-                    // Animated: snapshot from/to and start an
-                    // instance, threading the section_idx so a
-                    // multi-section node can host concurrent
-                    // animations on adjacent sections without
-                    // coalescing under the dedup key.
-                    doc.start_animation_at(&cm, id, hit_section, now_ms() as u64);
-                } else if let Some(tree) = mindmap_tree.as_mut() {
-                    doc.apply_custom_mutation(&cm, id, Some(tree));
-                    // Custom mutations can touch any cached field
-                    // (node positions, edge colors, glyph_connection
-                    // font). Match the keyboard-triggered-mutation
-                    // site (event_keyboard.rs) that already clears.
-                    scene_cache.clear();
-                }
-                doc.apply_document_actions(&cm);
-            }
-        }
     }
 
     // Update selection state
@@ -100,23 +70,63 @@ pub(super) fn handle_click(
             }
         }
         (Some(id), true) => {
-            // Shift+click: toggle node in/out of multi-selection.
-            // Shift+click on an edge selection promotes the clicked node
-            // to a fresh single selection (no edge multi-select).
+            // Shift+click: toggle node — or section, when the
+            // hit lands on a specific section in a multi-section
+            // node — in/out of the multi-selection.
+            if let Some(section_idx) = hit_section {
+                // Section-side shift+click: extends Section ↔
+                // MultiSection. Cross-node section sets are
+                // legal; the dedup'd-by-(node_id, section_idx)
+                // identity is the load-bearing invariant.
+                let new_sec = SectionSel {
+                    node_id: id.clone(),
+                    section_idx,
+                };
+                match &doc.selection {
+                    SelectionState::Section(existing) if existing == &new_sec => {
+                        // Toggle off — same section re-clicked.
+                        doc.selection = SelectionState::None;
+                    }
+                    SelectionState::Section(existing) => {
+                        doc.selection =
+                            SelectionState::MultiSection(vec![existing.clone(), new_sec]);
+                    }
+                    SelectionState::MultiSection(existing) => {
+                        let mut secs = existing.clone();
+                        if let Some(pos) = secs.iter().position(|s| s == &new_sec) {
+                            secs.remove(pos);
+                            doc.selection = SelectionState::from_sections(secs);
+                        } else {
+                            secs.push(new_sec);
+                            doc.selection = SelectionState::MultiSection(secs);
+                        }
+                    }
+                    _ => {
+                        // From any non-section state, shift+click
+                        // on a section starts a fresh `Section`
+                        // selection — gives the user a clean path
+                        // to build a MultiSection by additional
+                        // shift+clicks.
+                        doc.selection = SelectionState::Section(new_sec);
+                    }
+                }
+            } else {
+            // Whole-node shift+click — existing behaviour
+            // (toggle node in/out of Multi).
             match &doc.selection {
-                // Any edge-adjacent selection shouldn't absorb a
-                // shift+click on a node — promote the node to a
-                // fresh single selection, the same as clicking
-                // from a `None` or `Edge` state. Covers all four
-                // edge-side variants (body, label, icon, text)
-                // plus a `Section` (no shift+click multi-select
-                // semantics for sections; promote to whole-node).
+                // Any non-Single selection collapses to a fresh
+                // Single on shift+click of a different node —
+                // the user's intent is "start tracking this
+                // node" rather than "extend whatever set was
+                // here."
                 SelectionState::None
                 | SelectionState::Edge(_)
                 | SelectionState::EdgeLabel(_)
                 | SelectionState::PortalLabel(_)
                 | SelectionState::PortalText(_)
-                | SelectionState::Section(_) => {
+                | SelectionState::Section(_)
+                | SelectionState::MultiSection(_)
+                | SelectionState::SectionRange { .. } => {
                     doc.selection = SelectionState::Single(id.clone());
                 }
                 SelectionState::Single(existing) => {
@@ -136,6 +146,7 @@ pub(super) fn handle_click(
                         doc.selection = SelectionState::Multi(ids);
                     }
                 }
+            }
             }
         }
         (None, false) => {
@@ -209,16 +220,15 @@ pub(super) fn rebuild_all_with_mode(
     // where reparent_source_highlight was documented to override
     // selection_highlight on conflict.
     // Highlight tuples are `(node_id, section_idx?, color)`. A
-    // Section selection narrows the highlight to the selected
-    // section only; mode-driven Reparent / Connect highlights
-    // always paint every section (the gesture is whole-node).
-    let only_section_idx = doc.selection.selected_section().map(|s| s.section_idx);
-    let mut highlights: Vec<(&str, Option<usize>, [f32; 4])> = doc
-        .selection
-        .selected_ids()
-        .into_iter()
-        .map(|id| (id, only_section_idx, HIGHLIGHT_COLOR))
-        .collect();
+    // Section / MultiSection narrow the highlight to the
+    // selected sections only; mode-driven Reparent / Connect
+    // highlights always paint every section (the gesture is
+    // whole-node). Routes through the canonical
+    // `selection_highlight_entries` helper so the three
+    // selection-rebuild sites (here, `rebuild_all`, and the
+    // threshold-cross promotion's `rebuild_selection_highlight`)
+    // share one mapping.
+    let mut highlights = super::scene_rebuild::selection_highlight_entries(&doc.selection);
     match app_mode {
         AppMode::Reparent { sources } => {
             for s in sources {

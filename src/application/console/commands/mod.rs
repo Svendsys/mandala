@@ -24,8 +24,11 @@ pub mod help;
 pub mod label;
 pub mod mutation;
 pub mod new;
+pub mod node;
 pub mod open;
+pub mod range_kv;
 pub mod save;
+pub mod section;
 pub mod spacing;
 pub mod zoom;
 
@@ -78,6 +81,8 @@ pub const COMMANDS: &[Command] = &[
     save::COMMAND,
     open::COMMAND,
     new::COMMAND,
+    node::COMMAND,
+    section::COMMAND,
     zoom::COMMAND,
 ];
 

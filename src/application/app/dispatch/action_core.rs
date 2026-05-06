@@ -310,17 +310,48 @@ pub(in crate::application::app) fn dispatch_compatible(
             });
         }
         Action::ClearZoom => with_doc_rebuild(core, |rc| super::cross_dispatch::apply_clear_zoom(rc)),
+        Action::SetSectionOffsetDelta { dx, dy } => {
+            let (Some(dx_v), Some(dy_v)) = (dx.parse::<f64>().ok(), dy.parse::<f64>().ok()) else {
+                log::warn!("SetSectionOffsetDelta: invalid dx='{}' or dy='{}'", dx, dy);
+                return DispatchOutcome::Handled;
+            };
+            with_doc_rebuild(core, |rc| {
+                super::cross_dispatch::apply_set_section_offset_delta(dx_v, dy_v, rc)
+            });
+        }
+        Action::SetSectionSizeAbs { w, h } => {
+            let (Some(w_v), Some(h_v)) = (w.parse::<f64>().ok(), h.parse::<f64>().ok()) else {
+                log::warn!("SetSectionSizeAbs: invalid w='{}' or h='{}'", w, h);
+                return DispatchOutcome::Handled;
+            };
+            with_doc_rebuild(core, |rc| {
+                super::cross_dispatch::apply_set_section_size(
+                    Some(baumhard::mindmap::model::Size { width: w_v, height: h_v }),
+                    rc,
+                )
+            });
+        }
+        Action::SetSectionSizeFillParent => with_doc_rebuild(core, |rc| {
+            super::cross_dispatch::apply_set_section_size(None, rc)
+        }),
         // ── Clipboard ─────────────────────────────────────────
         // Compatible because `clipboard::{read,write}_clipboard`
         // are logged stubs on WASM (pending async-clipboard) and
         // the trait-driven walk over `selection_targets` compiles
         // on both targets.
-        Action::Copy | Action::Cut => {
-            let is_cut = matches!(action, Action::Cut);
+        Action::Copy => {
             if let Some(doc) = core.document.as_deref_mut() {
-                super::cross_dispatch::apply_copy_or_cut(is_cut, doc);
+                let _ = super::cross_dispatch::apply_copy_or_cut(false, doc);
             }
         }
+        // Cut mutates the source component's text — gate the
+        // rebuild on at least one target accepting the cut,
+        // mirroring the `apply_paste` shape.
+        Action::Cut => with_doc_rebuild(core, |rc| {
+            if super::cross_dispatch::apply_copy_or_cut(true, rc.document) {
+                rc.rebuild_after_geometry_change();
+            }
+        }),
         Action::Paste => with_doc_rebuild(core, |rc| super::cross_dispatch::apply_paste(rc)),
         // ── Create-orphan-and-edit (keyboard shape) ───────────
         // Mouse-driven empty-canvas double-click stays in
@@ -353,6 +384,12 @@ pub(in crate::application::app) fn dispatch_compatible(
         | Action::TextEditCursorDown
         | Action::TextEditCursorHome
         | Action::TextEditCursorEnd
+        | Action::TextEditCursorLeftSelect
+        | Action::TextEditCursorRightSelect
+        | Action::TextEditCursorUpSelect
+        | Action::TextEditCursorDownSelect
+        | Action::TextEditCursorHomeSelect
+        | Action::TextEditCursorEndSelect
         | Action::TextEditDeleteBack
         | Action::TextEditDeleteForward
         | Action::TextEditWordLeft

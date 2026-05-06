@@ -195,6 +195,7 @@ fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     let mut min: Option<f32> = None;
     let mut max: Option<f32> = None;
     let mut section_target: Option<usize> = None;
+    let mut range_target: Option<(usize, usize)> = None;
     let mut saw_any = false;
     for (k, v) in args.kvs() {
         saw_any = true;
@@ -211,17 +212,26 @@ fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                 Ok(pt) => max = Some(pt),
                 Err(e) => return e,
             },
-            "section" => match v.parse::<usize>() {
+            "section" => match super::range_kv::parse_section_kv("font", v) {
                 Ok(idx) => section_target = Some(idx),
-                Err(_) => {
-                    return ExecResult::err(format!(
-                        "font: section='{}' is not a non-negative integer",
-                        v
-                    ));
-                }
+                Err(msg) => return ExecResult::err(msg),
+            },
+            "range" => match super::range_kv::parse_range_kv(v) {
+                Ok(pair) => range_target = Some(pair),
+                Err(msg) => return ExecResult::err(format!("font: range='{}' — {}", v, msg)),
             },
             other => return ExecResult::err(format!("unknown key '{}'", other)),
         }
+    }
+    if range_target.is_some() && section_target.is_none() {
+        return ExecResult::err(
+            "font: range=A..B requires section=N — ranges target grapheme indices inside one section",
+        );
+    }
+    if range_target.is_some() && (min.is_some() || max.is_some()) {
+        return ExecResult::err(
+            "font: min/max not applicable to a section range (per-grapheme clamps don't exist)",
+        );
     }
     if !saw_any {
         return ExecResult::err(
@@ -254,7 +264,7 @@ fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         // section's runs; absent, the write applies to every
         // section on the node.
         SelectionState::Single(id) => match section_target {
-            Some(idx) => section_font_outcome(doc, &id, idx, size, min, max),
+            Some(idx) => section_font_outcome(doc, &id, idx, size, min, max, range_target),
             None => node_font_outcome(doc, &id, size, min, max),
         },
         SelectionState::Section(s) => {
@@ -262,7 +272,7 @@ fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             // the active section index; otherwise fall through to
             // the section the user pointed at.
             let idx = section_target.unwrap_or(s.section_idx);
-            section_font_outcome(doc, &s.node_id, idx, size, min, max)
+            section_font_outcome(doc, &s.node_id, idx, size, min, max, range_target)
         }
         SelectionState::Multi(ids) => {
             // Fanout: apply size to each node; collect a single
@@ -291,6 +301,32 @@ fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             }
             ExecResult::lines(lines)
         }
+        SelectionState::MultiSection(secs) => {
+            // Fanout: apply size to each section's runs. `min` /
+            // `max` are NotApplicable for sections — surface a
+            // single message rather than one per section.
+            let mut changed = 0usize;
+            for s in &secs {
+                if let Some(pt) = size {
+                    if doc.set_section_font_size(&s.node_id, s.section_idx, pt) {
+                        changed += 1;
+                    }
+                }
+            }
+            let applicable_msg = (min.is_some() || max.is_some())
+                .then(|| "min/max: sections have no screen-space clamps".to_string());
+            if changed == 0 && applicable_msg.is_none() {
+                return ExecResult::ok_msg("font: no change");
+            }
+            let mut lines = Vec::new();
+            if changed > 0 {
+                lines.push(format!("font: applied to {} section(s)", changed));
+            }
+            if let Some(m) = applicable_msg {
+                lines.push(m);
+            }
+            ExecResult::lines(lines)
+        }
         SelectionState::Edge(er) => {
             let changed = doc.set_edge_font(&er, size, min, max);
             finalize("edge", changed)
@@ -309,6 +345,15 @@ fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             let changed = doc.set_portal_text_font(&s.edge_ref(), &s.endpoint_node_id, size, min, max);
             finalize("portal text", changed)
         }
+        SelectionState::SectionRange { sel, range } => {
+            // SectionRange: route to the section, layering an
+            // explicit `range=A..B` from the kv parser on top of
+            // the selection's own range when both are set
+            // (kv wins — explicit user input).
+            let idx = section_target.unwrap_or(sel.section_idx);
+            let effective_range = range_target.or(Some(range));
+            section_font_outcome(doc, &sel.node_id, idx, size, min, max, effective_range)
+        }
         SelectionState::None => ExecResult::err("font: no selection"),
     }
 }
@@ -326,11 +371,46 @@ fn section_font_outcome(
     size: Option<f32>,
     min: Option<f32>,
     max: Option<f32>,
+    range: Option<(usize, usize)>,
 ) -> ExecResult {
+    if let Some((rs, _re)) = range {
+        if let Some(node) = doc.mindmap.nodes.get(id) {
+            if let Some(section) = node.sections.get(section_idx) {
+                let total = baumhard::util::grapheme_chad::count_grapheme_clusters(&section.text);
+                if rs >= total {
+                    return ExecResult::err(format!(
+                        "font: range_start={} is past the section's grapheme count ({})",
+                        rs, total
+                    ));
+                }
+            }
+        }
+    }
     let mut messages = Vec::new();
     let mut any_applied = false;
     if let Some(pt) = size {
-        if doc.set_section_font_size(id, section_idx, pt) {
+        let applied = match range {
+            Some((rs, re)) => {
+                let ok = doc.set_section_font_size_range(id, section_idx, rs, re, pt);
+                if !ok {
+                    // Mirror the picker path's stale-range diagnostic
+                    // (see `color_picker_flow::commit`). Pre-flight
+                    // already catches `rs >= total`; a `false` here
+                    // means `range_end` extends past the section's
+                    // grapheme count or the section was deleted.
+                    log::warn!(
+                        "font verb on section {} of node {} \
+                         range {}..{} produced no change \
+                         (range may extend past the section's \
+                         grapheme count or section was deleted)",
+                        section_idx, id, rs, re
+                    );
+                }
+                ok
+            }
+            None => doc.set_section_font_size(id, section_idx, pt),
+        };
+        if applied {
             any_applied = true;
         }
     }
@@ -344,7 +424,11 @@ fn section_font_outcome(
         return ExecResult::lines(messages);
     }
     if any_applied {
-        ExecResult::ok_msg(format!("font applied to section {}", section_idx))
+        let scope = match range {
+            Some((rs, re)) => format!("section {} range {}..{}", section_idx, rs, re),
+            None => format!("section {}", section_idx),
+        };
+        ExecResult::ok_msg(format!("font applied to {}", scope))
     } else {
         ExecResult::ok_msg("font: no change")
     }
@@ -401,11 +485,11 @@ fn execute_font_set(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     // and keeps the surface forgiving.
     let positionals: Vec<&str> = args.positionals().collect();
     if positionals.len() < 2 {
-        return ExecResult::err("usage: font set <family>");
+        return ExecResult::err("usage: font set <family> [section=N] [range=A..B]");
     }
     let family = positionals[1..].join(" ");
     if family.is_empty() {
-        return ExecResult::err("usage: font set <family>");
+        return ExecResult::err("usage: font set <family> [section=N] [range=A..B]");
     }
     // Validate against the loaded family list. Exact-match per
     // `app_font_by_family` semantics — the completion popup feeds
@@ -416,6 +500,66 @@ fn execute_font_set(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             "font: '{}' is not a loaded font; try `font list`",
             family
         ));
+    }
+    // Extract optional `section=N` + `range=A..B`. Both bypass
+    // the trait dispatcher and call the dedicated range / per-
+    // section setters directly — the trait surface doesn't
+    // carry per-section / per-range routing today (deferred to
+    // N4-C alongside `SelectionState::SectionRange`).
+    let mut section_target: Option<usize> = None;
+    let mut range_target: Option<(usize, usize)> = None;
+    for (k, v) in args.kvs() {
+        match k {
+            "section" => match super::range_kv::parse_section_kv("font", v) {
+                Ok(idx) => section_target = Some(idx),
+                Err(msg) => return ExecResult::err(msg),
+            },
+            "range" => match super::range_kv::parse_range_kv(v) {
+                Ok(pair) => range_target = Some(pair),
+                Err(msg) => return ExecResult::err(format!("font: range='{}' — {}", v, msg)),
+            },
+            other => return ExecResult::err(format!("font set: unknown key '{}'", other)),
+        }
+    }
+    if range_target.is_some() && section_target.is_none() {
+        return ExecResult::err(
+            "font: range=A..B requires section=N — ranges target grapheme indices inside one section",
+        );
+    }
+    if let (Some(idx), Some((rs, re))) = (section_target, range_target) {
+        let node_id = match eff.document.selection.clone() {
+            SelectionState::Single(id) => id,
+            SelectionState::Section(s) => s.node_id,
+            SelectionState::SectionRange { sel, .. } => sel.node_id,
+            _ => return ExecResult::err("font: section=N requires a node or section selection"),
+        };
+        let applied = eff
+            .document
+            .set_section_font_family_range(&node_id, idx, rs, re, Some(&family));
+        return if applied {
+            ExecResult::ok_msg(format!(
+                "font set: {} on section {} range {}..{}",
+                family, idx, rs, re
+            ))
+        } else {
+            ExecResult::ok_msg("font: no change")
+        };
+    }
+    if let Some(idx) = section_target {
+        let node_id = match eff.document.selection.clone() {
+            SelectionState::Single(id) => id,
+            SelectionState::Section(s) => s.node_id,
+            SelectionState::SectionRange { sel, .. } => sel.node_id,
+            _ => return ExecResult::err("font: section=N requires a node or section selection"),
+        };
+        let applied = eff
+            .document
+            .set_section_font_family(&node_id, idx, Some(&family));
+        return if applied {
+            ExecResult::ok_msg(format!("font set: {} on section {}", family, idx))
+        } else {
+            ExecResult::ok_msg("font: no change")
+        };
     }
     let report = apply_to_targets(eff.document, |view| view.set_font_family(Some(&family)));
     if report.all_failed {
@@ -471,15 +615,23 @@ pub(crate) fn apply_font_kv_to_selection(
         _ => return false,
     };
     match doc.selection.clone() {
-        // A `Section` selection routes its parametric font edit
-        // through the whole-node setter for now — section-level
-        // size overrides are a future verb syntax (`font size=N
-        // section=K`).
-        SelectionState::Single(id) | SelectionState::Section(SectionSel { node_id: id, .. }) => {
+        // Whole-node: writes every section's runs.
+        SelectionState::Single(id) => {
             // Nodes only accept `size`; `min` / `max` are
             // NotApplicable. Mirror the verb's behaviour.
             if size.is_some() {
                 doc.set_node_font_size(&id, pt)
+            } else {
+                false
+            }
+        }
+        // Section: route through `set_section_font_size` so the
+        // Action path (keybinds / palette) matches the verb path
+        // (`font size=N section=K`) — only the targeted section's
+        // runs grow, siblings stay put.
+        SelectionState::Section(SectionSel { node_id, section_idx }) => {
+            if size.is_some() {
+                doc.set_section_font_size(&node_id, section_idx, pt)
             } else {
                 false
             }
@@ -494,11 +646,27 @@ pub(crate) fn apply_font_kv_to_selection(
             }
             changed
         }
+        SelectionState::MultiSection(secs) => {
+            if size.is_none() {
+                return false;
+            }
+            let mut changed = false;
+            for s in &secs {
+                changed |= doc.set_section_font_size(&s.node_id, s.section_idx, pt);
+            }
+            changed
+        }
         SelectionState::Edge(er) => doc.set_edge_font(&er, size, min, max),
         SelectionState::EdgeLabel(s) => doc.set_edge_label_font(&s.edge_ref, size, min, max),
         SelectionState::PortalLabel(s) => doc.set_edge_font(&s.edge_ref(), size, min, max),
         SelectionState::PortalText(s) => {
             doc.set_portal_text_font(&s.edge_ref(), &s.endpoint_node_id, size, min, max)
+        }
+        SelectionState::SectionRange { sel, range } => {
+            if size.is_none() {
+                return false;
+            }
+            doc.set_section_font_size_range(&sel.node_id, sel.section_idx, range.0, range.1, pt)
         }
         SelectionState::None => false,
     }
@@ -958,29 +1126,7 @@ mod tests {
     /// size, sections at other indices stay untouched.
     #[test]
     fn font_size_section_kv_targets_specific_section() {
-        use baumhard::mindmap::model::MindSection;
-        let mut doc = fixture_doc();
-        // Materialise a multi-section node and pin every section's
-        // runs to size 14 so we can detect which index changed.
-        {
-            let node = doc.mindmap.nodes.get_mut("0").unwrap();
-            node.sections
-                .push(MindSection::new_default("second".into(), Vec::new()));
-            for section in node.sections.iter_mut() {
-                section.text_runs.clear();
-                section.text_runs.push(baumhard::mindmap::model::TextRun {
-                    start: 0,
-                    end: section.text.chars().count().max(1),
-                    bold: false,
-                    italic: false,
-                    underline: false,
-                    font: "LiberationSans".into(),
-                    size_pt: 14,
-                    color: "#ffffff".into(),
-                    hyperlink: None,
-                });
-            }
-        }
+        let mut doc = doc_with_two_sections_for_font("LiberationSans", 14);
         doc.selection = SelectionState::Single("0".into());
         assert_exec_ok(run("font size=22 section=1", &mut doc));
         let node = doc.mindmap.nodes.get("0").unwrap();
@@ -991,6 +1137,108 @@ mod tests {
         assert!(
             node.sections[1].text_runs.iter().all(|r| r.size_pt == 22),
             "section 1 must receive the new size"
+        );
+    }
+
+    /// Build a node "0" with two sections, both pinned to the
+    /// given `font` and `size_pt` so a per-section font/size write
+    /// is observable. Thin wrapper around the shared
+    /// `make_two_section_node_with_pinned_runs` helper.
+    fn doc_with_two_sections_for_font(
+        font: &str,
+        size: u32,
+    ) -> crate::application::document::MindMapDocument {
+        use crate::application::document::tests_common::make_two_section_node_with_pinned_runs;
+        let mut doc = fixture_doc();
+        make_two_section_node_with_pinned_runs(&mut doc, "0", "#ffffff", ["#ffffff", "#ffffff"], font, size);
+        doc
+    }
+
+    /// `font set <family>` with a `SelectionState::Section` (no
+    /// explicit `section=K` kv) routes through the
+    /// `AcceptsFontFamily` trait arm to `set_section_font_family`
+    /// — only the targeted section's runs change, siblings stay
+    /// untouched.
+    #[test]
+    fn font_family_section_collapse_writes_only_section() {
+        use crate::application::document::SectionSel;
+        let family = first_loaded_family();
+        let mut doc = doc_with_two_sections_for_font("LiberationSans", 14);
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: "0".into(),
+            section_idx: 1,
+        });
+        assert_exec_ok(run(&format!("font set {}", family), &mut doc));
+        let node = doc.mindmap.nodes.get("0").unwrap();
+        assert!(
+            node.sections[0]
+                .text_runs
+                .iter()
+                .all(|r| r.font == "LiberationSans"),
+            "section 0 (sibling) must NOT change family"
+        );
+        assert!(
+            node.sections[1].text_runs.iter().all(|r| r.font == family),
+            "section 1 (selected) must receive the new family"
+        );
+    }
+
+    /// `apply_font_kv_to_selection("size", N)` (the parametric
+    /// Action path used by keybinds and palette entries) with a
+    /// `SelectionState::Section` routes through
+    /// `set_section_font_size` so it matches the verb path's
+    /// per-section behaviour. Pre-Tier-2A this Action arm
+    /// collapsed to whole-node, lagging behind the verb. Pins
+    /// Item 10.
+    #[test]
+    fn font_size_action_section_writes_through_section_setter() {
+        use crate::application::document::SectionSel;
+        let mut doc = doc_with_two_sections_for_font("LiberationSans", 14);
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: "0".into(),
+            section_idx: 1,
+        });
+        assert!(super::apply_font_kv_to_selection(&mut doc, "size", 22.0));
+        let node = doc.mindmap.nodes.get("0").unwrap();
+        assert!(
+            node.sections[0].text_runs.iter().all(|r| r.size_pt == 14),
+            "section 0 (sibling) must NOT change size"
+        );
+        assert!(
+            node.sections[1].text_runs.iter().all(|r| r.size_pt == 22),
+            "section 1 (selected) must receive the new size"
+        );
+    }
+
+    /// `apply_font_family_to_selection(family)` (the parametric
+    /// Action path) with a `SelectionState::Section` routes
+    /// through `AcceptsFontFamily` → `set_section_font_family` —
+    /// the same per-section behaviour the verb path lands. Sister
+    /// pin to `font_size_action_section_writes_through_section_setter`
+    /// so both Action arms (size + family) have direct-call
+    /// coverage on a Section selection, not just transitive
+    /// coverage through the verb.
+    #[test]
+    fn font_family_action_section_writes_through_section_setter() {
+        use crate::application::document::SectionSel;
+        let family = first_loaded_family();
+        let mut doc = doc_with_two_sections_for_font("LiberationSans", 14);
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: "0".into(),
+            section_idx: 1,
+        });
+        assert!(super::apply_font_family_to_selection(&mut doc, &family));
+        let node = doc.mindmap.nodes.get("0").unwrap();
+        assert!(
+            node.sections[0]
+                .text_runs
+                .iter()
+                .all(|r| r.font == "LiberationSans"),
+            "section 0 (sibling) must NOT change family"
+        );
+        assert!(
+            node.sections[1].text_runs.iter().all(|r| r.font == family),
+            "section 1 (selected) must receive the new family"
         );
     }
 }

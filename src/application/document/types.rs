@@ -165,6 +165,28 @@ pub enum SelectionState {
     /// the section variant is the seam that surfaces when richer
     /// authoring needs the discrimination.
     Section(SectionSel),
+    /// Two or more sections — possibly across distinct nodes —
+    /// each addressed by `(node_id, section_idx)`. Per-section
+    /// verbs (`color text=…`, `font size=…`, `font family=…`)
+    /// fan out via [`super::super::console::traits::view::selection_targets`]
+    /// and apply to every section in the set. Resize and move
+    /// gestures stay single-target — a `MultiSection` selection
+    /// emits no resize handles, and threshold-cross promotion
+    /// from a multi-section press collapses to one entry. The
+    /// invariant `len() >= 2` is upheld by [`Self::from_sections`];
+    /// callers that may produce 0 / 1 entries should route
+    /// through that constructor.
+    MultiSection(Vec<SectionSel>),
+    /// One section with a sub-range of its grapheme indices —
+    /// the editor's shift-select anchor lifts the cursor +
+    /// anchor pair into this variant on close. Per-section
+    /// verbs (`color text=…`, `font size=…`, `font family=…`)
+    /// see the range and route to the range-aware setter
+    /// (`set_section_text_color_range` etc.); accessors that
+    /// only care about the owning section (`selected_section`,
+    /// `selected_ids`, `is_selected`) treat it identically to
+    /// [`Self::Section`].
+    SectionRange { sel: SectionSel, range: (usize, usize) },
     Edge(EdgeRef),
     /// Line-mode label selection: the edge's text label sits
     /// along the connection path and is selected independently
@@ -233,16 +255,56 @@ impl SelectionState {
         }
     }
 
+    /// Build a section-set selection from a flat list of
+    /// `SectionSel`, deduplicating by `(node_id, section_idx)`
+    /// in first-seen order. Empty becomes
+    /// [`SelectionState::None`], a single entry becomes
+    /// [`Self::Section`], anything longer becomes
+    /// [`Self::MultiSection`]. Keeps two invariants in one
+    /// place: `MultiSection.len() >= 2` and "every entry is
+    /// unique" — downstream consumers (`selection_targets`
+    /// fan-out, highlight pipeline, font / colour fan-out)
+    /// implicitly assume uniqueness; duplicates would inflate
+    /// fan-out counts and potentially write the same setter
+    /// twice on the same section.
+    ///
+    /// Cost: O(n) with a transient `HashSet` of (node_id ref,
+    /// section_idx) — bounded by the input length, which is
+    /// in turn bounded by user authoring (typically ≤ 10).
+    pub fn from_sections(secs: Vec<SectionSel>) -> Self {
+        let mut seen: std::collections::HashSet<(String, usize)> =
+            std::collections::HashSet::with_capacity(secs.len());
+        let mut deduped: Vec<SectionSel> = Vec::with_capacity(secs.len());
+        for s in secs {
+            let key = (s.node_id.clone(), s.section_idx);
+            if seen.insert(key) {
+                deduped.push(s);
+            }
+        }
+        let mut iter = deduped.into_iter();
+        match iter.next() {
+            None => SelectionState::None,
+            Some(first) => match iter.next() {
+                None => SelectionState::Section(first),
+                Some(second) => {
+                    let mut all = Vec::with_capacity(2 + iter.size_hint().0);
+                    all.push(first);
+                    all.push(second);
+                    all.extend(iter);
+                    SelectionState::MultiSection(all)
+                }
+            },
+        }
+    }
+
     pub fn is_selected(&self, node_id: &str) -> bool {
         match self {
             SelectionState::None => false,
             SelectionState::Single(id) => id == node_id,
             SelectionState::Multi(ids) => ids.contains(&node_id.to_string()),
-            // A section selection counts the owning node as
-            // selected — every per-node consumer (highlight,
-            // chrome rendering, child filter) gets the natural
-            // "this node is the one in focus" answer.
             SelectionState::Section(s) => s.node_id == node_id,
+            SelectionState::MultiSection(secs) => secs.iter().any(|s| s.node_id == node_id),
+            SelectionState::SectionRange { sel, .. } => sel.node_id == node_id,
             SelectionState::Edge(_)
             | SelectionState::EdgeLabel(_)
             | SelectionState::PortalLabel(_)
@@ -256,6 +318,17 @@ impl SelectionState {
             SelectionState::Single(id) => vec![id.as_str()],
             SelectionState::Multi(ids) => ids.iter().map(|s| s.as_str()).collect(),
             SelectionState::Section(s) => vec![s.node_id.as_str()],
+            SelectionState::MultiSection(secs) => {
+                let mut seen = std::collections::HashSet::new();
+                let mut out = Vec::with_capacity(secs.len());
+                for s in secs {
+                    if seen.insert(s.node_id.as_str()) {
+                        out.push(s.node_id.as_str());
+                    }
+                }
+                out
+            }
+            SelectionState::SectionRange { sel, .. } => vec![sel.node_id.as_str()],
             SelectionState::Edge(_)
             | SelectionState::EdgeLabel(_)
             | SelectionState::PortalLabel(_)
@@ -263,16 +336,79 @@ impl SelectionState {
         }
     }
 
-    /// Borrow the inner [`SectionSel`] for a section selection,
-    /// or `None` for any other variant. Per-section verbs
-    /// (`set_section_text` and friends) consult this accessor to
-    /// route an edit at the section index instead of the
-    /// whole-node default.
+    /// Borrow the inner [`SectionSel`] for a section-bearing
+    /// selection ([`Self::Section`] or [`Self::SectionRange`]),
+    /// or `None` for any other variant — *including*
+    /// [`Self::MultiSection`]. Verbs that need a single section
+    /// target consult this; verbs that fan out over every
+    /// selected section route through `selection_targets`.
     pub fn selected_section(&self) -> Option<&SectionSel> {
         match self {
             SelectionState::Section(s) => Some(s),
+            SelectionState::SectionRange { sel, .. } => Some(sel),
             _ => None,
         }
+    }
+
+    /// Borrow every selected section as a slice. Returns a
+    /// single-element slice for [`Self::Section`] /
+    /// [`Self::SectionRange`], the inner vec for
+    /// [`Self::MultiSection`], and an empty slice for every
+    /// other variant. Used by `selection_targets` to fan out
+    /// per-section verbs.
+    pub fn selected_sections(&self) -> &[SectionSel] {
+        match self {
+            SelectionState::Section(s) => std::slice::from_ref(s),
+            SelectionState::MultiSection(secs) => secs.as_slice(),
+            SelectionState::SectionRange { sel, .. } => std::slice::from_ref(sel),
+            _ => &[],
+        }
+    }
+
+    /// Owning-node id when the selection points at exactly one
+    /// node — `Single`, `Section`, or `SectionRange`. `None` for
+    /// `Multi`, `MultiSection`, edge / portal variants, and
+    /// `None`. Per-section verbs that need a single owning node
+    /// call this rather than re-implementing the match.
+    pub fn primary_node_id(&self) -> Option<&str> {
+        match self {
+            SelectionState::Single(id) => Some(id),
+            SelectionState::Section(s) => Some(&s.node_id),
+            SelectionState::SectionRange { sel, .. } => Some(&sel.node_id),
+            _ => None,
+        }
+    }
+
+    /// Sub-range carried by [`Self::SectionRange`], or `None`
+    /// for every other variant. Per-section verbs route
+    /// range-targeted setters through this when the user has
+    /// shift-selected a sub-range inside a section.
+    pub fn selected_range(&self) -> Option<(usize, usize)> {
+        match self {
+            SelectionState::SectionRange { range, .. } => Some(*range),
+            _ => None,
+        }
+    }
+
+    /// Owning-node ids for every selected target, deduplicated
+    /// by `node_id` in first-seen order, returned as `Vec<String>`
+    /// for callers that need owned strings (most node-fanout
+    /// verb arms — `border` / `zoom` / `topology` Delete).
+    /// `Multi` and `MultiSection` both dedup correctly:
+    /// `Multi(["a", "a", "b"])` → `["a", "b"]`,
+    /// `MultiSection([a/0, a/1, b/0])` → `["a", "b"]`. Other
+    /// variants return their natural single owner (or empty).
+    pub fn dedup_owning_node_ids(&self) -> Vec<String> {
+        let ids = self.selected_ids();
+        let mut seen: std::collections::HashSet<&str> =
+            std::collections::HashSet::with_capacity(ids.len());
+        let mut out = Vec::with_capacity(ids.len());
+        for id in ids {
+            if seen.insert(id) {
+                out.push(id.to_string());
+            }
+        }
+        out
     }
 
     /// Returns the selected edge, if any. The other edge-adjacent

@@ -50,7 +50,7 @@ pub use glyph_tables::{
 };
 pub use hit::PickerHit;
 pub use layout::ColorPickerLayout;
-pub use targets::{ColorTarget, NodeColorAxis};
+pub use targets::{ColorTarget, NodeColorAxis, SectionColorAxis};
 
 // Native-only surface — consumed exclusively by `app/color_picker_flow/`
 // (mouse / open / commit / rebuild) and `run_native.rs`. WASM has
@@ -67,4 +67,4 @@ pub use state::{
     request_error_flash, ColorPickerState, FlashKind, PickerDynamicApplyKey, PickerGesture, PickerMode,
 };
 #[cfg(not(target_arch = "wasm32"))]
-pub use targets::{current_hsv_at, PickerHandle};
+pub use targets::{current_color_at, current_hsv_at, PickerHandle};

@@ -52,6 +52,7 @@ pub(crate) mod dispatch;
 // See CLAUDE.md "Dual-target status".
 #[cfg(not(target_arch = "wasm32"))]
 mod click;
+mod click_triggers;
 #[cfg(not(target_arch = "wasm32"))]
 mod color_picker_flow;
 #[cfg(not(target_arch = "wasm32"))]
@@ -148,12 +149,13 @@ fn now_ms() -> f64 {
 #[cfg(not(target_arch = "wasm32"))]
 const EDGE_HIT_TOLERANCE_PX: f32 = 8.0;
 
-/// Screen-space click tolerance (in pixels) for edge grab-handle hit
-/// testing. Slightly larger than the edge-path tolerance above
-/// because handles are point-like and need a bit more grab-area
-/// to feel forgiving.
+/// Screen-space click tolerance (in pixels) for grab-handle hit
+/// testing — applies uniformly to edge handles and section
+/// resize handles. Slightly larger than the edge-path tolerance
+/// above because handles are point-like and need a bit more
+/// grab-area to feel forgiving.
 #[cfg(not(target_arch = "wasm32"))]
-const EDGE_HANDLE_HIT_TOLERANCE_PX: f32 = 12.0;
+const HANDLE_HIT_TOLERANCE_PX: f32 = 12.0;
 
 /// What a single click targeted. Used by [`LastClick`] + the
 /// double-click detector so a portal-marker double-click (navigate)
@@ -434,15 +436,15 @@ enum AppMode {
 
 /// Tracks the current drag interaction state.
 ///
-/// The four continuous, high-rate-input-driven drag variants
-/// (`MovingNode`, `EdgeHandle`, `PortalLabel`, `EdgeLabel`) are
-/// collapsed behind the `Throttled` tag. Each carries its
-/// pending-state and adaptive throttle as an interaction struct
-/// implementing [`throttled_interaction::ThrottledInteraction`];
-/// the per-frame drain in
-/// [`run_native::InitState::drain_frame`] dispatches through
-/// [`ThrottledDrag::as_dyn_mut`] without naming the active kind.
-/// Adding a fifth throttled drag is a new variant on
+/// Continuous, high-rate-input-driven drag variants
+/// (`MovingNode`, `MovingSection`, `SectionResize`, `NodeResize`,
+/// `EdgeHandle`, `PortalLabel`, `EdgeLabel`) are collapsed behind
+/// the `Throttled` tag. Each carries its pending-state and
+/// adaptive throttle as an interaction struct implementing
+/// [`throttled_interaction::ThrottledInteraction`]; the per-frame
+/// drain in [`run_native::InitState::drain_frame`] dispatches
+/// through [`ThrottledDrag::as_dyn_mut`] without naming the
+/// active kind. Adding a new throttled drag is a new variant on
 /// `ThrottledDrag` + a struct + a trait impl; nothing about this
 /// enum needs to grow.
 ///
@@ -488,6 +490,23 @@ enum DragState {
         /// `hit_node` — a label hovering over a node behind
         /// it should move as a label, not a node.
         hit_edge_label: Option<baumhard::mindmap::scene_cache::EdgeKey>,
+        /// If a section is currently selected and the cursor
+        /// landed on one of its 8 resize handles, this records
+        /// `(node_id, section_idx, side)` so a drag past
+        /// threshold transitions to `Throttled(SectionResize)`.
+        /// Takes precedence over `hit_node` — a handle sits on
+        /// the section's edge and clicking it is a resize, not
+        /// a section drag.
+        hit_section_resize_handle:
+            Option<(String, usize, baumhard::mindmap::scene_builder::ResizeHandleSide)>,
+        /// If a node is currently `Single`-selected and the
+        /// cursor landed on one of its 8 resize handles, this
+        /// records `(node_id, side)` so a drag past threshold
+        /// transitions to `Throttled(NodeResize)`. Takes
+        /// precedence over `hit_node` — clicking a handle on
+        /// a selected node is a resize, not a re-selection or
+        /// a move-node drag.
+        hit_node_resize_handle: Option<(String, baumhard::mindmap::scene_builder::ResizeHandleSide)>,
     },
     /// Dragging to pan the camera (started on empty space).
     /// Unthrottled — emits a `CameraPan` decree directly, no
@@ -502,9 +521,9 @@ enum DragState {
         /// Canvas-space corner at current cursor position.
         current_canvas: Vec2,
     },
-    /// One of the four throttled, mutation-heavy drag gestures —
-    /// see [`ThrottledDrag`] for variants. All four share the
-    /// same adaptive-throttle shell via
+    /// One of the throttled, mutation-heavy drag gestures —
+    /// see [`ThrottledDrag`] for variants. All share the same
+    /// adaptive-throttle shell via
     /// [`throttled_interaction::ThrottledInteraction`].
     Throttled(ThrottledDrag),
 }

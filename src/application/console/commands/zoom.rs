@@ -185,7 +185,9 @@ fn execute_zoom(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     let kind: &str = match &doc.selection {
         SelectionState::Single(_) => "node",
         // Zoom-bounds attach to the node, not the section.
-        SelectionState::Section(_) => "node",
+        SelectionState::Section(_)
+        | SelectionState::MultiSection(_)
+        | SelectionState::SectionRange { .. } => "node",
         SelectionState::Edge(_) => "edge",
         SelectionState::EdgeLabel(_) => "edge label",
         SelectionState::PortalLabel(_) => "portal label",
@@ -248,10 +250,24 @@ pub(crate) fn apply_zoom_to_selection(
         // Zoom-bounds are node-level; section selection routes
         // through to the owning node.
         SelectionState::Section(s) => doc.set_node_zoom_visibility(&s.node_id, min, max),
+        SelectionState::SectionRange { sel, .. } => {
+            doc.set_node_zoom_visibility(&sel.node_id, min, max)
+        }
         SelectionState::Multi(ids) => {
             let mut changed = false;
             for id in &ids {
                 changed |= doc.set_node_zoom_visibility(id, min, max);
+            }
+            changed
+        }
+        // Multi-section: zoom-bounds attach to nodes, so route
+        // through the shared `dedup_owning_node_ids` helper to
+        // apply once per unique owning node.
+        SelectionState::MultiSection(_) => {
+            let ids = doc.selection.dedup_owning_node_ids();
+            let mut changed = false;
+            for id in &ids {
+                changed |= doc.set_node_zoom_visibility(id, min.clone(), max.clone());
             }
             changed
         }

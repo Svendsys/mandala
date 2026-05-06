@@ -9,6 +9,7 @@ pub mod canvas;
 pub mod edge;
 pub mod node;
 pub mod palette;
+pub mod text_run_ops;
 
 pub use canvas::Canvas;
 pub use edge::{

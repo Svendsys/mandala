@@ -74,8 +74,8 @@ Complete field reference for every type in `.mindmap.json`.
 |---|---|---|
 | `id` | string | Dewey-decimal structural ID — see [ids.md](./ids.md) |
 | `parent_id` | string\|null | Parent reference; `null` for roots |
-| `position.x`, `position.y` | number | Absolute canvas coordinates |
-| `size.width`, `size.height` | number | Pixel dimensions |
+| `position.x`, `position.y` | number | Absolute canvas coordinates. May be negative (nodes float freely on the canvas with no parent AABB constraint). |
+| `size.width`, `size.height` | number | Pixel dimensions. Must be finite and strictly positive — `set_node_size` and `set_node_aabb` reject zero / negative / non-finite components, and `set_node_size` flags >100× the prior axis as a likely typo. The `node resize <w> <h>` console verb and the drag-to-resize gesture both route through these setters. |
 | `sections` | array | The user-data strata of this node — one or more positioned text-bearing surfaces inside the node AABB. Every renderable node has at least one section. Pre-section maps (`text` / `text_runs` directly on the node) are migrated by `maptool convert --sections`. See [sections.md](./sections.md). |
 | `style` | object | Visual styling (colors, shape, border) |
 | `layout` | object | How this node's *children* are arranged |
@@ -146,8 +146,9 @@ Complete field reference for every type in `.mindmap.json`.
 | `text` | string | Plain text content (may contain `\n`) |
 | `text_runs` | array | Formatting spans inside this section — see [text-runs.md](./text-runs.md); defaults to empty |
 | `offset.x`, `offset.y` | number | Top-left of the section AABB *relative to the owning node's `position`*, in canvas units. Defaults to `(0, 0)` (flush against the node's top-left). |
-| `size` | object\|null | Section AABB. `null` (the default) means "fill the parent node"; an explicit width/height overrides. |
+| `size` | object\|null | Section AABB. `null` (the default) means "fill the parent node"; an explicit width/height overrides. AABB containment uses the *effective* size (`null` ⇒ `node.size`), so a `null`-sized section is only valid at `offset = (0, 0)` — any non-zero offset stretches past the parent's right / bottom edge and `maptool verify` flags it. See [sections.md](./sections.md#effective-size-for-aabb-containment). |
 | `channel` | integer | Mutation channel inside the parent node-area; defaults to the section's index in `MindNode.sections`. |
+| `trigger_bindings` | array | Per-section [`TriggerBinding`s](./mutations.md). Section-level bindings fire *before* the whole-node bindings on `MindNode.trigger_bindings` — a section-targeted override (e.g. a different `OnClick` mutation per stratum of a multi-section node) takes precedence over catch-all node bindings. Defaults to empty. |
 
 See [sections.md](./sections.md) for the section concept and
 [text-runs.md](./text-runs.md) for the per-grapheme-run coverage rules.

@@ -192,17 +192,26 @@ fn aggregate_single_op(tally: OutcomeTally, targets: &[TargetId]) -> DispatchRep
 }
 
 fn targets_kind_label(targets: &[TargetId]) -> &'static str {
-    // Multi-selection is homogeneously nodes today; other combos
-    // are single-target. Pick the obvious label.
+    // Multi-selection is homogeneously nodes (`Multi`) or
+    // homogeneously sections (`MultiSection`). Pluralize the
+    // matching label when `len > 1`. Other variants are
+    // single-target by construction.
+    let plural = targets.len() > 1;
     match targets.first() {
         Some(TargetId::Node(_)) => {
-            if targets.len() > 1 {
+            if plural {
                 "nodes"
             } else {
                 "node"
             }
         }
-        Some(TargetId::Section { .. }) => "section",
+        Some(TargetId::Section { .. }) => {
+            if plural {
+                "sections"
+            } else {
+                "section"
+            }
+        }
         Some(TargetId::Edge(_)) => "edge",
         Some(TargetId::EdgeLabel(_)) => "edge label",
         Some(TargetId::PortalLabel { .. }) => "portal label",

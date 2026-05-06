@@ -1038,15 +1038,42 @@ pointer at `maptool convert --sections`. Full reference:
 
 **Status.** The original three-seam roadmap has all landed:
 
-- **Per-section selection / editing.** Shipped — a click on a
-  multi-section node lands on `SelectionState::Section { node_id,
-  section_idx }`; the inline text editor targets the specific
-  section.
-- **Per-section mutations.** Shipped — `TargetScope::SectionsOnly`
-  walks every section directly via
-  `MindMapTree::section_arena_id`, and the
-  `GfxElementField::Flag(Flag::SectionRoot)` predicate gate
-  filters by element flag from any other scope.
+- **Per-section selection / editing.** A click on a multi-section
+  node lands on `SelectionState::Section { node_id, section_idx }`;
+  the inline text editor targets the specific section.
+- **Per-section mutations.** `TargetScope::SectionsOnly` walks
+  every section via `MindMapTree::section_arena_id`; the
+  `GfxElementField::Flag(Flag::SectionRoot)` predicate filters by
+  element flag from any other scope.
+- **Per-section move / resize verbs.** `section move <dx> <dy>` /
+  `section resize <w> <h>` (plus `section resize none` for
+  fill-parent) write through `set_section_offset` /
+  `set_section_size` with AABB validation that mirrors
+  `maptool verify`. See
+  [`format/sections.md`](./format/sections.md).
+- **Per-section drag-to-move gesture.** Click + drag on a section
+  of a multi-section node promotes to a section-only drag
+  (`ThrottledDrag::MovingSection`); per-frame mutates the section
+  subtree, release-commit writes through `set_section_offset`
+  once. AABB overflow snaps the section back.
+- **Per-section drag-to-resize gesture.** Selecting a `Some`-sized
+  section surfaces 8 resize handles. Dragging a handle promotes
+  to `ThrottledDrag::SectionResize`; per-frame writes the
+  in-progress `(canvas_pos, canvas_size)` to the section-area's
+  `GlyphArea` (cosmic-text reflows mid-drag); release-commit
+  writes through `set_section_aabb` (atomic post-mutation AABB
+  validation, single `EditNodeStyle` undo entry).
+
+  **Animation interleaving.** While any drag that mutates the
+  tree per-frame is in flight (`MovingNode`, `MovingSection`,
+  `SectionResize`, `NodeResize`), `drain_animation_tick` is
+  suppressed in `run_native::drain_frame`. The animation tick
+  routes through `apply_custom_mutation` → `sync_node_from_tree`,
+  which would otherwise observe the in-progress mid-drag tree
+  position and write it to the model + undo stack — corrupting
+  both the gesture and the animation. Edge / portal-label drags
+  don't qualify; they touch the document directly, not the tree.
+  Animations resume on the next frame after release.
 - **Multiple `GlyphModel`s per section.** Still on the
   trajectory — today a section holds exactly one structural
   model; richer composed-glyph layouts (a gridded matrix beside
@@ -1891,9 +1918,51 @@ to the right element.
   when the user clicks on a section-area in a *multi-section*
   node (single-section migrated nodes still route through
   `Single` so today's whole-node verbs keep firing on the whole
-  node target). Per-section verbs (`set_section_text` and
-  friends) consult `selected_section()` to bypass the
-  whole-node collapse.
+  node target). Per-section setters cover text
+  (`set_section_text`, `set_section_text_and_runs`), colour
+  (`set_section_text_color`), font (`set_section_font_size`,
+  `set_section_font_family`), position + size
+  (`set_section_offset`, `set_section_size`), and the
+  structured-clipboard payload (`apply_section_payload`); the
+  trait dispatcher and the `section move` / `section resize`
+  console verbs route here from a `SelectionState::Section`.
+- `MultiSection(Vec<SectionSel>)` — two or more sections,
+  possibly across distinct nodes. Built by shift+click on a
+  section while another section (or section-set) is selected;
+  each shift+click toggles the targeted section in / out of the
+  set. Per-section verbs (colour text, font size / family) fan
+  out via `selection_targets` and apply to every section in the
+  set. Per-section gestures (drag-to-move, drag-to-resize) stay
+  single-target — a `MultiSection` selection emits no resize
+  handles, and a press on a section in the set **demotes** the
+  selection down to `Section(node, idx)` at threshold-cross so
+  mid-drag picker hints + per-section verbs reflect the
+  in-flight gesture's actual target rather than the prior
+  multi-set. Whole-node move and node-resize gestures demote
+  the same way (to `Single(node)`). The `section
+  move` / `section resize` verbs target the single-section
+  selected (or take an explicit `section=K` kv); `MultiSection`
+  is fan-out-only at the trait dispatch layer.
+- `SectionRange { sel, range }` — one section with a sub-range
+  of its grapheme indices. Produced by the inline text editor's
+  shift-select anchor on close: when the user shifts-arrow /
+  shift-click inside a section, the editor lifts the (cursor,
+  anchor) pair into this variant's `range = (start, end)` and
+  per-section verbs route range-aware setters
+  (`set_section_text_color_range`, `set_section_font_size_range`,
+  `set_section_font_family_range`) through it. Accessors that
+  only care about the owning section (`selected_section`,
+  `is_selected`, `selected_ids`) treat it identically to
+  `Section`. **Clipboard contract:** `Cut` and `Paste` return
+  `NotApplicable` rather than silently destroy out-of-range
+  graphemes — the action arm logs `log::warn!` to surface the
+  skip; `Copy` falls through to whole-section copy because it's
+  non-destructive. Range-aware clipboard is deferred to a future
+  tier. **Picker contract:** `ColorTarget::Section` and
+  `PickerHandle::Section` carry the sub-range, so commit calls
+  `set_section_text_color_range` directly (bypassing the
+  `MultiSection` fan-out — different sections' lengths make
+  cross-section sub-range semantics incoherent).
 - `Edge(EdgeRef)` — the whole edge body
 - `EdgeLabel(EdgeLabelSel)` — the text label of a line-mode edge
 - `PortalLabel(PortalLabelSel)` — a portal endpoint icon
@@ -1959,10 +2028,11 @@ always win over larger AABBs.
 
 ### `ThrottledInteraction` and `ThrottledDrag`
 
-**Summary.** A trait + four-variant enum providing one uniform
+**Summary.** A trait + seven-variant enum providing one uniform
 shell for continuous, high-rate-input drag types.
 
-**What it's for.** Dragging a node, an edge handle, a portal
+**What it's for.** Dragging a node, a section, a section's
+resize handle, a node's resize handle, an edge handle, a portal
 label, and an edge label all follow the same per-frame pattern:
 accumulate input deltas, ask the throttle whether to drain,
 apply if drain, otherwise wait. The trait factors that
@@ -1971,11 +2041,24 @@ attach as one struct + one trait impl + one enum variant
 without growing the dispatch.
 
 **Under the hood.**
-`src/application/app/throttled_interaction/mod.rs:78-125`.
+`src/application/app/throttled_interaction/mod.rs`.
 Trait methods: `has_pending`, `throttle`, `drain(ctx)`, `reset`.
 Variants:
 
 - `MovingNode(MovingNodeInteraction)`
+- `MovingSection(MovingSectionInteraction)` — drags one section's
+  `offset` relative to its owning node; threshold-cross promotes
+  here when the press lands on a section of a multi-section node.
+- `SectionResize(SectionResizeInteraction)` — drags one resize
+  handle of a `Some`-sized selected section. Threshold-cross
+  promotes here when the press lands on one of the 8 handles
+  (corners + edge midpoints); release commits a single
+  `(offset, size)` write through `set_section_aabb`.
+- `NodeResize(NodeResizeInteraction)` — drags one resize handle
+  of a `Single`-selected node. Threshold-cross promotes here
+  when the press lands on one of the node's 8 handles; release
+  commits a single `(position, size)` write through
+  `set_node_aabb`.
 - `EdgeHandle(EdgeHandleInteraction)`
 - `PortalLabel(PortalLabelInteraction)`
 - `EdgeLabel(EdgeLabelInteraction)`
@@ -2479,13 +2562,22 @@ integration.
 
 **What it's for.** Selection-routed clipboard: each
 [`SelectionState`](#selectionstate) variant has its own channel.
-Copying a node copies its style and text; copying an edge
-copies the body colour; copying an edge label copies the label
-colour; copying a portal label copies the icon colour; copying
-a portal text copies the text colour. The font channel mirrors
-this routing for `font size= min= max=` writes.
+Copying a node copies its style and text; copying a section
+copies a structured payload (text + per-run formatting + offset
+/ size / channel / bindings); copying an edge copies the body
+colour; copying an edge label copies the label colour; copying
+a portal label copies the icon colour; copying a portal text
+copies the text colour. The font channel mirrors this routing
+for `font size= min= max=` writes.
 
-**Under the hood.** `src/application/clipboard.rs:1-40`.
+**Under the hood.** `src/application/clipboard.rs`. The OS
+clipboard layer (native `arboard`, WASM stub) carries plain
+text. A thread-local in-process `SECTION_BUFFER` slot carries
+the structured `SectionPayload` for within-app section→section
+round-trip; on paste, the payload is consulted only when its
+`text` snapshot matches the OS clipboard's current text exactly
+(consistency check; falls through to plain text when the user
+copied from another app between Mandala copy and paste).
 Failures (permission denied, unavailable) log via `log::warn!`
 and return `None` — interactive paths must not panic. WASM
 stubs warn-and-noop pending the browser's async clipboard API.
@@ -2542,10 +2634,12 @@ chosen at compile time (Desktop on native, Web on WASM); the
 
 The following are native-only today, with reasons:
 
-- **Drag gestures** — pan, move-node, edge-handle, portal-label,
-  rect-select, edge-label. The whole `DragState` enum is
-  native-gated; the cross-platform story will be touch-first
-  recognisers feeding the same `ThrottledDrag` variants.
+- **Drag gestures** — pan, move-node, move-section,
+  section-resize, node-resize, edge-handle, portal-label,
+  rect-select, edge-label. The whole `DragState`
+  enum is native-gated; the cross-platform story will be
+  touch-first recognisers feeding the same `ThrottledDrag`
+  variants.
 - **`AppMode::Reparent` / `AppMode::Connect`** — modal
   selection state and click routing; not yet wired on WASM.
 - **Modals: console, glyph-wheel color picker, edge-label

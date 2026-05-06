@@ -1,323 +1,342 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Per-node mutations and the shared edit-shape primitives they
-//! route through. The setters in this directory cover everything
-//! the user-facing console can write to a single `MindNode`:
-//! text + per-run formatting, background / frame / text colour,
-//! font face, font size, zoom-visibility window, and the bundled
-//! frame-config edits in [`border`]. Every setter follows the
-//! same pattern — capture the prior state into an [`UndoAction`]
-//! envelope, mutate, set `dirty`, return whether anything actually
-//! changed — so the console layer can phrase "no-op" vs. "applied"
-//! uniformly without re-reading the model.
-//!
-//! The split into sub-modules tracks concept, not size:
-//! [`option_edit`] owns the triple-state edit primitive
-//! ([`OptionEdit`]) and the field-level fold helpers
-//! (`apply_option_edit` / `apply_value_set` / `apply_string_set`)
-//! that consume it; [`border`] owns the border-config bundle
-//! ([`BorderConfigEdits`]) and the apply pipeline that lands it on
-//! `MindNode.style.border`. What's left in this `mod.rs` is the
-//! suite of single-field text/color/font/zoom setters plus the
-//! private `set_node_style_field` helper they share.
+//! Per-node and per-section-geometry setters and node-style
+//! helpers. Section text / colour / font / runs / payload
+//! setters live in `section_text.rs`. Each setter captures prior
+//! state into an `UndoAction`, mutates, sets `dirty`, and
+//! returns whether anything changed.
 
 use baumhard::mindmap::model::{NodeStyle, TextRun};
 
+use super::compute_one_node_text_floor;
 use super::grow_one_node_to_fit_border;
 use super::undo_action::UndoAction;
 use super::MindMapDocument;
 
 mod border;
 mod option_edit;
+mod section_text;
 
 pub use border::{BorderConfigEdits, BorderEditOutcome, BorderSide};
 pub use option_edit::OptionEdit;
+pub(in crate::application::document) use section_text::clamp_runs_to_text;
+
+/// Snapshot of a `MindSection`'s user-facing fields, used by the
+/// structured-clipboard path (`ClipboardContent::Section` carries
+/// it, the in-process buffer in `application/clipboard.rs` stashes
+/// it, `apply_section_payload` writes it back). Decoupled from the
+/// trait layer so callers can build payloads without depending on
+/// `console::traits::outcome`.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct SectionPayload {
+    pub text_runs: Vec<TextRun>,
+    pub offset: baumhard::mindmap::model::Position,
+    pub size: Option<baumhard::mindmap::model::Size>,
+    pub channel: Option<usize>,
+    pub trigger_bindings: Vec<baumhard::mindmap::custom_mutation::TriggerBinding>,
+}
+
+impl SectionPayload {
+    /// Snapshot a `MindSection` into a payload (deep-clone each
+    /// field). Cheap — every contained type is `Clone`.
+    pub fn from_section(section: &baumhard::mindmap::model::MindSection) -> Self {
+        Self {
+            text_runs: section.text_runs.clone(),
+            offset: section.offset,
+            size: section.size,
+            channel: section.channel,
+            trigger_bindings: section.trigger_bindings.clone(),
+        }
+    }
+}
 
 impl MindMapDocument {
-    /// Replace a node's `text` and collapse its `text_runs` to a single
-    /// run inheriting the first original run's formatting (font,
-    /// size_pt, color, bold, italic, underline). If the original had
-    /// no runs, a white 24pt Liberation Sans run is synthesized —
-    /// mirrors `default_orphan_node`.
-    ///
-    /// Returns `true` if the value actually changed. No-op / no undo
-    /// push on unchanged text, matching `set_edge_label`'s contract.
-    ///
-    /// **Collapse caveat**: authored multi-run nodes lose their per-span
-    /// formatting on any edit — a future per-run splitter would preserve
-    /// it, but until then the editor path is single-run.
-    /// Replace one section's `text` and collapse its `text_runs`
-    /// to a single run inheriting the first original run's
-    /// formatting. Returns `true` when the value actually changed.
-    /// Section-aware sibling of [`Self::set_node_text`] — the
-    /// latter's contract is preserved by routing through here
-    /// with `section_idx = 0`.
-    ///
-    /// Section-aware setter that writes both `text` and `text_runs`
-    /// atomically, converting the live `ColorFontRegions` (the
-    /// editor's per-keystroke styling buffer) back to
-    /// `Vec<TextRun>` via the `region_to_text_run` reverse
-    /// converter (merging with the prior runs to preserve
-    /// `bold` / `italic` / `underline` / `size_pt` / `hyperlink`
-    /// the forward conversion drops).
-    ///
-    /// Used by the inline text editor's commit path
-    /// ([`crate::application::app::text_edit::editor::close_text_edit`])
-    /// so multi-color / multi-font text typed during the session
-    /// survives Esc-out. Pre-fix the commit went through
-    /// [`Self::set_section_text`] alone, which collapses
-    /// `text_runs` to a single template-inherited run — every
-    /// per-grapheme styling change vanished on commit.
-    ///
-    /// No-op (returns `false`, no undo push) when the section
-    /// doesn't exist or both `text` *and* `text_runs` would round
-    /// to the same shape.
-    pub fn set_section_text_and_runs(
+    /// Set one section's `offset` (relative to its owning node's
+    /// `position`) under a single `EditNodeStyle` undo entry.
+    /// Drag callers must NOT invoke this per-frame; gather delta
+    /// in a gesture-state shape and call once on release.
+    pub fn set_section_offset(
         &mut self,
         node_id: &str,
         section_idx: usize,
-        new_text: String,
-        new_regions: &baumhard::core::primitives::ColorFontRegions,
-    ) -> bool {
+        x: f64,
+        y: f64,
+    ) -> Result<bool, String> {
         let node = match self.mindmap.nodes.get(node_id) {
             Some(n) => n,
-            None => return false,
+            None => return Ok(false),
         };
         let Some(section) = node.sections.get(section_idx) else {
-            return false;
+            return Ok(false);
         };
-        // Merge each new region with the prior run sharing its
-        // range (or the dominant overlap when ranges drifted).
-        // `region_to_text_run` lives in `super::custom::sync` and
-        // is the canonical reverse converter; reuse it here so
-        // the editor commit and the custom-mutation sync share
-        // one shape.
-        //
-        // **Empty-regions guard.** A freshly-created node seeded
-        // with `ColorFontRegions::new_empty()` and a plaintext-
-        // only edit produces `new_regions.all_regions().is_empty()`.
-        // Pre-fix the merge below would emit `vec![]`, dropping
-        // every prior `text_runs` entry — including the
-        // template-inherited single run that the legacy
-        // `set_section_text` path always preserves. Fall back to
-        // [`Self::set_section_text`]'s collapse-with-template
-        // behaviour in that case so a plaintext keystroke session
-        // doesn't silently strip a section that *was* styled
-        // (e.g. a `bold` run that the user opened the editor on
-        // but didn't actively change). Authors who genuinely
-        // want every run cleared should use the document's
-        // direct-set path, not the editor commit.
-        if new_regions.all_regions().is_empty() {
-            return self.set_section_text(node_id, section_idx, new_text);
+        let new_offset = baumhard::mindmap::model::Position { x, y };
+        validate_section_aabb(node.size, section_idx, new_offset, section.size)?;
+        if section.offset == new_offset {
+            return Ok(false);
         }
-        let prior_runs: Vec<&TextRun> = section.text_runs.iter().collect();
-        let new_runs: Vec<TextRun> = new_regions
-            .all_regions()
-            .iter()
-            .map(|region| {
-                let prior = super::custom::sync::exact_or_dominant_overlap(
-                    &prior_runs,
-                    region.range.start,
-                    region.range.end,
-                );
-                super::custom::sync::region_to_text_run(region, prior)
-            })
-            .collect();
-        if section.text == new_text && section.text_runs == new_runs {
-            return false;
-        }
-        let before_sections = node.sections.clone();
         let canvas_default = self.mindmap.canvas.default_border.clone();
-        let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
-        if let Some(section) = node.sections.get_mut(section_idx) {
-            section.text = new_text;
-            section.text_runs = new_runs;
-            clamp_runs_to_text(section);
-        }
+        self.mutate_section_with_style_undo(node_id, section_idx, |s| {
+            s.offset.x = x;
+            s.offset.y = y;
+        });
+        // Re-acquire node and run the floor passes — moving a
+        // `None`-sized section can shift its measured-text floor
+        // contribution beyond the current node.size, leaving the
+        // node under its floor for the next unrelated edit. Every
+        // other section setter (text, font, payload) calls these
+        // for the same invariant.
+        let node = self
+            .mindmap
+            .nodes
+            .get_mut(node_id)
+            .expect("just confirmed exists");
         super::grow_one_node_to_fit_text(node);
         super::grow_one_node_to_fit_border(node, canvas_default.as_ref());
-        self.undo_stack.push(UndoAction::EditNodeText {
-            node_id: node_id.to_string(),
-            before_sections,
-        });
-        self.dirty = true;
-        true
+        Ok(true)
     }
 
-    /// No-op (returns `false`, no undo push) when the section
-    /// doesn't exist or its text already matches.
-    pub fn set_section_text(&mut self, node_id: &str, section_idx: usize, new_text: String) -> bool {
-        let node = match self.mindmap.nodes.get(node_id) {
-            Some(n) => n,
-            None => return false,
-        };
-        let Some(section) = node.sections.get(section_idx) else {
-            return false;
-        };
-        if section.text == new_text {
-            return false;
-        }
-        let before_sections = node.sections.clone();
-        let template = section.text_runs.first().cloned().unwrap_or_else(|| TextRun {
-            start: 0,
-            end: 0,
-            bold: false,
-            italic: false,
-            underline: false,
-            font: "LiberationSans".to_string(),
-            size_pt: 24,
-            color: "#ffffff".to_string(),
-            hyperlink: None,
-        });
-        let new_runs = vec![TextRun {
-            start: 0,
-            end: baumhard::util::grapheme_chad::count_grapheme_clusters(&new_text),
-            ..template
-        }];
-        let canvas_default = self.mindmap.canvas.default_border.clone();
-        let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
-        if let Some(section) = node.sections.get_mut(section_idx) {
-            section.text = new_text;
-            section.text_runs = new_runs;
-        }
-        super::grow_one_node_to_fit_text(node);
-        super::grow_one_node_to_fit_border(node, canvas_default.as_ref());
-        self.undo_stack.push(UndoAction::EditNodeText {
-            node_id: node_id.to_string(),
-            before_sections,
-        });
-        self.dirty = true;
-        true
-    }
-
-    /// Set the text colour on one section's runs, mirroring the
-    /// whole-node [`Self::set_node_text_color`] but bounded to a
-    /// single section. Per-run colour overrides authored on
-    /// matching colours (`run.color == old_default`) are rewritten;
-    /// runs the user explicitly coloured by hand keep their
-    /// override. The owning node's `style.text_color` is *not*
-    /// touched — that's the node-level default and a per-section
-    /// override doesn't change its meaning.
-    ///
-    /// No-op when the section is missing or every targeted run
-    /// already carries the new colour.
-    pub fn set_section_text_color(&mut self, node_id: &str, section_idx: usize, color: String) -> bool {
-        let node = match self.mindmap.nodes.get(node_id) {
-            Some(n) => n,
-            None => return false,
-        };
-        let Some(section) = node.sections.get(section_idx) else {
-            return false;
-        };
-        let old_default = node.style.text_color.clone();
-        let any_run_changes = section
-            .text_runs
-            .iter()
-            .any(|r| r.color == old_default && r.color != color);
-        if !any_run_changes {
-            return false;
-        }
-        let before_style = node.style.clone();
-        let before_sections = node.sections.clone();
-        let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
-        if let Some(section) = node.sections.get_mut(section_idx) {
-            for run in section.text_runs.iter_mut() {
-                if run.color == old_default {
-                    run.color = color.clone();
-                }
-            }
-        }
-        self.undo_stack.push(UndoAction::EditNodeStyle {
-            node_id: node_id.to_string(),
-            before_style,
-            before_sections,
-        });
-        self.dirty = true;
-        true
-    }
-
-    /// Set the font size on one section's runs (bounded sibling
-    /// of the whole-node [`Self::set_node_font_size`]). Rewrites
-    /// every run's `size_pt` on the targeted section; sibling
-    /// sections stay untouched. Triggers the same monotonic
-    /// `grow_one_node_to_fit_text` floor as the whole-node setter
-    /// — sections share the node's AABB, so a larger run on one
-    /// section can grow the node.
-    pub fn set_section_font_size(&mut self, node_id: &str, section_idx: usize, size_pt: f32) -> bool {
-        let size_u = size_pt.round().max(1.0) as u32;
-        let node = match self.mindmap.nodes.get(node_id) {
-            Some(n) => n,
-            None => return false,
-        };
-        let Some(section) = node.sections.get(section_idx) else {
-            return false;
-        };
-        let already = section.text_runs.iter().all(|r| r.size_pt == size_u);
-        if already {
-            return false;
-        }
-        let before_style = node.style.clone();
-        let before_sections = node.sections.clone();
-        let canvas_default = self.mindmap.canvas.default_border.clone();
-        let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
-        if let Some(section) = node.sections.get_mut(section_idx) {
-            for run in section.text_runs.iter_mut() {
-                run.size_pt = size_u;
-            }
-        }
-        super::grow_one_node_to_fit_text(node);
-        super::grow_one_node_to_fit_border(node, canvas_default.as_ref());
-        self.undo_stack.push(UndoAction::EditNodeStyle {
-            node_id: node_id.to_string(),
-            before_style,
-            before_sections,
-        });
-        self.dirty = true;
-        true
-    }
-
-    /// Set the font family on one section's runs (bounded sibling
-    /// of the whole-node [`Self::set_node_font_family`]).
-    /// `Some(name)` pins each run to that family on the targeted
-    /// section; `None` clears the pin. Triggers the same monotonic
-    /// `grow_one_node_to_fit_text` re-measure as the whole-node
-    /// setter — face changes can shift advance widths.
-    pub fn set_section_font_family(
+    /// Set one section's `size`. `None` means fill-parent;
+    /// `Some(Size)` pins an explicit AABB. Same verify-mirroring
+    /// validation discipline as [`Self::set_section_offset`]; same
+    /// no-per-frame contract for drag callers.
+    pub fn set_section_size(
         &mut self,
         node_id: &str,
         section_idx: usize,
-        family: Option<&str>,
-    ) -> bool {
-        let target = family.unwrap_or("");
+        size: Option<baumhard::mindmap::model::Size>,
+    ) -> Result<bool, String> {
         let node = match self.mindmap.nodes.get(node_id) {
             Some(n) => n,
-            None => return false,
+            None => return Ok(false),
         };
         let Some(section) = node.sections.get(section_idx) else {
-            return false;
+            return Ok(false);
         };
-        let already = section.text_runs.iter().all(|r| r.font.as_str() == target);
-        if already {
-            return false;
+        validate_section_aabb(node.size, section_idx, section.offset, size)?;
+        if section.size == size {
+            return Ok(false);
         }
-        let before_style = node.style.clone();
-        let before_sections = node.sections.clone();
         let canvas_default = self.mindmap.canvas.default_border.clone();
-        let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
-        if let Some(section) = node.sections.get_mut(section_idx) {
-            for run in section.text_runs.iter_mut() {
-                run.font = target.to_string();
-            }
-        }
+        self.mutate_section_with_style_undo(node_id, section_idx, |s| {
+            s.size = size;
+        });
+        let node = self
+            .mindmap
+            .nodes
+            .get_mut(node_id)
+            .expect("just confirmed exists");
         super::grow_one_node_to_fit_text(node);
         super::grow_one_node_to_fit_border(node, canvas_default.as_ref());
-        self.undo_stack.push(UndoAction::EditNodeStyle {
+        Ok(true)
+    }
+
+    /// Atomically set one section's `(offset, size)` under a
+    /// single `EditNodeStyle` undo entry. Validates the
+    /// **post-mutation** AABB so a gesture that shifts offset and
+    /// grows size in the same frame doesn't fail on the
+    /// intermediate state.
+    pub fn set_section_aabb(
+        &mut self,
+        node_id: &str,
+        section_idx: usize,
+        new_offset: baumhard::mindmap::model::Position,
+        new_size: baumhard::mindmap::model::Size,
+    ) -> Result<bool, String> {
+        let node = match self.mindmap.nodes.get(node_id) {
+            Some(n) => n,
+            None => return Ok(false),
+        };
+        let Some(section) = node.sections.get(section_idx) else {
+            return Ok(false);
+        };
+        validate_section_aabb(node.size, section_idx, new_offset, Some(new_size))?;
+        if section.offset == new_offset && section.size == Some(new_size) {
+            return Ok(false);
+        }
+        let canvas_default = self.mindmap.canvas.default_border.clone();
+        self.mutate_section_with_style_undo(node_id, section_idx, |s| {
+            s.offset = new_offset;
+            s.size = Some(new_size);
+        });
+        let node = self
+            .mindmap
+            .nodes
+            .get_mut(node_id)
+            .expect("just confirmed exists");
+        super::grow_one_node_to_fit_text(node);
+        super::grow_one_node_to_fit_border(node, canvas_default.as_ref());
+        Ok(true)
+    }
+
+    /// Set a node's `size` under a single `EditNodeAabb` undo
+    /// entry. Validates finite + strictly positive components and
+    /// rejects astronomical typos against `MAX_NODE_AXIS`. Position
+    /// stays unchanged. Used by the `node resize <w> <h>` console
+    /// verb.
+    ///
+    /// Idempotent: the no-op gate runs against the *post-grow*
+    /// `n.size` (so a framed node whose border-grow inflates
+    /// past `new_size` still no-ops on repeated calls; pre-fix
+    /// the gate compared the pre-mutation size against
+    /// `new_size`, missing on every framed-node call after the
+    /// first and stacking undo entries).
+    ///
+    /// Drag callers must NOT invoke this per-frame; gather delta
+    /// in a gesture-state shape and call once on release via
+    /// [`Self::set_node_aabb`] which atomically writes both
+    /// position and size.
+    pub fn set_node_size(
+        &mut self,
+        node_id: &str,
+        new_size: baumhard::mindmap::model::Size,
+    ) -> Result<bool, String> {
+        validate_node_size(new_size)?;
+        check_node_size_typo(new_size)?;
+        if !self.mindmap.nodes.contains_key(node_id) {
+            return Ok(false);
+        }
+        let before_position = self.mindmap.nodes[node_id].position;
+        let before_size = self.mindmap.nodes[node_id].size;
+        let canvas_default = self.mindmap.canvas.default_border.clone();
+        let n = self.mindmap.nodes.get_mut(node_id).expect("just confirmed exists");
+        n.size = new_size;
+        // Floor-respect pass.
+        super::grow_one_node_to_fit_text(n);
+        super::grow_one_node_to_fit_border(n, canvas_default.as_ref());
+        // Idempotent gate AFTER the grow passes — a framed
+        // node's post-grow size can exceed the bare `new_size`,
+        // so comparing pre-mutation against `new_size` would
+        // miss on every call after the first. Comparing the
+        // post-mutation `n.size` against `before_size` catches
+        // the no-op case for both bare and framed nodes.
+        if n.size == before_size {
+            return Ok(false);
+        }
+        self.undo_stack.push(UndoAction::EditNodeAabb {
             node_id: node_id.to_string(),
-            before_style,
-            before_sections,
+            before_position,
+            before_size,
         });
         self.dirty = true;
-        true
+        Ok(true)
+    }
+
+    /// Set a node's `(position, size)` atomically under a single
+    /// `EditNodeAabb` undo entry. Used by the node-resize gesture's
+    /// release-commit — corner / edge handles whose `axis_factors`
+    /// shrink size by the same delta they shift offset by need
+    /// the AABB written in lockstep so the undo stack carries one
+    /// pre-edit pair, not two interleaved entries.
+    ///
+    /// Same post-grow no-op-gate discipline as
+    /// [`Self::set_node_size`] — see there for the framed-node
+    /// idempotency rationale.
+    pub fn set_node_aabb(
+        &mut self,
+        node_id: &str,
+        new_position: baumhard::mindmap::model::Position,
+        new_size: baumhard::mindmap::model::Size,
+    ) -> Result<bool, String> {
+        validate_node_position(new_position)?;
+        validate_node_size(new_size)?;
+        check_node_size_typo(new_size)?;
+        if !self.mindmap.nodes.contains_key(node_id) {
+            return Ok(false);
+        }
+        let before_position = self.mindmap.nodes[node_id].position;
+        let before_size = self.mindmap.nodes[node_id].size;
+        let canvas_default = self.mindmap.canvas.default_border.clone();
+        let n = self.mindmap.nodes.get_mut(node_id).expect("just confirmed exists");
+        n.position = new_position;
+        n.size = new_size;
+        // Same floor-respect pass as `set_node_size`.
+        super::grow_one_node_to_fit_text(n);
+        super::grow_one_node_to_fit_border(n, canvas_default.as_ref());
+        // Post-grow no-op gate — see `set_node_size` for the
+        // framed-node idempotency rationale. Position is
+        // unaffected by the grow passes, so the comparison
+        // against `before_position` is exact.
+        let same_position = n.position.x == before_position.x && n.position.y == before_position.y;
+        if same_position && n.size == before_size {
+            return Ok(false);
+        }
+        self.undo_stack.push(UndoAction::EditNodeAabb {
+            node_id: node_id.to_string(),
+            before_position,
+            before_size,
+        });
+        self.dirty = true;
+        Ok(true)
+    }
+
+    /// Shrink (or grow) a node's `size` to its measured-text
+    /// floor — the explicit-shrink path the ambient `grow_*`
+    /// passes can't take. Border-bearing nodes are rounded up
+    /// from the text floor by `grow_one_node_to_fit_border` so
+    /// the rendered frame has room. Pushes one `EditNodeAabb`
+    /// undo entry; idempotent (no entry pushed when already at
+    /// the post-border-grow target). See `set_node_size` for
+    /// the floor-rejection counterpart.
+    ///
+    /// Re-measures every section under per-section
+    /// `FONT_SYSTEM` write-guard acquires — same cost shape as
+    /// `grow_one_node_to_fit_text`. Drag callers must NOT
+    /// invoke this per-frame.
+    pub fn fit_node_to_content(&mut self, node_id: &str) -> Result<bool, String> {
+        let node = match self.mindmap.nodes.get(node_id) {
+            Some(n) => n,
+            None => return Ok(false),
+        };
+        let (floor_w, floor_h) = compute_one_node_text_floor(node);
+        // `f64::NAN <= 0.0` is false, so the finite-check is
+        // load-bearing — NaN from a bad-font-measure path would
+        // otherwise slip through the simple `<= 0.0` gate.
+        if !floor_w.is_finite() || !floor_h.is_finite() || floor_w <= 0.0 || floor_h <= 0.0 {
+            return Err(format!(
+                "node '{}' has no measurable text; fit-to-content has no target floor",
+                node_id
+            ));
+        }
+        let candidate = baumhard::mindmap::model::Size {
+            width: floor_w,
+            height: floor_h,
+        };
+        // Route the candidate through the same validation +
+        // typo guard the sibling node-size setters use, so a
+        // pinned `section.size` of e.g. 5_000_000 (which
+        // propagates through the floor) can't bypass the
+        // absolute ceiling. Cheap arithmetic; defends future
+        // regressions in `compute_one_node_text_floor`.
+        validate_node_size(candidate)?;
+        check_node_size_typo(candidate)?;
+        let before_position = node.position;
+        let before_size = node.size;
+        let canvas_default = self.mindmap.canvas.default_border.clone();
+        let n = self.mindmap.nodes.get_mut(node_id).expect("just confirmed exists");
+        n.size = candidate;
+        // Border-grow runs after the text-floor write — the
+        // rendered border needs room. The text-grow pass is
+        // *deliberately* not invoked here (this is the shrink
+        // path; running grow would max-wins back up to the same
+        // floor we just wrote).
+        super::grow_one_node_to_fit_border(n, canvas_default.as_ref());
+        // Idempotent gate AFTER the border-grow: a framed
+        // node's post-grow size can exceed the bare text floor,
+        // so checking the gate before the grow would let
+        // repeated calls stack undo entries on framed nodes.
+        // Comparing the post-mutation `n.size` against
+        // `before_size` is the post-border-grow signature.
+        if n.size == before_size {
+            return Ok(false);
+        }
+        self.undo_stack.push(UndoAction::EditNodeAabb {
+            node_id: node_id.to_string(),
+            before_position,
+            before_size,
+        });
+        self.dirty = true;
+        Ok(true)
     }
 
     pub fn set_node_text(&mut self, node_id: &str, new_text: String) -> bool {
@@ -475,6 +494,9 @@ impl MindMapDocument {
     /// `size_pt` is rounded to the nearest positive integer; values
     /// below 1 clamp to 1.
     pub fn set_node_font_size(&mut self, node_id: &str, size_pt: f32) -> bool {
+        if !size_pt.is_finite() {
+            return false;
+        }
         let size_u = size_pt.round().max(1.0) as u32;
         let node = match self.mindmap.nodes.get(node_id) {
             Some(n) => n,
@@ -634,17 +656,152 @@ impl MindMapDocument {
 /// Cost: O(runs.len() * text grapheme count) — one
 /// `count_grapheme_clusters` call per section, plus a linear pass
 /// over the runs. Trivial for typical single-run sections.
-pub(super) fn clamp_runs_to_text(section: &mut baumhard::mindmap::model::MindSection) {
-    let max_end = baumhard::util::grapheme_chad::count_grapheme_clusters(&section.text);
-    section.text_runs.retain_mut(|run| {
-        if run.start >= max_end {
-            return false;
+/// Verify-parity guard for the section-position/size setters: a
+/// corrupt save with `node.size.{width,height}` non-finite or
+/// non-positive is caught upstream by `verify::sections::check`,
+/// but if the loader hands such a node to a setter and the AABB
+/// compares silently NaN-skip, the setter would write into a node
+/// that shouldn't accept any size at all. Return the same
+/// rejection messages verify produces.
+/// Finite + strictly-positive guard on a candidate node `Size`.
+/// Same rejection messages `verify::sections` emits.
+fn validate_node_size(size: baumhard::mindmap::model::Size) -> Result<(), String> {
+    if !size.width.is_finite() || !size.height.is_finite() {
+        return Err(format!(
+            "node.size has non-finite component (width={}, height={})",
+            size.width, size.height
+        ));
+    }
+    if size.width <= 0.0 {
+        return Err(format!("node.size.width is not positive ({})", size.width));
+    }
+    if size.height <= 0.0 {
+        return Err(format!("node.size.height is not positive ({})", size.height));
+    }
+    Ok(())
+}
+
+/// Validate a candidate post-mutation section AABB against its
+/// parent's size. Folds finite/positive guards on both node and
+/// section, the 100× typo guard, and right/bottom edge
+/// containment. `size = None` means fill-parent (effective size
+/// = node_size for the containment check). Mirrors
+/// `verify::sections` rejection messages so model invariants are
+/// pinned at write time.
+fn validate_section_aabb(
+    node_size: baumhard::mindmap::model::Size,
+    section_idx: usize,
+    offset: baumhard::mindmap::model::Position,
+    size: Option<baumhard::mindmap::model::Size>,
+) -> Result<(), String> {
+    validate_node_size(node_size)?;
+    if !offset.x.is_finite() || !offset.y.is_finite() {
+        return Err(format!(
+            "section[{}].offset has non-finite component (x={}, y={})",
+            section_idx, offset.x, offset.y
+        ));
+    }
+    if offset.x < 0.0 {
+        return Err(format!(
+            "section[{}].offset.x is negative ({})",
+            section_idx, offset.x
+        ));
+    }
+    if offset.y < 0.0 {
+        return Err(format!(
+            "section[{}].offset.y is negative ({})",
+            section_idx, offset.y
+        ));
+    }
+    if let Some(s) = size {
+        if !s.width.is_finite() || !s.height.is_finite() {
+            return Err(format!(
+                "section[{}].size has non-finite component (width={}, height={})",
+                section_idx, s.width, s.height
+            ));
         }
-        if run.end > max_end {
-            run.end = max_end;
+        if s.width <= 0.0 {
+            return Err(format!(
+                "section[{}].size.width is not positive ({})",
+                section_idx, s.width
+            ));
         }
-        run.start < run.end
-    });
+        if s.height <= 0.0 {
+            return Err(format!(
+                "section[{}].size.height is not positive ({})",
+                section_idx, s.height
+            ));
+        }
+        if s.width > node_size.width * 100.0 {
+            return Err(format!(
+                "section[{}].size.width ({}) is over 100× the node's width ({}); \
+                 likely a typo (e.g. an extra zero)",
+                section_idx, s.width, node_size.width
+            ));
+        }
+        if s.height > node_size.height * 100.0 {
+            return Err(format!(
+                "section[{}].size.height ({}) is over 100× the node's height ({}); \
+                 likely a typo (e.g. an extra zero)",
+                section_idx, s.height, node_size.height
+            ));
+        }
+    }
+    let effective = size.unwrap_or(node_size);
+    let right = offset.x + effective.width;
+    let bottom = offset.y + effective.height;
+    if right > node_size.width {
+        return Err(format!(
+            "section[{}] extends past node right edge ({} > {})",
+            section_idx, right, node_size.width
+        ));
+    }
+    if bottom > node_size.height {
+        return Err(format!(
+            "section[{}] extends past node bottom edge ({} > {})",
+            section_idx, bottom, node_size.height
+        ));
+    }
+    Ok(())
+}
+
+/// Astronomical-typo guard for a candidate node `Size` — fixed
+/// absolute bound rather than a multiplier against the prior
+/// size, so a gesture that legitimately enlarges a tiny node by
+/// many factors at release isn't silently rejected. The bound
+/// (`MAX_NODE_AXIS`) is large enough to swallow any sane canvas
+/// extent and small enough to flag an extra zero or two as the
+/// "extra zero" canonical typo.
+const MAX_NODE_AXIS: f64 = 1_000_000.0;
+
+fn check_node_size_typo(size: baumhard::mindmap::model::Size) -> Result<(), String> {
+    if size.width > MAX_NODE_AXIS {
+        return Err(format!(
+            "node.size.width ({}) exceeds the {} ceiling; likely a typo (e.g. an extra zero)",
+            size.width, MAX_NODE_AXIS
+        ));
+    }
+    if size.height > MAX_NODE_AXIS {
+        return Err(format!(
+            "node.size.height ({}) exceeds the {} ceiling; likely a typo (e.g. an extra zero)",
+            size.height, MAX_NODE_AXIS
+        ));
+    }
+    Ok(())
+}
+
+/// Validate a candidate `(x, y)` for a node — finite components
+/// only. Nodes float freely on the canvas (no parent AABB), so
+/// negative coordinates are legal — a node can sit at a negative
+/// canvas-x to the left of the origin.
+fn validate_node_position(pos: baumhard::mindmap::model::Position) -> Result<(), String> {
+    if !pos.x.is_finite() || !pos.y.is_finite() {
+        return Err(format!(
+            "node.position has non-finite component (x={}, y={})",
+            pos.x, pos.y
+        ));
+    }
+    Ok(())
 }
 
 pub(super) fn validate_zoom_pair(min: Option<f32>, max: Option<f32>) -> bool {

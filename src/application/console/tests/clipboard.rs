@@ -128,6 +128,85 @@ fn node_cut_clears_every_section_on_multi_section_node() {
     }
 }
 
+/// Section paste collapses the section's `text_runs` to a single
+/// run, inheriting the first original run's `font` / `size_pt` /
+/// `color` / `bold` / `italic` / `underline`. Pre-Tier-2B the
+/// clipboard payload is `String`-only; structured per-run paste
+/// is captured in the plan tracker. This test pins the CURRENT
+/// lossy behaviour so a future structured payload doesn't
+/// regress to the unstructured branch silently — the assertion
+/// is "if you paste plain text into a section that had multi-run
+/// formatting, you lose the per-run structure but keep the
+/// first-run template's formatting on the new single run."
+#[test]
+fn section_paste_collapses_runs_inheriting_first_run_template() {
+    use crate::application::clipboard::clear_section_clipboard;
+    use crate::application::console::traits::{HandlesPaste, TargetView};
+    use baumhard::mindmap::model::{MindSection, TextRun};
+    // Clear so a prior test on the same worker thread doesn't
+    // leak a buffer entry matching our probe and route us through
+    // `apply_section_payload` instead of the lossy fall-back.
+    clear_section_clipboard();
+    let mut doc = load_test_doc();
+    let nid = first_node_id(&doc);
+    {
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        node.sections
+            .push(MindSection::new_default("second".into(), Vec::new()));
+        // Section 1 starts with two distinctly-formatted runs.
+        // The first run's template (font="LiberationSans" / 18pt
+        // bold / "#ff0000") is what `set_section_text` should
+        // inherit onto the post-paste single run.
+        node.sections[1].text = "before".into();
+        node.sections[1].text_runs = vec![
+            TextRun {
+                start: 0,
+                end: 3,
+                bold: true,
+                italic: false,
+                underline: false,
+                font: "LiberationSans".into(),
+                size_pt: 18,
+                color: "#ff0000".into(),
+                hyperlink: None,
+            },
+            TextRun {
+                start: 3,
+                end: 6,
+                bold: false,
+                italic: true,
+                underline: false,
+                font: "Other".into(),
+                size_pt: 24,
+                color: "#00ff00".into(),
+                hyperlink: None,
+            },
+        ];
+    }
+    let id = nid.clone();
+    {
+        let mut view = TargetView::Section { range: None,
+            doc: &mut doc,
+            id,
+            section_idx: 1,
+        };
+        let _ = view.clipboard_paste("pasted");
+    }
+    let section = &doc.mindmap.nodes.get(&nid).unwrap().sections[1];
+    assert_eq!(section.text, "pasted");
+    assert_eq!(
+        section.text_runs.len(),
+        1,
+        "paste collapses multi-run sections to a single run (lossy by spec until Tier 2B)"
+    );
+    let r = &section.text_runs[0];
+    assert_eq!(r.font, "LiberationSans", "inherits first-run font");
+    assert_eq!(r.size_pt, 18, "inherits first-run size_pt");
+    assert_eq!(r.color, "#ff0000", "inherits first-run color");
+    assert!(r.bold, "inherits first-run bold flag");
+    assert!(!r.italic, "second-run italic flag must NOT bleed in");
+}
+
 /// Section paste with a stale `section_idx` (a custom mutation
 /// shrunk `node.sections` between the click that captured the
 /// Section selection and the paste) clamps to the last existing
@@ -135,8 +214,10 @@ fn node_cut_clears_every_section_on_multi_section_node() {
 /// `set_section_text`'s bounds check.
 #[test]
 fn section_paste_clamps_stale_idx_to_last_section() {
+    use crate::application::clipboard::clear_section_clipboard;
     use crate::application::console::traits::{HandlesPaste, TargetView};
     use baumhard::mindmap::model::MindSection;
+    clear_section_clipboard();
     let mut doc = load_test_doc();
     let nid = first_node_id(&doc);
     {
@@ -146,7 +227,7 @@ fn section_paste_clamps_stale_idx_to_last_section() {
     }
     let id = nid.clone();
     {
-        let mut view = TargetView::Section {
+        let mut view = TargetView::Section { range: None,
             doc: &mut doc,
             id,
             section_idx: 5, // way past the end
@@ -158,6 +239,283 @@ fn section_paste_clamps_stale_idx_to_last_section() {
         post.sections[1].text, "after-clamp",
         "stale paste must land in the last existing section, not silently no-op"
     );
+}
+
+// ── Section structured clipboard ────────────────────────────────
+
+/// Section copy emits the structured `Section` variant carrying
+/// both plain text (OS-clipboard cross-app fallback) and the full
+/// per-section payload (in-process within-app round-trip).
+#[test]
+fn section_copy_emits_structured_payload() {
+    use crate::application::document::tests_common::make_two_section_node_with_pinned_runs;
+    let mut doc = load_test_doc();
+    let nid = first_node_id(&doc);
+    make_two_section_node_with_pinned_runs(
+        &mut doc,
+        &nid,
+        "#aaaaaa",
+        ["#aaaaaa", "#abcdef"],
+        "LiberationSans",
+        18,
+    );
+    let tid = TargetId::Section { range: None,
+        node_id: nid.clone(),
+        section_idx: 1,
+    };
+    let view = view_for(&mut doc, &tid);
+    match view.clipboard_copy() {
+        ClipboardContent::Section { text: _, payload } => {
+            assert_eq!(payload.text_runs.len(), 1);
+            assert_eq!(payload.text_runs[0].color, "#abcdef");
+            assert_eq!(payload.text_runs[0].size_pt, 18);
+            assert_eq!(payload.text_runs[0].font, "LiberationSans");
+        }
+        other => panic!("expected ClipboardContent::Section, got {:?}", other),
+    }
+}
+
+/// Round-trip pin: paste consults the buffer, finds a matching
+/// payload, writes structured (per-run formatting + chrome
+/// preserved). Closes audit Q5 for the within-app path.
+#[test]
+fn section_paste_with_matching_buffer_preserves_runs() {
+    use crate::application::clipboard::{clear_section_clipboard, write_section_clipboard};
+    use crate::application::console::traits::TargetView;
+    use crate::application::document::tests_common::make_two_section_node_with_pinned_runs;
+    use crate::application::document::SectionPayload;
+    use baumhard::mindmap::model::TextRun;
+    clear_section_clipboard();
+    let mut doc = load_test_doc();
+    let nid = first_node_id(&doc);
+    make_two_section_node_with_pinned_runs(&mut doc, &nid, "#ffffff", ["#ffffff", "#ffffff"], "Seed", 14);
+    let payload = SectionPayload {
+        text_runs: vec![TextRun {
+            start: 0,
+            end: 3,
+            bold: false,
+            italic: true,
+            underline: false,
+            font: "LiberationSans".into(),
+            size_pt: 22,
+            color: "#112233".into(),
+            hyperlink: None,
+        }],
+        offset: baumhard::mindmap::model::Position { x: 5.0, y: 7.0 },
+        size: None,
+        channel: Some(3),
+        trigger_bindings: Vec::new(),
+    };
+    write_section_clipboard("src".into(), payload);
+
+    let id = nid.clone();
+    {
+        let mut view = TargetView::Section { range: None,
+            doc: &mut doc,
+            id,
+            section_idx: 1,
+        };
+        assert_eq!(view.clipboard_paste("src"), Outcome::Applied);
+    }
+    let section = &doc.mindmap.nodes.get(&nid).unwrap().sections[1];
+    assert_eq!(section.text, "src");
+    assert_eq!(section.text_runs.len(), 1);
+    assert_eq!(section.text_runs[0].size_pt, 22);
+    assert!(section.text_runs[0].italic);
+    assert_eq!(section.text_runs[0].color, "#112233");
+    assert_eq!(section.offset.x, 5.0);
+    assert_eq!(section.channel, Some(3));
+}
+
+/// Trailing-newline round-trip pin: a section whose text ends in
+/// `\n` (trivially produced by the inline editor's Enter key) must
+/// still match the buffer's snapshot — probing with the untrimmed
+/// `content` keeps the consistency check honest. Pre-fix, the
+/// paste side's `content.trim_end()` falsely missed any section
+/// whose text ended in whitespace.
+#[test]
+fn section_paste_buffer_match_survives_trailing_newline() {
+    use crate::application::clipboard::{clear_section_clipboard, write_section_clipboard};
+    use crate::application::console::traits::TargetView;
+    use crate::application::document::tests_common::make_two_section_node_with_pinned_runs;
+    use crate::application::document::SectionPayload;
+    use baumhard::mindmap::model::TextRun;
+    clear_section_clipboard();
+    let mut doc = load_test_doc();
+    let nid = first_node_id(&doc);
+    make_two_section_node_with_pinned_runs(&mut doc, &nid, "#ffffff", ["#ffffff", "#ffffff"], "Seed", 14);
+    let payload = SectionPayload {
+        text_runs: vec![TextRun {
+            start: 0,
+            end: 5,
+            bold: false,
+            italic: false,
+            underline: false,
+            font: "PreservedFont".into(),
+            size_pt: 30,
+            color: "#aabbcc".into(),
+            hyperlink: None,
+        }],
+        offset: baumhard::mindmap::model::Position::default(),
+        size: None,
+        channel: None,
+        trigger_bindings: Vec::new(),
+    };
+    write_section_clipboard("hello\n".into(), payload);
+
+    let id = nid.clone();
+    {
+        let mut view = TargetView::Section { range: None,
+            doc: &mut doc,
+            id,
+            section_idx: 1,
+        };
+        assert_eq!(view.clipboard_paste("hello\n"), Outcome::Applied);
+    }
+    let section = &doc.mindmap.nodes.get(&nid).unwrap().sections[1];
+    assert_eq!(section.text_runs.len(), 1);
+    assert_eq!(
+        section.text_runs[0].font, "PreservedFont",
+        "trailing-newline copy must round-trip via the structured buffer, not the trimmed plain-text fallback"
+    );
+}
+
+/// Buffer mismatch (user copied from another app between Mandala
+/// copy and paste) falls through to the plain-text branch with
+/// template inheritance from the destination's first run.
+#[test]
+fn section_paste_with_mismatched_buffer_falls_back_to_plain() {
+    use crate::application::clipboard::{clear_section_clipboard, write_section_clipboard};
+    use crate::application::console::traits::TargetView;
+    use crate::application::document::tests_common::make_two_section_node_with_pinned_runs;
+    use crate::application::document::SectionPayload;
+    use baumhard::mindmap::model::TextRun;
+    clear_section_clipboard();
+    let mut doc = load_test_doc();
+    let nid = first_node_id(&doc);
+    make_two_section_node_with_pinned_runs(&mut doc, &nid, "#ffffff", ["#ffffff", "#ffffff"], "Seed", 14);
+    let payload = SectionPayload {
+        text_runs: vec![TextRun {
+            start: 0,
+            end: 1,
+            bold: true,
+            italic: false,
+            underline: false,
+            font: "ShouldNotApply".into(),
+            size_pt: 99,
+            color: "#deadbe".into(),
+            hyperlink: None,
+        }],
+        offset: baumhard::mindmap::model::Position::default(),
+        size: None,
+        channel: None,
+        trigger_bindings: Vec::new(),
+    };
+    write_section_clipboard("OLD-COPY".into(), payload);
+
+    let id = nid.clone();
+    {
+        let mut view = TargetView::Section { range: None,
+            doc: &mut doc,
+            id,
+            section_idx: 1,
+        };
+        let _ = view.clipboard_paste("from-elsewhere");
+    }
+    let section = &doc.mindmap.nodes.get(&nid).unwrap().sections[1];
+    assert_eq!(section.text, "from-elsewhere");
+    assert_eq!(section.text_runs.len(), 1);
+    assert_eq!(section.text_runs[0].font, "Seed");
+    assert_eq!(section.text_runs[0].size_pt, 14);
+}
+
+/// Cut snapshots the structured payload, clears text + runs, and
+/// preserves offset / size / channel / bindings on the source.
+#[test]
+fn section_cut_emits_structured_payload_and_clears_text_runs_only() {
+    use crate::application::console::traits::TargetView;
+    use crate::application::document::tests_common::make_two_section_node_with_pinned_runs;
+    let mut doc = load_test_doc();
+    let nid = first_node_id(&doc);
+    make_two_section_node_with_pinned_runs(
+        &mut doc,
+        &nid,
+        "#ffffff",
+        ["#ffffff", "#abc123"],
+        "LiberationSans",
+        14,
+    );
+    {
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        node.sections[1].channel = Some(7);
+        node.sections[1].offset = baumhard::mindmap::model::Position { x: 1.0, y: 2.0 };
+    }
+    let id = nid.clone();
+    let cut = {
+        let mut view = TargetView::Section { range: None,
+            doc: &mut doc,
+            id,
+            section_idx: 1,
+        };
+        view.clipboard_cut()
+    };
+    match cut {
+        ClipboardContent::Section { text: _, payload } => {
+            assert_eq!(payload.text_runs.len(), 1);
+            assert_eq!(payload.text_runs[0].color, "#abc123");
+            assert_eq!(payload.channel, Some(7));
+            assert_eq!(payload.offset.x, 1.0);
+        }
+        other => panic!("expected ClipboardContent::Section, got {:?}", other),
+    }
+    let section = &doc.mindmap.nodes.get(&nid).unwrap().sections[1];
+    assert_eq!(section.text, "");
+    assert!(section.text_runs.is_empty());
+    assert_eq!(section.channel, Some(7));
+    assert_eq!(section.offset.x, 1.0);
+}
+
+/// `apply_section_payload` round-trips through undo — one Ctrl+Z
+/// restores all six fields atomically.
+#[test]
+fn apply_section_payload_round_trips_through_undo() {
+    use crate::application::document::tests_common::make_two_section_node_with_pinned_runs;
+    use crate::application::document::SectionPayload;
+    use baumhard::mindmap::model::TextRun;
+    let mut doc = load_test_doc();
+    let nid = first_node_id(&doc);
+    make_two_section_node_with_pinned_runs(&mut doc, &nid, "#ffffff", ["#ffffff", "#111111"], "Before", 14);
+    {
+        doc.mindmap.nodes.get_mut(&nid).unwrap().sections[1].channel = Some(2);
+    }
+    let snapshot_text = doc.mindmap.nodes.get(&nid).unwrap().sections[1].text.clone();
+    let snapshot_channel = doc.mindmap.nodes.get(&nid).unwrap().sections[1].channel;
+
+    let after = SectionPayload {
+        text_runs: vec![TextRun {
+            start: 0,
+            end: 5,
+            bold: true,
+            italic: true,
+            underline: false,
+            font: "After".into(),
+            size_pt: 22,
+            color: "#222222".into(),
+            hyperlink: None,
+        }],
+        offset: baumhard::mindmap::model::Position { x: 9.0, y: 9.0 },
+        size: None,
+        channel: Some(99),
+        trigger_bindings: Vec::new(),
+    };
+    assert!(doc.apply_section_payload(&nid, 1, "after".into(), &after));
+    assert_eq!(doc.mindmap.nodes.get(&nid).unwrap().sections[1].channel, Some(99));
+
+    assert!(doc.undo());
+    let restored = &doc.mindmap.nodes.get(&nid).unwrap().sections[1];
+    assert_eq!(restored.text, snapshot_text);
+    assert_eq!(restored.channel, snapshot_channel);
+    assert_eq!(restored.text_runs[0].font, "Before");
 }
 
 // ── Edge (body) ──────────────────────────────────────────────────

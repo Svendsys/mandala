@@ -18,6 +18,7 @@ use baumhard::gfx_structs::tree::MutatorTree;
 use baumhard::gfx_structs::tree_walker::walk_tree_from;
 use baumhard::mindmap::connection;
 use baumhard::mindmap::model::MindMap;
+use baumhard::mindmap::scene_builder::{build_node_resize_handles, build_section_resize_handles, ResizeHandleSide};
 use baumhard::mindmap::tree_builder::MindMapTree;
 
 use super::types::EdgeRef;
@@ -174,10 +175,8 @@ pub fn point_in_node_aabb(canvas_pos: Vec2, node_id: &str, tree: &MindMapTree) -
     let w = area.render_bounds.x.0;
     let h = area.render_bounds.y.0;
 
-    let in_container_aabb = canvas_pos.x >= x
-        && canvas_pos.x <= x + w
-        && canvas_pos.y >= y
-        && canvas_pos.y <= y + h;
+    let in_container_aabb =
+        canvas_pos.x >= x && canvas_pos.x <= x + w && canvas_pos.y >= y && canvas_pos.y <= y + h;
 
     if in_container_aabb {
         let local = Vec2::new(canvas_pos.x - x, canvas_pos.y - y);
@@ -185,10 +184,7 @@ pub fn point_in_node_aabb(canvas_pos: Vec2, node_id: &str, tree: &MindMapTree) -
     }
 
     if let Some((tl, br)) = element.subtree_aabb() {
-        return canvas_pos.x >= tl.x
-            && canvas_pos.x <= br.x
-            && canvas_pos.y >= tl.y
-            && canvas_pos.y <= br.y;
+        return canvas_pos.x >= tl.x && canvas_pos.x <= br.x && canvas_pos.y >= tl.y && canvas_pos.y <= br.y;
     }
     false
 }
@@ -467,6 +463,211 @@ pub fn apply_drag_delta_and_collect_patches(
     // Same invalidation contract as `apply_drag_delta` — position
     // writes go through `area.move_position` directly.
     tree.tree.invalidate_caches();
+}
+
+/// Per-frame tree mutation for the section-drag gesture: move only
+/// the targeted section's subtree (the section-area `GlyphArea` plus
+/// its structural `GlyphModel` grand-descendants), leaving the
+/// owning node's container and sibling sections untouched.
+///
+/// Mirrors [`apply_drag_delta_and_collect_patches`]'s patch-emission
+/// shape so the renderer's `patch_drag_positions` can update buffer
+/// positions in place — no text reshaping, no font-system lock.
+/// Per-frame safe; release-commit syncs the model via
+/// `set_section_offset` (which AABB-validates and pushes a single
+/// undo entry).
+pub fn apply_section_drag_delta_and_collect_patches(
+    tree: &mut MindMapTree,
+    node_id: &str,
+    section_idx: usize,
+    dx: f32,
+    dy: f32,
+    patches: &mut Vec<(usize, (f32, f32))>,
+) {
+    let section_root = match tree.section_arena_id(node_id, section_idx) {
+        Some(id) => id,
+        None => return,
+    };
+    collect_patches_recursive(&mut tree.tree.arena, section_root, dx, dy, patches);
+    tree.tree.invalidate_caches();
+}
+
+/// Per-frame tree mutation for the section-resize gesture: write
+/// the in-progress `(canvas_position, canvas_size)` to the
+/// targeted section-area's `GlyphArea`. The renderer's
+/// `rebuild_buffers_from_tree` reshapes the section's text against
+/// the new bounds on the next pass, so the user sees the section
+/// resize live (text reflow + handle tracking).
+///
+/// **Tree-only.** The model is unchanged until release-commit
+/// where `set_section_aabb` writes the final state under one
+/// `EditNodeStyle` undo entry. Drag callers must NOT route
+/// per-frame writes through the model setter — that would explode
+/// the undo stack.
+///
+/// No-op for missing nodes / sections (the section's arena id is
+/// looked up by `(mind_id, section_idx)` — `None` when either is
+/// out of range).
+pub fn apply_section_resize_to_tree(
+    tree: &mut MindMapTree,
+    node_id: &str,
+    section_idx: usize,
+    new_position: Vec2,
+    new_size: Vec2,
+) {
+    let section_root = match tree.section_arena_id(node_id, section_idx) {
+        Some(id) => id,
+        None => return,
+    };
+    if let Some(node) = tree.tree.arena.get_mut(section_root) {
+        if let Some(area) = node.get_mut().glyph_area_mut() {
+            area.set_position((new_position.x, new_position.y));
+            area.set_bounds((new_size.x, new_size.y));
+        }
+    }
+    tree.tree.invalidate_caches();
+}
+
+/// Hit-test the 8 resize handles of a node at `canvas_pos`.
+/// Returns the closest handle whose canvas-space center is within
+/// `tolerance` of the cursor, or `None` if no handle is in range.
+/// Returns `None` for missing nodes, hidden-by-fold nodes, and
+/// nodes whose `size` has any non-finite or non-positive
+/// component (those don't render handles).
+pub fn hit_test_node_resize_handle(
+    map: &MindMap,
+    canvas_pos: Vec2,
+    node_id: &str,
+    tolerance: f32,
+) -> Option<ResizeHandleSide> {
+    let node = map.nodes.get(node_id)?;
+    if map.is_hidden_by_fold(node) {
+        return None;
+    }
+    let handles = build_node_resize_handles(node_id, node.pos_vec2(), node.size_vec2());
+    nearest_handle_within(handles.iter().map(|h| (h.side, h.position)), canvas_pos, tolerance)
+}
+
+/// Pick the closest handle whose canvas-space position is within
+/// `tolerance` of `canvas_pos`. Bounded cost: 8 comparisons.
+fn nearest_handle_within(
+    handles: impl IntoIterator<Item = (ResizeHandleSide, (f32, f32))>,
+    canvas_pos: Vec2,
+    tolerance: f32,
+) -> Option<ResizeHandleSide> {
+    let mut best: Option<(ResizeHandleSide, f32)> = None;
+    for (side, (hx, hy)) in handles {
+        let dist = canvas_pos.distance(Vec2::new(hx, hy));
+        if dist > tolerance {
+            continue;
+        }
+        if best.as_ref().map_or(true, |(_, d)| dist < *d) {
+            best = Some((side, dist));
+        }
+    }
+    best.map(|(s, _)| s)
+}
+
+/// Per-frame tree mutation for the node-resize gesture: write the
+/// in-progress `(canvas_position, canvas_size)` to the node's
+/// container `GlyphArea` and shift every `Flag::SectionRoot` child
+/// by `position_delta` so section content tracks the moving frame.
+/// The renderer's `rebuild_buffers_from_tree` reshapes against
+/// the new bounds on the next pass, so the user sees the node
+/// resize live.
+///
+/// **Tree-only.** The model is unchanged until release-commit
+/// where `set_node_aabb` writes the final state under one
+/// `EditNodeAabb` undo entry. Drag callers must NOT route per-
+/// frame writes through the model setter — that would explode
+/// the undo stack.
+///
+/// Child mind-node containers are deliberately left in place —
+/// resizing a parent should not visually translate its
+/// descendants. Sections however *do* track the move because the
+/// tree stores section positions in absolute canvas coordinates;
+/// a parent's resize that shifts its origin (NW / N / W / NE /
+/// SW handles) would visibly detach sections without the shift.
+/// Mid-drag the section *bounds* stay at pre-drag values — the
+/// release-commit's full `rebuild_all` re-derives them from the
+/// model.
+pub fn apply_node_resize_to_tree(
+    tree: &mut MindMapTree,
+    node_id: &str,
+    new_position: Vec2,
+    new_size: Vec2,
+    position_delta: Vec2,
+) {
+    let container_id = match tree.arena_id_for(node_id) {
+        Some(id) => id,
+        None => return,
+    };
+    if let Some(node) = tree.tree.arena.get_mut(container_id) {
+        if let Some(area) = node.get_mut().glyph_area_mut() {
+            area.set_position((new_position.x, new_position.y));
+            area.set_bounds((new_size.x, new_size.y));
+        }
+    }
+    // Sections-only walk — the existing helper filters by
+    // `Flag::SectionRoot`, so child mind-node containers stay
+    // put. Move-this-node-only semantics, same primitive
+    // `apply_drag_delta` uses for the `MovingNode` drag.
+    if position_delta.x != 0.0 || position_delta.y != 0.0 {
+        // Shift only the section children — the container's own
+        // position was already written above via `set_position`,
+        // so we walk children directly rather than calling the
+        // sibling helper that would re-shift the container.
+        let mut child = tree
+            .tree
+            .arena
+            .get(container_id)
+            .and_then(|n| n.first_child());
+        while let Some(cid) = child {
+            child = tree.tree.arena.get(cid).and_then(|n| n.next_sibling());
+            let is_section = tree
+                .tree
+                .arena
+                .get(cid)
+                .map(|n| n.get().flag_is_set(Flag::SectionRoot))
+                .unwrap_or(false);
+            if is_section {
+                apply_delta_recursive(&mut tree.tree.arena, cid, position_delta.x, position_delta.y);
+            }
+        }
+    }
+    tree.tree.invalidate_caches();
+}
+
+/// Hit-test the 8 resize handles of a `Some`-sized section at
+/// `canvas_pos`. Returns the closest handle whose canvas-space
+/// center is within `tolerance` of the cursor, or `None` if no
+/// handle is in range. Mirrors
+/// [`super::MindMapDocument::hit_test_edge_handle`] — same
+/// "compute live positions, scan within tolerance" shape.
+///
+/// Returns `None` for `None`-sized sections (fill-parent — no
+/// handles emitted) and for missing nodes / sections. Bounded
+/// cost: 8 distance comparisons per call.
+pub fn hit_test_section_resize_handle(
+    map: &MindMap,
+    canvas_pos: Vec2,
+    node_id: &str,
+    section_idx: usize,
+    tolerance: f32,
+) -> Option<ResizeHandleSide> {
+    let node = map.nodes.get(node_id)?;
+    if map.is_hidden_by_fold(node) {
+        return None;
+    }
+    let section = node.sections.get(section_idx)?;
+    let section_size = section.size.as_ref()?;
+    let section_pos = Vec2::new(
+        node.position.x as f32 + section.offset.x as f32,
+        node.position.y as f32 + section.offset.y as f32,
+    );
+    let size = Vec2::new(section_size.width as f32, section_size.height as f32);
+    let handles = build_section_resize_handles(node_id, section_idx, section_pos, Some(size));
+    nearest_handle_within(handles.iter().map(|h| (h.side, h.position)), canvas_pos, tolerance)
 }
 
 /// Collect drag patches for the container plus its section

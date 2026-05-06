@@ -106,6 +106,264 @@ will see the variable replaced with a hex literal. The
 setters bypass the round trip and preserve `var(--name)`
 references verbatim.
 
+### Position and size verbs
+
+`section move <dx> <dy> [section=<idx>]` shifts the section's
+`offset` by `(dx, dy)` relative to the owning node's `position`.
+`section resize <w> <h> [section=<idx>]` pins `section.size` to
+`Some({w, h})`; `section resize none` flips it back to `None`
+(fill-parent — the migration default). The `section=<idx>` kv is
+required when the active selection is a single node (no implicit
+default — authors who want section 0 specifically should say
+so); a `SelectionState::Section` selection supplies the index
+unless the kv overrides it.
+
+Both verbs validate against the rules `maptool verify`'s
+[`verify::sections`](./validation.md) enforces — finite +
+non-negative offset, finite + strictly positive size, AABB
+contained within the parent node's bounds, no astronomical
+typos. Rejection messages are byte-equal to verify's so a
+verb-rejected edit and a `verify` violation read identically.
+
+### Effective size for AABB containment
+
+`Some(sz)` honours the explicit pin; `None` (fill-parent —
+the migration default) falls back to `node.size` for the
+containment check. A `None`-sized section's effective AABB
+is therefore `(offset, node.size)`, so any non-zero `offset`
+makes the section stretch past the node's right / bottom
+edge — verify flags it, both `set_section_offset` and
+`set_section_size` reject it. Pre-fix the `None` arm
+skipped the check entirely, leaving fill-parent sections
+free to visually escape the parent (a degenerate state
+authors could reach through `section move`, `section
+resize none`, or the drag gesture without any error
+feedback).
+
+The shared
+[`MindSection::effective_size`](../lib/baumhard/src/mindmap/model/node.rs)
+helper is the single source of truth — both the document-side
+setters and `verify::sections::check_within_node_aabb` route
+through it, so the two cannot drift on what "fill-parent"
+means.
+
+**Drag-to-move gesture.** Click and drag on a section of a
+multi-section node — past the drag-threshold the press promotes
+to a section-only drag rather than a whole-node drag. The
+section's `offset` updates per-frame in the tree; the model is
+written once at release through `set_section_offset`, with the
+same AABB validation as the verb (overflow snaps the section
+back to its pre-drag offset and logs a message). Single-section
+nodes still drag whole-node — mirrors the hit-test fold to
+`HitTarget::NodeContainer`.
+
+**Drag-to-resize gesture.** Selecting a `Some`-sized section
+emits 8 resize handles on top of it — four corners plus four
+edge midpoints (N / E / S / W). Click and drag a handle past
+the drag-threshold to resize the section: corner handles move
+both axes; edge-midpoint handles move only the perpendicular
+axis. NW / N / NE / SW / W handles shift `offset` toward the
+cursor while shrinking `size`, so the opposite edge stays put;
+SE / E / S handles only grow `size` from the existing
+top-left. Per-frame the section's tree position tracks the
+cursor; the model is written at release through the atomic
+`set_section_aabb` setter (one snapshot, one undo entry,
+both `offset` and `size` validated together). AABB-overflow,
+non-positive size, or astronomical-size rejection logs and
+falls through to a model-side rebuild that snaps the section
+back. `None`-sized (fill-parent) sections emit no handles —
+their dimensions are owned by the parent's auto-fit floor, not
+by an authored AABB.
+
+After a position or size edit, the parent node's auto-fit
+floor recomputes against **the larger of** measured text
+bounds and (when set) user-pinned `size` plus `offset` — user
+intent ("this section is at least this big") survives when
+text fits, and text overflow still grows the parent so nothing
+visually clips. Pre-Tier-2B the auto-fit pass skipped
+`Some`-sized sections entirely; that gap is closed.
+
+The auto-fit pass only **grows** the parent node's `size` (it
+never shrinks). To explicitly shrink a node back to its
+measured-text floor — useful after a manual `node resize`
+that pinned the node larger than its content — use the
+`node fit` console verb. The verb routes through
+`MindMapDocument::fit_node_to_content`, which computes the
+same floor the auto-fit pass uses (via the shared
+`compute_one_node_text_floor` helper) and writes it
+unconditionally as the new `node.size`, then re-applies
+`grow_one_node_to_fit_border` so the rendered border has
+room. Pinned-section contributions to the floor survive
+verbatim — a `Some`-sized section's `(offset, size)` is part
+of the measured floor, so `node fit` respects user intent
+on every individual section just like the grow path does.
+
+**Ambient auto-shrink is deliberately not part of the design.**
+After "Hello World" → "Hi" the node stays at the longer
+text's floor; the user reaches for `node fit` to recover
+the slack. Asymmetric with the auto-grow side, but the
+alternative — shrinking the node automatically on every
+text-edit that frees space — fights with manually-set sizes
+and produces janky resize-on-every-keystroke behavior.
+
+**Section-side shrink path** is `section resize none` (flatten
+to fill-parent). A per-section `fit-to-content` is
+intentionally absent — section text floor is folded into the
+parent's `compute_one_node_text_floor`, so a `node fit` on a
+multi-section node already reflows every section to its
+content-driven floor.
+
+Custom mutations (`target_scope: SectionsOnly` with
+`AreaCommand::SetBounds` / `MoveTo` / `NudgeRight`) **bypass**
+the AABB validation the verbs enforce — they write directly
+through the tree-bridge sync path
+(`document/custom/sync::sync_node_from_tree`). Authoring
+through custom mutations can therefore produce out-of-AABB
+sections that `maptool verify` rejects but the document
+accepts. Run `maptool verify` after any mutation-driven
+position/size authoring to catch the violations the verbs
+would have refused.
+
+### Console axis applicability on a section selection
+
+Sections only have a **text** colour axis (`color text=…`). The
+`bg=` and `border=` axes are node-level chrome and have no
+section-level field — running them against a `SelectionState::Section`
+returns `Outcome::NotApplicable` rather than collapsing to the
+owning node's `background_color` / `frame_color`. This applies
+both to the kv form (`color bg=#fff section=K`) and to the
+trait-dispatch form (`color bg=#fff` with the section already
+selected). The colour-picker modal follows the same rule:
+opening the picker on `color bg` / `color border` against a
+section selection surfaces the NotApplicable message rather
+than opening the picker on the owning node's chrome axis.
+
+The picker's read seed (`current_color_at` for a section handle)
+and the write predicate (`set_section_text_color`) are
+**cascade-symmetric**: if every run on the section shares one
+colour that is the section's effective colour and is the
+predicate the write rewrites against, otherwise both fall back
+to `node.style.text_color`. So a uniformly customized section
+opens the picker at its current colour and commits to a new
+colour, instead of the picker silently no-op'ing because the
+runs no longer match the node default.
+
+`var(--name)` references on section runs survive the kv / trait
+write paths verbatim (see "Documented round-trip limit" above).
+The colour picker preserves them too, but only when the user
+**doesn't move the wheel** from its open seed. Bit-exact equality
+on `(hue_deg, sat, val)` is the "did the user touch it?" signal:
+an open-and-close cycle with no interaction commits the original
+`var(--accent)` literal back; any cell click or keyboard nudge
+flips the commit to the new HSV's hex (the new colour was
+explicitly chosen, so honouring the old reference would silently
+discard it). Custom-mutation writes still collapse var refs to
+hex on round-trip (`FloatRgba` carries no record of the variable);
+that constraint is unchanged.
+
+### Multi-section selection
+
+Shift+click on a section extends the current selection
+(`Section` ↔ `MultiSection`): each shift+click toggles the
+targeted section in / out of the set. Cross-node section sets
+are legal — `MultiSection(Vec<SectionSel>)` is dedup'd by
+`(node_id, section_idx)`. Per-section verbs (`color text=…`,
+`font size=…`, `font family=…`) fan out via the trait
+dispatcher's `selection_targets` to apply to every section in
+the set; `bg=` / `border=` continue to return `NotApplicable`
+per the section spec (no chrome on sections). Per-section
+gestures (drag-to-move, drag-to-resize) stay single-target —
+a `MultiSection` selection emits no resize handles, and a
+press on a section in the set **demotes** the selection down
+to `Section(node, idx)` at threshold-cross so mid-drag picker
+hints + per-section verbs reflect the in-flight gesture's
+actual target rather than the prior multi-set. The
+whole-node move and node-resize arms demote the same way (to
+`Single(node)`). The `section move` / `section resize`
+console verbs require a single-section context (or an
+explicit `section=K` kv); `MultiSection` is fan-out-only at
+the trait dispatch layer.
+
+A click without shift on a section resets to the single-
+section `Section(SectionSel)` shape; a click without shift on
+a node resets to `Single(node_id)`. Building a multi-section
+selection therefore always starts with a plain click, then
+extends with shift+clicks.
+
+### Section sub-range selection
+
+A section can also be selected with a grapheme-level sub-range
+via `SelectionState::SectionRange { sel, range: (start, end) }`.
+The half-open `[start, end)` range targets a contiguous run of
+graphemes inside one section's text; per-section verbs route to
+range-aware setters (`set_section_text_color_range`,
+`set_section_font_size_range`, `set_section_font_family_range`).
+
+Two producers of `SectionRange`:
+
+- **Console verbs** with `range=A..B` kv:
+  `color text=#abc section=N range=2..7` /
+  `font size=14 section=N range=2..7` /
+  `font set <family> section=N range=2..7`. The verb path
+  bypasses the trait dispatcher and calls the range setter
+  directly; `range=A..B` requires `section=N` and rejects
+  empty / inverted / non-numeric input with a clear error.
+- **Editor shift-select anchor**: the inline text editor's
+  `Shift+Arrow*` / `Shift+Home` / `Shift+End` keystrokes seed an
+  anchor at the pre-action cursor position; subsequent shift-cursor
+  moves extend the cursor while preserving the anchor. On editor
+  close (commit or cancel), `lift_anchor_to_section_range` promotes
+  a non-empty `(anchor, cursor)` pair to
+  `SelectionState::SectionRange { range: (min, max) }`. Non-shift
+  cursor moves and any text edit (typing / delete) clear the anchor
+  — range-aware editing (typing-replaces-selection) is deferred.
+
+**Clipboard contract.** `Cut` and `Paste` return
+`Outcome::NotApplicable` rather than silently destroy
+out-of-range graphemes; the action arm logs a `log::warn!`
+line surfacing the skip. `Copy` falls through to whole-section
+copy because it's non-destructive. Range-aware clipboard
+semantics (sub-range cut, splice-paste) are deferred to a
+future tier.
+
+**Picker contract.** `color text` (no value) on a `SectionRange`
+selection opens the picker with the sub-range plumbed through
+`ColorTarget::Section { range }` → `PickerHandle::Section
+{ range }`. The picker's `current_color_at` cascade scans
+in-range runs only (via `text_run_ops::slice`); a range that
+crosses a gap or contains disagreeing runs falls back to
+`node.style.text_color`. Commit calls
+`set_section_text_color_range` directly, bypassing the
+`MultiSection` fan-out — different sections' lengths make
+cross-section sub-range semantics incoherent. Section live
+preview during wheel hover is deferred (commit-only today).
+
+### Structured clipboard
+
+Section copy / cut produce a structured payload carrying the
+full per-section snapshot (`text_runs` + `offset` + `size` +
+`channel` + `trigger_bindings`). The plain section text rides
+the OS clipboard so cross-app paste sees a sensible string; the
+structured payload rides an in-process buffer so a within-app
+section→section paste round-trips per-run formatting and section
+chrome.
+
+The two halves stay coherent through a consistency check on
+read: the structured payload is consulted only when the OS
+clipboard's current text matches the buffer's snapshot exactly
+(no trimming on either side, so a section whose text ends in
+`\n` from the inline editor still round-trips). When the OS text
+differs — typically because the user copied from another app
+between Mandala copy and paste — paste falls through to a
+plain-text branch where the new text takes the destination
+section's first run as a formatting template (per-run structure
+is lost; offset / size / channel / bindings stay).
+
+Cut clears text and runs only; offset / size / channel /
+bindings stay on the source section so the cut reads as "the
+text disappeared" rather than "the section dissolved", and a
+paste of the cut payload restores the full original shape.
+
 ## Channel space
 
 Sections live in the same Baumhard tree as child mind-nodes. The

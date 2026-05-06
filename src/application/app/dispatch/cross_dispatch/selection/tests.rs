@@ -13,7 +13,8 @@
 #![cfg(test)]
 
 use super::*;
-use crate::application::document::tests_common::load_test_doc;
+use crate::application::document::tests_common::{load_test_doc, pinned_two_section_node};
+use crate::application::document::SectionSel;
 
 fn first_node_id(doc: &MindMapDocument) -> String {
     doc.mindmap
@@ -151,6 +152,35 @@ fn select_parent_in_no_op_at_root() {
     assert!(matches!(
         doc.selection,
         SelectionState::Single(ref s) if s == &root_id
+    ));
+}
+
+/// `select_parent_in` walks up from a `SectionRange` selection
+/// to the section's owning node's parent — same shape as the
+/// `Section` arm. Pins the missed-arm fix from the N4-C.a
+/// review (N4-C.a's wildcard `_ => return false` would have
+/// no-op'd here).
+#[test]
+fn select_parent_in_walks_up_from_section_range() {
+    use crate::application::document::SectionSel;
+    let mut doc = load_test_doc();
+    let child_id = doc
+        .mindmap
+        .nodes
+        .values()
+        .find(|n| n.parent_id.is_some())
+        .expect("fixture has a non-root node")
+        .id
+        .clone();
+    let parent_id = doc.mindmap.nodes[&child_id].parent_id.clone().unwrap();
+    doc.selection = SelectionState::SectionRange {
+        sel: SectionSel::new(&child_id, 0),
+        range: (1, 3),
+    };
+    assert!(select_parent_in(&mut doc));
+    assert!(matches!(
+        doc.selection,
+        SelectionState::Single(ref s) if s == &parent_id
     ));
 }
 
@@ -323,6 +353,37 @@ fn select_sibling_in_walks_between_sections_forward() {
     ));
 }
 
+/// `select_sibling_in` from a `SectionRange` selection walks
+/// between sections like `Section` does — and **drops the
+/// sub-range** on transition (the result is `Section`, not a
+/// new `SectionRange`). Pins the documented "moving to a
+/// sibling section is a fresh selection, not a range
+/// carry-over" semantic.
+#[test]
+fn select_sibling_in_drops_section_range_on_walk() {
+    use crate::application::document::SectionSel;
+    use baumhard::mindmap::model::MindSection;
+    let mut doc = load_test_doc();
+    let nid = first_node_id(&doc);
+    {
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        node.sections
+            .push(MindSection::new_default("second".into(), Vec::new()));
+    }
+    doc.selection = SelectionState::SectionRange {
+        sel: SectionSel::new(nid.clone(), 0),
+        range: (1, 3),
+    };
+    assert!(select_sibling_in(&mut doc, true));
+    assert!(
+        matches!(
+            doc.selection,
+            SelectionState::Section(ref s) if s.node_id == nid && s.section_idx == 1
+        ),
+        "sibling walk must demote SectionRange to Section, dropping the sub-range"
+    );
+}
+
 /// Backward sibling walk on `Section(N, K>0)` steps to
 /// `Section(N, K-1)`; on `Section(N, 0)` falls through to the
 /// previous mind-node sibling (or no-op at root).
@@ -389,4 +450,97 @@ fn select_sibling_in_walks_visible_neighbour() {
     assert!(select_sibling_in(&mut doc, true));
     // Walking back returns to the previous sibling.
     assert!(select_sibling_in(&mut doc, false));
+}
+
+// ── MultiSection collapse-to-first nav ───────────────────────────
+
+/// Up-arrow on a MultiSection collapses to the first section's
+/// owning node and walks to its parent (or no-ops at root).
+#[test]
+fn select_parent_in_collapses_multisection_to_first_owning_node() {
+    let (mut doc, id) = pinned_two_section_node();
+    // Two-section node has no parent in the fixture; pin that
+    // up-arrow on MultiSection no-ops cleanly (rather than
+    // silently no-op'ing for the wrong reason).
+    doc.selection = SelectionState::MultiSection(vec![
+        SectionSel::new(&id, 0),
+        SectionSel::new(&id, 1),
+    ]);
+    assert!(!select_parent_in(&mut doc));
+}
+
+/// Down-arrow on a MultiSection produces the same post-state as
+/// down-arrow on `Single(first_section.node_id)` — pinning the
+/// "collapse to first owning node" contract. Uses load_test_doc
+/// (which has the testament hierarchy with parent/child relations)
+/// and selects a node with at least one visible child so the
+/// collapse + walk path is actually exercised.
+#[test]
+fn select_child_in_multisection_matches_single_on_first_owning_node() {
+    let mut doc_a = load_test_doc();
+    let mut doc_b = load_test_doc();
+    let parent_with_child = doc_a
+        .mindmap
+        .nodes
+        .values()
+        .filter_map(|n| {
+            doc_a
+                .mindmap
+                .children_of(&n.id)
+                .iter()
+                .find(|c| !doc_a.mindmap.is_hidden_by_fold(c))
+                .map(|c| (n.id.clone(), c.id.clone()))
+        })
+        .min()
+        .expect("fixture has at least one node with a visible child");
+    let parent_id = parent_with_child.0;
+    let expected_child = parent_with_child.1;
+    doc_a.selection =
+        SelectionState::MultiSection(vec![SectionSel::new(&parent_id, 0), SectionSel::new(&parent_id, 1)]);
+    doc_b.selection = SelectionState::Single(parent_id);
+    assert!(select_child_in(&mut doc_a));
+    assert!(select_child_in(&mut doc_b));
+    let landed_a = match &doc_a.selection {
+        SelectionState::Single(id) => id.clone(),
+        other => panic!("expected Single, got {:?}", other),
+    };
+    let landed_b = match &doc_b.selection {
+        SelectionState::Single(id) => id.clone(),
+        other => panic!("expected Single, got {:?}", other),
+    };
+    assert_eq!(landed_a, expected_child);
+    assert_eq!(landed_b, expected_child);
+}
+
+/// Sibling navigation on a MultiSection collapses to the first
+/// section's owning node and walks the node's siblings.
+/// Deterministic by `min()` so the test doesn't pick whichever
+/// HashMap iteration surfaced first.
+#[test]
+fn select_sibling_in_collapses_multisection_to_first_owning_node() {
+    let mut doc = load_test_doc();
+    let (start_id, expected_next) = doc
+        .mindmap
+        .nodes
+        .values()
+        .filter_map(|n| {
+            let parent_id = n.parent_id.clone()?;
+            let siblings = doc.mindmap.children_of(&parent_id);
+            if siblings.len() < 2 {
+                return None;
+            }
+            let idx = siblings.iter().position(|s| s.id == n.id)?;
+            let next = siblings.get(idx + 1)?.id.clone();
+            Some((n.id.clone(), next))
+        })
+        .min()
+        .expect("fixture has at least one node with a next sibling");
+    doc.selection =
+        SelectionState::MultiSection(vec![SectionSel::new(&start_id, 0), SectionSel::new(&start_id, 1)]);
+    assert!(select_sibling_in(&mut doc, true));
+    let landed = match &doc.selection {
+        SelectionState::Single(id) => id.clone(),
+        other => panic!("expected Single, got {:?}", other),
+    };
+    assert_eq!(landed, expected_next);
 }

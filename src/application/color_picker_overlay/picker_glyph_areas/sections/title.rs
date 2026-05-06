@@ -27,7 +27,16 @@ pub(in crate::application::color_picker_overlay::picker_glyph_areas) fn build(
 
     let is_standalone = geometry.target_label.is_empty();
     let title_text = if is_standalone {
-        spec.title_template_standalone.clone()
+        // Append the selection-identity hint so a Standalone-mode
+        // wheel commit shows the user what it will land on
+        // ("section K of <node>" / "node <id>" / "edge" / etc.).
+        // The hint is computed at the rebuild site
+        // (`rebuild_color_picker_overlay`) rather than here so the
+        // overlay layer stays free of `MindMapDocument` access.
+        match &geometry.selection_hint {
+            Some(hint) => format!("{} · {}", spec.title_template_standalone, hint),
+            None => spec.title_template_standalone.clone(),
+        }
     } else {
         spec.title_template_contextual
             .replace("{target_label}", geometry.target_label)

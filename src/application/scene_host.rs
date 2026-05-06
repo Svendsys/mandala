@@ -51,6 +51,13 @@ pub enum CanvasRole {
     EdgeHandles,
     /// Labels attached to labeled edges.
     ConnectionLabels,
+    /// Resize handles on the selected `Some`-sized section
+    /// (8 per selection, or 0 for `None`-sized fill-parent
+    /// sections / non-section selection).
+    SectionResizeHandles,
+    /// Resize handles on the selected node (8 per Single-node
+    /// selection with finite + positive size, 0 otherwise).
+    NodeResizeHandles,
 }
 
 /// Two arms of the §B2 canvas-tree dispatch: apply a mutator to the
@@ -113,6 +120,16 @@ pub mod layers {
     /// Edge handles draw on top of everything canvas-space so the
     /// user can always grab them.
     pub const EDGE_HANDLES: i32 = 50;
+    /// Section resize handles — same "always on top" rationale as
+    /// edge handles. One layer above so they win on the rare
+    /// pixel-overlap with an edge handle.
+    pub const SECTION_RESIZE_HANDLES: i32 = 51;
+    /// Node resize handles — one layer above section resize
+    /// handles so they win on a layered selection cycle (a Single
+    /// node selection precludes a Section selection by enum
+    /// construction, so they don't actually coexist; the layer
+    /// ordering is precautionary).
+    pub const NODE_RESIZE_HANDLES: i32 = 52;
 
     // --- Screen-space (overlay) layers ------------------------
 
@@ -139,6 +156,8 @@ pub struct AppScene {
     portals: Option<SceneTreeId>,
     edge_handles: Option<SceneTreeId>,
     connection_labels: Option<SceneTreeId>,
+    section_resize_handles: Option<SceneTreeId>,
+    node_resize_handles: Option<SceneTreeId>,
     /// Opaque per-role hash describing the **structural shape** of
     /// the registered canvas tree (not its variable-field state). A
     /// caller that wants to dispatch between full-rebuild and §B2
@@ -176,6 +195,8 @@ impl AppScene {
             portals: None,
             edge_handles: None,
             connection_labels: None,
+            section_resize_handles: None,
+            node_resize_handles: None,
             canvas_signatures: HashMap::new(),
             overlay_signatures: HashMap::new(),
         }
@@ -213,6 +234,8 @@ impl AppScene {
             CanvasRole::Portals => layers::PORTALS,
             CanvasRole::EdgeHandles => layers::EDGE_HANDLES,
             CanvasRole::ConnectionLabels => layers::CONNECTION_LABELS,
+            CanvasRole::SectionResizeHandles => layers::SECTION_RESIZE_HANDLES,
+            CanvasRole::NodeResizeHandles => layers::NODE_RESIZE_HANDLES,
         };
         let id = self.canvas.insert(tree, layer, offset);
         *self.canvas_role_slot_mut(role) = Some(id);
@@ -272,6 +295,8 @@ impl AppScene {
             CanvasRole::Portals => self.portals,
             CanvasRole::EdgeHandles => self.edge_handles,
             CanvasRole::ConnectionLabels => self.connection_labels,
+            CanvasRole::SectionResizeHandles => self.section_resize_handles,
+            CanvasRole::NodeResizeHandles => self.node_resize_handles,
         }
     }
 
@@ -405,6 +430,8 @@ impl AppScene {
             CanvasRole::Portals => &mut self.portals,
             CanvasRole::EdgeHandles => &mut self.edge_handles,
             CanvasRole::ConnectionLabels => &mut self.connection_labels,
+            CanvasRole::SectionResizeHandles => &mut self.section_resize_handles,
+            CanvasRole::NodeResizeHandles => &mut self.node_resize_handles,
         }
     }
 

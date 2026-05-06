@@ -102,4 +102,14 @@ pub struct ColorPickerOverlayGeometry {
     /// `handle_color_picker_mouse_move` so only a change triggers a
     /// rebuild.
     pub hovered_hit: Option<PickerHit>,
+    /// Standalone-mode selection hint — `Some("section 1 of 0.1")`
+    /// or `Some("node 0.1")` etc. when the document carries a
+    /// selection at picker-build time, `None` otherwise.
+    /// Contextual mode leaves this `None` because the picker title
+    /// already shows the bound target's label
+    /// (`color_picker/targets.rs::PickerHandle::label`). Without
+    /// this, a Standalone wheel commit on a `SelectionState::Section`
+    /// gives the user no signal that the write lands per-section vs
+    /// whole-node.
+    pub selection_hint: Option<String>,
 }
