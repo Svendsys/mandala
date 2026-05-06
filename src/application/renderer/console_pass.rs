@@ -10,6 +10,7 @@ use glam::Vec2;
 
 use baumhard::core::primitives::{ColorFontRegion, ColorFontRegions, Range as ColorFontRange};
 use baumhard::font::fonts::app_font_by_family;
+use baumhard::font::hex::cosmic_color_to_rgba;
 use baumhard::font::Color;
 use baumhard::gfx_structs::area::GlyphArea;
 use baumhard::gfx_structs::element::GfxElement;
@@ -109,12 +110,7 @@ pub(super) fn console_overlay_areas(
             Vec2::new(pos.0, pos.1),
             Vec2::new(bounds.0, bounds.1),
         );
-        let rgba = [
-            color.r() as f32 / 255.0,
-            color.g() as f32 / 255.0,
-            color.b() as f32 / 255.0,
-            color.a() as f32 / 255.0,
-        ];
+        let rgba = cosmic_color_to_rgba(color);
         // Resolve the per-line family-name (if any) to an AppFont
         // so the baumhard attrs builder pins the face. Unknown
         // families fall through as `None`, which the attrs builder
@@ -360,24 +356,16 @@ pub(super) fn console_overlay_areas(
         Vec2::new(content_width, prompt_budget),
     );
     let mut regions = ColorFontRegions::new_empty();
-    let to_rgba = |c: Color| -> [f32; 4] {
-        [
-            c.r() as f32 / 255.0,
-            c.g() as f32 / 255.0,
-            c.b() as f32 / 255.0,
-            c.a() as f32 / 255.0,
-        ]
-    };
     regions.submit_region(ColorFontRegion::new(
         ColorFontRange::new(0, prompt_chars),
         None,
-        Some(to_rgba(ACCENT_COLOR)),
+        Some(cosmic_color_to_rgba(ACCENT_COLOR)),
     ));
     if input_chars > 0 {
         regions.submit_region(ColorFontRegion::new(
             ColorFontRange::new(prompt_chars, prompt_chars + input_chars),
             None,
-            Some(to_rgba(TEXT_COLOR)),
+            Some(cosmic_color_to_rgba(TEXT_COLOR)),
         ));
     }
     prompt_area.regions = regions;

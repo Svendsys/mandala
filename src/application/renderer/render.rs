@@ -9,6 +9,7 @@ use log::debug;
 use wgpu::StoreOp;
 
 use baumhard::font::fonts;
+use baumhard::util::color_conversion::convert_u8_to_f32;
 
 use super::{Renderer, RECT_VBUF_INITIAL_CAPACITY, RECT_VERTEX_FLOATS};
 
@@ -122,12 +123,7 @@ impl Renderer {
                 vp_w_px,
                 vp_h_px,
             );
-            let color = [
-                rect.color[0] as f32 / 255.0,
-                rect.color[1] as f32 / 255.0,
-                rect.color[2] as f32 / 255.0,
-                rect.color[3] as f32 / 255.0,
-            ];
+            let color = convert_u8_to_f32(&rect.color);
             Self::push_rect_ndc(
                 &mut self.main_rect_vertices,
                 ndc_min,

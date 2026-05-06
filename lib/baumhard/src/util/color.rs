@@ -242,18 +242,11 @@ impl Color {
         self.rgba[ALPHA_IDX] = opacity;
     }
 
-    /// Convert to [`FloatRgba`] by integer-dividing each channel by
-    /// [`VAL_MAX`]. O(1), no heap. Note: this uses `u8` integer
-    /// division, so every non-max channel collapses to `0.0` — the
-    /// lossy form is kept for the existing scaling call sites that
-    /// rely on it.
+    /// Convert to [`FloatRgba`] by dividing each channel by 255.
+    /// O(1), no heap. Inverse of [`Color::new_f32`] within rounding
+    /// slack of `1.0/255.0`.
     pub fn to_float(&self) -> FloatRgba {
-        [
-            (self.rgba[RED_IDX] / VAL_MAX).into(),
-            (self.rgba[GREEN_IDX] / VAL_MAX).into(),
-            (self.rgba[BLUE_IDX] / VAL_MAX).into(),
-            (self.rgba[ALPHA_IDX] / VAL_MAX).into(),
-        ]
+        convert_u8_to_f32(&self.rgba)
     }
 }
 
@@ -654,5 +647,56 @@ mod tests {
         assert_eq!(r[1], 25);
         assert_eq!(r[2], 10);
         assert_eq!(r[3], 1);
+    }
+
+    /// `Color::to_float` and `Color::new_f32` are inverses within
+    /// rounding slack of `1.0/255.0` — a regression to the prior
+    /// integer-division body would collapse every non-saturated
+    /// channel to `0.0` and fail this immediately. Cycles every
+    /// fourth byte value so subnormal mid-range channels (where
+    /// the bug lived) get exercised.
+    #[test]
+    fn color_to_float_round_trips_through_new_f32() {
+        for r in (0u8..=255).step_by(4) {
+            for g in (0u8..=255).step_by(4) {
+                for b in (0u8..=255).step_by(4) {
+                    for a in (0u8..=255).step_by(4) {
+                        let original = Color::new_u8(&[r, g, b, a]);
+                        let floats = original.to_float();
+                        for (i, channel) in floats.iter().enumerate() {
+                            assert!(
+                                (*channel - original[i] as f32 / 255.0).abs() < f32::EPSILON,
+                                "channel {i} of {original:?} → {channel} drifted",
+                            );
+                        }
+                        let back = Color::new_f32(&floats);
+                        // Slack of 1 byte covers the round-trip's
+                        // mul-by-255 + round; in practice every
+                        // channel returns to itself bit-exact, but
+                        // the `<= 1` guard documents the contract.
+                        for i in 0..4 {
+                            assert!(
+                                (back[i] as i16 - original[i] as i16).abs() <= 1,
+                                "channel {i} of {original:?} round-tripped to {back:?}",
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Mid-range channels — the silent victims of the prior
+    /// integer-division `to_float` — must produce non-zero floats.
+    /// Direct regression guard: `[128, 200, 50, 255]` previously
+    /// returned `[0, 0, 0, 1]` and rendered as black.
+    #[test]
+    fn color_to_float_does_not_collapse_mid_range_channels() {
+        let mid = Color::new_u8(&[128, 200, 50, 255]);
+        let f = mid.to_float();
+        assert!(f[0] > 0.49 && f[0] < 0.51, "red 128/255 ≈ 0.502");
+        assert!(f[1] > 0.78 && f[1] < 0.79, "green 200/255 ≈ 0.784");
+        assert!(f[2] > 0.19 && f[2] < 0.20, "blue 50/255 ≈ 0.196");
+        assert_eq!(f[3], 1.0);
     }
 }

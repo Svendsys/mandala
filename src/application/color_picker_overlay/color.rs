@@ -3,18 +3,17 @@
 //! RGB → cosmic-text conversion and highlight mixes shared by the
 //! picker's tree / mutator / area builders.
 
-/// Convert a normalized `[0, 1]` RGB triple into an opaque
-/// `baumhard::font::Color`. Used by the glyph-wheel color picker render
-/// path to paint each hue-ring slot, sat/val cell, and preview glyph
-/// at its own HSV coordinate without per-frame closure allocation.
-///
-/// Clamps each channel before the `* 255.0` cast — `as u8` wraps on
-/// out-of-range floats, so `baumhard::util::color::convert_f32_to_u8`
-/// isn't a drop-in replacement for this path.
+use baumhard::font::hex::cosmic_color_from_rgba;
+
+/// Convert a normalized `[0, 1]` opaque RGB triple into a
+/// [`baumhard::font::Color`]. Used by the glyph-wheel color picker
+/// render path to paint each hue-ring slot, sat/val cell, and
+/// preview glyph at its own HSV coordinate without per-frame closure
+/// allocation. Routes through [`cosmic_color_from_rgba`] so quantisation
+/// stays single-sourced in the font wrapper.
 #[inline]
 pub(super) fn rgb_to_cosmic_color(rgb: [f32; 3]) -> baumhard::font::Color {
-    let to_u8 = |c: f32| (c.clamp(0.0, 1.0) * 255.0).round() as u8;
-    baumhard::font::Color::rgba(to_u8(rgb[0]), to_u8(rgb[1]), to_u8(rgb[2]), 255)
+    cosmic_color_from_rgba([rgb[0], rgb[1], rgb[2], 1.0])
 }
 
 /// Linear mix of `rgb` toward white by `t` ∈ `[0, 1]`. `t = 0` is the

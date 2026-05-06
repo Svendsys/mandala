@@ -11,6 +11,7 @@ use std::sync::OnceLock;
 
 use baumhard::core::primitives::ColorFontRegions;
 use baumhard::font::fonts::AppFont;
+use baumhard::font::hex::cosmic_color_to_rgba;
 use baumhard::gfx_structs::area::GlyphAreaField;
 use baumhard::util::color::{hsv_to_hex, hsv_to_rgb};
 use baumhard::util::grapheme_chad::count_grapheme_clusters;
@@ -292,17 +293,6 @@ impl<'a> PickerDynamicContext<'a> {
 }
 
 /// Convert a `baumhard::font::Color` to `[f32; 4]` in `[0, 1]` — same
-/// shape as `make_area`'s float-region input so the two paths
-/// produce bit-identical region values.
-#[inline]
-fn cosmic_to_rgba(color: baumhard::font::Color) -> [f32; 4] {
-    [
-        color.r() as f32 / 255.0,
-        color.g() as f32 / 255.0,
-        color.b() as f32 / 255.0,
-        color.a() as f32 / 255.0,
-    ]
-}
 
 impl<'a> SectionContext for PickerDynamicContext<'a> {
     fn field(&self, section: &str, index: usize, template: &CellField) -> GlyphAreaField {
@@ -413,7 +403,7 @@ impl<'a> SectionContext for PickerDynamicContext<'a> {
 
         GlyphAreaField::ColorFontRegions(ColorFontRegions::single_span(
             count,
-            Some(cosmic_to_rgba(color)),
+            Some(cosmic_color_to_rgba(color)),
             font,
         ))
     }
