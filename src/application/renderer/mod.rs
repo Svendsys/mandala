@@ -517,6 +517,39 @@ pub(crate) fn clamp_surface_size_to_gpu_limit(width: u32, height: u32, max_dim: 
 }
 
 impl Renderer {
+    /// Native bootstrap: own the `wgpu::Instance` + `Surface`
+    /// construction so the caller doesn't need to import `wgpu`.
+    /// Hand wgpu the owned `Arc<Window>` rather than pre-snapshotting
+    /// raw handles via `SurfaceTargetUnsafe::from_window`: under
+    /// wgpu 29 + winit 0.30 the latter blew up with
+    /// `Hal(MissingDisplayHandle)` on EGL/GL Linux because the GL
+    /// surface ctor re-queries the display handle and won't accept a
+    /// captured raw struct.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn bootstrap_native(window: Arc<Window>) -> Renderer {
+        let instance = wgpu::Instance::default();
+        let surface = instance
+            .create_surface(window.clone())
+            .expect("failed to create wgpu surface for window");
+        Self::new(instance, surface, window).await
+    }
+
+    /// WASM bootstrap: same as `bootstrap_native` but binds the
+    /// surface to the supplied `<canvas>` element. The browser's
+    /// adapter/device init is Promise-backed so this stays async
+    /// like the native form.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn bootstrap_wasm(
+        window: Arc<Window>,
+        canvas: web_sys::HtmlCanvasElement,
+    ) -> Renderer {
+        let instance = wgpu::Instance::default();
+        let surface = instance
+            .create_surface(wgpu::SurfaceTarget::Canvas(canvas))
+            .expect("failed to create wgpu surface for canvas");
+        Self::new(instance, surface, window).await
+    }
+
     pub async fn new(instance: Instance, surface: Surface<'static>, window: Arc<Window>) -> Renderer {
         let adapter = Self::get_adapter(&instance, &surface).await;
         let (device, queue) = Self::get_device(&adapter).await;

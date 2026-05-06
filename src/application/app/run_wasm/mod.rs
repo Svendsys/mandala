@@ -36,7 +36,6 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use baumhard::mindmap::tree_builder::MindMapTree;
-use wgpu::Instance;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, MouseButton, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
@@ -516,11 +515,7 @@ pub(super) fn run(mut app: Application) {
     // are Promise-backed). Spawn as a future so the event loop doesn't
     // block waiting for wgpu.
     wasm_bindgen_futures::spawn_local(async move {
-        let instance = Instance::default();
-        let surface = instance
-            .create_surface(wgpu::SurfaceTarget::Canvas(canvas.clone()))
-            .expect("Failed to create surface");
-        let mut renderer = Renderer::new(instance, surface, renderer_window).await;
+        let mut renderer = Renderer::bootstrap_wasm(renderer_window, canvas.clone()).await;
         log::info!("WASM: adapter + surface + renderer ready");
 
         let size = canvas.width();
