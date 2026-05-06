@@ -226,9 +226,14 @@ fn evaluate_field(
             Exists(negation) => !negation,
         }),
         GlyphModel(model_field) => {
-            // `glyph_model().is_none()` decides the predicate as
-            // false (matches the original `return false`).
-            let target_model = element.glyph_model()?;
+            // Missing `glyph_model()` decides the predicate as
+            // false — matches the original `return false` at the
+            // tail of the old `GlyphModel` arm. `?` would
+            // fall-through to the next field instead, which
+            // would diverge for multi-field predicates.
+            let Some(target_model) = element.glyph_model() else {
+                return Some(false);
+            };
             Some(evaluate_glyph_model_match(target_model, model_field, comparator))
         }
         GfxElementField::Flag(flag) => {
