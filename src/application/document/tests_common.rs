@@ -44,7 +44,7 @@ static CACHED_TESTAMENT_MAP: OnceLock<MindMap> = OnceLock::new();
 /// Load the testament map into a fresh `MindMapDocument` shell.
 /// Backed by a `OnceLock` so the JSON parse only happens once
 /// per process; subsequent calls clone the cached `MindMap` into
-/// a new doc shell via [`MindMapDocument::from_finalized_mindmap`].
+/// a new doc shell via [`MindMapDocument::from_mindmap`].
 ///
 /// Skips `finalize` (the grow-node-sizes-to-fit-text + border
 /// passes) since the testament map's authored sizes already
@@ -55,7 +55,7 @@ static CACHED_TESTAMENT_MAP: OnceLock<MindMap> = OnceLock::new();
 pub(crate) fn load_test_doc() -> MindMapDocument {
     let map = CACHED_TESTAMENT_MAP
         .get_or_init(|| loader::load_from_file(&test_map_path()).expect("testament map parses"));
-    MindMapDocument::from_finalized_mindmap(map.clone(), None)
+    MindMapDocument::from_mindmap(map.clone(), None)
 }
 
 pub(super) fn load_test_tree() -> MindMapTree {
@@ -121,26 +121,12 @@ pub(in crate::application) fn two_testament_node_ids(doc: &MindMapDocument) -> (
 /// parse, no font-system contention. Lifted from byte-
 /// identical helpers that previously sat inline in
 /// `zoom_bounds.rs` and `edges.rs` test modules.
+///
+/// Routes through [`MindMapDocument::with_orphan`] — the
+/// canonical constructor — so tests don't reach into
+/// `MindMapDocument`'s field list.
 pub(in crate::application) fn doc_with_one_orphan_node() -> MindMapDocument {
-    use std::collections::{HashMap, HashSet};
-    let mut doc = MindMapDocument {
-        mindmap: MindMap::new_blank("t"),
-        file_path: None,
-        dirty: false,
-        selection: super::SelectionState::None,
-        undo_stack: Vec::new(),
-        mutation_registry: HashMap::new(),
-        mutation_sources: HashMap::new(),
-        mutation_handlers: HashMap::new(),
-        active_toggles: HashSet::new(),
-        label_edit_preview: None,
-        portal_text_edit_preview: None,
-        color_picker_preview: None,
-        active_animations: Vec::new(),
-    };
-    let node = super::defaults::default_orphan_node("0", glam::Vec2::ZERO);
-    doc.mindmap.nodes.insert("0".to_string(), node);
-    doc
+    MindMapDocument::with_orphan("0", glam::Vec2::ZERO)
 }
 
 /// Build a fresh `MindMapDocument` carrying two orphan nodes

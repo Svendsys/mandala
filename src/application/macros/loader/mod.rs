@@ -138,14 +138,22 @@ pub fn rebuild_map_macros(
 /// covers this and recommends `node-id.action` patterns.
 pub fn parse_inline_macros(doc: &crate::application::document::MindMapDocument) -> Vec<super::Macro> {
     let mut out = Vec::new();
-    // Cross-node id collisions inside the Inline tier are
-    // non-deterministic — `MindMap.nodes` is a HashMap, so the
-    // walk order changes per process start. The "winner" for an
-    // id duplicated across nodes depends on hash randomization.
-    // Warn at parse time so authors notice and namespace their
-    // ids (e.g. `<node-id>.action`).
+    // Iterate nodes in lexicographic id order so cross-node id
+    // collisions resolve deterministically: the lowest node id
+    // wins. Without the sort, `MindMap.nodes` is a HashMap and
+    // the walk order changes per process start, making the
+    // "winner" of a duplicated id vary between runs. The warn
+    // below still fires — authors should namespace inline ids
+    // (e.g. `<node-id>.action`) — but the runtime behaviour is
+    // now reproducible.
+    let mut node_ids: Vec<&String> = doc.mindmap.nodes.keys().collect();
+    node_ids.sort();
     let mut seen: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    for (node_id, node) in &doc.mindmap.nodes {
+    for node_id in node_ids {
+        let node = match doc.mindmap.nodes.get(node_id) {
+            Some(n) => n,
+            None => continue,
+        };
         for (idx, v) in node.inline_macros.iter().enumerate() {
             match baumhard::format::json::parse_value::<super::Macro>(v.clone()) {
                 Ok(m) => {
@@ -153,12 +161,12 @@ pub fn parse_inline_macros(doc: &crate::application::document::MindMapDocument) 
                         if prev_node != *node_id {
                             log::warn!(
                                 "macros: Inline-tier id '{}' duplicated across nodes \
-                                 '{}' and '{}'; HashMap iteration order is \
-                                 non-deterministic so the winner varies per process \
-                                 start. Namespace your ids (e.g. '<node-id>.{}').",
+                                 '{}' and '{}'; the lower-id node ('{}') wins. \
+                                 Namespace your ids (e.g. '<node-id>.{}').",
                                 m.id,
                                 prev_node,
                                 node_id,
+                                prev_node,
                                 m.id
                             );
                         }

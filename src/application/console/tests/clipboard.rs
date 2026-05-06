@@ -16,7 +16,7 @@ use crate::application::console::traits::{
 fn node_copy_returns_node_text() {
     let mut doc = load_test_doc();
     let nid = first_node_id(&doc);
-    let original = doc.mindmap.nodes.get(&nid).unwrap().display_text();
+    let original = doc.mindmap.nodes.get(&nid).unwrap().display_text().into_owned();
     let tid = TargetId::Node(nid);
     let view = view_for(&mut doc, &tid);
     match view.clipboard_copy() {
@@ -78,7 +78,7 @@ fn node_paste_unchanged_text_reports_unchanged() {
 fn node_cut_returns_text_and_clears_node() {
     let mut doc = load_test_doc();
     let nid = first_node_id(&doc);
-    let original = doc.mindmap.nodes.get(&nid).unwrap().display_text();
+    let original = doc.mindmap.nodes.get(&nid).unwrap().display_text().into_owned();
     assert!(!original.is_empty(), "fixture node should have text");
     let tid = TargetId::Node(nid.clone());
     let cut = {
@@ -106,7 +106,7 @@ fn node_cut_clears_every_section_on_multi_section_node() {
         node.sections
             .push(MindSection::new_default("third-stratum".into(), Vec::new()));
     }
-    let original = doc.mindmap.nodes.get(&nid).unwrap().display_text();
+    let original = doc.mindmap.nodes.get(&nid).unwrap().display_text().into_owned();
     assert!(original.contains("second-stratum"));
     assert!(original.contains("third-stratum"));
 

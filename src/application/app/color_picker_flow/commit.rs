@@ -248,7 +248,7 @@ pub(in crate::application::app) fn apply_picker_preview(
             PickerHandle::Edge(index) => {
                 if let Some(edge) = doc.mindmap.edges.get(index) {
                     let key = baumhard::mindmap::scene_cache::EdgeKey::from_edge(edge);
-                    doc.color_picker_preview = Some(ColorPickerPreview::Edge { key, color: hex });
+                    doc.color_picker_preview = Some(ColorPickerPreview { key, color: hex });
                 }
             }
             PickerHandle::Node { .. } => {

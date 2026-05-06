@@ -35,21 +35,11 @@ impl Index<usize> for GlyphMatrix {
 }
 
 impl IndexMut<usize> for GlyphMatrix {
+    /// Mutable line access — panics on out-of-bounds, matching
+    /// `Vec::index_mut`. Use [`Self::ensure_line`] before
+    /// indexing if the line might not exist yet.
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-        let matrix = &mut self.matrix;
-        let matrix_len = matrix.len();
-
-        if matrix.get_mut(index).is_some() {
-            return matrix.get_mut(index).unwrap();
-        }
-        if index > matrix_len {
-            let matrix_delta = index - matrix_len;
-            for _ in 0..matrix_delta {
-                matrix.push(GlyphLine::new());
-            }
-        }
-        matrix.push(GlyphLine::new());
-        matrix.get_mut(index).unwrap()
+        &mut self.matrix[index]
     }
 }
 
@@ -123,6 +113,18 @@ impl GlyphMatrix {
     /// Mutable borrow of the line at `line_num`. O(1).
     pub fn get_mut(&mut self, line_num: usize) -> Option<&mut GlyphLine> {
         self.matrix.get_mut(line_num)
+    }
+
+    /// Grow `matrix` with empty lines until `line_num` is in
+    /// bounds, then return a mutable reference to that line. The
+    /// explicit-grow path that the old `IndexMut` quietly did on
+    /// every out-of-bounds index — callers that need auto-grow
+    /// must say so. O(growth) amortised.
+    pub fn ensure_line(&mut self, line_num: usize) -> &mut GlyphLine {
+        if line_num >= self.matrix.len() {
+            self.matrix.resize_with(line_num + 1, GlyphLine::new);
+        }
+        &mut self.matrix[line_num]
     }
 
     /// Expanding-insert at `(line_num, idx)`: grows rows / columns

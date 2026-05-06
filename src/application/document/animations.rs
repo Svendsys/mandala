@@ -299,12 +299,21 @@ impl MindMapDocument {
         apply_position_mutations_to_node(&flat, &mut scratch);
         let to_node = scratch;
 
+        // Invariant established by the early-return above:
+        // `cm.timing.is_some()` with `duration_ms > 0`. Carve
+        // the live timing envelope here so
+        // `AnimationInstance::timing()` projects without unwrap.
+        let timing = match cm.timing.as_ref() {
+            Some(t) => t.clone(),
+            None => return,
+        };
         self.active_animations.push(AnimationInstance {
             target_id: target_id.to_string(),
             section_idx,
             from_node,
             to_node,
             start_ms: now_ms,
+            timing,
             cm: cm.clone(),
         });
     }

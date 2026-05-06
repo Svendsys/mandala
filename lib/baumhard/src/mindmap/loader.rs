@@ -24,29 +24,63 @@ pub fn load_from_file(path: &Path) -> Result<MindMap, String> {
 }
 
 /// Parse a `MindMap` from a JSON string. Rejects pre-refactor files
-/// that still carry a top-level `portals[]` array with a concrete
-/// migration pointer (`maptool convert --portals`) so a stale map
-/// doesn't silently lose its portals — serde would otherwise ignore
-/// the unknown field. Allocation-bounded by the input size.
+/// that still carry a top-level `portals[]` array, or per-node
+/// `text` / `text_runs` instead of `sections[]`, with concrete
+/// migration pointers (`maptool convert ...`) so a stale map
+/// doesn't silently lose its content — serde would otherwise
+/// ignore the unknown fields.
 ///
-/// Cost: one JSON parse into `serde_json::Value`, followed by a
-/// `from_value` walk that rebuilds the typed `MindMap` from the
-/// parsed tree (no second parse). O(input_len) in both time and
-/// peak memory — the `Value` tree is kept around until the typed
-/// conversion completes, keeping the legacy-portal probe off the
-/// typed happy path.
+/// Cost: one typed parse on the happy path. The legacy-shape
+/// detection runs as a `Value` walk only when the typed parse
+/// fails OR when the typed result has zero-section nodes
+/// (`sections: []` is silently legal for serde but a current-
+/// invariant violation we surface as a migration hint).
 pub fn load_from_str(json: &str) -> Result<MindMap, String> {
+    match serde_json::from_str::<MindMap>(json) {
+        Ok(map) => {
+            // Post-typed-parse invariants serde can't enforce:
+            // - empty `sections[]` (every node needs one section);
+            // - silently-dropped legacy `portals` / `text` /
+            //   `text_runs` fields. We only inspect the raw JSON
+            //   here when the typed map carries the symptom
+            //   (zero-section node, or the substring marker
+            //   indicates a dropped field).
+            if map.nodes.values().any(|n| n.sections.is_empty())
+                || json.contains("\"portals\"")
+                || json.contains("\"text_runs\"")
+            {
+                if let Some(err) = detect_legacy_shape(json) {
+                    return Err(err);
+                }
+            }
+            Ok(map)
+        }
+        Err(e) => {
+            // Typed parse failed. Try the Value-based legacy
+            // detector — if it fingers a known legacy shape,
+            // surface the migration pointer; otherwise fall
+            // through to the raw serde error so the caller sees
+            // the actual parse failure (line / column included).
+            if let Some(err) = detect_legacy_shape(json) {
+                return Err(err);
+            }
+            Err(format!("Failed to parse mindmap JSON: {}", e))
+        }
+    }
+}
+
+/// Inspect `json` for legacy field shapes that the typed parse
+/// would silently drop or misread, returning a migration-pointing
+/// error message on first hit. Walks `serde_json::Value` once;
+/// only called when the cheap substring screen suggests a legacy
+/// marker is present.
+fn detect_legacy_shape(json: &str) -> Option<String> {
+    let raw: serde_json::Value = serde_json::from_str(json).ok()?;
     // Pre-refactor maps stored portals in a separate `portals[]` array.
-    // Post-refactor portals are edges with `display_mode = "portal"`,
-    // and the `portals` field no longer exists on `MindMap`. Reject
-    // legacy files with a clear pointer to `maptool convert --portals`
-    // so a stale file doesn't silently drop its portals — serde would
-    // otherwise ignore the unknown field.
-    let raw: serde_json::Value =
-        serde_json::from_str(json).map_err(|e| format!("Failed to parse mindmap JSON: {}", e))?;
+    // Post-refactor portals are edges with `display_mode = "portal"`.
     if let Some(arr) = raw.get("portals").and_then(|p| p.as_array()) {
         if !arr.is_empty() {
-            return Err(
+            return Some(
                 "legacy `portals` field present; run `maptool convert --portals <file>` \
                  to migrate to portal-mode edges"
                     .to_string(),
@@ -55,16 +89,13 @@ pub fn load_from_str(json: &str) -> Result<MindMap, String> {
     }
     // Pre-section-refactor maps put `text` and `text_runs` directly
     // on each node. Post-refactor those live on
-    // `MindNode.sections[].{text, text_runs}`. Reject legacy files
-    // with a concrete migration pointer rather than letting serde
-    // drop the unknown fields silently — see CODE_CONVENTIONS §10
-    // "Do not carry dual shapes".
+    // `MindNode.sections[].{text, text_runs}`.
     if let Some(nodes) = raw.get("nodes").and_then(|n| n.as_object()) {
         if let Some((id, _)) = nodes
             .iter()
             .find(|(_, v)| v.get("text").is_some() || v.get("text_runs").is_some())
         {
-            return Err(format!(
+            return Some(format!(
                 "legacy `text` / `text_runs` on node {:?}; run \
                  `maptool convert --sections <file>` to migrate node \
                  text into `sections[]`",
@@ -75,7 +106,7 @@ pub fn load_from_str(json: &str) -> Result<MindMap, String> {
             .iter()
             .find(|(_, v)| v.get("sections").map(|s| !s.is_array()).unwrap_or(false))
         {
-            return Err(format!(
+            return Some(format!(
                 "node {:?} has `sections` but it is not an array — \
                  see format/sections.md",
                 id
@@ -87,7 +118,7 @@ pub fn load_from_str(json: &str) -> Result<MindMap, String> {
                 .map(|arr| arr.is_empty())
                 .unwrap_or(true)
         }) {
-            return Err(format!(
+            return Some(format!(
                 "node {:?} ships zero sections — every renderable node \
                  needs at least one. Run `maptool convert --sections <file>` \
                  to migrate, or add an explicit `sections` array.",
@@ -95,7 +126,7 @@ pub fn load_from_str(json: &str) -> Result<MindMap, String> {
             ));
         }
     }
-    serde_json::from_value(raw).map_err(|e| format!("Failed to parse mindmap JSON: {}", e))
+    None
 }
 
 /// Serialize a `MindMap` to pretty-printed JSON and write it to disk

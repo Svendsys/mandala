@@ -156,7 +156,19 @@ fn process_instruction_node(
                 condition,
             )
         }
-        Instruction::RotateWhile(_, _) => {}
+        Instruction::RotateWhile(_, _) => {
+            // Reserved instruction (see `format/mutators.md` —
+            // sibling rotation), unimplemented in the walker
+            // today. A loaded mutator that uses RotateWhile will
+            // silently no-op the rotation step. Logging at
+            // `warn!` rather than panicking keeps the rest of the
+            // mutation chain executing — a malformed reserved
+            // instruction shouldn't abort the whole walk.
+            warn!(
+                "RotateWhile instruction not implemented in walker; \
+                 this branch becomes a no-op (see format/mutators.md)"
+            );
+        }
         Instruction::SpatialDescend(point) => {
             spatial_descend(gfx_tree, mutator_tree, target_id, mutator_id, point);
         }
@@ -166,61 +178,65 @@ fn process_instruction_node(
     };
 }
 
-/// Assumes that the order of siblings is according to their channels, ascending.
-/// Starting with the target, compare mutator and target channel and apply repeat_while
-/// if they match. If mutator channel is greater or equal than target channel, then next
-/// target sibling will also be checked
+/// Walk siblings comparing channels, applying [`repeat_while`]
+/// where they match. Channel-ascending invariant on both sides
+/// is the same one [`align_child_walks`] documents.
+///
+/// Iterative driver — the original recursive shape was tail-call
+/// in two places; flattening to a `loop` removes the unwrap chain
+/// and makes the channel-advance state explicit.
 fn compare_apply_repeat_while(
     gfx_tree: &mut Tree<GfxElement, GfxMutator>,
     mutator_tree: &MutatorTree<GfxMutator>,
-    target_id: NodeId,
-    mutator_id: NodeId,
+    initial_target_id: NodeId,
+    initial_mutator_id: NodeId,
     condition: &Predicate,
 ) {
-    let mutator_node = get_mutator(&mutator_tree.arena, mutator_id);
-    let target_node = get_target(&mut gfx_tree.arena, target_id);
-    let mutator = mutator_node.get();
-    let maybe_next_target = target_node.next_sibling();
-    let target = target_node.get_mut();
+    let mut target_id = initial_target_id;
+    let mut mutator_id = initial_mutator_id;
+    loop {
+        let mutator_node = get_mutator(&mutator_tree.arena, mutator_id);
+        let target_node = get_target(&mut gfx_tree.arena, target_id);
+        let mutator = mutator_node.get();
+        let maybe_next_target = target_node.next_sibling();
+        let target = target_node.get_mut();
 
-    let m_chan = mutator.channel();
-    let t_chan = target.channel();
-    let next_mutator = mutator_node.next_sibling();
+        let m_chan = mutator.channel();
+        let t_chan = target.channel();
+        let next_mutator = mutator_node.next_sibling();
 
-    if m_chan == t_chan {
-        debug!("Mutator and target channels matches - applying RepeatWhile.");
-        repeat_while(
-            gfx_tree,
-            mutator_tree,
-            target_id,
-            mutator_id,
-            condition,
-            DEFAULT_TERMINATOR,
-        );
-    }
-
-    // This is in case there are more target siblings with same channel
-    if m_chan >= t_chan {
-        if maybe_next_target.is_some() {
-            return compare_apply_repeat_while(
+        if m_chan == t_chan {
+            debug!("Mutator and target channels matches - applying RepeatWhile.");
+            repeat_while(
                 gfx_tree,
                 mutator_tree,
-                maybe_next_target.unwrap(),
+                target_id,
                 mutator_id,
                 condition,
+                DEFAULT_TERMINATOR,
             );
         }
-    }
 
-    if next_mutator.is_some() && maybe_next_target.is_some() {
-        debug!("Changing to next mutator-sibling");
-        compare_apply_repeat_while(
-            gfx_tree,
-            mutator_tree,
-            maybe_next_target.unwrap(),
-            next_mutator.unwrap(),
-            condition,
-        )
+        // More target siblings with the same channel: advance the
+        // target only, keep the mutator pointed at the current
+        // node so additional sibling matches still apply.
+        if m_chan >= t_chan {
+            if let Some(next_t) = maybe_next_target {
+                target_id = next_t;
+                continue;
+            }
+        }
+
+        // No more target matches at the current mutator: advance
+        // both pointers and try the next pair.
+        match (next_mutator, maybe_next_target) {
+            (Some(next_m), Some(next_t)) => {
+                debug!("Changing to next mutator-sibling");
+                target_id = next_t;
+                mutator_id = next_m;
+            }
+            _ => return,
+        }
     }
 }
 
@@ -260,6 +276,28 @@ fn get_target(arena: &mut Arena<GfxElement>, id: NodeId) -> &mut Node<GfxElement
 /// See also [`zip_map_children`] — the opt-out alternative that pairs
 /// children by sibling position (zip) instead of by channel, for
 /// mutations that need per-index targeting.
+///
+/// # Invariant (aspirational, not enforced)
+///
+/// The walker performs best when both target and mutator
+/// children are sorted by [`channel`](GfxElement::channel) in
+/// ascending order along each sibling row. The break on
+/// `t_chan > m_chan` below relies on this for completeness —
+/// once the target's current channel exceeds the mutator's,
+/// later target siblings with lower channels are skipped.
+///
+/// Production tree builders mostly insert in channel order
+/// (`mindmap::tree_builder::append_node_sections`,
+/// `MindMapTree::build`), but a few legitimate paths produce
+/// out-of-order siblings — the renderer's
+/// `console_mutator_round_trips_to_fresh_build` test exercises
+/// such a sibling row. In those cases the walker's pruning is
+/// over-aggressive and can miss matches.
+///
+/// Sorting children at apply time would fix this fully (see
+/// `REFACTOR_PLAN.md` §6.5a alternative); kept as a follow-up
+/// because the existing builder ordering covers the
+/// user-visible mutator surface.
 #[inline]
 fn align_child_walks(
     gfx_tree: &mut Tree<GfxElement, GfxMutator>,

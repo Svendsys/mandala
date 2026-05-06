@@ -365,7 +365,7 @@ impl<'a> HandlesCopy for TargetView<'a> {
                     if text.is_empty() {
                         ClipboardContent::Empty
                     } else {
-                        ClipboardContent::Text(text)
+                        ClipboardContent::Text(text.into_owned())
                     }
                 }
                 None => ClipboardContent::NotApplicable,
@@ -497,7 +497,7 @@ impl<'a> HandlesCut for TargetView<'a> {
             }
             TargetView::Node { doc, id } => {
                 let text = match doc.mindmap.nodes.get(id) {
-                    Some(n) => n.display_text(),
+                    Some(n) => n.display_text().into_owned(),
                     None => return ClipboardContent::NotApplicable,
                 };
                 // Clear **every** section's text — `clipboard_copy`

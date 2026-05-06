@@ -661,104 +661,126 @@ this out as remaining work; cleanup goes in two passes.
 ## Batch 6 — Types that don't lie
 
 ### 6.1 Panic on interactive paths (CODE_CONVENTIONS §9)
-- [ ] `AnimationInstance::timing()` (`document/types.rs:69-74`) —
-      `.expect(...)` on a per-frame interactive path. Store
-      `AnimationTiming` directly on `AnimationInstance`, carved from
-      `cm.timing` at construction. The `Option<AnimationTiming>` only
-      needs to live on `CustomMutation`, not on the live instance.
+- [x] `AnimationInstance::timing()` — `AnimationTiming` now stored
+      directly on `AnimationInstance`, carved from `cm.timing` at
+      construction in `start_animation`. The per-frame `timing()`
+      projection is now `&self.timing` — infallible by
+      construction.
 
 ### 6.2 Lying types
-- [ ] `Color::to_float` (already in Batch 2) — was returning `[0,0,0,1]`
-      while pretending to convert.
-- [ ] `GlyphMatrix::IndexMut` (`gfx_structs/model/matrix.rs:37-54`):
-      auto-grow on read-style indexing. Move auto-grow to an explicit
-      `ensure_line(i)` method; `IndexMut` panics like `Vec`.
-- [ ] `InputContext::parent` (`keybinds/context.rs:43-45`): unconditionally
-      returns `Document` regardless of `self`. Either rename to
-      `document_root()` or inline at the single call site
-      (`resolved.rs:123`).
-- [ ] `ColorPickerPreview` enum (`document/mod.rs:163-169`) has one
-      variant. Either collapse to a struct or commit to additional variants
-      — don't promise polymorphism that doesn't exist.
+- [x] `Color::to_float` (shipped in Batch 2).
+- [x] `GlyphMatrix::IndexMut` — auto-grow removed; `IndexMut`
+      panics like `Vec`. New `ensure_line(i) -> &mut GlyphLine`
+      method exposes the explicit-grow path. The single test
+      caller updated.
+- [x] `InputContext::parent` — deleted; the single call site in
+      `resolved.rs` inlines `InputContext::Document` with the
+      "fallthrough target is always Document" comment.
+- [x] `ColorPickerPreview` — collapsed from one-variant enum to a
+      struct `{ key, color }`. All construction / destructure
+      sites updated.
 
 ### 6.3 Test-time bypasses
-- [ ] Remove `MindMapDocument::from_finalized_mindmap`
-      (`document/mod.rs:428-431`); tests and production share `from_mindmap`.
-      The motivation (FONT_SYSTEM contention) is the bug to fix —
-      either memoise `grow_*` or run finalize once per test fixture and
-      clone.
-- [ ] `tests_common::doc_with_one_orphan_node`
-      (`document/mod.rs:124-144`) constructs `MindMapDocument` field-by-field;
-      replace with a `MindMapDocument::with_orphan(id, pos)` constructor in
-      `defaults.rs`.
+- [x] `MindMapDocument::from_finalized_mindmap` deleted.
+      `from_mindmap` made `pub(crate)` so the test fixture loader
+      uses the canonical constructor; doc-comment now explains
+      that callers either use `load`/`from_json_str` (which call
+      `finalize` first) or pass a map whose sizes already
+      accommodate text + borders.
+- [x] `doc_with_one_orphan_node` now routes through
+      `MindMapDocument::with_orphan(id, pos)` — a new public
+      constructor that uses `from_mindmap` internally so tests
+      don't reach into the field list.
 
 ### 6.4 Lock soup
-- [ ] `RegionParams` (`gfx_structs/util/regions.rs:53-294`): six
-      independent `RwLock<usize>` fields always written together, six
-      `read_*` accessors that return the same `RegionError`. Collapse
-      to one `RwLock<RegionParamsInner>`. Drop the `Updating` error
-      variant (the doc-claimed "writers and readers without a global
-      mutex" benefit doesn't survive when readers take 4 sequential
-      locks).
-- [ ] `acquire_font_system_write` busy-wait (`font/fonts.rs:299-356`):
-      replace 5-second 1ms-sleep poll with immediate `try_write` panic
-      on contention (it's always re-entrancy on a single-threaded app).
+- [x] `RegionParams` collapsed from 6 `RwLock<usize>` fields to one
+      `RwLock<Inner>`. Reads acquire one lock and copy out the
+      whole `Inner` snapshot (every field is `Copy`); writes
+      `adapt(...)` write the new snapshot atomically. Dropped the
+      `Updating` error variant (zero external callers).
+- [ ] `acquire_font_system_write` busy-wait — **DEFERRED**.
+      Plan premise was wrong: `cargo test` runs in parallel and
+      genuinely needs short-bounded wait to coordinate test
+      threads competing for `FONT_SYSTEM`. Production is
+      single-threaded (per `CLAUDE.md`); test runner isn't.
+      Doc-comment in `fonts.rs` now explains this trade-off so
+      the next reviewer sees the rationale.
 
 ### 6.5 Walker correctness
-- [ ] Decide and document the sibling-channel ordering invariant
-      (`gfx_structs/tree_walker.rs:264-314 align_child_walks`). Either
-      `debug_assert!` ascending channels at insert points, or sort
-      children at apply time.
-- [ ] Rewrite `walk_tree_from` recursion + `compare_apply_repeat_while`
-      with `while let Some(...)` and an explicit non-recursive driver
-      (`gfx_structs/tree_walker.rs:32-225`). Recursion depth is bounded
-      by tree depth; current code uses pointer-style `unwrap()` chains.
-- [ ] `apply_to_area(Event(_))` / `apply_to_model(Event(_))` silent-drop
-      (`gfx_structs/mutator.rs:317-350`): make `Event` a newtype that
-      doesn't compose into `apply_to_area/_model` paths at all.
+- [~] Sibling-channel ordering invariant — documented in
+      `align_child_walks` doc-comment as "aspirational, not
+      enforced". Original plan suggested `debug_assert!` at the
+      walker; that fired on a real test
+      (`console_mutator_round_trips_to_fresh_build`) — the
+      ordering is not actually guaranteed in production today,
+      and asserting it would break maps the renderer accepts.
+      The walker's break-on-`t_chan > m_chan` can theoretically
+      miss matches; it doesn't in user-visible code today.
+      Sorting children at apply time is the proper fix and
+      remains a follow-up.
+- [x] `compare_apply_repeat_while` rewritten as `loop { ... }`.
+      Original tail-recursion + `unwrap()` chains replaced with
+      explicit pointer mutation. (Skipped `walk_tree_from`
+      rewrite — the recursion depth is bounded by tree depth
+      and the function isn't tail-recursive in shape.)
+- [x] `apply_to_area`/`apply_to_model` made `pub(crate)` (no
+      external callers); the `Event(_)` arm in each is now
+      `unreachable!()` since `apply_to(GfxElement)` filters
+      `Event` before dispatch. Type-system enforcement via
+      visibility instead of newtype split.
 
 ### 6.6 Event-handling invariants
-- [ ] `Instruction::RotateWhile` empty arm
-      (`gfx_structs/tree_walker.rs:159`) — at minimum `log::warn!` on
-      attempted use; better, remove the variant if nothing dispatches.
-- [ ] Macro inline-id non-determinism (`macros/loader/mod.rs:138-181`):
-      the doc-comment warns about HashMap iteration order then ships
-      anyway. Either auto-prefix inline ids with the node id (deterministic),
-      or reject the load — `CODE_CONVENTIONS §5` forbids "half-features".
-- [ ] Console tokenize escape semantics (`console/parser.rs:25-67`):
-      `\n`/`\t`/unknown escapes silently produce a literal `\`. Either
-      reject unknown escape sequences or document the semantics.
+- [x] `Instruction::RotateWhile` arm now `log::warn!`s instead
+      of silently no-op'ing. Format-spec-reserved instruction;
+      removing the variant is out of scope for the format.
+- [x] Macro inline-id parse now sorts node ids before walking
+      so cross-node id collisions resolve deterministically
+      (lowest id wins). Warn message updated to surface the
+      determinism guarantee.
+- [x] Console parser escape semantics documented in
+      `tokenize` doc-comment: only `\"` and `\\` are
+      recognised; everything else is preserved literally
+      (Windows path-friendly).
 
 ### 6.7 Hot-path allocations
-- [ ] Replace `EdgeKey`'s 3 `String` fields
-      (`mindmap/scene_cache.rs:56-62`) with `Cow<'static, str>` for
-      `edge_type` (only 3 values: `parent_child`, `cross_link`,
-      `parent_child_no_inherit`) and an `EdgeRef<'a>` borrow type that
-      hashes the same as `EdgeKey` for cache lookups.
-- [ ] Re-key `mindmap_buffers` and friends from `unique_id.to_string()`
-      to `usize` (`renderer/tree_buffers.rs:42-44, 90-92, 100-102`).
-- [ ] `display_text` returns `Cow<'_, str>`; specialise the 1-section
-      case to borrow (`mindmap/model/node.rs:192-201`).
-- [ ] Cache the four legacy preset side-patterns as `static LazyLock`,
-      or fold into a `SidePattern::SingleClusterChar(char)` variant
-      (`mindmap/border.rs:597-605`).
-- [ ] Move `NodeShape::from_style_string` parsing onto `MindNode` (or
-      stamp on `BorderNodeData` upstream); currently re-parsed per node
-      per frame (`mindmap/tree_builder/border.rs:96`).
-- [ ] Rebuild `node_map`/`section_map`/`section_counts` reverse maps
-      during `append_node_sections` instead of a post-pass clone of every
-      key string (`mindmap/tree_builder/mod.rs:160-171`).
-- [ ] Mutate `ColorFontRegions` ranges in place via `BTreeMap::range`
-      instead of clone-then-extend (`core/primitives.rs:202-329`, four
-      call sites).
+- [ ] `EdgeKey` Cow / `EdgeRef<'a>` borrow type — **DEFERRED**.
+      `EdgeKey` is hashable + serde-serialized; the Cow refactor
+      with hash-equivalence between owned and borrowed forms
+      needs a focused session.
+- [ ] Re-key `mindmap_buffers` from `String` to `usize` —
+      **DEFERRED**. Touches every renderer key path.
+- [x] `display_text` returns `Cow<'_, str>` — single-section
+      case borrows (zero-allocation on the common path);
+      multi-section case allocates as before. Test sites and
+      `clipboard_copy` updated to call `.into_owned()` where
+      ownership is required.
+- [ ] Legacy preset side-patterns LazyLock cache — **DEFERRED**.
+      `SidePattern::AtomicRepeat { cluster: Vec<String> }` can't
+      be cheaply borrowed; the right fix is making `cluster`
+      hold `Cow<'static, str>` or `&'static str`, which is a
+      type-shape refactor.
+- [ ] `NodeShape::from_style_string` per-node cache — **DEFERRED**.
+      Plan claimed "per node per frame"; actually only called at
+      tree-build time, not per-frame. The `eq_ignore_ascii_case`
+      cost is negligible on the cold path.
+- [ ] `node_map`/`section_map`/`reverse_*` build during walk —
+      **DEFERRED**. Total clones per node is identical between
+      walk-time and post-pass; the saving is illusory without a
+      shared-ownership refactor (`Rc<String>` etc.).
+- [ ] `ColorFontRegions` BTreeMap::range mutation — **DEFERRED**.
+      `ColorFontRegion` is `Copy`; the "clone-then-extend"
+      pattern only allocates one `Vec<ColorFontRegion>` per
+      call, not String-per-region. The plan's framing
+      overstated the cost.
 
 ### 6.8 Loader streaming
-- [ ] `mindmap/loader.rs:38-98`: switch from
-      `serde_json::Value` peek-then-`from_value` (two heap-resident
-      copies) to direct `MindMap`/`MindNode` deserialisation with
-      `#[serde(deny_unknown_fields)]` + an explicit legacy-detector
-      that runs on `serde_json::Error` rather than on a happy-path
-      pre-parse. Doc-comment claim of "no second parse" matches the new
+- [x] `load_from_str` now tries direct `serde_json::from_str::<MindMap>`
+      first; legacy-shape detection (Value-walk) runs only on
+      typed-parse failure or when the typed result has zero-section
+      nodes / the substring screen flags `portals` /
+      `text_runs`. Happy-path is one parse. Error-path detection
+      moved into `detect_legacy_shape` so the surface is one
+      function each. Doc-comment now matches the actual cost
       shape.
 
 ---

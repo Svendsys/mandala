@@ -161,11 +161,9 @@ pub struct MindMapDocument {
 /// pass picks it up as `PortalColorPreview` when the edge has
 /// `display_mode = "portal"`.
 #[derive(Debug, Clone)]
-pub enum ColorPickerPreview {
-    Edge {
-        key: baumhard::mindmap::scene_cache::EdgeKey,
-        color: String,
-    },
+pub struct ColorPickerPreview {
+    pub key: baumhard::mindmap::scene_cache::EdgeKey,
+    pub color: String,
 }
 
 fn grow_node_sizes_to_fit_text(map: &mut MindMap) {
@@ -351,9 +349,16 @@ pub(super) fn grow_one_node_to_fit_border(
 impl MindMapDocument {
     /// Wrap a `MindMap` in a fresh document shell (selection cleared,
     /// undo stack empty, mutation registry rebuilt from the map's
-    /// declared mutations). Shared by `load` and `new_blank` so the
-    /// transient-state defaults stay in one place.
-    fn from_mindmap(mindmap: MindMap, file_path: Option<String>) -> Self {
+    /// declared mutations). Shared by `load`, `from_json_str`,
+    /// `new_blank`, and the test fixture loader so the transient-
+    /// state defaults stay in one place.
+    ///
+    /// Does **not** run [`Self::finalize`] (grow-to-fit passes) —
+    /// callers must either use [`Self::load`] / [`Self::from_json_str`]
+    /// (which call finalize first), or pass a map whose node sizes
+    /// already accommodate its text and borders (`new_blank` —
+    /// trivially; the testament fixture — by authored construction).
+    pub(crate) fn from_mindmap(mindmap: MindMap, file_path: Option<String>) -> Self {
         let mut doc = MindMapDocument {
             mindmap,
             file_path,
@@ -409,27 +414,6 @@ impl MindMapDocument {
         Self::from_mindmap(map, file_path)
     }
 
-    /// Wrap a *pre-finalized* `MindMap` in a fresh document shell
-    /// without rerunning the grow passes. Same shape as
-    /// [`Self::load`] / [`Self::from_json_str`] but skips
-    /// [`grow_node_sizes_to_fit_text`] and
-    /// [`grow_node_sizes_to_fit_borders`] — both of which
-    /// acquire the global `FONT_SYSTEM` write lock per-node.
-    ///
-    /// Test-only seam — `#[cfg(test)] pub(crate)` so production
-    /// code can't accidentally call it (any such call becomes a
-    /// compile error). The test fixture loader in
-    /// `tests_common::load_test_doc` caches a single finalized
-    /// `MindMap` in a `OnceLock` and clones it through here per
-    /// call, so a 30-test parallel run no longer thrashes the
-    /// lock 30×N times. Production code paths continue to use
-    /// [`Self::load`] / [`Self::from_json_str`] /
-    /// [`Self::new_blank`].
-    #[cfg(test)]
-    pub(crate) fn from_finalized_mindmap(map: MindMap, file_path: Option<String>) -> Self {
-        Self::from_mindmap(map, file_path)
-    }
-
     /// Construct an empty document, optionally bound to a target file
     /// path. Used by the `new` console command. `dirty` starts `false`
     /// — the in-memory map matches its (possibly absent) on-disk state
@@ -449,6 +433,19 @@ impl MindMapDocument {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "untitled".to_string());
         Self::from_mindmap(MindMap::new_blank(name), file_path)
+    }
+
+    /// Construct a doc carrying a single orphan node at the
+    /// given canvas position. Test- and small-scenario fixture
+    /// for "smallest interactive doc" — replaces field-by-field
+    /// `MindMapDocument { ... }` literal construction at
+    /// downstream test sites so the field list lives in one
+    /// place.
+    pub fn with_orphan(id: &str, pos: glam::Vec2) -> Self {
+        let mut doc = Self::from_mindmap(MindMap::new_blank("t"), None);
+        let node = super::document::defaults::default_orphan_node(id, pos);
+        doc.mindmap.nodes.insert(id.to_string(), node);
+        doc
     }
 
     /// Build a Baumhard mutation tree from the MindMap hierarchy.
@@ -537,7 +534,7 @@ impl MindMapDocument {
             selected_node_for_resize,
         };
         let (edge_preview, portal_preview) = match &self.color_picker_preview {
-            Some(ColorPickerPreview::Edge { key, color }) => (
+            Some(ColorPickerPreview { key, color }) => (
                 Some(scene_builder::EdgeColorPreview {
                     edge_key: key,
                     color: color.as_str(),

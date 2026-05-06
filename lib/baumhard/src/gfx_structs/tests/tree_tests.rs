@@ -365,7 +365,7 @@ pub fn model_block_commands() {
                     GlyphModelField::GlyphLine(num, line) => {
                         let mut my_reference = reference_model.clone();
                         apply_operation.apply(
-                            &mut my_reference.glyph_model_mut().unwrap().glyph_matrix[num],
+                            my_reference.glyph_model_mut().unwrap().glyph_matrix.ensure_line(num),
                             line,
                         );
                         assert_eq!(my_reference, my_model);
@@ -373,7 +373,7 @@ pub fn model_block_commands() {
                     GlyphModelField::GlyphLines(lines) => {
                         let mut my_matrix = reference_model.glyph_model().unwrap().glyph_matrix.clone();
                         for (num, line) in lines {
-                            apply_operation.apply(&mut my_matrix[num], line);
+                            apply_operation.apply(my_matrix.ensure_line(num), line);
                             assert_eq!(my_matrix[num], my_model.glyph_model().unwrap().glyph_matrix[num]);
                         }
                         assert_eq!(my_matrix, my_model.glyph_model().unwrap().glyph_matrix);

@@ -316,6 +316,17 @@ const FONT_SYSTEM_LOCK_POLL: Duration = Duration::from_millis(1);
 /// `site` is a short static string naming the call site; it appears
 /// in the panic message so the stack makes the culprit obvious even
 /// in a stripped release build.
+///
+/// **Note on the busy-wait shape.** The plan flagged this as a
+/// candidate for "replace with `try_write` + immediate panic on
+/// contention." That works for production (single-threaded by
+/// `CLAUDE.md` invariant) but breaks `cargo test`, which runs
+/// integration tests in parallel and routinely sees legitimate
+/// `WouldBlock` from sibling test threads. The busy-wait is the
+/// minimal-friction shape that handles both contexts: production
+/// hits `Ok(guard)` on the first iteration; test-thread contention
+/// resolves within a handful of polls. The 5 s ceiling still
+/// catches genuine deadlocks.
 pub fn acquire_font_system_write(site: &'static str) -> RwLockWriteGuard<'static, FontSystem> {
     acquire_font_system_write_with_timeout(site, FONT_SYSTEM_LOCK_TIMEOUT)
 }
