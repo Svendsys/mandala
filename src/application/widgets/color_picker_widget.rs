@@ -144,7 +144,7 @@ static SPEC: OnceLock<ColorPickerWidgetSpec> = OnceLock::new();
 pub fn load_spec() -> &'static ColorPickerWidgetSpec {
     SPEC.get_or_init(|| {
         static SOURCE: &str = include_str!("color_picker.json");
-        serde_json::from_str(SOURCE).expect("color_picker.json is malformed")
+        baumhard::format::json::parse(SOURCE).expect("color_picker.json is malformed")
     })
 }
 
