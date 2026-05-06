@@ -7,7 +7,7 @@
 
 use baumhard::font::fonts;
 use baumhard::mindmap::scene_builder::BorderElement;
-use cosmic_text::Attrs;
+use baumhard::font::{buffer, Attrs, Color, Metrics, SHAPING_ADVANCED};
 use glam::Vec2;
 
 use super::borders::create_border_buffer;
@@ -60,18 +60,9 @@ impl Renderer {
                     build_border_regions(spec.cluster_count, cycle, fallback_rgba, spec.palette_offset);
                 let families = RegionFamilies::resolve(&regions, &mut font_system);
                 let spans = rich_text_spans_from_regions(&spec.text, &families, font_size, font_size, None);
-                let mut buf = cosmic_text::Buffer::new(
-                    &mut font_system,
-                    cosmic_text::Metrics::new(font_size, font_size),
-                );
+                let mut buf = buffer::create_square(&mut font_system, font_size);
                 buf.set_size(&mut font_system, Some(spec.bounds.0), Some(spec.bounds.1));
-                buf.set_rich_text(
-                    &mut font_system,
-                    spans,
-                    &Attrs::new(),
-                    cosmic_text::Shaping::Advanced,
-                    None,
-                );
+                buf.set_rich_text(&mut font_system, spans, &Attrs::new(), SHAPING_ADVANCED, None);
                 buf.shape_until_scroll(&mut font_system, false);
                 MindMapTextBuffer {
                     buffer: buf,
@@ -100,13 +91,10 @@ impl Renderer {
         let mut font_system = fonts::acquire_font_system_write("rebuild_edge_handle_buffers");
         for handle in handles {
             let cosmic_color =
-                hex_to_cosmic_color(&handle.color).unwrap_or(cosmic_text::Color::rgba(0, 229, 255, 255));
+                hex_to_cosmic_color(&handle.color).unwrap_or(Color::rgba(0, 229, 255, 255));
             let attrs = Attrs::new()
                 .color(cosmic_color)
-                .metrics(cosmic_text::Metrics::new(
-                    handle.font_size_pt,
-                    handle.font_size_pt,
-                ));
+                .metrics(Metrics::new(handle.font_size_pt, handle.font_size_pt));
 
             let half_w = handle.font_size_pt * 0.3;
             let half_h = handle.font_size_pt * 0.5;
@@ -140,10 +128,10 @@ impl Renderer {
 
         for elem in label_elements {
             let cosmic_color =
-                hex_to_cosmic_color(&elem.color).unwrap_or(cosmic_text::Color::rgba(235, 235, 235, 255));
+                hex_to_cosmic_color(&elem.color).unwrap_or(Color::rgba(235, 235, 235, 255));
             let attrs = Attrs::new()
                 .color(cosmic_color)
-                .metrics(cosmic_text::Metrics::new(elem.font_size_pt, elem.font_size_pt));
+                .metrics(Metrics::new(elem.font_size_pt, elem.font_size_pt));
 
             let mut buffer = create_border_buffer(
                 &mut font_system,
@@ -172,10 +160,10 @@ impl Renderer {
 
         let font_size: f32 = 14.0;
         let approx_char_width = monospace_advance(font_size);
-        let rect_color = cosmic_text::Color::rgba(0, 230, 255, 200);
+        let rect_color = Color::rgba(0, 230, 255, 200);
         let attrs = Attrs::new()
             .color(rect_color)
-            .metrics(cosmic_text::Metrics::new(font_size, font_size));
+            .metrics(Metrics::new(font_size, font_size));
 
         let w = max.x - min.x;
         let h = max.y - min.y;

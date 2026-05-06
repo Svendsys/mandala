@@ -71,7 +71,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use web_time::Instant;
 
-use cosmic_text::{Attrs, Buffer};
+use baumhard::font::{Attrs, Buffer};
 use glyphon::{Cache, Resolution, SwashCache, TextAtlas, TextRenderer, Viewport};
 use log::{error, info, warn};
 
@@ -821,7 +821,7 @@ impl Renderer {
             return;
         };
         let text = format!("FPS: {}", self.fps.unwrap_or(0));
-        let attrs = Attrs::new().color(cosmic_text::Color::rgba(255, 235, 0, 255));
+        let attrs = Attrs::new().color(baumhard::font::Color::rgba(255, 235, 0, 255));
         let buf =
             borders::create_border_buffer(&mut font_system, &text, &attrs, 16.0, (8.0, 8.0), (200.0, 24.0));
         self.fps_overlay_buffers.clear();

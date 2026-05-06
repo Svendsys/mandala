@@ -6,9 +6,9 @@
 //! renderer territory. Per CODE_CONVENTIONS §1, styled-region →
 //! cosmic-text spans go through `baumhard::font::attrs`.
 
-use cosmic_text::{Attrs, FontSystem};
 use glam::Vec2;
 
+use baumhard::font::{buffer, Align, Attrs, Color, FontSystem, SHAPING_ADVANCED};
 use baumhard::font::attrs::{rich_text_spans_from_regions, RegionFamilies};
 use baumhard::gfx_structs::element::GfxElement;
 use baumhard::gfx_structs::mutator::GfxMutator;
@@ -134,7 +134,7 @@ pub(super) fn shape_one_element_into_buffers(
 
     let text = &area.text;
     let alignment = if area.align_center {
-        Some(cosmic_text::Align::Center)
+        Some(Align::Center)
     } else {
         None
     };
@@ -145,15 +145,9 @@ pub(super) fn shape_one_element_into_buffers(
     // (e.g. picker Egyptian hieroglyphs) whose shaped advance
     // exceeded the cell box.
     let mut shape_and_yield = |spans: Vec<(&str, Attrs)>, x_off: f32, y_off: f32, fs: &mut FontSystem| {
-        let mut buffer = cosmic_text::Buffer::new(fs, cosmic_text::Metrics::new(scale, line_height));
+        let mut buffer = buffer::create(fs, scale, line_height);
         buffer.set_size(fs, Some(bound_x), Some(bound_y));
-        buffer.set_rich_text(
-            fs,
-            spans,
-            &Attrs::new(),
-            cosmic_text::Shaping::Advanced,
-            alignment,
-        );
+        buffer.set_rich_text(fs, spans, &Attrs::new(), SHAPING_ADVANCED, alignment);
         buffer.shape_until_scroll(fs, false);
         let text_buffer = MindMapTextBuffer {
             buffer,
@@ -176,7 +170,7 @@ pub(super) fn shape_one_element_into_buffers(
     // just stamp once per offset.
     if let Some(outline) = area.outline {
         if outline.px > 0.0 {
-            let halo_color = cosmic_text::Color::rgba(
+            let halo_color = Color::rgba(
                 outline.color[0],
                 outline.color[1],
                 outline.color[2],

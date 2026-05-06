@@ -8,7 +8,7 @@ use glyphon::{TextArea, TextBounds};
 use log::debug;
 use wgpu::StoreOp;
 
-use baumhard::font::fonts;
+use baumhard::font::{fonts, COLOR_WHITE};
 use baumhard::util::color_conversion::convert_u8_to_f32;
 
 use super::{Renderer, RECT_VBUF_INITIAL_CAPACITY, RECT_VERTEX_FLOATS};
@@ -97,7 +97,7 @@ impl Renderer {
             right: vp_w,
             bottom: vp_h,
         };
-        let default_color = cosmic_text::Color::rgba(255, 255, 255, 255);
+        let default_color = COLOR_WHITE;
 
         // Rebuild the "main" rect batch: canvas-space node
         // backgrounds transformed to NDC via the current camera.
