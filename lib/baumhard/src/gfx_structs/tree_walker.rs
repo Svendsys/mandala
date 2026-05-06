@@ -277,27 +277,24 @@ fn get_target(arena: &mut Arena<GfxElement>, id: NodeId) -> &mut Node<GfxElement
 /// children by sibling position (zip) instead of by channel, for
 /// mutations that need per-index targeting.
 ///
-/// # Invariant (aspirational, not enforced)
+/// # Channel-sorted merge walk
 ///
-/// The walker performs best when both target and mutator
-/// children are sorted by [`channel`](GfxElement::channel) in
-/// ascending order along each sibling row. The break on
-/// `t_chan > m_chan` below relies on this for completeness —
-/// once the target's current channel exceeds the mutator's,
-/// later target siblings with lower channels are skipped.
+/// The walker treats the target's and mutator's children as
+/// sorted streams keyed by [`channel`](GfxElement::channel) and
+/// applies each mutator child to every target child sharing its
+/// channel. The arena order of children is **not** assumed to be
+/// channel-ascending — children are collected into local
+/// `Vec`s and sorted by channel before the merge walk. This
+/// removes a long-standing fragility where the walker's
+/// `t_chan > m_chan` break could prematurely skip matches when
+/// arena order disagreed with channel order (see
+/// `console_mutator_round_trips_to_fresh_build` for a fixture
+/// that exercises a non-ascending sibling row).
 ///
-/// Production tree builders mostly insert in channel order
-/// (`mindmap::tree_builder::append_node_sections`,
-/// `MindMapTree::build`), but a few legitimate paths produce
-/// out-of-order siblings — the renderer's
-/// `console_mutator_round_trips_to_fresh_build` test exercises
-/// such a sibling row. In those cases the walker's pruning is
-/// over-aggressive and can miss matches.
-///
-/// Sorting children at apply time would fix this fully (see
-/// `REFACTOR_PLAN.md` §6.5a alternative); kept as a follow-up
-/// because the existing builder ordering covers the
-/// user-visible mutator surface.
+/// Cost: O(n log n) per sibling row for the sort, where `n` is
+/// the sibling count under one parent. Sibling counts are small
+/// in practice (single-digit), so the sort is effectively free
+/// next to the per-pair `walk_tree_from` recursion.
 #[inline]
 fn align_child_walks(
     gfx_tree: &mut Tree<GfxElement, GfxMutator>,
@@ -309,46 +306,55 @@ fn align_child_walks(
         "Aligning children of target node {} and mutator node {}.",
         target_id, mutator_id
     );
-    let mut option_mutator_child_id = get_mutator(&mutator_tree.arena, mutator_id).first_child();
-    if option_mutator_child_id.is_none() {
+    let mutator_children = collect_sorted_children(&mutator_tree.arena, mutator_id, |m| m.channel());
+    if mutator_children.is_empty() {
         debug!("Mutator has no children - nothing to align.");
         return;
     }
-    let mut option_target_child_id = get_target(&mut gfx_tree.arena, target_id).first_child();
-    loop {
-        if option_mutator_child_id.is_some() {
-            let mutator_child_id = option_mutator_child_id.unwrap();
-            let mutator_child = get_mutator(&mutator_tree.arena, mutator_child_id);
-            option_mutator_child_id = mutator_child.next_sibling();
-            debug!("Mutator is present, seeking matching targets..");
-            loop {
-                if option_target_child_id.is_some() {
-                    let target_child_id = option_target_child_id.unwrap();
-                    let target_child = get_target(&mut gfx_tree.arena, target_child_id);
-                    let m_chan = mutator_child.get().channel();
-                    let t_chan = target_child.get().channel();
-                    if t_chan == m_chan {
-                        option_target_child_id = target_child.next_sibling();
-                        walk_tree_from(gfx_tree, mutator_tree, target_child_id, mutator_child_id);
-                        debug!("Applied mutation-walk on child node, checking next sibling...");
-                    } else if t_chan > m_chan {
-                        debug!(
-                            "Target channel is higher than mutator channel, breaking out of mutator loop."
-                        );
-                        break;
-                    } else {
-                        option_target_child_id = target_child.next_sibling();
-                    }
-                } else {
-                    debug!("Reached end of siblings, breaking inner mutation loop.");
-                    break;
-                }
+    let target_children = collect_sorted_children(&gfx_tree.arena, target_id, |t| t.channel());
+
+    let mut t_idx = 0usize;
+    for (m_id, m_chan) in mutator_children.iter().copied() {
+        while t_idx < target_children.len() {
+            let (t_id, t_chan) = target_children[t_idx];
+            if t_chan == m_chan {
+                t_idx += 1;
+                walk_tree_from(gfx_tree, mutator_tree, t_id, m_id);
+            } else if t_chan > m_chan {
+                debug!(
+                    "Target channel {} exceeds mutator channel {}, advancing to next mutator.",
+                    t_chan, m_chan
+                );
+                break;
+            } else {
+                t_idx += 1;
             }
+        }
+    }
+}
+
+/// Collect direct children of `parent` paired with their
+/// [`channel`](GfxElement::channel) value, sorted ascending by
+/// channel. Stable sort so siblings with identical channels keep
+/// their arena-relative order — pairs the channel-merge walk
+/// against itself deterministically.
+fn collect_sorted_children<E>(
+    arena: &Arena<E>,
+    parent: NodeId,
+    channel_of: impl Fn(&E) -> usize,
+) -> Vec<(NodeId, usize)> {
+    let mut out = Vec::new();
+    let mut cur = arena.get(parent).and_then(|n| n.first_child());
+    while let Some(id) = cur {
+        if let Some(node) = arena.get(id) {
+            out.push((id, channel_of(node.get())));
+            cur = node.next_sibling();
         } else {
-            debug!("Reached end of mutator siblings, breaking outer mutation loop.");
             break;
         }
     }
+    out.sort_by_key(|&(_, ch)| ch);
+    out
 }
 
 /// Zip the mutator's direct children against the target's direct

@@ -707,17 +707,18 @@ this out as remaining work; cleanup goes in two passes.
       the next reviewer sees the rationale.
 
 ### 6.5 Walker correctness
-- [~] Sibling-channel ordering invariant — documented in
-      `align_child_walks` doc-comment as "aspirational, not
-      enforced". Original plan suggested `debug_assert!` at the
-      walker; that fired on a real test
-      (`console_mutator_round_trips_to_fresh_build`) — the
-      ordering is not actually guaranteed in production today,
-      and asserting it would break maps the renderer accepts.
-      The walker's break-on-`t_chan > m_chan` can theoretically
-      miss matches; it doesn't in user-visible code today.
-      Sorting children at apply time is the proper fix and
-      remains a follow-up.
+- [x] Sibling-channel ordering invariant — fixed by sorting at
+      apply time. `align_child_walks` now collects target and
+      mutator children into local `Vec`s, sorts by channel
+      ascending, and runs a channel-merge walk on the sorted
+      streams. The walker is correct regardless of arena
+      insertion order; the `console_mutator_round_trips_to_fresh_build`
+      test (which exercises a non-ascending sibling row) passes
+      with the merge walk applied. O(n log n) per sibling row,
+      n typically single-digit — effectively free next to the
+      per-pair `walk_tree_from` recursion. New helper
+      `collect_sorted_children` is the single source for the
+      sibling-collection shape.
 - [x] `compare_apply_repeat_while` rewritten as `loop { ... }`.
       Original tail-recursion + `unwrap()` chains replaced with
       explicit pointer mutation. (Skipped `walk_tree_from`
