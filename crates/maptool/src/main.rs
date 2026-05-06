@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use baumhard::mindmap::loader::load_from_file;
+use baumhard::mindmap::loader::{load_from_file, save_to_file};
 use baumhard::mindmap::model::MindMap;
 use regex::{Regex, RegexBuilder};
 use std::fs;
@@ -180,7 +180,7 @@ fn run(args: &[String]) -> Result<(), CliError> {
                     }
                 }
             } else if !changed.is_empty() {
-                save_map(Path::new(parsed.map_path), &map)?;
+                save_to_file(Path::new(parsed.map_path), &map).map_err(CliError::Io)?;
             }
             Ok(())
         }
@@ -567,39 +567,6 @@ fn run_pipe(cmd: &str, cmd_args: &[String], input: &str) -> Result<String, CliEr
         }
     }
     Ok(out)
-}
-
-/// Serialise `map` to `path` deterministically and atomically. Goes
-/// through `serde_json::Value` so the default-build `BTreeMap`
-/// orders nodes lexicographically (HashMap iteration is randomised).
-/// Write is atomic (temp + rename) — see `write_atomic`.
-fn save_map(path: &Path, map: &MindMap) -> Result<(), CliError> {
-    let value =
-        serde_json::to_value(map).map_err(|e| CliError::Io(format!("failed to serialise map: {e}")))?;
-    let json = serde_json::to_string_pretty(&value)
-        .map_err(|e| CliError::Io(format!("failed to render map JSON: {e}")))?;
-    write_atomic(path, &json)
-}
-
-/// Write `contents` to `path` via temp + rename; cleans up the
-/// temp file on rename failure.
-fn write_atomic(path: &Path, contents: &str) -> Result<(), CliError> {
-    let dir = path.parent().unwrap_or_else(|| Path::new("."));
-    let file_name = path
-        .file_name()
-        .ok_or_else(|| CliError::Io(format!("invalid path: {}", path.display())))?
-        .to_string_lossy();
-    let tmp_path = dir.join(format!(".{}.maptool.{}.tmp", file_name, std::process::id()));
-    fs::write(&tmp_path, contents)
-        .map_err(|e| CliError::Io(format!("failed to write {}: {e}", tmp_path.display())))?;
-    fs::rename(&tmp_path, path).map_err(|e| {
-        let _ = fs::remove_file(&tmp_path);
-        CliError::Io(format!(
-            "failed to rename {} → {}: {e}",
-            tmp_path.display(),
-            path.display()
-        ))
-    })
 }
 
 #[cfg(test)]
@@ -1266,54 +1233,22 @@ mod tests {
         assert_eq!(p.pattern, "-foo");
     }
 
-    // --- save_map: deterministic ordering + atomicity ---------------
+    // --- save round-trip on the maptool fixture ---------------------
+    //
+    // Determinism (sorted keys) and atomicity (no tmp leftover) of the
+    // canonical save now live in `baumhard::mindmap::loader::tests` —
+    // see `test_save_to_file_is_deterministic` and
+    // `test_save_to_file_leaves_no_tmp_file_on_success` there. This
+    // file keeps a maptool-specific round-trip on the apply fixture
+    // (which exercises text-runs + per-section content) so a
+    // serde-shape regression that escapes the typed-baumhard tests
+    // still gets caught at the maptool seam.
 
     #[test]
-    fn save_map_produces_sorted_node_order() {
-        // MindMap.nodes is a HashMap; its native iteration order is
-        // randomised per-process. save_map must serialise with keys in
-        // sorted order so git diffs stay quiet across writes. The
-        // fixture uses Dewey-decimal ids (`0`, `0.0`, `0.1`, `0.2`) so
-        // we assert on those; lexicographic sort on Dewey ids happens
-        // to match their tree order, which is exactly the property
-        // git-diff stability needs.
-        let tmp = TmpMap::new("sorted_order");
-        let map = apply_fixture();
-        save_map(tmp.path(), &map).unwrap();
-        let json = std::fs::read_to_string(tmp.path()).unwrap();
-        let i0 = json.find("\"0\":").expect("0 missing");
-        let i00 = json.find("\"0.0\":").expect("0.0 missing");
-        let i01 = json.find("\"0.1\":").expect("0.1 missing");
-        let i02 = json.find("\"0.2\":").expect("0.2 missing");
-        assert!(
-            i0 < i00 && i00 < i01 && i01 < i02,
-            "nodes must appear in sorted order, got: 0@{i0} 0.0@{i00} 0.1@{i01} 0.2@{i02}"
-        );
-    }
-
-    #[test]
-    fn save_map_is_byte_identical_across_runs() {
-        // Two consecutive saves of the same map must produce the same
-        // bytes — proves HashMap hasher randomisation can't leak
-        // through.
-        let tmp_a = TmpMap::new("determinism_a");
-        let tmp_b = TmpMap::new("determinism_b");
-        let map = apply_fixture();
-        save_map(tmp_a.path(), &map).unwrap();
-        save_map(tmp_b.path(), &map).unwrap();
-        let a = std::fs::read(tmp_a.path()).unwrap();
-        let b = std::fs::read(tmp_b.path()).unwrap();
-        assert_eq!(a, b, "save output must be deterministic");
-    }
-
-    #[test]
-    fn save_map_roundtrip_preserves_content() {
-        // save → reload must preserve node text, notes, and runs. If
-        // routing through serde_json::Value dropped anything we'd see
-        // it here.
+    fn save_map_roundtrip_preserves_content_on_apply_fixture() {
         let tmp = TmpMap::new("roundtrip");
         let map = apply_fixture();
-        save_map(tmp.path(), &map).unwrap();
+        save_to_file(tmp.path(), &map).unwrap();
         let back = load_from_file(tmp.path()).unwrap();
         for (id, original) in &map.nodes {
             let reloaded = &back.nodes[id];
@@ -1334,26 +1269,6 @@ mod tests {
                 );
             }
         }
-    }
-
-    #[test]
-    fn save_map_leaves_no_tmp_file_on_success() {
-        // The atomic writer stages a `.<name>.maptool.<pid>.tmp` file
-        // and then renames it; after success, the dir should only
-        // contain the final map.
-        let tmp = TmpMap::new("no_leftover");
-        let map = apply_fixture();
-        save_map(tmp.path(), &map).unwrap();
-        let dir = tmp.path().parent().unwrap();
-        let pid = std::process::id();
-        let file_name = tmp.path().file_name().unwrap().to_string_lossy().to_string();
-        let tmp_name = format!(".{file_name}.maptool.{pid}.tmp");
-        let leftover = dir.join(&tmp_name);
-        assert!(
-            !leftover.exists(),
-            "atomic writer left a temp file behind: {}",
-            leftover.display()
-        );
     }
 
     // --- run_pipe: deadlock avoidance -------------------------------

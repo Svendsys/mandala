@@ -98,18 +98,52 @@ pub fn load_from_str(json: &str) -> Result<MindMap, String> {
     serde_json::from_value(raw).map_err(|e| format!("Failed to parse mindmap JSON: {}", e))
 }
 
-/// Serialize a `MindMap` to pretty-printed JSON and write it to disk.
-/// Mirrors `load_from_file` — the same `Result<_, String>` error
-/// convention, native-only synchronous I/O via `std::fs`. Pretty
-/// printing keeps the on-disk format diff-friendly so authors can
-/// inspect saved maps with normal text tools. Streams through a
-/// `BufWriter` so large maps don't have to materialize the entire
-/// JSON in memory before hitting disk.
+/// Serialize a `MindMap` to pretty-printed JSON and write it to disk
+/// atomically and deterministically.
+///
+/// **Determinism**: routes through `serde_json::Value` (which uses
+/// `BTreeMap` for object keys) so two saves of the same `MindMap` produce
+/// byte-identical output regardless of `HashMap` iteration order. Costs
+/// one extra heap copy of the JSON tree; acceptable for the editor's
+/// save cadence (post-mutation, not per-frame).
+///
+/// **Atomicity**: writes to a sibling `.<name>.<pid>.tmp` file then
+/// renames over `path`. A reader (another process, or the editor
+/// reloading after an external edit) never observes a torn-write
+/// half-written file. The temp file is removed on rename failure.
+///
+/// Native-only (synchronous I/O via `std::fs`). Returns a `String`
+/// error describing the path + underlying cause.
 pub fn save_to_file(path: &Path, map: &MindMap) -> Result<(), String> {
-    let file = fs::File::create(path).map_err(|e| format!("Failed to create {}: {}", path.display(), e))?;
-    let writer = std::io::BufWriter::new(file);
-    serde_json::to_writer_pretty(writer, map)
-        .map_err(|e| format!("Failed to write {}: {}", path.display(), e))
+    let value = serde_json::to_value(map).map_err(|e| format!("failed to serialize map: {e}"))?;
+    let json =
+        serde_json::to_string_pretty(&value).map_err(|e| format!("failed to render map JSON: {e}"))?;
+    write_atomic(path, &json)
+}
+
+/// Write `contents` to `path` via `<dir>/.<name>.<pid>.tmp` + rename.
+/// Cleans up the temp file on rename failure so a partially-written
+/// staging file is never left behind. Used by [`save_to_file`] for the
+/// typed-`MindMap` save path; also exposed for legacy-migration tools
+/// (`maptool convert --portals` etc.) that ship raw `serde_json::Value`
+/// to disk without a `MindMap` round-trip.
+pub fn write_atomic(path: &Path, contents: &str) -> Result<(), String> {
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| format!("invalid path: {}", path.display()))?
+        .to_string_lossy();
+    let tmp_path = dir.join(format!(".{}.{}.tmp", file_name, std::process::id()));
+    fs::write(&tmp_path, contents)
+        .map_err(|e| format!("failed to write {}: {e}", tmp_path.display()))?;
+    fs::rename(&tmp_path, path).map_err(|e| {
+        let _ = fs::remove_file(&tmp_path);
+        format!(
+            "failed to rename {} -> {}: {e}",
+            tmp_path.display(),
+            path.display()
+        )
+    })
 }
 
 #[cfg(test)]
@@ -576,6 +610,50 @@ mod tests {
         let back: MindMap = serde_json::from_str(&json).unwrap();
         assert_eq!(back.canvas.theme_variants.len(), 3);
         assert_eq!(back.custom_mutations.len(), 3);
+    }
+
+    /// Two consecutive `save_to_file` calls on the same `MindMap`
+    /// produce byte-identical files. `MindMap.nodes` is a `HashMap`
+    /// whose iteration order is randomised per-process; routing
+    /// through `serde_json::Value` (a `BTreeMap` under the hood)
+    /// pins the order. Without this, every save would diff against
+    /// the previous one even when nothing changed.
+    #[test]
+    fn test_save_to_file_is_deterministic() {
+        let map = load_from_file(&test_map_path()).unwrap();
+        let dir = std::env::temp_dir();
+        let path_a = dir.join("mandala_determinism_a.mindmap.json");
+        let path_b = dir.join("mandala_determinism_b.mindmap.json");
+        save_to_file(&path_a, &map).expect("save a failed");
+        save_to_file(&path_b, &map).expect("save b failed");
+        let bytes_a = std::fs::read(&path_a).unwrap();
+        let bytes_b = std::fs::read(&path_b).unwrap();
+        assert_eq!(bytes_a, bytes_b, "save output must be deterministic");
+        let _ = std::fs::remove_file(&path_a);
+        let _ = std::fs::remove_file(&path_b);
+    }
+
+    /// `save_to_file` writes to `<dir>/.<name>.<pid>.tmp` then renames
+    /// over `path`; on a successful rename, the staging file is gone.
+    /// Pins the contract that a kill mid-write leaves either the old
+    /// file intact or the new file complete — never a torn partial
+    /// write next to either.
+    #[test]
+    fn test_save_to_file_leaves_no_tmp_file_on_success() {
+        let map = MindMap::new_blank("no-tmp");
+        let dir = std::env::temp_dir();
+        let path = dir.join("mandala_no_tmp_leftover.mindmap.json");
+        save_to_file(&path, &map).expect("save failed");
+
+        let pid = std::process::id();
+        let file_name = path.file_name().unwrap().to_string_lossy().to_string();
+        let leftover = dir.join(format!(".{file_name}.{pid}.tmp"));
+        assert!(
+            !leftover.exists(),
+            "atomic writer left a temp file behind: {}",
+            leftover.display()
+        );
+        let _ = std::fs::remove_file(&path);
     }
 
     /// `save_to_file` → `load_from_file` reproduces the same `MindMap`
