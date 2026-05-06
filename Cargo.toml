@@ -16,6 +16,7 @@ license.workspace = true
 rustc-hash = "2.1.2"
 unicode-segmentation = "1.13.2"
 wgpu = { version = "29.0", features = ["webgl"] }
+bytemuck = "1.16"
 glyphon = "0.11.0"
 cosmic-text = "0.18.2"
 tinyvec = "1.11.0"

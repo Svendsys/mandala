@@ -103,10 +103,9 @@ mod throttled_interaction;
 
 // Sub-modules pull what they need from siblings directly; mod.rs
 // only imports for its own body (`now_ms`, the `Application` /
-// `Options` struct definitions, and the `route_label_edit_key`
-// helper below). Adding an `InputContext::Foo` arm doesn't widen
-// this list — the consumer in `event_keyboard.rs` imports it
-// itself.
+// `Options` struct definitions). Adding an `InputContext::Foo`
+// arm doesn't widen this list — the consumer in
+// `event_keyboard.rs` imports it itself.
 use crate::application::common::{InputMode, WindowMode};
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -114,7 +113,6 @@ use crate::application::document::EdgeRef;
 #[cfg(not(target_arch = "wasm32"))]
 use glam::Vec2;
 #[cfg(not(target_arch = "wasm32"))]
-use text_edit::insert_at_cursor;
 #[cfg(not(target_arch = "wasm32"))]
 use throttled_interaction::ThrottledDrag;
 
@@ -358,45 +356,6 @@ fn click_hit_from_priority(
     }
 }
 
-/// Pure router for the label-edit *character-input* path. Inserts
-/// printable chars from a `Key::Character` payload into the buffer.
-///
-/// Originally this also handled structural keys (Backspace, Delete,
-/// arrows, Home, End) directly via `Key::Named` matching, but Phase 5
-/// migrated those to `Action::LabelEdit*` variants that route through
-/// `dispatch::apply_label_edit_action_to_buffer`. The structural-key
-/// arms were stripped here so unbinding `label_edit_*` in
-/// `keybinds.json` actually disables the key — the previous fallback
-/// shadowed user config.
-///
-/// Returns `true` iff a printable character was inserted.
-#[cfg(not(target_arch = "wasm32"))]
-pub(in crate::application::app) fn route_label_edit_key(
-    logical_key: &crate::application::platform::input::Key,
-    buffer: &mut String,
-    cursor: &mut usize,
-) -> bool {
-    use crate::application::platform::input::Key;
-    if let Key::Character(c) = logical_key {
-        // `Key::Character` payloads can carry IME / dead-key multi-
-        // char sequences, so iterate. Control chars (and any non-
-        // printing payload winit attaches to a structural key) are
-        // filtered, which mirrors the original guard intent — the
-        // "huge pause icon on backspace" hole is also closed by the
-        // structural-key migration to actions, since Backspace is now
-        // dispatched as `Action::LabelEditDeleteBack` before this
-        // router ever runs.
-        let mut changed = false;
-        for ch in c.as_str().chars() {
-            if !ch.is_control() {
-                *cursor = insert_at_cursor(buffer, *cursor, ch);
-                changed = true;
-            }
-        }
-        return changed;
-    }
-    false
-}
 
 /// Tracks the high-level interaction mode. Normal handles the usual
 /// select/drag/pan flow; Reparent mode is entered via Ctrl+P and captures

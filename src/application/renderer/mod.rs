@@ -367,6 +367,13 @@ pub struct Renderer {
     color_picker_backdrop: Option<(f32, f32, f32, f32)>,
     /// Temporary overlay buffers (e.g., selection rectangle). Camera-transformed.
     overlay_buffers: Vec<MindMapTextBuffer>,
+    /// `(char_count, row_count)` of the most recent selection-rect
+    /// shape held in [`Self::overlay_buffers`]. Per-tick rebuilds
+    /// reuse the existing shaped buffers (just update positions)
+    /// when these counts match, avoiding 4 fresh `cosmic_text`
+    /// shapings per drag tick. `None` whenever the overlay is
+    /// cleared or holds a non-selection-rect shape.
+    selection_rect_shape_cache: Option<(usize, usize)>,
     /// Screen-space buffers produced by walking the app's
     /// [`AppScene`](crate::application::scene_host::AppScene).
     /// Populated by [`Self::rebuild_overlay_scene_buffers`] and
@@ -692,6 +699,7 @@ impl Renderer {
             console_overlay_buffers: Vec::new(),
             color_picker_backdrop: None,
             overlay_buffers: Vec::new(),
+            selection_rect_shape_cache: None,
             overlay_scene_buffers: Vec::new(),
             canvas_scene_buffers: Vec::new(),
             canvas_scene_background_rects: Vec::new(),

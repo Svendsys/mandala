@@ -7,7 +7,9 @@
 use crate::application::color_picker::ColorPickerState;
 use crate::application::console::commands::Command;
 use crate::application::console::parser::{parse, Args, ParseResult};
-use crate::application::console::{ConsoleEffects, ConsoleState, ExecResult};
+use crate::application::console::{ConsoleEffects, ConsoleSideEffect, ConsoleState, ExecResult};
+use baumhard::mindmap::scene_cache::SceneConnectionCache;
+use baumhard::mindmap::tree_builder::MindMapTree;
 use crate::application::document::MindMapDocument;
 use crate::application::renderer::Renderer;
 
@@ -53,14 +55,8 @@ pub(in crate::application::app) fn execute_console_line(
     let cmd: &'static Command = cmd;
     let mut effects = ConsoleEffects::new(doc);
     let result = (cmd.execute)(&Args::new(&args), &mut effects);
-    let label_edit_req = effects.open_label_edit.take();
-    let portal_text_edit_req = effects.open_portal_text_edit.take();
-    let color_picker_req = effects.open_color_picker.take();
-    let color_picker_standalone_req = effects.open_color_picker_standalone;
-    let color_picker_close_req = effects.close_color_picker;
+    let side_effect = effects.side_effect.take();
     let close_after = effects.close_console;
-    let fps_display_req = effects.set_fps_display.take();
-    let replace_doc = effects.replace_document.take();
 
     // Emit the command's result lines into the scrollback.
     match result {
@@ -77,67 +73,135 @@ pub(in crate::application::app) fn execute_console_line(
         }
     }
 
-    // Wholesale document swap from `open` / `new`. Drop the cached
-    // tree so `rebuild_all` rebuilds it fresh against the new map,
-    // and clear any open modal-editor state so stale references
-    // into the old document can't outlive the swap.
-    if let Some(new_doc) = replace_doc {
-        *doc = new_doc;
-        *mindmap_tree = None;
-        *label_edit_state = LabelEditState::Closed;
-        *portal_text_edit_state = PortalTextEditState::Closed;
-        *color_picker_state = ColorPickerState::Closed;
-        // Rebuild the document-derived tiers (Map + Inline). App
-        // and User tiers loaded at startup are untouched. The
-        // single-entry helper enforces Map-then-Inline ordering
-        // (Inline is highest precedence) so the two-call ordering
-        // can't drift between this site and `run_native_init::build`.
-        crate::application::macros::loader::rebuild_document_macros(macros, doc);
-    }
-
-    // `fps on` / `fps off` — forward to the renderer. The decree bus
-    // clears the overlay buffers when toggled off; the rebuild helper
-    // in `Renderer::process()` re-shapes them on the next frame when
-    // toggled on.
-    if let Some(mode) = fps_display_req {
-        renderer.set_fps_display(mode);
-    }
+    // Document swap from `open` / `new` happens before
+    // `rebuild_all` so the rebuild sees the new doc; the others
+    // happen after rebuild_all because they transition modal
+    // state on top of the rebuilt scene. `set_fps_display` is
+    // also pre-rebuild because the FPS overlay is screen-space
+    // and doesn't share state with the rest of `rebuild_all`.
+    let post_rebuild = handle_pre_rebuild_side_effect(
+        side_effect,
+        doc,
+        mindmap_tree,
+        label_edit_state,
+        portal_text_edit_state,
+        color_picker_state,
+        macros,
+        renderer,
+    );
 
     // Any successful command may have mutated the doc; rebuild.
     scene_cache.clear();
     rebuild_all(doc, mindmap_tree, app_scene, renderer, scene_cache);
 
-    if let Some(er) = label_edit_req {
-        open_label_edit(&er, doc, label_edit_state, app_scene, renderer);
-        *console_state = ConsoleState::Closed;
-        renderer.rebuild_console_overlay_buffers(app_scene, None);
-    } else if let Some((er, endpoint)) = portal_text_edit_req {
-        open_portal_text_edit(&er, &endpoint, doc, portal_text_edit_state, app_scene, renderer);
-        *console_state = ConsoleState::Closed;
-        renderer.rebuild_console_overlay_buffers(app_scene, None);
-    } else if let Some(target) = color_picker_req {
-        open_color_picker_contextual(target, doc, color_picker_state, app_scene, renderer, scene_cache);
-        *console_state = ConsoleState::Closed;
-        renderer.rebuild_console_overlay_buffers(app_scene, None);
-    } else if color_picker_standalone_req {
-        open_color_picker_standalone(doc, color_picker_state, app_scene, renderer, scene_cache);
-        *console_state = ConsoleState::Closed;
-        renderer.rebuild_console_overlay_buffers(app_scene, None);
-    } else if color_picker_close_req {
-        close_color_picker_standalone(
-            color_picker_state,
-            doc,
-            mindmap_tree,
-            app_scene,
-            renderer,
-            scene_cache,
-        );
-        *console_state = ConsoleState::Closed;
-        renderer.rebuild_console_overlay_buffers(app_scene, None);
-    } else if close_after {
+    let opened_modal = handle_post_rebuild_side_effect(
+        post_rebuild,
+        doc,
+        mindmap_tree,
+        label_edit_state,
+        portal_text_edit_state,
+        color_picker_state,
+        app_scene,
+        renderer,
+        scene_cache,
+    );
+    if opened_modal || close_after {
         *console_state = ConsoleState::Closed;
         renderer.rebuild_console_overlay_buffers(app_scene, None);
     }
+}
+
+/// Apply the side effects that need to land **before** the
+/// `rebuild_all` pass: wholesale document swap (so the rebuild
+/// sees the new doc) and FPS overlay toggle (orthogonal to the
+/// scene tree). Returns the side effect untouched if it's a
+/// post-rebuild modal transition; returns `None` if the effect
+/// was consumed here.
+#[allow(clippy::too_many_arguments)]
+fn handle_pre_rebuild_side_effect(
+    side_effect: Option<ConsoleSideEffect>,
+    doc: &mut MindMapDocument,
+    mindmap_tree: &mut Option<MindMapTree>,
+    label_edit_state: &mut LabelEditState,
+    portal_text_edit_state: &mut PortalTextEditState,
+    color_picker_state: &mut ColorPickerState,
+    macros: &mut crate::application::macros::MacroRegistry,
+    renderer: &mut Renderer,
+) -> Option<ConsoleSideEffect> {
+    match side_effect? {
+        ConsoleSideEffect::ReplaceDocument(new_doc) => {
+            *doc = new_doc;
+            *mindmap_tree = None;
+            *label_edit_state = LabelEditState::Closed;
+            *portal_text_edit_state = PortalTextEditState::Closed;
+            *color_picker_state = ColorPickerState::Closed;
+            // Rebuild the document-derived tiers (Map + Inline).
+            // App and User tiers loaded at startup are untouched.
+            // The single-entry helper enforces Map-then-Inline
+            // ordering (Inline is highest precedence) so the
+            // two-call ordering can't drift between this site
+            // and `run_native_init::build`.
+            crate::application::macros::loader::rebuild_document_macros(macros, doc);
+            None
+        }
+        ConsoleSideEffect::SetFpsDisplay(mode) => {
+            // The decree bus clears the overlay buffers when
+            // toggled off; the rebuild helper in
+            // `Renderer::process()` re-shapes them on the next
+            // frame when toggled on.
+            renderer.set_fps_display(mode);
+            None
+        }
+        other => Some(other),
+    }
+}
+
+/// Apply post-rebuild modal transitions. Returns `true` if a
+/// modal opened (so the dispatcher closes the console too).
+#[allow(clippy::too_many_arguments)]
+fn handle_post_rebuild_side_effect(
+    side_effect: Option<ConsoleSideEffect>,
+    doc: &mut MindMapDocument,
+    mindmap_tree: &mut Option<MindMapTree>,
+    label_edit_state: &mut LabelEditState,
+    portal_text_edit_state: &mut PortalTextEditState,
+    color_picker_state: &mut ColorPickerState,
+    app_scene: &mut crate::application::scene_host::AppScene,
+    renderer: &mut Renderer,
+    scene_cache: &mut SceneConnectionCache,
+) -> bool {
+    let Some(eff) = side_effect else { return false };
+    match eff {
+        ConsoleSideEffect::OpenLabelEdit(er) => {
+            open_label_edit(&er, doc, label_edit_state, app_scene, renderer);
+        }
+        ConsoleSideEffect::OpenPortalTextEdit(er, endpoint) => {
+            open_portal_text_edit(&er, &endpoint, doc, portal_text_edit_state, app_scene, renderer);
+        }
+        ConsoleSideEffect::OpenColorPicker(target) => {
+            open_color_picker_contextual(target, doc, color_picker_state, app_scene, renderer, scene_cache);
+        }
+        ConsoleSideEffect::OpenColorPickerStandalone => {
+            open_color_picker_standalone(doc, color_picker_state, app_scene, renderer, scene_cache);
+        }
+        ConsoleSideEffect::CloseColorPicker => {
+            close_color_picker_standalone(
+                color_picker_state,
+                doc,
+                mindmap_tree,
+                app_scene,
+                renderer,
+                scene_cache,
+            );
+        }
+        // Pre-rebuild variants — already consumed.
+        ConsoleSideEffect::ReplaceDocument(_) | ConsoleSideEffect::SetFpsDisplay(_) => {
+            unreachable!(
+                "ReplaceDocument / SetFpsDisplay should be consumed by handle_pre_rebuild_side_effect"
+            )
+        }
+    }
+    true
 }
 
 /// Persist the document to its bound `file_path`, clear the dirty

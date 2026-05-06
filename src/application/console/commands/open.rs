@@ -41,7 +41,7 @@ fn execute_open(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     }
     match MindMapDocument::load(&path) {
         Ok(doc) => {
-            eff.replace_document = Some(doc);
+            eff.side_effect = Some(super::super::ConsoleSideEffect::ReplaceDocument(doc));
             ExecResult::ok_msg(format!("opened {}", path))
         }
         Err(e) => ExecResult::err(e),

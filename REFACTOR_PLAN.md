@@ -570,61 +570,91 @@ this out as remaining work; cleanup goes in two passes.
       `init_text_pipeline`, `init_rect_pipeline`, `default_buffer_state`.
       Make `pipeline::create_rect_pipeline(device, format)` actually take
       the rect-pipeline construction (currently inlined in `new`).
+      **DEFERRED** — large surgery; the construction shape is correct
+      and the savings are aesthetic. Belongs in a focused session.
 - [ ] Split `Renderer::render` (`renderer/render.rs:84-378`) into
       `bake_main_rects`, `bake_overlay_rects`,
       `upload_rect_vertices() -> (u32, u32)`, `record_pass`.
-- [ ] Replace `unsafe { from_raw_parts }` for vertex upload with
+      **DEFERRED** — same reasoning as `Renderer::new` split.
+- [x] Replace `unsafe { from_raw_parts }` for vertex upload with
       `bytemuck::cast_slice` (`render.rs:194-209`); 60×/sec hot path.
-- [ ] Pre-size or reuse the `Vec<TextArea>` in `main_text_areas`
-      (`render.rs:218-243`); currently a fresh `Vec` from six chained
-      iterators per frame.
-- [ ] Cache `(width, height)` rounded to char cells for
-      `rebuild_selection_rect_overlay` (`scene_buffers.rs:230-289`); 4
-      buffer shapings per drag tick today.
+- [x] Pre-size or reuse the `Vec<TextArea>` in `main_text_areas`
+      (`render.rs:218-243`); upper-bound capacity replaces per-frame
+      grow-through-realloc. Same shape applied to `palette_text_areas`.
+- [x] Cache `(width, height)` rounded to char cells for
+      `rebuild_selection_rect_overlay` (`scene_buffers.rs:230-289`).
+      `selection_rect_shape_cache: Option<(usize, usize)>` on
+      `Renderer`; matching shape skips 4 cosmic-text shapings
+      per drag tick (only positions/bounds updated in place).
 
 ### 5.2 Cursor / event handling
 - [ ] Split `handle_cursor_moved` (`event_cursor_moved.rs:27-545`) into:
       picker/hover gate, a `promote_pending_drag(ctx, hits) -> Option<DragState>`
       helper that absorbs the 6-way `Pending`-promotion ladder (lines
-      196-414), and per-drag-arm methods.
+      196-414), and per-drag-arm methods. **DEFERRED** — co-edits with
+      the `DragState::Pending` enum conversion below; doing them
+      together avoids touching the same call sites twice.
 - [ ] Convert `DragState::Pending`'s 8 `Option` fields
       (`app/mod.rs:459-510`) to
       `enum PendingHit { Node, EdgeLabel(...), PortalLabel(...),
       EdgeHandle(...), NodeResize(...), SectionResize(...) } + start_pos`.
-- [ ] Lift the type-to-edit branch out of `event_keyboard.rs:204-304`
+      **DEFERRED** — release-path semantics: 3 of the 8 fields
+      (`hit_node`, `hit_section_idx`, `hit_edge_label`) are read
+      independently on sub-threshold release while the other 5 are
+      consumed only at threshold-cross. A naive priority-fold loses
+      release info for press-on-handle gestures. Wants a focused
+      session with care for sub-threshold release UX preservation.
+- [x] Lift the type-to-edit branch out of `event_keyboard.rs:204-304`
       into `try_type_to_edit(ctx, key, key_name) -> bool`.
 
 ### 5.3 Document / state
-- [ ] Pull `route_label_edit_key` out of `app/mod.rs:387-413` into
+- [x] Pull `route_label_edit_key` out of `app/mod.rs:387-413` into
       `label_edit.rs` (the rest of label edit lives there).
 - [ ] Split `MindMapDocument`'s 12 public fields into
       sub-bundles (`mutations: MutationState`, `previews: PreviewState`,
       `animations: AnimationState`); narrow accessors. Delete
       `from_finalized_mindmap` test bypass and make `grow_*` cheap enough
       that production and tests share a single constructor path.
+      **DEFERRED** — touches every doc-mutation call site (~hundreds);
+      wants its own session.
 - [ ] Carve `ModalState { console, label_edit, portal_text_edit,
       color_picker }` from `InputHandlerContext`'s 21 fields
       (`app/input_context.rs:37-93`); narrow dispatch borrows.
-- [ ] Convert `ConsoleEffects`'s 8 mutually-exclusive `Option` fields
+      **DEFERRED** — split-borrow-discipline rewrite touching every
+      modal handler; wants a focused session.
+- [x] Convert `ConsoleEffects`'s 7 mutually-exclusive transition fields
       (`console/mod.rs:56-114`) to one
       `enum ConsoleSideEffect { OpenLabelEdit(EdgeRef),
-      OpenColorPicker(...), CloseColorPicker, ... }` field.
+      OpenColorPicker(...), CloseColorPicker, ... }` field. (Plan
+      originally said "8 fields"; `close_console` is orthogonal —
+      set alongside any transition — and stayed as a separate
+      `bool`. The transition enum is the true "8 → 1" win.)
 
 ### 5.4 Predicate / dispatch
-- [ ] Refactor `Predicate::test` (`gfx_structs/predicate.rs:176-485`):
-      extract `evaluate_field(elt, field, comp) -> bool`; the outer body
-      becomes a fold over `(field, comparator)` pairs.
+- [x] Refactor `Predicate::test` (`gfx_structs/predicate.rs:176-485`):
+      extract `evaluate_field(elt, field, comp) -> bool`; the outer
+      body folds over `(field, comparator)` pairs returning
+      `Option<bool>` (None = field inapplicable / fall through).
+      Three sub-helpers (`evaluate_glyph_area_field`,
+      `evaluate_region_match`, `evaluate_glyph_model_match`) host
+      the per-axis logic.
 - [ ] Replace `KeybindConfig::resolve` (`keybinds/config.rs:420-795`,
-      375 lines) with a `#[derive(KeybindConfig)]` macro on `Action` that
-      walks `ActionKind` to emit fields, default, and resolve table.
-      Mandala already has `lib/mandala_derive/`.
-- [ ] Replace `console/commands/font.rs::execute_font` (185 lines,
-      `:174-358`) with `parse_font_args -> FontArgs` + `apply_font_args
-      -> ApplyTally` + one finalise site, mirroring how `font set` and
-      every other `console/traits/` axis already dispatches.
-- [ ] Table-drive the six `Has*Color`/`Accepts*`/`Handles*` impls in
-      `console/traits/view.rs` (926 lines, six 7-arm matches with shared
-      `is_valid_color_literal` helper).
+      375 lines) with a `#[derive(KeybindConfig)]` macro on `Action`
+      that walks `ActionKind` to emit fields, default, and resolve
+      table. Mandala already has `lib/mandala_derive/`.
+      **DEFERRED** — proc-macro design + per-action attribute schema
+      is large enough to warrant its own session.
+- [x] Replace `console/commands/font.rs::execute_font` (185 lines,
+      `:174-358`) with `parse_font_args -> FontArgs` + `apply_font_args`
+      + one finalise site. The `Multi` / `MultiSection` fanout arms
+      now share a `fanout_size_outcome` helper.
+- [x] Table-drive the six `Has*Color`/`Accepts*`/`Handles*` impls in
+      `console/traits/view.rs` (926 lines). Edge-adjacent four-arm
+      duplication consolidated into `write_edge_adjacent_color` and
+      `paste_edge_adjacent_color` helpers — `HasTextColor`,
+      `HasBorderColor`, and `HandlesPaste` (color-paste path) now
+      share one definition for the (Edge / EdgeLabel / PortalLabel
+      / PortalText) routing.
 
 ---
 

@@ -202,106 +202,11 @@ pub(super) fn handle_keyboard_input(
         )
     });
 
-    // Type-to-edit on edge / portal label selections: when an
-    // editable selection is active, no editor is open, no action
-    // claims the key (so custom mutations / keybind rebinds always
-    // win), and the user types a printable character (no Ctrl /
-    // Alt — Shift is OK so capital letters and shifted symbols
-    // still type), open the right inline editor and replay the
-    // keystroke through it so the typed character lands in the
-    // buffer as the first edit. This makes the gesture symmetric
-    // with what the node editor offers via `EditSelectionClean` /
-    // typing on a freshly-selected node. The action-first check
-    // means rebinding `'a'` to a Document action keeps that
-    // binding alive even when an edge label is selected.
-    if action.is_none() && !ctx.modifiers.control_key() && !ctx.modifiers.alt_key() {
-        if let Key::Character(ref c) = logical_key {
-            // Reject empty payloads and pure-control payloads up
-            // front so single-char shortcuts that the keybind table
-            // hasn't claimed don't accidentally open an editor.
-            let has_printable = c.as_str().chars().any(|ch| !ch.is_control());
-            if has_printable {
-                if let Some(doc) = ctx.document.as_mut() {
-                    let opened = match doc.selection.clone() {
-                        SelectionState::EdgeLabel(s) => {
-                            open_label_edit(
-                                &s.edge_ref,
-                                doc,
-                                ctx.label_edit_state,
-                                ctx.app_scene,
-                                ctx.renderer,
-                            );
-                            ctx.label_edit_state.is_open()
-                        }
-                        SelectionState::PortalLabel(s) | SelectionState::PortalText(s) => {
-                            let er = s.edge_ref();
-                            open_portal_text_edit(
-                                &er,
-                                &s.endpoint_node_id,
-                                doc,
-                                ctx.portal_text_edit_state,
-                                ctx.app_scene,
-                                ctx.renderer,
-                            );
-                            ctx.portal_text_edit_state.is_open()
-                        }
-                        _ => false,
-                    };
-                    if opened {
-                        // Replay the typed character through the
-                        // newly-opened editor so the first key
-                        // ends up in the buffer instead of being
-                        // swallowed by the open gesture.
-                        if ctx.label_edit_state.is_open() {
-                            handle_label_edit_key(
-                                &key_name,
-                                &logical_key,
-                                ctx.modifiers.control_key(),
-                                ctx.modifiers.shift_key(),
-                                ctx.modifiers.alt_key(),
-                                ctx.keybinds,
-                                ctx.label_edit_state,
-                                doc,
-                                ctx.mindmap_tree,
-                                ctx.app_scene,
-                                ctx.renderer,
-                                ctx.scene_cache,
-                            );
-                        } else if ctx.portal_text_edit_state.is_open() {
-                            handle_portal_text_edit_key(
-                                &key_name,
-                                &logical_key,
-                                ctx.modifiers.control_key(),
-                                ctx.modifiers.shift_key(),
-                                ctx.modifiers.alt_key(),
-                                ctx.keybinds,
-                                ctx.portal_text_edit_state,
-                                doc,
-                                ctx.mindmap_tree,
-                                ctx.app_scene,
-                                ctx.renderer,
-                                ctx.scene_cache,
-                            );
-                        }
-                        return;
-                    }
-                    // `open_*` silently returned without opening an
-                    // editor — the selection's target evaporated
-                    // (edge deleted by a background undo, portal
-                    // edge flipped to line mode, etc). Log and drop
-                    // the keystroke rather than falling through to
-                    // action dispatch with a stale selection — the
-                    // user's mental model was "I'm about to type
-                    // into this selected thing", not "trigger a
-                    // Document action".
-                    log::warn!(
-                        "type-to-edit: selected edge / portal endpoint \
-                         vanished before editor could open; keystroke dropped"
-                    );
-                    return;
-                }
-            }
-        }
+    // Type-to-edit on edge / portal label selections: only fires
+    // when no action claims the key, so rebound printables go to
+    // dispatch first.
+    if action.is_none() && try_type_to_edit(&logical_key, &key_name, ctx) {
+        return;
     }
 
     if let Some(a) = action {
@@ -346,4 +251,111 @@ pub(super) fn handle_keyboard_input(
             }
         }
     }
+}
+
+/// On edge / portal label selections, intercept printable
+/// characters and route them to the inline editor: open the
+/// right editor for the current selection, then replay the
+/// keystroke into it so the typed character lands as the first
+/// edit. Mirrors the `EditSelectionClean`-on-node flow.
+///
+/// Returns `true` when the keystroke was consumed (editor
+/// opened or selection was stale and the keystroke was dropped
+/// to avoid running Document-level dispatch with a phantom
+/// target). Returns `false` to let the caller fall through to
+/// the macro / custom-mutation tier.
+///
+/// Caller already checked `action.is_none()` so rebinding any
+/// printable to a Document action keeps that binding alive
+/// even when an edge label is selected.
+fn try_type_to_edit(
+    logical_key: &Key,
+    key_name: &Option<String>,
+    ctx: &mut InputHandlerContext<'_>,
+) -> bool {
+    if ctx.modifiers.control_key() || ctx.modifiers.alt_key() {
+        return false;
+    }
+    let Key::Character(ref c) = *logical_key else {
+        return false;
+    };
+    // Reject empty payloads and pure-control payloads up
+    // front so single-char shortcuts that the keybind table
+    // hasn't claimed don't accidentally open an editor.
+    if !c.as_str().chars().any(|ch| !ch.is_control()) {
+        return false;
+    }
+    let Some(doc) = ctx.document.as_mut() else {
+        return false;
+    };
+    let opened = match doc.selection.clone() {
+        SelectionState::EdgeLabel(s) => {
+            open_label_edit(
+                &s.edge_ref,
+                doc,
+                ctx.label_edit_state,
+                ctx.app_scene,
+                ctx.renderer,
+            );
+            ctx.label_edit_state.is_open()
+        }
+        SelectionState::PortalLabel(s) | SelectionState::PortalText(s) => {
+            let er = s.edge_ref();
+            open_portal_text_edit(
+                &er,
+                &s.endpoint_node_id,
+                doc,
+                ctx.portal_text_edit_state,
+                ctx.app_scene,
+                ctx.renderer,
+            );
+            ctx.portal_text_edit_state.is_open()
+        }
+        _ => return false,
+    };
+    if opened {
+        if ctx.label_edit_state.is_open() {
+            handle_label_edit_key(
+                key_name,
+                logical_key,
+                ctx.modifiers.control_key(),
+                ctx.modifiers.shift_key(),
+                ctx.modifiers.alt_key(),
+                ctx.keybinds,
+                ctx.label_edit_state,
+                doc,
+                ctx.mindmap_tree,
+                ctx.app_scene,
+                ctx.renderer,
+                ctx.scene_cache,
+            );
+        } else if ctx.portal_text_edit_state.is_open() {
+            handle_portal_text_edit_key(
+                key_name,
+                logical_key,
+                ctx.modifiers.control_key(),
+                ctx.modifiers.shift_key(),
+                ctx.modifiers.alt_key(),
+                ctx.keybinds,
+                ctx.portal_text_edit_state,
+                doc,
+                ctx.mindmap_tree,
+                ctx.app_scene,
+                ctx.renderer,
+                ctx.scene_cache,
+            );
+        }
+        return true;
+    }
+    // `open_*` silently returned — the selection's target
+    // evaporated (edge deleted by a background undo, portal
+    // edge flipped to line mode, etc). Drop the keystroke
+    // rather than falling through to action dispatch with a
+    // stale selection — the user's mental model was "I'm about
+    // to type into this selected thing", not "trigger a
+    // Document action".
+    log::warn!(
+        "type-to-edit: selected edge / portal endpoint vanished before editor could open; keystroke dropped"
+    );
+    true
 }

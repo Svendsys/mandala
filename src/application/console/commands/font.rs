@@ -171,76 +171,89 @@ fn parse_pt(key: &str, value: &str) -> Result<f32, ExecResult> {
     crate::application::console::helpers::parse_finite_pt(key, value).map_err(ExecResult::err)
 }
 
+/// Parsed `font` kv-form arguments. Built once by
+/// [`parse_font_args`]; the per-selection-variant dispatcher
+/// in [`apply_font_args`] reads from it without re-parsing.
+struct FontArgs {
+    size: Option<f32>,
+    min: Option<f32>,
+    max: Option<f32>,
+    section_target: Option<usize>,
+    range_target: Option<(usize, usize)>,
+}
+
 fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     // Positional subverbs are checked first — they're channel-less
     // operations and don't share parse state with the kv triple.
     if let Some(verb) = args.positional(0) {
-        match verb {
-            "set" => return execute_font_set(args, eff),
-            "list" => return execute_font_list(args),
-            _ => {
-                return ExecResult::err(format!(
-                    "font: unknown subverb '{}'; use 'set <family>', \
-                     'list', or 'size=<pt>' (kv form)",
-                    verb
-                ));
-            }
-        }
+        return match verb {
+            "set" => execute_font_set(args, eff),
+            "list" => execute_font_list(args),
+            _ => ExecResult::err(format!(
+                "font: unknown subverb '{}'; use 'set <family>', \
+                 'list', or 'size=<pt>' (kv form)",
+                verb
+            )),
+        };
     }
+    let parsed = match parse_font_args(args) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    apply_font_args(&mut eff.document, &parsed)
+}
 
-    // Parse every recognised kv up front so the atomic application
-    // sees a complete Option triple. Unknown keys report an error
-    // immediately — better than silently ignoring a typo.
-    let mut size: Option<f32> = None;
-    let mut min: Option<f32> = None;
-    let mut max: Option<f32> = None;
-    let mut section_target: Option<usize> = None;
-    let mut range_target: Option<(usize, usize)> = None;
+/// Parse every recognised kv up front so the atomic application
+/// sees a complete `FontArgs` value. Returns `Err(ExecResult)`
+/// for unknown keys, malformed values, mutually-exclusive
+/// combinations, or empty input — all surface to the caller via
+/// the same error channel `apply_font_args` would use.
+fn parse_font_args(args: &Args) -> Result<FontArgs, ExecResult> {
+    let mut out = FontArgs {
+        size: None,
+        min: None,
+        max: None,
+        section_target: None,
+        range_target: None,
+    };
     let mut saw_any = false;
     for (k, v) in args.kvs() {
         saw_any = true;
         match k {
-            "size" => match parse_pt("size", v) {
-                Ok(pt) => size = Some(pt),
-                Err(e) => return e,
-            },
-            "min" => match parse_pt("min", v) {
-                Ok(pt) => min = Some(pt),
-                Err(e) => return e,
-            },
-            "max" => match parse_pt("max", v) {
-                Ok(pt) => max = Some(pt),
-                Err(e) => return e,
-            },
-            "section" => match super::range_kv::parse_section_kv("font", v) {
-                Ok(idx) => section_target = Some(idx),
-                Err(msg) => return ExecResult::err(msg),
-            },
-            "range" => match super::range_kv::parse_range_kv(v) {
-                Ok(pair) => range_target = Some(pair),
-                Err(msg) => return ExecResult::err(format!("font: range='{}' — {}", v, msg)),
-            },
-            other => return ExecResult::err(format!("unknown key '{}'", other)),
+            "size" => out.size = Some(parse_pt("size", v)?),
+            "min" => out.min = Some(parse_pt("min", v)?),
+            "max" => out.max = Some(parse_pt("max", v)?),
+            "section" => {
+                out.section_target = Some(
+                    super::range_kv::parse_section_kv("font", v).map_err(ExecResult::err)?,
+                );
+            }
+            "range" => {
+                out.range_target = Some(super::range_kv::parse_range_kv(v).map_err(|msg| {
+                    ExecResult::err(format!("font: range='{}' — {}", v, msg))
+                })?);
+            }
+            other => return Err(ExecResult::err(format!("unknown key '{}'", other))),
         }
     }
-    if range_target.is_some() && section_target.is_none() {
-        return ExecResult::err(
+    if out.range_target.is_some() && out.section_target.is_none() {
+        return Err(ExecResult::err(
             "font: range=A..B requires section=N — ranges target grapheme indices inside one section",
-        );
+        ));
     }
-    if range_target.is_some() && (min.is_some() || max.is_some()) {
-        return ExecResult::err(
+    if out.range_target.is_some() && (out.min.is_some() || out.max.is_some()) {
+        return Err(ExecResult::err(
             "font: min/max not applicable to a section range (per-grapheme clamps don't exist)",
-        );
+        ));
     }
     if !saw_any {
-        return ExecResult::err(
+        return Err(ExecResult::err(
             "usage: font set <family> | font list | \
              font size=<pt> [min=<pt>] [max=<pt>]",
-        );
+        ));
     }
-    if size.is_none() && min.is_none() && max.is_none() {
-        return ExecResult::err("font: nothing to set");
+    if out.size.is_none() && out.min.is_none() && out.max.is_none() {
+        return Err(ExecResult::err("font: nothing to set"));
     }
     // Reject obviously-inverted explicit bounds up front so the
     // user sees a clear error instead of a silent no-op from the
@@ -248,101 +261,78 @@ fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     // against resolved (post-override) bounds for defence in
     // depth — that catches the case where the user passes only
     // one side and it inverts against the existing struct.
-    if let (Some(lo), Some(hi)) = (min, max) {
+    if let (Some(lo), Some(hi)) = (out.min, out.max) {
         if lo > hi {
-            return ExecResult::err(format!("font: min={lo} > max={hi} (inverted bounds)"));
+            return Err(ExecResult::err(format!(
+                "font: min={lo} > max={hi} (inverted bounds)"
+            )));
         }
     }
+    Ok(out)
+}
 
-    // Selection-variant dispatch. A Multi node selection fans
-    // out over each node (size only; min/max are NotApplicable
-    // for nodes). The edge-adjacent variants each write to
-    // their own channel.
-    let doc = &mut eff.document;
+/// Selection-variant dispatch. A `Multi` node selection fans
+/// out over each node (size only; min/max are NotApplicable
+/// for nodes). The edge-adjacent variants each write to their
+/// own channel.
+fn apply_font_args(
+    doc: &mut crate::application::document::MindMapDocument,
+    a: &FontArgs,
+) -> ExecResult {
     match doc.selection.clone() {
         // `section=N` (E5 verb syntax) routes to that specific
         // section's runs; absent, the write applies to every
         // section on the node.
-        SelectionState::Single(id) => match section_target {
-            Some(idx) => section_font_outcome(doc, &id, idx, size, min, max, range_target),
-            None => node_font_outcome(doc, &id, size, min, max),
+        SelectionState::Single(id) => match a.section_target {
+            Some(idx) => section_font_outcome(doc, &id, idx, a.size, a.min, a.max, a.range_target),
+            None => node_font_outcome(doc, &id, a.size, a.min, a.max),
         },
         SelectionState::Section(s) => {
             // Section selection: explicit `section=N` overrides
             // the active section index; otherwise fall through to
             // the section the user pointed at.
-            let idx = section_target.unwrap_or(s.section_idx);
-            section_font_outcome(doc, &s.node_id, idx, size, min, max, range_target)
+            let idx = a.section_target.unwrap_or(s.section_idx);
+            section_font_outcome(doc, &s.node_id, idx, a.size, a.min, a.max, a.range_target)
         }
-        SelectionState::Multi(ids) => {
-            // Fanout: apply size to each node; collect a single
-            // "any changed?" result. `min` / `max` are
-            // NotApplicable for nodes and surface as a single
-            // message rather than one per node.
-            let mut changed = 0usize;
-            for id in &ids {
-                if let Some(pt) = size {
-                    if doc.set_node_font_size(id, pt) {
-                        changed += 1;
-                    }
-                }
-            }
-            let applicable_msg = (min.is_some() || max.is_some())
-                .then(|| "min/max: nodes have no screen-space clamps".to_string());
-            if changed == 0 && applicable_msg.is_none() {
-                return ExecResult::ok_msg("font: no change");
-            }
-            let mut lines = Vec::new();
-            if changed > 0 {
-                lines.push(format!("font: applied to {} node(s)", changed));
-            }
-            if let Some(m) = applicable_msg {
-                lines.push(m);
-            }
-            ExecResult::lines(lines)
-        }
-        SelectionState::MultiSection(secs) => {
-            // Fanout: apply size to each section's runs. `min` /
-            // `max` are NotApplicable for sections — surface a
-            // single message rather than one per section.
-            let mut changed = 0usize;
-            for s in &secs {
-                if let Some(pt) = size {
-                    if doc.set_section_font_size(&s.node_id, s.section_idx, pt) {
-                        changed += 1;
-                    }
-                }
-            }
-            let applicable_msg = (min.is_some() || max.is_some())
-                .then(|| "min/max: sections have no screen-space clamps".to_string());
-            if changed == 0 && applicable_msg.is_none() {
-                return ExecResult::ok_msg("font: no change");
-            }
-            let mut lines = Vec::new();
-            if changed > 0 {
-                lines.push(format!("font: applied to {} section(s)", changed));
-            }
-            if let Some(m) = applicable_msg {
-                lines.push(m);
-            }
-            ExecResult::lines(lines)
-        }
+        SelectionState::Multi(ids) => fanout_size_outcome(
+            ids.iter().filter_map(|id| {
+                a.size.map(|pt| doc.set_node_font_size(id, pt))
+            }),
+            a.min,
+            a.max,
+            "node",
+        ),
+        SelectionState::MultiSection(secs) => fanout_size_outcome(
+            secs.iter().filter_map(|s| {
+                a.size
+                    .map(|pt| doc.set_section_font_size(&s.node_id, s.section_idx, pt))
+            }),
+            a.min,
+            a.max,
+            "section",
+        ),
         SelectionState::Edge(er) => {
-            let changed = doc.set_edge_font(&er, size, min, max);
+            let changed = doc.set_edge_font(&er, a.size, a.min, a.max);
             super::applied_or_no_change("font", "edge", changed)
         }
         SelectionState::EdgeLabel(s) => {
-            let changed = doc.set_edge_label_font(&s.edge_ref, size, min, max);
+            let changed = doc.set_edge_label_font(&s.edge_ref, a.size, a.min, a.max);
             super::applied_or_no_change("font", "edge label", changed)
         }
         SelectionState::PortalLabel(s) => {
             // Portal icon routes to the owning edge's
             // `glyph_connection` channel (same sink as `Edge`).
-            let changed = doc.set_edge_font(&s.edge_ref(), size, min, max);
+            let changed = doc.set_edge_font(&s.edge_ref(), a.size, a.min, a.max);
             super::applied_or_no_change("font", "portal label", changed)
         }
         SelectionState::PortalText(s) => {
-            let changed = doc.set_portal_text_font(&s.edge_ref(), &s.endpoint_node_id, size, min, max);
+            let changed = doc.set_portal_text_font(
+                &s.edge_ref(),
+                &s.endpoint_node_id,
+                a.size,
+                a.min,
+                a.max,
+            );
             super::applied_or_no_change("font", "portal text", changed)
         }
         SelectionState::SectionRange { sel, range } => {
@@ -350,12 +340,43 @@ fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             // explicit `range=A..B` from the kv parser on top of
             // the selection's own range when both are set
             // (kv wins — explicit user input).
-            let idx = section_target.unwrap_or(sel.section_idx);
-            let effective_range = range_target.or(Some(range));
-            section_font_outcome(doc, &sel.node_id, idx, size, min, max, effective_range)
+            let idx = a.section_target.unwrap_or(sel.section_idx);
+            let effective_range = a.range_target.or(Some(range));
+            section_font_outcome(doc, &sel.node_id, idx, a.size, a.min, a.max, effective_range)
         }
         SelectionState::None => ExecResult::err("font: no selection"),
     }
+}
+
+/// Outcome formatter for the `Multi` / `MultiSection` fanout
+/// arms. `applied_iter` yields one bool per attempted target
+/// (true = the setter changed the doc); `kind` is the singular
+/// noun used in the "applied to N <kind>(s)" line.
+///
+/// The `min` / `max` arms surface a single
+/// "min/max: <kind>s have no screen-space clamps" message rather
+/// than one per target — the message is identical across nodes
+/// and sections; the only difference is the noun.
+fn fanout_size_outcome(
+    applied_iter: impl Iterator<Item = bool>,
+    min: Option<f32>,
+    max: Option<f32>,
+    kind: &str,
+) -> ExecResult {
+    let changed = applied_iter.filter(|b| *b).count();
+    let applicable_msg = (min.is_some() || max.is_some())
+        .then(|| format!("min/max: {}s have no screen-space clamps", kind));
+    if changed == 0 && applicable_msg.is_none() {
+        return ExecResult::ok_msg("font: no change");
+    }
+    let mut lines = Vec::new();
+    if changed > 0 {
+        lines.push(format!("font: applied to {} {}(s)", changed, kind));
+    }
+    if let Some(m) = applicable_msg {
+        lines.push(m);
+    }
+    ExecResult::lines(lines)
 }
 
 /// Per-section font outcome — the `section=N` verb syntax routes

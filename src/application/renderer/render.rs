@@ -188,20 +188,18 @@ impl Renderer {
             self.rect_vertex_buffer_capacity = new_cap;
         }
         if main_bytes_len > 0 {
-            let bytes = unsafe {
-                std::slice::from_raw_parts(self.main_rect_vertices.as_ptr() as *const u8, main_bytes_len)
-            };
-            self.queue.write_buffer(&self.rect_vertex_buffer, 0, bytes);
+            self.queue.write_buffer(
+                &self.rect_vertex_buffer,
+                0,
+                bytemuck::cast_slice(&self.main_rect_vertices),
+            );
         }
         if palette_bytes_len > 0 {
-            let bytes = unsafe {
-                std::slice::from_raw_parts(
-                    self.console_rect_vertices.as_ptr() as *const u8,
-                    palette_bytes_len,
-                )
-            };
-            self.queue
-                .write_buffer(&self.rect_vertex_buffer, main_bytes_len as u64, bytes);
+            self.queue.write_buffer(
+                &self.rect_vertex_buffer,
+                main_bytes_len as u64,
+                bytemuck::cast_slice(&self.console_rect_vertices),
+            );
         }
         let main_vertex_count = (self.main_rect_vertices.len() / RECT_VERTEX_FLOATS) as u32;
         let palette_vertex_count = (self.console_rect_vertices.len() / RECT_VERTEX_FLOATS) as u32;
@@ -211,32 +209,43 @@ impl Renderer {
         // Palette buffers go into a separate list so they render
         // in a second glyphon pass (with the backdrop rect
         // between them, hence the split).
-        let main_text_areas: Vec<TextArea> = self
-            .mindmap_buffers
-            .values()
-            .flat_map(|v| v.iter())
-            .chain(self.border_buffers.values().flat_map(|v| v.iter()))
-            .chain(self.connection_label_buffers.values())
-            .chain(self.edge_handle_buffers.iter())
-            .chain(self.overlay_buffers.iter())
-            .chain(self.canvas_scene_buffers.iter())
-            .filter_map(|tb| {
-                if !tb.visible_at(&self.camera) {
-                    return None;
-                }
-                let canvas_pos = Vec2::new(tb.pos.0, tb.pos.1);
-                let screen_pos = self.camera.canvas_to_screen(canvas_pos);
-                Some(TextArea {
-                    buffer: &tb.buffer,
-                    left: screen_pos.x,
-                    top: screen_pos.y,
-                    scale: self.camera.zoom,
-                    bounds: vp_bounds,
-                    default_color,
-                    custom_glyphs: &[],
-                })
-            })
-            .collect();
+        // Upper-bound capacity so the per-frame `Vec` doesn't grow
+        // through several reallocs. Visibility-culling reduces the
+        // realised count below this; allocating once at the ceiling
+        // is still cheaper than `push` reallocations.
+        let main_capacity = self.mindmap_buffers.values().map(|v| v.len()).sum::<usize>()
+            + self.border_buffers.values().map(|v| v.len()).sum::<usize>()
+            + self.connection_label_buffers.len()
+            + self.edge_handle_buffers.len()
+            + self.overlay_buffers.len()
+            + self.canvas_scene_buffers.len();
+        let mut main_text_areas: Vec<TextArea> = Vec::with_capacity(main_capacity);
+        main_text_areas.extend(
+            self.mindmap_buffers
+                .values()
+                .flat_map(|v| v.iter())
+                .chain(self.border_buffers.values().flat_map(|v| v.iter()))
+                .chain(self.connection_label_buffers.values())
+                .chain(self.edge_handle_buffers.iter())
+                .chain(self.overlay_buffers.iter())
+                .chain(self.canvas_scene_buffers.iter())
+                .filter_map(|tb| {
+                    if !tb.visible_at(&self.camera) {
+                        return None;
+                    }
+                    let canvas_pos = Vec2::new(tb.pos.0, tb.pos.1);
+                    let screen_pos = self.camera.canvas_to_screen(canvas_pos);
+                    Some(TextArea {
+                        buffer: &tb.buffer,
+                        left: screen_pos.x,
+                        top: screen_pos.y,
+                        scale: self.camera.zoom,
+                        bounds: vp_bounds,
+                        default_color,
+                        custom_glyphs: &[],
+                    })
+                }),
+        );
 
         // Palette overlay: screen-space text, drawn in its own
         // glyphon pass so the rect-pipeline backdrop can be
@@ -247,21 +256,25 @@ impl Renderer {
         // tree in `AppScene`) — it's a mutually exclusive
         // screen-space modal that shares this pass with the
         // console.
-        let palette_text_areas: Vec<TextArea> = self
-            .console_overlay_buffers
-            .iter()
-            .chain(self.overlay_scene_buffers.iter())
-            .chain(self.fps_overlay_buffers.iter())
-            .map(|tb| TextArea {
-                buffer: &tb.buffer,
-                left: tb.pos.0,
-                top: tb.pos.1,
-                scale: 1.0,
-                bounds: vp_bounds,
-                default_color,
-                custom_glyphs: &[],
-            })
-            .collect();
+        let palette_capacity = self.console_overlay_buffers.len()
+            + self.overlay_scene_buffers.len()
+            + self.fps_overlay_buffers.len();
+        let mut palette_text_areas: Vec<TextArea> = Vec::with_capacity(palette_capacity);
+        palette_text_areas.extend(
+            self.console_overlay_buffers
+                .iter()
+                .chain(self.overlay_scene_buffers.iter())
+                .chain(self.fps_overlay_buffers.iter())
+                .map(|tb| TextArea {
+                    buffer: &tb.buffer,
+                    left: tb.pos.0,
+                    top: tb.pos.1,
+                    scale: 1.0,
+                    bounds: vp_bounds,
+                    default_color,
+                    custom_glyphs: &[],
+                }),
+        );
 
         // Interactive path: a contended font-system lock must skip
         // the frame, not abort the process.
