@@ -578,44 +578,30 @@ mod tests {
         assert_eq!(back.custom_mutations.len(), 3);
     }
 
+    /// `save_to_file` → `load_from_file` reproduces the same `MindMap`
+    /// for both the loaded testament fixture and a freshly-blank map
+    /// (the `new` console verb lands on this). Locks the on-disk
+    /// format as the canonical serialization for both shapes.
     #[test]
-    fn test_save_to_file_round_trip() {
-        // A `save_to_file` followed by `load_from_file` must reproduce
-        // the same MindMap, locking the on-disk format as the canonical
-        // serialization.
-        let path = test_map_path();
-        let original = load_from_file(&path).unwrap();
-
-        let tmp = std::env::temp_dir().join("mandala_save_round_trip.mindmap.json");
-        save_to_file(&tmp, &original).expect("save failed");
-        let reloaded = load_from_file(&tmp).expect("reload failed");
-
-        assert_eq!(reloaded.version, original.version);
-        assert_eq!(reloaded.name, original.name);
-        assert_eq!(reloaded.nodes.len(), original.nodes.len());
-        assert_eq!(reloaded.edges.len(), original.edges.len());
-        assert_eq!(reloaded.canvas.background_color, original.canvas.background_color);
-
-        let _ = std::fs::remove_file(&tmp);
-    }
-
-    #[test]
-    fn test_save_blank_map_round_trip() {
-        // A freshly-created blank map must serialize to JSON that
-        // re-parses cleanly — the `new` console command relies on
-        // this.
+    fn test_save_to_file_round_trip_for_loaded_and_blank_maps() {
+        let testament = load_from_file(&test_map_path()).unwrap();
         let blank = MindMap::new_blank("untitled");
-        let tmp = std::env::temp_dir().join("mandala_blank_round_trip.mindmap.json");
-        save_to_file(&tmp, &blank).expect("save failed");
-        let reloaded = load_from_file(&tmp).expect("reload failed");
 
-        assert_eq!(reloaded.name, "untitled");
-        assert_eq!(reloaded.version, "1.0");
-        assert!(reloaded.nodes.is_empty());
-        assert!(reloaded.edges.is_empty());
-        assert_eq!(reloaded.canvas.background_color, "#000000");
+        for (label, original) in [("testament", testament), ("blank", blank)] {
+            let tmp = std::env::temp_dir().join(format!("mandala_save_round_trip_{label}.mindmap.json"));
+            save_to_file(&tmp, &original).expect("save failed");
+            let reloaded = load_from_file(&tmp).expect("reload failed");
 
-        let _ = std::fs::remove_file(&tmp);
+            assert_eq!(reloaded.version, original.version, "{label}: version");
+            assert_eq!(reloaded.name, original.name, "{label}: name");
+            assert_eq!(reloaded.nodes.len(), original.nodes.len(), "{label}: nodes len");
+            assert_eq!(reloaded.edges.len(), original.edges.len(), "{label}: edges len");
+            assert_eq!(
+                reloaded.canvas.background_color, original.canvas.background_color,
+                "{label}: bg",
+            );
+            let _ = std::fs::remove_file(&tmp);
+        }
     }
 
     /// `MindMap.macros` round-trips through save+load with absence

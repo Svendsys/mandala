@@ -525,103 +525,74 @@ fn portal_glyph_presets_are_nonempty_and_unique() {
 // per model type that can carry an authored window.
 // ──────────────────────────────────────────────────────────
 
-/// Default `MindEdge` — no authored zoom window — must not
-/// emit either key. Keeps existing `.mindmap.json` files
-/// byte-stable on round-trip (`skip_serializing_if = "Option::is_none"`).
+/// `(min_zoom_to_render, max_zoom_to_render)` skip-default and
+/// round-trip contract on every model struct that carries the
+/// pair: `MindEdge`, `EdgeLabelConfig`, `PortalEndpointState`.
+/// Each shape is verified against the same three states (default,
+/// authored both-sides, authored one-side) so a future field
+/// rename or `skip_serializing_if` regression on any one of them
+/// fires the same test.
 #[test]
-fn mindedge_default_zoom_window_omitted_in_serialize() {
-    let edge = synthetic_edge_with_label(None, None);
-    let json = serde_json::to_string(&edge).unwrap();
-    assert!(
-        !json.contains("min_zoom_to_render"),
-        "None min should be omitted: {json}"
-    );
-    assert!(
-        !json.contains("max_zoom_to_render"),
-        "None max should be omitted: {json}"
-    );
-}
+fn zoom_window_skip_default_and_round_trip_on_every_struct() {
+    fn check_pair(label: &str, default_json: &str, authored_min: f32, mut set_pair: impl FnMut(Option<f32>, Option<f32>) -> (String, Option<f32>, Option<f32>)) {
+        // Default: neither key emitted.
+        assert!(
+            !default_json.contains("min_zoom_to_render"),
+            "{label}: default emitted min: {default_json}"
+        );
+        assert!(
+            !default_json.contains("max_zoom_to_render"),
+            "{label}: default emitted max: {default_json}"
+        );
 
-/// Authored `MindEdge` windows appear in the serialized form
-/// and round-trip through deserialize. Pins the pair's on-disk
-/// name, which format authors rely on.
-#[test]
-fn mindedge_authored_zoom_window_round_trips() {
-    let mut edge = synthetic_edge_with_label(None, None);
-    edge.min_zoom_to_render = Some(0.5);
-    edge.max_zoom_to_render = Some(2.0);
-    let json = serde_json::to_string(&edge).unwrap();
-    assert!(json.contains("\"min_zoom_to_render\":0.5"));
-    assert!(json.contains("\"max_zoom_to_render\":2.0"));
+        // Both-sides authored: both keys present and round-trip.
+        let (json, back_min, back_max) = set_pair(Some(authored_min), Some(authored_min * 4.0));
+        assert!(json.contains(&format!("\"min_zoom_to_render\":{authored_min}")));
+        assert!(json.contains(&format!("\"max_zoom_to_render\":{}", authored_min * 4.0)));
+        assert_eq!(back_min, Some(authored_min));
+        assert_eq!(back_max, Some(authored_min * 4.0));
 
-    let back: MindEdge = serde_json::from_str(&json).unwrap();
-    assert_eq!(back.min_zoom_to_render, Some(0.5));
-    assert_eq!(back.max_zoom_to_render, Some(2.0));
-}
+        // One-sided: only min present, max absent both in JSON and after round-trip.
+        let (json, back_min, back_max) = set_pair(Some(authored_min), None);
+        assert!(json.contains(&format!("\"min_zoom_to_render\":{authored_min}")));
+        assert!(!json.contains("max_zoom_to_render"), "{label}: one-sided max leaked: {json}");
+        assert_eq!(back_min, Some(authored_min));
+        assert!(back_max.is_none());
+    }
 
-/// One-sided `MindEdge` window: only `min_zoom_to_render` set
-/// — the `max_zoom_to_render` key stays absent from the JSON
-/// and round-trips as `None`.
-#[test]
-fn mindedge_one_sided_zoom_window_round_trips() {
-    let mut edge = synthetic_edge_with_label(None, None);
-    edge.min_zoom_to_render = Some(1.0);
-    // max stays None.
-    let json = serde_json::to_string(&edge).unwrap();
-    assert!(json.contains("\"min_zoom_to_render\":1.0"));
-    assert!(!json.contains("max_zoom_to_render"), "one-sided: max omitted");
-    let back: MindEdge = serde_json::from_str(&json).unwrap();
-    assert_eq!(back.min_zoom_to_render, Some(1.0));
-    assert!(back.max_zoom_to_render.is_none());
-}
+    let edge_default = serde_json::to_string(&synthetic_edge_with_label(None, None)).unwrap();
+    check_pair("MindEdge", &edge_default, 0.5, |min, max| {
+        let mut edge = synthetic_edge_with_label(None, None);
+        edge.min_zoom_to_render = min;
+        edge.max_zoom_to_render = max;
+        let json = serde_json::to_string(&edge).unwrap();
+        let back: MindEdge = serde_json::from_str(&json).unwrap();
+        (json, back.min_zoom_to_render, back.max_zoom_to_render)
+    });
 
-/// `EdgeLabelConfig` carries its own pair with the same
-/// skip-default contract. Ensures authoring a label-only
-/// override doesn't also require re-stating the edge's pair
-/// (the replace-not-intersect cascade lives above the serde
-/// layer).
-#[test]
-fn edge_label_config_zoom_window_round_trips() {
-    let cfg = EdgeLabelConfig {
-        min_zoom_to_render: Some(1.5),
-        max_zoom_to_render: None,
-        ..EdgeLabelConfig::default()
-    };
-    let json = serde_json::to_string(&cfg).unwrap();
-    assert!(json.contains("\"min_zoom_to_render\":1.5"));
-    assert!(!json.contains("max_zoom_to_render"));
+    let label_default = serde_json::to_string(&EdgeLabelConfig::default()).unwrap();
+    check_pair("EdgeLabelConfig", &label_default, 1.5, |min, max| {
+        let cfg = EdgeLabelConfig {
+            min_zoom_to_render: min,
+            max_zoom_to_render: max,
+            ..EdgeLabelConfig::default()
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: EdgeLabelConfig = serde_json::from_str(&json).unwrap();
+        (json, back.min_zoom_to_render, back.max_zoom_to_render)
+    });
 
-    let back: EdgeLabelConfig = serde_json::from_str(&json).unwrap();
-    assert_eq!(back.min_zoom_to_render, Some(1.5));
-    assert!(back.max_zoom_to_render.is_none());
-
-    // Default config emits neither key.
-    let default_json = serde_json::to_string(&EdgeLabelConfig::default()).unwrap();
-    assert!(!default_json.contains("min_zoom_to_render"));
-    assert!(!default_json.contains("max_zoom_to_render"));
-}
-
-/// `PortalEndpointState` also carries the pair. Setting only
-/// one side stays one-sided through the round-trip. Pins the
-/// cascade surface portal authors reach for via the console.
-#[test]
-fn portal_endpoint_state_zoom_window_round_trips() {
-    let state = PortalEndpointState {
-        min_zoom_to_render: None,
-        max_zoom_to_render: Some(0.75),
-        ..PortalEndpointState::default()
-    };
-    let json = serde_json::to_string(&state).unwrap();
-    assert!(!json.contains("min_zoom_to_render"));
-    assert!(json.contains("\"max_zoom_to_render\":0.75"));
-
-    let back: PortalEndpointState = serde_json::from_str(&json).unwrap();
-    assert!(back.min_zoom_to_render.is_none());
-    assert_eq!(back.max_zoom_to_render, Some(0.75));
-
-    let default_json = serde_json::to_string(&PortalEndpointState::default()).unwrap();
-    assert!(!default_json.contains("min_zoom_to_render"));
-    assert!(!default_json.contains("max_zoom_to_render"));
+    let portal_default = serde_json::to_string(&PortalEndpointState::default()).unwrap();
+    check_pair("PortalEndpointState", &portal_default, 0.75, |min, max| {
+        let state = PortalEndpointState {
+            min_zoom_to_render: min,
+            max_zoom_to_render: max,
+            ..PortalEndpointState::default()
+        };
+        let json = serde_json::to_string(&state).unwrap();
+        let back: PortalEndpointState = serde_json::from_str(&json).unwrap();
+        (json, back.min_zoom_to_render, back.max_zoom_to_render)
+    });
 }
 
 /// `MindNode` round-trip — node-level pair follows the same

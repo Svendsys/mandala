@@ -100,8 +100,10 @@ mod tests {
 
     /// Lookup is case-insensitive across both names and aliases,
     /// returns `None` on unknown, and resolves aliases to their
-    /// canonical entry. The const `COMMANDS` slice itself is
-    /// enforced by the compiler; this only exercises lookup.
+    /// canonical entry. Also pins the registered verb names — the
+    /// compiler enforces that the `COMMANDS` slice exists, but a
+    /// typo in `name: "border"` → `"boder"` would compile and
+    /// silently break user-facing console input without this list.
     #[test]
     fn test_command_by_name_lookup() {
         assert!(command_by_name("HELP").is_some());
@@ -109,5 +111,15 @@ mod tests {
         assert_eq!(command_by_name("?").map(|c| c.name), Some("help"));
         assert_eq!(command_by_name("visibility").map(|c| c.name), Some("zoom"));
         assert!(command_by_name("nope").is_none());
+
+        for name in [
+            "help", "anchor", "body", "border", "cap", "color", "edge", "font", "fps", "spacing",
+            "label", "mutation", "save", "open", "new", "zoom",
+        ] {
+            assert!(
+                command_by_name(name).is_some(),
+                "console verb '{name}' missing from registry"
+            );
+        }
     }
 }

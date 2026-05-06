@@ -133,9 +133,6 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("overriding_insert_12", |b| b.iter(|| overriding_insert_12()));
     c.bench_function("overriding_insert_13", |b| b.iter(|| overriding_insert_13()));
     // glyph_area //
-    c.bench_function("outline_default_is_none", |b| {
-        b.iter(|| do_outline_default_is_none())
-    });
     c.bench_function("outline_assign_round_trip", |b| {
         b.iter(|| do_outline_assign_round_trip())
     });
@@ -160,23 +157,11 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter(|| do_shape_field_add_picks_rhs())
     });
     // zoom_visibility //
-    c.bench_function("zoom_visibility_default_is_unbounded", |b| {
-        b.iter(|| do_default_is_unbounded())
-    });
     c.bench_function("zoom_visibility_unbounded_contains_full_camera_range", |b| {
         b.iter(|| do_unbounded_contains_full_camera_range())
     });
-    c.bench_function("zoom_visibility_min_only_is_inclusive", |b| {
-        b.iter(|| do_min_only_is_inclusive())
-    });
-    c.bench_function("zoom_visibility_max_only_is_inclusive", |b| {
-        b.iter(|| do_max_only_is_inclusive())
-    });
-    c.bench_function("zoom_visibility_closed_window_renders_inside_band", |b| {
-        b.iter(|| do_closed_window_renders_inside_band())
-    });
-    c.bench_function("zoom_visibility_single_point_band_is_inclusive", |b| {
-        b.iter(|| do_single_point_band_is_inclusive())
+    c.bench_function("zoom_visibility_inclusive_band_on_every_authored_shape", |b| {
+        b.iter(|| do_inclusive_band_on_every_authored_shape())
     });
     c.bench_function("zoom_visibility_inverted_band_never_contains", |b| {
         b.iter(|| do_inverted_band_never_contains())
@@ -342,14 +327,8 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter(|| do_is_non_negative_finite_f64())
     });
     // font / metrics //
-    c.bench_function("monospace_advance_zero_is_zero", |b| {
-        b.iter(|| do_monospace_advance_zero_is_zero())
-    });
     c.bench_function("monospace_advance_scales_linearly", |b| {
         b.iter(|| do_monospace_advance_scales_linearly())
-    });
-    c.bench_function("monospace_advance_ratio_is_zero_point_six", |b| {
-        b.iter(|| do_monospace_advance_ratio_is_zero_point_six())
     });
     // color //
     c.bench_function("from_hex", |b| b.iter(|| do_from_hex()));

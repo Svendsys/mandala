@@ -35,6 +35,12 @@ ceiling height" is the point, not the accident
 ([`CODE_CONVENTIONS.md §7`](./CODE_CONVENTIONS.md)). Entries flag
 these seams explicitly.
 
+Each entry uses bold labels in this order: **Summary** (one
+sentence), **What it's for** (the problem it solves), **Under
+the hood** (file references in `path/to/file.rs:line` form, jump
+targets), and where useful **Vision** (named trajectory) and
+**Caveat** (gotchas).
+
 ## Table of contents
 
 - [§1 Project foundations](#1-project-foundations)
@@ -1226,8 +1232,8 @@ alignment drifts.
 
 **Caveat.** Borders today only render on rectangular nodes
 (`NodeShape::Rectangle` and `style.show_frame = true`). Ellipse
-borders need shape-aware glyph layout — a named seam in
-[§8](#8-named-trajectory--vision).
+borders need shape-aware glyph layout — a named seam not yet
+implemented.
 
 ### `GlyphConnectionConfig`
 
@@ -1651,6 +1657,27 @@ mutations.
 mutation's `contexts` include `query` exactly or sit inside its
 dotted prefix; `matches_context("map")` hits both `"map.node"`
 and `"map.tree"`.
+
+### `PlatformContext`
+
+**Summary.** A three-variant enum — `Desktop`, `Web`, `Touch` —
+threaded through mutation handlers and trigger-binding filters
+so an authored mutation can branch on where it's running.
+
+**What it's for.** Some operations should behave differently per
+target — a layout that reflows narrower on mobile, a trigger
+binding that only fires on Desktop. `PlatformContext` is the
+channel for that distinction, distinct from the dotted-namespace
+"contexts" taxonomy above (which describes *what* the mutation
+operates on).
+
+**Under the hood.** Defined in
+`lib/baumhard/src/mindmap/custom_mutation`. Today the variant is
+chosen at compile time (`Desktop` on native, `Web` on WASM); the
+`Touch` variant exists but no input path dispatches on it yet.
+Embedded in `MutationApplicabilityGate.contexts:
+Vec<PlatformContext>` so a mutation can declare which platforms
+it applies to.
 
 ### Document actions
 

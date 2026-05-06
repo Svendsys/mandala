@@ -24,6 +24,12 @@ impl Renderer {
     /// (the same `(text, ColorFontRegions) → Vec<(&str, Attrs)>` path the
     /// tree walker uses; see CODE_CONVENTIONS §1).
     pub fn rebuild_border_buffers(&mut self, border_elements: &[BorderElement]) {
+        // Eviction-by-clear: every input element is reshaped fresh,
+        // so wiping the cache here is sufficient. A future keyed /
+        // incremental fast path that reuses cached buffers must
+        // remove this `clear()` AND reintroduce a `seen`-set
+        // `retain(|k, _| seen.contains(k))` at the end of the loop —
+        // the two halves are complementary.
         self.border_buffers.clear();
         let mut font_system = fonts::acquire_font_system_write("rebuild_border_buffers");
 

@@ -306,7 +306,8 @@ fn test_mouse_event_data_round_trips_constructor_inputs() {
 
 /// `MouseEventData::new` round-trips through to the named fields,
 /// `PartialEq` distinguishes distinct payloads, and the OrderedFloat
-/// wrapper accepts the f32 boundary values without nudging them.
+/// wrapper accepts every f32 boundary value (saturating, signed, and
+/// subnormal) without nudging them.
 pub fn do_mouse_event_data_round_trips_constructor_inputs() {
     let a = MouseEventData::new(42.5, -10.0);
     let b = MouseEventData::new(42.5, -10.0);
@@ -319,6 +320,12 @@ pub fn do_mouse_event_data_round_trips_constructor_inputs() {
     let extreme = MouseEventData::new(f32::MAX, f32::MIN);
     assert_eq!(extreme.x.0, f32::MAX);
     assert_eq!(extreme.y.0, f32::MIN);
+
+    // Subnormal boundary — OrderedFloat must not coerce away from
+    // `MIN_POSITIVE` (a real coordinate any high-DPI device can land on).
+    let subnormal = MouseEventData::new(f32::MIN_POSITIVE, -f32::MIN_POSITIVE);
+    assert_eq!(subnormal.x.0, f32::MIN_POSITIVE);
+    assert_eq!(subnormal.y.0, -f32::MIN_POSITIVE);
 }
 
 #[test]

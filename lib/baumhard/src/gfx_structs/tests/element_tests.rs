@@ -107,6 +107,22 @@ pub fn do_subtree_aabb_set_and_read() {
     assert!(a.subtree_aabb().is_none());
 }
 
+#[test]
+fn test_subtree_aabb_clone_resets_cache() {
+    do_subtree_aabb_clone_resets_cache();
+}
+
+/// Cloning an element with a populated subtree-AABB cache produces
+/// a clone whose cache is `None` — the cache is tree-position-
+/// dependent and a clone can land at a different position. Pins the
+/// invariant against accidental inclusion of the cache field in a
+/// future `Clone` derive.
+pub fn do_subtree_aabb_clone_resets_cache() {
+    let mut elem = GfxElement::new_void(0);
+    elem.set_subtree_aabb(Some((Vec2::ZERO, Vec2::new(50.0, 50.0))));
+    assert!(elem.clone().subtree_aabb().is_none());
+}
+
 // ── event subscribers add and check ────────────────────────────────
 
 #[test]

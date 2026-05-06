@@ -417,5 +417,6 @@ verify): a zero-section map is rejected at parse time with a
 - [`text-runs.md`](./text-runs.md) — per-grapheme styling, now
   anchored on a section instead of on the node.
 - [`CONCEPTS.md` §3 "Sections"](../CONCEPTS.md) — conceptual
-  treatment, including the named-trajectory seams.
+  treatment of the section selection model and per-section
+  mutator reach.
 

@@ -107,12 +107,17 @@ dispatchers. **Three paths**, in order of preference:
 
 The macro privilege gate (`MacroSource::allows_console_line`,
 `allows_action`, fail-closed in `dispatch_macro`) MUST remain
-single-sourced on both targets. The `WasmCompatibility`
-classification is orthogonal — a `Compatible` Action might still
-be denylisted by `MacroSource::allows_action` for non-User
-macros (e.g. `Action::SaveDocument` would be `Compatible` once
-WASM gains a save path, but it'd still be in the denylist
-because hostile mindmaps shouldn't invoke it).
+single-sourced on both targets. The
+[`format/macros.md`](./format/macros.md) "Privilege model"
+section is the authoritative spec; the implementation lives in
+`src/application/macros/mod.rs` and the enforcement loop in
+`src/application/app/dispatch/macro_core.rs`. The
+`WasmCompatibility` classification is orthogonal — a
+`Compatible` Action might still be denylisted by
+`MacroSource::allows_action` for non-User macros (e.g.
+`Action::SaveDocument` would be `Compatible` once WASM gains a
+save path, but it'd still be in the denylist because hostile
+mindmaps shouldn't invoke it).
 
 `MacroSource::allows_action` and `allows_console_line` live in
 `src/application/macros/mod.rs` (cross-platform). The fail-closed

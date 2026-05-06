@@ -171,8 +171,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 /// vec2<f32> uv + vec4<f32> color + u32 shape_id = 9 × 4 = 36 bytes`.
 /// Used when sizing / offsetting the vertex buffer. Declared as a
 /// compile-time const so the layout math is grep-able from a single
-/// place. Keep in sync with the attribute list in
-/// `create_render_pipeline` and with the per-vertex push in
+/// place. Keep in sync with the inline `wgpu::VertexAttribute`
+/// table in `Renderer::new` and the per-vertex push in
 /// `push_rect_ndc`.
 const RECT_VERTEX_SIZE: u64 = 36;
 

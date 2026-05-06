@@ -18,25 +18,6 @@ use crate::core::primitives::ApplyOperation;
 use crate::gfx_structs::area::{DeltaGlyphArea, GlyphArea, GlyphAreaField};
 use crate::gfx_structs::zoom_visibility::ZoomVisibility;
 
-/// The default value — both bounds `None` — advertises itself as
-/// default via `is_default()`. This is the gate
-/// `#[serde(skip_serializing_if = "ZoomVisibility::is_default")]`
-/// relies on; without it, every historical `GlyphArea` would start
-/// emitting a new JSON key and break byte-identical roundtrip of
-/// pre-existing fixtures.
-#[test]
-pub fn test_default_is_unbounded() {
-    do_default_is_unbounded();
-}
-
-pub fn do_default_is_unbounded() {
-    let v = ZoomVisibility::default();
-    assert!(v.min.is_none());
-    assert!(v.max.is_none());
-    assert!(v.is_default());
-    assert_eq!(v, ZoomVisibility::unbounded());
-}
-
 /// Unbounded windows render at every zoom the camera can reach, from
 /// `MIN_ZOOM` through `MAX_ZOOM` (camera.rs). Pins the "default means
 /// always visible" contract that existing maps depend on.
@@ -57,81 +38,58 @@ pub fn do_unbounded_contains_full_camera_range() {
     assert!(v.contains(100.0));
 }
 
-/// `min`-only window: renders at `min` (inclusive) and above; the
-/// "zoom in for detail" half of the Google-Maps-style layering
-/// use case.
+/// `[min, max]` containment is inclusive on both sides for every
+/// shape of authored window: min-only ("zoom in for detail"),
+/// max-only ("zoom out for landmark"), closed band, and the
+/// degenerate `min == max` single-point band. Locks the
+/// `#[serde(skip_serializing_if = "is_default")]` gate too —
+/// `ZoomVisibility::default()` reports as default and matches
+/// `unbounded()`.
 #[test]
-pub fn test_min_only_is_inclusive() {
-    do_min_only_is_inclusive();
+pub fn test_inclusive_band_on_every_authored_shape() {
+    do_inclusive_band_on_every_authored_shape();
 }
 
-pub fn do_min_only_is_inclusive() {
-    let v = ZoomVisibility {
-        min: Some(1.5),
-        max: None,
-    };
-    assert!(!v.contains(1.0));
-    assert!(!v.contains(1.4999));
-    assert!(v.contains(1.5), "min should be inclusive");
-    assert!(v.contains(1.5001));
-    assert!(v.contains(5.0));
-}
+pub fn do_inclusive_band_on_every_authored_shape() {
+    // Default reports as default and equals unbounded.
+    let dft = ZoomVisibility::default();
+    assert!(dft.is_default());
+    assert!(dft.min.is_none() && dft.max.is_none());
+    assert_eq!(dft, ZoomVisibility::unbounded());
 
-/// `max`-only window: renders at `max` (inclusive) and below; the
-/// "zoom out for landmark" half of the layering use case.
-#[test]
-pub fn test_max_only_is_inclusive() {
-    do_max_only_is_inclusive();
-}
+    // (label, window, expected_contains_at)
+    let cases: [(&str, ZoomVisibility, &[(f32, bool)]); 4] = [
+        (
+            "min-only",
+            ZoomVisibility { min: Some(1.5), max: None },
+            &[(1.0, false), (1.4999, false), (1.5, true), (1.5001, true), (5.0, true)],
+        ),
+        (
+            "max-only",
+            ZoomVisibility { min: None, max: Some(0.5) },
+            &[(0.05, true), (0.4999, true), (0.5, true), (0.5001, false), (1.0, false)],
+        ),
+        (
+            "closed",
+            ZoomVisibility { min: Some(0.5), max: Some(2.0) },
+            &[(0.25, false), (0.5, true), (1.0, true), (2.0, true), (2.5, false)],
+        ),
+        (
+            "single-point",
+            ZoomVisibility { min: Some(1.0), max: Some(1.0) },
+            &[(0.9999, false), (1.0, true), (1.0001, false)],
+        ),
+    ];
 
-pub fn do_max_only_is_inclusive() {
-    let v = ZoomVisibility {
-        min: None,
-        max: Some(0.5),
-    };
-    assert!(v.contains(0.05));
-    assert!(v.contains(0.4999));
-    assert!(v.contains(0.5), "max should be inclusive");
-    assert!(!v.contains(0.5001));
-    assert!(!v.contains(1.0));
-}
-
-/// Closed window: both bounds set. Renders only inside the
-/// inclusive band.
-#[test]
-pub fn test_closed_window_renders_inside_band() {
-    do_closed_window_renders_inside_band();
-}
-
-pub fn do_closed_window_renders_inside_band() {
-    let v = ZoomVisibility {
-        min: Some(0.5),
-        max: Some(2.0),
-    };
-    assert!(!v.contains(0.25));
-    assert!(v.contains(0.5));
-    assert!(v.contains(1.0));
-    assert!(v.contains(2.0));
-    assert!(!v.contains(2.5));
-}
-
-/// Degenerate `min == max`: the band collapses to a single point;
-/// `contains` still returns `true` at that point (inclusive on
-/// both sides). Documents the corner so a future reader doesn't
-/// "fix" it into a half-open interval.
-#[test]
-pub fn test_single_point_band_is_inclusive() {
-    do_single_point_band_is_inclusive();
-}
-
-pub fn do_single_point_band_is_inclusive() {
-    let v = ZoomVisibility {
-        min: Some(1.0),
-        max: Some(1.0),
-    };
-    assert!(v.contains(1.0));
-    assert!(!v.contains(0.9999));
-    assert!(!v.contains(1.0001));
+    for (label, window, expected) in cases {
+        for (z, want) in expected {
+            assert_eq!(
+                window.contains(*z),
+                *want,
+                "{label} window at zoom {z}: expected {want}"
+            );
+        }
+    }
 }
 
 /// Inverted band (`min > max`): `contains` still returns a

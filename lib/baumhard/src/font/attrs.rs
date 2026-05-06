@@ -36,7 +36,7 @@
 //! - `src/application/renderer/tree_walker.rs` — main
 //!   tree-to-buffer walker for nodes / connections / portals
 //!   (Baumhard tree path).
-//! - `src/application/renderer/scene_buffers.rs::rebuild_border_buffers_keyed` —
+//! - `src/application/renderer/scene_buffers.rs::rebuild_border_buffers` —
 //!   per-side border rebuild for framed nodes (flat-pipeline
 //!   `BorderElement` path).
 
