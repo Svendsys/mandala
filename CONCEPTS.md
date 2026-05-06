@@ -69,13 +69,11 @@ around in the app. See [`CODE_CONVENTIONS.md §1`](./CODE_CONVENTIONS.md).
 
 ### Mutation-first
 
-Any change to the data model is expressed as a **mutator** applied to
-a **tree** ([§2: `Tree`](#treet-m), [§2: `MutatorTree`](#mutatortreem),
-[§2: `Applicable`](#applicablet)). Clone-edit-reinsert is never the
-shape of a change. This is the single most pervasive discipline in
-the codebase: it is what makes incremental updates cheap, what lets
-user actions compose into undo/redo cleanly, and what gives custom
-mutations ([§4](#4-the-mutation-framework)) their reach.
+Any data-model change is a **mutator** applied to a **tree**, never
+clone-edit-reinsert ([§2: `Tree`](#treet-m), [§2: `MutatorTree`](#mutatortreem),
+[§2: `Applicable`](#applicablet)). The discipline keeps incremental
+updates cheap and lets actions compose into undo/redo cleanly. Full
+prescriptive rule set: [`lib/baumhard/CONVENTIONS.md §B2`](./lib/baumhard/CONVENTIONS.md).
 
 ### Everything is glyphs
 
@@ -108,15 +106,11 @@ into the document. The document never holds GPU handles.
 
 ### Cross-platform as first-class
 
-Native desktop, browser on desktop, and browser on mobile are three
-equally supported deployments. The lowest-spec target (mid-range
-phone in a browser) sets the performance budget. New interactive
-features ship cross-platform from the start; native-only additions
-are a declared parity gap, not a style choice. `cfg`-guards at the
-module boundary are the only abstraction used — traits would have
-been the wrong shape. See
-[`CODE_CONVENTIONS.md §4`](./CODE_CONVENTIONS.md) and the
-"Dual-target status" section of [`CLAUDE.md`](./CLAUDE.md).
+Native desktop and the browser are equally supported deployments.
+Full prescriptive rules + the parity-gap discipline:
+[`CODE_CONVENTIONS.md §4`](./CODE_CONVENTIONS.md). Live status of
+which features have crossed the parity gap: the "Dual-target
+status" section of [`CLAUDE.md`](./CLAUDE.md).
 
 ### Canonical or exemplary
 
@@ -1180,20 +1174,12 @@ mutate the live `canvas.theme_variables` map.
 **Summary.** The mindmap-level surface of
 [`ZoomVisibility`](#zoomvisibility): two flat fields
 (`min_zoom_to_render`, `max_zoom_to_render`) on every renderable
-entity.
-
-**What it's for.** Authors reach for zoom bounds to tier detail by
-zoom: a label fades in past 1.5×, a portal endpoint fades out
-below 0.5×. The field appears on `MindNode`, `MindEdge`,
-`EdgeLabelConfig`, and `PortalEndpointState`.
-
-**Under the hood.** **Replace, not intersect** cascade: when a
-label or portal endpoint declares either bound, it replaces the
-parent edge's window entirely. Intersection would silently
-inherit a bound the author did not mention. Full reference:
-[`format/zoom-bounds.md`](./format/zoom-bounds.md). Authoring via
-the `zoom` console verb (`zoom min=1.5 max=3.0`, `zoom clear`,
-`zoom max=unset`) is wired against the active selection.
+entity (`MindNode`, `MindEdge`, `EdgeLabelConfig`,
+`PortalEndpointState`). Cascade rule (replace-not-intersect),
+field semantics, and authoring shape:
+[`format/zoom-bounds.md`](./format/zoom-bounds.md). Console-verb
+authoring: `zoom min=1.5 max=3.0`, `zoom clear`, `zoom max=unset`
+against the active selection.
 
 ### Border geometry
 
@@ -2246,31 +2232,14 @@ To override a built-in Action with a macro, first unbind the
 Action's keybind (set `copy: []`) and then bind the macro. Same
 applies for built-in vs. custom-mutation collision.
 
-**Macro privilege model.** Macros are tagged with their loader
-tier via `MacroSource { App | User | Map | Inline }`. The
-dispatcher gates two surfaces on the tier:
-- **`MacroStep::ConsoleLine`** runs an arbitrary console verb
-  (`save`, `open`, `mutation apply`, etc.) — User-tier-only via
-  `MacroSource::allows_console_line`.
-- **Destructive / I/O `Action` variants** (`SaveDocument`,
-  `DeleteSelection`, `Cut`, `Paste`, `Copy`, `OrphanSelection`,
-  `CreateOrphanNode`, `CreateOrphanNodeAndEdit`, `NewDocument`)
-  are User-tier-only via `MacroSource::allows_action`.
-
-Privilege rejections **fail-closed** — the dispatcher aborts the
-rest of the macro so a `[DeleteSelection, ConsoleLine(rejected),
-SaveDocument]` pattern can't sneak its outer steps past the
-ConsoleLine gate. Honest mistakes (unbound action, no document)
-keep the existing best-effort `continue` semantic.
-
-`DocumentAction` (carried by `MacroStep::CustomMutation`) is
-`#[non_exhaustive]` — adding a variant that does I/O requires a
-parallel dispatcher gate.
-
-Today's only macro source is `~/.config/mandala/macros.json`
-(User), so trust posture matches `keybinds.json`. Future tiers
-(app-bundled, map-inline, node-inline) inherit the gate
-automatically and don't expose new attack surfaces.
+**Macro privilege model.** Macros are tagged by their loader tier
+(`MacroSource { App | User | Map | Inline }`); the dispatcher
+fail-closes on tier-restricted surfaces (`ConsoleLine` and
+destructive / I/O `Action` variants). Authoritative threat model
++ surface enumeration + tier-by-tier permissions:
+[`format/macros.md`](./format/macros.md). The `#[non_exhaustive]`
+gate on `DocumentAction` ensures any new I/O variant must add a
+matching dispatcher carve-out.
 
 **Dispatch status per gesture.** `DoubleClick`, `MiddleClick`,
 `LeftDrag`, `WheelUp`, `WheelDown` are dispatched through

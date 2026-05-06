@@ -53,31 +53,43 @@ pub(super) fn compute_positions(
     // ---- Crosshair sat/val bars (17 cells each) ----
     let bar_span = step * (SAT_CELL_COUNT as f32 - 1.0);
 
+    /// Apply a per-cell ink offset to a base canvas position.
+    /// `before_arm` covers cells in `0..CROSSHAIR_CENTER_CELL`;
+    /// `after_arm` covers `CROSSHAIR_CENTER_CELL+1..N`. The
+    /// crosshair-centre cell is the preview slot — drawn elsewhere
+    /// — so its offset is `(0, 0)`.
+    fn apply_ink(base: (f32, f32), before_arm: &[(f32, f32)], after_arm: &[(f32, f32)], i: usize, fs: f32) -> (f32, f32) {
+        let ink_ratio = if i < CROSSHAIR_CENTER_CELL {
+            before_arm[i]
+        } else if i > CROSSHAIR_CENTER_CELL {
+            after_arm[i - CROSSHAIR_CENTER_CELL - 1]
+        } else {
+            (0.0, 0.0)
+        };
+        (base.0 - ink_ratio.0 * fs, base.1 - ink_ratio.1 * fs)
+    }
+
     let mut sat_cell_positions = [(0.0_f32, 0.0_f32); SAT_CELL_COUNT];
     let mut val_cell_positions = [(0.0_f32, 0.0_f32); VAL_CELL_COUNT];
     for i in 0..SAT_CELL_COUNT {
-        let base_x = center.0 - bar_span * 0.5 + i as f32 * step;
-        let base_y = center.1;
-        let ink_ratio = if i < CROSSHAIR_CENTER_CELL {
-            geometry.arm_left_ink_offsets[i]
-        } else if i > CROSSHAIR_CENTER_CELL {
-            geometry.arm_right_ink_offsets[i - CROSSHAIR_CENTER_CELL - 1]
-        } else {
-            (0.0, 0.0)
-        };
-        sat_cell_positions[i] = (base_x - ink_ratio.0 * cell_fs, base_y - ink_ratio.1 * cell_fs);
+        let base = (center.0 - bar_span * 0.5 + i as f32 * step, center.1);
+        sat_cell_positions[i] = apply_ink(
+            base,
+            &geometry.arm_left_ink_offsets,
+            &geometry.arm_right_ink_offsets,
+            i,
+            cell_fs,
+        );
     }
     for i in 0..VAL_CELL_COUNT {
-        let base_x = center.0;
-        let base_y = center.1 - bar_span * 0.5 + i as f32 * step;
-        let ink_ratio = if i < CROSSHAIR_CENTER_CELL {
-            geometry.arm_top_ink_offsets[i]
-        } else if i > CROSSHAIR_CENTER_CELL {
-            geometry.arm_bottom_ink_offsets[i - CROSSHAIR_CENTER_CELL - 1]
-        } else {
-            (0.0, 0.0)
-        };
-        val_cell_positions[i] = (base_x - ink_ratio.0 * cell_fs, base_y - ink_ratio.1 * cell_fs);
+        let base = (center.0, center.1 - bar_span * 0.5 + i as f32 * step);
+        val_cell_positions[i] = apply_ink(
+            base,
+            &geometry.arm_top_ink_offsets,
+            &geometry.arm_bottom_ink_offsets,
+            i,
+            cell_fs,
+        );
     }
 
     // ---- Centre preview ࿕ ----

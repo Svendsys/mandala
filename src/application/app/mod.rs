@@ -114,8 +114,6 @@ use crate::application::document::EdgeRef;
 #[cfg(not(target_arch = "wasm32"))]
 use glam::Vec2;
 #[cfg(not(target_arch = "wasm32"))]
-use std::time::Instant;
-#[cfg(not(target_arch = "wasm32"))]
 use text_edit::insert_at_cursor;
 #[cfg(not(target_arch = "wasm32"))]
 use throttled_interaction::ThrottledDrag;
@@ -125,23 +123,11 @@ use std::sync::Arc;
 #[cfg(target_arch = "wasm32")]
 use winit::{event_loop::EventLoop, window::Window};
 
-/// Cross-platform monotonic clock in ms since first call. Native:
-/// `Instant`. WASM: `performance.now()` (≥1ms quantised; fine for
-/// the 400ms double-click window).
-#[cfg(not(target_arch = "wasm32"))]
-fn now_ms() -> f64 {
-    use std::sync::OnceLock;
-    static EPOCH: OnceLock<Instant> = OnceLock::new();
-    EPOCH.get_or_init(Instant::now).elapsed().as_secs_f64() * 1000.0
-}
-
-#[cfg(target_arch = "wasm32")]
-fn now_ms() -> f64 {
-    web_sys::window()
-        .and_then(|w| w.performance())
-        .map(|p| p.now())
-        .unwrap_or(0.0)
-}
+// `now_ms()` lives in `application::common` — single source for
+// the cross-platform monotonic clock both targets use. Re-export
+// here so the existing `use super::now_ms` import shape inside
+// `app/*` stays put.
+pub(crate) use crate::application::common::now_ms;
 
 /// Screen-space click tolerance (in pixels) for edge hit testing. Converted
 /// to canvas units via `Renderer::canvas_per_pixel()` so the click target

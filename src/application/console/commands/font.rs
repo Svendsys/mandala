@@ -329,21 +329,21 @@ fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         }
         SelectionState::Edge(er) => {
             let changed = doc.set_edge_font(&er, size, min, max);
-            finalize("edge", changed)
+            super::applied_or_no_change("font", "edge", changed)
         }
         SelectionState::EdgeLabel(s) => {
             let changed = doc.set_edge_label_font(&s.edge_ref, size, min, max);
-            finalize("edge label", changed)
+            super::applied_or_no_change("font", "edge label", changed)
         }
         SelectionState::PortalLabel(s) => {
             // Portal icon routes to the owning edge's
             // `glyph_connection` channel (same sink as `Edge`).
             let changed = doc.set_edge_font(&s.edge_ref(), size, min, max);
-            finalize("portal label", changed)
+            super::applied_or_no_change("font", "portal label", changed)
         }
         SelectionState::PortalText(s) => {
             let changed = doc.set_portal_text_font(&s.edge_ref(), &s.endpoint_node_id, size, min, max);
-            finalize("portal text", changed)
+            super::applied_or_no_change("font", "portal text", changed)
         }
         SelectionState::SectionRange { sel, range } => {
             // SectionRange: route to the section, layering an
@@ -464,13 +464,6 @@ fn node_font_outcome(
     }
 }
 
-fn finalize(kind: &str, changed: bool) -> ExecResult {
-    if changed {
-        ExecResult::ok_msg(format!("font applied to {}", kind))
-    } else {
-        ExecResult::ok_msg(format!("font: no change on {}", kind))
-    }
-}
 
 /// `font set <family>` — pin the font family on the current
 /// selection through the `AcceptsFontFamily` trait. Validates the

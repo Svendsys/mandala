@@ -569,6 +569,34 @@ fn spatial_descend_recurse(
     point: Vec2,
     best: &mut Option<(NodeId, f32)>,
 ) {
+    bvh_find(arena, node_id, point, 0.0, false, best);
+}
+
+/// Unified BVH descent — single source for both [`Tree::descendant_near`]
+/// (which wants slack + shape refinement so an ellipse-shaped node
+/// doesn't false-hit on its corner AABB) and the mutator-builder's
+/// `SpatialDescend` instruction (no slack, AABB-only).
+///
+/// For each child of `node_id`:
+/// 1. Prune: if the child's `subtree_aabb` doesn't contain `point`
+///    inflated by `slack`, skip the entire subtree.
+/// 2. Test the child's own `GlyphArea` AABB (slack-inflated). On
+///    hit, optionally refine via `area.shape.contains_local` so an
+///    ellipse hit-tests against its actual shape rather than its
+///    bounding rectangle.
+/// 3. Recurse into the child's children.
+///
+/// Smallest-area wins on tie (so a smaller element stacked over a
+/// bigger one is the hit). Uses `first_child` / `next_sibling`
+/// iteration to avoid per-call `Vec` allocation (§B7).
+pub(crate) fn bvh_find(
+    arena: &Arena<GfxElement>,
+    node_id: NodeId,
+    point: Vec2,
+    slack: f32,
+    refine_with_shape: bool,
+    best: &mut Option<(NodeId, f32)>,
+) {
     let mut child_opt = arena.get(node_id).and_then(|n| n.first_child());
 
     while let Some(child_id) = child_opt {
@@ -579,35 +607,56 @@ fn spatial_descend_recurse(
         };
         let element = node.get();
 
-        // Prune: skip if subtree AABB doesn't contain point.
+        // 1. Prune: subtree AABB must contain (slack-inflated) point.
         if let Some((st_min, st_max)) = element.subtree_aabb() {
-            if point.x < st_min.x || point.x > st_max.x || point.y < st_min.y || point.y > st_max.y {
+            if point.x < st_min.x - slack
+                || point.x > st_max.x + slack
+                || point.y < st_min.y - slack
+                || point.y > st_max.y + slack
+            {
                 continue;
             }
         } else {
-            continue;
+            continue; // no subtree AABB → no renderable content
         }
 
-        // Check this node's own GlyphArea AABB.
+        // 2. Check this node's own GlyphArea AABB.
         if let Some(area) = element.glyph_area() {
             let pos = area.position.to_vec2();
             let bounds = area.render_bounds.to_vec2();
-            if bounds.x > 0.0
-                && bounds.y > 0.0
-                && point.x >= pos.x
-                && point.x <= pos.x + bounds.x
-                && point.y >= pos.y
-                && point.y <= pos.y + bounds.y
-            {
-                let size = bounds.x * bounds.y;
-                match *best {
-                    Some((_, best_size)) if best_size <= size => {}
-                    _ => *best = Some((child_id, size)),
+            if bounds.x > 0.0 && bounds.y > 0.0 {
+                let min_x = pos.x - slack;
+                let min_y = pos.y - slack;
+                let max_x = pos.x + bounds.x + slack;
+                let max_y = pos.y + bounds.y + slack;
+                if point.x >= min_x && point.x <= max_x && point.y >= min_y && point.y <= max_y {
+                    let mut hit = true;
+                    if refine_with_shape {
+                        // Inflating the bounds by `slack` on every side and
+                        // shifting the local point by `slack` into the
+                        // inflated frame gives rectangle and ellipse the
+                        // same isotropic fuzzy margin the caller asked
+                        // for. `slack == 0` is the exact-hit case (no-op
+                        // inflation).
+                        let local = Vec2::new(point.x - pos.x + slack, point.y - pos.y + slack);
+                        let inflated = Vec2::new(bounds.x + 2.0 * slack, bounds.y + 2.0 * slack);
+                        hit = area.shape.contains_local(local, inflated);
+                    }
+                    if hit {
+                        // Tie-break by *original* (un-slacked) area so a
+                        // physically smaller element still wins.
+                        let size = bounds.x * bounds.y;
+                        match *best {
+                            Some((_, best_size)) if best_size <= size => {}
+                            _ => *best = Some((child_id, size)),
+                        }
+                    }
                 }
             }
         }
 
-        // Recurse deeper.
-        spatial_descend_recurse(arena, child_id, point, best);
+        // 3. Recurse (the subtree-AABB test above proved at least
+        //    one descendant may contain the point).
+        bvh_find(arena, child_id, point, slack, refine_with_shape, best);
     }
 }

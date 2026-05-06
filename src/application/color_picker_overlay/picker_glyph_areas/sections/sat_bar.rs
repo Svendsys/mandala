@@ -12,8 +12,8 @@ use baumhard::gfx_structs::area::OutlineStyle;
 use super::super::areas::{PickerAreas, PickerSection};
 use super::super::make_area::{make_area, PickerAreaStyle};
 use crate::application::color_picker::{
-    arm_left_glyphs, arm_right_glyphs, picker_channel, sat_cell_to_value, ColorPickerLayout,
-    ColorPickerOverlayGeometry, PickerHit, CROSSHAIR_CENTER_CELL, SAT_CELL_COUNT,
+    arm_left_glyphs, arm_right_glyphs, picker_channel, sat_cell_to_value, sat_value_to_cell,
+    ColorPickerLayout, ColorPickerOverlayGeometry, PickerHit, CROSSHAIR_CENTER_CELL, SAT_CELL_COUNT,
 };
 use crate::application::color_picker_overlay::color::{
     highlight_hovered_cell_color, highlight_selected_cell_color,
@@ -32,9 +32,7 @@ pub(in crate::application::color_picker_overlay::picker_glyph_areas) fn build(
     let cell_font_size = layout.cell_font_size;
     let cell_box_w = (layout.cell_advance * spec.geometry.cell_box_scale).max(cell_font_size * 1.5);
 
-    let current_sat_cell = (geometry.sat * (SAT_CELL_COUNT as f32 - 1.0))
-        .round()
-        .clamp(0.0, (SAT_CELL_COUNT - 1) as f32) as usize;
+    let current_sat_cell = sat_value_to_cell(geometry.sat);
 
     for i in 0..SAT_CELL_COUNT {
         if i == CROSSHAIR_CENTER_CELL {

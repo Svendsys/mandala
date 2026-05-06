@@ -313,89 +313,10 @@ impl Tree<GfxElement, GfxMutator> {
         let slack = slack.max(0.0);
         self.ensure_subtree_aabbs();
         let mut best: Option<(NodeId, f32)> = None;
-        self.bvh_descend(self.root, point, slack, &mut best);
+        crate::gfx_structs::tree_walker::bvh_find(&self.arena, self.root, point, slack, true, &mut best);
         best.map(|(id, _)| id)
     }
 
-    /// Recursive BVH descent. For each child of `node_id`:
-    /// 1. If the child's `subtree_aabb` does not contain `point`
-    ///    (accounting for `slack`) → prune the entire subtree.
-    /// 2. If the child's own `GlyphArea` AABB contains `point` →
-    ///    record it as a candidate (smallest-area wins).
-    /// 3. Recurse into the child's children.
-    ///
-    /// Uses `first_child` / `next_sibling` iteration to avoid
-    /// allocating a `Vec` on every recursive call (§B7).
-    fn bvh_descend(&self, node_id: NodeId, point: Vec2, slack: f32, best: &mut Option<(NodeId, f32)>) {
-        let mut child_opt = self.arena.get(node_id).and_then(|n| n.first_child());
-
-        while let Some(child_id) = child_opt {
-            // Advance the sibling pointer before any borrows on
-            // the child — this lets us read the child's data
-            // without conflicting with the next-sibling lookup.
-            child_opt = self.arena.get(child_id).and_then(|n| n.next_sibling());
-
-            let Some(node) = self.arena.get(child_id) else {
-                continue;
-            };
-            let element = node.get();
-
-            // 1. Prune: skip if subtree AABB doesn't contain point.
-            if let Some((st_min, st_max)) = element.subtree_aabb() {
-                if point.x < st_min.x - slack
-                    || point.x > st_max.x + slack
-                    || point.y < st_min.y - slack
-                    || point.y > st_max.y + slack
-                {
-                    continue; // prune
-                }
-            } else {
-                continue; // no subtree AABB → no renderable content
-            }
-
-            // 2. Check this node's own GlyphArea AABB.
-            if let Some(area) = element.glyph_area() {
-                let pos = area.position.to_vec2();
-                let bounds = area.render_bounds.to_vec2();
-                if bounds.x > 0.0 && bounds.y > 0.0 {
-                    let min_x = pos.x - slack;
-                    let min_y = pos.y - slack;
-                    let max_x = pos.x + bounds.x + slack;
-                    let max_y = pos.y + bounds.y + slack;
-                    if point.x >= min_x && point.x <= max_x && point.y >= min_y && point.y <= max_y {
-                        // Refine with the node's shape so a click
-                        // in the AABB corner of an ellipse counts
-                        // as a miss. `contains_local` sees the
-                        // shape in the node's own frame; inflating
-                        // the bounds by `slack` on every side (and
-                        // shifting the local point by `slack` into
-                        // the inflated frame) gives rectangle and
-                        // ellipse the same isotropic fuzzy margin
-                        // callers request for fat-finger forgiveness.
-                        // `slack >= 0.0` is enforced by
-                        // `descendant_near` so `slack == 0` is the
-                        // exact-hit case (no-op inflation).
-                        let local = glam::Vec2::new(point.x - pos.x + slack, point.y - pos.y + slack);
-                        let inflated = glam::Vec2::new(bounds.x + 2.0 * slack, bounds.y + 2.0 * slack);
-                        if area.shape.contains_local(local, inflated) {
-                            // Tie-break by *original* (un-slacked) area
-                            // so a physically smaller element still wins.
-                            let size = bounds.x * bounds.y;
-                            match *best {
-                                Some((_, best_size)) if best_size <= size => {}
-                                _ => *best = Some((child_id, size)),
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 3. Recurse into children (the subtree AABB test above
-            //    already proved that at least one descendant may contain
-            //    the point).
-            self.bvh_descend(child_id, point, slack, best);
-        }
-    }
 
     /// Conservative AABB covering every `GlyphArea` descendant of
     /// [`Self::root`]. Returns `(top_left, bottom_right)` or `None`

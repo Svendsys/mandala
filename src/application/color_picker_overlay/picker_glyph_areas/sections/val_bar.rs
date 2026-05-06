@@ -11,8 +11,9 @@ use baumhard::gfx_structs::area::OutlineStyle;
 use super::super::areas::{PickerAreas, PickerSection};
 use super::super::make_area::{make_area, PickerAreaStyle};
 use crate::application::color_picker::{
-    arm_bottom_font, arm_bottom_glyphs, arm_top_glyphs, picker_channel, val_cell_to_value, ColorPickerLayout,
-    ColorPickerOverlayGeometry, PickerHit, CROSSHAIR_CENTER_CELL, VAL_CELL_COUNT,
+    arm_bottom_font, arm_bottom_glyphs, arm_top_glyphs, picker_channel, val_cell_to_value,
+    val_value_to_cell, ColorPickerLayout, ColorPickerOverlayGeometry, PickerHit,
+    CROSSHAIR_CENTER_CELL, VAL_CELL_COUNT,
 };
 use crate::application::color_picker_overlay::color::{
     highlight_hovered_cell_color, highlight_selected_cell_color,
@@ -31,9 +32,7 @@ pub(in crate::application::color_picker_overlay::picker_glyph_areas) fn build(
     let cell_font_size = layout.cell_font_size;
     let cell_box_w = (layout.cell_advance * spec.geometry.cell_box_scale).max(cell_font_size * 1.5);
 
-    let current_val_cell = ((1.0 - geometry.val) * (VAL_CELL_COUNT as f32 - 1.0))
-        .round()
-        .clamp(0.0, (VAL_CELL_COUNT - 1) as f32) as usize;
+    let current_val_cell = val_value_to_cell(geometry.val);
 
     for i in 0..VAL_CELL_COUNT {
         if i == CROSSHAIR_CENTER_CELL {

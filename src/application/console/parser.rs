@@ -154,7 +154,7 @@ impl<'a> Args<'a> {
 
 /// A token is a kv iff it contains `=` and the `=` is not the first
 /// character.
-fn is_kv_token(t: &str) -> bool {
+pub(super) fn is_kv_token(t: &str) -> bool {
     match t.find('=') {
         Some(0) | None => false,
         Some(_) => true,

@@ -175,6 +175,28 @@ impl PollTimer {
     }
 }
 
+/// Cross-platform monotonic clock in milliseconds since first call.
+/// Native uses `web_time::Instant` (which delegates to
+/// `std::time::Instant`); WASM uses `performance.now()` (≥1ms
+/// quantised, fine for the 400ms double-click window and the
+/// animation-tick rate). Single source for click-time, animation-
+/// tick-time, and trigger-binding "now" reads on both targets.
+pub fn now_ms() -> f64 {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use std::sync::OnceLock;
+        static EPOCH: OnceLock<Instant> = OnceLock::new();
+        EPOCH.get_or_init(Instant::now).elapsed().as_secs_f64() * 1000.0
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::window()
+            .and_then(|w| w.performance())
+            .map(|p| p.now())
+            .unwrap_or(0.0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

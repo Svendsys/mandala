@@ -384,50 +384,15 @@ where
 /// section beneath a moving container would visibly detach from its
 /// node).
 pub fn apply_drag_delta(tree: &mut MindMapTree, node_id: &str, dx: f32, dy: f32, include_descendants: bool) {
-    let tree_node_id = match tree.arena_id_for(node_id) {
-        Some(id) => id,
-        None => return,
-    };
-
-    if include_descendants {
-        apply_delta_recursive(&mut tree.tree.arena, tree_node_id, dx, dy);
-    } else {
-        apply_delta_node_and_sections(&mut tree.tree.arena, tree_node_id, dx, dy);
-    }
-    // Position writes go through `area.move_position` directly,
-    // bypassing `MutatorTree::apply_to`'s wrapper that owns the
-    // cache invalidation. Mark the geometry caches dirty so the
-    // next `ensure_subtree_aabbs()` call recomputes — pre-fix the
-    // overflow-aware `point_in_node_aabb` could read a stale
-    // subtree AABB after a drag tick.
-    tree.tree.invalidate_caches();
-}
-
-/// Move a node container plus every section-area / section-model
-/// descendant under it. Skips child mind-node containers (and
-/// their subtrees) — the "drag this node only" path.
-fn apply_delta_node_and_sections(
-    arena: &mut indextree::Arena<baumhard::gfx_structs::element::GfxElement>,
-    node_id: indextree::NodeId,
-    dx: f32,
-    dy: f32,
-) {
-    if let Some(node) = arena.get_mut(node_id) {
-        if let Some(area) = node.get_mut().glyph_area_mut() {
-            area.move_position(dx, dy);
-        }
-    }
-    let mut child = arena.get(node_id).and_then(|n| n.first_child());
-    while let Some(cid) = child {
-        child = arena.get(cid).and_then(|n| n.next_sibling());
-        let is_section = arena
-            .get(cid)
-            .map(|n| n.get().flag_is_set(Flag::SectionRoot))
-            .unwrap_or(false);
-        if is_section {
-            apply_delta_recursive(arena, cid, dx, dy);
-        }
-    }
+    // Call sites today (`event_mouse_click.rs:579` — release-commit
+    // and a couple of tests) don't need the per-element patch list,
+    // but the `_and_collect_patches` body is the superset; routing
+    // through it with a throwaway Vec keeps the two sites at one
+    // implementation. The Vec is fresh per call and lives only
+    // until the function returns; the alloc is one-shot, not
+    // per-element.
+    let mut discard = Vec::new();
+    apply_drag_delta_and_collect_patches(tree, node_id, dx, dy, include_descendants, &mut discard);
 }
 
 /// Apply a position delta and return `(unique_id, new_position)` for

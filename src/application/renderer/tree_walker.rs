@@ -41,6 +41,50 @@ use super::{MindMapTextBuffer, NodeBackgroundRect};
 /// `FxHashMap` key. Holds the provided `font_system` write guard
 /// for the duration of the walk — keep the call site's own guard
 /// scope tight.
+/// Extract the background-fill rect for a single `GlyphArea`, or
+/// `None` if the area carries no `background_color`. Single source
+/// for both the full-walker text path
+/// ([`shape_one_element_into_buffers`]) and the drag-fast-path
+/// rebuild ([`super::Renderer::rebuild_node_backgrounds_from_tree`])
+/// — they used to inline this padding-and-rect math twice and the
+/// audit flagged the divergence as a bug magnet.
+///
+/// `offset` is added to the rect's position; pass `Vec2::ZERO` for
+/// canvas-space callers.
+pub(super) fn extract_background_rect(
+    element: &GfxElement,
+    area: &baumhard::gfx_structs::area::GlyphArea,
+    offset: Vec2,
+) -> Option<NodeBackgroundRect> {
+    let color = area.background_color?;
+    // Inflate the fill rect outward by `background_padding` —
+    // per-edge values so framed nodes whose four border runs sit at
+    // different visible-stroke offsets get an asymmetric fill that
+    // matches each side. The `is_zero` fast-path skips the four-add
+    // arithmetic for unframed nodes (the common case);
+    // `EdgePadding::ZERO` means the fill coincides with the text
+    // rect, the historical behaviour.
+    let pad = area.background_padding;
+    let pos = Vec2::new(area.position.x.0, area.position.y.0);
+    let size = Vec2::new(area.render_bounds.x.0, area.render_bounds.y.0);
+    let (rect_pos, rect_size) = if pad.is_zero() {
+        (pos, size)
+    } else {
+        (
+            Vec2::new(pos.x - pad.left(), pos.y - pad.top()),
+            Vec2::new(size.x + pad.left() + pad.right(), size.y + pad.top() + pad.bottom()),
+        )
+    };
+    Some(NodeBackgroundRect {
+        position: rect_pos + offset,
+        size: rect_size,
+        color,
+        shape_id: area.shape.shader_id(),
+        zoom_visibility: area.zoom_visibility,
+        unique_id: element.unique_id(),
+    })
+}
+
 pub(super) fn walk_tree_into_buffers(
     tree: &Tree<GfxElement, GfxMutator>,
     offset: Vec2,
@@ -82,38 +126,8 @@ pub(super) fn shape_one_element_into_buffers(
         None => return, // Void and GlyphModel nodes carry no text.
     };
 
-    if let Some(color) = area.background_color {
-        // Inflate the fill rect outward by `background_padding`
-        // — per-edge values so framed nodes whose four border
-        // runs sit at different visible-stroke offsets get an
-        // asymmetric fill that matches each side. The `is_zero`
-        // fast-path skips the four-add arithmetic for unframed
-        // nodes (the common case): `EdgePadding::ZERO` means
-        // the fill coincides with the text rect, the historical
-        // behaviour, so we can read `position` / `render_bounds`
-        // straight through.
-        let pad = area.background_padding;
-        let pos = Vec2::new(area.position.x.0, area.position.y.0);
-        let size = Vec2::new(area.render_bounds.x.0, area.render_bounds.y.0);
-        let (rect_pos, rect_size) = if pad.is_zero() {
-            (pos, size)
-        } else {
-            (
-                Vec2::new(pos.x - pad.left(), pos.y - pad.top()),
-                Vec2::new(
-                    size.x + pad.left() + pad.right(),
-                    size.y + pad.top() + pad.bottom(),
-                ),
-            )
-        };
-        yield_background(NodeBackgroundRect {
-            position: rect_pos + offset,
-            size: rect_size,
-            color,
-            shape_id: area.shape.shader_id(),
-            zoom_visibility: area.zoom_visibility,
-            unique_id: element.unique_id(),
-        });
+    if let Some(rect) = extract_background_rect(element, area, offset) {
+        yield_background(rect);
     }
 
     if area.text.is_empty() {

@@ -94,6 +94,23 @@ pub fn command_by_name(name: &str) -> Option<&'static Command> {
     })
 }
 
+/// Single-source success-or-no-op message for verbs that aggregate
+/// across a set of selection targets. `verb` is the noun the user
+/// typed (`"font"`, `"zoom"`, `"color"`, …); `kind` is the
+/// selection scope (`"node"`, `"section"`, `"edge"`, …); `changed`
+/// is whether at least one target actually mutated.
+///
+/// Two formats: `"<verb> applied to <kind>"` on change, `"<verb>:
+/// no change on <kind>"` on no-op. Mirrors the previous open-coded
+/// `finalize` helpers in `commands/font.rs` and `commands/zoom.rs`.
+pub(super) fn applied_or_no_change(verb: &str, kind: &str, changed: bool) -> ExecResult {
+    if changed {
+        ExecResult::ok_msg(format!("{verb} applied to {kind}"))
+    } else {
+        ExecResult::ok_msg(format!("{verb}: no change on {kind}"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

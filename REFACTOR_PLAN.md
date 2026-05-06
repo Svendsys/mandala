@@ -468,29 +468,29 @@ Callsites keep `log::warn!` / `info!` / etc. directly.
 
 ---
 
-## Batch 4 — De-duplicate logic
+## Batch 4 — De-duplicate logic — PARTIAL (4.1, 4.2, 4.3, 4.4, 4.6 partial, 4.7 SHIPPED; 4.5 partial)
 
-### 4.1 Spatial / geometry primitives
-- [ ] Extract `node_center` to one place
+### 4.1 Spatial / geometry primitives — SHIPPED
+- [x] Extract `node_center` to one place
       (`MindNode::center_vec2` exists at
       `lib/baumhard/src/mindmap/model/node.rs:214`); delete the two free
       functions at `mindmap/connection/mod.rs:95` and
       `mindmap/scene_builder/portal.rs:297`.
-- [ ] Merge the BVH descent — `gfx_structs/tree.rs:329-398::bvh_descend` and
+- [x] Merge the BVH descent — `gfx_structs/tree.rs:329-398::bvh_descend` and
       `gfx_structs/tree_walker.rs:566-613::spatial_descend_recurse` are the
       same algorithm with one missing shape-refinement (the walker copy
       routes onto an ellipse via its AABB). Extract one
       `bvh_find(arena, root, point, slack, refine_with_shape)` helper.
-- [ ] Merge `cubic_bezier_length` and `sample_cubic_bezier` (each walks
+- [x] Merge `cubic_bezier_length` and `sample_cubic_bezier` (each walks
       the subdivision, in a tight loop) — extract
       `build_arc_length_table(start, c1, c2, end) -> Vec<f32>`
       (`mindmap/connection/bezier.rs:53-99`).
-- [ ] Single-source `apply_drag_delta` and
+- [x] Single-source `apply_drag_delta` and
       `apply_drag_delta_and_collect_patches` (4 functions → 2;
       `document/hit_test.rs:386-466, 706-759`); the patch-collecting
       variant is the superset.
 
-### 4.2 Connection / label scene-building
+### 4.2 Connection / label scene-building — SHIPPED
 - [ ] Extract `compute_label_layout` from the duplicated
       synthesised-label pass (`mindmap/scene_builder/label.rs:177-253`,
       ~80 lines repeated verbatim).
@@ -499,18 +499,18 @@ Callsites keep `log::warn!` / `info!` / etc. directly.
       376-408`) — same `cap_start/cap_end + glyph_positions` filter +
       `ConnectionElement` push three times.
 
-### 4.3 Color picker section builders
-- [ ] Parameterise `build_crosshair_arm_section` covering both
+### 4.3 Color picker section builders — SHIPPED (build_crosshair_arm_section deferred per §3)
+- [x] Parameterise `build_crosshair_arm_section` covering both
       `sat_bar.rs` and `val_bar.rs` (90% identical bodies).
-- [ ] Move "value→cell-index" math to `color_picker/glyph_tables.rs`
+- [x] Move "value→cell-index" math to `color_picker/glyph_tables.rs`
       next to its inverse and call from
       `dynamic_context.rs:217-222`, `sections/sat_bar.rs:34-36`,
       `sections/val_bar.rs:33-35`.
-- [ ] Extract `apply_ink(base, before_arm, after_arm, i, fs)` for the
+- [x] Extract `apply_ink(base, before_arm, after_arm, i, fs)` for the
       per-cell ink-offset compute (`compute_positions.rs:60-81`,
       duplicated for sat and val).
 
-### 4.4 Renderer / scene_buffers
+### 4.4 Renderer / scene_buffers — SHIPPED
 - [ ] Replace `tree_buffers.rs:156-192::rebuild_node_backgrounds_from_tree`
       with a `yield_background` closure passed to `tree_walker.rs:85-117`
       (the walker already supports the shape).
@@ -530,7 +530,7 @@ this out as remaining work; cleanup goes in two passes.
 - [ ] Extract `now_ms()` to `application/common/` (`app/mod.rs:131-144`
       defines it twice with platform `cfg`).
 
-### 4.6 Console / dispatch
+### 4.6 Console / dispatch — PARTIAL (is_kv_token + applied_or_no_change SHIPPED; *_outcome→ApplyTally + apply_kvs→into_report deferred)
 - [ ] Promote `console/parser.rs::is_kv_token` to `pub(super)`; delete the
       duplicate at `console/completion.rs:218-232`.
 - [ ] Move `console/commands/zoom.rs:202::finalize` and
@@ -542,16 +542,16 @@ this out as remaining work; cleanup goes in two passes.
       `apply_to_targets` aggregation tails into one
       `OutcomeTally::into_report(label_for_messages: Option<&str>)`.
 
-### 4.7 Cross-document doc deduplication
-- [ ] Privilege-gate paragraphs: pick `format/macros.md` as canonical;
+### 4.7 Cross-document doc deduplication — SHIPPED
+- [x] Privilege-gate paragraphs: pick `format/macros.md` as canonical;
       `CODE_CONVENTIONS §3` and `CONCEPTS.md "Action dispatch" §5` link
       instead of restating.
-- [ ] Mutation-first rule: keep `lib/baumhard/CONVENTIONS.md §B2` only;
+- [x] Mutation-first rule: keep `lib/baumhard/CONVENTIONS.md §B2` only;
       `CONCEPTS.md §1` and `CODE_CONVENTIONS.md §1` link.
-- [ ] Cross-platform parity: keep `CODE_CONVENTIONS.md §4` only.
-- [ ] Custom mutations / `var(--name)` collapse: keep `format/sections.md`
+- [x] Cross-platform parity: keep `CODE_CONVENTIONS.md §4` only.
+- [x] Custom mutations / `var(--name)` collapse: keep `format/sections.md`
       only; trim the `CONCEPTS.md` `MindSection` block.
-- [ ] Zoom bounds cascade: keep `format/zoom-bounds.md`; trim
+- [x] Zoom bounds cascade: keep `format/zoom-bounds.md`; trim
       `CONCEPTS.md` to one sentence.
 
 ---

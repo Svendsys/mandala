@@ -17,9 +17,9 @@ use baumhard::util::color::{hsv_to_hex, hsv_to_rgb};
 use baumhard::util::grapheme_chad::count_grapheme_clusters;
 
 use crate::application::color_picker::{
-    arm_bottom_font, hue_slot_to_degrees, sat_cell_to_value, val_cell_to_value, ColorPickerLayout,
-    ColorPickerOverlayGeometry, PickerHit, CROSSHAIR_CENTER_CELL, HUE_SLOT_COUNT, SAT_CELL_COUNT,
-    VAL_CELL_COUNT,
+    arm_bottom_font, hue_slot_to_degrees, sat_cell_to_value, sat_value_to_cell, val_cell_to_value,
+    val_value_to_cell, ColorPickerLayout, ColorPickerOverlayGeometry, PickerHit,
+    CROSSHAIR_CENTER_CELL, HUE_SLOT_COUNT, SAT_CELL_COUNT, VAL_CELL_COUNT,
 };
 use crate::application::color_picker_overlay::color::{
     highlight_hovered_cell_color, highlight_selected_cell_color,
@@ -215,12 +215,8 @@ impl<'a> PickerDynamicContext<'a> {
         let preview_rgb = hsv_to_rgb(geometry.hue_deg, geometry.sat, geometry.val);
         let preview_color = cosmic_color_from_rgba([preview_rgb[0], preview_rgb[1], preview_rgb[2], 1.0]);
 
-        let current_sat_cell = (geometry.sat * (SAT_CELL_COUNT as f32 - 1.0))
-            .round()
-            .clamp(0.0, (SAT_CELL_COUNT - 1) as f32) as usize;
-        let current_val_cell = ((1.0 - geometry.val) * (VAL_CELL_COUNT as f32 - 1.0))
-            .round()
-            .clamp(0.0, (VAL_CELL_COUNT - 1) as f32) as usize;
+        let current_sat_cell = sat_value_to_cell(geometry.sat);
+        let current_val_cell = val_value_to_cell(geometry.val);
 
         // Sat-bar / val-bar base-color tables for every live cell.
         // The crosshair centre keeps its `CellColor::zero()` sentinel
