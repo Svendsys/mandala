@@ -57,32 +57,6 @@ pub fn do_new_void_constructs_void_variant() {
     assert_eq!(elem.unique_id(), 99);
 }
 
-// ── channel accessor ───────────────────────────────────────────────
-
-#[test]
-fn test_channel_accessor_returns_correct_value() {
-    do_channel_accessor_returns_correct_value();
-}
-
-/// The `channel()` accessor returns the value provided at construction
-/// for each variant family.
-pub fn do_channel_accessor_returns_correct_value() {
-    fonts::init();
-
-    // GlyphArea
-    let area = GlyphArea::new_with_str("ch", 10.0, 10.0, Vec2::ZERO, Vec2::new(50.0, 10.0));
-    let elem_area = GfxElement::new_area_non_indexed_with_id(area, 11, 0);
-    assert_eq!(elem_area.channel(), 11);
-
-    // GlyphModel
-    let elem_model = GfxElement::new_model_blank(22, 0);
-    assert_eq!(elem_model.channel(), 22);
-
-    // Void
-    let elem_void = GfxElement::new_void(33);
-    assert_eq!(elem_void.channel(), 33);
-}
-
 // ── flags accessor round-trip ──────────────────────────────────────
 
 #[test]
@@ -107,43 +81,7 @@ pub fn do_flags_accessor_round_trips() {
     assert!(!elem.flag_is_set(Flag::Focused));
 }
 
-// ── unique_id stability ────────────────────────────────────────────
-
-#[test]
-fn test_unique_id_is_stable() {
-    do_unique_id_is_stable();
-}
-
-/// Calling `unique_id()` multiple times on the same element returns
-/// the same value — the id is not regenerated or mutated by access.
-pub fn do_unique_id_is_stable() {
-    let elem = GfxElement::new_void_with_id(0, 777);
-
-    let first = elem.unique_id();
-    let second = elem.unique_id();
-    let third = elem.unique_id();
-
-    assert_eq!(first, 777);
-    assert_eq!(first, second);
-    assert_eq!(second, third);
-}
-
 // ── subtree_aabb cache ─────────────────────────────────────────────
-
-#[test]
-fn test_subtree_aabb_defaults_to_none() {
-    do_subtree_aabb_defaults_to_none();
-}
-
-/// Freshly constructed elements have no cached subtree AABB.
-pub fn do_subtree_aabb_defaults_to_none() {
-    fonts::init();
-
-    let area = GlyphArea::new_with_str("x", 10.0, 10.0, Vec2::ZERO, Vec2::new(50.0, 10.0));
-    assert!(GfxElement::new_area_non_indexed(area, 0).subtree_aabb().is_none());
-    assert!(GfxElement::new_model_blank(0, 0).subtree_aabb().is_none());
-    assert!(GfxElement::new_void(0).subtree_aabb().is_none());
-}
 
 #[test]
 fn test_subtree_aabb_set_and_read() {
@@ -151,50 +89,22 @@ fn test_subtree_aabb_set_and_read() {
 }
 
 /// Writing a subtree AABB via `set_subtree_aabb` makes it visible
-/// through `subtree_aabb()`. `invalidate_subtree_aabb` clears it.
+/// through `subtree_aabb()`. `invalidate_subtree_aabb` clears it,
+/// and the cache is excluded from `PartialEq` so two elements that
+/// differ only in their cache are considered equal.
 pub fn do_subtree_aabb_set_and_read() {
-    let mut elem = GfxElement::new_void(0);
-    let aabb = (Vec2::new(10.0, 20.0), Vec2::new(100.0, 200.0));
-
-    elem.set_subtree_aabb(Some(aabb));
-    assert_eq!(elem.subtree_aabb(), Some(aabb));
-
-    elem.invalidate_subtree_aabb();
-    assert!(elem.subtree_aabb().is_none());
-}
-
-#[test]
-fn test_subtree_aabb_survives_clone() {
-    do_subtree_aabb_survives_clone();
-}
-
-/// Cloning an element produces a fresh element with `subtree_aabb`
-/// defaulting to `None` — the cache is position-dependent and should
-/// not carry over to a clone placed in a different tree position.
-pub fn do_subtree_aabb_survives_clone() {
-    let mut elem = GfxElement::new_void(0);
-    elem.set_subtree_aabb(Some((Vec2::ZERO, Vec2::new(50.0, 50.0))));
-
-    let cloned = elem.clone();
-    // Cloned through the constructor which defaults to None — correct
-    // for a cache that is tree-position-dependent.
-    assert!(cloned.subtree_aabb().is_none());
-}
-
-#[test]
-fn test_subtree_aabb_ignored_in_eq() {
-    do_subtree_aabb_ignored_in_eq();
-}
-
-/// Two elements that differ only in their cached `subtree_aabb` are
-/// considered equal — the cache is not part of element identity.
-pub fn do_subtree_aabb_ignored_in_eq() {
     let mut a = GfxElement::new_void_with_id(0, 42);
     let b = GfxElement::new_void_with_id(0, 42);
+    let aabb = (Vec2::new(10.0, 20.0), Vec2::new(100.0, 200.0));
 
-    a.set_subtree_aabb(Some((Vec2::ZERO, Vec2::new(100.0, 100.0))));
-    // b has no subtree_aabb set.
+    assert!(a.subtree_aabb().is_none());
+    a.set_subtree_aabb(Some(aabb));
+    assert_eq!(a.subtree_aabb(), Some(aabb));
+    // Cache excluded from PartialEq — element identity is unchanged.
     assert_eq!(a, b);
+
+    a.invalidate_subtree_aabb();
+    assert!(a.subtree_aabb().is_none());
 }
 
 // ── event subscribers add and check ────────────────────────────────

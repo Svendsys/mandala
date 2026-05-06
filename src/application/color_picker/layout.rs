@@ -53,10 +53,6 @@ pub struct ColorPickerLayout {
     /// `(left, top, width, height)` of the opaque backdrop rect that
     /// the renderer draws under the overlay text pass.
     pub backdrop: (f32, f32, f32, f32),
-    /// Title text anchor (top of frame).
-    pub title_pos: (f32, f32),
-    /// Hint footer text anchor.
-    pub hint_pos: (f32, f32),
     /// `Some((x, y))` top-left anchor for the hex readout when it
     /// should render this frame, `None` otherwise. Derived from
     /// `geometry.hex_visible`. When `Some`, the readout is anchored

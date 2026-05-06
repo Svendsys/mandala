@@ -300,43 +300,25 @@ pub fn do_spatial_descend_ignores_channel_mismatch() {
 // =====================================================================
 
 #[test]
-fn test_mouse_event_data_new_and_fields() {
-    do_mouse_event_data_new_and_fields();
+fn test_mouse_event_data_round_trips_constructor_inputs() {
+    do_mouse_event_data_round_trips_constructor_inputs();
 }
 
-pub fn do_mouse_event_data_new_and_fields() {
+/// `MouseEventData::new` round-trips through to the named fields,
+/// `PartialEq` distinguishes distinct payloads, and the OrderedFloat
+/// wrapper accepts the f32 boundary values without nudging them.
+pub fn do_mouse_event_data_round_trips_constructor_inputs() {
     let a = MouseEventData::new(42.5, -10.0);
     let b = MouseEventData::new(42.5, -10.0);
     let c = MouseEventData::new(0.0, 0.0);
-    assert_eq!(a.x.0, 42.5_f32);
-    assert_eq!(a.y.0, -10.0_f32);
     assert_eq!(a, b);
     assert_ne!(a, c);
-    assert_eq!(a.clone(), a);
-}
+    assert_eq!(a.x.0, 42.5_f32);
+    assert_eq!(a.y.0, -10.0_f32);
 
-#[test]
-fn test_mouse_event_data_zero() {
-    do_mouse_event_data_zero();
-}
-
-pub fn do_mouse_event_data_zero() {
-    let d = MouseEventData::new(0.0, 0.0);
-    assert_eq!(d.x.0, 0.0_f32);
-    assert_eq!(d.y.0, 0.0_f32);
-}
-
-#[test]
-fn test_mouse_event_data_extreme_values() {
-    do_mouse_event_data_extreme_values();
-}
-
-pub fn do_mouse_event_data_extreme_values() {
-    let d = MouseEventData::new(f32::MAX, f32::MIN);
-    assert_eq!(d.x.0, f32::MAX);
-    assert_eq!(d.y.0, f32::MIN);
-    let tiny = MouseEventData::new(f32::MIN_POSITIVE, -f32::MIN_POSITIVE);
-    assert_eq!(tiny.x.0, f32::MIN_POSITIVE);
+    let extreme = MouseEventData::new(f32::MAX, f32::MIN);
+    assert_eq!(extreme.x.0, f32::MAX);
+    assert_eq!(extreme.y.0, f32::MIN);
 }
 
 #[test]

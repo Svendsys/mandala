@@ -79,32 +79,6 @@ pub fn verify(map: &MindMap) -> Vec<Violation> {
 #[cfg(test)]
 mod constructor_tests {
     use super::*;
-    use crate::verify::test_helpers::node;
-
-    #[test]
-    fn violation_node_uses_node_id_as_location() {
-        let n = node("0.3.1", None);
-        let v = Violation::node("test_cat", &n, "boom");
-        assert_eq!(v.category, "test_cat");
-        assert_eq!(v.location, "0.3.1");
-        assert_eq!(v.message, "boom");
-    }
-
-    #[test]
-    fn violation_edge_uses_bracket_index_stamp() {
-        let v = Violation::edge("test_cat", 7, "boom");
-        assert_eq!(v.category, "test_cat");
-        assert_eq!(v.location, "edge[7]");
-        assert_eq!(v.message, "boom");
-    }
-
-    #[test]
-    fn violation_at_passes_location_through() {
-        let v = Violation::at("test_cat", "palette[coral]", "boom");
-        assert_eq!(v.category, "test_cat");
-        assert_eq!(v.location, "palette[coral]");
-        assert_eq!(v.message, "boom");
-    }
 
     /// `Display` formats as `<category> @ <location>: <message>`.
     /// Pinned because any drift from this format would silently

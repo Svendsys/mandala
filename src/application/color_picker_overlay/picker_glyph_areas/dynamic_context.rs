@@ -270,9 +270,6 @@ impl<'a> PickerDynamicContext<'a> {
         let layout = self.layout;
         let hover = |matches_hover: bool| if matches_hover { self.hover_scale } else { 1.0 };
         match section {
-            PickerSection::Title | PickerSection::Hint => {
-                unreachable!("title/hint sections are not built")
-            }
             PickerSection::Hex => layout.font_size,
             PickerSection::HueRing => {
                 let hovered = matches!(g.hovered_hit, Some(PickerHit::Hue(h)) if h == index);
@@ -357,9 +354,6 @@ impl<'a> SectionContext for PickerDynamicContext<'a> {
         // cell. No `hsv_to_rgb` calls on this hot loop.
         let g = self.geometry;
         let (count, color, font): (usize, baumhard::font::Color, Option<AppFont>) = match section {
-            PickerSection::Title | PickerSection::Hint => {
-                unreachable!("title/hint sections are not built")
-            }
             PickerSection::Hex => (self.hex_count, self.preview_color, None),
             PickerSection::HueRing => {
                 let entry = hue_ring_colors()[index];

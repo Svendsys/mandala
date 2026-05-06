@@ -55,16 +55,6 @@ pub fn convert_sections(input_path: &Path, output_path: &Path) -> Result<(), Str
     Ok(())
 }
 
-/// Public alias for use by the legacy pipeline in `mod.rs`. The
-/// `_legacy` suffix names the call site, not a different
-/// behaviour — the function body is identical to
-/// [`migrate_one_node`]; there's just one public name for the
-/// pipeline integration and the test module reaches for the
-/// short-named helper.
-pub(super) fn migrate_one_node_legacy(node: &mut Value) -> bool {
-    migrate_one_node(node)
-}
-
 /// Migrate one node's JSON object. Returns `true` when the node
 /// shape changed — used by the caller for the summary log.
 ///
@@ -72,7 +62,7 @@ pub(super) fn migrate_one_node_legacy(node: &mut Value) -> bool {
 /// values are *moved* (not copied) into the new section so a
 /// round-trip through the typed loader matches the on-disk file
 /// byte-for-byte (no orphaned legacy keys remain).
-fn migrate_one_node(node: &mut Value) -> bool {
+pub(super) fn migrate_one_node(node: &mut Value) -> bool {
     let Some(obj) = node.as_object_mut() else {
         return false;
     };

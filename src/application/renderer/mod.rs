@@ -78,8 +78,8 @@ use log::{error, info, warn};
 use rustc_hash::FxHashMap;
 
 use wgpu::{
-    Adapter, Color, Device, Instance, MultisampleState, Queue, RenderPipeline, ShaderModule, Surface,
-    SurfaceCapabilities, SurfaceConfiguration, TextureFormat,
+    Color, Device, Instance, MultisampleState, Queue, RenderPipeline, Surface, SurfaceConfiguration,
+    TextureFormat,
 };
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
@@ -90,7 +90,6 @@ use baumhard::font::fonts;
 use baumhard::gfx_structs::area::GlyphArea;
 use baumhard::gfx_structs::camera::Camera2D;
 use baumhard::mindmap::scene_cache::EdgeKey;
-use baumhard::shaders::shaders::SHADER_APPLICATION;
 use glam::Vec2;
 
 /// Inline WGSL shader for the colored-rectangle pipeline. Draws a
@@ -247,11 +246,9 @@ pub(super) const RECT_VERTEX_FLOATS: usize = 9;
 pub(super) const RECT_VBUF_INITIAL_CAPACITY: u64 = 8192;
 
 pub struct Renderer {
-    instance: Instance,
     surface: Surface<'static>,
     window: Arc<Window>,
     config: SurfaceConfiguration,
-    adapter: Adapter,
     device: Device,
     queue: Queue,
     viewport: Viewport,
@@ -261,8 +258,6 @@ pub struct Renderer {
     timer: PollTimer,
     target_duration_between_renders: Duration,
     last_render_time: Duration,
-    shaders: FxHashMap<&'static str, ShaderModule>,
-    render_pipeline: RenderPipeline,
     text_renderer: TextRenderer,
     /// Second glyphon TextRenderer dedicated to the command
     /// palette overlay. Shares `self.atlas` with `text_renderer`
@@ -272,8 +267,6 @@ pub struct Renderer {
     /// (otherwise re-preparing the single text renderer would
     /// race with the pass's already-recorded draw commands).
     console_text_renderer: TextRenderer,
-    texture_format: TextureFormat,
-    surface_capabilities: SurfaceCapabilities,
     redraw_mode: RedrawMode,
     run: bool,
     should_render: bool,
@@ -323,12 +316,9 @@ pub struct Renderer {
     /// wins via `insert`); the vec preserves emission order so
     /// halos stay behind the main glyph at render time.
     mindmap_buffers: FxHashMap<String, Vec<MindMapTextBuffer>>,
-    /// Per-node border glyph buffers, keyed by `node_id`. Each entry is a
-    /// `Vec` of 4 buffers (top/bottom/left/right) matching the layout in
-    /// `rebuild_border_buffers_keyed`. Keyed so unchanged borders survive
-    /// across drag frames without re-shaping — cosmic-text shaping is
-    /// the dominant cost here, skipping it for unmoved borders is what
-    /// keeps drag interactive.
+    /// Per-node border glyph buffers, keyed by `node_id`. Each entry is
+    /// a `Vec` of 4 buffers (top/bottom/left/right) emitted by
+    /// `rebuild_border_buffers`.
     border_buffers: FxHashMap<String, Vec<MindMapTextBuffer>>,
     /// Edge grab-handle buffers for the connection reshape surface.
     /// Populated only when an edge is selected; rebuilt fresh every
@@ -530,19 +520,9 @@ impl Renderer {
     pub async fn new(instance: Instance, surface: Surface<'static>, window: Arc<Window>) -> Renderer {
         let adapter = Self::get_adapter(&instance, &surface).await;
         let (device, queue) = Self::get_device(&adapter).await;
-        let mut shaders = FxHashMap::default();
-        Self::load_shaders(&device, &mut shaders);
-        assert!(shaders.len() > 0, "No shaders found!");
-        let shader = shaders
-            .get(SHADER_APPLICATION)
-            .expect(&*format!("Shader not found {}", SHADER_APPLICATION));
         let swapchain_format = TextureFormat::Bgra8UnormSrgb;
-        let pipeline_layout = Self::create_pipeline_layout(&device);
         let surface_capabilities = surface.get_capabilities(&adapter);
         let texture_format = surface_capabilities.formats[0];
-
-        let render_pipeline =
-            Self::create_render_pipeline(&device, &shader, &pipeline_layout, texture_format.clone());
         let size = window.inner_size();
         let config = Self::create_surface_config(
             texture_format.clone(),
@@ -644,11 +624,9 @@ impl Renderer {
             mapped_at_creation: false,
         });
         Renderer {
-            instance,
             surface,
             window,
             config,
-            adapter,
             device,
             queue,
             atlas,
@@ -656,12 +634,8 @@ impl Renderer {
             timer: PollTimer::new(Duration::from_millis(16)),
             target_duration_between_renders: Duration::from_millis(10),
             last_render_time: Duration::from_millis(16),
-            shaders,
-            render_pipeline,
             text_renderer,
             console_text_renderer,
-            texture_format,
-            surface_capabilities,
             should_render: false,
             fps: None,
             redraw_mode: RedrawMode::NoLimit,

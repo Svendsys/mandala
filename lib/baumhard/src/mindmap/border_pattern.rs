@@ -214,7 +214,7 @@ impl SidePattern {
     /// O(`cluster_width`) cluster pushes plus one `String`
     /// allocation sized to the rendered byte length. Both hot
     /// border-rebuild paths (the renderer's
-    /// `rebuild_border_buffers_keyed` and the tree builder's
+    /// `rebuild_border_buffers` and the tree builder's
     /// `build_border_mutator_tree_from_nodes`) call this once per
     /// side per visible node per frame, so the per-glyph push has
     /// to stay branchless — no parser work happens here.

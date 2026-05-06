@@ -100,11 +100,6 @@ pub(super) fn compute_positions(
     let backdrop_top = center.1 - side * 0.5 - font_size;
     let backdrop_height = side + font_size * 7.0;
     let backdrop = (backdrop_left, backdrop_top, backdrop_width, backdrop_height);
-    let title_pos = (backdrop_left + font_size * 0.5, backdrop_top + font_size * 0.5);
-    let hint_pos = (
-        backdrop_left + font_size * 0.5,
-        backdrop_top + backdrop_height - font_size * 1.5,
-    );
 
     // ---- Hex readout position ----
     let hex_pos = if geometry.hex_visible {
@@ -129,8 +124,6 @@ pub(super) fn compute_positions(
         preview_pos,
         preview_size,
         backdrop,
-        title_pos,
-        hint_pos,
         hex_pos,
     }
 }

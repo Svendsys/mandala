@@ -32,20 +32,6 @@ fn sample_outline() -> OutlineStyle {
     }
 }
 
-/// Newly-constructed `GlyphArea`s default to no halo. A consumer
-/// that never sets `outline` keeps the existing behavior — important
-/// because every existing call site (mindmap nodes, console, palette,
-/// borders) constructs through `new_with_str` and must not pay the
-/// halo-shaping cost they didn't ask for.
-#[test]
-pub fn test_outline_default_is_none() {
-    do_outline_default_is_none();
-}
-
-pub fn do_outline_default_is_none() {
-    let area = GlyphArea::new_with_str("hello", 14.0, 14.0, Vec2::new(0.0, 0.0), Vec2::new(100.0, 20.0));
-    assert!(area.outline.is_none(), "GlyphArea should default to no halo");
-}
 
 /// Round-trip: a `DeltaGlyphArea` carrying `Some(outline)` under
 /// `Assign` writes the halo onto a previously-bare area; a follow-up

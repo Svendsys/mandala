@@ -27,8 +27,5 @@ pub mod mindmap;
 /// Declarative mutator-tree DSL: `MutatorNode` AST + `SectionContext`
 /// runtime look-up + `build` walker.
 pub mod mutator_builder;
-/// WGSL shader modules and the thin Rust wrappers exposing their
-/// entry-point names to the application.
-pub mod shaders;
 /// Shared math, container, and formatting helpers across the crate.
 pub mod util;

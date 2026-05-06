@@ -277,51 +277,43 @@ fn macro_step_serde_round_trip() {
     }
 }
 
-/// Locks the on-disk JSON shape for `MacroStep`. Hand-authored
-/// macro files in `~/.config/mandala/macros.json` use these
-/// keys; a future serde-derive change that rearranges them
-/// would silently break user configs.
+/// Locks the on-disk JSON shape for every `MacroStep` variant —
+/// hand-authored macro files in `~/.config/mandala/macros.json`
+/// use these keys; a serde-derive rearrangement would silently
+/// break user configs. Covers Action, ConsoleLine, and the two
+/// CustomMutation target shapes (default-omitted CurrentSelection
+/// and explicit `{node_id: "..."}`).
 #[test]
-fn macro_step_action_json_shape_locked() {
-    let step = MacroStep::Action { action: Action::Undo };
-    let json = serde_json::to_string(&step).unwrap();
-    assert_eq!(json, r#"{"kind":"Action","action":"Undo"}"#);
-}
+fn macro_step_json_shape_round_trip() {
+    let action = MacroStep::Action { action: Action::Undo };
+    assert_eq!(
+        serde_json::to_string(&action).unwrap(),
+        r#"{"kind":"Action","action":"Undo"}"#,
+    );
 
-#[test]
-fn macro_step_custom_mutation_default_target_omittable() {
-    // Authors who omit `target` get CurrentSelection by default.
-    let json = r#"{"kind":"CustomMutation","id":"x"}"#;
-    let parsed: MacroStep = serde_json::from_str(json).unwrap();
-    match parsed {
-        MacroStep::CustomMutation { id, target } => {
-            assert_eq!(id, "x");
-            assert!(matches!(target, MacroTarget::CurrentSelection));
-        }
-        _ => panic!("expected CustomMutation"),
-    }
-}
+    let console = MacroStep::ConsoleLine { line: "save".into() };
+    assert_eq!(
+        serde_json::to_string(&console).unwrap(),
+        r#"{"kind":"ConsoleLine","line":"save"}"#,
+    );
 
-#[test]
-fn macro_step_custom_mutation_node_id_target() {
-    let json = r#"{"kind":"CustomMutation","id":"x","target":{"node_id":"abc"}}"#;
-    let parsed: MacroStep = serde_json::from_str(json).unwrap();
-    match parsed {
-        MacroStep::CustomMutation {
-            target: MacroTarget::NodeId(s),
-            ..
-        } => {
-            assert_eq!(s, "abc");
-        }
-        _ => panic!("expected NodeId target"),
-    }
-}
+    let omitted: MacroStep = serde_json::from_str(r#"{"kind":"CustomMutation","id":"x"}"#).unwrap();
+    let MacroStep::CustomMutation { id, target } = omitted else {
+        panic!("expected CustomMutation");
+    };
+    assert_eq!(id, "x");
+    assert!(matches!(target, MacroTarget::CurrentSelection));
 
-#[test]
-fn macro_step_console_line_json_shape() {
-    let step = MacroStep::ConsoleLine { line: "save".into() };
-    let json = serde_json::to_string(&step).unwrap();
-    assert_eq!(json, r#"{"kind":"ConsoleLine","line":"save"}"#);
+    let node_target: MacroStep =
+        serde_json::from_str(r#"{"kind":"CustomMutation","id":"x","target":{"node_id":"abc"}}"#).unwrap();
+    let MacroStep::CustomMutation {
+        target: MacroTarget::NodeId(s),
+        ..
+    } = node_target
+    else {
+        panic!("expected NodeId target");
+    };
+    assert_eq!(s, "abc");
 }
 
 /// Inline-tier macros override every lower tier on id

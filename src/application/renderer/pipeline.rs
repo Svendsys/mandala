@@ -1,18 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Once-per-process device / surface / shader / pipeline-layout setup.
+//! Once-per-process device / surface setup.
 
-use std::borrow::Cow;
-
-use log::debug;
-use rustc_hash::FxHashMap;
-use wgpu::{
-    Adapter, Device, Instance, MultisampleState, PipelineLayout, Queue, RenderPipeline, ShaderModule,
-    Surface, SurfaceCapabilities, SurfaceConfiguration, TextureFormat,
-};
+use wgpu::{Adapter, Device, Instance, Queue, Surface, SurfaceCapabilities, SurfaceConfiguration, TextureFormat};
 use winit::dpi::PhysicalSize;
-
-use baumhard::shaders::shaders::SHADERS;
 
 use super::Renderer;
 
@@ -39,59 +30,6 @@ impl Renderer {
             alpha_mode: surface_capabilities.alpha_modes[0],
             view_formats: vec![],
         }
-    }
-
-    #[inline]
-    pub(super) fn create_render_pipeline(
-        device: &Device,
-        shader: &ShaderModule,
-        pipeline_layout: &PipelineLayout,
-        texture_format: TextureFormat,
-    ) -> RenderPipeline {
-        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: None,
-            layout: Some(pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: shader,
-                entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
-                targets: &[Some(texture_format.into())],
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        })
-    }
-
-    #[inline]
-    pub(super) fn load_shaders(device: &Device, shaders: &mut FxHashMap<&'static str, ShaderModule>) {
-        assert!(SHADERS.len() > 0, "No shaders defined!");
-        for i in 0..SHADERS.len() {
-            let (name, source) = SHADERS[i].clone();
-            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: None,
-                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(source)),
-            });
-            shaders.insert(name, shader);
-            debug!("Loaded a shader");
-        }
-    }
-
-    #[inline]
-    pub(super) fn create_pipeline_layout(device: &Device) -> PipelineLayout {
-        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: None,
-            bind_group_layouts: &[],
-            immediate_size: 0,
-        })
     }
 
     #[inline]

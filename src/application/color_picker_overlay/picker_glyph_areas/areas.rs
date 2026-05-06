@@ -24,9 +24,7 @@ use crate::application::color_picker::{HUE_SLOT_COUNT, SAT_CELL_COUNT, VAL_CELL_
 /// is a programming error.
 pub(super) struct PickerAreas {
     pub(super) ordered: Vec<(usize, GlyphArea)>,
-    title: [Option<usize>; 1],
     hue_ring: [Option<usize>; HUE_SLOT_COUNT],
-    hint: [Option<usize>; 1],
     sat_bar: [Option<usize>; SAT_CELL_COUNT],
     val_bar: [Option<usize>; VAL_CELL_COUNT],
     preview: [Option<usize>; 1],
@@ -40,9 +38,7 @@ pub(super) struct PickerAreas {
 /// would be a programming error, not a recoverable state.
 #[derive(Copy, Clone, Debug)]
 pub(super) enum PickerSection {
-    Title,
     HueRing,
-    Hint,
     SatBar,
     ValBar,
     Preview,
@@ -52,9 +48,7 @@ pub(super) enum PickerSection {
 impl PickerSection {
     pub(super) fn from_name(name: &str) -> Self {
         match name {
-            "title" => PickerSection::Title,
             "hue_ring" => PickerSection::HueRing,
-            "hint" => PickerSection::Hint,
             "sat_bar" => PickerSection::SatBar,
             "val_bar" => PickerSection::ValBar,
             "preview" => PickerSection::Preview,
@@ -70,9 +64,7 @@ impl PickerAreas {
     pub(super) fn new() -> Self {
         Self {
             ordered: Vec::with_capacity(58),
-            title: [None; 1],
             hue_ring: [None; HUE_SLOT_COUNT],
-            hint: [None; 1],
             sat_bar: [None; SAT_CELL_COUNT],
             val_bar: [None; VAL_CELL_COUNT],
             preview: [None; 1],
@@ -86,9 +78,7 @@ impl PickerAreas {
         let vec_index = self.ordered.len();
         self.ordered.push((channel, area));
         let slot = match section {
-            PickerSection::Title => self.title.get_mut(index),
             PickerSection::HueRing => self.hue_ring.get_mut(index),
-            PickerSection::Hint => self.hint.get_mut(index),
             PickerSection::SatBar => self.sat_bar.get_mut(index),
             PickerSection::ValBar => self.val_bar.get_mut(index),
             PickerSection::Preview => self.preview.get_mut(index),
@@ -105,9 +95,7 @@ impl PickerAreas {
     /// rather than a recoverable state.
     pub(super) fn area(&self, section: &str, index: usize) -> &GlyphArea {
         let slot: Option<usize> = match PickerSection::from_name(section) {
-            PickerSection::Title => self.title.get(index).copied().flatten(),
             PickerSection::HueRing => self.hue_ring.get(index).copied().flatten(),
-            PickerSection::Hint => self.hint.get(index).copied().flatten(),
             PickerSection::SatBar => self.sat_bar.get(index).copied().flatten(),
             PickerSection::ValBar => self.val_bar.get(index).copied().flatten(),
             PickerSection::Preview => self.preview.get(index).copied().flatten(),

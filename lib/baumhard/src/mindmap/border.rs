@@ -402,8 +402,8 @@ impl BorderStyle {
 
 /// Per-side run geometry the three border-emit pipelines (the
 /// in-place mutator path, the initial-build tree path, and the
-/// flat-pipeline `rebuild_border_buffers_keyed` in the renderer)
-/// each previously open-coded with byte-identical math.
+/// flat-pipeline `rebuild_border_buffers` in the renderer) each
+/// previously open-coded with byte-identical math.
 ///
 /// One spec describes one side (top / bottom / left / right):
 /// where the run sits in canvas space, how big its text bounds
@@ -447,8 +447,7 @@ pub struct BorderRunSpec {
 /// Single source of truth for the per-side `(text, position,
 /// bounds, palette_offset)` arithmetic that the in-place mutator
 /// path, the initial-build tree path, and the flat-pipeline
-/// `rebuild_border_buffers_keyed` previously reproduced
-/// independently.
+/// `rebuild_border_buffers` previously reproduced independently.
 ///
 /// Channels:
 /// - `1` = top, `2` = bottom, `3` = left, `4` = right.

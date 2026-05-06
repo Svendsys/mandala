@@ -23,7 +23,6 @@ use baumhard::gfx_structs::tree::{MutatorTree, Tree};
 use crate::application::color_picker::{ColorPickerLayout, ColorPickerOverlayGeometry};
 
 mod color;
-mod glyph_model;
 mod picker_glyph_areas;
 
 #[cfg(test)]

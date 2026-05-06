@@ -15,7 +15,6 @@ use super::areas::PickerAreas;
 use super::compute::compute_picker_areas;
 use super::dynamic_context::PickerDynamicContext;
 use crate::application::color_picker::{ColorPickerLayout, ColorPickerOverlayGeometry};
-use crate::application::color_picker_overlay::glyph_model::glyph_model_from_picker_area;
 use crate::application::widgets::color_picker_widget::load_spec;
 use baumhard::mutator_builder::{self, SectionContext};
 
@@ -23,16 +22,6 @@ use baumhard::mutator_builder::{self, SectionContext};
 /// pre-computed layout. Iterates the
 /// [channel-ascending][PickerAreas::ordered] list so the registered
 /// tree's channels match what the mutator path will later target.
-///
-/// Tree shape (each GlyphArea has a paired GlyphModel child built by
-/// [`glyph_model_from_picker_area`]):
-///
-/// ```text
-/// Void (root)
-/// ├── GlyphArea title bar / hue ring / hint / sat bar / val bar / preview / hex
-/// │   └── GlyphModel mirror
-/// └── …
-/// ```
 ///
 /// **Performance note**: this rebuilds every glyph on every
 /// `rebuild_color_picker_overlay_buffers` call, which is reserved
@@ -45,18 +34,10 @@ pub(in crate::application::color_picker_overlay) fn build_color_picker_overlay_t
 ) -> Tree<GfxElement, GfxMutator> {
     let areas = compute_picker_areas(geometry, layout);
     let mut tree: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed();
-    // Consume the ordered vector so each GlyphArea is moved into its
-    // GfxElement rather than cloned. The model is derived from the
-    // area by reference before the move so both children share the
-    // same text / color / position without a second allocation.
     for (channel, area) in areas.ordered {
-        let model = glyph_model_from_picker_area(&area);
         let area_element = GfxElement::new_area_non_indexed_with_id(area, channel, channel);
         let area_id = tree.arena.new_node(area_element);
         tree.root.append(area_id, &mut tree.arena);
-        let model_element = GfxElement::new_model_non_indexed_with_id(model, channel, channel);
-        let model_id = tree.arena.new_node(model_element);
-        area_id.append(model_id, &mut tree.arena);
     }
     tree
 }

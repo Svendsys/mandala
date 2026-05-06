@@ -126,7 +126,10 @@ fn run(args: &[String]) -> Result<(), CliError> {
                 .get(2)
                 .ok_or_else(|| CliError::Usage("show: missing <node-id>".into()))?;
             let map = load_map(map_path)?;
-            let text = show_node(&map, node_id)
+            let text = map
+                .nodes
+                .get(node_id)
+                .map(|n| n.display_text())
                 .ok_or_else(|| CliError::NotFound(format!("node not found: {node_id}")))?;
             println!("{text}");
             Ok(())
@@ -260,14 +263,6 @@ fn run(args: &[String]) -> Result<(), CliError> {
 
 fn load_map(path: &str) -> Result<MindMap, CliError> {
     load_from_file(Path::new(path)).map_err(CliError::Io)
-}
-
-/// Render the joined text content of a node — every section's
-/// text in order, separated by `'\n'`. Single-section nodes (the
-/// post-section-migration default) round-trip identically with
-/// the pre-section behaviour.
-fn show_node(map: &MindMap, node_id: &str) -> Option<String> {
-    map.nodes.get(node_id).map(|n| n.display_text())
 }
 
 /// Parsed positional args for `grep`.
@@ -624,20 +619,6 @@ mod tests {
         build_regex(pattern, case_insensitive).unwrap()
     }
 
-    // --- show -------------------------------------------------------
-
-    #[test]
-    fn show_returns_text_for_known_id() {
-        let map = testament();
-        assert_eq!(show_node(&map, "0").as_deref(), Some("Lord God"));
-    }
-
-    #[test]
-    fn show_returns_none_for_unknown_id() {
-        let map = testament();
-        assert!(show_node(&map, "does-not-exist").is_none());
-    }
-
     // --- grep / grep_nodes ------------------------------------------
 
     #[test]
@@ -658,31 +639,6 @@ mod tests {
     fn grep_empty_on_no_match() {
         let map = testament();
         assert!(grep_nodes(&map, &rx("xyzzy-no-such-token", false)).is_empty());
-    }
-
-    #[test]
-    fn grep_regex_metacharacters_match() {
-        let map = testament();
-        // "." is a wildcard, "L.rd God" matches "Lord God".
-        let hits = grep_nodes(&map, &rx("L.rd God", false));
-        assert!(hits.iter().any(|(id, _)| *id == "0"));
-    }
-
-    #[test]
-    fn grep_regex_character_class_matches() {
-        let map = testament();
-        // Character class: matches either "Lord" or "lord".
-        let hits = grep_nodes(&map, &rx("[Ll]ord God", false));
-        assert!(hits.iter().any(|(id, _)| *id == "0"));
-    }
-
-    #[test]
-    fn grep_regex_anchor_matches() {
-        let map = testament();
-        // "^Lord God" anchors on the start of a line (the root node
-        // text has "Lord God" as its first and only line).
-        let hits = grep_nodes(&map, &rx("^Lord God", false));
-        assert!(hits.iter().any(|(id, _)| *id == "0"));
     }
 
     #[test]

@@ -5,7 +5,6 @@
 //! mutator-walker safety relies on.
 
 use baumhard::gfx_structs::element::GfxElementType;
-use baumhard::gfx_structs::tree::BranchChannel;
 
 use super::fixtures::{picker_glyph_areas_for, picker_sample_geometry};
 use crate::application::color_picker::{compute_color_picker_layout, picker_channel};
@@ -76,66 +75,31 @@ fn picker_glyph_areas_ascending_channels() {
     }
 }
 
-/// Each picker `GlyphArea` node in the overlay tree has exactly one
-/// `GlyphModel` child, sharing the parent's channel — the
-/// architectural pattern the color-picker restructure asked for. The
-/// model node is structural source-of-truth (today's renderer reads
-/// the area; the model is "stamped into" the area at build time via
-/// `glyph_model_from_picker_area`); future per-glyph mutation /
-/// animation work can target the model and re-stamp.
-///
-/// Walker safety: this regression also implicitly verifies the §B2
-/// mutator path stays viable — Baumhard's `align_child_walks`
-/// returns immediately when a mutator node has no children
-/// (`tree_walker.rs:237-240`), so adding GlyphModel children under
-/// each GlyphArea doesn't trip the existing flat
-/// `build_color_picker_overlay_mutator` (it produces no mutator
-/// children for these models, so the walk terminates correctly at
-/// each GlyphArea level).
+/// Every direct child of the picker overlay tree's root is a
+/// `GlyphArea`, and they're all leaves — Baumhard's
+/// `align_child_walks` relies on the flat shape for the §B2 mutator
+/// path.
 #[test]
-fn picker_overlay_tree_pairs_each_area_with_a_model_child() {
+fn picker_overlay_tree_emits_flat_glyph_area_children() {
     let g = picker_sample_geometry();
     let layout = compute_color_picker_layout(&g, 1280.0, 720.0);
     let tree = build_color_picker_overlay_tree(&g, &layout);
 
     let mut area_count = 0usize;
-    let mut model_count = 0usize;
     for area_id in tree.root.children(&tree.arena) {
-        let area_node = tree.arena.get(area_id).expect("area node in arena");
-        let area_elem = area_node.get();
-        // `GfxElementType` doesn't implement `Debug`, so assert via
-        // `matches!` rather than `assert_eq!` — same coverage, no
-        // upstream-derive change needed.
+        let area_elem = tree.arena.get(area_id).expect("area node in arena").get();
         assert!(
             matches!(area_elem.get_type(), GfxElementType::GlyphArea),
             "every direct child of root must be a GlyphArea"
         );
-        area_count += 1;
-        let area_channel = area_elem.channel();
-
-        let mut children = area_id.children(&tree.arena);
-        let model_id = children
-            .next()
-            .expect("each picker GlyphArea must have a paired GlyphModel child");
-        assert!(
-            children.next().is_none(),
-            "each picker GlyphArea has exactly one child (the GlyphModel pair)"
-        );
-        let model_node = tree.arena.get(model_id).expect("model node in arena");
-        let model_elem = model_node.get();
-        assert!(
-            matches!(model_elem.get_type(), GfxElementType::GlyphModel),
-            "the area's child must be a GlyphModel"
-        );
         assert_eq!(
-            model_elem.channel(),
-            area_channel,
-            "model child shares its parent area's channel"
+            area_id.children(&tree.arena).count(),
+            0,
+            "picker GlyphAreas are leaves",
         );
-        model_count += 1;
+        area_count += 1;
     }
     assert!(area_count > 0, "picker tree must emit at least one piece");
-    assert_eq!(area_count, model_count, "every area has its model");
 }
 
 /// Hex visibility flips on cursor enter/exit of the backdrop. The

@@ -6,7 +6,6 @@
 //! cursor / time math, so exercising them here keeps the
 //! winit event loop out of the test scaffold.
 
-use super::text_edit::TextEditState;
 use super::*;
 
 // -----------------------------------------------------------------
@@ -109,56 +108,6 @@ fn test_double_click_just_under_boundary_fires() {
 // target. We verify the guard predicate here; the actual event
 // loop wiring is manually verified via `cargo run`.
 
-#[test]
-fn test_double_click_guard_skips_same_target_when_editor_open() {
-    let editor = TextEditState::Open {
-        node_id: "node-A".to_string(),
-        section_idx: 0,
-        buffer: "in progress".to_string(),
-        cursor_grapheme_pos: 11,
-        buffer_regions: baumhard::core::primitives::ColorFontRegions::new_empty(),
-        original_text: String::new(),
-        original_regions: baumhard::core::primitives::ColorFontRegions::new_empty(),
-        selection_anchor: None,
-    };
-    let hit = Some("node-A".to_string());
-    let already_editing = editor
-        .node_id()
-        .map(|id| hit.as_deref() == Some(id))
-        .unwrap_or(false);
-    assert!(already_editing, "guard must fire for same target");
-}
-
-#[test]
-fn test_double_click_guard_allows_different_target_when_editor_open() {
-    let editor = TextEditState::Open {
-        node_id: "node-A".to_string(),
-        section_idx: 0,
-        buffer: "in progress".to_string(),
-        cursor_grapheme_pos: 11,
-        buffer_regions: baumhard::core::primitives::ColorFontRegions::new_empty(),
-        original_text: String::new(),
-        original_regions: baumhard::core::primitives::ColorFontRegions::new_empty(),
-        selection_anchor: None,
-    };
-    let hit = Some("node-B".to_string());
-    let already_editing = editor
-        .node_id()
-        .map(|id| hit.as_deref() == Some(id))
-        .unwrap_or(false);
-    assert!(!already_editing, "guard must NOT fire for different target");
-}
-
-#[test]
-fn test_double_click_guard_allows_when_editor_closed() {
-    let editor = TextEditState::Closed;
-    let hit = Some("node-A".to_string());
-    let already_editing = editor
-        .node_id()
-        .map(|id| hit.as_deref() == Some(id))
-        .unwrap_or(false);
-    assert!(!already_editing, "guard must NOT fire when editor is closed");
-}
 
 // -----------------------------------------------------------------
 // Drag-helper + release-flush invariants

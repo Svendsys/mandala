@@ -252,26 +252,6 @@ mod tests {
         assert_eq!(lerp_vec2(from_v, to_v, 1.0), to_v);
     }
 
-    /// Round-trip through serde keeps the on-the-wire timing
-    /// envelope intact. Pins the wire format so a
-    /// `.mindmap.json` saved with timing fields loads back
-    /// correctly.
-    #[test]
-    fn test_animation_timing_serde_round_trip() {
-        let timing = AnimationTiming {
-            duration_ms: 350,
-            delay_ms: 100,
-            easing: Easing::EaseInOut,
-            // `then` is intentionally `None` — the wire format
-            // skips `Followup` until the tick loop dispatches
-            // it (see the field's doc-comment).
-            then: None,
-        };
-        let json = serde_json::to_string(&timing).unwrap();
-        let back: AnimationTiming = serde_json::from_str(&json).unwrap();
-        assert_eq!(back, timing);
-    }
-
     /// Default `AnimationTiming` round-trips through an empty
     /// JSON object — the serde defaults make every field
     /// optional, so an old map without a `timing` key

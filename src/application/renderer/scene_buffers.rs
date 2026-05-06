@@ -19,43 +19,15 @@ use baumhard::mindmap::border::build_border_regions;
 use baumhard::util::color::hex_to_rgba_safe;
 
 impl Renderer {
-    /// Full (non-keyed) border rebuild — wipes the keyed cache and rebuilds
-    /// every element from scratch. Used on map load, undo, reparent,
-    /// selection change, and anywhere else the caller already knows every
-    /// border may have changed.
+    /// Full border rebuild — wipes the cache and shapes every element
+    /// from scratch through baumhard's styled-region → cosmic-text bridge
+    /// (the same `(text, ColorFontRegions) → Vec<(&str, Attrs)>` path the
+    /// tree walker uses; see CODE_CONVENTIONS §1).
     pub fn rebuild_border_buffers(&mut self, border_elements: &[BorderElement]) {
         self.border_buffers.clear();
-        self.rebuild_border_buffers_keyed(border_elements, None);
-    }
-
-    /// Keyed border rebuild. If `dirty_node_ids` is `Some`, only entries
-    /// whose `node_id` is in the set are re-shaped from scratch; clean
-    /// entries have only their position patched in place on the existing
-    /// cached buffers. Keys not present in `border_elements` are evicted
-    /// at the end of the call. If `dirty_node_ids` is `None`, everything
-    /// is treated as dirty (full re-shape).
-    ///
-    /// The keyed path is what keeps drag interactive: on a drag frame
-    /// that moves one node, only that node's border cache entry is
-    /// re-shaped. All other visible borders reuse their shaped
-    /// `cosmic_text::Buffer`s — cosmic-text shaping is the dominant cost
-    /// here, so skipping it for unmoved borders is the point.
-    pub fn rebuild_border_buffers_keyed(
-        &mut self,
-        border_elements: &[BorderElement],
-        dirty_node_ids: Option<&std::collections::HashSet<String>>,
-    ) {
-        let mut font_system = fonts::acquire_font_system_write("rebuild_border_buffers_keyed");
-
-        let mut seen: std::collections::HashSet<String> =
-            std::collections::HashSet::with_capacity(border_elements.len());
+        let mut font_system = fonts::acquire_font_system_write("rebuild_border_buffers");
 
         for elem in border_elements {
-            seen.insert(elem.node_id.clone());
-            let is_dirty = dirty_node_ids
-                .map(|set| set.contains(&elem.node_id))
-                .unwrap_or(true);
-
             let font_size = elem.border_style.font_size_pt;
             let specs = baumhard::mindmap::border::border_run_specs(
                 &elem.border_style,
@@ -63,34 +35,6 @@ impl Renderer {
                 elem.node_size,
             );
 
-            // Fast path: cached, clean, matching glyph count.
-            // Only `.pos` is patched in place — other buffer
-            // fields (including `zoom_visibility`) are
-            // structurally stable under drag, which is the only
-            // scenario `dirty_node_ids` ever excludes.
-            // `rebuild_border_buffers_keyed` call sites today
-            // pass `dirty_node_ids = None`, forcing the slow
-            // path; a future keyed-drag optimisation that
-            // actually takes this branch must also stamp any
-            // fields that can change between builds onto
-            // `existing[i]` here.
-            if !is_dirty {
-                if let Some(existing) = self.border_buffers.get_mut(&elem.node_id) {
-                    if existing.len() == 4 && (existing[0].bounds.0 - specs[0].bounds.0).abs() < 0.5 {
-                        for (i, spec) in specs.iter().enumerate() {
-                            existing[i].pos = spec.position;
-                        }
-                        continue;
-                    }
-                }
-            }
-
-            // Slow path: shape fresh through baumhard's
-            // styled-region → cosmic-text bridge. The same
-            // `(text, ColorFontRegions) → Vec<(&str, Attrs)>`
-            // path the tree walker uses
-            // (`tree_walker.rs:89,158`); see CODE_CONVENTIONS §1
-            // and the banner at the top of this file.
             let fallback_rgba = hex_to_rgba_safe(&elem.border_style.color, [1.0, 1.0, 1.0, 1.0]);
 
             let zv = elem.zoom_visibility;
@@ -134,8 +78,6 @@ impl Renderer {
             let entry: Vec<MindMapTextBuffer> = specs.iter().map(&mut shape_spec).collect();
             self.border_buffers.insert(elem.node_id.clone(), entry);
         }
-
-        self.border_buffers.retain(|k, _| seen.contains(k));
     }
 
     /// Rebuild the edge grab-handle overlay buffers. Called after every
@@ -183,17 +125,6 @@ impl Renderer {
         &mut self,
         label_elements: &[baumhard::mindmap::scene_builder::ConnectionLabelElement],
     ) {
-        // No keyed fast path today — labels are ≤ 1 per edge
-        // and cheap to reshape every scene build, so we clear
-        // and rebuild unconditionally. If a future optimisation
-        // adds a clean-cache branch here (mirroring
-        // `rebuild_border_buffers_keyed`), it must also stamp
-        // `elem.zoom_visibility` onto the preserved buffer —
-        // `zoom_visibility` is an author-authored field that
-        // changes via mutator or console edits independent of
-        // drag, so the drag-only "only .pos changes" assumption
-        // the border / connection fast paths rely on does not
-        // automatically hold for labels.
         self.connection_label_buffers.clear();
         self.connection_label_hitboxes.clear();
         if label_elements.is_empty() {
