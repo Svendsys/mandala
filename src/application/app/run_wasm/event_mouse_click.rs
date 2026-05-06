@@ -21,7 +21,7 @@
 
 #![cfg(target_arch = "wasm32")]
 
-use winit::event::ElementState;
+use crate::application::platform::input::ElementState;
 
 use super::PendingClick;
 use crate::application::app::click_triggers::fire_onclick_triggers;

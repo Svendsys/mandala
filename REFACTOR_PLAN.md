@@ -344,32 +344,55 @@ The wrapper exists (`lib/baumhard/src/font/`) but the renderer constructs
       `renderer/console_pass.rs`, `renderer/tree_walker.rs`,
       `renderer/render.rs`, `renderer/mod.rs:74,817` with the new factories.
 
-### 3.2 `winit` — create the wrapper that doesn't exist — DEFERRED
+### 3.2 `winit` — type-alias seam in `src/application/platform/` — SHIPPED
 
-The audit's recommendation here was a `src/application/platform/`
-module exposing neutral `Key` / `Modifiers` / `MouseButton` /
-`KeyEvent` / `WindowSurface` types. On inventory the leak surface
-turned out to be 23 files / 53 references — substantially larger
-than the audit's "~15 sites" estimate — and the leaked types
-include `ApplicationHandler`, `ActiveEventLoop`, `EventLoop`,
-`Event`, `Window`, `WindowId`, `CursorIcon`, `MouseScrollDelta`,
-`Modifiers`, `KeyEvent`, `NamedKey`, plus `PhysicalSize` /
-`PhysicalPosition` for dpi.
+The audit recommended a `src/application/platform/` module
+exposing neutral `Key` / `Modifiers` / `MouseButton` etc. so
+inward callers don't import `winit::*` directly.
 
-The leaf types (`Key`, `Modifiers`, `MouseButton`) are wrappable
-mechanically. The driver types (`ApplicationHandler`,
-`ActiveEventLoop`, `EventLoop`, `Event`) are winit's
-event-loop architecture itself; wrapping them means
-re-implementing the driver, which is the same work as actually
-swapping winit. The plan's own "Out of scope" section flags
-"Replacing wgpu/cosmic-text/winit with alternatives" as a
-separate effort — the wrapper IS the prerequisite for that.
+Initial inventory was ~23 files / 53 references with the leaked
+types splitting into two groups:
 
-Deferred until a use case (e.g. SDL on WASM, custom
-event-loop, native touch backend) makes the swap concrete. The
-remaining wrappers from Batch 3 (cosmic-text, wgpu, log, json,
-atomic-save) deliver the rest of the audit's wrapper-consolidation
-value; winit is the holdout.
+- **Driver layer** (`ApplicationHandler`, `ActiveEventLoop`,
+  `EventLoop`, `Event<()>`, `KeyEvent`, `Window`, `WindowId`):
+  winit's event-loop architecture itself. These stay winit-typed
+  in the bootstrap files (`run_native.rs`, `run_wasm/mod.rs`,
+  `app/mod.rs`) — they would be rewritten end-to-end for any
+  backend swap (SDL, custom WASM driver, native touch). Wrapping
+  them is the swap, not a prerequisite for it.
+
+- **Value types** (`Key`, `NamedKey`, `Modifiers`, `MouseButton`,
+  `MouseScrollDelta`, `ElementState`, `CursorIcon`,
+  `PhysicalPosition`, `PhysicalSize`, `SmolStr`): pass through
+  the bootstrap as parameters into per-event handlers, modal
+  editors, the keybind matcher. These are now type-aliased
+  through `crate::application::platform::input` and
+  `crate::application::platform::window`.
+
+Inward callers refactored to import via `platform::`:
+- `keybinds/bind.rs` (Key)
+- `app/text_edit/editor.rs` + `text_edit/tests.rs` (Key, NamedKey)
+- `app/label_edit.rs` (Key, NamedKey, SmolStr)
+- `app/console_input/dispatch.rs` (Key)
+- `app/color_picker_flow/click.rs` (MouseButton)
+- `app/event_keyboard.rs` (Key — driver still imports
+  ActiveEventLoop)
+- `app/event_mouse_click.rs` (ElementState, MouseButton)
+- `app/event_cursor_moved.rs` (CursorIcon, PhysicalPosition —
+  driver still imports Window for set_cursor)
+- `app/input_context.rs` + `input_context_core.rs` (Modifiers)
+- `app/mod.rs:389 route_label_edit_key` (Key)
+- `app/run_wasm/event_*.rs` (5 sibling files: Key, Modifiers,
+  MouseButton, ElementState, MouseScrollDelta, PhysicalPosition,
+  PhysicalSize)
+- `app/run_native_init.rs` (Modifiers — Window stays winit for
+  renderer surface construction)
+- `app/run_wasm/mod.rs` field type (Modifiers)
+
+Today the platform types are `pub use winit::*` aliases. The
+swap-readiness story: a future port that wants to replace winit
+edits two files (`platform/input.rs`, `platform/window.rs`) and
+the bootstrap dispatchers; every inward caller stays put.
 
 ### 3.3 `log` — single-source the logging facade
 22+ files import `log` directly. `main.rs` initialises both `env_logger` and

@@ -9,7 +9,7 @@
 
 #![cfg(target_arch = "wasm32")]
 
-use winit::event::MouseScrollDelta;
+use crate::application::platform::input::MouseScrollDelta;
 
 use super::PendingClick;
 use crate::application::app::scene_rebuild::rebuild_scene_only;

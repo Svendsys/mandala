@@ -386,11 +386,11 @@ fn click_hit_from_priority(
 /// Returns `true` iff a printable character was inserted.
 #[cfg(not(target_arch = "wasm32"))]
 pub(in crate::application::app) fn route_label_edit_key(
-    logical_key: &winit::keyboard::Key,
+    logical_key: &crate::application::platform::input::Key,
     buffer: &mut String,
     cursor: &mut usize,
 ) -> bool {
-    use winit::keyboard::Key;
+    use crate::application::platform::input::Key;
     if let Key::Character(c) = logical_key {
         // `Key::Character` payloads can carry IME / dead-key multi-
         // char sequences, so iterate. Control chars (and any non-

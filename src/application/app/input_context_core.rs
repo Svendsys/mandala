@@ -31,7 +31,7 @@
 //! methods (each `&mut Self` accessor closes over the whole self)
 //! tip the design toward a concrete struct with split borrows.
 
-use winit::keyboard::ModifiersState;
+use crate::application::platform::input::Modifiers as ModifiersState;
 
 use crate::application::document::MindMapDocument;
 use crate::application::keybinds::ResolvedKeybinds;

@@ -117,7 +117,7 @@ pub(super) struct WasmInputState {
     pub last_click: Option<LastClick>,
     pub cursor_pos: (f64, f64),
     pub pending_click: PendingClick,
-    pub modifiers: winit::keyboard::ModifiersState,
+    pub modifiers: crate::application::platform::input::Modifiers,
     /// Mirror of native's `app_scene` so the canvas-scene tree
     /// path (borders, eventually connections / portals) works
     /// identically on WASM. Threaded into every
@@ -632,7 +632,7 @@ pub(super) fn run(mut app: Application) {
                 last_click: None,
                 cursor_pos: (0.0, 0.0),
                 pending_click: PendingClick::None,
-                modifiers: winit::keyboard::ModifiersState::empty(),
+                modifiers: crate::application::platform::input::Modifiers::empty(),
                 app_scene: crate::application::scene_host::AppScene::new(),
                 scene_cache: baumhard::mindmap::scene_cache::SceneConnectionCache::new(),
                 macros,

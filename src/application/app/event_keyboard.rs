@@ -8,7 +8,8 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use winit::event_loop::ActiveEventLoop;
-use winit::keyboard::Key;
+
+use crate::application::platform::input::Key;
 
 use super::color_picker_flow::handle_color_picker_key;
 use super::console_input::handle_console_key;

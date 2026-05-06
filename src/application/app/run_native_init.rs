@@ -9,8 +9,9 @@ use std::sync::Arc;
 
 use baumhard::mindmap::tree_builder::MindMapTree;
 use pollster::block_on;
-use winit::keyboard::ModifiersState;
 use winit::window::Window;
+
+use crate::application::platform::input::Modifiers as ModifiersState;
 
 use super::console_input::load_console_history;
 use super::label_edit::{LabelEditState, PortalTextEditState};

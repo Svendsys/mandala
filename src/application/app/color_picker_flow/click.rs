@@ -4,7 +4,7 @@
 //! commit, standalone selection commit, drag-anchor gesture start,
 //! and mouse-up gesture release.
 
-use winit::event::MouseButton;
+use crate::application::platform::input::MouseButton;
 
 use crate::application::document::MindMapDocument;
 use crate::application::renderer::Renderer;

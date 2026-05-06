@@ -5,7 +5,7 @@
 //! / commit keystrokes through `route_label_edit_key`, and commits or
 //! cancels back to the model's `MindEdge.label` on Enter / Esc.
 
-use winit::keyboard::Key;
+use crate::application::platform::input::Key;
 
 use baumhard::util::grapheme_chad;
 
@@ -512,7 +512,7 @@ mod tests {
     use super::*;
     use crate::application::app::dispatch::apply_label_edit_action_to_buffer;
     use crate::application::keybinds::Action;
-    use winit::keyboard::{Key, SmolStr};
+    use crate::application::platform::input::{Key, SmolStr};
 
     fn ch(s: &str) -> Key {
         Key::Character(SmolStr::new(s))
@@ -678,7 +678,7 @@ mod tests {
     /// disable the key by clearing the binding.
     #[test]
     fn test_route_named_key_is_noop_post_phase_5() {
-        use winit::keyboard::NamedKey;
+        use crate::application::platform::input::NamedKey;
         let mut buf = String::from("abc");
         let mut cursor = 3;
         let changed = route_label_edit_key(&Key::Named(NamedKey::Backspace), &mut buf, &mut cursor);
@@ -697,7 +697,7 @@ mod tests {
     /// and must not panic.
     #[test]
     fn test_route_unhandled_key_is_noop() {
-        use winit::keyboard::NamedKey;
+        use crate::application::platform::input::NamedKey;
         let mut buf = String::from("abc");
         let mut cursor = 1;
         let changed = route_label_edit_key(&Key::Named(NamedKey::Shift), &mut buf, &mut cursor);
