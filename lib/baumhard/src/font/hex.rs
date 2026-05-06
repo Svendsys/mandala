@@ -22,8 +22,8 @@ use crate::util::color_conversion::{convert_f32_to_u8, convert_u8_to_f32, hex_to
 /// labels) rather than baking it into the parser.
 ///
 /// **Cost.** O(len) over the input string for the underlying
-/// `hex_to_rgba` walk plus four `(f32 * 255.0).round() as u8` casts;
-/// no heap allocation.
+/// `hex_to_rgba` walk plus a single [`cosmic_color_from_rgba`]
+/// quantisation; no heap allocation.
 pub fn hex_to_cosmic_color(color: &str) -> Option<cosmic_text::Color> {
     Some(cosmic_color_from_rgba(hex_to_rgba(color)?))
 }

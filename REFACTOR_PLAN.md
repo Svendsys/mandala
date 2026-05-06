@@ -263,48 +263,63 @@ deletions. Self-contained.
 
 ---
 
-## Batch 2 — One canonical Color (correctness fix)
+## Batch 2 — One canonical Color (correctness fix) — SHIPPED
 
 Cross-batch dependency: lands before Batches 4 and 6 to avoid touching the
 same files twice.
 
-The audit found three `Color`-shaped types in two crates plus four open-coded
-`u8↔f32` quantisation helpers, one of which (`Color::to_float`) is
-arithmetically wrong. Net goal: one canonical 8-bit-per-channel `Color` in
-`baumhard::util::color`, one canonical pair of converters
-(`Color::from_rgb_f32` / `Color::to_rgba_f32`), and a single re-export in
-`baumhard::font` for callers that need to interop with `cosmic_text::Color`.
+The audit found three `Color`-shaped types in two crates plus open-coded
+`u8↔f32` quantisation helpers (six in total — five flagged in the audit
+plus a sixth in `tree_builder/node.rs` surfaced during review), one of
+which (`Color::to_float`) was arithmetically wrong. Net goal: one
+canonical 8-bit-per-channel `Color` in `baumhard::util::color`, every
+quantisation routed through `convert_f32_to_u8` /
+`convert_u8_to_f32` (mirror primitives in
+`baumhard::util::color_conversion`), and the cosmic-text bridge
+contained inside `baumhard::font::hex` as free functions.
 
-- [ ] **Fix `Color::to_float`**: change `lib/baumhard/src/util/color.rs:250`
-      to `(self.rgba[i] as f32) / 255.0`. Drop the lossy doc-comment paragraph.
-      Add a property test asserting `to_float ∘ from_rgb_f32` round-trips
-      within `1.0/255.0`.
-- [ ] Audit every existing call site of `Color::to_float` for the bug — they
-      were silently getting `[0,0,0,1]` for any non-saturated input. Likely
-      candidates: anywhere a runtime-built `Color` is passed to a renderer
-      `f32` color slot.
-- [ ] **Delete `color_picker_overlay/color.rs::rgb_to_cosmic_color`** —
-      replace with `Color::from_rgb_f32(...).into_cosmic()` (add the
-      `Into<cosmic_text::Color>` impl on `baumhard::util::color::Color` if
-      not present).
-- [ ] **Delete
-      `color_picker_overlay/picker_glyph_areas/dynamic_context.rs:301
-      ::cosmic_to_rgba`** — replace with `Color::from_cosmic(c).to_rgba_f32()`.
-- [ ] **Delete
-      `color_picker_overlay/glyph_model.rs:65-75`** byte-quantisation loop —
-      replace with `Color::from_rgba_f32(&[r,g,b,a])`.
-- [ ] **Delete inline `[r,g,b,a]/255.0` conversions** at
-      `console_pass.rs:112-117`, `console_pass.rs:363-369`,
-      `render.rs:126-129` — replace with `Color::to_rgba_f32(&self)`.
-- [ ] Decide the duplicate-`Color` policy:
-      `lib/baumhard/src/util/color.rs::Color` vs
-      `lib/baumhard/src/font/` re-export of `cosmic_text::Color`. Two
-      `Color`s in one crate is over-abstraction. Recommendation: keep the
-      `util::color::Color` as the canonical project type; the `font::` layer
-      converts to `cosmic_text::Color` at the call boundary only. Remove
-      the `font::Color` re-export and update all `cosmic_text::Color::rgba(...)`
-      sites in the renderer (item list in Batch 3) to take `Color` first
-      and convert at the cosmic-text wall.
+**API-shape choice (departure from initial audit).** The audit
+initially proposed `Color::from_rgb_f32` / `to_rgba_f32` /
+`from_cosmic` / `Into<cosmic_text::Color>`. Instead the implementation
+chose free functions in `baumhard::font::hex`
+(`cosmic_color_from_rgba` / `cosmic_color_to_rgba`). Reasoning:
+adding `Color::from_cosmic` would force `util::color::Color` to know
+about `cosmic_text::Color`, breaking the dependency boundary that
+`util/` carefully maintains (cosmic-text only enters `font/`). The
+free-fn-in-`font::hex` shape matches the existing
+`hex_to_cosmic_color` pattern.
+
+- [x] Fix `Color::to_float` — now routes through `convert_u8_to_f32`.
+- [x] Audit every `Color::to_float` call site — one production caller
+      (`matrix.rs:199`) confirmed dead today (only reachable through
+      `GlyphModel`, which `tree_walker.rs` skips); three test callers
+      used `Color::black()` so the bug was never visible. Documented
+      in commit message.
+- [x] Replace `color_picker_overlay/color.rs::rgb_to_cosmic_color`
+      body with `cosmic_color_from_rgba`. The 3-line wrapper itself
+      was KEPT — 9 call sites in the picker need an opaque RGB triple,
+      and pinning `alpha = 1.0` once via this domain-named wrapper is
+      cleaner than `cosmic_color_from_rgba([r, g, b, 1.0])` everywhere.
+- [x] Replace `dynamic_context::cosmic_to_rgba` with
+      `cosmic_color_to_rgba` directly at the call site (function
+      deleted).
+- [x] `glyph_model.rs:65-75` byte-quantisation loop — moot (file
+      deleted in Batch 1).
+- [x] Replace inline `[r,g,b,a]/255.0` conversions at
+      `console_pass.rs:112-117`, `console_pass.rs:359-365`
+      (`to_rgba` closure inlined twice), `render.rs:125-130` (now
+      `convert_u8_to_f32(&rect.color)`).
+- [x] **Picker `make_area.rs:52-57` cosmic→f32 inline** — surfaced by
+      review, replaced with `cosmic_color_to_rgba(style.color)`.
+- [x] **`tree_builder/node.rs:223-228` f32→u8 open-coded loop** —
+      surfaced by review, replaced with `BaumhardColor::new_f32(&fc)`
+      (which routes through `convert_f32_to_u8`).
+- [ ] Duplicate-`Color` policy decision (deferred to Batch 3.1 by
+      design — the plan's own recommendation said "item list in
+      Batch 3"). The two `Color`s coexist today via the new
+      `font::hex` bridge functions, the same pattern
+      `hex_to_cosmic_color` uses. Removing the `font::Color`
+      re-export is part of growing the `font/` wrapper in Batch 3.1.
 
 ---
 

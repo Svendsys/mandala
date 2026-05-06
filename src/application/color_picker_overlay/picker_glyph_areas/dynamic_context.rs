@@ -292,8 +292,6 @@ impl<'a> PickerDynamicContext<'a> {
     }
 }
 
-/// Convert a `baumhard::font::Color` to `[f32; 4]` in `[0, 1]` — same
-
 impl<'a> SectionContext for PickerDynamicContext<'a> {
     fn field(&self, section: &str, index: usize, template: &CellField) -> GlyphAreaField {
         // Resolve the section string to the typed enum up front so

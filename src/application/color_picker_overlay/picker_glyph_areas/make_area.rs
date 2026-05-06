@@ -7,6 +7,7 @@
 
 use baumhard::core::primitives::ColorFontRegions;
 use baumhard::font::fonts::AppFont;
+use baumhard::font::hex::cosmic_color_to_rgba;
 use baumhard::gfx_structs::area::{GlyphArea, OutlineStyle};
 use glam::Vec2;
 
@@ -49,12 +50,7 @@ pub(super) fn make_area(
     );
     area.align_center = style.centered;
     area.outline = style.outline;
-    let rgba = [
-        style.color.r() as f32 / 255.0,
-        style.color.g() as f32 / 255.0,
-        style.color.b() as f32 / 255.0,
-        style.color.a() as f32 / 255.0,
-    ];
+    let rgba = cosmic_color_to_rgba(style.color);
     area.regions = ColorFontRegions::single_span(
         baumhard::util::grapheme_chad::count_grapheme_clusters(text),
         Some(rgba),

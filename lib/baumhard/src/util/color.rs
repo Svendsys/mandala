@@ -244,7 +244,8 @@ impl Color {
 
     /// Convert to [`FloatRgba`] by dividing each channel by 255.
     /// O(1), no heap. Inverse of [`Color::new_f32`] within rounding
-    /// slack of `1.0/255.0`.
+    /// slack of `0.5/255.0` (the half-byte from `.round()` in the
+    /// reverse direction).
     pub fn to_float(&self) -> FloatRgba {
         convert_u8_to_f32(&self.rgba)
     }

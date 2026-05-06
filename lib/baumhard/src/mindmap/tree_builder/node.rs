@@ -219,14 +219,7 @@ pub(super) fn mindnode_section_model(section: &MindSection, area: &GlyphArea) ->
             let font = r.font.unwrap_or(AppFont::Any);
             let color = r
                 .color
-                .map(|fc| {
-                    BaumhardColor::new_u8(&[
-                        (fc[0].clamp(0.0, 1.0) * 255.0).round() as u8,
-                        (fc[1].clamp(0.0, 1.0) * 255.0).round() as u8,
-                        (fc[2].clamp(0.0, 1.0) * 255.0).round() as u8,
-                        (fc[3].clamp(0.0, 1.0) * 255.0).round() as u8,
-                    ])
-                })
+                .map(|fc| BaumhardColor::new_f32(&fc))
                 .unwrap_or_else(BaumhardColor::black);
             (font, color)
         }
