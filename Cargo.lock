@@ -220,6 +220,8 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 name = "baumhard"
 version = "0.1.0"
 dependencies = [
+ "console_error_panic_hook",
+ "console_log",
  "cosmic-text",
  "criterion",
  "crossbeam-channel",
@@ -1617,11 +1619,8 @@ version = "0.1.0"
 dependencies = [
  "arboard",
  "baumhard",
- "console_error_panic_hook",
- "console_log",
  "cosmic-text",
  "criterion",
- "env_logger",
  "futures",
  "getrandom 0.4.2",
  "glam",

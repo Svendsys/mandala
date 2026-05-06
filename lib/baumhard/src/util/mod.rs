@@ -18,6 +18,10 @@ pub mod geometry;
 /// Grapheme-cluster aware text primitives — reach for these from
 /// the app crate rather than byte-indexing a `String` (§B3).
 pub mod grapheme_chad;
+/// Logger initialisation — `init()` selects the right backend per
+/// target. Macro callsites keep using `log::warn!` etc. directly,
+/// since `log` is the universal Rust facade.
+pub mod log;
 /// Hashable, `Eq`-able 2D float vector (each axis wrapped in
 /// `OrderedFloat`).
 pub mod ordered_vec2;
