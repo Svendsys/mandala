@@ -344,24 +344,32 @@ The wrapper exists (`lib/baumhard/src/font/`) but the renderer constructs
       `renderer/console_pass.rs`, `renderer/tree_walker.rs`,
       `renderer/render.rs`, `renderer/mod.rs:74,817` with the new factories.
 
-### 3.2 `winit` — create the wrapper that doesn't exist
-This is the largest leak in the workspace. ~15 sites import `winit::keyboard::*`,
-`winit::event::*`, `winit::dpi::*`, `winit::window::*`.
+### 3.2 `winit` — create the wrapper that doesn't exist — DEFERRED
 
-- [ ] Create `src/application/platform/` module containing
-      neutral `Key`, `Modifiers`, `MouseButton`, `KeyEvent`, `WindowSurface`
-      types. The neutral types should compile on both native and WASM
-      without `winit` being a leaf dep.
-- [ ] `platform::translate::from_winit_key(...)` is the only place
-      `winit::keyboard::Key` is touched.
-- [ ] Replace `winit` imports across `keybinds/bind.rs:15,196,197`,
-      `app/text_edit/editor.rs:14`, `app/label_edit.rs:8,515,681,700`,
-      `app/event_keyboard.rs:10,11`, `app/event_mouse_click.rs:10`,
-      `app/event_cursor_moved.rs:12,13`, `app/input_context.rs:13`,
-      `app/input_context_core.rs:34`, `console_input/dispatch.rs:9`,
-      `color_picker_flow/click.rs:7`, `app/mod.rs:126,393`. Renderer takes
-      `(width: u32, height: u32) + impl SurfaceProvider` rather than
-      `winit::dpi::PhysicalSize` + `winit::window::Window`.
+The audit's recommendation here was a `src/application/platform/`
+module exposing neutral `Key` / `Modifiers` / `MouseButton` /
+`KeyEvent` / `WindowSurface` types. On inventory the leak surface
+turned out to be 23 files / 53 references — substantially larger
+than the audit's "~15 sites" estimate — and the leaked types
+include `ApplicationHandler`, `ActiveEventLoop`, `EventLoop`,
+`Event`, `Window`, `WindowId`, `CursorIcon`, `MouseScrollDelta`,
+`Modifiers`, `KeyEvent`, `NamedKey`, plus `PhysicalSize` /
+`PhysicalPosition` for dpi.
+
+The leaf types (`Key`, `Modifiers`, `MouseButton`) are wrappable
+mechanically. The driver types (`ApplicationHandler`,
+`ActiveEventLoop`, `EventLoop`, `Event`) are winit's
+event-loop architecture itself; wrapping them means
+re-implementing the driver, which is the same work as actually
+swapping winit. The plan's own "Out of scope" section flags
+"Replacing wgpu/cosmic-text/winit with alternatives" as a
+separate effort — the wrapper IS the prerequisite for that.
+
+Deferred until a use case (e.g. SDL on WASM, custom
+event-loop, native touch backend) makes the swap concrete. The
+remaining wrappers from Batch 3 (cosmic-text, wgpu, log, json,
+atomic-save) deliver the rest of the audit's wrapper-consolidation
+value; winit is the holdout.
 
 ### 3.3 `log` — single-source the logging facade
 22+ files import `log` directly. `main.rs` initialises both `env_logger` and
