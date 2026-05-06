@@ -792,30 +792,58 @@ Add tests where complexity is high and coverage is thin. After Batch 1
 removed ~35 weak tests, the suite is leaner; this batch adds the targeted
 tests that pin actual invariants.
 
-- [ ] **`mindmap/portal_geometry.rs`** (339 LoC, 0 inline tests): add
-      `mindmap/tests/portal_geometry_tests.rs` covering anchor resolution,
-      pair endpoint inversion, and offset application.
-- [ ] **`mindmap/scene_cache.rs`** (439 LoC, 0 cache-primitive tests):
-      add `EdgeKey::new`, `clear`, eviction-on-edge-deletion, hit/miss
-      counter tests.
-- [ ] **`document/mutations/flower_layout.rs` &
-      `mutations/tree_cascade.rs`**: add per-variant undo round-trip
-      tests (`TEST_CONVENTIONS §T7`).
-- [ ] **Macro privilege fail-closed tests** (`format/macros.md`'s
-      threat model): assert `dispatch_macro` rejects `App`/`Map`/`Node`
-      tier sources on `ConsoleLine` and destructive `Action`s.
-- [ ] **`mindmap/animation.rs::tick_animations` + easing curves**: add
-      sample tests on the curve outputs and a `tick_animations` driver
-      test (currently only the JSON wire format is covered).
-- [ ] **`Color::to_float` round-trip** (after Batch 2): property test
-      asserting `from_rgb_f32 ∘ to_rgba_f32` round-trips within
-      `1.0/255.0`.
-- [ ] **`event_subscribers`** (`gfx_structs/tests/element_tests.rs:202-238`):
-      strengthen — drive an event through the element and assert the
-      subscriber observed it (current test only asserts `Vec::push`).
-- [ ] **`measure_glyph_ink_bounds_x_offset_from_advance_center`**
-      (`font/tests/fonts_tests.rs:94-109`): assert Tibetan svasti's
-      offset is non-zero and the Latin "A"'s offset is small (the
+- [x] **`mindmap/portal_geometry.rs`**: plan claimed 0 inline tests
+      but the file already had 9. Strengthened with 4 more pinning
+      documented edge cases: corner tie-break order
+      (`top > right > bottom > left`), non-finite `wrap_border_t`
+      fallback to 0, axis-aligned `default_border_t` exiting at
+      side midpoint regardless of aspect ratio, and outward-normal
+      cardinality at side midpoints.
+- [x] **`mindmap/scene_cache.rs`**: plan claimed 0 cache-primitive
+      tests but the file already had 11. Added 4 more pinning the
+      remaining gaps: `EdgeKey::new` mixed `&str`/`String` inputs,
+      `EdgeKey::from_edge` matching explicit `new`,
+      eviction-on-deletion clearing both endpoint buckets,
+      cache-miss being side-effect-free. (No hit/miss counter
+      API exists; the counter test was speculative.)
+- [x] **`document/mutations/flower_layout.rs` & `tree_cascade.rs`**:
+      added `apply_then_undo_restores_*` tests for both. Drives
+      `apply_custom_mutation` with a synthesised `CustomMutation`
+      carrying the matching `target_scope` (Children for flower,
+      SelfAndDescendants for cascade), asserts at least one
+      affected node moves, then `undo()` restores every position
+      to baseline.
+- [x] **Macro privilege fail-closed tests**: Map tier was already
+      covered (`map_tier_console_line_fail_closed_aborts_remaining_steps`
+      + `map_tier_destructive_action_fail_closed_aborts`). Added
+      symmetric coverage for App tier (both ConsoleLine and
+      destructive Action) and Inline tier ConsoleLine (the
+      highest-risk path for hostile mindmaps).
+- [x] **`mindmap/animation.rs` easing curves**: added
+      sample-value pins at `t = 0.25, 0.75` for all four easing
+      curves (catches a regression that swapped EaseIn/EaseOut
+      formulas — endpoint and midpoint tests would still pass) +
+      a 100-sample monotonicity sweep. `tick_animations` driver
+      test was already covered (`tests_mutations.rs:1343,1366,
+      1379,1393`); plan claim "only JSON wire format covered" was
+      stale.
+- [x] **`Color::to_float` round-trip**: added
+      `color_new_f32_to_float_round_trips_within_one_byte` —
+      property sweep across `[0,1]` with 0.05 step (~200k
+      combinations) asserting `Color::new_f32` → `to_float` round-
+      trips within `1/255 + epsilon`. The reverse direction
+      (u8 → f32 → u8) was already pinned in Batch 2.
+- [x] **`event_subscribers`**: added
+      `test_event_subscribers_observe_dispatched_event` — wires
+      a recorder closure into a subscriber, dispatches a known
+      `GlyphTreeEvent` via `accept_event`, and asserts the
+      recorder observed the right event type. Two-subscriber
+      case verifies fan-out.
+- [x] **`measure_glyph_ink_bounds_x_offset_from_advance_center`**:
+      strengthened — Latin "A" offset asserted within ±4 px (small,
+      symmetric glyph), Tibetan svasti offset asserted > 0.1 px
+      (catches the "helper returns 0 regardless of input"
+      regression). Was previously only asserting `is_finite()`. (the
       documented motivating bug); current test only rejects NaN.
 
 ---

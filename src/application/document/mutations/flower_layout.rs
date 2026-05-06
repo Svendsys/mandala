@@ -184,4 +184,70 @@ mod tests {
         assert_eq!(before.x, after.x);
         assert_eq!(before.y, after.y);
     }
+
+    /// Driving `flower-layout` through `apply_custom_mutation` —
+    /// the production dispatch path — pushes an undo entry that
+    /// restores every affected child's pre-apply position. Pins
+    /// the §T7 round-trip invariant for the handler-dispatch
+    /// branch: a Children-scoped mutation snapshots every child
+    /// at start, the handler mutates positions, and `undo()`
+    /// replays the snapshots back into the model.
+    #[test]
+    fn flower_layout_apply_then_undo_restores_child_positions() {
+        use baumhard::mindmap::custom_mutation::{CustomMutation, MutationBehavior, TargetScope};
+
+        let (mut doc, target_id, child_ids) = test_doc_with_children();
+        let baseline: Vec<(String, f64, f64)> = child_ids
+            .iter()
+            .map(|id| {
+                let n = doc.mindmap.nodes.get(id).unwrap();
+                (id.clone(), n.position.x, n.position.y)
+            })
+            .collect();
+
+        let cm = CustomMutation {
+            id: "flower-layout".to_string(),
+            name: "flower-layout".to_string(),
+            description: String::new(),
+            contexts: Vec::new(),
+            mutator: None,
+            target_scope: TargetScope::Children,
+            behavior: MutationBehavior::Persistent,
+            predicate: None,
+            document_actions: Vec::new(),
+            timing: None,
+        };
+        // Register the handler so `will_dispatch_to_handler`
+        // finds `flower-layout` and routes to `apply` directly.
+        crate::application::document::mutations::register_builtin_handlers(&mut doc);
+        // Mark `flower-layout` as App-tier so the handler-dispatch
+        // gate fires (otherwise `apply_custom_mutation` would take
+        // the declarative branch and skip our handler).
+        doc.mutation_sources.insert(
+            "flower-layout".to_string(),
+            crate::application::document::mutations_loader::MutationSource::App,
+        );
+        doc.apply_custom_mutation(&cm, &target_id, None);
+
+        // At least one child must have moved — otherwise the
+        // undo round-trip is vacuously satisfied and the test
+        // silently regresses to a no-op.
+        let any_moved = baseline.iter().any(|(id, x0, y0)| {
+            let n = doc.mindmap.nodes.get(id).unwrap();
+            (n.position.x - x0).abs() > 1e-6 || (n.position.y - y0).abs() > 1e-6
+        });
+        assert!(any_moved, "flower-layout must move at least one child");
+
+        // Undo: every child returns to its baseline position.
+        assert!(doc.undo(), "undo() should consume the CustomMutation entry");
+        for (id, x0, y0) in &baseline {
+            let n = doc.mindmap.nodes.get(id).unwrap();
+            assert!(
+                (n.position.x - x0).abs() < 1e-6 && (n.position.y - y0).abs() < 1e-6,
+                "child {id} did not restore: ({}, {}) vs baseline ({x0}, {y0})",
+                n.position.x,
+                n.position.y,
+            );
+        }
+    }
 }

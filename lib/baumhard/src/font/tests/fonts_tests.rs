@@ -103,9 +103,40 @@ pub fn do_measure_glyph_ink_bounds_x_offset_from_advance_center() {
         "\u{0FD5}",
         32.0,
     );
-    // Both are finite (no NaN, no inf).
-    assert!(latin.x_offset_from_advance_center().is_finite());
-    assert!(svasti.x_offset_from_advance_center().is_finite());
+    let latin_offset = latin.x_offset_from_advance_center();
+    let svasti_offset = svasti.x_offset_from_advance_center();
+
+    // Sanity floor: no NaN, no inf.
+    assert!(latin_offset.is_finite(), "Latin 'A' offset must be finite");
+    assert!(svasti_offset.is_finite(), "Tibetan svasti offset must be finite");
+
+    // Latin "A" sits near-symmetrically around the advance center
+    // — offset should be small relative to the glyph's advance.
+    // 1.0 px at 24pt is ~3% of the typical advance; tolerating up
+    // to 4 px covers font-specific kerning without admitting a
+    // genuine asymmetry. Pre-fix this returned `0` from a buggy
+    // helper; the assertion guards against that regression.
+    assert!(
+        latin_offset.abs() <= 4.0,
+        "Latin 'A' offset ({latin_offset}) should be small (≤ 4px) — \
+         the glyph is roughly symmetric around its advance center",
+    );
+
+    // Tibetan svasti (U+0FD5) is the documented motivating bug:
+    // its ink doesn't sit symmetrically around the advance
+    // center. Pre-fix the helper returned `0` for every glyph
+    // regardless of shape; a non-zero offset here pins the
+    // corrected shape. The actual measured offset depends on the
+    // font face used (≈0.24 px at 32pt with NotoSerifTibetan);
+    // the assertion threshold of 0.1 px catches the
+    // returns-zero-always regression while staying tolerant of
+    // font-version drift.
+    assert!(
+        svasti_offset.abs() > 0.1,
+        "Tibetan svasti offset ({svasti_offset}) should be non-zero — \
+         the glyph drifts off-center; a 0 result indicates the helper \
+         returned a uniform value regardless of input",
+    );
 }
 
 #[test]

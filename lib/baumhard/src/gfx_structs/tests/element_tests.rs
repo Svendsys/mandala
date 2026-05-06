@@ -162,3 +162,80 @@ pub fn do_event_subscribers_add_and_check() {
         &elem.subscribers_as_ref()[1],
     ));
 }
+
+#[test]
+fn test_event_subscribers_observe_dispatched_event() {
+    do_event_subscribers_observe_dispatched_event();
+}
+
+/// Drive an event through `accept_event` and assert the
+/// subscriber observed it. Pre-strengthening this test only
+/// pushed onto the subscriber `Vec`; nothing exercised the
+/// dispatch path (`TreeEventConsumer::accept_event` →
+/// closure invocation). Now we wire a closure that records
+/// what it saw, dispatch a known event, and verify the
+/// recording matches.
+///
+/// Pin: §6.5c (`apply_to(GfxElement)` filters `Event` and
+/// routes it via `accept_event`) — this test is the
+/// upstream-side validation that subscribers actually fire.
+pub fn do_event_subscribers_observe_dispatched_event() {
+    use crate::gfx_structs::mutator::GlyphTreeEvent;
+    use crate::gfx_structs::tree::TreeEventConsumer;
+
+    let mut elem = GfxElement::new_void_with_id(0, 0);
+
+    // Closure-shared recorder: each invocation pushes the
+    // dispatched event-type tag. Arc<Mutex<Vec>> so the
+    // closure can mutate observed state from inside the
+    // subscriber's Mutex<dyn FnMut>.
+    let observed: Arc<Mutex<Vec<GlyphTreeEvent>>> = Arc::new(Mutex::new(Vec::new()));
+    let observed_for_subscriber = observed.clone();
+    let subscriber: Arc<Mutex<dyn FnMut(&mut GfxElement, GlyphTreeEventInstance) + Send + Sync>> = Arc::new(
+        Mutex::new(move |_elem: &mut GfxElement, evt: GlyphTreeEventInstance| {
+            observed_for_subscriber
+                .lock()
+                .expect("recorder lock not poisoned")
+                .push(evt.event_type);
+        }),
+    );
+    elem.subscribers_mut().push(subscriber);
+
+    let event = GlyphTreeEventInstance::new(GlyphTreeEvent::AppEvent, 12345);
+    elem.accept_event(&event);
+
+    let recorded = observed.lock().expect("recorder lock not poisoned");
+    assert_eq!(recorded.len(), 1, "subscriber should fire exactly once");
+    assert_eq!(
+        recorded[0],
+        GlyphTreeEvent::AppEvent,
+        "subscriber should observe the event-type that was dispatched",
+    );
+
+    // Two subscribers, one event → both fire.
+    drop(recorded);
+    let observed_for_second = observed.clone();
+    let second: Arc<Mutex<dyn FnMut(&mut GfxElement, GlyphTreeEventInstance) + Send + Sync>> = Arc::new(
+        Mutex::new(move |_e: &mut GfxElement, evt: GlyphTreeEventInstance| {
+            observed_for_second
+                .lock()
+                .expect("recorder lock")
+                .push(evt.event_type);
+        }),
+    );
+    elem.subscribers_mut().push(second);
+    let event2 = GlyphTreeEventInstance::new(GlyphTreeEvent::CloseEvent, 67890);
+    elem.accept_event(&event2);
+
+    let recorded = observed.lock().expect("recorder lock");
+    assert_eq!(
+        recorded.len(),
+        3,
+        "first dispatch fired 1; second dispatch fires both subscribers"
+    );
+    // First sub saw AppEvent then CloseEvent; second sub saw CloseEvent only.
+    // Combined recording is [AppEvent, CloseEvent, CloseEvent] in dispatch order.
+    assert_eq!(recorded[0], GlyphTreeEvent::AppEvent);
+    assert_eq!(recorded[1], GlyphTreeEvent::CloseEvent);
+    assert_eq!(recorded[2], GlyphTreeEvent::CloseEvent);
+}

@@ -436,4 +436,86 @@ mod tests {
         cache.ensure_zoom(0.5);
         assert_eq!(cache.len(), 1);
     }
+
+    /// `EdgeKey::new` accepts mixed `&str` and `String` payloads via
+    /// `Into<String>`. Pins the constructor surface — callers
+    /// shouldn't have to know which side wants what.
+    #[test]
+    fn edge_key_new_accepts_mixed_str_and_string_inputs() {
+        let from = String::from("a");
+        let k1 = EdgeKey::new(&from, "b", "cross_link");
+        let k2 = EdgeKey::new("a", String::from("b"), "cross_link");
+        let k3 = EdgeKey::new(from.clone(), "b".to_string(), "cross_link");
+        assert_eq!(k1, k2);
+        assert_eq!(k1, k3);
+        assert_eq!(k1.from_id, "a");
+        assert_eq!(k1.to_id, "b");
+        assert_eq!(k1.edge_type, "cross_link");
+    }
+
+    /// `EdgeKey::from_edge` produces the same key as the
+    /// `EdgeKey::new(from, to, type)` triple constructed from the
+    /// edge's identity fields. Pins the round-trip — a regression
+    /// where `from_edge` looked at `to_id` first or used a different
+    /// edge_type would show up here.
+    #[test]
+    fn edge_key_from_edge_matches_explicit_new() {
+        let edge = crate::mindmap::test_helpers::synthetic_edge("alpha", "beta", "auto", "auto");
+        let k_from = EdgeKey::from_edge(&edge);
+        // `synthetic_edge` defaults edge_type to `cross_link`.
+        let k_new = EdgeKey::new("alpha", "beta", "cross_link");
+        assert_eq!(k_from, k_new);
+    }
+
+    /// Edge-deletion eviction: when a caller drops an edge from
+    /// the model, `invalidate_edge` must remove BOTH the cache
+    /// entry AND the reverse-index buckets for both endpoints.
+    /// A regression that forgot to clear `by_node` would leak
+    /// stale `EdgeKey`s in `edges_touching` results, which the
+    /// drag-drain consumes — leading to "ghost edges" that
+    /// repaint with no model backing.
+    #[test]
+    fn invalidate_edge_removes_from_both_endpoint_buckets_on_deletion() {
+        let mut cache = SceneConnectionCache::new();
+        let kept = EdgeKey::new("hub", "a", "cross_link");
+        let evicted = EdgeKey::new("hub", "b", "cross_link");
+        cache.insert(kept.clone(), mk_entry("#111"));
+        cache.insert(evicted.clone(), mk_entry("#222"));
+
+        cache.invalidate_edge(&evicted);
+
+        // Hub side: only the kept edge survives in the bucket.
+        let hub_bucket: std::collections::HashSet<&EdgeKey> =
+            cache.edges_touching("hub").iter().collect();
+        assert_eq!(hub_bucket.len(), 1);
+        assert!(hub_bucket.contains(&kept));
+        // Other endpoint's bucket is now empty.
+        assert!(cache.edges_touching("b").is_empty());
+        // Forward lookup is gone too.
+        assert!(cache.get(&evicted).is_none());
+        // Sibling edge is untouched.
+        assert!(cache.get(&kept).is_some());
+    }
+
+    /// Cache-miss semantics: `get` on an unknown key returns
+    /// `None` cleanly without mutating cache state. The drag-tick
+    /// hot path asks the cache "do you know this edge?" hundreds
+    /// of times per frame; a miss must be cheap and side-effect
+    /// free.
+    #[test]
+    fn get_on_missing_key_returns_none_without_side_effects() {
+        let mut cache = SceneConnectionCache::new();
+        let known = EdgeKey::new("a", "b", "cross_link");
+        cache.insert(known.clone(), mk_entry("#fff"));
+        let len_before = cache.len();
+
+        let missing = EdgeKey::new("x", "y", "cross_link");
+        assert!(cache.get(&missing).is_none());
+
+        // No phantom insertion on miss; reverse index untouched.
+        assert_eq!(cache.len(), len_before);
+        assert!(cache.edges_touching("x").is_empty());
+        assert!(cache.edges_touching("y").is_empty());
+        assert!(cache.get(&known).is_some());
+    }
 }

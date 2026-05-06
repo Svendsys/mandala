@@ -700,4 +700,45 @@ mod tests {
         assert!(f[2] > 0.19 && f[2] < 0.20, "blue 50/255 ≈ 0.196");
         assert_eq!(f[3], 1.0);
     }
+
+    /// `Color::new_f32` then `to_float` round-trips within
+    /// `1.0/255.0` — the rounding slack of 8-bit quantisation.
+    /// Property-style sweep across the unit interval (4096 sample
+    /// points per channel = 64⁴ ≈ 16M combinations is too slow;
+    /// step by 0.05 = 21⁴ ≈ 200k combinations runs in well under
+    /// a second). Pins the §6.1 invariant that f32-source colours
+    /// (sliders, picker outputs, theme variables) round-trip
+    /// cleanly through the 8-bit storage.
+    #[test]
+    fn color_new_f32_to_float_round_trips_within_one_byte() {
+        let slack = 1.0 / 255.0 + f32::EPSILON;
+        let mut steps = Vec::new();
+        let mut x = 0.0f32;
+        while x <= 1.0 {
+            steps.push(x);
+            x += 0.05;
+        }
+        steps.push(1.0);
+        for &r in &steps {
+            for &g in &steps {
+                for &b in &steps {
+                    for &a in &steps {
+                        let c = Color::new_f32(&[r, g, b, a]);
+                        let back = c.to_float();
+                        for (i, original) in [r, g, b, a].iter().enumerate() {
+                            let drift = (back[i] - *original).abs();
+                            assert!(
+                                drift <= slack,
+                                "channel {i} of {:?}: {} → {} drifted {}",
+                                [r, g, b, a],
+                                original,
+                                back[i],
+                                drift,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

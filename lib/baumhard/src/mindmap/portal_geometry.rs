@@ -336,4 +336,86 @@ mod tests {
             );
         }
     }
+
+    /// `wrap_border_t` must reject non-finite inputs to `0.0` —
+    /// otherwise NaN propagates through into glyph positions and
+    /// the user sees a blank render. Pin both NaN and infinity
+    /// branches.
+    #[test]
+    fn wrap_non_finite_inputs_fall_back_to_zero() {
+        assert_eq!(wrap_border_t(f32::NAN), 0.0);
+        assert_eq!(wrap_border_t(f32::INFINITY), 0.0);
+        assert_eq!(wrap_border_t(f32::NEG_INFINITY), 0.0);
+    }
+
+    /// Documented corner tie-break order in `nearest_border_t`:
+    /// at a corner, `top > right > bottom > left`. Pin the
+    /// top-left and top-right corners — both are equidistant
+    /// from "top" and one of {left, right}, and "top" should
+    /// win. Without this assertion a regression that swapped
+    /// the comparison branches would silently flip the
+    /// outward-normal direction at corners and change
+    /// label-outset behaviour.
+    #[test]
+    fn nearest_t_at_corners_resolves_top_first() {
+        let pos = Vec2::new(0.0, 0.0);
+        let size = Vec2::new(100.0, 50.0);
+        // Top-left corner (0, 0): equidistant from top (t=0) and
+        // left (t=3). Top-priority must win → t in [0, 1).
+        let t_tl = nearest_border_t(pos, size, Vec2::new(0.0, 0.0));
+        assert!(
+            (0.0..1.0).contains(&t_tl),
+            "top-left corner should resolve to top side (t in [0,1)); got t={t_tl}"
+        );
+        // Top-right corner (100, 0): equidistant from top (t=1)
+        // and right (t=1). Top-priority wins; t lands at the
+        // top-edge end (≈ 1.0 - epsilon clamp).
+        let t_tr = nearest_border_t(pos, size, Vec2::new(100.0, 0.0));
+        assert!(
+            t_tr < 1.0,
+            "top-right corner should resolve to top side (t < 1.0); got t={t_tr}"
+        );
+    }
+
+    /// `default_border_t` for an axis-aligned partner exits
+    /// through the centre of the corresponding side (not a
+    /// corner), regardless of the owner's aspect ratio. Pin the
+    /// invariant for a tall owner: north-facing partner exits at
+    /// the top-side midpoint (`t = 0.5`), east-facing at the
+    /// right-side midpoint (`t = 1.5`).
+    #[test]
+    fn default_t_axis_aligned_partner_exits_at_side_midpoint() {
+        // Tall owner: 50 wide × 200 tall.
+        let pos = Vec2::new(0.0, 0.0);
+        let size = Vec2::new(50.0, 200.0);
+
+        // Partner directly north → ray exits top edge midpoint.
+        let north = Vec2::new(25.0, -1000.0);
+        let t_n = default_border_t(pos, size, north);
+        assert!(
+            (t_n - 0.5).abs() < 1e-3,
+            "north partner should exit top midpoint (t=0.5); got t={t_n}"
+        );
+
+        // Partner directly east → ray exits right edge midpoint.
+        let east = Vec2::new(1000.0, 100.0);
+        let t_e = default_border_t(pos, size, east);
+        assert!(
+            (t_e - 1.5).abs() < 1e-3,
+            "east partner should exit right midpoint (t=1.5); got t={t_e}"
+        );
+    }
+
+    /// Outward normal at the side midpoints matches the
+    /// documented cardinal directions. The rendering path multiplies
+    /// the label outset by this normal; a regression that swapped
+    /// any pair would push labels into the node frame instead of
+    /// outside it.
+    #[test]
+    fn outward_normal_at_side_midpoints_is_cardinal() {
+        assert_eq!(border_outward_normal(0.5), Vec2::new(0.0, -1.0)); // top → up
+        assert_eq!(border_outward_normal(1.5), Vec2::new(1.0, 0.0));  // right → right
+        assert_eq!(border_outward_normal(2.5), Vec2::new(0.0, 1.0));  // bottom → down
+        assert_eq!(border_outward_normal(3.5), Vec2::new(-1.0, 0.0)); // left → left
+    }
 }
