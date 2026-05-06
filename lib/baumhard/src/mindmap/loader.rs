@@ -31,10 +31,15 @@ pub fn load_from_file(path: &Path) -> Result<MindMap, String> {
 /// ignore the unknown fields.
 ///
 /// Cost: one typed parse on the happy path. The legacy-shape
-/// detection runs as a `Value` walk only when the typed parse
+/// detection (`Value` walk) runs only when the typed parse
 /// fails OR when the typed result has zero-section nodes
 /// (`sections: []` is silently legal for serde but a current-
-/// invariant violation we surface as a migration hint).
+/// invariant violation we surface as a migration hint) OR when
+/// the cheap substring screen flags a dropped field. The
+/// substring screen requires the marker to be followed by `":`
+/// so node text containing the literal word "portals" or
+/// "text_runs" doesn't false-positive — JSON keys always have
+/// `":` after them.
 pub fn load_from_str(json: &str) -> Result<MindMap, String> {
     match serde_json::from_str::<MindMap>(json) {
         Ok(map) => {
@@ -46,8 +51,7 @@ pub fn load_from_str(json: &str) -> Result<MindMap, String> {
             //   (zero-section node, or the substring marker
             //   indicates a dropped field).
             if map.nodes.values().any(|n| n.sections.is_empty())
-                || json.contains("\"portals\"")
-                || json.contains("\"text_runs\"")
+                || has_legacy_marker(json)
             {
                 if let Some(err) = detect_legacy_shape(json) {
                     return Err(err);
@@ -67,6 +71,17 @@ pub fn load_from_str(json: &str) -> Result<MindMap, String> {
             Err(format!("Failed to parse mindmap JSON: {}", e))
         }
     }
+}
+
+/// Cheap pre-screen for the substring patterns that legacy JSON
+/// keys produce. Requires the trailing `":` so user text
+/// containing the literal word `"portals"` (e.g. a node titled
+/// `My "portals"`) doesn't trigger the deeper [`detect_legacy_shape`]
+/// pass — JSON keys always emit as `"key":`, while string
+/// content emits as `\"key\"` with escape backslashes that
+/// break the substring match.
+fn has_legacy_marker(json: &str) -> bool {
+    json.contains("\"portals\":") || json.contains("\"text_runs\":")
 }
 
 /// Inspect `json` for legacy field shapes that the typed parse

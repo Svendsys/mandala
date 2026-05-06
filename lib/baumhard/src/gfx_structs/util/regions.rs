@@ -29,6 +29,13 @@ pub use super::region_indexer::RegionIndexer;
 /// - `Poisoned`: the inner lock is poisoned — an earlier writer
 ///   panicked while holding it. The region state may be inconsistent;
 ///   the caller should not retry.
+///
+/// **Removed:** an earlier `Updating` variant signalled
+/// "lock-would-block" from the per-field `try_read` shape. After the
+/// 6-locks → 1-lock collapse (Batch 6 §6.4a), reads use a blocking
+/// `RwLock::read` that always succeeds (or returns `Poisoned`), so
+/// there is no longer a non-blocking failure mode to surface. Zero
+/// external callers matched on `Updating` at the time of removal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RegionError {
     /// One of the inputs (pixel, region index, rectangle bounds) is

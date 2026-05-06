@@ -23,11 +23,12 @@ pub const HIGHLIGHT_COLOR: [f32; 4] = [0.0, 0.9, 1.0, 1.0];
 ///
 /// `cm` is the source of truth for the mutation list (consumed
 /// at completion by `apply_custom_mutation`) and the
-/// `mutation_id` (re-trigger dedup key). `timing` is carved
-/// from `cm.timing` at construction so the per-frame projection
-/// is infallible — `cm.timing` is `Option` (most CustomMutations
-/// are instant), but a live `AnimationInstance` only exists
-/// when `cm.timing.is_some()` with `duration_ms > 0`.
+/// `mutation_id` (re-trigger dedup key). The stored `cm.timing`
+/// is **stripped** to `None` at construction (see
+/// `start_animation`) so this struct holds exactly one copy of
+/// the timing data, on `self.timing` — the field the per-frame
+/// tick reads. The original spec's `cm.timing` remains unchanged;
+/// the runtime instance just doesn't carry a redundant snapshot.
 #[derive(Debug, Clone)]
 pub struct AnimationInstance {
     /// Node id this animation targets.
