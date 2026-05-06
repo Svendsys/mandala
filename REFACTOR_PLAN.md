@@ -122,133 +122,133 @@ sessions can resume by reading it. Tick boxes are flipped as each item lands.
 
 ---
 
-## Batch 1 — Deletions (low-risk, immediate signal-to-noise win)
+## Batch 1 — Deletions (low-risk, immediate signal-to-noise win) — SHIPPED
 
 Pure removals; zero new abstractions. Each item is a `git rm` + a few callsite
 deletions. Self-contained.
 
 ### 1.1 Delete dead documentation
-- [ ] `TODO.md`: delete the entire "Shipped on this branch" + per-track
+- [x] `TODO.md`: delete the entire "Shipped on this branch" + per-track
       strikethrough lists (lines 8–137); replace with a 5-line pointer to
       git history. Keep only the one outstanding thread (filesystem-on-WASM)
       as a 4-line bullet.
-- [ ] `WASM_CONVERGENCE.md`: collapse Track B SHIPPED (lines 140–219) and
+- [x] `WASM_CONVERGENCE.md`: collapse Track B SHIPPED (lines 140–219) and
       Track C SHIPPED (lines 220–310) to one paragraph each. Remove commit
       hashes (`b60569a`, `37c2897`, `1fd2eeb`) — git log owns those.
-- [ ] `CONCEPTS.md §9 Glossary` (lines 2792–3087, ~16 KB): delete entirely.
+- [x] `CONCEPTS.md §9 Glossary` (lines 2792–3087, ~16 KB): delete entirely.
       The headings + table of contents in §1 already serve as an index.
-- [ ] `CONCEPTS.md §8 Named trajectory — vision` (lines 2683–2789, ~6 KB):
+- [x] `CONCEPTS.md §8 Named trajectory — vision` (lines 2683–2789, ~6 KB):
       delete; the per-concept `**Vision.**` blurbs cover the same ground
       with better local context (the doc itself admits the duplication at
       line 2697).
-- [ ] `CONCEPTS.md` "Status" / "shipped-tier" subsections inside concept
+- [x] `CONCEPTS.md` "Status" / "shipped-tier" subsections inside concept
       entries (e.g. `MindSection` lines 1039–1102, `SelectionState` lines
       1922–1965, `ThrottledInteraction` lines 2046–2065). These are
       changelogs in a reference doc.
-- [ ] `CONCEPTS.md §7 Platform & parity` (lines 2606–2680): delete; itself
+- [x] `CONCEPTS.md §7 Platform & parity` (lines 2606–2680): delete; itself
       points at `CLAUDE.md` as authoritative, then duplicates the parity
       surface anyway.
-- [ ] `CONCEPTS.md` "How to read an entry" (lines 38–56): delete the
+- [x] `CONCEPTS.md` "How to read an entry" (lines 38–56): delete the
       meta-template explanation; readers figure it out from the first
       entry.
-- [ ] `lib/baumhard/todo.txt`: delete the file. Fold the 1–2 still-relevant
+- [x] `lib/baumhard/todo.txt`: delete the file. Fold the 1–2 still-relevant
       items into `TODO.md`.
-- [ ] `format/migration.md` "TextRun ranges: code points → grapheme clusters"
+- [x] `format/migration.md` "TextRun ranges: code points → grapheme clusters"
       (lines 99–137): delete; migration story specific to a finished commit,
       readers never need it again.
 
 ### 1.2 Delete dead code
-- [ ] `Renderer` dead fields: `instance`, `adapter`, `surface_capabilities`,
+- [x] `Renderer` dead fields: `instance`, `adapter`, `surface_capabilities`,
       `texture_format`, `shaders`, `render_pipeline`, plus the
       `default_pipeline` build path inside `Renderer::new`
       (`src/application/renderer/mod.rs:250-266` and `:565-645`). Verify
       with `grep -rn 'self\.\(instance\|adapter\|shaders\|render_pipeline\)\b'`
       — should be zero hits after.
-- [ ] `lib/baumhard/src/shaders/shaders.rs:16-19`: collapse the two
+- [x] `lib/baumhard/src/shaders/shaders.rs:16-19`: collapse the two
       identical `SHADERS` table entries (both point at `test_shader.wgsl`)
       to one inline shader load.
-- [ ] `renderer/tree_buffers.rs` keyed-rebuild branch: confirm it has no
+- [x] `renderer/tree_buffers.rs` keyed-rebuild branch: confirm it has no
       callers (per `scene_buffers.rs:74-77` it does not), rip the keyed
       branch, the `dirty_node_ids: Option` parameter, and the `seen`
       bookkeeping — keep only the slow (full) path.
-- [ ] `color_picker_overlay/picker_glyph_areas/sections/title.rs` and
+- [x] `color_picker_overlay/picker_glyph_areas/sections/title.rs` and
       `hint.rs`: delete files. Remove `title_template_*` / `hint_text_*`
       from `widgets/color_picker.json`. Remove `title_pos` / `hint_pos`
       from `color_picker/layout.rs:57-59` and the
       `compute_positions.rs:103-107` calls.
-- [ ] `color_picker_overlay/glyph_model.rs`: delete file plus the
+- [x] `color_picker_overlay/glyph_model.rs`: delete file plus the
       `glyph_model_from_picker_area` model-attach loop in `trees.rs:53-59`.
       The renderer explicitly ignores these `GlyphModel` children — pure
       speculative seam (`CODE_CONVENTIONS §5 §7`).
-- [ ] `renderer/borders.rs:99-123, 133-157`: delete
+- [x] `renderer/borders.rs:99-123, 133-157`: delete
       `create_border_buffer_spans` and `create_centered_cell_buffer` —
       grep finds zero callers.
-- [ ] `renderer/hit.rs:222-292`: delete 3 of the 4 trivial
+- [x] `renderer/hit.rs:222-292`: delete 3 of the 4 trivial
       `find_first_aabb_hit_*` tests; keep the one substantive case.
-- [ ] `renderer/tree_walker.rs:200-258`: delete the two
+- [x] `renderer/tree_walker.rs:200-258`: delete the two
       `shape_one_element_*_yields_*` iterator-emit-count tautologies.
-- [ ] `crates/maptool/src/main.rs:269-271`: inline `show_node` at the
+- [x] `crates/maptool/src/main.rs:269-271`: inline `show_node` at the
       single call site (`run` line 129); delete the helper. The
       corresponding `show_returns_text_for_known_id` test moves to
       baumhard.
-- [ ] `crates/maptool/src/convert/sections.rs:64-66`: delete
+- [x] `crates/maptool/src/convert/sections.rs:64-66`: delete
       `migrate_one_node_legacy` (alias of `migrate_one_node`); promote
       `migrate_one_node` to `pub(super)`.
-- [ ] `lib/baumhard/src/gfx_structs/camera.rs:216-307`: delete the inline
+- [x] `lib/baumhard/src/gfx_structs/camera.rs:216-307`: delete the inline
       `#[cfg(test)] mod tests` (duplicate of `tests/camera_tests.rs`).
       Migrate the two `apply_mutation_*` tests over first if they're
       unique to the inline block.
-- [ ] `mindmap/scene_builder/builder.rs:105-137`: delete the 8-line
+- [x] `mindmap/scene_builder/builder.rs:105-137`: delete the 8-line
       `build_scene` and `build_scene_with_offsets` wrappers; callers use
       `build_scene_with_cache` directly with
       `SceneSelectionContext::default()`.
-- [ ] `gfx_structs/tree_walker.rs:74-76`: delete `walk_tree`; callers
+- [x] `gfx_structs/tree_walker.rs:74-76`: delete `walk_tree`; callers
       use `walk_tree_from(g, m, g.root, m.root)` (or — better — promote
       it to a method on `Tree`).
 
 ### 1.3 Tests that test framework / type system (delete)
-- [ ] `lib/baumhard/src/util/tests/primes_test.rs`: replace 1242 lines
+- [x] `lib/baumhard/src/util/tests/primes_test.rs`: replace 1242 lines
       with `for n in 2..10000 { assert_eq!(is_prime(n), reference_table.contains(&n)); }`
       (~10 lines, also adds the negative side).
-- [ ] `lib/baumhard/src/util/tests/ordered_vec2_tests.rs:5-11`:
+- [x] `lib/baumhard/src/util/tests/ordered_vec2_tests.rs:5-11`:
       `equals` test asserts `PartialEq` derive; delete.
-- [ ] `gfx_structs/tests/element_tests.rs:62-84, 113-129, 134-146,
+- [x] `gfx_structs/tests/element_tests.rs:62-84, 113-129, 134-146,
       167-182, 184-198`: delete or merge — all are getter / `PartialEq` /
       `Default` / `Clone` derive tests.
-- [ ] `gfx_structs/tests/spatial_descend_tests.rs:307-340`: merge the
+- [x] `gfx_structs/tests/spatial_descend_tests.rs:307-340`: merge the
       `MouseEventData::new`/`zero`/`extreme_values` trio into one assertion.
-- [ ] `gfx_structs/tests/zoom_visibility_tests.rs`: drop redundant
+- [x] `gfx_structs/tests/zoom_visibility_tests.rs`: drop redundant
       `min_only_is_inclusive` / `max_only_is_inclusive` /
       `closed_window_renders_inside_band` /
       `single_point_band_is_inclusive` quadruplet to one parametric test;
       delete `test_default_is_unbounded`.
-- [ ] `gfx_structs/tests/area_tests.rs:40-48` `test_outline_default_is_none`:
+- [x] `gfx_structs/tests/area_tests.rs:40-48` `test_outline_default_is_none`:
       delete (covered implicitly by non-default cases).
-- [ ] `mindmap/animation.rs:259-273`
+- [x] `mindmap/animation.rs:259-273`
       `test_animation_timing_serde_round_trip`: tests `serde` itself;
       delete or strengthen with non-`None` `then`.
-- [ ] `console/tests/state.rs:9-32` and `console/tests/grapheme.rs:13-21`:
+- [x] `console/tests/state.rs:9-32` and `console/tests/grapheme.rs:13-21`:
       delete the two getter-and-sentinel tests.
-- [ ] `font/tests/metrics_tests.rs:21-24, 45-55`: delete two pin-the-constant
+- [x] `font/tests/metrics_tests.rs:21-24, 45-55`: delete two pin-the-constant
       tests.
-- [ ] `mindmap/loader.rs:582-619`: consolidate `test_save_blank_map_round_trip`
+- [x] `mindmap/loader.rs:582-619`: consolidate `test_save_blank_map_round_trip`
       and `test_save_to_file_round_trip` to one parametric.
-- [ ] `mindmap/model/tests.rs`: collapse the six near-identical
+- [x] `mindmap/model/tests.rs`: collapse the six near-identical
       `*_zoom_window_round_trips` tests (lines 532, 549, 566, 584, 608,
       632) to one parametric test over the four `*ZoomWindow*`-bearing
       structs.
-- [ ] `crates/maptool/src/main.rs:629-697`: drop the `grep_regex_*` tests
+- [x] `crates/maptool/src/main.rs:629-697`: drop the `grep_regex_*` tests
       that exercise the `regex` crate (keep one smoke).
-- [ ] `crates/maptool/src/verify/mod.rs:80-117`: keep only the `Display`
+- [x] `crates/maptool/src/verify/mod.rs:80-117`: keep only the `Display`
       test, drop the three constructor-getter tests.
-- [ ] `keybinds/tests.rs`: collapse the six
+- [x] `keybinds/tests.rs`: collapse the six
       `test_default_config_has_*_actions` tests into one (or two: document vs
       modal) table-driven test.
-- [ ] `console/commands/mod.rs:101-144`: drop registry-presence tests
+- [x] `console/commands/mod.rs:101-144`: drop registry-presence tests
       (`cargo build` already enforces the const slice).
-- [ ] `macros/tests.rs:285-325`: collapse the four JSON-shape pinning tests
+- [x] `macros/tests.rs:285-325`: collapse the four JSON-shape pinning tests
       to one round-trip plus the existing default-target test.
-- [ ] `app/tests.rs:113-161`: delete `test_double_click_guard_*` —
+- [x] `app/tests.rs:113-161`: delete `test_double_click_guard_*` —
       reproduces the production predicate inline (passes regardless of
       drift).
 
@@ -328,18 +328,23 @@ free-fn-in-`font::hex` shape matches the existing
 Cross-batch dependency: Batches 4–8 read more naturally on top of this. Each
 sub-batch (3.1–3.5) is independently shippable.
 
-### 3.1 `cosmic_text` — grow the `font/` wrapper
+### 3.1 `cosmic_text` — grow the `font/` wrapper — SHIPPED
 The wrapper exists (`lib/baumhard/src/font/`) but the renderer constructs
 `cosmic_text::Buffer/Metrics/Shaping/Align/Color` directly at ~12 sites.
 
-- [ ] Add `font::buffer::create(metrics, attrs, shaping) -> Buffer` factory
+- [x] Add `font::buffer::create(metrics, attrs, shaping) -> Buffer` factory
       that bundles the typical `Metrics::new(font_size, line_height) +
       Buffer::new + set_attrs/set_text_with_shaping` shape.
-- [ ] Add `font::Color::WHITE`, `font::Color::BLACK` constants for the
-      `cosmic_text::Color::rgba(255,255,255,255)` literals at
-      `render.rs:99`, `mod.rs:817`, `tree_walker.rs:179`.
-- [ ] Add `font::shaping::ADVANCED` and `font::align::CENTER` re-exports.
-- [ ] Replace direct `cosmic_text::*` imports in
+- [x] Add `font::COLOR_WHITE` / `font::COLOR_BLACK` module-level
+      constants for the `cosmic_text::Color::rgba(255,255,255,255)`
+      literals at `render.rs:99`, `mod.rs:817`. (Module-level `pub
+      const` instead of associated consts on the foreign
+      `cosmic_text::Color` type — Rust forbids the latter via the
+      orphan rule.) The `tree_walker.rs:179` halo color stays
+      inline because its bytes come from the per-element
+      `OutlineStyle.color` field, not a fixed white.
+- [x] Add `font::shaping::ADVANCED` and `font::align::CENTER` re-exports.
+- [x] Replace direct `cosmic_text::*` imports in
       `renderer/borders.rs`, `renderer/scene_buffers.rs`,
       `renderer/console_pass.rs`, `renderer/tree_walker.rs`,
       `renderer/render.rs`, `renderer/mod.rs:74,817` with the new factories.
@@ -394,46 +399,70 @@ swap-readiness story: a future port that wants to replace winit
 edits two files (`platform/input.rs`, `platform/window.rs`) and
 the bootstrap dispatchers; every inward caller stays put.
 
-### 3.3 `log` — single-source the logging facade
-22+ files import `log` directly. `main.rs` initialises both `env_logger` and
-`console_log` directly.
+### 3.3 `log` — single-source the logging facade — SHIPPED
 
-- [ ] Add `lib/baumhard/src/util/log.rs` re-exporting
-      `info!/warn!/error!/debug!/trace!` plus a single
-      `init_logger(target: LogTarget)` function that selects between
-      `env_logger`/`console_log` based on platform.
-- [ ] Replace all 22+ direct `use log::*;` imports with
-      `use baumhard::util::log::*;` (or `use crate::log::*;` inside baumhard).
-- [ ] Remove `env_logger::init()` (`main.rs:79`) and
-      `console_log::init_with_level(...)` (`main.rs:89`) — call
-      `baumhard::util::log::init()` once.
+`main.rs` previously initialised `env_logger` (native) and
+`console_log` + `console_error_panic_hook` (WASM) directly. The
+audit additionally proposed wrapping the `log` macros themselves
+across 22+ callsites; this part was deliberately NOT done — `log`
+IS the universal Rust logging facade (`tracing`, `defmt`,
+structured collectors all implement `log::Log`), so wrapping its
+macros gains no portability while costing 22+ files of churn.
+Callsites keep `log::warn!` / `info!` / etc. directly.
 
-### 3.4 `wgpu` — bootstrap factories for the renderer
-- [ ] Add `Renderer::bootstrap_native(window: &impl SurfaceProvider) ->
-      Result<Self, RendererError>` and `Renderer::bootstrap_wasm(canvas)`
-      factories that own the `wgpu::Instance` construction.
-- [ ] Delete `use wgpu::Instance` from `app/run_native_init.rs:12` and
-      `app/run_wasm/mod.rs:39,521`.
+- [x] Add `lib/baumhard/src/util/log.rs` exposing a single `init()`
+      that selects between `env_logger` and
+      `console_log` + the panic-hook based on platform.
+- [x] (Deviation, documented in commit message + module doc-comment)
+      Keep callsite `use log::*` and `log::warn!(...)` idioms —
+      only the per-target init is unified, not the macro surface.
+- [x] Remove `env_logger::init()` and
+      `console_log::init_with_level(...)` from `main.rs`; the one
+      `init()` call replaces both. WASM-only deps (`console_log` +
+      `console_error_panic_hook`) move to baumhard's Cargo.toml
+      where the implementation lives.
 
-### 3.5 `serde_json` — thin format facade
-- [ ] Add `lib/baumhard/src/format/json.rs` exposing
-      `load_json<T>(s: &str) -> Result<T, JsonError>`,
-      `save_json<T>(...)`, `Value` re-export.
-- [ ] Convert `keybinds/config.rs:414`,
-      `macros/loader/mod.rs:58,71,85,88,149,227`,
-      `widgets/color_picker_widget.rs:161` to call the facade.
-- [ ] `mindmap/loader.rs` is borderline (it IS the on-disk format wrapper);
+### 3.4 `wgpu` — bootstrap factories for the renderer — SHIPPED
+
+- [x] Add `Renderer::bootstrap_native(window: Arc<Window>) -> Self`
+      (native) and `Renderer::bootstrap_wasm(window, canvas) -> Self`
+      (WASM) async factories that own the `wgpu::Instance` +
+      `Surface` construction. Signature differs from the audit's
+      proposed `&impl SurfaceProvider -> Result<Self, RendererError>`:
+      the renderer takes an `Arc<Window>` directly because that's
+      what `wgpu::Instance::create_surface` needs to keep alive
+      under wgpu 29 + winit 0.30 (raw-handle pre-snapshotting via
+      `SurfaceTargetUnsafe` blew up with `Hal(MissingDisplayHandle)`
+      on EGL/GL Linux).
+- [x] Delete `use wgpu::Instance` from `app/run_native_init.rs` and
+      `app/run_wasm/mod.rs`.
+
+### 3.5 `serde_json` — thin format facade — SHIPPED
+
+- [x] Add `lib/baumhard/src/format/json.rs` exposing
+      `parse<T>(s: &str) -> Result<T, String>`,
+      `parse_value<T>(v: Value) -> Result<T, String>`, and `Value`
+      re-export. Errors stringify; the typed-loader callers all
+      formatted their own error string anyway.
+- [x] Convert keybinds/config.rs (`from_json`),
+      macros/loader/mod.rs (`load_app_macros`,
+      `parse_user_macros_json`, `parse_map_macros`, the
+      Inline-tier loader), document/mutations_loader/mod.rs
+      (`parse_mutations_json`), and
+      widgets/color_picker_widget.rs (`load_spec`) to call the
+      facade.
+- [x] `mindmap/loader.rs` is borderline (it IS the on-disk format wrapper);
       either bless it as the canonical loader or route it through
       `format::json`.
 
-### 3.6 Atomic save (single-source from maptool to baumhard)
-- [ ] Move `crates/maptool/src/main.rs:577-608::save_map +
+### 3.6 Atomic save (single-source from maptool to baumhard) — SHIPPED
+- [x] Move `crates/maptool/src/main.rs:577-608::save_map +
       write_atomic` into `lib/baumhard/src/mindmap/loader.rs::save_to_file`.
       The atomic temp+rename and the `serde_json::Value`-routed pretty
       serializer become the canonical save (every editor session benefits).
-- [ ] Delete the duplicate `write_atomic` at
+- [x] Delete the duplicate `write_atomic` at
       `crates/maptool/src/convert/portals.rs:125-142` (use the new helper).
-- [ ] Update the test in `crates/maptool/src/main.rs:1313` to call the
+- [x] Update the test in `crates/maptool/src/main.rs:1313` to call the
       canonical helper; the byte-identical-across-runs test moves to
       baumhard.
 

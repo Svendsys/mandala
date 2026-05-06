@@ -468,16 +468,6 @@ impl MindMapDocument {
         scene_builder::build_scene(&self.mindmap, camera_zoom)
     }
 
-    /// Build a RenderScene with position offsets applied to specific nodes.
-    /// Used during drag to update connections and borders in real-time.
-    pub fn build_scene_with_offsets(
-        &self,
-        offsets: &HashMap<String, (f32, f32)>,
-        camera_zoom: f32,
-    ) -> RenderScene {
-        scene_builder::build_scene_with_offsets(&self.mindmap, offsets, camera_zoom)
-    }
-
     /// The four transient scene-builder overrides every "build_scene_*"
     /// entry point on this document threads through to
     /// `baumhard::mindmap::scene_builder`: selected edge (highlight —

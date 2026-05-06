@@ -1,20 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! RGB → cosmic-text conversion and highlight mixes shared by the
-//! picker's tree / mutator / area builders.
+//! Hover / selected highlight mixes shared by the picker's tree /
+//! mutator / area builders. RGB → cosmic-text quantisation goes
+//! through [`baumhard::font::color::cosmic_color_from_rgba`] directly
+//! at every callsite.
 
-use baumhard::font::hex::cosmic_color_from_rgba;
-
-/// Convert a normalized `[0, 1]` opaque RGB triple into a
-/// [`baumhard::font::Color`]. Used by the glyph-wheel color picker
-/// render path to paint each hue-ring slot, sat/val cell, and
-/// preview glyph at its own HSV coordinate without per-frame closure
-/// allocation. Routes through [`cosmic_color_from_rgba`] so quantisation
-/// stays single-sourced in the font wrapper.
-#[inline]
-pub(super) fn rgb_to_cosmic_color(rgb: [f32; 3]) -> baumhard::font::Color {
-    cosmic_color_from_rgba([rgb[0], rgb[1], rgb[2], 1.0])
-}
+use baumhard::font::color::cosmic_color_from_rgba;
 
 /// Linear mix of `rgb` toward white by `t` ∈ `[0, 1]`. `t = 0` is the
 /// input untouched; `t = 1` is pure white. Shared by the picker's
@@ -34,7 +25,8 @@ fn mix_toward_white(rgb: [f32; 3], t: f32) -> [f32; 3] {
 /// hue-saturated base color.
 #[inline]
 pub(super) fn highlight_selected_cell_color(rgb: [f32; 3]) -> baumhard::font::Color {
-    rgb_to_cosmic_color(mix_toward_white(rgb, 0.6))
+    let mixed = mix_toward_white(rgb, 0.6);
+    cosmic_color_from_rgba([mixed[0], mixed[1], mixed[2], 1.0])
 }
 
 /// Highlight a cell under the cursor. Distinct from the selected-
@@ -47,5 +39,6 @@ pub(super) fn highlight_selected_cell_color(rgb: [f32; 3]) -> baumhard::font::Co
 /// character becomes hard to read.
 #[inline]
 pub(super) fn highlight_hovered_cell_color(rgb: [f32; 3]) -> baumhard::font::Color {
-    rgb_to_cosmic_color(mix_toward_white(rgb, 0.4))
+    let mixed = mix_toward_white(rgb, 0.4);
+    cosmic_color_from_rgba([mixed[0], mixed[1], mixed[2], 1.0])
 }

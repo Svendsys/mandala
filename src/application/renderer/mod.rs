@@ -550,7 +550,7 @@ impl Renderer {
         Self::new(instance, surface, window).await
     }
 
-    pub async fn new(instance: Instance, surface: Surface<'static>, window: Arc<Window>) -> Renderer {
+    pub(crate) async fn new(instance: Instance, surface: Surface<'static>, window: Arc<Window>) -> Renderer {
         let adapter = Self::get_adapter(&instance, &surface).await;
         let (device, queue) = Self::get_device(&adapter).await;
         let swapchain_format = TextureFormat::Bgra8UnormSrgb;

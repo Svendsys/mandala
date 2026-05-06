@@ -6,6 +6,7 @@
 //! currently-selected cell glowing 60% toward white and the hovered
 //! cell glowing 40% toward white + scaled up.
 
+use baumhard::font::color::cosmic_color_from_rgba;
 use baumhard::gfx_structs::area::OutlineStyle;
 
 use super::super::areas::{PickerAreas, PickerSection};
@@ -15,7 +16,7 @@ use crate::application::color_picker::{
     ColorPickerOverlayGeometry, PickerHit, CROSSHAIR_CENTER_CELL, SAT_CELL_COUNT,
 };
 use crate::application::color_picker_overlay::color::{
-    highlight_hovered_cell_color, highlight_selected_cell_color, rgb_to_cosmic_color,
+    highlight_hovered_cell_color, highlight_selected_cell_color,
 };
 use crate::application::widgets::color_picker_widget::ColorPickerWidgetSpec;
 use baumhard::util::color::hsv_to_rgb;
@@ -47,7 +48,7 @@ pub(in crate::application::color_picker_overlay::picker_glyph_areas) fn build(
         } else if i == current_sat_cell {
             highlight_selected_cell_color(base_rgb)
         } else {
-            rgb_to_cosmic_color(base_rgb)
+            cosmic_color_from_rgba([base_rgb[0], base_rgb[1], base_rgb[2], 1.0])
         };
         let glyph = if i < CROSSHAIR_CENTER_CELL {
             arm_left_glyphs()[i]

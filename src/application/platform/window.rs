@@ -4,13 +4,12 @@
 //! position. The actual `Window` handle the renderer needs lives
 //! at the bootstrap layer (winit-typed) — only the value-shaped
 //! companions live here.
-//!
-//! `#[allow(unused_imports)]`: `PhysicalSize` is only consumed by
-//! WASM-gated callers; the export stays unconditional so the
-//! platform-shape API is complete on every target.
-
-#![allow(unused_imports)]
 
 pub use winit::dpi::PhysicalPosition;
-pub use winit::dpi::PhysicalSize;
 pub use winit::window::CursorIcon;
+
+/// Surface-size payload — only the WASM resize handler routes
+/// through this seam; native handles `WindowEvent::Resized` at
+/// its driver dispatcher.
+#[cfg(target_arch = "wasm32")]
+pub use winit::dpi::PhysicalSize;

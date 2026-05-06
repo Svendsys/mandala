@@ -12,12 +12,19 @@
 /// [`attrs::rich_text_spans_from_regions`] for
 /// `Buffer::set_rich_text`).
 pub mod attrs;
+/// Float-RGBA ↔ `cosmic_text::Color` bridge — the boundary helpers
+/// every render path uses to hand cosmic-text a colour or read one
+/// back. Single source of byte↔float quantisation at the cosmic-text
+/// wall.
+pub mod color;
 /// Compiled-in font table, shared `FONT_SYSTEM`, cosmic-text editor
 /// factories, and the text-measurement primitives.
 pub mod fonts;
 /// Hex-string → `cosmic_text::Color` bridge — the single entry point
 /// renderer code uses to resolve a theme-variable hex into the
 /// cosmic-text colour type without importing `cosmic_text` itself.
+/// Routes through [`color::cosmic_color_from_rgba`] for the actual
+/// quantisation.
 pub mod hex;
 /// Font-metric approximations (`monospace_advance` + the underlying
 /// `MONOSPACE_ADVANCE_RATIO`) usable without a live `FontSystem`.

@@ -11,7 +11,7 @@ use std::sync::OnceLock;
 
 use baumhard::core::primitives::ColorFontRegions;
 use baumhard::font::fonts::AppFont;
-use baumhard::font::hex::cosmic_color_to_rgba;
+use baumhard::font::color::{cosmic_color_from_rgba, cosmic_color_to_rgba};
 use baumhard::gfx_structs::area::GlyphAreaField;
 use baumhard::util::color::{hsv_to_hex, hsv_to_rgb};
 use baumhard::util::grapheme_chad::count_grapheme_clusters;
@@ -22,7 +22,7 @@ use crate::application::color_picker::{
     VAL_CELL_COUNT,
 };
 use crate::application::color_picker_overlay::color::{
-    highlight_hovered_cell_color, highlight_selected_cell_color, rgb_to_cosmic_color,
+    highlight_hovered_cell_color, highlight_selected_cell_color,
 };
 use crate::application::widgets::color_picker_widget::load_spec;
 use baumhard::mutator_builder::{CellField, SectionContext};
@@ -53,7 +53,7 @@ impl CellColor {
     fn new(rgb: [f32; 3]) -> Self {
         Self {
             rgb,
-            color: rgb_to_cosmic_color(rgb),
+            color: cosmic_color_from_rgba([rgb[0], rgb[1], rgb[2], 1.0]),
         }
     }
 }
@@ -213,7 +213,7 @@ pub(super) struct PickerDynamicContext<'a> {
 impl<'a> PickerDynamicContext<'a> {
     pub(super) fn new(geometry: &'a ColorPickerOverlayGeometry, layout: &'a ColorPickerLayout) -> Self {
         let preview_rgb = hsv_to_rgb(geometry.hue_deg, geometry.sat, geometry.val);
-        let preview_color = rgb_to_cosmic_color(preview_rgb);
+        let preview_color = cosmic_color_from_rgba([preview_rgb[0], preview_rgb[1], preview_rgb[2], 1.0]);
 
         let current_sat_cell = (geometry.sat * (SAT_CELL_COUNT as f32 - 1.0))
             .round()

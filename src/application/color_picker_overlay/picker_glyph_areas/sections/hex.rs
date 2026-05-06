@@ -11,7 +11,7 @@ use baumhard::gfx_structs::area::OutlineStyle;
 use super::super::areas::{PickerAreas, PickerSection};
 use super::super::make_area::{make_area, PickerAreaStyle};
 use crate::application::color_picker::{picker_channel, ColorPickerLayout, ColorPickerOverlayGeometry};
-use crate::application::color_picker_overlay::color::rgb_to_cosmic_color;
+use baumhard::font::color::cosmic_color_from_rgba;
 use baumhard::util::color::{hsv_to_hex, hsv_to_rgb};
 
 pub(in crate::application::color_picker_overlay::picker_glyph_areas) fn build(
@@ -21,7 +21,7 @@ pub(in crate::application::color_picker_overlay::picker_glyph_areas) fn build(
     outline: Option<OutlineStyle>,
 ) {
     let preview_rgb = hsv_to_rgb(geometry.hue_deg, geometry.sat, geometry.val);
-    let preview_color = rgb_to_cosmic_color(preview_rgb);
+    let preview_color = cosmic_color_from_rgba([preview_rgb[0], preview_rgb[1], preview_rgb[2], 1.0]);
     let font_size = layout.font_size;
 
     let (hex_text, hex_pos, hex_bounds) = match layout.hex_pos {
