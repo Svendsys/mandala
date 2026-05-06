@@ -198,13 +198,20 @@ deletions. Self-contained.
       `#[cfg(test)] mod tests` (duplicate of `tests/camera_tests.rs`).
       Migrate the two `apply_mutation_*` tests over first if they're
       unique to the inline block.
-- [x] `mindmap/scene_builder/builder.rs:105-137`: delete the 8-line
-      `build_scene` and `build_scene_with_offsets` wrappers; callers use
-      `build_scene_with_cache` directly with
-      `SceneSelectionContext::default()`.
-- [x] `gfx_structs/tree_walker.rs:74-76`: delete `walk_tree`; callers
-      use `walk_tree_from(g, m, g.root, m.root)` (or — better — promote
-      it to a method on `Tree`).
+- [~] `mindmap/scene_builder/builder.rs:105-137`: ~~delete the 8-line
+      `build_scene` and `build_scene_with_offsets` wrappers~~ — KEPT
+      per CLAUDE.md §3 deviation (Batch 1 commit). The wrappers hide
+      6+ default arguments at 7-15 call sites; deleting them would
+      require expanding boilerplate at every call rather than
+      contracting it. `build_scene_with_cache` remains the canonical
+      slow-path entry, the wrappers are thin adapters.
+- [~] `gfx_structs/tree_walker.rs:74-76`: ~~delete `walk_tree`~~ —
+      KEPT per CLAUDE.md §3 deviation (Batch 1 commit). Same
+      rationale as `build_scene`: the wrapper hides repeated
+      arguments at multiple call sites. The "promote it to a method
+      on `Tree`" alternative the plan suggested is the right next
+      step if the wrapper grows further; out of scope for the
+      deletion-only Batch 1.
 
 ### 1.3 Tests that test framework / type system (delete)
 - [x] `lib/baumhard/src/util/tests/primes_test.rs`: replace 1242 lines
