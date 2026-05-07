@@ -130,7 +130,12 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
             warm_handle_tree_arenas(&mut app_scene);
             // Restamp the load-time empty signature so the
             // canvas state at load-end is the empty-handles state
-            // rather than the synthetic 8-handle one.
+            // rather than the synthetic 8-handle one. The later
+            // `rebuild_all` would do this again via
+            // `rebuild_scene_only`, but we re-stamp here too so
+            // correctness doesn't depend on `rebuild_all` running
+            // — if a future change makes it conditional or moves
+            // it, the canvas state stays well-defined.
             update_edge_handle_tree(&scene, &mut app_scene);
             update_section_resize_handle_tree(&scene, &mut app_scene);
             update_node_resize_handle_tree(&scene, &mut app_scene);

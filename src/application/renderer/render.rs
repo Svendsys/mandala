@@ -430,17 +430,43 @@ impl Renderer {
     ///
     /// The original `prewarm_atlas` skipped the render pass to
     /// avoid `atlas.trim()` evicting freshly warmed glyphs. The
-    /// concern was unfounded: `trim()` only evicts glyphs that
-    /// weren't pinned by the *just-drawn* frame, and a real
-    /// render pass pins every glyph it draws — so trimming after
-    /// a real render is a no-op for the warmed set.
+    /// concern was unfounded but for a reason worth stating
+    /// precisely: glyphon's `TextAtlas::trim()` doesn't evict at
+    /// all — it just clears the per-frame `glyphs_in_use` set
+    /// (text_atlas.rs `mask_atlas.trim` / `color_atlas.trim`
+    /// are `self.glyphs_in_use.clear()`). The glyph cache itself
+    /// only evicts under packer pressure inside `try_allocate`,
+    /// and the `glyphs_in_use` set is populated by
+    /// `text_renderer.prepare()` — not `render()`. So warmed
+    /// glyphs sit in the LRU cache regardless of whether a draw
+    /// happened, and the prior atlas-only path was already safe;
+    /// what the full render adds is shader compile and the
+    /// swapchain allocation, which `prepare` alone doesn't reach.
     ///
     /// Caller must have already populated the canvas-scene buffers
     /// (`flush_canvas_scene_buffers`) and dispatched
     /// `RenderDecree::StartRender`. If buffers are empty (doc-load
     /// failure path) this is a cheap no-op (one empty draw + one
     /// blank present).
+    ///
+    /// **Failure handling.** The whole call is wrapped in
+    /// `catch_unwind`: prewarm runs *before the window is
+    /// visible*, so if the first render's pipeline compile or
+    /// `frame.present()` panics on a flaky driver, we'd otherwise
+    /// abort startup with no UI feedback. `render()`'s own surface-
+    /// acquisition failures already early-return cleanly (see
+    /// `render()`'s `get_current_texture` match), but anything
+    /// deeper in wgpu/glyphon that panics would propagate. Catching
+    /// the panic and continuing means a degraded first frame
+    /// instead of a dead app — the next real `process()` cycle
+    /// retries from a known state.
     pub fn prewarm(&mut self) {
-        self.render();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.render()));
+        if result.is_err() {
+            log::warn!(
+                "renderer.prewarm: first render panicked; continuing with cold pipelines. \
+                 First user interaction may show a one-frame stutter."
+            );
+        }
     }
 }

@@ -647,7 +647,10 @@ pub(super) fn run(mut app: Application) {
                     warm_handle_tree_arenas(&mut init_app_scene);
                     // Restamp the empty-handle signatures so the
                     // load-end canvas state matches what's on
-                    // screen.
+                    // screen. The later `rebuild_all` re-stamps
+                    // these via `rebuild_scene_only`, but we do it
+                    // here too so correctness doesn't depend on
+                    // `rebuild_all` running.
                     update_edge_handle_tree(&scene, &mut init_app_scene);
                     update_section_resize_handle_tree(&scene, &mut init_app_scene);
                     update_node_resize_handle_tree(&scene, &mut init_app_scene);

@@ -184,6 +184,32 @@ mod tests {
             &SelectionState::Single("b".into())
         ));
     }
+
+    /// Construction-side panic guard for the load-time pre-warm.
+    /// `warm_handle_tree_arenas` runs synchronously before the
+    /// window is visible, so a panic here aborts startup. The
+    /// synthetic data uses stub `EdgeKey`s and empty `node_id`s;
+    /// if any future change to those constructors adds validation
+    /// that rejects the stubs, we want the failure to land in
+    /// `cargo test` rather than on the user's first launch.
+    #[test]
+    fn warm_handle_tree_arenas_does_not_panic_on_fresh_scene() {
+        let mut app_scene = crate::application::scene_host::AppScene::new();
+        super::warm_handle_tree_arenas(&mut app_scene);
+        // Sanity: all three handle roles have a registered tree
+        // (the synthetic stamp). Caller is responsible for any
+        // empty re-stamp that follows; this test only verifies
+        // the warm itself didn't blow up.
+        assert!(app_scene
+            .canvas_id(crate::application::scene_host::CanvasRole::NodeResizeHandles)
+            .is_some());
+        assert!(app_scene
+            .canvas_id(crate::application::scene_host::CanvasRole::SectionResizeHandles)
+            .is_some());
+        assert!(app_scene
+            .canvas_id(crate::application::scene_host::CanvasRole::EdgeHandles)
+            .is_some());
+    }
 }
 
 pub(in crate::application::app) fn rebuild_all(
