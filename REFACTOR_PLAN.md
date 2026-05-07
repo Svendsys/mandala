@@ -498,10 +498,10 @@ Callsites keep `log::warn!` / `info!` / etc. directly.
       variant is the superset.
 
 ### 4.2 Connection / label scene-building — SHIPPED
-- [ ] Extract `compute_label_layout` from the duplicated
+- [x] Extract `compute_label_layout` from the duplicated
       synthesised-label pass (`mindmap/scene_builder/label.rs:177-253`,
       ~80 lines repeated verbatim).
-- [ ] Extract `emit_connection_element` from the cache-hit / translate /
+- [x] Extract `emit_connection_element` from the cache-hit / translate /
       slow paths (`mindmap/scene_builder/connection.rs:155-192, 259-308,
       376-408`) — same `cap_start/cap_end + glyph_positions` filter +
       `ConnectionElement` push three times.
