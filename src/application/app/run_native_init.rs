@@ -17,9 +17,9 @@ use super::console_input::load_console_history;
 use super::label_edit::{LabelEditState, PortalTextEditState};
 use super::run_native::InitState;
 use super::scene_rebuild::{
-    flush_canvas_scene_buffers, update_border_tree_static, update_connection_label_tree,
-    update_connection_tree, update_edge_handle_tree, update_node_resize_handle_tree,
-    update_portal_tree, update_section_resize_handle_tree,
+    flush_canvas_scene_buffers, rebuild_all, update_border_tree_static, update_connection_label_tree,
+    update_connection_tree, update_edge_handle_tree, update_node_resize_handle_tree, update_portal_tree,
+    update_section_resize_handle_tree, warm_handle_tree_arenas,
 };
 use super::text_edit::TextEditState;
 use super::{AppMode, DragState, Options};
@@ -118,6 +118,22 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
             update_edge_handle_tree(&scene, &mut app_scene);
             update_section_resize_handle_tree(&scene, &mut app_scene);
             update_node_resize_handle_tree(&scene, &mut app_scene);
+            // Synthetic-handle allocator warm: feed the handle-tree
+            // dispatch path 8-element slices once so its arena
+            // allocates from cold pools at load instead of on the
+            // user's first selection. Doesn't help signature
+            // matching (the user-state signature still differs),
+            // but the cosmic-text BufferLine pools and arena
+            // bumpers used inside `build_handle_tree` are warm
+            // when the first real selection lands, cutting the
+            // FullRebuild cost.
+            warm_handle_tree_arenas(&mut app_scene);
+            // Restamp the load-time empty signature so the
+            // canvas state at load-end is the empty-handles state
+            // rather than the synthetic 8-handle one.
+            update_edge_handle_tree(&scene, &mut app_scene);
+            update_section_resize_handle_tree(&scene, &mut app_scene);
+            update_node_resize_handle_tree(&scene, &mut app_scene);
             flush_canvas_scene_buffers(&mut app_scene, &mut renderer);
 
             mindmap_tree = Some(tree);
@@ -131,12 +147,32 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
     // Start rendering.
     renderer.process_decree(RenderDecree::StartRender);
 
-    // Pre-warm the glyph atlas: rasterize and upload every visible
-    // glyph to the GPU atlas before the first user-driven frame.
-    // Without this, `text_renderer.prepare()` lazily uploads on the
-    // first `render()`, which can drop the first frame on large
-    // maps. No-op if document load failed (buffers are empty).
-    renderer.prewarm_atlas();
+    // Pre-warm allocators on the rebuild_all critical path: the
+    // first user-triggered selection / tree-mutating drag runs
+    // `rebuild_all` (build_tree → apply_tree_highlights →
+    // rebuild_buffers_from_tree → rebuild_scene_only) from a fresh
+    // process state, paying cold-allocator costs on every cosmic-
+    // text Buffer reshape. Running it once here at load warms the
+    // BufferLine pools, the Tree arena, and the per-role canvas-
+    // signature stamps so the first user-visible rebuild only
+    // pays the diffing-cost portion.
+    if let Some(doc) = document.as_ref() {
+        rebuild_all(
+            doc,
+            &mut mindmap_tree,
+            &mut app_scene,
+            &mut renderer,
+            &mut scene_cache,
+        );
+    }
+
+    // Pre-warm the render pipeline: one full render cycle so the
+    // wgpu driver compiles pipeline shaders, the swapchain
+    // allocates its first backing image, and the glyph atlas is
+    // populated before the first user-driven frame. Without this,
+    // those costs (commonly 50-300ms total on first Vulkan/Metal
+    // pipeline bind) would land on the user's first interaction.
+    renderer.prewarm();
 
     let keybinds: ResolvedKeybinds = options.keybind_config.resolve();
     // Cross-session history loaded from disk on startup; appended
@@ -213,3 +249,4 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
         anim_pause_start_ms: None,
     }
 }
+
