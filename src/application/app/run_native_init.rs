@@ -103,12 +103,18 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
                 &mut renderer,
             );
             update_connection_label_tree(&scene, &mut app_scene, &mut renderer);
-            // Pre-warm the three handle-tree canvas roles so first
-            // interactions touching them take the cheap
-            // `CanvasDispatch::InPlaceMutator` arm rather than the
-            // `FullRebuild` arm. At fresh-load nothing is selected,
-            // so the slices are empty — registering an empty tree
-            // is what stamps the canvas signature for §B2 dispatch.
+            // Register the three handle-tree canvas roles with their
+            // fresh-load (empty-slice) signatures. The first real
+            // selection still takes `CanvasDispatch::FullRebuild`
+            // (its 8-handle signature differs from the empty one),
+            // but every subsequent transition back to "nothing
+            // selected" hits `InPlaceMutator` instead of
+            // FullRebuild because the empty signature is already
+            // stamped. The role registration also lets §B2 dispatch
+            // find the role at all — without these calls the first
+            // interaction would force a register-and-rebuild, the
+            // second a rebuild, and only steady-state drags would
+            // be cheap.
             update_edge_handle_tree(&scene, &mut app_scene);
             update_section_resize_handle_tree(&scene, &mut app_scene);
             update_node_resize_handle_tree(&scene, &mut app_scene);

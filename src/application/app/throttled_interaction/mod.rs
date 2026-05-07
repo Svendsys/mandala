@@ -48,7 +48,7 @@ pub(in crate::application::app) use section_resize::SectionResizeInteraction;
 
 /// Mutable references into the persistent app state every drain
 /// body reaches for. Built once in
-/// [`super::run_native::InitState::drain_frame`] and handed to the
+/// [`super::run_native::InitState::drain_inputs`] and handed to the
 /// active interaction's [`ThrottledInteraction::drive`].
 ///
 /// The picker state is bundled here so

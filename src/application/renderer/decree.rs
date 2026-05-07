@@ -23,11 +23,15 @@ impl Renderer {
                 // Reset all per-mode FPS bookkeeping so prior-mode
                 // samples can't bleed in (a stale `last_frame_instant`
                 // would yield a ~0 FPS for the first frame after
-                // toggling).
+                // toggling). The active→idle transition flag is also
+                // cleared — it's tied to a specific transition that
+                // no longer applies once the user explicitly changed
+                // the mode.
                 self.last_frame_instant = None;
                 self.fps_clock = 0;
                 self.fps_ring.clear();
                 self.last_fps_shaped = None;
+                self.fps_pending_idle_paint = false;
                 if matches!(mode, FpsDisplayMode::Off) {
                     self.fps_overlay_buffers.clear();
                 }

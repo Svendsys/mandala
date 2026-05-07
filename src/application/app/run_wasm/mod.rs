@@ -632,11 +632,12 @@ pub(super) fn run(mut app: Application) {
                         &mut renderer,
                     );
                     update_connection_label_tree(&scene, &mut init_app_scene, &mut renderer);
-                    // Pre-warm the three handle-tree canvas roles
-                    // so first selections take the cheap
-                    // `CanvasDispatch::InPlaceMutator` arm. Empty
-                    // slices at fresh-load are fine — the goal is
-                    // to stamp the canvas signature.
+                    // Register the three handle-tree canvas roles
+                    // with fresh-load (empty-slice) signatures.
+                    // First real selection still takes FullRebuild
+                    // (8-handle signature differs from empty), but
+                    // every subsequent return to "nothing selected"
+                    // hits InPlaceMutator. Mirrors the native init.
                     update_edge_handle_tree(&scene, &mut init_app_scene);
                     update_section_resize_handle_tree(&scene, &mut init_app_scene);
                     update_node_resize_handle_tree(&scene, &mut init_app_scene);

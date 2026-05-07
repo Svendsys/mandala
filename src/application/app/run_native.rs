@@ -37,7 +37,7 @@ use crate::application::renderer::Renderer;
 ///
 /// Spawns the freeze watchdog before handing off to winit so it
 /// can catch a hang anywhere after the window is created, not just
-/// inside `drain_frame`. See
+/// inside `drain_inputs`. See
 /// [`super::freeze_watchdog::FreezeWatchdog`] for the rationale —
 /// short version: Mandala is single-threaded and a same-thread
 /// `std::sync::RwLock` re-entry deadlock would otherwise hang
@@ -508,11 +508,6 @@ impl InitState {
             });
         }
 
-        // Gate on picker open-state: when the picker is closed, the
-        // hover interaction has no pending work by construction, and
-        // the drive() call is wasted dispatch every frame. The check
-        // is part of the idle-CPU work so the loop can park in
-        // `ControlFlow::Wait` without a spurious driver tick.
         if color_picker_state.is_open() {
             picker_hover.drive(DrainContext {
                 document: &mut *document,
@@ -522,6 +517,19 @@ impl InitState {
                 scene_cache: &mut *scene_cache,
                 color_picker_state: &mut *color_picker_state,
             });
+        } else if picker_hover.has_pending() {
+            // Picker closed while a throttle-deferred hover drain
+            // was still queued. The drain body's closed-picker
+            // branch (`color_picker_hover.rs:88-92`) is a no-op
+            // rebuild that just clears both flags — going through
+            // the throttle would still strand them for the throttle
+            // window's worth of frames, during which
+            // `needs_continuation` reads `has_pending=true` and
+            // pins the loop in `ControlFlow::Poll`. Two boolean
+            // writes, no GPU work; bypass the throttle and clear
+            // immediately.
+            picker_hover.dirty = false;
+            picker_hover.canvas_dirty = false;
         }
 
         if let DragState::SelectingRect {
