@@ -958,6 +958,34 @@ impl Renderer {
         self.fps.is_some()
     }
 
+    /// Decide whether the active→idle FPS transition should be
+    /// deferred. Returns `Some(deadline)` if the last rendered
+    /// frame is more recent than `grace`, meaning the user could
+    /// still be reading the live reading and an immediate flip to
+    /// "-" would flicker. The caller pairs this with
+    /// `ControlFlow::WaitUntil(deadline)` so the loop wakes after
+    /// the grace period to commit the transition. Returns `None`
+    /// when the FPS is already idle, when no frame has been
+    /// rendered yet, or when the grace period has already elapsed
+    /// (transition can fire immediately).
+    ///
+    /// Without this, an active throttled drag whose `should_drain`
+    /// gates produce momentary `needs_continuation == false` gaps
+    /// between drain frames would flash "FPS: -" between every
+    /// drain — making the readout unusable as a diagnostic.
+    pub fn fps_idle_defer_deadline(&self, grace: Duration) -> Option<Instant> {
+        if !self.has_live_fps() {
+            return None;
+        }
+        let last = self.last_frame_instant?;
+        let age = last.elapsed();
+        if age >= grace {
+            None
+        } else {
+            Some(last + grace)
+        }
+    }
+
     /// Force the FPS overlay into the idle state so the next render
     /// shows "-" instead of a stale numeric value. Called when the
     /// event loop transitions from active rendering to
