@@ -31,6 +31,18 @@ use crate::application::document::MindMapDocument;
 use crate::application::keybinds::ResolvedKeybinds;
 use crate::application::renderer::Renderer;
 
+/// Wall-clock interval the event loop holds the FPS overlay's
+/// numeric reading on screen after the last live frame before
+/// flipping it to the "-" idle marker. Without this grace, an
+/// active throttled drag's between-drain gaps (where
+/// `needs_continuation` is briefly false while the throttle holds
+/// the next drain) would flicker the overlay between the live
+/// reading and "-" several times per second, defeating the
+/// readout's diagnostic value. One second is long enough to read
+/// the number on every drain frame yet short enough that genuine
+/// idle visibly transitions to "-".
+const FPS_IDLE_GRACE: std::time::Duration = std::time::Duration::from_secs(1);
+
 /// Entry point called from `Application::run` on every non-WASM
 /// target. Hands control to winit's event loop; returns when the
 /// window is closed.
@@ -127,25 +139,47 @@ impl ApplicationHandler for NativeApp {
             }
             // Active → idle FPS transition: when the loop is about
             // to park and the overlay still shows a live numeric
-            // reading, flip it to the idle marker and request one
-            // more redraw so the overlay reads "FPS: -" while the
-            // app sleeps. The overlay reflects the actual workload
-            // rather than freezing on a stale value, and toggling
-            // the overlay never changes the app's CPU profile.
+            // reading, eventually flip it to the idle marker so the
+            // overlay reads "FPS: -" while the app sleeps. Defer
+            // the flip by `FPS_IDLE_GRACE` so brief between-drain
+            // gaps during an active throttled drag don't flicker
+            // the overlay between numeric and "-" — the user needs
+            // a stable readout to actually use the diagnostic.
+            //
+            // `fps_idle_defer_deadline` returns `Some(when)` if the
+            // last frame is younger than the grace; in that case
+            // we hold the loop in `ControlFlow::WaitUntil(when)` so
+            // it wakes at the deadline to commit the flip if no
+            // events arrived in the meantime. Otherwise the grace
+            // has already elapsed (or the FPS is already idle), so
+            // we either commit the flip now or do nothing.
+            let fps_on = init.renderer.fps_display_mode()
+                != crate::application::common::FpsDisplayMode::Off;
+            let fps_defer_deadline = if !still_continuing && fps_on {
+                init.renderer.fps_idle_defer_deadline(FPS_IDLE_GRACE)
+            } else {
+                None
+            };
             if !still_continuing
-                && init.renderer.fps_display_mode() != crate::application::common::FpsDisplayMode::Off
+                && fps_on
+                && fps_defer_deadline.is_none()
                 && init.renderer.has_live_fps()
             {
                 init.renderer.set_fps_idle();
                 init.window.request_redraw();
             }
             // ControlFlow::Poll keeps the loop ticking so the next
-            // about_to_wait drains again; ControlFlow::Wait parks
-            // the thread until an OS event arrives. The choice is
-            // strictly post-drain — pre-drain state may have been
-            // continuing while post-drain state is fully idle.
+            // about_to_wait drains again; ControlFlow::WaitUntil
+            // parks until either the FPS-idle grace elapses or an
+            // event arrives, whichever comes first; ControlFlow::Wait
+            // parks the thread until an OS event arrives. The
+            // choice is strictly post-drain — pre-drain state may
+            // have been continuing while post-drain state is fully
+            // idle.
             event_loop.set_control_flow(if still_continuing {
                 ControlFlow::Poll
+            } else if let Some(deadline) = fps_defer_deadline {
+                ControlFlow::WaitUntil(deadline)
             } else {
                 ControlFlow::Wait
             });

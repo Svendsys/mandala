@@ -43,9 +43,9 @@ use winit::platform::web::EventLoopExtWebSys;
 use winit::window::WindowId;
 
 use super::scene_rebuild::{
-    flush_canvas_scene_buffers, update_border_tree_static, update_connection_label_tree,
+    flush_canvas_scene_buffers, rebuild_all, update_border_tree_static, update_connection_label_tree,
     update_connection_tree, update_edge_handle_tree, update_node_resize_handle_tree, update_portal_tree,
-    update_section_resize_handle_tree,
+    update_section_resize_handle_tree, warm_handle_tree_arenas,
 };
 use super::text_edit::TextEditState;
 use super::{Application, LastClick};
@@ -641,6 +641,19 @@ pub(super) fn run(mut app: Application) {
                     update_edge_handle_tree(&scene, &mut init_app_scene);
                     update_section_resize_handle_tree(&scene, &mut init_app_scene);
                     update_node_resize_handle_tree(&scene, &mut init_app_scene);
+                    // Synthetic-handle allocator warm; mirrors
+                    // native init. See `warm_handle_tree_arenas`
+                    // doc for what this does and what it doesn't.
+                    warm_handle_tree_arenas(&mut init_app_scene);
+                    // Restamp the empty-handle signatures so the
+                    // load-end canvas state matches what's on
+                    // screen. The later `rebuild_all` re-stamps
+                    // these via `rebuild_scene_only`, but we do it
+                    // here too so correctness doesn't depend on
+                    // `rebuild_all` running.
+                    update_edge_handle_tree(&scene, &mut init_app_scene);
+                    update_section_resize_handle_tree(&scene, &mut init_app_scene);
+                    update_node_resize_handle_tree(&scene, &mut init_app_scene);
                     flush_canvas_scene_buffers(&mut init_app_scene, &mut renderer);
                     tree_opt = Some(mindmap_tree);
                     doc_opt = Some(doc);
@@ -663,10 +676,24 @@ pub(super) fn run(mut app: Application) {
         renderer.process_decree(RenderDecree::StartRender);
         log::info!("WASM: StartRender dispatched, rAF loop starting");
 
-        // Pre-warm the glyph atlas before the first user-driven
-        // frame so glyphs are rasterized + uploaded eagerly. No-op
-        // if the document load failed (buffers are empty).
-        renderer.prewarm_atlas();
+        // Pre-warm allocators on the rebuild_all critical path.
+        // Mirrors native init — see the run_native_init.rs doc for
+        // what this does and why.
+        if let Some(doc) = doc_opt.as_ref() {
+            rebuild_all(
+                doc,
+                &mut tree_opt,
+                &mut init_app_scene,
+                &mut renderer,
+                &mut init_scene_cache,
+            );
+        }
+
+        // Pre-warm the render pipeline: one full render cycle so
+        // the wgpu driver compiles pipeline shaders, the swapchain
+        // allocates its first backing image, and the glyph atlas
+        // is populated before the first user-driven frame.
+        renderer.prewarm();
 
         // Populate the shared state now that init is complete.
         *renderer_for_init.borrow_mut() = Some(renderer);

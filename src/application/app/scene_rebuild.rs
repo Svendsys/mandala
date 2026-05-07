@@ -184,6 +184,32 @@ mod tests {
             &SelectionState::Single("b".into())
         ));
     }
+
+    /// Construction-side panic guard for the load-time pre-warm.
+    /// `warm_handle_tree_arenas` runs synchronously before the
+    /// window is visible, so a panic here aborts startup. The
+    /// synthetic data uses stub `EdgeKey`s and empty `node_id`s;
+    /// if any future change to those constructors adds validation
+    /// that rejects the stubs, we want the failure to land in
+    /// `cargo test` rather than on the user's first launch.
+    #[test]
+    fn warm_handle_tree_arenas_does_not_panic_on_fresh_scene() {
+        let mut app_scene = crate::application::scene_host::AppScene::new();
+        super::warm_handle_tree_arenas(&mut app_scene);
+        // Sanity: all three handle roles have a registered tree
+        // (the synthetic stamp). Caller is responsible for any
+        // empty re-stamp that follows; this test only verifies
+        // the warm itself didn't blow up.
+        assert!(app_scene
+            .canvas_id(crate::application::scene_host::CanvasRole::NodeResizeHandles)
+            .is_some());
+        assert!(app_scene
+            .canvas_id(crate::application::scene_host::CanvasRole::SectionResizeHandles)
+            .is_some());
+        assert!(app_scene
+            .canvas_id(crate::application::scene_host::CanvasRole::EdgeHandles)
+            .is_some());
+    }
 }
 
 pub(in crate::application::app) fn rebuild_all(
@@ -537,6 +563,22 @@ pub(in crate::application::app) fn update_edge_handle_tree(
     );
 }
 
+/// Same as [`update_edge_handle_tree`] but takes the element slice
+/// directly. Used by the load-time pre-warm to feed synthetic
+/// 8-handle data through the dispatch path so the handle-tree
+/// builder's arena allocates from warm pools — without forcing
+/// a full `RenderScene` build that already happens upstream.
+pub(in crate::application::app) fn update_edge_handle_tree_from_slice(
+    elements: &[baumhard::mindmap::scene_builder::EdgeHandleElement],
+    app_scene: &mut crate::application::scene_host::AppScene,
+) {
+    update_handle_canvas_role(
+        crate::application::scene_host::CanvasRole::EdgeHandles,
+        elements,
+        app_scene,
+    );
+}
+
 /// Build or in-place update the section-resize-handle tree under
 /// [`crate::application::scene_host::CanvasRole::SectionResizeHandles`].
 /// Sibling of `update_edge_handle_tree`; same §B2 dispatch shape.
@@ -636,4 +678,94 @@ pub(in crate::application::app) fn flush_canvas_scene_buffers(
     renderer: &mut Renderer,
 ) {
     renderer.rebuild_canvas_scene_buffers(app_scene);
+}
+
+/// Feed the three handle-tree canvas roles synthetic 8-element
+/// slices once so the handle-tree builder's arena allocates from
+/// cold pools at load rather than on the user's first selection.
+/// Caller is responsible for re-stamping the load-time empty
+/// signature afterwards (e.g. another `update_*_handle_tree`
+/// pass with the live `RenderScene`) so the active canvas state
+/// at load-end matches what's actually on screen — the synthetic
+/// stamp leaves the 8-handle signature in place, which would
+/// otherwise force an immediate FullRebuild on every drain that
+/// queries the role.
+///
+/// The synthetic data is not sound for rendering — positions are
+/// `(0, 0)`, `node_id` is empty, the edge key is a stub — but
+/// `build_handle_tree` only reads `HandleVisual` trait methods
+/// (channel / glyph / color / position / font_size_pt), which
+/// the synthetic elements satisfy. No glyph rendering happens
+/// until `flush_canvas_scene_buffers`, which the caller invokes
+/// after the empty re-stamp.
+pub(in crate::application::app) fn warm_handle_tree_arenas(
+    app_scene: &mut crate::application::scene_host::AppScene,
+) {
+    use baumhard::mindmap::scene_builder::{
+        EdgeHandleElement, EdgeHandleKind, NodeResizeHandleElement, ResizeHandleSide,
+        SectionResizeHandleElement,
+    };
+    use baumhard::mindmap::scene_cache::EdgeKey;
+
+    let sides = [
+        ResizeHandleSide::NW,
+        ResizeHandleSide::N,
+        ResizeHandleSide::NE,
+        ResizeHandleSide::E,
+        ResizeHandleSide::SE,
+        ResizeHandleSide::S,
+        ResizeHandleSide::SW,
+        ResizeHandleSide::W,
+    ];
+
+    let node_handles: Vec<NodeResizeHandleElement> = sides
+        .iter()
+        .map(|&side| NodeResizeHandleElement {
+            node_id: String::new(),
+            side,
+            position: (0.0, 0.0),
+            glyph: String::from("\u{25C7}"), // ◇
+            color: String::from("#000000"),
+            font_size_pt: 12.0,
+        })
+        .collect();
+    update_node_resize_handle_tree_from_slice(&node_handles, app_scene);
+
+    let section_handles: Vec<SectionResizeHandleElement> = sides
+        .iter()
+        .map(|&side| SectionResizeHandleElement {
+            node_id: String::new(),
+            section_idx: 0,
+            side,
+            position: (0.0, 0.0),
+            glyph: String::from("\u{25C7}"), // ◇
+            color: String::from("#000000"),
+            font_size_pt: 12.0,
+        })
+        .collect();
+    update_section_resize_handle_tree_from_slice(&section_handles, app_scene);
+
+    // Edge handles: a typical selected edge produces 2-5 handles
+    // (anchor-from, anchor-to, control points, midpoint). 5 is
+    // a reasonable upper-bound warm size — the arena's bump
+    // capacity scales with the largest count it sees.
+    let edge_kinds = [
+        EdgeHandleKind::AnchorFrom,
+        EdgeHandleKind::AnchorTo,
+        EdgeHandleKind::ControlPoint(0),
+        EdgeHandleKind::ControlPoint(1),
+        EdgeHandleKind::Midpoint,
+    ];
+    let edge_handles: Vec<EdgeHandleElement> = edge_kinds
+        .iter()
+        .map(|&kind| EdgeHandleElement {
+            edge_key: EdgeKey::new("a", "b", "parent_child"),
+            kind,
+            position: (0.0, 0.0),
+            glyph: String::from("\u{25C6}"), // ◆
+            color: String::from("#000000"),
+            font_size_pt: 12.0,
+        })
+        .collect();
+    update_edge_handle_tree_from_slice(&edge_handles, app_scene);
 }

@@ -196,9 +196,9 @@ impl Renderer {
         let palette_vertex_count = (self.console_rect_vertices.len() / RECT_VERTEX_FLOATS) as u32;
 
         // Collect text areas + run both glyphon prepares against
-        // the atlas. Shared with `prewarm_atlas()` so the warm-up
-        // sees exactly the same glyph set that the next real frame
-        // will draw — no risk of warming a different set than gets
+        // the atlas. Shared with `prewarm()` so the warm-up sees
+        // exactly the same glyph set that the next real frame will
+        // draw — no risk of warming a different set than gets
         // rasterised. On lock contention or prepare failure, skip
         // the rest of this frame.
         if !self.prepare_text_for_pass() {
@@ -288,9 +288,9 @@ impl Renderer {
     /// font-system lock contention or on either prepare failing —
     /// the same degrade path the inline render() code had.
     ///
-    /// Shared between `render()` (steady-state) and
-    /// `prewarm_atlas()` (one-shot at load) so the warm-up sees
-    /// exactly the same glyph set the next real frame will draw.
+    /// Shared between `render()` (steady-state) and `prewarm()`
+    /// (one-shot at load) so the warm-up sees exactly the same
+    /// glyph set the next real frame will draw.
     /// Note: this performs disjoint mutable borrows of `text_renderer`
     /// + `atlas` + `swash_cache` while holding immutable borrows of
     /// the buffer-map fields; the borrow checker permits this within
@@ -418,21 +418,55 @@ impl Renderer {
         true
     }
 
-    /// Pre-warm the glyph atlas during map load: walk every visible
-    /// `TextBuffer` and run both `text_renderer.prepare()` calls so
-    /// glyphs rasterize and upload to the GPU atlas before the
-    /// first user-driven frame. Deliberately omits `atlas.trim()` —
-    /// `trim` would evict every glyph that wasn't drawn during the
-    /// previous render, which on a warm-up frame is *all of them*
-    /// (we never enter the render pass). The first real `render()`
-    /// will redraw the same glyph set, so its trim is a no-op for
-    /// the warmed entries.
+    /// Pre-warm the render pipeline during map load: run one full
+    /// `render()` cycle (rect-vertex prep → glyph atlas upload →
+    /// `pass.set_pipeline(rect_pipeline)` → text pipeline bind →
+    /// `surface.get_current_texture()` → `frame.present()`). Forces
+    /// the wgpu driver to compile pipeline shaders and the
+    /// swapchain to allocate its first backing image — both are
+    /// commonly 50-300ms costs (Vulkan/Metal/D3D12 lazily compile
+    /// SPIR-V→GPU-ISA on first pipeline bind, Mesa especially) that
+    /// would otherwise land on the user's first interaction.
+    ///
+    /// The original `prewarm_atlas` skipped the render pass to
+    /// avoid `atlas.trim()` evicting freshly warmed glyphs. The
+    /// concern was unfounded but for a reason worth stating
+    /// precisely: glyphon's `TextAtlas::trim()` doesn't evict at
+    /// all — it just clears the per-frame `glyphs_in_use` set
+    /// (text_atlas.rs `mask_atlas.trim` / `color_atlas.trim`
+    /// are `self.glyphs_in_use.clear()`). The glyph cache itself
+    /// only evicts under packer pressure inside `try_allocate`,
+    /// and the `glyphs_in_use` set is populated by
+    /// `text_renderer.prepare()` — not `render()`. So warmed
+    /// glyphs sit in the LRU cache regardless of whether a draw
+    /// happened, and the prior atlas-only path was already safe;
+    /// what the full render adds is shader compile and the
+    /// swapchain allocation, which `prepare` alone doesn't reach.
     ///
     /// Caller must have already populated the canvas-scene buffers
     /// (`flush_canvas_scene_buffers`) and dispatched
     /// `RenderDecree::StartRender`. If buffers are empty (doc-load
-    /// failure path) this is a cheap no-op.
-    pub fn prewarm_atlas(&mut self) {
-        let _ = self.prepare_text_for_pass();
+    /// failure path) this is a cheap no-op (one empty draw + one
+    /// blank present).
+    ///
+    /// **Failure handling.** The whole call is wrapped in
+    /// `catch_unwind`: prewarm runs *before the window is
+    /// visible*, so if the first render's pipeline compile or
+    /// `frame.present()` panics on a flaky driver, we'd otherwise
+    /// abort startup with no UI feedback. `render()`'s own surface-
+    /// acquisition failures already early-return cleanly (see
+    /// `render()`'s `get_current_texture` match), but anything
+    /// deeper in wgpu/glyphon that panics would propagate. Catching
+    /// the panic and continuing means a degraded first frame
+    /// instead of a dead app — the next real `process()` cycle
+    /// retries from a known state.
+    pub fn prewarm(&mut self) {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.render()));
+        if result.is_err() {
+            log::warn!(
+                "renderer.prewarm: first render panicked; continuing with cold pipelines. \
+                 First user interaction may show a one-frame stutter."
+            );
+        }
     }
 }
