@@ -125,6 +125,20 @@ impl ApplicationHandler for NativeApp {
             if was_continuing || still_continuing {
                 init.window.request_redraw();
             }
+            // Active → idle FPS transition: when the loop is about
+            // to park and the overlay still shows a live numeric
+            // reading, flip it to the idle marker and request one
+            // more redraw so the overlay reads "FPS: -" while the
+            // app sleeps. The overlay reflects the actual workload
+            // rather than freezing on a stale value, and toggling
+            // the overlay never changes the app's CPU profile.
+            if !still_continuing
+                && init.renderer.fps_display_mode() != crate::application::common::FpsDisplayMode::Off
+                && init.renderer.has_live_fps()
+            {
+                init.renderer.set_fps_idle();
+                init.window.request_redraw();
+            }
             // ControlFlow::Poll keeps the loop ticking so the next
             // about_to_wait drains again; ControlFlow::Wait parks
             // the thread until an OS event arrives. The choice is
@@ -583,16 +597,17 @@ impl InitState {
     ///   landed during a `MovingNode` drag that suppressed the
     ///   rebuild; the flag will be picked up by the next drain
     ///   that doesn't suppress it.
-    /// - **FPS overlay enabled.** The user has opted in to a live
-    ///   FPS readout, which requires continuous frames to display
-    ///   a meaningful value.
     ///
     /// `None` / `Pending` / `Panning` / `SelectingRect` drag states
     /// are intentionally event-driven only — they update on
-    /// `CursorMoved` and don't need self-driven continuation.
+    /// `CursorMoved` and don't need self-driven continuation. The
+    /// FPS overlay is also intentionally NOT a continuation source:
+    /// a diagnostic should observe behaviour, not change it. When
+    /// the app idles, the overlay flips to "-" (see
+    /// [`crate::application::renderer::Renderer::set_fps_idle`])
+    /// rather than forcing the loop to keep rendering.
     pub(super) fn needs_continuation(&self) -> bool {
         use crate::application::app::throttled_interaction::ThrottledInteraction;
-        use crate::application::common::FpsDisplayMode;
 
         let drag_pending = matches!(
             self.drag_state,
@@ -604,8 +619,7 @@ impl InitState {
             .as_ref()
             .is_some_and(|d| d.has_active_animations());
         let geometry_dirty = self.renderer.connection_geometry_dirty();
-        let fps_overlay_on = self.renderer.fps_display_mode() != FpsDisplayMode::Off;
 
-        drag_pending || picker_pending || animations || geometry_dirty || fps_overlay_on
+        drag_pending || picker_pending || animations || geometry_dirty
     }
 }

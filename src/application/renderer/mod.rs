@@ -303,6 +303,13 @@ pub struct Renderer {
     /// average. The sum / divisor invariant is enforced by the
     /// `FrameIntervalRing` wrapper — no direct field access here.
     fps_ring: FrameIntervalRing,
+    /// Set by [`Self::set_fps_idle`] when the event loop transitions
+    /// from active rendering to `ControlFlow::Wait`. Consumed by
+    /// the next [`Self::tick_fps`] call, which short-circuits to
+    /// `fps = None` so the transitional render paints "FPS: -"
+    /// regardless of what the rolling average or snapshot
+    /// alignment would otherwise compute.
+    fps_pending_idle_paint: bool,
 
     camera: Camera2D,
     /// Mindmap text buffers keyed by `GfxElement::unique_id`
@@ -686,6 +693,7 @@ impl Renderer {
             last_frame_instant: None,
             fps_clock: 0,
             fps_ring: FrameIntervalRing::new(),
+            fps_pending_idle_paint: false,
             glyphon_cache,
             viewport,
             camera,
@@ -840,6 +848,12 @@ impl Renderer {
     /// cheap and only fires when the rounded integer actually
     /// shifts. Silent on font-system lock contention — the next
     /// process() cycle retries.
+    ///
+    /// `self.fps == None` is rendered as `"FPS: -"` to signal idle:
+    /// since the overlay no longer forces continuous rendering,
+    /// the readout reflects the app's actual workload — when no
+    /// frames are being drawn, the dash makes that explicit
+    /// instead of leaving a stale numeric value frozen on screen.
     #[inline]
     fn rebuild_fps_overlay_if_needed(&mut self) {
         if matches!(self.fps_display_mode, FpsDisplayMode::Off) {
@@ -851,7 +865,10 @@ impl Renderer {
         let Ok(mut font_system) = fonts::FONT_SYSTEM.try_write() else {
             return;
         };
-        let text = format!("FPS: {}", self.fps.unwrap_or(0));
+        let text = match self.fps {
+            Some(n) => format!("FPS: {}", n),
+            None => "FPS: -".to_string(),
+        };
         let attrs = Attrs::new().color(baumhard::font::Color::rgba(255, 235, 0, 255));
         let buf =
             borders::create_border_buffer(&mut font_system, &text, &attrs, 16.0, (8.0, 8.0), (200.0, 24.0));
@@ -867,6 +884,14 @@ impl Renderer {
     /// under heavy drag / scene-rebuild load, which would otherwise
     /// shrink `last_render_time` to a near-zero early-return cost and
     /// inflate the reported FPS into the hundreds of thousands.
+    ///
+    /// A frame interval longer than [`Self::IDLE_FRAME_THRESHOLD_US`]
+    /// indicates the previous "frame" was actually idle wall-clock,
+    /// not a render — under event-driven rendering the loop parks
+    /// between user actions. Resuming from such a gap discards the
+    /// spurious huge interval (folding it into a real FPS reading
+    /// would compute "FPS: 1") and resets the readout to idle so
+    /// the next genuine frame interval lands fresh.
     #[inline]
     fn tick_fps(&mut self) {
         let now = Instant::now();
@@ -875,6 +900,26 @@ impl Renderer {
             .map(|prev| now.duration_since(prev).as_micros())
             .unwrap_or(0);
         self.last_frame_instant = Some(now);
+
+        // Honour a pending idle paint queued by `set_fps_idle`: this
+        // transition render must show "-" even if the rolling avg
+        // would compute a value from prior active samples. Clear
+        // the rolling window so the next active session starts
+        // fresh instead of inheriting stale samples.
+        if self.fps_pending_idle_paint {
+            self.fps_pending_idle_paint = false;
+            self.fps = None;
+            self.fps_ring.clear();
+            return;
+        }
+
+        if frame_micros > Self::IDLE_FRAME_THRESHOLD_US {
+            // Resuming from idle. Don't fold the huge gap into a
+            // FPS sample; just reset to the idle marker. The next
+            // real frame's interval lands in a clean state.
+            self.fps = None;
+            return;
+        }
 
         match self.fps_display_mode {
             FpsDisplayMode::Off => {}
@@ -895,6 +940,35 @@ impl Renderer {
                 }
             }
         }
+    }
+
+    /// A frame interval longer than this is treated as a wall-clock
+    /// idle gap rather than a render — see [`Self::tick_fps`]. 500ms
+    /// is comfortably longer than any genuine frame at refresh rates
+    /// down to 4Hz and short enough that a brief lull during typing
+    /// shows as idle in the overlay.
+    const IDLE_FRAME_THRESHOLD_US: u128 = 500_000;
+
+    /// True iff the FPS overlay currently displays a numeric reading
+    /// (i.e., the renderer recently sampled a frame interval). False
+    /// if the overlay is at the idle marker or has never been
+    /// populated. Used by the event loop to decide whether the
+    /// overlay needs one more redraw to flip to "-" before parking.
+    pub fn has_live_fps(&self) -> bool {
+        self.fps.is_some()
+    }
+
+    /// Force the FPS overlay into the idle state so the next render
+    /// shows "-" instead of a stale numeric value. Called when the
+    /// event loop transitions from active rendering to
+    /// `ControlFlow::Wait`. Pairs with a `request_redraw` so the
+    /// transition lands one final frame before the loop parks.
+    /// The arm-and-consume flag protects the transitional frame
+    /// from `tick_fps` re-computing a numeric reading from the
+    /// pre-idle rolling-avg samples.
+    pub fn set_fps_idle(&mut self) {
+        self.fps = None;
+        self.fps_pending_idle_paint = true;
     }
 
     #[inline]
