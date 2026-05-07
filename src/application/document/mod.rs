@@ -215,12 +215,8 @@ pub(super) fn compute_one_node_text_floor(node: &baumhard::mindmap::model::MindN
 
     // §B5 lock-scope discipline: each section's measurement
     // acquires + drops the `FONT_SYSTEM` write guard
-    // independently. A single guard around the whole loop would
-    // be one fewer ceremony per node, but parallel cargo-test
-    // workers thrashed the lock when a test wrote two sections
-    // through `set_section_text` and the surrounding test threads
-    // all wanted the same guard — narrower scopes drain faster
-    // than fewer-but-longer ones under contention.
+    // independently to keep parallel cargo-test workers from
+    // thrashing the lock.
     let mut floor_w: f64 = 0.0;
     let mut floor_h: f64 = 0.0;
     for section in &node.sections {

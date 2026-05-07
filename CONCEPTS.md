@@ -70,68 +70,52 @@ around in the app. See [`CODE_CONVENTIONS.md §1`](./CODE_CONVENTIONS.md).
 ### Mutation-first
 
 Any data-model change is a **mutator** applied to a **tree**, never
-clone-edit-reinsert ([§2: `Tree`](#treet-m), [§2: `MutatorTree`](#mutatortreem),
-[§2: `Applicable`](#applicablet)). The discipline keeps incremental
-updates cheap and lets actions compose into undo/redo cleanly. Full
-prescriptive rule set: [`lib/baumhard/CONVENTIONS.md §B2`](./lib/baumhard/CONVENTIONS.md).
+clone-edit-reinsert. See
+[`lib/baumhard/CONVENTIONS.md §B2`](./lib/baumhard/CONVENTIONS.md).
 
 ### Everything is glyphs
 
 Text, borders, connection lines, portal markers, console chrome,
 selection highlights — every visual element is a positioned font
 glyph. There are no rectangle-shader UIs, no bitmap sprites, no
-icon atlases. Introducing a new kind of visual is therefore a
-question of "what glyph goes where", not "add a new pipeline". A
-new rendering pipeline is a project-scale decision.
+icon atlases. Introducing a new visual is a question of "what glyph
+goes where", not "add a new pipeline".
 
 ### Single-threaded event loop
 
-`Application` owns the `Renderer` directly. There are no channels,
-no worker threads, no `tokio`, no `std::thread::spawn` in any
-interactive path. The one sanctioned exception is the native
-[`FreezeWatchdog`](#freezewatchdog) thread, which only *reads* a
-`AtomicU64` ping from the main loop. The single-threaded invariant
-is what makes the model simple, what makes lock scopes trivial, and
-what makes the whole system easier to reason about than a typical
-engine.
+`Application` owns the `Renderer` directly. No channels, no worker
+threads, no `tokio`, no `std::thread::spawn` in any interactive
+path. The one sanctioned exception is the native
+[`FreezeWatchdog`](#freezewatchdog) thread, which only *reads* an
+`AtomicU64` ping. Lock scopes stay trivial because of this.
 
 ### Model / view separation
 
-The [`MindMapDocument`](#mindmapdocument) owns the data: `MindMap`,
-selection, undo stack, animations, mutation registries. The
+The [`MindMapDocument`](#mindmapdocument) owns the data; the
 [`Renderer`](#renderer) owns GPU resources. The renderer reads
-intermediate representations (`Tree<GfxElement, GfxMutator>`,
-`RenderScene`) from the document on each frame; it never reaches
-into the document. The document never holds GPU handles.
+intermediate representations from the document each frame; it
+never reaches into the document. The document never holds GPU
+handles.
 
 ### Cross-platform as first-class
 
-Native desktop and the browser are equally supported deployments.
-Full prescriptive rules + the parity-gap discipline:
-[`CODE_CONVENTIONS.md §4`](./CODE_CONVENTIONS.md). Live status of
-which features have crossed the parity gap: the "Dual-target
-status" section of [`CLAUDE.md`](./CLAUDE.md).
+Native desktop and the browser are equal deployments. Full
+prescriptive rules: [`CODE_CONVENTIONS.md §4`](./CODE_CONVENTIONS.md).
+Live parity status: [`CLAUDE.md`](./CLAUDE.md) "Dual-target status".
 
 ### Canonical or exemplary
 
-The bar for every merged change is *canonical* or *exemplary*.
-Nothing less. This is a public-domain project with no commercial
-pressure; the measuring stick is whether the work is good enough for
-God ([`CODE_CONVENTIONS.md §0`](./CODE_CONVENTIONS.md)). Concretely:
-every commit is a state we would ship, tests green, no half-features
-behind flags, no TODO comments, no dead code. "Not caused by my
-changes" is not an excuse — if you notice a gap, you own the close.
+The bar for every merged change is *canonical* or *exemplary*. See
+[`CODE_CONVENTIONS.md §0`](./CODE_CONVENTIONS.md). "Not caused by
+my changes" is not an excuse — if you notice a gap, you own the
+close.
 
 ### Preserved seams
 
-A **seam** is a point in the surface where a future extension can
-attach without rewriting what is around it: a `pub` boundary on a
-primitive, a composable mutator variant, a registry that accepts
-handlers, a field that exists today for a narrow purpose but whose
-shape admits more. Seams are named here frequently. "Extra ceiling
-height" is deliberate: it serves the *named trajectory* (plugins, a
-Baumhard script API, richer animations, complex exports) even when
-today's use is narrow. See [`CODE_CONVENTIONS.md §7`](./CODE_CONVENTIONS.md).
+A **seam** is a point where a future extension can attach without
+rewriting what surrounds it. Seams are named throughout this
+document; "extra ceiling height" is deliberate. See
+[`CODE_CONVENTIONS.md §7`](./CODE_CONVENTIONS.md).
 
 ---
 
@@ -151,10 +135,10 @@ This section is conceptual.
 
 ### `Tree<T, M>`
 
-**Summary.** An arena-backed forest of typed nodes with cached
+An arena-backed forest of typed nodes with cached
 spatial indices, representing one layer of visual content.
 
-**What it's for.** A `Tree` is how Baumhard stores anything
+A `Tree` is how Baumhard stores anything
 hierarchical that needs to render or be hit-tested: one tree for the
 mindmap nodes, one for connection glyphs, one for borders, one for
 the console overlay, and so on. Every node in a tree is reached
@@ -164,7 +148,7 @@ references. Nodes are `Clone`, mutation is in-place (never
 rebuild-the-arena), and both AABB caches and an optional region
 index ride along so hit-testing stays cheap.
 
-**Under the hood.** Defined in
+Defined in
 `lib/baumhard/src/gfx_structs/tree.rs`. Wraps `indextree::Arena<T>`;
 adds `root: NodeId`, `layer: usize`, an AABB cache (`Cell<Option<...>>`
 because the values are `Copy`), a subtree-AABB dirty flag, an
@@ -175,17 +159,17 @@ deferred application. The blessed iteration primitives are
 into a `Vec<NodeId>` is a code smell. Every `MutatorTree::apply_to`
 call invalidates the AABB cache once, not per-field.
 
-**Vision.** `position` and `pending_mutations` are seams: the first
+`position` and `pending_mutations` are seams: the first
 admits multi-viewport rendering without rework, the second lets
 event subscribers queue reactive mutations without fighting the
 walker. Both are used narrowly today and preserved at full width.
 
 ### `MutatorTree<M>`
 
-**Summary.** The mutation-side mirror of a `Tree`: same shape,
+The mutation-side mirror of a `Tree`: same shape,
 carrying deltas instead of values.
 
-**What it's for.** If `Tree` is the *noun*, `MutatorTree` is the
+If `Tree` is the *noun*, `MutatorTree` is the
 *verb*. A `MutatorTree<GfxMutator>` describes a change to apply to a
 `Tree<GfxElement, GfxMutator>`: "mutate the third child's text,
 shrink the font on every descendant of channel 2, repeat until the
@@ -194,7 +178,7 @@ sibling position, depending on the instruction), applies matching
 deltas in place, and leaves the rest alone. This is the seam custom
 mutations ([§4](#4-the-mutation-framework)) ride on.
 
-**Under the hood.** Also in
+Also in
 `lib/baumhard/src/gfx_structs/tree.rs`. Minimal — an `Arena<T>` and
 a `root: NodeId`. No spatial data: mutators are pure deltas, they do
 not render. The trait bound `TreeNode` requires a `void()` sentinel
@@ -204,10 +188,10 @@ the whole entry point; it calls `walk_tree_from` under the hood.
 
 ### `Applicable<T>`
 
-**Summary.** A one-method dispatch trait: "apply this delta to that
+A one-method dispatch trait: "apply this delta to that
 value".
 
-**What it's for.** Almost every mutation primitive in Baumhard
+Almost every mutation primitive in Baumhard
 implements `Applicable` against its target type. `MutatorTree<M>
 : Applicable<Tree<T, M>>` is the big one, but there are also
 `DeltaGlyphArea: Applicable<GlyphArea>`,
@@ -217,7 +201,7 @@ always `fn apply_to(&self, target: &mut T)`. This keeps the
 vocabulary uniform: to learn how a new delta works, look at its
 `apply_to` and nothing else.
 
-**Under the hood.** Defined in `lib/baumhard/src/core/primitives.rs`.
+Defined in `lib/baumhard/src/core/primitives.rs`.
 The trait is deliberately minimal; no associated types, no `Result`.
 Interactive paths cannot panic
 ([`CODE_CONVENTIONS.md §9`](./CODE_CONVENTIONS.md)), so type
@@ -229,27 +213,27 @@ glitch on one frame; the cost of a panic is a lost document.
 
 ### `ApplyOperation`
 
-**Summary.** The operation selector a delta carries — `Add`,
+The operation selector a delta carries — `Add`,
 `Assign`, `Subtract`, `Multiply`, `Delete`, or `Noop`.
 
-**What it's for.** A single `DeltaGlyphArea` does not hardcode
+A single `DeltaGlyphArea` does not hardcode
 "text replace" vs. "text append"; it carries an `ApplyOperation`
 that tells the generic `apply` helper which trait assignment to
 use. That is how one `Text(String)` delta variant covers both
 "concatenate this suffix" (`Add`) and "replace the whole text"
 (`Assign`) without duplicating the variant.
 
-**Under the hood.** `lib/baumhard/src/core/primitives.rs`. The
+`lib/baumhard/src/core/primitives.rs`. The
 generic apply requires the target type implement `AddAssign`,
 `SubAssign`, `MulAssign`, and `Default` — which is why every
 mutable field type in the delta world carries all four.
 
 ### `GfxElement`
 
-**Summary.** The tagged union every `Tree<GfxElement, _>` node is
+The tagged union every `Tree<GfxElement, _>` node is
 — either a `GlyphArea`, a `GlyphModel`, or a `Void`.
 
-**What it's for.** This is *the* tree-node type in the codebase.
+This is *the* tree-node type in the codebase.
 All visual things — every text region, every composed-glyph
 shape, every structural padding node — is one variant of this
 enum. Shared metadata rides on every variant: a `channel` for
@@ -257,7 +241,7 @@ mutation routing, a `unique_id` assigned by the host app (Mandala
 uses it for the mindmap node id), a `flags` set, an
 `event_subscribers` list, and a cached `subtree_aabb`.
 
-**Under the hood.** `lib/baumhard/src/gfx_structs/element.rs`.
+`lib/baumhard/src/gfx_structs/element.rs`.
 `GlyphArea` and `GlyphModel` each box their payload (one heap
 allocation per element of that kind); `Void` has no payload.
 There is a companion `GfxElementType` enum for cheap variant
@@ -267,10 +251,10 @@ which variant".
 
 ### `GlyphArea`
 
-**Summary.** A text region — the only element that actually draws
+A text region — the only element that actually draws
 glyphs to the screen.
 
-**What it's for.** When something visible has characters in it, a
+When something visible has characters in it, a
 `GlyphArea` represents it: mindmap node text, connection glyphs,
 portal icons, console lines, FPS overlay digits. The struct
 carries everything the renderer needs to shape and draw that text
@@ -279,7 +263,7 @@ color/font overrides ([`ColorFontRegions`](#colorfontregions)), a
 background fill, an optional outline halo, a hit shape, and a
 zoom-visibility window.
 
-**Under the hood.** `lib/baumhard/src/gfx_structs/area.rs`. Uses
+`lib/baumhard/src/gfx_structs/area.rs`. Uses
 `OrderedFloat<f32>` and `OrderedVec2` for its numeric fields so
 the struct is `Eq + Hash` despite holding floats — important for
 caching and identity-based diffing. The `hitbox` field is the one
@@ -287,17 +271,17 @@ exception to the hash/eq contract: it is derived by the scene
 builder from the rest of the fields, not part of identity. One
 `GlyphArea` maps to one cosmic-text `TextArea` in the renderer.
 
-**Caveat.** The `text: String` is edited with grapheme-aware
+The `text: String` is edited with grapheme-aware
 helpers ([`grapheme_chad`](#utilities--grapheme_chad-color-geometry)); byte
 offsets from user-facing counts will land mid-cluster on the
 first emoji.
 
 ### `GlyphModel`, `GlyphMatrix`, `GlyphLine`, `GlyphComponent`
 
-**Summary.** A four-level composition hierarchy for glyph shapes
+A four-level composition hierarchy for glyph shapes
 built out of small typed cells.
 
-**What it's for.** Sometimes a visual element is more structured
+Sometimes a visual element is more structured
 than a plain string — a grid, a menu, a composed diagram built of
 box-drawing pieces. `GlyphModel` is the answer: it is a child of a
 `GlyphArea` that contributes a matrix of lines of components, each
@@ -307,7 +291,7 @@ overrides. The model paints its contents *into* the owning
 renders as one cosmic-text pass while remaining structurally
 addressable for mutation.
 
-**Under the hood.** The hierarchy is: `GlyphModel` owns a
+The hierarchy is: `GlyphModel` owns a
 `GlyphMatrix`; `GlyphMatrix` owns a `Vec<GlyphLine>`; `GlyphLine`
 owns a `Vec<GlyphComponent>`; `GlyphComponent` is
 `{ text, font: Option<AppFont>, color: Option<FloatRgba> }`. All
@@ -320,26 +304,26 @@ spaces so every component lands on the intended grapheme cell.
 
 ### `Void`
 
-**Summary.** A no-op tree node: no payload, no render cost, just
+A no-op tree node: no payload, no render cost, just
 structure.
 
-**What it's for.** Sometimes a mutator tree needs a child at index
+Sometimes a mutator tree needs a child at index
 *k* that does nothing, so subsequent children align against the
 right target children. Sometimes a target tree needs a parent that
 has no content of its own but holds other elements. `Void` is the
 answer in both cases. It is never required — but used tastefully,
 it keeps tree shapes regular and channel alignment clean.
 
-**Under the hood.** `lib/baumhard/src/gfx_structs/element.rs` for
+`lib/baumhard/src/gfx_structs/element.rs` for
 the target side; same enum on the mutator side in `mutator.rs`.
 No heap allocation, just metadata (channel, id, flags).
 
 ### `ColorFontRegions`
 
-**Summary.** A set of character-range spans, each with optional
+A set of character-range spans, each with optional
 colour and font overrides, layered over a `GlyphArea`'s text.
 
-**What it's for.** A single node's text can have multiple styles —
+A single node's text can have multiple styles —
 a bold first word, a red annotation, a smaller footnote. Rather
 than fragmenting text into per-style nodes, Baumhard carries
 **span tables**: `[start, end)` ranges that say "between these
@@ -349,7 +333,7 @@ The same primitive drives rich-text on mindmap nodes
 ([`text runs`](#text-runs)), highlight on selected regions, and
 transient live-edit previews.
 
-**Under the hood.** `lib/baumhard/src/core/primitives.rs`. Backed
+`lib/baumhard/src/core/primitives.rs`. Backed
 by `BTreeSet<ColorFontRegion>` keyed on the `Range`, so lookups
 by range are `O(log n)` but two regions with the same range and
 different payloads collide (last write wins) — this is
@@ -368,32 +352,32 @@ consistent under text edit: `insert_regions_at`,
 ([`RegionIndexer`](#regionparams-regionindexer-regionerror)) can
 be layered on top for hit-testing.
 
-**Caveat.** Never mutate `ColorFontRegions` outside the mutator
+Never mutate `ColorFontRegions` outside the mutator
 pipeline — direct writes skip the index update and selection
 drifts silently. See [`lib/baumhard/CONVENTIONS.md §B6`](./lib/baumhard/CONVENTIONS.md).
 
 ### `Range`
 
-**Summary.** A half-open `[start, end)` span of `usize` indices.
+A half-open `[start, end)` span of `usize` indices.
 
-**What it's for.** The canonical primitive for "some part of the
+The canonical primitive for "some part of the
 text" everywhere text appears. `ColorFontRegion` keys on it;
 `GlyphAreaCommand::ChangeRegionRange` manipulates one; text-run
 schema validation runs over them. Small but load-bearing: a
 single shared `Range` type means span operations compose across
 modules without glue.
 
-**Under the hood.** `lib/baumhard/src/core/primitives.rs`. Totally
+`lib/baumhard/src/core/primitives.rs`. Totally
 ordered for `BTreeSet` use; ships with `magnitude`, `push_left`,
 `push_right`, `overlaps`, `to_rust_range`.
 
 ### `Channel` and `BranchChannel`
 
-**Summary.** An integer routing tag on every node. The tree walker
+An integer routing tag on every node. The tree walker
 matches mutator nodes to target nodes by equal channel within a
 sibling group.
 
-**What it's for.** Without channels, every mutation applied to a
+Without channels, every mutation applied to a
 parent would broadcast to *every* child; with channels, the author
 can say "this mutation only hits siblings tagged channel 1". A
 parent and its child can share a channel or differ; the matching
@@ -402,14 +386,14 @@ is within-sibling only. Siblings on the same channel form a
 primitive that makes a single mutation selective without naming
 child indices.
 
-**Under the hood.** The `BranchChannel` trait
+The `BranchChannel` trait
 (`lib/baumhard/src/gfx_structs/tree.rs`) is a one-method trait
 `fn channel(&self) -> usize`. Both `GfxElement` and `GfxMutator`
 implement it. The walker calls it to align children. In the
 mindmap domain, `MindNode.channel` is where this surfaces to
 end users; see [§3: Channels](#channels-mindmap-level).
 
-**Caveat.** Children arrive at the walker in **Dewey-id order**
+Children arrive at the walker in **Dewey-id order**
 (`id_sort_key`), not in channel order — the tree builder sorts
 by id, not by channel. Channel matching happens within whatever
 sibling order the map defines. Authoring custom mutations that
@@ -420,17 +404,17 @@ sibling position instead.
 
 ### `Flag` / `Flaggable` / `AnchorBox`
 
-**Summary.** A small enum of state markers any node can carry, and
+A small enum of state markers any node can carry, and
 the trait that queries them.
 
-**What it's for.** Some per-node state is not *data* in the
+Some per-node state is not *data* in the
 rendering sense but *status* — "this node is focused", "this
 node is in edit mode", "this node is anchored to a specific
 screen corner". Flags provide a uniform place to store those,
 queryable by [predicates](#predicate-and-comparator) without
 extending the element's data fields.
 
-**Under the hood.** `lib/baumhard/src/core/primitives.rs`. Current
+`lib/baumhard/src/core/primitives.rs`. Current
 variants: `Focused`, `Mutable`, `Anchored(AnchorBox)`,
 `MutationEvents`. `AnchorBox` holds up to four `Anchor` entries
 for layout-solver pinning. `MutationEvents` is reserved — it
@@ -439,11 +423,11 @@ future reactive handlers).
 
 ### `Event`, `GlyphTreeEvent`, `GlyphTreeEventInstance`, `EventSubscriber`
 
-**Summary.** A *non-state-mutating* kind of mutator: instead of
+A *non-state-mutating* kind of mutator: instead of
 changing element data, it invokes callbacks subscribed to the
 element.
 
-**What it's for.** Event-driven behaviour (button-like nodes,
+Event-driven behaviour (button-like nodes,
 hover-response, keyboard dispatch to a focused node) does not
 belong in the mutation-first data pipeline — a keystroke is not
 a delta to a field. Events reuse the mutator infrastructure for
@@ -451,7 +435,7 @@ dispatch but invoke subscriber callbacks instead of editing
 data. A subscriber *can* enqueue further mutations as a
 reaction, which is how reactive chains are built.
 
-**Under the hood.** `lib/baumhard/src/gfx_structs/mutator.rs`.
+`lib/baumhard/src/gfx_structs/mutator.rs`.
 `GlyphTreeEvent` is the enum of event kinds (`KeyboardEvent`,
 `MouseEvent`, `AppEvent`, `CloseEvent`, `KillEvent`);
 `GlyphTreeEventInstance` wraps it with a timestamp;
@@ -461,7 +445,7 @@ reaction, which is how reactive chains are built.
 cloning an element (as the arena does) keeps a single callback
 reachable from every clone rather than duplicating state.
 
-**Vision.** Today the mindmap app does not use subscribers
+Today the mindmap app does not use subscribers
 heavily — most interaction goes through the application's own
 input handlers. The seam is preserved for the Baumhard script
 API and plugin trajectory, where user-authored code will want
@@ -469,17 +453,17 @@ to subscribe to events without reaching into the app crate.
 
 ### `Predicate` and `Comparator`
 
-**Summary.** A small expression language for "does this element
+A small expression language for "does this element
 match?" tests, used by loop and dispatch instructions.
 
-**What it's for.** Some mutations only apply to certain nodes —
+Some mutations only apply to certain nodes —
 "every child whose font size is under 12pt", "every descendant
 marked `Focused`". A `Predicate` names the fields to test and
 the `Comparator` (equals, not-equals, greater-than, etc.) to use
 against each; the walker evaluates it per candidate node and
 decides whether to recurse.
 
-**Under the hood.** `lib/baumhard/src/gfx_structs/predicate.rs`.
+`lib/baumhard/src/gfx_structs/predicate.rs`.
 Pure data (serialisable); typical predicates carry one or two
 fields, so evaluation is effectively `O(1)`. Float comparisons
 use `almost_equal` with a `1e-5` epsilon
@@ -489,11 +473,11 @@ use `almost_equal` with a `1e-5` epsilon
 
 ### `Instruction`
 
-**Summary.** The four control-flow primitives a `GfxMutator` can
+The four control-flow primitives a `GfxMutator` can
 carry: `RepeatWhile`, `SpatialDescend`, `MapChildren`, and
 `RotateWhile` (reserved).
 
-**What it's for.** Most mutations are direct: apply this delta to
+Most mutations are direct: apply this delta to
 this node. Some need to loop ("apply this to every descendant
 matching predicate X"), some need spatial routing ("apply this
 to whichever node contains this point"), some need
@@ -502,7 +486,7 @@ siblings, zip-style"). `Instruction` is the vocabulary. This is
 how one custom mutation can sweep a whole subtree without
 hand-listing every target.
 
-**Under the hood.** `lib/baumhard/src/gfx_structs/mutator.rs`.
+`lib/baumhard/src/gfx_structs/mutator.rs`.
 - `RepeatWhile(Predicate)` — iterates children, applies mutator
   children while predicate holds, stops on failure. Aligns by
   channel (broadcast semantics).
@@ -518,10 +502,10 @@ hand-listing every target.
 
 ### `GfxMutator`
 
-**Summary.** The mutator-side node type, mirroring `GfxElement`:
+The mutator-side node type, mirroring `GfxElement`:
 `Single`, `Macro`, `Void`, or `Instruction` variants.
 
-**What it's for.** Every node of a `MutatorTree` is a
+Every node of a `MutatorTree` is a
 `GfxMutator`. The four variants cover "one field change here",
 "a batch of changes on this target", "structural padding", and
 "control flow with nested children". Together with
@@ -529,7 +513,7 @@ hand-listing every target.
 [`Predicate`](#predicate-and-comparator) they form a small but
 complete mutation language.
 
-**Under the hood.** `lib/baumhard/src/gfx_structs/mutator.rs`.
+`lib/baumhard/src/gfx_structs/mutator.rs`.
 Implements `BranchChannel`. The `Mutation` payload can be an
 `AreaDelta`, `AreaCommand`, `ModelDelta`, `ModelCommand`,
 `Event`, or `None`. A `Macro` carries a `Vec<Mutation>` applied
@@ -538,17 +522,17 @@ descendant instruction nodes.
 
 ### `Mutation` enum
 
-**Summary.** The payload union: which kind of delta or command
+The payload union: which kind of delta or command
 this mutator carries.
 
-**What it's for.** A mutation is not one uniform thing — a
+A mutation is not one uniform thing — a
 `GlyphArea` and a `GlyphModel` accept different kinds of change.
 The `Mutation` enum is the sum type covering all of them: two
 flavours each for area and model (field-level `Delta` vs.
 imperative `Command`), plus `Event` (subscriber dispatch) and
 `None` (structural placeholder).
 
-**Under the hood.** `lib/baumhard/src/gfx_structs/mutator.rs`.
+`lib/baumhard/src/gfx_structs/mutator.rs`.
 Each variant boxes its payload to keep the enum compact. Type
 mismatches (e.g. `ModelDelta` applied to a `GlyphArea`) are
 silently ignored per the [`Applicable`](#applicablet) no-panic
@@ -556,17 +540,17 @@ rule.
 
 ### `GlyphAreaField` and `DeltaGlyphArea`
 
-**Summary.** The per-field delta surface for `GlyphArea`: text,
+The per-field delta surface for `GlyphArea`: text,
 scale, position, bounds, regions, outline, shape, zoom
 visibility.
 
-**What it's for.** This is the granular surface any field-level
+This is the granular surface any field-level
 mutation reaches into. A font-size change is a
 `GlyphAreaField::Scale(…)` inside a `DeltaGlyphArea` with an
 `ApplyOperation` — that one pattern scales across every field
 without bespoke plumbing per field.
 
-**Under the hood.** `lib/baumhard/src/gfx_structs/area_fields.rs`
+`lib/baumhard/src/gfx_structs/area_fields.rs`
 for the field enum and `OutlineStyle`; `area_mutators.rs` for
 `DeltaGlyphArea`. The wrapper carries one `ApplyOperation`
 shared across all fields in the batch, so "move this node 10
@@ -575,11 +559,11 @@ with different field lists and a different operation.
 
 ### `GlyphModelField`, `DeltaGlyphModel`, `GlyphModelCommand`
 
-**Summary.** The `GlyphModel` mutation surface — the parallel of
+The `GlyphModel` mutation surface — the parallel of
 the area-side delta and command trio, applied to composed-glyph
 structures rather than plain text.
 
-**What it's for.** Everything the area side offers
+Everything the area side offers
 ([`GlyphAreaField`](#glyphareafield-and-deltaglypharea),
 [`GlyphAreaCommand`](#glyphareacommand)), the model side needs
 too — position nudges, matrix inserts and replacements, colour
@@ -587,7 +571,6 @@ and font edits on individual components. Same operation vocab
 (`ApplyOperation`), same `Applicable` dispatch, same walker
 path; different target type.
 
-**Under the hood.**
 `lib/baumhard/src/gfx_structs/model/mutator.rs`. `GlyphModelField`
 variants cover the structural bits (matrix inserts, component
 edits, model position). `DeltaGlyphModel` wraps them with an
@@ -599,64 +582,64 @@ matrix-coordinate moves, rotations. All three ride in the
 
 ### `GlyphAreaCommand`
 
-**Summary.** The *named-operation* mutation surface, for actions
+The *named-operation* mutation surface, for actions
 that are not arithmetic deltas.
 
-**What it's for.** Some operations have fixed semantics that
+Some operations have fixed semantics that
 don't map to "add/subtract/assign": *pop the last three
 graphemes*, *change the range of this region*, *delete a
 specific region*. Commands are the vocabulary for those.
 Imperatively named, grapheme-aware, covers ~16 operations.
 
-**Under the hood.** `lib/baumhard/src/gfx_structs/area_mutators.rs`.
+`lib/baumhard/src/gfx_structs/area_mutators.rs`.
 All grapheme-touching commands use `grapheme_chad` helpers, so
 emoji / ZWJ / combining-mark sequences survive intact.
 
 ### `OutlineStyle`
 
-**Summary.** A coloured halo behind text, rendered as eight stamp
+A coloured halo behind text, rendered as eight stamp
 copies (four cardinals + four diagonals) around the main glyph.
 
-**What it's for.** When glyphs sit on a busy background, legibility
+When glyphs sit on a busy background, legibility
 drops. `OutlineStyle` draws an outline halo so the glyphs read.
 It is a field on `GlyphArea`, optional; default is no outline.
 
-**Under the hood.** `lib/baumhard/src/gfx_structs/area_fields.rs`.
+`lib/baumhard/src/gfx_structs/area_fields.rs`.
 Two fields: `color: [u8; 4]` and `px: f32`. Cost is **9×** the
 cosmic-text shapings of the area (one main + eight stamps). Hot
 path, so enable only when background legibility demands it.
 
 ### `NodeShape`
 
-**Summary.** A pluggable hit-test shape — `Rectangle` or
+A pluggable hit-test shape — `Rectangle` or
 `Ellipse` — shared between the renderer SDF and the BVH
 descent.
 
-**What it's for.** A node's visual silhouette and its clickable
+A node's visual silhouette and its clickable
 silhouette must agree. `NodeShape` names the two today
 (rectangle, ellipse) and gives both pipelines one source of
 truth for "is this point inside?". Adding a new shape is
 three small changes: one enum variant, one WGSL shader `case`,
 one `contains_local` arm.
 
-**Under the hood.** `lib/baumhard/src/gfx_structs/shape.rs`.
+`lib/baumhard/src/gfx_structs/shape.rs`.
 `contains_local` does point-in-AABB or point-in-ellipse
 (normalised coordinates, `nx² + ny² ≤ 1`); degenerate bounds
 always return `false`. `intersects_local_aabb` supports
 rect-select with conservative approximation for ellipses.
 
-**Vision.** Shape-aware borders (glyph-drawn frames that follow
+Shape-aware borders (glyph-drawn frames that follow
 the ellipse outline, not just the AABB) wait on the
 [`GlyphBorderConfig`](#border-geometry) side; the primitive
 surface here is ready.
 
 ### `ZoomVisibility`
 
-**Summary.** An optional inclusive `[min, max]` camera-zoom
+An optional inclusive `[min, max]` camera-zoom
 window that gates whether an element renders at the current
 zoom.
 
-**What it's for.** Visual detail that makes sense at one zoom
+Visual detail that makes sense at one zoom
 rarely makes sense at another. A legend label is precious when
 zoomed in on its region and noise when the whole map is on
 screen; an overview landmark is a guide when zoomed out and
@@ -664,7 +647,7 @@ redundant up close. `ZoomVisibility` lets authors say "this
 appears between 1.5× and 3× zoom" and have the renderer silently
 honour it — no script, no custom mutation, just two fields.
 
-**Under the hood.** `lib/baumhard/src/gfx_structs/zoom_visibility.rs`.
+`lib/baumhard/src/gfx_structs/zoom_visibility.rs`.
 Two `Option<f32>` fields, a `contains(zoom) -> bool` predicate;
 cost is two branchless float comparisons, benchmarked as
 sub-nanosecond. No cosmic-text reshaping or buffer-cache
@@ -675,13 +658,13 @@ surface is two flat fields (`min_zoom_to_render`,
 [`format/zoom-bounds.md`](./format/zoom-bounds.md) and
 [§3: Zoom bounds](#zoom-bounds).
 
-**Caveat.** `NaN` zoom is treated as "not visible" deliberately —
+`NaN` zoom is treated as "not visible" deliberately —
 a `NaN` camera is a bug upstream, and culling the frame surfaces
 it faster than carrying the `NaN` through the glyph pipeline.
 Inverted windows (`min > max`) render as "always hidden" at
 runtime; `maptool verify` flags these as authoring errors.
 
-**Vision.** The seam waiting here is **zoom-triggered LOD
+The seam waiting here is **zoom-triggered LOD
 mutations**: a `CustomMutation` bound to a zoom threshold could
 swap a node's content entirely at the transition, so a cluster
 summary becomes a detail view as you zoom in.
@@ -691,17 +674,17 @@ zoom crossings.
 
 ### `Camera2D` and `CameraMutation`
 
-**Summary.** A 2D canvas camera with pan/zoom and an intent-level
+A 2D canvas camera with pan/zoom and an intent-level
 mutation vocabulary.
 
-**What it's for.** The renderer projects canvas coordinates to
+The renderer projects canvas coordinates to
 screen pixels through a `Camera2D`; pan and zoom are represented
 as `CameraMutation` variants so that one handler can accept
 input, animation, and scripted values uniformly. When a gesture
 says "pan by 10 pixels" and an animation says "fit-to-bounds with
 5% margin", both go through the same apply site.
 
-**Under the hood.** `lib/baumhard/src/gfx_structs/camera.rs`.
+`lib/baumhard/src/gfx_structs/camera.rs`.
 Position in canvas space (the point at the viewport centre),
 `zoom: f32` clamped between `MIN_ZOOM = 0.05` and `MAX_ZOOM =
 5.0`. `CameraMutation` variants: `Pan { screen_delta }`,
@@ -713,10 +696,10 @@ place coordinate-space conversion lives.
 
 ### `Scene`
 
-**Summary.** A multi-layer compositor: owns many `Tree`s at
+A multi-layer compositor: owns many `Tree`s at
 different draw-order layers and screen-space offsets.
 
-**What it's for.** The mindmap canvas is one tree; connection
+The mindmap canvas is one tree; connection
 glyphs are another; the console overlay is another; the color
 picker overlay is yet another. `Scene` collects them all,
 orders them by layer, and provides a single `component_at(point)`
@@ -725,7 +708,7 @@ tree that owns the point. This is the structural seam where the
 `AppScene` at the application layer
 ([§5: scene host](#appscene-and-scene-host)) attaches.
 
-**Under the hood.** `lib/baumhard/src/gfx_structs/scene.rs`. Uses
+`lib/baumhard/src/gfx_structs/scene.rs`. Uses
 `Slab<SceneEntry>` for stable ids across insert/remove; each
 entry carries `layer: i32`, `offset: Vec2`, and `visible: bool`.
 Hit-test is `O(trees)` at the scene level and `O(tree size)`
@@ -733,17 +716,17 @@ inside the matched tree.
 
 ### `TreeWalker`
 
-**Summary.** The recursive dispatch engine that walks a
+The recursive dispatch engine that walks a
 `MutatorTree` against a `Tree` and applies matched mutations.
 
-**What it's for.** Every mutation that ever lands on an element
+Every mutation that ever lands on an element
 goes through the walker — `MutatorTree::apply_to` just calls
 `walk_tree_from`. The walker aligns children by channel (or by
 position, depending on instruction), recurses, and dispatches
 deltas to `Applicable::apply_to` at the leaves. Cost is `O(sum
 of matching pairs)` — pruned branches are free.
 
-**Under the hood.** `lib/baumhard/src/gfx_structs/tree_walker.rs`.
+`lib/baumhard/src/gfx_structs/tree_walker.rs`.
 Key functions: `walk_tree_from` (the entry), `align_child_walks`
 (the channel-based pairing), `process_instruction_node` (the
 loop/spatial/map dispatch), `DEFAULT_TERMINATOR` (the closure
@@ -752,11 +735,11 @@ exits). Branchless enough that matching-pair cost dominates.
 
 ### Mutator builder DSL — `MutatorNode`, `SectionContext`, `Repeat`, runtime holes
 
-**Summary.** A serde-friendly AST (`MutatorNode`) that compiles
+A serde-friendly AST (`MutatorNode`) that compiles
 to a `MutatorTree<GfxMutator>` at apply time, with a
 `SectionContext` for runtime value injection.
 
-**What it's for.** Declaring mutators by hand as
+Declaring mutators by hand as
 `MutatorTree<GfxMutator>` is fine for Rust code but hostile to
 JSON authoring. The builder DSL solves this: authors write
 `MutatorNode` in JSON (the shape is nearly identical to
@@ -767,7 +750,7 @@ walks the AST with a `SectionContext` to resolve runtime values
 tree ready for `walk_tree_from`. This is the seam
 [custom mutations](#4-the-mutation-framework) attach to.
 
-**Under the hood.** `lib/baumhard/src/mutator_builder/`. The AST:
+`lib/baumhard/src/mutator_builder/`. The AST:
 `MutatorNode::{Void, Single, Macro, Instruction, Repeat}`. The
 indirection enums `ChannelSrc`, `CountSrc`, `MutationSrc` each
 have a `Literal` variant (inline) and a `Runtime(String)` or
@@ -778,11 +761,11 @@ on consecutive channels.
 
 ### Font system — `FONT_SYSTEM`, `AppFont`, `attrs_list_from_regions`, `RegionFamilies`, `rich_text_spans_from_regions`
 
-**Summary.** A single global cosmic-text `FontSystem`, a
+A single global cosmic-text `FontSystem`, a
 compile-time enum of available fonts, and a small set of bridges
 from `ColorFontRegions` to the two cosmic-text shaping API shapes.
 
-**What it's for.** Every piece of text shaping in the project
+Every piece of text shaping in the project
 flows through these. `fonts::init()` is called once at startup;
 the `FONT_SYSTEM` `RwLock` is acquired through
 `acquire_font_system_write("site-name")` with a timeout-guarded
@@ -790,7 +773,7 @@ write lock. `AppFont` is generated at build time by scanning
 `lib/baumhard/src/font/fonts/` — drop a font file in, recompile,
 and the variant appears.
 
-**Under the hood.** `lib/baumhard/src/font/`. Two bridges, one
+`lib/baumhard/src/font/`. Two bridges, one
 shared private resolver, both live in `attrs.rs`:
 
 - `attrs_list_from_regions` returns a single
@@ -815,10 +798,10 @@ twice.
 
 ### `RegionParams`, `RegionIndexer`, `RegionError`
 
-**Summary.** A grid-bucketed spatial index over colour/font
+A grid-bucketed spatial index over colour/font
 regions for cheap hit-testing.
 
-**What it's for.** Hit-testing "which region contains this point?"
+Hit-testing "which region contains this point?"
 against hundreds of spans over thousands of glyphs would be
 linear per query. `RegionIndexer` divides the rendered surface
 into a grid of buckets; queries consult the bucket containing
@@ -827,25 +810,25 @@ configures the grid, adapting to the resolution so dimensions
 that don't factor cleanly (primes, near-primes) still get a
 sensible subdivision.
 
-**Under the hood.** `lib/baumhard/src/gfx_structs/util/`.
+`lib/baumhard/src/gfx_structs/util/`.
 `RegionError::{Updating, InvalidParameters, Poisoned}` covers
 the three failure modes; callers match and decide rather than
 panicking. The indexer keeps in sync with the tree via the
 `MutatorTree::apply_to` path — never mutate regions outside
 that path, or the index drifts silently.
 
-**Vision.** Per-tree spatial indexing is a seam
+Per-tree spatial indexing is a seam
 ([`Tree::region_params` / `region_index` fields](#treet-m));
 currently the index is scene-wide but the plumbing to push it
 per-tree already exists.
 
 ### Animation primitives — `AnimationDef`, `AnimationInstance`, `Timeline`, `TimelineEvent`
 
-**Summary.** An immutable animation blueprint (`AnimationDef`)
+An immutable animation blueprint (`AnimationDef`)
 and a per-playback state struct (`AnimationInstance`) driven by
 a `Timeline` of `TimelineEvent`s.
 
-**What it's for.** Glyph animations need to define a sequence
+Glyph animations need to define a sequence
 once and replay it many times at different speeds, phases, or
 counts without cloning the definition. `AnimationDef` is the
 shared blueprint (via `Rc`); `AnimationInstance` carries the
@@ -854,22 +837,22 @@ live play state. The timeline is a list of events —
 duration }`, `WaitMillis(n)`, `Goto(idx)`, `Terminate` —
 processed by the animation driver one event at a time.
 
-**Under the hood.** `lib/baumhard/src/core/animation.rs`. A
+`lib/baumhard/src/core/animation.rs`. A
 `TimelineBuilder` provides a fluent constructor. The
 `AnimationMutator` trait exists alongside `Mutator` so an
 animation step can interpolate rather than apply instantly.
 
-**Vision.** This is today's vocabulary for motion; the
+This is today's vocabulary for motion; the
 `Followup` slot on mutation timing ([§4](#animation-timing))
 expects to extend it with loop/reverse/chain semantics.
 
 ### Utilities — `grapheme_chad`, `color`, `geometry`
 
-**Summary.** The shared-primitive toolkit: grapheme-aware text
+The shared-primitive toolkit: grapheme-aware text
 operations, colour types and macros, and epsilon-aware 2D
 geometry helpers.
 
-**What it's for.** Three small modules that the rest of the
+Three small modules that the rest of the
 codebase builds on, rather than each module re-implementing its
 own take:
 
@@ -894,7 +877,7 @@ own take:
   order), `vec2_area`. `Comparator` float equality uses
   `almost_equal`.
 
-**Under the hood.** `lib/baumhard/src/util/`. All pure functions,
+`lib/baumhard/src/util/`. All pure functions,
 no shared state, no allocations beyond what the return types
 demand.
 
@@ -911,10 +894,10 @@ for field-by-field detail; this section is conceptual.
 
 ### `MindMap`
 
-**Summary.** The document root: nodes, edges, canvas configuration,
+The document root: nodes, edges, canvas configuration,
 palettes, custom mutations.
 
-**What it's for.** Everything a user can save and reload is here.
+Everything a user can save and reload is here.
 The `MindMap` is a plain serialisable struct — no derived state, no
 runtime caches. The loader deserialises it from JSON; the
 [scene builder](#scene-builder) and [tree builder](#tree-builder)
@@ -923,7 +906,6 @@ Helper methods (`children_of`, `all_descendants`,
 `is_hidden_by_fold`, `is_ancestor_or_self`, `resolve_theme_colors`)
 walk the data on demand rather than caching.
 
-**Under the hood.**
 `lib/baumhard/src/mindmap/model/mod.rs`. The shape is a flat
 `HashMap<String, MindNode>` (keyed by Dewey id), a
 `Vec<MindEdge>`, a [`canvas: Canvas`](#canvas), a `palettes:
@@ -935,11 +917,11 @@ example.
 
 ### `Canvas`
 
-**Summary.** The per-map shared rendering context: background
+The per-map shared rendering context: background
 colour, default node and connection styles, live theme-variable
 map, named theme presets.
 
-**What it's for.** Some things are per-map rather than per-node:
+Some things are per-map rather than per-node:
 the canvas background colour, the defaults nodes and edges fall
 back to when their fields are absent, the `var(--name)` theme
 variables colours reference, and the presets theme-switching
@@ -948,7 +930,6 @@ shared state. It sits on `MindMap` directly (`canvas: Canvas`)
 and is consulted at scene-build time for defaults and theme
 resolution.
 
-**Under the hood.**
 `lib/baumhard/src/mindmap/model/canvas.rs`. Key fields:
 `background_color`, default-style records for nodes and
 connections, `theme_variables: HashMap<String, String>` (live
@@ -961,11 +942,11 @@ entries.
 
 ### `MindNode`
 
-**Summary.** One node — position, size, style, layout hint,
+One node — position, size, style, layout hint,
 palette binding, channel, trigger bindings, and one or more
 [`MindSection`](#mindsection)s carrying the text content.
 
-**What it's for.** The unit of content. Each node renders as a
+The unit of content. Each node renders as a
 shape with one or more text-bearing **sections** inside,
 optionally framed by a glyph border, and participates in the
 parent-child tree through its `parent_id`. Post-section refactor
@@ -974,7 +955,7 @@ shadow) and structural pieces (`channel`, `color_schema`,
 `trigger_bindings`, `inline_mutations`, zoom-bounds); the
 user-typed text lives on its sections.
 
-**Under the hood.** `lib/baumhard/src/mindmap/model/node.rs`. Full
+`lib/baumhard/src/mindmap/model/node.rs`. Full
 field reference in [`format/schema.md`](./format/schema.md). Author
 owns non-overlap of node AABBs; the model does no collision
 checking. The tree builder excludes folded subtrees from the
@@ -985,11 +966,11 @@ children — see [tree builder](#tree-builder).
 
 ### `MindSection`
 
-**Summary.** A positioned text-bearing surface inside a
+A positioned text-bearing surface inside a
 `MindNode` — the post-section data shape's home for `text` and
 `text_runs`. Every renderable node has at least one section.
 
-**What it's for.** The user-facing strata of data. A node is a
+The user-facing strata of data. A node is a
 *container*; a section is *what the user typed*. Sections give
 the architecture room to grow per-stratum styling, per-stratum
 mutations, and per-stratum interaction without making the node
@@ -998,7 +979,7 @@ section per node (offset `(0, 0)`, fills the parent); authors who
 want multiple strata of data on one node opt in by appending
 extra sections.
 
-**Under the hood.** `lib/baumhard/src/mindmap/model/node.rs:MindSection`.
+`lib/baumhard/src/mindmap/model/node.rs:MindSection`.
 Plain data — `text`, `text_runs`, `offset`, optional `size`,
 `channel`. In the runtime tree each section becomes a
 `GfxElement::GlyphArea` child of the owning node's container area,
@@ -1012,11 +993,11 @@ pointer at `maptool convert --sections`. Full reference:
 
 ### `MindEdge`
 
-**Summary.** A directed connection between two nodes — line-mode
+A directed connection between two nodes — line-mode
 or portal-mode — with style, optional label, and optional
 per-endpoint state.
 
-**What it's for.** Edges carry both hierarchical structure (when
+Edges carry both hierarchical structure (when
 their `type` is `parent_child`) and arbitrary cross-links (when
 `type` is `cross_link`). They render as either a path of glyphs
 along a Bézier curve (line mode) or a pair of small markers, one
@@ -1024,7 +1005,7 @@ at each endpoint (portal mode). A line-mode edge can have a
 single text label sitting along the path; a portal-mode edge has
 two endpoint records, each with its own text and styling.
 
-**Under the hood.** `lib/baumhard/src/mindmap/model/edge.rs`. Edges
+`lib/baumhard/src/mindmap/model/edge.rs`. Edges
 have **no stable id** — they are identified by the tuple
 `(from_id, to_id, edge_type)`
 ([`CODE_CONVENTIONS.md §3`](./CODE_CONVENTIONS.md)). The
@@ -1033,63 +1014,63 @@ underlying edge identity; flipping a long edge from line to portal
 is a one-field change. Field reference in
 [`format/schema.md`](./format/schema.md).
 
-**Caveat.** Multiple edges between the same pair with different
+Multiple edges between the same pair with different
 `type` are allowed (rare but legitimate). Multiple edges with the
 *same* tuple are a duplicate and a validation error.
 
 ### Dewey-decimal IDs
 
-**Summary.** Dot-separated hierarchical node IDs (`"0"`, `"1.2"`,
+Dot-separated hierarchical node IDs (`"0"`, `"1.2"`,
 `"1.2.3"`) that encode tree structure in the key itself.
 
-**What it's for.** Reading a `.mindmap.json` reveals the tree shape
+Reading a `.mindmap.json` reveals the tree shape
 in the keys. IDs sort as numbers segment-by-segment (`"1.10"` after
 `"1.9"`, not before), and `derive_parent_id` recovers the parent
 without pointer chasing. The format is human-friendly and
 diff-friendly — exactly the sort of place where opaque UUIDs would
 have ended in the same byte count and zero readability.
 
-**Under the hood.** `lib/baumhard/src/mindmap/model/mod.rs`.
+`lib/baumhard/src/mindmap/model/mod.rs`.
 `id_sort_key` extracts the last segment for sibling sort;
 `derive_parent_id` strips it. Fresh IDs are minted by
 `fresh_child_id` in `src/application/document/topology.rs`
 without reusing deleted gaps. Full reference:
 [`format/ids.md`](./format/ids.md).
 
-**Caveat.** IDs do **not** cascade on runtime reparent — when
+IDs do **not** cascade on runtime reparent — when
 node `"1.2"` moves under `"0"`, it stays `"1.2"` and `parent_id`
 becomes the truth. They *do* cascade on delete-with-orphan-promote.
 This trade keeps reparent cheap; `maptool verify` flags drift.
 
 ### Channels (mindmap level)
 
-**Summary.** The `MindNode.channel` field — the user-facing
+The `MindNode.channel` field — the user-facing
 surface of the Baumhard routing tag.
 
-**What it's for.** Authors tag siblings with channels to opt them
+Authors tag siblings with channels to opt them
 into selective mutations. A `CustomMutation` whose mutator targets
 channel 1 hits only siblings tagged 1; siblings tagged 0 are
 skipped. Multiple siblings can share a channel (broadcast group),
 or each can be unique (per-sibling targeting). All existing maps
 default to channel 0 and behave as if the field did not exist.
 
-**Under the hood.** Stored as `usize` on `MindNode`; preserved
+Stored as `usize` on `MindNode`; preserved
 through tree builder onto the corresponding `GfxElement.channel`;
 consulted by [`BranchChannel`](#channel-and-branchchannel) at walk
 time. Full reference:
 [`format/channels.md`](./format/channels.md).
 
-**Vision.** A `TargetScope::ChildrenOnChannel(n)` variant is the
+A `TargetScope::ChildrenOnChannel(n)` variant is the
 named extension waiting on this field — it would let a mutation
 declare "children whose channel is 1" without an inline predicate.
 
 ### Palettes
 
-**Summary.** Map-level named colour schemes; nodes reference them
+Map-level named colour schemes; nodes reference them
 through `color_schema { palette, level, … }` rather than carrying
 colours inline.
 
-**What it's for.** The legacy miMind format stored full palette
+The legacy miMind format stored full palette
 data on every node; the testament map alone duplicated the same
 ~225 palettes across nodes. Hoisting palettes to the document
 level is a 100× reduction in file size and turns "rethemes the
@@ -1098,7 +1079,6 @@ whole map" into a single edit. Each palette is an array of
 it pulls from. Level-clamping (last group when out of range) makes
 deep subtrees degrade gracefully.
 
-**Under the hood.**
 `lib/baumhard/src/mindmap/model/palette.rs`. A node's binding
 lives in its optional `color_schema` field, a `ColorSchema`
 record with `palette: String` (the key into `map.palettes`),
@@ -1111,24 +1091,24 @@ last group rather than failing. Validation requires every
 referenced palette to exist with at least one group. Full
 reference: [`format/palettes.md`](./format/palettes.md).
 
-**Vision.** Animated palette transitions are the seam — the data
+Animated palette transitions are the seam — the data
 shape is already mutation-friendly; the runtime would need to
 interpolate `ColorGroup` fields on a clock.
 
 ### Text runs
 
-**Summary.** Non-overlapping styled character ranges within a
+Non-overlapping styled character ranges within a
 node's text — bold, italic, underline, font, size, colour,
 hyperlink.
 
-**What it's for.** A single node can have rich text without being
+A single node can have rich text without being
 fragmented into multiple nodes. Text runs are the mindmap-side
 surface that the renderer translates into `ColorFontRegions`
 spans for shaping. The user-visible effect is a per-span
 override: emphasis on the first word, a coloured annotation in
 the middle, a link at the end — all on one node.
 
-**Under the hood.** `lib/baumhard/src/mindmap/model/node.rs`.
+`lib/baumhard/src/mindmap/model/node.rs`.
 Each run carries `start`, `end`, `bold`, `italic`, `underline`,
 optional `font`, optional `size_pt`, optional `color`, optional
 `hyperlink`. Indexed by **grapheme clusters** — what users see
@@ -1144,7 +1124,7 @@ on whole glyphs. Validation: non-overlapping, ascending,
 inherit the node-level style. Full reference:
 [`format/text-runs.md`](./format/text-runs.md).
 
-**Caveat.** If `text_runs` is non-empty, **only covered ranges
+If `text_runs` is non-empty, **only covered ranges
 render** — uncovered graphemes drop silently. So authors must
 cover every grapheme they want visible, not just the ones they
 want to restyle. This is by design (it simplifies the
@@ -1154,16 +1134,16 @@ intent vs. accident.
 
 ### Theme variables
 
-**Summary.** Document-level CSS-style named colours referenced as
+Document-level CSS-style named colours referenced as
 `var(--name)` from any colour field.
 
-**What it's for.** Avoids hex repetition across hundreds of nodes
+Avoids hex repetition across hundreds of nodes
 and edges. A theme switch changes the variable; everything
 referencing it updates. Theme variants (presets) can be stored
 under `canvas.theme_variants` and applied through the
 `SetThemeVariant` document action.
 
-**Under the hood.** Resolved at scene-build time in the colour
+Resolved at scene-build time in the colour
 cascade — variable lookup, then fall through to a default if the
 name is unknown. Document actions
 [`SetThemeVariant`](#document-actions) and `SetThemeVariables`
@@ -1171,7 +1151,7 @@ mutate the live `canvas.theme_variables` map.
 
 ### Zoom bounds
 
-**Summary.** The mindmap-level surface of
+The mindmap-level surface of
 [`ZoomVisibility`](#zoomvisibility): two flat fields
 (`min_zoom_to_render`, `max_zoom_to_render`) on every renderable
 entity (`MindNode`, `MindEdge`, `EdgeLabelConfig`,
@@ -1183,10 +1163,10 @@ against the active selection.
 
 ### Border geometry
 
-**Summary.** Glyph-drawn frames around nodes — Unicode box-drawing
+Glyph-drawn frames around nodes — Unicode box-drawing
 characters laid out around the node's AABB.
 
-**What it's for.** Borders are the visual frame that gives a node
+Borders are the visual frame that gives a node
 its "boxed" appearance. They are made of glyphs (light, heavy,
 double, rounded, or fully custom box-drawing chars), not solid
 strokes — consistent with the
@@ -1194,7 +1174,7 @@ strokes — consistent with the
 also serve as anchor surfaces for portal endpoints, which sit at
 parametric positions along the border perimeter.
 
-**Under the hood.** `lib/baumhard/src/mindmap/border.rs`. The
+`lib/baumhard/src/mindmap/border.rs`. The
 `GlyphBorderConfig` per-node record (in
 `lib/baumhard/src/mindmap/model/node.rs`) carries:
 
@@ -1216,17 +1196,17 @@ Geometry constants (`BORDER_CORNER_OVERLAP_FRAC`,
 renderer and tree builder; they must agree, or corner
 alignment drifts.
 
-**Caveat.** Borders today only render on rectangular nodes
+Borders today only render on rectangular nodes
 (`NodeShape::Rectangle` and `style.show_frame = true`). Ellipse
 borders need shape-aware glyph layout — a named seam not yet
 implemented.
 
 ### `GlyphConnectionConfig`
 
-**Summary.** The per-edge rendering configuration: body glyph,
+The per-edge rendering configuration: body glyph,
 caps, font, font size, screen-space font clamps, color.
 
-**What it's for.** Every `MindEdge` carries one. `GlyphBorderConfig`
+Every `MindEdge` carries one. `GlyphBorderConfig`
 is to a node what `GlyphConnectionConfig` is to an edge: the
 shape of the glyphs that draw the thing. The body glyph is
 repeated along the connection path; `cap_start` and `cap_end`
@@ -1236,7 +1216,7 @@ interpreted as the target *on-screen* size at zoom = 1.0;
 screen-space size as the camera zooms, so a long edge stays
 readable both zoomed in and zoomed out.
 
-**Under the hood.** `lib/baumhard/src/mindmap/model/edge.rs:335+`.
+`lib/baumhard/src/mindmap/model/edge.rs:335+`.
 Fields: `body: String` (default mid-dot `·`), `cap_start` /
 `cap_end: Option<String>`, `font: Option<String>`, `font_size_pt:
 f32`, `min_font_size_pt` / `max_font_size_pt: Option<f32>`,
@@ -1247,11 +1227,11 @@ to derive the clamped screen-space size.
 
 ### `ControlPoint`
 
-**Summary.** An author-set Bézier offset on a `MindEdge`,
+An author-set Bézier offset on a `MindEdge`,
 expressed as an offset from a node centre rather than an
 absolute canvas coordinate.
 
-**What it's for.** Straight line-mode edges can become curved
+Straight line-mode edges can become curved
 when the author specifies control points. Zero control points
 is a straight segment; one promotes to a cubic Bézier (via
 quadratic-to-cubic lifting); two or more define a cubic
@@ -1259,7 +1239,6 @@ directly. Control points live as offsets from endpoint centres
 so a node move drags the curve along without the author
 having to re-tune the path.
 
-**Under the hood.**
 `lib/baumhard/src/mindmap/model/edge.rs`. Consumed by
 [connection path construction](#connection-paths), where
 `build_connection_path` converts control points from offsets
@@ -1267,11 +1246,11 @@ into cubic control coordinates in canvas space.
 
 ### Portals
 
-**Summary.** Edges with `display_mode = "portal"`: rendered as two
+Edges with `display_mode = "portal"`: rendered as two
 glyph markers, one at each endpoint, instead of a connecting
 line.
 
-**What it's for.** When two endpoints are far apart on the canvas,
+When two endpoints are far apart on the canvas,
 drawing a literal line between them is visually noisy and
 expensive (hundreds of glyphs). Portals decouple the visual link
 from the physical span: the user sees a small glyph at each end,
@@ -1280,7 +1259,6 @@ can double-click either to fly the camera to the partner.
 Portals share the underlying edge with line-mode — the only
 difference is `display_mode`.
 
-**Under the hood.**
 `lib/baumhard/src/mindmap/model/edge.rs`. Per-endpoint state lives
 in `PortalEndpointState`: `color`, `border_t` (parametric
 position on the owning node's border), `perpendicular_offset`
@@ -1296,34 +1274,34 @@ Full reference: [`format/portal-labels.md`](./format/portal-labels.md).
 
 ### Edge labels
 
-**Summary.** Optional text along a line-mode edge, positioned by
+Optional text along a line-mode edge, positioned by
 parametric `t` along the path with an optional perpendicular
 offset.
 
-**What it's for.** Edge annotations — "depends on", "blocks",
+Edge annotations — "depends on", "blocks",
 "derived from". Line-mode only; portal edges use per-endpoint
 text instead. Labels can be dragged to reposition (native today),
 authored via the `label position_t=… perpendicular=…` console
 verb (cross-platform), and given their own zoom-window override.
 
-**Under the hood.** `EdgeLabelConfig` on `MindEdge`. Position
+`EdgeLabelConfig` on `MindEdge`. Position
 encoded as `(position_t, perpendicular_offset)`. Drag computes
 both via `closest_point_on_path`. Replace-not-intersect zoom
 cascade matches portals.
 
 ### Connection paths
 
-**Summary.** The geometric backbone of edge rendering: straight
+The geometric backbone of edge rendering: straight
 segments and cubic Bézier curves with anchor resolution at the
 endpoints.
 
-**What it's for.** Given two node AABBs and optional control
+Given two node AABBs and optional control
 points, compute the curve along which to lay out edge glyphs.
 The same path math powers glyph placement (sample at uniform arc
 length), label drag (project cursor onto path), and hit-testing
 (distance from cursor to path).
 
-**Under the hood.** `lib/baumhard/src/mindmap/connection/`. Key
+`lib/baumhard/src/mindmap/connection/`. Key
 functions: `build_connection_path` (from anchors + control
 points), `resolve_anchor_point` (auto / top / right / bottom /
 left), `point_at_t`, `tangent_at_t`, `closest_point_on_path`
@@ -1335,18 +1313,18 @@ shapes.
 
 ### Portal geometry
 
-**Summary.** The conversion between `border_t ∈ [0, 4)` and a
+The conversion between `border_t ∈ [0, 4)` and a
 canvas point on a rectangular node's border, plus directional
 defaults.
 
-**What it's for.** Portal endpoints must sit on their owning
+Portal endpoints must sit on their owning
 node's border, parametrically — so when the node is resized, a
 label at "the middle of the right edge" stays at the middle of
 the right edge. The side-indexed encoding (`[0, 1)` = top,
 `[1, 2)` = right, `[2, 3)` = bottom, `[3, 4)` = left) is the right
 abstraction: stable across resize, deterministic across corners.
 
-**Under the hood.** `lib/baumhard/src/mindmap/portal_geometry.rs`.
+`lib/baumhard/src/mindmap/portal_geometry.rs`.
 Functions: `wrap_border_t` (rem-Euclid into `[0, 4)`),
 `border_point_at`, `border_outward_normal`,
 `default_border_t` (the auto-orientation: cast a ray from owner
@@ -1355,26 +1333,26 @@ the closest border parameter, used by drag-snap).
 
 ### Fold state
 
-**Summary.** A boolean per node; folded subtrees are excluded
+A boolean per node; folded subtrees are excluded
 from the display tree but persist in the model.
 
-**What it's for.** Hide subtrees without losing data. The user
+Hide subtrees without losing data. The user
 can collapse a region of the map; reopening restores it. The
 scene builder and tree builder both consult
 `MindMap::is_hidden_by_fold`, which walks the parent chain.
 
-**Under the hood.** `MindNode.folded: bool`; the cascading
+`MindNode.folded: bool`; the cascading
 visibility check is `O(depth)` per node and runs once per scene
 build.
 
 ### Tree builder
 
-**Summary.** Projects a `MindMap` into a Baumhard
+Projects a `MindMap` into a Baumhard
 `Tree<GfxElement, GfxMutator>` mirroring the parent-child
 structure, with each `MindNode` materialising as a three-deep
 subtree (container + section-areas + section-models).
 
-**What it's for.** Mutations need a `Tree` to walk against. The
+Mutations need a `Tree` to walk against. The
 tree builder constructs it from the model: each visible
 `MindNode` becomes a chrome-only container `GfxElement::GlyphArea`
 plus one `GfxElement::GlyphArea` per section (carrying the
@@ -1386,7 +1364,6 @@ borders, portals, connections, edge labels, and edge handles,
 each producing its own tree (and matching mutator-tree) so
 per-role mutations stay scoped.
 
-**Under the hood.**
 `lib/baumhard/src/mindmap/tree_builder/mod.rs`. Returns a
 `MindMapTree` with `node_map: HashMap<String, NodeId>` (mind id →
 container arena id), `section_map: HashMap<(String, usize), NodeId>`
@@ -1398,11 +1375,11 @@ mind-node. Section-areas (and section-models) carry
 
 ### Scene builder
 
-**Summary.** Projects a `MindMap` into a flat `RenderScene` of
+Projects a `MindMap` into a flat `RenderScene` of
 plain-data elements (text, borders, connections, portals,
 labels, handles) for direct GPU consumption.
 
-**What it's for.** The renderer wants flat element lists, not a
+The renderer wants flat element lists, not a
 tree. The scene builder walks the model, applies style cascades
 (theme variables, palette resolution, zoom windows, transient
 edit previews), samples connection paths, and emits a transient
@@ -1410,7 +1387,7 @@ edit previews), samples connection paths, and emits a transient
 [`scene_cache`](#scene-cache) level reuses sampled positions when
 endpoints don't move.
 
-**Under the hood.** `lib/baumhard/src/mindmap/scene_builder/`.
+`lib/baumhard/src/mindmap/scene_builder/`.
 Per-role modules: `node_pass` (text + borders + clip AABBs),
 `connection`, `label`, `portal`, `edge_handle`. Output is the
 `RenderScene` struct, whose fields are plain-data element
@@ -1440,29 +1417,29 @@ but never committed back.
 
 ### Scene cache
 
-**Summary.** A per-edge cache of sampled glyph positions, keyed
+A per-edge cache of sampled glyph positions, keyed
 on `(from_id, to_id, edge_type)`, reused across frames when
 endpoints have not moved.
 
-**What it's for.** Sampling a cubic Bézier path at uniform arc
+Sampling a cubic Bézier path at uniform arc
 length is the most expensive per-edge work. The cache invalidates
 on endpoint drag (via `drag_offsets`) and on zoom or structural
 change. Otherwise the previous frame's samples are reused with a
 cheap `point_inside_any_node` clip filter.
 
-**Under the hood.** `lib/baumhard/src/mindmap/scene_cache.rs`.
+`lib/baumhard/src/mindmap/scene_cache.rs`.
 
 ### Trigger bindings
 
-**Summary.** Per-node bindings of input events to custom-mutation
+Per-node bindings of input events to custom-mutation
 ids: `OnClick`, `OnHover`, `OnKey`, `OnLink`.
 
-**What it's for.** Authoring interactive map elements without
+Authoring interactive map elements without
 custom code: a button-like node fires a custom mutation when
 clicked. Bindings carry an optional context filter (Desktop /
 Web / Touch); empty means "all platforms".
 
-**Under the hood.** `MindNode.trigger_bindings`; dispatch lives
+`MindNode.trigger_bindings`; dispatch lives
 in the application's input handlers. Missing mutation IDs are
 silent no-ops — runtime ignores rather than panicking.
 
@@ -1484,18 +1461,17 @@ prescriptive carrier shape see
 
 ### `CustomMutation`
 
-**Summary.** The carrier struct: an id, name, description,
+The carrier struct: an id, name, description,
 contexts, optional mutator AST, target scope, behavior, optional
 document actions, and optional animation timing.
 
-**What it's for.** A `CustomMutation` is one named, reusable
+A `CustomMutation` is one named, reusable
 operation. Authored as JSON (declarative) or registered in Rust
 (imperative); referenced by id from console verbs, trigger
 bindings, or other custom mutations. The same shape covers tiny
 deltas ("add 2pt to font") and structural algorithms
 (`flower-layout`).
 
-**Under the hood.**
 `lib/baumhard/src/mindmap/custom_mutation/mod.rs`. Fields: `id`
 (unique key), `name` and `description` (human-readable),
 `contexts` (taxonomy tags — see
@@ -1507,10 +1483,10 @@ covers), `behavior` (`Persistent` or `Toggle`),
 
 ### Four-source loader
 
-**Summary.** Mutations merge from four sources at startup, with
+Mutations merge from four sources at startup, with
 ascending precedence: App < User < Map < Inline.
 
-**What it's for.** Authors at every layer can define mutations
+Authors at every layer can define mutations
 without stepping on each other. A bundled "grow-font-2pt" can be
 overridden by the user's personal version, which can in turn be
 overridden by a map's local definition, which can in turn be
@@ -1518,7 +1494,6 @@ overridden by a single node's `inline_mutations`. The
 `MindMapDocument::mutation_sources` map records which layer won
 each id, so `mutation help <id>` can report it.
 
-**Under the hood.**
 `src/application/document/mutations_loader/`. Native:
 - App from `assets/mutations/application.json` via `include_str!`.
 - User from `$XDG_CONFIG_HOME/mandala/mutations.json` (or
@@ -1541,11 +1516,11 @@ won a given id.
 
 ### Declarative path — `MutatorNode` AST
 
-**Summary.** A pure-data AST that compiles to a
+A pure-data AST that compiles to a
 `MutatorTree<GfxMutator>` and runs through the standard tree
 walker.
 
-**What it's for.** Any mutation expressible as a tree of
+Any mutation expressible as a tree of
 field-level deltas with control-flow instructions belongs here.
 This is the default: write JSON, the runtime walks it. The AST
 shape mirrors `GfxMutator` — `Void`, `Single`, `Macro`,
@@ -1553,7 +1528,6 @@ shape mirrors `GfxMutator` — `Void`, `Single`, `Macro`,
 children at consecutive channels with the same template" (the
 flower-petal pattern, etc.).
 
-**Under the hood.**
 `build_mutator(ast, context)` in `lib/baumhard/src/mutator_builder/`
 walks the AST recursively, expands `Repeat` to N children with
 incrementing channels, resolves `Runtime("<label>")` holes via the
@@ -1564,17 +1538,16 @@ the next scene build.
 
 ### Imperative path — `DynamicMutationHandler`
 
-**Summary.** A registered Rust function pointer the dispatcher
+A registered Rust function pointer the dispatcher
 calls directly when the AST is too narrow.
 
-**What it's for.** Some operations are inherently imperative —
+Some operations are inherently imperative —
 arbitrary BFS layouts, multi-pass spatial algorithms, anything
 that needs runtime control flow the walker doesn't provide. The
 handler registry lets them live as Rust functions registered at
 startup, with the same `id`/contexts/target-scope surface as a
 declarative mutation.
 
-**Under the hood.**
 `src/application/document/mutations/`. Built-in handlers:
 - `flower_layout.rs` — radial child arrangement.
 - `tree_cascade.rs` — hierarchical cascading layout.
@@ -1583,7 +1556,7 @@ declarative mutation.
 handler is: new module, new function, new registration call, new
 matching id in `assets/mutations/application.json`.
 
-**Caveat.** When a higher-precedence layer (User / Map / Inline)
+When a higher-precedence layer (User / Map / Inline)
 declares the same id as a registered handler, **the declarative
 mutator wins**. The handler is bypassed. This prevents a subtle
 hijack where a user's JSON would silently invoke imperative code
@@ -1591,17 +1564,17 @@ they did not author.
 
 ### Target scopes
 
-**Summary.** Six variants telling the dispatcher which nodes the
+Six variants telling the dispatcher which nodes the
 mutation covers — also used as the snapshot window for undo.
 
-**What it's for.** A mutation declares "I touch this node only" or
+A mutation declares "I touch this node only" or
 "I touch this node and all its descendants" and the dispatcher
 both walks the right subtree and snapshots the right set for
 undo. The undo-snapshot equivalence is the load-bearing detail:
 if a mutation's `target_scope` is too narrow, undo will not
 fully reverse it.
 
-**Under the hood.** Variants: `SelfOnly`, `Children`,
+Variants: `SelfOnly`, `Children`,
 `Descendants` (not the anchor), `SelfAndDescendants`, `Parent`,
 `Siblings` (the anchor's siblings, excluding itself). Scope
 helpers in `custom_mutation::scope` produce matching
@@ -1609,18 +1582,18 @@ helpers in `custom_mutation::scope` produce matching
 
 ### Behaviors — `Persistent` vs. `Toggle`
 
-**Summary.** Whether the mutation commits to the model and pushes
+Whether the mutation commits to the model and pushes
 an undo entry (`Persistent`) or only modifies the display tree
 and remembers itself in `active_toggles` (`Toggle`).
 
-**What it's for.** Some mutations are "apply and remember"
+Some mutations are "apply and remember"
 (persistent — visual change, undo coverage); others are
 "reversible inspection" (toggle — visual change without model
 commit, second trigger reverses). Toggles are the right shape
 for "highlight this", "expand this preview", "show debug
 overlay".
 
-**Under the hood.** Persistent: snapshot affected nodes, apply,
+Persistent: snapshot affected nodes, apply,
 sync back, push undo. Toggle: apply to tree only, insert
 `(node_id, mutation_id)` into `MindMapDocument::active_toggles`;
 on second trigger from the same anchor, remove the pair (undo
@@ -1628,36 +1601,36 @@ stack gets no entry — re-triggering is the reverse).
 
 ### Contexts taxonomy
 
-**Summary.** Dotted-namespace tags describing what a mutation
+Dotted-namespace tags describing what a mutation
 operates on: `"internal"`, `"map"`, `"map.node"`, `"map.tree"`,
 plus the reserved `"plugin.<name>.<kind>"` namespace.
 
-**What it's for.** The console's `mutation list` filters by
+The console's `mutation list` filters by
 context so users see only mutations relevant to their current
 selection. `"internal"` hides a mutation from listing entirely
 (used by handlers that compose into other mutations). The
 plugin namespace is the home of future plugin-authored
 mutations.
 
-**Under the hood.** `matches_context(query)` returns true if the
+`matches_context(query)` returns true if the
 mutation's `contexts` include `query` exactly or sit inside its
 dotted prefix; `matches_context("map")` hits both `"map.node"`
 and `"map.tree"`.
 
 ### `PlatformContext`
 
-**Summary.** A three-variant enum — `Desktop`, `Web`, `Touch` —
+A three-variant enum — `Desktop`, `Web`, `Touch` —
 threaded through mutation handlers and trigger-binding filters
 so an authored mutation can branch on where it's running.
 
-**What it's for.** Some operations should behave differently per
+Some operations should behave differently per
 target — a layout that reflows narrower on mobile, a trigger
 binding that only fires on Desktop. `PlatformContext` is the
 channel for that distinction, distinct from the dotted-namespace
 "contexts" taxonomy above (which describes *what* the mutation
 operates on).
 
-**Under the hood.** Defined in
+Defined in
 `lib/baumhard/src/mindmap/custom_mutation`. Today the variant is
 chosen at compile time (`Desktop` on native, `Web` on WASM); the
 `Touch` variant exists but no input path dispatches on it yet.
@@ -1667,16 +1640,15 @@ it applies to.
 
 ### Document actions
 
-**Summary.** Canvas-level operations a mutation can carry
+Canvas-level operations a mutation can carry
 alongside (or instead of) its tree mutations:
 `SetThemeVariant(name)`, `SetThemeVariables(map)`.
 
-**What it's for.** "Switch the theme" is not a per-node delta —
+"Switch the theme" is not a per-node delta —
 it touches `canvas.theme_variables`. Document actions cover that
 seam. They run alongside the tree mutation; a single mutation
 can both restyle nodes and switch the theme in one apply.
 
-**Under the hood.**
 `lib/baumhard/src/mindmap/custom_mutation/document_action.rs`.
 `SetThemeVariant` copies a named preset from
 `canvas.theme_variants` into the live `theme_variables`;
@@ -1685,33 +1657,32 @@ preserving unmentioned keys.
 
 ### Animation timing
 
-**Summary.** Optional duration / delay / easing wrapper around
+Optional duration / delay / easing wrapper around
 any mutation, turning instant application into a clock-driven
 interpolation.
 
-**What it's for.** A "grow font" that snaps is fine; one that
+A "grow font" that snaps is fine; one that
 animates over 300ms reads better. The timing wrapper lets a
 declarative mutation carry that timing without authoring an
 animation by hand. The dispatcher starts an `AnimationInstance`
 that ticks each frame, blends the in-flight state, and commits
 on completion.
 
-**Under the hood.**
 `lib/baumhard/src/mindmap/custom_mutation/timing.rs`. Fields:
 `duration_ms`, `delay_ms`, `easing` (`Linear` / `EaseIn` /
 `EaseOut` / `EaseInOut`), and a reserved `then` (`Followup`)
 slot.
 
-**Vision.** `Followup::{Reverse, Chain, Loop}` is named but not
+`Followup::{Reverse, Chain, Loop}` is named but not
 yet wired. When it lands, mutations will compose into chains
 and oscillations without scripting.
 
 ### Runtime holes — `SectionContext`
 
-**Summary.** A trait the host implements to feed runtime values
+A trait the host implements to feed runtime values
 into a `MutatorNode` AST at build time.
 
-**What it's for.** Some mutations need values the AST can't
+Some mutations need values the AST can't
 inline — the count of currently-visible children, the cursor
 position when invoked, a field looked up from the selected
 node. `MutationSrc::Runtime("<label>")` and
@@ -1720,7 +1691,6 @@ node. `MutationSrc::Runtime("<label>")` and
 it as it walks. Pure-data mutations (no holes) use a no-op
 context.
 
-**Under the hood.**
 `lib/baumhard/src/mutator_builder/context.rs`. The trait:
 `fn count(&self, label) -> usize`,
 `fn mutation(&self, label) -> Option<Mutation>`,
@@ -1743,18 +1713,18 @@ Lives under [`src/application/`](./src/application/).
 
 ### `Application`, `InitState`, `NativeApp`
 
-**Summary.** The native event-loop entry points. `Application` is
+The native event-loop entry points. `Application` is
 the pre-window root; `InitState` is the persistent post-window
 state; `NativeApp` is the winit `ApplicationHandler` glue.
 
-**What it's for.** The platform separation is honest: pre-window
+The platform separation is honest: pre-window
 work (parse args, init fonts, load mutations) happens before any
 GPU resources exist; once the OS gives us a window, we transition
 to `InitState` and stay there for the lifetime of the run.
 `NativeApp` exists only to satisfy winit's trait surface;
 everything substantive lives on `InitState`.
 
-**Under the hood.** `src/application/app/run_native.rs:48-130`.
+`src/application/app/run_native.rs:48-130`.
 `InitState` carries `window: Arc<Window>`, an optional
 `document: Option<MindMapDocument>` (`None` before first file
 load), `drag_state`, `app_mode`, modal UI state (console,
@@ -1766,11 +1736,11 @@ contortions.
 
 ### Event loop and `drain_frame`
 
-**Summary.** The per-frame heartbeat: tick watchdog, drive
+The per-frame heartbeat: tick watchdog, drive
 throttled interactions, advance animations, rebuild geometry,
 rebuild scene if dirty, render, log frame interval.
 
-**What it's for.** Every frame runs the same six steps in the
+Every frame runs the same six steps in the
 same order. Inputs arriving between frames mutate the document
 and set the `dirty` flag; the next `drain_frame` consults the
 flag and rebuilds only what changed. This decouples mutation
@@ -1778,7 +1748,7 @@ frequency (often per-input-sample) from rebuild frequency
 (at most once per frame), so a flurry of pointer events doesn't
 trigger a flurry of scene rebuilds.
 
-**Under the hood.** `src/application/app/drain_frame.rs`. Called
+`src/application/app/drain_frame.rs`. Called
 on every winit `AboutToWait` event. Step order:
 
 1. Drive any active throttled interaction
@@ -1793,18 +1763,17 @@ on every winit `AboutToWait` event. Step order:
 
 ### `MindMapDocument`
 
-**Summary.** The data plane: owns the `MindMap`, the tree mirror,
+The data plane: owns the `MindMap`, the tree mirror,
 the undo stack, the running animations, and the mutation
 registries.
 
-**What it's for.** This is where every persistent piece of state
+This is where every persistent piece of state
 lives. It is the only owner of the model and the undo stack; the
 renderer reads from it, never mutates. The dirty flag belongs to
 it. Transient previews (live colour picker, in-flight label edit,
 in-flight portal-text edit) belong to it too — read by the scene
 builder, never committed back without an explicit step.
 
-**Under the hood.**
 `src/application/document/mod.rs:64-151`. Fields include
 `mindmap: MindMap`, `tree: Option<MindMapTree>`, `selection:
 SelectionState`, `undo_stack: Vec<UndoAction>`,
@@ -1817,11 +1786,11 @@ those are all on `InitState`.
 
 ### `SelectionState`
 
-**Summary.** A tagged union of what the user has selected:
+A tagged union of what the user has selected:
 nothing, a node, multiple nodes, one section of one node, an
 edge body, an edge label, a portal icon, or a portal text.
 
-**What it's for.** Selection variants are mutually exclusive by
+Selection variants are mutually exclusive by
 construction — at most one thing is selected at a time. The
 variant tag is the routing key for everything operating on the
 selection: which clipboard channel a copy goes through, which
@@ -1829,7 +1798,6 @@ colour field a colour command sets, which font field a font
 command sets. The renderer uses it to apply the cyan highlight
 to the right element.
 
-**Under the hood.**
 `src/application/document/types.rs`. Variants:
 
 - `None`
@@ -1898,15 +1866,14 @@ font commands write to the corresponding field group.
 
 ### `EdgeRef`
 
-**Summary.** The `(from_id, to_id, edge_type)` triple that
+The `(from_id, to_id, edge_type)` triple that
 identifies an edge.
 
-**What it's for.** Edges have no stable id (§3:
+Edges have no stable id (§3:
 [`MindEdge`](#mindedge)), so selection, undo entries, and
 console arguments all carry this triple. Equality and lookup are
 by triple match against the model's `Vec<MindEdge>`.
 
-**Under the hood.**
 `src/application/document/types.rs:71-97`. The `matches`
 method walks the edge vector linearly; this is fine because
 edges are sparse and the lookup happens at user-event frequency,
@@ -1914,28 +1881,28 @@ not in hot loops.
 
 ### `AppMode`
 
-**Summary.** The transient modal state for reparent and connect
+The transient modal state for reparent and connect
 operations: `Normal` / `Reparent { sources }` / `Connect {
 source }`.
 
-**What it's for.** Some user actions take two clicks: select a
+Some user actions take two clicks: select a
 source, then click a target. Modes encode the in-between state.
 Pressing Ctrl+R on a selection enters `Reparent`; the next click
 on a node attaches the sources as its last children, and Esc
 cancels. Pressing Ctrl+D on one node enters `Connect`; the next
 click on another node creates a `cross_link` edge.
 
-**Under the hood.** `src/application/app/mod.rs:328-338`.
+`src/application/app/mod.rs:328-338`.
 Native-only today — both modes are gated `#[cfg(not(target_arch
 = "wasm32"))]`. The mode is stored on `InitState` and consulted
 by the click handler.
 
 ### `DragState`
 
-**Summary.** The drag state machine: `None` / `Pending` /
+The drag state machine: `None` / `Pending` /
 `Panning` / `SelectingRect` / `Throttled(ThrottledDrag)`.
 
-**What it's for.** Mouse-down does not commit to a drag yet —
+Mouse-down does not commit to a drag yet —
 the user might be clicking, or might be about to drag. `Pending`
 captures everything the cursor was over at button-down; once
 movement crosses the drag threshold, the state transitions to
@@ -1943,17 +1910,17 @@ movement crosses the drag threshold, the state transitions to
 space), or one of the four `ThrottledDrag` variants depending
 on what was hit.
 
-**Under the hood.** `src/application/app/mod.rs:358-411`.
+`src/application/app/mod.rs:358-411`.
 Native-only today. Hit priority on `Pending` is fixed: edge
 handle > portal label > edge label > node, so small grab-areas
 always win over larger AABBs.
 
 ### `ThrottledInteraction` and `ThrottledDrag`
 
-**Summary.** A trait + seven-variant enum providing one uniform
+A trait + seven-variant enum providing one uniform
 shell for continuous, high-rate-input drag types.
 
-**What it's for.** Dragging a node, a section, a section's
+Dragging a node, a section, a section's
 resize handle, a node's resize handle, an edge handle, a portal
 label, and an edge label all follow the same per-frame pattern:
 accumulate input deltas, ask the throttle whether to drain,
@@ -1962,7 +1929,6 @@ accept-and-drain dance into one place; new throttled drags
 attach as one struct + one trait impl + one enum variant
 without growing the dispatch.
 
-**Under the hood.**
 `src/application/app/throttled_interaction/mod.rs`.
 Trait methods: `has_pending`, `throttle`, `drain(ctx)`, `reset`.
 Variants:
@@ -1988,17 +1954,17 @@ Variants:
 `as_dyn_mut()` widens to `&mut dyn ThrottledInteraction` so the
 drain dispatcher does not need to know each kind.
 
-**Vision.** Touch gestures are the next obvious user — pinch
+Touch gestures are the next obvious user — pinch
 zoom, two-finger pan, long-press selection — each a new
 `ThrottledDrag` variant with the same shape.
 
 ### `MutationFrequencyThrottle` (and `frame_throttle`)
 
-**Summary.** An adaptive frame-counter throttle that gates
+An adaptive frame-counter throttle that gates
 *application* of mutations under load while leaving *acceptance*
 of input untouched.
 
-**What it's for.** When per-frame work threatens the GPU
+When per-frame work threatens the GPU
 budget, the system must degrade gracefully. The non-negotiable
 rule is **responsiveness is never traded for fidelity**: the
 cursor must stay current with the hardware pointer at all
@@ -2008,7 +1974,7 @@ average; if the average exceeds budget, it raises `n` (the
 "drain divisor"); if work is well under budget with hysteresis
 margin, it lowers `n` toward 1.
 
-**Under the hood.** `src/application/frame_throttle.rs:64-183`.
+`src/application/frame_throttle.rs:64-183`.
 Default budget `14_000` µs (60 Hz minus safety), default
 window 8 frames, default hysteresis 30%. `n` clamps in
 `[1, 8]`. Each `ThrottledDrag` owns its own throttle, so
@@ -2017,18 +1983,17 @@ budget does not bias an edge-label drag's average.
 
 ### `UndoAction`
 
-**Summary.** A 12-variant tagged union; one variant per
+A 12-variant tagged union; one variant per
 user-facing mutation, dispatched through `MindMapDocument::undo`
 to reverse it.
 
-**What it's for.** Every persistent change pushes one
+Every persistent change pushes one
 `UndoAction`; Ctrl+Z pops the back of the stack and dispatches.
 The discipline is **one mutation, one variant** — adding a new
 mutation means adding a new variant, snapshotting the right
 "before" state, and writing the matching `undo()` arm in the
 same commit.
 
-**Under the hood.**
 `src/application/document/undo_action.rs:10-88`. The twelve
 variants: `MoveNodes`, `CustomMutation`, `ReparentNodes`,
 `DeleteEdge`, `CreateEdge`, `EditEdge`, `CreateNode`,
@@ -2042,17 +2007,17 @@ state.
 
 ### `Renderer`
 
-**Summary.** The GPU resource holder and command-buffer builder;
+The GPU resource holder and command-buffer builder;
 reads from the document, writes to the swapchain.
 
-**What it's for.** The `Renderer` is the view side of the
+The `Renderer` is the view side of the
 model/view split. It owns wgpu device, queue, surface,
 pipelines, atlases, and the FPS ring buffer; every frame, its
 `process()` reads document and scene state, builds command
 buffers, and submits to the GPU. It never holds a reference to
 the document.
 
-**Under the hood.** `src/application/renderer/mod.rs:224-878`.
+`src/application/renderer/mod.rs:224-878`.
 The dual pipeline lives here:
 - **Rect / SDF pipeline** — node fills, ellipse SDF (shape-aware
   fills via `RECT_SHADER_WGSL`), background fills.
@@ -2066,11 +2031,11 @@ combines `Camera2D::is_visible` (spatial) with
 
 ### `AppScene` and scene host
 
-**Summary.** A two-role scene container: a camera-transformed
+A two-role scene container: a camera-transformed
 canvas and a screen-space overlay, each composed of named
 sub-trees.
 
-**What it's for.** Mindmap content (nodes, borders, connections,
+Mindmap content (nodes, borders, connections,
 portals, edge handles) belongs in the canvas role — pans and
 zooms with the camera. The console and color picker belong in
 the overlay role — fixed in screen space. The `AppScene`
@@ -2079,7 +2044,7 @@ abstracts that split; rebuild dispatch
 `FullRebuild` for structural changes) flows through the same
 seam for both roles.
 
-**Under the hood.** `src/application/scene_host.rs:1-150`. Each
+`src/application/scene_host.rs:1-150`. Each
 role has named slots (`CanvasRole`, `OverlayRole`); each slot
 has a corresponding `Tree<GfxElement, GfxMutator>` and a
 mutator registry. The same idiom drives both canvas-role
@@ -2088,17 +2053,17 @@ rebuilds (in `scene_rebuild.rs`) and overlay-role rebuilds
 
 ### Scene rebuild granularity
 
-**Summary.** Five tiered rebuild functions, each scoped to a
+Five tiered rebuild functions, each scoped to a
 specific change kind.
 
-**What it's for.** Different changes invalidate different
+Different changes invalidate different
 amounts of work. Editing a node's text might change its width
 (full rebuild); dragging a node only moves connection paths
 (connection-only rebuild); changing a portal endpoint colour
 only touches portal markers (portal-only rebuild). Each tier
 is dispatched explicitly so the cheapest one runs.
 
-**Under the hood.** `src/application/app/scene_rebuild.rs`.
+`src/application/app/scene_rebuild.rs`.
 Functions: `rebuild_all` (full tree + scene), `rebuild_scene_only`
 (reuse tree, rebuild scene), `update_connection_tree` (edges
 only), `update_portal_tree` (portals only),
@@ -2106,16 +2071,16 @@ only), `update_portal_tree` (portals only),
 
 ### Dirty flag
 
-**Summary.** A single `bool` on `MindMapDocument` set by
+A single `bool` on `MindMapDocument` set by
 mutations and consulted by `drain_frame`.
 
-**What it's for.** Decouples mutation frequency from rebuild
+Decouples mutation frequency from rebuild
 frequency. A drag handler that fires 200 mutations per second
 does not trigger 200 rebuilds; it sets `dirty = true` once and
 the next frame's drain rebuilds once. After rebuild, the flag
 resets.
 
-**Under the hood.** Read at the top of `drain_frame`'s rebuild
+Read at the top of `drain_frame`'s rebuild
 step; reset at the bottom. Modal editors check it implicitly —
 if a text-edit modal is open, the rebuild step is suppressed
 because edits are visualised through the in-flight preview, not
@@ -2123,17 +2088,17 @@ the model.
 
 ### FPS overlay
 
-**Summary.** Two display modes for frame-time diagnostics:
+Two display modes for frame-time diagnostics:
 snapshot (stable readout, re-sampled periodically) and debug
 (live rolling average).
 
-**What it's for.** Performance-conscious development needs a
+Performance-conscious development needs a
 truthful FPS readout. The snapshot mode answers "what is the
 steady-state frame rate?"; the debug mode answers "where are
 the hitches?". The `fps` console verb (native) toggles between
 them.
 
-**Under the hood.** Embedded in
+Embedded in
 `src/application/renderer/mod.rs`. Both modes read
 **wall-clock** deltas via `Instant::now()` stored in
 `Renderer::last_frame_instant` — measuring render-body time
@@ -2148,12 +2113,12 @@ WASM parity gap is cheap to leave.
 
 ### `FreezeWatchdog`
 
-**Summary.** A native-only background thread that reads an
+A native-only background thread that reads an
 atomic timestamp pinged by the main loop and aborts the
 process with a diagnostic banner if the main loop stalls past
 threshold.
 
-**What it's for.** Mandala is single-threaded; an infinite
+Mandala is single-threaded; an infinite
 loop, a same-thread `RwLock` re-entry, or a blocking GPU call
 would hang indefinitely with no actionable error. The watchdog
 turns a hang into a fast, diagnostic crash. It is the **only**
@@ -2162,7 +2127,6 @@ single-threaded invariant for the model/view pipeline is
 preserved because the watchdog only *reads* a shared
 `AtomicU64`, never touching app state.
 
-**Under the hood.**
 `src/application/app/freeze_watchdog.rs:38-134`. Main thread
 calls `tick()` at every event-loop boundary; watchdog reads
 the atomic every second; if the gap exceeds `FREEZE_THRESHOLD`
@@ -2172,15 +2136,15 @@ for free.
 
 ### `now_ms()`
 
-**Summary.** A cross-platform monotonic clock returning `f64`
+A cross-platform monotonic clock returning `f64`
 milliseconds since process start (native) or page load (WASM).
 
-**What it's for.** Animation timing, double-click detection,
+Animation timing, double-click detection,
 FPS tracking, throttled-interaction frame stamping all need a
 clock that works the same on both targets. `now_ms()` is the
 single bridge.
 
-**Under the hood.** `src/application/app/mod.rs:98-111`.
+`src/application/app/mod.rs:98-111`.
 Native: `Instant::now()` deltas from a static epoch. WASM:
 `window.performance.now()` (clamped to ≥1ms by Spectre
 mitigations).
@@ -2189,13 +2153,13 @@ mitigations).
 
 ### Action dispatch
 
-**Summary.** Every user-driven application-level effect is a variant
+Every user-driven application-level effect is a variant
 of `enum Action` (`src/application/keybinds/action.rs`) and runs
 through a single `dispatch_action(action, ctx, hit)` funnel
 (`src/application/app/dispatch/native.rs`). Mouse, keyboard, the future
 macro runtime, and any plugin host all reach the same arms.
 
-**What it's for.** Before this funnel existed, mouse gestures
+Before this funnel existed, mouse gestures
 (double-click create-orphan, double-click open-editor, middle-click
 pan, wheel zoom) were hardcoded inside event handlers and bypassed
 the keybind system entirely. Users couldn't disable, rebind, or
@@ -2203,7 +2167,7 @@ replace them without recompiling. The funnel reifies every gesture
 as an Action so one vocabulary covers keys, mouse, macros, and
 plugins.
 
-**Under the hood.** `KeyBind` (`src/application/keybinds/bind.rs`)
+`KeyBind` (`src/application/keybinds/bind.rs`)
 accepts mouse-shaped binding strings —`DoubleClick`, `MiddleClick`,
 `RightClick`, `LeftClick`, `LeftDrag`, `WheelUp`, `WheelDown` —
 alongside keyboard names. Mouse handlers synthesize the gesture's
@@ -2291,10 +2255,10 @@ parity story for each is honest.
 
 ### Inline node-text editor
 
-**Summary.** Multi-line, grapheme-aware text editing on a
+Multi-line, grapheme-aware text editing on a
 selected node; commit-on-click-outside, cancel on Esc.
 
-**What it's for.** Editing a node's text without leaving the
+Editing a node's text without leaving the
 canvas. Double-click or Enter opens the editor; Backspace on a
 selected node opens it pre-cleared; arrow keys move the cursor
 in grapheme units. Live edits paint through a `DeltaGlyphArea`
@@ -2302,7 +2266,7 @@ mutation against the tree (not the model) so the user sees
 in-flight characters; on commit, the model is updated and a
 single `EditNodeText` undo entry is pushed.
 
-**Under the hood.** `src/application/app/text_edit/mod.rs:29-80`.
+`src/application/app/text_edit/mod.rs:29-80`.
 Cross-platform — works on both native and WASM. Cursor math
 runs on grapheme-cluster indices throughout (via
 [`grapheme_chad`](#utilities--grapheme_chad-color-geometry)),
@@ -2311,34 +2275,34 @@ text and regions are snapshotted on open; Esc restores them.
 
 ### Inline edge-label editor
 
-**Summary.** Single-line text editing for line-mode edge labels.
+Single-line text editing for line-mode edge labels.
 
-**What it's for.** Setting or changing an edge label without
+Setting or changing an edge label without
 leaving the canvas. Same lifecycle as the node editor (commit
 on click outside the AABB, cancel on Esc) but restricted to one
 line.
 
-**Under the hood.** `src/application/app/label_edit.rs`.
+`src/application/app/label_edit.rs`.
 Native-only today. WASM users reach the same operation via the
 `label` console verb, which has full cross-platform parity.
 
 ### Inline portal-text editor
 
-**Summary.** Single-line text editing for portal-endpoint text.
+Single-line text editing for portal-endpoint text.
 
-**What it's for.** Setting the text label that sits next to a
+Setting the text label that sits next to a
 portal icon. Selection and editing target one endpoint at a
 time; the other endpoint's text is unaffected.
 
-**Under the hood.** Mirrors the label editor shape; native-only
+Mirrors the label editor shape; native-only
 today, console parity on WASM.
 
 ### Glyph-wheel color picker
 
-**Summary.** A modal HSV picker rendered as a 24-glyph hue ring
+A modal HSV picker rendered as a 24-glyph hue ring
 with sat/value crosshairs and theme-variable quick-pick chips.
 
-**What it's for.** Picking a colour for the current selection
+Picking a colour for the current selection
 without leaving the canvas. Hover live-previews through the
 `color_picker_preview` transient on `MindMapDocument`; the
 scene builder reads it during render and substitutes the
@@ -2346,7 +2310,7 @@ preview colour for the targeted element. Click commits, click
 outside cancels. Keyboard: h/H nudges hue, s/S sat, v/V value,
 Tab cycles theme chips, Enter commits, Esc cancels.
 
-**Under the hood.** `src/application/color_picker/mod.rs:1-77`
+`src/application/color_picker/mod.rs:1-77`
 and `src/application/color_picker_overlay/`. Native-only today.
 `compute_color_picker_layout()` is a pure function over
 geometry + viewport, so layout can be unit-tested without GPU.
@@ -2357,10 +2321,10 @@ the current selection and stays open).
 
 ### Console
 
-**Summary.** A CLI-style command palette (Ctrl+;) for mutations,
+A CLI-style command palette (Ctrl+;) for mutations,
 styling, settings, and document operations.
 
-**What it's for.** Power-user operations that don't have a
+Power-user operations that don't have a
 keybind. The console covers the long tail: zoom-bound
 authoring, font-size clamps, palette swaps, mutation listing
 and application, FPS toggle. Tokenised shell-style
@@ -2368,7 +2332,7 @@ and application, FPS toggle. Tokenised shell-style
 first-class). Tab-completion is contextual and prefix-matched;
 scrollback shows command history with dimmed older lines.
 
-**Under the hood.** `src/application/console/mod.rs:1-170`.
+`src/application/console/mod.rs:1-170`.
 Native-only today. Verbs include `zoom`, `font`, `color`,
 `label`, `edge`, `portal`, `anchor`, `body`, `cap`, `spacing`,
 `fps`, `mutation` (with `list`, `help`, `apply`, `inspect`
@@ -2378,25 +2342,25 @@ for the frame; content is clipped via
 `grapheme_chad::truncate_to_display_width` so wide CJK
 characters never overflow.
 
-**Vision.** Console parity on WASM is the obvious next step;
+Console parity on WASM is the obvious next step;
 the verb implementations are already cross-platform, only the
 modal shell is native-gated.
 
 ### Keybinds and `Action`
 
-**Summary.** A three-layer pipeline: abstract `Action` enum →
+A three-layer pipeline: abstract `Action` enum →
 parsed `KeyBind` → resolved table; with cross-platform
 configuration via XDG (native) and `?keybinds=` /
 `localStorage` (WASM).
 
-**What it's for.** Every keystroke that does *anything* maps to
+Every keystroke that does *anything* maps to
 an `Action` first; the `Action` is then dispatched in the right
 input context (Document, Console, ColorPicker, LabelEdit,
 TextEdit). This indirection means users can rebind keys without
 touching code, and the same `Action` works on both targets even
 though the config-loading paths differ.
 
-**Under the hood.** `src/application/keybinds/`. The three
+`src/application/keybinds/`. The three
 layers:
 
 - `Action` enum (`action.rs`) — high-level intents:
@@ -2461,11 +2425,11 @@ privilege gate.
 
 ### Clipboard
 
-**Summary.** Cross-platform copy / cut / paste, with native
+Cross-platform copy / cut / paste, with native
 backed by `arboard` and WASM stubbed pending async-clipboard
 integration.
 
-**What it's for.** Selection-routed clipboard: each
+Selection-routed clipboard: each
 [`SelectionState`](#selectionstate) variant has its own channel.
 Copying a node copies its style and text; copying a section
 copies a structured payload (text + per-run formatting + offset
@@ -2475,7 +2439,7 @@ a portal label copies the icon colour; copying a portal text
 copies the text colour. The font channel mirrors this routing
 for `font size= min= max=` writes.
 
-**Under the hood.** `src/application/clipboard.rs`. The OS
+`src/application/clipboard.rs`. The OS
 clipboard layer (native `arboard`, WASM stub) carries plain
 text. A thread-local in-process `SECTION_BUFFER` slot carries
 the structured `SectionPayload` for within-app section→section
@@ -2489,19 +2453,19 @@ stubs warn-and-noop pending the browser's async clipboard API.
 
 ### `maptool` CLI
 
-**Summary.** A separate binary in `crates/maptool/` for
+A separate binary in `crates/maptool/` for
 scripted operations on `.mindmap.json` files: `show`, `grep`,
 `apply`, `export`, `convert --legacy`, `convert --portals`,
 `verify`.
 
-**What it's for.** Authoring and maintenance from outside the
+Authoring and maintenance from outside the
 app. `verify` is the structural-invariant checker
 ([`format/validation.md`](./format/validation.md)). `convert`
 migrates legacy formats. `apply` pipes node text through an
 external command for batch edits. `export` renders to Markdown.
 `grep` and `show` are read-only inspectors.
 
-**Under the hood.** `crates/maptool/`. Not the focus of this
+`crates/maptool/`. Not the focus of this
 document — see the crate directly for the verb-level reference.
 The format docs under [`format/`](./format/) are the
 authoritative reference for what `verify` enforces.

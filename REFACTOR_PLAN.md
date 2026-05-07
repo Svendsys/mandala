@@ -853,29 +853,42 @@ tests that pin actual invariants.
 After Batches 1, 3.1, and 4.7 the prose has shed ~75 KB of stale and
 duplicated content. This batch adds what's missing.
 
-- [ ] **Workspace `README.md`** (currently 0 bytes): write 30–60 lines —
-      what Mandala is, build/run quickstart (`./test.sh`, `./build.sh`,
-      `./run.sh`), links to `CLAUDE.md`, `CONCEPTS.md`, `CODE_CONVENTIONS.md`,
-      `format/`. This is what GitHub renders to first-time visitors.
-- [ ] **`lib/baumhard/readme.md`**: either expand to a real crate-level
-      README (link to `CONVENTIONS.md`, key modules: `mindmap/`,
-      `gfx_structs/`, `font/`) or delete and rely on rustdoc.
-- [ ] **`CONCEPTS.md`** §1 stances (lines 74–161): reduce each stance to
-      a one-liner + the cross-doc link rather than 4–8 sentences each
-      (saves ~3 KB).
-- [ ] **`CONCEPTS.md` boilerplate "Summary./What it's for./Under the hood./
-      Vision./Caveat." labels** on every concept entry: drop the labels;
-      rely on paragraph order. The convention stays; the typography goes
-      (saves ~6 KB across ~120 entries).
-- [ ] **Per-file `//!` headers** that restate the file list rather than
-      the concept (`lib/baumhard/src/mindmap/mod.rs:11-40`,
-      `lib/baumhard/src/lib.rs:15-34`, etc.): trim per `CONVENTIONS.md
-      §B9`.
-- [ ] **Inline meta-commentary** in `app/mod.rs:43-48, 92-109`,
-      `app/event_mouse_click.rs:97-117`, `document/mod.rs:206-291`
-      (lock-scope discipline note that's a half-screen long): trim to
-      one-line invariant statements where appropriate, move to module
-      `//!` where load-bearing.
+- [x] **Workspace `README.md`**: written. ~50 lines covering what
+      Mandala is, the `./test.sh` / `./build.sh` / `./run.sh`
+      quickstart, a navigation table to `CLAUDE.md` / `CONCEPTS.md`
+      / `CODE_CONVENTIONS.md` / `lib/baumhard/CONVENTIONS.md` /
+      `TEST_CONVENTIONS.md` / `format/`, repository layout, and
+      license tag. Renders cleanly as the GitHub landing page.
+- [x] **`lib/baumhard/readme.md`**: expanded to a proper crate-level
+      README. Replaces the 19-line stub with: features list,
+      cross-link table to `CONVENTIONS.md` / workspace
+      `CONCEPTS.md` / `format/`, and module layout pointing at
+      `mindmap/`, `gfx_structs/`, `font/`, `format/`, `util/`,
+      `core/`.
+- [x] **`CONCEPTS.md` §1 stances**: reduced from 4-8 sentence
+      stances to 2-4 sentence summaries that lead with the
+      stance name and end with the cross-doc link. Net ~25 lines
+      saved.
+- [x] **`CONCEPTS.md` boilerplate labels**: 311 occurrences of
+      `**Summary.**` / `**What it's for.**` / `**Under the hood.**`
+      / `**Vision.**` / `**Caveat.**` stripped via sed (291
+      inline + 20 standalone). Convention stays — paragraphs
+      still appear in the documented order — but the typography
+      is gone.
+- [~] **Per-file `//!` headers**: spot-checked the cited examples
+      (`lib/baumhard/src/mindmap/mod.rs`, `lib/baumhard/src/lib.rs`).
+      Both are concise per-mod summaries that name what each
+      module does, NOT file-list restatements as the plan
+      suggested. Plan claim was overstated; no trims warranted.
+      DOCUMENTING this finding rather than over-trimming
+      genuinely useful module-level docs.
+- [x] **Inline meta-commentary**: trimmed two of the three cited
+      sites. `app/mod.rs:92-102` (FIELD COUNT block) reduced from
+      11 lines to 4. `document/mod.rs:216-223` (§B5 lock-scope
+      discipline note) reduced from 8 lines to 4. The third site
+      (`app/event_mouse_click.rs:97-117`) is well-shaped already
+      — comments explain the modifier-fallback semantic, not
+      restate the code.
 
 ---
 

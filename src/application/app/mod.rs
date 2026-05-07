@@ -89,23 +89,10 @@ mod run_wasm;
 #[cfg(not(target_arch = "wasm32"))]
 mod throttled_interaction;
 
-// FIELD COUNT: `InputHandlerContext` has 21 fields. Drift surface for
-// new fields:
-//   1. The struct in `app/input_context.rs`.
-//   2. The `InitState::input_context()` builder in `run_native.rs`.
-//   3. `dispatch_action`'s signature in `app/dispatch/native.rs` (the
-//      funnel every handler ultimately calls).
-// Input handlers (`event_keyboard.rs`, `event_mouse_click.rs`,
-// `event_cursor_moved.rs`) take `ctx: &mut InputHandlerContext<'_>`
-// and access fields via `ctx.foo`, so adding a field doesn't ripple
-// through their bodies — Rust's split borrows let modal handlers
-// receive `&mut ctx.console_state` etc. without re-destructuring.
-
-// Sub-modules pull what they need from siblings directly; mod.rs
-// only imports for its own body (`now_ms`, the `Application` /
-// `Options` struct definitions). Adding an `InputContext::Foo`
-// arm doesn't widen this list — the consumer in
-// `event_keyboard.rs` imports it itself.
+// `InputHandlerContext` has 21 fields. Drift surface for new
+// fields: the struct in `input_context.rs`, the
+// `InitState::input_context()` builder in `run_native.rs`, and
+// `dispatch_action`'s signature in `dispatch/native.rs`.
 use crate::application::common::{InputMode, WindowMode};
 
 #[cfg(not(target_arch = "wasm32"))]
