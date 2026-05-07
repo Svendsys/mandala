@@ -44,7 +44,8 @@ use winit::window::WindowId;
 
 use super::scene_rebuild::{
     flush_canvas_scene_buffers, update_border_tree_static, update_connection_label_tree,
-    update_connection_tree, update_portal_tree,
+    update_connection_tree, update_edge_handle_tree, update_node_resize_handle_tree, update_portal_tree,
+    update_section_resize_handle_tree,
 };
 use super::text_edit::TextEditState;
 use super::{Application, LastClick};
@@ -345,20 +346,44 @@ impl ApplicationHandler for WasmApp {
 }
 
 impl WasmApp {
-    /// Per-event dispatch — six arms fan out into per-arm methods
-    /// defined in sibling `event_*.rs` files, plus an inline
+    /// Per-event dispatch — seven arms fan out into per-arm
+    /// methods defined in sibling `event_*.rs` files, plus an
+    /// inline `RedrawRequested` arm that runs the renderer's
+    /// `process()` (the sole entry to render on web), an inline
     /// `CloseRequested` no-op (browser tabs don't really close)
     /// and a `_ => {}` catch-all that silently drops the arms
     /// winit fires that WASM doesn't currently consume (touch
-    /// events, IME composition, focus changes). Each fan-out arm
-    /// extracts only the fields that arm needs.
+    /// events, IME composition, focus changes). Each fan-out
+    /// arm extracts only the fields that arm needs.
+    ///
+    /// Mutating arms set `redraw_after = true`; the trailing
+    /// `Renderer::request_redraw` call hands a redraw request
+    /// to winit-web, which translates to an internal rAF
+    /// dispatch. The browser only paints when the canvas
+    /// actually changed.
     fn handle_window_event(&mut self, event: WindowEvent) {
+        let mut redraw_after = false;
         match event {
-            WindowEvent::Resized(s) => self.handle_resized(s),
+            WindowEvent::RedrawRequested => {
+                // Sole entry to the render path on web. Coalesced
+                // by winit-web from any number of `request_redraw`
+                // calls in the prior event chain.
+                if let Some(r) = self.renderer.borrow_mut().as_mut() {
+                    r.process();
+                }
+            }
+            WindowEvent::Resized(s) => {
+                self.handle_resized(s);
+                redraw_after = true;
+            }
             WindowEvent::CloseRequested => {
                 // WASM doesn't really close
             }
-            WindowEvent::ModifiersChanged(m) => self.handle_modifiers_changed(m),
+            WindowEvent::ModifiersChanged(m) => {
+                self.handle_modifiers_changed(m);
+                // Modifier-only changes don't paint anything until
+                // a paired mouse/keyboard event acts on them.
+            }
             WindowEvent::KeyboardInput {
                 event:
                     KeyEvent {
@@ -367,14 +392,35 @@ impl WasmApp {
                         ..
                     },
                 ..
-            } => self.handle_keyboard_input(logical_key),
-            WindowEvent::CursorMoved { position, .. } => self.handle_cursor_moved(position),
+            } => {
+                self.handle_keyboard_input(logical_key);
+                redraw_after = true;
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                self.handle_cursor_moved(position);
+                // WASM doesn't yet have full drag/picker state
+                // (see `WasmInputState` field comments) so the
+                // CursorMoved redraw conditions native checks for
+                // collapse to "yes" for any in-progress click.
+                // Conservative: redraw on every CursorMoved that
+                // arrived while a click is pending.
+                redraw_after = !matches!(
+                    self.input.borrow().as_ref().map(|s| matches!(s.pending_click, PendingClick::None)),
+                    Some(true) | None,
+                );
+            }
             WindowEvent::MouseInput {
                 state,
                 button: MouseButton::Left,
                 ..
-            } => self.handle_mouse_input(state),
-            WindowEvent::MouseWheel { delta, .. } => self.handle_mouse_wheel(delta),
+            } => {
+                self.handle_mouse_input(state);
+                redraw_after = true;
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                self.handle_mouse_wheel(delta);
+                redraw_after = true;
+            }
             // Catch-all for winit `WindowEvent` variants WASM
             // doesn't yet route. The notable un-wired ones:
             //
@@ -399,6 +445,11 @@ impl WasmApp {
             // wired, lift the corresponding match arm out of
             // this catch-all into a dedicated handle_* method.
             _ => {}
+        }
+        if redraw_after {
+            if let Some(r) = self.renderer.borrow().as_ref() {
+                r.request_redraw();
+            }
         }
     }
 }
@@ -526,10 +577,15 @@ pub(super) fn run(mut app: Application) {
         // std::fs is unavailable in the browser; fetch over the page origin instead.
         let mut doc_opt: Option<MindMapDocument> = None;
         let mut tree_opt: Option<MindMapTree> = None;
-        // Local AppScene used only for the initial border tree
-        // build; it's then dropped, and `WasmInputState`'s own
-        // `app_scene` takes over for the live event loop.
+        // Lifted to outer scope so the warm-cache and warm-AppScene
+        // built during init survive into `WasmInputState` (the
+        // active event-loop scene host) instead of being dropped at
+        // the end of init. Native does this implicitly because both
+        // halves share the same `InitState`; on WASM the rAF loop
+        // and the input state are separate Rc<RefCell> cells, so we
+        // build once and move into the input state.
         let mut init_app_scene = crate::application::scene_host::AppScene::new();
+        let mut init_scene_cache = baumhard::mindmap::scene_cache::SceneConnectionCache::new();
         match fetch_map_json(&mindmap_path).await {
             Ok(json) => match MindMapDocument::from_json_str(&json, Some(mindmap_path.clone())) {
                 Ok(mut doc) => {
@@ -559,7 +615,14 @@ pub(super) fn run(mut app: Application) {
                     renderer.rebuild_buffers_from_tree(&mindmap_tree.tree);
                     renderer.fit_camera_to_tree(&mindmap_tree.tree);
 
-                    let scene = doc.build_scene(renderer.camera_zoom());
+                    // Use `build_scene_with_cache` so the per-edge
+                    // Bezier-sample cache is populated at load and
+                    // first interactions don't pay the full cost.
+                    let scene = doc.build_scene_with_cache(
+                        &std::collections::HashMap::new(),
+                        &mut init_scene_cache,
+                        renderer.camera_zoom(),
+                    );
                     update_connection_tree(&scene, &mut init_app_scene);
                     update_border_tree_static(&doc, &mut init_app_scene);
                     update_portal_tree(
@@ -569,6 +632,15 @@ pub(super) fn run(mut app: Application) {
                         &mut renderer,
                     );
                     update_connection_label_tree(&scene, &mut init_app_scene, &mut renderer);
+                    // Register the three handle-tree canvas roles
+                    // with fresh-load (empty-slice) signatures.
+                    // First real selection still takes FullRebuild
+                    // (8-handle signature differs from empty), but
+                    // every subsequent return to "nothing selected"
+                    // hits InPlaceMutator. Mirrors the native init.
+                    update_edge_handle_tree(&scene, &mut init_app_scene);
+                    update_section_resize_handle_tree(&scene, &mut init_app_scene);
+                    update_node_resize_handle_tree(&scene, &mut init_app_scene);
                     flush_canvas_scene_buffers(&mut init_app_scene, &mut renderer);
                     tree_opt = Some(mindmap_tree);
                     doc_opt = Some(doc);
@@ -590,6 +662,11 @@ pub(super) fn run(mut app: Application) {
 
         renderer.process_decree(RenderDecree::StartRender);
         log::info!("WASM: StartRender dispatched, rAF loop starting");
+
+        // Pre-warm the glyph atlas before the first user-driven
+        // frame so glyphs are rasterized + uploaded eagerly. No-op
+        // if the document load failed (buffers are empty).
+        renderer.prewarm_atlas();
 
         // Populate the shared state now that init is complete.
         *renderer_for_init.borrow_mut() = Some(renderer);
@@ -633,45 +710,28 @@ pub(super) fn run(mut app: Application) {
                 cursor_pos: (0.0, 0.0),
                 pending_click: PendingClick::None,
                 modifiers: crate::application::platform::input::Modifiers::empty(),
-                app_scene: crate::application::scene_host::AppScene::new(),
-                scene_cache: baumhard::mindmap::scene_cache::SceneConnectionCache::new(),
+                // Move the warm AppScene + scene_cache built during
+                // init into the live event-loop state so the
+                // pre-warm work isn't dropped at the end of init.
+                app_scene: init_app_scene,
+                scene_cache: init_scene_cache,
                 macros,
             });
         }
 
-        // WASM render loop via requestAnimationFrame
-        use wasm_bindgen::closure::Closure;
-        let renderer_for_raf = renderer_for_init.clone();
-        let f: Rc<RefCell<Option<Closure<dyn FnMut()>>>> = Rc::new(RefCell::new(None));
-        let g = f.clone();
-
-        *g.borrow_mut() = Some(Closure::new(move || {
-            if let Some(r) = renderer_for_raf.borrow_mut().as_mut() {
-                r.process();
-            }
-            // Reschedule against the same closure we were called from.
-            // `f` is set to `Some(closure)` immediately below this
-            // `Closure::new(...)` expression and never cleared — the
-            // setup completes before any rAF fires, so inside this
-            // body the Option is always `Some`. The `None` arm is
-            // therefore unreachable in practice; rather than panic
-            // (§9), we log and let the loop halt — the browser is
-            // about to tear down the tab if this ever fires, and a
-            // dropped loop is the correct outcome in that case
-            // because the closure (`f`'s inner value) is the very
-            // thing that would have been rescheduled.
-            let closure_ref = f.borrow();
-            let Some(closure) = closure_ref.as_ref() else {
-                log::error!("RAF closure unexpectedly cleared — tab teardown in progress");
-                return;
-            };
-            request_animation_frame(closure);
-        }));
-        request_animation_frame(
-            g.borrow()
-                .as_ref()
-                .expect("render closure installed immediately above"),
-        );
+        // Event-driven redraw model: instead of an unconditional
+        // self-rescheduling rAF (which kept the main thread busy at
+        // 60Hz even when the canvas was visually idle), we kick a
+        // single `Window::request_redraw` here to paint the first
+        // frame and rely on `WasmApp::handle_window_event`'s
+        // `WindowEvent::RedrawRequested` arm to do all subsequent
+        // renders. Mutating event handlers call
+        // `Renderer::request_redraw` after their work, which
+        // winit-web translates to an internal rAF dispatch — so the
+        // browser only paints when the canvas actually changed.
+        if let Some(r) = renderer_for_init.borrow().as_ref() {
+            r.request_redraw();
+        }
     });
 
     // Resolve the keybind config once. `action_for(key, ctrl, shift, alt)`
@@ -695,28 +755,6 @@ pub(super) fn run(mut app: Application) {
         keybinds,
     };
     app.event_loop.spawn_app(handler);
-}
-
-/// Schedule `f` on the next browser animation frame — the
-/// `requestAnimationFrame` handshake winit-web uses to drive its
-/// render ticks. Kept next to the event-loop body because that's
-/// its sole caller.
-///
-/// Called once per frame from inside the RAF closure — an
-/// interactive-path caller per `CODE_CONVENTIONS.md §9`. Missing
-/// `window` or a rejected rAF request degrades to a logged warning
-/// and a dropped frame rather than a panic. In practice the browser
-/// keeps both available for the lifetime of the page, so failure
-/// here would indicate the tab is being torn down.
-fn request_animation_frame(f: &wasm_bindgen::closure::Closure<dyn FnMut()>) {
-    use wasm_bindgen::JsCast;
-    let Some(window) = web_sys::window() else {
-        log::error!("requestAnimationFrame: no `window` available — dropping frame");
-        return;
-    };
-    if let Err(err) = window.request_animation_frame(f.as_ref().unchecked_ref()) {
-        log::error!("requestAnimationFrame rejected: {:?} — dropping frame", err);
-    }
 }
 
 /// HTTP-fetch a mindmap JSON file. Maps are bundled into the page
