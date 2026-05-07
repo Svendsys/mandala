@@ -42,22 +42,13 @@ fn complete_fps(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completio
 }
 
 fn execute_fps(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
-    match args.positional(0) {
-        Some("on") => {
-            eff.set_fps_display = Some(FpsDisplayMode::Snapshot);
-            eff.close_console = true;
-            ExecResult::ok_empty()
-        }
-        Some("off") => {
-            eff.set_fps_display = Some(FpsDisplayMode::Off);
-            eff.close_console = true;
-            ExecResult::ok_empty()
-        }
-        Some("debug") => {
-            eff.set_fps_display = Some(FpsDisplayMode::Debug);
-            eff.close_console = true;
-            ExecResult::ok_empty()
-        }
-        _ => ExecResult::err("usage: fps on | fps off | fps debug"),
-    }
+    let mode = match args.positional(0) {
+        Some("on") => FpsDisplayMode::Snapshot,
+        Some("off") => FpsDisplayMode::Off,
+        Some("debug") => FpsDisplayMode::Debug,
+        _ => return ExecResult::err("usage: fps on | fps off | fps debug"),
+    };
+    eff.side_effect = Some(super::super::ConsoleSideEffect::SetFpsDisplay(mode));
+    eff.close_console = true;
+    ExecResult::ok_empty()
 }

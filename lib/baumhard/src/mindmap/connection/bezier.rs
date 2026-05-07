@@ -47,19 +47,31 @@ pub(crate) fn cubic_bezier_second_derivative(t: f32, p0: Vec2, p1: Vec2, p2: Vec
     6.0 * u * (p2 - 2.0 * p1 + p0) + 6.0 * t * (p3 - 2.0 * p2 + p1)
 }
 
-/// Total arc length of a cubic Bezier curve, approximated by walking
-/// `ARC_LENGTH_SUBDIVISIONS` straight segments between evenly-spaced
-/// parameter samples.
-pub(super) fn cubic_bezier_length(start: Vec2, control1: Vec2, control2: Vec2, end: Vec2) -> f32 {
-    let mut length = 0.0f32;
+/// Build the cumulative arc-length table for a cubic Bezier — one
+/// entry per subdivision boundary, monotonically non-decreasing.
+/// `table[0] == 0.0`, `table[n]` is the total polyline length.
+/// Single source of truth for both [`cubic_bezier_length`] (which
+/// reads only `table[n]`) and [`sample_cubic_bezier`] (which binary-
+/// searches the table to invert arc-length → `t`).
+fn build_arc_length_table(start: Vec2, control1: Vec2, control2: Vec2, end: Vec2) -> Vec<f32> {
+    let n = ARC_LENGTH_SUBDIVISIONS;
+    let mut arc_lengths = Vec::with_capacity(n + 1);
+    arc_lengths.push(0.0f32);
     let mut prev = start;
-    for i in 1..=ARC_LENGTH_SUBDIVISIONS {
-        let t = i as f32 / ARC_LENGTH_SUBDIVISIONS as f32;
+    for i in 1..=n {
+        let t = i as f32 / n as f32;
         let pt = cubic_bezier_point(t, start, control1, control2, end);
-        length += prev.distance(pt);
+        arc_lengths.push(arc_lengths[i - 1] + prev.distance(pt));
         prev = pt;
     }
-    length
+    arc_lengths
+}
+
+/// Total arc length of a cubic Bezier curve, approximated by
+/// walking `ARC_LENGTH_SUBDIVISIONS` straight segments between
+/// evenly-spaced parameter samples.
+pub(super) fn cubic_bezier_length(start: Vec2, control1: Vec2, control2: Vec2, end: Vec2) -> f32 {
+    *build_arc_length_table(start, control1, control2, end).last().unwrap()
 }
 
 pub(super) fn sample_cubic_bezier(
@@ -69,24 +81,13 @@ pub(super) fn sample_cubic_bezier(
     end: Vec2,
     spacing: f32,
 ) -> Vec<SampledPoint> {
-    // Build arc-length lookup table
-    let n = ARC_LENGTH_SUBDIVISIONS;
-    let mut arc_lengths = Vec::with_capacity(n + 1);
-    arc_lengths.push(0.0f32);
-    let mut prev = start;
-    for i in 1..=n {
-        let t = i as f32 / n as f32;
-        let pt = cubic_bezier_point(t, start, control1, control2, end);
-        let prev_len = arc_lengths[i - 1];
-        arc_lengths.push(prev_len + prev.distance(pt));
-        prev = pt;
-    }
+    let arc_lengths = build_arc_length_table(start, control1, control2, end);
     let total_length = *arc_lengths.last().unwrap();
     if total_length < f32::EPSILON {
         return vec![SampledPoint { position: start }];
     }
 
-    // Sample at even arc-length intervals
+    let n = ARC_LENGTH_SUBDIVISIONS;
     let count = (total_length / spacing).floor() as usize + 1;
     let mut points = Vec::with_capacity(count);
     for i in 0..count {

@@ -11,17 +11,18 @@ use std::sync::OnceLock;
 
 use baumhard::core::primitives::ColorFontRegions;
 use baumhard::font::fonts::AppFont;
+use baumhard::font::color::{cosmic_color_from_rgba, cosmic_color_to_rgba};
 use baumhard::gfx_structs::area::GlyphAreaField;
 use baumhard::util::color::{hsv_to_hex, hsv_to_rgb};
 use baumhard::util::grapheme_chad::count_grapheme_clusters;
 
 use crate::application::color_picker::{
-    arm_bottom_font, hue_slot_to_degrees, sat_cell_to_value, val_cell_to_value, ColorPickerLayout,
-    ColorPickerOverlayGeometry, PickerHit, CROSSHAIR_CENTER_CELL, HUE_SLOT_COUNT, SAT_CELL_COUNT,
-    VAL_CELL_COUNT,
+    arm_bottom_font, hue_slot_to_degrees, sat_cell_to_value, sat_value_to_cell, val_cell_to_value,
+    val_value_to_cell, ColorPickerLayout, ColorPickerOverlayGeometry, PickerHit,
+    CROSSHAIR_CENTER_CELL, HUE_SLOT_COUNT, SAT_CELL_COUNT, VAL_CELL_COUNT,
 };
 use crate::application::color_picker_overlay::color::{
-    highlight_hovered_cell_color, highlight_selected_cell_color, rgb_to_cosmic_color,
+    highlight_hovered_cell_color, highlight_selected_cell_color,
 };
 use crate::application::widgets::color_picker_widget::load_spec;
 use baumhard::mutator_builder::{CellField, SectionContext};
@@ -52,7 +53,7 @@ impl CellColor {
     fn new(rgb: [f32; 3]) -> Self {
         Self {
             rgb,
-            color: rgb_to_cosmic_color(rgb),
+            color: cosmic_color_from_rgba([rgb[0], rgb[1], rgb[2], 1.0]),
         }
     }
 }
@@ -212,14 +213,10 @@ pub(super) struct PickerDynamicContext<'a> {
 impl<'a> PickerDynamicContext<'a> {
     pub(super) fn new(geometry: &'a ColorPickerOverlayGeometry, layout: &'a ColorPickerLayout) -> Self {
         let preview_rgb = hsv_to_rgb(geometry.hue_deg, geometry.sat, geometry.val);
-        let preview_color = rgb_to_cosmic_color(preview_rgb);
+        let preview_color = cosmic_color_from_rgba([preview_rgb[0], preview_rgb[1], preview_rgb[2], 1.0]);
 
-        let current_sat_cell = (geometry.sat * (SAT_CELL_COUNT as f32 - 1.0))
-            .round()
-            .clamp(0.0, (SAT_CELL_COUNT - 1) as f32) as usize;
-        let current_val_cell = ((1.0 - geometry.val) * (VAL_CELL_COUNT as f32 - 1.0))
-            .round()
-            .clamp(0.0, (VAL_CELL_COUNT - 1) as f32) as usize;
+        let current_sat_cell = sat_value_to_cell(geometry.sat);
+        let current_val_cell = val_value_to_cell(geometry.val);
 
         // Sat-bar / val-bar base-color tables for every live cell.
         // The crosshair centre keeps its `CellColor::zero()` sentinel
@@ -270,9 +267,6 @@ impl<'a> PickerDynamicContext<'a> {
         let layout = self.layout;
         let hover = |matches_hover: bool| if matches_hover { self.hover_scale } else { 1.0 };
         match section {
-            PickerSection::Title | PickerSection::Hint => {
-                unreachable!("title/hint sections are not built")
-            }
             PickerSection::Hex => layout.font_size,
             PickerSection::HueRing => {
                 let hovered = matches!(g.hovered_hit, Some(PickerHit::Hue(h)) if h == index);
@@ -292,19 +286,6 @@ impl<'a> PickerDynamicContext<'a> {
             }
         }
     }
-}
-
-/// Convert a `baumhard::font::Color` to `[f32; 4]` in `[0, 1]` — same
-/// shape as `make_area`'s float-region input so the two paths
-/// produce bit-identical region values.
-#[inline]
-fn cosmic_to_rgba(color: baumhard::font::Color) -> [f32; 4] {
-    [
-        color.r() as f32 / 255.0,
-        color.g() as f32 / 255.0,
-        color.b() as f32 / 255.0,
-        color.a() as f32 / 255.0,
-    ]
 }
 
 impl<'a> SectionContext for PickerDynamicContext<'a> {
@@ -357,9 +338,6 @@ impl<'a> SectionContext for PickerDynamicContext<'a> {
         // cell. No `hsv_to_rgb` calls on this hot loop.
         let g = self.geometry;
         let (count, color, font): (usize, baumhard::font::Color, Option<AppFont>) = match section {
-            PickerSection::Title | PickerSection::Hint => {
-                unreachable!("title/hint sections are not built")
-            }
             PickerSection::Hex => (self.hex_count, self.preview_color, None),
             PickerSection::HueRing => {
                 let entry = hue_ring_colors()[index];
@@ -419,7 +397,7 @@ impl<'a> SectionContext for PickerDynamicContext<'a> {
 
         GlyphAreaField::ColorFontRegions(ColorFontRegions::single_span(
             count,
-            Some(cosmic_to_rgba(color)),
+            Some(cosmic_color_to_rgba(color)),
             font,
         ))
     }

@@ -71,15 +71,15 @@ use std::sync::Arc;
 use std::time::Duration;
 use web_time::Instant;
 
-use cosmic_text::{Attrs, Buffer};
+use baumhard::font::{Attrs, Buffer};
 use glyphon::{Cache, Resolution, SwashCache, TextAtlas, TextRenderer, Viewport};
 use log::{error, info, warn};
 
 use rustc_hash::FxHashMap;
 
 use wgpu::{
-    Adapter, Color, Device, Instance, MultisampleState, Queue, RenderPipeline, ShaderModule, Surface,
-    SurfaceCapabilities, SurfaceConfiguration, TextureFormat,
+    Color, Device, Instance, MultisampleState, Queue, RenderPipeline, Surface, SurfaceConfiguration,
+    TextureFormat,
 };
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
@@ -90,7 +90,6 @@ use baumhard::font::fonts;
 use baumhard::gfx_structs::area::GlyphArea;
 use baumhard::gfx_structs::camera::Camera2D;
 use baumhard::mindmap::scene_cache::EdgeKey;
-use baumhard::shaders::shaders::SHADER_APPLICATION;
 use glam::Vec2;
 
 /// Inline WGSL shader for the colored-rectangle pipeline. Draws a
@@ -172,8 +171,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 /// vec2<f32> uv + vec4<f32> color + u32 shape_id = 9 × 4 = 36 bytes`.
 /// Used when sizing / offsetting the vertex buffer. Declared as a
 /// compile-time const so the layout math is grep-able from a single
-/// place. Keep in sync with the attribute list in
-/// `create_render_pipeline` and with the per-vertex push in
+/// place. Keep in sync with the inline `wgpu::VertexAttribute`
+/// table in `Renderer::new` and the per-vertex push in
 /// `push_rect_ndc`.
 const RECT_VERTEX_SIZE: u64 = 36;
 
@@ -247,11 +246,9 @@ pub(super) const RECT_VERTEX_FLOATS: usize = 9;
 pub(super) const RECT_VBUF_INITIAL_CAPACITY: u64 = 8192;
 
 pub struct Renderer {
-    instance: Instance,
     surface: Surface<'static>,
     window: Arc<Window>,
     config: SurfaceConfiguration,
-    adapter: Adapter,
     device: Device,
     queue: Queue,
     viewport: Viewport,
@@ -261,8 +258,6 @@ pub struct Renderer {
     timer: PollTimer,
     target_duration_between_renders: Duration,
     last_render_time: Duration,
-    shaders: FxHashMap<&'static str, ShaderModule>,
-    render_pipeline: RenderPipeline,
     text_renderer: TextRenderer,
     /// Second glyphon TextRenderer dedicated to the command
     /// palette overlay. Shares `self.atlas` with `text_renderer`
@@ -272,8 +267,6 @@ pub struct Renderer {
     /// (otherwise re-preparing the single text renderer would
     /// race with the pass's already-recorded draw commands).
     console_text_renderer: TextRenderer,
-    texture_format: TextureFormat,
-    surface_capabilities: SurfaceCapabilities,
     redraw_mode: RedrawMode,
     run: bool,
     should_render: bool,
@@ -323,12 +316,9 @@ pub struct Renderer {
     /// wins via `insert`); the vec preserves emission order so
     /// halos stay behind the main glyph at render time.
     mindmap_buffers: FxHashMap<String, Vec<MindMapTextBuffer>>,
-    /// Per-node border glyph buffers, keyed by `node_id`. Each entry is a
-    /// `Vec` of 4 buffers (top/bottom/left/right) matching the layout in
-    /// `rebuild_border_buffers_keyed`. Keyed so unchanged borders survive
-    /// across drag frames without re-shaping — cosmic-text shaping is
-    /// the dominant cost here, skipping it for unmoved borders is what
-    /// keeps drag interactive.
+    /// Per-node border glyph buffers, keyed by `node_id`. Each entry is
+    /// a `Vec` of 4 buffers (top/bottom/left/right) emitted by
+    /// `rebuild_border_buffers`.
     border_buffers: FxHashMap<String, Vec<MindMapTextBuffer>>,
     /// Edge grab-handle buffers for the connection reshape surface.
     /// Populated only when an edge is selected; rebuilt fresh every
@@ -377,6 +367,13 @@ pub struct Renderer {
     color_picker_backdrop: Option<(f32, f32, f32, f32)>,
     /// Temporary overlay buffers (e.g., selection rectangle). Camera-transformed.
     overlay_buffers: Vec<MindMapTextBuffer>,
+    /// `(char_count, row_count)` of the most recent selection-rect
+    /// shape held in [`Self::overlay_buffers`]. Per-tick rebuilds
+    /// reuse the existing shaped buffers (just update positions)
+    /// when these counts match, avoiding 4 fresh `cosmic_text`
+    /// shapings per drag tick. `None` whenever the overlay is
+    /// cleared or holds a non-selection-rect shape.
+    selection_rect_shape_cache: Option<(usize, usize)>,
     /// Screen-space buffers produced by walking the app's
     /// [`AppScene`](crate::application::scene_host::AppScene).
     /// Populated by [`Self::rebuild_overlay_scene_buffers`] and
@@ -527,22 +524,45 @@ pub(crate) fn clamp_surface_size_to_gpu_limit(width: u32, height: u32, max_dim: 
 }
 
 impl Renderer {
-    pub async fn new(instance: Instance, surface: Surface<'static>, window: Arc<Window>) -> Renderer {
+    /// Native bootstrap: own the `wgpu::Instance` + `Surface`
+    /// construction so the caller doesn't need to import `wgpu`.
+    /// Hand wgpu the owned `Arc<Window>` rather than pre-snapshotting
+    /// raw handles via `SurfaceTargetUnsafe::from_window`: under
+    /// wgpu 29 + winit 0.30 the latter blew up with
+    /// `Hal(MissingDisplayHandle)` on EGL/GL Linux because the GL
+    /// surface ctor re-queries the display handle and won't accept a
+    /// captured raw struct.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn bootstrap_native(window: Arc<Window>) -> Renderer {
+        let instance = wgpu::Instance::default();
+        let surface = instance
+            .create_surface(window.clone())
+            .expect("failed to create wgpu surface for window");
+        Self::new(instance, surface, window).await
+    }
+
+    /// WASM bootstrap: same as `bootstrap_native` but binds the
+    /// surface to the supplied `<canvas>` element. The browser's
+    /// adapter/device init is Promise-backed so this stays async
+    /// like the native form.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn bootstrap_wasm(
+        window: Arc<Window>,
+        canvas: web_sys::HtmlCanvasElement,
+    ) -> Renderer {
+        let instance = wgpu::Instance::default();
+        let surface = instance
+            .create_surface(wgpu::SurfaceTarget::Canvas(canvas))
+            .expect("failed to create wgpu surface for canvas");
+        Self::new(instance, surface, window).await
+    }
+
+    pub(crate) async fn new(instance: Instance, surface: Surface<'static>, window: Arc<Window>) -> Renderer {
         let adapter = Self::get_adapter(&instance, &surface).await;
         let (device, queue) = Self::get_device(&adapter).await;
-        let mut shaders = FxHashMap::default();
-        Self::load_shaders(&device, &mut shaders);
-        assert!(shaders.len() > 0, "No shaders found!");
-        let shader = shaders
-            .get(SHADER_APPLICATION)
-            .expect(&*format!("Shader not found {}", SHADER_APPLICATION));
         let swapchain_format = TextureFormat::Bgra8UnormSrgb;
-        let pipeline_layout = Self::create_pipeline_layout(&device);
         let surface_capabilities = surface.get_capabilities(&adapter);
         let texture_format = surface_capabilities.formats[0];
-
-        let render_pipeline =
-            Self::create_render_pipeline(&device, &shader, &pipeline_layout, texture_format.clone());
         let size = window.inner_size();
         let config = Self::create_surface_config(
             texture_format.clone(),
@@ -644,11 +664,9 @@ impl Renderer {
             mapped_at_creation: false,
         });
         Renderer {
-            instance,
             surface,
             window,
             config,
-            adapter,
             device,
             queue,
             atlas,
@@ -656,12 +674,8 @@ impl Renderer {
             timer: PollTimer::new(Duration::from_millis(16)),
             target_duration_between_renders: Duration::from_millis(10),
             last_render_time: Duration::from_millis(16),
-            shaders,
-            render_pipeline,
             text_renderer,
             console_text_renderer,
-            texture_format,
-            surface_capabilities,
             should_render: false,
             fps: None,
             redraw_mode: RedrawMode::NoLimit,
@@ -685,6 +699,7 @@ impl Renderer {
             console_overlay_buffers: Vec::new(),
             color_picker_backdrop: None,
             overlay_buffers: Vec::new(),
+            selection_rect_shape_cache: None,
             overlay_scene_buffers: Vec::new(),
             canvas_scene_buffers: Vec::new(),
             canvas_scene_background_rects: Vec::new(),
@@ -814,7 +829,7 @@ impl Renderer {
             return;
         };
         let text = format!("FPS: {}", self.fps.unwrap_or(0));
-        let attrs = Attrs::new().color(cosmic_text::Color::rgba(255, 235, 0, 255));
+        let attrs = Attrs::new().color(baumhard::font::Color::rgba(255, 235, 0, 255));
         let buf =
             borders::create_border_buffer(&mut font_system, &text, &attrs, 16.0, (8.0, 8.0), (200.0, 24.0));
         self.fps_overlay_buffers.clear();

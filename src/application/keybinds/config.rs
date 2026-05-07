@@ -411,7 +411,7 @@ impl KeybindConfig {
     /// Parse a JSON string into a config. Missing fields fall back to
     /// defaults thanks to `#[serde(default)]` on the struct.
     pub fn from_json(json: &str) -> Result<Self, String> {
-        serde_json::from_str(json).map_err(|e| format!("parse keybinds JSON: {}", e))
+        baumhard::format::json::parse(json).map_err(|e| format!("parse keybinds JSON: {}", e))
     }
 
     /// Parse every binding string into concrete `KeyBind` values. Any

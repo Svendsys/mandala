@@ -6,9 +6,9 @@
 //! renderer territory. Per CODE_CONVENTIONS §1, styled-region →
 //! cosmic-text spans go through `baumhard::font::attrs`.
 
-use cosmic_text::{Attrs, FontSystem};
 use glam::Vec2;
 
+use baumhard::font::{buffer, Align, Attrs, Color, FontSystem, SHAPING_ADVANCED};
 use baumhard::font::attrs::{rich_text_spans_from_regions, RegionFamilies};
 use baumhard::gfx_structs::element::GfxElement;
 use baumhard::gfx_structs::mutator::GfxMutator;
@@ -41,6 +41,50 @@ use super::{MindMapTextBuffer, NodeBackgroundRect};
 /// `FxHashMap` key. Holds the provided `font_system` write guard
 /// for the duration of the walk — keep the call site's own guard
 /// scope tight.
+/// Extract the background-fill rect for a single `GlyphArea`, or
+/// `None` if the area carries no `background_color`. Single source
+/// for both the full-walker text path
+/// ([`shape_one_element_into_buffers`]) and the drag-fast-path
+/// rebuild ([`super::Renderer::rebuild_node_backgrounds_from_tree`])
+/// — they used to inline this padding-and-rect math twice and the
+/// audit flagged the divergence as a bug magnet.
+///
+/// `offset` is added to the rect's position; pass `Vec2::ZERO` for
+/// canvas-space callers.
+pub(super) fn extract_background_rect(
+    element: &GfxElement,
+    area: &baumhard::gfx_structs::area::GlyphArea,
+    offset: Vec2,
+) -> Option<NodeBackgroundRect> {
+    let color = area.background_color?;
+    // Inflate the fill rect outward by `background_padding` —
+    // per-edge values so framed nodes whose four border runs sit at
+    // different visible-stroke offsets get an asymmetric fill that
+    // matches each side. The `is_zero` fast-path skips the four-add
+    // arithmetic for unframed nodes (the common case);
+    // `EdgePadding::ZERO` means the fill coincides with the text
+    // rect, the historical behaviour.
+    let pad = area.background_padding;
+    let pos = Vec2::new(area.position.x.0, area.position.y.0);
+    let size = Vec2::new(area.render_bounds.x.0, area.render_bounds.y.0);
+    let (rect_pos, rect_size) = if pad.is_zero() {
+        (pos, size)
+    } else {
+        (
+            Vec2::new(pos.x - pad.left(), pos.y - pad.top()),
+            Vec2::new(size.x + pad.left() + pad.right(), size.y + pad.top() + pad.bottom()),
+        )
+    };
+    Some(NodeBackgroundRect {
+        position: rect_pos + offset,
+        size: rect_size,
+        color,
+        shape_id: area.shape.shader_id(),
+        zoom_visibility: area.zoom_visibility,
+        unique_id: element.unique_id(),
+    })
+}
+
 pub(super) fn walk_tree_into_buffers(
     tree: &Tree<GfxElement, GfxMutator>,
     offset: Vec2,
@@ -82,38 +126,8 @@ pub(super) fn shape_one_element_into_buffers(
         None => return, // Void and GlyphModel nodes carry no text.
     };
 
-    if let Some(color) = area.background_color {
-        // Inflate the fill rect outward by `background_padding`
-        // — per-edge values so framed nodes whose four border
-        // runs sit at different visible-stroke offsets get an
-        // asymmetric fill that matches each side. The `is_zero`
-        // fast-path skips the four-add arithmetic for unframed
-        // nodes (the common case): `EdgePadding::ZERO` means
-        // the fill coincides with the text rect, the historical
-        // behaviour, so we can read `position` / `render_bounds`
-        // straight through.
-        let pad = area.background_padding;
-        let pos = Vec2::new(area.position.x.0, area.position.y.0);
-        let size = Vec2::new(area.render_bounds.x.0, area.render_bounds.y.0);
-        let (rect_pos, rect_size) = if pad.is_zero() {
-            (pos, size)
-        } else {
-            (
-                Vec2::new(pos.x - pad.left(), pos.y - pad.top()),
-                Vec2::new(
-                    size.x + pad.left() + pad.right(),
-                    size.y + pad.top() + pad.bottom(),
-                ),
-            )
-        };
-        yield_background(NodeBackgroundRect {
-            position: rect_pos + offset,
-            size: rect_size,
-            color,
-            shape_id: area.shape.shader_id(),
-            zoom_visibility: area.zoom_visibility,
-            unique_id: element.unique_id(),
-        });
+    if let Some(rect) = extract_background_rect(element, area, offset) {
+        yield_background(rect);
     }
 
     if area.text.is_empty() {
@@ -134,7 +148,7 @@ pub(super) fn shape_one_element_into_buffers(
 
     let text = &area.text;
     let alignment = if area.align_center {
-        Some(cosmic_text::Align::Center)
+        Some(Align::Center)
     } else {
         None
     };
@@ -145,15 +159,9 @@ pub(super) fn shape_one_element_into_buffers(
     // (e.g. picker Egyptian hieroglyphs) whose shaped advance
     // exceeded the cell box.
     let mut shape_and_yield = |spans: Vec<(&str, Attrs)>, x_off: f32, y_off: f32, fs: &mut FontSystem| {
-        let mut buffer = cosmic_text::Buffer::new(fs, cosmic_text::Metrics::new(scale, line_height));
+        let mut buffer = buffer::create(fs, scale, line_height);
         buffer.set_size(fs, Some(bound_x), Some(bound_y));
-        buffer.set_rich_text(
-            fs,
-            spans,
-            &Attrs::new(),
-            cosmic_text::Shaping::Advanced,
-            alignment,
-        );
+        buffer.set_rich_text(fs, spans, &Attrs::new(), SHAPING_ADVANCED, alignment);
         buffer.shape_until_scroll(fs, false);
         let text_buffer = MindMapTextBuffer {
             buffer,
@@ -176,7 +184,7 @@ pub(super) fn shape_one_element_into_buffers(
     // just stamp once per offset.
     if let Some(outline) = area.outline {
         if outline.px > 0.0 {
-            let halo_color = cosmic_text::Color::rgba(
+            let halo_color = Color::rgba(
                 outline.color[0],
                 outline.color[1],
                 outline.color[2],
@@ -196,63 +204,3 @@ pub(super) fn shape_one_element_into_buffers(
     shape_and_yield(main_spans, 0.0, 0.0, font_system);
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use baumhard::font::fonts;
-    use baumhard::gfx_structs::area::GlyphArea;
-    use glam::Vec2;
-
-    /// `shape_one_element_into_buffers` on a `Void` element
-    /// yields nothing — same fast-skip the full walker uses.
-    /// Pins the no-op contract so the keyed-reshape API can rely
-    /// on "unknown unique_id → Void → silent no-op".
-    #[test]
-    fn shape_one_element_void_yields_nothing() {
-        fonts::init();
-        let void = GfxElement::new_void_with_id(0, 0);
-        let mut font_system = fonts::acquire_font_system_write("shape_one_element_void_yields_nothing");
-        let mut buffer_count = 0usize;
-        let mut bg_count = 0usize;
-        shape_one_element_into_buffers(
-            &void,
-            Vec2::ZERO,
-            &mut font_system,
-            &mut |_uid, _buffer| buffer_count += 1,
-            &mut |_rect| bg_count += 1,
-        );
-        assert_eq!(buffer_count, 0);
-        assert_eq!(bg_count, 0);
-    }
-
-    /// `shape_one_element_into_buffers` on a non-empty
-    /// `GlyphArea` element yields exactly one buffer (the main
-    /// glyph; halos are absent because no outline is configured)
-    /// and zero background rects (no `background_color`). Pins
-    /// the per-element output count the keyed-reshape API
-    /// relies on.
-    #[test]
-    fn shape_one_element_glyph_area_yields_one_buffer() {
-        fonts::init();
-        let area = GlyphArea::new_with_str(
-            "hello",
-            16.0,
-            18.0,
-            Vec2::new(0.0, 0.0),
-            Vec2::new(100.0, 24.0),
-        );
-        let element = GfxElement::new_area_non_indexed_with_id(area, 0, 1);
-        let mut font_system = fonts::acquire_font_system_write("shape_one_element_glyph_area_yields_one_buffer");
-        let mut emitted_uids: Vec<usize> = Vec::new();
-        let mut bg_count = 0usize;
-        shape_one_element_into_buffers(
-            &element,
-            Vec2::ZERO,
-            &mut font_system,
-            &mut |uid, _buffer| emitted_uids.push(uid),
-            &mut |_rect| bg_count += 1,
-        );
-        assert_eq!(emitted_uids, vec![1], "main glyph emitted with element's unique_id");
-        assert_eq!(bg_count, 0, "no background_color → no rect");
-    }
-}

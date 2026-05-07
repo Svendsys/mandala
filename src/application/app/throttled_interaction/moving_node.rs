@@ -22,7 +22,8 @@ use crate::application::frame_throttle::MutationFrequencyThrottle;
 
 use super::super::scene_rebuild::{
     flush_canvas_scene_buffers, update_border_tree_with_offsets, update_connection_label_tree,
-    update_connection_tree, update_edge_handle_tree, update_portal_tree,
+    update_connection_tree, update_edge_handle_tree, update_node_resize_handle_tree,
+    update_portal_tree,
 };
 use super::{DrainContext, ThrottledInteraction};
 
@@ -125,6 +126,14 @@ impl ThrottledInteraction for MovingNodeInteraction {
             update_connection_label_tree(&scene, app_scene, renderer);
             update_portal_tree(doc, &offsets, app_scene, renderer);
             update_edge_handle_tree(&scene, app_scene);
+            // The 8 resize handles for a Single-selected dragged
+            // node anchor on the node's AABB; the cache-aware scene
+            // build above already populated `scene.node_resize_handles`
+            // with the in-flight offsets, so we just push those
+            // through to the app-scene tree. Without this the
+            // handles freeze at the pre-drag position while the
+            // node visibly slides under them.
+            update_node_resize_handle_tree(&scene, app_scene);
             flush_canvas_scene_buffers(app_scene, renderer);
         }
 

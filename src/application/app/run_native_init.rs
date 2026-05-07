@@ -9,9 +9,9 @@ use std::sync::Arc;
 
 use baumhard::mindmap::tree_builder::MindMapTree;
 use pollster::block_on;
-use wgpu::Instance;
-use winit::keyboard::ModifiersState;
 use winit::window::Window;
+
+use crate::application::platform::input::Modifiers as ModifiersState;
 
 use super::console_input::load_console_history;
 use super::label_edit::{LabelEditState, PortalTextEditState};
@@ -34,18 +34,7 @@ use crate::application::renderer::Renderer;
 pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
     baumhard::font::fonts::init();
 
-    // Hand wgpu the owned `Arc<Window>` rather than pre-snapshotting
-    // raw handles via `SurfaceTargetUnsafe::from_window`: under
-    // wgpu 29 + winit 0.30 the latter blew up with
-    // `Hal(MissingDisplayHandle)` on EGL/GL Linux because the GL
-    // surface ctor re-queries the display handle and won't accept a
-    // captured raw struct. WASM uses the same safe API path.
-    let instance = Instance::default();
-    let surface = instance
-        .create_surface(window.clone())
-        .expect("Failed to create wgpu surface for window");
-
-    let mut renderer = block_on(Renderer::new(instance, surface, Arc::clone(&window)));
+    let mut renderer = block_on(Renderer::bootstrap_native(Arc::clone(&window)));
 
     // Configure initial surface size.
     let size = window.inner_size();

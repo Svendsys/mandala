@@ -46,11 +46,6 @@
 
   "arm_bottom_font": "NotoSansEgyptianHieroglyphsRegular",
 
-  "title_template_contextual": "࿕ {target_label} color",
-  "title_template_standalone": "࿕ color palette",
-  "hint_text_contextual": "Esc cancel  ·  ࿕ commit  ·  drag to move  ·  RMB resize",
-  "hint_text_standalone": "࿕ commit  ·  drag to move  ·  RMB resize",
-
   "_mutator_spec_comment": "Two declarative mutator specs for the picker overlay, one per phase. `mutator_spec` is the LAYOUT phase — full 8-field AreaDelta per cell, applied only on layout-change events (initial open, viewport resize, RMB size_scale drag). `dynamic_mutator_spec` is the per-frame phase — slim per-section field lists, applied every hover / HSV / drag frame. Both share the same channel layout so the dynamic mutator can target the layout-built tree in place. See src/application/mutator_builder/ for the walker.",
   "mutator_spec": {
     "Void": {

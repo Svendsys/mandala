@@ -9,8 +9,9 @@
 
 #![cfg(not(target_arch = "wasm32"))]
 
-use winit::dpi::PhysicalPosition;
-use winit::window::{CursorIcon, Window};
+use winit::window::Window;
+
+use crate::application::platform::window::{CursorIcon, PhysicalPosition};
 
 use super::click::rebuild_all_with_mode;
 use super::color_picker_flow::handle_color_picker_mouse_move;

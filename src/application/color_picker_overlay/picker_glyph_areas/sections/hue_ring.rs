@@ -4,6 +4,7 @@
 //! each fixed to its own hue (15° apart). Hover bumps a single cell's
 //! scale + brightness; everything else stays stable across frames.
 
+use baumhard::font::color::cosmic_color_from_rgba;
 use baumhard::gfx_structs::area::OutlineStyle;
 
 use super::super::areas::{PickerAreas, PickerSection};
@@ -12,7 +13,7 @@ use crate::application::color_picker::{
     hue_ring_glyphs, hue_slot_to_degrees, picker_channel, ColorPickerLayout, ColorPickerOverlayGeometry,
     PickerHit,
 };
-use crate::application::color_picker_overlay::color::{highlight_hovered_cell_color, rgb_to_cosmic_color};
+use crate::application::color_picker_overlay::color::{highlight_hovered_cell_color};
 use crate::application::widgets::color_picker_widget::ColorPickerWidgetSpec;
 use baumhard::util::color::hsv_to_rgb;
 
@@ -34,7 +35,7 @@ pub(in crate::application::color_picker_overlay::picker_glyph_areas) fn build(
         let color = if is_hovered {
             highlight_hovered_cell_color(rgb)
         } else {
-            rgb_to_cosmic_color(rgb)
+            cosmic_color_from_rgba([rgb[0], rgb[1], rgb[2], 1.0])
         };
         let scale = if is_hovered { hover_scale } else { 1.0 };
         let pos = layout.hue_slot_positions[i];

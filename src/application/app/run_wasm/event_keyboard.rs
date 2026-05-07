@@ -11,7 +11,7 @@
 
 #![cfg(target_arch = "wasm32")]
 
-use winit::keyboard::Key;
+use crate::application::platform::input::Key;
 
 use super::WasmMacroDispatchTarget;
 use crate::application::app::dispatch;

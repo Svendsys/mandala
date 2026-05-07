@@ -155,38 +155,16 @@ impl Renderer {
     /// lock — just position and color reads from the arena.
     pub fn rebuild_node_backgrounds_from_tree(&mut self, tree: &Tree<GfxElement, GfxMutator>) {
         self.node_background_rects.clear();
+        // Single source of background-rect math: routes through the
+        // walker's `extract_background_rect` so the drag-fast-path
+        // and the full text-shaping pass can't drift on padding /
+        // shape-id / zoom-visibility resolution.
         for descendant_id in tree.root().descendants(&tree.arena) {
             let Some(node) = tree.arena.get(descendant_id) else { continue };
             let element = node.get();
             let Some(area) = element.glyph_area() else { continue };
-            if let Some(color) = area.background_color {
-                // Sibling of `tree_walker::walk_tree_into_buffers` —
-                // same per-edge `background_padding` inflation, same
-                // `is_zero` fast path for unframed nodes so the drag
-                // path doesn't paint a smaller / mis-aligned fill
-                // than the shape-and-rebuild path.
-                let pad = area.background_padding;
-                let pos = Vec2::new(area.position.x.0, area.position.y.0);
-                let size = Vec2::new(area.render_bounds.x.0, area.render_bounds.y.0);
-                let (rect_pos, rect_size) = if pad.is_zero() {
-                    (pos, size)
-                } else {
-                    (
-                        Vec2::new(pos.x - pad.left(), pos.y - pad.top()),
-                        Vec2::new(
-                            size.x + pad.left() + pad.right(),
-                            size.y + pad.top() + pad.bottom(),
-                        ),
-                    )
-                };
-                self.node_background_rects.push(super::NodeBackgroundRect {
-                    position: rect_pos,
-                    size: rect_size,
-                    color,
-                    shape_id: area.shape.shader_id(),
-                    zoom_visibility: area.zoom_visibility,
-                    unique_id: element.unique_id(),
-                });
+            if let Some(rect) = super::tree_walker::extract_background_rect(element, area, Vec2::ZERO) {
+                self.node_background_rects.push(rect);
             }
         }
     }

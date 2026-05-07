@@ -213,14 +213,7 @@ pub fn kv_key_completions_with_hints(
         .collect()
 }
 
-/// A token is kv-form iff it contains `=` and the `=` is not the
-/// first character. Mirrors `parser::is_kv_token`.
-fn is_kv_token(t: &str) -> bool {
-    match t.find('=') {
-        Some(0) | None => false,
-        Some(_) => true,
-    }
-}
+use super::parser::is_kv_token;
 
 /// Owned-`String` wrapper around [`super::parser::split_kv`] for
 /// cursor-time partial-token splitting. The completion state is

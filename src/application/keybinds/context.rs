@@ -28,7 +28,10 @@ pub enum InputContext {
 }
 
 impl InputContext {
-    /// Whether unmatched keys in this context should try the parent.
+    /// Whether unmatched keys in this context should try the
+    /// `Document` root. The fallthrough target is always
+    /// `Document` — there's no general parent chain, just a
+    /// modal-or-root distinction.
     pub fn falls_through(&self) -> bool {
         match self {
             InputContext::Document => false,
@@ -37,10 +40,5 @@ impl InputContext {
             InputContext::LabelEdit => false,
             InputContext::TextEdit => false,
         }
-    }
-
-    /// The parent context for fallthrough resolution.
-    pub fn parent(&self) -> InputContext {
-        InputContext::Document
     }
 }

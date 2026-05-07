@@ -314,7 +314,13 @@ impl Mutation {
     /// directly to an area). A model variant or event is silently
     /// ignored (debug-logged). Cost: O(k) for deltas, O(1) for
     /// commands.
-    pub fn apply_to_area(&self, area: &mut GlyphArea) {
+    ///
+    /// `pub(crate)` because the only correct entry point is
+    /// [`Self::apply_to`] (which routes `Event` to the element's
+    /// subscribers before dispatching to area / model). Direct
+    /// callers would bypass `Event` handling — the `unreachable!`
+    /// in the `Event` arm below pins this invariant.
+    pub(crate) fn apply_to_area(&self, area: &mut GlyphArea) {
         match self {
             AreaDelta(mutation) => mutation.apply_to(area),
             AreaCommand(mutation) => mutation.apply_to(area),
@@ -322,18 +328,21 @@ impl Mutation {
                 debug!("Tried to apply a model mutation to an area, ignoring.")
             }
             Mutation::None => {}
-            Event(_) => {
-                debug!(
-                    "Event applied directly to GlyphArea — use Mutation::apply_to on a GfxElement instead."
-                );
-            }
+            // `apply_to` filters `Event` before reaching here.
+            // A direct caller hitting this arm is a regression in
+            // the dispatch invariant, not a runtime user error.
+            Event(_) => unreachable!(
+                "Event reached apply_to_area; apply_to() must filter Event before dispatch"
+            ),
         }
     }
 
     /// Apply this mutation directly to a [`GlyphModel`]. An area
-    /// variant or event is silently ignored (debug-logged). Cost:
-    /// O(k) for deltas, O(1) for commands.
-    pub fn apply_to_model(&self, model: &mut GlyphModel) {
+    /// variant is silently ignored (debug-logged). Cost: O(k) for
+    /// deltas, O(1) for commands.
+    ///
+    /// See [`Self::apply_to_area`] for the `pub(crate)` rationale.
+    pub(crate) fn apply_to_model(&self, model: &mut GlyphModel) {
         match self {
             ModelDelta(mutation) => mutation.apply_to(model),
             ModelCommand(mutation) => mutation.apply_to(model),
@@ -341,11 +350,9 @@ impl Mutation {
                 debug!("Tried to apply an area mutation to a model, ignoring.");
             }
             Mutation::None => {}
-            Event(_) => {
-                debug!(
-                    "Event applied directly to GlyphModel — use Mutation::apply_to on a GfxElement instead."
-                );
-            }
+            Event(_) => unreachable!(
+                "Event reached apply_to_model; apply_to() must filter Event before dispatch"
+            ),
         }
     }
 

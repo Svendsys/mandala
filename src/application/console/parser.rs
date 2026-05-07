@@ -22,6 +22,23 @@ use super::commands::{command_by_name, Command};
 /// whitespace-only input. A trailing unterminated quote is tolerated
 /// — the partial token is returned as-is so completion can still
 /// reason about the fragment the user is typing.
+///
+/// # Escape semantics inside quoted strings
+///
+/// Only two escape sequences are recognised:
+///
+/// - `\"` → `"`
+/// - `\\` → `\`
+///
+/// **Any other backslash is preserved literally**, including
+/// `\n`, `\t`, `\xNN`, etc. The console doesn't grow a printf-
+/// style escape grammar — most console commands work on
+/// identifiers or hex literals where `\n` is not a meaningful
+/// payload, and surfacing a backslash literally is the least-
+/// surprising shape for users typing Windows path fragments
+/// inside quotes (`save "C:\maps\foo.json"`). Authors who want
+/// a literal backslash followed by `t` get exactly that — no
+/// confusing tab.
 pub fn tokenize(input: &str) -> Vec<String> {
     let mut tokens: Vec<String> = Vec::new();
     let mut buf = String::new();
@@ -154,7 +171,7 @@ impl<'a> Args<'a> {
 
 /// A token is a kv iff it contains `=` and the `=` is not the first
 /// character.
-fn is_kv_token(t: &str) -> bool {
+pub(super) fn is_kv_token(t: &str) -> bool {
     match t.find('=') {
         Some(0) | None => false,
         Some(_) => true,

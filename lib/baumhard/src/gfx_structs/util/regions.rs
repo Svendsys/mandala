@@ -10,7 +10,7 @@
 //! structure itself.
 
 use crate::util::primes::is_prime;
-use std::sync::{RwLock, TryLockError};
+use std::sync::RwLock;
 
 // Re-export so existing consumers that `use regions::RegionIndexer`
 // continue to resolve.
@@ -23,50 +23,68 @@ pub use super::region_indexer::RegionIndexer;
 /// `std::error::Error` for its own enums — call sites match on the
 /// variant directly. Variants:
 ///
-/// - `Updating`: the inner lock is held for write (target / size / factor
-///   are mid-`adapt`); the read attempt would block, so the call returns
-///   immediately. The caller decides to retry, drop the frame, or skip.
 /// - `InvalidParameters`: an input is out of range (pixel beyond the
 ///   resolution, region index past the live count, malformed rectangle).
 ///   The `&'static str` is a short, log-ready reason.
-/// - `Poisoned`: an earlier writer panicked while holding the lock. The
-///   region state may be inconsistent; the caller should not retry.
+/// - `Poisoned`: the inner lock is poisoned — an earlier writer
+///   panicked while holding it. The region state may be inconsistent;
+///   the caller should not retry.
+///
+/// **Removed:** an earlier `Updating` variant signalled
+/// "lock-would-block" from the per-field `try_read` shape. After the
+/// 6-locks → 1-lock collapse (Batch 6 §6.4a), reads use a blocking
+/// `RwLock::read` that always succeeds (or returns `Poisoned`), so
+/// there is no longer a non-blocking failure mode to surface. Zero
+/// external callers matched on `Updating` at the time of removal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RegionError {
-    /// The lock would block — `RegionParams` is mid-`adapt`. Retry on
-    /// the next frame.
-    Updating,
     /// One of the inputs (pixel, region index, rectangle bounds) is
     /// outside the live resolution / region grid. Carries a static
     /// reason for the log.
     InvalidParameters(&'static str),
-    /// An inner lock is poisoned — an earlier write panicked while
+    /// The inner lock is poisoned — an earlier write panicked while
     /// holding it. Region state may be inconsistent.
     Poisoned,
 }
 
-/// Shared pixel-grid / region-bucket parameters for one Scene and
-/// its owned Trees. Each field sits behind an `RwLock` so readers
-/// (hit-tests, renderer) and the one writer ([`RegionParams::adapt`])
-/// can access it without a global mutex.
-#[derive(Debug)]
-pub struct RegionParams {
+/// Snapshot of all six pixel-grid / region-bucket parameters,
+/// guarded by a single [`RwLock`] in [`RegionParams`].
+///
+/// Lives in this module rather than as a public type because
+/// callers don't need to construct an `Inner` directly —
+/// [`RegionParams::new`] / [`RegionParams::adapt`] are the only
+/// writers, and the read accessors return `Copy` values out of
+/// the lock.
+#[derive(Debug, Clone, Copy)]
+struct Inner {
     /// Caller-requested subdivisions per axis. The effective factor
     /// (stored in `region_factor_x`/`_y`) is derived from this plus
     /// the current resolution — divisor-snapped to avoid fractional
     /// regions.
-    target_region_factor: RwLock<usize>,
+    target_region_factor: usize,
     /// Effective horizontal subdivisions in use after divisor-snap.
-    region_factor_x: RwLock<usize>,
+    region_factor_x: usize,
     /// Effective vertical subdivisions in use after divisor-snap.
-    region_factor_y: RwLock<usize>,
+    region_factor_y: usize,
     /// Canvas resolution the factors were snapped against. Neither
     /// dimension is prime (enforced by `new`/`adapt`).
-    current_resolution: RwLock<(usize, usize)>,
+    current_resolution: (usize, usize),
     /// Pixels per region along x (`resolution.0 / region_factor_x`).
-    region_size_x: RwLock<usize>,
+    region_size_x: usize,
     /// Pixels per region along y (`resolution.1 / region_factor_y`).
-    region_size_y: RwLock<usize>,
+    region_size_y: usize,
+}
+
+/// Shared pixel-grid / region-bucket parameters for one Scene and
+/// its owned Trees. The six logical fields sit behind a single
+/// [`RwLock`] — readers (hit-tests, renderer) take one read lock
+/// per accessor call, the one writer ([`RegionParams::adapt`])
+/// takes one write lock per `adapt` call. Atomic-as-a-group is
+/// the natural shape: every reader needs the post-`adapt` state
+/// or pre-`adapt` state, never a mix.
+#[derive(Debug)]
+pub struct RegionParams {
+    inner: RwLock<Inner>,
 }
 
 impl RegionParams {
@@ -102,12 +120,25 @@ impl RegionParams {
         let region_factor_x = Self::calculate_actual_region_factor(target_region_factor, resolution.0);
         let region_factor_y = Self::calculate_actual_region_factor(target_region_factor, resolution.1);
         RegionParams {
-            target_region_factor: RwLock::new(target_region_factor),
-            region_factor_x: RwLock::new(region_factor_x),
-            region_factor_y: RwLock::new(region_factor_y),
-            current_resolution: RwLock::new(resolution),
-            region_size_x: RwLock::new(resolution.0 / region_factor_x),
-            region_size_y: RwLock::new(resolution.1 / region_factor_y),
+            inner: RwLock::new(Inner {
+                target_region_factor,
+                region_factor_x,
+                region_factor_y,
+                current_resolution: resolution,
+                region_size_x: resolution.0 / region_factor_x,
+                region_size_y: resolution.1 / region_factor_y,
+            }),
+        }
+    }
+
+    /// One read-lock acquisition; returns a copy of the inner
+    /// snapshot (every field is `Copy`). Used by the per-accessor
+    /// helpers — collapses the previous 4-sequential-locks
+    /// per-call cost to one.
+    fn read_inner(&self) -> Result<Inner, RegionError> {
+        match self.inner.read() {
+            Ok(g) => Ok(*g),
+            Err(_) => Err(RegionError::Poisoned),
         }
     }
 
@@ -134,7 +165,7 @@ impl RegionParams {
         start: (usize, usize),
         end: (usize, usize),
     ) -> Result<Vec<usize>, RegionError> {
-        let current_resolution = self.read_current_resolution()?;
+        let inner = self.read_inner()?;
 
         if start.0 > end.0 || start.1 > end.1 {
             return Err(RegionError::InvalidParameters(
@@ -142,31 +173,27 @@ impl RegionParams {
             ));
         }
 
-        if start.0 >= current_resolution.0 || start.1 >= current_resolution.1 {
+        if start.0 >= inner.current_resolution.0 || start.1 >= inner.current_resolution.1 {
             return Err(RegionError::InvalidParameters(
                 "Start position is out of resolution bounds",
             ));
         }
 
-        if end.0 >= current_resolution.0 || end.1 >= current_resolution.1 {
+        if end.0 >= inner.current_resolution.0 || end.1 >= inner.current_resolution.1 {
             return Err(RegionError::InvalidParameters(
                 "End position is out of resolution bounds",
             ));
         }
 
-        let region_size_x = self.read_region_size_x()?;
-        let region_size_y = self.read_region_size_y()?;
-        let factor_x = self.read_region_factor_x()?;
-
-        let col_start = start.0 / region_size_x;
-        let col_end = end.0 / region_size_x;
-        let row_start = start.1 / region_size_y;
-        let row_end = end.1 / region_size_y;
+        let col_start = start.0 / inner.region_size_x;
+        let col_end = end.0 / inner.region_size_x;
+        let row_start = start.1 / inner.region_size_y;
+        let row_end = end.1 / inner.region_size_y;
 
         let mut output = Vec::with_capacity((col_end - col_start + 1) * (row_end - row_start + 1));
         for row in row_start..=row_end {
             for col in col_start..=col_end {
-                output.push(row * factor_x + col);
+                output.push(row * inner.region_factor_x + col);
             }
         }
         Ok(output)
@@ -182,15 +209,11 @@ impl RegionParams {
     /// # Costs
     /// O(1). Three lock reads (resolution, region sizes, factor_x).
     pub fn calculate_region_from_pixel(&self, pixel: (usize, usize)) -> Result<usize, RegionError> {
-        let dimensions = self.read_current_resolution()?;
-        if dimensions.0 <= pixel.0 || dimensions.1 <= pixel.1 {
+        let inner = self.read_inner()?;
+        if inner.current_resolution.0 <= pixel.0 || inner.current_resolution.1 <= pixel.1 {
             return Err(RegionError::InvalidParameters("Pixel is out of bounds"));
         }
-        let region_x = self.read_region_size_x()?;
-        let region_y = self.read_region_size_y()?;
-        let region_factor_x = self.read_region_factor_x()?;
-
-        Ok(pixel.1 / region_y * region_factor_x + (pixel.0 / region_x))
+        Ok(pixel.1 / inner.region_size_y * inner.region_factor_x + (pixel.0 / inner.region_size_x))
     }
 
     /// Return the top-left pixel corner of the given region bucket.
@@ -201,96 +224,80 @@ impl RegionParams {
     /// # Costs
     /// O(1), four lock reads.
     pub fn calculate_pixel_from_region(&self, region: usize) -> Result<(usize, usize), RegionError> {
-        let num_regions = self.calc_num_regions()?;
+        let inner = self.read_inner()?;
+        let num_regions = inner.region_factor_x * inner.region_factor_y;
         if region >= num_regions {
             return Err(RegionError::InvalidParameters("Region is out of bounds"));
         }
-        let region_x = self.read_region_size_x()?;
-        let region_y = self.read_region_size_y()?;
-        let region_factor_x = self.read_region_factor_x()?;
-        let pixel_x = (region % region_factor_x) * region_x;
-        let pixel_y = (region / region_factor_x) * region_y;
+        let pixel_x = (region % inner.region_factor_x) * inner.region_size_x;
+        let pixel_y = (region / inner.region_factor_x) * inner.region_size_y;
         Ok((pixel_x, pixel_y))
     }
 
     /// Effective `factor_x * factor_y` region bucket count. O(1),
-    /// two lock reads.
+    /// one lock read.
     pub fn calc_num_regions(&self) -> Result<usize, RegionError> {
-        let region_factor_x = self.read_region_factor_x()?;
-        let region_factor_y = self.read_region_factor_y()?;
-        Ok(region_factor_x * region_factor_y)
+        let inner = self.read_inner()?;
+        Ok(inner.region_factor_x * inner.region_factor_y)
     }
 
-    /// Read-lock accessor for the y-axis region size (pixels). O(1);
-    /// returns `Updating` if an `adapt` call is mid-flight.
+    /// Read-lock accessor for the y-axis region size (pixels). O(1).
     pub fn read_region_size_y(&self) -> Result<usize, RegionError> {
-        Self::read_locked_value(&self.region_size_y)
+        Ok(self.read_inner()?.region_size_y)
     }
 
-    /// Read-lock accessor for the x-axis region size (pixels). O(1);
-    /// returns `Updating` if an `adapt` call is mid-flight.
+    /// Read-lock accessor for the x-axis region size (pixels). O(1).
     pub fn read_region_size_x(&self) -> Result<usize, RegionError> {
-        Self::read_locked_value(&self.region_size_x)
+        Ok(self.read_inner()?.region_size_x)
     }
 
     /// Read-lock accessor for the canvas resolution the factors are
     /// snapped against. O(1); see [`RegionError`] for the failure modes.
     pub fn read_current_resolution(&self) -> Result<(usize, usize), RegionError> {
-        Self::read_locked_value(&self.current_resolution)
+        Ok(self.read_inner()?.current_resolution)
     }
 
     /// Read-lock accessor for the caller-requested target factor.
     /// Differs from the effective factors when the resolution forced
     /// a divisor snap. O(1).
     pub fn read_target_region_factor(&self) -> Result<usize, RegionError> {
-        Self::read_locked_value(&self.target_region_factor)
+        Ok(self.read_inner()?.target_region_factor)
     }
 
     /// Read-lock accessor for the effective x-axis factor. O(1).
     pub fn read_region_factor_x(&self) -> Result<usize, RegionError> {
-        Self::read_locked_value(&self.region_factor_x)
+        Ok(self.read_inner()?.region_factor_x)
     }
 
     /// Read-lock accessor for the effective y-axis factor. O(1).
     pub fn read_region_factor_y(&self) -> Result<usize, RegionError> {
-        Self::read_locked_value(&self.region_factor_y)
+        Ok(self.read_inner()?.region_factor_y)
     }
 
-    fn read_locked_value<T: Copy>(lock: &RwLock<T>) -> Result<T, RegionError> {
-        match lock.try_read() {
-            Ok(value) => Ok(*value),
-            Err(e) => match e {
-                TryLockError::Poisoned(_) => Err(RegionError::Poisoned),
-                TryLockError::WouldBlock => Err(RegionError::Updating),
-            },
-        }
-    }
-
-    /// Reconfigure for a new target factor and/or resolution. All six
-    /// inner locks are acquired for write in sequence; downstream
-    /// readers observe `RegionError::Updating` until the call returns.
+    /// Reconfigure for a new target factor and/or resolution. One
+    /// write lock acquired; downstream readers either observe the
+    /// pre-`adapt` snapshot or the post-`adapt` snapshot — never a
+    /// torn mix.
     ///
     /// # Panics
     /// Asserts neither dimension is prime (same invariant as `new`).
     ///
     /// # Costs
     /// O(sqrt(max(dimensions.0, dimensions.1))) for the divisor
-    /// search, plus six write-lock acquisitions.
+    /// search, plus one write-lock acquisition.
     pub fn adapt(&mut self, target_factor: usize, dimensions: (usize, usize)) {
         assert!(!is_prime(dimensions.0));
         assert!(!is_prime(dimensions.1));
         let new_x_factor = Self::calculate_actual_region_factor(target_factor, dimensions.0);
         let new_y_factor = Self::calculate_actual_region_factor(target_factor, dimensions.1);
-
-        *self.current_resolution.write().unwrap() = dimensions;
-
-        *self.target_region_factor.write().unwrap() = target_factor;
-
-        *self.region_factor_x.write().unwrap() = new_x_factor;
-        *self.region_factor_y.write().unwrap() = new_y_factor;
-
-        *self.region_size_x.write().unwrap() = dimensions.0 / new_x_factor;
-        *self.region_size_y.write().unwrap() = dimensions.1 / new_y_factor;
+        *self.inner.write().unwrap() = Inner {
+            target_region_factor: target_factor,
+            region_factor_x: new_x_factor,
+            region_factor_y: new_y_factor,
+            current_resolution: dimensions,
+            region_size_x: dimensions.0 / new_x_factor,
+            region_size_y: dimensions.1 / new_y_factor,
+        };
     }
 
     pub(crate) fn calculate_actual_region_factor(target_factor: usize, dimension_span: usize) -> usize {

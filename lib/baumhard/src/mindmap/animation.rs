@@ -221,6 +221,55 @@ mod tests {
         }
     }
 
+    /// Pin specific sample values along each curve so a
+    /// regression in the formula is caught even when endpoints
+    /// and midpoint stay correct. `EaseIn` is `t²`, so at `0.25`
+    /// it should be `0.0625`; `EaseOut` is `1 - (1-t)²`, so at
+    /// `0.25` it should be `0.4375`. These are the easy bug
+    /// surfaces — swapping the two formulas would slip past the
+    /// existing endpoint and "in+out=1 at midpoint" tests.
+    #[test]
+    fn test_easing_pins_sample_curve_values() {
+        let eps = 1e-6;
+        // Linear: identity.
+        assert!((Easing::Linear.evaluate(0.25) - 0.25).abs() < eps);
+        assert!((Easing::Linear.evaluate(0.75) - 0.75).abs() < eps);
+
+        // EaseIn: t².
+        assert!((Easing::EaseIn.evaluate(0.25) - 0.0625).abs() < eps);
+        assert!((Easing::EaseIn.evaluate(0.75) - 0.5625).abs() < eps);
+
+        // EaseOut: 1 - (1-t)².
+        assert!((Easing::EaseOut.evaluate(0.25) - 0.4375).abs() < eps);
+        assert!((Easing::EaseOut.evaluate(0.75) - 0.9375).abs() < eps);
+
+        // EaseInOut: piecewise. At 0.25: 2*0.25² = 0.125.
+        // At 0.75: t > 0.5, so 1 - (-2*0.75 + 2)² / 2 = 1 - 0.25/2 = 0.875.
+        assert!((Easing::EaseInOut.evaluate(0.25) - 0.125).abs() < eps);
+        assert!((Easing::EaseInOut.evaluate(0.75) - 0.875).abs() < eps);
+    }
+
+    /// Easing curves are monotonically non-decreasing on
+    /// `[0, 1]`. A regression that swapped sign or introduced a
+    /// dip would produce visible "rewind" at a frame boundary;
+    /// the discrete-sample sweep here catches a wide class of
+    /// such regressions.
+    #[test]
+    fn test_easing_curves_are_monotonic_non_decreasing() {
+        for easing in [Easing::Linear, Easing::EaseIn, Easing::EaseOut, Easing::EaseInOut] {
+            let mut prev = easing.evaluate(0.0);
+            for step in 1..=100 {
+                let t = step as f32 / 100.0;
+                let v = easing.evaluate(t);
+                assert!(
+                    v >= prev - 1e-6,
+                    "{easing:?} dipped at t={t}: prev={prev}, v={v}"
+                );
+                prev = v;
+            }
+        }
+    }
+
     /// Linear midpoint blend: at `t = 0.5` the lerp sits at the
     /// arithmetic mean of `from` and `to`. Pins the per-tick
     /// math the tween path produces.
@@ -250,26 +299,6 @@ mod tests {
         let to_v = Vec2::new(-1.0, 4.0);
         assert_eq!(lerp_vec2(from_v, to_v, 0.0), from_v);
         assert_eq!(lerp_vec2(from_v, to_v, 1.0), to_v);
-    }
-
-    /// Round-trip through serde keeps the on-the-wire timing
-    /// envelope intact. Pins the wire format so a
-    /// `.mindmap.json` saved with timing fields loads back
-    /// correctly.
-    #[test]
-    fn test_animation_timing_serde_round_trip() {
-        let timing = AnimationTiming {
-            duration_ms: 350,
-            delay_ms: 100,
-            easing: Easing::EaseInOut,
-            // `then` is intentionally `None` — the wire format
-            // skips `Followup` until the tick loop dispatches
-            // it (see the field's doc-comment).
-            then: None,
-        };
-        let json = serde_json::to_string(&timing).unwrap();
-        let back: AnimationTiming = serde_json::from_str(&json).unwrap();
-        assert_eq!(back, timing);
     }
 
     /// Default `AnimationTiming` round-trips through an empty

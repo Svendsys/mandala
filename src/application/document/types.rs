@@ -21,10 +21,14 @@ pub const HIGHLIGHT_COLOR: [f32; 4] = [0.0, 0.9, 1.0, 1.0];
 /// per-frame and writes the blended state back into
 /// `mindmap.nodes`.
 ///
-/// `cm` is the single source of truth — `mutation_id()` and
-/// `timing()` project out the fields the dispatcher needs, so
-/// there is no way for a mutation_id / timing copy to drift out
-/// of sync with the underlying `CustomMutation`.
+/// `cm` is the source of truth for the mutation list (consumed
+/// at completion by `apply_custom_mutation`) and the
+/// `mutation_id` (re-trigger dedup key). The stored `cm.timing`
+/// is **stripped** to `None` at construction (see
+/// `start_animation`) so this struct holds exactly one copy of
+/// the timing data, on `self.timing` — the field the per-frame
+/// tick reads. The original spec's `cm.timing` remains unchanged;
+/// the runtime instance just doesn't carry a redundant snapshot.
 #[derive(Debug, Clone)]
 pub struct AnimationInstance {
     /// Node id this animation targets.
@@ -47,10 +51,13 @@ pub struct AnimationInstance {
     pub to_node: MindNode,
     /// Wall-clock timestamp (ms) when the animation started.
     pub start_ms: u64,
+    /// Timing envelope carved from `cm.timing` at construction.
+    /// Stored directly (not as `Option`) so the per-frame tick
+    /// loop projects without unwrap.
+    pub timing: AnimationTiming,
     /// The `CustomMutation` driving the animation. Carries the
-    /// id (for re-trigger detection), the `timing` envelope (for
-    /// the tick loop), and the full mutation list (for the
-    /// `apply_custom_mutation` commit at completion).
+    /// id (for re-trigger detection) and the mutation list (for
+    /// the `apply_custom_mutation` commit at completion).
     pub cm: CustomMutation,
 }
 
@@ -62,15 +69,11 @@ impl AnimationInstance {
         &self.cm.id
     }
 
-    /// The timing envelope. Unwraps `cm.timing` — animations are
-    /// only constructed through `start_animation`, which checks
-    /// `cm.timing.is_some() && duration_ms > 0` before pushing,
-    /// so this projection is always safe by construction.
+    /// The timing envelope. Stored directly on the instance —
+    /// `start_animation` carves it from `cm.timing` so the
+    /// per-frame tick loop never has to unwrap.
     pub fn timing(&self) -> &AnimationTiming {
-        self.cm
-            .timing
-            .as_ref()
-            .expect("AnimationInstance invariant: cm.timing is always Some")
+        &self.timing
     }
 }
 

@@ -55,7 +55,7 @@ pub fn load_app_macros() -> Vec<Macro> {
     if trimmed.is_empty() {
         return Vec::new();
     }
-    serde_json::from_str::<Vec<Macro>>(trimmed)
+    baumhard::format::json::parse::<Vec<Macro>>(trimmed)
         .expect("malformed assets/macros/application.json — bundle is invalid")
 }
 
@@ -68,7 +68,8 @@ pub fn parse_user_macros_json(source: &str) -> Result<Vec<Macro>, String> {
     if source.trim().is_empty() {
         return Ok(Vec::new());
     }
-    serde_json::from_str::<Vec<Macro>>(source).map_err(|e| format!("malformed user macros JSON: {}", e))
+    baumhard::format::json::parse::<Vec<Macro>>(source)
+        .map_err(|e| format!("malformed user macros JSON: {}", e))
 }
 
 /// Parse Map-tier macros out of a loaded document's
@@ -82,10 +83,10 @@ pub fn parse_user_macros_json(source: &str) -> Result<Vec<Macro>, String> {
 /// the typed `Macro` lives in the application crate (its `Action`
 /// enum would otherwise force a circular dependency). The JSON
 /// shape matches the User / App tiers — see `format/macros.md`.
-pub fn parse_map_macros(values: &[serde_json::Value]) -> Vec<Macro> {
+pub fn parse_map_macros(values: &[baumhard::format::json::Value]) -> Vec<Macro> {
     let mut out = Vec::with_capacity(values.len());
     for (idx, v) in values.iter().enumerate() {
-        match serde_json::from_value::<Macro>(v.clone()) {
+        match baumhard::format::json::parse_value::<Macro>(v.clone()) {
             Ok(m) => out.push(m),
             Err(e) => {
                 // Surface the entry's `id` field in the warning when
@@ -137,27 +138,35 @@ pub fn rebuild_map_macros(
 /// covers this and recommends `node-id.action` patterns.
 pub fn parse_inline_macros(doc: &crate::application::document::MindMapDocument) -> Vec<super::Macro> {
     let mut out = Vec::new();
-    // Cross-node id collisions inside the Inline tier are
-    // non-deterministic — `MindMap.nodes` is a HashMap, so the
-    // walk order changes per process start. The "winner" for an
-    // id duplicated across nodes depends on hash randomization.
-    // Warn at parse time so authors notice and namespace their
-    // ids (e.g. `<node-id>.action`).
+    // Iterate nodes in lexicographic id order so cross-node id
+    // collisions resolve deterministically: the lowest node id
+    // wins. Without the sort, `MindMap.nodes` is a HashMap and
+    // the walk order changes per process start, making the
+    // "winner" of a duplicated id vary between runs. The warn
+    // below still fires — authors should namespace inline ids
+    // (e.g. `<node-id>.action`) — but the runtime behaviour is
+    // now reproducible.
+    let mut node_ids: Vec<&String> = doc.mindmap.nodes.keys().collect();
+    node_ids.sort();
     let mut seen: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    for (node_id, node) in &doc.mindmap.nodes {
+    for node_id in node_ids {
+        let node = match doc.mindmap.nodes.get(node_id) {
+            Some(n) => n,
+            None => continue,
+        };
         for (idx, v) in node.inline_macros.iter().enumerate() {
-            match serde_json::from_value::<super::Macro>(v.clone()) {
+            match baumhard::format::json::parse_value::<super::Macro>(v.clone()) {
                 Ok(m) => {
                     if let Some(prev_node) = seen.insert(m.id.clone(), node_id.clone()) {
                         if prev_node != *node_id {
                             log::warn!(
                                 "macros: Inline-tier id '{}' duplicated across nodes \
-                                 '{}' and '{}'; HashMap iteration order is \
-                                 non-deterministic so the winner varies per process \
-                                 start. Namespace your ids (e.g. '<node-id>.{}').",
+                                 '{}' and '{}'; the lower-id node ('{}') wins. \
+                                 Namespace your ids (e.g. '<node-id>.{}').",
                                 m.id,
                                 prev_node,
                                 node_id,
+                                prev_node,
                                 m.id
                             );
                         }

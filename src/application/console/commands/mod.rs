@@ -94,52 +94,49 @@ pub fn command_by_name(name: &str) -> Option<&'static Command> {
     })
 }
 
+/// Single-source success-or-no-op message for verbs that aggregate
+/// across a set of selection targets. `verb` is the noun the user
+/// typed (`"font"`, `"zoom"`, `"color"`, …); `kind` is the
+/// selection scope (`"node"`, `"section"`, `"edge"`, …); `changed`
+/// is whether at least one target actually mutated.
+///
+/// Two formats: `"<verb> applied to <kind>"` on change, `"<verb>:
+/// no change on <kind>"` on no-op. Mirrors the previous open-coded
+/// `finalize` helpers in `commands/font.rs` and `commands/zoom.rs`.
+pub(super) fn applied_or_no_change(verb: &str, kind: &str, changed: bool) -> ExecResult {
+    if changed {
+        ExecResult::ok_msg(format!("{verb} applied to {kind}"))
+    } else {
+        ExecResult::ok_msg(format!("{verb}: no change on {kind}"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// Lookup is case-insensitive across both names and aliases,
+    /// returns `None` on unknown, and resolves aliases to their
+    /// canonical entry. Also pins the registered verb names — the
+    /// compiler enforces that the `COMMANDS` slice exists, but a
+    /// typo in `name: "border"` → `"boder"` would compile and
+    /// silently break user-facing console input without this list.
     #[test]
-    fn test_command_by_name_finds_help() {
-        assert!(command_by_name("help").is_some());
-    }
-
-    #[test]
-    fn test_command_by_name_is_case_insensitive() {
+    fn test_command_by_name_lookup() {
         assert!(command_by_name("HELP").is_some());
         assert!(command_by_name("AnChOr").is_some());
-    }
-
-    #[test]
-    fn test_command_by_name_finds_alias() {
-        // `?` is the conventional alias for help.
         assert_eq!(command_by_name("?").map(|c| c.name), Some("help"));
-    }
-
-    #[test]
-    fn test_command_by_name_unknown_is_none() {
+        assert_eq!(command_by_name("visibility").map(|c| c.name), Some("zoom"));
         assert!(command_by_name("nope").is_none());
-    }
 
-    #[test]
-    fn test_command_registry_has_every_migrated_verb() {
-        let expected = [
-            "help", "anchor", "body", "border", "cap", "color", "edge", "font", "fps", "spacing", "label",
-            "mutation", "save", "open", "new", "zoom",
-        ];
-        for name in expected {
+        for name in [
+            "help", "anchor", "body", "border", "cap", "color", "edge", "font", "fps", "spacing",
+            "label", "mutation", "save", "open", "new", "zoom",
+        ] {
             assert!(
                 command_by_name(name).is_some(),
-                "command '{name}' missing from registry"
+                "console verb '{name}' missing from registry"
             );
         }
-    }
-
-    #[test]
-    fn test_command_by_name_finds_zoom_alias() {
-        // `visibility` is the sibling name — surfaces in help /
-        // completion so users thinking "control visibility by
-        // zoom" find the command without learning the shorter
-        // `zoom` verb first.
-        assert_eq!(command_by_name("visibility").map(|c| c.name), Some("zoom"));
     }
 }

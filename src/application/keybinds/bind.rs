@@ -12,7 +12,7 @@
 //! calling `ResolvedKeybinds::action_for_context`, so the lookup
 //! table is universal across input devices.
 
-use winit::keyboard::Key;
+use crate::application::platform::input::Key;
 
 /// A parsed keybinding: a logical key name plus modifier flags. Key names
 /// are normalized to lowercase during parsing so comparisons are

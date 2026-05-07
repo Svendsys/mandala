@@ -8,6 +8,7 @@
 //!   `font`/`font_size_pt`     → `glyph_connection.{font,font_size_pt}`
 //! `label` is dropped (post-refactor portals identify by edge tuple).
 
+use baumhard::mindmap::loader::write_atomic;
 use serde_json::{json, Value};
 use std::path::Path;
 
@@ -119,28 +120,6 @@ pub fn convert_portals(input_path: &Path, output_path: &Path) -> Result<(), Stri
     Ok(())
 }
 
-/// Atomic temp-file + rename write; `String` errors to match the
-/// module's `Result<(), String>` API. Lets `convert_portals` support
-/// safe in-place migration (input == output).
-fn write_atomic(path: &Path, contents: &str) -> Result<(), String> {
-    let dir = path.parent().unwrap_or_else(|| Path::new("."));
-    let file_name = path
-        .file_name()
-        .ok_or_else(|| format!("invalid path: {}", path.display()))?
-        .to_string_lossy();
-    let tmp_path = dir.join(format!(".{}.maptool.{}.tmp", file_name, std::process::id()));
-    std::fs::write(&tmp_path, contents)
-        .map_err(|e| format!("failed to write {}: {e}", tmp_path.display()))?;
-    std::fs::rename(&tmp_path, path).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp_path);
-        format!(
-            "failed to rename {} -> {}: {e}",
-            tmp_path.display(),
-            path.display()
-        )
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -183,29 +162,9 @@ mod tests {
         assert_eq!(body.as_str().unwrap(), "\u{25C8}");
     }
 
-    #[test]
-    fn atomic_write_leaves_no_tmp_file_on_success() {
-        // The atomic writer stages a `.<name>.maptool.<pid>.tmp`
-        // file and renames it; after success the dir should only
-        // contain the final output.
-        let mut src = tempfile::NamedTempFile::new().unwrap();
-        writeln!(
-            src,
-            r##"{{"version":"1.0","name":"t","canvas":{{"background_color":"#000","default_border":null,"default_connection":null,"theme_variables":{{}},"theme_variants":{{}}}},"nodes":{{}},"edges":[]}}"##
-        )
-        .unwrap();
-        let dst = tempfile::NamedTempFile::new().unwrap();
-        convert_portals(src.path(), dst.path()).unwrap();
-        let dir = dst.path().parent().unwrap();
-        let file_name = dst.path().file_name().unwrap().to_string_lossy().to_string();
-        let pid = std::process::id();
-        let leftover = dir.join(format!(".{file_name}.maptool.{pid}.tmp"));
-        assert!(
-            !leftover.exists(),
-            "atomic writer left a temp file behind: {}",
-            leftover.display()
-        );
-    }
+    // Atomicity (no tmp leftover after successful rename) is tested
+    // canonically in `baumhard::mindmap::loader::tests` against the
+    // shared `write_atomic` helper that this migration now uses.
 
     #[test]
     fn legacy_portal_becomes_portal_mode_edge() {

@@ -10,7 +10,7 @@
 
 #![cfg(not(target_arch = "wasm32"))]
 
-use winit::keyboard::ModifiersState;
+use crate::application::platform::input::Modifiers as ModifiersState;
 
 use crate::application::color_picker::ColorPickerState;
 use crate::application::console::ConsoleState;

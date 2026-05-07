@@ -186,18 +186,27 @@ impl MindNode {
     /// `display_text()` is just `sections[0].text`.
     ///
     /// **Costs.** O(total section text bytes); one fresh `String`
-    /// allocation sized to the joined output. Hot paths that need
+    /// allocation when the node has 2+ sections. The single-section
+    /// fast path borrows `sections[0].text` and returns
+    /// `Cow::Borrowed`, so reads on the common case (most nodes
+    /// have one section) are zero-allocation. Hot paths that need
     /// per-section rendering should walk `sections` directly
     /// instead of reaching for this helper.
-    pub fn display_text(&self) -> String {
-        let mut out = String::new();
-        for (i, section) in self.sections.iter().enumerate() {
-            if i > 0 {
-                out.push('\n');
+    pub fn display_text(&self) -> std::borrow::Cow<'_, str> {
+        match self.sections.len() {
+            0 => std::borrow::Cow::Borrowed(""),
+            1 => std::borrow::Cow::Borrowed(self.sections[0].text.as_str()),
+            _ => {
+                let mut out = String::new();
+                for (i, section) in self.sections.iter().enumerate() {
+                    if i > 0 {
+                        out.push('\n');
+                    }
+                    out.push_str(&section.text);
+                }
+                std::borrow::Cow::Owned(out)
             }
-            out.push_str(&section.text);
         }
-        out
     }
 
     /// Center of the node's AABB in canvas space — `pos + size / 2`.

@@ -77,12 +77,15 @@ fn execute_label(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             // command execution).
             match &eff.document.selection {
                 SelectionState::Edge(e) => {
-                    eff.open_label_edit = Some(e.clone());
+                    eff.side_effect = Some(super::super::ConsoleSideEffect::OpenLabelEdit(e.clone()));
                     eff.close_console = true;
                     return ExecResult::ok_empty();
                 }
                 SelectionState::PortalLabel(s) => {
-                    eff.open_portal_text_edit = Some((s.edge_ref(), s.endpoint_node_id.clone()));
+                    eff.side_effect = Some(super::super::ConsoleSideEffect::OpenPortalTextEdit(
+                        s.edge_ref(),
+                        s.endpoint_node_id.clone(),
+                    ));
                     eff.close_console = true;
                     return ExecResult::ok_empty();
                 }

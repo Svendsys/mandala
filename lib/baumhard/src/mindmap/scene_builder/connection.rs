@@ -51,6 +51,56 @@ use super::{ConnectionElement, EdgeColorPreview, EdgeHandleElement, SELECTED_EDG
 /// still fall through to the slow path.
 const TRANSLATE_DELTA_EPSILON_SQ: f32 = 1.0e-6;
 
+/// Build + push one `ConnectionElement` to `out`. Single source
+/// for the three previous emit sites (cache-hit fast path,
+/// translate path, slow rebuild) — they each filtered cap_start /
+/// cap_end / glyph_positions against `node_aabbs`, applied the
+/// "all-clipped → skip" rule, and pushed an identical struct
+/// literal. Returns `true` iff an element was actually pushed
+/// (callers don't currently use it; a future "did this edge clip
+/// out?" check would).
+#[allow(clippy::too_many_arguments)]
+fn emit_connection_element(
+    out: &mut Vec<ConnectionElement>,
+    edge_key: EdgeKey,
+    body_glyph: String,
+    font: Option<String>,
+    font_size_pt: f32,
+    color: String,
+    zoom_visibility: crate::gfx_structs::zoom_visibility::ZoomVisibility,
+    cap_start_raw: Option<(String, Vec2)>,
+    cap_end_raw: Option<(String, Vec2)>,
+    pre_clip_positions: &[Vec2],
+    node_aabbs: &[(Vec2, Vec2)],
+) -> bool {
+    let cap_start = cap_start_raw
+        .filter(|(_, p)| !point_inside_any_node(*p, node_aabbs))
+        .map(|(g, p)| (g, (p.x, p.y)));
+    let cap_end = cap_end_raw
+        .filter(|(_, p)| !point_inside_any_node(*p, node_aabbs))
+        .map(|(g, p)| (g, (p.x, p.y)));
+    let glyph_positions: Vec<(f32, f32)> = pre_clip_positions
+        .iter()
+        .filter(|p| !point_inside_any_node(**p, node_aabbs))
+        .map(|p| (p.x, p.y))
+        .collect();
+    if glyph_positions.is_empty() && cap_start.is_none() && cap_end.is_none() {
+        return false;
+    }
+    out.push(ConnectionElement {
+        edge_key,
+        glyph_positions,
+        body_glyph,
+        cap_start,
+        cap_end,
+        font,
+        font_size_pt,
+        color,
+        zoom_visibility,
+    });
+    true
+}
+
 /// Emit connection elements + edge-handle elements. Consumes
 /// `node_aabbs` from the node pass for the clip filter; mutates
 /// `cache` on slow-path edges and after the loop (retain_keys
@@ -160,34 +210,19 @@ pub(super) fn build_connection_elements(
                 } else {
                     cached.color.clone()
                 };
-                let cap_start = match &cached.cap_start {
-                    Some((g, p)) if !point_inside_any_node(*p, node_aabbs) => Some((g.clone(), (p.x, p.y))),
-                    _ => None,
-                };
-                let cap_end = match &cached.cap_end {
-                    Some((g, p)) if !point_inside_any_node(*p, node_aabbs) => Some((g.clone(), (p.x, p.y))),
-                    _ => None,
-                };
-                let glyph_positions: Vec<(f32, f32)> = cached
-                    .pre_clip_positions
-                    .iter()
-                    .filter(|p| !point_inside_any_node(**p, node_aabbs))
-                    .map(|p| (p.x, p.y))
-                    .collect();
-                if glyph_positions.is_empty() && cap_start.is_none() && cap_end.is_none() {
-                    continue;
-                }
-                connection_elements.push(ConnectionElement {
+                emit_connection_element(
+                    &mut connection_elements,
                     edge_key,
-                    glyph_positions,
-                    body_glyph: cached.body_glyph.clone(),
-                    cap_start,
-                    cap_end,
-                    font: cached.font.clone(),
-                    font_size_pt: cached.font_size_pt,
+                    cached.body_glyph.clone(),
+                    cached.font.clone(),
+                    cached.font_size_pt,
                     color,
-                    zoom_visibility: edge.zoom_window(),
-                });
+                    edge.zoom_window(),
+                    cached.cap_start.clone(),
+                    cached.cap_end.clone(),
+                    &cached.pre_clip_positions,
+                    node_aabbs,
+                );
                 continue;
             }
         }
@@ -277,34 +312,19 @@ pub(super) fn build_connection_elements(
             // node_aabbs — an unrelated moved node passing through
             // a translated edge must still clip out the glyphs
             // inside it.
-            let cap_start = match entry.cap_start.as_ref() {
-                Some((g, p)) if !point_inside_any_node(*p, node_aabbs) => Some((g.clone(), (p.x, p.y))),
-                _ => None,
-            };
-            let cap_end = match entry.cap_end.as_ref() {
-                Some((g, p)) if !point_inside_any_node(*p, node_aabbs) => Some((g.clone(), (p.x, p.y))),
-                _ => None,
-            };
-            let glyph_positions: Vec<(f32, f32)> = entry
-                .pre_clip_positions
-                .iter()
-                .filter(|p| !point_inside_any_node(**p, node_aabbs))
-                .map(|p| (p.x, p.y))
-                .collect();
-            if glyph_positions.is_empty() && cap_start.is_none() && cap_end.is_none() {
-                continue;
-            }
-            connection_elements.push(ConnectionElement {
+            emit_connection_element(
+                &mut connection_elements,
                 edge_key,
-                glyph_positions,
-                body_glyph: entry.body_glyph.clone(),
-                cap_start,
-                cap_end,
-                font: entry.font.clone(),
-                font_size_pt: font_size,
+                entry.body_glyph.clone(),
+                entry.font.clone(),
+                font_size,
                 color,
-                zoom_visibility: edge.zoom_window(),
-            });
+                edge.zoom_window(),
+                entry.cap_start.clone(),
+                entry.cap_end.clone(),
+                &entry.pre_clip_positions,
+                node_aabbs,
+            );
             continue;
         }
 
@@ -373,38 +393,19 @@ pub(super) fn build_connection_elements(
         );
 
         // Now produce the post-clip element for THIS frame.
-        let cap_start = match cached_cap_start {
-            Some((g, p)) if !point_inside_any_node(p, node_aabbs) => Some((g, (p.x, p.y))),
-            _ => None,
-        };
-        let cap_end = match cached_cap_end {
-            Some((g, p)) if !point_inside_any_node(p, node_aabbs) => Some((g, (p.x, p.y))),
-            _ => None,
-        };
-        let glyph_positions: Vec<(f32, f32)> = pre_clip_positions
-            .iter()
-            .filter(|p| !point_inside_any_node(**p, node_aabbs))
-            .map(|p| (p.x, p.y))
-            .collect();
-
-        // If every sample was clipped (e.g. an entirely-internal edge),
-        // there's nothing to draw for the body — skip the element unless a
-        // cap survives to represent the connection.
-        if glyph_positions.is_empty() && cap_start.is_none() && cap_end.is_none() {
-            continue;
-        }
-
-        connection_elements.push(ConnectionElement {
+        emit_connection_element(
+            &mut connection_elements,
             edge_key,
-            glyph_positions,
-            body_glyph: config.body.clone(),
-            cap_start,
-            cap_end,
-            font: config.font.clone(),
-            font_size_pt: font_size,
+            config.body.clone(),
+            config.font.clone(),
+            font_size,
             color,
-            zoom_visibility: edge.zoom_window(),
-        });
+            edge.zoom_window(),
+            cached_cap_start,
+            cached_cap_end,
+            &pre_clip_positions,
+            node_aabbs,
+        );
     }
 
     // Evict any cache entries for edges that were in the cache but NOT in

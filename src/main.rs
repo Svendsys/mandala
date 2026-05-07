@@ -74,19 +74,11 @@ fn create_options() -> Options {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn main() {
-    env_logger::init();
+    baumhard::util::log::init();
+    #[cfg(not(target_arch = "wasm32"))]
     info!("Starting Mandala (native)");
-
-    let app = Application::new(create_options());
-    app.run();
-}
-
-#[cfg(target_arch = "wasm32")]
-fn main() {
-    std::panic::set_hook(Box::new(console_error_panic_hook::hook));
-    console_log::init_with_level(log::Level::Info).expect("Failed to init logger");
+    #[cfg(target_arch = "wasm32")]
     info!("Starting Mandala (WASM)");
 
     let app = Application::new(create_options());

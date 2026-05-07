@@ -46,7 +46,7 @@ fn execute_new(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             return ExecResult::err(e);
         }
     }
-    eff.replace_document = Some(doc);
+    eff.side_effect = Some(super::super::ConsoleSideEffect::ReplaceDocument(doc));
     match path {
         Some(p) => ExecResult::ok_msg(format!("new map at {}", p)),
         None => ExecResult::ok_msg("new map (no file path; use `save <path>` to bind one)"),

@@ -89,24 +89,10 @@ mod run_wasm;
 #[cfg(not(target_arch = "wasm32"))]
 mod throttled_interaction;
 
-// FIELD COUNT: `InputHandlerContext` has 21 fields. Drift surface for
-// new fields:
-//   1. The struct in `app/input_context.rs`.
-//   2. The `InitState::input_context()` builder in `run_native.rs`.
-//   3. `dispatch_action`'s signature in `app/dispatch/native.rs` (the
-//      funnel every handler ultimately calls).
-// Input handlers (`event_keyboard.rs`, `event_mouse_click.rs`,
-// `event_cursor_moved.rs`) take `ctx: &mut InputHandlerContext<'_>`
-// and access fields via `ctx.foo`, so adding a field doesn't ripple
-// through their bodies — Rust's split borrows let modal handlers
-// receive `&mut ctx.console_state` etc. without re-destructuring.
-
-// Sub-modules pull what they need from siblings directly; mod.rs
-// only imports for its own body (`now_ms`, the `Application` /
-// `Options` struct definitions, and the `route_label_edit_key`
-// helper below). Adding an `InputContext::Foo` arm doesn't widen
-// this list — the consumer in `event_keyboard.rs` imports it
-// itself.
+// `InputHandlerContext` has 21 fields. Drift surface for new
+// fields: the struct in `input_context.rs`, the
+// `InitState::input_context()` builder in `run_native.rs`, and
+// `dispatch_action`'s signature in `dispatch/native.rs`.
 use crate::application::common::{InputMode, WindowMode};
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -114,9 +100,6 @@ use crate::application::document::EdgeRef;
 #[cfg(not(target_arch = "wasm32"))]
 use glam::Vec2;
 #[cfg(not(target_arch = "wasm32"))]
-use std::time::Instant;
-#[cfg(not(target_arch = "wasm32"))]
-use text_edit::insert_at_cursor;
 #[cfg(not(target_arch = "wasm32"))]
 use throttled_interaction::ThrottledDrag;
 
@@ -125,23 +108,11 @@ use std::sync::Arc;
 #[cfg(target_arch = "wasm32")]
 use winit::{event_loop::EventLoop, window::Window};
 
-/// Cross-platform monotonic clock in ms since first call. Native:
-/// `Instant`. WASM: `performance.now()` (≥1ms quantised; fine for
-/// the 400ms double-click window).
-#[cfg(not(target_arch = "wasm32"))]
-fn now_ms() -> f64 {
-    use std::sync::OnceLock;
-    static EPOCH: OnceLock<Instant> = OnceLock::new();
-    EPOCH.get_or_init(Instant::now).elapsed().as_secs_f64() * 1000.0
-}
-
-#[cfg(target_arch = "wasm32")]
-fn now_ms() -> f64 {
-    web_sys::window()
-        .and_then(|w| w.performance())
-        .map(|p| p.now())
-        .unwrap_or(0.0)
-}
+// `now_ms()` lives in `application::common` — single source for
+// the cross-platform monotonic clock both targets use. Re-export
+// here so the existing `use super::now_ms` import shape inside
+// `app/*` stays put.
+pub(crate) use crate::application::common::now_ms;
 
 /// Screen-space click tolerance (in pixels) for edge hit testing. Converted
 /// to canvas units via `Renderer::canvas_per_pixel()` so the click target
@@ -372,45 +343,6 @@ fn click_hit_from_priority(
     }
 }
 
-/// Pure router for the label-edit *character-input* path. Inserts
-/// printable chars from a `Key::Character` payload into the buffer.
-///
-/// Originally this also handled structural keys (Backspace, Delete,
-/// arrows, Home, End) directly via `Key::Named` matching, but Phase 5
-/// migrated those to `Action::LabelEdit*` variants that route through
-/// `dispatch::apply_label_edit_action_to_buffer`. The structural-key
-/// arms were stripped here so unbinding `label_edit_*` in
-/// `keybinds.json` actually disables the key — the previous fallback
-/// shadowed user config.
-///
-/// Returns `true` iff a printable character was inserted.
-#[cfg(not(target_arch = "wasm32"))]
-pub(in crate::application::app) fn route_label_edit_key(
-    logical_key: &winit::keyboard::Key,
-    buffer: &mut String,
-    cursor: &mut usize,
-) -> bool {
-    use winit::keyboard::Key;
-    if let Key::Character(c) = logical_key {
-        // `Key::Character` payloads can carry IME / dead-key multi-
-        // char sequences, so iterate. Control chars (and any non-
-        // printing payload winit attaches to a structural key) are
-        // filtered, which mirrors the original guard intent — the
-        // "huge pause icon on backspace" hole is also closed by the
-        // structural-key migration to actions, since Backspace is now
-        // dispatched as `Action::LabelEditDeleteBack` before this
-        // router ever runs.
-        let mut changed = false;
-        for ch in c.as_str().chars() {
-            if !ch.is_control() {
-                *cursor = insert_at_cursor(buffer, *cursor, ch);
-                changed = true;
-            }
-        }
-        return changed;
-    }
-    false
-}
 
 /// Tracks the high-level interaction mode. Normal handles the usual
 /// select/drag/pan flow; Reparent mode is entered via Ctrl+P and captures

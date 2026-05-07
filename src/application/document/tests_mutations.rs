@@ -499,7 +499,7 @@ fn test_sync_node_from_tree_writes_back_section_run_color() {
     use baumhard::core::primitives::Range;
     use baumhard::gfx_structs::area::GlyphAreaCommand;
     use baumhard::gfx_structs::mutator::Mutation;
-    use baumhard::mindmap::custom_mutation::{scope, CustomMutation, MutationBehavior};
+    use baumhard::mindmap::custom_mutation::{scope, CustomMutation};
     use baumhard::mindmap::model::TextRun;
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
@@ -562,7 +562,7 @@ fn test_sync_node_from_tree_section_1_untouched_when_section_0_mutated() {
     use baumhard::core::primitives::Range;
     use baumhard::gfx_structs::area::GlyphAreaCommand;
     use baumhard::gfx_structs::mutator::Mutation;
-    use baumhard::mindmap::custom_mutation::{scope, CustomMutation, MutationBehavior};
+    use baumhard::mindmap::custom_mutation::{scope, CustomMutation};
     use baumhard::mindmap::model::{MindSection, TextRun};
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
@@ -713,7 +713,7 @@ fn test_sync_node_from_tree_var_color_preserved_when_regions_untouched() {
 fn test_sync_node_from_tree_section_offset_persists_after_rebuild() {
     use baumhard::gfx_structs::area::GlyphAreaCommand;
     use baumhard::gfx_structs::mutator::Mutation;
-    use baumhard::mindmap::custom_mutation::{scope, CustomMutation, MutationBehavior};
+    use baumhard::mindmap::custom_mutation::{scope, CustomMutation};
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
     // Pin the model offset so we can detect the writeback.
@@ -764,7 +764,7 @@ fn test_sync_node_from_tree_section_offset_persists_after_rebuild() {
 #[test]
 fn test_find_triggered_mutations_at_section_binding_fires_first() {
     use baumhard::mindmap::custom_mutation::{
-        scope, CustomMutation, MutationBehavior, PlatformContext, Trigger, TriggerBinding,
+        scope, CustomMutation, PlatformContext, Trigger, TriggerBinding,
     };
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
@@ -838,7 +838,7 @@ fn test_find_triggered_mutations_at_section_binding_fires_first() {
 fn test_apply_custom_mutation_move_to_does_not_collapse_section_offsets() {
     use baumhard::gfx_structs::area::GlyphAreaCommand;
     use baumhard::gfx_structs::mutator::Mutation;
-    use baumhard::mindmap::custom_mutation::{scope, CustomMutation, MutationBehavior};
+    use baumhard::mindmap::custom_mutation::{scope, CustomMutation};
     use baumhard::mindmap::model::{MindSection, Position};
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
@@ -882,7 +882,7 @@ fn test_apply_custom_mutation_move_to_does_not_collapse_section_offsets() {
 #[test]
 fn test_find_triggered_mutations_at_dedups_same_mutation_id() {
     use baumhard::mindmap::custom_mutation::{
-        scope, CustomMutation, MutationBehavior, PlatformContext, Trigger, TriggerBinding,
+        scope, CustomMutation, PlatformContext, Trigger, TriggerBinding,
     };
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
@@ -926,7 +926,7 @@ fn test_find_triggered_mutations_at_dedups_same_mutation_id() {
 #[test]
 fn test_start_animation_at_does_not_dedup_across_sections() {
     use baumhard::mindmap::animation::AnimationTiming;
-    use baumhard::mindmap::custom_mutation::{scope, CustomMutation, MutationBehavior};
+    use baumhard::mindmap::custom_mutation::{scope, CustomMutation};
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
     let cm = CustomMutation {

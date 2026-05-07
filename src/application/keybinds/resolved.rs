@@ -120,9 +120,10 @@ impl ResolvedKeybinds {
             }
         }
         if context.falls_through() {
-            let parent = context.parent();
+            // Fallthrough target is always `Document` — see
+            // `InputContext::falls_through` doc.
             for (action, bind) in &self.binds {
-                if bind.matches(key, ctrl, shift, alt) && action.context() == parent {
+                if bind.matches(key, ctrl, shift, alt) && action.context() == InputContext::Document {
                     return Some(action.clone());
                 }
             }

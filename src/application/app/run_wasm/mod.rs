@@ -36,7 +36,6 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use baumhard::mindmap::tree_builder::MindMapTree;
-use wgpu::Instance;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, MouseButton, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
@@ -118,7 +117,7 @@ pub(super) struct WasmInputState {
     pub last_click: Option<LastClick>,
     pub cursor_pos: (f64, f64),
     pub pending_click: PendingClick,
-    pub modifiers: winit::keyboard::ModifiersState,
+    pub modifiers: crate::application::platform::input::Modifiers,
     /// Mirror of native's `app_scene` so the canvas-scene tree
     /// path (borders, eventually connections / portals) works
     /// identically on WASM. Threaded into every
@@ -516,11 +515,7 @@ pub(super) fn run(mut app: Application) {
     // are Promise-backed). Spawn as a future so the event loop doesn't
     // block waiting for wgpu.
     wasm_bindgen_futures::spawn_local(async move {
-        let instance = Instance::default();
-        let surface = instance
-            .create_surface(wgpu::SurfaceTarget::Canvas(canvas.clone()))
-            .expect("Failed to create surface");
-        let mut renderer = Renderer::new(instance, surface, renderer_window).await;
+        let mut renderer = Renderer::bootstrap_wasm(renderer_window, canvas.clone()).await;
         log::info!("WASM: adapter + surface + renderer ready");
 
         let size = canvas.width();
@@ -637,7 +632,7 @@ pub(super) fn run(mut app: Application) {
                 last_click: None,
                 cursor_pos: (0.0, 0.0),
                 pending_click: PendingClick::None,
-                modifiers: winit::keyboard::ModifiersState::empty(),
+                modifiers: crate::application::platform::input::Modifiers::empty(),
                 app_scene: crate::application::scene_host::AppScene::new(),
                 scene_cache: baumhard::mindmap::scene_cache::SceneConnectionCache::new(),
                 macros,

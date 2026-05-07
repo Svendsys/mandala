@@ -50,65 +50,86 @@ impl<'a> ConsoleContext<'a> {
     }
 }
 
-/// Mutable handles handed to `execute`. Keeps the two modal-handoff
-/// fields the palette already used; everything else is a direct
-/// `MindMapDocument` mutation.
-pub struct ConsoleEffects<'a> {
-    pub document: &'a mut MindMapDocument,
-    /// If set when `execute` returns, the dispatcher transitions to
-    /// the inline label editor on the given edge.
-    pub open_label_edit: Option<EdgeRef>,
-    /// If set when `execute` returns, the dispatcher transitions to
-    /// the inline portal-text editor on the given
-    /// `(edge_ref, endpoint_node_id)` pair. Mutually exclusive
-    /// with `open_label_edit` — `label edit` picks one or the
-    /// other based on the current selection variant.
-    pub open_portal_text_edit: Option<(EdgeRef, String)>,
-    /// If set when `execute` returns, the dispatcher transitions to
-    /// the glyph-wheel color picker in **contextual** mode on the
-    /// given target. Commit writes to that target and closes; Esc /
-    /// outside-click cancel.
-    pub open_color_picker: Option<ColorTarget>,
-    /// If set when `execute` returns, the dispatcher transitions to
-    /// the glyph-wheel color picker in **standalone** mode — a
-    /// persistent palette with no bound target. Commit applies the
-    /// current HSV to the document's current selection; the palette
-    /// stays open until `close_color_picker` is requested. Set by
+/// One out-of-band effect a console command can request the
+/// dispatcher to perform after the command's `MindMapDocument`
+/// mutations land. All variants are mutually exclusive — a
+/// single command produces at most one transition / state write.
+/// `close_console` lives outside the enum because it's orthogonal
+/// (a transition can leave the console open or close it).
+pub enum ConsoleSideEffect {
+    /// Transition to the inline label editor on the given edge.
+    OpenLabelEdit(EdgeRef),
+    /// Transition to the inline portal-text editor on the given
+    /// `(edge_ref, endpoint_node_id)` pair. The dispatcher picks
+    /// this vs [`Self::OpenLabelEdit`] based on the source
+    /// command's selection variant.
+    OpenPortalTextEdit(EdgeRef, String),
+    /// Transition to the glyph-wheel color picker in
+    /// **contextual** mode on the given target. Commit writes to
+    /// that target and closes; Esc / outside-click cancel.
+    OpenColorPicker(ColorTarget),
+    /// Transition to the glyph-wheel color picker in
+    /// **standalone** mode — a persistent palette with no bound
+    /// target. Commit applies the current HSV to the document's
+    /// current selection; the palette stays open until
+    /// [`Self::CloseColorPicker`] is requested. Set by
     /// `color picker on`.
-    pub open_color_picker_standalone: bool,
-    /// If set when `execute` returns, the dispatcher closes any open
-    /// color picker (contextual or standalone) without committing.
-    /// Set by `color picker off`.
-    pub close_color_picker: bool,
-    /// If set when `execute` returns, the dispatcher closes the
-    /// console even on a successful command (e.g. `quit`, or after a
-    /// modal handoff).
-    pub close_console: bool,
-    /// If `Some(mode)` when `execute` returns, the dispatcher
-    /// forwards `mode` to `Renderer::set_fps_display`. Set by
+    OpenColorPickerStandalone,
+    /// Close any open color picker (contextual or standalone)
+    /// without committing. Set by `color picker off`.
+    CloseColorPicker,
+    /// Forward `mode` to `Renderer::set_fps_display`. Set by
     /// `fps on` (Snapshot), `fps debug` (Debug), `fps off` (Off).
-    pub set_fps_display: Option<FpsDisplayMode>,
-    /// If set when `execute` returns, the dispatcher swaps the
-    /// app's document for this one. Set by `open` and `new` —
-    /// commands that wholesale replace the current map. The
+    SetFpsDisplay(FpsDisplayMode),
+    /// Wholesale document swap. Set by `open` and `new`. The
     /// dispatcher also drops the cached `mindmap_tree` and clears
     /// any open modal-editor state so stale references into the
     /// old document can't outlive the swap.
-    pub replace_document: Option<MindMapDocument>,
+    ReplaceDocument(MindMapDocument),
+}
+
+impl std::fmt::Debug for ConsoleSideEffect {
+    /// Test-friendly variant tag without recursing into the
+    /// (non-Debug) `MindMapDocument` payload. Tests use
+    /// `matches!(eff.side_effect, ConsoleSideEffect::X(_))` so
+    /// the variant discrimination is what matters.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::OpenLabelEdit(er) => f.debug_tuple("OpenLabelEdit").field(er).finish(),
+            Self::OpenPortalTextEdit(er, n) => {
+                f.debug_tuple("OpenPortalTextEdit").field(er).field(n).finish()
+            }
+            Self::OpenColorPicker(t) => f.debug_tuple("OpenColorPicker").field(t).finish(),
+            Self::OpenColorPickerStandalone => write!(f, "OpenColorPickerStandalone"),
+            Self::CloseColorPicker => write!(f, "CloseColorPicker"),
+            Self::SetFpsDisplay(m) => f.debug_tuple("SetFpsDisplay").field(m).finish(),
+            Self::ReplaceDocument(_) => write!(f, "ReplaceDocument(<doc>)"),
+        }
+    }
+}
+
+/// Mutable handles handed to `execute`. The dispatcher reads
+/// [`Self::side_effect`] and [`Self::close_console`] after the
+/// command returns; everything else is a direct
+/// `MindMapDocument` mutation through [`Self::document`].
+pub struct ConsoleEffects<'a> {
+    pub document: &'a mut MindMapDocument,
+    /// Out-of-band transition / state write the dispatcher should
+    /// perform after the command. Mutually exclusive — at most
+    /// one effect per command.
+    pub side_effect: Option<ConsoleSideEffect>,
+    /// Close the console after the command, even on success
+    /// (e.g. `quit`, or after a modal handoff that takes the
+    /// user out of the console). Orthogonal to `side_effect`.
+    pub close_console: bool,
 }
 
 impl<'a> ConsoleEffects<'a> {
     pub fn new(document: &'a mut MindMapDocument) -> Self {
         Self {
             document,
-            open_label_edit: None,
-            open_portal_text_edit: None,
-            open_color_picker: None,
-            open_color_picker_standalone: false,
-            close_color_picker: false,
+            side_effect: None,
             close_console: false,
-            set_fps_display: None,
-            replace_document: None,
         }
     }
 }

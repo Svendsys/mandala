@@ -24,6 +24,19 @@ pub fn convert_f32_to_u8(color: &[f32; 4]) -> [u8; 4] {
     u8_color
 }
 
+/// Convert `[u8; 4]` RGBA channels to `[f32; 4]` in `[0.0, 1.0]` —
+/// the inverse of [`convert_f32_to_u8`]. Single source of truth so
+/// every byte→float quantisation in the project lands on the same
+/// `c as f32 / 255.0` arithmetic.
+pub fn convert_u8_to_f32(color: &[u8; 4]) -> [f32; 4] {
+    [
+        color[0] as f32 / 255.0,
+        color[1] as f32 / 255.0,
+        color[2] as f32 / 255.0,
+        color[3] as f32 / 255.0,
+    ]
+}
+
 /// Resolve a (possibly `var(--name)`) color reference against a set of
 /// theme variables. If `raw` looks like `var(--something)` and the
 /// corresponding entry exists in `vars`, return the variable's value;

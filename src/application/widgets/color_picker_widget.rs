@@ -46,20 +46,6 @@ pub struct ColorPickerWidgetSpec {
     /// hieroglyphs. `None` to let cosmic-text pick.
     #[serde(default)]
     pub arm_bottom_font: Option<AppFont>,
-    /// Title template for contextual mode. `{target_label}` is
-    /// replaced by "edge" / "portal" / "node" at render time.
-    pub title_template_contextual: String,
-    /// Title shown verbatim when the picker is in standalone mode.
-    pub title_template_standalone: String,
-    /// Hint footer text shown inside the backdrop when the picker
-    /// is in contextual mode. Includes the "Esc cancel" affordance
-    /// since Esc exits a contextual picker.
-    pub hint_text_contextual: String,
-    /// Hint footer text shown inside the backdrop when the picker
-    /// is in standalone mode. Omits "Esc cancel" — Esc has no
-    /// effect on a standalone picker, which only closes via
-    /// `color picker off` from the console.
-    pub hint_text_standalone: String,
     /// Declarative mutator-tree shape for the picker overlay's
     /// **layout phase** — full per-cell field set, applied on layout
     /// changes only (initial open, viewport resize, RMB size_scale
@@ -158,7 +144,7 @@ static SPEC: OnceLock<ColorPickerWidgetSpec> = OnceLock::new();
 pub fn load_spec() -> &'static ColorPickerWidgetSpec {
     SPEC.get_or_init(|| {
         static SOURCE: &str = include_str!("color_picker.json");
-        serde_json::from_str(SOURCE).expect("color_picker.json is malformed")
+        baumhard::format::json::parse(SOURCE).expect("color_picker.json is malformed")
     })
 }
 

@@ -123,8 +123,8 @@ fn test_color_bg_no_value_on_node_opens_picker_with_bg_axis() {
     let mut eff = ConsoleEffects::new(&mut doc);
     let _ = (cmd.execute)(&Args::new(&toks), &mut eff);
     assert!(eff.close_console);
-    match eff.open_color_picker {
-        Some(ColorTarget::Node { id, axis }) => {
+    match eff.side_effect {
+        Some(super::super::ConsoleSideEffect::OpenColorPicker(ColorTarget::Node { id, axis })) => {
             assert_eq!(id, nid);
             assert_eq!(axis, NodeColorAxis::Bg);
         }
@@ -145,7 +145,10 @@ fn test_color_text_no_value_on_edge_opens_picker_on_edge() {
     };
     let mut eff = ConsoleEffects::new(&mut doc);
     let _ = (cmd.execute)(&Args::new(&toks), &mut eff);
-    assert!(matches!(eff.open_color_picker, Some(ColorTarget::Edge(_))));
+    assert!(matches!(
+        eff.side_effect,
+        Some(super::super::ConsoleSideEffect::OpenColorPicker(ColorTarget::Edge(_)))
+    ));
 }
 
 /// `color text` on a portal-mode edge routes through the same
@@ -182,7 +185,10 @@ fn test_color_pick_sets_open_color_picker_handoff() {
     };
     let mut eff = ConsoleEffects::new(&mut doc);
     let _ = (cmd.execute)(&Args::new(&toks), &mut eff);
-    assert!(eff.open_color_picker.is_some());
+    assert!(matches!(
+        eff.side_effect,
+        Some(super::super::ConsoleSideEffect::OpenColorPicker(_))
+    ));
     assert!(eff.close_console);
 }
 
@@ -196,7 +202,10 @@ fn test_label_edit_hands_off_to_inline_editor() {
     };
     let mut eff = ConsoleEffects::new(&mut doc);
     let _ = (cmd.execute)(&Args::new(&toks), &mut eff);
-    assert!(eff.open_label_edit.is_some());
+    assert!(matches!(
+        eff.side_effect,
+        Some(super::super::ConsoleSideEffect::OpenLabelEdit(_))
+    ));
 }
 
 #[test]

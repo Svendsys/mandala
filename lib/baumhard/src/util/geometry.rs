@@ -104,6 +104,16 @@ pub fn vec2_area(vec: Vec2) -> f32 {
     vec.x * vec.y
 }
 
+/// AABB centre from a top-left position + size pair. O(1), no
+/// heap. Equivalent to [`crate::mindmap::model::MindNode::center_vec2`]
+/// for the case where only the geometry is in scope (anchor
+/// resolution paths, scene-builder portal-pair midpoint compute);
+/// where a `MindNode` is in scope, prefer the method.
+#[inline]
+pub fn aabb_center(pos: Vec2, size: Vec2) -> Vec2 {
+    pos + size * 0.5
+}
+
 /// Component-wise [`pretty_inequal`] on two vectors: true if either
 /// component pair is outside the `almost_equal` tolerance.
 /// Cost: O(1).

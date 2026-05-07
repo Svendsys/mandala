@@ -368,7 +368,6 @@ pub(in crate::application::app) fn update_portal_tree(
     app_scene: &mut crate::application::scene_host::AppScene,
     renderer: &mut Renderer,
 ) {
-    use crate::application::document::ColorPickerPreview;
     use crate::application::scene_host::{hash_canvas_signature, CanvasDispatch, CanvasRole};
     use baumhard::mindmap::scene_builder::SelectedPortalLabel;
     use baumhard::mindmap::tree_builder::{
@@ -386,15 +385,13 @@ pub(in crate::application::app) fn update_portal_tree(
     let selected_portal_label: Option<SelectedPortalLabel> = doc.selection.selected_portal_label_scene_ref();
 
     // The picker preview fans out to the portal pass whenever the
-    // previewed edge is portal-mode. No separate Portal variant on
-    // `ColorPickerPreview` — the `Edge` key is enough.
-    let preview: Option<PortalColorPreviewRef> = match &doc.color_picker_preview {
-        Some(ColorPickerPreview::Edge { key, color }) => Some(PortalColorPreviewRef {
-            edge_key: key,
-            color: color.as_str(),
-        }),
-        _ => None,
-    };
+    // previewed edge is portal-mode. `ColorPickerPreview` is a
+    // struct (one shape, one preview) — no Portal variant needed,
+    // the edge `key` is enough to fan out.
+    let preview: Option<PortalColorPreviewRef> = doc.color_picker_preview.as_ref().map(|p| PortalColorPreviewRef {
+        edge_key: &p.key,
+        color: p.color.as_str(),
+    });
 
     // Portal text-edit preview mirrors the existing
     // `label_edit_preview`: when the inline portal-text editor is

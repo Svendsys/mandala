@@ -179,8 +179,28 @@ pub fn sat_cell_to_value(cell: usize) -> f32 {
     cell as f32 / (SAT_CELL_COUNT as f32 - 1.0)
 }
 
+/// Inverse of [`sat_cell_to_value`]: round a `[0, 1]` saturation
+/// to the nearest cell index in `0..SAT_CELL_COUNT`. Used by the
+/// picker overlay's "selected sat cell" highlight + the dynamic
+/// context's per-frame highlight branch.
+pub fn sat_value_to_cell(sat: f32) -> usize {
+    (sat * (SAT_CELL_COUNT as f32 - 1.0))
+        .round()
+        .clamp(0.0, (SAT_CELL_COUNT - 1) as f32) as usize
+}
+
 /// Convert a value-bar cell index to its `[0, 1]` value. Top of the bar
 /// (cell 0) is brightest (val=1.0); bottom is darkest (val=0.0).
 pub fn val_cell_to_value(cell: usize) -> f32 {
     1.0 - cell as f32 / (VAL_CELL_COUNT as f32 - 1.0)
+}
+
+/// Inverse of [`val_cell_to_value`]: round a `[0, 1]` value to
+/// the nearest cell index in `0..VAL_CELL_COUNT`. Top of the bar
+/// (cell 0) is the brightest value, so the formula uses
+/// `(1 - val)`.
+pub fn val_value_to_cell(val: f32) -> usize {
+    ((1.0 - val) * (VAL_CELL_COUNT as f32 - 1.0))
+        .round()
+        .clamp(0.0, (VAL_CELL_COUNT - 1) as f32) as usize
 }

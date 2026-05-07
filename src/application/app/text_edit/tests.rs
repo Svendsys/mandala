@@ -842,7 +842,7 @@ fn test_lift_anchor_returns_none_when_anchor_equals_cursor() {
 #[test]
 fn test_literal_char_typing_clears_anchor() {
     use super::editor::apply_literal_char_insert;
-    use winit::keyboard::Key;
+    use crate::application::platform::input::Key;
     let mut s = open_editor_state("abcdef", 3);
     // Seed an anchor by pretending the user shift-selected
     // forward by one grapheme.
@@ -868,7 +868,7 @@ fn test_literal_char_typing_clears_anchor() {
 #[test]
 fn test_literal_enter_clears_anchor() {
     use super::editor::apply_literal_char_insert;
-    use winit::keyboard::Key;
+    use crate::application::platform::input::Key;
     let mut s = open_editor_state("abcdef", 3);
     if let TextEditState::Open {
         selection_anchor, ..
@@ -878,7 +878,7 @@ fn test_literal_enter_clears_anchor() {
     }
     let changed = apply_literal_char_insert(
         Some("enter"),
-        &Key::Named(winit::keyboard::NamedKey::Enter),
+        &Key::Named(crate::application::platform::input::NamedKey::Enter),
         &mut s,
     );
     assert!(changed);
@@ -891,7 +891,7 @@ fn test_literal_enter_clears_anchor() {
 #[test]
 fn test_literal_tab_clears_anchor() {
     use super::editor::apply_literal_char_insert;
-    use winit::keyboard::Key;
+    use crate::application::platform::input::Key;
     let mut s = open_editor_state("abcdef", 3);
     if let TextEditState::Open {
         selection_anchor, ..
@@ -901,7 +901,7 @@ fn test_literal_tab_clears_anchor() {
     }
     let changed = apply_literal_char_insert(
         Some("tab"),
-        &Key::Named(winit::keyboard::NamedKey::Tab),
+        &Key::Named(crate::application::platform::input::NamedKey::Tab),
         &mut s,
     );
     assert!(changed);

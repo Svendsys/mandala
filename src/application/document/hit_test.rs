@@ -384,50 +384,11 @@ where
 /// section beneath a moving container would visibly detach from its
 /// node).
 pub fn apply_drag_delta(tree: &mut MindMapTree, node_id: &str, dx: f32, dy: f32, include_descendants: bool) {
-    let tree_node_id = match tree.arena_id_for(node_id) {
-        Some(id) => id,
-        None => return,
-    };
-
-    if include_descendants {
-        apply_delta_recursive(&mut tree.tree.arena, tree_node_id, dx, dy);
-    } else {
-        apply_delta_node_and_sections(&mut tree.tree.arena, tree_node_id, dx, dy);
-    }
-    // Position writes go through `area.move_position` directly,
-    // bypassing `MutatorTree::apply_to`'s wrapper that owns the
-    // cache invalidation. Mark the geometry caches dirty so the
-    // next `ensure_subtree_aabbs()` call recomputes — pre-fix the
-    // overflow-aware `point_in_node_aabb` could read a stale
-    // subtree AABB after a drag tick.
-    tree.tree.invalidate_caches();
-}
-
-/// Move a node container plus every section-area / section-model
-/// descendant under it. Skips child mind-node containers (and
-/// their subtrees) — the "drag this node only" path.
-fn apply_delta_node_and_sections(
-    arena: &mut indextree::Arena<baumhard::gfx_structs::element::GfxElement>,
-    node_id: indextree::NodeId,
-    dx: f32,
-    dy: f32,
-) {
-    if let Some(node) = arena.get_mut(node_id) {
-        if let Some(area) = node.get_mut().glyph_area_mut() {
-            area.move_position(dx, dy);
-        }
-    }
-    let mut child = arena.get(node_id).and_then(|n| n.first_child());
-    while let Some(cid) = child {
-        child = arena.get(cid).and_then(|n| n.next_sibling());
-        let is_section = arena
-            .get(cid)
-            .map(|n| n.get().flag_is_set(Flag::SectionRoot))
-            .unwrap_or(false);
-        if is_section {
-            apply_delta_recursive(arena, cid, dx, dy);
-        }
-    }
+    // The recursive walkers take `Option<&mut Vec>`; passing `None`
+    // skips the per-frame allocation that would otherwise leak
+    // through the patch-collecting variant. Same primitive, two
+    // callers, zero overhead for the no-patch path.
+    apply_drag_delta_inner(tree, node_id, dx, dy, include_descendants, None);
 }
 
 /// Apply a position delta and return `(unique_id, new_position)` for
@@ -445,23 +406,36 @@ pub fn apply_drag_delta_and_collect_patches(
     include_descendants: bool,
     patches: &mut Vec<(usize, (f32, f32))>,
 ) {
+    apply_drag_delta_inner(tree, node_id, dx, dy, include_descendants, Some(patches));
+}
+
+/// Shared body for [`apply_drag_delta`] and
+/// [`apply_drag_delta_and_collect_patches`]. `patches = None` skips
+/// per-element patch emission and avoids the allocation that the
+/// release-commit / drag-tick callers would otherwise pay.
+fn apply_drag_delta_inner(
+    tree: &mut MindMapTree,
+    node_id: &str,
+    dx: f32,
+    dy: f32,
+    include_descendants: bool,
+    mut patches: Option<&mut Vec<(usize, (f32, f32))>>,
+) {
     let tree_node_id = match tree.arena_id_for(node_id) {
         Some(id) => id,
         None => return,
     };
 
     if include_descendants {
-        collect_patches_recursive(&mut tree.tree.arena, tree_node_id, dx, dy, patches);
+        walk_drag_subtree(&mut tree.tree.arena, tree_node_id, dx, dy, patches.as_deref_mut());
     } else {
         // Container plus every section sub-element (`Flag::SectionRoot`).
         // Sections store absolute canvas positions and must move
         // with the node container or they'll visibly detach. Child
         // mind-nodes (without `Flag::SectionRoot`) are skipped —
         // the historical `include_descendants=false` semantic.
-        collect_patches_node_and_sections(&mut tree.tree.arena, tree_node_id, dx, dy, patches);
+        walk_drag_node_and_sections(&mut tree.tree.arena, tree_node_id, dx, dy, patches.as_deref_mut());
     }
-    // Same invalidation contract as `apply_drag_delta` — position
-    // writes go through `area.move_position` directly.
     tree.tree.invalidate_caches();
 }
 
@@ -488,7 +462,7 @@ pub fn apply_section_drag_delta_and_collect_patches(
         Some(id) => id,
         None => return,
     };
-    collect_patches_recursive(&mut tree.tree.arena, section_root, dx, dy, patches);
+    walk_drag_subtree(&mut tree.tree.arena, section_root, dx, dy, Some(patches));
     tree.tree.invalidate_caches();
 }
 
@@ -631,7 +605,7 @@ pub fn apply_node_resize_to_tree(
                 .map(|n| n.get().flag_is_set(Flag::SectionRoot))
                 .unwrap_or(false);
             if is_section {
-                apply_delta_recursive(&mut tree.tree.arena, cid, position_delta.x, position_delta.y);
+                walk_drag_subtree(&mut tree.tree.arena, cid, position_delta.x, position_delta.y, None);
             }
         }
     }
@@ -670,23 +644,26 @@ pub fn hit_test_section_resize_handle(
     nearest_handle_within(handles.iter().map(|h| (h.side, h.position)), canvas_pos, tolerance)
 }
 
-/// Collect drag patches for the container plus its section
-/// descendants only — siblings that carry `Flag::SectionRoot`
-/// recurse, child mind-nodes are skipped.
-fn collect_patches_node_and_sections(
+/// Walk the container's section-bearing children only — siblings
+/// with `Flag::SectionRoot` recurse via [`walk_drag_subtree`],
+/// child mind-nodes are skipped. The container itself is moved
+/// unconditionally (and patched, if `patches` is `Some`).
+fn walk_drag_node_and_sections(
     arena: &mut indextree::Arena<baumhard::gfx_structs::element::GfxElement>,
     node_id: indextree::NodeId,
     dx: f32,
     dy: f32,
-    patches: &mut Vec<(usize, (f32, f32))>,
+    mut patches: Option<&mut Vec<(usize, (f32, f32))>>,
 ) {
     if let Some(node) = arena.get_mut(node_id) {
         let elem = node.get_mut();
         if let Some(area) = elem.glyph_area_mut() {
             area.move_position(dx, dy);
         }
-        let pos = elem.position();
-        patches.push((elem.unique_id(), (pos.x, pos.y)));
+        if let Some(p) = patches.as_deref_mut() {
+            let pos = elem.position();
+            p.push((elem.unique_id(), (pos.x, pos.y)));
+        }
     }
     let mut child = arena.get(node_id).and_then(|n| n.first_child());
     while let Some(cid) = child {
@@ -696,64 +673,38 @@ fn collect_patches_node_and_sections(
             .map(|n| n.get().flag_is_set(Flag::SectionRoot))
             .unwrap_or(false);
         if is_section {
-            collect_patches_recursive(arena, cid, dx, dy, patches);
+            walk_drag_subtree(arena, cid, dx, dy, patches.as_deref_mut());
         }
     }
 }
 
-/// Recursively apply delta and collect patches via `first_child` /
-/// `next_sibling` — zero allocations per call (§B7).
-fn apply_delta_recursive(
+/// Recursively apply a drag delta via `first_child` / `next_sibling`
+/// — zero allocations (§B7). When `patches` is `Some`, push one
+/// `(unique_id, new_pos)` per element that owns a renderer buffer
+/// entry (i.e. `GlyphArea`-bearing variants). Section-model
+/// `GlyphModel` siblings have no buffer key, so emitting their
+/// `unique_id` would drive a hash miss in `patch_drag_positions`
+/// per drag tick — they're skipped.
+fn walk_drag_subtree(
     arena: &mut indextree::Arena<baumhard::gfx_structs::element::GfxElement>,
     node_id: indextree::NodeId,
     dx: f32,
     dy: f32,
+    mut patches: Option<&mut Vec<(usize, (f32, f32))>>,
 ) {
-    // Move this node.
-    if let Some(node) = arena.get_mut(node_id) {
-        if let Some(area) = node.get_mut().glyph_area_mut() {
-            area.move_position(dx, dy);
-        }
-    }
-    // Recurse into children.
-    let mut child = arena.get(node_id).and_then(|n| n.first_child());
-    while let Some(cid) = child {
-        child = arena.get(cid).and_then(|n| n.next_sibling());
-        apply_delta_recursive(arena, cid, dx, dy);
-    }
-}
-
-/// Recursively apply delta, collect patches, via `first_child` /
-/// `next_sibling` — zero allocations per call (§B7).
-///
-/// Patches are only emitted for elements that carry a renderer
-/// buffer entry — i.e. `GlyphArea`-bearing variants. Section-
-/// model `GlyphModel` siblings have no buffer key (the renderer
-/// doesn't shape them), so emitting their `unique_id` would
-/// drive a hash miss in `patch_drag_positions` per drag tick on
-/// every section-model in the dragged subtree. Dropping them
-/// here costs one branch per arena entry; the avoided hash
-/// misses cost an order of magnitude more.
-fn collect_patches_recursive(
-    arena: &mut indextree::Arena<baumhard::gfx_structs::element::GfxElement>,
-    node_id: indextree::NodeId,
-    dx: f32,
-    dy: f32,
-    patches: &mut Vec<(usize, (f32, f32))>,
-) {
-    // Move this node and collect patch.
     if let Some(node) = arena.get_mut(node_id) {
         let elem = node.get_mut();
         if let Some(area) = elem.glyph_area_mut() {
             area.move_position(dx, dy);
-            let pos = elem.position();
-            patches.push((elem.unique_id(), (pos.x, pos.y)));
+            if let Some(p) = patches.as_deref_mut() {
+                let pos = elem.position();
+                p.push((elem.unique_id(), (pos.x, pos.y)));
+            }
         }
     }
-    // Recurse into children.
     let mut child = arena.get(node_id).and_then(|n| n.first_child());
     while let Some(cid) = child {
         child = arena.get(cid).and_then(|n| n.next_sibling());
-        collect_patches_recursive(arena, cid, dx, dy, patches);
+        walk_drag_subtree(arena, cid, dx, dy, patches.as_deref_mut());
     }
 }

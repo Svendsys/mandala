@@ -36,6 +36,7 @@ use crate::mindmap::portal_geometry::{border_outward_normal, border_point_at, de
 use crate::mindmap::scene_cache::EdgeKey;
 use crate::mindmap::SELECTION_HIGHLIGHT_HEX;
 use crate::util::color::resolve_var;
+use crate::util::geometry::aabb_center;
 use crate::util::grapheme_chad::count_grapheme_clusters;
 
 use super::{PortalColorPreview, PortalElement};
@@ -292,12 +293,6 @@ pub(crate) fn layout_portal_label(
     PortalLabelLayout { top_left, bounds }
 }
 
-/// Center of a node in canvas space, used as the partner reference
-/// for the directional-default computation.
-pub(crate) fn node_center(pos: Vec2, size: Vec2) -> Vec2 {
-    Vec2::new(pos.x + size.x * 0.5, pos.y + size.y * 0.5)
-}
-
 /// Padding between a portal icon and its adjacent text label,
 /// as a fraction of the icon font size. Tuned so the text sits
 /// slightly outside the icon AABB without colliding with it.
@@ -460,7 +455,7 @@ pub(super) fn build_portal_elements(
             let layout = layout_portal_label(
                 owner_pos,
                 owner_size,
-                node_center(partner_pos, partner_size),
+                aabb_center(partner_pos, partner_size),
                 endpoint_state,
                 style.font_size_pt,
             );

@@ -28,6 +28,69 @@ use crate::util::geometry::almost_equal;
 use crate::util::grapheme_chad::count_grapheme_clusters;
 
 use super::{ConnectionLabelElement, EdgeColorPreview};
+use crate::mindmap::model::{MindEdge, MindNode};
+
+/// Compute the geometry + cosmic-text-ready fields for one
+/// connection-label, given pre-resolved text + raw color. Single
+/// source for both the main-pass and synthesised-pass branches —
+/// they previously open-coded the same path build, font-size
+/// derivation, AABB sizing, and `resolve_var` step.
+fn compute_label_layout(
+    edge: &MindEdge,
+    edge_key: EdgeKey,
+    from_node: &MindNode,
+    to_node: &MindNode,
+    offsets: &HashMap<String, (f32, f32)>,
+    map: &MindMap,
+    camera_zoom: f32,
+    rendered_label: String,
+    raw_color: &str,
+) -> ConnectionLabelElement {
+    let (fox, foy) = offsets.get(&from_node.id).copied().unwrap_or((0.0, 0.0));
+    let (tox, toy) = offsets.get(&to_node.id).copied().unwrap_or((0.0, 0.0));
+    let from_pos = from_node.pos_vec2() + Vec2::new(fox, foy);
+    let from_size = from_node.size_vec2();
+    let to_pos = to_node.pos_vec2() + Vec2::new(tox, toy);
+    let to_size = to_node.size_vec2();
+    let path = connection::build_connection_path(
+        from_pos,
+        from_size,
+        &edge.anchor_from,
+        to_pos,
+        to_size,
+        &edge.anchor_to,
+        &edge.control_points,
+    );
+    let label_cfg = edge.label_config.as_ref();
+    let t = EdgeLabelConfig::effective_position_t(label_cfg);
+    let perp = EdgeLabelConfig::effective_perpendicular_offset(label_cfg);
+    let anchor_on_path = connection::point_at_t(&path, t);
+    let anchor = apply_perpendicular_offset(&path, t, anchor_on_path, perp);
+    let config = GlyphConnectionConfig::resolved_for(edge, &map.canvas);
+    let font_size_pt = EdgeLabelConfig::effective_font_size_pt(label_cfg, edge, &map.canvas, camera_zoom);
+    let color = resolve_var(raw_color, &map.canvas.theme_variables).to_string();
+
+    // Loose AABB sized from the grapheme-count approximation
+    // (`font_size * 0.6` per grapheme — same constant the connection
+    // body sampler uses). Counting graphemes (not Unicode scalars)
+    // keeps a family-ZWJ emoji at one slot wide instead of eleven
+    // (§B3).
+    let grapheme_count = count_grapheme_clusters(&rendered_label) as f32;
+    let bounds_w = (grapheme_count * font_size_pt * 0.6).max(font_size_pt);
+    let bounds_h = font_size_pt * 1.3;
+    let top_left = (anchor.x - bounds_w * 0.5, anchor.y - bounds_h * 0.5);
+
+    ConnectionLabelElement {
+        edge_key,
+        text: rendered_label,
+        position: top_left,
+        bounds: (bounds_w, bounds_h),
+        color,
+        font: config.font.clone(),
+        font_size_pt,
+        zoom_visibility: edge.label_zoom_window(label_cfg),
+    }
+}
 
 /// Emit connection labels for the given map + overrides. Returns
 /// the two-pass union: committed labels first, then (optionally) a
@@ -41,7 +104,6 @@ pub(super) fn build_label_elements(
     selected_edge_label: Option<&EdgeKey>,
     camera_zoom: f32,
 ) -> Vec<ConnectionLabelElement> {
-    let vars = &map.canvas.theme_variables;
     let mut connection_label_elements: Vec<ConnectionLabelElement> = Vec::new();
     let mut label_override_emitted = false;
 
@@ -83,30 +145,6 @@ pub(super) fn build_label_elements(
             }
         };
 
-        let (fox, foy) = offsets.get(&from_node.id).copied().unwrap_or((0.0, 0.0));
-        let (tox, toy) = offsets.get(&to_node.id).copied().unwrap_or((0.0, 0.0));
-        let from_pos = from_node.pos_vec2() + Vec2::new(fox, foy);
-        let from_size = from_node.size_vec2();
-        let to_pos = to_node.pos_vec2() + Vec2::new(tox, toy);
-        let to_size = to_node.size_vec2();
-
-        let path = connection::build_connection_path(
-            from_pos,
-            from_size,
-            &edge.anchor_from,
-            to_pos,
-            to_size,
-            &edge.anchor_to,
-            &edge.control_points,
-        );
-        let label_cfg = edge.label_config.as_ref();
-        let t = EdgeLabelConfig::effective_position_t(label_cfg);
-        let perp = EdgeLabelConfig::effective_perpendicular_offset(label_cfg);
-        let anchor_on_path = connection::point_at_t(&path, t);
-        let anchor = apply_perpendicular_offset(&path, t, anchor_on_path, perp);
-
-        let config = GlyphConnectionConfig::resolved_for(edge, &map.canvas);
-        let font_size_pt = EdgeLabelConfig::effective_font_size_pt(label_cfg, edge, &map.canvas, camera_zoom);
         // Color cascade, highest priority first:
         //   1. Edge-label selection highlight — cyan tint so the
         //      user sees which label carries focus. Wins over
@@ -117,8 +155,11 @@ pub(super) fn build_label_elements(
         //      around the swatch.
         //   3. Committed color cascade — `label_config.color` →
         //      `glyph_connection.color` → `edge.color`.
-        // `resolve_var` runs after selection so a preview value
-        // like `var(--accent)` still theme-resolves correctly.
+        // `resolve_var` (inside compute_label_layout) runs after
+        // selection so a preview value like `var(--accent)` still
+        // theme-resolves correctly.
+        let label_cfg = edge.label_config.as_ref();
+        let config = GlyphConnectionConfig::resolved_for(edge, &map.canvas);
         let is_selected = selected_edge_label.map_or(false, |key| *key == edge_key);
         let raw_color: &str = if is_selected {
             SELECTION_HIGHLIGHT_HEX
@@ -138,34 +179,22 @@ pub(super) fn build_label_elements(
                         .unwrap_or(edge.color.as_str())
                 })
         };
-        let color = resolve_var(raw_color, vars).to_string();
-
-        // Loose AABB sized from the grapheme-count approximation
-        // (`font_size * 0.6` per grapheme — same constant the
-        // connection body sampler uses). Height is one font-size plus
-        // a small vertical margin. Counting graphemes (not Unicode
-        // scalars) keeps a family-ZWJ emoji at one slot wide instead
-        // of eleven (§B3).
-        let grapheme_count = count_grapheme_clusters(&rendered_label) as f32;
-        let bounds_w = (grapheme_count * font_size_pt * 0.6).max(font_size_pt);
-        let bounds_h = font_size_pt * 1.3;
-        // Center the AABB on the path anchor.
-        let top_left = (anchor.x - bounds_w * 0.5, anchor.y - bounds_h * 0.5);
 
         if is_edited {
             label_override_emitted = true;
         }
 
-        connection_label_elements.push(ConnectionLabelElement {
+        connection_label_elements.push(compute_label_layout(
+            edge,
             edge_key,
-            text: rendered_label,
-            position: top_left,
-            bounds: (bounds_w, bounds_h),
-            color,
-            font: config.font.clone(),
-            font_size_pt,
-            zoom_visibility: edge.label_zoom_window(label_cfg),
-        });
+            from_node,
+            to_node,
+            offsets,
+            map,
+            camera_zoom,
+            rendered_label,
+            raw_color,
+        ));
     }
 
     // Synthesized-label pass: if `label_edit_override` targets an
@@ -185,37 +214,13 @@ pub(super) fn build_label_elements(
                     (map.nodes.get(&edge.from_id), map.nodes.get(&edge.to_id))
                 {
                     if !map.is_hidden_by_fold(from_node) && !map.is_hidden_by_fold(to_node) {
-                        let (fox, foy) = offsets.get(&from_node.id).copied().unwrap_or((0.0, 0.0));
-                        let (tox, toy) = offsets.get(&to_node.id).copied().unwrap_or((0.0, 0.0));
-                        let from_pos = from_node.pos_vec2() + Vec2::new(fox, foy);
-                        let from_size = from_node.size_vec2();
-                        let to_pos = to_node.pos_vec2() + Vec2::new(tox, toy);
-                        let to_size = to_node.size_vec2();
-                        let path = connection::build_connection_path(
-                            from_pos,
-                            from_size,
-                            &edge.anchor_from,
-                            to_pos,
-                            to_size,
-                            &edge.anchor_to,
-                            &edge.control_points,
-                        );
+                        // Synthesized path is for an edge being
+                        // edited with an empty committed label — no
+                        // selection-highlight branch here (the edited
+                        // edge IS the label, and the color picker
+                        // preview wins where it applies).
                         let label_cfg = edge.label_config.as_ref();
-                        let t = EdgeLabelConfig::effective_position_t(label_cfg);
-                        let perp = EdgeLabelConfig::effective_perpendicular_offset(label_cfg);
-                        let anchor_on_path = connection::point_at_t(&path, t);
-                        let anchor = apply_perpendicular_offset(&path, t, anchor_on_path, perp);
                         let config = GlyphConnectionConfig::resolved_for(edge, &map.canvas);
-                        let font_size_pt = EdgeLabelConfig::effective_font_size_pt(
-                            label_cfg,
-                            edge,
-                            &map.canvas,
-                            camera_zoom,
-                        );
-                        // Synthesized path is for an edge being edited
-                        // with an empty committed label — if the color
-                        // picker is also previewing this edge,
-                        // substitute the preview value.
                         let raw_color: &str = edge_color_preview
                             .and_then(|p| {
                                 if p.edge_key == target_key {
@@ -230,22 +235,17 @@ pub(super) fn build_label_elements(
                                     .or(config.color.as_deref())
                                     .unwrap_or(edge.color.as_str())
                             });
-                        let color = resolve_var(raw_color, vars).to_string();
-                        let rendered = format!("{buffer}\u{258C}");
-                        let grapheme_count = count_grapheme_clusters(&rendered) as f32;
-                        let bounds_w = (grapheme_count * font_size_pt * 0.6).max(font_size_pt);
-                        let bounds_h = font_size_pt * 1.3;
-                        let top_left = (anchor.x - bounds_w * 0.5, anchor.y - bounds_h * 0.5);
-                        connection_label_elements.push(ConnectionLabelElement {
-                            edge_key: target_key.clone(),
-                            text: rendered,
-                            position: top_left,
-                            bounds: (bounds_w, bounds_h),
-                            color,
-                            font: config.font.clone(),
-                            font_size_pt,
-                            zoom_visibility: edge.label_zoom_window(label_cfg),
-                        });
+                        connection_label_elements.push(compute_label_layout(
+                            edge,
+                            target_key.clone(),
+                            from_node,
+                            to_node,
+                            offsets,
+                            map,
+                            camera_zoom,
+                            format!("{buffer}\u{258C}"),
+                            raw_color,
+                        ));
                     }
                 }
             }

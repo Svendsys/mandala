@@ -196,15 +196,7 @@ fn execute_zoom(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         SelectionState::Multi(_) => unreachable!("Multi handled above"),
     };
     let changed = apply_zoom_to_selection(doc, min_edit, max_edit);
-    finalize(kind, changed)
-}
-
-fn finalize(kind: &str, changed: bool) -> ExecResult {
-    if changed {
-        ExecResult::ok_msg(format!("zoom applied to {kind}"))
-    } else {
-        ExecResult::ok_msg(format!("zoom: no change on {kind}"))
-    }
+    super::applied_or_no_change("zoom", kind, changed)
 }
 
 /// Parse a parametric Action's payload string into an

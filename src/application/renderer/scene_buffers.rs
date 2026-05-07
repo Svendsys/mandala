@@ -7,7 +7,7 @@
 
 use baumhard::font::fonts;
 use baumhard::mindmap::scene_builder::BorderElement;
-use cosmic_text::Attrs;
+use baumhard::font::{buffer, Attrs, Color, Metrics, SHAPING_ADVANCED};
 use glam::Vec2;
 
 use super::borders::create_border_buffer;
@@ -19,43 +19,21 @@ use baumhard::mindmap::border::build_border_regions;
 use baumhard::util::color::hex_to_rgba_safe;
 
 impl Renderer {
-    /// Full (non-keyed) border rebuild — wipes the keyed cache and rebuilds
-    /// every element from scratch. Used on map load, undo, reparent,
-    /// selection change, and anywhere else the caller already knows every
-    /// border may have changed.
+    /// Full border rebuild — wipes the cache and shapes every element
+    /// from scratch through baumhard's styled-region → cosmic-text bridge
+    /// (the same `(text, ColorFontRegions) → Vec<(&str, Attrs)>` path the
+    /// tree walker uses; see CODE_CONVENTIONS §1).
     pub fn rebuild_border_buffers(&mut self, border_elements: &[BorderElement]) {
+        // Eviction-by-clear: every input element is reshaped fresh,
+        // so wiping the cache here is sufficient. A future keyed /
+        // incremental fast path that reuses cached buffers must
+        // remove this `clear()` AND reintroduce a `seen`-set
+        // `retain(|k, _| seen.contains(k))` at the end of the loop —
+        // the two halves are complementary.
         self.border_buffers.clear();
-        self.rebuild_border_buffers_keyed(border_elements, None);
-    }
-
-    /// Keyed border rebuild. If `dirty_node_ids` is `Some`, only entries
-    /// whose `node_id` is in the set are re-shaped from scratch; clean
-    /// entries have only their position patched in place on the existing
-    /// cached buffers. Keys not present in `border_elements` are evicted
-    /// at the end of the call. If `dirty_node_ids` is `None`, everything
-    /// is treated as dirty (full re-shape).
-    ///
-    /// The keyed path is what keeps drag interactive: on a drag frame
-    /// that moves one node, only that node's border cache entry is
-    /// re-shaped. All other visible borders reuse their shaped
-    /// `cosmic_text::Buffer`s — cosmic-text shaping is the dominant cost
-    /// here, so skipping it for unmoved borders is the point.
-    pub fn rebuild_border_buffers_keyed(
-        &mut self,
-        border_elements: &[BorderElement],
-        dirty_node_ids: Option<&std::collections::HashSet<String>>,
-    ) {
-        let mut font_system = fonts::acquire_font_system_write("rebuild_border_buffers_keyed");
-
-        let mut seen: std::collections::HashSet<String> =
-            std::collections::HashSet::with_capacity(border_elements.len());
+        let mut font_system = fonts::acquire_font_system_write("rebuild_border_buffers");
 
         for elem in border_elements {
-            seen.insert(elem.node_id.clone());
-            let is_dirty = dirty_node_ids
-                .map(|set| set.contains(&elem.node_id))
-                .unwrap_or(true);
-
             let font_size = elem.border_style.font_size_pt;
             let specs = baumhard::mindmap::border::border_run_specs(
                 &elem.border_style,
@@ -63,34 +41,6 @@ impl Renderer {
                 elem.node_size,
             );
 
-            // Fast path: cached, clean, matching glyph count.
-            // Only `.pos` is patched in place — other buffer
-            // fields (including `zoom_visibility`) are
-            // structurally stable under drag, which is the only
-            // scenario `dirty_node_ids` ever excludes.
-            // `rebuild_border_buffers_keyed` call sites today
-            // pass `dirty_node_ids = None`, forcing the slow
-            // path; a future keyed-drag optimisation that
-            // actually takes this branch must also stamp any
-            // fields that can change between builds onto
-            // `existing[i]` here.
-            if !is_dirty {
-                if let Some(existing) = self.border_buffers.get_mut(&elem.node_id) {
-                    if existing.len() == 4 && (existing[0].bounds.0 - specs[0].bounds.0).abs() < 0.5 {
-                        for (i, spec) in specs.iter().enumerate() {
-                            existing[i].pos = spec.position;
-                        }
-                        continue;
-                    }
-                }
-            }
-
-            // Slow path: shape fresh through baumhard's
-            // styled-region → cosmic-text bridge. The same
-            // `(text, ColorFontRegions) → Vec<(&str, Attrs)>`
-            // path the tree walker uses
-            // (`tree_walker.rs:89,158`); see CODE_CONVENTIONS §1
-            // and the banner at the top of this file.
             let fallback_rgba = hex_to_rgba_safe(&elem.border_style.color, [1.0, 1.0, 1.0, 1.0]);
 
             let zv = elem.zoom_visibility;
@@ -110,18 +60,9 @@ impl Renderer {
                     build_border_regions(spec.cluster_count, cycle, fallback_rgba, spec.palette_offset);
                 let families = RegionFamilies::resolve(&regions, &mut font_system);
                 let spans = rich_text_spans_from_regions(&spec.text, &families, font_size, font_size, None);
-                let mut buf = cosmic_text::Buffer::new(
-                    &mut font_system,
-                    cosmic_text::Metrics::new(font_size, font_size),
-                );
+                let mut buf = buffer::create_square(&mut font_system, font_size);
                 buf.set_size(&mut font_system, Some(spec.bounds.0), Some(spec.bounds.1));
-                buf.set_rich_text(
-                    &mut font_system,
-                    spans,
-                    &Attrs::new(),
-                    cosmic_text::Shaping::Advanced,
-                    None,
-                );
+                buf.set_rich_text(&mut font_system, spans, &Attrs::new(), SHAPING_ADVANCED, None);
                 buf.shape_until_scroll(&mut font_system, false);
                 MindMapTextBuffer {
                     buffer: buf,
@@ -134,8 +75,6 @@ impl Renderer {
             let entry: Vec<MindMapTextBuffer> = specs.iter().map(&mut shape_spec).collect();
             self.border_buffers.insert(elem.node_id.clone(), entry);
         }
-
-        self.border_buffers.retain(|k, _| seen.contains(k));
     }
 
     /// Rebuild the edge grab-handle overlay buffers. Called after every
@@ -152,13 +91,10 @@ impl Renderer {
         let mut font_system = fonts::acquire_font_system_write("rebuild_edge_handle_buffers");
         for handle in handles {
             let cosmic_color =
-                hex_to_cosmic_color(&handle.color).unwrap_or(cosmic_text::Color::rgba(0, 229, 255, 255));
+                hex_to_cosmic_color(&handle.color).unwrap_or(Color::rgba(0, 229, 255, 255));
             let attrs = Attrs::new()
                 .color(cosmic_color)
-                .metrics(cosmic_text::Metrics::new(
-                    handle.font_size_pt,
-                    handle.font_size_pt,
-                ));
+                .metrics(Metrics::new(handle.font_size_pt, handle.font_size_pt));
 
             let half_w = handle.font_size_pt * 0.3;
             let half_h = handle.font_size_pt * 0.5;
@@ -183,17 +119,6 @@ impl Renderer {
         &mut self,
         label_elements: &[baumhard::mindmap::scene_builder::ConnectionLabelElement],
     ) {
-        // No keyed fast path today — labels are ≤ 1 per edge
-        // and cheap to reshape every scene build, so we clear
-        // and rebuild unconditionally. If a future optimisation
-        // adds a clean-cache branch here (mirroring
-        // `rebuild_border_buffers_keyed`), it must also stamp
-        // `elem.zoom_visibility` onto the preserved buffer —
-        // `zoom_visibility` is an author-authored field that
-        // changes via mutator or console edits independent of
-        // drag, so the drag-only "only .pos changes" assumption
-        // the border / connection fast paths rely on does not
-        // automatically hold for labels.
         self.connection_label_buffers.clear();
         self.connection_label_hitboxes.clear();
         if label_elements.is_empty() {
@@ -203,10 +128,10 @@ impl Renderer {
 
         for elem in label_elements {
             let cosmic_color =
-                hex_to_cosmic_color(&elem.color).unwrap_or(cosmic_text::Color::rgba(235, 235, 235, 255));
+                hex_to_cosmic_color(&elem.color).unwrap_or(Color::rgba(235, 235, 235, 255));
             let attrs = Attrs::new()
                 .color(cosmic_color)
-                .metrics(cosmic_text::Metrics::new(elem.font_size_pt, elem.font_size_pt));
+                .metrics(Metrics::new(elem.font_size_pt, elem.font_size_pt));
 
             let mut buffer = create_border_buffer(
                 &mut font_system,
@@ -229,67 +154,80 @@ impl Renderer {
 
     /// Build overlay buffers for a selection rectangle using dashed box-drawing glyphs.
     /// Coordinates are in canvas space.
+    ///
+    /// Per-tick fast path: when `(char_count, row_count)` round to
+    /// the same cells as the previous call, the four shaped buffers
+    /// in `overlay_buffers` are reused — only their positions are
+    /// updated. The drag hot path commonly drifts under 1 char per
+    /// tick, so this skips 4 `cosmic_text::Buffer::set_rich_text`
+    /// shapings per cursor-move event.
     pub fn rebuild_selection_rect_overlay(&mut self, min: Vec2, max: Vec2) {
-        self.overlay_buffers.clear();
-        let mut font_system = fonts::acquire_font_system_write("rebuild_selection_rect_overlay");
-
         let font_size: f32 = 14.0;
         let approx_char_width = monospace_advance(font_size);
-        let rect_color = cosmic_text::Color::rgba(0, 230, 255, 200);
-        let attrs = Attrs::new()
-            .color(rect_color)
-            .metrics(cosmic_text::Metrics::new(font_size, font_size));
 
         let w = max.x - min.x;
         let h = max.y - min.y;
         let h_width = w + approx_char_width * 2.0;
         let v_width = approx_char_width * 2.0;
-
         let char_count = (w / approx_char_width).max(1.0) as usize;
-        let top_text = format!("\u{256D}{}\u{256E}", "\u{2504}".repeat(char_count));
-        self.overlay_buffers.push(create_border_buffer(
-            &mut font_system,
-            &top_text,
-            &attrs,
-            font_size,
-            (min.x - approx_char_width, min.y - font_size),
-            (h_width, font_size * 1.5),
-        ));
-
-        let bottom_text = format!("\u{2570}{}\u{256F}", "\u{2504}".repeat(char_count));
-        self.overlay_buffers.push(create_border_buffer(
-            &mut font_system,
-            &bottom_text,
-            &attrs,
-            font_size,
-            (min.x - approx_char_width, max.y),
-            (h_width, font_size * 1.5),
-        ));
-
         let row_count = (h / font_size).max(1.0) as usize;
-        let left_text: String = std::iter::repeat_n("\u{2506}\n", row_count).collect();
-        self.overlay_buffers.push(create_border_buffer(
-            &mut font_system,
-            &left_text,
-            &attrs,
-            font_size,
-            (min.x - approx_char_width, min.y),
-            (v_width, h),
-        ));
 
-        let right_text: String = std::iter::repeat_n("\u{2506}\n", row_count).collect();
-        self.overlay_buffers.push(create_border_buffer(
-            &mut font_system,
-            &right_text,
-            &attrs,
-            font_size,
-            (max.x, min.y),
+        let positions = [
+            (min.x - approx_char_width, min.y - font_size), // top
+            (min.x - approx_char_width, max.y),              // bottom
+            (min.x - approx_char_width, min.y),              // left
+            (max.x, min.y),                                  // right
+        ];
+        let bounds = [
+            (h_width, font_size * 1.5),
+            (h_width, font_size * 1.5),
             (v_width, h),
-        ));
+            (v_width, h),
+        ];
+
+        if self.selection_rect_shape_cache == Some((char_count, row_count))
+            && self.overlay_buffers.len() == 4
+        {
+            for (i, tb) in self.overlay_buffers.iter_mut().enumerate() {
+                tb.pos = positions[i];
+                tb.bounds = bounds[i];
+            }
+            return;
+        }
+
+        self.overlay_buffers.clear();
+        let mut font_system = fonts::acquire_font_system_write("rebuild_selection_rect_overlay");
+
+        let rect_color = Color::rgba(0, 230, 255, 200);
+        let attrs = Attrs::new()
+            .color(rect_color)
+            .metrics(Metrics::new(font_size, font_size));
+
+        let top_text = format!("\u{256D}{}\u{256E}", "\u{2504}".repeat(char_count));
+        let bottom_text = format!("\u{2570}{}\u{256F}", "\u{2504}".repeat(char_count));
+        let side_text: String = std::iter::repeat_n("\u{2506}\n", row_count).collect();
+
+        for (text, pos, bound) in [
+            (top_text.as_str(), positions[0], bounds[0]),
+            (bottom_text.as_str(), positions[1], bounds[1]),
+            (side_text.as_str(), positions[2], bounds[2]),
+            (side_text.as_str(), positions[3], bounds[3]),
+        ] {
+            self.overlay_buffers.push(create_border_buffer(
+                &mut font_system,
+                text,
+                &attrs,
+                font_size,
+                pos,
+                bound,
+            ));
+        }
+        self.selection_rect_shape_cache = Some((char_count, row_count));
     }
 
     /// Clear all overlay buffers (e.g., after selection rect is finished).
     pub fn clear_overlay_buffers(&mut self) {
         self.overlay_buffers.clear();
+        self.selection_rect_shape_cache = None;
     }
 }

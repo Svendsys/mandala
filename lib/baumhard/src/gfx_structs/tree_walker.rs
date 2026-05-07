@@ -156,7 +156,19 @@ fn process_instruction_node(
                 condition,
             )
         }
-        Instruction::RotateWhile(_, _) => {}
+        Instruction::RotateWhile(_, _) => {
+            // Reserved instruction (see `format/mutators.md` —
+            // sibling rotation), unimplemented in the walker
+            // today. A loaded mutator that uses RotateWhile will
+            // silently no-op the rotation step. Logging at
+            // `warn!` rather than panicking keeps the rest of the
+            // mutation chain executing — a malformed reserved
+            // instruction shouldn't abort the whole walk.
+            warn!(
+                "RotateWhile instruction not implemented in walker; \
+                 this branch becomes a no-op (see format/mutators.md)"
+            );
+        }
         Instruction::SpatialDescend(point) => {
             spatial_descend(gfx_tree, mutator_tree, target_id, mutator_id, point);
         }
@@ -166,61 +178,65 @@ fn process_instruction_node(
     };
 }
 
-/// Assumes that the order of siblings is according to their channels, ascending.
-/// Starting with the target, compare mutator and target channel and apply repeat_while
-/// if they match. If mutator channel is greater or equal than target channel, then next
-/// target sibling will also be checked
+/// Walk siblings comparing channels, applying [`repeat_while`]
+/// where they match. Channel-ascending invariant on both sides
+/// is the same one [`align_child_walks`] documents.
+///
+/// Iterative driver — the original recursive shape was tail-call
+/// in two places; flattening to a `loop` removes the unwrap chain
+/// and makes the channel-advance state explicit.
 fn compare_apply_repeat_while(
     gfx_tree: &mut Tree<GfxElement, GfxMutator>,
     mutator_tree: &MutatorTree<GfxMutator>,
-    target_id: NodeId,
-    mutator_id: NodeId,
+    initial_target_id: NodeId,
+    initial_mutator_id: NodeId,
     condition: &Predicate,
 ) {
-    let mutator_node = get_mutator(&mutator_tree.arena, mutator_id);
-    let target_node = get_target(&mut gfx_tree.arena, target_id);
-    let mutator = mutator_node.get();
-    let maybe_next_target = target_node.next_sibling();
-    let target = target_node.get_mut();
+    let mut target_id = initial_target_id;
+    let mut mutator_id = initial_mutator_id;
+    loop {
+        let mutator_node = get_mutator(&mutator_tree.arena, mutator_id);
+        let target_node = get_target(&mut gfx_tree.arena, target_id);
+        let mutator = mutator_node.get();
+        let maybe_next_target = target_node.next_sibling();
+        let target = target_node.get_mut();
 
-    let m_chan = mutator.channel();
-    let t_chan = target.channel();
-    let next_mutator = mutator_node.next_sibling();
+        let m_chan = mutator.channel();
+        let t_chan = target.channel();
+        let next_mutator = mutator_node.next_sibling();
 
-    if m_chan == t_chan {
-        debug!("Mutator and target channels matches - applying RepeatWhile.");
-        repeat_while(
-            gfx_tree,
-            mutator_tree,
-            target_id,
-            mutator_id,
-            condition,
-            DEFAULT_TERMINATOR,
-        );
-    }
-
-    // This is in case there are more target siblings with same channel
-    if m_chan >= t_chan {
-        if maybe_next_target.is_some() {
-            return compare_apply_repeat_while(
+        if m_chan == t_chan {
+            debug!("Mutator and target channels matches - applying RepeatWhile.");
+            repeat_while(
                 gfx_tree,
                 mutator_tree,
-                maybe_next_target.unwrap(),
+                target_id,
                 mutator_id,
                 condition,
+                DEFAULT_TERMINATOR,
             );
         }
-    }
 
-    if next_mutator.is_some() && maybe_next_target.is_some() {
-        debug!("Changing to next mutator-sibling");
-        compare_apply_repeat_while(
-            gfx_tree,
-            mutator_tree,
-            maybe_next_target.unwrap(),
-            next_mutator.unwrap(),
-            condition,
-        )
+        // More target siblings with the same channel: advance the
+        // target only, keep the mutator pointed at the current
+        // node so additional sibling matches still apply.
+        if m_chan >= t_chan {
+            if let Some(next_t) = maybe_next_target {
+                target_id = next_t;
+                continue;
+            }
+        }
+
+        // No more target matches at the current mutator: advance
+        // both pointers and try the next pair.
+        match (next_mutator, maybe_next_target) {
+            (Some(next_m), Some(next_t)) => {
+                debug!("Changing to next mutator-sibling");
+                target_id = next_t;
+                mutator_id = next_m;
+            }
+            _ => return,
+        }
     }
 }
 
@@ -260,6 +276,25 @@ fn get_target(arena: &mut Arena<GfxElement>, id: NodeId) -> &mut Node<GfxElement
 /// See also [`zip_map_children`] — the opt-out alternative that pairs
 /// children by sibling position (zip) instead of by channel, for
 /// mutations that need per-index targeting.
+///
+/// # Channel-sorted merge walk
+///
+/// The walker treats the target's and mutator's children as
+/// sorted streams keyed by [`channel`](GfxElement::channel) and
+/// applies each mutator child to every target child sharing its
+/// channel. The arena order of children is **not** assumed to be
+/// channel-ascending — children are collected into local
+/// `Vec`s and sorted by channel before the merge walk. This
+/// removes a long-standing fragility where the walker's
+/// `t_chan > m_chan` break could prematurely skip matches when
+/// arena order disagreed with channel order (see
+/// `console_mutator_round_trips_to_fresh_build` for a fixture
+/// that exercises a non-ascending sibling row).
+///
+/// Cost: O(n log n) per sibling row for the sort, where `n` is
+/// the sibling count under one parent. Sibling counts are small
+/// in practice (single-digit), so the sort is effectively free
+/// next to the per-pair `walk_tree_from` recursion.
 #[inline]
 fn align_child_walks(
     gfx_tree: &mut Tree<GfxElement, GfxMutator>,
@@ -271,46 +306,55 @@ fn align_child_walks(
         "Aligning children of target node {} and mutator node {}.",
         target_id, mutator_id
     );
-    let mut option_mutator_child_id = get_mutator(&mutator_tree.arena, mutator_id).first_child();
-    if option_mutator_child_id.is_none() {
+    let mutator_children = collect_sorted_children(&mutator_tree.arena, mutator_id, |m| m.channel());
+    if mutator_children.is_empty() {
         debug!("Mutator has no children - nothing to align.");
         return;
     }
-    let mut option_target_child_id = get_target(&mut gfx_tree.arena, target_id).first_child();
-    loop {
-        if option_mutator_child_id.is_some() {
-            let mutator_child_id = option_mutator_child_id.unwrap();
-            let mutator_child = get_mutator(&mutator_tree.arena, mutator_child_id);
-            option_mutator_child_id = mutator_child.next_sibling();
-            debug!("Mutator is present, seeking matching targets..");
-            loop {
-                if option_target_child_id.is_some() {
-                    let target_child_id = option_target_child_id.unwrap();
-                    let target_child = get_target(&mut gfx_tree.arena, target_child_id);
-                    let m_chan = mutator_child.get().channel();
-                    let t_chan = target_child.get().channel();
-                    if t_chan == m_chan {
-                        option_target_child_id = target_child.next_sibling();
-                        walk_tree_from(gfx_tree, mutator_tree, target_child_id, mutator_child_id);
-                        debug!("Applied mutation-walk on child node, checking next sibling...");
-                    } else if t_chan > m_chan {
-                        debug!(
-                            "Target channel is higher than mutator channel, breaking out of mutator loop."
-                        );
-                        break;
-                    } else {
-                        option_target_child_id = target_child.next_sibling();
-                    }
-                } else {
-                    debug!("Reached end of siblings, breaking inner mutation loop.");
-                    break;
-                }
+    let target_children = collect_sorted_children(&gfx_tree.arena, target_id, |t| t.channel());
+
+    let mut t_idx = 0usize;
+    for (m_id, m_chan) in mutator_children.iter().copied() {
+        while t_idx < target_children.len() {
+            let (t_id, t_chan) = target_children[t_idx];
+            if t_chan == m_chan {
+                t_idx += 1;
+                walk_tree_from(gfx_tree, mutator_tree, t_id, m_id);
+            } else if t_chan > m_chan {
+                debug!(
+                    "Target channel {} exceeds mutator channel {}, advancing to next mutator.",
+                    t_chan, m_chan
+                );
+                break;
+            } else {
+                t_idx += 1;
             }
+        }
+    }
+}
+
+/// Collect direct children of `parent` paired with their
+/// [`channel`](GfxElement::channel) value, sorted ascending by
+/// channel. Stable sort so siblings with identical channels keep
+/// their arena-relative order — pairs the channel-merge walk
+/// against itself deterministically.
+fn collect_sorted_children<E>(
+    arena: &Arena<E>,
+    parent: NodeId,
+    channel_of: impl Fn(&E) -> usize,
+) -> Vec<(NodeId, usize)> {
+    let mut out = Vec::new();
+    let mut cur = arena.get(parent).and_then(|n| n.first_child());
+    while let Some(id) = cur {
+        if let Some(node) = arena.get(id) {
+            out.push((id, channel_of(node.get())));
+            cur = node.next_sibling();
         } else {
-            debug!("Reached end of mutator siblings, breaking outer mutation loop.");
             break;
         }
     }
+    out.sort_by_key(|&(_, ch)| ch);
+    out
 }
 
 /// Zip the mutator's direct children against the target's direct
@@ -569,6 +613,34 @@ fn spatial_descend_recurse(
     point: Vec2,
     best: &mut Option<(NodeId, f32)>,
 ) {
+    bvh_find(arena, node_id, point, 0.0, false, best);
+}
+
+/// Unified BVH descent — single source for both [`Tree::descendant_near`]
+/// (which wants slack + shape refinement so an ellipse-shaped node
+/// doesn't false-hit on its corner AABB) and the mutator-builder's
+/// `SpatialDescend` instruction (no slack, AABB-only).
+///
+/// For each child of `node_id`:
+/// 1. Prune: if the child's `subtree_aabb` doesn't contain `point`
+///    inflated by `slack`, skip the entire subtree.
+/// 2. Test the child's own `GlyphArea` AABB (slack-inflated). On
+///    hit, optionally refine via `area.shape.contains_local` so an
+///    ellipse hit-tests against its actual shape rather than its
+///    bounding rectangle.
+/// 3. Recurse into the child's children.
+///
+/// Smallest-area wins on tie (so a smaller element stacked over a
+/// bigger one is the hit). Uses `first_child` / `next_sibling`
+/// iteration to avoid per-call `Vec` allocation (§B7).
+pub(crate) fn bvh_find(
+    arena: &Arena<GfxElement>,
+    node_id: NodeId,
+    point: Vec2,
+    slack: f32,
+    refine_with_shape: bool,
+    best: &mut Option<(NodeId, f32)>,
+) {
     let mut child_opt = arena.get(node_id).and_then(|n| n.first_child());
 
     while let Some(child_id) = child_opt {
@@ -579,35 +651,56 @@ fn spatial_descend_recurse(
         };
         let element = node.get();
 
-        // Prune: skip if subtree AABB doesn't contain point.
+        // 1. Prune: subtree AABB must contain (slack-inflated) point.
         if let Some((st_min, st_max)) = element.subtree_aabb() {
-            if point.x < st_min.x || point.x > st_max.x || point.y < st_min.y || point.y > st_max.y {
+            if point.x < st_min.x - slack
+                || point.x > st_max.x + slack
+                || point.y < st_min.y - slack
+                || point.y > st_max.y + slack
+            {
                 continue;
             }
         } else {
-            continue;
+            continue; // no subtree AABB → no renderable content
         }
 
-        // Check this node's own GlyphArea AABB.
+        // 2. Check this node's own GlyphArea AABB.
         if let Some(area) = element.glyph_area() {
             let pos = area.position.to_vec2();
             let bounds = area.render_bounds.to_vec2();
-            if bounds.x > 0.0
-                && bounds.y > 0.0
-                && point.x >= pos.x
-                && point.x <= pos.x + bounds.x
-                && point.y >= pos.y
-                && point.y <= pos.y + bounds.y
-            {
-                let size = bounds.x * bounds.y;
-                match *best {
-                    Some((_, best_size)) if best_size <= size => {}
-                    _ => *best = Some((child_id, size)),
+            if bounds.x > 0.0 && bounds.y > 0.0 {
+                let min_x = pos.x - slack;
+                let min_y = pos.y - slack;
+                let max_x = pos.x + bounds.x + slack;
+                let max_y = pos.y + bounds.y + slack;
+                if point.x >= min_x && point.x <= max_x && point.y >= min_y && point.y <= max_y {
+                    let mut hit = true;
+                    if refine_with_shape {
+                        // Inflating the bounds by `slack` on every side and
+                        // shifting the local point by `slack` into the
+                        // inflated frame gives rectangle and ellipse the
+                        // same isotropic fuzzy margin the caller asked
+                        // for. `slack == 0` is the exact-hit case (no-op
+                        // inflation).
+                        let local = Vec2::new(point.x - pos.x + slack, point.y - pos.y + slack);
+                        let inflated = Vec2::new(bounds.x + 2.0 * slack, bounds.y + 2.0 * slack);
+                        hit = area.shape.contains_local(local, inflated);
+                    }
+                    if hit {
+                        // Tie-break by *original* (un-slacked) area so a
+                        // physically smaller element still wins.
+                        let size = bounds.x * bounds.y;
+                        match *best {
+                            Some((_, best_size)) if best_size <= size => {}
+                            _ => *best = Some((child_id, size)),
+                        }
+                    }
                 }
             }
         }
 
-        // Recurse deeper.
-        spatial_descend_recurse(arena, child_id, point, best);
+        // 3. Recurse (the subtree-AABB test above proved at least
+        //    one descendant may contain the point).
+        bvh_find(arena, child_id, point, slack, refine_with_shape, best);
     }
 }

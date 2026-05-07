@@ -89,9 +89,7 @@ pub fn parse_mutations_json(source: &str) -> Result<Vec<CustomMutation>, String>
         #[serde(default)]
         mutations: Vec<CustomMutation>,
     }
-    serde_json::from_str::<Envelope>(source)
-        .map(|e| e.mutations)
-        .map_err(|e| e.to_string())
+    baumhard::format::json::parse::<Envelope>(source).map(|e| e.mutations)
 }
 
 #[cfg(test)]

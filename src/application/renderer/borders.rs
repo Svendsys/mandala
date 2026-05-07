@@ -11,8 +11,7 @@
 //! `baumhard::font::hex::hex_to_cosmic_color` (§B5: cosmic-text
 //! usage stays inside `font/`).
 
-use cosmic_text::{Attrs, FontSystem};
-
+use baumhard::font::{buffer, Attrs, FontSystem, SHAPING_ADVANCED};
 use baumhard::font::metrics::monospace_advance;
 use baumhard::gfx_structs::zoom_visibility::ZoomVisibility;
 
@@ -22,17 +21,17 @@ use super::MindMapTextBuffer;
 /// cosmic-text. Falls back to `monospace_advance(font_size)` if
 /// every glyph shapes to zero (tofu + missing fallback).
 pub fn measure_max_glyph_advance(
-    font_system: &mut cosmic_text::FontSystem,
+    font_system: &mut FontSystem,
     glyphs: &[&str],
     font_size: f32,
 ) -> f32 {
-    let mut buffer = cosmic_text::Buffer::new(font_system, cosmic_text::Metrics::new(font_size, font_size));
+    let mut buf = buffer::create_square(font_system, font_size);
     let attrs = Attrs::new();
     let mut max_w: f32 = 0.0;
     for g in glyphs {
-        buffer.set_text(font_system, g, &attrs, cosmic_text::Shaping::Advanced, None);
-        buffer.shape_until_scroll(font_system, false);
-        for run in buffer.layout_runs() {
+        buf.set_text(font_system, g, &attrs, SHAPING_ADVANCED, None);
+        buf.shape_until_scroll(font_system, false);
+        for run in buf.layout_runs() {
             for glyph in run.glyphs.iter() {
                 if glyph.w > max_w {
                     max_w = glyph.w;
@@ -73,79 +72,14 @@ pub(super) fn create_border_buffer_lh(
     pos: (f32, f32),
     bounds: (f32, f32),
 ) -> MindMapTextBuffer {
-    let mut buf = cosmic_text::Buffer::new(font_system, cosmic_text::Metrics::new(font_size, line_height));
+    let mut buf = buffer::create(font_system, font_size, line_height);
     buf.set_size(font_system, Some(bounds.0), Some(bounds.1));
     buf.set_rich_text(
         font_system,
         vec![(text, attrs.clone())],
         &Attrs::new(),
-        cosmic_text::Shaping::Advanced,
+        SHAPING_ADVANCED,
         None,
-    );
-    buf.shape_until_scroll(font_system, false);
-    MindMapTextBuffer {
-        buffer: buf,
-        pos,
-        bounds,
-        zoom_visibility: ZoomVisibility::unbounded(),
-    }
-}
-
-/// Multi-span variant of [`create_border_buffer`] — hands cosmic-text
-/// a sequence of `(text, attrs)` pairs in one buffer so adjacent
-/// spans with different colors (e.g. accent-colored prompt glyph +
-/// text-colored input) lay out as one line without the caller having
-/// to position them separately.
-pub(super) fn create_border_buffer_spans(
-    font_system: &mut FontSystem,
-    spans: &[(&str, Attrs)],
-    font_size: f32,
-    pos: (f32, f32),
-    bounds: (f32, f32),
-) -> MindMapTextBuffer {
-    let mut buf = cosmic_text::Buffer::new(font_system, cosmic_text::Metrics::new(font_size, font_size));
-    buf.set_size(font_system, Some(bounds.0), Some(bounds.1));
-    let span_refs: Vec<(&str, Attrs)> = spans.iter().map(|(t, a)| (*t, a.clone())).collect();
-    buf.set_rich_text(
-        font_system,
-        span_refs,
-        &Attrs::new(),
-        cosmic_text::Shaping::Advanced,
-        None,
-    );
-    buf.shape_until_scroll(font_system, false);
-    MindMapTextBuffer {
-        buffer: buf,
-        pos,
-        bounds,
-        zoom_visibility: ZoomVisibility::unbounded(),
-    }
-}
-
-/// Like `create_border_buffer` but center-aligns the text within its
-/// box via `cosmic_text::Align::Center`. Used for the color picker's
-/// crosshair-arm glyphs and hue-ring glyphs: with sacred-script
-/// glyphs varying significantly in shaped width (~5 px for Hebrew,
-/// ~20 px for Egyptian hieroglyphs at base `font_size`), flush-left
-/// positioning would produce a visibly drifting cross and a ring
-/// thrown out of round. Center alignment pins each glyph's visual
-/// center to the middle of its box, independent of advance width.
-pub(super) fn create_centered_cell_buffer(
-    font_system: &mut FontSystem,
-    text: &str,
-    attrs: &Attrs,
-    font_size: f32,
-    pos: (f32, f32),
-    bounds: (f32, f32),
-) -> MindMapTextBuffer {
-    let mut buf = cosmic_text::Buffer::new(font_system, cosmic_text::Metrics::new(font_size, font_size));
-    buf.set_size(font_system, Some(bounds.0), Some(bounds.1));
-    buf.set_rich_text(
-        font_system,
-        vec![(text, attrs.clone())],
-        &Attrs::new(),
-        cosmic_text::Shaping::Advanced,
-        Some(cosmic_text::Align::Center),
     );
     buf.shape_until_scroll(font_system, false);
     MindMapTextBuffer {

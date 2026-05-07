@@ -23,6 +23,7 @@ mod tests;
 use glam::Vec2;
 
 use crate::mindmap::model::ControlPoint;
+use crate::util::geometry::aabb_center;
 
 use self::bezier::{
     cubic_bezier_length, cubic_bezier_point, cubic_bezier_second_derivative, cubic_bezier_tangent,
@@ -91,11 +92,6 @@ pub fn resolve_anchor_point(node_pos: Vec2, node_size: Vec2, anchor: &str, other
     }
 }
 
-/// Returns the center of a node given its top-left position and size.
-fn node_center(pos: Vec2, size: Vec2) -> Vec2 {
-    Vec2::new(pos.x + size.x * 0.5, pos.y + size.y * 0.5)
-}
-
 /// Builds a connection path from edge data.
 ///
 /// Control points are interpreted as offsets from the respective node centers:
@@ -111,8 +107,8 @@ pub fn build_connection_path(
     anchor_to: &str,
     control_points: &[ControlPoint],
 ) -> ConnectionPath {
-    let from_center = node_center(from_pos, from_size);
-    let to_center = node_center(to_pos, to_size);
+    let from_center = aabb_center(from_pos, from_size);
+    let to_center = aabb_center(to_pos, to_size);
     let start = resolve_anchor_point(from_pos, from_size, anchor_from, to_center);
     let end = resolve_anchor_point(to_pos, to_size, anchor_to, from_center);
 

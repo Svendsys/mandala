@@ -11,7 +11,7 @@
 //! `section_idx` resolved from the active `SelectionState` at open
 //! time so per-section selections commit to the right section).
 
-use winit::keyboard::Key;
+use crate::application::platform::input::Key;
 
 use baumhard::util::grapheme_chad;
 

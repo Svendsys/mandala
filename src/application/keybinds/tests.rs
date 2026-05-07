@@ -77,43 +77,76 @@ fn test_matches_modifiers_exactly() {
     assert!(!k.matches("z", false, false, false));
 }
 
+/// Default-config bindings resolve in every context Mandala
+/// honours: the bare `Document` context plus the four modal
+/// contexts (`Console`, `ColorPicker`, `LabelEdit`, `TextEdit`).
+/// Table-driven so a binding rename / removal triggers exactly
+/// one diffable failure rather than scrolling through a wall
+/// of bespoke `assert_eq!`s.
 #[test]
-fn test_default_config_has_all_actions() {
-    let cfg = KeybindConfig::default();
-    let resolved = cfg.resolve();
-    assert_eq!(resolved.action_for("z", true, false, false), Some(Action::Undo));
-    assert_eq!(
-        resolved.action_for("p", true, false, false),
-        Some(Action::EnterReparentMode)
-    );
-    assert_eq!(
-        resolved.action_for("d", true, false, false),
-        Some(Action::EnterConnectMode)
-    );
-    assert_eq!(
-        resolved.action_for("delete", false, false, false),
-        Some(Action::DeleteSelection)
-    );
-    assert_eq!(
-        resolved.action_for("escape", false, false, false),
-        Some(Action::CancelMode)
-    );
-    assert_eq!(
-        resolved.action_for("n", true, false, false),
-        Some(Action::CreateOrphanNode)
-    );
-    assert_eq!(
-        resolved.action_for("o", true, false, false),
-        Some(Action::OrphanSelection)
-    );
-    assert_eq!(
-        resolved.action_for("enter", false, false, false),
-        Some(Action::EditSelection)
-    );
-    assert_eq!(
-        resolved.action_for("backspace", false, false, false),
-        Some(Action::EditSelectionClean)
-    );
+fn test_default_config_resolves_every_documented_binding() {
+    let resolved = KeybindConfig::default().resolve();
+
+    // (context, key, ctrl, shift, alt, expected_action)
+    let cases: &[(Option<InputContext>, &str, bool, bool, bool, Action)] = &[
+        // Document context (the bare-context resolver).
+        (None, "z", true, false, false, Action::Undo),
+        (None, "p", true, false, false, Action::EnterReparentMode),
+        (None, "d", true, false, false, Action::EnterConnectMode),
+        (None, "delete", false, false, false, Action::DeleteSelection),
+        (None, "escape", false, false, false, Action::CancelMode),
+        (None, "n", true, false, false, Action::CreateOrphanNode),
+        (None, "o", true, false, false, Action::OrphanSelection),
+        (None, "enter", false, false, false, Action::EditSelection),
+        (None, "backspace", false, false, false, Action::EditSelectionClean),
+        (None, "undo", false, false, false, Action::Undo), // bare alias
+
+        // Console.
+        (Some(InputContext::Console), "escape", false, false, false, Action::ConsoleClose),
+        (Some(InputContext::Console), "enter", false, false, false, Action::ConsoleSubmit),
+        (Some(InputContext::Console), "tab", false, false, false, Action::ConsoleTabComplete),
+        (Some(InputContext::Console), "c", true, false, false, Action::ConsoleClearLine),
+        (Some(InputContext::Console), "a", true, false, false, Action::ConsoleJumpStart),
+        (Some(InputContext::Console), "e", true, false, false, Action::ConsoleJumpEnd),
+        (Some(InputContext::Console), "u", true, false, false, Action::ConsoleKillToStart),
+        (Some(InputContext::Console), "w", true, false, false, Action::ConsoleKillWord),
+        (Some(InputContext::Console), "backspace", false, false, false, Action::ConsoleDeleteBack),
+        (Some(InputContext::Console), "space", false, false, false, Action::ConsoleInsertSpace),
+
+        // ColorPicker.
+        (Some(InputContext::ColorPicker), "escape", false, false, false, Action::PickerCancel),
+        (Some(InputContext::ColorPicker), "enter", false, false, false, Action::PickerCommit),
+        (Some(InputContext::ColorPicker), "h", false, false, false, Action::PickerNudgeHueDown),
+        (Some(InputContext::ColorPicker), "h", false, true, false, Action::PickerNudgeHueUp),
+        (Some(InputContext::ColorPicker), "s", false, false, false, Action::PickerNudgeSatDown),
+        (Some(InputContext::ColorPicker), "v", false, false, false, Action::PickerNudgeValDown),
+
+        // LabelEdit.
+        (Some(InputContext::LabelEdit), "escape", false, false, false, Action::LabelEditCancel),
+        (Some(InputContext::LabelEdit), "enter", false, false, false, Action::LabelEditCommit),
+
+        // TextEdit.
+        (Some(InputContext::TextEdit), "escape", false, false, false, Action::TextEditCancel),
+    ];
+
+    for &(ctx, key, ctrl, shift, alt, ref expected) in cases {
+        let actual = match ctx {
+            None => resolved.action_for(key, ctrl, shift, alt),
+            Some(c) => resolved.action_for_context(c, key, ctrl, shift, alt),
+        };
+        let ctx_label = ctx.map_or("Document", |c| match c {
+            InputContext::Console => "Console",
+            InputContext::ColorPicker => "ColorPicker",
+            InputContext::LabelEdit => "LabelEdit",
+            InputContext::TextEdit => "TextEdit",
+            InputContext::Document => "Document",
+        });
+        assert_eq!(
+            actual.as_ref(),
+            Some(expected),
+            "{ctx_label} ctrl={ctrl} shift={shift} alt={alt} key={key:?}",
+        );
+    }
 }
 
 #[test]
@@ -768,17 +801,6 @@ fn test_save_document_default_bound_to_ctrl_s() {
 }
 
 #[test]
-fn test_default_config_has_undo_alias() {
-    // Ctrl+Z and the bare "Undo" key should both fire undo
-    let cfg = KeybindConfig::default();
-    let resolved = cfg.resolve();
-    assert_eq!(
-        resolved.action_for("undo", false, false, false),
-        Some(Action::Undo)
-    );
-}
-
-#[test]
 fn test_partial_json_uses_defaults_for_missing_fields() {
     // A user who only wants to rebind one action should be able to omit
     // every other field and get the defaults for them.
@@ -831,102 +853,6 @@ fn test_normalize_key_name() {
 }
 
 // ── Component-scoped actions and contextual resolution ──
-
-#[test]
-fn test_default_config_has_console_actions() {
-    let resolved = KeybindConfig::default().resolve();
-    assert_eq!(
-        resolved.action_for_context(InputContext::Console, "escape", false, false, false),
-        Some(Action::ConsoleClose),
-    );
-    assert_eq!(
-        resolved.action_for_context(InputContext::Console, "enter", false, false, false),
-        Some(Action::ConsoleSubmit),
-    );
-    assert_eq!(
-        resolved.action_for_context(InputContext::Console, "tab", false, false, false),
-        Some(Action::ConsoleTabComplete),
-    );
-    assert_eq!(
-        resolved.action_for_context(InputContext::Console, "c", true, false, false),
-        Some(Action::ConsoleClearLine),
-    );
-    assert_eq!(
-        resolved.action_for_context(InputContext::Console, "a", true, false, false),
-        Some(Action::ConsoleJumpStart),
-    );
-    assert_eq!(
-        resolved.action_for_context(InputContext::Console, "e", true, false, false),
-        Some(Action::ConsoleJumpEnd),
-    );
-    assert_eq!(
-        resolved.action_for_context(InputContext::Console, "u", true, false, false),
-        Some(Action::ConsoleKillToStart),
-    );
-    assert_eq!(
-        resolved.action_for_context(InputContext::Console, "w", true, false, false),
-        Some(Action::ConsoleKillWord),
-    );
-    assert_eq!(
-        resolved.action_for_context(InputContext::Console, "backspace", false, false, false),
-        Some(Action::ConsoleDeleteBack),
-    );
-    assert_eq!(
-        resolved.action_for_context(InputContext::Console, "space", false, false, false),
-        Some(Action::ConsoleInsertSpace),
-    );
-}
-
-#[test]
-fn test_default_config_has_picker_actions() {
-    let resolved = KeybindConfig::default().resolve();
-    assert_eq!(
-        resolved.action_for_context(InputContext::ColorPicker, "escape", false, false, false),
-        Some(Action::PickerCancel),
-    );
-    assert_eq!(
-        resolved.action_for_context(InputContext::ColorPicker, "enter", false, false, false),
-        Some(Action::PickerCommit),
-    );
-    assert_eq!(
-        resolved.action_for_context(InputContext::ColorPicker, "h", false, false, false),
-        Some(Action::PickerNudgeHueDown),
-    );
-    assert_eq!(
-        resolved.action_for_context(InputContext::ColorPicker, "h", false, true, false),
-        Some(Action::PickerNudgeHueUp),
-    );
-    assert_eq!(
-        resolved.action_for_context(InputContext::ColorPicker, "s", false, false, false),
-        Some(Action::PickerNudgeSatDown),
-    );
-    assert_eq!(
-        resolved.action_for_context(InputContext::ColorPicker, "v", false, false, false),
-        Some(Action::PickerNudgeValDown),
-    );
-}
-
-#[test]
-fn test_default_config_has_label_edit_actions() {
-    let resolved = KeybindConfig::default().resolve();
-    assert_eq!(
-        resolved.action_for_context(InputContext::LabelEdit, "escape", false, false, false),
-        Some(Action::LabelEditCancel),
-    );
-    assert_eq!(
-        resolved.action_for_context(InputContext::LabelEdit, "enter", false, false, false),
-        Some(Action::LabelEditCommit),
-    );
-}
-
-#[test]
-fn test_default_config_has_text_edit_actions() {
-    let resolved = KeybindConfig::default().resolve();
-    assert_eq!(
-        resolved.action_for_context(InputContext::TextEdit, "escape", false, false, false),
-        Some(Action::TextEditCancel),
-    );
-}
 
 #[test]
 fn test_console_context_does_not_leak_document_actions() {

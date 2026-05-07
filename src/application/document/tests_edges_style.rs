@@ -620,7 +620,7 @@ fn test_color_picker_preview_does_not_push_undo_or_dirty() {
     doc.dirty = false;
 
     let key = baumhard::mindmap::scene_cache::EdgeKey::from_edge(&doc.mindmap.edges[idx]);
-    doc.color_picker_preview = Some(ColorPickerPreview::Edge {
+    doc.color_picker_preview = Some(ColorPickerPreview {
         key,
         color: "#abcdef".to_string(),
     });
@@ -722,7 +722,7 @@ fn test_color_picker_preview_cleared_returns_to_committed() {
     let committed_before = doc.mindmap.edges[idx].clone();
 
     let key = baumhard::mindmap::scene_cache::EdgeKey::from_edge(&doc.mindmap.edges[idx]);
-    doc.color_picker_preview = Some(ColorPickerPreview::Edge {
+    doc.color_picker_preview = Some(ColorPickerPreview {
         key,
         color: "#112233".to_string(),
     });

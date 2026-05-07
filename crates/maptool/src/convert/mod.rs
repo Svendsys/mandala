@@ -61,7 +61,7 @@ pub fn convert_legacy(input_path: &Path, output_path: &Path) -> Result<(), Strin
     cleanup::cleanup_nodes(&mut root);
     if let Some(nodes) = nodes_obj_mut(&mut root) {
         for (_id, node) in nodes.iter_mut() {
-            sections::migrate_one_node_legacy(node);
+            sections::migrate_one_node(node);
         }
     }
 

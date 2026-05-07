@@ -299,13 +299,31 @@ impl MindMapDocument {
         apply_position_mutations_to_node(&flat, &mut scratch);
         let to_node = scratch;
 
+        // Invariant established by the early-return above:
+        // `cm.timing.is_some()` with `duration_ms > 0`. Carve
+        // the live timing envelope here so
+        // `AnimationInstance::timing()` projects without unwrap.
+        let timing = match cm.timing.as_ref() {
+            Some(t) => t.clone(),
+            None => return,
+        };
+        // Strip `timing` from the stored `cm` clone so the
+        // runtime copy can't drift from `self.timing` — the
+        // live tick reads `self.timing` exclusively, and
+        // `apply_custom_mutation` (consumed at completion)
+        // doesn't read `cm.timing` either. Keeping both fields
+        // populated would create two sources of truth for the
+        // same datum.
+        let mut cm_for_completion = cm.clone();
+        cm_for_completion.timing = None;
         self.active_animations.push(AnimationInstance {
             target_id: target_id.to_string(),
             section_idx,
             from_node,
             to_node,
             start_ms: now_ms,
-            cm: cm.clone(),
+            timing,
+            cm: cm_for_completion,
         });
     }
 

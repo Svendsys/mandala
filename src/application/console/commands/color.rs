@@ -233,12 +233,12 @@ fn execute_color(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         if verb == "picker" {
             match args.positional(1) {
                 Some("on") => {
-                    eff.open_color_picker_standalone = true;
+                    eff.side_effect = Some(super::super::ConsoleSideEffect::OpenColorPickerStandalone);
                     eff.close_console = true;
                     return ExecResult::ok_empty();
                 }
                 Some("off") => {
-                    eff.close_color_picker = true;
+                    eff.side_effect = Some(super::super::ConsoleSideEffect::CloseColorPicker);
                     eff.close_console = true;
                     return ExecResult::ok_empty();
                 }
@@ -247,7 +247,7 @@ fn execute_color(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         }
         match picker_target_for(verb, &eff.document.selection) {
             PickerTargetOutcome::Open(target) => {
-                eff.open_color_picker = Some(target);
+                eff.side_effect = Some(super::super::ConsoleSideEffect::OpenColorPicker(target));
                 eff.close_console = true;
                 return ExecResult::ok_empty();
             }
@@ -802,13 +802,13 @@ mod tests {
         // assert_exec_ok catches a regression where the picker
         // opens AND the command surfaces an error (mixed signal).
         assert_exec_ok((cmd.execute)(&Args::new(&toks), &mut eff));
-        match eff.open_color_picker {
-            Some(ColorTarget::Section {
+        match eff.side_effect {
+            Some(crate::application::console::ConsoleSideEffect::OpenColorPicker(ColorTarget::Section {
                 node_id,
                 section_idx,
                 axis,
                 range,
-            }) => {
+            })) => {
                 assert_eq!(node_id, id);
                 assert_eq!(section_idx, 1);
                 assert_eq!(axis, SectionColorAxis::Text);
@@ -839,13 +839,13 @@ mod tests {
         };
         let mut eff = ConsoleEffects::new(&mut doc);
         assert_exec_ok((cmd.execute)(&Args::new(&toks), &mut eff));
-        match eff.open_color_picker {
-            Some(ColorTarget::Section {
+        match eff.side_effect {
+            Some(crate::application::console::ConsoleSideEffect::OpenColorPicker(ColorTarget::Section {
                 node_id,
                 section_idx,
                 axis,
                 range,
-            }) => {
+            })) => {
                 assert_eq!(node_id, id);
                 assert_eq!(section_idx, 1);
                 assert_eq!(axis, SectionColorAxis::Text);
@@ -875,7 +875,10 @@ mod tests {
         let mut eff = ConsoleEffects::new(&mut doc);
         let result = (cmd.execute)(&Args::new(&toks), &mut eff);
         assert!(
-            eff.open_color_picker.is_none(),
+            !matches!(
+                eff.side_effect,
+                Some(crate::application::console::ConsoleSideEffect::OpenColorPicker(_))
+            ),
             "no picker should open for bg axis on a section selection"
         );
         assert_exec_err_contains(result, "not applicable");

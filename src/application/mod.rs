@@ -49,6 +49,11 @@ pub(crate) mod document;
 pub(crate) mod frame_throttle;
 pub(crate) mod keybinds;
 pub(crate) mod macros;
+/// Platform-input value types — the inward seam over winit's
+/// `Key` / `Modifiers` / `MouseButton` / `CursorIcon` / etc. so
+/// only the bootstrap (`app/run_native.rs`, `app/run_wasm/`)
+/// imports `winit::*`.
+pub(crate) mod platform;
 pub mod renderer;
 pub(crate) mod scene_host;
 pub(crate) mod user_config;

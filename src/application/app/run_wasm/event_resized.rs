@@ -7,7 +7,7 @@
 
 #![cfg(target_arch = "wasm32")]
 
-use winit::dpi::PhysicalSize;
+use crate::application::platform::window::PhysicalSize;
 
 use crate::application::common::RenderDecree;
 

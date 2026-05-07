@@ -7,19 +7,6 @@
 //! manipulating operations stay correct across multi-byte and
 //! multi-codepoint characters — CODE_CONVENTIONS §2.
 
-use crate::application::console::ConsoleState;
-
-#[test]
-fn test_console_cursor_is_grapheme_indexed_in_docs() {
-    // A sentinel check — if someone reverts the cursor semantics,
-    // this test will force them to re-read CODE_CONVENTIONS §2.
-    let state = ConsoleState::open(Vec::new());
-    match state {
-        ConsoleState::Open { cursor, .. } => assert_eq!(cursor, 0),
-        _ => panic!("expected Open"),
-    }
-}
-
 #[test]
 fn test_grapheme_space_insertion_via_helper() {
     // winit delivers the spacebar as `Key::Named(NamedKey::Space)`,

@@ -11,6 +11,7 @@
 //! callers (e.g. background-fill resolution in
 //! `mindmap::tree_builder::node`).
 
+use crate::font::color::cosmic_color_from_rgba;
 use crate::util::color_conversion::hex_to_rgba;
 
 /// Parse a hex color string into a [`cosmic_text::Color`], returning
@@ -22,14 +23,8 @@ use crate::util::color_conversion::hex_to_rgba;
 /// labels) rather than baking it into the parser.
 ///
 /// **Cost.** O(len) over the input string for the underlying
-/// `hex_to_rgba` walk plus four `(f32 * 255.0).round() as u8` casts;
-/// no heap allocation.
+/// `hex_to_rgba` walk plus a single [`cosmic_color_from_rgba`]
+/// quantisation; no heap allocation.
 pub fn hex_to_cosmic_color(color: &str) -> Option<cosmic_text::Color> {
-    let [r, g, b, a] = hex_to_rgba(color)?;
-    Some(cosmic_text::Color::rgba(
-        (r * 255.0).round() as u8,
-        (g * 255.0).round() as u8,
-        (b * 255.0).round() as u8,
-        (a * 255.0).round() as u8,
-    ))
+    Some(cosmic_color_from_rgba(hex_to_rgba(color)?))
 }

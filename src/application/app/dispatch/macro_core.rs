@@ -487,4 +487,86 @@ mod tests {
         assert!(!dispatch_macro("i1", &mut t));
         assert!(t.calls.is_empty());
     }
+
+    /// App tier (bundled with the binary, not user-authored) is
+    /// gated identically to Map / Inline. Pins symmetric coverage
+    /// — the Map tier was tested above; this test pins the same
+    /// fail-closed posture for App so a regression that
+    /// special-cased one tier without the other gets caught.
+    #[test]
+    fn app_tier_console_line_fail_closed_aborts_remaining_steps() {
+        let m = macro_with_steps(
+            "a1",
+            vec![
+                MacroStep::Action { action: Action::Undo },
+                MacroStep::ConsoleLine {
+                    line: "fps on".into(),
+                },
+                MacroStep::Action {
+                    action: Action::SaveDocument,
+                },
+            ],
+        );
+        let mut t = MockTarget::new(registry_with(vec![(m, MacroSource::App)]));
+        assert!(dispatch_macro("a1", &mut t));
+        assert_eq!(
+            t.calls,
+            vec!["action:Undo".to_string()],
+            "App-tier ConsoleLine must abort remaining steps so post-gate \
+             SaveDocument can't sneak through",
+        );
+    }
+
+    /// App tier rejects destructive Actions. Symmetric with the
+    /// Map-tier test above.
+    #[test]
+    fn app_tier_destructive_action_fail_closed_aborts() {
+        let m = macro_with_steps(
+            "a2",
+            vec![
+                MacroStep::Action { action: Action::Undo },
+                MacroStep::Action {
+                    action: Action::Cut,
+                },
+                MacroStep::Action { action: Action::Undo },
+            ],
+        );
+        let mut t = MockTarget::new(registry_with(vec![(m, MacroSource::App)]));
+        assert!(dispatch_macro("a2", &mut t));
+        assert_eq!(
+            t.calls,
+            vec!["action:Undo".to_string()],
+            "App-tier destructive Action must abort: only the pre-gate \
+             benign Undo runs",
+        );
+    }
+
+    /// Inline-tier ConsoleLine is the highest-risk tier-violation
+    /// path: a hostile mindmap can ship a node-inline macro that
+    /// runs `save /etc/passwd` on first interaction. Fail-closed
+    /// must hold; the test pins exactly that.
+    #[test]
+    fn inline_tier_console_line_fail_closed_aborts_remaining_steps() {
+        let m = macro_with_steps(
+            "i_console",
+            vec![
+                MacroStep::Action { action: Action::Undo },
+                MacroStep::ConsoleLine {
+                    line: "save /tmp/exfil.json".into(),
+                },
+                MacroStep::Action {
+                    action: Action::NewDocument,
+                },
+            ],
+        );
+        let mut t = MockTarget::new(registry_with(vec![(m, MacroSource::Inline)]));
+        assert!(dispatch_macro("i_console", &mut t));
+        assert_eq!(
+            t.calls,
+            vec!["action:Undo".to_string()],
+            "Inline-tier ConsoleLine must abort: the malicious save line \
+             never reaches `execute_console_line`, and the post-gate \
+             NewDocument never reaches `dispatch_action`",
+        );
+    }
 }

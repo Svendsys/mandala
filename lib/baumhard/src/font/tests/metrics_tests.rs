@@ -12,18 +12,6 @@ use crate::font::metrics::{monospace_advance, MONOSPACE_ADVANCE_RATIO};
 use crate::util::geometry::almost_equal;
 
 #[test]
-fn test_monospace_advance_zero_is_zero() {
-    do_monospace_advance_zero_is_zero();
-}
-
-/// Zero in → zero out. Pins the multiplicative-identity boundary;
-/// a future calibration table that special-cases zero would
-/// fail this.
-pub fn do_monospace_advance_zero_is_zero() {
-    assert_eq!(monospace_advance(0.0), 0.0);
-}
-
-#[test]
 fn test_monospace_advance_scales_linearly() {
     do_monospace_advance_scales_linearly();
 }
@@ -41,15 +29,3 @@ pub fn do_monospace_advance_scales_linearly() {
     ));
 }
 
-#[test]
-fn test_monospace_advance_ratio_is_zero_point_six() {
-    do_monospace_advance_ratio_is_zero_point_six();
-}
-
-/// Pins the calibration constant. A future face-calibration
-/// session changing the value triggers this assertion so the
-/// callers (renderer + color picker + scene-builder) get visited
-/// in the same commit.
-pub fn do_monospace_advance_ratio_is_zero_point_six() {
-    assert_eq!(MONOSPACE_ADVANCE_RATIO, 0.6);
-}

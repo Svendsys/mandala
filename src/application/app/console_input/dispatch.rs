@@ -6,7 +6,7 @@
 //! Character input that matches no action is inserted at the cursor
 //! as literal text.
 
-use winit::keyboard::Key;
+use crate::application::platform::input::Key;
 
 use crate::application::console::{ConsoleLine, ConsoleState, MAX_HISTORY};
 use crate::application::document::MindMapDocument;

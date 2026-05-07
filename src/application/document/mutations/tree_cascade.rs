@@ -192,6 +192,75 @@ mod tests {
         assert_eq!(before.y, after.y);
     }
 
+    /// Driving `tree-cascade` through `apply_custom_mutation`
+    /// pushes an undo entry that restores every snapshotted
+    /// node's pre-apply position. Pins the §T7 round-trip
+    /// invariant for the SelfAndDescendants-scope handler-
+    /// dispatch branch — the broader scope (vs flower_layout's
+    /// Children) is the only structural difference, but the
+    /// undo mechanism is the same (snapshot at start, restore
+    /// from snapshot on undo).
+    #[test]
+    fn tree_cascade_apply_then_undo_restores_descendant_positions() {
+        use baumhard::mindmap::custom_mutation::{CustomMutation, MutationBehavior, TargetScope};
+
+        let (mut doc, target_id) = test_doc();
+        // Walk descendants via repeated children_of calls — every
+        // node `tree-cascade` will move (target + its full
+        // subtree). Snapshot positions pre-apply.
+        let mut descendant_ids: Vec<String> = vec![target_id.clone()];
+        let mut frontier: Vec<String> = vec![target_id.clone()];
+        while let Some(id) = frontier.pop() {
+            for child in doc.mindmap.children_of(&id) {
+                descendant_ids.push(child.id.clone());
+                frontier.push(child.id.clone());
+            }
+        }
+        let baseline: Vec<(String, f64, f64)> = descendant_ids
+            .iter()
+            .map(|id| {
+                let n = doc.mindmap.nodes.get(id).unwrap();
+                (id.clone(), n.position.x, n.position.y)
+            })
+            .collect();
+
+        let cm = CustomMutation {
+            id: "tree-cascade".to_string(),
+            name: "tree-cascade".to_string(),
+            description: String::new(),
+            contexts: Vec::new(),
+            mutator: None,
+            target_scope: TargetScope::SelfAndDescendants,
+            behavior: MutationBehavior::Persistent,
+            predicate: None,
+            document_actions: Vec::new(),
+            timing: None,
+        };
+        crate::application::document::mutations::register_builtin_handlers(&mut doc);
+        doc.mutation_sources.insert(
+            "tree-cascade".to_string(),
+            crate::application::document::mutations_loader::MutationSource::App,
+        );
+        doc.apply_custom_mutation(&cm, &target_id, None);
+
+        let any_moved = baseline.iter().any(|(id, x0, y0)| {
+            let n = doc.mindmap.nodes.get(id).unwrap();
+            (n.position.x - x0).abs() > 1e-6 || (n.position.y - y0).abs() > 1e-6
+        });
+        assert!(any_moved, "tree-cascade must move at least one descendant");
+
+        assert!(doc.undo(), "undo() should consume the CustomMutation entry");
+        for (id, x0, y0) in &baseline {
+            let n = doc.mindmap.nodes.get(id).unwrap();
+            assert!(
+                (n.position.x - x0).abs() < 1e-6 && (n.position.y - y0).abs() < 1e-6,
+                "descendant {id} did not restore: ({}, {}) vs baseline ({x0}, {y0})",
+                n.position.x,
+                n.position.y,
+            );
+        }
+    }
+
     /// Freeze-hardening regression: if the single-parent invariant
     /// is violated (e.g. a bug elsewhere introduces a two-node
     /// parent cycle), the BFS must abort with a diagnostic panic

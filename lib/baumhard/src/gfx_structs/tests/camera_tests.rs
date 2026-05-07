@@ -275,3 +275,106 @@ pub fn do_camera_mutation_zoom() {
         "ZoomAt mutation moved focus point: {canvas_before} → {canvas_after}"
     );
 }
+
+// ── CameraMutation::SetZoom clamps to bounds ────────────────────────
+
+#[test]
+fn test_camera_mutation_set_zoom_clamps_to_bounds() {
+    do_camera_mutation_set_zoom_clamps_to_bounds();
+}
+
+/// `SetZoom` clamps to `MIN_ZOOM..=MAX_ZOOM` so an animation tween
+/// that overshoots the bounds doesn't produce a degenerate camera.
+pub fn do_camera_mutation_set_zoom_clamps_to_bounds() {
+    let mut cam = Camera2D::new(800, 600);
+    cam.apply_mutation(&CameraMutation::SetZoom { factor: 100.0 });
+    assert_eq!(cam.zoom, Camera2D::MAX_ZOOM);
+    cam.apply_mutation(&CameraMutation::SetZoom { factor: 0.0001 });
+    assert_eq!(cam.zoom, Camera2D::MIN_ZOOM);
+}
+
+// ── CameraMutation::FitToBounds matches imperative fit_to_bounds ────
+
+#[test]
+fn test_camera_mutation_fit_to_bounds_matches_imperative() {
+    do_camera_mutation_fit_to_bounds_matches_imperative();
+}
+
+pub fn do_camera_mutation_fit_to_bounds_matches_imperative() {
+    let mut imperative = Camera2D::new(800, 600);
+    let mut via_mutation = Camera2D::new(800, 600);
+    let min = Vec2::new(-500.0, -400.0);
+    let max = Vec2::new(500.0, 400.0);
+    imperative.fit_to_bounds(min, max, 0.05);
+    via_mutation.apply_mutation(&CameraMutation::FitToBounds {
+        min,
+        max,
+        padding_fraction: 0.05,
+    });
+    assert_eq!(imperative.position, via_mutation.position);
+    assert_eq!(imperative.zoom, via_mutation.zoom);
+}
+
+// ── CameraMutation::SetPosition is direct assignment ────────────────
+
+#[test]
+fn test_camera_mutation_set_position_assigns_directly() {
+    do_camera_mutation_set_position_assigns_directly();
+}
+
+/// `SetPosition` is a clean assignment, no clamping or transform —
+/// used by fit-to-bounds and animation snapshot restore.
+pub fn do_camera_mutation_set_position_assigns_directly() {
+    let mut cam = Camera2D::new(800, 600);
+    let target = Vec2::new(-150.0, 425.5);
+    cam.apply_mutation(&CameraMutation::SetPosition { canvas_pos: target });
+    assert_eq!(cam.position, target);
+}
+
+// ── pan / set_position / set_viewport_size leave neighbours alone ───
+
+/// Pan changes only the position. The renderer's camera-pan perf fix
+/// skips the canvas rebuild on this invariant — a future Pan variant
+/// that also adjusted zoom would silently desync the scene.
+#[test]
+fn test_pan_leaves_zoom_and_viewport_size_untouched() {
+    let mut cam = Camera2D::new(800, 600);
+    cam.zoom = 2.5;
+    let initial_zoom = cam.zoom;
+    let initial_viewport = cam.viewport_size;
+    cam.apply_mutation(&CameraMutation::Pan {
+        screen_delta: Vec2::new(15.0, -22.5),
+    });
+    assert_eq!(cam.zoom, initial_zoom);
+    assert_eq!(cam.viewport_size, initial_viewport);
+}
+
+/// `SetPosition` (used by `set_camera_center` for portal double-click
+/// pan-to) must also leave zoom / viewport_size alone.
+#[test]
+fn test_set_position_leaves_zoom_and_viewport_size_untouched() {
+    let mut cam = Camera2D::new(800, 600);
+    cam.zoom = 0.75;
+    let initial_zoom = cam.zoom;
+    let initial_viewport = cam.viewport_size;
+    cam.apply_mutation(&CameraMutation::SetPosition {
+        canvas_pos: Vec2::new(-150.0, 425.5),
+    });
+    assert_eq!(cam.zoom, initial_zoom);
+    assert_eq!(cam.viewport_size, initial_viewport);
+}
+
+/// `set_viewport_size` (used for window resize) is a pure viewport
+/// change — the resize-doesn't-rebuild path depends on it leaving
+/// zoom and position untouched.
+#[test]
+fn test_set_viewport_size_leaves_zoom_and_position_untouched() {
+    let mut cam = Camera2D::new(800, 600);
+    cam.zoom = 1.5;
+    cam.position = Vec2::new(100.0, 200.0);
+    let initial_zoom = cam.zoom;
+    let initial_position = cam.position;
+    cam.set_viewport_size(1920, 1080);
+    assert_eq!(cam.zoom, initial_zoom);
+    assert_eq!(cam.position, initial_position);
+}

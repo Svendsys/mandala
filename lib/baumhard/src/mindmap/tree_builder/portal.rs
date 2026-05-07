@@ -39,9 +39,10 @@ use crate::gfx_structs::mutator::GfxMutator;
 use crate::gfx_structs::tree::Tree;
 use crate::mindmap::model::{is_portal_edge, portal_endpoint_state, MindMap, MindNode};
 use crate::mindmap::scene_builder::portal::{
-    layout_portal_label, layout_portal_text, node_center, resolve_portal_endpoint_style,
+    layout_portal_label, layout_portal_text, resolve_portal_endpoint_style,
     resolve_portal_endpoint_text_style, SelectedPortalLabel,
 };
+use crate::util::geometry::aabb_center;
 use crate::mindmap::scene_builder::PortalTextEditOverride;
 use crate::mindmap::scene_cache::EdgeKey;
 use crate::mindmap::SELECTION_HIGHLIGHT_HEX;
@@ -229,7 +230,7 @@ pub fn portal_pair_data(
             let icon_layout = layout_portal_label(
                 owner_pos,
                 owner_size,
-                node_center(partner_pos, partner_size),
+                aabb_center(partner_pos, partner_size),
                 endpoint_state,
                 style.font_size_pt,
             );
@@ -249,7 +250,7 @@ pub fn portal_pair_data(
                 icon_layout,
                 owner_pos,
                 owner_size,
-                node_center(partner_pos, partner_size),
+                aabb_center(partner_pos, partner_size),
                 endpoint_state,
                 style.font_size_pt,
                 text_style.font_size_pt,

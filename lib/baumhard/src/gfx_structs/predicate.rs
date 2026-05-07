@@ -177,309 +177,298 @@ impl Predicate {
         if self.always_match {
             return true;
         }
-        for (element_field, comparator) in &self.fields {
-            match element_field {
-                GlyphArea(section) => match section {
-                    Text(text) => {
-                        return match comparator {
-                            Equals(negation) => {
-                                if let Some(area) = element.glyph_area() {
-                                    (area.text == *text) != *negation
-                                } else {
-                                    false
-                                }
-                            }
-                            // Text is an unordered payload — only `Equals` is
-                            // meaningful. A mutator JSON that pairs it with
-                            // `<`/`>`/`Exists` is malformed; degrade the
-                            // predicate to non-match rather than panic (§9).
-                            _ => {
-                                log::warn!(
-                                    "predicate: unsupported Comparator {:?} on GlyphArea::Text \
-                                     — treating as non-match",
-                                    comparator,
-                                );
-                                false
-                            }
-                        };
-                    }
-                    Scale(scale) => {
-                        let Some(area) = element.glyph_area() else {
-                            return false;
-                        };
-                        return comparator.compare_f32(area.scale.0, scale.0);
-                    }
-                    LineHeight(line_height) => {
-                        let Some(area) = element.glyph_area() else {
-                            return false;
-                        };
-                        return comparator.compare_f32(area.line_height.0, line_height.0);
-                    }
-                    ColorFontRegions(_) => {} // not a predicate axis
-
-                    GlyphAreaField::Position(vec) => {
-                        return match comparator {
-                            Equals(negation) => {
-                                almost_equal_vec2(element.position(), vec.to_vec2()) != *negation
-                            }
-                            GreaterThan(negation) => {
-                                let element_pos = element.position().to_array();
-                                pixel_greater_than((element_pos[0], element_pos[1]), vec.to_pair())
-                                    != *negation
-                            }
-                            LessThan(negation) => {
-                                let element_pos = element.position().to_array();
-                                pixel_lesser_than((element_pos[0], element_pos[1]), vec.to_pair())
-                                    != *negation
-                            }
-                            Exists(negation) => !negation,
-                        };
-                    }
-                    Bounds(vec) => {
-                        return match comparator {
-                            Equals(negation) => {
-                                if let Some(area) = element.glyph_area() {
-                                    almost_equal_vec2(area.render_bounds.to_vec2(), vec.to_vec2())
-                                        != *negation
-                                } else {
-                                    false
-                                }
-                            }
-                            GreaterThan(negation) => {
-                                if let Some(area) = element.glyph_area() {
-                                    (vec2_area(area.render_bounds.to_vec2()) > vec2_area(vec.to_vec2()))
-                                        != *negation
-                                } else {
-                                    false
-                                }
-                            }
-                            LessThan(negation) => {
-                                return if let Some(area) = element.glyph_area() {
-                                    (vec2_area(area.render_bounds.to_vec2()) < vec2_area(vec.to_vec2()))
-                                        != *negation
-                                } else {
-                                    false
-                                }
-                            }
-                            Exists(negation) => !negation,
-                        };
-                    }
-                    GlyphAreaField::Outline(_) => {} // Halo state isn't a predicate axis.
-                    GlyphAreaField::Shape(_) => {}   // Shape isn't a predicate axis.
-                    GlyphAreaField::ZoomVisibility(_) => {} // Zoom window isn't a predicate axis.
-                    GlyphAreaField::Operation(_) => {}
-                },
-                Channel(channel) => {
-                    return match comparator {
-                        Equals(negation) => (*channel == element.channel()) != *negation,
-                        GreaterThan(negation) => (*channel > element.channel()) != *negation,
-                        LessThan(negation) => (*channel < element.channel()) != *negation,
-                        _ => false,
-                    }
-                }
-                Region(region, color_font_region_field) => {
-                    let Some(area) = element.glyph_area() else {
-                        // Region predicates only make sense on elements
-                        // that carry a `GlyphArea`. Degrade to non-match
-                        // for other element kinds (§9).
-                        return false;
-                    };
-                    let target_range = area.regions.get(*region);
-                    if let Some(target) = target_range.copied() {
-                        return match comparator {
-                            Equals(negation) => match color_font_region_field {
-                                ColorFontRegionField::Range(range) => (*range == target.range) != *negation,
-                                ColorFontRegionField::Font(font) => {
-                                    if let Some(target_font) = target.font {
-                                        (*font == target_font) != *negation
-                                    } else {
-                                        false
-                                    }
-                                }
-                                ColorFontRegionField::Color(color) => {
-                                    if let Some(target_color) = target.color {
-                                        (*color == target_color) != *negation
-                                    } else {
-                                        false
-                                    }
-                                }
-                                // `This` is a no-payload marker used for
-                                // `Exists`-style probes; `Equals(This)` is
-                                // malformed input.
-                                ColorFontRegionField::This => {
-                                    log::warn!(
-                                        "predicate: Equals on ColorFontRegionField::This has no \
-                                         meaning — treating as non-match",
-                                    );
-                                    false
-                                }
-                            },
-                            GreaterThan(negation) => match color_font_region_field {
-                                ColorFontRegionField::Range(range) => (target.range > *range) != *negation,
-                                // Only `Range` has an ordering; font / color /
-                                // this are opaque.
-                                _ => {
-                                    log::warn!(
-                                        "predicate: GreaterThan on non-Range \
-                                         ColorFontRegionField {:?} — treating as non-match",
-                                        color_font_region_field,
-                                    );
-                                    false
-                                }
-                            },
-                            LessThan(negation) => match color_font_region_field {
-                                ColorFontRegionField::Range(range) => (target.range < *range) != *negation,
-                                _ => {
-                                    log::warn!(
-                                        "predicate: LessThan on non-Range \
-                                         ColorFontRegionField {:?} — treating as non-match",
-                                        color_font_region_field,
-                                    );
-                                    false
-                                }
-                            },
-                            Exists(negation) => {
-                                return match color_font_region_field {
-                                    ColorFontRegionField::Range(_) => !negation,
-                                    ColorFontRegionField::Font(_) => target.font.is_some() != *negation,
-                                    ColorFontRegionField::Color(_) => target.color.is_some() != *negation,
-                                    ColorFontRegionField::This => !negation,
-                                }
-                            }
-                        };
-                    }
-                }
-                Id(id) => {
-                    return match comparator {
-                        Equals(negation) => (*id == element.unique_id()) != *negation,
-                        GreaterThan(negation) => (element.unique_id() > *id) != *negation,
-                        LessThan(negation) => (element.unique_id() < *id) != *negation,
-                        Exists(negation) => !negation,
-                    }
-                }
-                GlyphModel(model_field) => {
-                    if let Some(target_model) = element.glyph_model() {
-                        return match comparator {
-                            Equals(negation) => match model_field {
-                                GlyphMatrix(matrix) => (*matrix == target_model.glyph_matrix) != *negation,
-                                GlyphLine(line_num, line) => {
-                                    // maybe she's born with it, maybe it's
-                                    if let Some(our_line) = target_model.glyph_matrix.get(*line_num) {
-                                        (our_line == line) != *negation
-                                    } else {
-                                        false
-                                    }
-                                }
-                                // `GlyphLines` is a count-based field — use
-                                // `GreaterThan`/`LessThan` against it, or
-                                // `GlyphMatrix` / `GlyphLine` for equality.
-                                GlyphLines(_) => {
-                                    log::warn!(
-                                        "predicate: Equals on GlyphLines (count-only field) \
-                                         — use GlyphMatrix or GlyphLine for equality",
-                                    );
-                                    false
-                                }
-                                Layer(layer) => (*layer == target_model.layer) != *negation,
-                                GlyphModelField::Position(vec) => {
-                                    (target_model.position == *vec) != *negation
-                                }
-                                GlyphModelField::Operation(_) => false,
-                            },
-                            GreaterThan(negation) => {
-                                match model_field {
-                                    // A matrix is a structured payload; only
-                                    // `Equals` is defined for it. Use
-                                    // `GlyphLines(n)` with `GreaterThan` for
-                                    // line-count ordering.
-                                    GlyphMatrix(_) => {
-                                        log::warn!(
-                                            "predicate: GreaterThan on GlyphMatrix \
-                                             (structured payload) — use GlyphLines for count \
-                                             ordering",
-                                        );
-                                        false
-                                    }
-                                    GlyphLine(line_num, line) => {
-                                        // maybe she's born with it, maybe it's
-                                        if let Some(our_line) = target_model.glyph_matrix.get(*line_num) {
-                                            (our_line.length() > line.length()) != *negation
-                                        } else {
-                                            false
-                                        }
-                                    }
-                                    GlyphLines(lines) => {
-                                        (lines.len() > target_model.glyph_matrix.matrix.len()) != *negation
-                                    }
-                                    Layer(layer) => (*layer > target_model.layer) != *negation,
-                                    GlyphModelField::Position(vec) => {
-                                        (target_model.position.to_vec2().distance(Vec2::new(0.0, 0.0))
-                                            > vec.to_vec2().distance(Vec2::new(0.0, 0.0)))
-                                            != *negation
-                                    }
-                                    GlyphModelField::Operation(_) => false,
-                                }
-                            }
-                            LessThan(negation) => match model_field {
-                                GlyphMatrix(_) => {
-                                    log::warn!(
-                                        "predicate: LessThan on GlyphMatrix \
-                                         (structured payload) — use GlyphLines for count \
-                                         ordering",
-                                    );
-                                    false
-                                }
-                                GlyphLine(line_num, line) => {
-                                    if let Some(our_line) = target_model.glyph_matrix.get(*line_num) {
-                                        (our_line.length() < line.length()) != *negation
-                                    } else {
-                                        false
-                                    }
-                                }
-                                GlyphLines(lines) => {
-                                    (lines.len() < target_model.glyph_matrix.matrix.len()) != *negation
-                                }
-
-                                Layer(layer) => *layer < target_model.layer,
-                                GlyphModelField::Position(vec) => {
-                                    (target_model.position.to_vec2().distance(Vec2::new(0.0, 0.0))
-                                        < vec.to_vec2().distance(Vec2::new(0.0, 0.0)))
-                                        != *negation
-                                }
-                                GlyphModelField::Operation(_) => false,
-                            },
-                            Exists(negation) => !negation,
-                        };
-                    }
-                    return false;
-                }
-                GfxElementField::Flag(flag) => {
-                    let is_set = element.flag_is_set(*flag);
-                    return match comparator {
-                        // `Equals(false)` ⇒ match when the flag's
-                        // presence equals the inferred reference
-                        // (`true`); `Equals(true)` ⇒ inverted (the
-                        // flag is absent). `Exists` flips on the
-                        // negation flag, mirroring the
-                        // GlyphAreaField / GlyphModelField shape.
-                        Equals(negation) => is_set != *negation,
-                        Exists(negation) => is_set != *negation,
-                        // Ordering on a presence bit is not
-                        // meaningful — degrade to non-match rather
-                        // than panic (§9).
-                        _ => {
-                            log::warn!(
-                                "predicate: unsupported Comparator {:?} on Flag({:?}) \
-                                 — treating as non-match",
-                                comparator,
-                                flag,
-                            );
-                            false
-                        }
-                    };
-                }
+        for (field, comparator) in &self.fields {
+            if let Some(verdict) = evaluate_field(element, field, comparator) {
+                return verdict;
             }
         }
         false
+    }
+}
+
+/// Evaluate one `(field, comparator)` pair against `element`.
+///
+/// Returns `Some(true)` / `Some(false)` when the pair decides the
+/// predicate's verdict, or `None` when the pair is inapplicable
+/// (e.g. a `GlyphAreaField::Outline` axis that the predicate
+/// language deliberately doesn't expose, or a `Region` axis whose
+/// `region_id` isn't present on the element). The outer loop in
+/// [`Predicate::test`] continues to the next field on `None` and
+/// returns `false` if every field falls through.
+fn evaluate_field(
+    element: &GfxElement,
+    field: &GfxElementField,
+    comparator: &Comparator,
+) -> Option<bool> {
+    match field {
+        GlyphArea(section) => evaluate_glyph_area_field(element, section, comparator),
+        Channel(channel) => Some(match comparator {
+            Equals(negation) => (*channel == element.channel()) != *negation,
+            GreaterThan(negation) => (*channel > element.channel()) != *negation,
+            LessThan(negation) => (*channel < element.channel()) != *negation,
+            _ => false,
+        }),
+        Region(region, color_font_region_field) => {
+            // Region predicates only make sense on elements that
+            // carry a `GlyphArea`. Degrade to non-match (not
+            // fall-through) for other element kinds (§9).
+            let Some(area) = element.glyph_area() else {
+                return Some(false);
+            };
+            // Region missing on this element — fall through to next field.
+            let target = area.regions.get(*region).copied()?;
+            Some(evaluate_region_match(&target, color_font_region_field, comparator))
+        }
+        Id(id) => Some(match comparator {
+            Equals(negation) => (*id == element.unique_id()) != *negation,
+            GreaterThan(negation) => (element.unique_id() > *id) != *negation,
+            LessThan(negation) => (element.unique_id() < *id) != *negation,
+            Exists(negation) => !negation,
+        }),
+        GlyphModel(model_field) => {
+            // Missing `glyph_model()` decides the predicate as
+            // false — matches the original `return false` at the
+            // tail of the old `GlyphModel` arm. `?` would
+            // fall-through to the next field instead, which
+            // would diverge for multi-field predicates.
+            let Some(target_model) = element.glyph_model() else {
+                return Some(false);
+            };
+            Some(evaluate_glyph_model_match(target_model, model_field, comparator))
+        }
+        GfxElementField::Flag(flag) => {
+            let is_set = element.flag_is_set(*flag);
+            Some(match comparator {
+                // `Equals(false)` ⇒ match when the flag's presence
+                // equals the inferred reference (`true`);
+                // `Equals(true)` ⇒ inverted (the flag is absent).
+                // `Exists` flips on the negation flag, mirroring
+                // the GlyphAreaField / GlyphModelField shape.
+                Equals(negation) => is_set != *negation,
+                Exists(negation) => is_set != *negation,
+                // Ordering on a presence bit is not meaningful —
+                // degrade to non-match rather than panic (§9).
+                _ => {
+                    log::warn!(
+                        "predicate: unsupported Comparator {:?} on Flag({:?}) \
+                         — treating as non-match",
+                        comparator,
+                        flag,
+                    );
+                    false
+                }
+            })
+        }
+    }
+}
+
+fn evaluate_glyph_area_field(
+    element: &GfxElement,
+    section: &GlyphAreaField,
+    comparator: &Comparator,
+) -> Option<bool> {
+    match section {
+        Text(text) => Some(match comparator {
+            Equals(negation) => element
+                .glyph_area()
+                .map(|area| (area.text == *text) != *negation)
+                .unwrap_or(false),
+            // Text is an unordered payload — only `Equals` is
+            // meaningful. Pairing it with `<`/`>`/`Exists` is
+            // malformed; degrade to non-match rather than panic.
+            _ => {
+                log::warn!(
+                    "predicate: unsupported Comparator {:?} on GlyphArea::Text \
+                     — treating as non-match",
+                    comparator,
+                );
+                false
+            }
+        }),
+        Scale(scale) => {
+            // Missing area decides the predicate as false (matches
+            // the original `let Some(area) = ... else { return false; };`).
+            let Some(area) = element.glyph_area() else {
+                return Some(false);
+            };
+            Some(comparator.compare_f32(area.scale.0, scale.0))
+        }
+        LineHeight(line_height) => {
+            let Some(area) = element.glyph_area() else {
+                return Some(false);
+            };
+            Some(comparator.compare_f32(area.line_height.0, line_height.0))
+        }
+        GlyphAreaField::Position(vec) => Some(match comparator {
+            Equals(negation) => almost_equal_vec2(element.position(), vec.to_vec2()) != *negation,
+            GreaterThan(negation) => {
+                let element_pos = element.position().to_array();
+                pixel_greater_than((element_pos[0], element_pos[1]), vec.to_pair()) != *negation
+            }
+            LessThan(negation) => {
+                let element_pos = element.position().to_array();
+                pixel_lesser_than((element_pos[0], element_pos[1]), vec.to_pair()) != *negation
+            }
+            Exists(negation) => !negation,
+        }),
+        Bounds(vec) => Some(match comparator {
+            Equals(negation) => element
+                .glyph_area()
+                .map(|area| almost_equal_vec2(area.render_bounds.to_vec2(), vec.to_vec2()) != *negation)
+                .unwrap_or(false),
+            GreaterThan(negation) => element
+                .glyph_area()
+                .map(|area| (vec2_area(area.render_bounds.to_vec2()) > vec2_area(vec.to_vec2())) != *negation)
+                .unwrap_or(false),
+            LessThan(negation) => element
+                .glyph_area()
+                .map(|area| (vec2_area(area.render_bounds.to_vec2()) < vec2_area(vec.to_vec2())) != *negation)
+                .unwrap_or(false),
+            Exists(negation) => !negation,
+        }),
+        // Not predicate axes — fall through to the next field.
+        ColorFontRegions(_)
+        | GlyphAreaField::Outline(_)
+        | GlyphAreaField::Shape(_)
+        | GlyphAreaField::ZoomVisibility(_)
+        | GlyphAreaField::Operation(_) => None,
+    }
+}
+
+fn evaluate_region_match(
+    target: &crate::core::primitives::ColorFontRegion,
+    color_font_region_field: &ColorFontRegionField,
+    comparator: &Comparator,
+) -> bool {
+    match comparator {
+        Equals(negation) => match color_font_region_field {
+            ColorFontRegionField::Range(range) => (*range == target.range) != *negation,
+            ColorFontRegionField::Font(font) => target
+                .font
+                .map(|target_font| (*font == target_font) != *negation)
+                .unwrap_or(false),
+            ColorFontRegionField::Color(color) => target
+                .color
+                .map(|target_color| (*color == target_color) != *negation)
+                .unwrap_or(false),
+            // `This` is a no-payload marker used for `Exists`-style
+            // probes; `Equals(This)` is malformed input.
+            ColorFontRegionField::This => {
+                log::warn!(
+                    "predicate: Equals on ColorFontRegionField::This has no \
+                     meaning — treating as non-match",
+                );
+                false
+            }
+        },
+        GreaterThan(negation) => match color_font_region_field {
+            ColorFontRegionField::Range(range) => (target.range > *range) != *negation,
+            // Only `Range` has an ordering; font / color / this are opaque.
+            _ => {
+                log::warn!(
+                    "predicate: GreaterThan on non-Range \
+                     ColorFontRegionField {:?} — treating as non-match",
+                    color_font_region_field,
+                );
+                false
+            }
+        },
+        LessThan(negation) => match color_font_region_field {
+            ColorFontRegionField::Range(range) => (target.range < *range) != *negation,
+            _ => {
+                log::warn!(
+                    "predicate: LessThan on non-Range \
+                     ColorFontRegionField {:?} — treating as non-match",
+                    color_font_region_field,
+                );
+                false
+            }
+        },
+        Exists(negation) => match color_font_region_field {
+            ColorFontRegionField::Range(_) => !negation,
+            ColorFontRegionField::Font(_) => target.font.is_some() != *negation,
+            ColorFontRegionField::Color(_) => target.color.is_some() != *negation,
+            ColorFontRegionField::This => !negation,
+        },
+    }
+}
+
+fn evaluate_glyph_model_match(
+    target_model: &crate::gfx_structs::model::GlyphModel,
+    model_field: &GlyphModelField,
+    comparator: &Comparator,
+) -> bool {
+    match comparator {
+        Equals(negation) => match model_field {
+            GlyphMatrix(matrix) => (*matrix == target_model.glyph_matrix) != *negation,
+            GlyphLine(line_num, line) => target_model
+                .glyph_matrix
+                .get(*line_num)
+                .map(|our_line| (our_line == line) != *negation)
+                .unwrap_or(false),
+            // `GlyphLines` is a count-based field — use
+            // `GreaterThan` / `LessThan` against it, or
+            // `GlyphMatrix` / `GlyphLine` for equality.
+            GlyphLines(_) => {
+                log::warn!(
+                    "predicate: Equals on GlyphLines (count-only field) \
+                     — use GlyphMatrix or GlyphLine for equality",
+                );
+                false
+            }
+            Layer(layer) => (*layer == target_model.layer) != *negation,
+            GlyphModelField::Position(vec) => (target_model.position == *vec) != *negation,
+            GlyphModelField::Operation(_) => false,
+        },
+        GreaterThan(negation) => match model_field {
+            // A matrix is a structured payload; only `Equals` is
+            // defined for it. Use `GlyphLines(n)` with
+            // `GreaterThan` for line-count ordering.
+            GlyphMatrix(_) => {
+                log::warn!(
+                    "predicate: GreaterThan on GlyphMatrix \
+                     (structured payload) — use GlyphLines for count \
+                     ordering",
+                );
+                false
+            }
+            GlyphLine(line_num, line) => target_model
+                .glyph_matrix
+                .get(*line_num)
+                .map(|our_line| (our_line.length() > line.length()) != *negation)
+                .unwrap_or(false),
+            GlyphLines(lines) => (lines.len() > target_model.glyph_matrix.matrix.len()) != *negation,
+            Layer(layer) => (*layer > target_model.layer) != *negation,
+            GlyphModelField::Position(vec) => {
+                (target_model.position.to_vec2().distance(Vec2::new(0.0, 0.0))
+                    > vec.to_vec2().distance(Vec2::new(0.0, 0.0)))
+                    != *negation
+            }
+            GlyphModelField::Operation(_) => false,
+        },
+        LessThan(negation) => match model_field {
+            GlyphMatrix(_) => {
+                log::warn!(
+                    "predicate: LessThan on GlyphMatrix \
+                     (structured payload) — use GlyphLines for count \
+                     ordering",
+                );
+                false
+            }
+            GlyphLine(line_num, line) => target_model
+                .glyph_matrix
+                .get(*line_num)
+                .map(|our_line| (our_line.length() < line.length()) != *negation)
+                .unwrap_or(false),
+            GlyphLines(lines) => (lines.len() < target_model.glyph_matrix.matrix.len()) != *negation,
+            Layer(layer) => *layer < target_model.layer,
+            GlyphModelField::Position(vec) => {
+                (target_model.position.to_vec2().distance(Vec2::new(0.0, 0.0))
+                    < vec.to_vec2().distance(Vec2::new(0.0, 0.0)))
+                    != *negation
+            }
+            GlyphModelField::Operation(_) => false,
+        },
+        Exists(negation) => !negation,
     }
 }

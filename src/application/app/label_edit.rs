@@ -5,7 +5,7 @@
 //! / commit keystrokes through `route_label_edit_key`, and commits or
 //! cancels back to the model's `MindEdge.label` on Enter / Esc.
 
-use winit::keyboard::Key;
+use crate::application::platform::input::Key;
 
 use baumhard::util::grapheme_chad;
 
@@ -13,9 +13,46 @@ use crate::application::document::MindMapDocument;
 use crate::application::keybinds::{InputContext, ResolvedKeybinds};
 use crate::application::renderer::Renderer;
 
-use super::route_label_edit_key;
 use super::scene_rebuild::{rebuild_all, update_connection_label_tree, update_portal_tree};
-use super::text_edit::insert_caret;
+use super::text_edit::{insert_at_cursor, insert_caret};
+
+/// Pure router for the label-edit *character-input* path. Inserts
+/// printable chars from a `Key::Character` payload into the buffer.
+///
+/// Originally this also handled structural keys (Backspace, Delete,
+/// arrows, Home, End) directly via `Key::Named` matching, but Phase 5
+/// migrated those to `Action::LabelEdit*` variants that route through
+/// `dispatch::apply_label_edit_action_to_buffer`. The structural-key
+/// arms were stripped here so unbinding `label_edit_*` in
+/// `keybinds.json` actually disables the key — the previous fallback
+/// shadowed user config.
+///
+/// Returns `true` iff a printable character was inserted.
+pub(super) fn route_label_edit_key(
+    logical_key: &Key,
+    buffer: &mut String,
+    cursor: &mut usize,
+) -> bool {
+    if let Key::Character(c) = logical_key {
+        // `Key::Character` payloads can carry IME / dead-key multi-
+        // char sequences, so iterate. Control chars (and any non-
+        // printing payload winit attaches to a structural key) are
+        // filtered, which mirrors the original guard intent — the
+        // "huge pause icon on backspace" hole is also closed by the
+        // structural-key migration to actions, since Backspace is now
+        // dispatched as `Action::LabelEditDeleteBack` before this
+        // router ever runs.
+        let mut changed = false;
+        for ch in c.as_str().chars() {
+            if !ch.is_control() {
+                *cursor = insert_at_cursor(buffer, *cursor, ch);
+                changed = true;
+            }
+        }
+        return changed;
+    }
+    false
+}
 
 // (`update_portal_tree` imported above is used by the portal-text
 // editor; the line-mode label editor deliberately does NOT touch
@@ -512,7 +549,7 @@ mod tests {
     use super::*;
     use crate::application::app::dispatch::apply_label_edit_action_to_buffer;
     use crate::application::keybinds::Action;
-    use winit::keyboard::{Key, SmolStr};
+    use crate::application::platform::input::{Key, SmolStr};
 
     fn ch(s: &str) -> Key {
         Key::Character(SmolStr::new(s))
@@ -678,7 +715,7 @@ mod tests {
     /// disable the key by clearing the binding.
     #[test]
     fn test_route_named_key_is_noop_post_phase_5() {
-        use winit::keyboard::NamedKey;
+        use crate::application::platform::input::NamedKey;
         let mut buf = String::from("abc");
         let mut cursor = 3;
         let changed = route_label_edit_key(&Key::Named(NamedKey::Backspace), &mut buf, &mut cursor);
@@ -697,7 +734,7 @@ mod tests {
     /// and must not panic.
     #[test]
     fn test_route_unhandled_key_is_noop() {
-        use winit::keyboard::NamedKey;
+        use crate::application::platform::input::NamedKey;
         let mut buf = String::from("abc");
         let mut cursor = 1;
         let changed = route_label_edit_key(&Key::Named(NamedKey::Shift), &mut buf, &mut cursor);

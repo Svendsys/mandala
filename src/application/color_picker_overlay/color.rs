@@ -1,21 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! RGB → cosmic-text conversion and highlight mixes shared by the
-//! picker's tree / mutator / area builders.
+//! Hover / selected highlight mixes shared by the picker's tree /
+//! mutator / area builders. RGB → cosmic-text quantisation goes
+//! through [`baumhard::font::color::cosmic_color_from_rgba`] directly
+//! at every callsite.
 
-/// Convert a normalized `[0, 1]` RGB triple into an opaque
-/// `baumhard::font::Color`. Used by the glyph-wheel color picker render
-/// path to paint each hue-ring slot, sat/val cell, and preview glyph
-/// at its own HSV coordinate without per-frame closure allocation.
-///
-/// Clamps each channel before the `* 255.0` cast — `as u8` wraps on
-/// out-of-range floats, so `baumhard::util::color::convert_f32_to_u8`
-/// isn't a drop-in replacement for this path.
-#[inline]
-pub(super) fn rgb_to_cosmic_color(rgb: [f32; 3]) -> baumhard::font::Color {
-    let to_u8 = |c: f32| (c.clamp(0.0, 1.0) * 255.0).round() as u8;
-    baumhard::font::Color::rgba(to_u8(rgb[0]), to_u8(rgb[1]), to_u8(rgb[2]), 255)
-}
+use baumhard::font::color::cosmic_color_from_rgba;
 
 /// Linear mix of `rgb` toward white by `t` ∈ `[0, 1]`. `t = 0` is the
 /// input untouched; `t = 1` is pure white. Shared by the picker's
@@ -35,7 +25,8 @@ fn mix_toward_white(rgb: [f32; 3], t: f32) -> [f32; 3] {
 /// hue-saturated base color.
 #[inline]
 pub(super) fn highlight_selected_cell_color(rgb: [f32; 3]) -> baumhard::font::Color {
-    rgb_to_cosmic_color(mix_toward_white(rgb, 0.6))
+    let mixed = mix_toward_white(rgb, 0.6);
+    cosmic_color_from_rgba([mixed[0], mixed[1], mixed[2], 1.0])
 }
 
 /// Highlight a cell under the cursor. Distinct from the selected-
@@ -48,5 +39,6 @@ pub(super) fn highlight_selected_cell_color(rgb: [f32; 3]) -> baumhard::font::Co
 /// character becomes hard to read.
 #[inline]
 pub(super) fn highlight_hovered_cell_color(rgb: [f32; 3]) -> baumhard::font::Color {
-    rgb_to_cosmic_color(mix_toward_white(rgb, 0.4))
+    let mixed = mix_toward_white(rgb, 0.4);
+    cosmic_color_from_rgba([mixed[0], mixed[1], mixed[2], 1.0])
 }

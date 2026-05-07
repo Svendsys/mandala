@@ -24,29 +24,78 @@ pub fn load_from_file(path: &Path) -> Result<MindMap, String> {
 }
 
 /// Parse a `MindMap` from a JSON string. Rejects pre-refactor files
-/// that still carry a top-level `portals[]` array with a concrete
-/// migration pointer (`maptool convert --portals`) so a stale map
-/// doesn't silently lose its portals — serde would otherwise ignore
-/// the unknown field. Allocation-bounded by the input size.
+/// that still carry a top-level `portals[]` array, or per-node
+/// `text` / `text_runs` instead of `sections[]`, with concrete
+/// migration pointers (`maptool convert ...`) so a stale map
+/// doesn't silently lose its content — serde would otherwise
+/// ignore the unknown fields.
 ///
-/// Cost: one JSON parse into `serde_json::Value`, followed by a
-/// `from_value` walk that rebuilds the typed `MindMap` from the
-/// parsed tree (no second parse). O(input_len) in both time and
-/// peak memory — the `Value` tree is kept around until the typed
-/// conversion completes, keeping the legacy-portal probe off the
-/// typed happy path.
+/// Cost: one typed parse on the happy path. The legacy-shape
+/// detection (`Value` walk) runs only when the typed parse
+/// fails OR when the typed result has zero-section nodes
+/// (`sections: []` is silently legal for serde but a current-
+/// invariant violation we surface as a migration hint) OR when
+/// the cheap substring screen flags a dropped field. The
+/// substring screen requires the marker to be followed by `":`
+/// so node text containing the literal word "portals" or
+/// "text_runs" doesn't false-positive — JSON keys always have
+/// `":` after them.
 pub fn load_from_str(json: &str) -> Result<MindMap, String> {
+    match serde_json::from_str::<MindMap>(json) {
+        Ok(map) => {
+            // Post-typed-parse invariants serde can't enforce:
+            // - empty `sections[]` (every node needs one section);
+            // - silently-dropped legacy `portals` / `text` /
+            //   `text_runs` fields. We only inspect the raw JSON
+            //   here when the typed map carries the symptom
+            //   (zero-section node, or the substring marker
+            //   indicates a dropped field).
+            if map.nodes.values().any(|n| n.sections.is_empty())
+                || has_legacy_marker(json)
+            {
+                if let Some(err) = detect_legacy_shape(json) {
+                    return Err(err);
+                }
+            }
+            Ok(map)
+        }
+        Err(e) => {
+            // Typed parse failed. Try the Value-based legacy
+            // detector — if it fingers a known legacy shape,
+            // surface the migration pointer; otherwise fall
+            // through to the raw serde error so the caller sees
+            // the actual parse failure (line / column included).
+            if let Some(err) = detect_legacy_shape(json) {
+                return Err(err);
+            }
+            Err(format!("Failed to parse mindmap JSON: {}", e))
+        }
+    }
+}
+
+/// Cheap pre-screen for the substring patterns that legacy JSON
+/// keys produce. Requires the trailing `":` so user text
+/// containing the literal word `"portals"` (e.g. a node titled
+/// `My "portals"`) doesn't trigger the deeper [`detect_legacy_shape`]
+/// pass — JSON keys always emit as `"key":`, while string
+/// content emits as `\"key\"` with escape backslashes that
+/// break the substring match.
+fn has_legacy_marker(json: &str) -> bool {
+    json.contains("\"portals\":") || json.contains("\"text_runs\":")
+}
+
+/// Inspect `json` for legacy field shapes that the typed parse
+/// would silently drop or misread, returning a migration-pointing
+/// error message on first hit. Walks `serde_json::Value` once;
+/// only called when the cheap substring screen suggests a legacy
+/// marker is present.
+fn detect_legacy_shape(json: &str) -> Option<String> {
+    let raw: serde_json::Value = serde_json::from_str(json).ok()?;
     // Pre-refactor maps stored portals in a separate `portals[]` array.
-    // Post-refactor portals are edges with `display_mode = "portal"`,
-    // and the `portals` field no longer exists on `MindMap`. Reject
-    // legacy files with a clear pointer to `maptool convert --portals`
-    // so a stale file doesn't silently drop its portals — serde would
-    // otherwise ignore the unknown field.
-    let raw: serde_json::Value =
-        serde_json::from_str(json).map_err(|e| format!("Failed to parse mindmap JSON: {}", e))?;
+    // Post-refactor portals are edges with `display_mode = "portal"`.
     if let Some(arr) = raw.get("portals").and_then(|p| p.as_array()) {
         if !arr.is_empty() {
-            return Err(
+            return Some(
                 "legacy `portals` field present; run `maptool convert --portals <file>` \
                  to migrate to portal-mode edges"
                     .to_string(),
@@ -55,16 +104,13 @@ pub fn load_from_str(json: &str) -> Result<MindMap, String> {
     }
     // Pre-section-refactor maps put `text` and `text_runs` directly
     // on each node. Post-refactor those live on
-    // `MindNode.sections[].{text, text_runs}`. Reject legacy files
-    // with a concrete migration pointer rather than letting serde
-    // drop the unknown fields silently — see CODE_CONVENTIONS §10
-    // "Do not carry dual shapes".
+    // `MindNode.sections[].{text, text_runs}`.
     if let Some(nodes) = raw.get("nodes").and_then(|n| n.as_object()) {
         if let Some((id, _)) = nodes
             .iter()
             .find(|(_, v)| v.get("text").is_some() || v.get("text_runs").is_some())
         {
-            return Err(format!(
+            return Some(format!(
                 "legacy `text` / `text_runs` on node {:?}; run \
                  `maptool convert --sections <file>` to migrate node \
                  text into `sections[]`",
@@ -75,7 +121,7 @@ pub fn load_from_str(json: &str) -> Result<MindMap, String> {
             .iter()
             .find(|(_, v)| v.get("sections").map(|s| !s.is_array()).unwrap_or(false))
         {
-            return Err(format!(
+            return Some(format!(
                 "node {:?} has `sections` but it is not an array — \
                  see format/sections.md",
                 id
@@ -87,7 +133,7 @@ pub fn load_from_str(json: &str) -> Result<MindMap, String> {
                 .map(|arr| arr.is_empty())
                 .unwrap_or(true)
         }) {
-            return Err(format!(
+            return Some(format!(
                 "node {:?} ships zero sections — every renderable node \
                  needs at least one. Run `maptool convert --sections <file>` \
                  to migrate, or add an explicit `sections` array.",
@@ -95,21 +141,55 @@ pub fn load_from_str(json: &str) -> Result<MindMap, String> {
             ));
         }
     }
-    serde_json::from_value(raw).map_err(|e| format!("Failed to parse mindmap JSON: {}", e))
+    None
 }
 
-/// Serialize a `MindMap` to pretty-printed JSON and write it to disk.
-/// Mirrors `load_from_file` — the same `Result<_, String>` error
-/// convention, native-only synchronous I/O via `std::fs`. Pretty
-/// printing keeps the on-disk format diff-friendly so authors can
-/// inspect saved maps with normal text tools. Streams through a
-/// `BufWriter` so large maps don't have to materialize the entire
-/// JSON in memory before hitting disk.
+/// Serialize a `MindMap` to pretty-printed JSON and write it to disk
+/// atomically and deterministically.
+///
+/// **Determinism**: routes through `serde_json::Value` (which uses
+/// `BTreeMap` for object keys) so two saves of the same `MindMap` produce
+/// byte-identical output regardless of `HashMap` iteration order. Costs
+/// one extra heap copy of the JSON tree; acceptable for the editor's
+/// save cadence (post-mutation, not per-frame).
+///
+/// **Atomicity**: writes to a sibling `.<name>.<pid>.tmp` file then
+/// renames over `path`. A reader (another process, or the editor
+/// reloading after an external edit) never observes a torn-write
+/// half-written file. The temp file is removed on rename failure.
+///
+/// Native-only (synchronous I/O via `std::fs`). Returns a `String`
+/// error describing the path + underlying cause.
 pub fn save_to_file(path: &Path, map: &MindMap) -> Result<(), String> {
-    let file = fs::File::create(path).map_err(|e| format!("Failed to create {}: {}", path.display(), e))?;
-    let writer = std::io::BufWriter::new(file);
-    serde_json::to_writer_pretty(writer, map)
-        .map_err(|e| format!("Failed to write {}: {}", path.display(), e))
+    let value = serde_json::to_value(map).map_err(|e| format!("failed to serialize map: {e}"))?;
+    let json =
+        serde_json::to_string_pretty(&value).map_err(|e| format!("failed to render map JSON: {e}"))?;
+    write_atomic(path, &json)
+}
+
+/// Write `contents` to `path` via `<dir>/.<name>.<pid>.tmp` + rename.
+/// Cleans up the temp file on rename failure so a partially-written
+/// staging file is never left behind. Used by [`save_to_file`] for the
+/// typed-`MindMap` save path; also exposed for legacy-migration tools
+/// (`maptool convert --portals` etc.) that ship raw `serde_json::Value`
+/// to disk without a `MindMap` round-trip.
+pub fn write_atomic(path: &Path, contents: &str) -> Result<(), String> {
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| format!("invalid path: {}", path.display()))?
+        .to_string_lossy();
+    let tmp_path = dir.join(format!(".{}.{}.tmp", file_name, std::process::id()));
+    fs::write(&tmp_path, contents)
+        .map_err(|e| format!("failed to write {}: {e}", tmp_path.display()))?;
+    fs::rename(&tmp_path, path).map_err(|e| {
+        let _ = fs::remove_file(&tmp_path);
+        format!(
+            "failed to rename {} -> {}: {e}",
+            tmp_path.display(),
+            path.display()
+        )
+    })
 }
 
 #[cfg(test)]
@@ -578,44 +658,74 @@ mod tests {
         assert_eq!(back.custom_mutations.len(), 3);
     }
 
+    /// Two consecutive `save_to_file` calls on the same `MindMap`
+    /// produce byte-identical files. `MindMap.nodes` is a `HashMap`
+    /// whose iteration order is randomised per-process; routing
+    /// through `serde_json::Value` (a `BTreeMap` under the hood)
+    /// pins the order. Without this, every save would diff against
+    /// the previous one even when nothing changed.
     #[test]
-    fn test_save_to_file_round_trip() {
-        // A `save_to_file` followed by `load_from_file` must reproduce
-        // the same MindMap, locking the on-disk format as the canonical
-        // serialization.
-        let path = test_map_path();
-        let original = load_from_file(&path).unwrap();
-
-        let tmp = std::env::temp_dir().join("mandala_save_round_trip.mindmap.json");
-        save_to_file(&tmp, &original).expect("save failed");
-        let reloaded = load_from_file(&tmp).expect("reload failed");
-
-        assert_eq!(reloaded.version, original.version);
-        assert_eq!(reloaded.name, original.name);
-        assert_eq!(reloaded.nodes.len(), original.nodes.len());
-        assert_eq!(reloaded.edges.len(), original.edges.len());
-        assert_eq!(reloaded.canvas.background_color, original.canvas.background_color);
-
-        let _ = std::fs::remove_file(&tmp);
+    fn test_save_to_file_is_deterministic() {
+        let map = load_from_file(&test_map_path()).unwrap();
+        let dir = std::env::temp_dir();
+        let path_a = dir.join("mandala_determinism_a.mindmap.json");
+        let path_b = dir.join("mandala_determinism_b.mindmap.json");
+        save_to_file(&path_a, &map).expect("save a failed");
+        save_to_file(&path_b, &map).expect("save b failed");
+        let bytes_a = std::fs::read(&path_a).unwrap();
+        let bytes_b = std::fs::read(&path_b).unwrap();
+        assert_eq!(bytes_a, bytes_b, "save output must be deterministic");
+        let _ = std::fs::remove_file(&path_a);
+        let _ = std::fs::remove_file(&path_b);
     }
 
+    /// `save_to_file` writes to `<dir>/.<name>.<pid>.tmp` then renames
+    /// over `path`; on a successful rename, the staging file is gone.
+    /// Pins the contract that a kill mid-write leaves either the old
+    /// file intact or the new file complete — never a torn partial
+    /// write next to either.
     #[test]
-    fn test_save_blank_map_round_trip() {
-        // A freshly-created blank map must serialize to JSON that
-        // re-parses cleanly — the `new` console command relies on
-        // this.
+    fn test_save_to_file_leaves_no_tmp_file_on_success() {
+        let map = MindMap::new_blank("no-tmp");
+        let dir = std::env::temp_dir();
+        let path = dir.join("mandala_no_tmp_leftover.mindmap.json");
+        save_to_file(&path, &map).expect("save failed");
+
+        let pid = std::process::id();
+        let file_name = path.file_name().unwrap().to_string_lossy().to_string();
+        let leftover = dir.join(format!(".{file_name}.{pid}.tmp"));
+        assert!(
+            !leftover.exists(),
+            "atomic writer left a temp file behind: {}",
+            leftover.display()
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// `save_to_file` → `load_from_file` reproduces the same `MindMap`
+    /// for both the loaded testament fixture and a freshly-blank map
+    /// (the `new` console verb lands on this). Locks the on-disk
+    /// format as the canonical serialization for both shapes.
+    #[test]
+    fn test_save_to_file_round_trip_for_loaded_and_blank_maps() {
+        let testament = load_from_file(&test_map_path()).unwrap();
         let blank = MindMap::new_blank("untitled");
-        let tmp = std::env::temp_dir().join("mandala_blank_round_trip.mindmap.json");
-        save_to_file(&tmp, &blank).expect("save failed");
-        let reloaded = load_from_file(&tmp).expect("reload failed");
 
-        assert_eq!(reloaded.name, "untitled");
-        assert_eq!(reloaded.version, "1.0");
-        assert!(reloaded.nodes.is_empty());
-        assert!(reloaded.edges.is_empty());
-        assert_eq!(reloaded.canvas.background_color, "#000000");
+        for (label, original) in [("testament", testament), ("blank", blank)] {
+            let tmp = std::env::temp_dir().join(format!("mandala_save_round_trip_{label}.mindmap.json"));
+            save_to_file(&tmp, &original).expect("save failed");
+            let reloaded = load_from_file(&tmp).expect("reload failed");
 
-        let _ = std::fs::remove_file(&tmp);
+            assert_eq!(reloaded.version, original.version, "{label}: version");
+            assert_eq!(reloaded.name, original.name, "{label}: name");
+            assert_eq!(reloaded.nodes.len(), original.nodes.len(), "{label}: nodes len");
+            assert_eq!(reloaded.edges.len(), original.edges.len(), "{label}: edges len");
+            assert_eq!(
+                reloaded.canvas.background_color, original.canvas.background_color,
+                "{label}: bg",
+            );
+            let _ = std::fs::remove_file(&tmp);
+        }
     }
 
     /// `MindMap.macros` round-trips through save+load with absence

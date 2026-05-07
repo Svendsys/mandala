@@ -9,7 +9,7 @@
 
 #![cfg(target_arch = "wasm32")]
 
-use winit::dpi::PhysicalPosition;
+use crate::application::platform::window::PhysicalPosition;
 
 impl super::WasmApp {
     pub(super) fn handle_cursor_moved(&mut self, position: PhysicalPosition<f64>) {

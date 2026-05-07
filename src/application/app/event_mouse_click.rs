@@ -7,7 +7,8 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use glam::Vec2;
-use winit::event::{ElementState, MouseButton};
+
+use crate::application::platform::input::{ElementState, MouseButton};
 
 use super::click::handle_click;
 use super::color_picker_flow::{end_color_picker_gesture, handle_color_picker_click};
