@@ -774,6 +774,25 @@ impl Renderer {
         std::mem::replace(&mut self.connection_geometry_dirty, false)
     }
 
+    /// Non-consuming peek of [`take_connection_geometry_dirty`].
+    /// Used by the idle-CPU `needs_continuation` predicate to
+    /// decide whether the loop should keep iterating without
+    /// burning the flag — `take` would consume it before the
+    /// next `drain_camera_geometry_rebuild` got a chance to react.
+    pub fn connection_geometry_dirty(&self) -> bool {
+        self.connection_geometry_dirty
+    }
+
+    /// Forward a redraw request to the underlying winit window. On
+    /// native this queues a `WindowEvent::RedrawRequested` for the
+    /// next event-loop iteration; on web (winit-web) it schedules
+    /// an internal `requestAnimationFrame`. Multiple calls in one
+    /// event chain coalesce to a single delivery — safe to call
+    /// from any handler that mutated visual state.
+    pub fn request_redraw(&self) {
+        self.window.request_redraw();
+    }
+
     const ZERO_DURATION: Duration = Duration::new(0, 0);
 
     #[inline]
@@ -790,16 +809,20 @@ impl Renderer {
                     } else {
                         self.timer.expire_in(delta_duration);
                     }
-                    self.tick_fps();
-                    self.rebuild_fps_overlay_if_needed();
+                    if self.fps_display_mode != FpsDisplayMode::Off {
+                        self.tick_fps();
+                        self.rebuild_fps_overlay_if_needed();
+                    }
                     let sw = StopWatch::new_start();
                     self.render();
                     self.last_render_time = sw.stop();
                 }
             }
             RedrawMode::NoLimit => {
-                self.tick_fps();
-                self.rebuild_fps_overlay_if_needed();
+                if self.fps_display_mode != FpsDisplayMode::Off {
+                    self.tick_fps();
+                    self.rebuild_fps_overlay_if_needed();
+                }
                 let sw = StopWatch::new_start();
                 self.render();
                 self.last_render_time = sw.stop();

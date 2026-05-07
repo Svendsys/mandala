@@ -70,8 +70,11 @@ struct NativeApp {
 }
 
 impl ApplicationHandler for NativeApp {
-    fn new_events(&mut self, event_loop: &ActiveEventLoop, _: StartCause) {
-        event_loop.set_control_flow(ControlFlow::Poll);
+    fn new_events(&mut self, _event_loop: &ActiveEventLoop, _: StartCause) {
+        // ControlFlow is set authoritatively at the end of every
+        // `about_to_wait` based on `InitState::needs_continuation`.
+        // No-op here so we don't override that decision on each
+        // iteration.
     }
 
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
@@ -86,21 +89,58 @@ impl ApplicationHandler for NativeApp {
         // knows the main loop has reached a live state. Before
         // this point, the watchdog treats the zeroed atomic as
         // "still initializing" and doesn't enforce the threshold.
-        self.watchdog.tick();
+        // `unparked` also clears any stale parked state from a
+        // prior suspend cycle.
+        self.watchdog.unparked();
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId, event: WindowEvent) {
-        self.watchdog.tick();
+        // The watchdog's "is the main thread alive" semantics are
+        // event-handler-completion-based under ControlFlow::Wait:
+        // legitimate idle (no events) is not a hang, only a stuck
+        // handler is. `unparked` ticks the activity clock and
+        // clears the parked atomic so a hang inside this handler
+        // still trips the threshold.
+        self.watchdog.unparked();
         if let Some(init) = self.init.as_mut() {
             init.handle_event(event_loop, Event::WindowEvent { window_id, event });
         }
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        self.watchdog.tick();
+        self.watchdog.unparked();
         if let Some(init) = self.init.as_mut() {
-            init.handle_event(event_loop, Event::AboutToWait);
+            // Pre-snapshot the continuation predicate: if the loop
+            // was *entering* this iteration with continuous work
+            // (animations, throttled-drag pending, mid-zoom), the
+            // drain will do work that needs to land on screen.
+            let was_continuing = init.needs_continuation();
+            init.drain_inputs();
+            let still_continuing = init.needs_continuation();
+            // Request a redraw if work happened this iteration
+            // (`was_continuing`) OR if more work is pending
+            // (`still_continuing`). The OR catches the last
+            // animation frame: pre=true, post=false, still need
+            // one redraw to land the final state.
+            if was_continuing || still_continuing {
+                init.window.request_redraw();
+            }
+            // ControlFlow::Poll keeps the loop ticking so the next
+            // about_to_wait drains again; ControlFlow::Wait parks
+            // the thread until an OS event arrives. The choice is
+            // strictly post-drain — pre-drain state may have been
+            // continuing while post-drain state is fully idle.
+            event_loop.set_control_flow(if still_continuing {
+                ControlFlow::Poll
+            } else {
+                ControlFlow::Wait
+            });
         }
+        // Mark parked AFTER setting ControlFlow so the watchdog
+        // begins ignoring silence only once we've committed to
+        // sleeping. If ControlFlow::Poll, the next about_to_wait
+        // will call `unparked` again immediately.
+        self.watchdog.parked();
     }
 }
 
@@ -190,7 +230,17 @@ impl InitState {
     /// and [`super::event_keyboard`]; this method handles the
     /// smaller arms (resize, close, wheel, modifiers) inline and
     /// delegates the larger ones.
+    ///
+    /// Mutating arms set `redraw_after = true` so the trailing
+    /// [`winit::window::Window::request_redraw`] call queues one
+    /// `WindowEvent::RedrawRequested` for the next event-loop
+    /// iteration. The `RedrawRequested` arm itself is the only
+    /// place [`crate::application::renderer::Renderer::process`]
+    /// runs — separating "decide to redraw" from "actually
+    /// render" lets winit coalesce multiple `request_redraw`
+    /// calls in one event chain into a single render.
     pub(super) fn handle_event(&mut self, event_loop: &ActiveEventLoop, event: winit::event::Event<()>) {
+        let mut redraw_after = false;
         match event {
             //// WINDOW SPECIFIC ////
             Event::WindowEvent {
@@ -216,6 +266,18 @@ impl InitState {
                         );
                     }
                 }
+                redraw_after = true;
+            }
+            Event::WindowEvent {
+                event: WindowEvent::RedrawRequested,
+                ..
+            } => {
+                // Sole entry to the render path. Redraws are queued
+                // via `Window::request_redraw` from event handlers
+                // (mutations) and from `about_to_wait` (drain
+                // continuations); winit delivers exactly one
+                // `RedrawRequested` per coalesced batch.
+                self.renderer.process();
             }
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
@@ -231,6 +293,7 @@ impl InitState {
             } => {
                 let mut ctx = self.input_context();
                 event_mouse_click::handle_mouse_input(state, button, &mut ctx);
+                redraw_after = true;
             }
             Event::WindowEvent {
                 event: WindowEvent::MouseWheel { delta, .. },
@@ -271,6 +334,7 @@ impl InitState {
                                 &self.keybinds,
                             );
                         }
+                        redraw_after = true;
                     }
                 } else {
                     // Wheel zoom is routed through `dispatch_action` so
@@ -300,6 +364,7 @@ impl InitState {
                     if let Some(a) = action {
                         let mut bundle = self.input_context();
                         let _ = crate::application::app::dispatch::dispatch_action(a, &mut bundle, None);
+                        redraw_after = true;
                     }
                 }
             }
@@ -310,6 +375,13 @@ impl InitState {
                 let window = self.window.clone();
                 let mut ctx = self.input_context();
                 event_cursor_moved::handle_cursor_moved(position, window.as_ref(), &mut ctx);
+                // Hover that doesn't drag and doesn't open the
+                // picker doesn't change visuals — no redraw needed.
+                // Any active drag (Pending → Throttled etc.) or an
+                // open picker requires a fresh frame so the drag
+                // preview / hover marker tracks the cursor.
+                redraw_after = !matches!(self.drag_state, DragState::None)
+                    || self.color_picker_state.is_open();
             }
             //// KEYBOARD ////
             Event::WindowEvent {
@@ -317,6 +389,8 @@ impl InitState {
                 ..
             } => {
                 self.modifiers = mods.state();
+                // Modifier-only changes don't paint anything until
+                // a paired mouse/keyboard event acts on them.
             }
             Event::WindowEvent {
                 event:
@@ -333,9 +407,12 @@ impl InitState {
             } => {
                 let mut ctx = self.input_context();
                 event_keyboard::handle_keyboard_input(logical_key, event_loop, &mut ctx);
+                redraw_after = true;
             }
-            Event::AboutToWait => self.drain_frame(),
             _ => {}
+        }
+        if redraw_after {
+            self.window.request_redraw();
         }
     }
 
@@ -343,8 +420,12 @@ impl InitState {
     /// and the always-live picker-hover interaction through the
     /// unified [`super::throttled_interaction::ThrottledInteraction::drive`]
     /// shell, then the non-throttled drains (rect-select overlay,
-    /// camera rebuild, animation tick), then one render frame.
-    fn drain_frame(&mut self) {
+    /// camera rebuild, animation tick). Does **not** render — the
+    /// caller (`NativeApp::about_to_wait`) decides whether to
+    /// `request_redraw` based on the post-drain
+    /// [`Self::needs_continuation`] state, and the actual `render`
+    /// runs from the `WindowEvent::RedrawRequested` arm.
+    pub(super) fn drain_inputs(&mut self) {
         use super::throttled_interaction::{DrainContext, ThrottledInteraction};
 
         // Only the moving-node drag needs to suppress the camera
@@ -413,14 +494,21 @@ impl InitState {
             });
         }
 
-        picker_hover.drive(DrainContext {
-            document: &mut *document,
-            mindmap_tree: &mut *mindmap_tree,
-            app_scene: &mut *app_scene,
-            renderer: &mut *renderer,
-            scene_cache: &mut *scene_cache,
-            color_picker_state: &mut *color_picker_state,
-        });
+        // Gate on picker open-state: when the picker is closed, the
+        // hover interaction has no pending work by construction, and
+        // the drive() call is wasted dispatch every frame. The check
+        // is part of the idle-CPU work so the loop can park in
+        // `ControlFlow::Wait` without a spurious driver tick.
+        if color_picker_state.is_open() {
+            picker_hover.drive(DrainContext {
+                document: &mut *document,
+                mindmap_tree: &mut *mindmap_tree,
+                app_scene: &mut *app_scene,
+                renderer: &mut *renderer,
+                scene_cache: &mut *scene_cache,
+                color_picker_state: &mut *color_picker_state,
+            });
+        }
 
         if let DragState::SelectingRect {
             start_canvas,
@@ -476,8 +564,48 @@ impl InitState {
                 &mut self.scene_cache,
             );
         }
+    }
 
-        // Drive the render loop each frame
-        self.renderer.process();
+    /// True iff the event loop should keep iterating without
+    /// further input. Drives the choice between `ControlFlow::Wait`
+    /// (idle, park until next OS event) and `ControlFlow::Poll`
+    /// (continuous frames). Sources of continuation:
+    ///
+    /// - **Throttled drag with pending state.** The throttle may
+    ///   have deferred a drain; without continuation the loop would
+    ///   park indefinitely after the last cursor event, leaving
+    ///   pending input unflushed.
+    /// - **Picker hover with pending state.** Same shape — the
+    ///   hover interaction owns its own pending buffer.
+    /// - **Active animation.** The animation tick must keep
+    ///   advancing until each animation completes.
+    /// - **Connection-geometry dirty flag set.** A camera change
+    ///   landed during a `MovingNode` drag that suppressed the
+    ///   rebuild; the flag will be picked up by the next drain
+    ///   that doesn't suppress it.
+    /// - **FPS overlay enabled.** The user has opted in to a live
+    ///   FPS readout, which requires continuous frames to display
+    ///   a meaningful value.
+    ///
+    /// `None` / `Pending` / `Panning` / `SelectingRect` drag states
+    /// are intentionally event-driven only — they update on
+    /// `CursorMoved` and don't need self-driven continuation.
+    pub(super) fn needs_continuation(&self) -> bool {
+        use crate::application::app::throttled_interaction::ThrottledInteraction;
+        use crate::application::common::FpsDisplayMode;
+
+        let drag_pending = matches!(
+            self.drag_state,
+            DragState::Throttled(ref d) if d.as_dyn().needs_continuation()
+        );
+        let picker_pending = self.picker_hover.has_pending();
+        let animations = self
+            .document
+            .as_ref()
+            .is_some_and(|d| d.has_active_animations());
+        let geometry_dirty = self.renderer.connection_geometry_dirty();
+        let fps_overlay_on = self.renderer.fps_display_mode() != FpsDisplayMode::Off;
+
+        drag_pending || picker_pending || animations || geometry_dirty || fps_overlay_on
     }
 }

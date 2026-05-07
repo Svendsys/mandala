@@ -18,7 +18,8 @@ use super::label_edit::{LabelEditState, PortalTextEditState};
 use super::run_native::InitState;
 use super::scene_rebuild::{
     flush_canvas_scene_buffers, update_border_tree_static, update_connection_label_tree,
-    update_connection_tree, update_portal_tree,
+    update_connection_tree, update_edge_handle_tree, update_node_resize_handle_tree,
+    update_portal_tree, update_section_resize_handle_tree,
 };
 use super::text_edit::TextEditState;
 use super::{AppMode, DragState, Options};
@@ -44,10 +45,11 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
     let mut document: Option<MindMapDocument> = None;
     let mut mindmap_tree: Option<MindMapTree> = None;
     // Keyed incremental rebuild: document-side cache of per-edge
-    // pre-clip sample geometry. Populated lazily by
-    // `build_scene_with_cache`; cleared by `rebuild_all` so any
+    // pre-clip sample geometry. Populated at load by
+    // `build_scene_with_cache` so first interactions don't pay the
+    // full Bezier-sample cost; cleared by `rebuild_all` so any
     // structural change forces a fresh scene build.
-    let scene_cache = baumhard::mindmap::scene_cache::SceneConnectionCache::new();
+    let mut scene_cache = baumhard::mindmap::scene_cache::SceneConnectionCache::new();
     // App-level scene host: owns the canvas-space tree for borders
     // today (registered via `update_border_tree_*`) and hosts the
     // console / color-picker overlays.
@@ -82,7 +84,16 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
             // it through — the scene builder sizes connection
             // glyphs against the actual final zoom rather than the
             // default-init value.
-            let scene = doc.build_scene(renderer.camera_zoom());
+            //
+            // Use `build_scene_with_cache` (not `build_scene`) so
+            // `scene_cache` is hot before the first interaction; the
+            // first drag/zoom no longer pays the full per-edge
+            // Bezier-sample cost.
+            let scene = doc.build_scene_with_cache(
+                &std::collections::HashMap::new(),
+                &mut scene_cache,
+                renderer.camera_zoom(),
+            );
             update_connection_tree(&scene, &mut app_scene);
             update_border_tree_static(&doc, &mut app_scene);
             update_portal_tree(
@@ -92,6 +103,15 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
                 &mut renderer,
             );
             update_connection_label_tree(&scene, &mut app_scene, &mut renderer);
+            // Pre-warm the three handle-tree canvas roles so first
+            // interactions touching them take the cheap
+            // `CanvasDispatch::InPlaceMutator` arm rather than the
+            // `FullRebuild` arm. At fresh-load nothing is selected,
+            // so the slices are empty — registering an empty tree
+            // is what stamps the canvas signature for §B2 dispatch.
+            update_edge_handle_tree(&scene, &mut app_scene);
+            update_section_resize_handle_tree(&scene, &mut app_scene);
+            update_node_resize_handle_tree(&scene, &mut app_scene);
             flush_canvas_scene_buffers(&mut app_scene, &mut renderer);
 
             mindmap_tree = Some(tree);
@@ -104,6 +124,13 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
 
     // Start rendering.
     renderer.process_decree(RenderDecree::StartRender);
+
+    // Pre-warm the glyph atlas: rasterize and upload every visible
+    // glyph to the GPU atlas before the first user-driven frame.
+    // Without this, `text_renderer.prepare()` lazily uploads on the
+    // first `render()`, which can drop the first frame on large
+    // maps. No-op if document load failed (buffers are empty).
+    renderer.prewarm_atlas();
 
     let keybinds: ResolvedKeybinds = options.keybind_config.resolve();
     // Cross-session history loaded from disk on startup; appended

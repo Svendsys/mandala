@@ -106,8 +106,12 @@ pub(super) fn drain_camera_geometry_rebuild(
 /// snapshots into the model and (on completion) routes the final
 /// state through `apply_custom_mutation` so the standard model-sync
 /// + undo-push runs once. Drives `rebuild_all` only when something
-/// actually advanced — sleeping in Poll mode when no animations
-/// are active is automatic.
+/// actually advanced. The event loop's `ControlFlow::Wait` /
+/// `ControlFlow::Poll` choice is decided in `NativeApp::about_to_wait`
+/// from `InitState::needs_continuation`, which factors in
+/// `has_active_animations` — so when no animations are active and
+/// no other source needs continuation, the loop parks until the
+/// next OS event.
 pub(super) fn drain_animation_tick(
     document: &mut Option<MindMapDocument>,
     mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,

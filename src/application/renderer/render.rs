@@ -89,15 +89,6 @@ impl Renderer {
         }
         let vp_w_px = self.config.width as f32;
         let vp_h_px = self.config.height as f32;
-        let vp_w = self.config.width as i32;
-        let vp_h = self.config.height as i32;
-        let vp_bounds = TextBounds {
-            left: 0,
-            top: 0,
-            right: vp_w,
-            bottom: vp_h,
-        };
-        let default_color = COLOR_WHITE;
 
         // Rebuild the "main" rect batch: canvas-space node
         // backgrounds transformed to NDC via the current camera.
@@ -204,6 +195,119 @@ impl Renderer {
         let main_vertex_count = (self.main_rect_vertices.len() / RECT_VERTEX_FLOATS) as u32;
         let palette_vertex_count = (self.console_rect_vertices.len() / RECT_VERTEX_FLOATS) as u32;
 
+        // Collect text areas + run both glyphon prepares against
+        // the atlas. Shared with `prewarm_atlas()` so the warm-up
+        // sees exactly the same glyph set that the next real frame
+        // will draw — no risk of warming a different set than gets
+        // rasterised. On lock contention or prepare failure, skip
+        // the rest of this frame.
+        if !self.prepare_text_for_pass() {
+            return;
+        }
+
+        let frame = match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+            other => {
+                debug!("Failed to get the surface texture ({other:?}), can't render.");
+                return;
+            }
+        };
+        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: None,
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(self.clear_color),
+                        store: StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+
+            // 1. Node backgrounds (rect pipeline, camera-transformed).
+            if main_vertex_count > 0 {
+                pass.set_pipeline(&self.rect_pipeline);
+                pass.set_vertex_buffer(0, self.rect_vertex_buffer.slice(0..main_bytes_len as u64));
+                pass.draw(0..main_vertex_count, 0..1);
+            }
+
+            // 2. Main text pass — node text, borders, connections,
+            //    edge handles, camera-transformed and screen-space
+            //    overlays, all drawn on top of the node backgrounds.
+            //    Interactive path: log and continue on render failure
+            //    so a single bad atlas frame doesn't crash the editor.
+            if let Err(e) = self.text_renderer.render(&self.atlas, &self.viewport, &mut pass) {
+                log::warn!("text_renderer.render failed: {e}");
+            }
+
+            // 3. Palette backdrop (rect pipeline, screen-space).
+            //    Drawn AFTER the main text pass so node text
+            //    sitting behind the palette is fully occluded.
+            if palette_vertex_count > 0 {
+                pass.set_pipeline(&self.rect_pipeline);
+                pass.set_vertex_buffer(
+                    0,
+                    self.rect_vertex_buffer
+                        .slice(main_bytes_len as u64..(main_bytes_len + palette_bytes_len) as u64),
+                );
+                pass.draw(0..palette_vertex_count, 0..1);
+            }
+
+            // 4. Palette text pass — cyan border, query line,
+            //    filtered action rows. Drawn on top of the palette
+            //    backdrop so every glyph sits cleanly on solid fill.
+            //    Interactive path: log and continue on render failure.
+            if let Err(e) = self
+                .console_text_renderer
+                .render(&self.atlas, &self.viewport, &mut pass)
+            {
+                log::warn!("console_text_renderer.render failed: {e}");
+            }
+        }
+        self.queue.submit(Some(encoder.finish()));
+        frame.present();
+        self.atlas.trim();
+    }
+
+    /// Collect every visible text-area from the renderer's buffer
+    /// maps (mindmap nodes, borders, connection labels, edge
+    /// handles, overlays, canvas-scene, console, color picker, FPS
+    /// overlay) and run both `text_renderer.prepare()` and
+    /// `console_text_renderer.prepare()` against the atlas. Returns
+    /// `false` (and skips the rest of the caller's frame) on
+    /// font-system lock contention or on either prepare failing —
+    /// the same degrade path the inline render() code had.
+    ///
+    /// Shared between `render()` (steady-state) and
+    /// `prewarm_atlas()` (one-shot at load) so the warm-up sees
+    /// exactly the same glyph set the next real frame will draw.
+    /// Note: this performs disjoint mutable borrows of `text_renderer`
+    /// + `atlas` + `swash_cache` while holding immutable borrows of
+    /// the buffer-map fields; the borrow checker permits this within
+    /// a single `&mut self` body but would reject it across a method
+    /// boundary, which is why the prepare call lives in this method
+    /// rather than splitting into a `collect_text_areas` helper.
+    fn prepare_text_for_pass(&mut self) -> bool {
+        let vp_w = self.config.width as i32;
+        let vp_h = self.config.height as i32;
+        let vp_bounds = TextBounds {
+            left: 0,
+            top: 0,
+            right: vp_w,
+            bottom: vp_h,
+        };
+        let default_color = COLOR_WHITE;
+
         // Collect "main" text areas: the mindmap + borders +
         // connections + edge handles + overlays + arena buffers.
         // Palette buffers go into a separate list so they render
@@ -279,8 +383,8 @@ impl Renderer {
         // Interactive path: a contended font-system lock must skip
         // the frame, not abort the process.
         let Ok(mut font_system) = fonts::FONT_SYSTEM.try_write() else {
-            log::warn!("font_system lock contended in render(), skipping frame");
-            return;
+            log::warn!("font_system lock contended in prepare_text_for_pass, skipping");
+            return false;
         };
 
         // Interactive path: a glyphon prepare failure must degrade the
@@ -296,7 +400,7 @@ impl Renderer {
             &mut self.swash_cache,
         ) {
             log::warn!("text_renderer.prepare failed, skipping frame: {e}");
-            return;
+            return false;
         }
         if let Err(e) = self.console_text_renderer.prepare(
             &self.device,
@@ -308,81 +412,27 @@ impl Renderer {
             &mut self.swash_cache,
         ) {
             log::warn!("console_text_renderer.prepare failed, skipping frame: {e}");
-            return;
+            return false;
         }
         drop(font_system);
+        true
+    }
 
-        let frame = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
-            other => {
-                debug!("Failed to get the surface texture ({other:?}), can't render.");
-                return;
-            }
-        };
-        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: None,
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    depth_slice: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(self.clear_color),
-                        store: StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-
-            // 1. Node backgrounds (rect pipeline, camera-transformed).
-            if main_vertex_count > 0 {
-                pass.set_pipeline(&self.rect_pipeline);
-                pass.set_vertex_buffer(0, self.rect_vertex_buffer.slice(0..main_bytes_len as u64));
-                pass.draw(0..main_vertex_count, 0..1);
-            }
-
-            // 2. Main text pass — node text, borders, connections,
-            //    edge handles, camera-transformed and screen-space
-            //    overlays, all drawn on top of the node backgrounds.
-            //    Interactive path: log and continue on render failure
-            //    so a single bad atlas frame doesn't crash the editor.
-            if let Err(e) = self.text_renderer.render(&self.atlas, &self.viewport, &mut pass) {
-                log::warn!("text_renderer.render failed: {e}");
-            }
-
-            // 3. Palette backdrop (rect pipeline, screen-space).
-            //    Drawn AFTER the main text pass so node text
-            //    sitting behind the palette is fully occluded.
-            if palette_vertex_count > 0 {
-                pass.set_pipeline(&self.rect_pipeline);
-                pass.set_vertex_buffer(
-                    0,
-                    self.rect_vertex_buffer
-                        .slice(main_bytes_len as u64..(main_bytes_len + palette_bytes_len) as u64),
-                );
-                pass.draw(0..palette_vertex_count, 0..1);
-            }
-
-            // 4. Palette text pass — cyan border, query line,
-            //    filtered action rows. Drawn on top of the palette
-            //    backdrop so every glyph sits cleanly on solid fill.
-            //    Interactive path: log and continue on render failure.
-            if let Err(e) = self
-                .console_text_renderer
-                .render(&self.atlas, &self.viewport, &mut pass)
-            {
-                log::warn!("console_text_renderer.render failed: {e}");
-            }
-        }
-        self.queue.submit(Some(encoder.finish()));
-        frame.present();
-        self.atlas.trim();
+    /// Pre-warm the glyph atlas during map load: walk every visible
+    /// `TextBuffer` and run both `text_renderer.prepare()` calls so
+    /// glyphs rasterize and upload to the GPU atlas before the
+    /// first user-driven frame. Deliberately omits `atlas.trim()` —
+    /// `trim` would evict every glyph that wasn't drawn during the
+    /// previous render, which on a warm-up frame is *all of them*
+    /// (we never enter the render pass). The first real `render()`
+    /// will redraw the same glyph set, so its trim is a no-op for
+    /// the warmed entries.
+    ///
+    /// Caller must have already populated the canvas-scene buffers
+    /// (`flush_canvas_scene_buffers`) and dispatched
+    /// `RenderDecree::StartRender`. If buffers are empty (doc-load
+    /// failure path) this is a cheap no-op.
+    pub fn prewarm_atlas(&mut self) {
+        let _ = self.prepare_text_for_pass();
     }
 }

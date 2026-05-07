@@ -96,6 +96,23 @@ impl ThrottledDrag {
             Self::EdgeLabel(i) => i,
         }
     }
+
+    /// `&self` widening counterpart of [`as_dyn_mut`]. Predicates
+    /// like [`ThrottledInteraction::needs_continuation`] read state
+    /// without mutation; an immutable borrow lets callers ask the
+    /// active variant whether the event loop should keep iterating
+    /// without holding `&mut self.drag_state`.
+    pub(in crate::application::app) fn as_dyn(&self) -> &dyn ThrottledInteraction {
+        match self {
+            Self::MovingNode(i) => i,
+            Self::MovingSection(i) => i,
+            Self::SectionResize(i) => i,
+            Self::NodeResize(i) => i,
+            Self::EdgeHandle(i) => i,
+            Self::PortalLabel(i) => i,
+            Self::EdgeLabel(i) => i,
+        }
+    }
 }
 
 /// Shared shell for every throttled, continuous interactive
@@ -145,6 +162,17 @@ pub(in crate::application::app) trait ThrottledInteraction {
             return false;
         }
         self.throttle().should_drain()
+    }
+
+    /// True iff the loop must keep iterating to flush pending state
+    /// even without further input. Consulted by the idle-CPU
+    /// gating: under `ControlFlow::Wait` the loop would otherwise
+    /// park indefinitely after the last cursor event, leaving a
+    /// throttle-deferred drain stuck on its accumulated pending
+    /// delta. The default mirrors `has_pending` — if there's
+    /// pending state, a future drive() will eventually drain it.
+    fn needs_continuation(&self) -> bool {
+        self.has_pending()
     }
 
     /// The unified six-step shell. Not meant to be overridden —
@@ -271,5 +299,63 @@ mod tests {
             pending_drag.as_dyn_mut().should_perform_drain(),
             "pending interaction through dyn_mut must drain on fresh throttle"
         );
+    }
+
+    #[test]
+    fn test_needs_continuation_matches_has_pending_idle() {
+        // The default `needs_continuation` body returns
+        // `has_pending`. An idle interaction with no pending state
+        // does not require the event loop to keep iterating —
+        // `ControlFlow::Wait` can park.
+        let inner = MovingNodeInteraction::new(vec!["n".into()], false);
+        let drag = ThrottledDrag::MovingNode(inner);
+        assert!(!drag.as_dyn().needs_continuation());
+    }
+
+    #[test]
+    fn test_needs_continuation_matches_has_pending_with_pending_delta() {
+        // With a non-zero pending_delta the throttle may have
+        // deferred a drain; under `ControlFlow::Wait` the loop
+        // would otherwise park indefinitely until the next cursor
+        // event. `needs_continuation` forces another iteration so
+        // the deferred work flushes.
+        let mut inner = MovingNodeInteraction::new(vec!["n".into()], false);
+        inner.pending_delta = Vec2::new(1.0, 0.0);
+        let drag = ThrottledDrag::MovingNode(inner);
+        assert!(drag.as_dyn().needs_continuation());
+    }
+
+    #[test]
+    fn test_needs_continuation_routes_through_each_variant() {
+        // Every `ThrottledDrag` variant must route
+        // `needs_continuation` to its underlying struct's
+        // `has_pending`; any mis-routing would silently leave a
+        // pending drain stuck under `Wait`.
+        use baumhard::mindmap::scene_builder::EdgeHandleKind;
+
+        let mut moving_node = MovingNodeInteraction::new(vec!["n".into()], false);
+        moving_node.pending_delta = Vec2::new(1.0, 0.0);
+        assert!(ThrottledDrag::MovingNode(moving_node).as_dyn().needs_continuation());
+
+        let mut edge_handle = EdgeHandleInteraction::new(
+            EdgeRef::new("a", "b", "parent_child"),
+            EdgeHandleKind::AnchorFrom,
+            fixture_edge(),
+            Vec2::ZERO,
+        );
+        edge_handle.pending_delta = Vec2::new(0.0, 2.0);
+        assert!(ThrottledDrag::EdgeHandle(edge_handle).as_dyn().needs_continuation());
+
+        let mut portal_label = PortalLabelInteraction::new(
+            EdgeRef::new("a", "b", "parent_child"),
+            "a".to_string(),
+            fixture_edge(),
+        );
+        portal_label.pending_cursor = Some(Vec2::new(10.0, 20.0));
+        assert!(ThrottledDrag::PortalLabel(portal_label).as_dyn().needs_continuation());
+
+        let mut edge_label = EdgeLabelInteraction::new(EdgeRef::new("a", "b", "parent_child"), fixture_edge());
+        edge_label.pending_cursor = Some(Vec2::new(5.0, 5.0));
+        assert!(ThrottledDrag::EdgeLabel(edge_label).as_dyn().needs_continuation());
     }
 }
