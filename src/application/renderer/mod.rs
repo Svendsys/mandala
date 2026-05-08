@@ -285,6 +285,24 @@ pub struct Renderer {
     /// last. Used to skip re-shaping when the integer value hasn't
     /// changed since the last rebuild.
     last_fps_shaped: Option<usize>,
+    /// Pending mode-status overlay text, set by the app's
+    /// scene-rebuild path on every mode-affecting action and consumed
+    /// by [`Self::rebuild_mode_status_overlay_if_needed`] at the next
+    /// frame. `None` clears the overlay (Default mode); `Some(text)`
+    /// shows it. Computing the string in `scene_rebuild.rs` (rather
+    /// than the renderer) keeps the renderer model-agnostic and lets
+    /// the source of truth — `(mode, selection, doc)` — stay on the
+    /// app side.
+    mode_status_text: Option<String>,
+    /// Screen-space text buffer(s) carrying the mode-status line
+    /// (e.g. `editing: <node-id> — section [N of M]`). Sibling of
+    /// `fps_overlay_buffers`; same render path. Empty when
+    /// `mode_status_text` is `None`.
+    mode_status_overlay_buffers: Vec<MindMapTextBuffer>,
+    /// The `self.mode_status_text` value that was shaped into
+    /// `mode_status_overlay_buffers` last. Used to skip re-shaping
+    /// when the text hasn't changed.
+    last_mode_status_shaped: Option<String>,
     /// Wall-clock timestamp of the previous rendered frame. The
     /// difference between consecutive values is the actual frame
     /// interval, which is what FPS is derived from. Measuring
@@ -690,6 +708,9 @@ impl Renderer {
             fps_display_mode: FpsDisplayMode::Off,
             fps_overlay_buffers: Vec::new(),
             last_fps_shaped: None,
+            mode_status_text: None,
+            mode_status_overlay_buffers: Vec::new(),
+            last_mode_status_shaped: None,
             last_frame_instant: None,
             fps_clock: 0,
             fps_ring: FrameIntervalRing::new(),
@@ -821,6 +842,7 @@ impl Renderer {
                         self.tick_fps();
                         self.rebuild_fps_overlay_if_needed();
                     }
+                    self.rebuild_mode_status_overlay_if_needed();
                     let sw = StopWatch::new_start();
                     self.render();
                     self.last_render_time = sw.stop();
@@ -831,12 +853,55 @@ impl Renderer {
                     self.tick_fps();
                     self.rebuild_fps_overlay_if_needed();
                 }
+                self.rebuild_mode_status_overlay_if_needed();
                 let sw = StopWatch::new_start();
                 self.render();
                 self.last_render_time = sw.stop();
             }
         }
         self.run
+    }
+
+    /// Set the mode-status overlay text. `None` clears the overlay
+    /// (Default mode); `Some(text)` shows the line on the next
+    /// frame. Called from the app's scene-rebuild paths on every
+    /// mode-affecting action — the renderer trusts the app to
+    /// recompute the string when (mode, selection, doc) changes.
+    pub fn set_mode_status_text(&mut self, text: Option<String>) {
+        self.mode_status_text = text;
+    }
+
+    /// Re-shape the cyan mode-status line when `self.mode_status_text`
+    /// has changed since the last shape. Sibling of
+    /// [`Self::rebuild_fps_overlay_if_needed`]; same caching
+    /// discipline (skip when nothing changed). Silent on font-system
+    /// lock contention — the next process() cycle retries.
+    #[inline]
+    fn rebuild_mode_status_overlay_if_needed(&mut self) {
+        if self.mode_status_text == self.last_mode_status_shaped {
+            return;
+        }
+        self.mode_status_overlay_buffers.clear();
+        self.last_mode_status_shaped = self.mode_status_text.clone();
+        let Some(text) = self.mode_status_text.as_deref() else {
+            return;
+        };
+        let Ok(mut font_system) = fonts::FONT_SYSTEM.try_write() else {
+            return;
+        };
+        // Cyan to match the SELECTED_EDGE_COLOR family used elsewhere
+        // for "active" affordances (selection highlight, section
+        // frames). Width is generous so multi-section labels fit.
+        let attrs = Attrs::new().color(baumhard::font::Color::rgba(120, 220, 220, 255));
+        let buf = borders::create_border_buffer(
+            &mut font_system,
+            text,
+            &attrs,
+            14.0,
+            (8.0, 32.0), // top-left corner; below the FPS overlay's row
+            (640.0, 24.0),
+        );
+        self.mode_status_overlay_buffers.push(buf);
     }
 
     /// Re-shape the yellow "FPS: N" screen-space overlay when the

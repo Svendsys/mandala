@@ -362,13 +362,15 @@ impl Renderer {
         // console.
         let palette_capacity = self.console_overlay_buffers.len()
             + self.overlay_scene_buffers.len()
-            + self.fps_overlay_buffers.len();
+            + self.fps_overlay_buffers.len()
+            + self.mode_status_overlay_buffers.len();
         let mut palette_text_areas: Vec<TextArea> = Vec::with_capacity(palette_capacity);
         palette_text_areas.extend(
             self.console_overlay_buffers
                 .iter()
                 .chain(self.overlay_scene_buffers.iter())
                 .chain(self.fps_overlay_buffers.iter())
+                .chain(self.mode_status_overlay_buffers.iter())
                 .map(|tb| TextArea {
                     buffer: &tb.buffer,
                     left: tb.pos.0,

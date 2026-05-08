@@ -211,6 +211,79 @@ mod tests {
             .canvas_id(crate::application::scene_host::CanvasRole::EdgeHandles)
             .is_some());
     }
+
+    /// `mode_status_line` returns `None` for `Default` mode — no
+    /// status overlay when the user has nothing modal active.
+    #[test]
+    fn test_mode_status_line_default_is_none() {
+        use crate::application::app::InteractionMode;
+        use crate::application::document::tests_common::pinned_two_section_node;
+        let (doc, _id) = pinned_two_section_node();
+        assert_eq!(super::mode_status_line(&InteractionMode::Default, &doc), None);
+    }
+
+    /// NodeEdit on a single-section node renders the short form
+    /// (just `editing: <id>`) — section count [1 of 1] would be
+    /// noise for migrated maps where every node has exactly one
+    /// section.
+    #[test]
+    fn test_mode_status_line_node_edit_single_section_uses_short_form() {
+        use crate::application::app::InteractionMode;
+        use crate::application::document::tests_common::pinned_two_section_node;
+        let (mut doc, id) = pinned_two_section_node();
+        // Drop section 1 to make the node single-section.
+        doc.mindmap.nodes.get_mut(&id).unwrap().sections.truncate(1);
+        let mode = InteractionMode::NodeEdit { node_id: id.clone() };
+        let line = super::mode_status_line(&mode, &doc).expect("text expected");
+        assert!(line.starts_with("editing: "), "got {:?}", line);
+        assert!(line.contains(&id), "got {:?}", line);
+        assert!(!line.contains("section ["), "single-section must skip the [N of M] suffix; got {:?}", line);
+    }
+
+    /// NodeEdit on a multi-section node renders `editing: <id> — section [N of M]`
+    /// where N is the active section idx + 1 (selection-derived) and M is
+    /// the total section count.
+    #[test]
+    fn test_mode_status_line_node_edit_multi_section_renders_n_of_m() {
+        use crate::application::app::InteractionMode;
+        use crate::application::document::tests_common::pinned_two_section_node;
+        use crate::application::document::{SectionSel, SelectionState};
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::Section(SectionSel::new(&id, 1));
+        let mode = InteractionMode::NodeEdit { node_id: id.clone() };
+        let line = super::mode_status_line(&mode, &doc).expect("text expected");
+        assert!(line.contains(&id), "got {:?}", line);
+        assert!(line.contains("section [2 of 2]"), "got {:?}", line);
+    }
+
+    /// Resize-mode status line spells out the target — node form is
+    /// just the id, section form is `node[idx]`.
+    #[test]
+    fn test_mode_status_line_resize_node_target_renders_id() {
+        use crate::application::app::interaction_mode::ResizeTarget;
+        use crate::application::app::InteractionMode;
+        use crate::application::document::tests_common::pinned_two_section_node;
+        let (doc, id) = pinned_two_section_node();
+        let mode = InteractionMode::Resize {
+            target: ResizeTarget::Node(id.clone()),
+        };
+        let line = super::mode_status_line(&mode, &doc).expect("text expected");
+        assert!(line.starts_with("resize: "), "got {:?}", line);
+        assert!(line.contains(&id), "got {:?}", line);
+    }
+
+    #[test]
+    fn test_mode_status_line_resize_section_target_renders_indexed_form() {
+        use crate::application::app::interaction_mode::ResizeTarget;
+        use crate::application::app::InteractionMode;
+        use crate::application::document::tests_common::pinned_two_section_node;
+        let (doc, id) = pinned_two_section_node();
+        let mode = InteractionMode::Resize {
+            target: ResizeTarget::Section { node_id: id.clone(), section_idx: 1 },
+        };
+        let line = super::mode_status_line(&mode, &doc).expect("text expected");
+        assert!(line.contains(&format!("{}[1]", id)), "got {:?}", line);
+    }
 }
 
 pub(in crate::application::app) fn rebuild_all(
@@ -226,8 +299,77 @@ pub(in crate::application::app) fn rebuild_all(
     renderer.rebuild_buffers_from_tree(&new_tree.tree);
 
     rebuild_scene_only(doc, interaction_mode, app_scene, renderer, scene_cache);
+    renderer.set_mode_status_text(mode_status_line(interaction_mode, doc));
 
     *mindmap_tree = Some(new_tree);
+}
+
+/// Compute the mode-status overlay line for the active interaction
+/// mode. Returns `None` for `Default` (no overlay), `Some(text)` for
+/// every other mode. Pure derivation from `(mode, doc, selection)`
+/// — pulled into a helper so [`rebuild_all`] can pass the result
+/// straight to `Renderer::set_mode_status_text`.
+///
+/// Format pinned in §3.5 of `SECTIONS_BORDERS_RESIZE_PLAN.md`.
+pub(in crate::application::app) fn mode_status_line(
+    interaction_mode: &super::InteractionMode,
+    doc: &MindMapDocument,
+) -> Option<String> {
+    use super::InteractionMode;
+    match interaction_mode {
+        InteractionMode::Default => None,
+        InteractionMode::NodeEdit { node_id } => {
+            let total = doc
+                .mindmap
+                .nodes
+                .get(node_id)
+                .map(|n| n.sections.len())
+                .unwrap_or(0);
+            // The active section index — derived from the current
+            // selection; defaults to 1 when selection isn't
+            // narrowed to a section yet (NodeEdit on a Single
+            // selection).
+            let active_idx = doc.selection.selected_section()
+                .filter(|s| s.node_id == *node_id)
+                .map(|s| s.section_idx + 1)
+                .unwrap_or(1);
+            if total <= 1 {
+                Some(format!("editing: {}", node_id))
+            } else {
+                Some(format!(
+                    "editing: {} \u{2014} section [{} of {}]",
+                    node_id, active_idx, total
+                ))
+            }
+        }
+        InteractionMode::Resize { target } => {
+            use super::interaction_mode::ResizeTarget;
+            let target_label = match target {
+                ResizeTarget::Node(id) => id.clone(),
+                ResizeTarget::Section { node_id, section_idx } => {
+                    format!("{}[{}]", node_id, section_idx)
+                }
+            };
+            Some(format!(
+                "resize: {} \u{2014} drag a corner or edge",
+                target_label
+            ))
+        }
+        InteractionMode::Reparent { sources } => {
+            let count = sources.len();
+            Some(format!(
+                "reparent: {} source{} \u{2014} click a target node",
+                count,
+                if count == 1 { "" } else { "s" },
+            ))
+        }
+        InteractionMode::Connect { source } => {
+            Some(format!(
+                "connect: {} \u{2014} click a target node",
+                source
+            ))
+        }
+    }
 }
 
 /// Map a [`SelectionState`] to the highlight entries
