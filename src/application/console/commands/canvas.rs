@@ -411,16 +411,6 @@ fn execute_show_section_frame(eff: &mut ConsoleEffects, focused: bool) -> ExecRe
     ExecResult::lines(lines)
 }
 
-fn format_resolved(
-    label: &str,
-    font: Option<&str>,
-    size_pt: f32,
-    color: &str,
-    cfg: &GlyphBorderConfig,
-) -> Vec<String> {
-    format_resolved_with_source(label, "canvas default", font, size_pt, color, cfg)
-}
-
 /// Tail of `execute_show_*` — produce the multi-line readout
 /// describing the resolved style. Now includes per-side patterns
 /// and per-corner glyphs (the prior shape omitted both, which
