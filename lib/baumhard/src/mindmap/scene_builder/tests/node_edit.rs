@@ -178,7 +178,7 @@ fn test_node_edit_inactive_node_dims_to_half_alpha() {
 #[test]
 fn test_border_preview_node_target_renders_through_scene_builder() {
     use crate::mindmap::scene_builder::{
-        BorderConfigEditsView, BorderPreview, BorderPreviewTargetRef,
+        BorderConfigEditsView, BorderPreview, BorderPreviewTargetRef, EditView,
     };
     let map = synthetic_map(
         vec![
@@ -189,7 +189,7 @@ fn test_border_preview_node_target_renders_through_scene_builder() {
     );
     let target_ids = [String::from("a")];
     let edits = BorderConfigEditsView {
-        preset: Some("heavy"),
+        preset: EditView::Set("heavy"),
         ..Default::default()
     };
     let preview = BorderPreview {
@@ -234,7 +234,7 @@ fn test_border_preview_node_target_renders_through_scene_builder() {
 #[test]
 fn test_border_preview_force_show_frame_on_hidden_node() {
     use crate::mindmap::scene_builder::{
-        BorderConfigEditsView, BorderPreview, BorderPreviewTargetRef,
+        BorderConfigEditsView, BorderPreview, BorderPreviewTargetRef, EditView,
     };
     // Build a node with `show_frame = false`.
     let mut hidden_node = synthetic_node("hidden", 0.0, 0.0, 200.0, 100.0, false);
@@ -261,7 +261,7 @@ fn test_border_preview_force_show_frame_on_hidden_node() {
     // `show_frame` is still `false`.
     let target_ids = [String::from("hidden")];
     let edits = BorderConfigEditsView {
-        preset: Some("heavy"),
+        preset: EditView::Set("heavy"),
         ..Default::default()
     };
     let preview = BorderPreview {

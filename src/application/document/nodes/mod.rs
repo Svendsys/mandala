@@ -18,6 +18,12 @@ mod option_edit;
 mod section_text;
 
 pub use border::{BorderConfigEdits, BorderEditOutcome, BorderPreview, BorderPreviewTarget, BorderSide};
+// Test-only re-export of the slot helper. Production code routes
+// through the four committing setters; the parity test in
+// `tests_nodes.rs` reaches for the helper directly to exercise
+// it against `apply_view_to_slot`.
+#[cfg(test)]
+pub(in crate::application) use border::apply_glyph_border_edits_to_slot;
 pub use option_edit::OptionEdit;
 pub(in crate::application::document) use section_text::clamp_runs_to_text;
 

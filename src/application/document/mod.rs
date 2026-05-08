@@ -682,31 +682,59 @@ fn build_border_preview_scene_view<'a>(
 
 /// Convert an owned `BorderConfigEdits` (from the application
 /// crate) into a borrowed scene-side `BorderConfigEditsView<'a>`
-/// the scene builder consumes. The view is just per-field
-/// `Option<&str>` / `Option<f32>` — a flat read-only projection
-/// of the staged edits.
-fn build_border_config_edits_view<'a>(
-    edits: &'a BorderConfigEdits,
-) -> scene_builder::BorderConfigEditsView<'a> {
+/// the scene builder consumes. Per-field tri-state: `Keep` →
+/// `EditView::Keep`, `Clear` → `EditView::Clear`, `Set(v)` →
+/// `EditView::Set(&v)`. Pre-fix this projection collapsed both
+/// `Keep` and `Clear` to a single "no edit" sentinel, dropping
+/// the `Clear` axis entirely and breaking the parity contract
+/// with `apply_glyph_border_edits_to_slot` (Risk #1 in the plan).
+/// Test-only re-export of [`build_border_config_edits_view`].
+/// Used by the parity test in `tests_nodes.rs` that exercises
+/// `apply_view_to_slot` (baumhard) vs `apply_glyph_border_edits_to_slot`
+/// (application) against identical edits across every per-field
+/// axis. Keep `pub(crate)` — production callers go through
+/// `assemble_scene_overrides`.
+#[cfg(test)]
+pub(crate) fn build_border_config_edits_view_for_test(
+    edits: &BorderConfigEdits,
+) -> scene_builder::BorderConfigEditsView<'_> {
+    build_border_config_edits_view(edits)
+}
+
+/// Test-only proxy for the private `nodes::border::apply_glyph_border_edits_to_slot`
+/// — keeps the module-level visibility narrow while still letting
+/// the parity test in `tests_nodes.rs` exercise the helper directly.
+#[cfg(test)]
+pub(crate) fn nodes_border_apply_glyph_border_edits_to_slot_for_test(
+    slot: &mut Option<baumhard::mindmap::model::GlyphBorderConfig>,
+    edits: &BorderConfigEdits,
+    outcome: &mut BorderEditOutcome,
+) -> bool {
+    nodes::apply_glyph_border_edits_to_slot(slot, edits, outcome)
+}
+
+fn build_border_config_edits_view(edits: &BorderConfigEdits) -> scene_builder::BorderConfigEditsView<'_> {
     use crate::application::document::OptionEdit;
-    fn opt_str<'a>(e: &'a OptionEdit<String>) -> Option<&'a str> {
+    use scene_builder::EditView;
+    fn opt_str(e: &OptionEdit<String>) -> EditView<&str> {
         match e {
-            OptionEdit::Set(s) => Some(s.as_str()),
-            _ => None,
+            OptionEdit::Keep => EditView::Keep,
+            OptionEdit::Clear => EditView::Clear,
+            OptionEdit::Set(s) => EditView::Set(s.as_str()),
         }
     }
-    fn opt_f32(e: &OptionEdit<f32>) -> Option<f32> {
+    fn opt_f32(e: &OptionEdit<f32>) -> EditView<f32> {
         match e {
-            OptionEdit::Set(v) => Some(*v),
-            _ => None,
+            OptionEdit::Keep => EditView::Keep,
+            OptionEdit::Clear => EditView::Clear,
+            OptionEdit::Set(v) => EditView::Set(*v),
         }
     }
-    fn opt_field<'a>(
-        e: &'a OptionEdit<baumhard::mindmap::border::PaletteField>,
-    ) -> Option<&'a str> {
+    fn opt_field(e: &OptionEdit<baumhard::mindmap::border::PaletteField>) -> EditView<&str> {
         match e {
-            OptionEdit::Set(v) => Some(v.as_str()),
-            _ => None,
+            OptionEdit::Keep => EditView::Keep,
+            OptionEdit::Clear => EditView::Clear,
+            OptionEdit::Set(v) => EditView::Set(v.as_str()),
         }
     }
     scene_builder::BorderConfigEditsView {
@@ -730,26 +758,17 @@ fn build_border_config_edits_view<'a>(
 }
 
 /// `true` iff `view`'s edits include at least one field that
-/// implies the resolved border should be visible — preset,
-/// font / size / color / padding / palette / palette-field, or
-/// any per-side / per-corner glyph. Force-show then ignores a
-/// committed `style.show_frame == false` for the duration of the
-/// preview so the user sees their staged edits even on a
-/// frameless node.
+/// implies the resolved border should be visible — any field
+/// edit (`Set` or `Clear`) or the entire-slot `clear` flag.
+/// Force-show then ignores a committed `style.show_frame == false`
+/// for the duration of the preview so the user sees their staged
+/// edits even on a frameless node.
+///
+/// Delegates to [`scene_builder::BorderConfigEditsView::touches_any_field`]
+/// so the predicate stays in lockstep with the slot-allocation
+/// gate inside `apply_view_to_slot` (the previous parallel
+/// implementation drifted by one field — `clear` was excluded
+/// from this side and included on the other).
 fn view_implies_visible(view: &scene_builder::BorderConfigEditsView<'_>) -> bool {
-    view.preset.is_some()
-        || view.font.is_some()
-        || view.font_size_pt.is_some()
-        || view.color.is_some()
-        || view.padding.is_some()
-        || view.color_palette.is_some()
-        || view.color_palette_field.is_some()
-        || view.side_top.is_some()
-        || view.side_bottom.is_some()
-        || view.side_left.is_some()
-        || view.side_right.is_some()
-        || view.corner_top_left.is_some()
-        || view.corner_top_right.is_some()
-        || view.corner_bottom_left.is_some()
-        || view.corner_bottom_right.is_some()
+    view.touches_any_field() || view.clear
 }

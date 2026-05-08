@@ -142,6 +142,35 @@ pub enum BorderPreviewTargetRef<'a> {
     CanvasSectionFrameFocused,
 }
 
+/// Per-field tri-state edit, mirroring the application crate's
+/// `OptionEdit<T>` (`Keep` / `Clear` / `Set`). The scene-side
+/// view carries this so `OptionEdit::Clear` round-trips into the
+/// preview pipeline — pre-fix `BorderConfigEditsView` collapsed
+/// `Clear` to "no edit" and the rendered preview diverged from
+/// what commit produced (Risk #1 in the plan).
+///
+/// `Keep` = no edit (steady-state default); `Clear` = drop the
+/// field on the slot; `Set(v)` = write the borrowed value.
+/// `Default` is `Keep` so a `BorderConfigEditsView::default()`
+/// is a no-op view.
+#[derive(Debug, Clone, Copy, Default)]
+pub enum EditView<T: Copy> {
+    #[default]
+    Keep,
+    Clear,
+    Set(T),
+}
+
+impl<T: Copy> EditView<T> {
+    /// `true` iff the edit is `Set` or `Clear` — i.e. it touches
+    /// the field, vs `Keep` which leaves it alone. Used by the
+    /// "any field touched?" predicates that gate slot allocation
+    /// + force-show-frame logic.
+    pub fn is_edit(&self) -> bool {
+        !matches!(self, EditView::Keep)
+    }
+}
+
 /// Scene-side mirror of the application-crate `BorderConfigEdits`
 /// struct. The application crate owns `BorderConfigEdits` (it
 /// imports `OptionEdit` and shapes around the document layer);
@@ -152,31 +181,63 @@ pub enum BorderPreviewTargetRef<'a> {
 ///
 /// Mirrors the slot-helper's read shape — preset / font / size /
 /// color / palette / palette_field / padding / four sides / four
-/// corners — plus the `clear` / `visible` bookkeeping. Per-field
-/// `Option<&str>` doubles as "no edit" (`None`) or a `Set` value
-/// (`Some(s)`); `clear: bool` is the explicit-clear axis the
-/// document-side `OptionEdit::Clear` represents.
+/// corners — each as an [`EditView`] tri-state so that
+/// `OptionEdit::Clear` survives the projection. Plus a top-level
+/// `clear: bool` that empties the entire slot (mirrors
+/// `BorderConfigEdits.clear`).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct BorderConfigEditsView<'a> {
-    pub preset: Option<&'a str>,
-    pub font: Option<&'a str>,
-    pub font_size_pt: Option<f32>,
-    pub color: Option<&'a str>,
-    pub padding: Option<f32>,
-    pub color_palette: Option<&'a str>,
-    pub color_palette_field: Option<&'a str>,
-    pub side_top: Option<&'a str>,
-    pub side_bottom: Option<&'a str>,
-    pub side_left: Option<&'a str>,
-    pub side_right: Option<&'a str>,
-    pub corner_top_left: Option<&'a str>,
-    pub corner_top_right: Option<&'a str>,
-    pub corner_bottom_left: Option<&'a str>,
-    pub corner_bottom_right: Option<&'a str>,
+    pub preset: EditView<&'a str>,
+    pub font: EditView<&'a str>,
+    pub font_size_pt: EditView<f32>,
+    pub color: EditView<&'a str>,
+    pub padding: EditView<f32>,
+    pub color_palette: EditView<&'a str>,
+    pub color_palette_field: EditView<&'a str>,
+    pub side_top: EditView<&'a str>,
+    pub side_bottom: EditView<&'a str>,
+    pub side_left: EditView<&'a str>,
+    pub side_right: EditView<&'a str>,
+    pub corner_top_left: EditView<&'a str>,
+    pub corner_top_right: EditView<&'a str>,
+    pub corner_bottom_left: EditView<&'a str>,
+    pub corner_bottom_right: EditView<&'a str>,
     /// `true` clears the slot entirely (the cascade falls through
     /// to the canvas default or the hardcoded floor). Mirrors
     /// `BorderConfigEdits.clear`.
     pub clear: bool,
+}
+
+impl<'a> BorderConfigEditsView<'a> {
+    /// `true` iff any per-field axis is `Set` or `Clear`. Used by
+    /// the slot-allocation gate inside `apply_view_to_slot` and
+    /// by the force-show-frame predicate (along with `clear`,
+    /// which is its own axis).
+    pub fn touches_any_field(&self) -> bool {
+        self.preset.is_edit()
+            || self.font.is_edit()
+            || self.font_size_pt.is_edit()
+            || self.color.is_edit()
+            || self.padding.is_edit()
+            || self.color_palette.is_edit()
+            || self.color_palette_field.is_edit()
+            || self.touches_glyphs()
+    }
+
+    /// `true` iff any side- or corner-glyph axis is `Set` or
+    /// `Clear`. Mirrors the application-side `edits_touch_glyphs`
+    /// predicate; lifts the eight-way OR into the type so the
+    /// app side can drop its parallel copy.
+    pub fn touches_glyphs(&self) -> bool {
+        self.side_top.is_edit()
+            || self.side_bottom.is_edit()
+            || self.side_left.is_edit()
+            || self.side_right.is_edit()
+            || self.corner_top_left.is_edit()
+            || self.corner_top_right.is_edit()
+            || self.corner_bottom_left.is_edit()
+            || self.corner_bottom_right.is_edit()
+    }
 }
 
 /// Intermediate representation between MindMap data and GPU rendering.

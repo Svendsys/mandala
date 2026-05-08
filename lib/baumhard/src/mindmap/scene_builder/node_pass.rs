@@ -91,6 +91,27 @@ pub(super) fn build_node_elements(
             _ => None,
         });
     let preview_force_show_frame = border_preview.map(|p| p.force_show_frame).unwrap_or(false);
+    // Hoist the canvas-default-with-preview-folded-in clone OUT of
+    // the per-node loop. With `preview_canvas_default = None` (the
+    // common case) we keep the clone-free `Option<&GlyphBorderConfig>`
+    // borrow into the model; only when a canvas-default preview is
+    // active do we materialise an owned cloned-and-mutated slot.
+    // §B7: pre-fix this clone fired per-node-per-frame regardless
+    // of whether any preview was active.
+    //
+    // `apply_view_to_slot` can empty the slot when `view.clear ==
+    // true` — keep the result as `Option<GlyphBorderConfig>` and
+    // only borrow `.as_ref()` for the resolver path.
+    let canvas_default_preview_owned: Option<Option<GlyphBorderConfig>> =
+        preview_canvas_default.map(|view| {
+            let mut slot = map.canvas.default_border.clone();
+            crate::mindmap::border::apply_view_to_slot(&mut slot, &view);
+            slot
+        });
+    let canvas_default_ref: Option<&GlyphBorderConfig> = match &canvas_default_preview_owned {
+        Some(opt) => opt.as_ref(),
+        None => map.canvas.default_border.as_ref(),
+    };
     let vars = &map.canvas.theme_variables;
     let mut text_elements = Vec::new();
     let mut border_elements = Vec::new();
@@ -144,33 +165,36 @@ pub(super) fn build_node_elements(
         // clone of `canvas.default_border` and pass that to the
         // resolver as the cascade base — the per-node slot stays
         // unchanged. Either flavour leaves the model untouched.
+        // Per-node preview: target this node only when a `Nodes`
+        // preview is active AND this node's id is in its target
+        // list. The steady-state path (no preview / preview
+        // targets a different node) keeps the clone-free borrow
+        // into `node.style.border` — §B7: no allocations on the
+        // common path.
         let preview_targets_this_node = preview_node_ids
             .map(|ids| ids.iter().any(|i| i == &node.id))
             .unwrap_or(false);
-        let node_slot_owned: Option<GlyphBorderConfig> = if preview_targets_this_node {
+        // `node_slot_owned_for_preview` is only allocated when a
+        // preview folds into this node's slot. Holds the cloned-
+        // and-mutated slot for the resolver to borrow from.
+        let node_slot_owned_for_preview: Option<Option<GlyphBorderConfig>> = if preview_targets_this_node
+        {
             let view = border_preview
                 .map(|p| p.edits)
                 .expect("preview_targets_this_node implies preview is Some");
             let mut slot = node.style.border.clone();
             crate::mindmap::border::apply_view_to_slot(&mut slot, &view);
-            slot
+            Some(slot)
         } else {
-            node.style.border.clone()
+            None
         };
-        let canvas_default_owned: Option<GlyphBorderConfig> = if let Some(view) = preview_canvas_default {
-            let mut slot = map.canvas.default_border.clone();
-            crate::mindmap::border::apply_view_to_slot(&mut slot, &view);
-            slot
-        } else {
-            map.canvas.default_border.clone()
+        let node_slot_ref: Option<&GlyphBorderConfig> = match &node_slot_owned_for_preview {
+            Some(opt) => opt.as_ref(),
+            None => node.style.border.as_ref(),
         };
         let visible = node.style.show_frame || (preview_targets_this_node && preview_force_show_frame);
         let resolved_border = if visible {
-            Some(resolve_border_style(
-                node_slot_owned.as_ref(),
-                canvas_default_owned.as_ref(),
-                frame_color,
-            ))
+            Some(resolve_border_style(node_slot_ref, canvas_default_ref, frame_color))
         } else {
             None
         };

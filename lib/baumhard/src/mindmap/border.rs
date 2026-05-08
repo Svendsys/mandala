@@ -719,14 +719,11 @@ pub fn resolve_section_frame_border(
     } else {
         canvas.default_section_frame_border.as_ref()
     };
-    let floor;
-    let chosen: &GlyphBorderConfig = match section.frame_border.as_ref().or(canvas_default) {
-        Some(c) => c,
-        None => {
-            floor = section_frame_floor_config(focused);
-            &floor
-        }
-    };
+    let chosen: &GlyphBorderConfig = section
+        .frame_border
+        .as_ref()
+        .or(canvas_default)
+        .unwrap_or_else(|| section_frame_floor_config(focused));
     resolve_border_style(Some(chosen), None, frame_color_resolved)
 }
 
@@ -737,13 +734,12 @@ pub fn resolve_section_frame_border(
 ///
 /// `focused = false` → light preset (┌─┐│└─┘).
 /// `focused = true`  → heavy preset (┏━┓┃┗━┛).
-pub fn section_frame_floor_config(focused: bool) -> GlyphBorderConfig {
-    GlyphBorderConfig {
-        preset: if focused {
-            "heavy".to_string()
-        } else {
-            "light".to_string()
-        },
+pub fn section_frame_floor_config(focused: bool) -> &'static GlyphBorderConfig {
+    use std::sync::OnceLock;
+    static UNFOCUSED: OnceLock<GlyphBorderConfig> = OnceLock::new();
+    static FOCUSED: OnceLock<GlyphBorderConfig> = OnceLock::new();
+    let init = |preset: &'static str| GlyphBorderConfig {
+        preset: preset.to_string(),
         font: None,
         font_size_pt: SECTION_FRAME_FLOOR_FONT_SIZE_PT,
         color: None,
@@ -751,6 +747,11 @@ pub fn section_frame_floor_config(focused: bool) -> GlyphBorderConfig {
         padding: 0.0,
         color_palette: None,
         color_palette_field: None,
+    };
+    if focused {
+        FOCUSED.get_or_init(|| init("heavy"))
+    } else {
+        UNFOCUSED.get_or_init(|| init("light"))
     }
 }
 
@@ -922,36 +923,52 @@ pub fn apply_view_to_slot(
     slot: &mut Option<GlyphBorderConfig>,
     view: &crate::mindmap::scene_builder::BorderConfigEditsView<'_>,
 ) {
+    use crate::mindmap::scene_builder::EditView;
+    // Top-level slot clear — empties the entire slot, falls back
+    // to the canvas default / hardcoded floor on resolve.
     if view.clear {
         *slot = None;
         return;
     }
-    if !view_touches_cfg_field(view) {
+    if !view.touches_any_field() {
         return;
     }
     let cfg = slot.get_or_insert_with(default_glyph_border_config);
-    if let Some(p) = view.preset {
+    // Per-field tri-state apply. `Keep` is no-op; `Clear` drops
+    // the field's `Option<String>` (or leaves a non-Option field
+    // at its default for `font_size_pt` / `padding`); `Set` writes
+    // the value. Mirrors the application-side
+    // `apply_glyph_border_edits_to_slot` field-by-field.
+    if let EditView::Set(p) = view.preset {
         cfg.preset = p.to_string();
     }
-    if let Some(f) = view.font {
-        cfg.font = Some(f.to_string());
+    match view.font {
+        EditView::Keep => {}
+        EditView::Clear => cfg.font = None,
+        EditView::Set(f) => cfg.font = Some(f.to_string()),
     }
-    if let Some(s) = view.font_size_pt {
+    if let EditView::Set(s) = view.font_size_pt {
         cfg.font_size_pt = s;
     }
-    if let Some(c) = view.color {
-        cfg.color = Some(c.to_string());
+    match view.color {
+        EditView::Keep => {}
+        EditView::Clear => cfg.color = None,
+        EditView::Set(c) => cfg.color = Some(c.to_string()),
     }
-    if let Some(p) = view.padding {
+    if let EditView::Set(p) = view.padding {
         cfg.padding = p;
     }
-    if let Some(p) = view.color_palette {
-        cfg.color_palette = Some(p.to_string());
+    match view.color_palette {
+        EditView::Keep => {}
+        EditView::Clear => cfg.color_palette = None,
+        EditView::Set(p) => cfg.color_palette = Some(p.to_string()),
     }
-    if let Some(f) = view.color_palette_field {
-        cfg.color_palette_field = Some(f.to_string());
+    match view.color_palette_field {
+        EditView::Keep => {}
+        EditView::Clear => cfg.color_palette_field = None,
+        EditView::Set(f) => cfg.color_palette_field = Some(f.to_string()),
     }
-    if view_touches_glyphs(view) {
+    if view.touches_glyphs() {
         if cfg.glyphs.is_none() {
             cfg.glyphs = Some(default_custom_glyphs());
         }
@@ -959,53 +976,36 @@ pub fn apply_view_to_slot(
             cfg.preset = "custom".to_string();
         }
         let g = cfg.glyphs.as_mut().expect("just inserted");
-        if let Some(v) = view.side_top {
+        // Side / corner glyphs are non-`Option<String>` on the
+        // model side (`CustomBorderGlyphs`), so `Clear` semantics
+        // for them mean "fall back to the preset's default char"
+        // — same posture the application-side helper takes
+        // (`apply_string_set` with no Clear handling).
+        if let EditView::Set(v) = view.side_top {
             g.top = v.to_string();
         }
-        if let Some(v) = view.side_bottom {
+        if let EditView::Set(v) = view.side_bottom {
             g.bottom = v.to_string();
         }
-        if let Some(v) = view.side_left {
+        if let EditView::Set(v) = view.side_left {
             g.left = v.to_string();
         }
-        if let Some(v) = view.side_right {
+        if let EditView::Set(v) = view.side_right {
             g.right = v.to_string();
         }
-        if let Some(v) = view.corner_top_left {
+        if let EditView::Set(v) = view.corner_top_left {
             g.top_left = v.to_string();
         }
-        if let Some(v) = view.corner_top_right {
+        if let EditView::Set(v) = view.corner_top_right {
             g.top_right = v.to_string();
         }
-        if let Some(v) = view.corner_bottom_left {
+        if let EditView::Set(v) = view.corner_bottom_left {
             g.bottom_left = v.to_string();
         }
-        if let Some(v) = view.corner_bottom_right {
+        if let EditView::Set(v) = view.corner_bottom_right {
             g.bottom_right = v.to_string();
         }
     }
-}
-
-fn view_touches_cfg_field(view: &crate::mindmap::scene_builder::BorderConfigEditsView<'_>) -> bool {
-    view.preset.is_some()
-        || view.font.is_some()
-        || view.font_size_pt.is_some()
-        || view.color.is_some()
-        || view.padding.is_some()
-        || view.color_palette.is_some()
-        || view.color_palette_field.is_some()
-        || view_touches_glyphs(view)
-}
-
-fn view_touches_glyphs(view: &crate::mindmap::scene_builder::BorderConfigEditsView<'_>) -> bool {
-    view.side_top.is_some()
-        || view.side_bottom.is_some()
-        || view.side_left.is_some()
-        || view.side_right.is_some()
-        || view.corner_top_left.is_some()
-        || view.corner_top_right.is_some()
-        || view.corner_bottom_left.is_some()
-        || view.corner_bottom_right.is_some()
 }
 
 /// Default `GlyphBorderConfig` shape — light preset, 14pt, no

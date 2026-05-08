@@ -205,11 +205,20 @@ impl MindMapDocument {
     /// `preset=heavy top=…` request resulted in a `custom` border,
     /// not a `heavy` one with a side override.
     pub fn set_node_border_config(&mut self, node_id: &str, edits: BorderConfigEdits) -> BorderEditOutcome {
-        // Any committing border edit clears an active preview —
-        // otherwise a previewed config would render on top of the
-        // just-committed value until the user manually cancelled.
-        // See the plan's "Esc + console interaction" section.
-        self.cancel_border_preview();
+        // Scope-gated implicit cancel: a committing per-node edit
+        // only clears previews whose visual scope it overlaps —
+        // `Nodes(_)` previews target the same surface, and
+        // `CanvasDefault` previews would render the canvas-default
+        // through every framed node (this commit included). Other
+        // preview kinds (per-section, canvas section-frame) live
+        // in orthogonal visual surfaces and survive the per-node
+        // commit. Pre-fix this cleared every preview unconditionally.
+        if matches!(
+            self.border_preview.as_ref().map(|p| &p.target),
+            Some(BorderPreviewTarget::Nodes(_)) | Some(BorderPreviewTarget::CanvasDefault)
+        ) {
+            self.cancel_border_preview();
+        }
         let canvas_default = self.mindmap.canvas.default_border.clone();
         let node = match self.mindmap.nodes.get_mut(node_id) {
             Some(n) => n,
@@ -285,9 +294,20 @@ impl MindMapDocument {
         section_idx: usize,
         edits: BorderConfigEdits,
     ) -> BorderEditOutcome {
-        // Implicit-cancel of any active preview — same rule the
-        // node-level setter applies. See `set_node_border_config`.
-        self.cancel_border_preview();
+        // Scope-gated implicit cancel — only clear previews whose
+        // visual scope this commit overlaps: `Sections(_)` (same
+        // per-section surface) and the two `CanvasSectionFrame*`
+        // variants (which render through every section frame on
+        // the active node). See `set_node_border_config` for the
+        // rationale.
+        if matches!(
+            self.border_preview.as_ref().map(|p| &p.target),
+            Some(BorderPreviewTarget::Sections(_))
+                | Some(BorderPreviewTarget::CanvasSectionFrame)
+                | Some(BorderPreviewTarget::CanvasSectionFrameFocused)
+        ) {
+            self.cancel_border_preview();
+        }
         // Validate node + section exist before we touch anything.
         let node = match self.mindmap.nodes.get(node_id) {
             Some(n) => n,
@@ -354,9 +374,18 @@ impl MindMapDocument {
     /// field in one step. Same posture as the
     /// `theme switch` verb.
     pub fn set_canvas_default_border_config(&mut self, edits: BorderConfigEdits) -> BorderEditOutcome {
-        // Implicit-cancel of any active preview — see
-        // `set_node_border_config` for the rationale.
-        self.cancel_border_preview();
+        // Scope-gated implicit cancel — `CanvasDefault` previews
+        // share the canvas-border slot directly; `Nodes(_)`
+        // previews render against per-node-resolved styles which
+        // include the canvas default in their cascade base.
+        // Per-section / canvas-section-frame previews live in a
+        // different visual surface and survive.
+        if matches!(
+            self.border_preview.as_ref().map(|p| &p.target),
+            Some(BorderPreviewTarget::CanvasDefault) | Some(BorderPreviewTarget::Nodes(_))
+        ) {
+            self.cancel_border_preview();
+        }
         let preset_before = self
             .mindmap
             .canvas
@@ -411,9 +440,20 @@ impl MindMapDocument {
         focused: bool,
         edits: BorderConfigEdits,
     ) -> BorderEditOutcome {
-        // Implicit-cancel of any active preview — see
-        // `set_node_border_config` for the rationale.
-        self.cancel_border_preview();
+        // Scope-gated implicit cancel — clear previews whose
+        // visual scope this commit overlaps:
+        // `CanvasSectionFrame[Focused]` (same canvas slot) and
+        // `Sections(_)` (each section frame composes the canvas
+        // default into its cascade). Per-node / canvas-border
+        // previews live in an orthogonal surface and survive.
+        if matches!(
+            self.border_preview.as_ref().map(|p| &p.target),
+            Some(BorderPreviewTarget::CanvasSectionFrame)
+                | Some(BorderPreviewTarget::CanvasSectionFrameFocused)
+                | Some(BorderPreviewTarget::Sections(_))
+        ) {
+            self.cancel_border_preview();
+        }
         let canvas_snapshot = self.mindmap.canvas.clone();
         let mut outcome = BorderEditOutcome::default();
 
@@ -583,26 +623,33 @@ impl MindMapDocument {
         self.border_preview.take().is_some()
     }
 
-    /// `true` iff the active preview's `selection_snapshot` is
-    /// still covered by the live selection. With no preview
-    /// active, returns `true` (nothing to drift). Canvas-level
-    /// previews never drift (they're not selection-bound).
-    /// Node / section previews drift when the live selection no
-    /// longer matches the snapshot — the cheapest correct check
-    /// is structural equality, since `SelectionState` derives
-    /// `PartialEq` and a state-preserving click produces an equal
-    /// `SelectionState`. Used by `assemble_scene_overrides` to
-    /// decide whether to render the preview this frame
-    /// (defer-clear posture: an orphan-by-drift preview just
+    /// `true` iff the active preview's targets are still covered
+    /// by the live selection. With no preview active, returns
+    /// `true` (nothing to drift). Canvas-level previews never
+    /// drift (they're not selection-bound).
+    ///
+    /// **Subset semantics, not equality.** `Multi(["A","B"]) →
+    /// Single("A")` keeps `Nodes(["A"])` previews valid (A is
+    /// still selected). `Section(A/0) → MultiSection([A/0,
+    /// A/1])` keeps `Sections([(A,0)])` previews valid. Pre-fix
+    /// this used `selection_snapshot == self.selection` which
+    /// rejected state-preserving subtarget moves and produced
+    /// false-positive "preview vanishes for no reason" UX bugs.
+    /// Defer-clear posture: an orphan-by-drift preview just
     /// stops applying; the slot itself is cleared at the next
-    /// `set_*` / `cancel_*` / `commit_*` call).
+    /// `set_*` / `cancel_*` / `commit_*` call.
     pub(crate) fn border_preview_covers_live_selection(&self) -> bool {
         let Some(preview) = self.border_preview.as_ref() else {
             return true;
         };
         match &preview.target {
-            BorderPreviewTarget::Nodes(_) | BorderPreviewTarget::Sections(_) => {
-                preview.selection_snapshot == self.selection
+            BorderPreviewTarget::Nodes(target_ids) => {
+                let live = live_selection_node_ids(&self.selection);
+                target_ids.iter().all(|id| live.iter().any(|l| l == id))
+            }
+            BorderPreviewTarget::Sections(target_pairs) => {
+                let live = live_selection_section_pairs(&self.selection);
+                target_pairs.iter().all(|t| live.iter().any(|l| l == t))
             }
             // Canvas-level previews aren't selection-bound — they
             // affect map-wide defaults regardless of who's selected.
@@ -640,28 +687,57 @@ impl MindMapDocument {
             return None;
         }
         let preview = self.border_preview.take()?;
+        // Force-show coupling: when the preview's edits implied
+        // visibility (any per-field edit, on a node whose
+        // committed `show_frame == false`), the *preview* showed
+        // the frame via the scene-side `force_show_frame` flag.
+        // Without coupling that into commit, the user sees the
+        // preview, hits commit, the frame disappears (the model's
+        // `show_frame` stays false). For `Nodes(_)` targets we
+        // therefore inject `visible = Set(true)` into the
+        // commit-time edits whenever the preview's edits touch
+        // any field — same predicate the scene-side preview used
+        // to set `force_show_frame`. Per-section / canvas previews
+        // don't carry a visibility axis (sections render in
+        // NodeEdit unconditionally; canvas defaults don't have a
+        // `show_frame` flag), so the coupling is `Nodes`-only.
+        let mut commit_edits = preview.edits.clone();
+        if matches!(preview.target, BorderPreviewTarget::Nodes(_)) && commit_edits.visible.is_none()
+        {
+            let touches_any_field = !matches!(commit_edits.preset, OptionEdit::Keep)
+                || !matches!(commit_edits.font, OptionEdit::Keep)
+                || !matches!(commit_edits.font_size_pt, OptionEdit::Keep)
+                || !matches!(commit_edits.color, OptionEdit::Keep)
+                || !matches!(commit_edits.padding, OptionEdit::Keep)
+                || !matches!(commit_edits.color_palette, OptionEdit::Keep)
+                || !matches!(commit_edits.color_palette_field, OptionEdit::Keep)
+                || edits_touch_glyphs(&commit_edits);
+            if touches_any_field || commit_edits.clear {
+                commit_edits.visible = Some(true);
+            }
+        }
         let mut merged = BorderEditOutcome::default();
         match preview.target {
             BorderPreviewTarget::Nodes(ids) => {
                 for id in &ids {
-                    let outcome = self.set_node_border_config(id, preview.edits.clone());
+                    let outcome = self.set_node_border_config(id, commit_edits.clone());
                     merge_outcome(&mut merged, outcome);
                 }
             }
             BorderPreviewTarget::Sections(pairs) => {
                 for (id, idx) in &pairs {
-                    let outcome = self.set_section_frame_border_config(id, *idx, preview.edits.clone());
+                    let outcome = self.set_section_frame_border_config(id, *idx, commit_edits.clone());
                     merge_outcome(&mut merged, outcome);
                 }
             }
             BorderPreviewTarget::CanvasDefault => {
-                merged = self.set_canvas_default_border_config(preview.edits);
+                merged = self.set_canvas_default_border_config(commit_edits);
             }
             BorderPreviewTarget::CanvasSectionFrame => {
-                merged = self.set_canvas_default_section_frame_border_config(false, preview.edits);
+                merged = self.set_canvas_default_section_frame_border_config(false, commit_edits);
             }
             BorderPreviewTarget::CanvasSectionFrameFocused => {
-                merged = self.set_canvas_default_section_frame_border_config(true, preview.edits);
+                merged = self.set_canvas_default_section_frame_border_config(true, commit_edits);
             }
         }
         Some(merged)
@@ -864,6 +940,45 @@ fn default_custom_glyphs() -> CustomBorderGlyphs {
         top_right: "\u{2510}".to_string(),
         bottom_left: "\u{2514}".to_string(),
         bottom_right: "\u{2518}".to_string(),
+    }
+}
+
+/// Resolve the live selection's set of node ids — the same shape
+/// `border_preview_covers_live_selection` uses to compare against
+/// a `Nodes(ids)` snapshot. `Section` / `SectionRange` /
+/// `MultiSection` collapse to their owning node ids; non-node
+/// selections (edges / portal labels / etc.) yield an empty list,
+/// causing any node-targeted preview to read as drifted.
+fn live_selection_node_ids(sel: &super::super::SelectionState) -> Vec<String> {
+    use super::super::SelectionState;
+    match sel {
+        SelectionState::Single(id) => vec![id.clone()],
+        SelectionState::Multi(ids) => ids.clone(),
+        SelectionState::Section(s) => vec![s.node_id.clone()],
+        SelectionState::SectionRange { sel: s, .. } => vec![s.node_id.clone()],
+        SelectionState::MultiSection(_) => sel.dedup_owning_node_ids(),
+        _ => Vec::new(),
+    }
+}
+
+/// Resolve the live selection's set of `(node_id, section_idx)`
+/// pairs — the same shape
+/// `border_preview_covers_live_selection` uses against a
+/// `Sections(...)` snapshot. `SectionRange` expands; `MultiSection`
+/// fans out; non-section selections yield an empty list.
+fn live_selection_section_pairs(sel: &super::super::SelectionState) -> Vec<(String, usize)> {
+    use super::super::SelectionState;
+    match sel {
+        SelectionState::Section(s) => vec![(s.node_id.clone(), s.section_idx)],
+        SelectionState::SectionRange { sel, range } => {
+            let (lo, hi) = (range.0.min(range.1), range.0.max(range.1));
+            (lo..=hi).map(|i| (sel.node_id.clone(), i)).collect()
+        }
+        SelectionState::MultiSection(sels) => sels
+            .iter()
+            .map(|s| (s.node_id.clone(), s.section_idx))
+            .collect(),
+        _ => Vec::new(),
     }
 }
 

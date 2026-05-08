@@ -14,6 +14,7 @@ use baumhard::util::grapheme_chad::count_grapheme_clusters;
 fn test_set_node_text_updates_text_and_collapses_runs() {
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(nid.clone());
     let changed = doc.set_node_text(&nid, "Hello world".to_string());
     assert!(changed);
     let node = doc.mindmap.nodes.get(&nid).unwrap();
@@ -41,6 +42,7 @@ fn test_set_section_text_targets_specific_section() {
     use baumhard::mindmap::model::MindSection;
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(nid.clone());
     // Materialise a multi-section node by appending a second
     // section to the existing testament root.
     {
@@ -74,6 +76,7 @@ fn test_set_section_text_targets_specific_section() {
 fn test_set_section_text_grapheme_handling_for_emoji_and_combining() {
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(nid.clone());
     let zwj = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
     let combining = "e\u{0301}";
     let flag = "\u{1F1EF}\u{1F1F5}";
@@ -984,6 +987,7 @@ fn test_auto_fit_some_sized_section_grows_parent_when_text_overflows() {
     use super::grow_one_node_to_fit_text;
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(nid.clone());
     {
         let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
         node.sections.clear();
@@ -1018,6 +1022,7 @@ fn test_auto_fit_some_sized_section_keeps_user_size_when_text_fits() {
     use super::grow_one_node_to_fit_text;
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(nid.clone());
     {
         let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
         node.sections.clear();
@@ -1056,6 +1061,7 @@ fn test_auto_fit_some_sized_section_text_dominates_when_larger() {
     use super::grow_one_node_to_fit_text;
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(nid.clone());
     {
         let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
         node.sections.clear();
@@ -1087,6 +1093,7 @@ fn test_auto_fit_none_sized_section_unchanged_regression() {
     use super::grow_one_node_to_fit_text;
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(nid.clone());
     {
         let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
         node.sections.clear();
@@ -1114,6 +1121,7 @@ fn test_auto_fit_none_sized_section_unchanged_regression() {
 fn test_set_section_text_out_of_range_is_noop() {
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(nid.clone());
     doc.undo_stack.clear();
     doc.dirty = false;
     assert!(!doc.set_section_text(&nid, 99, "nope".to_string()));
@@ -1125,6 +1133,7 @@ fn test_set_section_text_out_of_range_is_noop() {
 fn test_set_node_text_noop_on_unchanged() {
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(nid.clone());
     let current = doc.mindmap.nodes.get(&nid).unwrap().sections[0].text.clone();
     doc.undo_stack.clear();
     doc.dirty = false;
@@ -1138,6 +1147,7 @@ fn test_set_node_text_noop_on_unchanged() {
 fn test_set_node_text_undo_round_trip() {
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(nid.clone());
     let before_text = doc.mindmap.nodes.get(&nid).unwrap().sections[0].text.clone();
     let before_runs_len = doc.mindmap.nodes.get(&nid).unwrap().sections[0].text_runs.len();
     let before_first_run_color = doc.mindmap.nodes.get(&nid).unwrap().sections[0]
@@ -1162,6 +1172,7 @@ fn test_set_node_text_undo_round_trip() {
 fn test_set_node_text_multiline_with_newlines() {
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(nid.clone());
     assert!(doc.set_node_text(&nid, "line 1\nline 2\nline 3".to_string()));
     let node = doc.mindmap.nodes.get(&nid).unwrap();
     assert_eq!(node.sections[0].text, "line 1\nline 2\nline 3");
@@ -1187,6 +1198,7 @@ fn test_set_node_text_unknown_id_returns_false() {
 fn test_set_node_text_inherits_first_run_formatting() {
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(nid.clone());
     // Force a specific first-run formatting we can check for.
     {
         let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
@@ -1223,6 +1235,7 @@ fn test_set_node_text_inherits_first_run_formatting() {
 fn test_set_node_bg_color_round_trips_through_undo() {
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(nid.clone());
     let before = doc
         .mindmap
         .nodes
@@ -1251,6 +1264,7 @@ fn test_set_node_bg_color_round_trips_through_undo() {
 fn test_set_node_bg_color_unchanged_is_noop() {
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(nid.clone());
     let current = doc
         .mindmap
         .nodes
@@ -1270,6 +1284,7 @@ fn test_set_node_bg_color_unchanged_is_noop() {
 fn test_set_node_border_color_writes_frame_color() {
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(nid.clone());
     assert!(doc.set_node_border_color(&nid, "#ff00ff".to_string()));
     assert_eq!(doc.mindmap.nodes.get(&nid).unwrap().style.frame_color, "#ff00ff");
 }
@@ -1286,6 +1301,7 @@ fn test_default_border_config_first_edit_materialises_light_preset() {
     use crate::application::document::{BorderConfigEdits, OptionEdit};
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(nid.clone());
     // Strip any pre-existing per-node border so we exercise the
     // `get_or_insert_with(default_glyph_border_config)` path.
     doc.mindmap.nodes.get_mut(&nid).unwrap().style.border = None;
@@ -1312,6 +1328,7 @@ fn test_default_border_config_first_edit_materialises_light_preset() {
 fn test_set_node_text_color_preserves_per_run_overrides() {
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(nid.clone());
     // Seed the node with a known default and two runs: one
     // matching the default, one hand-colored. Pin
     // `sections[0].text` to a string of known grapheme count so
@@ -1367,6 +1384,7 @@ fn test_set_node_text_color_preserves_per_run_overrides() {
 fn test_set_node_text_color_round_trips_through_undo() {
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(nid.clone());
     {
         let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
         node.style.text_color = "#dddddd".into();
@@ -1396,6 +1414,7 @@ fn test_set_node_text_color_round_trips_through_undo() {
 fn test_set_node_font_size_writes_all_runs_and_round_trips() {
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(nid.clone());
     let before_sizes: Vec<u32> = doc.mindmap.nodes.get(&nid).unwrap().sections[0]
         .text_runs
         .iter()
@@ -1417,6 +1436,7 @@ fn test_set_node_font_size_writes_all_runs_and_round_trips() {
 fn test_set_node_font_size_clamps_below_one() {
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(nid.clone());
     assert!(doc.set_node_font_size(&nid, 0.5));
     let node = doc.mindmap.nodes.get(&nid).unwrap();
     assert!(node.sections[0].text_runs.iter().all(|r| r.size_pt == 1));
@@ -1441,6 +1461,7 @@ fn test_set_node_font_family_writes_all_runs_and_round_trips() {
     baumhard::font::fonts::init();
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(nid.clone());
     let before_fonts: Vec<String> = doc.mindmap.nodes.get(&nid).unwrap().sections[0]
         .text_runs
         .iter()
@@ -1480,6 +1501,7 @@ fn test_set_node_font_family_grows_node_to_fit_new_face() {
     baumhard::font::fonts::init();
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(nid.clone());
 
     // Shrink the node *below* its measured floor so the per-edit
     // re-fit has something concrete to grow back. Note: the
@@ -1518,6 +1540,7 @@ fn test_set_node_font_size_grows_node_to_fit_new_size() {
     baumhard::font::fonts::init();
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(nid.clone());
     let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
     node.size.width = 1.0;
     node.size.height = 1.0;
@@ -1601,6 +1624,7 @@ fn test_set_node_font_family_wide_face_grows_more_than_narrow() {
     let measure_floor = |fam: &str| -> f64 {
         let mut doc = load_test_doc();
         let nid = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(nid.clone());
         let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
         node.size.width = 1.0;
         node.size.height = 1.0;
@@ -1629,6 +1653,7 @@ fn test_set_node_text_grows_node_to_fit_longer_text() {
     baumhard::font::fonts::init();
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(nid.clone());
     let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
     node.size.width = 1.0;
     node.size.height = 1.0;
@@ -1647,6 +1672,7 @@ fn test_set_node_text_grows_node_to_fit_longer_text() {
 fn test_set_node_font_family_none_clears_every_run() {
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(nid.clone());
     // Pin the runs to a known family first so the clear has
     // something to clear.
     baumhard::font::fonts::init();
@@ -1995,6 +2021,7 @@ fn test_border_preview_does_not_push_undo_or_dirty() {
     };
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(nid.clone());
     let undo_depth = doc.undo_stack.len();
     let before_node = doc.mindmap.nodes.get(&nid).cloned().unwrap();
     doc.dirty = false;
@@ -2023,6 +2050,7 @@ fn test_border_preview_cleared_returns_to_committed() {
     };
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(nid.clone());
     let before_node = doc.mindmap.nodes.get(&nid).cloned().unwrap();
     doc.dirty = false;
     let undo_depth = doc.undo_stack.len();
@@ -2053,6 +2081,7 @@ fn test_border_preview_commit_pushes_undo_and_dirty() {
     };
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(nid.clone());
     let undo_depth = doc.undo_stack.len();
     doc.dirty = false;
 
@@ -2085,6 +2114,7 @@ fn test_border_preview_commit_clears_preview_slot() {
     };
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(nid.clone());
     let mut edits = BorderConfigEdits::default();
     edits.preset = OptionEdit::Set("heavy".into());
     let _ = doc.set_border_preview(BorderPreviewTarget::Nodes(vec![nid]), edits);
@@ -2105,6 +2135,7 @@ fn test_border_preview_replaces_prior_preview() {
     };
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(nid.clone());
 
     let mut first_edits = BorderConfigEdits::default();
     first_edits.preset = OptionEdit::Set("heavy".into());
@@ -2141,6 +2172,7 @@ fn test_border_preview_cancel_returns_true_when_active_and_false_when_inactive()
     };
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(nid.clone());
 
     assert!(
         !doc.cancel_border_preview(),
@@ -2171,6 +2203,7 @@ fn test_border_preview_auto_promotes_preset_to_custom_in_outcome() {
     };
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(nid.clone());
     // Ensure the pre-preview slot is non-custom so the helper
     // sees a real promotion.
     doc.mindmap.nodes.get_mut(&nid).unwrap().style.border = None;
@@ -2249,6 +2282,7 @@ fn test_committing_set_node_border_config_clears_active_preview() {
     };
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(nid.clone());
 
     // Stage a preview.
     let mut preview_edits = BorderConfigEdits::default();
@@ -2276,6 +2310,197 @@ fn test_committing_set_node_border_config_clears_active_preview() {
     );
 }
 
+/// **Parity contract:** `apply_view_to_slot` (baumhard, scene-side)
+/// and `apply_glyph_border_edits_to_slot` (application, commit-side)
+/// must produce byte-identical post-states for any committing edit.
+/// Pre-fix `BorderConfigEditsView` collapsed both `Keep` and
+/// `Clear` to "no edit" — preview rendered the field unchanged
+/// while commit dropped it (Risk #1 in the plan). This test
+/// runs every per-field axis (Set + Clear) through both helpers
+/// and asserts the resulting `Option<GlyphBorderConfig>` matches
+/// shape-for-shape.
+///
+/// Crosses the crate boundary deliberately — the parity contract
+/// IS that the two helpers in two crates produce the same output;
+/// a single-crate test wouldn't cover the projection step that
+/// turns `BorderConfigEdits` into `BorderConfigEditsView`.
+#[test]
+fn test_border_preview_view_apply_matches_committing_apply_byte_for_byte() {
+    use crate::application::document::{
+        BorderConfigEdits, BorderEditOutcome, BorderSide, OptionEdit,
+    };
+    // The application-side slot helper lives in
+    // `document/nodes/border.rs` as `pub(crate)`. The module is
+    // private; re-export through `document/mod.rs` would be
+    // wider than needed. Reach via the full path for the parity
+    // test only.
+    use crate::application::document::nodes_border_apply_glyph_border_edits_to_slot_for_test as apply_glyph_border_edits_to_slot;
+    use baumhard::mindmap::border::{apply_view_to_slot, PaletteField};
+    use baumhard::mindmap::model::GlyphBorderConfig;
+
+    // Build a concrete starting slot the apply paths can mutate.
+    let starting_slot = || -> Option<GlyphBorderConfig> {
+        Some(GlyphBorderConfig {
+            preset: "rounded".to_string(),
+            font: Some("LiberationSans".to_string()),
+            font_size_pt: 14.0,
+            color: Some("#abcdef".to_string()),
+            glyphs: None,
+            padding: 4.0,
+            color_palette: Some("rainbow".to_string()),
+            color_palette_field: Some("frame".to_string()),
+        })
+    };
+
+    // Each scenario: a `BorderConfigEdits` and a description.
+    let scenarios: Vec<(&'static str, BorderConfigEdits)> = vec![
+        ("Set preset to heavy", {
+            let mut e = BorderConfigEdits::default();
+            e.preset = OptionEdit::Set("heavy".into());
+            e
+        }),
+        ("Clear font (Risk #1 case)", {
+            let mut e = BorderConfigEdits::default();
+            e.font = OptionEdit::Clear;
+            e
+        }),
+        ("Clear color (Risk #1 case)", {
+            let mut e = BorderConfigEdits::default();
+            e.color = OptionEdit::Clear;
+            e
+        }),
+        ("Clear color_palette (Risk #1 case)", {
+            let mut e = BorderConfigEdits::default();
+            e.color_palette = OptionEdit::Clear;
+            e
+        }),
+        ("Clear color_palette_field (Risk #1 case)", {
+            let mut e = BorderConfigEdits::default();
+            e.color_palette_field = OptionEdit::Clear;
+            e
+        }),
+        ("Set side top to a pattern (auto-promote to custom)", {
+            let mut e = BorderConfigEdits::default();
+            e.with_side_pattern(BorderSide::Top, "###(*)###").expect("parses");
+            e
+        }),
+        ("Set padding", {
+            let mut e = BorderConfigEdits::default();
+            e.padding = OptionEdit::Set(8.0);
+            e
+        }),
+        ("Combine preset=heavy + color=Clear", {
+            let mut e = BorderConfigEdits::default();
+            e.preset = OptionEdit::Set("heavy".into());
+            e.color = OptionEdit::Clear;
+            e
+        }),
+        ("Set palette + field", {
+            let mut e = BorderConfigEdits::default();
+            e.color_palette = OptionEdit::Set("summer".into());
+            e.color_palette_field = OptionEdit::Set(PaletteField::Background);
+            e
+        }),
+    ];
+
+    for (label, edits) in scenarios {
+        // Commit-side: in-place application via the document's helper.
+        let mut commit_slot = starting_slot();
+        let mut outcome = BorderEditOutcome::default();
+        apply_glyph_border_edits_to_slot(&mut commit_slot, &edits, &mut outcome);
+
+        // Preview-side: same edits projected to a borrowed view,
+        // then applied via the scene-side helper.
+        let view = crate::application::document::build_border_config_edits_view_for_test(&edits);
+        let mut preview_slot = starting_slot();
+        apply_view_to_slot(&mut preview_slot, &view);
+
+        // Compare structurally — both `Option<GlyphBorderConfig>`
+        // values should be identical post-apply.
+        assert_eq!(
+            commit_slot.is_some(),
+            preview_slot.is_some(),
+            "[{}] Option shape must match",
+            label
+        );
+        if let (Some(c), Some(p)) = (commit_slot.as_ref(), preview_slot.as_ref()) {
+            assert_eq!(c.preset, p.preset, "[{}] preset", label);
+            assert_eq!(c.font, p.font, "[{}] font", label);
+            assert_eq!(c.font_size_pt.to_bits(), p.font_size_pt.to_bits(), "[{}] font_size_pt", label);
+            assert_eq!(c.color, p.color, "[{}] color", label);
+            assert_eq!(c.padding.to_bits(), p.padding.to_bits(), "[{}] padding", label);
+            assert_eq!(c.color_palette, p.color_palette, "[{}] color_palette", label);
+            assert_eq!(c.color_palette_field, p.color_palette_field, "[{}] color_palette_field", label);
+            assert_eq!(c.glyphs.is_some(), p.glyphs.is_some(), "[{}] glyphs Option shape", label);
+            if let (Some(cg), Some(pg)) = (c.glyphs.as_ref(), p.glyphs.as_ref()) {
+                assert_eq!(cg.top, pg.top, "[{}] glyphs.top", label);
+                assert_eq!(cg.bottom, pg.bottom, "[{}] glyphs.bottom", label);
+                assert_eq!(cg.left, pg.left, "[{}] glyphs.left", label);
+                assert_eq!(cg.right, pg.right, "[{}] glyphs.right", label);
+                assert_eq!(cg.top_left, pg.top_left, "[{}] glyphs.top_left", label);
+                assert_eq!(cg.top_right, pg.top_right, "[{}] glyphs.top_right", label);
+                assert_eq!(cg.bottom_left, pg.bottom_left, "[{}] glyphs.bottom_left", label);
+                assert_eq!(cg.bottom_right, pg.bottom_right, "[{}] glyphs.bottom_right", label);
+            }
+        }
+    }
+}
+
+/// **C8 regression** — the preview's `force_show_frame` flag
+/// renders a frame on a node with committed `show_frame == false`,
+/// but a naive commit would leave `show_frame == false` and the
+/// frame would visibly disappear after commit. Commit now
+/// auto-flips `style.show_frame = true` when the preview's edits
+/// imply visibility (any field touched), so the user gets what
+/// they previewed.
+#[test]
+fn test_border_preview_commit_force_shows_frame_on_hidden_node() {
+    use crate::application::document::{BorderConfigEdits, BorderPreviewTarget, OptionEdit};
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    // Force the node into a hidden-frame state.
+    doc.mindmap.nodes.get_mut(&nid).unwrap().style.show_frame = false;
+    doc.selection = SelectionState::Single(nid.clone());
+
+    let mut edits = BorderConfigEdits::default();
+    edits.preset = OptionEdit::Set("heavy".into());
+    let _ = doc.set_border_preview(BorderPreviewTarget::Nodes(vec![nid.clone()]), edits);
+    let _ = doc.commit_border_preview().expect("preview was active");
+
+    assert!(
+        doc.mindmap.nodes.get(&nid).unwrap().style.show_frame,
+        "commit must auto-flip `show_frame = true` when the preview's force-show fired \
+         (otherwise the user sees the preview render then commit hides it)"
+    );
+    assert_eq!(
+        doc.mindmap.nodes.get(&nid).unwrap().style.border.as_ref().unwrap().preset,
+        "heavy",
+        "the preset still committed"
+    );
+}
+
+/// Inverse of the C8 fix — explicit `visible=Some(false)` in the
+/// preview edits survives the auto-flip rule.
+#[test]
+fn test_border_preview_commit_explicit_visibility_overrides_auto_flip() {
+    use crate::application::document::{BorderConfigEdits, BorderPreviewTarget, OptionEdit};
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    doc.mindmap.nodes.get_mut(&nid).unwrap().style.show_frame = false;
+    doc.selection = SelectionState::Single(nid.clone());
+
+    let mut edits = BorderConfigEdits::default();
+    edits.preset = OptionEdit::Set("heavy".into());
+    edits.visible = Some(false);
+    let _ = doc.set_border_preview(BorderPreviewTarget::Nodes(vec![nid.clone()]), edits);
+    let _ = doc.commit_border_preview();
+
+    assert!(
+        !doc.mindmap.nodes.get(&nid).unwrap().style.show_frame,
+        "explicit `visible=Some(false)` must survive the auto-flip"
+    );
+}
+
 /// Undo after commit restores the pre-preview model state. The
 /// preview itself never pushed undo — the undo entry was pushed
 /// by the underlying setter at commit time.
@@ -2286,6 +2511,7 @@ fn test_border_preview_undo_after_commit_restores_pre_preview() {
     };
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(nid.clone());
     // Ensure a known starting point.
     doc.mindmap.nodes.get_mut(&nid).unwrap().style.border = None;
     doc.undo_stack.clear();

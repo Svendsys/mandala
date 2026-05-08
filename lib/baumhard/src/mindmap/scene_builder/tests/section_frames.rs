@@ -404,12 +404,12 @@ fn test_section_frames_no_palette_yields_empty_cycle() {
 #[test]
 fn test_border_preview_section_target_renders_through_scene_builder() {
     use crate::mindmap::scene_builder::{
-        BorderConfigEditsView, BorderPreview, BorderPreviewTargetRef,
+        BorderConfigEditsView, BorderPreview, BorderPreviewTargetRef, EditView,
     };
     let map = synthetic_map(vec![three_section_node()], vec![]);
     let target_pairs = [(String::from("active"), 1usize)];
     let edits = BorderConfigEditsView {
-        preset: Some("heavy"),
+        preset: EditView::Set("heavy"),
         ..Default::default()
     };
     let preview = BorderPreview {
@@ -450,7 +450,7 @@ fn test_border_preview_section_target_renders_through_scene_builder() {
 fn test_border_preview_canvas_section_frame_unfocused_branch() {
     use crate::mindmap::model::GlyphBorderConfig;
     use crate::mindmap::scene_builder::{
-        BorderConfigEditsView, BorderPreview, BorderPreviewTargetRef,
+        BorderConfigEditsView, BorderPreview, BorderPreviewTargetRef, EditView,
     };
     let mut map = synthetic_map(vec![three_section_node()], vec![]);
     // Pin the focused canvas default so focused sections don't
@@ -467,7 +467,7 @@ fn test_border_preview_canvas_section_frame_unfocused_branch() {
         color_palette_field: None,
     });
     let edits = BorderConfigEditsView {
-        preset: Some("double"),
+        preset: EditView::Set("double"),
         ..Default::default()
     };
     let preview = BorderPreview {
@@ -502,11 +502,11 @@ fn test_border_preview_canvas_section_frame_unfocused_branch() {
 #[test]
 fn test_border_preview_canvas_section_frame_focused_branch() {
     use crate::mindmap::scene_builder::{
-        BorderConfigEditsView, BorderPreview, BorderPreviewTargetRef,
+        BorderConfigEditsView, BorderPreview, BorderPreviewTargetRef, EditView,
     };
     let map = synthetic_map(vec![three_section_node()], vec![]);
     let edits = BorderConfigEditsView {
-        preset: Some("double"),
+        preset: EditView::Set("double"),
         ..Default::default()
     };
     let preview = BorderPreview {
@@ -535,22 +535,41 @@ fn test_border_preview_canvas_section_frame_focused_branch() {
     );
 }
 
-/// `border_preview = None` produces byte-identical output to a
-/// build with no preview thread. Parity is the minimum bar; a
-/// regression here means the preview branch leaks state when no
-/// preview is active.
+/// Active preview that doesn't target this node-id / section
+/// produces output byte-identical to `border_preview = None`.
+/// Parity is the minimum bar — without it, the preview branch
+/// would leak state into untargeted sections. The previous
+/// version of this test compared the same `None` input twice
+/// (`with_none` and `baseline` were identical inputs), proving
+/// nothing; this one compares an active preview that misses
+/// every target section against a `None` baseline.
 #[test]
-fn test_border_preview_none_matches_baseline() {
+fn test_border_preview_inactive_target_matches_baseline() {
+    use crate::mindmap::scene_builder::{
+        BorderConfigEditsView, BorderPreview, BorderPreviewTargetRef, EditView,
+    };
     let map = synthetic_map(vec![three_section_node()], vec![]);
-    let with_none = build_section_frames(
+    // Preview targets a section nobody is rendering: the
+    // node-id matches but the section index is out of range
+    // for a three-section node, so the per-section "is this
+    // target?" check fires false on every iteration.
+    let target_pairs = [(String::from("active"), 999usize)];
+    let edits = BorderConfigEditsView {
+        preset: EditView::Set("heavy"),
+        ..Default::default()
+    };
+    let preview = BorderPreview {
+        target: BorderPreviewTargetRef::Sections(&target_pairs),
+        edits,
+        force_show_frame: false,
+    };
+    let with_preview = build_section_frames(
         &map,
         &HashMap::new(),
         Some("active"),
         Some(("active", 1)),
-        None,
+        Some(preview),
     );
-    // Same call, no preview param at all (matches the pre-preview
-    // baseline since this is the same function with `None`).
     let baseline = build_section_frames(
         &map,
         &HashMap::new(),
@@ -558,10 +577,20 @@ fn test_border_preview_none_matches_baseline() {
         Some(("active", 1)),
         None,
     );
-    assert_eq!(with_none.len(), baseline.len());
-    for (a, b) in with_none.iter().zip(baseline.iter()) {
-        assert_eq!(a.border_style.color, b.border_style.color);
-        assert_eq!(a.border_style.corners.top_left, b.border_style.corners.top_left);
+    assert_eq!(with_preview.len(), baseline.len());
+    for (a, b) in with_preview.iter().zip(baseline.iter()) {
+        assert_eq!(
+            a.border_style.color, b.border_style.color,
+            "non-targeted section's color must match baseline"
+        );
+        assert_eq!(
+            a.border_style.corners.top_left, b.border_style.corners.top_left,
+            "non-targeted section's corner must match baseline"
+        );
+        assert_eq!(
+            a.border_style.font_size_pt, b.border_style.font_size_pt,
+            "non-targeted section's size must match baseline"
+        );
         assert_eq!(a.focused, b.focused);
     }
 }

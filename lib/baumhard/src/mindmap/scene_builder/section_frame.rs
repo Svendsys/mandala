@@ -144,23 +144,33 @@ pub fn build_section_frames(
             super::BorderPreviewTargetRef::CanvasSectionFrameFocused => Some(p.edits),
             _ => None,
         });
-    // Pre-clone the two canvas defaults once per call, applying
-    // any canvas-targeted preview to the clones. Per-section
-    // cascade reads from these instead of `map.canvas.*` directly.
-    let canvas_unfocused_default: Option<crate::mindmap::model::GlyphBorderConfig> = {
-        let mut slot = map.canvas.default_section_frame_border.clone();
-        if let Some(view) = preview_canvas_unfocused {
+    // Pre-clone the canvas defaults ONLY when a canvas-targeted
+    // preview is active — steady-state keeps the clone-free
+    // borrow into `map.canvas`. §B7: pre-fix this allocated two
+    // `Option<GlyphBorderConfig>` per call regardless of preview
+    // state.
+    let canvas_unfocused_owned: Option<Option<crate::mindmap::model::GlyphBorderConfig>> =
+        preview_canvas_unfocused.map(|view| {
+            let mut slot = map.canvas.default_section_frame_border.clone();
             crate::mindmap::border::apply_view_to_slot(&mut slot, &view);
-        }
-        slot
-    };
-    let canvas_focused_default: Option<crate::mindmap::model::GlyphBorderConfig> = {
-        let mut slot = map.canvas.default_focused_section_frame_border.clone();
-        if let Some(view) = preview_canvas_focused {
+            slot
+        });
+    let canvas_focused_owned: Option<Option<crate::mindmap::model::GlyphBorderConfig>> =
+        preview_canvas_focused.map(|view| {
+            let mut slot = map.canvas.default_focused_section_frame_border.clone();
             crate::mindmap::border::apply_view_to_slot(&mut slot, &view);
-        }
-        slot
-    };
+            slot
+        });
+    let canvas_unfocused_default: Option<&crate::mindmap::model::GlyphBorderConfig> =
+        match &canvas_unfocused_owned {
+            Some(opt) => opt.as_ref(),
+            None => map.canvas.default_section_frame_border.as_ref(),
+        };
+    let canvas_focused_default: Option<&crate::mindmap::model::GlyphBorderConfig> =
+        match &canvas_focused_owned {
+            Some(opt) => opt.as_ref(),
+            None => map.canvas.default_focused_section_frame_border.as_ref(),
+        };
 
     let mut out: Vec<SectionFrameElement> = Vec::with_capacity(node.sections.len());
     for (section_idx, section) in node.sections.iter().enumerate() {
@@ -176,20 +186,29 @@ pub fn build_section_frames(
         let focused = focused_idx == Some(section_idx);
 
         // Apply per-section preview to the section's `frame_border`
-        // slot if this section is a `Sections((id, idx))` target.
+        // slot ONLY if this section is a `Sections((id, idx))`
+        // target. Steady-state keeps the clone-free borrow into
+        // `section.frame_border` — §B7: no allocations on the
+        // common path.
         let section_targeted = preview_section_targets
             .map(|ts| ts.iter().any(|(id, idx)| id == active_id && *idx == section_idx))
             .unwrap_or(false);
-        let section_slot: Option<crate::mindmap::model::GlyphBorderConfig> = if section_targeted {
-            let view = border_preview
-                .map(|p| p.edits)
-                .expect("section_targeted implies preview is Some");
-            let mut slot = section.frame_border.clone();
-            crate::mindmap::border::apply_view_to_slot(&mut slot, &view);
-            slot
-        } else {
-            section.frame_border.clone()
-        };
+        let section_owned_for_preview: Option<Option<crate::mindmap::model::GlyphBorderConfig>> =
+            if section_targeted {
+                let view = border_preview
+                    .map(|p| p.edits)
+                    .expect("section_targeted implies preview is Some");
+                let mut slot = section.frame_border.clone();
+                crate::mindmap::border::apply_view_to_slot(&mut slot, &view);
+                Some(slot)
+            } else {
+                None
+            };
+        let section_slot_ref: Option<&crate::mindmap::model::GlyphBorderConfig> =
+            match &section_owned_for_preview {
+                Some(opt) => opt.as_ref(),
+                None => section.frame_border.as_ref(),
+            };
 
         // Resolve through the same cascade
         // `resolve_section_frame_border` would, but using the
@@ -197,9 +216,9 @@ pub fn build_section_frames(
         // both layers are `None`) reuses the standard config the
         // resolver would have produced.
         let border_style = resolve_section_frame_border_with_overrides(
-            section_slot.as_ref(),
-            canvas_unfocused_default.as_ref(),
-            canvas_focused_default.as_ref(),
+            section_slot_ref,
+            canvas_unfocused_default,
+            canvas_focused_default,
             focused,
             frame_color_resolved,
         );
@@ -245,5 +264,5 @@ fn resolve_section_frame_border_with_overrides(
     }
     // Floor — same shape `resolve_section_frame_border` synthesises.
     let floor = crate::mindmap::border::section_frame_floor_config(focused);
-    crate::mindmap::border::resolve_border_style(Some(&floor), None, frame_color_fallback)
+    crate::mindmap::border::resolve_border_style(Some(floor), None, frame_color_fallback)
 }
