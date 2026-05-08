@@ -39,6 +39,36 @@ pub enum ColorAxis {
     Border,
 }
 
+/// Which border-slot a [`Action::SetBorderPreview`] targets.
+/// Discriminator for the `<verb> preview <kv>=…` Action surface
+/// — five variants mirror the five committing setters
+/// (`set_node_border_config` /
+/// `set_section_frame_border_config` /
+/// `set_canvas_default_border_config` /
+/// `set_canvas_default_section_frame_border_config(focused=false|true)`).
+///
+/// Same strum-derive shape as [`ColorAxis`]: `Node.into() ==
+/// "node"`, `"node".parse::<BorderPreviewTargetKind>() ==
+/// Ok(Node)`. Replaces the prior `target_kind: String`
+/// stringly-typed discriminator that could accept typos at
+/// runtime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, IntoStaticStr, EnumString)]
+#[serde(rename_all = "kebab-case")]
+#[strum(serialize_all = "kebab-case")]
+pub enum BorderPreviewTargetKind {
+    /// `border preview` — per-node `style.border` for selected nodes.
+    Node,
+    /// `section frame preview` — per-section `frame_border` for
+    /// selected section pairs.
+    Section,
+    /// `canvas border preview` — `Canvas.default_border`.
+    CanvasBorder,
+    /// `canvas section-frame preview` — `Canvas.default_section_frame_border`.
+    CanvasSf,
+    /// `canvas section-frame focused preview` — `Canvas.default_focused_section_frame_border`.
+    CanvasSfFocused,
+}
+
 /// Which font slot a [`Action::SetFont`] targets. Mirrors the
 /// `size|min|max` kv key on the `font` console verb. Family
 /// (`SetFontFamily`) lives on its own Action because the verb
@@ -617,7 +647,7 @@ pub enum Action {
     /// without the model write.
     #[action(context = Document, wasm = Compatible)]
     SetBorderPreview {
-        target_kind: String,
+        target_kind: BorderPreviewTargetKind,
         field: String,
         value: String,
     },

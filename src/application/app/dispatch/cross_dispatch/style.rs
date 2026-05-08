@@ -29,7 +29,7 @@ pub(in crate::application::app) fn apply_set_border_field(
 /// envelope (the scene needs to re-emit with the previewed
 /// edits visible). Unknown `target_kind` is a no-op + warn.
 pub(in crate::application::app) fn apply_set_border_preview(
-    target_kind: &str,
+    target_kind: crate::application::keybinds::BorderPreviewTargetKind,
     field: &str,
     value: &str,
     rc: &mut RebuildContext<'_>,
@@ -37,6 +37,7 @@ pub(in crate::application::app) fn apply_set_border_preview(
     apply_with_rebuild(rc, |doc| {
         use crate::application::console::commands::border::stage_kv;
         use crate::application::document::{BorderConfigEdits, BorderPreviewTarget};
+        use crate::application::keybinds::BorderPreviewTargetKind;
 
         let mut edits = BorderConfigEdits::default();
         if let Err(msg) = stage_kv(&mut edits, field, value) {
@@ -44,13 +45,14 @@ pub(in crate::application::app) fn apply_set_border_preview(
             return false;
         }
 
-        // Resolve target_kind → BorderPreviewTarget. For the
-        // selection-bound variants (`node`, `section`), reuse the
-        // verb-side selection resolvers via the document state.
+        // Resolve `target_kind` → `BorderPreviewTarget`. The
+        // selection-bound variants (`Node`, `Section`) walk the
+        // live selection via the same resolvers the verb path
+        // uses; canvas variants are constants. Typed-enum
+        // dispatch — pre-fix this was a stringly-typed match
+        // with `unknown` arms warning at runtime.
         let target = match target_kind {
-            "node" => {
-                // Mirror `border preview …`'s target resolution —
-                // every selected node id.
+            BorderPreviewTargetKind::Node => {
                 let ids = match crate::application::console::commands::border::nodes_in_selection(
                     &doc.selection,
                     "border preview",
@@ -60,12 +62,7 @@ pub(in crate::application::app) fn apply_set_border_preview(
                 };
                 BorderPreviewTarget::Nodes(ids)
             }
-            "section" => {
-                // Mirror `section frame preview …`'s target — every
-                // selected (node_id, section_idx) pair. Falls back
-                // to empty (no-op) if the selection isn't a section
-                // shape; keybinds firing in non-section context are
-                // a no-op rather than an error.
+            BorderPreviewTargetKind::Section => {
                 let pairs: Vec<(String, usize)> = match &doc.selection {
                     crate::application::document::SelectionState::Section(s) => {
                         vec![(s.node_id.clone(), s.section_idx)]
@@ -82,17 +79,9 @@ pub(in crate::application::app) fn apply_set_border_preview(
                 };
                 BorderPreviewTarget::Sections(pairs)
             }
-            "canvas-border" => BorderPreviewTarget::CanvasDefault,
-            "canvas-sf" => BorderPreviewTarget::CanvasSectionFrame,
-            "canvas-sf-focused" => BorderPreviewTarget::CanvasSectionFrameFocused,
-            other => {
-                log::warn!(
-                    "apply_set_border_preview: unknown target_kind {:?}; expected \
-                     node|section|canvas-border|canvas-sf|canvas-sf-focused",
-                    other
-                );
-                return false;
-            }
+            BorderPreviewTargetKind::CanvasBorder => BorderPreviewTarget::CanvasDefault,
+            BorderPreviewTargetKind::CanvasSf => BorderPreviewTarget::CanvasSectionFrame,
+            BorderPreviewTargetKind::CanvasSfFocused => BorderPreviewTarget::CanvasSectionFrameFocused,
         };
         let _ = doc.set_border_preview(target, edits);
         true

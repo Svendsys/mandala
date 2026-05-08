@@ -585,6 +585,55 @@ fn test_double_click_activate_default_resolves_to_action() {
     );
 }
 
+/// `Action::SetBorderPreview` round-trips through the JSON
+/// config — pre-fix the Action variant existed and was
+/// dispatched but had no `KeybindConfig` field, so users could
+/// not bind a key to preview-set via JSON.
+#[test]
+fn test_set_border_preview_keybind_round_trips_through_json() {
+    use crate::application::keybinds::BorderPreviewTargetKind;
+    let json = r#"{
+        "set_border_preview": [
+            { "combo": "Ctrl+H", "args": ["node", "preset", "heavy"] }
+        ]
+    }"#;
+    let cfg = KeybindConfig::from_json(json).unwrap();
+    assert_eq!(cfg.set_border_preview.len(), 1);
+    let r = cfg.resolve();
+    assert_eq!(
+        r.action_for_context(InputContext::Document, "h", true, false, false),
+        Some(Action::SetBorderPreview {
+            target_kind: BorderPreviewTargetKind::Node,
+            field: "preset".into(),
+            value: "heavy".into(),
+        })
+    );
+}
+
+/// All five `BorderPreviewTargetKind` variants round-trip
+/// through the strum-derived parser.
+#[test]
+fn test_border_preview_target_kind_strum_round_trip() {
+    use crate::application::keybinds::BorderPreviewTargetKind;
+    use std::str::FromStr;
+    for (s, expected) in [
+        ("node", BorderPreviewTargetKind::Node),
+        ("section", BorderPreviewTargetKind::Section),
+        ("canvas-border", BorderPreviewTargetKind::CanvasBorder),
+        ("canvas-sf", BorderPreviewTargetKind::CanvasSf),
+        ("canvas-sf-focused", BorderPreviewTargetKind::CanvasSfFocused),
+    ] {
+        let parsed = BorderPreviewTargetKind::from_str(s).unwrap_or_else(|_| panic!("parses {}", s));
+        assert_eq!(parsed, expected, "round-trip {} → variant", s);
+        let back: &'static str = expected.into();
+        assert_eq!(back, s, "round-trip variant → {}", s);
+    }
+    // Unknown tokens fail the parse — `push_parametric` warns
+    // and skips on these.
+    assert!(BorderPreviewTargetKind::from_str("canvas-sf-focsed").is_err());
+    assert!(BorderPreviewTargetKind::from_str("nodes").is_err());
+}
+
 /// `cancel_border_preview` ships unbound by default — the
 /// keybind system has no per-action active-state guard, so
 /// defaulting Esc would conflict with the existing Esc-bound

@@ -333,45 +333,60 @@ fn execute_show_border(eff: &mut ConsoleEffects) -> ExecResult {
     let cfg: Option<&GlyphBorderConfig> = map.canvas.default_border.as_ref();
     let lines = if let Some(cfg) = cfg {
         let resolved = resolve_border_style(Some(cfg), None, "#cccace");
-        format_resolved(
+        format_resolved_with_source(
             "canvas border",
+            "canvas default",
             resolved.font_name.as_deref(),
             resolved.font_size_pt,
             &resolved.color,
             cfg,
         )
     } else {
-        vec!["canvas border: (no map-wide default — falls back to the hardcoded floor)".into()]
+        vec!["canvas border: (no map-wide default — every framed node falls back to its per-node `style.frame_color` / hardcoded glyph defaults)".into()]
     };
     ExecResult::lines(lines)
 }
 
 fn execute_show_section_frame(eff: &mut ConsoleEffects, focused: bool) -> ExecResult {
     let map = &eff.document.mindmap;
-    let cfg = if focused {
-        map.canvas.default_focused_section_frame_border.as_ref()
-    } else {
-        map.canvas.default_section_frame_border.as_ref()
-    };
     let label = if focused {
         "canvas section-frame focused"
     } else {
         "canvas section-frame"
     };
+    // Cascade matches `resolve_section_frame_border`: focused
+    // frames fall through to the unfocused canvas slot before
+    // hitting the hardcoded floor. Pre-fix the focused branch
+    // only consulted `default_focused_section_frame_border`,
+    // reporting "no map-wide default" while the renderer was
+    // actually using the unfocused slot through fallback (C9).
+    let (cfg, source) = if focused {
+        match (
+            map.canvas.default_focused_section_frame_border.as_ref(),
+            map.canvas.default_section_frame_border.as_ref(),
+        ) {
+            (Some(c), _) => (Some(c), "focused canvas default"),
+            (None, Some(c)) => (Some(c), "unfocused canvas default (focused fallback)"),
+            (None, None) => (None, "hardcoded heavy floor"),
+        }
+    } else {
+        match map.canvas.default_section_frame_border.as_ref() {
+            Some(c) => (Some(c), "unfocused canvas default"),
+            None => (None, "hardcoded light floor"),
+        }
+    };
     let lines = if let Some(cfg) = cfg {
         let resolved = resolve_border_style(Some(cfg), None, "#00E5FF");
-        format_resolved(
+        format_resolved_with_source(
             label,
+            source,
             resolved.font_name.as_deref(),
             resolved.font_size_pt,
             &resolved.color,
             cfg,
         )
     } else {
-        vec![format!(
-            "{}: (no map-wide default — falls back to the hardcoded floor)",
-            label
-        )]
+        vec![format!("{}: (no map-wide default — falls back to {})", label, source)]
     };
     ExecResult::lines(lines)
 }
@@ -383,8 +398,28 @@ fn format_resolved(
     color: &str,
     cfg: &GlyphBorderConfig,
 ) -> Vec<String> {
-    vec![
+    format_resolved_with_source(label, "canvas default", font, size_pt, color, cfg)
+}
+
+/// Tail of `execute_show_*` — produce the multi-line readout
+/// describing the resolved style. Now includes per-side patterns
+/// and per-corner glyphs (the prior shape omitted both, which
+/// hid the very fields users author when they pass
+/// `top="###(*)###"` etc. — flagged as M4 / M1 in two prior
+/// reviews). `source` labels the cascade level the resolved
+/// style came from (e.g. "focused canvas default", "unfocused
+/// canvas default (focused fallback)", "hardcoded light floor").
+fn format_resolved_with_source(
+    label: &str,
+    source: &str,
+    font: Option<&str>,
+    size_pt: f32,
+    color: &str,
+    cfg: &GlyphBorderConfig,
+) -> Vec<String> {
+    let mut lines = vec![
         format!("{}:", label),
+        format!("  source:    {}", source),
         format!("  preset:    {}", cfg.preset),
         format!("  font:      {}", font.unwrap_or("(default)")),
         format!("  size:      {} pt", size_pt),
@@ -400,7 +435,24 @@ fn format_resolved(
                 })
                 .unwrap_or_else(|| "(none)".into())
         ),
-    ]
+    ];
+    // Per-side / per-corner readout. Only meaningful when the
+    // preset is `custom` (other presets ignore `glyphs`); for
+    // the named presets we surface "(preset default)" so the
+    // reader knows the preset's defaults are in play.
+    if let Some(g) = cfg.glyphs.as_ref() {
+        lines.push(format!("  top:       {}", g.top));
+        lines.push(format!("  bottom:    {}", g.bottom));
+        lines.push(format!("  left:      {}", g.left));
+        lines.push(format!("  right:     {}", g.right));
+        lines.push(format!(
+            "  corners:   tl={}  tr={}  bl={}  br={}",
+            g.top_left, g.top_right, g.bottom_left, g.bottom_right
+        ));
+    } else {
+        lines.push(format!("  glyphs:    (preset '{}' defaults)", cfg.preset));
+    }
+    lines
 }
 
 // `edits_has_glyph_field` and `custom_preset_hint` are imported

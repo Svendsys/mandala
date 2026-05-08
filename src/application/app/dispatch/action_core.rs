@@ -104,6 +104,31 @@ pub(in crate::application::app) fn dispatch_compatible(
     match action {
         Action::ExitMode => {
             // Cross-platform slice runs first:
+            // 0. Cancel any active border preview. The plan's
+            //    intended Esc shape was "if a preview is up, Esc
+            //    cancels it; otherwise Esc falls through to the
+            //    rest of ExitMode". Since `cancel_border_preview`
+            //    can't share Esc with `exit_mode` through the
+            //    keybind resolver (first match wins, no chaining),
+            //    we collapse the chain into ExitMode's body — Esc
+            //    on a preview cancels the preview AND skips the
+            //    mode-clear, so a user previewing while in Resize
+            //    doesn't lose their resize mode just because they
+            //    typed Esc to drop a preview. C7 fix.
+            if let Some(doc) = core.document.as_deref_mut() {
+                if doc.cancel_border_preview() {
+                    let mut rc = super::cross_dispatch::RebuildContext {
+                        document: doc,
+                        mindmap_tree: core.mindmap_tree,
+                        app_scene: core.app_scene,
+                        renderer: core.renderer,
+                        scene_cache: core.scene_cache,
+                        interaction_mode: core.interaction_mode,
+                    };
+                    rc.rebuild_after_geometry_change();
+                    return DispatchOutcome::Handled;
+                }
+            }
             // 1. Clear `last_click` so a post-Esc click isn't paired
             //    with a pre-Esc one (was already in the pre-Batch-2
             //    `ExitMode` cross-platform body).
@@ -316,7 +341,7 @@ pub(in crate::application::app) fn dispatch_compatible(
             field,
             value,
         } => with_doc_rebuild(core, |rc| {
-            super::cross_dispatch::apply_set_border_preview(target_kind, field, value, rc)
+            super::cross_dispatch::apply_set_border_preview(*target_kind, field, value, rc)
         }),
         Action::CommitBorderPreview => {
             with_doc_rebuild(core, |rc| super::cross_dispatch::apply_commit_border_preview(rc))

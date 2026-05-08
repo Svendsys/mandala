@@ -275,36 +275,109 @@ fn execute_show(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         ));
     };
 
-    // Resolve through the same cascade the renderer uses so the
-    // readout matches what's drawn on screen, even when the
-    // section has no override.
-    let resolved = resolve_section_frame_border(section, &map.canvas, false, "#00E5FF");
+    // Whether this specific section is currently focused at render
+    // time is interaction-mode runtime state (NodeEdit + cursor),
+    // not document state, so the verb path can't tell. Surface
+    // BOTH cascade branches so the user sees what unfocused and
+    // focused frames will actually look like — same posture as
+    // `canvas section-frame show` vs `canvas section-frame focused
+    // show`. C10 fix: the prior shape hardcoded `focused=false`
+    // and silently lied for sections being edited.
+    let mut lines = vec![format!(
+        "section frame: node='{}' section={}",
+        node_id, section_idx
+    )];
+    push_resolved_section_frame(&mut lines, section, &map.canvas, /* focused */ false);
+    push_resolved_section_frame(&mut lines, section, &map.canvas, /* focused */ true);
+    ExecResult::lines(lines)
+}
+
+/// Append the resolved-style readout for one focus state. The
+/// labelled `source` walks the cascade the same way
+/// `resolve_section_frame_border` does — per-section override,
+/// then focused canvas default (focused branch only), then
+/// unfocused canvas default (focused branch falls through to
+/// it), then the hardcoded floor.
+fn push_resolved_section_frame(
+    lines: &mut Vec<String>,
+    section: &baumhard::mindmap::model::MindSection,
+    canvas: &baumhard::mindmap::model::Canvas,
+    focused: bool,
+) {
+    use baumhard::mindmap::model::GlyphBorderConfig;
+    let header = if focused { "focused" } else { "unfocused" };
     let source = if section.frame_border.is_some() {
         "per-section override"
-    } else if map.canvas.default_section_frame_border.is_some() {
-        "canvas default"
+    } else if focused {
+        match (
+            canvas.default_focused_section_frame_border.is_some(),
+            canvas.default_section_frame_border.is_some(),
+        ) {
+            (true, _) => "focused canvas default",
+            (false, true) => "unfocused canvas default (focused fallback)",
+            (false, false) => "hardcoded heavy floor",
+        }
+    } else if canvas.default_section_frame_border.is_some() {
+        "unfocused canvas default"
     } else {
-        "hardcoded floor"
+        "hardcoded light floor"
     };
-    let lines = vec![
-        format!("section frame: node='{}' section={}", node_id, section_idx),
-        format!("  source:    {}", source),
-        format!(
-            "  font:      {}",
-            resolved.font_name.as_deref().unwrap_or("(default)")
-        ),
-        format!("  size:      {} pt", resolved.font_size_pt),
-        format!("  color:     {}", resolved.color),
-        format!(
-            "  palette:   {}",
-            resolved
-                .color_palette
-                .as_deref()
-                .map(|n| format!("{} (field={})", n, resolved.palette_field.as_str()))
-                .unwrap_or_else(|| "(none)".into())
-        ),
-    ];
-    ExecResult::lines(lines)
+    let resolved = resolve_section_frame_border(section, canvas, focused, "#00E5FF");
+    // Cascade pick — same logic `resolve_section_frame_border`
+    // walks. We re-derive it for the per-side / per-corner readout
+    // because `resolve_border_style` discards the source `glyphs`
+    // (it bakes them into resolved corners only when `preset =
+    // custom`); we need the source slot to surface what the
+    // author wrote regardless of preset.
+    let canvas_default_for_focus: Option<&GlyphBorderConfig> = if focused {
+        canvas
+            .default_focused_section_frame_border
+            .as_ref()
+            .or(canvas.default_section_frame_border.as_ref())
+    } else {
+        canvas.default_section_frame_border.as_ref()
+    };
+    let chosen_cfg: Option<&GlyphBorderConfig> = section
+        .frame_border
+        .as_ref()
+        .or(canvas_default_for_focus);
+    lines.push(format!("  [{}]", header));
+    lines.push(format!("    source:    {}", source));
+    lines.push(format!(
+        "    preset:    {}",
+        chosen_cfg
+            .map(|c| c.preset.as_str())
+            .unwrap_or(if focused { "heavy" } else { "light" })
+    ));
+    lines.push(format!(
+        "    font:      {}",
+        resolved.font_name.as_deref().unwrap_or("(default)")
+    ));
+    lines.push(format!("    size:      {} pt", resolved.font_size_pt));
+    lines.push(format!("    color:     {}", resolved.color));
+    lines.push(format!(
+        "    palette:   {}",
+        resolved
+            .color_palette
+            .as_deref()
+            .map(|n| format!("{} (field={})", n, resolved.palette_field.as_str()))
+            .unwrap_or_else(|| "(none)".into())
+    ));
+    if let Some(g) = chosen_cfg.and_then(|c| c.glyphs.as_ref()) {
+        lines.push(format!("    top:       {}", g.top));
+        lines.push(format!("    bottom:    {}", g.bottom));
+        lines.push(format!("    left:      {}", g.left));
+        lines.push(format!("    right:     {}", g.right));
+        lines.push(format!(
+            "    corners:   tl={}  tr={}  bl={}  br={}",
+            g.top_left, g.top_right, g.bottom_left, g.bottom_right
+        ));
+    } else {
+        let preset = chosen_cfg
+            .map(|c| c.preset.as_str())
+            .unwrap_or(if focused { "heavy" } else { "light" });
+        lines.push(format!("    glyphs:    (preset '{}' defaults)", preset));
+    }
 }
 
 fn parse_section_kv(args: &Args) -> Result<Option<usize>, String> {
@@ -598,6 +671,86 @@ mod tests {
             blob
         );
         assert!(blob.contains("#cd00cd"), "show must surface the color: {}", blob);
+        // C10: surface both focused and unfocused branches so the
+        // user sees what each will look like at render time.
+        assert!(
+            blob.contains("[unfocused]"),
+            "show must include unfocused header: {}",
+            blob
+        );
+        assert!(
+            blob.contains("[focused]"),
+            "show must include focused header: {}",
+            blob
+        );
+    }
+
+    #[test]
+    fn section_frame_show_focused_branch_falls_through_to_unfocused_canvas_default() {
+        // No per-section override, no focused canvas slot, just an
+        // unfocused canvas slot — focused branch should report the
+        // "focused fallback" source label, matching the renderer's
+        // cascade in `resolve_section_frame_border`.
+        let (mut doc, id) = pinned_two_section_node();
+        doc.mindmap.canvas.default_section_frame_border = Some(baumhard::mindmap::model::GlyphBorderConfig {
+            preset: "double".into(),
+            font: None,
+            font_size_pt: 12.0,
+            color: Some("#abcdef".into()),
+            glyphs: None,
+            padding: 0.0,
+            color_palette: None,
+            color_palette_field: None,
+        });
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id,
+            section_idx: 1,
+        });
+        let result = run("section frame show", &mut doc);
+        let blob = match result {
+            ExecResult::Lines(ls) => ls.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join("\n"),
+            other => panic!("expected ExecResult::Lines, got {:?}", other),
+        };
+        assert!(
+            blob.contains("unfocused canvas default (focused fallback)"),
+            "focused branch should label the focused→unfocused fallback: {}",
+            blob
+        );
+        assert!(
+            blob.contains("unfocused canvas default"),
+            "unfocused branch should label the canvas-default source: {}",
+            blob
+        );
+    }
+
+    #[test]
+    fn section_frame_show_surfaces_per_side_glyphs_when_set() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id,
+            section_idx: 1,
+        });
+        assert_exec_ok(run("section frame top=\"###(*)###\"", &mut doc));
+        let result = run("section frame show", &mut doc);
+        let blob = match result {
+            ExecResult::Lines(ls) => ls.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join("\n"),
+            other => panic!("expected ExecResult::Lines, got {:?}", other),
+        };
+        assert!(
+            blob.contains("top:"),
+            "show must surface per-side glyph patterns when authored: {}",
+            blob
+        );
+        assert!(
+            blob.contains("###(*)###"),
+            "show must echo the literal pattern: {}",
+            blob
+        );
+        assert!(
+            blob.contains("corners:"),
+            "show must surface the per-corner readout: {}",
+            blob
+        );
     }
 
     #[test]

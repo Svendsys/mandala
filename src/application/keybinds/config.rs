@@ -115,13 +115,30 @@ pub struct KeybindConfig {
     pub text_edit_cancel: Vec<String>,
 
     // ── Border Preview ───────────────────────────────────────────
-    /// Discard the active border preview. Default: Escape (only
-    /// fires when a preview is active; falls through to other Esc
-    /// consumers otherwise — text-edit cancel etc. are checked
-    /// first by the keyboard handler ladder).
+    /// Discard the active border preview.
+    ///
+    /// **Default: unbound** — but the user-visible Esc behaviour
+    /// is "if a preview is active, cancel it; otherwise exit the
+    /// current mode" because `Action::ExitMode` (the default Esc
+    /// binding) calls `cancel_border_preview()` first and
+    /// short-circuits if a preview was canceled. See
+    /// `app/dispatch/action_core.rs` for the chain. The chain
+    /// lives in `ExitMode`'s body rather than as a separate
+    /// keybind because the resolver maps `(context, key) →
+    /// Action` deterministically and can't fall through from
+    /// one Action to another based on document state.
+    ///
+    /// Bind this entry to opt out of the chain — e.g. to put
+    /// preview-cancel on a different key while leaving `Escape`
+    /// bound to plain `ExitMode`. The verb path `border preview
+    /// cancel` is the primary surface and works regardless.
     pub cancel_border_preview: Vec<String>,
     /// Commit the active border preview through the matching
     /// committing setter. No default binding — users opt in.
+    /// Unlike `cancel_border_preview`, commit isn't part of any
+    /// implicit chain — the `border preview commit` verb is the
+    /// primary surface and a binding here is purely opt-in
+    /// muscle-memory.
     pub commit_border_preview: Vec<String>,
 
     // ── Mouse-gesture Actions ────────────────────────────────────
@@ -200,6 +217,18 @@ pub struct KeybindConfig {
     /// and `value` is a color string (`#rrggbb`, `var(--name)`,
     /// palette key). Maps to [`Action::SetColor`].
     pub set_color: Vec<ParametricBinding>,
+    /// `args = [target_kind, field, value]` where `target_kind ∈
+    /// {node, section, canvas-border, canvas-sf, canvas-sf-focused}`
+    /// (kebab-case, matching [`crate::application::keybinds::BorderPreviewTargetKind`]'s
+    /// strum-`IntoStaticStr`-derived form). `field` is one of the
+    /// `border` kv keys (`preset`, `font`, `size`, `color`,
+    /// `palette`, `field`, `padding`, `top`, `bottom`, `left`,
+    /// `right`, `tl`, `tr`, `bl`, `br`); `value` is the same
+    /// kv-form string the verb accepts. Maps to
+    /// [`Action::SetBorderPreview`]. Pre-fix this Action variant
+    /// existed but was *unregistered* — users could not bind a
+    /// key to preview-set via JSON.
+    pub set_border_preview: Vec<ParametricBinding>,
     pub set_edge_type: Vec<ParametricBinding>,
     pub set_edge_display_mode: Vec<ParametricBinding>,
     pub reset_edge: Vec<ParametricBinding>,
@@ -319,15 +348,16 @@ impl Default for KeybindConfig {
 
             // Border Preview
             //
-            // No default keybinding — the keybind resolution
-            // system maps `(context, key) → Action` deterministically
-            // and has no per-action active-state guard. Defaulting
-            // Esc to `CancelBorderPreview` would conflict with the
-            // existing Esc-bound actions (`exit_mode`, etc.) in
-            // the Document context. Users who want a preview-cancel
-            // shortcut opt in via the JSON config (e.g.
-            // `"cancel_border_preview": ["Ctrl+Escape"]`); the verb
-            // path `border preview cancel` is the primary surface.
+            // No default keybinding for `cancel` — Esc-cancels-preview
+            // is achieved by chaining inside `ExitMode`'s arm body
+            // (it calls `cancel_border_preview()` before mode-clear
+            // and short-circuits when a preview was canceled).
+            // Binding `Escape` here would shadow `exit_mode` because
+            // the resolver picks the first match per `(context, key)`
+            // and has no per-action active-state guard. Users who
+            // want `cancel` on a different key opt in via JSON.
+            // `commit_border_preview` is purely opt-in — there is
+            // no implicit chain for it.
             cancel_border_preview: vec![],
             commit_border_preview: vec![],
 
@@ -433,6 +463,7 @@ impl Default for KeybindConfig {
             set_border_field: vec![],
             set_edge_cap: vec![],
             set_color: vec![],
+            set_border_preview: vec![],
             set_edge_type: vec![],
             set_edge_display_mode: vec![],
             reset_edge: vec![],
@@ -671,6 +702,27 @@ impl KeybindConfig {
                 }),
             _ => None,
         });
+        // BorderPreview: `args = [target_kind, field, value]`.
+        // `target_kind.parse::<BorderPreviewTargetKind>()` is the
+        // strum-`EnumString`-derived round-trip; unknown tokens
+        // land in `Err` and `push_parametric` warns and skips.
+        push_parametric(
+            &mut binds,
+            "set_border_preview",
+            3,
+            &self.set_border_preview,
+            |args| match args {
+                [target_kind, field, value] => target_kind
+                    .parse::<super::BorderPreviewTargetKind>()
+                    .ok()
+                    .map(|target_kind| Action::SetBorderPreview {
+                        target_kind,
+                        field: field.clone(),
+                        value: value.clone(),
+                    }),
+                _ => None,
+            },
+        );
         // Edge structural — type / display_mode / reset.
         push_parametric(
             &mut binds,
