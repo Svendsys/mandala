@@ -14,10 +14,10 @@ use baumhard::mindmap::scene_cache::EdgeKey;
 /// Selection highlight color: bright cyan [R, G, B, A]
 pub const HIGHLIGHT_COLOR: [f32; 4] = [0.0, 0.9, 1.0, 1.0];
 
-// `ResizeHandleOverrides` lives in baumhard
-// (`baumhard::mindmap::scene_builder::ResizeHandleOverrides`) — its
+// `InteractionModeOverrides` lives in baumhard
+// (`baumhard::mindmap::scene_builder::InteractionModeOverrides`) — its
 // home is next to the `SceneSelectionContext` it feeds. Re-exported
-// from `document/mod.rs` for the convenient `ResizeHandleOverrides::none()`
+// from `document/mod.rs` for the convenient `InteractionModeOverrides::none()`
 // path that production callers use.
 
 /// Per-active-mutation runtime record for the animation system.

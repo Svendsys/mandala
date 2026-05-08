@@ -633,7 +633,7 @@ pub(super) fn run(mut app: Application) {
                         &std::collections::HashMap::new(),
                         &mut init_scene_cache,
                         renderer.camera_zoom(),
-                        crate::application::document::ResizeHandleOverrides::none(),
+                        crate::application::document::InteractionModeOverrides::none(),
                     );
                     update_connection_tree(&scene, &mut init_app_scene);
                     update_border_tree_static(&doc, &mut init_app_scene);

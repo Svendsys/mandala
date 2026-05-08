@@ -97,7 +97,7 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
                 &std::collections::HashMap::new(),
                 &mut scene_cache,
                 renderer.camera_zoom(),
-                crate::application::document::ResizeHandleOverrides::none(),
+                crate::application::document::InteractionModeOverrides::none(),
             );
             update_connection_tree(&scene, &mut app_scene);
             update_border_tree_static(&doc, &mut app_scene);

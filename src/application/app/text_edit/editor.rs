@@ -392,16 +392,6 @@ pub(in crate::application::app) fn close_text_edit(
         // them before the rebuild. The drag drop path already
         // does the equivalent (`event_mouse_click.rs`).
         scene_cache.clear();
-        // Clear the focus flag *before* the rebuild — the rebuild
-        // walks the tree and the focus flag should not survive
-        // editor close. `set_section_text_and_runs` rebuilds the
-        // section's tree element from the model, so the flag is
-        // already implicitly dropped on the commit path; the
-        // explicit clear is for symmetry with the cancel path
-        // (which keeps the same arena element) and future-proofs
-        // against a builder that preserves arena state across
-        // commits.
-        clear_section_focused_flag(&node_id, section_idx, mindmap_tree);
         rebuild_all(doc, interaction_mode, mindmap_tree, app_scene, renderer, scene_cache);
     } else {
         // Cancel: model is untouched, so we only need to revert the
@@ -417,9 +407,6 @@ pub(in crate::application::app) fn close_text_edit(
             mindmap_tree,
             renderer,
         );
-        // Cancel keeps the same arena element across the close —
-        // the focus flag would otherwise leak. Clear unconditionally.
-        clear_section_focused_flag(&node_id, section_idx, mindmap_tree);
     }
 }
 
@@ -494,13 +481,11 @@ pub(in crate::application::app) fn apply_text_edit_to_tree(
     ]);
     delta.apply_to(area);
 
-    // SectionEdit visual: pin `Flag::Focused` on the actively-
-    // edited section's element. Idempotent — every keystroke runs
-    // through here; insert into the EnumSet is a no-op when the
-    // flag is already set. Cleared at editor close (commit or
-    // cancel) by `clear_section_focused_flag`.
-    use baumhard::core::primitives::{Flag, Flaggable};
-    element.set_flag(Flag::Focused);
+    // `Flag::Focused` write deferred until the section-frame scene
+    // pass (Plan §4.4) lands — the flag has no renderer consumer
+    // today, so a writer here would be a half-feature per
+    // CODE_CONVENTIONS §5. Re-add the `set_flag(Flag::Focused)`
+    // call alongside the consumer.
 
     // Re-shape only the edited section's buffer — the keyed reshape
     // drops the per-keystroke cost on a multi-section node from
@@ -510,29 +495,6 @@ pub(in crate::application::app) fn apply_text_edit_to_tree(
     // pass it through directly so the renderer skips an O(arena)
     // descendant scan to re-find the element.
     renderer.reshape_buffer_for(indextree_node_id, &tree.tree);
-}
-
-/// Clear `Flag::Focused` on a section element. Called by the
-/// editor close path (commit + cancel) so the focus flag does not
-/// leak past the edit session. Tolerates a missing tree / missing
-/// section: returns silently rather than warning, because the close
-/// path runs unconditionally and the section may legitimately have
-/// disappeared mid-edit (e.g. a custom mutation between the editor
-/// open and the close removed the section). The companion setter
-/// runs inside `apply_text_edit_to_tree` on every keystroke.
-pub(in crate::application::app) fn clear_section_focused_flag(
-    node_id: &str,
-    section_idx: usize,
-    mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
-) {
-    use baumhard::core::primitives::{Flag, Flaggable};
-    let Some(tree) = mindmap_tree.as_mut() else { return };
-    let Some(arena_id) = section_arena_id(tree, node_id, section_idx) else {
-        return;
-    };
-    if let Some(node) = tree.tree.arena.get_mut(arena_id) {
-        node.get_mut().clear_flag(Flag::Focused);
-    }
 }
 
 /// Apply a literal-character keystroke (Enter, Tab, or printable
@@ -828,50 +790,4 @@ mod tests {
         ));
     }
 
-    /// `clear_section_focused_flag` removes [`Flag::Focused`] when
-    /// the named section exists, leaves other flags untouched, and
-    /// is a no-op on missing tree / missing section. Pins the close-
-    /// path contract so a refactor that drops the call leaks the
-    /// flag past editor close.
-    #[test]
-    fn test_clear_section_focused_flag_removes_only_focused() {
-        use baumhard::core::primitives::{Flag, Flaggable};
-        let (tree, node_id) = tree_with_text_node();
-        let mut tree_opt = Some(tree);
-
-        // Stamp Focused + Mutable on the section element so we can
-        // check that `clear_section_focused_flag` only clears
-        // Focused.
-        let arena_id =
-            section_arena_id(tree_opt.as_ref().unwrap(), &node_id, 0).expect("section exists");
-        if let Some(node) = tree_opt.as_mut().unwrap().tree.arena.get_mut(arena_id) {
-            node.get_mut().set_flag(Flag::Focused);
-            node.get_mut().set_flag(Flag::Mutable);
-        }
-        assert!(
-            tree_opt.as_ref().unwrap().tree.arena.get(arena_id).unwrap().get()
-                .flag_is_set(Flag::Focused)
-        );
-
-        clear_section_focused_flag(&node_id, 0, &mut tree_opt);
-
-        let after = tree_opt.as_ref().unwrap().tree.arena.get(arena_id).unwrap().get();
-        assert!(!after.flag_is_set(Flag::Focused), "Focused must be cleared");
-        assert!(after.flag_is_set(Flag::Mutable), "Mutable must stay set");
-    }
-
-    #[test]
-    fn test_clear_section_focused_flag_no_op_on_missing_tree() {
-        let mut none_tree: Option<baumhard::mindmap::tree_builder::MindMapTree> = None;
-        // Must not panic.
-        clear_section_focused_flag("any", 0, &mut none_tree);
-    }
-
-    #[test]
-    fn test_clear_section_focused_flag_no_op_on_missing_section() {
-        let (tree, _real_id) = tree_with_text_node();
-        let mut tree_opt = Some(tree);
-        // Must not panic on a node id that doesn't exist.
-        clear_section_focused_flag("nonexistent-node-id", 0, &mut tree_opt);
-    }
 }

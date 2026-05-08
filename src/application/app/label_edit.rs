@@ -171,7 +171,7 @@ pub(in crate::application::app) fn open_label_edit(
     // resize-handle overrides are irrelevant here.
     let scene = doc.build_scene_with_selection(
         renderer.camera_zoom(),
-        crate::application::document::ResizeHandleOverrides::none(),
+        crate::application::document::InteractionModeOverrides::none(),
     );
     update_connection_label_tree(&scene, app_scene, renderer);
 }
@@ -251,7 +251,7 @@ pub(in crate::application::app) fn handle_label_edit_key(
         // through every caller.
         let scene = doc.build_scene_with_selection(
             renderer.camera_zoom(),
-            crate::application::document::ResizeHandleOverrides::none(),
+            crate::application::document::InteractionModeOverrides::none(),
         );
         update_connection_label_tree(&scene, app_scene, renderer);
     }

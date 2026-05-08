@@ -162,12 +162,13 @@ pub(in crate::application::app) fn dispatch_compatible(
             return DispatchOutcome::Unhandled;
         }
         Action::EditSelection | Action::EditSelectionClean => {
-            // Cross-platform slice: Single-selection branch
-            // opens the inline node text editor via
-            // `apply_open_text_edit_on_single`. Returns true
-            // iff selection was Single (and the editor opened).
-            // EdgeLabel + Portal branches are native-only; on
-            // false return, caller's fall-through tries them.
+            // Cross-platform slice: Single / Section / SectionRange
+            // selections route through `apply_enter_node_edit` —
+            // flips `InteractionMode::NodeEdit { node_id }` and (for
+            // single-section nodes) opens the inline editor in the
+            // same call. Returns true iff a node-scoped selection
+            // was found. EdgeLabel + Portal branches are native-only;
+            // on false return, caller's fall-through tries them.
             let clean = matches!(action, Action::EditSelectionClean);
             let opened = if let Some(doc) = core.document.as_deref_mut() {
                 let mut rc = super::cross_dispatch::RebuildContext {
@@ -178,7 +179,7 @@ pub(in crate::application::app) fn dispatch_compatible(
                     scene_cache: core.scene_cache,
                     interaction_mode: core.interaction_mode,
                 };
-                super::cross_dispatch::apply_open_text_edit_on_single(clean, &mut rc, core.text_edit_state)
+                super::cross_dispatch::apply_enter_node_edit(clean, &mut rc, core.text_edit_state)
             } else {
                 false
             };

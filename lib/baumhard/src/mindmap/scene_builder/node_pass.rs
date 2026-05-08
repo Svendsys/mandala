@@ -73,7 +73,7 @@ fn section_aabb(
 pub(super) fn build_node_elements(
     map: &MindMap,
     offsets: &HashMap<String, (f32, f32)>,
-    dim_other_nodes_for: Option<&str>,
+    node_edit_for: Option<&str>,
 ) -> (Vec<TextElement>, Vec<BorderElement>, Vec<(Vec2, Vec2)>) {
     let vars = &map.canvas.theme_variables;
     let mut text_elements = Vec::new();
@@ -95,9 +95,9 @@ pub(super) fn build_node_elements(
 
         // NodeEdit dimming: every node *other* than the NodeEdit target
         // renders chrome + text at INACTIVE_NODE_ALPHA_MULTIPLIER alpha so
-        // the active node visually pops. `dim_other_nodes_for == None`
-        // (the Default-mode case) is the no-op fast path.
-        let dim_this_node = dim_other_nodes_for
+        // the active node visually pops. `node_edit_for == None` (the
+        // Default-mode case) is the no-op fast path.
+        let dim_this_node = node_edit_for
             .map(|active| active != node.id.as_str())
             .unwrap_or(false);
 

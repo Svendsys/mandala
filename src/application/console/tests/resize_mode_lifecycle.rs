@@ -22,7 +22,7 @@
 use crate::application::app::InteractionMode;
 use crate::application::console::tests::fixtures::{first_node_id, load_test_doc};
 use crate::application::console::{Args, ConsoleEffects, ConsoleSideEffect, ExecResult};
-use crate::application::document::{ResizeHandleOverrides, SelectionState};
+use crate::application::document::{InteractionModeOverrides, SelectionState};
 
 /// Resolve and run a `mode` console line, returning the side
 /// effect (the dispatcher consumes this in the production path).
@@ -93,7 +93,7 @@ fn test_resize_mode_lifecycle_default_to_resize_to_default() {
     assert_eq!(mode.resize_handle_overrides().node, None);
     assert!(matches!(
         mode.resize_handle_overrides(),
-        ResizeHandleOverrides {
+        InteractionModeOverrides {
             node: None,
             section: None,
             node_edit_for: None,

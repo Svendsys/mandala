@@ -88,26 +88,6 @@ pub(in crate::application::app) fn apply_delete_selection(rc: &mut RebuildContex
     }
 }
 
-/// Open the inline node text editor on a `Single`-selection.
-/// Returns `true` when the editor opened (selection was Single
-/// and the caller's editor-side bookkeeping should run); `false`
-/// when the selection wasn't a single node (caller may fall
-/// through to other branches — `Action::EditSelection` is
-/// classified `NativeOnly` because the EdgeLabel and Portal
-/// branches go to inline modal editors that only exist on
-/// native).
-///
-/// The Single branch IS cross-platform: `open_text_edit`
-/// (`text_edit/editor.rs`) compiles on both targets and is
-/// renderer + document only.
-pub(in crate::application::app) fn apply_open_text_edit_on_single(
-    clean: bool,
-    rc: &mut RebuildContext<'_>,
-    text_edit_state: &mut super::super::super::text_edit::TextEditState,
-) -> bool {
-    apply_enter_node_edit(clean, rc, text_edit_state)
-}
-
 /// Enter NodeEdit mode on the currently-selected node. Resolves the
 /// owning node via `selection.primary_node_id()` (Single / Section /
 /// SectionRange). Multi / MultiSection / edge / None warn and bail.

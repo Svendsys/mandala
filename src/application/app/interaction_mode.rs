@@ -163,25 +163,25 @@ impl InteractionMode {
     /// gate in `document/mod.rs::assemble_scene_overrides` (via
     /// `resize_handle_overrides()`, which packs both the resize
     /// handle target and the dimming target into one bundle).
-    pub fn node_edit_for_dimming(&self) -> Option<&str> {
+    pub fn node_edit_for(&self) -> Option<&str> {
         match self {
             InteractionMode::NodeEdit { node_id } => Some(node_id.as_str()),
             _ => None,
         }
     }
 
-    /// Resolve this mode into the `ResizeHandleOverrides` value the
+    /// Resolve this mode into the `InteractionModeOverrides` value the
     /// scene-builder consumes. Single source of truth for "what
     /// mode-driven chrome should this frame emit?" — every
     /// scene-rebuild call site reads through this method rather
     /// than reaching for the per-field predicates separately.
     pub fn resize_handle_overrides(
         &self,
-    ) -> baumhard::mindmap::scene_builder::ResizeHandleOverrides<'_> {
-        baumhard::mindmap::scene_builder::ResizeHandleOverrides {
+    ) -> baumhard::mindmap::scene_builder::InteractionModeOverrides<'_> {
+        baumhard::mindmap::scene_builder::InteractionModeOverrides {
             node: self.resize_handle_node(),
             section: self.resize_handle_section(),
-            node_edit_for: self.node_edit_for_dimming(),
+            node_edit_for: self.node_edit_for(),
         }
     }
 }

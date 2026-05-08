@@ -76,12 +76,12 @@ pub use nodes::{BorderConfigEdits, BorderEditOutcome, BorderSide, OptionEdit, Se
 pub use types::{
     AnimationInstance, EdgeLabelSel, EdgeRef, PortalLabelSel, SectionSel, SelectionState, HIGHLIGHT_COLOR,
 };
-// `ResizeHandleOverrides` lives in baumhard (next to the
+// `InteractionModeOverrides` lives in baumhard (next to the
 // `SceneSelectionContext` it composes into). Re-exported here so
 // callers across the application crate that already
 // `use crate::application::document::*` for the doc API don't have
 // to reach across into baumhard's scene_builder for the value type.
-pub use baumhard::mindmap::scene_builder::ResizeHandleOverrides;
+pub use baumhard::mindmap::scene_builder::InteractionModeOverrides;
 // Native-only: consumed by `app/click.rs`'s reparent / connect mode
 // rendering. WASM doesn't dispatch `EnterReparentMode` /
 // `EnterConnectMode` (NativeOnly per `wasm_compatibility`).
@@ -481,7 +481,7 @@ impl MindMapDocument {
     /// lives as long as `self`.
     fn assemble_scene_overrides<'a>(
         &'a self,
-        resize_overrides: ResizeHandleOverrides<'a>,
+        resize_overrides: InteractionModeOverrides<'a>,
     ) -> (
         scene_builder::SceneSelectionContext<'a>,
         Option<scene_builder::EdgeColorPreview<'a>>,
@@ -509,7 +509,7 @@ impl MindMapDocument {
         let label_edit = self.label_edit_preview.as_ref().map(|(k, s)| (k, s.as_str()));
         // Resize-handle emission + NodeEdit dimming are both driven
         // by `InteractionMode`, not by selection — the application
-        // layer translates the active mode into `ResizeHandleOverrides`
+        // layer translates the active mode into `InteractionModeOverrides`
         // and threads it through here. Fill-parent sections emit zero
         // handles inside the scene builder regardless of the override
         // value (no own AABB to stretch).
@@ -556,7 +556,7 @@ impl MindMapDocument {
         offsets: &HashMap<String, (f32, f32)>,
         cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
         camera_zoom: f32,
-        resize_overrides: ResizeHandleOverrides<'_>,
+        resize_overrides: InteractionModeOverrides<'_>,
     ) -> RenderScene {
         let (selection, edge_preview, portal_preview) = self.assemble_scene_overrides(resize_overrides);
         scene_builder::build_scene_with_cache(
@@ -581,7 +581,7 @@ impl MindMapDocument {
     pub fn build_scene_with_selection(
         &self,
         camera_zoom: f32,
-        resize_overrides: ResizeHandleOverrides<'_>,
+        resize_overrides: InteractionModeOverrides<'_>,
     ) -> RenderScene {
         let (selection, edge_preview, portal_preview) = self.assemble_scene_overrides(resize_overrides);
         scene_builder::build_scene_with_offsets_selection_and_overrides(

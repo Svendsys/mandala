@@ -9,7 +9,7 @@
 //! 8 section handles. That auto-emission produced the user-facing
 //! "we often find ourselves accidentally resizing when we only want
 //! to move nodes around" bug. Batch 2 moved the gate to
-//! `ResizeHandleOverrides` (populated from `InteractionMode`), so
+//! `InteractionModeOverrides` (populated from `InteractionMode`), so
 //! handles emit only when the active mode is `Resize { target }`.
 //!
 //! These tests pin the contract on both ends:
@@ -20,17 +20,17 @@
 //!   (filtered by the scene builder regardless of override).
 
 use super::tests_common::{first_testament_node_id, load_test_doc, pinned_two_section_node};
-use super::{ResizeHandleOverrides, SelectionState};
+use super::{InteractionModeOverrides, SelectionState};
 
 /// Regression for the auto-anchor-on-selection UX bug fixed in
 /// Batch 2: a `Single`-selection in `Default` mode (i.e. callers
-/// that pass `ResizeHandleOverrides::none()`) emits zero handles.
+/// that pass `InteractionModeOverrides::none()`) emits zero handles.
 #[test]
 fn test_default_mode_with_single_selection_emits_no_resize_handles() {
     let mut doc = load_test_doc();
     let id = first_testament_node_id(&doc);
     doc.selection = SelectionState::Single(id);
-    let scene = doc.build_scene_with_selection(1.0, ResizeHandleOverrides::none());
+    let scene = doc.build_scene_with_selection(1.0, InteractionModeOverrides::none());
     assert!(
         scene.node_resize_handles.is_empty(),
         "Default mode + Single selection must NOT emit node resize handles"
@@ -52,7 +52,7 @@ fn test_default_mode_with_section_selection_emits_no_resize_handles() {
         node_id: id,
         section_idx: 1,
     });
-    let scene = doc.build_scene_with_selection(1.0, ResizeHandleOverrides::none());
+    let scene = doc.build_scene_with_selection(1.0, InteractionModeOverrides::none());
     assert!(
         scene.node_resize_handles.is_empty(),
         "Default mode + Section selection must NOT emit node resize handles"
@@ -72,7 +72,7 @@ fn test_resize_mode_node_target_emits_eight_node_handles() {
     let id = first_testament_node_id(&doc);
     let scene = doc.build_scene_with_selection(
         1.0,
-        ResizeHandleOverrides {
+        InteractionModeOverrides {
             node: Some(id.as_str()),
             section: None,
             node_edit_for: None,
@@ -104,7 +104,7 @@ fn test_resize_mode_section_target_emits_eight_section_handles() {
     let (doc, id) = pinned_two_section_node();
     let scene = doc.build_scene_with_selection(
         1.0,
-        ResizeHandleOverrides {
+        InteractionModeOverrides {
             node: None,
             section: Some((id.as_str(), 1)),
             node_edit_for: None,
@@ -143,7 +143,7 @@ fn test_resize_mode_section_target_fill_parent_emits_no_handles() {
     }
     let scene = doc.build_scene_with_selection(
         1.0,
-        ResizeHandleOverrides {
+        InteractionModeOverrides {
             node: None,
             section: Some((id.as_str(), 0)),
             node_edit_for: None,

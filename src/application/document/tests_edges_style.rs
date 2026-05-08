@@ -633,7 +633,7 @@ fn test_color_picker_preview_does_not_push_undo_or_dirty() {
     // And the scene builder substitutes the preview color into
     // the matching edge's label element.
     doc.selection = SelectionState::Edge(er.clone());
-    let scene = doc.build_scene_with_selection(1.0, ResizeHandleOverrides::none());
+    let scene = doc.build_scene_with_selection(1.0, InteractionModeOverrides::none());
     // The edge has a glyph label → scene_builder should emit a
     // ConnectionLabelElement for it. If the edge has no label
     // this test case simply verifies nothing crashes.
@@ -672,7 +672,7 @@ fn test_edge_label_selection_paints_label_cyan() {
     // (whatever the cascade resolves to from the model).
     doc.selection = SelectionState::None;
     let baseline = doc
-        .build_scene_with_selection(1.0, ResizeHandleOverrides::none())
+        .build_scene_with_selection(1.0, InteractionModeOverrides::none())
         .connection_label_elements
         .iter()
         .find(|c| c.edge_key == edge_key)
@@ -688,7 +688,7 @@ fn test_edge_label_selection_paints_label_cyan() {
     // EdgeLabel selection: label tints cyan.
     doc.selection = SelectionState::EdgeLabel(EdgeLabelSel::new(er.clone()));
     let highlighted = doc
-        .build_scene_with_selection(1.0, ResizeHandleOverrides::none())
+        .build_scene_with_selection(1.0, InteractionModeOverrides::none())
         .connection_label_elements
         .iter()
         .find(|c| c.edge_key == edge_key)
@@ -702,7 +702,7 @@ fn test_edge_label_selection_paints_label_cyan() {
     // which sub-part the click landed on.
     doc.selection = SelectionState::Edge(er.clone());
     let edge_selected = doc
-        .build_scene_with_selection(1.0, ResizeHandleOverrides::none())
+        .build_scene_with_selection(1.0, InteractionModeOverrides::none())
         .connection_label_elements
         .iter()
         .find(|c| c.edge_key == edge_key)

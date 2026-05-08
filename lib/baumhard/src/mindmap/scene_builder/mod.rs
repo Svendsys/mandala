@@ -45,13 +45,11 @@ pub struct EdgeColorPreview<'a> {
 /// clean: the document doesn't know about modes, the app translates
 /// mode to override, the scene builder consumes the override.
 ///
-/// The struct's name still leads with "Resize" because the resize
-/// handles were the original consumer; the NodeEdit-dimming field
-/// rides along to avoid threading a second mode-derived parameter
-/// through every `build_scene_*` signature. Rename to
-/// `InteractionModeOverrides` is on deck for a follow-up batch.
+/// One bundle per `build_scene_*` call — adding a third mode-derived
+/// override (e.g. `Resize`-mode body tinting) extends the struct
+/// rather than threading another parameter through the signature.
 #[derive(Debug, Default, Clone, Copy)]
-pub struct ResizeHandleOverrides<'a> {
+pub struct InteractionModeOverrides<'a> {
     /// Which node should auto-emit 8 resize handles this frame, or
     /// `None` for no node handles.
     pub node: Option<&'a str>,
@@ -68,7 +66,7 @@ pub struct ResizeHandleOverrides<'a> {
     pub node_edit_for: Option<&'a str>,
 }
 
-impl<'a> ResizeHandleOverrides<'a> {
+impl<'a> InteractionModeOverrides<'a> {
     /// All-`None` overrides — equivalent to `Default::default()`
     /// but named for clarity at construction sites that want to
     /// be explicit about "this rebuild emits no handles".
