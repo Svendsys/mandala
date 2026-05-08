@@ -27,7 +27,7 @@ use super::portal::build_portal_elements;
 use super::portal::SelectedPortalLabel;
 use super::node_resize_handle::{build_node_resize_handles, NodeResizeHandleElement};
 use super::section_resize_handle::{build_section_resize_handles, SectionResizeHandleElement};
-use super::{EdgeColorPreview, PortalColorPreview, RenderScene};
+use super::{BorderPreview, EdgeColorPreview, PortalColorPreview, RenderScene};
 
 /// Bundle of "what is the user currently pointing at?" inputs
 /// threaded into the scene build. Groups the three selection-
@@ -127,6 +127,7 @@ pub fn build_scene(map: &MindMap, camera_zoom: f32) -> RenderScene {
         SceneSelectionContext::default(),
         None,
         None,
+        None,
         &mut scratch,
         camera_zoom,
     )
@@ -146,6 +147,7 @@ pub fn build_scene_with_offsets(
         map,
         offsets,
         SceneSelectionContext::default(),
+        None,
         None,
         None,
         &mut scratch,
@@ -171,6 +173,7 @@ pub fn build_scene_with_offsets_selection_and_overrides(
     selection: SceneSelectionContext<'_>,
     edge_color_preview: Option<EdgeColorPreview<'_>>,
     portal_color_preview: Option<PortalColorPreview<'_>>,
+    border_preview: Option<BorderPreview<'_>>,
     camera_zoom: f32,
 ) -> RenderScene {
     let mut scratch = SceneConnectionCache::new();
@@ -180,6 +183,7 @@ pub fn build_scene_with_offsets_selection_and_overrides(
         selection,
         edge_color_preview,
         portal_color_preview,
+        border_preview,
         &mut scratch,
         camera_zoom,
     )
@@ -204,6 +208,7 @@ pub fn build_scene_with_cache(
     selection: SceneSelectionContext<'_>,
     edge_color_preview: Option<EdgeColorPreview<'_>>,
     portal_color_preview: Option<PortalColorPreview<'_>>,
+    border_preview: Option<BorderPreview<'_>>,
     cache: &mut SceneConnectionCache,
     camera_zoom: f32,
 ) -> RenderScene {
@@ -228,7 +233,7 @@ pub fn build_scene_with_cache(
     // `node_edit_for` dims chrome on every other node — see
     // `node_pass::INACTIVE_NODE_ALPHA_MULTIPLIER`.
     let (text_elements, border_elements, node_aabbs) =
-        build_node_elements(map, offsets, node_edit_for);
+        build_node_elements(map, offsets, node_edit_for, border_preview);
 
     // Connection pass — fast/slow cache path, clip filter against
     // `node_aabbs`, edge-handle emission for the selected edge.
@@ -296,8 +301,13 @@ pub fn build_scene_with_cache(
     // in Default mode and on single-section nodes (the
     // single-section short-circuit bypasses NodeEdit entirely).
     // Plan §3.5 / §4.3.
-    let section_frames =
-        super::section_frame::build_section_frames(map, offsets, node_edit_for, focused_section);
+    let section_frames = super::section_frame::build_section_frames(
+        map,
+        offsets,
+        node_edit_for,
+        focused_section,
+        border_preview,
+    );
 
     RenderScene {
         text_elements,

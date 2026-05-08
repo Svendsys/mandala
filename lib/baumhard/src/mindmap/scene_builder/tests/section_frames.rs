@@ -36,14 +36,14 @@ fn other_node() -> crate::mindmap::model::MindNode {
 #[test]
 fn test_section_frames_default_mode_emits_none() {
     let map = synthetic_map(vec![three_section_node(), other_node()], vec![]);
-    let frames = build_section_frames(&map, &HashMap::new(), None, None);
+    let frames = build_section_frames(&map, &HashMap::new(), None, None, None);
     assert!(frames.is_empty(), "no NodeEdit target → no frames");
 }
 
 #[test]
 fn test_section_frames_node_edit_on_multi_section_emits_per_section() {
     let map = synthetic_map(vec![three_section_node(), other_node()], vec![]);
-    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None);
+    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None, None);
     assert_eq!(frames.len(), 3, "one frame per section");
     // Frames are emitted in section order.
     assert_eq!(frames[0].section_idx, 0);
@@ -58,7 +58,7 @@ fn test_section_frames_node_edit_on_multi_section_emits_per_section() {
 #[test]
 fn test_section_frames_inactive_node_emits_no_frames() {
     let map = synthetic_map(vec![three_section_node(), other_node()], vec![]);
-    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None);
+    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None, None);
     // Only sections of "active" appear; "other" never gets frames.
     assert!(frames.iter().all(|f| f.node_id == "active"));
 }
@@ -68,7 +68,7 @@ fn test_section_frames_single_section_node_skips_frames() {
     let mut node = synthetic_node("solo", 0.0, 0.0, 200.0, 50.0, true);
     node.sections = vec![section("only", 0.0, 0.0, 200.0, 50.0)];
     let map = synthetic_map(vec![node], vec![]);
-    let frames = build_section_frames(&map, &HashMap::new(), Some("solo"), None);
+    let frames = build_section_frames(&map, &HashMap::new(), Some("solo"), None, None);
     assert!(
         frames.is_empty(),
         "single-section nodes skip frames (would duplicate the border)"
@@ -79,14 +79,14 @@ fn test_section_frames_single_section_node_skips_frames() {
 fn test_section_frames_missing_active_node_emits_no_frames() {
     let map = synthetic_map(vec![three_section_node()], vec![]);
     // Stale NodeEdit target after a custom mutation deletion.
-    let frames = build_section_frames(&map, &HashMap::new(), Some("nonexistent"), None);
+    let frames = build_section_frames(&map, &HashMap::new(), Some("nonexistent"), None, None);
     assert!(frames.is_empty(), "missing active node → no frames");
 }
 
 #[test]
 fn test_section_frames_track_section_aabb() {
     let map = synthetic_map(vec![three_section_node(), other_node()], vec![]);
-    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None);
+    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None, None);
 
     // Section 0 lives at node.position + section.offset = (100, 200).
     let f0 = &frames[0];
@@ -108,6 +108,7 @@ fn test_section_frames_focused_section_marks_only_matching_idx() {
         &HashMap::new(),
         Some("active"),
         Some(("active", 1)),
+        None,
     );
     assert_eq!(frames.len(), 3);
     assert!(!frames[0].focused);
@@ -126,6 +127,7 @@ fn test_section_frames_focused_section_owner_mismatch_marks_none() {
         &HashMap::new(),
         Some("active"),
         Some(("other", 0)),
+        None,
     );
     assert!(frames.iter().all(|f: &SectionFrameElement| !f.focused));
 }
@@ -145,7 +147,7 @@ fn test_section_frames_skip_zero_size_section() {
         },
     ];
     let map = synthetic_map(vec![node], vec![]);
-    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None);
+    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None, None);
     assert_eq!(frames.len(), 1, "degenerate section is skipped");
     assert_eq!(frames[0].section_idx, 0);
 }
@@ -154,7 +156,7 @@ fn test_section_frames_skip_zero_size_section() {
 fn test_section_frames_uses_selected_edge_color_when_no_override() {
     use crate::mindmap::SELECTION_HIGHLIGHT_HEX;
     let map = synthetic_map(vec![three_section_node()], vec![]);
-    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None);
+    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None, None);
     // With no per-section or canvas override, the resolver falls
     // through to the hardcoded floor (no `color` set) → resolved
     // BorderStyle.color is the SELECTION_HIGHLIGHT_HEX cyan the
@@ -192,7 +194,7 @@ fn test_section_frames_per_section_override_wins_over_canvas_default() {
         color_palette: None,
         color_palette_field: None,
     });
-    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None);
+    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None, None);
     assert_eq!(frames[0].border_style.color, "#00ff00", "section 0 uses canvas default");
     assert_eq!(frames[1].border_style.color, "#ff8800", "section 1 uses per-section override");
     assert_eq!(frames[2].border_style.color, "#00ff00", "section 2 uses canvas default");
@@ -213,7 +215,7 @@ fn test_section_frames_canvas_default_drives_unset_sections() {
         color_palette: None,
         color_palette_field: None,
     });
-    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None);
+    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None, None);
     for f in &frames {
         assert_eq!(f.border_style.color, "#abcdef");
     }
@@ -249,6 +251,7 @@ fn test_section_frames_focused_uses_focused_canvas_default() {
         &HashMap::new(),
         Some("active"),
         Some(("active", 1)),
+        None,
     );
     assert_eq!(frames[0].border_style.color, "#aaaaaa", "section 0 unfocused → unfocused default");
     assert_eq!(frames[1].border_style.color, "#ffffff", "section 1 focused → focused default");
@@ -280,6 +283,7 @@ fn test_section_frames_focused_falls_back_to_unfocused_canvas_default() {
         &HashMap::new(),
         Some("active"),
         Some(("active", 1)),
+        None,
     );
     assert_eq!(
         frames[1].border_style.color, "#abcdef",
@@ -313,6 +317,7 @@ fn test_section_frames_unfocused_does_not_bleed_focused_canvas_default() {
         &HashMap::new(),
         Some("active"),
         Some(("active", 1)),
+        None,
     );
     assert_eq!(frames[0].border_style.color, SELECTION_HIGHLIGHT_HEX);
     assert_eq!(frames[1].border_style.color, "#ff00ff");
@@ -364,7 +369,7 @@ fn test_section_frames_palette_cycle_resolves_for_named_palette() {
             ],
         },
     );
-    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None);
+    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None, None);
     let palette = &frames[0].palette_cycle;
     assert_eq!(palette.len(), 3, "palette cycle has one entry per ColorGroup");
     // Spot-check the first entry is RGBA red.
@@ -379,8 +384,184 @@ fn test_section_frames_palette_cycle_resolves_for_named_palette() {
 #[test]
 fn test_section_frames_no_palette_yields_empty_cycle() {
     let map = synthetic_map(vec![three_section_node()], vec![]);
-    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None);
+    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None, None);
     for f in &frames {
         assert!(f.palette_cycle.is_empty(), "single-color frame has no palette cycle");
+    }
+}
+
+// ─── border preview integration ────────────────────────────────
+//
+// The scene builder folds the staged preview edits into a clone
+// of the affected slot before resolution. The committed model is
+// untouched. These tests pin the integration end-to-end at the
+// scene-builder layer; the document-side discipline (no undo, no
+// dirty) is pinned in `tests_nodes.rs`.
+
+/// Section-targeted preview reflects in the resolved
+/// `SectionFrameElement.border_style` for the matching section
+/// only — sibling sections fall back to their committed slot.
+#[test]
+fn test_border_preview_section_target_renders_through_scene_builder() {
+    use crate::mindmap::scene_builder::{
+        BorderConfigEditsView, BorderPreview, BorderPreviewTargetRef,
+    };
+    let map = synthetic_map(vec![three_section_node()], vec![]);
+    let target_pairs = [(String::from("active"), 1usize)];
+    let edits = BorderConfigEditsView {
+        preset: Some("heavy"),
+        ..Default::default()
+    };
+    let preview = BorderPreview {
+        target: BorderPreviewTargetRef::Sections(&target_pairs),
+        edits,
+        force_show_frame: true,
+    };
+    let frames = build_section_frames(
+        &map,
+        &HashMap::new(),
+        Some("active"),
+        None,
+        Some(preview),
+    );
+    // Section 1 should have the heavy preset's top corner glyph
+    // (`┏` U+250F); sections 0 and 2 should retain the floor.
+    assert_eq!(
+        frames[1].border_style.corners.top_left, "\u{250F}",
+        "preview-targeted section[1] resolves to heavy preset"
+    );
+    assert_eq!(
+        frames[0].border_style.corners.top_left, "\u{250C}",
+        "non-targeted section[0] keeps the light floor"
+    );
+    assert_eq!(
+        frames[2].border_style.corners.top_left, "\u{250C}",
+        "non-targeted section[2] keeps the light floor"
+    );
+}
+
+/// Canvas-section-frame (unfocused) preview applies to unfocused
+/// sections that have no per-section override. The focused
+/// section falls through to the unfocused canvas slot per the
+/// existing cascade (when no focused canvas default is set), so
+/// pin a focused canvas default explicitly to isolate the
+/// preview's reach to unfocused sections only.
+#[test]
+fn test_border_preview_canvas_section_frame_unfocused_branch() {
+    use crate::mindmap::model::GlyphBorderConfig;
+    use crate::mindmap::scene_builder::{
+        BorderConfigEditsView, BorderPreview, BorderPreviewTargetRef,
+    };
+    let mut map = synthetic_map(vec![three_section_node()], vec![]);
+    // Pin the focused canvas default so focused sections don't
+    // fall through to the unfocused slot — that way the preview's
+    // effect on unfocused is observable in isolation.
+    map.canvas.default_focused_section_frame_border = Some(GlyphBorderConfig {
+        preset: "rounded".into(),
+        font: None,
+        font_size_pt: 14.0,
+        color: None,
+        glyphs: None,
+        padding: 4.0,
+        color_palette: None,
+        color_palette_field: None,
+    });
+    let edits = BorderConfigEditsView {
+        preset: Some("double"),
+        ..Default::default()
+    };
+    let preview = BorderPreview {
+        target: BorderPreviewTargetRef::CanvasSectionFrame,
+        edits,
+        force_show_frame: true,
+    };
+    let frames = build_section_frames(
+        &map,
+        &HashMap::new(),
+        Some("active"),
+        Some(("active", 1)),
+        Some(preview),
+    );
+    assert_eq!(
+        frames[0].border_style.corners.top_left, "\u{2554}",
+        "unfocused section[0] picks up the double-preset preview"
+    );
+    assert_eq!(
+        frames[2].border_style.corners.top_left, "\u{2554}",
+        "unfocused section[2] picks up the double-preset preview"
+    );
+    assert_eq!(
+        frames[1].border_style.corners.top_left, "\u{256D}",
+        "focused section[1] keeps the pinned focused canvas default (rounded)"
+    );
+}
+
+/// Canvas-section-frame focused preview applies only to the
+/// focused section; unfocused sections fall through to their own
+/// floor (`light` preset).
+#[test]
+fn test_border_preview_canvas_section_frame_focused_branch() {
+    use crate::mindmap::scene_builder::{
+        BorderConfigEditsView, BorderPreview, BorderPreviewTargetRef,
+    };
+    let map = synthetic_map(vec![three_section_node()], vec![]);
+    let edits = BorderConfigEditsView {
+        preset: Some("double"),
+        ..Default::default()
+    };
+    let preview = BorderPreview {
+        target: BorderPreviewTargetRef::CanvasSectionFrameFocused,
+        edits,
+        force_show_frame: true,
+    };
+    let frames = build_section_frames(
+        &map,
+        &HashMap::new(),
+        Some("active"),
+        Some(("active", 1)),
+        Some(preview),
+    );
+    assert_eq!(
+        frames[1].border_style.corners.top_left, "\u{2554}",
+        "focused section[1] picks up the double-preset preview"
+    );
+    assert_eq!(
+        frames[0].border_style.corners.top_left, "\u{250C}",
+        "unfocused section[0] keeps the light floor"
+    );
+    assert_eq!(
+        frames[2].border_style.corners.top_left, "\u{250C}",
+        "unfocused section[2] keeps the light floor"
+    );
+}
+
+/// `border_preview = None` produces byte-identical output to a
+/// build with no preview thread. Parity is the minimum bar; a
+/// regression here means the preview branch leaks state when no
+/// preview is active.
+#[test]
+fn test_border_preview_none_matches_baseline() {
+    let map = synthetic_map(vec![three_section_node()], vec![]);
+    let with_none = build_section_frames(
+        &map,
+        &HashMap::new(),
+        Some("active"),
+        Some(("active", 1)),
+        None,
+    );
+    // Same call, no preview param at all (matches the pre-preview
+    // baseline since this is the same function with `None`).
+    let baseline = build_section_frames(
+        &map,
+        &HashMap::new(),
+        Some("active"),
+        Some(("active", 1)),
+        None,
+    );
+    assert_eq!(with_none.len(), baseline.len());
+    for (a, b) in with_none.iter().zip(baseline.iter()) {
+        assert_eq!(a.border_style.color, b.border_style.color);
+        assert_eq!(a.border_style.corners.top_left, b.border_style.corners.top_left);
+        assert_eq!(a.focused, b.focused);
     }
 }

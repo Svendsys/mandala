@@ -788,22 +788,12 @@ fn preset_is_custom(s: &str) -> bool {
     s.eq_ignore_ascii_case("custom")
 }
 
-fn default_glyph_border_config() -> GlyphBorderConfig {
-    // Mirrors the loader-time defaults from
-    // `baumhard::mindmap::model::node`. Centralised here so the
-    // setter doesn't need access to the private `default_*`
-    // factory functions in the model module.
-    GlyphBorderConfig {
-        preset: "light".to_string(),
-        font: None,
-        font_size_pt: 14.0,
-        color: None,
-        glyphs: None,
-        padding: 4.0,
-        color_palette: None,
-        color_palette_field: None,
-    }
-}
+// Single source of truth for the default `GlyphBorderConfig` lives
+// in baumhard (`baumhard::mindmap::border::default_glyph_border_config`)
+// — the scene-side preview apply path also reaches for it, so
+// keeping the constant in one place avoids the parity drift
+// CODE_CONVENTIONS §5 forbids.
+use baumhard::mindmap::border::default_glyph_border_config;
 
 fn default_custom_glyphs() -> CustomBorderGlyphs {
     // Light-preset corners (`┌┐└┘`) match the new default border

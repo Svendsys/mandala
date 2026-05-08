@@ -21,7 +21,7 @@ use std::collections::HashMap;
 use glam::Vec2;
 
 use crate::mindmap::border::resolve_border_style;
-use crate::mindmap::model::{MindMap, TextRun};
+use crate::mindmap::model::{GlyphBorderConfig, MindMap, TextRun};
 use crate::util::color::{hex_with_alpha_scaled, resolve_var};
 
 use super::{BorderElement, TextElement};
@@ -74,7 +74,23 @@ pub(super) fn build_node_elements(
     map: &MindMap,
     offsets: &HashMap<String, (f32, f32)>,
     node_edit_for: Option<&str>,
+    border_preview: Option<super::BorderPreview<'_>>,
 ) -> (Vec<TextElement>, Vec<BorderElement>, Vec<(Vec2, Vec2)>) {
+    // Hoist the preview-target match out of the per-node loop:
+    // most rebuilds run with `border_preview = None` and we want
+    // the steady-state branch to be a single `is_none()` check
+    // per node. Match each preview target shape once here.
+    let preview_node_ids: Option<&[String]> =
+        border_preview.and_then(|p| match p.target {
+            super::BorderPreviewTargetRef::Nodes(ids) => Some(ids),
+            _ => None,
+        });
+    let preview_canvas_default: Option<super::BorderConfigEditsView<'_>> =
+        border_preview.and_then(|p| match p.target {
+            super::BorderPreviewTargetRef::CanvasDefault => Some(p.edits),
+            _ => None,
+        });
+    let preview_force_show_frame = border_preview.map(|p| p.force_show_frame).unwrap_or(false);
     let vars = &map.canvas.theme_variables;
     let mut text_elements = Vec::new();
     let mut border_elements = Vec::new();
@@ -121,10 +137,38 @@ pub(super) fn build_node_elements(
         // hardcoded defaults; doing this twice per visible node was a
         // hot-path regression — the resolver also reparses each side
         // pattern, so the cost compounds.
-        let resolved_border = if node.style.show_frame {
+        // Border preview: when this node is in the preview's
+        // `Nodes(ids)` target, fold the staged edits into a clone
+        // of the committed slot before resolution. When the
+        // preview targets `CanvasDefault`, fold the edits into a
+        // clone of `canvas.default_border` and pass that to the
+        // resolver as the cascade base — the per-node slot stays
+        // unchanged. Either flavour leaves the model untouched.
+        let preview_targets_this_node = preview_node_ids
+            .map(|ids| ids.iter().any(|i| i == &node.id))
+            .unwrap_or(false);
+        let node_slot_owned: Option<GlyphBorderConfig> = if preview_targets_this_node {
+            let view = border_preview
+                .map(|p| p.edits)
+                .expect("preview_targets_this_node implies preview is Some");
+            let mut slot = node.style.border.clone();
+            crate::mindmap::border::apply_view_to_slot(&mut slot, &view);
+            slot
+        } else {
+            node.style.border.clone()
+        };
+        let canvas_default_owned: Option<GlyphBorderConfig> = if let Some(view) = preview_canvas_default {
+            let mut slot = map.canvas.default_border.clone();
+            crate::mindmap::border::apply_view_to_slot(&mut slot, &view);
+            slot
+        } else {
+            map.canvas.default_border.clone()
+        };
+        let visible = node.style.show_frame || (preview_targets_this_node && preview_force_show_frame);
+        let resolved_border = if visible {
             Some(resolve_border_style(
-                node.style.border.as_ref(),
-                map.canvas.default_border.as_ref(),
+                node_slot_owned.as_ref(),
+                canvas_default_owned.as_ref(),
                 frame_color,
             ))
         } else {

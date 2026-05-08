@@ -72,6 +72,7 @@ fn test_node_edit_dim_off_renders_full_alpha() {
         SceneSelectionContext::default(),
         None,
         None,
+        None,
         1.0,
     );
     for el in &scene.text_elements {
@@ -105,6 +106,7 @@ fn test_node_edit_active_node_keeps_full_alpha() {
         &map,
         &HashMap::new(),
         ctx_with_node_edit_for("a"),
+        None,
         None,
         None,
         1.0,
@@ -142,6 +144,7 @@ fn test_node_edit_inactive_node_dims_to_half_alpha() {
         ctx_with_node_edit_for("a"),
         None,
         None,
+        None,
         1.0,
     );
     let inactive_text: Vec<_> = scene.text_elements.iter().filter(|e| e.node_id == "b").collect();
@@ -165,4 +168,123 @@ fn test_node_edit_inactive_node_dims_to_half_alpha() {
             alpha_of(&b.border_style.color),
         );
     }
+}
+
+// ─── border preview integration: per-node target ────────────────
+
+/// Per-node `Nodes(ids)` preview substitutes the previewed border
+/// config for the matching node's resolved style, leaving other
+/// visible nodes' borders unchanged.
+#[test]
+fn test_border_preview_node_target_renders_through_scene_builder() {
+    use crate::mindmap::scene_builder::{
+        BorderConfigEditsView, BorderPreview, BorderPreviewTargetRef,
+    };
+    let map = synthetic_map(
+        vec![
+            node_with_text("a", 0.0, 0.0, "alpha"),
+            node_with_text("b", 400.0, 0.0, "beta"),
+        ],
+        vec![],
+    );
+    let target_ids = [String::from("a")];
+    let edits = BorderConfigEditsView {
+        preset: Some("heavy"),
+        ..Default::default()
+    };
+    let preview = BorderPreview {
+        target: BorderPreviewTargetRef::Nodes(&target_ids),
+        edits,
+        force_show_frame: true,
+    };
+    let scene = build_scene_with_offsets_selection_and_overrides(
+        &map,
+        &HashMap::new(),
+        SceneSelectionContext::default(),
+        None,
+        None,
+        Some(preview),
+        1.0,
+    );
+    let target = scene
+        .border_elements
+        .iter()
+        .find(|b| b.node_id == "a")
+        .expect("a's border emitted (force_show_frame)");
+    assert_eq!(
+        target.border_style.corners.top_left, "\u{250F}",
+        "preview-targeted node 'a' resolves to heavy preset"
+    );
+    if let Some(other) = scene.border_elements.iter().find(|b| b.node_id == "b") {
+        // 'b' isn't in the preview target — its border resolves
+        // through the committed cascade (light floor / fixture's
+        // configured shape).
+        assert_ne!(
+            other.border_style.corners.top_left, "\u{250F}",
+            "non-targeted node 'b' must NOT pick up the heavy preview"
+        );
+    }
+}
+
+/// `force_show_frame = true` lets a preview render against a node
+/// whose committed `style.show_frame == false`. Without it, the
+/// emitter skips the border entirely and `border preview
+/// preset=heavy` on a frameless node would render nothing — the
+/// user would think the verb was broken.
+#[test]
+fn test_border_preview_force_show_frame_on_hidden_node() {
+    use crate::mindmap::scene_builder::{
+        BorderConfigEditsView, BorderPreview, BorderPreviewTargetRef,
+    };
+    // Build a node with `show_frame = false`.
+    let mut hidden_node = synthetic_node("hidden", 0.0, 0.0, 200.0, 100.0, false);
+    hidden_node.sections = vec![MindSection::new_default("hidden text".into(), vec![])];
+    let map = synthetic_map(vec![hidden_node], vec![]);
+
+    // Sanity: with no preview, the node emits no `BorderElement`.
+    let baseline = build_scene_with_offsets_selection_and_overrides(
+        &map,
+        &HashMap::new(),
+        SceneSelectionContext::default(),
+        None,
+        None,
+        None,
+        1.0,
+    );
+    assert!(
+        baseline.border_elements.iter().all(|b| b.node_id != "hidden"),
+        "no preview + show_frame=false → no BorderElement"
+    );
+
+    // With a preview that has `force_show_frame = true`, the node
+    // emits a previewed `BorderElement` even though the committed
+    // `show_frame` is still `false`.
+    let target_ids = [String::from("hidden")];
+    let edits = BorderConfigEditsView {
+        preset: Some("heavy"),
+        ..Default::default()
+    };
+    let preview = BorderPreview {
+        target: BorderPreviewTargetRef::Nodes(&target_ids),
+        edits,
+        force_show_frame: true,
+    };
+    let scene = build_scene_with_offsets_selection_and_overrides(
+        &map,
+        &HashMap::new(),
+        SceneSelectionContext::default(),
+        None,
+        None,
+        Some(preview),
+        1.0,
+    );
+    let target = scene
+        .border_elements
+        .iter()
+        .find(|b| b.node_id == "hidden")
+        .expect("force_show_frame must materialise the BorderElement");
+    assert_eq!(
+        target.border_style.corners.top_left, "\u{250F}",
+        "preview's heavy preset rendered through"
+    );
 }

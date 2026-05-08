@@ -26,7 +26,7 @@ use std::collections::HashMap;
 
 use super::node_pass::section_aabb;
 use super::{SectionFrameElement, SELECTED_EDGE_COLOR};
-use crate::mindmap::border::{resolve_palette_cycle, resolve_section_frame_border};
+use crate::mindmap::border::resolve_palette_cycle;
 use crate::mindmap::model::MindMap;
 use crate::util::color::{hex_to_rgba_safe, resolve_var};
 
@@ -56,6 +56,7 @@ pub fn build_section_frames(
     offsets: &HashMap<String, (f32, f32)>,
     active_node: Option<&str>,
     focused_section: Option<(&str, usize)>,
+    border_preview: Option<super::BorderPreview<'_>>,
 ) -> Vec<SectionFrameElement> {
     let Some(active_id) = active_node else {
         return Vec::new();
@@ -124,6 +125,43 @@ pub fn build_section_frames(
     // unset on their config.
     let frame_color_resolved = resolve_var(SELECTED_EDGE_COLOR, &map.canvas.theme_variables);
 
+    // Hoist preview-target match out of the per-section loop. Most
+    // rebuilds run with `border_preview = None` and we want the
+    // steady-state per-section iteration to be one `is_none()`
+    // check per branch.
+    let preview_section_targets: Option<&[(String, usize)]> =
+        border_preview.and_then(|p| match p.target {
+            super::BorderPreviewTargetRef::Sections(ts) => Some(ts),
+            _ => None,
+        });
+    let preview_canvas_unfocused: Option<super::BorderConfigEditsView<'_>> =
+        border_preview.and_then(|p| match p.target {
+            super::BorderPreviewTargetRef::CanvasSectionFrame => Some(p.edits),
+            _ => None,
+        });
+    let preview_canvas_focused: Option<super::BorderConfigEditsView<'_>> =
+        border_preview.and_then(|p| match p.target {
+            super::BorderPreviewTargetRef::CanvasSectionFrameFocused => Some(p.edits),
+            _ => None,
+        });
+    // Pre-clone the two canvas defaults once per call, applying
+    // any canvas-targeted preview to the clones. Per-section
+    // cascade reads from these instead of `map.canvas.*` directly.
+    let canvas_unfocused_default: Option<crate::mindmap::model::GlyphBorderConfig> = {
+        let mut slot = map.canvas.default_section_frame_border.clone();
+        if let Some(view) = preview_canvas_unfocused {
+            crate::mindmap::border::apply_view_to_slot(&mut slot, &view);
+        }
+        slot
+    };
+    let canvas_focused_default: Option<crate::mindmap::model::GlyphBorderConfig> = {
+        let mut slot = map.canvas.default_focused_section_frame_border.clone();
+        if let Some(view) = preview_canvas_focused {
+            crate::mindmap::border::apply_view_to_slot(&mut slot, &view);
+        }
+        slot
+    };
+
     let mut out: Vec<SectionFrameElement> = Vec::with_capacity(node.sections.len());
     for (section_idx, section) in node.sections.iter().enumerate() {
         if !section.offset.x.is_finite() || !section.offset.y.is_finite() {
@@ -136,7 +174,35 @@ pub fn build_section_frames(
         }
         let ((sx, sy), (sw, sh)) = section_aabb(section, pos_x, pos_y, size_x, size_y);
         let focused = focused_idx == Some(section_idx);
-        let border_style = resolve_section_frame_border(section, &map.canvas, focused, frame_color_resolved);
+
+        // Apply per-section preview to the section's `frame_border`
+        // slot if this section is a `Sections((id, idx))` target.
+        let section_targeted = preview_section_targets
+            .map(|ts| ts.iter().any(|(id, idx)| id == active_id && *idx == section_idx))
+            .unwrap_or(false);
+        let section_slot: Option<crate::mindmap::model::GlyphBorderConfig> = if section_targeted {
+            let view = border_preview
+                .map(|p| p.edits)
+                .expect("section_targeted implies preview is Some");
+            let mut slot = section.frame_border.clone();
+            crate::mindmap::border::apply_view_to_slot(&mut slot, &view);
+            slot
+        } else {
+            section.frame_border.clone()
+        };
+
+        // Resolve through the same cascade
+        // `resolve_section_frame_border` would, but using the
+        // possibly-previewed slot + canvas defaults. Floor (when
+        // both layers are `None`) reuses the standard config the
+        // resolver would have produced.
+        let border_style = resolve_section_frame_border_with_overrides(
+            section_slot.as_ref(),
+            canvas_unfocused_default.as_ref(),
+            canvas_focused_default.as_ref(),
+            focused,
+            frame_color_resolved,
+        );
         let fallback_rgba = hex_to_rgba_safe(&border_style.color, [1.0, 1.0, 1.0, 1.0]);
         let palette_cycle = resolve_palette_cycle(&map.palettes, &border_style, fallback_rgba);
         out.push(SectionFrameElement {
@@ -150,4 +216,34 @@ pub fn build_section_frames(
         });
     }
     out
+}
+
+/// Section-frame cascade keyed off owned slot clones rather than a
+/// `&Canvas` and `&MindSection` — same shape as
+/// [`crate::mindmap::border::resolve_section_frame_border`] but
+/// suitable for the preview path that wants to substitute the
+/// per-section / canvas-default slots before resolution. With
+/// `border_preview = None` at the call site the two paths produce
+/// byte-identical output (parity contract).
+fn resolve_section_frame_border_with_overrides(
+    section_slot: Option<&crate::mindmap::model::GlyphBorderConfig>,
+    canvas_unfocused_default: Option<&crate::mindmap::model::GlyphBorderConfig>,
+    canvas_focused_default: Option<&crate::mindmap::model::GlyphBorderConfig>,
+    focused: bool,
+    frame_color_fallback: &str,
+) -> crate::mindmap::border::BorderStyle {
+    if let Some(cfg) = section_slot {
+        return crate::mindmap::border::resolve_border_style(Some(cfg), None, frame_color_fallback);
+    }
+    let canvas_chosen = if focused {
+        canvas_focused_default.or(canvas_unfocused_default)
+    } else {
+        canvas_unfocused_default
+    };
+    if let Some(cfg) = canvas_chosen {
+        return crate::mindmap::border::resolve_border_style(Some(cfg), None, frame_color_fallback);
+    }
+    // Floor — same shape `resolve_section_frame_border` synthesises.
+    let floor = crate::mindmap::border::section_frame_floor_config(focused);
+    crate::mindmap::border::resolve_border_style(Some(&floor), None, frame_color_fallback)
 }

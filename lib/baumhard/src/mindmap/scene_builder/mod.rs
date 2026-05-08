@@ -100,6 +100,85 @@ pub struct PortalColorPreview<'a> {
     pub color: &'a str,
 }
 
+/// Transient, scene-build-only substitution of a border's resolved
+/// configuration. Drives the `border preview …` /
+/// `section frame preview …` / `canvas border preview …` /
+/// `canvas section-frame [focused] preview …` console verbs.
+///
+/// While `Some(...)` is threaded through the build pipeline, the
+/// scene builder folds the previewed `edits` into a clone of the
+/// committed slot at the matching target before resolution — the
+/// committed model in `MindMap` is never mutated; this preview is
+/// purely a scene-level substitution. Borrow shape mirrors
+/// [`EdgeColorPreview`] / [`PortalColorPreview`]: the application
+/// layer owns the data, threads a borrow into the scene call.
+///
+/// `force_show_frame` lets `border preview preset=heavy` render
+/// against a node whose committed `style.show_frame == false` —
+/// otherwise the preview would be invisible and the user would
+/// think the verb was broken. Commit writes the explicit
+/// visibility flip through the normal setter, so the force flag
+/// only lives here on the scene-side struct.
+#[derive(Debug, Clone, Copy)]
+pub struct BorderPreview<'a> {
+    pub target: BorderPreviewTargetRef<'a>,
+    /// View carried by value — it's already a borrow of the
+    /// document's `BorderConfigEdits`, so cloning it just copies
+    /// 17 fields of `Option<&str>` / `Option<f32>` / `bool`. No
+    /// secondary borrow needed.
+    pub edits: BorderConfigEditsView<'a>,
+    pub force_show_frame: bool,
+}
+
+/// Borrowed view of the document-side `BorderPreviewTarget`. The
+/// scene builder reads through these slices without taking
+/// ownership of the doc's `Vec`s.
+#[derive(Debug, Clone, Copy)]
+pub enum BorderPreviewTargetRef<'a> {
+    Nodes(&'a [String]),
+    Sections(&'a [(String, usize)]),
+    CanvasDefault,
+    CanvasSectionFrame,
+    CanvasSectionFrameFocused,
+}
+
+/// Scene-side mirror of the application-crate `BorderConfigEdits`
+/// struct. The application crate owns `BorderConfigEdits` (it
+/// imports `OptionEdit` and shapes around the document layer);
+/// this view exposes just the resolved option-fields the slot
+/// helper needs at scene-build time. The application layer
+/// constructs an instance from the owned `BorderConfigEdits` and
+/// hands the borrow into [`BorderPreview`].
+///
+/// Mirrors the slot-helper's read shape — preset / font / size /
+/// color / palette / palette_field / padding / four sides / four
+/// corners — plus the `clear` / `visible` bookkeeping. Per-field
+/// `Option<&str>` doubles as "no edit" (`None`) or a `Set` value
+/// (`Some(s)`); `clear: bool` is the explicit-clear axis the
+/// document-side `OptionEdit::Clear` represents.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BorderConfigEditsView<'a> {
+    pub preset: Option<&'a str>,
+    pub font: Option<&'a str>,
+    pub font_size_pt: Option<f32>,
+    pub color: Option<&'a str>,
+    pub padding: Option<f32>,
+    pub color_palette: Option<&'a str>,
+    pub color_palette_field: Option<&'a str>,
+    pub side_top: Option<&'a str>,
+    pub side_bottom: Option<&'a str>,
+    pub side_left: Option<&'a str>,
+    pub side_right: Option<&'a str>,
+    pub corner_top_left: Option<&'a str>,
+    pub corner_top_right: Option<&'a str>,
+    pub corner_bottom_left: Option<&'a str>,
+    pub corner_bottom_right: Option<&'a str>,
+    /// `true` clears the slot entirely (the cascade falls through
+    /// to the canvas default or the hardcoded floor). Mirrors
+    /// `BorderConfigEdits.clear`.
+    pub clear: bool,
+}
+
 /// Intermediate representation between MindMap data and GPU rendering.
 /// Produced by `build_scene()`, consumed by Renderer to create cosmic-text buffers.
 pub struct RenderScene {

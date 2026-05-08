@@ -106,6 +106,7 @@ fn selected_portal_edge_rendered_with_highlight_color() {
         },
         None,
         None,
+        None,
         &mut cache,
         1.0,
     );
@@ -236,6 +237,7 @@ fn portal_color_preview_wins_over_selection() {
         },
         None,
         Some(preview),
+        None,
         &mut cache,
         1.0,
     );

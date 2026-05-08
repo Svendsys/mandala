@@ -737,7 +737,7 @@ pub fn resolve_section_frame_border(
 ///
 /// `focused = false` → light preset (┌─┐│└─┘).
 /// `focused = true`  → heavy preset (┏━┓┃┗━┛).
-fn section_frame_floor_config(focused: bool) -> GlyphBorderConfig {
+pub fn section_frame_floor_config(focused: bool) -> GlyphBorderConfig {
     GlyphBorderConfig {
         preset: if focused {
             "heavy".to_string()
@@ -897,12 +897,139 @@ fn default_custom_glyphs() -> CustomBorderGlyphs {
 /// in the map (logs a warning in the latter case per
 /// `CODE_CONVENTIONS.md` §9). Pre-resolution lets the renderer and
 /// tree builder consume the colour list without re-walking the
-/// palette every frame; the resolved cycle is stamped on
-/// [`crate::mindmap::scene_builder::BorderElement::palette_cycle`]
-/// and
-/// [`crate::mindmap::tree_builder::BorderNodeData::palette_cycle`]
-/// at scene-build time.
+/// Apply a [`crate::mindmap::scene_builder::BorderConfigEditsView`]
+/// to a slot for live-preview rendering. Mirrors the application-
+/// crate's `apply_glyph_border_edits_to_slot` shape but consumes
+/// borrowed strings rather than `OptionEdit<T>` so the scene
+/// builder can fold the staged preview edits into a clone of the
+/// committed slot without round-tripping back through the
+/// application layer.
 ///
+/// **Parity contract:** this function must produce the same
+/// post-state as `apply_glyph_border_edits_to_slot` for any
+/// committing edit. Both paths derive from the same field rules:
+/// per-field set-or-keep, side / corner edits force preset to
+/// `"custom"`, the `glyphs` slot materialises on first edit. A
+/// parity regression here means the preview lies about what
+/// commit will produce — Risk #1 in the plan.
+///
+/// `view.clear == true` empties the slot and short-circuits.
+/// Otherwise the helper materialises a fresh `GlyphBorderConfig`
+/// on first edit (mirroring the committing path's
+/// `default_glyph_border_config`) and folds each per-field
+/// override.
+pub fn apply_view_to_slot(
+    slot: &mut Option<GlyphBorderConfig>,
+    view: &crate::mindmap::scene_builder::BorderConfigEditsView<'_>,
+) {
+    if view.clear {
+        *slot = None;
+        return;
+    }
+    if !view_touches_cfg_field(view) {
+        return;
+    }
+    let cfg = slot.get_or_insert_with(default_glyph_border_config);
+    if let Some(p) = view.preset {
+        cfg.preset = p.to_string();
+    }
+    if let Some(f) = view.font {
+        cfg.font = Some(f.to_string());
+    }
+    if let Some(s) = view.font_size_pt {
+        cfg.font_size_pt = s;
+    }
+    if let Some(c) = view.color {
+        cfg.color = Some(c.to_string());
+    }
+    if let Some(p) = view.padding {
+        cfg.padding = p;
+    }
+    if let Some(p) = view.color_palette {
+        cfg.color_palette = Some(p.to_string());
+    }
+    if let Some(f) = view.color_palette_field {
+        cfg.color_palette_field = Some(f.to_string());
+    }
+    if view_touches_glyphs(view) {
+        if cfg.glyphs.is_none() {
+            cfg.glyphs = Some(default_custom_glyphs());
+        }
+        if !cfg.preset.eq_ignore_ascii_case("custom") {
+            cfg.preset = "custom".to_string();
+        }
+        let g = cfg.glyphs.as_mut().expect("just inserted");
+        if let Some(v) = view.side_top {
+            g.top = v.to_string();
+        }
+        if let Some(v) = view.side_bottom {
+            g.bottom = v.to_string();
+        }
+        if let Some(v) = view.side_left {
+            g.left = v.to_string();
+        }
+        if let Some(v) = view.side_right {
+            g.right = v.to_string();
+        }
+        if let Some(v) = view.corner_top_left {
+            g.top_left = v.to_string();
+        }
+        if let Some(v) = view.corner_top_right {
+            g.top_right = v.to_string();
+        }
+        if let Some(v) = view.corner_bottom_left {
+            g.bottom_left = v.to_string();
+        }
+        if let Some(v) = view.corner_bottom_right {
+            g.bottom_right = v.to_string();
+        }
+    }
+}
+
+fn view_touches_cfg_field(view: &crate::mindmap::scene_builder::BorderConfigEditsView<'_>) -> bool {
+    view.preset.is_some()
+        || view.font.is_some()
+        || view.font_size_pt.is_some()
+        || view.color.is_some()
+        || view.padding.is_some()
+        || view.color_palette.is_some()
+        || view.color_palette_field.is_some()
+        || view_touches_glyphs(view)
+}
+
+fn view_touches_glyphs(view: &crate::mindmap::scene_builder::BorderConfigEditsView<'_>) -> bool {
+    view.side_top.is_some()
+        || view.side_bottom.is_some()
+        || view.side_left.is_some()
+        || view.side_right.is_some()
+        || view.corner_top_left.is_some()
+        || view.corner_top_right.is_some()
+        || view.corner_bottom_left.is_some()
+        || view.corner_bottom_right.is_some()
+}
+
+/// Default `GlyphBorderConfig` shape — light preset, 14pt, no
+/// font, 4px padding, no palette. Used by the application-side
+/// committing setters as the "first edit materialises this" base
+/// (`set_node_border_config` etc.) and by the scene-side preview
+/// apply path so the two share one constant. Mirrors the
+/// loader-time defaults in
+/// [`crate::mindmap::model::node`]; centralised here so callers
+/// don't reach into the model module's private `default_*`
+/// factories.
+pub fn default_glyph_border_config() -> GlyphBorderConfig {
+    GlyphBorderConfig {
+        preset: "light".to_string(),
+        font: None,
+        font_size_pt: 14.0,
+        color: None,
+        glyphs: None,
+        padding: 4.0,
+        color_palette: None,
+        color_palette_field: None,
+    }
+}
+
 /// Cost: O(groups.len()) hex parses on names that resolve, O(1) on
 /// the unset / missing fallback paths.
 pub fn resolve_palette_cycle(

@@ -511,6 +511,7 @@ impl MindMapDocument {
         scene_builder::SceneSelectionContext<'a>,
         Option<scene_builder::EdgeColorPreview<'a>>,
         Option<scene_builder::PortalColorPreview<'a>>,
+        Option<scene_builder::BorderPreview<'a>>,
     ) {
         let edge = self
             .selection
@@ -565,7 +566,19 @@ impl MindMapDocument {
             ),
             None => (None, None),
         };
-        (selection, edge_preview, portal_preview)
+        // Border preview: build a borrowed scene-side view from
+        // the owned `self.border_preview`. The view is borrowed
+        // straight from `self`, so the returned tuple lives as
+        // long as `&self`. Returns `None` when no preview is
+        // active OR when the preview's `selection_snapshot` no
+        // longer covers the live selection (defer-clear arrives
+        // in a follow-up commit; for now this branch is `None`
+        // only when the slot is itself `None`).
+        let border_preview = self
+            .border_preview
+            .as_ref()
+            .map(|bp| build_border_preview_scene_view(bp));
+        (selection, edge_preview, portal_preview, border_preview)
     }
 
     /// Cache-aware scene build. The drag drain in `app.rs` calls this
@@ -585,13 +598,15 @@ impl MindMapDocument {
         camera_zoom: f32,
         resize_overrides: InteractionModeOverrides<'_>,
     ) -> RenderScene {
-        let (selection, edge_preview, portal_preview) = self.assemble_scene_overrides(resize_overrides);
+        let (selection, edge_preview, portal_preview, border_preview) =
+            self.assemble_scene_overrides(resize_overrides);
         scene_builder::build_scene_with_cache(
             &self.mindmap,
             offsets,
             selection,
             edge_preview,
             portal_preview,
+            border_preview,
             cache,
             camera_zoom,
         )
@@ -610,14 +625,129 @@ impl MindMapDocument {
         camera_zoom: f32,
         resize_overrides: InteractionModeOverrides<'_>,
     ) -> RenderScene {
-        let (selection, edge_preview, portal_preview) = self.assemble_scene_overrides(resize_overrides);
+        let (selection, edge_preview, portal_preview, border_preview) =
+            self.assemble_scene_overrides(resize_overrides);
         scene_builder::build_scene_with_offsets_selection_and_overrides(
             &self.mindmap,
             &HashMap::new(),
             selection,
             edge_preview,
             portal_preview,
+            border_preview,
             camera_zoom,
         )
     }
+}
+
+/// Build a borrowed scene-side `BorderPreview<'a>` from the owned
+/// document-side `BorderPreview`. The scene-side view is `Copy +
+/// 'a`; it holds `&'a str` borrows pointing at the owned
+/// `BorderConfigEdits` fields, so the resulting view lives as
+/// long as the document reference the caller already has.
+///
+/// `force_show_frame` fires when the preview's edits include any
+/// preset / glyph / pattern field — preview must be visible even
+/// when the committed `style.show_frame == false`, otherwise
+/// `border preview preset=heavy` on a frameless node renders
+/// nothing and the user thinks the verb is broken. Commit writes
+/// `style.show_frame = true` through the normal setter when the
+/// user wants the visibility flip persisted (today via
+/// `border on`).
+fn build_border_preview_scene_view<'a>(
+    bp: &'a BorderPreview,
+) -> scene_builder::BorderPreview<'a> {
+    let target = match &bp.target {
+        BorderPreviewTarget::Nodes(ids) => scene_builder::BorderPreviewTargetRef::Nodes(ids.as_slice()),
+        BorderPreviewTarget::Sections(ts) => {
+            scene_builder::BorderPreviewTargetRef::Sections(ts.as_slice())
+        }
+        BorderPreviewTarget::CanvasDefault => scene_builder::BorderPreviewTargetRef::CanvasDefault,
+        BorderPreviewTarget::CanvasSectionFrame => {
+            scene_builder::BorderPreviewTargetRef::CanvasSectionFrame
+        }
+        BorderPreviewTarget::CanvasSectionFrameFocused => {
+            scene_builder::BorderPreviewTargetRef::CanvasSectionFrameFocused
+        }
+    };
+    let edits = build_border_config_edits_view(&bp.edits);
+    let force_show_frame = view_implies_visible(&edits);
+    scene_builder::BorderPreview {
+        target,
+        edits,
+        force_show_frame,
+    }
+}
+
+/// Convert an owned `BorderConfigEdits` (from the application
+/// crate) into a borrowed scene-side `BorderConfigEditsView<'a>`
+/// the scene builder consumes. The view is just per-field
+/// `Option<&str>` / `Option<f32>` — a flat read-only projection
+/// of the staged edits.
+fn build_border_config_edits_view<'a>(
+    edits: &'a BorderConfigEdits,
+) -> scene_builder::BorderConfigEditsView<'a> {
+    use crate::application::document::OptionEdit;
+    fn opt_str<'a>(e: &'a OptionEdit<String>) -> Option<&'a str> {
+        match e {
+            OptionEdit::Set(s) => Some(s.as_str()),
+            _ => None,
+        }
+    }
+    fn opt_f32(e: &OptionEdit<f32>) -> Option<f32> {
+        match e {
+            OptionEdit::Set(v) => Some(*v),
+            _ => None,
+        }
+    }
+    fn opt_field<'a>(
+        e: &'a OptionEdit<baumhard::mindmap::border::PaletteField>,
+    ) -> Option<&'a str> {
+        match e {
+            OptionEdit::Set(v) => Some(v.as_str()),
+            _ => None,
+        }
+    }
+    scene_builder::BorderConfigEditsView {
+        preset: opt_str(&edits.preset),
+        font: opt_str(&edits.font),
+        font_size_pt: opt_f32(&edits.font_size_pt),
+        color: opt_str(&edits.color),
+        padding: opt_f32(&edits.padding),
+        color_palette: opt_str(&edits.color_palette),
+        color_palette_field: opt_field(&edits.color_palette_field),
+        side_top: opt_str(&edits.side_top),
+        side_bottom: opt_str(&edits.side_bottom),
+        side_left: opt_str(&edits.side_left),
+        side_right: opt_str(&edits.side_right),
+        corner_top_left: opt_str(&edits.corner_top_left),
+        corner_top_right: opt_str(&edits.corner_top_right),
+        corner_bottom_left: opt_str(&edits.corner_bottom_left),
+        corner_bottom_right: opt_str(&edits.corner_bottom_right),
+        clear: edits.clear,
+    }
+}
+
+/// `true` iff `view`'s edits include at least one field that
+/// implies the resolved border should be visible — preset,
+/// font / size / color / padding / palette / palette-field, or
+/// any per-side / per-corner glyph. Force-show then ignores a
+/// committed `style.show_frame == false` for the duration of the
+/// preview so the user sees their staged edits even on a
+/// frameless node.
+fn view_implies_visible(view: &scene_builder::BorderConfigEditsView<'_>) -> bool {
+    view.preset.is_some()
+        || view.font.is_some()
+        || view.font_size_pt.is_some()
+        || view.color.is_some()
+        || view.padding.is_some()
+        || view.color_palette.is_some()
+        || view.color_palette_field.is_some()
+        || view.side_top.is_some()
+        || view.side_bottom.is_some()
+        || view.side_left.is_some()
+        || view.side_right.is_some()
+        || view.corner_top_left.is_some()
+        || view.corner_top_right.is_some()
+        || view.corner_bottom_left.is_some()
+        || view.corner_bottom_right.is_some()
 }

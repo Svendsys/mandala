@@ -34,6 +34,7 @@ fn test_edge_handles_straight_edge_emits_midpoint() {
         },
         None,
         None,
+        None,
         &mut cache,
         1.0,
     );
@@ -65,6 +66,7 @@ fn test_edge_handles_curved_edge_emits_control_points_not_midpoint() {
             edge: Some((&edge.from_id, &edge.to_id, &edge.edge_type)),
             ..Default::default()
         },
+        None,
         None,
         None,
         &mut cache,
@@ -101,6 +103,7 @@ fn test_edge_handles_cubic_edge_emits_both_control_points() {
             edge: Some((&edge.from_id, &edge.to_id, &edge.edge_type)),
             ..Default::default()
         },
+        None,
         None,
         None,
         &mut cache,
@@ -140,6 +143,7 @@ fn test_edge_handle_control_point_position_is_absolute_canvas() {
             edge: Some((&edge.from_id, &edge.to_id, &edge.edge_type)),
             ..Default::default()
         },
+        None,
         None,
         None,
         &mut cache,
