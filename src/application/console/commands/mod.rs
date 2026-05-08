@@ -22,6 +22,7 @@ pub mod font;
 pub mod fps;
 pub mod help;
 pub mod label;
+pub mod mode;
 pub mod mutation;
 pub mod new;
 pub mod node;
@@ -77,6 +78,7 @@ pub const COMMANDS: &[Command] = &[
     fps::COMMAND,
     spacing::COMMAND,
     label::COMMAND,
+    mode::COMMAND,
     mutation::COMMAND,
     save::COMMAND,
     open::COMMAND,

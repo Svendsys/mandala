@@ -668,3 +668,52 @@ fn test_orphan_selection_on_root_is_noop() {
     // undo.entries may be non-empty but the restoration is a no-op.
     let _ = undo;
 }
+
+/// **Regression: Default mode emits zero resize handles.**
+///
+/// Pre-Batch-2 of `SECTIONS_BORDERS_RESIZE_PLAN.md`, a `Single`
+/// selection auto-armed 8 node resize handles, leading to "we
+/// often find ourselves accidentally resizing when we only want
+/// to move nodes around" (the user-facing bug this batch fixes).
+/// The fix moved the gate from selection to mode: handles emit
+/// only when `InteractionMode::Resize` is active. This test pins
+/// the new behaviour.
+#[test]
+fn default_mode_with_single_selection_emits_no_resize_handles() {
+    let mut doc = load_test_doc();
+    let id = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(id);
+    let scene = doc.build_scene_with_selection(1.0, ResizeHandleOverrides::none());
+    assert!(
+        scene.node_resize_handles.is_empty(),
+        "Default mode + Single selection must NOT emit resize handles"
+    );
+    assert!(
+        scene.section_resize_handles.is_empty(),
+        "Default mode + Single selection must NOT emit section resize handles"
+    );
+}
+
+/// Counterpart to the above: `Resize { Node(id) }` mode emits the
+/// 8 handles for the targeted node.
+#[test]
+fn resize_mode_node_target_emits_eight_handles() {
+    let doc = load_test_doc();
+    let id = first_testament_node_id(&doc);
+    let scene = doc.build_scene_with_selection(
+        1.0,
+        ResizeHandleOverrides {
+            node: Some(id.as_str()),
+            section: None,
+        },
+    );
+    assert_eq!(
+        scene.node_resize_handles.len(),
+        8,
+        "Resize mode with Node target must emit 8 handles"
+    );
+    assert!(
+        scene.section_resize_handles.is_empty(),
+        "Node-target Resize mode must not emit section handles"
+    );
+}

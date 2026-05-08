@@ -180,6 +180,8 @@ pub(in crate::application::app) fn dispatch_action(
             // for CancelMode). This arm runs only the native-only
             // residual: InteractionMode reset + hovered_node clear + rebuild.
             if ctx.interaction_mode.is_target_picker() {
+                // Reparent / Connect — full hover-clear + rebuild_with_mode
+                // path (orange / green highlights need to clear).
                 *ctx.interaction_mode = InteractionMode::Default;
                 *ctx.hovered_node = None;
                 if let Some(doc) = ctx.document.as_ref() {
@@ -187,6 +189,22 @@ pub(in crate::application::app) fn dispatch_action(
                         doc,
                         ctx.interaction_mode,
                         ctx.hovered_node.as_deref(),
+                        ctx.mindmap_tree,
+                        ctx.app_scene,
+                        ctx.renderer,
+                        ctx.scene_cache,
+                    );
+                }
+            } else if matches!(ctx.interaction_mode, InteractionMode::Resize { .. }) {
+                // Resize — flip mode back, full rebuild_all so the
+                // 8 resize handles disappear (the scene-builder
+                // gate at `document/mod.rs:520` reads from the
+                // mode that we just changed).
+                *ctx.interaction_mode = InteractionMode::Default;
+                if let Some(doc) = ctx.document.as_ref() {
+                    super::super::scene_rebuild::rebuild_all(
+                        doc,
+                        ctx.interaction_mode,
                         ctx.mindmap_tree,
                         ctx.app_scene,
                         ctx.renderer,

@@ -35,7 +35,7 @@ pub(in crate::application::app) fn execute_console_line(
     portal_text_edit_state: &mut PortalTextEditState,
     color_picker_state: &mut ColorPickerState,
     doc: &mut MindMapDocument,
-    interaction_mode: &super::super::InteractionMode,
+    interaction_mode: &mut super::super::InteractionMode,
     mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
     app_scene: &mut crate::application::scene_host::AppScene,
     renderer: &mut Renderer,
@@ -83,6 +83,7 @@ pub(in crate::application::app) fn execute_console_line(
     let post_rebuild = handle_pre_rebuild_side_effect(
         side_effect,
         doc,
+        interaction_mode,
         mindmap_tree,
         label_edit_state,
         portal_text_edit_state,
@@ -123,6 +124,7 @@ pub(in crate::application::app) fn execute_console_line(
 fn handle_pre_rebuild_side_effect(
     side_effect: Option<ConsoleSideEffect>,
     doc: &mut MindMapDocument,
+    interaction_mode: &mut super::super::InteractionMode,
     mindmap_tree: &mut Option<MindMapTree>,
     label_edit_state: &mut LabelEditState,
     portal_text_edit_state: &mut PortalTextEditState,
@@ -152,6 +154,15 @@ fn handle_pre_rebuild_side_effect(
             // `Renderer::process()` re-shapes them on the next
             // frame when toggled on.
             renderer.set_fps_display(mode);
+            None
+        }
+        ConsoleSideEffect::SetInteractionMode(mode) => {
+            // Flip the mode in place so the rebuild that runs
+            // after this helper sees the new value when reading
+            // `interaction_mode.resize_handle_overrides()`. No
+            // separate rebuild here — `execute_console_line`'s
+            // post-handler `rebuild_all` covers it.
+            *interaction_mode = mode;
             None
         }
         other => Some(other),
@@ -199,9 +210,11 @@ fn handle_post_rebuild_side_effect(
             );
         }
         // Pre-rebuild variants — already consumed.
-        ConsoleSideEffect::ReplaceDocument(_) | ConsoleSideEffect::SetFpsDisplay(_) => {
+        ConsoleSideEffect::ReplaceDocument(_)
+        | ConsoleSideEffect::SetFpsDisplay(_)
+        | ConsoleSideEffect::SetInteractionMode(_) => {
             unreachable!(
-                "ReplaceDocument / SetFpsDisplay should be consumed by handle_pre_rebuild_side_effect"
+                "ReplaceDocument / SetFpsDisplay / SetInteractionMode should be consumed by handle_pre_rebuild_side_effect"
             )
         }
     }

@@ -175,6 +175,11 @@ pub(in crate::application::app) fn dispatch_compatible(
         }
         // ── Document-lifecycle ─────────────────────────────────
         Action::Undo => with_doc_rebuild(core, |rc| super::cross_dispatch::apply_undo(rc)),
+        Action::EnterResizeMode => {
+            with_doc_rebuild(core, |rc| {
+                let _ = super::cross_dispatch::apply_enter_resize_mode(rc);
+            })
+        }
         Action::DeleteSelection => {
             with_doc_rebuild(core, |rc| super::cross_dispatch::apply_delete_selection(rc))
         }

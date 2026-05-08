@@ -296,53 +296,51 @@ pub(super) fn handle_mouse_input(
                     },
                     None => None,
                 };
-                // If a `Some`-sized section is currently selected,
-                // check whether the cursor is over one of its 8
-                // resize handles. Same precedence shape as
-                // `hit_edge_handle` — the handle wins over the
-                // section / node behind it at threshold-cross
-                // time. `None`-sized sections (fill-parent) emit
-                // no handles, so this branch produces `None`.
-                // Section AND SectionRange both expose an inner
-                // SectionSel via `selected_section()`. Range-aware
-                // selections still emit resize handles on the
-                // owning section.
-                let hit_section_resize_handle = match ctx.document.as_ref() {
-                    Some(doc) => match doc.selection.selected_section() {
-                        Some(s) => {
-                            let tol = HANDLE_HIT_TOLERANCE_PX * ctx.renderer.canvas_per_pixel();
-                            crate::application::document::hit_test_section_resize_handle(
-                                &doc.mindmap,
-                                canvas_pos,
-                                &s.node_id,
-                                s.section_idx,
-                                tol,
-                            )
-                            .map(|side| (s.node_id.clone(), s.section_idx, side))
-                        }
-                        None => None,
-                    },
-                    None => None,
+                // Section resize handle press capture — only fires
+                // when the active mode is `Resize { Section { .. } }`.
+                // Pre-Batch-2 this gate read selection
+                // (`selected_section()`) so a `Some`-sized section
+                // selection auto-armed handle hits; the
+                // mode-driven gate fixes that. `None`-sized
+                // sections still emit no handles regardless,
+                // because `hit_test_section_resize_handle` filters
+                // them out internally.
+                let hit_section_resize_handle = match (
+                    ctx.document.as_ref(),
+                    ctx.interaction_mode.resize_handle_section(),
+                ) {
+                    (Some(doc), Some((node_id, section_idx))) => {
+                        let tol = HANDLE_HIT_TOLERANCE_PX * ctx.renderer.canvas_per_pixel();
+                        crate::application::document::hit_test_section_resize_handle(
+                            &doc.mindmap,
+                            canvas_pos,
+                            node_id,
+                            section_idx,
+                            tol,
+                        )
+                        .map(|side| (node_id.to_string(), section_idx, side))
+                    }
+                    _ => None,
                 };
-                // Node resize handle press capture — when a node
-                // is `Single`-selected, the cursor may land on
-                // one of its 8 handles. Same shape / tolerance
-                // as edge + section handles.
-                let hit_node_resize_handle = match ctx.document.as_ref() {
-                    Some(doc) => match &doc.selection {
-                        SelectionState::Single(id) => {
-                            let tol = HANDLE_HIT_TOLERANCE_PX * ctx.renderer.canvas_per_pixel();
-                            crate::application::document::hit_test_node_resize_handle(
-                                &doc.mindmap,
-                                canvas_pos,
-                                id,
-                                tol,
-                            )
-                            .map(|side| (id.clone(), side))
-                        }
-                        _ => None,
-                    },
-                    None => None,
+                // Node resize handle press capture — only fires when
+                // the active mode is `Resize { Node(_) }`. Same
+                // mode-driven gate replaces the pre-Batch-2
+                // `Single`-selection auto-arm.
+                let hit_node_resize_handle = match (
+                    ctx.document.as_ref(),
+                    ctx.interaction_mode.resize_handle_node(),
+                ) {
+                    (Some(doc), Some(node_id)) => {
+                        let tol = HANDLE_HIT_TOLERANCE_PX * ctx.renderer.canvas_per_pixel();
+                        crate::application::document::hit_test_node_resize_handle(
+                            &doc.mindmap,
+                            canvas_pos,
+                            node_id,
+                            tol,
+                        )
+                        .map(|side| (node_id.to_string(), side))
+                    }
+                    _ => None,
                 };
                 // Portal-label drag capture. Takes precedence
                 // over `hit_node` at threshold-cross time so

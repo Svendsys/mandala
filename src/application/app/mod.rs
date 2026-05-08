@@ -122,12 +122,14 @@ pub(crate) use crate::application::common::now_ms;
 const EDGE_HIT_TOLERANCE_PX: f32 = 8.0;
 
 /// Screen-space click tolerance (in pixels) for grab-handle hit
-/// testing — applies uniformly to edge handles and section
-/// resize handles. Slightly larger than the edge-path tolerance
-/// above because handles are point-like and need a bit more
-/// grab-area to feel forgiving.
+/// testing — applies uniformly to edge handles and section /
+/// node resize handles. Tightened to 8px in Batch 2 of
+/// `SECTIONS_BORDERS_RESIZE_PLAN.md`: with explicit Resize mode
+/// gating handle visibility, we no longer need the 12px catch
+/// radius to compete with body-click ambiguity. 8px is still
+/// generous for a single ☐ glyph at standard zoom.
 #[cfg(not(target_arch = "wasm32"))]
-const HANDLE_HIT_TOLERANCE_PX: f32 = 12.0;
+const HANDLE_HIT_TOLERANCE_PX: f32 = 8.0;
 
 /// What a single click targeted. Used by [`LastClick`] + the
 /// double-click detector so a portal-marker double-click (navigate)
@@ -346,14 +348,14 @@ fn click_hit_from_priority(
 
 
 // `InteractionMode` is the cross-platform high-level mode enum
-// (re-exported here so submodules can write `super::InteractionMode`).
+// (re-exported here so submodules can write `super::InteractionMode`,
+// and so the console layer can carry it inside `ConsoleSideEffect`).
 // Lives in `interaction_mode.rs`; full doc comment + variant prose
 // lives there. Replaces the pre-Batch-1 native-only `AppMode` enum.
-// `ResizeTarget` lives in the same module and will be re-exported
-// in Batch 2 of `SECTIONS_BORDERS_RESIZE_PLAN.md` when the Resize
-// mode arms surface as consumers — until then, callers reach
-// through `super::interaction_mode::ResizeTarget`.
-pub(super) use interaction_mode::InteractionMode;
+// `ResizeTarget` ships at the same time so the `mode resize`
+// console verb can construct `Resize { target }` without reaching
+// through the submodule.
+pub(in crate::application) use interaction_mode::{InteractionMode, ResizeTarget};
 
 /// Tracks the current drag interaction state.
 ///

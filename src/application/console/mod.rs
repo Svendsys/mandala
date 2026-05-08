@@ -86,6 +86,16 @@ pub enum ConsoleSideEffect {
     /// any open modal-editor state so stale references into the
     /// old document can't outlive the swap.
     ReplaceDocument(MindMapDocument),
+    /// Flip the high-level interaction mode and trigger a scene
+    /// rebuild. Mirrors the `SetFpsDisplay` precedent: a UI-state
+    /// transition that doesn't pass through `Action` because the
+    /// console verb already IS the user-named effect (no second
+    /// dispatch site needed). Used by the `mode` console verb's
+    /// `default` / `resize` subverbs. `default` carries
+    /// `InteractionMode::Default`; `resize` carries
+    /// `InteractionMode::Resize { ... }` resolved from the
+    /// selection inside the verb body.
+    SetInteractionMode(crate::application::app::InteractionMode),
 }
 
 impl std::fmt::Debug for ConsoleSideEffect {
@@ -104,6 +114,7 @@ impl std::fmt::Debug for ConsoleSideEffect {
             Self::CloseColorPicker => write!(f, "CloseColorPicker"),
             Self::SetFpsDisplay(m) => f.debug_tuple("SetFpsDisplay").field(m).finish(),
             Self::ReplaceDocument(_) => write!(f, "ReplaceDocument(<doc>)"),
+            Self::SetInteractionMode(m) => f.debug_tuple("SetInteractionMode").field(m).finish(),
         }
     }
 }

@@ -191,6 +191,26 @@ pub enum Action {
     /// **WASM:** same stub posture as `Copy`.
     #[action(context = Document, wasm = Compatible, destructive)]
     Cut,
+    /// Enter resize mode on the current selection. Resolves the
+    /// selection into a [`crate::application::app::interaction_mode::ResizeTarget`]:
+    /// - `Single(node)` → `Resize { target: Node(node_id) }`.
+    /// - `Section(s)` / `SectionRange` with `s.size == Some(_)` →
+    ///   `Resize { target: Section { node_id, section_idx } }`.
+    /// - `Section` with `size == None` (fill-parent) → no-op + log
+    ///   (None-sized sections have no AABB to stretch).
+    /// - `Multi` / `MultiSection` / `Edge*` / `None` → no-op + log.
+    ///
+    /// On success the active node / section emits 8 resize handles
+    /// (NW, N, NE, E, SE, S, SW, W); anchor drag transitions
+    /// `DragState` through the existing throttled-resize gestures.
+    /// `ExitMode` (Esc) returns to `Default`.
+    ///
+    /// Non-destructive — flips a mode bit and triggers a scene
+    /// rebuild, no document mutation. The actual resize commit
+    /// happens later via `set_node_aabb` / `set_section_aabb` on
+    /// drag release; that path is gated separately.
+    #[action(context = Document, wasm = Compatible)]
+    EnterResizeMode,
 
     // ── Console ──────────────────────────────────────────────────
     /// Close the console (two-tier: dismiss popup first, then close).

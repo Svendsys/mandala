@@ -120,6 +120,74 @@ pub(in crate::application::app) fn apply_open_text_edit_on_single(
     true
 }
 
+/// Resolve the current `SelectionState` into a `ResizeTarget` and
+/// flip the active interaction mode to `Resize { target }`. Returns
+/// `true` when the mode actually changed (selection resolved
+/// successfully and was a valid resize target). On a non-resizable
+/// selection (`Multi`, `MultiSection`, `Edge*`, `None`, or a
+/// `None`-sized section) returns `false` after a `log::warn!` —
+/// the caller decides whether to treat that as a no-op or as
+/// console feedback.
+///
+/// Cross-platform: only touches `interaction_mode`, the document
+/// model (selection read), and rebuilds the scene. No filesystem,
+/// no console, no modal-state mutation.
+pub(in crate::application::app) fn apply_enter_resize_mode(rc: &mut RebuildContext<'_>) -> bool {
+    use super::super::super::interaction_mode::{InteractionMode, ResizeTarget};
+    use crate::application::document::SelectionState;
+
+    let target = match &rc.document.selection {
+        SelectionState::Single(node_id) => ResizeTarget::Node(node_id.clone()),
+        SelectionState::Section(s) | SelectionState::SectionRange { sel: s, .. } => {
+            // Reach into the model to confirm the section is
+            // `Some`-sized — fill-parent sections have no own AABB
+            // to stretch and therefore can't be resized. Verify
+            // before flipping mode so the failure surface is one
+            // log line, not a Resize mode that's silently empty.
+            let section_size = rc
+                .document
+                .mindmap
+                .nodes
+                .get(&s.node_id)
+                .and_then(|n| n.sections.get(s.section_idx))
+                .and_then(|sec| sec.size);
+            if section_size.is_none() {
+                log::warn!(
+                    "EnterResizeMode: section {}[{}] is fill-parent (no Some size); cannot resize",
+                    s.node_id,
+                    s.section_idx
+                );
+                return false;
+            }
+            ResizeTarget::Section {
+                node_id: s.node_id.clone(),
+                section_idx: s.section_idx,
+            }
+        }
+        SelectionState::None => {
+            log::warn!("EnterResizeMode: no selection; nothing to resize");
+            return false;
+        }
+        SelectionState::Multi(_) | SelectionState::MultiSection(_) => {
+            log::warn!(
+                "EnterResizeMode: multi-target selection — single-target only; \
+                 select a single node or section first"
+            );
+            return false;
+        }
+        SelectionState::Edge(_)
+        | SelectionState::EdgeLabel(_)
+        | SelectionState::PortalLabel(_)
+        | SelectionState::PortalText(_) => {
+            log::warn!("EnterResizeMode: edge / label / portal selection — not resizable");
+            return false;
+        }
+    };
+    *rc.interaction_mode = InteractionMode::Resize { target };
+    rc.rebuild_after_selection_change();
+    true
+}
+
 // ── Clipboard ───────────────────────────────────────────────────
 //
 // Cross-platform: `clipboard::{read,write}_clipboard` are logged

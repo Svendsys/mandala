@@ -2313,7 +2313,40 @@ predicate tests). `./test.sh --lint` advisory clippy warnings are
 all pre-existing. WASM target compiles cleanly (two pre-existing
 unused-import warnings on the platform shim — separate concern).
 
-#### Batch 2 — Resize mode (the urgent UX fix)
+#### Batch 2 — Resize mode (the urgent UX fix) — SHIPPED
+
+Tasks (status):
+- [x] Mode-driven gate at `document/mod.rs:520-523` reads from
+      `ResizeHandleOverrides` populated from `InteractionMode`. Auto-
+      anchor-on-selection bug FIXED — `Single`/`Section` selections
+      in `Default` mode emit zero handles.
+- [x] Press-time handle hit-test gates moved from selection
+      (`event_mouse_click.rs:309-345`) to mode
+      (`interaction_mode.resize_handle_*()`).
+- [x] `Action::EnterResizeMode` + `apply_enter_resize_mode` helper
+      in `cross_dispatch::lifecycle`.
+- [x] Default keybind `enter_resize_mode: vec!["r".into()]`.
+- [x] `CancelMode` (Esc) extended to exit Resize → Default. The
+      `CancelMode → ExitMode` rename is **deferred** — the
+      functional behavior ships now; the rename is a separate
+      drive-by since user keybinds.json files would break and the
+      semantic value is small.
+- [x] `HANDLE_HIT_TOLERANCE_PX` 12 → 8.
+- [x] Corner inset 2px **deferred** (per plan §6.9 itself flags this
+      as "minor follow-up; not strictly required to fix the bug").
+      Existing `resize_handle_positions` tests pin specific
+      positions; insetting requires a coordinated test update.
+- [x] `mode` console verb with `show | default | resize` subverbs
+      via new `ConsoleSideEffect::SetInteractionMode`.
+- [x] Tests: 9 new (regression `default_mode_with_single_selection_emits_no_resize_handles`,
+      counterpart `resize_mode_node_target_emits_eight_handles`,
+      6 `mode` console verb tests, 1 InteractionMode predicate test
+      for resize_handle_overrides).
+
+2274 (baseline) → 2282 (Batch 1) → 2291 (Batch 2). Native + WASM
+both green.
+
+
 
 Wires NodeEdit-and-Resize-mode-driven handle gating, lands the
 `EnterResizeMode` Action, the `mode resize` console verb, and

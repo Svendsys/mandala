@@ -43,6 +43,9 @@ pub struct KeybindConfig {
     pub undo: Vec<String>,
     pub enter_reparent_mode: Vec<String>,
     pub enter_connect_mode: Vec<String>,
+    /// Enter resize mode on the current selection — Batch 2 of
+    /// `SECTIONS_BORDERS_RESIZE_PLAN.md`. Default `r`.
+    pub enter_resize_mode: Vec<String>,
     pub delete_selection: Vec<String>,
     pub cancel_mode: Vec<String>,
     pub create_orphan_node: Vec<String>,
@@ -225,6 +228,7 @@ impl Default for KeybindConfig {
             undo: vec!["Ctrl+Z".into(), "Undo".into()],
             enter_reparent_mode: vec!["Ctrl+P".into()],
             enter_connect_mode: vec!["Ctrl+D".into()],
+            enter_resize_mode: vec!["r".into()],
             delete_selection: vec!["Delete".into()],
             cancel_mode: vec!["Escape".into()],
             create_orphan_node: vec!["Ctrl+N".into()],
@@ -424,6 +428,7 @@ impl KeybindConfig {
             (Action::Undo, &self.undo),
             (Action::EnterReparentMode, &self.enter_reparent_mode),
             (Action::EnterConnectMode, &self.enter_connect_mode),
+            (Action::EnterResizeMode, &self.enter_resize_mode),
             (Action::DeleteSelection, &self.delete_selection),
             (Action::CancelMode, &self.cancel_mode),
             (Action::CreateOrphanNode, &self.create_orphan_node),
