@@ -44,7 +44,7 @@ use crate::application::document::{BorderConfigEdits, BorderEditOutcome, OptionE
 /// Subverbs surfaced as token-0 completions.
 pub const VERBS: &[&str] = &["border", "section-frame"];
 /// Subverbs surfaced under `border` / `section-frame`.
-pub const SUBVERBS: &[&str] = &["show", "reset"];
+pub const SUBVERBS: &[&str] = &["show", "reset", "preview"];
 /// Modifier under `section-frame` (followed by show|reset|kv).
 pub const SECTION_FRAME_MODIFIERS: &[&str] = &["focused"];
 
@@ -141,17 +141,18 @@ pub fn execute_canvas(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
 }
 
 fn execute_border_subject(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
-    // tokens[1] is either show/reset or the first kv. Skip the
-    // `subject` positional; everything else mirrors the
+    // tokens[1] is either show/reset/preview or the first kv.
+    // Skip the `subject` positional; everything else mirrors the
     // per-node `border` verb's kv-form path. Case-insensitive
     // for parity with the rest of the verb.
     if let Some(verb) = args.positional(1) {
         match verb.to_ascii_lowercase().as_str() {
             "show" => return execute_show_border(eff),
             "reset" => return apply_border_edits(eff, clear_edits()),
+            "preview" => return execute_canvas_border_preview(args, eff),
             other if !other.contains('=') => {
                 return ExecResult::err(format!(
-                    "canvas border: unknown subverb '{}'; use 'show', 'reset', or kv form",
+                    "canvas border: unknown subverb '{}'; use 'show', 'reset', 'preview', or kv form",
                     other
                 ));
             }
@@ -187,9 +188,10 @@ fn execute_section_frame_subject(args: &Args, eff: &mut ConsoleEffects) -> ExecR
         match verb.to_ascii_lowercase().as_str() {
             "show" => return execute_show_section_frame(eff, focused),
             "reset" => return apply_section_frame_edits(eff, focused, clear_edits()),
+            "preview" => return execute_canvas_section_frame_preview(args, eff, focused),
             other if !other.contains('=') => {
                 return ExecResult::err(format!(
-                    "canvas section-frame{}: unknown subverb '{}'; use 'show', 'reset', or kv form",
+                    "canvas section-frame{}: unknown subverb '{}'; use 'show', 'reset', 'preview', or kv form",
                     if focused { " focused" } else { "" },
                     other
                 ));
@@ -217,6 +219,51 @@ fn clear_edits() -> BorderConfigEdits {
         clear: true,
         ..BorderConfigEdits::default()
     }
+}
+
+/// `canvas border preview …` — stage / commit / cancel a
+/// preview that targets `Canvas.default_border`. The preview
+/// applies map-wide to every framed node without a per-node
+/// override; commit writes through the same setter the
+/// committing `canvas border …` path uses
+/// (`set_canvas_default_border_config`).
+fn execute_canvas_border_preview(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
+    use crate::application::document::BorderPreviewTarget;
+    super::border::dispatch_border_preview(
+        args,
+        eff,
+        "canvas border preview",
+        /* subverb_pos */ 2,
+        |_sel| Ok(BorderPreviewTarget::CanvasDefault),
+    )
+}
+
+/// `canvas section-frame [focused] preview …` — stage / commit /
+/// cancel a preview that targets one of the two canvas
+/// section-frame slots
+/// (`default_section_frame_border` or `default_focused_section_frame_border`
+/// per the `focused` arg).
+fn execute_canvas_section_frame_preview(
+    args: &Args,
+    eff: &mut ConsoleEffects,
+    focused: bool,
+) -> ExecResult {
+    use crate::application::document::BorderPreviewTarget;
+    let label: &'static str = if focused {
+        "canvas section-frame focused preview"
+    } else {
+        "canvas section-frame preview"
+    };
+    let target = if focused {
+        BorderPreviewTarget::CanvasSectionFrameFocused
+    } else {
+        BorderPreviewTarget::CanvasSectionFrame
+    };
+    // Subverb position depends on the `focused` modifier:
+    // `canvas section-frame preview …`        → positional(2)
+    // `canvas section-frame focused preview …`→ positional(3)
+    let subverb_pos = if focused { 3 } else { 2 };
+    super::border::dispatch_border_preview(args, eff, label, subverb_pos, move |_sel| Ok(target.clone()))
 }
 
 fn apply_border_edits(eff: &mut ConsoleEffects, edits: BorderConfigEdits) -> ExecResult {
@@ -628,5 +675,76 @@ mod tests {
         };
         assert!(blob.contains("double"), "show must report preset: {}", blob);
         assert!(blob.contains("#ff00cc"), "show must report color: {}", blob);
+    }
+
+    /// `canvas border preview preset=heavy` stages a preview
+    /// against `Canvas.default_border` without writing the model.
+    #[test]
+    fn canvas_border_preview_targets_canvas_default() {
+        let mut doc = load_test_doc();
+        assert!(doc.mindmap.canvas.default_border.is_none());
+        let result = run("canvas border preview preset=heavy", &mut doc);
+        match result {
+            ExecResult::Ok(_) | ExecResult::Lines(_) => {}
+            other => panic!("expected success, got {:?}", other),
+        }
+        assert!(doc.border_preview.is_some(), "preview slot populated");
+        match &doc.border_preview.as_ref().unwrap().target {
+            crate::application::document::BorderPreviewTarget::CanvasDefault => {}
+            other => panic!("expected CanvasDefault target, got {:?}", other),
+        }
+        assert!(
+            doc.mindmap.canvas.default_border.is_none(),
+            "preview must not write to the model"
+        );
+    }
+
+    /// `canvas section-frame focused preview preset=double`
+    /// targets the focused canvas slot only — commits write to
+    /// `default_focused_section_frame_border` and leave the
+    /// unfocused variant untouched.
+    #[test]
+    fn canvas_section_frame_focused_preview_does_not_touch_unfocused_default() {
+        let mut doc = load_test_doc();
+        assert_exec_ok(run(
+            "canvas section-frame focused preview preset=double",
+            &mut doc,
+        ));
+        let preview = doc.border_preview.as_ref().expect("preview slot populated");
+        match &preview.target {
+            crate::application::document::BorderPreviewTarget::CanvasSectionFrameFocused => {}
+            other => panic!("expected CanvasSectionFrameFocused target, got {:?}", other),
+        }
+        // Commit and verify the focused canvas slot is the only
+        // one written.
+        let result = run("canvas section-frame focused preview commit", &mut doc);
+        match result {
+            ExecResult::Ok(_) | ExecResult::Lines(_) => {}
+            other => panic!("expected success, got {:?}", other),
+        }
+        assert_eq!(
+            doc.mindmap
+                .canvas
+                .default_focused_section_frame_border
+                .as_ref()
+                .unwrap()
+                .preset,
+            "double"
+        );
+        assert!(
+            doc.mindmap.canvas.default_section_frame_border.is_none(),
+            "unfocused canvas slot must remain untouched"
+        );
+    }
+
+    /// `canvas border preview cancel` discards without writing.
+    #[test]
+    fn canvas_border_preview_cancel_clears_without_writing() {
+        let mut doc = load_test_doc();
+        assert_exec_ok(run("canvas border preview preset=heavy", &mut doc));
+        assert!(doc.border_preview.is_some());
+        assert_exec_ok(run("canvas border preview cancel", &mut doc));
+        assert!(doc.border_preview.is_none());
+        assert!(doc.mindmap.canvas.default_border.is_none());
     }
 }
