@@ -26,21 +26,27 @@ analysis and what's blocking it.
 
 ## Examples
 
+All examples below assume the rendered side has room for ~14 cluster
+columns; narrower sides emit fewer fill iterations, wider sides emit
+more. The auto-resize pass (§5) grows the node so the static parts
+always fit.
+
 ```
 top="+=##=+"                  → +=##=++=##=++=##=+    (atomic-repeat)
 top="###(*)###"               → ###******###          (prefix-fill-suffix)
-top="-##---(AAAA)---##-"      → -##---AAAA AAAA---##- (multi-glyph fill)
+top="-##---(AAAA)---##-"      → -##---AAAAAAAA---##-  (multi-glyph fill, 2 fill iters)
 top="─" tl="◆" tr="◇"         → ◆────────────◇        (custom corners)
-top="+=#(\(\))#=+"            → +=#()()()#=+          (escaped fill glyph)
+top="+=#(\(\))#=+"            → +=#()()()#=+          (escaped parens in fill)
 ```
 
 Per-side strings live under `GlyphBorderConfig.glyphs` as
 `top`, `bottom`, `left`, `right`. Per-corner glyphs live under
-`top_left`, `top_right`, `bottom_left`, `bottom_right`. Set the
-preset to `custom` to pull the per-side / per-corner overrides
-into the resolved style.
+`top_left`, `top_right`, `bottom_left`, `bottom_right`. The console
+verbs auto-promote `preset` to `"custom"` whenever a side or corner
+glyph is set; hand-edited JSON should set `preset: "custom"`
+explicitly so the resolver reads the `glyphs` payload.
 
-# Reference: Border-side patterns
+## Reference: Border-side patterns
 
 The four side fields under
 [`GlyphBorderConfig.glyphs`](./schema.md#glyphborderconfig)
@@ -155,17 +161,55 @@ Map-wide defaults live on the canvas:
 - `Canvas.default_focused_section_frame_border` — the focused
   frame shape (the section whose text is being edited).
 
-Resolver cascade:
-1. `MindSection.frame_border` if `Some` (per-section author override).
-2. else `Canvas.default_focused_section_frame_border` (when
-   focused) or `Canvas.default_section_frame_border`.
-3. else a hardcoded floor: `light` preset for unfocused frames,
-   `heavy` preset for the focused one. The floor is just another
-   `GlyphBorderConfig` flowing through the same resolver — there
-   are no inline glyph constants in the section-frame path.
+Resolver cascade (per-section, on each scene rebuild):
+1. `MindSection.frame_border` if `Some` — per-section author
+   override wins outright.
+2. Otherwise the canvas default for the section's focus state:
+   - **Focused section** (currently inside the inline text editor):
+     `Canvas.default_focused_section_frame_border` if `Some`, else
+     `Canvas.default_section_frame_border` if `Some` (focused
+     frames inherit unfocused defaults so authors who only set the
+     unfocused variant get one consistent shape).
+   - **Unfocused section**: `Canvas.default_section_frame_border`
+     if `Some`.
+3. Otherwise a hardcoded floor: `light` preset for unfocused
+   frames, `heavy` preset for the focused one. The floor is just
+   another `GlyphBorderConfig` flowing through the same resolver —
+   there are no inline glyph constants in the section-frame path.
 
 The resolver call site is
 `lib/baumhard/src/mindmap/border.rs::resolve_section_frame_border`.
+
+### Console verbs (section frames)
+
+Per-section frame style is authored through the `section frame …`
+subverb of the [`section`
+command](../src/application/console/commands/section/frame.rs):
+
+```
+section frame show               # readout of the resolved config (cascade source labelled)
+section frame reset              # drop the per-section override
+section frame preset=heavy color=#ff8800
+section frame top="###(*)###" tl="◆" tr="◆" bl="◆" br="◆"
+section frame palette=rainbow field=frame
+section frame preset=heavy section=2     # explicit section index when selection is a single node
+```
+
+Map-wide defaults are authored through the `canvas` command:
+
+```
+canvas border preset=heavy color=#ff00cc        # Canvas.default_border
+canvas section-frame preset=double              # Canvas.default_section_frame_border
+canvas section-frame focused preset=heavy       # Canvas.default_focused_section_frame_border
+canvas section-frame show
+canvas border reset
+```
+
+The `section frame` and `canvas` verbs share the per-node `border`
+verb's kv vocabulary verbatim — `preset`, `font`, `size`, `color`,
+`palette`, `field`, `padding`, `top`, `bottom`, `left`, `right`,
+`tl`, `tr`, `bl`, `br`, `show`, `reset` — so muscle memory carries
+across surfaces.
 
 ## Console verb
 
@@ -204,10 +248,8 @@ Setting any side or corner glyph automatically promotes the
 preset to `"custom"`. Quoted patterns survive the tokenizer
 unchanged so `(` / `)` / spaces don't need shell escaping.
 
-A `section frame …` console subverb (mirroring the same kv
-keyspace) and a `canvas section-frame …` / `canvas
-section-frame focused …` surface are tracked as follow-up work
-in [`SECTIONS_BORDERS_RESIZE_PLAN.md`](../SECTIONS_BORDERS_RESIZE_PLAN.md)
-§5 and the abundant-leaping-moonbeam plan. The model fields
-exist today; they are authorable via raw JSON until the verbs
-land.
+A live-preview surface (`border preview` / `border preview commit`
+/ `border preview cancel`) is on the roadmap — see §5.6 of
+[`SECTIONS_BORDERS_RESIZE_PLAN.md`](../SECTIONS_BORDERS_RESIZE_PLAN.md).
+Today edits commit immediately and undo (Ctrl-Z) is the back-out
+path.

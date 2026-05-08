@@ -13,14 +13,24 @@ pub fn complete_border(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Com
     match &state.context {
         CompletionContext::Token { index: 0 } => verb_or_key(state.partial),
         CompletionContext::Token { .. } => key_completions(state.partial),
-        CompletionContext::KvValue { key } => match key.as_str() {
-            "preset" => prefix_filter(super::PRESETS, state.partial),
-            "field" => prefix_filter(super::FIELDS, state.partial),
-            "color" => prefix_filter(super::COLOR_PRESETS, state.partial),
-            "palette" => palette_value_completions(state.partial, ctx),
-            "font" => font_family_completions(state.partial),
-            _ => Vec::new(),
-        },
+        CompletionContext::KvValue { key } => kv_value_completions(key.as_str(), state.partial, ctx),
+        _ => Vec::new(),
+    }
+}
+
+/// Shared per-key value completer for the `border` kv vocabulary.
+/// Returns the set of completions to surface inside the popup when
+/// the cursor is on the *value* side of `<key>=<value>`. Reused by
+/// `section frame …` and `canvas …` so the popup vocabulary is
+/// byte-identical regardless of which border surface the user is
+/// editing.
+pub fn kv_value_completions(key: &str, partial: &str, ctx: &ConsoleContext) -> Vec<Completion> {
+    match key {
+        "preset" => prefix_filter(super::PRESETS, partial),
+        "field" => prefix_filter(super::FIELDS, partial),
+        "color" => prefix_filter(super::COLOR_PRESETS, partial),
+        "palette" => palette_value_completions(partial, ctx),
+        "font" => font_family_completions(partial),
         _ => Vec::new(),
     }
 }
@@ -64,19 +74,13 @@ fn verb_hint(v: &str) -> &'static str {
     }
 }
 
+/// Per-key hint for the verb-or-key surface (token 0 of `border`).
+/// Delegates to the shared [`super::kv_hint`] used across `border`,
+/// `section frame`, and `canvas` so the hint table lives in one
+/// place. Returns `""` for unknown keys to preserve the
+/// `&'static str` return shape this completer's row-emit expects.
 fn key_hint(k: &str) -> &'static str {
-    match k {
-        "preset" => "light | heavy | double | rounded | custom",
-        "font" => "font family for border glyphs (use `font list` for names)",
-        "size" => "border glyph size in points",
-        "color" => "#hex, var(--name), preset, or 'reset'",
-        "palette" => "palette name to cycle per-glyph colours, or 'off'",
-        "field" => "frame | background | text | title",
-        "padding" => "border-to-content padding in pixels",
-        "top" | "bottom" | "left" | "right" => "side pattern: `prefix(fill)suffix` or atomic",
-        "tl" | "tr" | "bl" | "br" => "single corner glyph (escapes apply)",
-        _ => "",
-    }
+    super::kv_hint(k).unwrap_or("")
 }
 
 fn palette_value_completions(partial: &str, ctx: &ConsoleContext) -> Vec<Completion> {

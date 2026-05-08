@@ -60,7 +60,7 @@ use unicode_segmentation::UnicodeSegmentation;
 /// invariant (and the future "no nested fill region" invariant)
 /// is enforced. Internal construction inside this module is
 /// still allowed and is what the parser uses.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SidePattern {
     /// `+=##=+` — repeat the whole cluster sequence atomically.

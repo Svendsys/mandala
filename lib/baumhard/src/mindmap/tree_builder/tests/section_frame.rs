@@ -171,7 +171,11 @@ fn test_section_frame_tree_custom_preset_renders_author_glyphs() {
         area.text
     );
     // The fill between corners uses the author's 'A' glyph.
-    assert!(area.text.contains('A'), "custom-preset top fill must include 'A', got {:?}", area.text);
+    assert!(
+        area.text.contains('A'),
+        "custom-preset top fill must include 'A', got {:?}",
+        area.text
+    );
 }
 
 /// Section frame side patterns flow through `border_run_specs`,
@@ -221,8 +225,16 @@ fn test_section_frame_tree_supports_prefix_fill_suffix_pattern() {
         .expect("GlyphArea");
     // The top text should contain at least one `*` (the fill)
     // between two `###` static segments.
-    assert!(area.text.contains("###"), "top must contain prefix '###', got {:?}", area.text);
-    assert!(area.text.contains('*'), "top must contain fill '*', got {:?}", area.text);
+    assert!(
+        area.text.contains("###"),
+        "top must contain prefix '###', got {:?}",
+        area.text
+    );
+    assert!(
+        area.text.contains('*'),
+        "top must contain fill '*', got {:?}",
+        area.text
+    );
 }
 
 #[test]
@@ -316,11 +328,107 @@ fn test_section_frame_identity_sequence_changes_on_pattern_change() {
     }
     let style_a = resolve_border_style(Some(&cfg_a), None, "#00E5FF");
     let style_b = resolve_border_style(Some(&cfg_b), None, "#00E5FF");
-    let a = SectionFrameElement { border_style: style_a, ..frame("n", 0, false) };
-    let b = SectionFrameElement { border_style: style_b, ..frame("n", 0, false) };
+    let a = SectionFrameElement {
+        border_style: style_a,
+        ..frame("n", 0, false)
+    };
+    let b = SectionFrameElement {
+        border_style: style_b,
+        ..frame("n", 0, false)
+    };
     assert_ne!(
         section_frame_identity_sequence(&[a]),
         section_frame_identity_sequence(&[b]),
         "side-pattern change must change the signature"
+    );
+}
+
+/// `font_size_pt` change must move the signature even when the
+/// resulting `cluster_count` happens to land on the same integer
+/// (e.g. 14.0 → 14.5 on a 100-px wide section both compute
+/// `((100/(14.0*0.6))+2).ceil() = 14`). Pre-fix the identity hashed
+/// the rendered text only; this test pins the new inputs-hash so a
+/// future regression can't reintroduce the rendered-output shortcut.
+#[test]
+fn test_section_frame_identity_sequence_changes_on_font_size_change() {
+    let mut a = frame("n", 0, false);
+    let mut b = frame("n", 0, false);
+    a.border_style.font_size_pt = 14.0;
+    b.border_style.font_size_pt = 14.5;
+    assert_ne!(
+        section_frame_identity_sequence(&[a]),
+        section_frame_identity_sequence(&[b]),
+        "font_size_pt change must change the signature"
+    );
+}
+
+/// `font_name` change must move the signature. The renderer
+/// pipeline doesn't yet thread `BorderStyle.font_name` into the
+/// emitted `GlyphArea`, but the resolver populates it and the
+/// signature should track every input the model exposes — when
+/// the renderer wires it up, the dispatch already triggers
+/// rebuilds on the right shape.
+#[test]
+fn test_section_frame_identity_sequence_changes_on_font_name_change() {
+    let mut a = frame("n", 0, false);
+    let mut b = frame("n", 0, false);
+    a.border_style.font_name = None;
+    b.border_style.font_name = Some("Liberation Mono".into());
+    assert_ne!(
+        section_frame_identity_sequence(&[a]),
+        section_frame_identity_sequence(&[b]),
+        "font_name change must change the signature"
+    );
+}
+
+/// Position change with same rendered text must move the
+/// signature. Pre-fix the identity didn't include position, so
+/// dragging the active node while in NodeEdit (which calls
+/// `update_section_frame_tree` once the drag fix lands) would hit
+/// `InPlaceMutator` and the registered tree would render at the
+/// pre-drag origin.
+#[test]
+fn test_section_frame_identity_sequence_changes_on_position_change() {
+    let mut a = frame("n", 0, false);
+    let mut b = frame("n", 0, false);
+    a.position = (100.0, 200.0);
+    b.position = (110.0, 200.0);
+    assert_ne!(
+        section_frame_identity_sequence(&[a]),
+        section_frame_identity_sequence(&[b]),
+        "position change must change the signature"
+    );
+}
+
+/// Bounds (size) change with same text must move the signature
+/// for the same reason position changes do.
+#[test]
+fn test_section_frame_identity_sequence_changes_on_size_change() {
+    let mut a = frame("n", 0, false);
+    let mut b = frame("n", 0, false);
+    a.size = (300.0, 30.0);
+    b.size = (320.0, 30.0);
+    assert_ne!(
+        section_frame_identity_sequence(&[a]),
+        section_frame_identity_sequence(&[b]),
+        "size change must change the signature"
+    );
+}
+
+/// Palette-cycle list change must move the signature so an
+/// authored palette edit (`section frame palette=…`) triggers a
+/// rebuild. The cycle is the resolved per-glyph color sequence —
+/// not the palette name — so a palette whose hex strings update
+/// in place is also caught.
+#[test]
+fn test_section_frame_identity_sequence_changes_on_palette_cycle_change() {
+    let mut a = frame("n", 0, false);
+    let mut b = frame("n", 0, false);
+    a.palette_cycle = vec![[1.0, 0.0, 0.0, 1.0], [0.0, 1.0, 0.0, 1.0]];
+    b.palette_cycle = vec![[1.0, 0.0, 0.0, 1.0], [0.0, 0.0, 1.0, 1.0]];
+    assert_ne!(
+        section_frame_identity_sequence(&[a]),
+        section_frame_identity_sequence(&[b]),
+        "palette_cycle change must change the signature"
     );
 }

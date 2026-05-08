@@ -24,34 +24,46 @@ use crate::util::color::hex_to_rgba_safe;
 /// element list. Hashed by `AppScene::set_canvas_signature` to
 /// short-circuit redundant rebuilds.
 ///
-/// Identity captures `(node_id, section_idx, focused, color,
-/// per-side rendered text)` — running each side's `SidePattern`
-/// through `border_run_specs` and hashing the resulting glyph
-/// strings. That catches every change a creative-toolkit author
-/// can make: preset, pattern, corner, color, focus toggle. The
-/// rendered-text path is the cheapest stable hash given that
-/// `BorderStyle` itself doesn't derive `Hash` (it carries
-/// runtime-resolved glyph sets and palette enums).
-pub fn section_frame_identity_sequence(
-    elements: &[SectionFrameElement],
-) -> Vec<SectionFrameIdentity> {
+/// Identity captures every **input** to the rendered glyph runs:
+/// id triple (node_id, section_idx, focused), the resolved
+/// `BorderStyle` axes (preset corners + 4 side patterns + color +
+/// font + font_size + palette + palette_field), the position +
+/// bounds (so a node move while in NodeEdit re-registers the
+/// frames), and the resolved palette cycle (so an authored palette
+/// edit triggers a rebuild). Hashing inputs — not the rendered
+/// output — is both correct (no missed shifts that happen to
+/// preserve cluster_count) and cheap (zero allocations on the
+/// hot path; pre-fix the function ran `border_run_specs` four
+/// times per frame on every NodeEdit rebuild for the side
+/// strings, which were then thrown away after the hash compare).
+///
+/// Combined with the `InPlaceMutator` early-return in
+/// `update_section_frame_tree`, the completeness of this signature
+/// is load-bearing: a missed delta means the dispatch declares
+/// "no work needed" and the screen keeps stale glyphs.
+pub fn section_frame_identity_sequence(elements: &[SectionFrameElement]) -> Vec<SectionFrameIdentity> {
     elements
         .iter()
         .map(|e| {
-            let specs = crate::mindmap::border::border_run_specs(
-                &e.border_style,
-                e.position,
-                e.size,
-            );
+            let bs = &e.border_style;
             SectionFrameIdentity {
                 node_id: e.node_id.clone(),
                 section_idx: e.section_idx,
                 focused: e.focused,
-                color: e.border_style.color.clone(),
-                top: specs[0].text.clone(),
-                bottom: specs[1].text.clone(),
-                left: specs[2].text.clone(),
-                right: specs[3].text.clone(),
+                position_bits: (e.position.0.to_bits(), e.position.1.to_bits()),
+                size_bits: (e.size.0.to_bits(), e.size.1.to_bits()),
+                color: bs.color.clone(),
+                font_name: bs.font_name.clone(),
+                font_size_pt_bits: bs.font_size_pt.to_bits(),
+                color_palette: bs.color_palette.clone(),
+                palette_field: bs.palette_field,
+                corners: bs.corners.clone(),
+                side_patterns: bs.side_patterns.clone(),
+                palette_cycle_bits: e
+                    .palette_cycle
+                    .iter()
+                    .map(|c| [c[0].to_bits(), c[1].to_bits(), c[2].to_bits(), c[3].to_bits()])
+                    .collect(),
             }
         })
         .collect()
@@ -61,16 +73,26 @@ pub fn section_frame_identity_sequence(
 /// [`section_frame_identity_sequence`]. Hashable so the
 /// `AppScene` dispatch can compare against the last frame's
 /// signature without re-walking the elements.
+///
+/// Float fields ride as their `to_bits()` `u32` form so the struct
+/// can derive `Hash`/`Eq` directly (NaN equality is irrelevant —
+/// the only NaN that survives upstream is a parse error, which the
+/// scene-builder gate filters out).
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct SectionFrameIdentity {
     pub node_id: String,
     pub section_idx: usize,
     pub focused: bool,
+    pub position_bits: (u32, u32),
+    pub size_bits: (u32, u32),
     pub color: String,
-    pub top: String,
-    pub bottom: String,
-    pub left: String,
-    pub right: String,
+    pub font_name: Option<String>,
+    pub font_size_pt_bits: u32,
+    pub color_palette: Option<String>,
+    pub palette_field: crate::mindmap::border::PaletteField,
+    pub corners: crate::mindmap::border::BorderCorners,
+    pub side_patterns: crate::mindmap::border::SidePatternQuad,
+    pub palette_cycle_bits: Vec<[u32; 4]>,
 }
 
 /// Build a `Tree<GfxElement, GfxMutator>` from a slice of
@@ -86,17 +108,14 @@ pub struct SectionFrameIdentity {
 /// caller (`scene_rebuild`) gates this against
 /// `InteractionMode::NodeEdit` so non-NodeEdit rebuilds produce
 /// a trivial tree.
-pub fn build_section_frame_tree(
-    elements: &[SectionFrameElement],
-) -> Tree<GfxElement, GfxMutator> {
+pub fn build_section_frame_tree(elements: &[SectionFrameElement]) -> Tree<GfxElement, GfxMutator> {
     let mut tree: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed();
     let mut unique_id: usize = 1;
     for (idx, frame) in elements.iter().enumerate() {
         let parent_channel = idx + 1;
-        let parent_id = tree.arena.new_node(GfxElement::new_void_with_id(
-            parent_channel,
-            unique_id,
-        ));
+        let parent_id = tree
+            .arena
+            .new_node(GfxElement::new_void_with_id(parent_channel, unique_id));
         tree.root.append(parent_id, &mut tree.arena);
         unique_id += 1;
 
@@ -120,11 +139,7 @@ fn append_frame_runs(
     frame: &SectionFrameElement,
     unique_id: &mut usize,
 ) {
-    let specs = crate::mindmap::border::border_run_specs(
-        &frame.border_style,
-        frame.position,
-        frame.size,
-    );
+    let specs = crate::mindmap::border::border_run_specs(&frame.border_style, frame.position, frame.size);
     let color_rgba = hex_to_rgba_safe(&frame.border_style.color, [1.0, 1.0, 1.0, 1.0]);
     // Frames inherit the active node's zoom window implicitly —
     // they only render while the active node is visible (the

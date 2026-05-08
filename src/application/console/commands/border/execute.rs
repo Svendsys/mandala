@@ -98,7 +98,7 @@ pub fn execute_border(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
 }
 
 fn apply_visible_only(eff: &mut ConsoleEffects, on: bool) -> ExecResult {
-    let ids = match nodes_in_selection(&eff.document.selection) {
+    let ids = match nodes_in_selection(&eff.document.selection, "border") {
         Ok(ids) => ids,
         Err(e) => return e,
     };
@@ -119,13 +119,15 @@ fn apply_visible_only(eff: &mut ConsoleEffects, on: bool) -> ExecResult {
 }
 
 fn apply_reset(eff: &mut ConsoleEffects) -> ExecResult {
-    let mut edits = BorderConfigEdits::default();
-    edits.clear = true;
+    let edits = BorderConfigEdits {
+        clear: true,
+        ..BorderConfigEdits::default()
+    };
     apply_edits(eff, edits)
 }
 
 fn apply_edits(eff: &mut ConsoleEffects, edits: BorderConfigEdits) -> ExecResult {
-    let ids = match nodes_in_selection(&eff.document.selection) {
+    let ids = match nodes_in_selection(&eff.document.selection, "border") {
         Ok(ids) => ids,
         Err(e) => return e,
     };
@@ -160,7 +162,7 @@ fn apply_edits(eff: &mut ConsoleEffects, edits: BorderConfigEdits) -> ExecResult
         // "no change" line so the input doesn't feel ignored.
         if bare_custom {
             lines.push("border: preset=custom set; no glyph fields were given".into());
-            lines.push(custom_preset_hint());
+            lines.push(custom_preset_hint("border"));
             return ExecResult::lines(lines);
         }
         return ExecResult::ok_msg("border: no change");
@@ -181,7 +183,7 @@ fn apply_edits(eff: &mut ConsoleEffects, edits: BorderConfigEdits) -> ExecResult
         ));
     }
     if bare_custom {
-        lines.push(custom_preset_hint());
+        lines.push(custom_preset_hint("border"));
     }
     if lines.len() == 1 {
         ExecResult::ok_msg(lines.into_iter().next().expect("len==1"))
@@ -212,7 +214,7 @@ pub(crate) fn apply_border_field_to_selection(
     if stage_kv(&mut edits, field, value).is_err() {
         return false;
     }
-    let ids = match nodes_in_selection(&doc.selection) {
+    let ids = match nodes_in_selection(&doc.selection, "border") {
         Ok(ids) => ids,
         Err(_) => return false,
     };
@@ -228,8 +230,10 @@ pub(crate) fn apply_border_field_to_selection(
 
 /// `true` iff the staged edits include any side-pattern or corner
 /// override — the fields that make `preset=custom` actually
-/// distinguishable from `rounded`.
-fn edits_has_glyph_field(edits: &BorderConfigEdits) -> bool {
+/// distinguishable from `rounded`. Shared with the
+/// `section frame …` and `canvas …` verbs so the bare-custom hint
+/// fires under the same conditions everywhere.
+pub(crate) fn edits_has_glyph_field(edits: &BorderConfigEdits) -> bool {
     !matches!(edits.side_top, OptionEdit::Keep)
         || !matches!(edits.side_bottom, OptionEdit::Keep)
         || !matches!(edits.side_left, OptionEdit::Keep)
@@ -243,19 +247,53 @@ fn edits_has_glyph_field(edits: &BorderConfigEdits) -> bool {
 /// Multi-line orientation for users who set `preset=custom` without
 /// any glyph fields. Lists the eight overrides the preset takes and
 /// shows one example so a user can copy-paste a starting point.
-fn custom_preset_hint() -> String {
-    "hint: 'custom' is the preset that lets you author per-side / per-corner glyphs. \
-     Combine it with any of: top=… bottom=… left=… right=… tl=… tr=… bl=… br=…  \
-     e.g. `border preset=custom top=\"###(*)###\" tl=\"+\" tr=\"+\" bl=\"+\" br=\"+\"`. \
-     See `format/border-patterns.md` for the side-pattern grammar."
-        .to_string()
+/// `verb_label` is the verb prefix the example shows (`"border"`,
+/// `"section frame"`, `"canvas border"`, etc.) so the hint is
+/// always idiomatic for the verb the user just typed.
+pub(crate) fn custom_preset_hint(verb_label: &str) -> String {
+    format!(
+        "hint: 'custom' is the preset that lets you author per-side / per-corner glyphs. \
+         Combine it with any of: top=… bottom=… left=… right=… tl=… tr=… bl=… br=…  \
+         e.g. `{} preset=custom top=\"###(*)###\" tl=\"+\" tr=\"+\" bl=\"+\" br=\"+\"`. \
+         See `format/border-patterns.md` for the side-pattern grammar.",
+        verb_label
+    )
+}
+
+/// Per-key hint string for the shared `border` kv vocabulary.
+/// `border …`, `section frame …`, and `canvas …` all surface the
+/// same hints in completion popups; this is the single source of
+/// truth.
+pub(crate) fn kv_hint(key: &str) -> Option<&'static str> {
+    match key {
+        "preset" => Some("light | heavy | double | rounded | custom"),
+        "font" => Some("font family for border glyphs (use `font list` for names)"),
+        "size" => Some("border glyph size in points"),
+        "color" => Some("#hex, var(--name), preset, or 'reset'"),
+        "palette" => Some("palette name to cycle per-glyph colours, or 'off'"),
+        "field" => Some("frame | background | text | title"),
+        "padding" => Some("border-to-content padding in pixels"),
+        "top" | "bottom" | "left" | "right" => Some("side pattern: `prefix(fill)suffix` or atomic"),
+        "tl" | "tr" | "bl" | "br" => Some("single corner glyph (escapes apply)"),
+        _ => None,
+    }
 }
 
 /// Resolve the current selection into a list of node ids, or an
 /// `ExecResult::Err` describing why it can't apply (no selection /
 /// non-node selection). Edge-adjacent selections surface a single
 /// "not applicable" line — borders are node-only.
-pub(crate) fn nodes_in_selection(sel: &SelectionState) -> Result<Vec<String>, ExecResult> {
+/// Resolve the current selection into a list of node ids, or an
+/// `ExecResult::Err` describing why the verb can't apply (no
+/// selection / edge-adjacent selection). `verb_label` is the string
+/// prepended to every error message — `"border"` for the per-node
+/// verb, `"section frame"` for the per-section verb, etc. The
+/// label is part of the contract because callers want the exact
+/// not-applicable variant surfaced (edge / edge-label / portal-label
+/// / portal-text / section-text / no-selection are five distinct
+/// reasons; collapsing them all into a single "no selection" line
+/// hides what the user actually clicked on).
+pub(crate) fn nodes_in_selection(sel: &SelectionState, verb_label: &str) -> Result<Vec<String>, ExecResult> {
     match sel {
         SelectionState::Single(id) => Ok(vec![id.clone()]),
         SelectionState::Multi(ids) => Ok(ids.clone()),
@@ -267,11 +305,26 @@ pub(crate) fn nodes_in_selection(sel: &SelectionState) -> Result<Vec<String>, Ex
         // owning nodes via the shared
         // `dedup_owning_node_ids` helper.
         SelectionState::MultiSection(_) => Ok(sel.dedup_owning_node_ids()),
-        SelectionState::None => Err(ExecResult::err("border: no selection (select a node first)")),
-        SelectionState::Edge(_) => Err(ExecResult::err("border: not applicable to edges")),
-        SelectionState::EdgeLabel(_) => Err(ExecResult::err("border: not applicable to edge labels")),
-        SelectionState::PortalLabel(_) => Err(ExecResult::err("border: not applicable to portal labels")),
-        SelectionState::PortalText(_) => Err(ExecResult::err("border: not applicable to portal text")),
+        SelectionState::None => Err(ExecResult::err(format!(
+            "{}: no selection (select a node first)",
+            verb_label
+        ))),
+        SelectionState::Edge(_) => Err(ExecResult::err(format!(
+            "{}: not applicable to edges",
+            verb_label
+        ))),
+        SelectionState::EdgeLabel(_) => Err(ExecResult::err(format!(
+            "{}: not applicable to edge labels",
+            verb_label
+        ))),
+        SelectionState::PortalLabel(_) => Err(ExecResult::err(format!(
+            "{}: not applicable to portal labels",
+            verb_label
+        ))),
+        SelectionState::PortalText(_) => Err(ExecResult::err(format!(
+            "{}: not applicable to portal text",
+            verb_label
+        ))),
     }
 }
 

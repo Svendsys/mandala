@@ -29,51 +29,57 @@
 use baumhard::mindmap::border::resolve_section_frame_border;
 
 use crate::application::console::commands::border::{
-    nodes_in_selection as border_nodes_in_selection, stage_kv, KEYS as BORDER_KEYS,
+    custom_preset_hint, edits_has_glyph_field, nodes_in_selection as border_nodes_in_selection, stage_kv,
+    KEYS as BORDER_KEYS,
 };
 use crate::application::console::completion::{
     kv_key_completions_with_hints, prefix_filter, Completion, CompletionContext, CompletionState,
 };
 use crate::application::console::parser::Args;
 use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
-use crate::application::document::{BorderConfigEdits, BorderEditOutcome, OptionEdit, SectionSel, SelectionState};
+use crate::application::document::{
+    BorderConfigEdits, BorderEditOutcome, OptionEdit, SectionSel, SelectionState,
+};
 
 /// Subverbs surfaced as token-2 completions after `section frame`.
 pub const VERBS: &[&str] = &["show", "reset"];
 
-pub fn complete_section_frame(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completion> {
+pub fn complete_section_frame(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Completion> {
     match &state.context {
-        // tokens[0] = "section", tokens[1] = "frame", tokens[2..] is
-        // the same shape as a top-level `border …` invocation.
-        CompletionContext::Token { index: 2 } => {
+        // The engine's `Token { index }` is the count of non-kv
+        // positionals *after* the command name, so for the input
+        // `section frame ` the cursor sits at `index: 1`. (`index: 0`
+        // is for `section <here>` — handled by `complete_section`.)
+        // Anything past the `frame` subverb (so `index >= 1`) accepts
+        // the same kv keyset the top-level `border …` verb does.
+        CompletionContext::Token { index: 1 } => {
             let mut out = prefix_filter(VERBS, state.partial);
-            out.extend(kv_key_completions_with_hints(
-                BORDER_KEYS,
-                state.partial,
-                kv_hint,
-            ));
+            out.extend(kv_key_completions_with_hints(BORDER_KEYS, state.partial, kv_hint));
             out
         }
-        CompletionContext::Token { index: i } if *i > 2 => {
+        CompletionContext::Token { index: i } if *i > 1 => {
             kv_key_completions_with_hints(BORDER_KEYS, state.partial, kv_hint)
+        }
+        // KvValue completions for `preset=` / `palette=` / `font=` /
+        // `color=` / `field=`. Mirror `border/complete.rs` so the
+        // popup vocabulary is identical regardless of which border
+        // surface (node / section / canvas) the user is editing.
+        CompletionContext::KvValue { key } => {
+            crate::application::console::commands::border::kv_value_completions(
+                key.as_str(),
+                state.partial,
+                ctx,
+            )
         }
         _ => Vec::new(),
     }
 }
 
+/// Per-key hint table — delegates to the shared
+/// [`super::super::border::kv_hint`] so `border …`,
+/// `section frame …`, and `canvas …` surface identical hints.
 fn kv_hint(key: &str) -> Option<&'static str> {
-    match key {
-        "preset" => Some("light | heavy | double | rounded | custom"),
-        "font" => Some("font family for border glyphs (use `font list` for names)"),
-        "size" => Some("border glyph size in points"),
-        "color" => Some("#hex, var(--name), preset, or 'reset'"),
-        "palette" => Some("palette name to cycle per-glyph colours, or 'off'"),
-        "field" => Some("frame | background | text | title"),
-        "padding" => Some("border-to-content padding in pixels"),
-        "top" | "bottom" | "left" | "right" => Some("side pattern: `prefix(fill)suffix` or atomic"),
-        "tl" | "tr" | "bl" | "br" => Some("single corner glyph (escapes apply)"),
-        _ => None,
-    }
+    super::super::border::kv_hint(key)
 }
 
 /// Entry point dispatched from `section/mod.rs::execute_section`
@@ -127,19 +133,21 @@ pub fn execute_section_frame(args: &Args, eff: &mut ConsoleEffects) -> ExecResul
 }
 
 fn apply_reset(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
-    let mut edits = BorderConfigEdits::default();
-    edits.clear = true;
+    let edits = BorderConfigEdits {
+        clear: true,
+        ..BorderConfigEdits::default()
+    };
     apply_edits(args, eff, edits)
 }
 
 fn apply_edits(args: &Args, eff: &mut ConsoleEffects, edits: BorderConfigEdits) -> ExecResult {
-    let node_ids = match border_nodes_in_selection(&eff.document.selection) {
+    // Surface the specific not-applicable variant from
+    // `nodes_in_selection` rather than collapsing all five branches
+    // (no selection / edge / edge-label / portal-label / portal-text)
+    // into a single misleading "select a section" message.
+    let node_ids = match border_nodes_in_selection(&eff.document.selection, "section frame") {
         Ok(ids) => ids,
-        Err(_) => {
-            return ExecResult::err(
-                "section frame: select a section (or a node + pass section=<idx>) first",
-            );
-        }
+        Err(e) => return e,
     };
     let kv_idx = match parse_section_kv(args) {
         Ok(v) => v,
@@ -151,9 +159,14 @@ fn apply_edits(args: &Args, eff: &mut ConsoleEffects, edits: BorderConfigEdits) 
         OptionEdit::Set(ref s) if s.eq_ignore_ascii_case("custom")
     ) && !edits_has_glyph_field(&edits);
 
-    let mut changed = 0usize;
-    let mut auto_promoted: Option<String> = None;
-
+    // Parse-then-dispatch: resolve every (node_id, section_idx)
+    // pair and verify the section exists BEFORE any mutation. A
+    // mid-loop error after some nodes had their `frame_border`
+    // written would leave the document in a half-mutated state with
+    // an undo entry per touched node — undo would only reverse one
+    // node at a time and the user would see the error message
+    // hiding a partial commit.
+    let mut targets: Vec<(String, usize)> = Vec::with_capacity(node_ids.len());
     for node_id in &node_ids {
         let section_idx = match resolve_section_idx_for(&eff.document.selection, node_id, kv_idx) {
             Ok(idx) => idx,
@@ -172,9 +185,15 @@ fn apply_edits(args: &Args, eff: &mut ConsoleEffects, edits: BorderConfigEdits) 
                 section_idx, node_id
             ));
         }
+        targets.push((node_id.clone(), section_idx));
+    }
+
+    let mut changed = 0usize;
+    let mut auto_promoted: Option<String> = None;
+    for (node_id, section_idx) in &targets {
         let outcome: BorderEditOutcome =
             eff.document
-                .set_section_frame_border_config(node_id, section_idx, edits.clone());
+                .set_section_frame_border_config(node_id, *section_idx, edits.clone());
         if outcome.changed {
             changed += 1;
         }
@@ -187,7 +206,7 @@ fn apply_edits(args: &Args, eff: &mut ConsoleEffects, edits: BorderConfigEdits) 
     if changed == 0 {
         if bare_custom {
             lines.push("section frame: preset=custom set; no glyph fields were given".into());
-            lines.push(custom_preset_hint());
+            lines.push(custom_preset_hint("section frame"));
             return ExecResult::lines(lines);
         }
         return ExecResult::ok_msg("section frame: no change");
@@ -202,7 +221,7 @@ fn apply_edits(args: &Args, eff: &mut ConsoleEffects, edits: BorderConfigEdits) 
         ));
     }
     if bare_custom {
-        lines.push(custom_preset_hint());
+        lines.push(custom_preset_hint("section frame"));
     }
     if lines.len() == 1 {
         ExecResult::ok_msg(lines.into_iter().next().expect("len==1"))
@@ -212,18 +231,14 @@ fn apply_edits(args: &Args, eff: &mut ConsoleEffects, edits: BorderConfigEdits) 
 }
 
 fn execute_show(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
-    let node_ids = match border_nodes_in_selection(&eff.document.selection) {
+    // Surface the specific not-applicable variant — same shape as
+    // `apply_edits`. See its comment for the rationale.
+    let node_ids = match border_nodes_in_selection(&eff.document.selection, "section frame show") {
         Ok(ids) => ids,
-        Err(_) => {
-            return ExecResult::err(
-                "section frame show: select a section (or a node + pass section=<idx>) first",
-            );
-        }
+        Err(e) => return e,
     };
     if node_ids.len() != 1 {
-        return ExecResult::err(
-            "section frame show: single-section target only; pick one section first",
-        );
+        return ExecResult::err("section frame show: single-section target only; pick one section first");
     }
     let node_id = node_ids.into_iter().next().expect("len==1");
     let kv_idx = match parse_section_kv(args) {
@@ -259,7 +274,10 @@ fn execute_show(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     let lines = vec![
         format!("section frame: node='{}' section={}", node_id, section_idx),
         format!("  source:    {}", source),
-        format!("  font:      {}", resolved.font_name.as_deref().unwrap_or("(default)")),
+        format!(
+            "  font:      {}",
+            resolved.font_name.as_deref().unwrap_or("(default)")
+        ),
         format!("  size:      {} pt", resolved.font_size_pt),
         format!("  color:     {}", resolved.color),
         format!(
@@ -292,14 +310,17 @@ fn resolve_section_idx_for(
         return Ok(idx);
     }
     match sel {
-        SelectionState::Section(SectionSel { node_id: nid, section_idx }) if nid == node_id => {
-            Ok(*section_idx)
-        }
-        SelectionState::SectionRange { sel: SectionSel { node_id: nid, section_idx }, .. }
-            if nid == node_id =>
-        {
-            Ok(*section_idx)
-        }
+        SelectionState::Section(SectionSel {
+            node_id: nid,
+            section_idx,
+        }) if nid == node_id => Ok(*section_idx),
+        SelectionState::SectionRange {
+            sel: SectionSel {
+                node_id: nid,
+                section_idx,
+            },
+            ..
+        } if nid == node_id => Ok(*section_idx),
         _ => Err(format!(
             "section frame: node '{}' has multiple sections — pass section=<idx>",
             node_id
@@ -307,30 +328,15 @@ fn resolve_section_idx_for(
     }
 }
 
-fn edits_has_glyph_field(edits: &BorderConfigEdits) -> bool {
-    !matches!(edits.side_top, OptionEdit::Keep)
-        || !matches!(edits.side_bottom, OptionEdit::Keep)
-        || !matches!(edits.side_left, OptionEdit::Keep)
-        || !matches!(edits.side_right, OptionEdit::Keep)
-        || !matches!(edits.corner_top_left, OptionEdit::Keep)
-        || !matches!(edits.corner_top_right, OptionEdit::Keep)
-        || !matches!(edits.corner_bottom_left, OptionEdit::Keep)
-        || !matches!(edits.corner_bottom_right, OptionEdit::Keep)
-}
-
-fn custom_preset_hint() -> String {
-    "hint: 'custom' is the preset that lets you author per-side / per-corner glyphs. \
-     Combine it with any of: top=… bottom=… left=… right=… tl=… tr=… bl=… br=…  \
-     e.g. `section frame preset=custom top=\"###(*)###\" tl=\"+\" tr=\"+\" bl=\"+\" br=\"+\"`. \
-     See `format/border-patterns.md` for the side-pattern grammar."
-        .to_string()
-}
+// `edits_has_glyph_field` and `custom_preset_hint` are shared with
+// the `border …` and `canvas …` verbs through
+// `border::edits_has_glyph_field` / `border::custom_preset_hint(label)`.
+// They used to live here as byte-identical copies — see CODE_CONVENTIONS.md
+// §5 for why that's forbidden.
 
 #[cfg(test)]
 mod tests {
-    use crate::application::console::tests::fixtures::{
-        assert_exec_err_contains, assert_exec_ok, run,
-    };
+    use crate::application::console::tests::fixtures::{assert_exec_err_contains, assert_exec_ok, run};
     use crate::application::console::ExecResult;
     use crate::application::document::tests_common::pinned_two_section_node;
     use crate::application::document::{SectionSel, SelectionState};
@@ -461,6 +467,31 @@ mod tests {
         );
     }
 
+    /// `dirty` must not flip on a no-op section-frame edit. Pre-fix
+    /// the helper called `mutate_section_with_style_undo`
+    /// unconditionally, which set `dirty = true`, then the verb
+    /// would `undo_stack.pop()` to undo the snapshot push — but
+    /// `dirty` stayed flipped, causing spurious "unsaved changes"
+    /// prompts on a save-on-exit path. The fix moved the bool
+    /// verdict into the helper itself; this test pins the
+    /// regression so a future refactor that re-introduces a
+    /// pop-the-snapshot pattern fails immediately.
+    #[test]
+    fn section_frame_no_change_does_not_flip_dirty() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id,
+            section_idx: 1,
+        });
+        assert_exec_ok(run("section frame preset=heavy", &mut doc));
+        doc.dirty = false; // baseline: post-real-edit, simulate save
+        assert_exec_ok(run("section frame preset=heavy", &mut doc));
+        assert!(
+            !doc.dirty,
+            "an idempotent section-frame edit must not flip `dirty`"
+        );
+    }
+
     #[test]
     fn section_frame_unknown_key_errors() {
         let (mut doc, id) = pinned_two_section_node();
@@ -499,7 +530,11 @@ mod tests {
             .map(|l| l.text.as_str())
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(blob.contains("section="), "show must include section index: {}", blob);
+        assert!(
+            blob.contains("section="),
+            "show must include section index: {}",
+            blob
+        );
         assert!(
             blob.contains("per-section override"),
             "show must label the source: {}",
@@ -517,11 +552,7 @@ mod tests {
         });
         let result = run("section frame preset=custom", &mut doc);
         let blob: String = match result {
-            ExecResult::Lines(ls) => ls
-                .iter()
-                .map(|l| l.text.as_str())
-                .collect::<Vec<_>>()
-                .join("\n"),
+            ExecResult::Lines(ls) => ls.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join("\n"),
             ExecResult::Ok(s) => s,
             other => panic!("expected lines or ok, got {:?}", other),
         };
@@ -570,5 +601,107 @@ mod tests {
             section_idx: 1,
         });
         assert_exec_err_contains(run("section frame", &mut doc), "usage:");
+    }
+
+    /// Single-node selection without a `section=K` kv must error
+    /// at the verb layer with a hint to pass `section=`. Pre-fix
+    /// the only `Single` test always passed `section=K`, so this
+    /// path was untested.
+    #[test]
+    fn section_frame_single_selection_without_kv_errors() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::Single(id);
+        assert_exec_err_contains(run("section frame preset=heavy", &mut doc), "pass section=");
+    }
+
+    /// `SelectionState::None` must surface a "no selection" error
+    /// rather than the misleading "select a section" message the
+    /// pre-fix swallow-all path emitted regardless of variant.
+    #[test]
+    fn section_frame_no_selection_errors_with_no_selection_message() {
+        let (mut doc, _id) = pinned_two_section_node();
+        doc.selection = SelectionState::None;
+        assert_exec_err_contains(run("section frame preset=heavy", &mut doc), "no selection");
+    }
+
+    /// Edge selection must surface "not applicable to edges" — the
+    /// border verbs collapse into the same diagnostic surface.
+    #[test]
+    fn section_frame_edge_selection_errors_with_not_applicable() {
+        let (mut doc, _id) = pinned_two_section_node();
+        // Synthesise an edge selection. Any edge will do — the
+        // verb's branch fires before any per-edge inspection runs.
+        if let Some(edge) = doc.mindmap.edges.first() {
+            let edge_ref = crate::application::document::EdgeRef::new(
+                &edge.from_id,
+                &edge.to_id,
+                &edge.edge_type,
+            );
+            doc.selection = SelectionState::Edge(edge_ref);
+            assert_exec_err_contains(
+                run("section frame preset=heavy", &mut doc),
+                "not applicable to edges",
+            );
+        }
+    }
+
+    /// Side-pattern parse error from the kv stage must surface
+    /// verbatim — closes the negative-path coverage gap that
+    /// `border` already pins via its own tests.
+    #[test]
+    fn section_frame_invalid_side_pattern_errors_with_parser_message() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id,
+            section_idx: 1,
+        });
+        // `a)` is unmatched-close — the parser rejects it with a
+        // message containing "unmatched". `stage_kv` prefixes the
+        // side label.
+        assert_exec_err_contains(run("section frame top=\"a)\"", &mut doc), "unmatched");
+    }
+
+    /// Re-applying the same edit after undo lands the same final
+    /// state as the original. The document layer doesn't yet
+    /// expose a `redo` API (`pub fn undo` is the only direction in
+    /// `document/undo.rs`), so this test exercises the
+    /// "undo-then-redo-by-replay" path instead — same correctness
+    /// contract, just spelled out explicitly. The earlier
+    /// `*_round_trips_through_undo` test is intentionally
+    /// undo-only to match the `undo`-only API.
+    #[test]
+    fn section_frame_replay_after_undo_lands_same_state() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id.clone(),
+            section_idx: 1,
+        });
+        assert_exec_ok(run("section frame preset=heavy color=#ff8800", &mut doc));
+        let after_edit_preset = doc.mindmap.nodes.get(&id).unwrap().sections[1]
+            .frame_border
+            .as_ref()
+            .map(|c| c.preset.clone());
+        let after_edit_color = doc.mindmap.nodes.get(&id).unwrap().sections[1]
+            .frame_border
+            .as_ref()
+            .and_then(|c| c.color.clone());
+        assert!(doc.undo());
+        assert!(
+            doc.mindmap.nodes.get(&id).unwrap().sections[1]
+                .frame_border
+                .is_none(),
+            "undo restores the absent prior frame_border"
+        );
+        assert_exec_ok(run("section frame preset=heavy color=#ff8800", &mut doc));
+        let after_replay_preset = doc.mindmap.nodes.get(&id).unwrap().sections[1]
+            .frame_border
+            .as_ref()
+            .map(|c| c.preset.clone());
+        let after_replay_color = doc.mindmap.nodes.get(&id).unwrap().sections[1]
+            .frame_border
+            .as_ref()
+            .and_then(|c| c.color.clone());
+        assert_eq!(after_edit_preset, after_replay_preset);
+        assert_eq!(after_edit_color, after_replay_color);
     }
 }

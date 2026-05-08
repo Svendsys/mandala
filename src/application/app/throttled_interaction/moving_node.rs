@@ -22,8 +22,8 @@ use crate::application::frame_throttle::MutationFrequencyThrottle;
 
 use super::super::scene_rebuild::{
     flush_canvas_scene_buffers, update_border_tree_with_offsets, update_connection_label_tree,
-    update_connection_tree, update_edge_handle_tree, update_node_resize_handle_tree,
-    update_portal_tree,
+    update_connection_tree, update_edge_handle_tree, update_node_resize_handle_tree, update_portal_tree,
+    update_section_frame_tree,
 };
 use super::{DrainContext, ThrottledInteraction};
 
@@ -140,6 +140,15 @@ impl ThrottledInteraction for MovingNodeInteraction {
             // handles freeze at the pre-drag position while the
             // node visibly slides under them.
             update_node_resize_handle_tree(&scene, app_scene);
+            // Section frames render only while in NodeEdit mode but
+            // are emitted into the same `RenderScene.section_frames`
+            // that the cache-aware build above populated. Without
+            // this drain call, dragging the active node mid-edit
+            // leaves every section frame stuck at the pre-drag
+            // origin while the node and its borders slide under
+            // them — the no-NodeEdit case is already a no-op
+            // (`scene.section_frames` is empty).
+            update_section_frame_tree(&scene, app_scene);
             flush_canvas_scene_buffers(app_scene, renderer);
         }
 

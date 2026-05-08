@@ -27,12 +27,15 @@ need to land for the dynamic half.
 - **`AnimationTiming` envelope on `CustomMutation`.** Authors
   set `duration_ms` / `delay_ms` / `easing` on a per-mutation
   basis; see [`./mutations.md`](./mutations.md) `timing` field.
-- **Snapshot-driven dispatch.** When a triggered mutation has
-  `timing.duration_ms > 0`, the runtime captures a `from_node`
-  snapshot, derives the `to_node` by applying the mutation's
-  effects, and lerps between them per frame. Completion routes
-  through the normal `apply_custom_mutation` path so the model
-  state lands cleanly.
+- **Position-only snapshot interpolation.** When a triggered
+  mutation has `timing.duration_ms > 0`, the runtime captures a
+  `from_node` snapshot, derives the `to_node` by applying the
+  mutation's effects, and **lerps `MindNode.position` between them
+  per frame** (`from.pos_vec2().lerp(to.pos_vec2(), t)` in
+  `tick_animations`). Every other field on `MindNode` snaps to the
+  post-mutation state at completion — there is no general
+  field-by-field tween. Completion routes through the normal
+  `apply_custom_mutation` path so the model state lands cleanly.
 
 ## What's dormant (defined but unused)
 

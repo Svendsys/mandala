@@ -34,12 +34,16 @@ mod show;
 mod tests;
 
 pub use complete::complete_border;
+pub(crate) use complete::kv_value_completions;
 pub(crate) use execute::apply_border_field_to_selection;
 pub use execute::execute_border;
 // Re-exports consumed by sibling verbs that share the kv vocabulary
-// (currently `section frame …`). Both are `pub(crate)` on the
-// underlying definitions in `execute.rs`.
-pub(crate) use execute::{nodes_in_selection, stage_kv};
+// (currently `section frame …` and `canvas …`). All are
+// `pub(crate)` on the underlying definitions; the duplication these
+// re-exports replaced (three copies each of `kv_hint`,
+// `edits_has_glyph_field`, `custom_preset_hint`) violated
+// `CODE_CONVENTIONS.md` §5 ("avoid duplicating logic").
+pub(crate) use execute::{custom_preset_hint, edits_has_glyph_field, kv_hint, nodes_in_selection, stage_kv};
 
 /// kv keys recognised on the kv-form path.
 pub const KEYS: &[&str] = &[

@@ -70,9 +70,43 @@ pub fn build_section_frames(
         return Vec::new();
     }
 
-    let (ox, oy) = offsets.get(active_id).copied().unwrap_or((0.0, 0.0));
+    // Missing-offset for the active node means the layout/scene-
+    // build invariant ("the active node has an offset entry") was
+    // broken upstream — every other emission path consults the
+    // same map and would also fall back to (0,0) silently. Log so
+    // the regression is visible without panicking; per
+    // `CODE_CONVENTIONS.md` §9 interactive paths must keep running.
+    let (ox, oy) = match offsets.get(active_id).copied() {
+        Some(v) => v,
+        None => {
+            log::warn!(
+                "build_section_frames: active node {:?} missing from `offsets` map; \
+                 falling back to (0, 0) — frames will render at the node's authored \
+                 position. This indicates the layout/scene-build pass didn't populate \
+                 the active node's offset.",
+                active_id
+            );
+            (0.0, 0.0)
+        }
+    };
     let pos = node.pos_vec2();
     let size = node.size_vec2();
+    // Active-node AABB sanity: NaN or non-positive size produces
+    // degenerate frames (3-cluster runs from `border_run_specs`
+    // when `size.x / (font_size * 0.6)` is NaN or 0). Bail out
+    // cleanly — same defence-in-depth shape `node_pass.rs` uses
+    // for `TextElement` emission. Pre-fix the per-section guard
+    // below caught only authored-bad section sizes; the active
+    // node's own size was unguarded.
+    if !pos.x.is_finite()
+        || !pos.y.is_finite()
+        || !size.x.is_finite()
+        || !size.y.is_finite()
+        || size.x <= 0.0
+        || size.y <= 0.0
+    {
+        return Vec::new();
+    }
     let pos_x = pos.x + ox;
     let pos_y = pos.y + oy;
     let size_x = size.x;
@@ -96,21 +130,15 @@ pub fn build_section_frames(
             continue;
         }
         if let Some(sz) = section.size.as_ref() {
-            if !sz.width.is_finite()
-                || !sz.height.is_finite()
-                || sz.width <= 0.0
-                || sz.height <= 0.0
-            {
+            if !sz.width.is_finite() || !sz.height.is_finite() || sz.width <= 0.0 || sz.height <= 0.0 {
                 continue;
             }
         }
         let ((sx, sy), (sw, sh)) = section_aabb(section, pos_x, pos_y, size_x, size_y);
         let focused = focused_idx == Some(section_idx);
-        let border_style =
-            resolve_section_frame_border(section, &map.canvas, focused, frame_color_resolved);
+        let border_style = resolve_section_frame_border(section, &map.canvas, focused, frame_color_resolved);
         let fallback_rgba = hex_to_rgba_safe(&border_style.color, [1.0, 1.0, 1.0, 1.0]);
-        let palette_cycle =
-            resolve_palette_cycle(&map.palettes, &border_style, fallback_rgba);
+        let palette_cycle = resolve_palette_cycle(&map.palettes, &border_style, fallback_rgba);
         out.push(SectionFrameElement {
             node_id: active_id.to_string(),
             section_idx,

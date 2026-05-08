@@ -19443,7 +19443,7 @@
       "parent_id": null,
       "position": {
         "x": 0.0,
-        "y": 2700.0
+        "y": 11500.0
       },
       "size": {
         "height": 110.0,
@@ -19452,7 +19452,7 @@
       "style": {
         "background_color": "#0a0a0a",
         "border": {
-          "preset": "rounded",
+          "preset": "light",
           "font_size_pt": 18.0,
           "padding": 6.0
         },
@@ -19460,7 +19460,7 @@
         "frame_color": "#9be96a",
         "frame_thickness": 0.0,
         "shape": "rectangle",
-        "show_frame": false,
+        "show_frame": true,
         "show_shadow": false,
         "text_color": "#ffffff"
       },
@@ -19513,7 +19513,7 @@
       "parent_id": "3",
       "position": {
         "x": -1860.0,
-        "y": 3000.0
+        "y": 11800.0
       },
       "size": {
         "height": 110.0,
@@ -19540,7 +19540,7 @@
         "frame_color": "#f5b740",
         "frame_thickness": 0.0,
         "shape": "rectangle",
-        "show_frame": false,
+        "show_frame": true,
         "show_shadow": false,
         "text_color": "#ffffff"
       },
@@ -19593,7 +19593,7 @@
       "parent_id": "3",
       "position": {
         "x": -1440.0,
-        "y": 3000.0
+        "y": 11800.0
       },
       "size": {
         "height": 110.0,
@@ -19620,7 +19620,7 @@
         "frame_color": "#5ad6f4",
         "frame_thickness": 0.0,
         "shape": "rectangle",
-        "show_frame": false,
+        "show_frame": true,
         "show_shadow": false,
         "text_color": "#ffffff"
       },
@@ -19673,7 +19673,7 @@
       "parent_id": "3",
       "position": {
         "x": -1020.0,
-        "y": 3000.0
+        "y": 11800.0
       },
       "size": {
         "height": 110.0,
@@ -19700,7 +19700,7 @@
         "frame_color": "#ff8aab",
         "frame_thickness": 0.0,
         "shape": "rectangle",
-        "show_frame": false,
+        "show_frame": true,
         "show_shadow": false,
         "text_color": "#ffffff"
       },
@@ -19753,7 +19753,7 @@
       "parent_id": "3",
       "position": {
         "x": -600.0,
-        "y": 3000.0
+        "y": 11800.0
       },
       "size": {
         "height": 110.0,
@@ -19780,7 +19780,7 @@
         "frame_color": "#a78bfa",
         "frame_thickness": 0.0,
         "shape": "rectangle",
-        "show_frame": false,
+        "show_frame": true,
         "show_shadow": false,
         "text_color": "#ffffff"
       },
@@ -19833,7 +19833,7 @@
       "parent_id": "3",
       "position": {
         "x": -180.0,
-        "y": 3000.0
+        "y": 11800.0
       },
       "size": {
         "height": 110.0,
@@ -19852,7 +19852,7 @@
         "frame_color": "#cecf4d",
         "frame_thickness": 0.0,
         "shape": "rectangle",
-        "show_frame": false,
+        "show_frame": true,
         "show_shadow": false,
         "text_color": "#ffffff"
       },
@@ -19905,7 +19905,7 @@
       "parent_id": "3",
       "position": {
         "x": 240.0,
-        "y": 3000.0
+        "y": 11800.0
       },
       "size": {
         "height": 110.0,
@@ -19914,27 +19914,36 @@
       "style": {
         "background_color": "#0a0a0a",
         "border": {
-          "preset": "double",
-          "font": "Liberation Mono",
-          "font_size_pt": 16.0,
-          "padding": 4.0
+          "preset": "custom",
+          "font_size_pt": 18.0,
+          "padding": 4.0,
+          "glyphs": {
+            "top": "+=#(\\(\\))#=+",
+            "bottom": "\u2500",
+            "left": "\u2502",
+            "right": "\u2502",
+            "top_left": "\u250c",
+            "top_right": "\u2510",
+            "bottom_left": "\u2514",
+            "bottom_right": "\u2518"
+          }
         },
         "corner_radius_percent": 0.0,
         "frame_color": "#34d399",
         "frame_thickness": 0.0,
         "shape": "rectangle",
-        "show_frame": false,
+        "show_frame": true,
         "show_shadow": false,
         "text_color": "#ffffff"
       },
       "sections": [
         {
-          "text": "Custom border font\nLiberation Mono @ 16pt",
+          "text": "Escape grammar\ntop = \"+=#(\\(\\))#=+\"",
           "text_runs": [
             {
               "bold": true,
               "color": "#ffffff",
-              "end": 18,
+              "end": 14,
               "font": "LiberationSans",
               "hyperlink": null,
               "italic": false,
@@ -19945,12 +19954,12 @@
             {
               "bold": false,
               "color": "#ffffff",
-              "end": 41,
+              "end": 35,
               "font": "LiberationSans",
               "hyperlink": null,
               "italic": false,
               "size_pt": 20,
-              "start": 18,
+              "start": 14,
               "underline": false
             }
           ]
@@ -19976,7 +19985,7 @@
       "parent_id": "3",
       "position": {
         "x": 660.0,
-        "y": 3000.0
+        "y": 11800.0
       },
       "size": {
         "height": 110.0,
@@ -20003,18 +20012,18 @@
         "frame_color": "#fb923c",
         "frame_thickness": 0.0,
         "shape": "rectangle",
-        "show_frame": false,
+        "show_frame": true,
         "show_shadow": false,
         "text_color": "#ffffff"
       },
       "sections": [
         {
-          "text": "Heavy + diamonds\npreset=custom, sides=heavy, corners=\u25c6",
+          "text": "Heavy chars + diamonds\npreset=custom, sides=\u2501\u2503, corners=\u25c6",
           "text_runs": [
             {
               "bold": true,
               "color": "#ffffff",
-              "end": 16,
+              "end": 22,
               "font": "LiberationSans",
               "hyperlink": null,
               "italic": false,
@@ -20025,12 +20034,12 @@
             {
               "bold": false,
               "color": "#ffffff",
-              "end": 54,
+              "end": 57,
               "font": "LiberationSans",
               "hyperlink": null,
               "italic": false,
               "size_pt": 20,
-              "start": 16,
+              "start": 22,
               "underline": false
             }
           ]
@@ -20056,7 +20065,7 @@
       "parent_id": "3",
       "position": {
         "x": 1080.0,
-        "y": 3000.0
+        "y": 11800.0
       },
       "size": {
         "height": 270.0,
@@ -20073,13 +20082,13 @@
         "frame_color": "#cccace",
         "frame_thickness": 0.0,
         "shape": "rectangle",
-        "show_frame": false,
+        "show_frame": true,
         "show_shadow": false,
         "text_color": "#ffffff"
       },
       "sections": [
         {
-          "text": "Per-section frame: atomic",
+          "text": "Per-section frame: atomic\n(enter NodeEdit to see frames)",
           "text_runs": [
             {
               "bold": true,
@@ -20090,6 +20099,17 @@
               "italic": false,
               "size_pt": 18,
               "start": 0,
+              "underline": false
+            },
+            {
+              "bold": false,
+              "color": "#ffffff",
+              "end": 56,
+              "font": "LiberationSans",
+              "hyperlink": null,
+              "italic": false,
+              "size_pt": 18,
+              "start": 25,
               "underline": false
             }
           ],

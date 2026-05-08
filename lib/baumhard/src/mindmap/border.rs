@@ -12,9 +12,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::core::primitives::{ColorFontRegion, ColorFontRegions, Range};
 use crate::mindmap::border_pattern::SidePattern;
-use crate::mindmap::model::{
-    Canvas, ColorGroup, CustomBorderGlyphs, GlyphBorderConfig, MindSection,
-};
+use crate::mindmap::model::{Canvas, ColorGroup, CustomBorderGlyphs, GlyphBorderConfig, MindSection};
 use crate::util::color::FloatRgba;
 
 /// Fraction of `font_size` by which a border's top/bottom runs
@@ -195,7 +193,7 @@ fn build_side_column(glyph: char, rows: usize) -> String {
 /// allowed by the type but actively normalised to the preset
 /// fallback during resolution, so the renderer never receives a
 /// corner with zero glyphs.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct BorderCorners {
     /// Glyphs at the top-left corner of the rectangle.
     pub top_left: String,
@@ -211,7 +209,7 @@ pub struct BorderCorners {
 /// renderer fits between the corners. Populated by
 /// [`resolve_border_style`] from the per-node config or the
 /// preset's defaults.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct SidePatternQuad {
     /// Pattern fitted between the top corners.
     pub top: SidePattern,
@@ -229,7 +227,7 @@ pub struct SidePatternQuad {
 /// today (`resolve_theme_colors` writes the same field into the
 /// resolved colours). Open seam — adding a new variant here is a
 /// localised change.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum PaletteField {
     /// Cycle the border across each `ColorGroup`'s `frame`
     /// channel — the historical default and the channel whose
@@ -741,7 +739,11 @@ pub fn resolve_section_frame_border(
 /// `focused = true`  → heavy preset (┏━┓┃┗━┛).
 fn section_frame_floor_config(focused: bool) -> GlyphBorderConfig {
     GlyphBorderConfig {
-        preset: if focused { "heavy".to_string() } else { "light".to_string() },
+        preset: if focused {
+            "heavy".to_string()
+        } else {
+            "light".to_string()
+        },
         font: None,
         font_size_pt: SECTION_FRAME_FLOOR_FONT_SIZE_PT,
         color: None,

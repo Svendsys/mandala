@@ -193,17 +193,7 @@ impl MindMapDocument {
         // captured up-front in `outcome.requested_preset` by
         // `apply_border_edits`; here we compare against what
         // landed in the model.
-        if let Some(cfg) = node.style.border.as_ref() {
-            if cfg.preset.eq_ignore_ascii_case("custom") {
-                let was_already_custom = preset_before
-                    .as_deref()
-                    .map(|p| p.eq_ignore_ascii_case("custom"))
-                    .unwrap_or(false);
-                if !was_already_custom && outcome.requested_preset.is_some() {
-                    outcome.preset_auto_promoted = true;
-                }
-            }
-        }
+        detect_preset_auto_promote(node.style.border.as_ref(), preset_before.as_deref(), &mut outcome);
 
         // The size grow is monotonic by design (mirrors
         // `grow_node_sizes_to_fit_text`), so undoing a border edit
@@ -260,23 +250,21 @@ impl MindMapDocument {
             }
             self.mutate_section_with_style_undo(node_id, section_idx, |s| {
                 s.frame_border = None;
+                true
             });
             outcome.changed = true;
             return outcome;
         }
 
-        // Apply the staged edits to the section's frame_border slot.
-        // The closure runs under the undo-snapshot wrapper so the
-        // pre-edit `sections` clone is captured automatically.
-        let mut any_change = false;
-        self.mutate_section_with_style_undo(node_id, section_idx, |s| {
-            any_change = apply_glyph_border_edits_to_slot(&mut s.frame_border, &edits, &mut outcome);
+        // Apply the staged edits to the section's frame_border slot
+        // through the helper. The closure returns its change verdict
+        // so the helper itself decides whether to push the undo
+        // entry + flip `dirty` — no post-hoc `undo_stack.pop()` and
+        // no leaked `dirty=true` on no-ops.
+        let changed = self.mutate_section_with_style_undo(node_id, section_idx, |s| {
+            apply_glyph_border_edits_to_slot(&mut s.frame_border, &edits, &mut outcome)
         });
-
-        if !any_change {
-            // The undo snapshot already landed; pop it so a
-            // user-visible no-op doesn't grow the undo stack.
-            self.undo_stack.pop();
+        if !changed {
             return outcome;
         }
 
@@ -288,17 +276,7 @@ impl MindMapDocument {
             .get(node_id)
             .and_then(|n| n.sections.get(section_idx))
             .and_then(|s| s.frame_border.as_ref());
-        if let Some(cfg) = landed {
-            if cfg.preset.eq_ignore_ascii_case("custom") {
-                let was_already_custom = preset_before
-                    .as_deref()
-                    .map(|p| p.eq_ignore_ascii_case("custom"))
-                    .unwrap_or(false);
-                if !was_already_custom && outcome.requested_preset.is_some() {
-                    outcome.preset_auto_promoted = true;
-                }
-            }
-        }
+        detect_preset_auto_promote(landed, preset_before.as_deref(), &mut outcome);
 
         outcome.changed = true;
         outcome
@@ -338,31 +316,22 @@ impl MindMapDocument {
                 true
             }
         } else {
-            apply_glyph_border_edits_to_slot(
-                &mut self.mindmap.canvas.default_border,
-                &edits,
-                &mut outcome,
-            )
+            apply_glyph_border_edits_to_slot(&mut self.mindmap.canvas.default_border, &edits, &mut outcome)
         };
 
         if !any_change {
             return outcome;
         }
 
-        if let Some(cfg) = self.mindmap.canvas.default_border.as_ref() {
-            if cfg.preset.eq_ignore_ascii_case("custom") {
-                let was_already_custom = preset_before
-                    .as_deref()
-                    .map(|p| p.eq_ignore_ascii_case("custom"))
-                    .unwrap_or(false);
-                if !was_already_custom && outcome.requested_preset.is_some() {
-                    outcome.preset_auto_promoted = true;
-                }
-            }
-        }
+        detect_preset_auto_promote(
+            self.mindmap.canvas.default_border.as_ref(),
+            preset_before.as_deref(),
+            &mut outcome,
+        );
 
-        self.undo_stack
-            .push(UndoAction::CanvasSnapshot { canvas: canvas_snapshot });
+        self.undo_stack.push(UndoAction::CanvasSnapshot {
+            canvas: canvas_snapshot,
+        });
         self.dirty = true;
         outcome.changed = true;
         outcome
@@ -427,30 +396,47 @@ impl MindMapDocument {
         }
 
         let landed = if focused {
-            self.mindmap
-                .canvas
-                .default_focused_section_frame_border
-                .as_ref()
+            self.mindmap.canvas.default_focused_section_frame_border.as_ref()
         } else {
             self.mindmap.canvas.default_section_frame_border.as_ref()
         };
-        if let Some(cfg) = landed {
-            if cfg.preset.eq_ignore_ascii_case("custom") {
-                let was_already_custom = preset_before
-                    .as_deref()
-                    .map(|p| p.eq_ignore_ascii_case("custom"))
-                    .unwrap_or(false);
-                if !was_already_custom && outcome.requested_preset.is_some() {
-                    outcome.preset_auto_promoted = true;
-                }
-            }
-        }
+        detect_preset_auto_promote(landed, preset_before.as_deref(), &mut outcome);
 
-        self.undo_stack
-            .push(UndoAction::CanvasSnapshot { canvas: canvas_snapshot });
+        self.undo_stack.push(UndoAction::CanvasSnapshot {
+            canvas: canvas_snapshot,
+        });
         self.dirty = true;
         outcome.changed = true;
         outcome
+    }
+}
+
+/// Set `outcome.preset_auto_promoted = true` when `landed`'s preset
+/// is `"custom"` (case-insensitive), the pre-edit preset wasn't
+/// already custom, and the user explicitly asked for some preset
+/// (i.e. their kv mentioned `preset=`). Shared between the four
+/// border-style setters (`set_node_border_config`,
+/// `set_section_frame_border_config`,
+/// `set_canvas_default_border_config`,
+/// `set_canvas_default_section_frame_border_config`) so the
+/// detection logic lives in exactly one place. When the auto-
+/// promote path is removed (per `SECTIONS_BORDERS_RESIZE_PLAN.md`
+/// §5.4), this function and the `BorderEditOutcome.preset_auto_promoted`
+/// field go together.
+pub(super) fn detect_preset_auto_promote(
+    landed: Option<&GlyphBorderConfig>,
+    preset_before: Option<&str>,
+    outcome: &mut BorderEditOutcome,
+) {
+    let Some(cfg) = landed else { return };
+    if !cfg.preset.eq_ignore_ascii_case("custom") {
+        return;
+    }
+    let was_already_custom = preset_before
+        .map(|p| p.eq_ignore_ascii_case("custom"))
+        .unwrap_or(false);
+    if !was_already_custom && outcome.requested_preset.is_some() {
+        outcome.preset_auto_promoted = true;
     }
 }
 

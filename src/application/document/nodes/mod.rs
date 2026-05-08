@@ -79,6 +79,7 @@ impl MindMapDocument {
         self.mutate_section_with_style_undo(node_id, section_idx, |s| {
             s.offset.x = x;
             s.offset.y = y;
+            true
         });
         // Re-acquire node and run the floor passes — moving a
         // `None`-sized section can shift its measured-text floor
@@ -120,6 +121,7 @@ impl MindMapDocument {
         let canvas_default = self.mindmap.canvas.default_border.clone();
         self.mutate_section_with_style_undo(node_id, section_idx, |s| {
             s.size = size;
+            true
         });
         let node = self
             .mindmap
@@ -158,6 +160,7 @@ impl MindMapDocument {
         self.mutate_section_with_style_undo(node_id, section_idx, |s| {
             s.offset = new_offset;
             s.size = Some(new_size);
+            true
         });
         let node = self
             .mindmap
@@ -199,7 +202,11 @@ impl MindMapDocument {
         let before_position = self.mindmap.nodes[node_id].position;
         let before_size = self.mindmap.nodes[node_id].size;
         let canvas_default = self.mindmap.canvas.default_border.clone();
-        let n = self.mindmap.nodes.get_mut(node_id).expect("just confirmed exists");
+        let n = self
+            .mindmap
+            .nodes
+            .get_mut(node_id)
+            .expect("just confirmed exists");
         n.size = new_size;
         // Floor-respect pass.
         super::grow_one_node_to_fit_text(n);
@@ -247,7 +254,11 @@ impl MindMapDocument {
         let before_position = self.mindmap.nodes[node_id].position;
         let before_size = self.mindmap.nodes[node_id].size;
         let canvas_default = self.mindmap.canvas.default_border.clone();
-        let n = self.mindmap.nodes.get_mut(node_id).expect("just confirmed exists");
+        let n = self
+            .mindmap
+            .nodes
+            .get_mut(node_id)
+            .expect("just confirmed exists");
         n.position = new_position;
         n.size = new_size;
         // Same floor-respect pass as `set_node_size`.
@@ -313,7 +324,11 @@ impl MindMapDocument {
         let before_position = node.position;
         let before_size = node.size;
         let canvas_default = self.mindmap.canvas.default_border.clone();
-        let n = self.mindmap.nodes.get_mut(node_id).expect("just confirmed exists");
+        let n = self
+            .mindmap
+            .nodes
+            .get_mut(node_id)
+            .expect("just confirmed exists");
         n.size = candidate;
         // Border-grow runs after the text-floor write — the
         // rendered border needs room. The text-grow pass is

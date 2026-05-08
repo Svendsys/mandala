@@ -47,16 +47,22 @@ pub const COMMAND: Command = Command {
 };
 
 fn complete_section(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Completion> {
+    // `state.tokens[0]` is the command name ("section"); the first
+    // arg (`move`, `resize`, or `frame`) lives at index 1. The
+    // engine's `Token { index }` already counts past the command,
+    // so `index: 0` means "the user is typing the first positional
+    // after `section`."
+    let first_arg = state.tokens.get(1).map(String::as_str);
     // `frame` opens a sub-verb tree — once the user has typed
     // `section frame …` we delegate every later token to the
     // frame-specific completer (which surfaces the same kv keys
     // the `border …` verb uses).
-    if state.tokens.first().map(String::as_str) == Some("frame") {
+    if first_arg == Some("frame") {
         return frame::complete_section_frame(state, ctx);
     }
     match &state.context {
         CompletionContext::Token { index: 0 } => prefix_filter(VERBS, state.partial),
-        CompletionContext::Token { index: 1 } => match state.tokens.first().map(String::as_str) {
+        CompletionContext::Token { index: 1 } => match first_arg {
             Some("resize") => prefix_filter(&["none"], state.partial),
             _ => Vec::new(),
         },
