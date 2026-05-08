@@ -202,6 +202,20 @@ pub fn build_scene_with_offsets_selection_and_overrides(
 ///
 /// At the end of the build, any cached entry whose key was not seen this
 /// frame (i.e. the edge was deleted from the model) is evicted.
+// `clippy::too_many_arguments` is silenced here for an
+// architectural reason rather than a stylistic one: this is the
+// scene-build entry point and each argument has a different
+// caller-vs-builder lifetime relationship. `map` and `offsets`
+// borrow the persisted document; `selection` is a per-frame
+// snapshot; the three `*_preview` Options are short-lived
+// borrowed views constructed by `assemble_scene_overrides`;
+// `cache` is mut-borrowed across frames for memoisation;
+// `camera_zoom` is by-value. Bundling them into a struct would
+// either duplicate every field's lifetime/mutability annotation
+// or hide the borrow shape from the caller. Keep the function
+// signature as the documentation surface for "what this function
+// reads vs. writes".
+#[allow(clippy::too_many_arguments)]
 pub fn build_scene_with_cache(
     map: &MindMap,
     offsets: &HashMap<String, (f32, f32)>,

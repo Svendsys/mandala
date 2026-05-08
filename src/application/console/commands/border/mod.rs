@@ -38,18 +38,16 @@ pub use complete::complete_border;
 pub(crate) use complete::{kv_value_completions, preview_subverb_completions};
 pub(crate) use execute::apply_border_field_to_selection;
 pub use execute::execute_border;
-// Re-exports consumed by the `section frame preview …` and
+// Re-exported for the `section frame preview …` and
 // `canvas border preview …` / `canvas section-frame [focused]
-// preview …` verbs. The `preview` arm in each verb's dispatch
-// wraps `dispatch_border_preview` with a target-resolver
-// closure; commit / cancel terminator paths route through the
-// shared verbs. Suppress the unused-import warning until
-// commits 5/6 land — early commits don't yet have downstream
-// consumers.
-#[allow(unused_imports)]
-pub(crate) use preview::{
-    cancel_border_preview_verb, commit_border_preview_verb, dispatch_border_preview, stage_kv_for_preview,
-};
+// preview …` verbs. Each verb's `preview` arm wraps
+// `dispatch_border_preview` with a target-resolver closure;
+// commit / cancel terminator paths route through that helper
+// too. The other three preview symbols
+// (`cancel_border_preview_verb`, `commit_border_preview_verb`,
+// `stage_kv_for_preview`) are private to `border::preview` —
+// no downstream consumer reaches in.
+pub(crate) use preview::dispatch_border_preview;
 // Re-exports consumed by sibling verbs that share the kv vocabulary
 // (currently `section frame …` and `canvas …`). All are
 // `pub(crate)` on the underlying definitions; the duplication these

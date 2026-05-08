@@ -543,8 +543,13 @@ impl MindMapDocument {
         // Drop any orphan-by-drift preview before recording a new
         // one. Defer-clear posture: the scene-build path treats a
         // drifted preview as inactive; the actual slot empties
-        // here on the next setter call.
-        self.clear_orphan_preview_if_drifted();
+        // here on the next setter call. `cancel_border_preview`
+        // and `commit_border_preview` open-code the same shape
+        // because each wants a different *return* (false /
+        // `None`) when drift was detected.
+        if !self.border_preview_covers_live_selection() {
+            self.border_preview = None;
+        }
         // Simulate the apply against a clone of the affected slot
         // so the outcome reflects what commit will produce. Pick
         // the slot per target variant; for multi-target
@@ -669,16 +674,6 @@ impl MindMapDocument {
             BorderPreviewTarget::CanvasDefault
             | BorderPreviewTarget::CanvasSectionFrame
             | BorderPreviewTarget::CanvasSectionFrameFocused => true,
-        }
-    }
-
-    /// Drop an orphan-by-drift preview. Called by the three setters
-    /// at entry so a preview that's no longer covered by the live
-    /// selection is gone before the setter runs — keeps the
-    /// document state clean without 25-site selection-setter hooks.
-    fn clear_orphan_preview_if_drifted(&mut self) {
-        if !self.border_preview_covers_live_selection() {
-            self.border_preview = None;
         }
     }
 
