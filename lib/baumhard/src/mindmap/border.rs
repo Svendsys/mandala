@@ -12,7 +12,9 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::core::primitives::{ColorFontRegion, ColorFontRegions, Range};
 use crate::mindmap::border_pattern::SidePattern;
-use crate::mindmap::model::{ColorGroup, CustomBorderGlyphs, GlyphBorderConfig};
+use crate::mindmap::model::{
+    Canvas, ColorGroup, CustomBorderGlyphs, GlyphBorderConfig, MindSection,
+};
 use crate::util::color::FloatRgba;
 
 /// Fraction of `font_size` by which a border's top/bottom runs
@@ -684,11 +686,11 @@ pub fn resolve_border_style(
 /// 2. else `canvas.default_section_frame_border` (or
 ///    `canvas.default_focused_section_frame_border` when `focused`)
 ///    if `Some` — map-wide author default.
-/// 3. else a hardcoded floor: thin single-line preset for unfocused
-///    sections, heavy preset for the focused section. Same glyphs
-///    Phase B.1 emitted, but now expressed as a default
-///    [`GlyphBorderConfig`] that flows through the same resolver
-///    every other border consumes.
+/// 3. else a hardcoded floor `GlyphBorderConfig`: `light` preset
+///    for unfocused sections, `heavy` for the focused section.
+///    Synthesized so the cascade always routes through one
+///    `resolve_border_style` call — there are no inline glyph
+///    constants in the section-frame path.
 ///
 /// `frame_color_resolved` is the cyan `SELECTED_EDGE_COLOR` the
 /// caller already resolved through `theme_variables`. The frame
@@ -699,8 +701,8 @@ pub fn resolve_border_style(
 /// story". Authors who want the active-affordance signal preserved
 /// just leave `color` unset on their override.
 pub fn resolve_section_frame_border(
-    section: &crate::mindmap::model::MindSection,
-    canvas: &crate::mindmap::model::Canvas,
+    section: &MindSection,
+    canvas: &Canvas,
     focused: bool,
     frame_color_resolved: &str,
 ) -> BorderStyle {
@@ -732,9 +734,8 @@ pub fn resolve_section_frame_border(
 
 /// Hardcoded fallback `GlyphBorderConfig` for section frames when
 /// both the per-section override and the canvas default are unset.
-/// Matches Phase B.1's thin / heavy defaults but expressed as a
-/// `GlyphBorderConfig` so the resolver path is the same for every
-/// section frame regardless of where its style comes from.
+/// Synthesized so the resolver path is the same for every section
+/// frame regardless of where its style comes from.
 ///
 /// `focused = false` → light preset (┌─┐│└─┘).
 /// `focused = true`  → heavy preset (┏━┓┃┗━┛).
@@ -742,7 +743,7 @@ fn section_frame_floor_config(focused: bool) -> GlyphBorderConfig {
     GlyphBorderConfig {
         preset: if focused { "heavy".to_string() } else { "light".to_string() },
         font: None,
-        font_size_pt: SECTION_FRAME_DEFAULT_FONT_SIZE_PT,
+        font_size_pt: SECTION_FRAME_FLOOR_FONT_SIZE_PT,
         color: None,
         glyphs: None,
         padding: 0.0,
@@ -751,12 +752,24 @@ fn section_frame_floor_config(focused: bool) -> GlyphBorderConfig {
     }
 }
 
-/// Default font size (pt) for section frames when no per-section
-/// or canvas-level config sets it. Smaller than the node-border
-/// default (14 pt) so the per-section subdivisions read as a
-/// finer-grained subdivision rather than competing with the node
-/// frame.
-pub const SECTION_FRAME_DEFAULT_FONT_SIZE_PT: f32 = 10.0;
+/// Font size (pt) baked into the hardcoded floor
+/// `GlyphBorderConfig` returned by `section_frame_floor_config`.
+/// Smaller than the `GlyphBorderConfig` field default (14 pt) so
+/// the per-section subdivisions read as a finer-grained
+/// subdivision rather than competing with the node frame in the
+/// no-author-config path.
+///
+/// **Cascade caveat.** Authors who set a partial canvas-level
+/// override like `default_section_frame_border = { preset:
+/// "double" }` get the **`GlyphBorderConfig` field default of
+/// 14 pt**, not this 10 pt — `font_size_pt` is `f32`, not
+/// `Option<f32>`, so deserialization can't distinguish "author
+/// omitted" from "author wrote 14.0". Authors who want the
+/// smaller-grain feel inside their config write
+/// `font_size_pt: 10.0` (or any value they prefer) explicitly.
+/// This matches the pattern node borders use today and keeps
+/// the cascade lossless.
+const SECTION_FRAME_FLOOR_FONT_SIZE_PT: f32 = 10.0;
 
 /// Pick the [`BorderGlyphSet`] for a preset name, case-insensitively.
 /// Unknown preset names fall back to `light` and log a warning;

@@ -142,6 +142,7 @@ Complete field reference for every type in `.mindmap.json`.
   "offset": { "x": 0.0, "y": 0.0 },
   "size": { "width": 240.0, "height": 60.0 },
   "channel": 0,
+  "trigger_bindings": [],
   "frame_border": null
 }
 ```

@@ -46,11 +46,11 @@ use crate::util::color::{hex_to_rgba_safe, resolve_var};
 ///   "renderable" sections.
 ///
 /// Each emitted element carries a fully-resolved [`BorderStyle`]
-/// + `palette_cycle`. The matching `(active_node,
-/// focused_section_idx)` section emits `focused = true`; the
-/// resolver flips to the focused-variant cascade for that one
-/// element so its style can differ from its unfocused siblings
-/// (Plan §4.4).
+/// plus a `palette_cycle`. The matching
+/// `(active_node, focused_section_idx)` section emits
+/// `focused = true`; the resolver flips to the focused-variant
+/// cascade for that one element so its style can differ from
+/// its unfocused siblings.
 pub fn build_section_frames(
     map: &MindMap,
     offsets: &HashMap<String, (f32, f32)>,

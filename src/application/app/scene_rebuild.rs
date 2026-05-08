@@ -884,12 +884,21 @@ pub(in crate::application::app) fn update_section_resize_handle_tree_from_slice(
 /// flush.
 ///
 /// Section-frame visibility is mode-driven (NodeEdit on / off),
-/// not gesture-driven, so a per-rebuild dispatch on the structural
-/// signature is sufficient — there's no §B2 in-place mutator path
-/// because the focus toggle changes which glyphs we emit (thin →
-/// heavy box-drawing chars), so the structural shape changes too.
-/// Identity = ordered list of `(node_id, section_idx, focused)`
-/// triples; any change forces a full rebuild.
+/// not gesture-driven. The dispatch's structural signature is
+/// the [`section_frame_identity_sequence`] output, which captures
+/// `(node_id, section_idx, focused, color, per-side rendered
+/// text)`. Any visible style change — preset, pattern, corner,
+/// color, focus toggle — moves the signature, so the dispatch
+/// triggers a full rebuild correctly.
+///
+/// There's no §B2 in-place mutator path: section-frame style
+/// changes (e.g. an author edits a per-side `SidePattern`)
+/// reshape the glyph runs entirely, and the focus toggle swaps
+/// preset glyph sets. A delta-style mutator would have to
+/// re-stamp every field of every run anyway, so the
+/// `FullRebuild` arm is the only meaningful path. The matching
+/// `InPlaceMutator` arm short-circuits to a no-op: the
+/// registered tree is already correct, no work needed.
 pub(in crate::application::app) fn update_section_frame_tree(
     scene: &baumhard::mindmap::scene_builder::RenderScene,
     app_scene: &mut crate::application::scene_host::AppScene,
@@ -901,18 +910,14 @@ pub(in crate::application::app) fn update_section_frame_tree(
 
     let signature = hash_canvas_signature(&section_frame_identity_sequence(&scene.section_frames));
     match app_scene.canvas_dispatch(CanvasRole::SectionFrames, signature) {
-        CanvasDispatch::InPlaceMutator | CanvasDispatch::FullRebuild => {
-            // The frame tree has no in-place mutator path (see
-            // doc comment); both arms route through the full
-            // rebuild. The dispatch still short-circuits the
-            // common "nothing changed" case via the signature
-            // match — `canvas_dispatch` returns `InPlaceMutator`
-            // only when the registered tree's signature equals
-            // the new one, in which case re-registering the
-            // identical tree is a wasted alloc but not incorrect.
-            // Match `CanvasDispatch::InPlaceMutator` here too so
-            // a future seam (delta updates on focus-only changes)
-            // has the obvious place to land.
+        CanvasDispatch::InPlaceMutator => {
+            // Signature matched the registered tree — nothing
+            // changed since the last rebuild, so the registered
+            // tree is already correct. Early-return saves the
+            // tree-allocation + register_canvas slab churn that
+            // would otherwise fire on every NodeEdit-mode rebuild.
+        }
+        CanvasDispatch::FullRebuild => {
             let tree = build_section_frame_tree(&scene.section_frames);
             app_scene.register_canvas(CanvasRole::SectionFrames, tree, glam::Vec2::ZERO);
             app_scene.set_canvas_signature(CanvasRole::SectionFrames, signature);

@@ -15,6 +15,12 @@ use crate::mindmap::model::{CustomBorderGlyphs, GlyphBorderConfig};
 use crate::mindmap::scene_builder::SectionFrameElement;
 use crate::mindmap::tree_builder::{build_section_frame_tree, section_frame_identity_sequence};
 
+/// 10pt is the production floor's font size (private const
+/// `SECTION_FRAME_FLOOR_FONT_SIZE_PT` in `border.rs`); this
+/// fixture mirrors that value so the test's glyph-layout
+/// assertions match what users see, but the value isn't
+/// load-bearing — every test below would still pass at any
+/// reasonable size.
 fn floor_style(focused: bool) -> BorderStyle {
     let cfg = GlyphBorderConfig {
         preset: if focused { "heavy".into() } else { "light".into() },
@@ -238,5 +244,83 @@ fn test_section_frame_identity_sequence_stable_for_unchanged_inputs() {
         section_frame_identity_sequence(&frames),
         section_frame_identity_sequence(&frames),
         "identity is a pure function of inputs"
+    );
+}
+
+/// A color edit on a section frame must move the structural
+/// signature so the §B2 dispatch rebuilds the glyph runs with
+/// the new tint. Pin so a future regression that drops `color`
+/// from `SectionFrameIdentity` fails this test.
+#[test]
+fn test_section_frame_identity_sequence_changes_on_color_change() {
+    let mut a = frame("n", 0, false);
+    let mut b = frame("n", 0, false);
+    a.border_style.color = "#ff0000".into();
+    b.border_style.color = "#00ff00".into();
+    assert_ne!(
+        section_frame_identity_sequence(&[a]),
+        section_frame_identity_sequence(&[b]),
+        "color change must change the signature"
+    );
+}
+
+/// A preset swap (light → heavy) changes the rendered glyphs on
+/// each side, so the identity must move. Without this the
+/// dispatch would skip a rebuild and leave stale ┌─┐ corners on
+/// a frame that should be ┏━┓.
+#[test]
+fn test_section_frame_identity_sequence_changes_on_preset_change() {
+    let a = SectionFrameElement {
+        border_style: floor_style(false), // light
+        ..frame("n", 0, false)
+    };
+    let b = SectionFrameElement {
+        border_style: floor_style(true), // heavy
+        ..frame("n", 0, false)
+    };
+    assert_ne!(
+        section_frame_identity_sequence(&[a]),
+        section_frame_identity_sequence(&[b]),
+        "preset change must change the signature (different glyphs on every side)"
+    );
+}
+
+/// A custom-pattern swap (`top="A"` → `top="B"`) must change the
+/// signature. The identity captures rendered side text via
+/// `border_run_specs`, so any author edit to a `SidePattern` lands
+/// in the dispatch path.
+#[test]
+fn test_section_frame_identity_sequence_changes_on_pattern_change() {
+    let cfg_a = GlyphBorderConfig {
+        preset: "custom".into(),
+        font: None,
+        font_size_pt: 10.0,
+        color: None,
+        glyphs: Some(CustomBorderGlyphs {
+            top: "A".into(),
+            bottom: "─".into(),
+            left: "│".into(),
+            right: "│".into(),
+            top_left: "┌".into(),
+            top_right: "┐".into(),
+            bottom_left: "└".into(),
+            bottom_right: "┘".into(),
+        }),
+        padding: 0.0,
+        color_palette: None,
+        color_palette_field: None,
+    };
+    let mut cfg_b = cfg_a.clone();
+    if let Some(g) = cfg_b.glyphs.as_mut() {
+        g.top = "B".into();
+    }
+    let style_a = resolve_border_style(Some(&cfg_a), None, "#00E5FF");
+    let style_b = resolve_border_style(Some(&cfg_b), None, "#00E5FF");
+    let a = SectionFrameElement { border_style: style_a, ..frame("n", 0, false) };
+    let b = SectionFrameElement { border_style: style_b, ..frame("n", 0, false) };
+    assert_ne!(
+        section_frame_identity_sequence(&[a]),
+        section_frame_identity_sequence(&[b]),
+        "side-pattern change must change the signature"
     );
 }

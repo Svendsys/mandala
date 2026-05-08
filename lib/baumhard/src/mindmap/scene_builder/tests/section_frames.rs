@@ -254,3 +254,133 @@ fn test_section_frames_focused_uses_focused_canvas_default() {
     assert_eq!(frames[1].border_style.color, "#ffffff", "section 1 focused → focused default");
     assert_eq!(frames[2].border_style.color, "#aaaaaa", "section 2 unfocused → unfocused default");
 }
+
+/// `focused = true` with only the unfocused canvas default set
+/// falls through to the unfocused config (Plan §4.4 cascade
+/// fallback). Pins the `default_focused.or(default_unfocused)`
+/// branch in `resolve_section_frame_border`.
+#[test]
+fn test_section_frames_focused_falls_back_to_unfocused_canvas_default() {
+    use crate::mindmap::model::GlyphBorderConfig;
+    let node = three_section_node();
+    let mut map = synthetic_map(vec![node], vec![]);
+    map.canvas.default_section_frame_border = Some(GlyphBorderConfig {
+        preset: "double".into(),
+        font: None,
+        font_size_pt: 14.0,
+        color: Some("#abcdef".to_string()),
+        glyphs: None,
+        padding: 0.0,
+        color_palette: None,
+        color_palette_field: None,
+    });
+    // No focused canvas default — focused should fall through.
+    let frames = build_section_frames(
+        &map,
+        &HashMap::new(),
+        Some("active"),
+        Some(("active", 1)),
+    );
+    assert_eq!(
+        frames[1].border_style.color, "#abcdef",
+        "focused section with no focused-canvas-default uses the unfocused default"
+    );
+}
+
+/// `focused = false` with only the *focused* canvas default set
+/// must NOT bleed into unfocused frames — those fall through to
+/// the floor preset.
+#[test]
+fn test_section_frames_unfocused_does_not_bleed_focused_canvas_default() {
+    use crate::mindmap::model::GlyphBorderConfig;
+    use crate::mindmap::SELECTION_HIGHLIGHT_HEX;
+    let node = three_section_node();
+    let mut map = synthetic_map(vec![node], vec![]);
+    map.canvas.default_focused_section_frame_border = Some(GlyphBorderConfig {
+        preset: "heavy".into(),
+        font: None,
+        font_size_pt: 12.0,
+        color: Some("#ff00ff".to_string()),
+        glyphs: None,
+        padding: 0.0,
+        color_palette: None,
+        color_palette_field: None,
+    });
+    // No unfocused canvas default. Section 1 is focused → focused
+    // canvas default; sections 0/2 unfocused → floor (cyan).
+    let frames = build_section_frames(
+        &map,
+        &HashMap::new(),
+        Some("active"),
+        Some(("active", 1)),
+    );
+    assert_eq!(frames[0].border_style.color, SELECTION_HIGHLIGHT_HEX);
+    assert_eq!(frames[1].border_style.color, "#ff00ff");
+    assert_eq!(frames[2].border_style.color, SELECTION_HIGHLIGHT_HEX);
+}
+
+/// Palette-cycling on a per-section `frame_border` resolves through
+/// `resolve_palette_cycle` and lands on the emitted element's
+/// `palette_cycle` vec. This is the headline creative-toolkit
+/// capability — pins that authors can color-cycle a section frame
+/// using the same palette infra node borders use.
+#[test]
+fn test_section_frames_palette_cycle_resolves_for_named_palette() {
+    use crate::mindmap::model::{ColorGroup, GlyphBorderConfig, Palette};
+    let mut node = three_section_node();
+    node.sections[0].frame_border = Some(GlyphBorderConfig {
+        preset: "light".into(),
+        font: None,
+        font_size_pt: 10.0,
+        color: None,
+        glyphs: None,
+        padding: 0.0,
+        color_palette: Some("rainbow".into()),
+        color_palette_field: Some("frame".into()),
+    });
+    let mut map = synthetic_map(vec![node], vec![]);
+    map.palettes.insert(
+        "rainbow".into(),
+        Palette {
+            groups: vec![
+                ColorGroup {
+                    background: "#000000".into(),
+                    frame: "#ff0000".into(),
+                    text: "#ffffff".into(),
+                    title: "#ffffff".into(),
+                },
+                ColorGroup {
+                    background: "#000000".into(),
+                    frame: "#00ff00".into(),
+                    text: "#ffffff".into(),
+                    title: "#ffffff".into(),
+                },
+                ColorGroup {
+                    background: "#000000".into(),
+                    frame: "#0000ff".into(),
+                    text: "#ffffff".into(),
+                    title: "#ffffff".into(),
+                },
+            ],
+        },
+    );
+    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None);
+    let palette = &frames[0].palette_cycle;
+    assert_eq!(palette.len(), 3, "palette cycle has one entry per ColorGroup");
+    // Spot-check the first entry is RGBA red.
+    assert!((palette[0][0] - 1.0).abs() < 1e-3, "red channel = 1.0");
+    assert!(palette[0][1] < 1e-3, "green channel = 0.0");
+    assert!(palette[0][2] < 1e-3, "blue channel = 0.0");
+}
+
+/// Sections without `color_palette` set produce an empty
+/// `palette_cycle` — single-color borders should not waste an
+/// allocation on an N-element vec they won't read.
+#[test]
+fn test_section_frames_no_palette_yields_empty_cycle() {
+    let map = synthetic_map(vec![three_section_node()], vec![]);
+    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None);
+    for f in &frames {
+        assert!(f.palette_cycle.is_empty(), "single-color frame has no palette cycle");
+    }
+}
