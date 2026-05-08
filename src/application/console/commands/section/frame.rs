@@ -453,6 +453,22 @@ fn execute_section_frame_preview(args: &Args, eff: &mut ConsoleEffects) -> ExecR
         "section frame preview",
         /* subverb_pos */ 2,
         |sel| {
+            // `MultiSection([(A,0),(A,1),(B,0)])` already encodes
+            // distinct (node_id, section_idx) pairs — drop them
+            // straight into `BorderPreviewTarget::Sections` rather
+            // than collapsing to node-ids and re-resolving via
+            // `resolve_section_idx_for` (which doesn't know how
+            // to pick one section idx out of a multi-pair shape).
+            // Mirrors the resolver `apply_set_border_preview` in
+            // `cross_dispatch/style.rs` already uses for the same
+            // case.
+            if let SelectionState::MultiSection(sels) = sel {
+                let pairs: Vec<(String, usize)> = sels
+                    .iter()
+                    .map(|s| (s.node_id.clone(), s.section_idx))
+                    .collect();
+                return Ok(BorderPreviewTarget::Sections(pairs));
+            }
             let node_ids = super::super::border::nodes_in_selection(sel, "section frame preview")?;
             let mut pairs: Vec<(String, usize)> = Vec::with_capacity(node_ids.len());
             for nid in &node_ids {
@@ -978,5 +994,54 @@ mod tests {
             "double"
         );
         assert!(doc.border_preview.is_none());
+    }
+
+    /// `section frame preview` against a `MultiSection` selection
+    /// previews every (node_id, section_idx) pair. Pre-fix
+    /// `MultiSection` collapsed to node-ids and re-resolved one
+    /// idx per node — for a multi-pair shape this was either
+    /// "no section" or the wrong section. Now the verb path
+    /// drops the pairs straight into `Sections(...)`.
+    #[test]
+    fn section_frame_preview_handles_multi_section_selection() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::MultiSection(vec![
+            SectionSel {
+                node_id: id.clone(),
+                section_idx: 0,
+            },
+            SectionSel {
+                node_id: id.clone(),
+                section_idx: 1,
+            },
+        ]);
+        assert_exec_ok(run("section frame preview preset=heavy", &mut doc));
+        // Preview slot must populate with both targets.
+        let target = match doc.border_preview.as_ref() {
+            Some(p) => &p.target,
+            None => panic!("preview slot should be populated for MultiSection"),
+        };
+        match target {
+            crate::application::document::BorderPreviewTarget::Sections(pairs) => {
+                assert_eq!(pairs.len(), 2, "MultiSection must produce 2 pairs");
+                assert!(pairs.iter().any(|(n, i)| n == &id && *i == 0));
+                assert!(pairs.iter().any(|(n, i)| n == &id && *i == 1));
+            }
+            other => panic!("expected Sections target, got {:?}", other),
+        }
+        // Commit fans out to both sections.
+        assert_exec_ok(run("section frame preview commit", &mut doc));
+        for i in 0..=1 {
+            assert_eq!(
+                doc.mindmap.nodes.get(&id).unwrap().sections[i]
+                    .frame_border
+                    .as_ref()
+                    .unwrap()
+                    .preset,
+                "heavy",
+                "MultiSection commit must write to section[{}]",
+                i
+            );
+        }
     }
 }
