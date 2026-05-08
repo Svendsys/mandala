@@ -3356,6 +3356,110 @@
       "type": "cross_link",
       "visible": true,
       "width": 4
+    },
+    {
+      "anchor_from": "auto",
+      "anchor_to": "auto",
+      "color": "#cecf4d",
+      "control_points": [],
+      "from_id": "3",
+      "label": null,
+      "line_style": "solid",
+      "to_id": "3.0",
+      "type": "parent_child",
+      "visible": true,
+      "width": 4
+    },
+    {
+      "anchor_from": "auto",
+      "anchor_to": "auto",
+      "color": "#cecf4d",
+      "control_points": [],
+      "from_id": "3",
+      "label": null,
+      "line_style": "solid",
+      "to_id": "3.1",
+      "type": "parent_child",
+      "visible": true,
+      "width": 4
+    },
+    {
+      "anchor_from": "auto",
+      "anchor_to": "auto",
+      "color": "#cecf4d",
+      "control_points": [],
+      "from_id": "3",
+      "label": null,
+      "line_style": "solid",
+      "to_id": "3.2",
+      "type": "parent_child",
+      "visible": true,
+      "width": 4
+    },
+    {
+      "anchor_from": "auto",
+      "anchor_to": "auto",
+      "color": "#cecf4d",
+      "control_points": [],
+      "from_id": "3",
+      "label": null,
+      "line_style": "solid",
+      "to_id": "3.3",
+      "type": "parent_child",
+      "visible": true,
+      "width": 4
+    },
+    {
+      "anchor_from": "auto",
+      "anchor_to": "auto",
+      "color": "#cecf4d",
+      "control_points": [],
+      "from_id": "3",
+      "label": null,
+      "line_style": "solid",
+      "to_id": "3.4",
+      "type": "parent_child",
+      "visible": true,
+      "width": 4
+    },
+    {
+      "anchor_from": "auto",
+      "anchor_to": "auto",
+      "color": "#cecf4d",
+      "control_points": [],
+      "from_id": "3",
+      "label": null,
+      "line_style": "solid",
+      "to_id": "3.5",
+      "type": "parent_child",
+      "visible": true,
+      "width": 4
+    },
+    {
+      "anchor_from": "auto",
+      "anchor_to": "auto",
+      "color": "#cecf4d",
+      "control_points": [],
+      "from_id": "3",
+      "label": null,
+      "line_style": "solid",
+      "to_id": "3.6",
+      "type": "parent_child",
+      "visible": true,
+      "width": 4
+    },
+    {
+      "anchor_from": "auto",
+      "anchor_to": "auto",
+      "color": "#cecf4d",
+      "control_points": [],
+      "from_id": "3",
+      "label": null,
+      "line_style": "solid",
+      "to_id": "3.7",
+      "type": "parent_child",
+      "visible": true,
+      "width": 4
     }
   ],
   "name": "testament",
@@ -19317,6 +19421,762 @@
               "underline": false
             }
           ]
+        }
+      ]
+    },
+    "3": {
+      "channel": 0,
+      "color_schema": {
+        "connections_colored": true,
+        "level": 0,
+        "palette": "rainbow",
+        "starts_at_root": true
+      },
+      "folded": false,
+      "id": "3",
+      "layout": {
+        "direction": "auto",
+        "spacing": 50.0,
+        "type": "map"
+      },
+      "notes": "",
+      "parent_id": null,
+      "position": {
+        "x": 0.0,
+        "y": 2700.0
+      },
+      "size": {
+        "height": 110.0,
+        "width": 540.0
+      },
+      "style": {
+        "background_color": "#0a0a0a",
+        "border": {
+          "preset": "rounded",
+          "font_size_pt": 18.0,
+          "padding": 6.0
+        },
+        "corner_radius_percent": 0.0,
+        "frame_color": "#9be96a",
+        "frame_thickness": 0.0,
+        "shape": "rectangle",
+        "show_frame": false,
+        "show_shadow": false,
+        "text_color": "#ffffff"
+      },
+      "sections": [
+        {
+          "text": "Border Toolkit\n(creative-toolkit demo: every glyph is authorable)",
+          "text_runs": [
+            {
+              "bold": true,
+              "color": "#ffffff",
+              "end": 14,
+              "font": "LiberationSans",
+              "hyperlink": null,
+              "italic": false,
+              "size_pt": 28,
+              "start": 0,
+              "underline": false
+            },
+            {
+              "bold": false,
+              "color": "#ffffff",
+              "end": 65,
+              "font": "LiberationSans",
+              "hyperlink": null,
+              "italic": false,
+              "size_pt": 28,
+              "start": 14,
+              "underline": false
+            }
+          ]
+        }
+      ]
+    },
+    "3.0": {
+      "channel": 0,
+      "color_schema": {
+        "connections_colored": true,
+        "level": 1,
+        "palette": "rainbow",
+        "starts_at_root": true
+      },
+      "folded": false,
+      "id": "3.0",
+      "layout": {
+        "direction": "auto",
+        "spacing": 50.0,
+        "type": "map"
+      },
+      "notes": "",
+      "parent_id": "3",
+      "position": {
+        "x": -1860.0,
+        "y": 3000.0
+      },
+      "size": {
+        "height": 110.0,
+        "width": 360.0
+      },
+      "style": {
+        "background_color": "#0a0a0a",
+        "border": {
+          "preset": "custom",
+          "font_size_pt": 18.0,
+          "padding": 4.0,
+          "glyphs": {
+            "top": "+=##=+",
+            "bottom": "\u2500",
+            "left": "\u2502",
+            "right": "\u2502",
+            "top_left": "\u250c",
+            "top_right": "\u2510",
+            "bottom_left": "\u2514",
+            "bottom_right": "\u2518"
+          }
+        },
+        "corner_radius_percent": 0.0,
+        "frame_color": "#f5b740",
+        "frame_thickness": 0.0,
+        "shape": "rectangle",
+        "show_frame": false,
+        "show_shadow": false,
+        "text_color": "#ffffff"
+      },
+      "sections": [
+        {
+          "text": "Atomic-repeat\ntop = \"+=##=+\"",
+          "text_runs": [
+            {
+              "bold": true,
+              "color": "#ffffff",
+              "end": 13,
+              "font": "LiberationSans",
+              "hyperlink": null,
+              "italic": false,
+              "size_pt": 20,
+              "start": 0,
+              "underline": false
+            },
+            {
+              "bold": false,
+              "color": "#ffffff",
+              "end": 28,
+              "font": "LiberationSans",
+              "hyperlink": null,
+              "italic": false,
+              "size_pt": 20,
+              "start": 13,
+              "underline": false
+            }
+          ]
+        }
+      ]
+    },
+    "3.1": {
+      "channel": 0,
+      "color_schema": {
+        "connections_colored": true,
+        "level": 1,
+        "palette": "rainbow",
+        "starts_at_root": true
+      },
+      "folded": false,
+      "id": "3.1",
+      "layout": {
+        "direction": "auto",
+        "spacing": 50.0,
+        "type": "map"
+      },
+      "notes": "",
+      "parent_id": "3",
+      "position": {
+        "x": -1440.0,
+        "y": 3000.0
+      },
+      "size": {
+        "height": 110.0,
+        "width": 360.0
+      },
+      "style": {
+        "background_color": "#0a0a0a",
+        "border": {
+          "preset": "custom",
+          "font_size_pt": 18.0,
+          "padding": 4.0,
+          "glyphs": {
+            "top": "###(*)###",
+            "bottom": "\u2500",
+            "left": "\u2502",
+            "right": "\u2502",
+            "top_left": "\u250c",
+            "top_right": "\u2510",
+            "bottom_left": "\u2514",
+            "bottom_right": "\u2518"
+          }
+        },
+        "corner_radius_percent": 0.0,
+        "frame_color": "#5ad6f4",
+        "frame_thickness": 0.0,
+        "shape": "rectangle",
+        "show_frame": false,
+        "show_shadow": false,
+        "text_color": "#ffffff"
+      },
+      "sections": [
+        {
+          "text": "Prefix-Fill-Suffix\ntop = \"###(*)###\"",
+          "text_runs": [
+            {
+              "bold": true,
+              "color": "#ffffff",
+              "end": 18,
+              "font": "LiberationSans",
+              "hyperlink": null,
+              "italic": false,
+              "size_pt": 20,
+              "start": 0,
+              "underline": false
+            },
+            {
+              "bold": false,
+              "color": "#ffffff",
+              "end": 36,
+              "font": "LiberationSans",
+              "hyperlink": null,
+              "italic": false,
+              "size_pt": 20,
+              "start": 18,
+              "underline": false
+            }
+          ]
+        }
+      ]
+    },
+    "3.2": {
+      "channel": 0,
+      "color_schema": {
+        "connections_colored": true,
+        "level": 1,
+        "palette": "rainbow",
+        "starts_at_root": true
+      },
+      "folded": false,
+      "id": "3.2",
+      "layout": {
+        "direction": "auto",
+        "spacing": 50.0,
+        "type": "map"
+      },
+      "notes": "",
+      "parent_id": "3",
+      "position": {
+        "x": -1020.0,
+        "y": 3000.0
+      },
+      "size": {
+        "height": 110.0,
+        "width": 360.0
+      },
+      "style": {
+        "background_color": "#0a0a0a",
+        "border": {
+          "preset": "custom",
+          "font_size_pt": 18.0,
+          "padding": 4.0,
+          "glyphs": {
+            "top": "\u25c6\u00b7",
+            "bottom": "\u25c6\u00b7",
+            "left": "\u25c6\u00b7",
+            "right": "\u25c6\u00b7",
+            "top_left": "\u25c7",
+            "top_right": "\u25c7",
+            "bottom_left": "\u25c7",
+            "bottom_right": "\u25c7"
+          }
+        },
+        "corner_radius_percent": 0.0,
+        "frame_color": "#ff8aab",
+        "frame_thickness": 0.0,
+        "shape": "rectangle",
+        "show_frame": false,
+        "show_shadow": false,
+        "text_color": "#ffffff"
+      },
+      "sections": [
+        {
+          "text": "Multi-cluster\nrepeat \"\u25c6\u00b7\" on all sides",
+          "text_runs": [
+            {
+              "bold": true,
+              "color": "#ffffff",
+              "end": 13,
+              "font": "LiberationSans",
+              "hyperlink": null,
+              "italic": false,
+              "size_pt": 20,
+              "start": 0,
+              "underline": false
+            },
+            {
+              "bold": false,
+              "color": "#ffffff",
+              "end": 38,
+              "font": "LiberationSans",
+              "hyperlink": null,
+              "italic": false,
+              "size_pt": 20,
+              "start": 13,
+              "underline": false
+            }
+          ]
+        }
+      ]
+    },
+    "3.3": {
+      "channel": 0,
+      "color_schema": {
+        "connections_colored": true,
+        "level": 1,
+        "palette": "rainbow",
+        "starts_at_root": true
+      },
+      "folded": false,
+      "id": "3.3",
+      "layout": {
+        "direction": "auto",
+        "spacing": 50.0,
+        "type": "map"
+      },
+      "notes": "",
+      "parent_id": "3",
+      "position": {
+        "x": -600.0,
+        "y": 3000.0
+      },
+      "size": {
+        "height": 110.0,
+        "width": 360.0
+      },
+      "style": {
+        "background_color": "#0a0a0a",
+        "border": {
+          "preset": "custom",
+          "font_size_pt": 18.0,
+          "padding": 4.0,
+          "glyphs": {
+            "top": "\u2500",
+            "bottom": "\u2500",
+            "left": "\u2502",
+            "right": "\u2502",
+            "top_left": "\u25c6",
+            "top_right": "\u25c7",
+            "bottom_left": "\u25c7",
+            "bottom_right": "\u25c6"
+          }
+        },
+        "corner_radius_percent": 0.0,
+        "frame_color": "#a78bfa",
+        "frame_thickness": 0.0,
+        "shape": "rectangle",
+        "show_frame": false,
+        "show_shadow": false,
+        "text_color": "#ffffff"
+      },
+      "sections": [
+        {
+          "text": "Custom corners\n\u25c6 \u25c7 \u25c7 \u25c6",
+          "text_runs": [
+            {
+              "bold": true,
+              "color": "#ffffff",
+              "end": 14,
+              "font": "LiberationSans",
+              "hyperlink": null,
+              "italic": false,
+              "size_pt": 20,
+              "start": 0,
+              "underline": false
+            },
+            {
+              "bold": false,
+              "color": "#ffffff",
+              "end": 22,
+              "font": "LiberationSans",
+              "hyperlink": null,
+              "italic": false,
+              "size_pt": 20,
+              "start": 14,
+              "underline": false
+            }
+          ]
+        }
+      ]
+    },
+    "3.4": {
+      "channel": 0,
+      "color_schema": {
+        "connections_colored": true,
+        "level": 1,
+        "palette": "rainbow",
+        "starts_at_root": true
+      },
+      "folded": false,
+      "id": "3.4",
+      "layout": {
+        "direction": "auto",
+        "spacing": 50.0,
+        "type": "map"
+      },
+      "notes": "",
+      "parent_id": "3",
+      "position": {
+        "x": -180.0,
+        "y": 3000.0
+      },
+      "size": {
+        "height": 110.0,
+        "width": 360.0
+      },
+      "style": {
+        "background_color": "#0a0a0a",
+        "border": {
+          "preset": "light",
+          "font_size_pt": 18.0,
+          "padding": 4.0,
+          "color_palette": "rainbow",
+          "color_palette_field": "frame"
+        },
+        "corner_radius_percent": 0.0,
+        "frame_color": "#cecf4d",
+        "frame_thickness": 0.0,
+        "shape": "rectangle",
+        "show_frame": false,
+        "show_shadow": false,
+        "text_color": "#ffffff"
+      },
+      "sections": [
+        {
+          "text": "Palette-cycled\nrainbow per glyph",
+          "text_runs": [
+            {
+              "bold": true,
+              "color": "#ffffff",
+              "end": 14,
+              "font": "LiberationSans",
+              "hyperlink": null,
+              "italic": false,
+              "size_pt": 20,
+              "start": 0,
+              "underline": false
+            },
+            {
+              "bold": false,
+              "color": "#ffffff",
+              "end": 32,
+              "font": "LiberationSans",
+              "hyperlink": null,
+              "italic": false,
+              "size_pt": 20,
+              "start": 14,
+              "underline": false
+            }
+          ]
+        }
+      ]
+    },
+    "3.5": {
+      "channel": 0,
+      "color_schema": {
+        "connections_colored": true,
+        "level": 1,
+        "palette": "rainbow",
+        "starts_at_root": true
+      },
+      "folded": false,
+      "id": "3.5",
+      "layout": {
+        "direction": "auto",
+        "spacing": 50.0,
+        "type": "map"
+      },
+      "notes": "",
+      "parent_id": "3",
+      "position": {
+        "x": 240.0,
+        "y": 3000.0
+      },
+      "size": {
+        "height": 110.0,
+        "width": 360.0
+      },
+      "style": {
+        "background_color": "#0a0a0a",
+        "border": {
+          "preset": "double",
+          "font": "Liberation Mono",
+          "font_size_pt": 16.0,
+          "padding": 4.0
+        },
+        "corner_radius_percent": 0.0,
+        "frame_color": "#34d399",
+        "frame_thickness": 0.0,
+        "shape": "rectangle",
+        "show_frame": false,
+        "show_shadow": false,
+        "text_color": "#ffffff"
+      },
+      "sections": [
+        {
+          "text": "Custom border font\nLiberation Mono @ 16pt",
+          "text_runs": [
+            {
+              "bold": true,
+              "color": "#ffffff",
+              "end": 18,
+              "font": "LiberationSans",
+              "hyperlink": null,
+              "italic": false,
+              "size_pt": 20,
+              "start": 0,
+              "underline": false
+            },
+            {
+              "bold": false,
+              "color": "#ffffff",
+              "end": 41,
+              "font": "LiberationSans",
+              "hyperlink": null,
+              "italic": false,
+              "size_pt": 20,
+              "start": 18,
+              "underline": false
+            }
+          ]
+        }
+      ]
+    },
+    "3.6": {
+      "channel": 0,
+      "color_schema": {
+        "connections_colored": true,
+        "level": 1,
+        "palette": "rainbow",
+        "starts_at_root": true
+      },
+      "folded": false,
+      "id": "3.6",
+      "layout": {
+        "direction": "auto",
+        "spacing": 50.0,
+        "type": "map"
+      },
+      "notes": "",
+      "parent_id": "3",
+      "position": {
+        "x": 660.0,
+        "y": 3000.0
+      },
+      "size": {
+        "height": 110.0,
+        "width": 360.0
+      },
+      "style": {
+        "background_color": "#0a0a0a",
+        "border": {
+          "preset": "custom",
+          "font_size_pt": 18.0,
+          "padding": 4.0,
+          "glyphs": {
+            "top": "\u2501",
+            "bottom": "\u2501",
+            "left": "\u2503",
+            "right": "\u2503",
+            "top_left": "\u25c6",
+            "top_right": "\u25c6",
+            "bottom_left": "\u25c6",
+            "bottom_right": "\u25c6"
+          }
+        },
+        "corner_radius_percent": 0.0,
+        "frame_color": "#fb923c",
+        "frame_thickness": 0.0,
+        "shape": "rectangle",
+        "show_frame": false,
+        "show_shadow": false,
+        "text_color": "#ffffff"
+      },
+      "sections": [
+        {
+          "text": "Heavy + diamonds\npreset=custom, sides=heavy, corners=\u25c6",
+          "text_runs": [
+            {
+              "bold": true,
+              "color": "#ffffff",
+              "end": 16,
+              "font": "LiberationSans",
+              "hyperlink": null,
+              "italic": false,
+              "size_pt": 20,
+              "start": 0,
+              "underline": false
+            },
+            {
+              "bold": false,
+              "color": "#ffffff",
+              "end": 54,
+              "font": "LiberationSans",
+              "hyperlink": null,
+              "italic": false,
+              "size_pt": 20,
+              "start": 16,
+              "underline": false
+            }
+          ]
+        }
+      ]
+    },
+    "3.7": {
+      "channel": 0,
+      "color_schema": {
+        "connections_colored": true,
+        "level": 1,
+        "palette": "rainbow",
+        "starts_at_root": true
+      },
+      "folded": false,
+      "id": "3.7",
+      "layout": {
+        "direction": "auto",
+        "spacing": 50.0,
+        "type": "map"
+      },
+      "notes": "",
+      "parent_id": "3",
+      "position": {
+        "x": 1080.0,
+        "y": 3000.0
+      },
+      "size": {
+        "height": 270.0,
+        "width": 420.0
+      },
+      "style": {
+        "background_color": "#0a0a0a",
+        "border": {
+          "preset": "light",
+          "font_size_pt": 16.0,
+          "padding": 4.0
+        },
+        "corner_radius_percent": 0.0,
+        "frame_color": "#cccace",
+        "frame_thickness": 0.0,
+        "shape": "rectangle",
+        "show_frame": false,
+        "show_shadow": false,
+        "text_color": "#ffffff"
+      },
+      "sections": [
+        {
+          "text": "Per-section frame: atomic",
+          "text_runs": [
+            {
+              "bold": true,
+              "color": "#ffffff",
+              "end": 25,
+              "font": "LiberationSans",
+              "hyperlink": null,
+              "italic": false,
+              "size_pt": 18,
+              "start": 0,
+              "underline": false
+            }
+          ],
+          "offset": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "size": {
+            "width": 420.0,
+            "height": 90.0
+          },
+          "frame_border": {
+            "preset": "custom",
+            "font_size_pt": 14.0,
+            "padding": 2.0,
+            "glyphs": {
+              "top": "+=##=+",
+              "bottom": "+=##=+",
+              "left": "\u2503",
+              "right": "\u2503",
+              "top_left": "\u25c6",
+              "top_right": "\u25c6",
+              "bottom_left": "\u25c6",
+              "bottom_right": "\u25c6"
+            }
+          }
+        },
+        {
+          "text": "Per-section frame: double",
+          "text_runs": [
+            {
+              "bold": true,
+              "color": "#ffffff",
+              "end": 25,
+              "font": "LiberationSans",
+              "hyperlink": null,
+              "italic": false,
+              "size_pt": 18,
+              "start": 0,
+              "underline": false
+            }
+          ],
+          "offset": {
+            "x": 0.0,
+            "y": 90.0
+          },
+          "size": {
+            "width": 420.0,
+            "height": 90.0
+          },
+          "frame_border": {
+            "preset": "double",
+            "font_size_pt": 14.0,
+            "padding": 2.0,
+            "color": "#5ad6f4"
+          }
+        },
+        {
+          "text": "Per-section frame: rounded + summer palette",
+          "text_runs": [
+            {
+              "bold": true,
+              "color": "#ffffff",
+              "end": 43,
+              "font": "LiberationSans",
+              "hyperlink": null,
+              "italic": false,
+              "size_pt": 18,
+              "start": 0,
+              "underline": false
+            }
+          ],
+          "offset": {
+            "x": 0.0,
+            "y": 180.0
+          },
+          "size": {
+            "width": 420.0,
+            "height": 90.0
+          },
+          "frame_border": {
+            "preset": "rounded",
+            "font_size_pt": 14.0,
+            "padding": 2.0,
+            "color_palette": "summer",
+            "color_palette_field": "frame"
+          }
         }
       ]
     }

@@ -12,8 +12,8 @@ fn test_build_tree_structure() {
     let map = loader::load_from_file(&path).unwrap();
     let result = build_mindmap_tree(&map);
 
-    // Testament map has 243 nodes (none folded by default)
-    assert_eq!(result.node_count(), 243);
+    // Testament map has 252 nodes (none folded by default)
+    assert_eq!(result.node_count(), 252);
 
     // Root of tree is Void, its children are the mindmap root nodes
     let root_children: Vec<_> = result.tree.root.children(&result.tree.arena).collect();
