@@ -43,6 +43,37 @@ pub(in crate::application::app) fn open_text_edit(
     _app_scene: &mut crate::application::scene_host::AppScene,
     renderer: &mut Renderer,
 ) {
+    open_text_edit_with_close_target(
+        node_id,
+        from_creation,
+        false,
+        doc,
+        text_edit_state,
+        mindmap_tree,
+        _app_scene,
+        renderer,
+    );
+}
+
+/// Variant of [`open_text_edit`] that records the post-close mode
+/// target. Set `exit_to_default_on_close = true` when the caller
+/// also flipped `InteractionMode::NodeEdit { … }` as part of the
+/// same call (the single-section short-circuit inside
+/// `apply_enter_node_edit`); the close path will revert mode to
+/// `Default` so the user lands at the single-section node's normal
+/// post-edit state rather than stranded in NodeEdit. Every other
+/// caller passes `false` (they didn't change mode, so the closer
+/// shouldn't either).
+pub(in crate::application::app) fn open_text_edit_with_close_target(
+    node_id: &str,
+    from_creation: bool,
+    exit_to_default_on_close: bool,
+    doc: &mut MindMapDocument,
+    text_edit_state: &mut TextEditState,
+    mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
+    _app_scene: &mut crate::application::scene_host::AppScene,
+    renderer: &mut Renderer,
+) {
     // Resolve the section index from the document's selection.
     // `Section { node_id: id, section_idx }` opens the editor on
     // *that* section; any other selection (Single, Multi, edge-
@@ -96,6 +127,7 @@ pub(in crate::application::app) fn open_text_edit(
         original_text,
         original_regions,
         selection_anchor: None,
+        exit_to_default_on_close,
     };
     // Push the initial (caret-only for creation, or "existing text +
     // caret at end" for edit) through the Baumhard mutation pipeline.
@@ -264,7 +296,7 @@ pub(in crate::application::app) fn lift_anchor_to_section_range(
 pub(in crate::application::app) fn close_text_edit(
     commit: bool,
     doc: &mut MindMapDocument,
-    interaction_mode: &super::super::InteractionMode,
+    interaction_mode: &mut super::super::InteractionMode,
     text_edit_state: &mut TextEditState,
     mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
     app_scene: &mut crate::application::scene_host::AppScene,
@@ -281,6 +313,7 @@ pub(in crate::application::app) fn close_text_edit(
             original_text,
             original_regions,
             selection_anchor,
+            exit_to_default_on_close,
         } => (
             node_id,
             section_idx,
@@ -290,6 +323,7 @@ pub(in crate::application::app) fn close_text_edit(
             original_text,
             original_regions,
             selection_anchor,
+            exit_to_default_on_close,
         ),
         TextEditState::Closed => return,
     };
@@ -302,7 +336,21 @@ pub(in crate::application::app) fn close_text_edit(
         original_text,
         original_regions,
         selection_anchor,
+        exit_to_default_on_close,
     ) = snapshot;
+    // Single-section short-circuit lift: when the editor was opened
+    // by `apply_enter_node_edit`'s short-circuit (single-section
+    // node, NodeEdit + editor in one call), revert to Default mode
+    // on close so the user lands at the node's normal post-edit
+    // state. Multi-section opens (where the user picked a section
+    // inside an already-active NodeEdit session) keep
+    // `exit_to_default_on_close == false` — close returns to
+    // NodeEdit so the user can pick a different section.
+    if exit_to_default_on_close
+        && matches!(*interaction_mode, super::super::InteractionMode::NodeEdit { .. })
+    {
+        *interaction_mode = super::super::InteractionMode::Default;
+    }
     // Editor close lifts a non-empty shift-select anchor to
     // `SelectionState::SectionRange` so per-section verbs
     // (color text, font size, font family) target only the

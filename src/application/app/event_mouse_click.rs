@@ -525,6 +525,22 @@ pub(super) fn handle_mouse_input(
                                     k.edge_type.as_str(),
                                 )
                             });
+                        // NodeEdit-mode outside-click: clicking
+                        // outside the active node's overflow-aware
+                        // AABB exits NodeEdit back to Default
+                        // BEFORE any selection routing fires, so
+                        // every selection branch below (edge-label,
+                        // node, empty-canvas) lands in Default mode.
+                        // Pre-fix this only ran for the node-hit
+                        // arm — clicking an edge label or portal
+                        // from inside NodeEdit left the user in
+                        // an orphan "NodeEdit + EdgeLabel selection"
+                        // state.
+                        maybe_exit_node_edit_on_outside_click(
+                            ctx,
+                            cursor_pos_val,
+                            hit_node.as_deref(),
+                        );
                         let entered_label_select = if let Some(er) = edge_label_target {
                             if let Some(doc) = ctx.document.as_mut() {
                                 let prev = doc.selection.clone();
@@ -548,19 +564,6 @@ pub(super) fn handle_mouse_input(
                             false
                         };
                         if !entered_label_select {
-                            // NodeEdit-mode outside-click: clicking
-                            // outside the active node's
-                            // overflow-aware AABB exits NodeEdit
-                            // back to Default before the click
-                            // registers, so the new selection lands
-                            // in Default mode (whole-node Single
-                            // for any node hit, including the
-                            // previously-active one).
-                            maybe_exit_node_edit_on_outside_click(
-                                ctx,
-                                cursor_pos_val,
-                                hit_node.as_deref(),
-                            );
                             handle_click(
                                 hit_node,
                                 hit_section_idx,

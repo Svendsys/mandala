@@ -311,6 +311,7 @@ fn test_text_edit_state_node_id_round_trip() {
         original_text: String::new(),
         original_regions: baumhard::core::primitives::ColorFontRegions::new_empty(),
         selection_anchor: None,
+        exit_to_default_on_close: false,
     };
     assert_eq!(open.node_id(), Some("n-42"));
     assert!(open.is_open());
@@ -467,6 +468,7 @@ fn make_open_state(buffer: &str, cursor: usize) -> TextEditState {
         original_text: String::new(),
         original_regions: baumhard::core::primitives::ColorFontRegions::new_empty(),
         selection_anchor: None,
+        exit_to_default_on_close: false,
     }
 }
 
@@ -684,6 +686,7 @@ fn open_editor_state(buffer: &str, cursor: usize) -> TextEditState {
         original_text: buffer.into(),
         original_regions: baumhard::core::primitives::ColorFontRegions::new_empty(),
         selection_anchor: None,
+        exit_to_default_on_close: false,
     }
 }
 

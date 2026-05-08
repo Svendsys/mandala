@@ -151,9 +151,14 @@ pub(in crate::application::app) fn apply_enter_node_edit(
         .map(|n| n.sections.len())
         .unwrap_or(0);
     if section_count <= 1 {
-        super::super::super::text_edit::open_text_edit(
+        // Short-circuit path: this call ALSO flipped mode to NodeEdit,
+        // so on close the editor must revert mode to Default — a
+        // single-section node has nothing else to edit, so leaving
+        // the user in NodeEdit + dimming is a UX dead-end.
+        super::super::super::text_edit::open_text_edit_with_close_target(
             &node_id,
             clean,
+            true, // exit_to_default_on_close
             rc.document,
             text_edit_state,
             rc.mindmap_tree,
@@ -161,9 +166,9 @@ pub(in crate::application::app) fn apply_enter_node_edit(
             rc.renderer,
         );
     } else {
-        // Multi-section: stop at NodeEdit. Rebuild so the future
-        // visual chrome (Batch 3 Phase B section frames + dimming)
-        // catches the mode change.
+        // Multi-section: stop at NodeEdit so the user can pick
+        // a section. Rebuild so the dimming + status-bar visuals
+        // catch the mode change.
         rc.rebuild_after_selection_change();
     }
     true

@@ -108,19 +108,45 @@ pub(in crate::application::app) fn dispatch_compatible(
             //    with a pre-Esc one (was already in the pre-Batch-2
             //    `ExitMode` cross-platform body).
             // 2. Clear `interaction_mode` to `Default` and rebuild
-            //    when the active mode is `Resize { .. }`. WASM users
-            //    were stuck in Resize without this — the pre-Batch-2
-            //    arm was `wasm = NativeOnly` so Esc never reached the
-            //    mode-clear path on WASM. Per the cross-platform
-            //    review.
+            //    when the active mode is `Resize { .. }` or
+            //    `NodeEdit { .. }`. Both modes need a way out: Resize
+            //    used to be NativeOnly (review-fix in Batch 2), and
+            //    NodeEdit was added by Batch 3 with no Esc-handler at
+            //    all — multi-section users got trapped (no outside-
+            //    click on WASM, no NodeEdit-context Esc binding). On
+            //    NodeEdit exit also lift selection back to
+            //    `Single(node_id)` so per-node verbs stay usable
+            //    after exit; a stale Section selection would point
+            //    at a dimming-cleared node and surprise the user.
             //
             // The native fallthrough still handles the
             // Reparent / Connect target-picker overlay clear (which
             // depends on `hovered_node` from `NativeContextExt`).
             *core.last_click = None;
-            if matches!(*core.interaction_mode, InteractionMode::Resize { .. }) {
+            let exit_target_node = match &*core.interaction_mode {
+                InteractionMode::Resize { .. } => Some(None),
+                InteractionMode::NodeEdit { node_id } => Some(Some(node_id.clone())),
+                _ => None,
+            };
+            if let Some(node_id_to_lift) = exit_target_node {
                 *core.interaction_mode = InteractionMode::Default;
                 if let Some(doc) = core.document.as_deref_mut() {
+                    if let Some(node_id) = node_id_to_lift {
+                        // Lift Section / SectionRange / Single
+                        // selections that point at the exited
+                        // NodeEdit node back to whole-node Single.
+                        // Other selection states (Multi, edge,
+                        // portal) stay untouched — the user steered
+                        // away from the active node deliberately.
+                        if doc
+                            .selection
+                            .primary_node_id()
+                            .map_or(false, |id| id == node_id)
+                        {
+                            doc.selection =
+                                crate::application::document::SelectionState::Single(node_id);
+                        }
+                    }
                     let mut rc = super::cross_dispatch::RebuildContext {
                         document: doc,
                         mindmap_tree: core.mindmap_tree,

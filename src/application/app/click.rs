@@ -162,24 +162,22 @@ pub(super) fn rebuild_all_with_mode(
                 }
             }
         }
-        // Default / NodeEdit / Resize do not contribute mode-specific
-        // highlights (NodeEdit dimming + Resize tinting land in
-        // Batches 2-3 of SECTIONS_BORDERS_RESIZE_PLAN.md and use
-        // separate scene-builder seams).
+        // Default / NodeEdit / Resize don't contribute selection-
+        // tinting highlights — NodeEdit dimming and Resize tinting
+        // run through their own scene-builder seams (`node_pass.rs`
+        // alpha multiplier, scene_builder handle emission) rather
+        // than through `apply_tree_highlights`.
         InteractionMode::Default | InteractionMode::NodeEdit { .. } | InteractionMode::Resize { .. } => {}
     }
     apply_tree_highlights(&mut new_tree, highlights);
     renderer.rebuild_buffers_from_tree(&new_tree.tree);
 
     rebuild_scene_only(doc, interaction_mode, app_scene, renderer, scene_cache);
+    renderer
+        .set_mode_status_text(super::scene_rebuild::mode_status_line(interaction_mode, doc));
 
     *mindmap_tree = Some(new_tree);
 }
-
-// `handle_connect_target_click` / `handle_reparent_target_click`
-// removed — the click handler dispatches through the funnel as
-// `Action::ConnectToTarget(target_id)` / `Action::ReparentToTarget(target)`.
-// See `dispatch.rs`'s arms.
 
 /// Pure selection-update helper for "click landed on a node."
 ///

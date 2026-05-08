@@ -139,6 +139,16 @@ fn handle_pre_rebuild_side_effect(
             *label_edit_state = LabelEditState::Closed;
             *portal_text_edit_state = PortalTextEditState::Closed;
             *color_picker_state = ColorPickerState::Closed;
+            // Reset interaction mode: a stale `NodeEdit { node_id }`
+            // or `Resize { target }` from the prior document points
+            // at ids that don't exist in the new one — the next
+            // rebuild would render `editing: <stale-id>` overlay and
+            // dim the entire new map (no node matches the stale id).
+            *interaction_mode = super::super::InteractionMode::Default;
+            // Clear the renderer's status overlay too, in case the
+            // mode-status setter was last called for an
+            // already-stale mode value before this swap landed.
+            renderer.set_mode_status_text(None);
             // Rebuild the document-derived tiers (Map + Inline).
             // App and User tiers loaded at startup are untouched.
             // The single-entry helper enforces Map-then-Inline
