@@ -248,8 +248,43 @@ Setting any side or corner glyph automatically promotes the
 preset to `"custom"`. Quoted patterns survive the tokenizer
 unchanged so `(` / `)` / spaces don't need shell escaping.
 
-A live-preview surface (`border preview` / `border preview commit`
-/ `border preview cancel`) is on the roadmap — see §5.6 of
-[`SECTIONS_BORDERS_RESIZE_PLAN.md`](../SECTIONS_BORDERS_RESIZE_PLAN.md).
-Today edits commit immediately and undo (Ctrl-Z) is the back-out
-path.
+### Live preview
+
+Every border verb has a `preview` sub-mode that stages edits
+without writing the model. The preview renders on the targeted
+node / section / canvas slot until the user terminates with
+`commit` (writes through the matching committing setter) or
+`cancel` (discards). Auto-promotion notes ride alongside the
+preview's success message so the user sees the same outcome
+they'll get on commit.
+
+```
+border preview preset=heavy color=#ff8800
+border preview commit                       # write to MindNode.style.border
+border preview cancel                       # discard
+
+section frame preview top="###(*)###"
+section frame preview commit                # write to MindSection.frame_border
+section frame preview cancel
+
+canvas border preview palette=rainbow
+canvas border preview commit                # write to Canvas.default_border
+canvas border preview cancel
+
+canvas section-frame preview preset=double
+canvas section-frame focused preview preset=heavy
+canvas section-frame focused preview commit # write to Canvas.default_focused_section_frame_border
+```
+
+Selection drift cancels: setting a preview on node A then
+selecting node B causes the preview to stop rendering (the
+slot is cleared at the next `set_*` / `commit_*` / `cancel_*`
+call). Implicit cancel: a non-preview committing edit
+(`border preset=double` after `border preview preset=heavy`)
+clears the preview before applying its own write — the
+committing edit always wins.
+
+Programmatic surface: `Action::SetBorderPreview { target_kind,
+field, value }`, `Action::CommitBorderPreview`,
+`Action::CancelBorderPreview`. Default keybinds are unbound;
+users opt in via the JSON config.

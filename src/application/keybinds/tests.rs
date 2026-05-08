@@ -585,6 +585,51 @@ fn test_double_click_activate_default_resolves_to_action() {
     );
 }
 
+/// `cancel_border_preview` ships unbound by default — the
+/// keybind system has no per-action active-state guard, so
+/// defaulting Esc would conflict with the existing Esc-bound
+/// actions in the Document context (`exit_mode` etc.). Users
+/// opt in via the JSON config; the verb path
+/// `border preview cancel` is the primary surface.
+#[test]
+fn test_cancel_border_preview_is_unbound_by_default() {
+    let cfg = KeybindConfig::default();
+    assert!(
+        cfg.cancel_border_preview.is_empty(),
+        "CancelBorderPreview must not have a default binding (would conflict with `exit_mode`)"
+    );
+    let r = cfg.resolve();
+    // No key resolves to CancelBorderPreview in the Document
+    // context with the default config.
+    assert!(
+        !r.has_any_binding_for(Action::CancelBorderPreview),
+        "default-resolved keybinds must not include CancelBorderPreview"
+    );
+}
+
+/// Users can opt in to a custom binding via the JSON config —
+/// pin the round-trip path that landing
+/// `cancel_border_preview` and `commit_border_preview` work.
+#[test]
+fn test_border_preview_keybinds_round_trip_through_json() {
+    let json = r#"{
+        "cancel_border_preview": ["Ctrl+Escape"],
+        "commit_border_preview": ["Ctrl+Enter"]
+    }"#;
+    let cfg = KeybindConfig::from_json(json).unwrap();
+    assert_eq!(cfg.cancel_border_preview, vec!["Ctrl+Escape"]);
+    assert_eq!(cfg.commit_border_preview, vec!["Ctrl+Enter"]);
+    let r = cfg.resolve();
+    assert_eq!(
+        r.action_for_context(InputContext::Document, "escape", true, false, false),
+        Some(Action::CancelBorderPreview)
+    );
+    assert_eq!(
+        r.action_for_context(InputContext::Document, "enter", true, false, false),
+        Some(Action::CommitBorderPreview)
+    );
+}
+
 #[test]
 fn test_create_orphan_node_and_edit_default_is_unbound() {
     // The user's primary feature request: empty-canvas double-click

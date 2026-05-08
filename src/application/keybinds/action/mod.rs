@@ -608,6 +608,30 @@ pub enum Action {
     /// field|padding|top|bottom|left|right|tl|tr|bl|br`.
     #[action(context = Document, wasm = Compatible)]
     SetBorderField { field: String, value: String },
+    /// Stage a single-kv border preview against the live
+    /// selection. `target_kind` discriminates between
+    /// `node` / `section` / `canvas-border` / `canvas-sf` /
+    /// `canvas-sf-focused`. Single kv per binding (preview-set
+    /// keybinds; multi-kv preview stays console-only). Mirrors
+    /// the `<verb> preview <field>=<value>` console path
+    /// without the model write.
+    #[action(context = Document, wasm = Compatible)]
+    SetBorderPreview {
+        target_kind: String,
+        field: String,
+        value: String,
+    },
+    /// Commit the active border preview through the matching
+    /// committing setter and clear the preview slot. No-op when
+    /// no preview is active.
+    #[action(context = Document, wasm = Compatible)]
+    CommitBorderPreview,
+    /// Discard the active border preview without writing the
+    /// model. No-op when no preview is active. Default Esc
+    /// binding routes here when the preview is active (and
+    /// nothing else has consumed Esc first).
+    #[action(context = Document, wasm = Compatible)]
+    CancelBorderPreview,
     /// Mirror `cap from=<arrow|circle|diamond|none> to=<...>` on the
     /// selected edge.
     #[action(context = Document, wasm = Compatible)]

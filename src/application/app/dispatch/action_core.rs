@@ -311,6 +311,19 @@ pub(in crate::application::app) fn dispatch_compatible(
         Action::SetBorderField { field, value } => with_doc_rebuild(core, |rc| {
             super::cross_dispatch::apply_set_border_field(field, value, rc)
         }),
+        Action::SetBorderPreview {
+            target_kind,
+            field,
+            value,
+        } => with_doc_rebuild(core, |rc| {
+            super::cross_dispatch::apply_set_border_preview(target_kind, field, value, rc)
+        }),
+        Action::CommitBorderPreview => {
+            with_doc_rebuild(core, |rc| super::cross_dispatch::apply_commit_border_preview(rc))
+        }
+        Action::CancelBorderPreview => {
+            with_doc_rebuild(core, |rc| super::cross_dispatch::apply_cancel_border_preview(rc))
+        }
         Action::SetEdgeCap { from, to } => {
             with_doc_rebuild(core, |rc| super::cross_dispatch::apply_set_edge_cap(from, to, rc))
         }

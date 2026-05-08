@@ -22,6 +22,97 @@ pub(in crate::application::app) fn apply_set_border_field(
     });
 }
 
+/// Stage a single-kv border preview against the live selection.
+/// `target_kind` discriminates between
+/// `node` / `section` / `canvas-border` / `canvas-sf` /
+/// `canvas-sf-focused`. Always returns `true` for the rebuild
+/// envelope (the scene needs to re-emit with the previewed
+/// edits visible). Unknown `target_kind` is a no-op + warn.
+pub(in crate::application::app) fn apply_set_border_preview(
+    target_kind: &str,
+    field: &str,
+    value: &str,
+    rc: &mut RebuildContext<'_>,
+) {
+    apply_with_rebuild(rc, |doc| {
+        use crate::application::console::commands::border::stage_kv;
+        use crate::application::document::{BorderConfigEdits, BorderPreviewTarget};
+
+        let mut edits = BorderConfigEdits::default();
+        if let Err(msg) = stage_kv(&mut edits, field, value) {
+            log::warn!("apply_set_border_preview: stage_kv error: {msg}");
+            return false;
+        }
+
+        // Resolve target_kind → BorderPreviewTarget. For the
+        // selection-bound variants (`node`, `section`), reuse the
+        // verb-side selection resolvers via the document state.
+        let target = match target_kind {
+            "node" => {
+                // Mirror `border preview …`'s target resolution —
+                // every selected node id.
+                let ids = match crate::application::console::commands::border::nodes_in_selection(
+                    &doc.selection,
+                    "border preview",
+                ) {
+                    Ok(ids) => ids,
+                    Err(_) => return false,
+                };
+                BorderPreviewTarget::Nodes(ids)
+            }
+            "section" => {
+                // Mirror `section frame preview …`'s target — every
+                // selected (node_id, section_idx) pair. Falls back
+                // to empty (no-op) if the selection isn't a section
+                // shape; keybinds firing in non-section context are
+                // a no-op rather than an error.
+                let pairs: Vec<(String, usize)> = match &doc.selection {
+                    crate::application::document::SelectionState::Section(s) => {
+                        vec![(s.node_id.clone(), s.section_idx)]
+                    }
+                    crate::application::document::SelectionState::SectionRange { sel, range } => {
+                        let (lo, hi) = (range.0.min(range.1), range.0.max(range.1));
+                        (lo..=hi).map(|i| (sel.node_id.clone(), i)).collect()
+                    }
+                    crate::application::document::SelectionState::MultiSection(sels) => sels
+                        .iter()
+                        .map(|s| (s.node_id.clone(), s.section_idx))
+                        .collect(),
+                    _ => return false,
+                };
+                BorderPreviewTarget::Sections(pairs)
+            }
+            "canvas-border" => BorderPreviewTarget::CanvasDefault,
+            "canvas-sf" => BorderPreviewTarget::CanvasSectionFrame,
+            "canvas-sf-focused" => BorderPreviewTarget::CanvasSectionFrameFocused,
+            other => {
+                log::warn!(
+                    "apply_set_border_preview: unknown target_kind {:?}; expected \
+                     node|section|canvas-border|canvas-sf|canvas-sf-focused",
+                    other
+                );
+                return false;
+            }
+        };
+        let _ = doc.set_border_preview(target, edits);
+        true
+    });
+}
+
+/// Commit the active border preview through the matching
+/// committing setter and clear the slot. No-op + no rebuild
+/// when no preview is active.
+pub(in crate::application::app) fn apply_commit_border_preview(rc: &mut RebuildContext<'_>) {
+    apply_with_rebuild(rc, |doc| doc.commit_border_preview().is_some());
+}
+
+/// Cancel the active border preview without writing the model.
+/// Returns `true` (rebuild) when a preview was actually cleared
+/// — the scene needs to re-emit without the staged edits.
+pub(in crate::application::app) fn apply_cancel_border_preview(rc: &mut RebuildContext<'_>) {
+    apply_with_rebuild(rc, |doc| doc.cancel_border_preview());
+}
+
 /// Set a single colour axis (`bg` / `frame` / `text` / `title`
 /// — see [`crate::application::keybinds::ColorAxis`]) to a
 /// hex / palette / `var(--name)` value across the current

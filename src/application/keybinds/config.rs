@@ -114,6 +114,16 @@ pub struct KeybindConfig {
     // ── Text Editor ──────────────────────────────────────────────
     pub text_edit_cancel: Vec<String>,
 
+    // ── Border Preview ───────────────────────────────────────────
+    /// Discard the active border preview. Default: Escape (only
+    /// fires when a preview is active; falls through to other Esc
+    /// consumers otherwise — text-edit cancel etc. are checked
+    /// first by the keyboard handler ladder).
+    pub cancel_border_preview: Vec<String>,
+    /// Commit the active border preview through the matching
+    /// committing setter. No default binding — users opt in.
+    pub commit_border_preview: Vec<String>,
+
     // ── Mouse-gesture Actions ────────────────────────────────────
     pub double_click_activate: Vec<String>,
     pub create_orphan_node_and_edit: Vec<String>,
@@ -306,6 +316,20 @@ impl Default for KeybindConfig {
 
             // Text Editor
             text_edit_cancel: vec!["Escape".into()],
+
+            // Border Preview
+            //
+            // No default keybinding — the keybind resolution
+            // system maps `(context, key) → Action` deterministically
+            // and has no per-action active-state guard. Defaulting
+            // Esc to `CancelBorderPreview` would conflict with the
+            // existing Esc-bound actions (`exit_mode`, etc.) in
+            // the Document context. Users who want a preview-cancel
+            // shortcut opt in via the JSON config (e.g.
+            // `"cancel_border_preview": ["Ctrl+Escape"]`); the verb
+            // path `border preview cancel` is the primary surface.
+            cancel_border_preview: vec![],
+            commit_border_preview: vec![],
 
             // Mouse-gesture Actions. `create_orphan_node_and_edit`
             // is intentionally `vec![]` —
@@ -505,6 +529,9 @@ impl KeybindConfig {
             (Action::LabelEditCommit, &self.label_edit_commit),
             // Text Editor
             (Action::TextEditCancel, &self.text_edit_cancel),
+            // Border Preview
+            (Action::CancelBorderPreview, &self.cancel_border_preview),
+            (Action::CommitBorderPreview, &self.commit_border_preview),
             // Mouse-gesture Actions
             (Action::DoubleClickActivate, &self.double_click_activate),
             (Action::CreateOrphanNodeAndEdit, &self.create_orphan_node_and_edit),
