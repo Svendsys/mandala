@@ -339,6 +339,20 @@ pub struct MindSection {
     /// file remains valid.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub trigger_bindings: Vec<TriggerBinding>,
+    /// Per-section frame style override. Drives the cyan rectangle
+    /// rendered around the section while the owning node is in
+    /// `InteractionMode::NodeEdit`. `None` falls through to
+    /// `Canvas.default_section_frame_border` (or the focused
+    /// variant when the section is currently inside the open text
+    /// editor), then to a hardcoded thin / heavy floor. `Some(...)`
+    /// reuses the same [`GlyphBorderConfig`] vocabulary node
+    /// borders use, so per-section frames can carry any pattern,
+    /// preset, font, color, or palette the border system supports.
+    ///
+    /// Authors set this via the `section frame …` console subverb
+    /// (mirrors the `border …` keyspace).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame_border: Option<GlyphBorderConfig>,
 }
 
 fn is_default_position(p: &Position) -> bool {
@@ -360,6 +374,7 @@ impl MindSection {
             size: None,
             channel: None,
             trigger_bindings: Vec::new(),
+            frame_border: None,
         }
     }
 

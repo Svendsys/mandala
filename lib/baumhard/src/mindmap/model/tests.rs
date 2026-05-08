@@ -449,6 +449,8 @@ fn resolved_for_falls_back_to_canvas_default() {
         background_color: "#000".to_string(),
         default_border: None,
         default_connection: Some(canvas_cfg),
+        default_section_frame_border: None,
+        default_focused_section_frame_border: None,
         theme_variables: std::collections::HashMap::new(),
         theme_variants: std::collections::HashMap::new(),
     };
@@ -829,6 +831,7 @@ fn mindsection_trigger_bindings_round_trip() {
             mutation_id: "m_focus".into(),
             contexts: Vec::new(),
         }],
+        frame_border: None,
     };
     let json = serde_json::to_string(&section).expect("serialises");
     assert!(json.contains("trigger_bindings"));

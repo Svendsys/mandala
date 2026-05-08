@@ -45,9 +45,7 @@ pub use portal::{
     build_portal_tree_from_pairs, portal_identity_sequence, portal_pair_data, PortalColorPreviewRef,
     PortalIdentity, PortalMutator, PortalPairData, PortalTree, SelectedEdgeRef,
 };
-pub use section_frame::{
-    build_section_frame_tree, section_frame_identity_sequence, SECTION_FRAME_FONT_SIZE_PT,
-};
+pub use section_frame::{build_section_frame_tree, section_frame_identity_sequence};
 
 use node::{append_node_sections, build_children_recursive, mindnode_container_area};
 

@@ -673,6 +673,91 @@ pub fn resolve_border_style(
     }
 }
 
+/// Resolve a section-frame's [`BorderStyle`] against the same
+/// vocabulary node borders use. Drives the cyan rectangle drawn
+/// around each section while the owning node is in
+/// `InteractionMode::NodeEdit` mode (Plan §3.5 / §4.3).
+///
+/// Cascade (mirrors [`resolve_border_style`] but with section-
+/// frame-specific canvas defaults and floors):
+/// 1. `section.frame_border` if `Some` — per-section author override.
+/// 2. else `canvas.default_section_frame_border` (or
+///    `canvas.default_focused_section_frame_border` when `focused`)
+///    if `Some` — map-wide author default.
+/// 3. else a hardcoded floor: thin single-line preset for unfocused
+///    sections, heavy preset for the focused section. Same glyphs
+///    Phase B.1 emitted, but now expressed as a default
+///    [`GlyphBorderConfig`] that flows through the same resolver
+///    every other border consumes.
+///
+/// `frame_color_resolved` is the cyan `SELECTED_EDGE_COLOR` the
+/// caller already resolved through `theme_variables`. The frame
+/// system is mode-driven chrome — the active-affordance signal
+/// (cyan) sits at the bottom of the cascade; an author who sets
+/// `section.frame_border.color = "#ff8800"` overrides the cyan
+/// fully, which is the desired shape for "make my borders tell a
+/// story". Authors who want the active-affordance signal preserved
+/// just leave `color` unset on their override.
+pub fn resolve_section_frame_border(
+    section: &crate::mindmap::model::MindSection,
+    canvas: &crate::mindmap::model::Canvas,
+    focused: bool,
+    frame_color_resolved: &str,
+) -> BorderStyle {
+    // Field-by-field cascade — same shape as `resolve_border_style`.
+    // Per-section override wins; otherwise the canvas-level default
+    // for the focused / unfocused state. When neither is set we
+    // synthesize a hardcoded floor `GlyphBorderConfig` so the
+    // returned `BorderStyle` flows through the same resolver every
+    // other border consumes — the floor is just another author
+    // default that authors can override at any cascade level.
+    let canvas_default = if focused {
+        canvas
+            .default_focused_section_frame_border
+            .as_ref()
+            .or(canvas.default_section_frame_border.as_ref())
+    } else {
+        canvas.default_section_frame_border.as_ref()
+    };
+    let floor;
+    let chosen: &GlyphBorderConfig = match section.frame_border.as_ref().or(canvas_default) {
+        Some(c) => c,
+        None => {
+            floor = section_frame_floor_config(focused);
+            &floor
+        }
+    };
+    resolve_border_style(Some(chosen), None, frame_color_resolved)
+}
+
+/// Hardcoded fallback `GlyphBorderConfig` for section frames when
+/// both the per-section override and the canvas default are unset.
+/// Matches Phase B.1's thin / heavy defaults but expressed as a
+/// `GlyphBorderConfig` so the resolver path is the same for every
+/// section frame regardless of where its style comes from.
+///
+/// `focused = false` → light preset (┌─┐│└─┘).
+/// `focused = true`  → heavy preset (┏━┓┃┗━┛).
+fn section_frame_floor_config(focused: bool) -> GlyphBorderConfig {
+    GlyphBorderConfig {
+        preset: if focused { "heavy".to_string() } else { "light".to_string() },
+        font: None,
+        font_size_pt: SECTION_FRAME_DEFAULT_FONT_SIZE_PT,
+        color: None,
+        glyphs: None,
+        padding: 0.0,
+        color_palette: None,
+        color_palette_field: None,
+    }
+}
+
+/// Default font size (pt) for section frames when no per-section
+/// or canvas-level config sets it. Smaller than the node-border
+/// default (14 pt) so the per-section subdivisions read as a
+/// finer-grained subdivision rather than competing with the node
+/// frame.
+pub const SECTION_FRAME_DEFAULT_FONT_SIZE_PT: f32 = 10.0;
+
 /// Pick the [`BorderGlyphSet`] for a preset name, case-insensitively.
 /// Unknown preset names fall back to `light` and log a warning;
 /// the `"custom"` preset returns `light` here too — its corners /

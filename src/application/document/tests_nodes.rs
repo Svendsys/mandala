@@ -1741,6 +1741,8 @@ fn finalize_grows_nodes_to_fit_border_static_parts() {
             background_color: "#000".into(),
             default_border: None,
             default_connection: None,
+            default_section_frame_border: None,
+            default_focused_section_frame_border: None,
             theme_variables: HashMap::new(),
             theme_variants: HashMap::new(),
         },

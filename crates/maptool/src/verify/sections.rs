@@ -298,6 +298,7 @@ mod tests {
             size,
             channel: None,
             trigger_bindings: Vec::new(),
+            frame_border: None,
         }
     }
 

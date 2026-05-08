@@ -189,21 +189,25 @@ pub struct BorderElement {
     pub palette_cycle: Vec<[f32; 4]>,
 }
 
-/// A thin glyph-drawn rectangle outlining one section of the
-/// active NodeEdit node — the visual cue telling the user "this
-/// is the per-section subdivision you can pick from." Single
-/// colour (cyan, [`SELECTED_EDGE_COLOR`]); the focused section
-/// (the one whose text editor is open, if any) renders at a
-/// thicker stroke per Plan §4.4.
+/// A glyph-drawn rectangle outlining one section of the active
+/// NodeEdit node — the visual cue telling the user "this is the
+/// per-section subdivision you can pick from."
+///
+/// Section frames flow through the same [`BorderStyle`] machinery
+/// node borders do: any preset, any per-side `SidePattern`, any
+/// per-corner glyph, any font, any color, any palette. The
+/// resolver cascade (`resolve_section_frame_border` in
+/// `crate::mindmap::border`) is:
+///   1. `MindSection.frame_border` if `Some` (per-section author
+///      override).
+///   2. else `Canvas.default_section_frame_border` (or
+///      `default_focused_section_frame_border` when `focused`).
+///   3. else a hardcoded thin (default) / heavy (focused) floor.
 ///
 /// One element per section of the active node when emitted. Empty
 /// for: Default mode, NodeEdit on a single-section node (frame
 /// would duplicate the border), NodeEdit on a missing /
 /// hidden-by-fold node.
-///
-/// Style is fixed (thin box-drawing glyphs in cyan) — no palette
-/// cycling, no per-section configuration — because the frames
-/// are mode-driven chrome, not author-configured visual style.
 #[derive(Debug, Clone)]
 pub struct SectionFrameElement {
     /// Owning MindNode id — same id every per-node element keys
@@ -222,12 +226,22 @@ pub struct SectionFrameElement {
     /// `section.size.unwrap_or(node.size)`. Mirrors
     /// `TextElement.size`.
     pub size: (f32, f32),
-    /// Resolved hex color (canonically `SELECTED_EDGE_COLOR`).
-    pub color: String,
+    /// Resolved per-frame [`BorderStyle`] — preset, side patterns,
+    /// corners, font, size, color, palette field. Mirrors
+    /// [`BorderElement::border_style`]; consumers feed it to
+    /// `crate::mindmap::border::border_run_specs` for the four-side
+    /// run geometry.
+    pub border_style: BorderStyle,
+    /// Resolved per-cycle-position colors when the frame uses a
+    /// `color_palette`; empty otherwise. Mirrors
+    /// [`BorderElement::palette_cycle`].
+    pub palette_cycle: Vec<[f32; 4]>,
     /// `true` when this section is the focus of an active text
-    /// editor. The renderer draws focused frames at a thicker
-    /// stroke so the user sees which section is being edited
-    /// among the active node's siblings. Plan §4.4.
+    /// editor. The renderer draws focused frames using the heavy-
+    /// preset floor (or the canvas-level
+    /// `default_focused_section_frame_border` when set) so the
+    /// user sees which section is being edited among the active
+    /// node's siblings. Plan §4.4.
     pub focused: bool,
 }
 

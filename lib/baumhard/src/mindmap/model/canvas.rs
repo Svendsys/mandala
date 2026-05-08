@@ -24,6 +24,21 @@ pub struct Canvas {
     /// Default connection style applied to all edges unless overridden per-edge.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_connection: Option<GlyphConnectionConfig>,
+    /// Default section-frame style for sections of nodes in
+    /// NodeEdit mode. `None` → hardcoded thin floor. Set on the
+    /// canvas to give an entire map a coherent section-frame look
+    /// without writing per-section overrides on every node. Authors
+    /// reach this via the `canvas section-frame …` console subverb.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_section_frame_border: Option<GlyphBorderConfig>,
+    /// Default section-frame style for the *focused* section (the
+    /// one currently inside the open inline text editor). `None` →
+    /// hardcoded heavy floor. Same cascade as
+    /// [`Self::default_section_frame_border`]; the focused variant
+    /// gives the focused section a visually distinct frame so the
+    /// user sees which section is being edited among siblings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_focused_section_frame_border: Option<GlyphBorderConfig>,
     /// The live map of theme variables, each keyed by its CSS-style name
     /// (including the leading `--`, e.g. `"--bg"`). Any color string in the
     /// map can reference these via `var(--name)` and will be resolved at

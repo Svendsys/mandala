@@ -151,11 +151,106 @@ fn test_section_frames_skip_zero_size_section() {
 }
 
 #[test]
-fn test_section_frames_uses_selected_edge_color() {
+fn test_section_frames_uses_selected_edge_color_when_no_override() {
     use crate::mindmap::SELECTION_HIGHLIGHT_HEX;
     let map = synthetic_map(vec![three_section_node()], vec![]);
     let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None);
+    // With no per-section or canvas override, the resolver falls
+    // through to the hardcoded floor (no `color` set) → resolved
+    // BorderStyle.color is the SELECTION_HIGHLIGHT_HEX cyan the
+    // caller passes in as `frame_color_resolved`.
     for f in &frames {
-        assert_eq!(f.color, SELECTION_HIGHLIGHT_HEX);
+        assert_eq!(f.border_style.color, SELECTION_HIGHLIGHT_HEX);
     }
+}
+
+#[test]
+fn test_section_frames_per_section_override_wins_over_canvas_default() {
+    use crate::mindmap::model::GlyphBorderConfig;
+    let mut node = three_section_node();
+    // Section 1 carries a per-section override with a custom color.
+    node.sections[1].frame_border = Some(GlyphBorderConfig {
+        preset: "heavy".to_string(),
+        font: None,
+        font_size_pt: 12.0,
+        color: Some("#ff8800".to_string()),
+        glyphs: None,
+        padding: 0.0,
+        color_palette: None,
+        color_palette_field: None,
+    });
+    let mut map = synthetic_map(vec![node], vec![]);
+    // Canvas-level default supplies a different color — the
+    // per-section override should beat it.
+    map.canvas.default_section_frame_border = Some(GlyphBorderConfig {
+        preset: "double".to_string(),
+        font: None,
+        font_size_pt: 14.0,
+        color: Some("#00ff00".to_string()),
+        glyphs: None,
+        padding: 0.0,
+        color_palette: None,
+        color_palette_field: None,
+    });
+    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None);
+    assert_eq!(frames[0].border_style.color, "#00ff00", "section 0 uses canvas default");
+    assert_eq!(frames[1].border_style.color, "#ff8800", "section 1 uses per-section override");
+    assert_eq!(frames[2].border_style.color, "#00ff00", "section 2 uses canvas default");
+}
+
+#[test]
+fn test_section_frames_canvas_default_drives_unset_sections() {
+    use crate::mindmap::model::GlyphBorderConfig;
+    let node = three_section_node();
+    let mut map = synthetic_map(vec![node], vec![]);
+    map.canvas.default_section_frame_border = Some(GlyphBorderConfig {
+        preset: "double".to_string(),
+        font: None,
+        font_size_pt: 14.0,
+        color: Some("#abcdef".to_string()),
+        glyphs: None,
+        padding: 0.0,
+        color_palette: None,
+        color_palette_field: None,
+    });
+    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None);
+    for f in &frames {
+        assert_eq!(f.border_style.color, "#abcdef");
+    }
+}
+
+#[test]
+fn test_section_frames_focused_uses_focused_canvas_default() {
+    use crate::mindmap::model::GlyphBorderConfig;
+    let node = three_section_node();
+    let mut map = synthetic_map(vec![node], vec![]);
+    map.canvas.default_section_frame_border = Some(GlyphBorderConfig {
+        preset: "light".to_string(),
+        font: None,
+        font_size_pt: 10.0,
+        color: Some("#aaaaaa".to_string()),
+        glyphs: None,
+        padding: 0.0,
+        color_palette: None,
+        color_palette_field: None,
+    });
+    map.canvas.default_focused_section_frame_border = Some(GlyphBorderConfig {
+        preset: "heavy".to_string(),
+        font: None,
+        font_size_pt: 12.0,
+        color: Some("#ffffff".to_string()),
+        glyphs: None,
+        padding: 0.0,
+        color_palette: None,
+        color_palette_field: None,
+    });
+    let frames = build_section_frames(
+        &map,
+        &HashMap::new(),
+        Some("active"),
+        Some(("active", 1)),
+    );
+    assert_eq!(frames[0].border_style.color, "#aaaaaa", "section 0 unfocused → unfocused default");
+    assert_eq!(frames[1].border_style.color, "#ffffff", "section 1 focused → focused default");
+    assert_eq!(frames[2].border_style.color, "#aaaaaa", "section 2 unfocused → unfocused default");
 }
