@@ -4,7 +4,7 @@
 //!
 //! Part of the tests split for `document`. Helpers live in
 //! `tests_common`; only the tests for this theme live here.
-use super::tests_common::{first_testament_node_id, load_test_doc};
+use super::tests_common::{first_n_testament_node_ids, first_testament_node_id, load_test_doc};
 use super::*;
 
 use baumhard::mindmap::model::{MindNode, MindSection, NodeLayout, NodeStyle, Position, Size, TextRun};
@@ -2543,5 +2543,178 @@ fn test_border_preview_undo_after_commit_restores_pre_preview() {
     assert_eq!(
         before_preset, after,
         "undo after commit restores the pre-preview border config"
+    );
+}
+
+/// **C20 regression** — commit on a `Multi(ids)` selection
+/// fans out to every targeted node. Each node gets the staged
+/// preset applied through `set_node_border_config` (one undo
+/// entry per node, matching the committing-path posture
+/// documented on `commit_border_preview`).
+#[test]
+fn test_border_preview_commit_fans_out_to_all_nodes_in_multi_selection() {
+    use crate::application::document::{
+        BorderConfigEdits, BorderPreviewTarget, OptionEdit,
+    };
+    let mut doc = load_test_doc();
+    let ids = first_n_testament_node_ids(&doc, 3);
+    // Clear baseline border slots so the post-commit assertion
+    // is unambiguous.
+    for id in &ids {
+        doc.mindmap.nodes.get_mut(id).unwrap().style.border = None;
+    }
+    doc.selection = SelectionState::Multi(ids.clone());
+    doc.undo_stack.clear();
+    doc.dirty = false;
+
+    let mut edits = BorderConfigEdits::default();
+    edits.preset = OptionEdit::Set("heavy".into());
+    let _ = doc.set_border_preview(BorderPreviewTarget::Nodes(ids.clone()), edits);
+    let outcome = doc
+        .commit_border_preview()
+        .expect("preview was active before commit");
+
+    // Every node should now carry the staged preset.
+    for id in &ids {
+        assert_eq!(
+            doc.mindmap.nodes.get(id).unwrap().style.border.as_ref().unwrap().preset,
+            "heavy",
+            "commit must fan out to every node in Multi(ids); missed {}",
+            id
+        );
+    }
+    // N undo entries, one per fanned-out node — same posture
+    // as today's `apply_edits` and as documented on
+    // `commit_border_preview`.
+    assert_eq!(
+        doc.undo_stack.len(),
+        ids.len(),
+        "Multi commit must push one undo entry per node ({}); pushed {}",
+        ids.len(),
+        doc.undo_stack.len()
+    );
+    assert!(doc.dirty, "Multi commit must flip dirty");
+    // Outcome's `changed` reflects the fan-out total — pinned
+    // so a future "merge into one undo entry" change doesn't
+    // silently regress the user-visible commit count.
+    assert!(
+        outcome.changed,
+        "outcome.changed must be true after Multi commit"
+    );
+}
+
+/// **C20 regression** — commit on a `SectionRange` selection
+/// fans out to every section in the range. The section path
+/// uses `set_section_frame_border_config` per (node_id,
+/// section_idx) pair; each pushes its own undo entry.
+#[test]
+fn test_border_preview_commit_fans_out_to_section_range() {
+    use crate::application::document::{
+        BorderConfigEdits, BorderPreviewTarget, OptionEdit, SectionSel,
+    };
+    let mut doc = load_test_doc();
+    // Pick a node with at least 2 sections — testament's node 3.7
+    // has multiple by construction; fall back to any node with
+    // .sections.len() >= 2.
+    let node_id: String = doc
+        .mindmap
+        .nodes
+        .iter()
+        .filter(|(_, n)| n.sections.len() >= 2)
+        .map(|(id, _)| id.clone())
+        .min()
+        .expect("testament map has a multi-section node");
+    let n_sections = doc.mindmap.nodes.get(&node_id).unwrap().sections.len();
+    let last_section_idx = (n_sections - 1).min(2); // up to 3 sections
+    // Clear baseline frame_border slots on the targeted range.
+    for i in 0..=last_section_idx {
+        doc.mindmap.nodes.get_mut(&node_id).unwrap().sections[i].frame_border = None;
+    }
+    doc.selection = SelectionState::SectionRange {
+        sel: SectionSel {
+            node_id: node_id.clone(),
+            section_idx: 0,
+        },
+        range: (0, last_section_idx),
+    };
+    doc.undo_stack.clear();
+    doc.dirty = false;
+
+    let pairs: Vec<(String, usize)> = (0..=last_section_idx)
+        .map(|i| (node_id.clone(), i))
+        .collect();
+    let mut edits = BorderConfigEdits::default();
+    edits.preset = OptionEdit::Set("heavy".into());
+    let _ = doc.set_border_preview(BorderPreviewTarget::Sections(pairs.clone()), edits);
+    let _ = doc
+        .commit_border_preview()
+        .expect("preview was active before commit");
+
+    // Every section in the range now carries `heavy`.
+    for i in 0..=last_section_idx {
+        assert_eq!(
+            doc.mindmap.nodes.get(&node_id).unwrap().sections[i]
+                .frame_border
+                .as_ref()
+                .unwrap()
+                .preset,
+            "heavy",
+            "commit must fan out to every section in the range; missed section[{}]",
+            i
+        );
+    }
+    // Same per-target undo posture.
+    assert_eq!(
+        doc.undo_stack.len(),
+        pairs.len(),
+        "SectionRange commit must push one undo entry per section pair ({}); pushed {}",
+        pairs.len(),
+        doc.undo_stack.len()
+    );
+}
+
+/// **C19 regression** — `Action::SetBorderPreview` /
+/// `CommitBorderPreview` / `CancelBorderPreview` arms route to
+/// the corresponding document setters with the typed
+/// `BorderPreviewTargetKind` discriminator. The dispatch arms
+/// can't be exercised without a `Renderer`
+/// (`TEST_CONVENTIONS.md §T8`), so this test pins the
+/// document-side contract `apply_set_border_preview` ultimately
+/// invokes — `target_kind: Node` resolves to a
+/// `BorderPreviewTarget::Nodes` against the live selection.
+#[test]
+fn test_border_preview_target_kind_node_resolves_against_live_selection() {
+    use crate::application::document::{
+        BorderConfigEdits, BorderPreviewTarget, OptionEdit, SelectionState,
+    };
+    let mut doc = load_test_doc();
+    let ids = first_n_testament_node_ids(&doc, 2);
+    doc.selection = SelectionState::Multi(ids.clone());
+
+    // Mimic the resolver `apply_set_border_preview` runs for
+    // `BorderPreviewTargetKind::Node`: ids come from
+    // `nodes_in_selection(&doc.selection, ...)` and feed
+    // `BorderPreviewTarget::Nodes(...)`.
+    let resolved_ids = crate::application::console::commands::border::nodes_in_selection(
+        &doc.selection,
+        "border preview",
+    )
+    .expect("Multi selection resolves to ids");
+    assert_eq!(resolved_ids.len(), ids.len(), "all selected ids carried through");
+    for id in &ids {
+        assert!(
+            resolved_ids.contains(id),
+            "live selection id {} must appear in resolved target",
+            id
+        );
+    }
+
+    let mut edits = BorderConfigEdits::default();
+    edits.preset = OptionEdit::Set("heavy".into());
+    let outcome = doc.set_border_preview(BorderPreviewTarget::Nodes(resolved_ids), edits);
+    assert!(doc.border_preview.is_some(), "preview slot populated");
+    assert!(
+        !outcome.preset_auto_promoted,
+        "plain preset edit must not auto-promote"
     );
 }
