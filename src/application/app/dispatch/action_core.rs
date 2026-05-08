@@ -124,6 +124,7 @@ pub(in crate::application::app) fn dispatch_compatible(
                     app_scene: core.app_scene,
                     renderer: core.renderer,
                     scene_cache: core.scene_cache,
+                    interaction_mode: core.interaction_mode,
                 };
                 super::cross_dispatch::apply_open_text_edit_on_single(clean, &mut rc, core.text_edit_state)
             } else {
@@ -163,6 +164,7 @@ pub(in crate::application::app) fn dispatch_compatible(
                 super::super::text_edit::close_text_edit(
                     commit,
                     doc,
+                    core.interaction_mode,
                     core.text_edit_state,
                     core.mindmap_tree,
                     core.app_scene,

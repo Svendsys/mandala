@@ -167,7 +167,12 @@ pub(in crate::application::app) fn open_label_edit(
     // edges have no line label to preview, so the portal canvas
     // doesn't change on any label-edit keystroke. Keeping that call
     // out of the hot path is the core "fast label typing" fix.
-    let scene = doc.build_scene_with_selection(renderer.camera_zoom());
+    // Label-edit preview only reads connection-label elements;
+    // resize-handle overrides are irrelevant here.
+    let scene = doc.build_scene_with_selection(
+        renderer.camera_zoom(),
+        crate::application::document::ResizeHandleOverrides::none(),
+    );
     update_connection_label_tree(&scene, app_scene, renderer);
 }
 
@@ -240,7 +245,14 @@ pub(in crate::application::app) fn handle_label_edit_key(
         // Same scope as `open_label_edit`: only the connection-
         // label canvas reads `label_edit_preview`, so the portal
         // tree stays untouched on every keystroke.
-        let scene = doc.build_scene_with_selection(renderer.camera_zoom());
+        // Label-edit preview only reads connection-label elements
+        // out of the scene; resize-handle overrides are irrelevant.
+        // Pass `none()` so this hot path doesn't have to thread mode
+        // through every caller.
+        let scene = doc.build_scene_with_selection(
+            renderer.camera_zoom(),
+            crate::application::document::ResizeHandleOverrides::none(),
+        );
         update_connection_label_tree(&scene, app_scene, renderer);
     }
 }
@@ -254,6 +266,7 @@ pub(in crate::application::app) fn handle_label_edit_key(
 pub(in crate::application::app) fn close_label_edit(
     commit: bool,
     doc: &mut MindMapDocument,
+    interaction_mode: &super::InteractionMode,
     label_edit_state: &mut LabelEditState,
     mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
     app_scene: &mut crate::application::scene_host::AppScene,
@@ -280,7 +293,7 @@ pub(in crate::application::app) fn close_label_edit(
     }
     // Rebuild so the label reflects the model state (or vanishes if
     // the buffer was empty + original was None).
-    rebuild_all(doc, mindmap_tree, app_scene, renderer, scene_cache);
+    rebuild_all(doc, interaction_mode, mindmap_tree, app_scene, renderer, scene_cache);
 }
 
 /// Inline-edit state for a portal label's text. Parallel to
@@ -416,6 +429,7 @@ pub(in crate::application::app) fn handle_portal_text_edit_key(
     keybinds: &ResolvedKeybinds,
     state: &mut PortalTextEditState,
     doc: &mut MindMapDocument,
+    interaction_mode: &super::InteractionMode,
     mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
     app_scene: &mut crate::application::scene_host::AppScene,
     renderer: &mut Renderer,
@@ -449,7 +463,7 @@ pub(in crate::application::app) fn handle_portal_text_edit_key(
         PortalTextEditState::Closed => return,
     };
     if !edge_still_valid {
-        close_portal_text_edit(false, doc, state, mindmap_tree, app_scene, renderer, scene_cache);
+        close_portal_text_edit(false, doc, interaction_mode, state, mindmap_tree, app_scene, renderer, scene_cache);
         return;
     }
 
@@ -510,6 +524,7 @@ pub(in crate::application::app) fn handle_portal_text_edit_key(
 pub(in crate::application::app) fn close_portal_text_edit(
     commit: bool,
     doc: &mut MindMapDocument,
+    interaction_mode: &super::InteractionMode,
     state: &mut PortalTextEditState,
     mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
     app_scene: &mut crate::application::scene_host::AppScene,
@@ -534,7 +549,7 @@ pub(in crate::application::app) fn close_portal_text_edit(
             doc.set_portal_label_text(&edge_ref, &endpoint_node_id, new_val);
         }
     }
-    rebuild_all(doc, mindmap_tree, app_scene, renderer, scene_cache);
+    rebuild_all(doc, interaction_mode, mindmap_tree, app_scene, renderer, scene_cache);
 }
 
 #[cfg(test)]

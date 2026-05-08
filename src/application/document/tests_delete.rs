@@ -408,7 +408,7 @@ fn test_scene_builder_highlights_selected_edge() {
     let (edge_ref, _) = pick_test_edge(&doc);
 
     // Without selection: the edge renders with its model color
-    let scene_normal = doc.build_scene_with_selection(1.0);
+    let scene_normal = doc.build_scene_with_selection(1.0, ResizeHandleOverrides::none());
     let normal_colors: Vec<String> = scene_normal
         .connection_elements
         .iter()
@@ -417,7 +417,7 @@ fn test_scene_builder_highlights_selected_edge() {
 
     // With edge selected: its element color should be the cyan highlight
     doc.selection = SelectionState::Edge(edge_ref);
-    let scene_selected = doc.build_scene_with_selection(1.0);
+    let scene_selected = doc.build_scene_with_selection(1.0, ResizeHandleOverrides::none());
     let highlighted_count = scene_selected
         .connection_elements
         .iter()

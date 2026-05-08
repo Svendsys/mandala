@@ -264,6 +264,7 @@ pub(in crate::application::app) fn lift_anchor_to_section_range(
 pub(in crate::application::app) fn close_text_edit(
     commit: bool,
     doc: &mut MindMapDocument,
+    interaction_mode: &super::super::InteractionMode,
     text_edit_state: &mut TextEditState,
     mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
     app_scene: &mut crate::application::scene_host::AppScene,
@@ -343,7 +344,7 @@ pub(in crate::application::app) fn close_text_edit(
         // them before the rebuild. The drag drop path already
         // does the equivalent (`event_mouse_click.rs`).
         scene_cache.clear();
-        rebuild_all(doc, mindmap_tree, app_scene, renderer, scene_cache);
+        rebuild_all(doc, interaction_mode, mindmap_tree, app_scene, renderer, scene_cache);
     } else {
         // Cancel: model is untouched, so we only need to revert the
         // edited section's transient caret-bearing text/regions to

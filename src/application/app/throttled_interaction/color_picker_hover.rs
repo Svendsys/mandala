@@ -79,6 +79,7 @@ impl ThrottledInteraction for ColorPickerHoverInteraction {
             renderer,
             scene_cache,
             color_picker_state,
+            interaction_mode,
             ..
         } = ctx;
 
@@ -102,7 +103,7 @@ impl ThrottledInteraction for ColorPickerHoverInteraction {
 
         if let Some(doc) = document.as_mut() {
             if canvas_needs_rebuild {
-                rebuild_scene_only(doc, app_scene, renderer, scene_cache);
+                rebuild_scene_only(doc, interaction_mode, app_scene, renderer, scene_cache);
             }
             rebuild_color_picker_overlay(color_picker_state, doc, app_scene, renderer);
         }

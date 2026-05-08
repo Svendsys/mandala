@@ -72,7 +72,8 @@ pub use hit_test::{
 };
 pub use nodes::{BorderConfigEdits, BorderEditOutcome, BorderSide, OptionEdit, SectionPayload};
 pub use types::{
-    AnimationInstance, EdgeLabelSel, EdgeRef, PortalLabelSel, SectionSel, SelectionState, HIGHLIGHT_COLOR,
+    AnimationInstance, EdgeLabelSel, EdgeRef, PortalLabelSel, ResizeHandleOverrides, SectionSel,
+    SelectionState, HIGHLIGHT_COLOR,
 };
 // Native-only: consumed by `app/click.rs`'s reparent / connect mode
 // rendering. WASM doesn't dispatch `EnterReparentMode` /
@@ -471,12 +472,13 @@ impl MindMapDocument {
     /// so a portal-mode edge under the wheel picks it up on the
     /// marker pass). Borrowed from `&self`, so the returned tuple
     /// lives as long as `self`.
-    fn assemble_scene_overrides(
-        &self,
+    fn assemble_scene_overrides<'a>(
+        &'a self,
+        resize_overrides: ResizeHandleOverrides<'a>,
     ) -> (
-        scene_builder::SceneSelectionContext<'_>,
-        Option<scene_builder::EdgeColorPreview<'_>>,
-        Option<scene_builder::PortalColorPreview<'_>>,
+        scene_builder::SceneSelectionContext<'a>,
+        Option<scene_builder::EdgeColorPreview<'a>>,
+        Option<scene_builder::PortalColorPreview<'a>>,
     ) {
         let edge = self
             .selection
@@ -498,29 +500,26 @@ impl MindMapDocument {
         };
         let portal_label = self.selection.selected_portal_label_scene_ref();
         let label_edit = self.label_edit_preview.as_ref().map(|(k, s)| (k, s.as_str()));
-        // Section selection drives resize-handle emission. The
-        // scene builder resolves the named section's AABB and
-        // emits 8 handles when the section has `Some` size; a
-        // `None`-sized (fill-parent) section emits nothing because
-        // there's no per-section AABB to stretch.
-        // Section AND SectionRange both surface a single owning
-        // section to the scene-builder via `selected_section()`
-        // — the carried sub-range doesn't change handle
-        // emission (handles attach to the section AABB, not the
-        // grapheme range).
-        let selected_section = self
-            .selection
-            .selected_section()
-            .map(|s| (s.node_id.as_str(), s.section_idx));
-        // Single-node selection drives node-resize-handle
-        // emission. Multi / Section / Edge / etc. produce no
-        // node handles. The `Single`-only gate matches the
-        // resize gesture's contract — multi-node resize is
-        // a Tier 2C+ concern.
-        let selected_node_for_resize = match &self.selection {
-            crate::application::document::SelectionState::Single(id) => Some(id.as_str()),
-            _ => None,
-        };
+        // Resize-handle emission is driven by `InteractionMode`,
+        // not by selection. The application layer translates the
+        // active mode into `ResizeHandleOverrides` and threads it
+        // through `build_scene_with_cache`; here we just plumb the
+        // overrides into the scene-builder's
+        // `SceneSelectionContext`. Pre-Batch-2 of
+        // `SECTIONS_BORDERS_RESIZE_PLAN.md` this gate read selection
+        // directly (`Single` → handles, `Section` → handles), which
+        // produced the "accidental resize on selection" UX bug —
+        // moving the gate to mode is the fix.
+        //
+        // `Some`-sized sections still emit handles only when their
+        // size is `Some`; fill-parent sections produce zero
+        // handles inside the scene builder regardless. Section
+        // AND SectionRange selections continue to NOT emit handles
+        // by themselves — they only emit when the active mode is
+        // `Resize { target: Section { .. } }` matching their
+        // identity, which the application layer arranges.
+        let selected_section = resize_overrides.section;
+        let selected_node_for_resize = resize_overrides.node;
         let selection = scene_builder::SceneSelectionContext {
             edge,
             edge_label,
@@ -560,8 +559,9 @@ impl MindMapDocument {
         offsets: &HashMap<String, (f32, f32)>,
         cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
         camera_zoom: f32,
+        resize_overrides: ResizeHandleOverrides<'_>,
     ) -> RenderScene {
-        let (selection, edge_preview, portal_preview) = self.assemble_scene_overrides();
+        let (selection, edge_preview, portal_preview) = self.assemble_scene_overrides(resize_overrides);
         scene_builder::build_scene_with_cache(
             &self.mindmap,
             offsets,
@@ -581,8 +581,12 @@ impl MindMapDocument {
     /// `label_edit_preview` and `color_picker_preview` into the scene
     /// build so live interaction previews are visible on any scene
     /// that flows through this entry point.
-    pub fn build_scene_with_selection(&self, camera_zoom: f32) -> RenderScene {
-        let (selection, edge_preview, portal_preview) = self.assemble_scene_overrides();
+    pub fn build_scene_with_selection(
+        &self,
+        camera_zoom: f32,
+        resize_overrides: ResizeHandleOverrides<'_>,
+    ) -> RenderScene {
+        let (selection, edge_preview, portal_preview) = self.assemble_scene_overrides(resize_overrides);
         scene_builder::build_scene_with_offsets_selection_and_overrides(
             &self.mindmap,
             &HashMap::new(),

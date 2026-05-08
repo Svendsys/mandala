@@ -529,6 +529,7 @@ impl InitState {
             color_picker_state,
             drag_state,
             picker_hover,
+            interaction_mode,
             ..
         } = self;
 
@@ -540,6 +541,7 @@ impl InitState {
                 renderer: &mut *renderer,
                 scene_cache: &mut *scene_cache,
                 color_picker_state: &mut *color_picker_state,
+                interaction_mode: &*interaction_mode,
             });
         }
 
@@ -551,6 +553,7 @@ impl InitState {
                 renderer: &mut *renderer,
                 scene_cache: &mut *scene_cache,
                 color_picker_state: &mut *color_picker_state,
+                interaction_mode: &*interaction_mode,
             });
         } else if picker_hover.has_pending() {
             // Picker closed while a throttle-deferred hover drain
@@ -584,6 +587,7 @@ impl InitState {
         drain_frame::drain_camera_geometry_rebuild(
             is_moving_node,
             &self.document,
+            &self.interaction_mode,
             &mut self.app_scene,
             &mut self.renderer,
             &mut self.scene_cache,
@@ -615,6 +619,7 @@ impl InitState {
         if !is_drag_with_tree_mutation {
             drain_frame::drain_animation_tick(
                 &mut self.document,
+                &self.interaction_mode,
                 &mut self.mindmap_tree,
                 &mut self.app_scene,
                 &mut self.renderer,

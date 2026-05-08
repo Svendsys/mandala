@@ -345,6 +345,7 @@ pub(in crate::application::app) fn submit_line(
                 ctx.portal_text_edit_state,
                 ctx.color_picker_state,
                 doc,
+                ctx.interaction_mode,
                 ctx.mindmap_tree,
                 ctx.app_scene,
                 ctx.renderer,

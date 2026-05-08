@@ -61,15 +61,16 @@ pub(in crate::application::app) fn selection_change_touches_tree(
 pub(in crate::application::app) fn rebuild_after_selection_change(
     prev_selection: &SelectionState,
     doc: &MindMapDocument,
+    interaction_mode: &super::InteractionMode,
     mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
     app_scene: &mut crate::application::scene_host::AppScene,
     renderer: &mut Renderer,
     scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
 ) {
     if selection_change_touches_tree(prev_selection, &doc.selection) {
-        rebuild_all(doc, mindmap_tree, app_scene, renderer, scene_cache);
+        rebuild_all(doc, interaction_mode, mindmap_tree, app_scene, renderer, scene_cache);
     } else {
-        rebuild_scene_only(doc, app_scene, renderer, scene_cache);
+        rebuild_scene_only(doc, interaction_mode, app_scene, renderer, scene_cache);
     }
 }
 
@@ -214,6 +215,7 @@ mod tests {
 
 pub(in crate::application::app) fn rebuild_all(
     doc: &MindMapDocument,
+    interaction_mode: &super::InteractionMode,
     mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
     app_scene: &mut crate::application::scene_host::AppScene,
     renderer: &mut Renderer,
@@ -223,7 +225,7 @@ pub(in crate::application::app) fn rebuild_all(
     apply_tree_highlights(&mut new_tree, selection_highlight_entries(&doc.selection));
     renderer.rebuild_buffers_from_tree(&new_tree.tree);
 
-    rebuild_scene_only(doc, app_scene, renderer, scene_cache);
+    rebuild_scene_only(doc, interaction_mode, app_scene, renderer, scene_cache);
 
     *mindmap_tree = Some(new_tree);
 }
@@ -281,6 +283,7 @@ pub(in crate::application::app) fn selection_highlight_entries(
 /// reaches this helper now inherits the same optimization.
 pub(in crate::application::app) fn rebuild_scene_only(
     doc: &MindMapDocument,
+    interaction_mode: &super::InteractionMode,
     app_scene: &mut crate::application::scene_host::AppScene,
     renderer: &mut Renderer,
     scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
@@ -289,6 +292,7 @@ pub(in crate::application::app) fn rebuild_scene_only(
         &std::collections::HashMap::new(),
         scene_cache,
         renderer.camera_zoom(),
+        interaction_mode.resize_handle_overrides(),
     );
     update_connection_tree(&scene, app_scene);
     update_border_tree_static(doc, app_scene);

@@ -93,6 +93,14 @@ pub(in crate::application::app) struct InputContextCore<'a> {
     /// Inline tiers refreshed by `loader::rebuild_document_macros`
     /// whenever a document loads. Cross-platform per Track B.
     pub macros: &'a mut MacroRegistry,
+    /// High-level interaction mode (Default / Reparent / Connect /
+    /// NodeEdit / Resize). Cross-platform — sits on the core because
+    /// the resize-handle gate, the click router, and the
+    /// `close_text_edit` rebuild path all need to read it. Mutating
+    /// arms (Enter*Mode, Exit*Mode, ReparentToTarget, ConnectToTarget)
+    /// take `&mut`; read paths (rebuild_all-callers, hit-test gates)
+    /// take `&`. See `super::interaction_mode::InteractionMode`.
+    pub interaction_mode: &'a mut super::InteractionMode,
 }
 
 /// Native-only extension carrying the modal / console / picker /
@@ -112,9 +120,6 @@ pub(in crate::application::app) struct InputContextCore<'a> {
 pub(in crate::application::app) struct NativeContextExt<'a> {
     /// Current pointer / drag state machine.
     pub drag_state: &'a mut super::DragState,
-    /// High-level interaction mode (Reparent / Connect / NodeEdit /
-    /// Resize, etc.). See `super::interaction_mode::InteractionMode`.
-    pub interaction_mode: &'a mut super::InteractionMode,
     /// Console (slash-command overlay) state.
     pub console_state: &'a mut crate::application::console::ConsoleState,
     /// Console command-history ring.

@@ -232,6 +232,7 @@ pub(super) fn handle_cursor_moved(
                             rebuild_after_selection_change(
                                 &prev,
                                 doc,
+                                ctx.interaction_mode,
                                 ctx.mindmap_tree,
                                 ctx.app_scene,
                                 ctx.renderer,
@@ -265,6 +266,7 @@ pub(super) fn handle_cursor_moved(
                             ));
                             rebuild_all(
                                 doc,
+                                ctx.interaction_mode,
                                 ctx.mindmap_tree,
                                 ctx.app_scene,
                                 ctx.renderer,

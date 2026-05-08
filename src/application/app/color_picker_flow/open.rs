@@ -24,6 +24,7 @@ pub(in crate::application::app) fn open_color_picker_contextual(
     target: crate::application::color_picker::ColorTarget,
     doc: &mut MindMapDocument,
     state: &mut crate::application::color_picker::ColorPickerState,
+    interaction_mode: &super::super::InteractionMode,
     app_scene: &mut crate::application::scene_host::AppScene,
     renderer: &mut Renderer,
     scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
@@ -80,6 +81,7 @@ pub(in crate::application::app) fn open_color_picker_contextual(
         hsv,
         doc,
         state,
+        interaction_mode,
         app_scene,
         renderer,
         scene_cache,
@@ -93,6 +95,7 @@ pub(in crate::application::app) fn open_color_picker_contextual(
 pub(in crate::application::app) fn open_color_picker_standalone(
     doc: &mut MindMapDocument,
     state: &mut crate::application::color_picker::ColorPickerState,
+    interaction_mode: &super::super::InteractionMode,
     app_scene: &mut crate::application::scene_host::AppScene,
     renderer: &mut Renderer,
     scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
@@ -110,6 +113,7 @@ pub(in crate::application::app) fn open_color_picker_standalone(
         hsv,
         doc,
         state,
+        interaction_mode,
         app_scene,
         renderer,
         scene_cache,
@@ -126,6 +130,7 @@ pub(in crate::application::app) fn open_picker_inner(
     (hue_deg, sat, val): (f32, f32, f32),
     doc: &mut MindMapDocument,
     state: &mut crate::application::color_picker::ColorPickerState,
+    interaction_mode: &super::super::InteractionMode,
     app_scene: &mut crate::application::scene_host::AppScene,
     renderer: &mut Renderer,
     scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
@@ -259,7 +264,7 @@ pub(in crate::application::app) fn open_picker_inner(
     };
 
     rebuild_color_picker_overlay(state, doc, app_scene, renderer);
-    rebuild_scene_only(doc, app_scene, renderer, scene_cache);
+    rebuild_scene_only(doc, interaction_mode, app_scene, renderer, scene_cache);
 }
 
 /// Helper: write the initial HSV into `doc.color_picker_preview` on

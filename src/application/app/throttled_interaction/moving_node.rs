@@ -78,6 +78,7 @@ impl ThrottledInteraction for MovingNodeInteraction {
             app_scene,
             renderer,
             scene_cache,
+            interaction_mode,
             ..
         } = ctx;
 
@@ -119,7 +120,12 @@ impl ThrottledInteraction for MovingNodeInteraction {
                 }
             }
 
-            let scene = doc.build_scene_with_cache(&offsets, scene_cache, renderer.camera_zoom());
+            let scene = doc.build_scene_with_cache(
+                &offsets,
+                scene_cache,
+                renderer.camera_zoom(),
+                interaction_mode.resize_handle_overrides(),
+            );
 
             update_connection_tree(&scene, app_scene);
             update_border_tree_with_offsets(doc, &offsets, app_scene);

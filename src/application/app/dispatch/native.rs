@@ -271,6 +271,7 @@ pub(in crate::application::app) fn dispatch_action(
                 // green highlights).
                 rebuild_all(
                     doc,
+                    ctx.interaction_mode,
                     ctx.mindmap_tree,
                     ctx.app_scene,
                     ctx.renderer,
@@ -310,6 +311,7 @@ pub(in crate::application::app) fn dispatch_action(
                 }
                 rebuild_all(
                     doc,
+                    ctx.interaction_mode,
                     ctx.mindmap_tree,
                     ctx.app_scene,
                     ctx.renderer,
@@ -394,6 +396,7 @@ pub(in crate::application::app) fn dispatch_action(
                         };
                         rebuild_all(
                             doc,
+                            ctx.interaction_mode,
                             ctx.mindmap_tree,
                             ctx.app_scene,
                             ctx.renderer,
@@ -431,6 +434,7 @@ pub(in crate::application::app) fn dispatch_action(
                         ));
                         rebuild_all(
                             doc,
+                            ctx.interaction_mode,
                             ctx.mindmap_tree,
                             ctx.app_scene,
                             ctx.renderer,
@@ -452,6 +456,7 @@ pub(in crate::application::app) fn dispatch_action(
                         super::super::scene_rebuild::rebuild_after_selection_change(
                             &prev,
                             doc,
+                            ctx.interaction_mode,
                             ctx.mindmap_tree,
                             ctx.app_scene,
                             ctx.renderer,
@@ -493,6 +498,7 @@ pub(in crate::application::app) fn dispatch_action(
                 open_color_picker_standalone(
                     doc,
                     ctx.color_picker_state,
+                    ctx.interaction_mode,
                     ctx.app_scene,
                     ctx.renderer,
                     ctx.scene_cache,
@@ -506,6 +512,7 @@ pub(in crate::application::app) fn dispatch_action(
                 close_color_picker_standalone(
                     ctx.color_picker_state,
                     doc,
+                    ctx.interaction_mode,
                     ctx.mindmap_tree,
                     ctx.app_scene,
                     ctx.renderer,
@@ -572,6 +579,7 @@ pub(in crate::application::app) fn dispatch_action(
                     super::super::label_edit::close_portal_text_edit(
                         false,
                         doc,
+                        ctx.interaction_mode,
                         ctx.portal_text_edit_state,
                         ctx.mindmap_tree,
                         ctx.app_scene,
@@ -582,6 +590,7 @@ pub(in crate::application::app) fn dispatch_action(
                     super::super::label_edit::close_label_edit(
                         false,
                         doc,
+                        ctx.interaction_mode,
                         ctx.label_edit_state,
                         ctx.mindmap_tree,
                         ctx.app_scene,
@@ -598,6 +607,7 @@ pub(in crate::application::app) fn dispatch_action(
                     super::super::label_edit::close_portal_text_edit(
                         true,
                         doc,
+                        ctx.interaction_mode,
                         ctx.portal_text_edit_state,
                         ctx.mindmap_tree,
                         ctx.app_scene,
@@ -608,6 +618,7 @@ pub(in crate::application::app) fn dispatch_action(
                     super::super::label_edit::close_label_edit(
                         true,
                         doc,
+                        ctx.interaction_mode,
                         ctx.label_edit_state,
                         ctx.mindmap_tree,
                         ctx.app_scene,
@@ -657,6 +668,7 @@ pub(in crate::application::app) fn dispatch_action(
                     ctx.portal_text_edit_state,
                     ctx.color_picker_state,
                     doc,
+                    ctx.interaction_mode,
                     ctx.mindmap_tree,
                     ctx.app_scene,
                     ctx.renderer,
@@ -817,6 +829,7 @@ impl<'a, 'b> super::macro_core::MacroDispatchTarget for NativeMacroDispatchTarge
         ) {
             rebuild_all(
                 doc,
+                self.ctx.interaction_mode,
                 self.ctx.mindmap_tree,
                 self.ctx.app_scene,
                 self.ctx.renderer,
@@ -846,6 +859,7 @@ impl<'a, 'b> super::macro_core::MacroDispatchTarget for NativeMacroDispatchTarge
             self.ctx.portal_text_edit_state,
             self.ctx.color_picker_state,
             doc,
+            self.ctx.interaction_mode,
             self.ctx.mindmap_tree,
             self.ctx.app_scene,
             self.ctx.renderer,
@@ -910,6 +924,7 @@ pub(in crate::application::app) fn dispatch_custom_mutation_for_key(
     if applied {
         rebuild_all(
             doc,
+            ctx.interaction_mode,
             ctx.mindmap_tree,
             ctx.app_scene,
             ctx.renderer,
@@ -927,6 +942,7 @@ fn dispatch_create_orphan_and_edit(ctx: &mut InputHandlerContext<'_>, hit: &Disp
         let new_id = doc.create_orphan_and_select(hit.canvas_pos);
         rebuild_all(
             doc,
+            ctx.interaction_mode,
             ctx.mindmap_tree,
             ctx.app_scene,
             ctx.renderer,

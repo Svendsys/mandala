@@ -149,6 +149,11 @@ pub(in crate::application::app) struct RebuildContext<'a> {
     pub app_scene: &'a mut AppScene,
     pub renderer: &'a mut Renderer,
     pub scene_cache: &'a mut SceneConnectionCache,
+    /// Active interaction mode — read by `rebuild_all` /
+    /// `rebuild_scene_only` to decide which node / section receives
+    /// resize handles this frame. Threaded through from the
+    /// caller's `InputContextCore::interaction_mode`.
+    pub interaction_mode: &'a super::super::InteractionMode,
 }
 
 impl<'a> RebuildContext<'a> {
@@ -168,6 +173,7 @@ impl<'a> RebuildContext<'a> {
         self.scene_cache.clear();
         rebuild_all(
             self.document,
+            self.interaction_mode,
             self.mindmap_tree,
             self.app_scene,
             self.renderer,
@@ -185,6 +191,7 @@ impl<'a> RebuildContext<'a> {
     pub fn rebuild_after_selection_change(&mut self) {
         rebuild_all(
             self.document,
+            self.interaction_mode,
             self.mindmap_tree,
             self.app_scene,
             self.renderer,
@@ -214,6 +221,7 @@ macro_rules! rebuild_ctx {
             app_scene: $ctx.app_scene,
             renderer: $ctx.renderer,
             scene_cache: $ctx.scene_cache,
+            interaction_mode: $ctx.interaction_mode,
         }
     };
 }

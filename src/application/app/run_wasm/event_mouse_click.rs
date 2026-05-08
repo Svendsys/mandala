@@ -122,6 +122,7 @@ impl super::WasmApp {
                     };
                     rebuild_all(
                         &input.document,
+                        &input.interaction_mode,
                         &mut input.mindmap_tree,
                         &mut input.app_scene,
                         renderer,
@@ -154,6 +155,7 @@ impl super::WasmApp {
                         SelectionState::Edge(EdgeRef::new(&edge.from_id, &edge.to_id, &edge.edge_type));
                     rebuild_all(
                         &input.document,
+                        &input.interaction_mode,
                         &mut input.mindmap_tree,
                         &mut input.app_scene,
                         renderer,
@@ -193,6 +195,7 @@ impl super::WasmApp {
                         input.document.selection = SelectionState::EdgeLabel(EdgeLabelSel::new(expected_er));
                         rebuild_scene_only(
                             &input.document,
+                            &input.interaction_mode,
                             &mut input.app_scene,
                             renderer,
                             &mut input.scene_cache,
@@ -214,6 +217,7 @@ impl super::WasmApp {
                         let new_id = input.document.create_orphan_and_select(canvas_pos);
                         rebuild_all(
                             &input.document,
+                            &input.interaction_mode,
                             &mut input.mindmap_tree,
                             &mut input.app_scene,
                             renderer,
@@ -416,6 +420,7 @@ impl super::WasmApp {
             rebuild_after_selection_change(
                 &prev_selection,
                 &input.document,
+                &input.interaction_mode,
                 &mut input.mindmap_tree,
                 &mut input.app_scene,
                 renderer,

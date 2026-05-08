@@ -162,6 +162,20 @@ impl InteractionMode {
     pub fn is_target_picker(&self) -> bool {
         matches!(self, InteractionMode::Reparent { .. } | InteractionMode::Connect { .. })
     }
+
+    /// Resolve this mode into the `ResizeHandleOverrides` value the
+    /// scene-builder consumes. Single source of truth for "should this
+    /// frame emit handles and on what target?" — every scene-rebuild
+    /// call site reads through this method rather than reaching for
+    /// the two `resize_handle_*` predicates separately.
+    pub fn resize_handle_overrides(
+        &self,
+    ) -> crate::application::document::ResizeHandleOverrides<'_> {
+        crate::application::document::ResizeHandleOverrides {
+            node: self.resize_handle_node(),
+            section: self.resize_handle_section(),
+        }
+    }
 }
 
 #[cfg(test)]

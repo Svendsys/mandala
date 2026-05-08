@@ -31,6 +31,7 @@ pub(super) fn handle_click(
     cursor_pos: (f64, f64),
     shift_pressed: bool,
     document: &mut Option<MindMapDocument>,
+    interaction_mode: &InteractionMode,
     mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
     app_scene: &mut crate::application::scene_host::AppScene,
     renderer: &mut Renderer,
@@ -192,7 +193,7 @@ pub(super) fn handle_click(
     }
 
     // Rebuild tree with selection highlight applied
-    rebuild_all(doc, mindmap_tree, app_scene, renderer, scene_cache);
+    rebuild_all(doc, interaction_mode, mindmap_tree, app_scene, renderer, scene_cache);
 }
 
 /// Rebuild tree, connections, and borders like `rebuild_all`, but additionally
@@ -257,7 +258,7 @@ pub(super) fn rebuild_all_with_mode(
     apply_tree_highlights(&mut new_tree, highlights);
     renderer.rebuild_buffers_from_tree(&new_tree.tree);
 
-    rebuild_scene_only(doc, app_scene, renderer, scene_cache);
+    rebuild_scene_only(doc, interaction_mode, app_scene, renderer, scene_cache);
 
     *mindmap_tree = Some(new_tree);
 }

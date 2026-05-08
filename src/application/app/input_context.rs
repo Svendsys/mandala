@@ -126,10 +126,10 @@ impl<'a> InputHandlerContext<'a> {
                 keybinds: self.keybinds,
 
                 macros: &mut *self.macros,
+                interaction_mode: &mut *self.interaction_mode,
             },
             super::input_context_core::NativeContextExt {
                 drag_state: &mut *self.drag_state,
-                interaction_mode: &mut *self.interaction_mode,
                 console_state: &mut *self.console_state,
                 console_history: &mut *self.console_history,
                 label_edit_state: &mut *self.label_edit_state,

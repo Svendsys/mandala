@@ -69,6 +69,7 @@ pub(super) fn handle_mouse_input(
                     button,
                     ctx.color_picker_state,
                     doc,
+                    ctx.interaction_mode,
                     ctx.mindmap_tree,
                     ctx.app_scene,
                     ctx.renderer,
@@ -541,6 +542,7 @@ pub(super) fn handle_mouse_input(
                                 rebuild_after_selection_change(
                                     &prev,
                                     doc,
+                                    ctx.interaction_mode,
                                     ctx.mindmap_tree,
                                     ctx.app_scene,
                                     ctx.renderer,
@@ -560,6 +562,7 @@ pub(super) fn handle_mouse_input(
                                 cursor_pos_val,
                                 ctx.modifiers.shift_key(),
                                 ctx.document,
+                                ctx.interaction_mode,
                                 ctx.mindmap_tree,
                                 ctx.app_scene,
                                 ctx.renderer,
@@ -618,6 +621,7 @@ pub(super) fn handle_mouse_input(
                             // Full rebuild from model
                             rebuild_all(
                                 doc,
+                                ctx.interaction_mode,
                                 ctx.mindmap_tree,
                                 ctx.app_scene,
                                 ctx.renderer,
@@ -657,6 +661,7 @@ pub(super) fn handle_mouse_input(
                             ctx.scene_cache.clear();
                             rebuild_all(
                                 doc,
+                                ctx.interaction_mode,
                                 ctx.mindmap_tree,
                                 ctx.app_scene,
                                 ctx.renderer,
@@ -686,6 +691,7 @@ pub(super) fn handle_mouse_input(
                             ctx.scene_cache.clear();
                             rebuild_all(
                                 doc,
+                                ctx.interaction_mode,
                                 ctx.mindmap_tree,
                                 ctx.app_scene,
                                 ctx.renderer,
@@ -726,6 +732,7 @@ pub(super) fn handle_mouse_input(
                             ctx.scene_cache.clear();
                             rebuild_all(
                                 doc,
+                                ctx.interaction_mode,
                                 ctx.mindmap_tree,
                                 ctx.app_scene,
                                 ctx.renderer,
@@ -762,6 +769,7 @@ pub(super) fn handle_mouse_input(
                             doc.commit_throttled_edge_drag(&edge_ref, original, |_, _| true);
                             rebuild_all(
                                 doc,
+                                ctx.interaction_mode,
                                 ctx.mindmap_tree,
                                 ctx.app_scene,
                                 ctx.renderer,
@@ -803,6 +811,7 @@ pub(super) fn handle_mouse_input(
                             });
                             rebuild_all(
                                 doc,
+                                ctx.interaction_mode,
                                 ctx.mindmap_tree,
                                 ctx.app_scene,
                                 ctx.renderer,
@@ -837,7 +846,7 @@ pub(super) fn handle_mouse_input(
                             // because node trees are untouched by a
                             // label move; the release commit is
                             // the same story.
-                            rebuild_scene_only(doc, ctx.app_scene, ctx.renderer, ctx.scene_cache);
+                            rebuild_scene_only(doc, ctx.interaction_mode, ctx.app_scene, ctx.renderer, ctx.scene_cache);
                         }
                     }
                     DragState::SelectingRect {
@@ -851,6 +860,7 @@ pub(super) fn handle_mouse_input(
                             doc.selection = SelectionState::from_ids(hits);
                             rebuild_all(
                                 doc,
+                                ctx.interaction_mode,
                                 ctx.mindmap_tree,
                                 ctx.app_scene,
                                 ctx.renderer,

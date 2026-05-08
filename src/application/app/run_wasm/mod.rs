@@ -170,6 +170,7 @@ impl WasmInputState {
             modifiers: &self.modifiers,
             keybinds,
             macros: &mut self.macros,
+            interaction_mode: &mut self.interaction_mode,
         }
     }
 }
@@ -237,6 +238,7 @@ impl<'a> super::dispatch::macro_core::MacroDispatchTarget for WasmMacroDispatchT
             // animated.
             super::scene_rebuild::rebuild_all(
                 &self.input.document,
+                &self.input.interaction_mode,
                 &mut self.input.mindmap_tree,
                 &mut self.input.app_scene,
                 self.renderer,
@@ -626,10 +628,12 @@ pub(super) fn run(mut app: Application) {
                     // Use `build_scene_with_cache` so the per-edge
                     // Bezier-sample cache is populated at load and
                     // first interactions don't pay the full cost.
+                    // WASM init runs in Default mode — no handles emit.
                     let scene = doc.build_scene_with_cache(
                         &std::collections::HashMap::new(),
                         &mut init_scene_cache,
                         renderer.camera_zoom(),
+                        crate::application::document::ResizeHandleOverrides::none(),
                     );
                     update_connection_tree(&scene, &mut init_app_scene);
                     update_border_tree_static(&doc, &mut init_app_scene);
@@ -688,8 +692,11 @@ pub(super) fn run(mut app: Application) {
         // Mirrors native init — see the run_native_init.rs doc for
         // what this does and why.
         if let Some(doc) = doc_opt.as_ref() {
+            // WASM init runs in Default mode.
+            let init_mode = super::InteractionMode::Default;
             rebuild_all(
                 doc,
+                &init_mode,
                 &mut tree_opt,
                 &mut init_app_scene,
                 &mut renderer,
