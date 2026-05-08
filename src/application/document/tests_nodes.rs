@@ -1973,3 +1973,262 @@ fn set_section_zero_text_and_single_run(
     doc.undo_stack.clear();
     doc.dirty = false;
 }
+
+// ─── border preview ────────────────────────────────────────────
+//
+// `MindMapDocument::set_border_preview` /
+// `cancel_border_preview` / `commit_border_preview` are the
+// preview-substrate setters — runtime-only state, no model write
+// until commit. The tests below mirror the discipline pinned for
+// `color_picker_preview` (tests_edges_style.rs) and the
+// node-border / section-frame / canvas auto-promotion contract.
+// Scene-build threading lands in a later commit; these tests
+// assert behaviour observable from the document layer alone.
+
+/// Setting a preview must not push undo, flip `dirty`, or mutate
+/// the model. Same discipline as `color_picker_preview` — preview
+/// is a transient runtime substitution, not a model edit.
+#[test]
+fn test_border_preview_does_not_push_undo_or_dirty() {
+    use crate::application::document::{
+        BorderConfigEdits, BorderPreviewTarget, OptionEdit,
+    };
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    let undo_depth = doc.undo_stack.len();
+    let before_node = doc.mindmap.nodes.get(&nid).cloned().unwrap();
+    doc.dirty = false;
+
+    let mut edits = BorderConfigEdits::default();
+    edits.preset = OptionEdit::Set("heavy".into());
+    let _ = doc.set_border_preview(BorderPreviewTarget::Nodes(vec![nid.clone()]), edits);
+
+    assert_eq!(doc.undo_stack.len(), undo_depth);
+    assert!(!doc.dirty);
+    assert_eq!(
+        doc.mindmap.nodes.get(&nid).unwrap().style.border.as_ref().map(|c| c.preset.clone()),
+        before_node.style.border.as_ref().map(|c| c.preset.clone()),
+        "model border slot must be byte-identical to pre-preview state"
+    );
+    assert!(doc.border_preview.is_some(), "preview slot populated");
+}
+
+/// Cancelling a preview returns to the pre-preview model state
+/// without writing anything. Mirrors
+/// `test_color_picker_preview_cleared_returns_to_committed`.
+#[test]
+fn test_border_preview_cleared_returns_to_committed() {
+    use crate::application::document::{
+        BorderConfigEdits, BorderPreviewTarget, OptionEdit,
+    };
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    let before_node = doc.mindmap.nodes.get(&nid).cloned().unwrap();
+    doc.dirty = false;
+    let undo_depth = doc.undo_stack.len();
+
+    let mut edits = BorderConfigEdits::default();
+    edits.preset = OptionEdit::Set("double".into());
+    let _ = doc.set_border_preview(BorderPreviewTarget::Nodes(vec![nid.clone()]), edits);
+    let returned = doc.cancel_border_preview();
+
+    assert!(returned, "cancel returns true when a preview was active");
+    assert!(doc.border_preview.is_none(), "preview slot cleared");
+    assert!(!doc.dirty);
+    assert_eq!(doc.undo_stack.len(), undo_depth);
+    assert_eq!(
+        doc.mindmap.nodes.get(&nid).unwrap().style.border.as_ref().map(|c| c.preset.clone()),
+        before_node.style.border.as_ref().map(|c| c.preset.clone()),
+        "model unchanged after preview-then-cancel"
+    );
+}
+
+/// Commit dispatches to the underlying setter, which pushes one
+/// undo entry per affected target and flips `dirty`. The preview
+/// slot is cleared.
+#[test]
+fn test_border_preview_commit_pushes_undo_and_dirty() {
+    use crate::application::document::{
+        BorderConfigEdits, BorderPreviewTarget, OptionEdit,
+    };
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    let undo_depth = doc.undo_stack.len();
+    doc.dirty = false;
+
+    let mut edits = BorderConfigEdits::default();
+    edits.preset = OptionEdit::Set("heavy".into());
+    let _ = doc.set_border_preview(BorderPreviewTarget::Nodes(vec![nid.clone()]), edits);
+    let outcome = doc.commit_border_preview().expect("preview was active");
+
+    assert!(outcome.changed);
+    assert!(doc.dirty);
+    assert!(doc.undo_stack.len() > undo_depth, "commit pushes at least one undo entry");
+    let cfg = doc
+        .mindmap
+        .nodes
+        .get(&nid)
+        .unwrap()
+        .style
+        .border
+        .as_ref()
+        .expect("border populated");
+    assert_eq!(cfg.preset, "heavy");
+}
+
+/// Commit clears `border_preview` to `None`. A subsequent `commit`
+/// returns `None` because no preview is active.
+#[test]
+fn test_border_preview_commit_clears_preview_slot() {
+    use crate::application::document::{
+        BorderConfigEdits, BorderPreviewTarget, OptionEdit,
+    };
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    let mut edits = BorderConfigEdits::default();
+    edits.preset = OptionEdit::Set("heavy".into());
+    let _ = doc.set_border_preview(BorderPreviewTarget::Nodes(vec![nid]), edits);
+    let _ = doc.commit_border_preview().expect("preview was active");
+    assert!(doc.border_preview.is_none(), "commit clears the preview slot");
+    assert!(
+        doc.commit_border_preview().is_none(),
+        "second commit returns None — no preview to commit"
+    );
+}
+
+/// A fresh `set_border_preview` replaces any prior preview
+/// atomically. The new preview's edits are what commit will apply.
+#[test]
+fn test_border_preview_replaces_prior_preview() {
+    use crate::application::document::{
+        BorderConfigEdits, BorderPreviewTarget, OptionEdit,
+    };
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+
+    let mut first_edits = BorderConfigEdits::default();
+    first_edits.preset = OptionEdit::Set("heavy".into());
+    let _ = doc.set_border_preview(BorderPreviewTarget::Nodes(vec![nid.clone()]), first_edits);
+
+    let mut second_edits = BorderConfigEdits::default();
+    second_edits.preset = OptionEdit::Set("double".into());
+    let _ = doc.set_border_preview(BorderPreviewTarget::Nodes(vec![nid.clone()]), second_edits);
+
+    let outcome = doc.commit_border_preview().expect("second preview active");
+    assert!(outcome.changed);
+    let cfg = doc
+        .mindmap
+        .nodes
+        .get(&nid)
+        .unwrap()
+        .style
+        .border
+        .as_ref()
+        .expect("border populated");
+    assert_eq!(
+        cfg.preset, "double",
+        "second preview wins; the first preview's heavy preset must not have committed"
+    );
+}
+
+/// `cancel_border_preview` returns `true` when a preview was
+/// active and `false` otherwise. The bool is what the verb / Esc
+/// arm uses to decide whether the keystroke should fall through.
+#[test]
+fn test_border_preview_cancel_returns_true_when_active_and_false_when_inactive() {
+    use crate::application::document::{
+        BorderConfigEdits, BorderPreviewTarget, OptionEdit,
+    };
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+
+    assert!(
+        !doc.cancel_border_preview(),
+        "cancel returns false when no preview is active"
+    );
+
+    let mut edits = BorderConfigEdits::default();
+    edits.preset = OptionEdit::Set("heavy".into());
+    let _ = doc.set_border_preview(BorderPreviewTarget::Nodes(vec![nid]), edits);
+    assert!(
+        doc.cancel_border_preview(),
+        "cancel returns true when a preview was active"
+    );
+    assert!(
+        !doc.cancel_border_preview(),
+        "subsequent cancel returns false again"
+    );
+}
+
+/// Auto-promotion is reflected in the preview's outcome — the
+/// verb surfaces the same auto-promote note up-front whether
+/// the user runs `border preview preset=heavy top=…` or the
+/// committing `border preset=heavy top=…`.
+#[test]
+fn test_border_preview_auto_promotes_preset_to_custom_in_outcome() {
+    use crate::application::document::{
+        BorderConfigEdits, BorderPreviewTarget, OptionEdit,
+    };
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    // Ensure the pre-preview slot is non-custom so the helper
+    // sees a real promotion.
+    doc.mindmap.nodes.get_mut(&nid).unwrap().style.border = None;
+
+    let mut edits = BorderConfigEdits::default();
+    edits.preset = OptionEdit::Set("heavy".into());
+    edits
+        .with_side_pattern(crate::application::document::BorderSide::Top, "###(*)###")
+        .expect("pattern parses");
+    let outcome = doc.set_border_preview(BorderPreviewTarget::Nodes(vec![nid]), edits);
+
+    assert!(
+        outcome.preset_auto_promoted,
+        "side glyph + non-custom preset must auto-promote in the simulated outcome"
+    );
+    assert_eq!(outcome.requested_preset.as_deref(), Some("heavy"));
+}
+
+/// Undo after commit restores the pre-preview model state. The
+/// preview itself never pushed undo — the undo entry was pushed
+/// by the underlying setter at commit time.
+#[test]
+fn test_border_preview_undo_after_commit_restores_pre_preview() {
+    use crate::application::document::{
+        BorderConfigEdits, BorderPreviewTarget, OptionEdit,
+    };
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    // Ensure a known starting point.
+    doc.mindmap.nodes.get_mut(&nid).unwrap().style.border = None;
+    doc.undo_stack.clear();
+    doc.dirty = false;
+    let before_preset = doc
+        .mindmap
+        .nodes
+        .get(&nid)
+        .unwrap()
+        .style
+        .border
+        .as_ref()
+        .map(|c| c.preset.clone());
+
+    let mut edits = BorderConfigEdits::default();
+    edits.preset = OptionEdit::Set("heavy".into());
+    let _ = doc.set_border_preview(BorderPreviewTarget::Nodes(vec![nid.clone()]), edits);
+    let _ = doc.commit_border_preview().expect("preview was active");
+    assert!(doc.undo());
+    let after = doc
+        .mindmap
+        .nodes
+        .get(&nid)
+        .unwrap()
+        .style
+        .border
+        .as_ref()
+        .map(|c| c.preset.clone());
+    assert_eq!(
+        before_preset, after,
+        "undo after commit restores the pre-preview border config"
+    );
+}

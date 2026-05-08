@@ -17,7 +17,7 @@ mod border;
 mod option_edit;
 mod section_text;
 
-pub use border::{BorderConfigEdits, BorderEditOutcome, BorderSide};
+pub use border::{BorderConfigEdits, BorderEditOutcome, BorderPreview, BorderPreviewTarget, BorderSide};
 pub use option_edit::OptionEdit;
 pub(in crate::application::document) use section_text::clamp_runs_to_text;
 

@@ -72,7 +72,16 @@ pub use hit_test::{
     apply_section_drag_delta_and_collect_patches, apply_section_resize_to_tree, hit_test_edge,
     hit_test_node_resize_handle, hit_test_section_resize_handle, rect_select,
 };
-pub use nodes::{BorderConfigEdits, BorderEditOutcome, BorderSide, OptionEdit, SectionPayload};
+pub use nodes::{
+    BorderConfigEdits, BorderEditOutcome, BorderPreview, BorderSide, OptionEdit, SectionPayload,
+};
+// `BorderPreviewTarget` is consumed only by the document setters
+// (and the upcoming preview verbs) — re-exported here so the
+// commits adding the verb files import it from the same place
+// the rest of the public document API lives. Triggers an
+// unused-import warning until commit 5 lands; suppress.
+#[allow(unused_imports)]
+pub use nodes::BorderPreviewTarget;
 pub use types::{
     AnimationInstance, EdgeLabelSel, EdgeRef, PortalLabelSel, SectionSel, SelectionState, HIGHLIGHT_COLOR,
 };
@@ -156,6 +165,21 @@ pub struct MindMapDocument {
     /// cancel both clear the preview; neither the committed model
     /// nor the undo stack is touched during hover.
     pub color_picker_preview: Option<ColorPickerPreview>,
+    /// Transient border-preview substitution. When `Some(...)`,
+    /// the scene builder substitutes `edits` (folded into a clone
+    /// of the committed slot) for the resolved border at the
+    /// matching target — node border, section frame, or canvas
+    /// default. Same discipline as the other `*_preview` fields:
+    /// never serialised, never push undo, never flip `dirty`.
+    /// Replaced atomically by a fresh `set_border_preview` call;
+    /// cleared by `cancel_border_preview` /
+    /// `commit_border_preview`; lazily ignored by the scene
+    /// builder when the live selection no longer covers the
+    /// preview's `selection_snapshot` (drift). Drives the
+    /// `border preview …` / `section frame preview …` /
+    /// `canvas border preview …` /
+    /// `canvas section-frame [focused] preview …` console verbs.
+    pub border_preview: Option<BorderPreview>,
 }
 
 /// Transient visual-only substitution of a color-pickerable element's
@@ -376,6 +400,7 @@ impl MindMapDocument {
             label_edit_preview: None,
             portal_text_edit_preview: None,
             color_picker_preview: None,
+            border_preview: None,
             active_animations: Vec::new(),
         };
         doc.build_mutation_registry();
