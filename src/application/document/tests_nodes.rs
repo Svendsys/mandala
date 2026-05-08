@@ -2189,6 +2189,49 @@ fn test_border_preview_auto_promotes_preset_to_custom_in_outcome() {
     assert_eq!(outcome.requested_preset.as_deref(), Some("heavy"));
 }
 
+/// A direct (non-preview) committing edit clears any active
+/// preview. Without this rule, typing `border preset=double`
+/// after `border preview preset=heavy` would render the heavy
+/// preview *over* the just-committed double border — visibly
+/// stale until the user manually cancelled. The implicit-cancel
+/// fires on every committing setter:
+/// `set_node_border_config`, `set_section_frame_border_config`,
+/// `set_canvas_default_border_config`,
+/// `set_canvas_default_section_frame_border_config`.
+#[test]
+fn test_committing_set_node_border_config_clears_active_preview() {
+    use crate::application::document::{
+        BorderConfigEdits, BorderPreviewTarget, OptionEdit,
+    };
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+
+    // Stage a preview.
+    let mut preview_edits = BorderConfigEdits::default();
+    preview_edits.preset = OptionEdit::Set("heavy".into());
+    let _ = doc.set_border_preview(BorderPreviewTarget::Nodes(vec![nid.clone()]), preview_edits);
+    assert!(doc.border_preview.is_some());
+
+    // A direct committing edit on any of the four setters must
+    // clear the preview before applying its own write. Test the
+    // node-level setter path here; the section / canvas paths
+    // are validated by the same implicit-cancel call site at the
+    // top of each setter.
+    let mut direct_edits = BorderConfigEdits::default();
+    direct_edits.preset = OptionEdit::Set("double".into());
+    let _ = doc.set_node_border_config(&nid, direct_edits);
+
+    assert!(
+        doc.border_preview.is_none(),
+        "committing edit must clear an active preview"
+    );
+    assert_eq!(
+        doc.mindmap.nodes.get(&nid).unwrap().style.border.as_ref().unwrap().preset,
+        "double",
+        "the direct edit's value lands, not the preview's"
+    );
+}
+
 /// Undo after commit restores the pre-preview model state. The
 /// preview itself never pushed undo — the undo entry was pushed
 /// by the underlying setter at commit time.

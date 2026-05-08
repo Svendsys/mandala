@@ -205,6 +205,11 @@ impl MindMapDocument {
     /// `preset=heavy top=…` request resulted in a `custom` border,
     /// not a `heavy` one with a side override.
     pub fn set_node_border_config(&mut self, node_id: &str, edits: BorderConfigEdits) -> BorderEditOutcome {
+        // Any committing border edit clears an active preview —
+        // otherwise a previewed config would render on top of the
+        // just-committed value until the user manually cancelled.
+        // See the plan's "Esc + console interaction" section.
+        self.cancel_border_preview();
         let canvas_default = self.mindmap.canvas.default_border.clone();
         let node = match self.mindmap.nodes.get_mut(node_id) {
             Some(n) => n,
@@ -280,6 +285,9 @@ impl MindMapDocument {
         section_idx: usize,
         edits: BorderConfigEdits,
     ) -> BorderEditOutcome {
+        // Implicit-cancel of any active preview — same rule the
+        // node-level setter applies. See `set_node_border_config`.
+        self.cancel_border_preview();
         // Validate node + section exist before we touch anything.
         let node = match self.mindmap.nodes.get(node_id) {
             Some(n) => n,
@@ -346,6 +354,9 @@ impl MindMapDocument {
     /// field in one step. Same posture as the
     /// `theme switch` verb.
     pub fn set_canvas_default_border_config(&mut self, edits: BorderConfigEdits) -> BorderEditOutcome {
+        // Implicit-cancel of any active preview — see
+        // `set_node_border_config` for the rationale.
+        self.cancel_border_preview();
         let preset_before = self
             .mindmap
             .canvas
@@ -400,6 +411,9 @@ impl MindMapDocument {
         focused: bool,
         edits: BorderConfigEdits,
     ) -> BorderEditOutcome {
+        // Implicit-cancel of any active preview — see
+        // `set_node_border_config` for the rationale.
+        self.cancel_border_preview();
         let canvas_snapshot = self.mindmap.canvas.clone();
         let mut outcome = BorderEditOutcome::default();
 
