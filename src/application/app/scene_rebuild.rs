@@ -536,6 +536,7 @@ pub(in crate::application::app) fn rebuild_scene_only(
     update_edge_handle_tree(&scene, app_scene);
     update_section_resize_handle_tree(&scene, app_scene);
     update_node_resize_handle_tree(&scene, app_scene);
+    update_section_frame_tree(&scene, app_scene);
     update_connection_label_tree(&scene, app_scene, renderer);
     flush_canvas_scene_buffers(app_scene, renderer);
 }
@@ -874,6 +875,49 @@ pub(in crate::application::app) fn update_section_resize_handle_tree_from_slice(
         elements,
         app_scene,
     );
+}
+
+/// Build or in-place register the section-frame tree under
+/// [`crate::application::scene_host::CanvasRole::SectionFrames`].
+/// Empty input → a trivial tree (one void root, no children),
+/// which is fine: the renderer skips empty trees during canvas
+/// flush.
+///
+/// Section-frame visibility is mode-driven (NodeEdit on / off),
+/// not gesture-driven, so a per-rebuild dispatch on the structural
+/// signature is sufficient — there's no §B2 in-place mutator path
+/// because the focus toggle changes which glyphs we emit (thin →
+/// heavy box-drawing chars), so the structural shape changes too.
+/// Identity = ordered list of `(node_id, section_idx, focused)`
+/// triples; any change forces a full rebuild.
+pub(in crate::application::app) fn update_section_frame_tree(
+    scene: &baumhard::mindmap::scene_builder::RenderScene,
+    app_scene: &mut crate::application::scene_host::AppScene,
+) {
+    use crate::application::scene_host::{hash_canvas_signature, CanvasDispatch, CanvasRole};
+    use baumhard::mindmap::tree_builder::{
+        build_section_frame_tree, section_frame_identity_sequence,
+    };
+
+    let signature = hash_canvas_signature(&section_frame_identity_sequence(&scene.section_frames));
+    match app_scene.canvas_dispatch(CanvasRole::SectionFrames, signature) {
+        CanvasDispatch::InPlaceMutator | CanvasDispatch::FullRebuild => {
+            // The frame tree has no in-place mutator path (see
+            // doc comment); both arms route through the full
+            // rebuild. The dispatch still short-circuits the
+            // common "nothing changed" case via the signature
+            // match — `canvas_dispatch` returns `InPlaceMutator`
+            // only when the registered tree's signature equals
+            // the new one, in which case re-registering the
+            // identical tree is a wasted alloc but not incorrect.
+            // Match `CanvasDispatch::InPlaceMutator` here too so
+            // a future seam (delta updates on focus-only changes)
+            // has the obvious place to land.
+            let tree = build_section_frame_tree(&scene.section_frames);
+            app_scene.register_canvas(CanvasRole::SectionFrames, tree, glam::Vec2::ZERO);
+            app_scene.set_canvas_signature(CanvasRole::SectionFrames, signature);
+        }
+    }
 }
 
 /// Generic §B2 dispatch for any handle-bearing canvas role —

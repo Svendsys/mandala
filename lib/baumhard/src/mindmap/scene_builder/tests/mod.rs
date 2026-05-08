@@ -32,5 +32,6 @@ mod labels;
 mod node_edit;
 mod point_inside;
 mod portals;
+mod section_frames;
 mod sections;
 mod themes;

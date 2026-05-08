@@ -44,7 +44,7 @@ pub const INACTIVE_NODE_ALPHA_MULTIPLIER: f32 = 0.5;
 /// happy path — most authored sections fill the node, so the
 /// `size.is_none()` branch is the predicted side.
 #[inline]
-fn section_aabb(
+pub(super) fn section_aabb(
     section: &crate::mindmap::model::MindSection,
     node_pos_x: f32,
     node_pos_y: f32,

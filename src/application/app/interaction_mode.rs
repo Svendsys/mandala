@@ -182,6 +182,11 @@ impl InteractionMode {
             node: self.resize_handle_node(),
             section: self.resize_handle_section(),
             node_edit_for: self.node_edit_for(),
+            // `focused_section` is filled by the application's
+            // text-edit-aware caller (e.g. drain_frame.rs reads it
+            // from `TextEditState::Open`); the mode predicate alone
+            // doesn't know about open editors.
+            focused_section: None,
         }
     }
 }

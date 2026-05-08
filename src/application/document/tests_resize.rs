@@ -76,6 +76,7 @@ fn test_resize_mode_node_target_emits_eight_node_handles() {
             node: Some(id.as_str()),
             section: None,
             node_edit_for: None,
+            focused_section: None,
         },
     );
     assert_eq!(
@@ -108,6 +109,7 @@ fn test_resize_mode_section_target_emits_eight_section_handles() {
             node: None,
             section: Some((id.as_str(), 1)),
             node_edit_for: None,
+            focused_section: None,
         },
     );
     assert_eq!(
@@ -147,6 +149,7 @@ fn test_resize_mode_section_target_fill_parent_emits_no_handles() {
             node: None,
             section: Some((id.as_str(), 0)),
             node_edit_for: None,
+            focused_section: None,
         },
     );
     assert!(

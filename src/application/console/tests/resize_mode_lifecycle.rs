@@ -97,6 +97,7 @@ fn test_resize_mode_lifecycle_default_to_resize_to_default() {
             node: None,
             section: None,
             node_edit_for: None,
+            focused_section: None,
         }
     ));
 }

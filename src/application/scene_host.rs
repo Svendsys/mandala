@@ -58,6 +58,10 @@ pub enum CanvasRole {
     /// Resize handles on the selected node (8 per Single-node
     /// selection with finite + positive size, 0 otherwise).
     NodeResizeHandles,
+    /// Per-section thin frames rendered on the active NodeEdit
+    /// node so the user sees which section subdivisions can be
+    /// picked. Empty in Default mode and on single-section nodes.
+    SectionFrames,
 }
 
 /// Two arms of the §B2 canvas-tree dispatch: apply a mutator to the
@@ -110,6 +114,11 @@ pub mod layers {
     pub const MINDMAP: i32 = 0;
     /// Borders sit just above the mindmap text.
     pub const BORDERS: i32 = 10;
+    /// Section frames sit just above the node borders so the
+    /// per-section subdivisions are visible on top of the node
+    /// chrome but below connections (which already draw above
+    /// borders to avoid label occlusion).
+    pub const SECTION_FRAMES: i32 = 15;
     /// Connections over the borders so a labeled edge on a framed
     /// node isn't occluded by the frame glyphs.
     pub const CONNECTIONS: i32 = 20;
@@ -158,6 +167,7 @@ pub struct AppScene {
     connection_labels: Option<SceneTreeId>,
     section_resize_handles: Option<SceneTreeId>,
     node_resize_handles: Option<SceneTreeId>,
+    section_frames: Option<SceneTreeId>,
     /// Opaque per-role hash describing the **structural shape** of
     /// the registered canvas tree (not its variable-field state). A
     /// caller that wants to dispatch between full-rebuild and §B2
@@ -197,6 +207,7 @@ impl AppScene {
             connection_labels: None,
             section_resize_handles: None,
             node_resize_handles: None,
+            section_frames: None,
             canvas_signatures: HashMap::new(),
             overlay_signatures: HashMap::new(),
         }
@@ -236,6 +247,7 @@ impl AppScene {
             CanvasRole::ConnectionLabels => layers::CONNECTION_LABELS,
             CanvasRole::SectionResizeHandles => layers::SECTION_RESIZE_HANDLES,
             CanvasRole::NodeResizeHandles => layers::NODE_RESIZE_HANDLES,
+            CanvasRole::SectionFrames => layers::SECTION_FRAMES,
         };
         let id = self.canvas.insert(tree, layer, offset);
         *self.canvas_role_slot_mut(role) = Some(id);
@@ -297,6 +309,7 @@ impl AppScene {
             CanvasRole::ConnectionLabels => self.connection_labels,
             CanvasRole::SectionResizeHandles => self.section_resize_handles,
             CanvasRole::NodeResizeHandles => self.node_resize_handles,
+            CanvasRole::SectionFrames => self.section_frames,
         }
     }
 
@@ -432,6 +445,7 @@ impl AppScene {
             CanvasRole::ConnectionLabels => &mut self.connection_labels,
             CanvasRole::SectionResizeHandles => &mut self.section_resize_handles,
             CanvasRole::NodeResizeHandles => &mut self.node_resize_handles,
+            CanvasRole::SectionFrames => &mut self.section_frames,
         }
     }
 

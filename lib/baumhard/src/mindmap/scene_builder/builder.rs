@@ -90,6 +90,12 @@ pub struct SceneSelectionContext<'a> {
     /// `selected_section`; routes to [`super::node_pass`] inside
     /// [`build_scene_with_cache`].
     pub node_edit_for: Option<&'a str>,
+    /// Section currently inside the inline text editor, if any.
+    /// Read by the section-frame pass to mark the matching
+    /// `SectionFrameElement.focused = true`. `None` = no editor
+    /// open or the editor's section isn't part of an emitted frame
+    /// set (Default mode, single-section node).
+    pub focused_section: Option<(&'a str, usize)>,
 }
 
 /// Substitution pair for the portal-text inline edit preview.
@@ -209,6 +215,7 @@ pub fn build_scene_with_cache(
         selected_section,
         selected_node_for_resize,
         node_edit_for,
+        focused_section,
     } = selection;
     // The per-edge sample spacing depends on the effective font size,
     // which depends on `camera_zoom`. Flush cached samples if the
@@ -284,6 +291,14 @@ pub fn build_scene_with_cache(
     // cases produce zero handles.
     let node_resize_handles = build_selected_node_handles(map, offsets, selected_node_for_resize);
 
+    // Section frames — one per section of the active NodeEdit
+    // node so the user sees the per-section subdivisions. Empty
+    // in Default mode and on single-section nodes (the
+    // single-section short-circuit bypasses NodeEdit entirely).
+    // Plan §3.5 / §4.3.
+    let section_frames =
+        super::section_frame::build_section_frames(map, offsets, node_edit_for, focused_section);
+
     RenderScene {
         text_elements,
         border_elements,
@@ -292,6 +307,7 @@ pub fn build_scene_with_cache(
         edge_handles,
         section_resize_handles,
         node_resize_handles,
+        section_frames,
         connection_label_elements,
         background_color: resolve_var(&map.canvas.background_color, &map.canvas.theme_variables).to_string(),
     }

@@ -516,6 +516,7 @@ impl MindMapDocument {
         let selected_section = resize_overrides.section;
         let selected_node_for_resize = resize_overrides.node;
         let node_edit_for = resize_overrides.node_edit_for;
+        let focused_section = resize_overrides.focused_section;
         let selection = scene_builder::SceneSelectionContext {
             edge,
             edge_label,
@@ -524,6 +525,7 @@ impl MindMapDocument {
             selected_section,
             selected_node_for_resize,
             node_edit_for,
+            focused_section,
         };
         let (edge_preview, portal_preview) = match &self.color_picker_preview {
             Some(ColorPickerPreview { key, color }) => (

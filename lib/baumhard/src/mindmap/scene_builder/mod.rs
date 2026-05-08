@@ -64,6 +64,14 @@ pub struct InteractionModeOverrides<'a> {
     /// the "you are inside this node" affordance.
     /// `None` (the Default-mode case) is the no-op fast path.
     pub node_edit_for: Option<&'a str>,
+    /// Section currently inside the inline text editor, if any.
+    /// `Some((node_id, section_idx))` causes the matching
+    /// `SectionFrameElement` to emit `focused = true` so the
+    /// renderer draws its perimeter at a thicker stroke (Plan
+    /// §4.4). `None` is the no-op — every emitted frame draws at
+    /// the standard stroke. Read by the section-frame builder via
+    /// [`SceneSelectionContext::focused_section`].
+    pub focused_section: Option<(&'a str, usize)>,
 }
 
 impl<'a> InteractionModeOverrides<'a> {
@@ -75,6 +83,7 @@ impl<'a> InteractionModeOverrides<'a> {
             node: None,
             section: None,
             node_edit_for: None,
+            focused_section: None,
         }
     }
 }
@@ -117,6 +126,18 @@ pub struct RenderScene {
     /// positive size. 8 handles when populated (corners + edge
     /// midpoints).
     pub node_resize_handles: Vec<NodeResizeHandleElement>,
+    /// Section frames rendered on top of the active NodeEdit
+    /// node's sections. Always empty unless the scene was built
+    /// with `node_edit_for = Some(active)` AND the named node has
+    /// `sections.len() >= 2` (single-section nodes skip frames —
+    /// they would just duplicate the border, and the single-
+    /// section short-circuit bypasses NodeEdit anyway). One element
+    /// per section of the active node when populated; the renderer
+    /// draws each as a thin glyph rectangle in the cyan
+    /// SELECTED_EDGE_COLOR family. The element flagged `focused`
+    /// (the section currently inside the text editor, if any) is
+    /// rendered with a thicker / brighter stroke per Plan §4.4.
+    pub section_frames: Vec<SectionFrameElement>,
     /// Labels attached to edges whose `label` field is non-empty.
     /// One element per labeled edge, positioned along the connection
     /// path at `label_config.position_t` (defaulting to 0.5), shifted
@@ -166,6 +187,48 @@ pub struct BorderElement {
     /// hot rebuild path. Sibling of
     /// [`crate::mindmap::tree_builder::BorderNodeData::palette_cycle`].
     pub palette_cycle: Vec<[f32; 4]>,
+}
+
+/// A thin glyph-drawn rectangle outlining one section of the
+/// active NodeEdit node — the visual cue telling the user "this
+/// is the per-section subdivision you can pick from." Single
+/// colour (cyan, [`SELECTED_EDGE_COLOR`]); the focused section
+/// (the one whose text editor is open, if any) renders at a
+/// thicker stroke per Plan §4.4.
+///
+/// One element per section of the active node when emitted. Empty
+/// for: Default mode, NodeEdit on a single-section node (frame
+/// would duplicate the border), NodeEdit on a missing /
+/// hidden-by-fold node.
+///
+/// Style is fixed (thin box-drawing glyphs in cyan) — no palette
+/// cycling, no per-section configuration — because the frames
+/// are mode-driven chrome, not author-configured visual style.
+#[derive(Debug, Clone)]
+pub struct SectionFrameElement {
+    /// Owning MindNode id — same id every per-node element keys
+    /// on. Multiple `SectionFrameElement`s share this id when the
+    /// active node has multiple sections.
+    pub node_id: String,
+    /// Index into [`MindNode.sections`](crate::mindmap::model::MindNode::sections).
+    /// Stable across rebuilds for unchanged nodes.
+    pub section_idx: usize,
+    /// Top-left of the section's effective AABB in canvas space —
+    /// `node.position + section.offset`. Same value that the
+    /// matching `TextElement.position` carries; the renderer reads
+    /// from here to draw the perimeter glyphs.
+    pub position: (f32, f32),
+    /// Size of the section's effective AABB —
+    /// `section.size.unwrap_or(node.size)`. Mirrors
+    /// `TextElement.size`.
+    pub size: (f32, f32),
+    /// Resolved hex color (canonically `SELECTED_EDGE_COLOR`).
+    pub color: String,
+    /// `true` when this section is the focus of an active text
+    /// editor. The renderer draws focused frames at a thicker
+    /// stroke so the user sees which section is being edited
+    /// among the active node's siblings. Plan §4.4.
+    pub focused: bool,
 }
 
 /// A connection (edge) between two nodes, with pre-computed glyph positions.
@@ -340,6 +403,7 @@ mod edge_handle;
 mod label;
 mod node_pass;
 mod node_resize_handle;
+mod section_frame;
 /// Portal-marker emission — one `PortalElement` per endpoint of
 /// each `display_mode = "portal"` edge, attached to its owning
 /// node's border at the point facing the opposite endpoint.
@@ -356,6 +420,7 @@ pub use builder::{
 pub use edge_handle::{build_edge_handles, edge_handle_channel_for};
 pub use node_resize_handle::{build_node_resize_handles, NodeResizeHandleElement};
 pub use portal::SelectedPortalLabel;
+pub use section_frame::build_section_frames;
 pub use section_resize_handle::{
     build_section_resize_handles, ResizeHandleSide, SectionResizeHandleElement,
     SECTION_RESIZE_HANDLE_FONT_SIZE_PT, SECTION_RESIZE_HANDLE_GLYPH,
