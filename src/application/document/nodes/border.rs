@@ -183,7 +183,24 @@ impl MindMapDocument {
     /// Toggle the node's frame visibility. Returns `true` if the
     /// flag actually changed. No-op + no undo on no change, like
     /// every other style setter.
+    ///
+    /// Implicit-cancel rule: `border on` / `border off` against a
+    /// node that's a target of an active per-node preview clears
+    /// the preview before flipping `show_frame`. Without this, a
+    /// preview's `force_show_frame` flag would keep rendering the
+    /// staged border on top of a `border off` commit, so the
+    /// user would see the border they just hid still on screen.
+    /// Same scope-gating as `set_node_border_config`: only
+    /// `Nodes(_)` / `CanvasDefault` previews cancel here; per-section
+    /// and canvas-section-frame previews live in orthogonal
+    /// surfaces and survive a node-visibility flip.
     pub fn set_node_border_visible(&mut self, node_id: &str, on: bool) -> bool {
+        if matches!(
+            self.border_preview.as_ref().map(|p| &p.target),
+            Some(BorderPreviewTarget::Nodes(_)) | Some(BorderPreviewTarget::CanvasDefault)
+        ) {
+            self.cancel_border_preview();
+        }
         super::set_node_style_field(self, node_id, |s| {
             if s.show_frame == on {
                 return false;

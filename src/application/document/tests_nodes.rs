@@ -2718,3 +2718,49 @@ fn test_border_preview_target_kind_node_resolves_against_live_selection() {
         "plain preset edit must not auto-promote"
     );
 }
+
+/// **Important review finding** — `set_node_border_visible`
+/// (the `border on` / `border off` setter) was missing the
+/// implicit-cancel rule the file's module doc claims is
+/// universal. With the fix, flipping a node's frame
+/// visibility while a `Nodes(_)` preview targets that node
+/// clears the preview first — same scope-gating as
+/// `set_node_border_config`.
+///
+/// Pre-fix: `border preview preset=heavy` then `border off`
+/// would leave the preview rendering through `force_show_frame`
+/// on top of the `show_frame=false` commit, so the user sees
+/// the border they just hid still on screen.
+#[test]
+fn test_border_on_off_clears_active_node_preview() {
+    use crate::application::document::{
+        BorderConfigEdits, BorderPreviewTarget, OptionEdit,
+    };
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    doc.selection = SelectionState::Single(nid.clone());
+
+    let mut edits = BorderConfigEdits::default();
+    edits.preset = OptionEdit::Set("heavy".into());
+    let _ = doc.set_border_preview(BorderPreviewTarget::Nodes(vec![nid.clone()]), edits);
+    assert!(doc.border_preview.is_some(), "preview was set");
+
+    // `border off` (visibility flip) must clear the preview.
+    doc.set_node_border_visible(&nid, false);
+    assert!(
+        doc.border_preview.is_none(),
+        "border off must clear an active per-node preview (implicit-cancel rule)"
+    );
+
+    // Same for `border on`: stage another preview, flip back to
+    // visible, the preview is gone.
+    let mut edits = BorderConfigEdits::default();
+    edits.preset = OptionEdit::Set("double".into());
+    let _ = doc.set_border_preview(BorderPreviewTarget::Nodes(vec![nid.clone()]), edits);
+    assert!(doc.border_preview.is_some());
+    doc.set_node_border_visible(&nid, true);
+    assert!(
+        doc.border_preview.is_none(),
+        "border on must clear an active per-node preview (implicit-cancel rule)"
+    );
+}

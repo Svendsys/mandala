@@ -648,6 +648,17 @@ pub enum Action {
     /// kv per binding (preview-set keybinds; multi-kv preview
     /// stays console-only). Mirrors the `<verb> preview
     /// <field>=<value>` console path without the model write.
+    ///
+    /// **`Section` target requires a section-shaped selection**
+    /// (`Section` / `SectionRange` / `MultiSection`). On
+    /// `Single(node_id)` the resolver in
+    /// `apply_set_border_preview` falls through (no `section=K`
+    /// payload exists on the Action variant) and the keybind
+    /// becomes a no-op. The console verb path requires `section=K`
+    /// to disambiguate; the keybind has no kv side-channel so
+    /// authors who want a section preview keybind should bind it
+    /// to a navigation key that lands a section-shaped selection
+    /// first, or use the console verb.
     #[action(context = Document, wasm = Compatible)]
     SetBorderPreview {
         target_kind: BorderPreviewTargetKind,
