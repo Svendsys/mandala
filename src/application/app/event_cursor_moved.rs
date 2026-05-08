@@ -21,7 +21,7 @@ use super::throttled_interaction::{
     EdgeHandleInteraction, EdgeLabelInteraction, MovingNodeInteraction, MovingSectionInteraction,
     NodeResizeInteraction, PortalLabelInteraction, SectionResizeInteraction, ThrottledDrag,
 };
-use super::{AppMode, DragState};
+use super::DragState;
 use crate::application::common::RenderDecree;
 use crate::application::document::{apply_tree_highlights, hit_test, SelectionState};
 
@@ -55,7 +55,7 @@ pub(super) fn handle_cursor_moved(
 
     // Reparent or Connect mode: hit-test under cursor to update the hover
     // target highlight. Skip the regular drag-state handling.
-    if matches!(*ctx.app_mode, AppMode::Reparent { .. } | AppMode::Connect { .. }) {
+    if ctx.interaction_mode.is_target_picker() {
         let new_hover = ctx.mindmap_tree.as_mut().and_then(|tree| {
             let canvas_pos = ctx
                 .renderer
@@ -67,7 +67,7 @@ pub(super) fn handle_cursor_moved(
             if let Some(doc) = ctx.document.as_ref() {
                 rebuild_all_with_mode(
                     doc,
-                    ctx.app_mode,
+                    ctx.interaction_mode,
                     ctx.hovered_node.as_deref(),
                     ctx.mindmap_tree,
                     ctx.app_scene,

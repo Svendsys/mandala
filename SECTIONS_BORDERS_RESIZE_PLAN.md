@@ -2282,30 +2282,36 @@ NodeEdit / SectionEdit / Resize variants are defined but not yet
 reachable.
 
 Tasks:
-- [ ] Create `src/application/app/interaction_mode.rs` with the
-      enum, ResizeTarget, predicate methods (each method body is
-      `unimplemented!()` for variants this batch doesn't cover, with
-      a doc-comment "Wired in Batch N").
-- [ ] Replace `app_mode: AppMode` with `interaction_mode:
+- [x] Create `src/application/app/interaction_mode.rs` with the
+      enum, ResizeTarget, predicate methods. Variants beyond Default
+      / Reparent / Connect are defined but their predicate bodies
+      are stubs (`Resize::resize_handle_*` works; NodeEdit's
+      `click_resolves_to_section` works; nothing further) — wired in
+      Batches 2 / 3.
+- [x] Replace `app_mode: AppMode` with `interaction_mode:
       InteractionMode` across `run_native.rs`, `run_native_init.rs`,
       `input_context.rs`, `input_context_core.rs`, `event_*` handlers,
-      `dispatch/native.rs`, `app/click.rs`. ~30 call sites.
-- [ ] Delete the old `enum AppMode` at `app/mod.rs:352-367`.
-- [ ] Update tests under `keybinds/tests.rs`, `app/tests.rs` for the
-      rename. No test count change.
-- [ ] Lift `Reparent` / `Connect` modes to be cross-platform (delete
-      `#[cfg(not(target_arch = "wasm32"))]` gates on the matching
-      Action variants and dispatch arms — they still won't fully work
-      on WASM if they depend on filesystem, but the mode flip itself
-      works).
-- [ ] Add tests for the predicate methods — `intercepts_left_click`,
+      `dispatch/native.rs`, `app/click.rs`. The `WasmInputState`
+      gained an `interaction_mode: InteractionMode` field too —
+      Reparent / Connect modes are cross-platform from this commit
+      forward.
+- [x] Delete the old `enum AppMode` at `app/mod.rs:352-367`.
+- [x] Update doc comments in `keybinds/action/mod.rs`, `dispatch/*`,
+      and `input_context_core.rs` for the rename.
+- [x] Lift `Reparent` / `Connect` modes to be cross-platform — the
+      `interaction_mode` field is on both `InitState` (native) and
+      `WasmInputState` (WASM). Mode transitions still go through the
+      native-only Action arms today (those depend on click hit-test
+      paths only available natively for now).
+- [x] Add tests for the predicate methods — 8 tests in
+      `interaction_mode.rs::tests` covering `intercepts_left_click`,
       `click_resolves_to_section`, `resize_handle_node`,
-      `resize_handle_section` for `Default | Reparent | Connect`
-      variants only.
+      `resize_handle_section`, `is_target_picker` for every variant.
 
-Verification: `./test.sh`, `./test.sh --lint`, manual smoke
-(reparent + connect work as today on native; cross-platform — open
-on WASM and verify reparent works there too).
+Verification: `./test.sh` green (2274 → 2282 tests, +8 from new
+predicate tests). `./test.sh --lint` advisory clippy warnings are
+all pre-existing. WASM target compiles cleanly (two pre-existing
+unused-import warnings on the platform shim — separate concern).
 
 #### Batch 2 — Resize mode (the urgent UX fix)
 

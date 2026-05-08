@@ -22,7 +22,8 @@ use super::label_edit::{LabelEditState, PortalTextEditState};
 use super::run_native_init;
 use super::text_edit::TextEditState;
 use super::{
-    drain_frame, event_cursor_moved, event_keyboard, event_mouse_click, AppMode, Application, DragState,
+    drain_frame, event_cursor_moved, event_keyboard, event_mouse_click, Application, DragState,
+    InteractionMode,
     LastClick, Options,
 };
 use crate::application::common::RenderDecree;
@@ -207,7 +208,7 @@ pub(super) struct InitState {
     pub(super) app_scene: crate::application::scene_host::AppScene,
     pub(super) cursor_pos: (f64, f64),
     pub(super) drag_state: DragState,
-    pub(super) app_mode: AppMode,
+    pub(super) interaction_mode: InteractionMode,
     pub(super) console_state: ConsoleState,
     pub(super) console_history: Vec<String>,
     pub(super) label_edit_state: LabelEditState,
@@ -255,7 +256,7 @@ impl InitState {
             renderer: &mut self.renderer,
             scene_cache: &mut self.scene_cache,
             drag_state: &mut self.drag_state,
-            app_mode: &mut self.app_mode,
+            interaction_mode: &mut self.interaction_mode,
             console_state: &mut self.console_state,
             console_history: &mut self.console_history,
             label_edit_state: &mut self.label_edit_state,

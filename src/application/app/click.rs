@@ -11,7 +11,7 @@ use baumhard::mindmap::custom_mutation::PlatformContext;
 
 use super::click_triggers::fire_onclick_triggers;
 use super::scene_rebuild::{rebuild_all, rebuild_scene_only};
-use super::{now_ms, AppMode, EDGE_HIT_TOLERANCE_PX};
+use super::{now_ms, InteractionMode, EDGE_HIT_TOLERANCE_PX};
 use crate::application::document::{
     apply_tree_highlights, hit_test_edge, MindMapDocument, SectionSel, SelectionState,
     REPARENT_SOURCE_COLOR, REPARENT_TARGET_COLOR,
@@ -202,7 +202,7 @@ pub(super) fn handle_click(
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn rebuild_all_with_mode(
     doc: &MindMapDocument,
-    app_mode: &AppMode,
+    interaction_mode: &InteractionMode,
     hovered_node: Option<&str>,
     mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
     app_scene: &mut crate::application::scene_host::AppScene,
@@ -229,8 +229,8 @@ pub(super) fn rebuild_all_with_mode(
     // threshold-cross promotion's `rebuild_selection_highlight`)
     // share one mapping.
     let mut highlights = super::scene_rebuild::selection_highlight_entries(&doc.selection);
-    match app_mode {
-        AppMode::Reparent { sources } => {
+    match interaction_mode {
+        InteractionMode::Reparent { sources } => {
             for s in sources {
                 highlights.push((s.as_str(), None, REPARENT_SOURCE_COLOR));
             }
@@ -240,7 +240,7 @@ pub(super) fn rebuild_all_with_mode(
                 }
             }
         }
-        AppMode::Connect { source } => {
+        InteractionMode::Connect { source } => {
             highlights.push((source.as_str(), None, REPARENT_SOURCE_COLOR));
             if let Some(h) = hovered_node {
                 if h != source {
@@ -248,7 +248,11 @@ pub(super) fn rebuild_all_with_mode(
                 }
             }
         }
-        AppMode::Normal => {}
+        // Default / NodeEdit / Resize do not contribute mode-specific
+        // highlights (NodeEdit dimming + Resize tinting land in
+        // Batches 2-3 of SECTIONS_BORDERS_RESIZE_PLAN.md and use
+        // separate scene-builder seams).
+        InteractionMode::Default | InteractionMode::NodeEdit { .. } | InteractionMode::Resize { .. } => {}
     }
     apply_tree_highlights(&mut new_tree, highlights);
     renderer.rebuild_buffers_from_tree(&new_tree.tree);

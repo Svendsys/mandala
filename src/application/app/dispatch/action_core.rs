@@ -58,7 +58,7 @@ where
 /// Lift `Unhandled → Handled` for the two mixed-branch arms whose
 /// cross-platform slice IS the totality of what WASM can do
 /// (`CancelMode`, `EditSelection*`). On native, `Unhandled` flows
-/// to the dispatcher's existing match for the AppMode-clear or
+/// to the dispatcher's existing match for the InteractionMode-clear or
 /// EdgeLabel/Portal editor open. WASM has no such fall-through —
 /// `WasmMacroDispatchTarget::dispatch_action` calls
 /// [`dispatch_compatible`] directly, so the macro loop's
@@ -95,15 +95,15 @@ pub(in crate::application::app) fn dispatch_compatible(
 ) -> DispatchOutcome {
     // Mixed-branch arms — handle the cross-platform slice here.
     // Caller's fall-through (native only) handles the residual
-    // NativeOnly branches (EdgeLabel / Portal editors, AppMode
-    // clearing). Returning `Unhandled` from a mixed arm means
-    // "the cross-platform slice ran (or wasn't applicable);
+    // NativeOnly branches (EdgeLabel / Portal editors,
+    // InteractionMode clearing). Returning `Unhandled` from a mixed
+    // arm means "the cross-platform slice ran (or wasn't applicable);
     // native may have more to do".
     match action {
         Action::CancelMode => {
             // Cross-platform slice: clear `last_click` so a
-            // post-Esc click isn't paired with a pre-Esc one.
-            // The AppMode side (clear `app_mode`, `hovered_node`,
+            // post-Esc click isn't paired with a pre-Esc one. The
+            // mode side (clear `interaction_mode`, `hovered_node`,
             // rebuild_all_with_mode) is native-only — caller's
             // fall-through runs it.
             *core.last_click = None;

@@ -9,7 +9,7 @@
 //! (`super::super::run_wasm` — cfg-gated, hence the plain
 //! code-span). The split between native and WASM exists because
 //! the two dispatchers carry different context types — native has
-//! 21 fields including console / picker / app_mode / modifiers;
+//! 21 fields including console / picker / interaction_mode / modifiers;
 //! WASM has 9 fields, a strict subset. Arms whose bodies touch
 //! only the shared subset live here; native-only arms stay in
 //! [`super::native`].

@@ -119,6 +119,14 @@ pub(super) struct WasmInputState {
     pub cursor_pos: (f64, f64),
     pub pending_click: PendingClick,
     pub modifiers: crate::application::platform::input::Modifiers,
+    /// High-level interaction mode (Default / Reparent / Connect /
+    /// NodeEdit / Resize). Cross-platform field per Batch 1 of
+    /// `SECTIONS_BORDERS_RESIZE_PLAN.md` — the enum is target-agnostic
+    /// even though some mode transitions still depend on native-only
+    /// dispatch arms (Reparent / Connect). WASM construction
+    /// initialises to `Default`; later batches add mode-aware click
+    /// routing here.
+    pub interaction_mode: super::InteractionMode,
     /// Mirror of native's `app_scene` so the canvas-scene tree
     /// path (borders, eventually connections / portals) works
     /// identically on WASM. Threaded into every
@@ -737,6 +745,7 @@ pub(super) fn run(mut app: Application) {
                 cursor_pos: (0.0, 0.0),
                 pending_click: PendingClick::None,
                 modifiers: crate::application::platform::input::Modifiers::empty(),
+                interaction_mode: super::InteractionMode::Default,
                 // Move the warm AppScene + scene_cache built during
                 // init into the live event-loop state so the
                 // pre-warm work isn't dropped at the end of init.

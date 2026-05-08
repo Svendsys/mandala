@@ -129,19 +129,20 @@ pub enum Action {
     EnterConnectMode,
     /// Confirm a reparent operation by clicking on a target node
     /// (or empty canvas to promote sources to root). Sources come
-    /// from `AppMode::Reparent { sources }`; the payload carries
-    /// the target node id (`None` for empty-canvas → root).
-    /// NativeOnly: depends on `AppMode`, which doesn't exist on
-    /// WASM. Classified `is_destructive = true` so the privilege
-    /// gate (`MacroSource::allows_action`) denylists non-User
-    /// macro tiers; the arm body's `mem::replace(.., Normal)` is
+    /// from `InteractionMode::Reparent { sources }`; the payload
+    /// carries the target node id (`None` for empty-canvas → root).
+    /// NativeOnly today because the click-handler path that surfaces
+    /// the hit target lives natively only; the mode enum itself is
+    /// cross-platform. Classified `is_destructive = true` so the
+    /// privilege gate (`MacroSource::allows_action`) denylists non-User
+    /// macro tiers; the arm body's `mem::replace(.., Default)` is
     /// an additional runtime guard (stale fire outside Reparent
     /// mode is a no-op).
     #[action(context = Document, wasm = NativeOnly, destructive)]
     ReparentToTarget(Option<String>),
     /// Confirm a connect operation by clicking on a target node
     /// (or empty canvas to exit Connect mode without creating an
-    /// edge). Source comes from `AppMode::Connect { source }`; the
+    /// edge). Source comes from `InteractionMode::Connect { source }`; the
     /// payload carries the target node id (`None` for empty-canvas
     /// → mode-exit only, mirroring `ReparentToTarget`'s shape).
     /// NativeOnly + `is_destructive = true` per the same reasoning
@@ -647,8 +648,10 @@ pub enum WasmCompatibility {
     /// `dispatch_action_for_wasm` once that path is built.
     Compatible,
     /// Action requires a native-only system not yet ported to
-    /// WASM (`AppMode`, console, color picker, inline label /
-    /// portal-text editors, `DragState`, filesystem `save`).
+    /// WASM (console, color picker, inline label / portal-text
+    /// editors, `DragState`, filesystem `save`). The `InteractionMode`
+    /// enum itself is cross-platform; only the click-handler paths
+    /// that read it on native still gate Reparent / Connect arms here.
     /// Currently a no-op on WASM; the convergence path is to
     /// either port the underlying system or surface a WASM-
     /// specific equivalent and flip the classification to

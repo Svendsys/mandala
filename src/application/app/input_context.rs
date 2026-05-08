@@ -23,7 +23,7 @@ use crate::application::scene_host::AppScene;
 use super::label_edit::{LabelEditState, PortalTextEditState};
 use super::text_edit::TextEditState;
 use super::throttled_interaction::ColorPickerHoverInteraction;
-use super::{AppMode, DragState, LastClick};
+use super::{DragState, InteractionMode, LastClick};
 
 /// Borrowed view of the persistent state every interactive-path
 /// dispatcher reads and writes. Built once per event by
@@ -50,7 +50,7 @@ pub(in crate::application::app) struct InputHandlerContext<'a> {
     /// Current pointer / drag state machine.
     pub drag_state: &'a mut DragState,
     /// Reparent / Connect modal mode for the next click.
-    pub app_mode: &'a mut AppMode,
+    pub interaction_mode: &'a mut InteractionMode,
     /// Console (slash-command overlay) state.
     pub console_state: &'a mut ConsoleState,
     /// Console command-history ring.
@@ -129,7 +129,7 @@ impl<'a> InputHandlerContext<'a> {
             },
             super::input_context_core::NativeContextExt {
                 drag_state: &mut *self.drag_state,
-                app_mode: &mut *self.app_mode,
+                interaction_mode: &mut *self.interaction_mode,
                 console_state: &mut *self.console_state,
                 console_history: &mut *self.console_history,
                 label_edit_state: &mut *self.label_edit_state,

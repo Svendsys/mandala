@@ -12,7 +12,7 @@
 //!   `dispatch_action` takes post-Track-C; both targets' keyboard
 //!   handlers can construct one and call the same dispatcher.
 //! - [`NativeContextExt`] holds the 10 native-only fields (drag_state,
-//!   app_mode, console_state, console_history, label_edit_state,
+//!   interaction_mode, console_state, console_history, label_edit_state,
 //!   portal_text_edit_state, color_picker_state, hovered_node,
 //!   cursor_is_hand, picker_hover) — modal / console / picker state
 //!   that doesn't exist in the browser. Cfg-gated to native.
@@ -112,8 +112,9 @@ pub(in crate::application::app) struct InputContextCore<'a> {
 pub(in crate::application::app) struct NativeContextExt<'a> {
     /// Current pointer / drag state machine.
     pub drag_state: &'a mut super::DragState,
-    /// Reparent / Connect modal mode for the next click.
-    pub app_mode: &'a mut super::AppMode,
+    /// High-level interaction mode (Reparent / Connect / NodeEdit /
+    /// Resize, etc.). See `super::interaction_mode::InteractionMode`.
+    pub interaction_mode: &'a mut super::InteractionMode,
     /// Console (slash-command overlay) state.
     pub console_state: &'a mut crate::application::console::ConsoleState,
     /// Console command-history ring.

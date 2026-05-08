@@ -71,6 +71,7 @@ mod event_keyboard;
 mod event_mouse_click;
 #[cfg(not(target_arch = "wasm32"))]
 mod freeze_watchdog;
+mod interaction_mode;
 #[cfg(not(target_arch = "wasm32"))]
 mod input_context;
 // Cross-platform context-bundles for the unified `dispatch_action`
@@ -344,27 +345,15 @@ fn click_hit_from_priority(
 }
 
 
-/// Tracks the high-level interaction mode. Normal handles the usual
-/// select/drag/pan flow; Reparent mode is entered via Ctrl+P and captures
-/// the next left-click as a "choose reparent target" gesture. Connect mode
-/// is entered via Ctrl+D and captures the next left-click as a "choose
-/// connection target" gesture to create a cross_link edge.
-#[cfg(not(target_arch = "wasm32"))]
-enum AppMode {
-    Normal,
-    /// Reparent mode: the user is choosing a new parent for `sources`.
-    /// The next left-click on a node attaches all sources as its last children;
-    /// a left-click on empty canvas promotes them to root. Esc cancels.
-    Reparent {
-        sources: Vec<String>,
-    },
-    /// Connect mode: the user is drawing a new cross_link edge from `source`.
-    /// The next left-click on a target node creates the edge; a left-click
-    /// on empty canvas cancels. Esc also cancels.
-    Connect {
-        source: String,
-    },
-}
+// `InteractionMode` is the cross-platform high-level mode enum
+// (re-exported here so submodules can write `super::InteractionMode`).
+// Lives in `interaction_mode.rs`; full doc comment + variant prose
+// lives there. Replaces the pre-Batch-1 native-only `AppMode` enum.
+// `ResizeTarget` lives in the same module and will be re-exported
+// in Batch 2 of `SECTIONS_BORDERS_RESIZE_PLAN.md` when the Resize
+// mode arms surface as consumers — until then, callers reach
+// through `super::interaction_mode::ResizeTarget`.
+pub(super) use interaction_mode::InteractionMode;
 
 /// Tracks the current drag interaction state.
 ///

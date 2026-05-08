@@ -24,7 +24,7 @@ use super::super::input_context::InputHandlerContext;
 use super::super::label_edit::{open_label_edit, open_portal_text_edit};
 use super::super::scene_rebuild::rebuild_all;
 use super::super::text_edit::open_text_edit;
-use super::super::{AppMode, ClickHit, DragState};
+use super::super::{ClickHit, DragState, InteractionMode};
 use super::apply_keybind_custom_mutation;
 use crate::application::console::ConsoleState;
 
@@ -85,9 +85,9 @@ fn quote_console_arg(s: &str) -> String {
 /// when the cross-platform dispatcher returns `Unhandled`, which
 /// means one of:
 ///   - a NativeOnly Action whose body needs `NativeContextExt` fields
-///     (console / picker / app_mode / drag — see
+///     (console / picker / interaction_mode / drag — see
 ///     `Action::wasm_compatibility`'s NativeOnly classification),
-///   - a mixed-branch arm's native residual (`CancelMode`'s AppMode
+///   - a mixed-branch arm's native residual (`CancelMode`'s mode
 ///     reset + rebuild; `EditSelection*` on EdgeLabel / Portal
 ///     selections),
 ///   - the mouse-mixed branch of `DoubleClickActivate` and the
@@ -178,14 +178,14 @@ pub(in crate::application::app) fn dispatch_action(
             // `last_click` was already cleared by the cross-platform
             // dispatcher (`dispatch_compatible`'s mixed-branch slice
             // for CancelMode). This arm runs only the native-only
-            // residual: AppMode reset + hovered_node clear + rebuild.
-            if matches!(*ctx.app_mode, AppMode::Reparent { .. } | AppMode::Connect { .. }) {
-                *ctx.app_mode = AppMode::Normal;
+            // residual: InteractionMode reset + hovered_node clear + rebuild.
+            if ctx.interaction_mode.is_target_picker() {
+                *ctx.interaction_mode = InteractionMode::Default;
                 *ctx.hovered_node = None;
                 if let Some(doc) = ctx.document.as_ref() {
                     rebuild_all_with_mode(
                         doc,
-                        ctx.app_mode,
+                        ctx.interaction_mode,
                         ctx.hovered_node.as_deref(),
                         ctx.mindmap_tree,
                         ctx.app_scene,
@@ -205,12 +205,12 @@ pub(in crate::application::app) fn dispatch_action(
                     .map(|s| s.to_string())
                     .collect();
                 if !sel.is_empty() {
-                    *ctx.app_mode = AppMode::Reparent { sources: sel };
+                    *ctx.interaction_mode = InteractionMode::Reparent { sources: sel };
                     *ctx.hovered_node = None;
                     *ctx.last_click = None;
                     rebuild_all_with_mode(
                         doc,
-                        ctx.app_mode,
+                        ctx.interaction_mode,
                         ctx.hovered_node.as_deref(),
                         ctx.mindmap_tree,
                         ctx.app_scene,
@@ -224,14 +224,14 @@ pub(in crate::application::app) fn dispatch_action(
         Action::EnterConnectMode => {
             if let Some(doc) = ctx.document.as_ref() {
                 if let SelectionState::Single(source) = &doc.selection {
-                    *ctx.app_mode = AppMode::Connect {
+                    *ctx.interaction_mode = InteractionMode::Connect {
                         source: source.clone(),
                     };
                     *ctx.hovered_node = None;
                     *ctx.last_click = None;
                     rebuild_all_with_mode(
                         doc,
-                        ctx.app_mode,
+                        ctx.interaction_mode,
                         ctx.hovered_node.as_deref(),
                         ctx.mindmap_tree,
                         ctx.app_scene,
@@ -243,14 +243,14 @@ pub(in crate::application::app) fn dispatch_action(
             DispatchOutcome::Handled
         }
         Action::ReparentToTarget(ref target) => {
-            // Mode-exit + mutation: extract sources from `app_mode`
-            // atomically with the reset to `Normal`. A stale fire
-            // outside Reparent mode silently no-ops; the
-            // `mem::replace` guards against re-entry leaving
-            // `app_mode` half-reset on early return.
-            let sources = match std::mem::replace(ctx.app_mode, AppMode::Normal) {
-                AppMode::Reparent { sources } => sources,
-                AppMode::Normal | AppMode::Connect { .. } => {
+            // Mode-exit + mutation: extract sources from
+            // `interaction_mode` atomically with the reset to
+            // `Default`. A stale fire outside Reparent mode silently
+            // no-ops; the `mem::replace` guards against re-entry
+            // leaving the mode half-reset on early return.
+            let sources = match std::mem::replace(ctx.interaction_mode, InteractionMode::Default) {
+                InteractionMode::Reparent { sources } => sources,
+                _ => {
                     return DispatchOutcome::Handled;
                 }
             };
@@ -281,14 +281,14 @@ pub(in crate::application::app) fn dispatch_action(
         }
         Action::ConnectToTarget(ref target) => {
             // Mirror `ReparentToTarget`'s mode-exit pattern. Source
-            // comes from `AppMode::Connect { source }`; stale-fire
-            // outside Connect mode silently no-ops. `target = None`
-            // is empty-canvas mode-exit (no edge to create); the
-            // arm still runs the rebuild so orange/green highlights
-            // clear.
-            let source = match std::mem::replace(ctx.app_mode, AppMode::Normal) {
-                AppMode::Connect { source } => source,
-                AppMode::Normal | AppMode::Reparent { .. } => {
+            // comes from `InteractionMode::Connect { source }`;
+            // stale-fire outside Connect mode silently no-ops.
+            // `target = None` is empty-canvas mode-exit (no edge to
+            // create); the arm still runs the rebuild so orange /
+            // green highlights clear.
+            let source = match std::mem::replace(ctx.interaction_mode, InteractionMode::Default) {
+                InteractionMode::Connect { source } => source,
+                _ => {
                     return DispatchOutcome::Handled;
                 }
             };

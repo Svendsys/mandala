@@ -18,7 +18,7 @@ use super::input_context::InputHandlerContext;
 use super::portal_label_drag::apply_portal_label_drag;
 use super::scene_rebuild::{rebuild_after_selection_change, rebuild_all, rebuild_scene_only};
 use super::throttled_interaction::ThrottledDrag;
-use super::{is_double_click, now_ms, AppMode, DragState, LastClick, HANDLE_HIT_TOLERANCE_PX};
+use super::{is_double_click, now_ms, DragState, InteractionMode, LastClick, HANDLE_HIT_TOLERANCE_PX};
 use crate::application::console::ConsoleState;
 use crate::application::document::{apply_drag_delta, rect_select, SelectionState, UndoAction};
 use crate::application::keybinds::Action;
@@ -121,8 +121,8 @@ pub(super) fn handle_mouse_input(
             // In reparent or connect mode, left-click (release) is consumed as
             // a "choose target" gesture and never transitions to Pending/drag.
             // Hit-test inline so the dispatch arm receives a resolved target id;
-            // the arms read the source(s) from `ctx.app_mode` directly.
-            if matches!(ctx.app_mode, AppMode::Reparent { .. }) {
+            // the arms read the source(s) from `ctx.interaction_mode` directly.
+            if matches!(ctx.interaction_mode, InteractionMode::Reparent { .. }) {
                 if state == ElementState::Released {
                     let target: Option<String> = ctx.mindmap_tree.as_mut().and_then(|tree| {
                         let canvas_pos = ctx
@@ -139,7 +139,7 @@ pub(super) fn handle_mouse_input(
                     *ctx.last_click = None;
                 }
                 // Pressed: swallow — do not transition drag state
-            } else if matches!(ctx.app_mode, AppMode::Connect { .. }) {
+            } else if matches!(ctx.interaction_mode, InteractionMode::Connect { .. }) {
                 if state == ElementState::Released {
                     let target: Option<String> = ctx.mindmap_tree.as_mut().and_then(|tree| {
                         let canvas_pos = ctx

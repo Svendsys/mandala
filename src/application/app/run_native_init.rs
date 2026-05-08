@@ -22,7 +22,7 @@ use super::scene_rebuild::{
     update_section_resize_handle_tree, warm_handle_tree_arenas,
 };
 use super::text_edit::TextEditState;
-use super::{AppMode, DragState, Options};
+use super::{DragState, InteractionMode, Options};
 use crate::application::common::RenderDecree;
 use crate::application::console::ConsoleState;
 use crate::application::document::MindMapDocument;
@@ -228,7 +228,7 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
         app_scene,
         cursor_pos: (0.0, 0.0),
         drag_state: DragState::None,
-        app_mode: AppMode::Normal,
+        interaction_mode: InteractionMode::Default,
         console_state: ConsoleState::Closed,
         console_history,
         label_edit_state: LabelEditState::Closed,
