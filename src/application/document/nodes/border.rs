@@ -303,6 +303,155 @@ impl MindMapDocument {
         outcome.changed = true;
         outcome
     }
+
+    /// Apply a bundle of border edits to
+    /// [`baumhard::mindmap::model::Canvas::default_border`] —
+    /// the map-wide fallback every framed node falls back to when
+    /// it has no per-node `style.border` override. Drives the
+    /// `canvas border …` console verb.
+    ///
+    /// `edits.clear == true` drops the canvas default (every
+    /// unframed node falls back to the hardcoded floor). `visible`
+    /// is ignored: canvas-level defaults don't carry a visibility
+    /// flag — the per-node `show_frame` toggle is the
+    /// authoritative on/off.
+    ///
+    /// Captures the entire `Canvas` in a `CanvasSnapshot` undo
+    /// entry so undo restores every theme / palette / default
+    /// field in one step. Same posture as the
+    /// `theme switch` verb.
+    pub fn set_canvas_default_border_config(&mut self, edits: BorderConfigEdits) -> BorderEditOutcome {
+        let preset_before = self
+            .mindmap
+            .canvas
+            .default_border
+            .as_ref()
+            .map(|c| c.preset.clone());
+        let canvas_snapshot = self.mindmap.canvas.clone();
+        let mut outcome = BorderEditOutcome::default();
+
+        let any_change = if edits.clear {
+            if self.mindmap.canvas.default_border.is_none() {
+                false
+            } else {
+                self.mindmap.canvas.default_border = None;
+                true
+            }
+        } else {
+            apply_glyph_border_edits_to_slot(
+                &mut self.mindmap.canvas.default_border,
+                &edits,
+                &mut outcome,
+            )
+        };
+
+        if !any_change {
+            return outcome;
+        }
+
+        if let Some(cfg) = self.mindmap.canvas.default_border.as_ref() {
+            if cfg.preset.eq_ignore_ascii_case("custom") {
+                let was_already_custom = preset_before
+                    .as_deref()
+                    .map(|p| p.eq_ignore_ascii_case("custom"))
+                    .unwrap_or(false);
+                if !was_already_custom && outcome.requested_preset.is_some() {
+                    outcome.preset_auto_promoted = true;
+                }
+            }
+        }
+
+        self.undo_stack
+            .push(UndoAction::CanvasSnapshot { canvas: canvas_snapshot });
+        self.dirty = true;
+        outcome.changed = true;
+        outcome
+    }
+
+    /// Apply a bundle of border edits to either
+    /// [`baumhard::mindmap::model::Canvas::default_section_frame_border`]
+    /// (when `focused == false`) or
+    /// [`baumhard::mindmap::model::Canvas::default_focused_section_frame_border`]
+    /// (when `focused == true`). Drives the
+    /// `canvas section-frame …` and `canvas section-frame focused …`
+    /// console subverbs.
+    ///
+    /// Same `edits.clear` / `visible`-ignored / `CanvasSnapshot`
+    /// undo / auto-promotion-detection contract as
+    /// [`Self::set_canvas_default_border_config`].
+    pub fn set_canvas_default_section_frame_border_config(
+        &mut self,
+        focused: bool,
+        edits: BorderConfigEdits,
+    ) -> BorderEditOutcome {
+        let canvas_snapshot = self.mindmap.canvas.clone();
+        let mut outcome = BorderEditOutcome::default();
+
+        let preset_before = if focused {
+            self.mindmap
+                .canvas
+                .default_focused_section_frame_border
+                .as_ref()
+                .map(|c| c.preset.clone())
+        } else {
+            self.mindmap
+                .canvas
+                .default_section_frame_border
+                .as_ref()
+                .map(|c| c.preset.clone())
+        };
+
+        let any_change = if edits.clear {
+            let slot = if focused {
+                &mut self.mindmap.canvas.default_focused_section_frame_border
+            } else {
+                &mut self.mindmap.canvas.default_section_frame_border
+            };
+            if slot.is_none() {
+                false
+            } else {
+                *slot = None;
+                true
+            }
+        } else {
+            let slot = if focused {
+                &mut self.mindmap.canvas.default_focused_section_frame_border
+            } else {
+                &mut self.mindmap.canvas.default_section_frame_border
+            };
+            apply_glyph_border_edits_to_slot(slot, &edits, &mut outcome)
+        };
+
+        if !any_change {
+            return outcome;
+        }
+
+        let landed = if focused {
+            self.mindmap
+                .canvas
+                .default_focused_section_frame_border
+                .as_ref()
+        } else {
+            self.mindmap.canvas.default_section_frame_border.as_ref()
+        };
+        if let Some(cfg) = landed {
+            if cfg.preset.eq_ignore_ascii_case("custom") {
+                let was_already_custom = preset_before
+                    .as_deref()
+                    .map(|p| p.eq_ignore_ascii_case("custom"))
+                    .unwrap_or(false);
+                if !was_already_custom && outcome.requested_preset.is_some() {
+                    outcome.preset_auto_promoted = true;
+                }
+            }
+        }
+
+        self.undo_stack
+            .push(UndoAction::CanvasSnapshot { canvas: canvas_snapshot });
+        self.dirty = true;
+        outcome.changed = true;
+        outcome
+    }
 }
 
 /// Apply non-clear edits to a node's style/border. Returns

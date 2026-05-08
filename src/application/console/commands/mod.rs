@@ -15,6 +15,7 @@ use crate::application::console::parser::Args;
 pub mod anchor;
 pub mod body;
 pub mod border;
+pub mod canvas;
 pub mod cap;
 pub mod color;
 pub mod edge;
@@ -71,6 +72,7 @@ pub const COMMANDS: &[Command] = &[
     anchor::COMMAND,
     body::COMMAND,
     border::COMMAND,
+    canvas::COMMAND,
     cap::COMMAND,
     color::COMMAND,
     edge::COMMAND,
