@@ -29,6 +29,7 @@ mod cache;
 mod clipping;
 mod edge_handles;
 mod labels;
+mod node_edit;
 mod point_inside;
 mod portals;
 mod sections;

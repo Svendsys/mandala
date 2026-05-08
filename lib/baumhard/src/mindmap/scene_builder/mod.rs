@@ -30,19 +30,26 @@ pub struct EdgeColorPreview<'a> {
 }
 
 /// View-side overrides telling the scene builder which node /
-/// section should receive auto-emitted resize handles this frame.
-/// Computed by the application layer (translating from its
-/// interaction-mode state) and threaded into
+/// section should receive mode-driven chrome this frame: resize
+/// handles on the active resize target, and inactive-node dimming
+/// when NodeEdit is open. Computed by the application layer
+/// (translating from its interaction-mode state) and threaded into
 /// [`build_scene_with_cache`] / [`build_scene_with_offsets_selection_and_overrides`].
 ///
-/// `Default` is no handles. Pre-Batch-2 of the sections / borders /
-/// resize UX overhaul, the scene builder read selection directly
-/// (`Single` → handles, `Section` → handles), which produced the
-/// "accidental resize on selection" UX bug. Decoupling the gate
-/// from selection — and putting it next to its consumer
-/// `SceneSelectionContext` — keeps the model/view boundary clean:
-/// the document doesn't know about modes, the app translates mode
-/// to override, the scene builder consumes the override.
+/// `Default` is no handles + no dimming. Pre-Batch-2 of the
+/// sections / borders / resize UX overhaul, the scene builder read
+/// selection directly (`Single` → handles, `Section` → handles),
+/// which produced the "accidental resize on selection" UX bug.
+/// Decoupling the gate from selection — and putting it next to its
+/// consumer `SceneSelectionContext` — keeps the model/view boundary
+/// clean: the document doesn't know about modes, the app translates
+/// mode to override, the scene builder consumes the override.
+///
+/// The struct's name still leads with "Resize" because the resize
+/// handles were the original consumer; the NodeEdit-dimming field
+/// rides along to avoid threading a second mode-derived parameter
+/// through every `build_scene_*` signature. Rename to
+/// `InteractionModeOverrides` is on deck for a follow-up batch.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ResizeHandleOverrides<'a> {
     /// Which node should auto-emit 8 resize handles this frame, or
@@ -53,6 +60,12 @@ pub struct ResizeHandleOverrides<'a> {
     /// with `size == None` (fill-parent) emit zero handles inside
     /// the builder regardless — there's no own AABB to stretch.
     pub section: Option<(&'a str, usize)>,
+    /// Active NodeEdit target. When `Some(active)`, every node other
+    /// than `active` renders chrome + text at
+    /// [`super::node_pass::INACTIVE_NODE_ALPHA_MULTIPLIER`] alpha —
+    /// the "you are inside this node" affordance.
+    /// `None` (the Default-mode case) is the no-op fast path.
+    pub node_edit_for: Option<&'a str>,
 }
 
 impl<'a> ResizeHandleOverrides<'a> {
@@ -63,6 +76,7 @@ impl<'a> ResizeHandleOverrides<'a> {
         Self {
             node: None,
             section: None,
+            node_edit_for: None,
         }
     }
 }

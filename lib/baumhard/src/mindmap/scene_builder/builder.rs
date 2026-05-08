@@ -79,6 +79,17 @@ pub struct SceneSelectionContext<'a> {
     /// empty otherwise. The scene includes 8 handles for the
     /// node when its size is finite + positive.
     pub selected_node_for_resize: Option<&'a str>,
+    /// Active NodeEdit target. When `Some(active)`, every node
+    /// other than `active` renders chrome + text at
+    /// [`super::node_pass::INACTIVE_NODE_ALPHA_MULTIPLIER`] alpha
+    /// — the "you are inside this node" affordance for
+    /// `InteractionMode::NodeEdit`. `None` (the Default-mode
+    /// case) is the no-op fast path: every node draws at full
+    /// opacity. Set from the application layer at the same call
+    /// site that fills `selected_node_for_resize` /
+    /// `selected_section`; routes to [`super::node_pass`] inside
+    /// [`build_scene_with_cache`].
+    pub node_edit_for: Option<&'a str>,
 }
 
 /// Substitution pair for the portal-text inline edit preview.
@@ -197,6 +208,7 @@ pub fn build_scene_with_cache(
         label_edit: label_edit_override,
         selected_section,
         selected_node_for_resize,
+        node_edit_for,
     } = selection;
     // The per-edge sample spacing depends on the effective font size,
     // which depends on `camera_zoom`. Flush cached samples if the
@@ -206,7 +218,10 @@ pub fn build_scene_with_cache(
 
     // Per-node pass: emits `TextElement`s + `BorderElement`s and
     // computes the clip AABBs the connection pass below consumes.
-    let (text_elements, border_elements, node_aabbs) = build_node_elements(map, offsets);
+    // `node_edit_for` dims chrome on every other node — see
+    // `node_pass::INACTIVE_NODE_ALPHA_MULTIPLIER`.
+    let (text_elements, border_elements, node_aabbs) =
+        build_node_elements(map, offsets, node_edit_for);
 
     // Connection pass — fast/slow cache path, clip filter against
     // `node_aabbs`, edge-handle emission for the selected edge.

@@ -156,17 +156,32 @@ impl InteractionMode {
         matches!(self, InteractionMode::Reparent { .. } | InteractionMode::Connect { .. })
     }
 
+    /// The active NodeEdit target, or `None` for any non-NodeEdit
+    /// mode. Drives the scene builder's inactive-node dimming pass:
+    /// every node other than this one renders chrome + text at
+    /// half alpha while NodeEdit is open. Read by the scene-builder
+    /// gate in `document/mod.rs::assemble_scene_overrides` (via
+    /// `resize_handle_overrides()`, which packs both the resize
+    /// handle target and the dimming target into one bundle).
+    pub fn node_edit_for_dimming(&self) -> Option<&str> {
+        match self {
+            InteractionMode::NodeEdit { node_id } => Some(node_id.as_str()),
+            _ => None,
+        }
+    }
+
     /// Resolve this mode into the `ResizeHandleOverrides` value the
-    /// scene-builder consumes. Single source of truth for "should this
-    /// frame emit handles and on what target?" — every scene-rebuild
-    /// call site reads through this method rather than reaching for
-    /// the two `resize_handle_*` predicates separately.
+    /// scene-builder consumes. Single source of truth for "what
+    /// mode-driven chrome should this frame emit?" — every
+    /// scene-rebuild call site reads through this method rather
+    /// than reaching for the per-field predicates separately.
     pub fn resize_handle_overrides(
         &self,
     ) -> baumhard::mindmap::scene_builder::ResizeHandleOverrides<'_> {
         baumhard::mindmap::scene_builder::ResizeHandleOverrides {
             node: self.resize_handle_node(),
             section: self.resize_handle_section(),
+            node_edit_for: self.node_edit_for_dimming(),
         }
     }
 }

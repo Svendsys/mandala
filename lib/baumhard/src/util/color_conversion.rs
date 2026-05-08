@@ -11,7 +11,7 @@
 
 use std::collections::HashMap;
 
-use super::color::FloatRgba;
+use super::color::{FloatRgba, ALPHA_IDX};
 
 /// Convert `[f32; 4]` RGBA (each component in `[0, 1]`) to `[u8; 4]`
 /// by scaling to 255 and rounding. Clamped by the `as u8` cast (values
@@ -197,6 +197,27 @@ pub fn rgba_to_hex(rgba: FloatRgba) -> String {
     } else {
         format!("#{:02x}{:02x}{:02x}{:02x}", u[0], u[1], u[2], u[3])
     }
+}
+
+/// Multiply a hex color string's alpha channel by `factor`,
+/// returning the rebuilt `#RRGGBB` / `#RRGGBBAA` hex string. RGB
+/// channels stay untouched; the alpha channel is clamped to
+/// `[0.0, 1.0]` after multiplication. Tolerates a leading `#` and
+/// the same 3 / 4 / 6 / 8 hex-char shapes [`hex_to_rgba`] accepts;
+/// returns the input string verbatim on parse failure so a typo in
+/// a theme variable stays visible at full opacity rather than
+/// disappearing into transparent black.
+///
+/// Used by the inactive-node dimming pass to render every node's
+/// chrome at half alpha while one node is active in NodeEdit mode —
+/// the per-element color resolution downstream of this is unchanged
+/// (it sees the dimmed hex string just like any other color).
+pub fn hex_with_alpha_scaled(hex: &str, factor: f32) -> String {
+    let Some(mut rgba) = hex_to_rgba(hex) else {
+        return hex.to_string();
+    };
+    rgba[ALPHA_IDX] = (rgba[ALPHA_IDX] * factor).clamp(0.0, 1.0);
+    rgba_to_hex(rgba)
 }
 
 /// Parse a hex color string into HSV, returning `None` on any parse

@@ -507,14 +507,15 @@ impl MindMapDocument {
         };
         let portal_label = self.selection.selected_portal_label_scene_ref();
         let label_edit = self.label_edit_preview.as_ref().map(|(k, s)| (k, s.as_str()));
-        // Resize-handle emission is driven by `InteractionMode`, not
-        // by selection — the application layer translates the active
-        // mode into `ResizeHandleOverrides` and threads it through
-        // here. Fill-parent sections emit zero handles inside the
-        // scene builder regardless of the override value (no own
-        // AABB to stretch).
+        // Resize-handle emission + NodeEdit dimming are both driven
+        // by `InteractionMode`, not by selection — the application
+        // layer translates the active mode into `ResizeHandleOverrides`
+        // and threads it through here. Fill-parent sections emit zero
+        // handles inside the scene builder regardless of the override
+        // value (no own AABB to stretch).
         let selected_section = resize_overrides.section;
         let selected_node_for_resize = resize_overrides.node;
+        let node_edit_for = resize_overrides.node_edit_for;
         let selection = scene_builder::SceneSelectionContext {
             edge,
             edge_label,
@@ -522,6 +523,7 @@ impl MindMapDocument {
             label_edit,
             selected_section,
             selected_node_for_resize,
+            node_edit_for,
         };
         let (edge_preview, portal_preview) = match &self.color_picker_preview {
             Some(ColorPickerPreview { key, color }) => (

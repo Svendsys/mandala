@@ -22,9 +22,17 @@ use glam::Vec2;
 
 use crate::mindmap::border::resolve_border_style;
 use crate::mindmap::model::{MindMap, TextRun};
-use crate::util::color::resolve_var;
+use crate::util::color::{hex_with_alpha_scaled, resolve_var};
 
 use super::{BorderElement, TextElement};
+
+/// Alpha multiplier applied to text-run + border colors of every
+/// node that is **not** the active NodeEdit target. Half-alpha is
+/// the "you are inside this node" affordance: the active node
+/// stays vivid while the rest of the canvas falls back. Single
+/// constant so the section-frame pass and any future inactive-
+/// chrome consumer share the dim shade.
+pub const INACTIVE_NODE_ALPHA_MULTIPLIER: f32 = 0.5;
 
 /// Compute the absolute (canvas-space) position + size of a
 /// [`MindSection`](crate::mindmap::model::MindSection) given its
@@ -65,6 +73,7 @@ fn section_aabb(
 pub(super) fn build_node_elements(
     map: &MindMap,
     offsets: &HashMap<String, (f32, f32)>,
+    dim_other_nodes_for: Option<&str>,
 ) -> (Vec<TextElement>, Vec<BorderElement>, Vec<(Vec2, Vec2)>) {
     let vars = &map.canvas.theme_variables;
     let mut text_elements = Vec::new();
@@ -83,6 +92,14 @@ pub(super) fn build_node_elements(
         let pos_y = pos.y + oy;
         let size_x = size.x;
         let size_y = size.y;
+
+        // NodeEdit dimming: every node *other* than the NodeEdit target
+        // renders chrome + text at INACTIVE_NODE_ALPHA_MULTIPLIER alpha so
+        // the active node visually pops. `dim_other_nodes_for == None`
+        // (the Default-mode case) is the no-op fast path.
+        let dim_this_node = dim_other_nodes_for
+            .map(|active| active != node.id.as_str())
+            .unwrap_or(false);
 
         // Resolve the frame color through theme variables once — used for
         // both the clip AABB sizing and the border element below.
@@ -153,7 +170,12 @@ pub(super) fn build_node_elements(
                 .iter()
                 .map(|run| {
                     let mut r = run.clone();
-                    r.color = resolve_var(&run.color, vars).to_string();
+                    let resolved = resolve_var(&run.color, vars);
+                    r.color = if dim_this_node {
+                        hex_with_alpha_scaled(resolved, INACTIVE_NODE_ALPHA_MULTIPLIER)
+                    } else {
+                        resolved.to_string()
+                    };
                     r
                 })
                 .collect();
@@ -172,7 +194,11 @@ pub(super) fn build_node_elements(
         // so the frame never outlives its node at any zoom level.
         // Reuses the `resolved_border` populated above so the
         // resolver runs at most once per visible framed node.
-        if let Some(border_style) = resolved_border {
+        if let Some(mut border_style) = resolved_border {
+            if dim_this_node {
+                border_style.color =
+                    hex_with_alpha_scaled(&border_style.color, INACTIVE_NODE_ALPHA_MULTIPLIER);
+            }
             let fallback_rgba =
                 crate::util::color::hex_to_rgba_safe(&border_style.color, [1.0, 1.0, 1.0, 1.0]);
             let palette_cycle =

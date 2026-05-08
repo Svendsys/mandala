@@ -93,6 +93,10 @@ fn test_resize_mode_lifecycle_default_to_resize_to_default() {
     assert_eq!(mode.resize_handle_overrides().node, None);
     assert!(matches!(
         mode.resize_handle_overrides(),
-        ResizeHandleOverrides { node: None, section: None }
+        ResizeHandleOverrides {
+            node: None,
+            section: None,
+            node_edit_for: None,
+        }
     ));
 }
