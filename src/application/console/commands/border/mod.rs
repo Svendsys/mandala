@@ -35,7 +35,7 @@ mod show;
 mod tests;
 
 pub use complete::complete_border;
-pub(crate) use complete::kv_value_completions;
+pub(crate) use complete::{kv_value_completions, preview_subverb_completions};
 pub(crate) use execute::apply_border_field_to_selection;
 pub use execute::execute_border;
 // Re-exports consumed by the `section frame preview …` and

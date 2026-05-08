@@ -49,7 +49,11 @@ use super::show::execute_border_show;
 
 pub fn execute_border(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     if let Some(verb) = args.positional(0) {
-        match verb {
+        // C14: case-insensitive subverb match — same posture as
+        // `border preview` already uses, and as `canvas …` and
+        // top-level command lookup. Without normalising here,
+        // `border Show` falls through to the unknown-subverb arm.
+        match verb.to_ascii_lowercase().as_str() {
             "on" => return apply_visible_only(eff, true),
             "off" => return apply_visible_only(eff, false),
             "show" => return execute_border_show(args, eff),
@@ -68,13 +72,13 @@ pub fn execute_border(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                         "border: unexpected positional '{}' alongside a kv pair — \
                          did you mean to quote a multi-word value? \
                          e.g. `border palette=\"{}\"`",
-                        other, other
+                        verb, verb
                     ));
                 }
                 return ExecResult::err(format!(
                     "border: unknown subverb '{}'; use \
-                     'on', 'off', 'show', 'reset', or kv form",
-                    other
+                     'on', 'off', 'show', 'reset', 'preview', or kv form",
+                    verb
                 ));
             }
             _ => {}

@@ -117,7 +117,11 @@ where
 /// Mirrors the kv-staging block at `border/execute.rs:86-96` and
 /// `section/frame.rs::execute_section_frame`'s loop — extracted
 /// here so the four preview verbs share the same parser. Returns
-/// the parser error verbatim with the verb's label prefixed.
+/// the parser error with the verb's label prefixed (C13: tells
+/// the user *which* verb they were running when the parse
+/// failed; the prior shape returned the raw `stage_kv` message
+/// and confused users running the same kv vocabulary across
+/// four verbs).
 pub(crate) fn stage_kv_for_preview(args: &Args, verb_label: &str) -> Result<BorderConfigEdits, String> {
     let mut edits = BorderConfigEdits::default();
     let mut saw_any = false;
@@ -126,7 +130,9 @@ pub(crate) fn stage_kv_for_preview(args: &Args, verb_label: &str) -> Result<Bord
             continue;
         }
         saw_any = true;
-        stage_kv(&mut edits, k, v)?;
+        if let Err(e) = stage_kv(&mut edits, k, v) {
+            return Err(format!("{}: {}", verb_label, e));
+        }
     }
     if !saw_any {
         return Err(format!(
@@ -312,5 +318,45 @@ mod tests {
             ExecResult::Ok(s) => assert!(s.contains("no active preview")),
             other => panic!("expected Ok with no-preview message, got {:?}", other),
         }
+    }
+
+    /// C13: parser errors from the preview path are prefixed with
+    /// the verb label so the user knows which surface emitted the
+    /// diagnostic — confusing without it because the same kv
+    /// vocabulary is shared across four verbs.
+    #[test]
+    fn test_border_preview_unknown_key_is_prefixed_with_verb_label() {
+        let mut doc = load_test_doc();
+        let nid = crate::application::document::tests_common::first_testament_node_id(&doc);
+        doc.selection = SelectionState::Single(nid);
+        let result = run("border preview foo=bar", &mut doc);
+        match result {
+            ExecResult::Err(s) => {
+                assert!(
+                    s.contains("border preview"),
+                    "diagnostic must include 'border preview' verb label: {}",
+                    s
+                );
+                assert!(
+                    s.contains("unknown key 'foo'") || s.contains("unknown key"),
+                    "diagnostic must include the parser hint: {}",
+                    s
+                );
+            }
+            other => panic!("expected Err, got {:?}", other),
+        }
+    }
+
+    /// C14: subverbs are case-insensitive — `Commit` / `CANCEL`
+    /// / `Preview` route the same as their lowercase forms.
+    #[test]
+    fn test_border_preview_subverbs_are_case_insensitive() {
+        let mut doc = load_test_doc();
+        let nid = crate::application::document::tests_common::first_testament_node_id(&doc);
+        doc.selection = SelectionState::Single(nid);
+        assert_exec_ok(run("BORDER preview preset=heavy", &mut doc));
+        assert!(doc.border_preview.is_some(), "uppercase verb routed to set");
+        assert_exec_ok(run("border PREVIEW Cancel", &mut doc));
+        assert!(doc.border_preview.is_none(), "uppercase Cancel routed to cancel");
     }
 }

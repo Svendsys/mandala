@@ -64,10 +64,10 @@ pub fn complete_section_frame(state: &CompletionState, ctx: &ConsoleContext) -> 
             out
         }
         CompletionContext::Token { index: 2 } if after_preview => {
-            let mut out = prefix_filter(
-                crate::application::console::commands::border::PREVIEW_SUBVERBS,
-                state.partial,
-            );
+            // C12: surface commit/cancel with their hints (shared
+            // helper) so the popup tells users what each does.
+            let mut out =
+                crate::application::console::commands::border::preview_subverb_completions(state.partial);
             out.extend(kv_key_completions_with_hints(BORDER_KEYS, state.partial, kv_hint));
             out
         }
@@ -103,7 +103,12 @@ fn kv_hint(key: &str) -> Option<&'static str> {
 /// optional `show` / `reset` subverb.
 pub fn execute_section_frame(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     if let Some(verb) = args.positional(1) {
-        match verb {
+        // C14: case-insensitive match — same posture as `border
+        // preview commit` / `cancel` already use, and as the
+        // committing `border …` verb arms. Without normalising
+        // here `Show` / `RESET` / `Preview` would route through
+        // the kv-form path and produce a confusing error.
+        match verb.to_ascii_lowercase().as_str() {
             "show" => return execute_show(args, eff),
             "reset" => return apply_reset(args, eff),
             "preview" => return execute_section_frame_preview(args, eff),
@@ -113,12 +118,12 @@ pub fn execute_section_frame(args: &Args, eff: &mut ConsoleEffects) -> ExecResul
                         "section frame: unexpected positional '{}' alongside a kv pair — \
                          did you mean to quote a multi-word value? \
                          e.g. `section frame palette=\"{}\"`",
-                        other, other
+                        verb, verb
                     ));
                 }
                 return ExecResult::err(format!(
-                    "section frame: unknown subverb '{}'; use 'show', 'reset', or kv form",
-                    other
+                    "section frame: unknown subverb '{}'; use 'show', 'reset', 'preview', or kv form",
+                    verb
                 ));
             }
             _ => {}

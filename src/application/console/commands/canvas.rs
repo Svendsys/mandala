@@ -76,12 +76,19 @@ fn complete_canvas(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Complet
     // engine's `Token { index: 0 }` counts past the command, so it
     // represents the first positional after `canvas`.
     let subject = state.tokens.get(1).map(String::as_str);
+    // `preview` can sit at tokens[2] (after `border` or
+    // `section-frame`) or at tokens[3] (after `section-frame
+    // focused`). C12: surface commit/cancel hints instead of
+    // hint-less rows when the cursor is past `preview`.
+    let after_canvas_preview = state.tokens.get(2).map(String::as_str) == Some("preview");
+    let after_focused_preview = state.tokens.get(2).map(String::as_str) == Some("focused")
+        && state.tokens.get(3).map(String::as_str) == Some("preview");
     match &state.context {
         // First positional after `canvas`: offer the subjects.
         CompletionContext::Token { index: 0 } => prefix_filter(VERBS, state.partial),
         // Second positional, branched on subject:
-        //   - after `border`: show/reset + kv keys
-        //   - after `section-frame`: `focused`, show/reset, kv keys
+        //   - after `border`: show/reset/preview + kv keys
+        //   - after `section-frame`: `focused`, show/reset/preview, kv keys
         CompletionContext::Token { index: 1 } => match subject {
             Some("border") => {
                 let mut out = prefix_filter(SUBVERBS, state.partial);
@@ -96,7 +103,20 @@ fn complete_canvas(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Complet
             }
             _ => Vec::new(),
         },
-        // Anything past index 1 is always kv-form.
+        // Index 2: after `canvas border preview` or `canvas
+        // section-frame preview` or `canvas section-frame focused`.
+        CompletionContext::Token { index: 2 } if after_canvas_preview => {
+            let mut out = super::border::preview_subverb_completions(state.partial);
+            out.extend(kv_key_completions_with_hints(BORDER_KEYS, state.partial, kv_hint));
+            out
+        }
+        // Index 3: after `canvas section-frame focused preview`.
+        CompletionContext::Token { index: 3 } if after_focused_preview => {
+            let mut out = super::border::preview_subverb_completions(state.partial);
+            out.extend(kv_key_completions_with_hints(BORDER_KEYS, state.partial, kv_hint));
+            out
+        }
+        // Anything else past index 1 is always kv-form.
         CompletionContext::Token { .. } => kv_key_completions_with_hints(BORDER_KEYS, state.partial, kv_hint),
         // Per-key value completions (preset/palette/font/color/field)
         // mirror the top-level `border …` popup vocabulary so the

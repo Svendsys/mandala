@@ -19,13 +19,40 @@ pub fn complete_border(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Com
     match &state.context {
         CompletionContext::Token { index: 0 } => verb_or_key(state.partial),
         CompletionContext::Token { index: 1 } if after_preview => {
-            let mut out = prefix_filter(super::PREVIEW_SUBVERBS, state.partial);
+            let mut out = preview_subverb_completions(state.partial);
             out.extend(key_completions(state.partial));
             out
         }
         CompletionContext::Token { .. } => key_completions(state.partial),
         CompletionContext::KvValue { key } => kv_value_completions(key.as_str(), state.partial, ctx),
         _ => Vec::new(),
+    }
+}
+
+/// `border preview <TAB>` → `commit` / `cancel` rows with hints.
+/// C12 fix: the prior shape used `prefix_filter(PREVIEW_SUBVERBS, …)`
+/// which yields hint-less rows; users couldn't tell which subverb
+/// did what without reading the source. Re-exported for the
+/// section-frame and canvas verbs so all four preview surfaces
+/// share the same hint vocabulary.
+pub(crate) fn preview_subverb_completions(partial: &str) -> Vec<Completion> {
+    super::PREVIEW_SUBVERBS
+        .iter()
+        .filter(|s| s.starts_with(partial))
+        .map(|s| Completion {
+            text: s.to_string(),
+            display: s.to_string(),
+            hint: Some(preview_subverb_hint(s).to_string()),
+            font_family: None,
+        })
+        .collect()
+}
+
+fn preview_subverb_hint(s: &str) -> &'static str {
+    match s {
+        "commit" => "write the staged preview through and clear the slot",
+        "cancel" => "discard the staged preview, no model write",
+        _ => "",
     }
 }
 
@@ -81,6 +108,7 @@ fn verb_hint(v: &str) -> &'static str {
         "off" => "hide the border",
         "show" => "print the resolved config",
         "reset" => "drop the per-node override",
+        "preview" => "stage a preview without writing the model (commit/cancel terminates)",
         _ => "",
     }
 }
