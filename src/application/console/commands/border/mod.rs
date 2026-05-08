@@ -28,6 +28,7 @@ use crate::application::console::predicates::always;
 
 mod complete;
 mod execute;
+mod preview;
 mod show;
 
 #[cfg(test)]
@@ -37,6 +38,18 @@ pub use complete::complete_border;
 pub(crate) use complete::kv_value_completions;
 pub(crate) use execute::apply_border_field_to_selection;
 pub use execute::execute_border;
+// Re-exports consumed by the `section frame preview …` and
+// `canvas border preview …` / `canvas section-frame [focused]
+// preview …` verbs. The `preview` arm in each verb's dispatch
+// wraps `dispatch_border_preview` with a target-resolver
+// closure; commit / cancel terminator paths route through the
+// shared verbs. Suppress the unused-import warning until
+// commits 5/6 land — early commits don't yet have downstream
+// consumers.
+#[allow(unused_imports)]
+pub(crate) use preview::{
+    cancel_border_preview_verb, commit_border_preview_verb, dispatch_border_preview, stage_kv_for_preview,
+};
 // Re-exports consumed by sibling verbs that share the kv vocabulary
 // (currently `section frame …` and `canvas …`). All are
 // `pub(crate)` on the underlying definitions; the duplication these
@@ -53,7 +66,13 @@ pub const KEYS: &[&str] = &[
 
 /// Positional verbs surfaced as token-0 completions alongside kv
 /// keys.
-pub const VERBS: &[&str] = &["on", "off", "show", "reset"];
+pub const VERBS: &[&str] = &["on", "off", "show", "reset", "preview"];
+
+/// Subverbs surfaced under `border preview` — the
+/// commit/cancel terminator pair plus the kv keys (handled
+/// through completion's `KvKey` arm). `preview <kv>=…` and
+/// `preview commit` / `preview cancel` are siblings.
+pub const PREVIEW_SUBVERBS: &[&str] = &["commit", "cancel"];
 
 /// Border preset names — surfaced in completion.
 pub const PRESETS: &[&str] = BORDER_PRESETS;
@@ -74,7 +93,7 @@ pub const COMMAND: Command = Command {
     summary: "Configure the node border (preset, font, color, custom glyphs, palette)",
     usage: "border on|off|show|reset | border [preset=…] [font=…] [size=…] [color=…] \
          [palette=…] [field=…] [padding=…] [top=…] [bottom=…] [left=…] [right=…] \
-         [tl=…] [tr=…] [bl=…] [br=…]",
+         [tl=…] [tr=…] [bl=…] [br=…] | border preview <kv>=… | border preview commit|cancel",
     tags: &[
         "border", "frame", "glyph", "preset", "corner", "side", "pattern", "palette", "padding", "rounded",
         "heavy", "double", "light", "custom",

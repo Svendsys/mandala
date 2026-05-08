@@ -37,9 +37,9 @@ pub const COMMAND: Command = Command {
     aliases: &[],
     summary: "Move, resize, or style a section's frame border",
     usage:
-        "section move <dx> <dy> [section=<idx>] | section resize <w> <h>|none [section=<idx>] | section frame show|reset|<key>=<value> … [section=<idx>]",
+        "section move <dx> <dy> [section=<idx>] | section resize <w> <h>|none [section=<idx>] | section frame show|reset|<key>=<value> … [section=<idx>] | section frame preview <key>=<value> …|commit|cancel [section=<idx>]",
     tags: &[
-        "section", "move", "resize", "offset", "size", "frame", "border", "preset", "glyph",
+        "section", "move", "resize", "offset", "size", "frame", "border", "preset", "glyph", "preview",
     ],
     applicable: always,
     complete: complete_section,

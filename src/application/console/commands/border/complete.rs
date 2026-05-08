@@ -10,8 +10,19 @@ use crate::application::console::completion::{
 use crate::application::console::ConsoleContext;
 
 pub fn complete_border(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Completion> {
+    // After `border preview ` the user gets `commit` / `cancel`
+    // plus the kv keys (preview accepts the same vocabulary as
+    // the committing kv-form). The engine's `Token { index: 0 }`
+    // is for the first positional after `border`; index 1 is
+    // for the position after `preview`.
+    let after_preview = state.tokens.get(1).map(String::as_str) == Some("preview");
     match &state.context {
         CompletionContext::Token { index: 0 } => verb_or_key(state.partial),
+        CompletionContext::Token { index: 1 } if after_preview => {
+            let mut out = prefix_filter(super::PREVIEW_SUBVERBS, state.partial);
+            out.extend(key_completions(state.partial));
+            out
+        }
         CompletionContext::Token { .. } => key_completions(state.partial),
         CompletionContext::KvValue { key } => kv_value_completions(key.as_str(), state.partial, ctx),
         _ => Vec::new(),

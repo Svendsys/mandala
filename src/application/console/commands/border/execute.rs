@@ -54,6 +54,7 @@ pub fn execute_border(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             "off" => return apply_visible_only(eff, false),
             "show" => return execute_border_show(args, eff),
             "reset" => return apply_reset(eff),
+            "preview" => return super::preview::execute_border_preview(args, eff),
             other if !other.contains('=') => {
                 // A bare positional alongside a recognised kv almost
                 // always means the user typed an unquoted multi-word

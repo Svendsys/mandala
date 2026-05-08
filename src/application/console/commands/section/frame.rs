@@ -42,9 +42,15 @@ use crate::application::document::{
 };
 
 /// Subverbs surfaced as token-2 completions after `section frame`.
-pub const VERBS: &[&str] = &["show", "reset"];
+pub const VERBS: &[&str] = &["show", "reset", "preview"];
 
 pub fn complete_section_frame(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Completion> {
+    // After `section frame preview ` the user gets `commit` /
+    // `cancel` plus the kv keys (preview accepts the same
+    // vocabulary as the committing kv-form). The engine's
+    // `Token { index }` counts past the parent command, so
+    // `section frame preview <here>` lands at index 2.
+    let after_preview = state.tokens.get(2).map(String::as_str) == Some("preview");
     match &state.context {
         // The engine's `Token { index }` is the count of non-kv
         // positionals *after* the command name, so for the input
@@ -54,6 +60,14 @@ pub fn complete_section_frame(state: &CompletionState, ctx: &ConsoleContext) -> 
         // the same kv keyset the top-level `border …` verb does.
         CompletionContext::Token { index: 1 } => {
             let mut out = prefix_filter(VERBS, state.partial);
+            out.extend(kv_key_completions_with_hints(BORDER_KEYS, state.partial, kv_hint));
+            out
+        }
+        CompletionContext::Token { index: 2 } if after_preview => {
+            let mut out = prefix_filter(
+                crate::application::console::commands::border::PREVIEW_SUBVERBS,
+                state.partial,
+            );
             out.extend(kv_key_completions_with_hints(BORDER_KEYS, state.partial, kv_hint));
             out
         }
@@ -92,6 +106,7 @@ pub fn execute_section_frame(args: &Args, eff: &mut ConsoleEffects) -> ExecResul
         match verb {
             "show" => return execute_show(args, eff),
             "reset" => return apply_reset(args, eff),
+            "preview" => return execute_section_frame_preview(args, eff),
             other if !other.contains('=') => {
                 if args.kvs().next().is_some() {
                     return ExecResult::err(format!(
@@ -333,6 +348,48 @@ fn resolve_section_idx_for(
 // `border::edits_has_glyph_field` / `border::custom_preset_hint(label)`.
 // They used to live here as byte-identical copies — see CODE_CONVENTIONS.md
 // §5 for why that's forbidden.
+
+/// `section frame preview …` — same kv vocabulary, no model
+/// write. Routes to the shared
+/// [`crate::application::console::commands::border::dispatch_border_preview`]
+/// with a section-target resolver. Live `Section` /
+/// `SectionRange` / `MultiSection` selections are turned into
+/// the matching `(node_id, section_idx)` pairs; `Single(node_id)`
+/// requires an explicit `section=K` kv (mirroring the committing
+/// `section frame …` verb's posture). The preview's
+/// `selection_snapshot` rides on `self.selection` at set time.
+fn execute_section_frame_preview(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
+    use crate::application::document::BorderPreviewTarget;
+
+    // The `section=K` kv (if any) overrides the selection's
+    // section index — same shape `apply_edits` uses, copied here
+    // because the preview path's target is fixed at dispatch
+    // time (not inferred per-target like the committing path).
+    let kv_idx = match parse_section_kv(args) {
+        Ok(v) => v,
+        Err(msg) => return ExecResult::err(msg),
+    };
+    super::super::border::dispatch_border_preview(
+        args,
+        eff,
+        "section frame preview",
+        /* subverb_pos */ 2,
+        |sel| {
+            let node_ids = super::super::border::nodes_in_selection(sel, "section frame preview")?;
+            let mut pairs: Vec<(String, usize)> = Vec::with_capacity(node_ids.len());
+            for nid in &node_ids {
+                let idx = match resolve_section_idx_for(sel, nid, kv_idx) {
+                    Ok(i) => i,
+                    Err(msg) => {
+                        return Err(crate::application::console::ExecResult::err(msg));
+                    }
+                };
+                pairs.push((nid.clone(), idx));
+            }
+            Ok(BorderPreviewTarget::Sections(pairs))
+        },
+    )
+}
 
 #[cfg(test)]
 mod tests {
@@ -703,5 +760,65 @@ mod tests {
             .and_then(|c| c.color.clone());
         assert_eq!(after_edit_preset, after_replay_preset);
         assert_eq!(after_edit_color, after_replay_color);
+    }
+
+    /// `section frame preview …` writes to `border_preview` with
+    /// a `Sections([(node_id, idx)])` target — section index
+    /// resolved from the live `Section` selection (or `section=K`
+    /// kv).
+    #[test]
+    fn section_frame_preview_resolves_section_idx_from_selection() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id.clone(),
+            section_idx: 1,
+        });
+        let result = run("section frame preview preset=heavy", &mut doc);
+        match result {
+            ExecResult::Ok(_) | ExecResult::Lines(_) => {}
+            other => panic!("expected success, got {:?}", other),
+        }
+        let preview = doc.border_preview.as_ref().expect("preview slot populated");
+        match &preview.target {
+            crate::application::document::BorderPreviewTarget::Sections(pairs) => {
+                assert_eq!(pairs.len(), 1);
+                assert_eq!(pairs[0].0, id);
+                assert_eq!(pairs[0].1, 1);
+            }
+            other => panic!("expected Sections target, got {:?}", other),
+        }
+        // Model is not touched.
+        assert!(
+            doc.mindmap.nodes.get(&id).unwrap().sections[1]
+                .frame_border
+                .is_none(),
+            "preview must not write to the model"
+        );
+    }
+
+    /// Commit dispatches to `set_section_frame_border_config` —
+    /// the model picks up the staged preset on commit.
+    #[test]
+    fn section_frame_preview_commit_writes_through() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id.clone(),
+            section_idx: 0,
+        });
+        assert_exec_ok(run("section frame preview preset=double", &mut doc));
+        let result = run("section frame preview commit", &mut doc);
+        match result {
+            ExecResult::Ok(_) | ExecResult::Lines(_) => {}
+            other => panic!("expected success, got {:?}", other),
+        }
+        assert_eq!(
+            doc.mindmap.nodes.get(&id).unwrap().sections[0]
+                .frame_border
+                .as_ref()
+                .unwrap()
+                .preset,
+            "double"
+        );
+        assert!(doc.border_preview.is_none());
     }
 }
