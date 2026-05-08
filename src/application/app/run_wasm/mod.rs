@@ -201,7 +201,7 @@ impl<'a> super::dispatch::macro_core::MacroDispatchTarget for WasmMacroDispatchT
         // deleted and both the keyboard handler and this trait
         // impl reach `dispatch_action_core::dispatch_compatible`.
         // The mixed-branch lift below restores `Handled` returns
-        // for `CancelMode`/`EditSelection*` so the macro loop's
+        // for `ExitMode`/`EditSelection*` so the macro loop's
         // `any_ran` flag bumps correctly — see
         // `lift_mixed_branch_for_wasm_macro`'s rustdoc.
         let outcome = {

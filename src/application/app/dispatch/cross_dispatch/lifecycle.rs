@@ -121,71 +121,42 @@ pub(in crate::application::app) fn apply_open_text_edit_on_single(
 }
 
 /// Resolve the current `SelectionState` into a `ResizeTarget` and
-/// flip the active interaction mode to `Resize { target }`. Returns
-/// `true` when the mode actually changed (selection resolved
-/// successfully and was a valid resize target). On a non-resizable
-/// selection (`Multi`, `MultiSection`, `Edge*`, `None`, or a
-/// `None`-sized section) returns `false` after a `log::warn!` —
-/// the caller decides whether to treat that as a no-op or as
-/// console feedback.
+/// flip the active interaction mode to `Resize { target }`. On a
+/// non-resizable selection logs the resolution failure and leaves
+/// mode untouched. Cross-platform: touches mode + model + scene
+/// rebuild only.
 ///
-/// Cross-platform: only touches `interaction_mode`, the document
-/// model (selection read), and rebuilds the scene. No filesystem,
-/// no console, no modal-state mutation.
-pub(in crate::application::app) fn apply_enter_resize_mode(rc: &mut RebuildContext<'_>) -> bool {
-    use super::super::super::interaction_mode::{InteractionMode, ResizeTarget};
-    use crate::application::document::SelectionState;
+/// Resolution logic is shared with the `mode resize` console verb
+/// via [`super::super::super::interaction_mode::resolve_resize_target`].
+pub(in crate::application::app) fn apply_enter_resize_mode(rc: &mut RebuildContext<'_>) {
+    use super::super::super::interaction_mode::{
+        resolve_resize_target, InteractionMode, ResizeTargetError,
+    };
 
-    let target = match &rc.document.selection {
-        SelectionState::Single(node_id) => ResizeTarget::Node(node_id.clone()),
-        SelectionState::Section(s) | SelectionState::SectionRange { sel: s, .. } => {
-            // Reach into the model to confirm the section is
-            // `Some`-sized — fill-parent sections have no own AABB
-            // to stretch and therefore can't be resized. Verify
-            // before flipping mode so the failure surface is one
-            // log line, not a Resize mode that's silently empty.
-            let section_size = rc
-                .document
-                .mindmap
-                .nodes
-                .get(&s.node_id)
-                .and_then(|n| n.sections.get(s.section_idx))
-                .and_then(|sec| sec.size);
-            if section_size.is_none() {
-                log::warn!(
-                    "EnterResizeMode: section {}[{}] is fill-parent (no Some size); cannot resize",
-                    s.node_id,
-                    s.section_idx
-                );
-                return false;
-            }
-            ResizeTarget::Section {
-                node_id: s.node_id.clone(),
-                section_idx: s.section_idx,
-            }
+    match resolve_resize_target(&rc.document.selection, &rc.document.mindmap) {
+        Ok(target) => {
+            *rc.interaction_mode = InteractionMode::Resize { target };
+            rc.rebuild_after_selection_change();
         }
-        SelectionState::None => {
+        Err(ResizeTargetError::NoSelection) => {
             log::warn!("EnterResizeMode: no selection; nothing to resize");
-            return false;
         }
-        SelectionState::Multi(_) | SelectionState::MultiSection(_) => {
+        Err(ResizeTargetError::MultiTarget) => {
             log::warn!(
                 "EnterResizeMode: multi-target selection — single-target only; \
                  select a single node or section first"
             );
-            return false;
         }
-        SelectionState::Edge(_)
-        | SelectionState::EdgeLabel(_)
-        | SelectionState::PortalLabel(_)
-        | SelectionState::PortalText(_) => {
+        Err(ResizeTargetError::SectionFillParent { node_id, section_idx }) => {
+            log::warn!(
+                "EnterResizeMode: section {}[{}] is fill-parent (no Some size); cannot resize",
+                node_id, section_idx,
+            );
+        }
+        Err(ResizeTargetError::EdgeOrPortal) => {
             log::warn!("EnterResizeMode: edge / label / portal selection — not resizable");
-            return false;
         }
-    };
-    *rc.interaction_mode = InteractionMode::Resize { target };
-    rc.rebuild_after_selection_change();
-    true
+    }
 }
 
 // ── Clipboard ───────────────────────────────────────────────────

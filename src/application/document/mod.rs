@@ -72,9 +72,14 @@ pub use hit_test::{
 };
 pub use nodes::{BorderConfigEdits, BorderEditOutcome, BorderSide, OptionEdit, SectionPayload};
 pub use types::{
-    AnimationInstance, EdgeLabelSel, EdgeRef, PortalLabelSel, ResizeHandleOverrides, SectionSel,
-    SelectionState, HIGHLIGHT_COLOR,
+    AnimationInstance, EdgeLabelSel, EdgeRef, PortalLabelSel, SectionSel, SelectionState, HIGHLIGHT_COLOR,
 };
+// `ResizeHandleOverrides` lives in baumhard (next to the
+// `SceneSelectionContext` it composes into). Re-exported here so
+// callers across the application crate that already
+// `use crate::application::document::*` for the doc API don't have
+// to reach across into baumhard's scene_builder for the value type.
+pub use baumhard::mindmap::scene_builder::ResizeHandleOverrides;
 // Native-only: consumed by `app/click.rs`'s reparent / connect mode
 // rendering. WASM doesn't dispatch `EnterReparentMode` /
 // `EnterConnectMode` (NativeOnly per `wasm_compatibility`).
@@ -500,24 +505,12 @@ impl MindMapDocument {
         };
         let portal_label = self.selection.selected_portal_label_scene_ref();
         let label_edit = self.label_edit_preview.as_ref().map(|(k, s)| (k, s.as_str()));
-        // Resize-handle emission is driven by `InteractionMode`,
-        // not by selection. The application layer translates the
-        // active mode into `ResizeHandleOverrides` and threads it
-        // through `build_scene_with_cache`; here we just plumb the
-        // overrides into the scene-builder's
-        // `SceneSelectionContext`. Pre-Batch-2 of
-        // `SECTIONS_BORDERS_RESIZE_PLAN.md` this gate read selection
-        // directly (`Single` → handles, `Section` → handles), which
-        // produced the "accidental resize on selection" UX bug —
-        // moving the gate to mode is the fix.
-        //
-        // `Some`-sized sections still emit handles only when their
-        // size is `Some`; fill-parent sections produce zero
-        // handles inside the scene builder regardless. Section
-        // AND SectionRange selections continue to NOT emit handles
-        // by themselves — they only emit when the active mode is
-        // `Resize { target: Section { .. } }` matching their
-        // identity, which the application layer arranges.
+        // Resize-handle emission is driven by `InteractionMode`, not
+        // by selection — the application layer translates the active
+        // mode into `ResizeHandleOverrides` and threads it through
+        // here. Fill-parent sections emit zero handles inside the
+        // scene builder regardless of the override value (no own
+        // AABB to stretch).
         let selected_section = resize_overrides.section;
         let selected_node_for_resize = resize_overrides.node;
         let selection = scene_builder::SceneSelectionContext {

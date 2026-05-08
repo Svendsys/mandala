@@ -298,13 +298,9 @@ pub(super) fn handle_mouse_input(
                 };
                 // Section resize handle press capture — only fires
                 // when the active mode is `Resize { Section { .. } }`.
-                // Pre-Batch-2 this gate read selection
-                // (`selected_section()`) so a `Some`-sized section
-                // selection auto-armed handle hits; the
-                // mode-driven gate fixes that. `None`-sized
-                // sections still emit no handles regardless,
-                // because `hit_test_section_resize_handle` filters
-                // them out internally.
+                // Fill-parent sections emit no handles regardless;
+                // `hit_test_section_resize_handle` filters them out
+                // internally.
                 let hit_section_resize_handle = match (
                     ctx.document.as_ref(),
                     ctx.interaction_mode.resize_handle_section(),
@@ -323,9 +319,7 @@ pub(super) fn handle_mouse_input(
                     _ => None,
                 };
                 // Node resize handle press capture — only fires when
-                // the active mode is `Resize { Node(_) }`. Same
-                // mode-driven gate replaces the pre-Batch-2
-                // `Single`-selection auto-arm.
+                // the active mode is `Resize { Node(_) }`.
                 let hit_node_resize_handle = match (
                     ctx.document.as_ref(),
                     ctx.interaction_mode.resize_handle_node(),

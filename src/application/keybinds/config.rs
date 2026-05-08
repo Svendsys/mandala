@@ -47,7 +47,7 @@ pub struct KeybindConfig {
     /// `SECTIONS_BORDERS_RESIZE_PLAN.md`. Default `r`.
     pub enter_resize_mode: Vec<String>,
     pub delete_selection: Vec<String>,
-    pub cancel_mode: Vec<String>,
+    pub exit_mode: Vec<String>,
     pub create_orphan_node: Vec<String>,
     pub orphan_selection: Vec<String>,
     pub edit_selection: Vec<String>,
@@ -230,7 +230,7 @@ impl Default for KeybindConfig {
             enter_connect_mode: vec!["Ctrl+D".into()],
             enter_resize_mode: vec!["r".into()],
             delete_selection: vec!["Delete".into()],
-            cancel_mode: vec!["Escape".into()],
+            exit_mode: vec!["Escape".into()],
             create_orphan_node: vec!["Ctrl+N".into()],
             orphan_selection: vec!["Ctrl+O".into()],
             edit_selection: vec!["Enter".into()],
@@ -312,8 +312,8 @@ impl Default for KeybindConfig {
 
             // Selection.
             select_all: vec!["Ctrl+a".into()],
-            // Default unbound — Esc already cancels modes via
-            // `CancelMode`, and rebinding Esc here would conflict
+            // Default unbound — Esc already exits modes via
+            // `ExitMode`, and rebinding Esc here would conflict
             // with the modal-cascade contract. Users opt in by
             // binding e.g. `Ctrl+Shift+a`.
             deselect_all: vec![],
@@ -430,7 +430,7 @@ impl KeybindConfig {
             (Action::EnterConnectMode, &self.enter_connect_mode),
             (Action::EnterResizeMode, &self.enter_resize_mode),
             (Action::DeleteSelection, &self.delete_selection),
-            (Action::CancelMode, &self.cancel_mode),
+            (Action::ExitMode, &self.exit_mode),
             (Action::CreateOrphanNode, &self.create_orphan_node),
             (Action::OrphanSelection, &self.orphan_selection),
             (Action::EditSelection, &self.edit_selection),

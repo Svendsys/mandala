@@ -49,7 +49,12 @@ pub(in crate::application::app) struct InputHandlerContext<'a> {
     pub scene_cache: &'a mut baumhard::mindmap::scene_cache::SceneConnectionCache,
     /// Current pointer / drag state machine.
     pub drag_state: &'a mut DragState,
-    /// Reparent / Connect modal mode for the next click.
+    /// High-level interaction mode (`Default`, `Reparent`, `Connect`,
+    /// `NodeEdit`, `Resize`). Drives click routing, mode-gated chrome
+    /// (resize anchors, target highlights), and selection resolution.
+    /// Mutated by mode-transition Action arms (`EnterReparentMode`,
+    /// `EnterConnectMode`, `EnterResizeMode`, `ExitMode`,
+    /// `ReparentToTarget`, `ConnectToTarget`).
     pub interaction_mode: &'a mut InteractionMode,
     /// Console (slash-command overlay) state.
     pub console_state: &'a mut ConsoleState,

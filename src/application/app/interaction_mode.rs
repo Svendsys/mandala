@@ -4,18 +4,17 @@
 //!
 //! Drives:
 //! - which clicks are absorbed (Reparent / Connect intercept the next
-//!   left-click; NodeEdit reroutes section clicks; Resize captures the
-//!   next click as a resize gesture).
+//!   left-click; NodeEdit reroutes section clicks; Resize gates the
+//!   handle hit-test).
 //! - which mode-gated chrome is rendered (resize anchors, section frames,
 //!   mode-specific highlight colors).
 //! - how a `SelectionState` click resolves (e.g. a click on a section-area
 //!   in NodeEdit produces `SelectionState::Section`; in Default it folds
 //!   to `SelectionState::Single`).
 //!
-//! Cross-platform — replaces the native-only `AppMode` that lived inline
-//! in `app/mod.rs` pre-Batch-1 of `SECTIONS_BORDERS_RESIZE_PLAN.md`. The
-//! enum carries no GPU handles; it depends only on owned `String` ids
-//! and the value types defined here, so both targets compile it.
+//! Cross-platform. The enum carries no GPU handles; it depends only on
+//! owned `String` ids and the value types defined here, so both targets
+//! compile it.
 //!
 //! `SectionEdit` is intentionally **not** a variant. Section-text editing
 //! is carried by `TextEditState::Open { node_id, section_idx, .. }` in
@@ -24,13 +23,11 @@
 //! the dispatcher arms that open / close the editor; this module only
 //! defines the mode shape.
 //!
-//! `NodeEdit` and `Resize` are defined here but their predicate bodies
-//! are stubs in this batch — no caller wires them yet. Their full
-//! behaviour lands in Batch 2 (Resize) and Batch 3 (NodeEdit visuals)
-//! per the plan §8. `Default::resize_handle_*` returns `None` and the
-//! corresponding callers (`document/mod.rs:520-523`) keep their
-//! selection-driven gates in this batch — the gate flip is the single
-//! line change in Batch 2.
+//! `NodeEdit` is defined for use by Batch 3 of
+//! `SECTIONS_BORDERS_RESIZE_PLAN.md` (NodeEdit visuals + section
+//! selection routing). The `click_resolves_to_section` predicate is
+//! consumed by `app/click.rs` once Batch 3 lands; today it's reachable
+//! from console / future GUI but no per-frame consumer reads it.
 
 /// What the user is doing right now at the canvas level.
 ///
@@ -97,27 +94,28 @@ impl InteractionMode {
     /// mode-specific gesture rather than letting the standard click
     /// router handle it.
     ///
-    /// Reparent / Connect intercept; Resize will intercept once Batch 2
-    /// wires it; NodeEdit / Default do not intercept — clicks fall
-    /// through to the regular hit-test + selection update.
+    /// Reparent / Connect intercept their next click as a "choose
+    /// target" gesture. Resize / NodeEdit / Default do not intercept;
+    /// Resize relies on a separate handle-hit-test path
+    /// (`event_mouse_click.rs`) gated on `resize_handle_*()` rather
+    /// than on a click intercept.
     pub fn intercepts_left_click(&self) -> bool {
-        match self {
-            InteractionMode::Reparent { .. } | InteractionMode::Connect { .. } => true,
-            InteractionMode::Resize { .. } => false, // Wired in Batch 2.
-            InteractionMode::NodeEdit { .. } | InteractionMode::Default => false,
-        }
+        matches!(
+            self,
+            InteractionMode::Reparent { .. } | InteractionMode::Connect { .. }
+        )
     }
 
     /// True when a click on a section-area should produce
     /// `SelectionState::Section { node_id, section_idx }` rather than
     /// folding to `SelectionState::Single(node_id)`.
     ///
-    /// In `Default` mode, single-section nodes always fold via the
-    /// `hit_test_target` rule; multi-section nodes fold here in
-    /// `Default` and only break out to `Section` in `NodeEdit { node_id }`
-    /// for the matching node.
-    ///
-    /// Wired in Batch 3.
+    /// In `Default` mode, every section-click folds to the owning
+    /// `Single(node)` (single-section nodes via the `hit_test_target`
+    /// fold; multi-section nodes via the click router's mode gate).
+    /// Inside `NodeEdit { node_id }` for the matching node, clicks on
+    /// section-areas resolve to `Section`. Consumed by Batch 3's
+    /// rewrite of `app/click.rs`'s click-routing fork.
     pub fn click_resolves_to_section(&self, hit_node: &str) -> bool {
         match self {
             InteractionMode::NodeEdit { node_id } => node_id == hit_node,
@@ -126,12 +124,9 @@ impl InteractionMode {
     }
 
     /// The node that should receive auto-emitted resize handles this
-    /// frame, or `None` if no node should.
-    ///
-    /// Wired in Batch 2 — until then, the scene-builder gate at
-    /// `document/mod.rs:520-523` continues to read selection directly,
-    /// and this method is unused. Returns `None` for every mode in this
-    /// batch (the selection-driven path is what's live).
+    /// frame, or `None` if no node should. Read by the scene-builder
+    /// gate in `document/mod.rs::assemble_scene_overrides` (via
+    /// `resize_handle_overrides()`).
     pub fn resize_handle_node(&self) -> Option<&str> {
         match self {
             InteractionMode::Resize {
@@ -142,10 +137,8 @@ impl InteractionMode {
     }
 
     /// The section that should receive auto-emitted resize handles this
-    /// frame, or `None` if no section should.
-    ///
-    /// Same wiring story as `resize_handle_node` — the call site in
-    /// `document/mod.rs:520-523` flips to consume this in Batch 2.
+    /// frame, or `None` if no section should. Companion to
+    /// `resize_handle_node`.
     pub fn resize_handle_section(&self) -> Option<(&str, usize)> {
         match self {
             InteractionMode::Resize {
@@ -170,11 +163,81 @@ impl InteractionMode {
     /// the two `resize_handle_*` predicates separately.
     pub fn resize_handle_overrides(
         &self,
-    ) -> crate::application::document::ResizeHandleOverrides<'_> {
-        crate::application::document::ResizeHandleOverrides {
+    ) -> baumhard::mindmap::scene_builder::ResizeHandleOverrides<'_> {
+        baumhard::mindmap::scene_builder::ResizeHandleOverrides {
             node: self.resize_handle_node(),
             section: self.resize_handle_section(),
         }
+    }
+}
+
+/// Why a `SelectionState` could not be resolved into a `ResizeTarget`.
+/// Distinguishing the failure mode lets the caller (a console verb,
+/// the dispatch arm) format an appropriate user-facing message
+/// without re-walking the selection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResizeTargetError {
+    /// `SelectionState::None`.
+    NoSelection,
+    /// `SelectionState::Multi` or `MultiSection` — Resize mode is
+    /// single-target by design.
+    MultiTarget,
+    /// Section selected, but `section.size == None` (fill-parent) —
+    /// no own AABB to stretch.
+    SectionFillParent {
+        node_id: String,
+        section_idx: usize,
+    },
+    /// Edge / label / portal selection — not resizable surface.
+    EdgeOrPortal,
+}
+
+/// Resolve a [`SelectionState`] into a [`ResizeTarget`].
+///
+/// Single source of truth shared by [`Action::EnterResizeMode`]'s
+/// dispatch arm (`apply_enter_resize_mode`) and the `mode resize`
+/// console verb. Pre-fix Batch 2 of
+/// `SECTIONS_BORDERS_RESIZE_PLAN.md` had this logic duplicated
+/// across both call sites, with subtly different error wording.
+///
+/// Reads only the document's selection + the `MindMap` model
+/// (specifically section sizes). Cross-platform — no GPU, no
+/// console, no renderer.
+///
+/// [`SelectionState`]: crate::application::document::SelectionState
+/// [`Action::EnterResizeMode`]: crate::application::keybinds::Action::EnterResizeMode
+pub fn resolve_resize_target(
+    selection: &crate::application::document::SelectionState,
+    map: &baumhard::mindmap::model::MindMap,
+) -> Result<ResizeTarget, ResizeTargetError> {
+    use crate::application::document::SelectionState;
+
+    match selection {
+        SelectionState::Single(node_id) => Ok(ResizeTarget::Node(node_id.clone())),
+        SelectionState::Section(s) | SelectionState::SectionRange { sel: s, .. } => {
+            let section_size = map
+                .nodes
+                .get(&s.node_id)
+                .and_then(|n| n.sections.get(s.section_idx))
+                .and_then(|sec| sec.size);
+            if section_size.is_none() {
+                Err(ResizeTargetError::SectionFillParent {
+                    node_id: s.node_id.clone(),
+                    section_idx: s.section_idx,
+                })
+            } else {
+                Ok(ResizeTarget::Section {
+                    node_id: s.node_id.clone(),
+                    section_idx: s.section_idx,
+                })
+            }
+        }
+        SelectionState::None => Err(ResizeTargetError::NoSelection),
+        SelectionState::Multi(_) | SelectionState::MultiSection(_) => Err(ResizeTargetError::MultiTarget),
+        SelectionState::Edge(_)
+        | SelectionState::EdgeLabel(_)
+        | SelectionState::PortalLabel(_)
+        | SelectionState::PortalText(_) => Err(ResizeTargetError::EdgeOrPortal),
     }
 }
 

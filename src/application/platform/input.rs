@@ -9,6 +9,10 @@
 //! that imports through this module stays put.
 
 pub use winit::event::ElementState;
+/// Mouse-button payload — consumed by native event handlers and the
+/// color-picker click flow. WASM's bootstrap (`run_wasm/mod.rs`)
+/// imports directly from winit, so this re-export is gated to native.
+#[cfg(not(target_arch = "wasm32"))]
 pub use winit::event::MouseButton;
 pub use winit::keyboard::Key;
 pub use winit::keyboard::ModifiersState as Modifiers;

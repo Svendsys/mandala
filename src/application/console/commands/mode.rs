@@ -3,38 +3,38 @@
 //! `mode` — query and change the active high-level interaction mode.
 //!
 //! Verbs:
-//! - `mode show` — print the current mode.
 //! - `mode default` — exit any active mode and return to `Default`.
-//!   Equivalent to pressing the `CancelMode` keybind (Esc by default).
+//!   Equivalent to pressing the `ExitMode` keybind (Esc by default).
 //! - `mode resize` — enter Resize mode targeting the current selection.
 //!   Equivalent to `Action::EnterResizeMode` (`r` by default).
 //!
-//! Reparent and Connect modes are reachable via their own console
-//! verbs (currently absent — they're keybind-only on `Ctrl+P` /
-//! `Ctrl+D`). Adding `mode reparent` / `mode connect` here is a
-//! later batch alongside the rest of the mode-verb surface; this
-//! batch lands `mode show / default / resize` only — the slice the
-//! resize-UX overhaul absolutely needs.
+//! `mode show` is intentionally absent until Batch 3 plumbs the
+//! active mode through `ConsoleEffects` (it has no clean surface to
+//! read mode from today, so a stub would be a half-feature per
+//! CODE_CONVENTIONS §5). Reparent / Connect transitions remain
+//! keybind-only (`Ctrl+P` / `Ctrl+D`); their console-verb surface
+//! lands alongside the mode-verb expansion in a later batch.
 //!
 //! See `SECTIONS_BORDERS_RESIZE_PLAN.md` §3.9 for the full target
-//! grammar (`mode node-edit`, `mode section-edit`, etc.) which lands
-//! in subsequent batches.
+//! grammar (`mode node-edit`, `mode section-edit`, `mode reparent`,
+//! `mode connect`, `mode show`) that lands in subsequent batches.
 
 use super::Command;
-use crate::application::app::{InteractionMode, ResizeTarget};
+use crate::application::app::{resolve_resize_target, InteractionMode, ResizeTargetError};
+#[cfg(test)]
+use crate::application::app::ResizeTarget;
 use crate::application::console::completion::{prefix_filter, Completion, CompletionContext, CompletionState};
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
 use crate::application::console::{ConsoleContext, ConsoleEffects, ConsoleSideEffect, ExecResult};
-use crate::application::document::SelectionState;
 
-const VERBS: &[&str] = &["show", "default", "resize"];
+const VERBS: &[&str] = &["default", "resize"];
 
 pub const COMMAND: Command = Command {
     name: "mode",
     aliases: &[],
-    summary: "Query or change the active interaction mode (Default / Resize / ...)",
-    usage: "mode show | mode default | mode resize",
+    summary: "Change the active interaction mode (default / resize)",
+    usage: "mode default | mode resize",
     tags: &["mode", "resize", "interaction", "default", "exit"],
     applicable: always,
     complete: complete_mode,
@@ -50,23 +50,12 @@ fn complete_mode(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completi
 
 fn execute_mode(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     match args.positional(0) {
-        Some("show") => {
-            // The console verb has no direct handle on the active
-            // `InteractionMode` (it's not on `ConsoleEffects`).
-            // Future batches that wire a status bar will surface
-            // the mode there; for now point users at the
-            // documented keybind exits.
-            ExecResult::ok_msg(
-                "mode: status display landing in Batch 3 (NodeEdit visuals); \
-                 use `mode default` or Esc to exit any active mode",
-            )
-        }
         Some("default") => {
             eff.side_effect = Some(ConsoleSideEffect::SetInteractionMode(InteractionMode::Default));
             eff.close_console = true;
             ExecResult::ok_msg("mode: returning to Default")
         }
-        Some("resize") => match resolve_resize_target(&eff.document.selection, eff.document) {
+        Some("resize") => match resolve_resize_target(&eff.document.selection, &eff.document.mindmap) {
             Ok(target) => {
                 eff.side_effect = Some(ConsoleSideEffect::SetInteractionMode(InteractionMode::Resize {
                     target,
@@ -74,58 +63,38 @@ fn execute_mode(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                 eff.close_console = true;
                 ExecResult::ok_msg("entering resize mode")
             }
-            Err(msg) => ExecResult::err(msg),
+            Err(e) => ExecResult::err(format_resize_error(&e)),
         },
         Some(other) => ExecResult::err(format!(
-            "mode: unknown subverb '{}'; use 'show', 'default', or 'resize'",
+            "mode: unknown subverb '{}'; use 'default' or 'resize'",
             other
         )),
-        None => ExecResult::err("usage: mode show | mode default | mode resize"),
+        None => ExecResult::err("usage: mode default | mode resize"),
     }
 }
 
-/// Mirror the `Action::EnterResizeMode` resolution rules — defined
-/// once in `cross_dispatch::lifecycle::apply_enter_resize_mode` and
-/// re-implemented here against `&MindMapDocument` rather than
-/// `RebuildContext` because the console verb runs before the
-/// dispatcher. Returns a typed error string the user sees in the
-/// console scrollback.
-fn resolve_resize_target(
-    selection: &SelectionState,
-    doc: &crate::application::document::MindMapDocument,
-) -> Result<ResizeTarget, String> {
-    match selection {
-        SelectionState::Single(id) => Ok(ResizeTarget::Node(id.clone())),
-        SelectionState::Section(s) | SelectionState::SectionRange { sel: s, .. } => {
-            let section_size = doc
-                .mindmap
-                .nodes
-                .get(&s.node_id)
-                .and_then(|n| n.sections.get(s.section_idx))
-                .and_then(|sec| sec.size);
-            if section_size.is_none() {
-                return Err(format!(
-                    "mode resize: section {}[{}] is fill-parent (size=None) — no AABB to stretch. \
-                     Pin a size first via `section resize <w> <h>`",
-                    s.node_id, s.section_idx
-                ));
-            }
-            Ok(ResizeTarget::Section {
-                node_id: s.node_id.clone(),
-                section_idx: s.section_idx,
-            })
+/// Format a [`ResizeTargetError`] (returned by the shared
+/// [`crate::application::app::resolve_resize_target`] resolver) as a
+/// user-facing console message prefixed with the verb name. The
+/// underlying error type is the same one the dispatcher arm
+/// (`apply_enter_resize_mode`) consumes, with `log::warn!` lines
+/// rather than console output — keeping the resolver one source of
+/// truth while letting each consumer phrase its own user surface.
+fn format_resize_error(e: &ResizeTargetError) -> String {
+    match e {
+        ResizeTargetError::NoSelection => {
+            "mode resize: no selection; click a node or section first".into()
         }
-        SelectionState::None => {
-            Err("mode resize: no selection; click a node or section first".into())
+        ResizeTargetError::MultiTarget => {
+            "mode resize: multi-target selection — single-target only".into()
         }
-        SelectionState::Multi(_) | SelectionState::MultiSection(_) => {
-            Err("mode resize: multi-target selection — single-target only".into())
-        }
-        SelectionState::Edge(_)
-        | SelectionState::EdgeLabel(_)
-        | SelectionState::PortalLabel(_)
-        | SelectionState::PortalText(_) => {
-            Err("mode resize: edge / label / portal selection — not resizable".into())
+        ResizeTargetError::SectionFillParent { node_id, section_idx } => format!(
+            "mode resize: section {}[{}] is fill-parent (size=None) — no AABB to stretch. \
+             Pin a size first via `section resize <w> <h>`",
+            node_id, section_idx,
+        ),
+        ResizeTargetError::EdgeOrPortal => {
+            "mode resize: edge / label / portal selection — not resizable".into()
         }
     }
 }
@@ -137,7 +106,10 @@ mod tests {
     use crate::application::console::parser::ParseResult;
     use crate::application::console::Args;
     use crate::application::document::tests_common::load_test_doc;
-    use crate::application::document::SectionSel;
+    use crate::application::document::{
+        EdgeLabelSel, EdgeRef, PortalLabelSel, SectionSel, SelectionState,
+    };
+    use baumhard::mindmap::scene_cache::EdgeKey;
 
     /// Parse `line` and run the `mode` verb body against `doc`,
     /// returning the result and the side-effect that the dispatcher

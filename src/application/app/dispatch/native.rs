@@ -80,14 +80,15 @@ fn quote_console_arg(s: &str) -> String {
 /// platform [`super::action_core::dispatch_compatible`] first.
 /// On `Handled`, this returns immediately — that path covers every
 /// Compatible-classified Action plus the cross-platform slice of
-/// mixed-branch arms (`CancelMode`'s `last_click` clear,
+/// mixed-branch arms (`ExitMode`'s `last_click` clear and
+///   Resize-mode reset,
 /// `EditSelection*`-Single open). The native match below runs only
 /// when the cross-platform dispatcher returns `Unhandled`, which
 /// means one of:
 ///   - a NativeOnly Action whose body needs `NativeContextExt` fields
 ///     (console / picker / interaction_mode / drag — see
 ///     `Action::wasm_compatibility`'s NativeOnly classification),
-///   - a mixed-branch arm's native residual (`CancelMode`'s mode
+///   - a mixed-branch arm's native residual (`ExitMode`'s mode
 ///     reset + rebuild; `EditSelection*` on EdgeLabel / Portal
 ///     selections),
 ///   - the mouse-mixed branch of `DoubleClickActivate` and the
@@ -174,14 +175,15 @@ pub(in crate::application::app) fn dispatch_action(
             super::super::console_input::dispatch_console_action(&action, ctx);
             DispatchOutcome::Handled
         }
-        Action::CancelMode => {
-            // `last_click` was already cleared by the cross-platform
-            // dispatcher (`dispatch_compatible`'s mixed-branch slice
-            // for CancelMode). This arm runs only the native-only
-            // residual: InteractionMode reset + hovered_node clear + rebuild.
+        Action::ExitMode => {
+            // Cross-platform slice (mode reset + rebuild on Resize)
+            // already ran in `dispatch_compatible`; that branch
+            // returns `Handled` and we never reach here. We arrive
+            // only when mode was target-picker (Reparent / Connect)
+            // — those depend on `hovered_node` from `NativeContextExt`
+            // and the `rebuild_all_with_mode` overlay path (orange /
+            // green highlights), so the residual stays native.
             if ctx.interaction_mode.is_target_picker() {
-                // Reparent / Connect — full hover-clear + rebuild_with_mode
-                // path (orange / green highlights need to clear).
                 *ctx.interaction_mode = InteractionMode::Default;
                 *ctx.hovered_node = None;
                 if let Some(doc) = ctx.document.as_ref() {
@@ -195,23 +197,18 @@ pub(in crate::application::app) fn dispatch_action(
                         ctx.scene_cache,
                     );
                 }
-            } else if matches!(ctx.interaction_mode, InteractionMode::Resize { .. }) {
-                // Resize — flip mode back, full rebuild_all so the
-                // 8 resize handles disappear (the scene-builder
-                // gate at `document/mod.rs:520` reads from the
-                // mode that we just changed).
-                *ctx.interaction_mode = InteractionMode::Default;
-                if let Some(doc) = ctx.document.as_ref() {
-                    super::super::scene_rebuild::rebuild_all(
-                        doc,
-                        ctx.interaction_mode,
-                        ctx.mindmap_tree,
-                        ctx.app_scene,
-                        ctx.renderer,
-                        ctx.scene_cache,
-                    );
-                }
             }
+            DispatchOutcome::Handled
+        }
+        Action::EnterResizeMode => {
+            // The body is cross-platform (mode flip + scene rebuild)
+            // and lives in `apply_enter_resize_mode`, but the Action
+            // is `wasm = NativeOnly` until WASM gains a resize
+            // gesture pipeline (no `DragState`, no handle hit-test
+            // on `run_wasm/event_mouse_click.rs` today). On native,
+            // the helper does the resolve + flip + rebuild.
+            let (mut core, _ext) = ctx.split_borrow();
+            super::action_core::with_doc_rebuild(&mut core, super::cross_dispatch::apply_enter_resize_mode);
             DispatchOutcome::Handled
         }
         Action::EnterReparentMode => {

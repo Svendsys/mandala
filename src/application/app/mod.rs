@@ -122,12 +122,13 @@ pub(crate) use crate::application::common::now_ms;
 const EDGE_HIT_TOLERANCE_PX: f32 = 8.0;
 
 /// Screen-space click tolerance (in pixels) for grab-handle hit
-/// testing — applies uniformly to edge handles and section /
-/// node resize handles. Tightened to 8px in Batch 2 of
-/// `SECTIONS_BORDERS_RESIZE_PLAN.md`: with explicit Resize mode
-/// gating handle visibility, we no longer need the 12px catch
-/// radius to compete with body-click ambiguity. 8px is still
-/// generous for a single ☐ glyph at standard zoom.
+/// testing — applies uniformly to edge handles and section / node
+/// resize handles. With explicit `InteractionMode::Resize` gating
+/// handle visibility, the press-time hit-test only competes with
+/// itself (no body-vs-handle ambiguity), so 8px is generous for a
+/// 14pt ☐ glyph at standard zoom. Touch / accessibility tuning
+/// will need this to grow — `KeybindConfig`-side configurability
+/// is a future seam.
 #[cfg(not(target_arch = "wasm32"))]
 const HANDLE_HIT_TOLERANCE_PX: f32 = 8.0;
 
@@ -347,15 +348,22 @@ fn click_hit_from_priority(
 }
 
 
-// `InteractionMode` is the cross-platform high-level mode enum
-// (re-exported here so submodules can write `super::InteractionMode`,
-// and so the console layer can carry it inside `ConsoleSideEffect`).
-// Lives in `interaction_mode.rs`; full doc comment + variant prose
-// lives there. Replaces the pre-Batch-1 native-only `AppMode` enum.
-// `ResizeTarget` ships at the same time so the `mode resize`
-// console verb can construct `Resize { target }` without reaching
-// through the submodule.
-pub(in crate::application) use interaction_mode::{InteractionMode, ResizeTarget};
+// Re-export the mode enum, the shared selection→target resolver,
+// and the resolver's typed error so the console layer can carry
+// `InteractionMode` inside `ConsoleSideEffect` and consumers across
+// `application::*` reach a uniform path. Full doc + variant prose
+// lives in `interaction_mode.rs`.
+pub(in crate::application) use interaction_mode::{
+    resolve_resize_target, InteractionMode, ResizeTargetError,
+};
+// `ResizeTarget` is constructed only inside `interaction_mode.rs`
+// (the resolver returns it); production consumers pattern-match
+// the result without naming the type. Tests assert on the variant
+// shape, so the re-export is `#[cfg(test)]`-gated to avoid an
+// unused-import warning on non-test builds. When Batch 4 (fast
+// resize) lands a non-test consumer, the gate moves.
+#[cfg(test)]
+pub(in crate::application) use interaction_mode::ResizeTarget;
 
 /// Tracks the current drag interaction state.
 ///

@@ -6,6 +6,10 @@
 //! companions live here.
 
 pub use winit::dpi::PhysicalPosition;
+/// Cursor icon — consumed by native cursor-update logic in
+/// `event_cursor_moved.rs`. WASM uses CSS cursor styles via the
+/// browser, not winit's enum, so this re-export is native-only.
+#[cfg(not(target_arch = "wasm32"))]
 pub use winit::window::CursorIcon;
 
 /// Surface-size payload — only the WASM resize handler routes

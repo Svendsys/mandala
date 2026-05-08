@@ -152,9 +152,16 @@ pub enum Action {
     /// Delete the current selection (currently: selected edge).
     #[action(context = Document, wasm = Compatible, destructive)]
     DeleteSelection,
-    /// Cancel the current mode (reparent / connect).
-    #[action(context = Document, wasm = NativeOnly)]
-    CancelMode,
+    /// Exit the active interaction mode (Reparent / Connect / Resize)
+    /// back to `Default`. Cross-platform: the mode-clear + scene
+    /// rebuild slice runs on both targets via `dispatch_compatible`;
+    /// the native-only residual (clearing `hovered_node` for the
+    /// Reparent/Connect overlay rebuild) runs in the native arm.
+    /// Replaces the pre-Batch-2 `CancelMode` per
+    /// `SECTIONS_BORDERS_RESIZE_PLAN.md` §3.3 + CODE_CONVENTIONS §10
+    /// (rename rather than alias).
+    #[action(context = Document, wasm = Compatible)]
+    ExitMode,
     /// Create a new unattached (orphan) node at the cursor position.
     #[action(context = Document, wasm = Compatible, destructive)]
     CreateOrphanNode,
@@ -205,11 +212,22 @@ pub enum Action {
     /// `DragState` through the existing throttled-resize gestures.
     /// `ExitMode` (Esc) returns to `Default`.
     ///
+    /// **WASM: NativeOnly until the resize gesture is wired
+    /// cross-platform.** The mode flip itself is target-agnostic
+    /// (the cross-platform `apply_enter_resize_mode` arm could
+    /// run on WASM today), but WASM has no `DragState`, no
+    /// throttled-drag pipeline, and no handle hit-test in
+    /// `run_wasm/event_mouse_click.rs` — so a flip on WASM would
+    /// render handles the user can't use. Per CODE_CONVENTIONS §5
+    /// (no half-features), the Action is `NativeOnly` until Batches
+    /// 4 / 7 land the WASM gesture pipeline. Reclassification is a
+    /// one-line change at that point.
+    ///
     /// Non-destructive — flips a mode bit and triggers a scene
     /// rebuild, no document mutation. The actual resize commit
     /// happens later via `set_node_aabb` / `set_section_aabb` on
     /// drag release; that path is gated separately.
-    #[action(context = Document, wasm = Compatible)]
+    #[action(context = Document, wasm = NativeOnly)]
     EnterResizeMode,
 
     // ── Console ──────────────────────────────────────────────────

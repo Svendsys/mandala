@@ -94,7 +94,7 @@ fn test_default_config_resolves_every_documented_binding() {
         (None, "p", true, false, false, Action::EnterReparentMode),
         (None, "d", true, false, false, Action::EnterConnectMode),
         (None, "delete", false, false, false, Action::DeleteSelection),
-        (None, "escape", false, false, false, Action::CancelMode),
+        (None, "escape", false, false, false, Action::ExitMode),
         (None, "n", true, false, false, Action::CreateOrphanNode),
         (None, "o", true, false, false, Action::OrphanSelection),
         (None, "enter", false, false, false, Action::EditSelection),
@@ -384,12 +384,17 @@ fn test_wasm_compatibility_console_modals_are_native_only() {
 #[test]
 fn test_wasm_compatibility_modal_actions_are_native_only() {
     use crate::application::keybinds::WasmCompatibility::NativeOnly;
+    // `ExitMode` is **not** in this list: the cross-platform mode-clear
+    // slice (drop `last_click`, reset `Resize` mode + rebuild) runs on
+    // both targets via `dispatch_compatible`; the native-only residual
+    // (Reparent/Connect overlay clear) is the fallthrough. WASM users
+    // press Esc to exit Resize mode the same way native users do.
     for a in [
         Action::EnterReparentMode,
         Action::EnterConnectMode,
         Action::ReparentToTarget(None),
         Action::ConnectToTarget(None),
-        Action::CancelMode,
+        Action::EnterResizeMode,
         Action::PickerCancel,
         Action::PickerCommit,
         Action::LabelEditCancel,
@@ -762,7 +767,7 @@ fn test_all_document_defaults_resolve_via_action_for_context() {
         (Action::EnterReparentMode, "p", true, false, false),
         (Action::EnterConnectMode, "d", true, false, false),
         (Action::DeleteSelection, "delete", false, false, false),
-        (Action::CancelMode, "escape", false, false, false),
+        (Action::ExitMode, "escape", false, false, false),
         (Action::CreateOrphanNode, "n", true, false, false),
         (Action::OrphanSelection, "o", true, false, false),
         (Action::EditSelection, "enter", false, false, false),
@@ -809,7 +814,7 @@ fn test_partial_json_uses_defaults_for_missing_fields() {
     assert_eq!(cfg.undo, vec!["Ctrl+Y"]);
     // Other fields should still have defaults
     assert_eq!(cfg.enter_reparent_mode, vec!["Ctrl+P"]);
-    assert_eq!(cfg.cancel_mode, vec!["Escape"]);
+    assert_eq!(cfg.exit_mode, vec!["Escape"]);
 }
 
 #[test]
@@ -887,7 +892,7 @@ fn test_picker_context_falls_through_to_document() {
 #[test]
 fn test_picker_context_prefers_picker_action_over_document() {
     let resolved = KeybindConfig::default().resolve();
-    // Escape is CancelMode at Document level but PickerCancel at picker level
+    // Escape is ExitMode at Document level but PickerCancel at picker level
     assert_eq!(
         resolved.action_for_context(InputContext::ColorPicker, "escape", false, false, false),
         Some(Action::PickerCancel),
@@ -996,7 +1001,7 @@ fn test_partial_json_preserves_component_defaults() {
 
 #[test]
 fn test_empty_binding_list_disables_action() {
-    let json = r#"{ "cancel_mode": [] }"#;
+    let json = r#"{ "exit_mode": [] }"#;
     let cfg = KeybindConfig::from_json(json).unwrap();
     let resolved = cfg.resolve();
     assert_eq!(

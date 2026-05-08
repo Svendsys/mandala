@@ -5,7 +5,7 @@
 //! Handles every Compatible-classified `Action` arm whose body
 //! has been factored into a `cross_dispatch::apply_*` helper, plus
 //! the cross-platform slice of two mixed-branch NativeOnly Actions
-//! (`Action::CancelMode`'s `last_click` clear,
+//! (`Action::ExitMode`'s mode reset + `last_click` clear,
 //! `Action::EditSelection*`-Single open). Returns `Handled` when
 //! the body ran; `Unhandled` for variants this dispatcher doesn't
 //! own — the caller's fall-through (native only) runs the
@@ -33,6 +33,7 @@ use crate::application::document::OptionEdit;
 use crate::application::keybinds::{Action, WasmCompatibility};
 
 use super::super::input_context_core::InputContextCore;
+use super::super::InteractionMode;
 use super::cross_dispatch::DispatchOutcome;
 
 /// Run `f` against a `RebuildContext` built from `core`, IF the
@@ -45,7 +46,7 @@ use super::cross_dispatch::DispatchOutcome;
 /// CODE_CONVENTIONS §5: "If a function is needed in two or more
 /// places, the answer is never to copy it." This helper closes
 /// that gap inside the dispatcher.
-fn with_doc_rebuild<F>(core: &mut InputContextCore<'_>, f: F)
+pub(in crate::application::app) fn with_doc_rebuild<F>(core: &mut InputContextCore<'_>, f: F)
 where
     F: FnOnce(&mut super::cross_dispatch::RebuildContext<'_>),
 {
@@ -57,8 +58,9 @@ where
 
 /// Lift `Unhandled → Handled` for the two mixed-branch arms whose
 /// cross-platform slice IS the totality of what WASM can do
-/// (`CancelMode`, `EditSelection*`). On native, `Unhandled` flows
-/// to the dispatcher's existing match for the InteractionMode-clear or
+/// (`ExitMode`, `EditSelection*`). On native, `Unhandled` flows
+/// to the dispatcher's existing match for the target-picker
+/// (Reparent / Connect) overlay clear or
 /// EdgeLabel/Portal editor open. WASM has no such fall-through —
 /// `WasmMacroDispatchTarget::dispatch_action` calls
 /// [`dispatch_compatible`] directly, so the macro loop's
@@ -75,7 +77,7 @@ pub(in crate::application::app) fn lift_mixed_branch_for_wasm_macro(
     if matches!(outcome, DispatchOutcome::Unhandled)
         && matches!(
             action,
-            Action::CancelMode | Action::EditSelection | Action::EditSelectionClean,
+            Action::ExitMode | Action::EditSelection | Action::EditSelectionClean,
         )
     {
         DispatchOutcome::Handled
@@ -100,13 +102,37 @@ pub(in crate::application::app) fn dispatch_compatible(
     // arm means "the cross-platform slice ran (or wasn't applicable);
     // native may have more to do".
     match action {
-        Action::CancelMode => {
-            // Cross-platform slice: clear `last_click` so a
-            // post-Esc click isn't paired with a pre-Esc one. The
-            // mode side (clear `interaction_mode`, `hovered_node`,
-            // rebuild_all_with_mode) is native-only — caller's
-            // fall-through runs it.
+        Action::ExitMode => {
+            // Cross-platform slice runs first:
+            // 1. Clear `last_click` so a post-Esc click isn't paired
+            //    with a pre-Esc one (was already in the pre-Batch-2
+            //    `ExitMode` cross-platform body).
+            // 2. Clear `interaction_mode` to `Default` and rebuild
+            //    when the active mode is `Resize { .. }`. WASM users
+            //    were stuck in Resize without this — the pre-Batch-2
+            //    arm was `wasm = NativeOnly` so Esc never reached the
+            //    mode-clear path on WASM. Per the cross-platform
+            //    review.
+            //
+            // The native fallthrough still handles the
+            // Reparent / Connect target-picker overlay clear (which
+            // depends on `hovered_node` from `NativeContextExt`).
             *core.last_click = None;
+            if matches!(*core.interaction_mode, InteractionMode::Resize { .. }) {
+                *core.interaction_mode = InteractionMode::Default;
+                if let Some(doc) = core.document.as_deref_mut() {
+                    let mut rc = super::cross_dispatch::RebuildContext {
+                        document: doc,
+                        mindmap_tree: core.mindmap_tree,
+                        app_scene: core.app_scene,
+                        renderer: core.renderer,
+                        scene_cache: core.scene_cache,
+                        interaction_mode: core.interaction_mode,
+                    };
+                    rc.rebuild_after_selection_change();
+                }
+                return DispatchOutcome::Handled;
+            }
             return DispatchOutcome::Unhandled;
         }
         Action::EditSelection | Action::EditSelectionClean => {
@@ -175,11 +201,6 @@ pub(in crate::application::app) fn dispatch_compatible(
         }
         // ── Document-lifecycle ─────────────────────────────────
         Action::Undo => with_doc_rebuild(core, |rc| super::cross_dispatch::apply_undo(rc)),
-        Action::EnterResizeMode => {
-            with_doc_rebuild(core, |rc| {
-                let _ = super::cross_dispatch::apply_enter_resize_mode(rc);
-            })
-        }
         Action::DeleteSelection => {
             with_doc_rebuild(core, |rc| super::cross_dispatch::apply_delete_selection(rc))
         }
@@ -429,8 +450,8 @@ mod tests {
     use crate::application::keybinds::Action;
 
     #[test]
-    fn cancel_mode_unhandled_lifts_to_handled() {
-        let out = lift_mixed_branch_for_wasm_macro(&Action::CancelMode, DispatchOutcome::Unhandled);
+    fn exit_mode_unhandled_lifts_to_handled() {
+        let out = lift_mixed_branch_for_wasm_macro(&Action::ExitMode, DispatchOutcome::Unhandled);
         assert_eq!(out, DispatchOutcome::Handled);
     }
 
@@ -453,7 +474,7 @@ mod tests {
         // Single selection returns Handled from the cross-platform
         // dispatcher; we don't want to alter that.)
         for action in [
-            Action::CancelMode,
+            Action::ExitMode,
             Action::EditSelection,
             Action::EditSelectionClean,
         ] {

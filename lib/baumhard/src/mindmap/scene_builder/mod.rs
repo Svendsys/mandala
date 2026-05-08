@@ -29,6 +29,44 @@ pub struct EdgeColorPreview<'a> {
     pub color: &'a str,
 }
 
+/// View-side overrides telling the scene builder which node /
+/// section should receive auto-emitted resize handles this frame.
+/// Computed by the application layer (translating from its
+/// interaction-mode state) and threaded into
+/// [`build_scene_with_cache`] / [`build_scene_with_offsets_selection_and_overrides`].
+///
+/// `Default` is no handles. Pre-Batch-2 of the sections / borders /
+/// resize UX overhaul, the scene builder read selection directly
+/// (`Single` → handles, `Section` → handles), which produced the
+/// "accidental resize on selection" UX bug. Decoupling the gate
+/// from selection — and putting it next to its consumer
+/// `SceneSelectionContext` — keeps the model/view boundary clean:
+/// the document doesn't know about modes, the app translates mode
+/// to override, the scene builder consumes the override.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ResizeHandleOverrides<'a> {
+    /// Which node should auto-emit 8 resize handles this frame, or
+    /// `None` for no node handles.
+    pub node: Option<&'a str>,
+    /// Which section (`(node_id, section_idx)`) should auto-emit 8
+    /// resize handles, or `None` for no section handles. Sections
+    /// with `size == None` (fill-parent) emit zero handles inside
+    /// the builder regardless — there's no own AABB to stretch.
+    pub section: Option<(&'a str, usize)>,
+}
+
+impl<'a> ResizeHandleOverrides<'a> {
+    /// All-`None` overrides — equivalent to `Default::default()`
+    /// but named for clarity at construction sites that want to
+    /// be explicit about "this rebuild emits no handles".
+    pub const fn none() -> Self {
+        Self {
+            node: None,
+            section: None,
+        }
+    }
+}
+
 /// Portal equivalent of `EdgeColorPreview`. Matched against the
 /// portal-mode edge's `EdgeKey`. A portal-mode edge and a line-mode
 /// edge with identical endpoints and `edge_type` would share the

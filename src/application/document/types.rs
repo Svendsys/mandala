@@ -14,38 +14,11 @@ use baumhard::mindmap::scene_cache::EdgeKey;
 /// Selection highlight color: bright cyan [R, G, B, A]
 pub const HIGHLIGHT_COLOR: [f32; 4] = [0.0, 0.9, 1.0, 1.0];
 
-/// View-side overrides telling the scene builder which node / section
-/// should receive auto-emitted resize handles this frame. Computed by
-/// the application layer from `InteractionMode` and threaded into
-/// [`super::MindMapDocument::build_scene_with_cache`].
-///
-/// Default = no handles. Callers explicitly opt in via
-/// `InteractionMode::resize_handle_node()` /
-/// `resize_handle_section()` (see
-/// `crate::application::app::interaction_mode`). Pre-Batch-2 of
-/// `SECTIONS_BORDERS_RESIZE_PLAN.md` the gate was selection-driven
-/// (every `Single`-node selection auto-emitted handles); the
-/// mode-driven gate is the single change that fixes the
-/// "accidental resize on selection" UX bug.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct ResizeHandleOverrides<'a> {
-    /// Which node should auto-emit 8 resize handles, or `None` for
-    /// no node handles this frame.
-    pub node: Option<&'a str>,
-    /// Which section (`(node_id, section_idx)`) should auto-emit 8
-    /// resize handles, or `None` for no section handles. Only sections
-    /// with `Some` size produce handles regardless — the scene
-    /// builder filters fill-parent sections internally.
-    pub section: Option<(&'a str, usize)>,
-}
-
-impl<'a> ResizeHandleOverrides<'a> {
-    /// All-`None` overrides — equivalent to `Default::default()` but
-    /// named for clarity at construction sites that want to be explicit.
-    pub fn none() -> Self {
-        Self::default()
-    }
-}
+// `ResizeHandleOverrides` lives in baumhard
+// (`baumhard::mindmap::scene_builder::ResizeHandleOverrides`) — its
+// home is next to the `SceneSelectionContext` it feeds. Re-exported
+// from `document/mod.rs` for the convenient `ResizeHandleOverrides::none()`
+// path that production callers use.
 
 /// Per-active-mutation runtime record for the animation system.
 /// Carries the from/to `MindNode` snapshot and the driving
