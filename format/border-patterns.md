@@ -1,4 +1,46 @@
-# Border-side patterns
+# Borders: a creative toolkit
+
+Mandala borders are not a "pick from five presets" feature.
+They're a typographic surface authors can author freely: any
+glyph, any pattern, any color, any palette, any font. The
+machine-readable schema lives below; the goal of this section is
+to set expectations.
+
+If you want a border made of the letter `A`, you can do that.
+If you want `-##---AAAA---##-` repeating around a node, you can
+do that. If you want one node's left side to read "TODO ⇒"
+forever and the right side to be palette-cycled emoji, you can
+do that. The presets (`light`, `heavy`, `double`, `rounded`)
+exist as conveniences — they're starting points authors can
+walk away from any time.
+
+The same machinery powers **section frames** (the cyan rectangles
+around per-section subdivisions while NodeEdit is active) — see
+[Section frames](#section-frames) below — so the customization
+applies to both surfaces with one shared vocabulary.
+
+Animation of border content (a scrolling marquee, a per-tick
+glyph swap) is on the roadmap but not implemented. See
+[`./animation-roadmap.md`](./animation-roadmap.md) for the gap
+analysis and what's blocking it.
+
+## Examples
+
+```
+top="+=##=+"                  → +=##=++=##=++=##=+    (atomic-repeat)
+top="###(*)###"               → ###******###          (prefix-fill-suffix)
+top="-##---(AAAA)---##-"      → -##---AAAA AAAA---##- (multi-glyph fill)
+top="─" tl="◆" tr="◇"         → ◆────────────◇        (custom corners)
+top="+=#(\(\))#=+"            → +=#()()()#=+          (escaped fill glyph)
+```
+
+Per-side strings live under `GlyphBorderConfig.glyphs` as
+`top`, `bottom`, `left`, `right`. Per-corner glyphs live under
+`top_left`, `top_right`, `bottom_left`, `bottom_right`. Set the
+preset to `custom` to pull the per-side / per-corner overrides
+into the resolved style.
+
+# Reference: Border-side patterns
 
 The four side fields under
 [`GlyphBorderConfig.glyphs`](./schema.md#glyphborderconfig)
@@ -93,6 +135,38 @@ naturally across the corners.
 is cycled — `"frame"` (default), `"background"`, `"text"`, or
 `"title"`. Unknown values warn and fall back to `"frame"`.
 
+## Section frames
+
+Section frames — the cyan rectangles drawn around each section
+of a multi-section node while NodeEdit is active — flow through
+the same machinery node borders do. Authors can write
+`MindSection.frame_border: GlyphBorderConfig` on a per-section
+basis; the configuration accepts every key the node-border
+config does (`preset`, `font`, `font_size_pt`, `color`,
+`color_palette`, `color_palette_field`, `glyphs.{top, bottom,
+left, right, top_left, top_right, bottom_left, bottom_right}`,
+`padding`).
+
+Map-wide defaults live on the canvas:
+
+- `Canvas.default_section_frame_border` — the unfocused frame
+  shape (sections of the active NodeEdit node that are *not*
+  currently inside the inline text editor).
+- `Canvas.default_focused_section_frame_border` — the focused
+  frame shape (the section whose text is being edited).
+
+Resolver cascade:
+1. `MindSection.frame_border` if `Some` (per-section author override).
+2. else `Canvas.default_focused_section_frame_border` (when
+   focused) or `Canvas.default_section_frame_border`.
+3. else a hardcoded floor: `light` preset for unfocused frames,
+   `heavy` preset for the focused one. The floor is just another
+   `GlyphBorderConfig` flowing through the same resolver — there
+   are no inline glyph constants in the section-frame path.
+
+The resolver call site is
+`lib/baumhard/src/mindmap/border.rs::resolve_section_frame_border`.
+
 ## Console verb
 
 Per-node configuration runs through the
@@ -129,3 +203,11 @@ the look you want.
 Setting any side or corner glyph automatically promotes the
 preset to `"custom"`. Quoted patterns survive the tokenizer
 unchanged so `(` / `)` / spaces don't need shell escaping.
+
+A `section frame …` console subverb (mirroring the same kv
+keyspace) and a `canvas section-frame …` / `canvas
+section-frame focused …` surface are tracked as follow-up work
+in [`SECTIONS_BORDERS_RESIZE_PLAN.md`](../SECTIONS_BORDERS_RESIZE_PLAN.md)
+§5 and the abundant-leaping-moonbeam plan. The model fields
+exist today; they are authorable via raw JSON until the verbs
+land.
