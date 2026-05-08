@@ -11,21 +11,22 @@
 //!   primary node. Mirrors `Action::EnterNodeEdit` but does **not**
 //!   trigger the single-section short-circuit (the verb path is
 //!   "set mode" only — for the legacy "Enter on a node opens the
-//!   editor" UX, use the keybind or `node edit`).
-//! - `mode section-edit` — promote a NodeEdit session into the text
-//!   editor on the active section. Requires `interaction_mode ==
-//!   NodeEdit { … }` (NodeEdit is the modal scope under which
-//!   per-section editing makes sense). Selection picks the section:
-//!   `Section(s)` / `SectionRange { sel: s, .. }` use `s.section_idx`;
-//!   `Single(node_id)` defaults to section 0; cross-node selections
-//!   error.
+//!   editor" UX, use the keybind).
 //!
-//! `mode show` is intentionally absent until a later batch plumbs the
-//! active mode through `ConsoleEffects` (it has no clean surface to
-//! read mode from today, so a stub would be a half-feature per
-//! CODE_CONVENTIONS §5). Reparent / Connect transitions remain
-//! keybind-only (`Ctrl+P` / `Ctrl+D`); their console-verb surface
-//! lands alongside the mode-verb expansion in a later batch.
+//! `mode section-edit` is intentionally absent: the `ConsoleSideEffect`
+//! bus only carries `SetInteractionMode` today, but opening the
+//! section editor needs the full modal cascade
+//! (`apply_enter_section_edit` consumes a `RebuildContext` + the
+//! native modal-stealer). Per CODE_CONVENTIONS §5 (no half-features),
+//! we don't surface a verb that the bus can't drive — keybind users
+//! get the full functionality today via `Action::EnterSectionEdit`
+//! (Enter inside `InputContext::NodeEdit`). When the bus gains a
+//! richer variant (e.g. `OpenSectionEditor`), the verb lands then.
+//!
+//! `mode show` is intentionally absent until a later batch plumbs
+//! the active mode through `ConsoleEffects` (same §5 reasoning —
+//! no surface, no verb). Reparent / Connect transitions remain
+//! keybind-only (`Ctrl+P` / `Ctrl+D`).
 //!
 //! See `SECTIONS_BORDERS_RESIZE_PLAN.md` §3.9 for the full target
 //! grammar.
@@ -40,16 +41,16 @@ use crate::application::console::predicates::always;
 use crate::application::console::{ConsoleContext, ConsoleEffects, ConsoleSideEffect, ExecResult};
 use crate::application::document::SelectionState;
 
-const VERBS: &[&str] = &["default", "resize", "node-edit", "section-edit"];
+const VERBS: &[&str] = &["default", "resize", "node-edit"];
 
 pub const COMMAND: Command = Command {
     name: "mode",
     aliases: &[],
-    summary: "Change the active interaction mode (default / resize / node-edit / section-edit)",
-    usage: "mode default | mode resize | mode node-edit | mode section-edit",
+    summary: "Change the active interaction mode (default / resize / node-edit)",
+    usage: "mode default | mode resize | mode node-edit",
     tags: &[
         "mode", "resize", "interaction", "default", "exit",
-        "node-edit", "section-edit", "edit",
+        "node-edit", "edit",
     ],
     applicable: always,
     complete: complete_mode,
@@ -90,12 +91,11 @@ fn execute_mode(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             }
             Err(msg) => ExecResult::err(msg),
         },
-        Some("section-edit") => execute_section_edit(eff),
         Some(other) => ExecResult::err(format!(
-            "mode: unknown subverb '{}'; use 'default', 'resize', 'node-edit', or 'section-edit'",
+            "mode: unknown subverb '{}'; use 'default', 'resize', or 'node-edit'",
             other
         )),
-        None => ExecResult::err("usage: mode default | mode resize | mode node-edit | mode section-edit"),
+        None => ExecResult::err("usage: mode default | mode resize | mode node-edit"),
     }
 }
 
@@ -116,55 +116,6 @@ fn resolve_node_edit_target(selection: &SelectionState) -> Result<String, String
             _ => Err("mode node-edit: selection is not a node — try clicking on a node body".into()),
         },
     }
-}
-
-/// `mode section-edit` body. Promotes the active NodeEdit session
-/// to the text editor on the selection's section.
-///
-/// **Today's surface limitation.** Console verbs use the
-/// [`ConsoleSideEffect`] bus, which routes through
-/// `handle_pre_rebuild_side_effect` — that surface only fits
-/// `SetInteractionMode` (single-bit mode flip). Opening the
-/// section editor needs the full modal cascade
-/// (`apply_enter_section_edit` consumes a `RebuildContext`), which
-/// the bus can't carry without a richer enum variant. Until that
-/// variant lands, the verb errors out and tells the user to use
-/// the `Enter` keybind once the selection narrows to a section.
-/// Keybind users get the full functionality today (Phase A
-/// shipped `Action::EnterSectionEdit` and its dispatcher arm).
-fn execute_section_edit(eff: &ConsoleEffects) -> ExecResult {
-    // Validate preconditions so the error message is verb-specific
-    // — the user gets a clear path forward (e.g. "click a section
-    // first") rather than a silent no-op.
-    match &eff.document.selection {
-        SelectionState::None => {
-            return ExecResult::err(
-                "mode section-edit: no selection; click a section first",
-            );
-        }
-        SelectionState::Multi(_) | SelectionState::MultiSection(_) => {
-            return ExecResult::err(
-                "mode section-edit: multi-target selection — single-target only",
-            );
-        }
-        SelectionState::Edge(_)
-        | SelectionState::EdgeLabel(_)
-        | SelectionState::PortalLabel(_)
-        | SelectionState::PortalText(_) => {
-            return ExecResult::err(
-                "mode section-edit: edge / label / portal selection — not a section target",
-            );
-        }
-        // Selection is node- or section-scoped — fall through.
-        _ => {}
-    }
-    // Surface the dispatch-bus gap rather than silently no-op.
-    // Keybind path (Action::EnterSectionEdit, default Enter inside
-    // NodeEdit) covers the full functionality today.
-    ExecResult::err(
-        "mode section-edit: not yet wired through the console; \
-         use the `Enter` keybind inside NodeEdit mode",
-    )
 }
 
 /// Format a [`ResizeTargetError`] (returned by the shared
@@ -481,57 +432,5 @@ mod tests {
         doc.selection = SelectionState::Edge(er);
         let (result, _, _) = run_mode("mode node-edit", &mut doc);
         assert_err_contains(&result, "not a node");
-    }
-
-    /// `mode section-edit` is documented as not-yet-wired through
-    /// the console (see helper). The verb still validates the
-    /// selection so the user gets a verb-specific error rather than
-    /// a generic "not yet wired" message.
-    #[test]
-    fn test_mode_section_edit_with_no_selection_errors() {
-        let mut doc = load_test_doc();
-        doc.selection = SelectionState::None;
-        let (result, side, _) = run_mode("mode section-edit", &mut doc);
-        assert_err_contains(&result, "no selection");
-        assert!(side.is_none());
-    }
-
-    #[test]
-    fn test_mode_section_edit_with_multi_section_errors() {
-        use crate::application::document::tests_common::pinned_two_section_node;
-        let (mut doc, id) = pinned_two_section_node();
-        doc.selection = SelectionState::MultiSection(vec![
-            SectionSel::new(&id, 0),
-            SectionSel::new(&id, 1),
-        ]);
-        let (result, _, _) = run_mode("mode section-edit", &mut doc);
-        assert_err_contains(&result, "single-target only");
-    }
-
-    #[test]
-    fn test_mode_section_edit_with_edge_selection_errors() {
-        let mut doc = load_test_doc();
-        let er = doc
-            .mindmap
-            .edges
-            .first()
-            .map(|e| EdgeRef::new(&e.from_id, &e.to_id, &e.edge_type))
-            .expect("test doc has edges");
-        doc.selection = SelectionState::Edge(er);
-        let (result, _, _) = run_mode("mode section-edit", &mut doc);
-        assert_err_contains(&result, "not a section target");
-    }
-
-    /// Even with a Section selection, `mode section-edit` errors
-    /// today — the dispatch-bus gap surfaces as a clear "use the
-    /// keybind" message rather than a silent no-op.
-    #[test]
-    fn test_mode_section_edit_with_section_selection_surfaces_dispatch_gap() {
-        use crate::application::document::tests_common::pinned_two_section_node;
-        let (mut doc, id) = pinned_two_section_node();
-        doc.selection = SelectionState::Section(SectionSel::new(&id, 0));
-        let (result, side, _) = run_mode("mode section-edit", &mut doc);
-        assert_err_contains(&result, "Enter");
-        assert!(side.is_none());
     }
 }

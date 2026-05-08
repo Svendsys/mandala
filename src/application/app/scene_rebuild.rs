@@ -284,6 +284,84 @@ mod tests {
         let line = super::mode_status_line(&mode, &doc).expect("text expected");
         assert!(line.contains(&format!("{}[1]", id)), "got {:?}", line);
     }
+
+    /// NodeEdit on a multi-section node with a `Single` selection
+    /// (the user entered NodeEdit but hasn't picked a section yet)
+    /// renders `[- of N]` rather than the misleading `[1 of N]`
+    /// fabricated index. Pin from the Opus review TIER2.
+    #[test]
+    fn test_mode_status_line_node_edit_single_no_section_picked_renders_dash() {
+        use crate::application::app::InteractionMode;
+        use crate::application::document::tests_common::pinned_two_section_node;
+        use crate::application::document::SelectionState;
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::Single(id.clone());
+        let mode = InteractionMode::NodeEdit { node_id: id.clone() };
+        let line = super::mode_status_line(&mode, &doc).expect("text expected");
+        assert!(line.contains("section [- of 2]"), "got {:?}", line);
+    }
+
+    /// NodeEdit on a multi-section node with a Section selection
+    /// pointing at a *different* node (drift, e.g. user clicked a
+    /// sibling) — same `[- of N]` outcome because the selection
+    /// owner doesn't match the active NodeEdit target.
+    #[test]
+    fn test_mode_status_line_node_edit_section_owner_mismatch_renders_dash() {
+        use crate::application::app::InteractionMode;
+        use crate::application::document::tests_common::pinned_two_section_node;
+        use crate::application::document::{SectionSel, SelectionState};
+        let (mut doc, id) = pinned_two_section_node();
+        // Selection points at a different (synthetic) node id.
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: "other-node".to_string(),
+            section_idx: 0,
+        });
+        let mode = InteractionMode::NodeEdit { node_id: id.clone() };
+        let line = super::mode_status_line(&mode, &doc).expect("text expected");
+        assert!(line.contains("section [- of 2]"), "got {:?}", line);
+    }
+
+    /// Reparent mode with one source renders the singular form
+    /// "1 source" — pluralization branch boundary.
+    #[test]
+    fn test_mode_status_line_reparent_singular_source() {
+        use crate::application::app::InteractionMode;
+        use crate::application::document::tests_common::load_test_doc;
+        let doc = load_test_doc();
+        let mode = InteractionMode::Reparent {
+            sources: vec!["only-source".to_string()],
+        };
+        let line = super::mode_status_line(&mode, &doc).expect("text expected");
+        assert!(line.contains("1 source "), "got {:?}", line);
+        assert!(!line.contains("1 sources"), "singular form must not pluralize: {:?}", line);
+    }
+
+    /// Reparent mode with two+ sources renders the plural form.
+    #[test]
+    fn test_mode_status_line_reparent_plural_sources() {
+        use crate::application::app::InteractionMode;
+        use crate::application::document::tests_common::load_test_doc;
+        let doc = load_test_doc();
+        let mode = InteractionMode::Reparent {
+            sources: vec!["a".to_string(), "b".to_string()],
+        };
+        let line = super::mode_status_line(&mode, &doc).expect("text expected");
+        assert!(line.contains("2 sources"), "plural form must render: {:?}", line);
+    }
+
+    /// Connect mode renders the source node id in the status line.
+    #[test]
+    fn test_mode_status_line_connect_renders_source() {
+        use crate::application::app::InteractionMode;
+        use crate::application::document::tests_common::load_test_doc;
+        let doc = load_test_doc();
+        let mode = InteractionMode::Connect {
+            source: "src-node-42".to_string(),
+        };
+        let line = super::mode_status_line(&mode, &doc).expect("text expected");
+        assert!(line.starts_with("connect: "), "got {:?}", line);
+        assert!(line.contains("src-node-42"), "got {:?}", line);
+    }
 }
 
 pub(in crate::application::app) fn rebuild_all(
@@ -325,20 +403,36 @@ pub(in crate::application::app) fn mode_status_line(
                 .get(node_id)
                 .map(|n| n.sections.len())
                 .unwrap_or(0);
-            // The active section index — derived from the current
-            // selection; defaults to 1 when selection isn't
-            // narrowed to a section yet (NodeEdit on a Single
-            // selection).
-            let active_idx = doc.selection.selected_section()
+            // Active section index, 1-indexed for display. `None` when
+            // selection isn't narrowed to a section of the active
+            // NodeEdit node (Single selection on the node, drift to
+            // an edge / portal, etc.). Pre-fix this defaulted to 1
+            // and showed `[1 of N]` even when no section was picked
+            // — misleading. Now we render `[- of N]` so the user
+            // sees they still need to pick a section.
+            let active_idx_display = doc
+                .selection
+                .selected_section()
                 .filter(|s| s.node_id == *node_id)
-                .map(|s| s.section_idx + 1)
-                .unwrap_or(1);
+                .map(|s| {
+                    // Clamp against `total` so a stale selection
+                    // pointing past the section count after a custom
+                    // mutation doesn't render `[N+1 of N]`.
+                    (s.section_idx + 1).min(total.max(1))
+                });
             if total <= 1 {
+                // Single-section (or stale-mode-after-deletion node
+                // with `total == 0`): short form. The status bar
+                // can't say anything more meaningful than the node id.
                 Some(format!("editing: {}", node_id))
             } else {
+                let idx_label = match active_idx_display {
+                    Some(n) => n.to_string(),
+                    None => "-".to_string(),
+                };
                 Some(format!(
                     "editing: {} \u{2014} section [{} of {}]",
-                    node_id, active_idx, total
+                    node_id, idx_label, total
                 ))
             }
         }
