@@ -26,17 +26,17 @@ analysis and what's blocking it.
 
 ## Examples
 
-All examples below assume the rendered side has room for ~14 cluster
-columns; narrower sides emit fewer fill iterations, wider sides emit
-more. The auto-resize pass (§5) grows the node so the static parts
-always fit.
+Each example shows the resolved string at one specific rendered
+width — narrower sides emit fewer fill iterations, wider sides
+emit more. The auto-resize pass (§5) grows the node so the static
+parts (prefix + suffix + corners) always fit.
 
 ```
-top="+=##=+"                  → +=##=++=##=++=##=+    (atomic-repeat)
-top="###(*)###"               → ###******###          (prefix-fill-suffix)
-top="-##---(AAAA)---##-"      → -##---AAAAAAAA---##-  (multi-glyph fill, 2 fill iters)
-top="─" tl="◆" tr="◇"         → ◆────────────◇        (custom corners)
-top="+=#(\(\))#=+"            → +=#()()()#=+          (escaped parens in fill)
+top="+=##=+"             →  +=##=++=##=++=##=+   (width 18, 3 atomic copies)
+top="###(*)###"          →  ###******###         (width 12, 6 fill iters)
+top="-##---(AAAA)---##-" →  -##---AAAAAAAA---##- (width 20, 2 fill iters)
+top="─" tl="◆" tr="◇"    →  ◆────────────◇       (width 14, custom corners)
+top="+=#(\(\))#=+"       →  +=#()()()#=+         (width 12, escaped parens in fill)
 ```
 
 Per-side strings live under `GlyphBorderConfig.glyphs` as
@@ -284,7 +284,15 @@ call). Implicit cancel: a non-preview committing edit
 clears the preview before applying its own write — the
 committing edit always wins.
 
-Programmatic surface: `Action::SetBorderPreview { target_kind,
-field, value }`, `Action::CommitBorderPreview`,
-`Action::CancelBorderPreview`. Default keybinds are unbound;
-users opt in via the JSON config.
+Programmatic surface: `Action::SetBorderPreview { target_kind:
+BorderPreviewTargetKind, field, value }`, `Action::CommitBorderPreview`,
+`Action::CancelBorderPreview`. `BorderPreviewTargetKind` is a
+typed enum (`node` | `section` | `canvas-border` | `canvas-sf` |
+`canvas-sf-focused`) registered in `KeybindConfig` as
+`set_border_preview` parametric bindings. Default `Esc` already
+cancels an active preview through `Action::ExitMode`'s body —
+the chain lives there because the keybind resolver maps
+`(context, key) → Action` deterministically and can't fall
+through. `cancel_border_preview` and `commit_border_preview`
+ship unbound by default; users opt in for muscle-memory variants
+(e.g. `Ctrl+Enter` for commit) via the JSON config.

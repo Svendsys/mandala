@@ -1364,50 +1364,66 @@ preset. The preset-promotion logic in
 custom when a side glyph was set) is **deleted** — the new error
 message in §5.4.3 catches this case at the verb layer instead.
 
-### 5.6 Live preview (`border preview`)
+### 5.6 Live preview (`border preview`) — *shipped*
 
-The biggest new capability. Users frequently want to see what a
-preset / color / pattern looks like before committing.
+**Status: implemented across all four border surfaces** (per-node,
+per-section, two canvas defaults). Users frequently want to see
+what a preset / color / pattern looks like before committing —
+preview stages the edit on a transient slot, the renderer
+substitutes the staged style, and the user terminates with
+`commit` (writes through the matching committing setter) or
+`cancel` (discards).
 
 ```
-border preview preset=heavy
-border preview color=#ff00ff
-border preview side top="###(*)###"
+border preview preset=heavy color=#ff8800   # per-node
 border preview commit
 border preview cancel
+
+section frame preview top="###(*)###"        # per-section
+canvas border preview palette=rainbow        # canvas default
+canvas section-frame focused preview preset=double
 ```
 
-A preview transient on the document (no model write, no undo entry)
-shows the requested change, rebuilds the scene, and waits for
-`commit` or `cancel`. Commit writes the underlying setter; cancel
-discards.
+As-shipped implementation diverges from the original sketch in
+two places — both flagged during the review-fix passes:
 
-Implementation:
+- **Target shape**: `BorderPreview { target: BorderPreviewTarget,
+  edits: BorderConfigEdits, selection_snapshot: SelectionState }`
+  where `BorderPreviewTarget` is a 5-variant enum
+  (`Nodes(Vec<String>)` / `Sections(Vec<(String, usize)>)` /
+  `CanvasDefault` / `CanvasSectionFrame` /
+  `CanvasSectionFrameFocused`). The original `node_ids:
+  Vec<String>` shape was per-node-only and didn't fit the four
+  surfaces.
+- **Selection-drift posture**: lazy defer-clear, not eager
+  cancel-on-change. The renderer treats a drift-detected preview
+  as inactive; the actual slot clear happens at the next `set_*`
+  / `commit_*` / `cancel_*` call. Hooking the ~25 sites that
+  write `MindMapDocument.selection` would be fragile, and an
+  eager cancel on every tab key was annoying in practice.
+- **Scene-builder hook**: extends `build_scene_with_cache` with
+  `border_preview: Option<BorderPreview<'a>>` (peer of the
+  existing `edge_color_preview` / `portal_color_preview`); not a
+  field on `SceneSelectionContext`. Single chokepoint at
+  `assemble_scene_overrides` constructs the borrowed view.
+- **Esc behavior**: chained inside `Action::ExitMode`'s body —
+  `cancel_border_preview()` runs first, short-circuits when a
+  preview was canceled, and otherwise falls through to the
+  normal mode-clear path. The keybind resolver maps
+  `(context, key) → Action` deterministically and can't fall
+  through, so `cancel_border_preview` ships unbound by default
+  (the chain is the user-visible behaviour).
+- **Implicit cancel on committing edits**: any of the four
+  committing setters clears the preview as their first line, so
+  a non-preview edit always wins.
 
-- A new field on `MindMapDocument`: `border_preview: Option<BorderPreview>`
-  where `BorderPreview { node_ids: Vec<String>, edits: BorderConfigEdits }`.
-  When `Some`, the scene-rebuild path applies the edits transiently
-  to a clone of the relevant nodes' `style.border` fields when
-  building the scene — model unchanged.
-- The scene builder gets a new optional input
-  `border_preview: Option<&BorderPreview>` on `SceneSelectionContext`.
-- `border preview <kvs>` dispatches `Action::SetBorderPreview { kvs }`,
-  which sets `border_preview = Some(...)`, triggers scene rebuild.
-- `border preview commit` reads `border_preview`, calls
-  `set_node_border_config` for each node id, clears the preview,
-  triggers rebuild + undo entry.
-- `border preview cancel` clears `border_preview` + rebuild.
-- Esc inside the console with an active preview cancels (treated as
-  a soft modal — TextEditState-style steal).
+Programmatic surface: `Action::SetBorderPreview { target_kind:
+BorderPreviewTargetKind, field, value }` (single kv per Action;
+multi-kv preview stays console-only),
+`Action::CommitBorderPreview`, `Action::CancelBorderPreview`.
 
-The preview is bounded to one selection. If selection changes while
-a preview is active, the preview is cancelled and a console line
-informs the user. This avoids "preview drift" where a user picks a
-node, previews a heavy border, then clicks another node and
-forgets the preview existed.
-
-The preview does **not** persist through document load/save cycles
-(it's a runtime ephemeral state, not a serialised field).
+The preview slot does **not** persist through document load/save
+cycles (runtime ephemeral state, not serialised).
 
 ### 5.7 Canvas-default editing
 

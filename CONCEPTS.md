@@ -1780,9 +1780,9 @@ SelectionState`, `undo_stack: Vec<UndoAction>`,
 `active_animations`, `active_toggles`, `mutation_registry`,
 `mutation_handlers`, `mutation_sources`, `dirty: bool`,
 `label_edit_preview`, `portal_text_edit_preview`,
-`color_picker_preview`. What it does **not** own: the renderer,
-GPU resources, drag/mode state, modal editor state, keybinds —
-those are all on `InitState`.
+`color_picker_preview`, `border_preview`. What it does **not**
+own: the renderer, GPU resources, drag/mode state, modal editor
+state, keybinds — those are all on `InitState`.
 
 ### `SelectionState`
 
@@ -2318,6 +2318,39 @@ Two modes: contextual (modal, opened from edge context menu;
 commits to the targeted edge and closes) and standalone
 (persistent palette, opened via `color picker on`; commits to
 the current selection and stays open).
+
+### `BorderPreview`
+
+A transient slot on `MindMapDocument` that stages border-config
+edits without writing the model — the renderer substitutes the
+preview style for the targeted node / section / canvas slot
+while the slot is `Some(...)`, and the user terminates with
+`commit` (writes through the matching committing setter) or
+`cancel` (discards).
+
+Authoring iteration on the four border surfaces (per-node,
+per-section, two canvas defaults). Without preview, every kv
+edit is a commit-then-undo cycle and the visual feedback comes
+*after* the model write — the "creative toolkit" framing
+depends on the user seeing changes before they land.
+
+`src/application/document/nodes/border.rs` (the slot type +
+setters) and `lib/baumhard/src/mindmap/scene_builder/builder.rs`
+(the borrowed scene-side view + injection in `node_pass.rs`,
+`section_frame.rs`). Same discipline as `ColorPickerPreview`:
+never serialised, never push undo, never flip `dirty`. Cancel
+or commit clears the slot; a fresh `set_border_preview` call
+replaces the prior preview atomically. Selection drift causes
+lazy defer-clear: the preview stops rendering when the live
+selection no longer covers the target, and the actual slot
+clear happens at the next `set_*` / `commit_*` / `cancel_*`
+call. Implicit cancel: any of the four committing setters
+clears the preview as their first line, so a non-preview edit
+always wins. `Action::SetBorderPreview { target_kind:
+BorderPreviewTargetKind, field, value }`,
+`Action::CommitBorderPreview`, `Action::CancelBorderPreview`
+expose the keybind / dispatch surface; `Esc` cancels through
+`Action::ExitMode`'s body before mode-clear.
 
 ### Console
 

@@ -9,6 +9,19 @@
 //! slot — including the auto-promotion of `preset` to `"custom"`
 //! whenever a side- or corner-glyph edit is staged against a
 //! built-in preset.
+//!
+//! Also home of the [`BorderPreview`] / [`BorderPreviewTarget`]
+//! types and the three preview setters (`set_border_preview`,
+//! `commit_border_preview`, `cancel_border_preview`) — the
+//! live-preview surface for the four border verbs (per-node,
+//! per-section, two canvas defaults). Same discipline as
+//! `color_picker_preview`: never serialised, never push undo,
+//! never flip `dirty`. Cancel / commit clears the slot
+//! atomically; drift detection is lazy
+//! (`border_preview_covers_live_selection`); implicit cancel
+//! happens at the first line of each committing setter so a
+//! non-preview edit always wins. The scene-build plumbing
+//! lives in `assemble_scene_overrides`.
 
 use baumhard::mindmap::border::PaletteField;
 use baumhard::mindmap::border_pattern::SidePattern;

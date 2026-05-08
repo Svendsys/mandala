@@ -639,12 +639,15 @@ pub enum Action {
     #[action(context = Document, wasm = Compatible)]
     SetBorderField { field: String, value: String },
     /// Stage a single-kv border preview against the live
-    /// selection. `target_kind` discriminates between
-    /// `node` / `section` / `canvas-border` / `canvas-sf` /
-    /// `canvas-sf-focused`. Single kv per binding (preview-set
-    /// keybinds; multi-kv preview stays console-only). Mirrors
-    /// the `<verb> preview <field>=<value>` console path
-    /// without the model write.
+    /// selection. `target_kind: BorderPreviewTargetKind` is a
+    /// typed enum (kebab-case-serialised: `node` / `section` /
+    /// `canvas-border` / `canvas-sf` / `canvas-sf-focused`)
+    /// that picks the committing setter `commit_border_preview`
+    /// will route to; replaces the prior stringly-typed
+    /// discriminator that could accept typos at runtime. Single
+    /// kv per binding (preview-set keybinds; multi-kv preview
+    /// stays console-only). Mirrors the `<verb> preview
+    /// <field>=<value>` console path without the model write.
     #[action(context = Document, wasm = Compatible)]
     SetBorderPreview {
         target_kind: BorderPreviewTargetKind,
@@ -657,9 +660,15 @@ pub enum Action {
     #[action(context = Document, wasm = Compatible)]
     CommitBorderPreview,
     /// Discard the active border preview without writing the
-    /// model. No-op when no preview is active. Default Esc
-    /// binding routes here when the preview is active (and
-    /// nothing else has consumed Esc first).
+    /// model. No-op when no preview is active. Default-bound to
+    /// **nothing** in `KeybindConfig::default()` — Esc cancels
+    /// previews through `Action::ExitMode`'s body (which calls
+    /// `cancel_border_preview()` first and short-circuits when a
+    /// preview was canceled). The chain lives inside ExitMode
+    /// because the keybind resolver maps `(context, key) →
+    /// Action` deterministically and can't fall through. Bind
+    /// this entry to opt out of the chain (e.g. preview-cancel
+    /// on a different key while leaving Esc on plain ExitMode).
     #[action(context = Document, wasm = Compatible)]
     CancelBorderPreview,
     /// Mirror `cap from=<arrow|circle|diamond|none> to=<...>` on the
