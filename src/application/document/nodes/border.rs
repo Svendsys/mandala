@@ -220,6 +220,89 @@ impl MindMapDocument {
         outcome.changed = true;
         outcome
     }
+
+    /// Apply a bundle of border edits to one section's
+    /// `frame_border` atomically — the per-section equivalent of
+    /// [`Self::set_node_border_config`]. Drives the
+    /// `section frame …` console verb.
+    ///
+    /// `edits.clear == true` drops the per-section
+    /// `frame_border` override (the section falls back to
+    /// `Canvas.default_section_frame_border` and then to a
+    /// hardcoded floor — same cascade as
+    /// [`baumhard::mindmap::border::resolve_section_frame_border`]).
+    /// `edits.visible` is ignored: section frames don't carry a
+    /// per-frame visibility flag (NodeEdit drives their lifecycle).
+    ///
+    /// Returns the same [`BorderEditOutcome`] shape — the verb
+    /// surfaces auto-promotion identically whether the edit
+    /// landed on a node or a section.
+    pub fn set_section_frame_border_config(
+        &mut self,
+        node_id: &str,
+        section_idx: usize,
+        edits: BorderConfigEdits,
+    ) -> BorderEditOutcome {
+        // Validate node + section exist before we touch anything.
+        let node = match self.mindmap.nodes.get(node_id) {
+            Some(n) => n,
+            None => return BorderEditOutcome::default(),
+        };
+        let Some(section) = node.sections.get(section_idx) else {
+            return BorderEditOutcome::default();
+        };
+        let preset_before = section.frame_border.as_ref().map(|c| c.preset.clone());
+
+        let mut outcome = BorderEditOutcome::default();
+        if edits.clear {
+            if section.frame_border.is_none() {
+                return outcome;
+            }
+            self.mutate_section_with_style_undo(node_id, section_idx, |s| {
+                s.frame_border = None;
+            });
+            outcome.changed = true;
+            return outcome;
+        }
+
+        // Apply the staged edits to the section's frame_border slot.
+        // The closure runs under the undo-snapshot wrapper so the
+        // pre-edit `sections` clone is captured automatically.
+        let mut any_change = false;
+        self.mutate_section_with_style_undo(node_id, section_idx, |s| {
+            any_change = apply_glyph_border_edits_to_slot(&mut s.frame_border, &edits, &mut outcome);
+        });
+
+        if !any_change {
+            // The undo snapshot already landed; pop it so a
+            // user-visible no-op doesn't grow the undo stack.
+            self.undo_stack.pop();
+            return outcome;
+        }
+
+        // Detect preset auto-promotion (light / heavy / etc. → custom)
+        // identically to the node-level setter.
+        let landed = self
+            .mindmap
+            .nodes
+            .get(node_id)
+            .and_then(|n| n.sections.get(section_idx))
+            .and_then(|s| s.frame_border.as_ref());
+        if let Some(cfg) = landed {
+            if cfg.preset.eq_ignore_ascii_case("custom") {
+                let was_already_custom = preset_before
+                    .as_deref()
+                    .map(|p| p.eq_ignore_ascii_case("custom"))
+                    .unwrap_or(false);
+                if !was_already_custom && outcome.requested_preset.is_some() {
+                    outcome.preset_auto_promoted = true;
+                }
+            }
+        }
+
+        outcome.changed = true;
+        outcome
+    }
 }
 
 /// Apply non-clear edits to a node's style/border. Returns
@@ -237,27 +320,51 @@ pub(super) fn apply_border_edits(
     outcome: &mut BorderEditOutcome,
 ) -> bool {
     let mut changed = false;
-    if let OptionEdit::Set(p) = &edits.preset {
-        outcome.requested_preset = Some(p.clone());
-    }
     if let Some(v) = edits.visible {
         if node.style.show_frame != v {
             node.style.show_frame = v;
             changed = true;
         }
     }
+    changed |= apply_glyph_border_edits_to_slot(&mut node.style.border, edits, outcome);
+    changed
+}
 
-    // Bring the per-node config into existence on first edit so
-    // every field has a slot to land in. Skip the slot allocation
-    // entirely when the only edit is `visible`, which writes
-    // `style.show_frame` and doesn't touch the GlyphBorderConfig.
-    let needs_cfg = edits_touch_cfg_field(edits);
-    if !needs_cfg {
-        return changed;
+/// Slot-level helper that applies every config-side field on
+/// `BorderConfigEdits` (preset / font / size / color / padding /
+/// palette / field / sides / corners) directly to a
+/// `&mut Option<GlyphBorderConfig>`. Skips the `visible` flag —
+/// that's a node-only concept that the per-node wrapper layers on
+/// top.
+///
+/// Shared between `apply_border_edits` (writes `node.style.border`)
+/// and [`MindMapDocument::set_section_frame_border_config`] (writes
+/// `section.frame_border`). The factoring is what lets the
+/// `border …` and `section frame …` verbs feed the same kv
+/// vocabulary into two different model slots.
+///
+/// `outcome.requested_preset` is set when the caller passed
+/// `preset=…` so the upper layer can phrase the "auto-promoted to
+/// custom" message after detecting the preset shift.
+pub(super) fn apply_glyph_border_edits_to_slot(
+    slot: &mut Option<GlyphBorderConfig>,
+    edits: &BorderConfigEdits,
+    outcome: &mut BorderEditOutcome,
+) -> bool {
+    if let OptionEdit::Set(p) = &edits.preset {
+        outcome.requested_preset = Some(p.clone());
     }
 
-    let had_cfg = node.style.border.is_some();
-    let cfg = node.style.border.get_or_insert_with(default_glyph_border_config);
+    // Skip the slot allocation entirely when no config-side field
+    // was touched. The caller may still have written `visible`
+    // before us; that change is its bookkeeping, not ours.
+    if !edits_touch_cfg_field(edits) {
+        return false;
+    }
+
+    let mut changed = false;
+    let had_cfg = slot.is_some();
+    let cfg = slot.get_or_insert_with(default_glyph_border_config);
     if !had_cfg {
         changed = true;
     }

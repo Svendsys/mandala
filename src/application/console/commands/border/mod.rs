@@ -36,6 +36,10 @@ mod tests;
 pub use complete::complete_border;
 pub(crate) use execute::apply_border_field_to_selection;
 pub use execute::execute_border;
+// Re-exports consumed by sibling verbs that share the kv vocabulary
+// (currently `section frame …`). Both are `pub(crate)` on the
+// underlying definitions in `execute.rs`.
+pub(crate) use execute::{nodes_in_selection, stage_kv};
 
 /// kv keys recognised on the kv-form path.
 pub const KEYS: &[&str] = &[
