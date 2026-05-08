@@ -570,14 +570,16 @@ impl MindMapDocument {
         // the owned `self.border_preview`. The view is borrowed
         // straight from `self`, so the returned tuple lives as
         // long as `&self`. Returns `None` when no preview is
-        // active OR when the preview's `selection_snapshot` no
-        // longer covers the live selection (defer-clear arrives
-        // in a follow-up commit; for now this branch is `None`
-        // only when the slot is itself `None`).
-        let border_preview = self
-            .border_preview
-            .as_ref()
-            .map(|bp| build_border_preview_scene_view(bp));
+        // active OR when the preview's target is no longer
+        // covered by the live selection (defer-clear posture —
+        // the actual slot empties at the next `set_*` /
+        // `cancel_*` / `commit_*` call; here at scene-build
+        // time, an orphan-by-drift preview just stops applying).
+        let border_preview = if self.border_preview_covers_live_selection() {
+            self.border_preview.as_ref().map(build_border_preview_scene_view)
+        } else {
+            None
+        };
         (selection, edge_preview, portal_preview, border_preview)
     }
 

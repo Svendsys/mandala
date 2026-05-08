@@ -2189,6 +2189,50 @@ fn test_border_preview_auto_promotes_preset_to_custom_in_outcome() {
     assert_eq!(outcome.requested_preset.as_deref(), Some("heavy"));
 }
 
+/// Selection drift: when the live selection no longer covers the
+/// preview's `selection_snapshot`, the scene-build path renders
+/// as if no preview were active. The actual slot empties at the
+/// next `set_*` / `cancel_*` / `commit_*` call (defer-clear).
+#[test]
+fn test_border_preview_drift_clears_on_selection_change() {
+    use crate::application::document::{
+        BorderConfigEdits, BorderPreviewTarget, OptionEdit, SelectionState,
+    };
+    let mut doc = load_test_doc();
+    let nid_a = first_testament_node_id(&doc);
+    // Pick any other node id distinct from `nid_a`.
+    let nid_b = doc
+        .mindmap
+        .nodes
+        .keys()
+        .find(|id| id.as_str() != nid_a)
+        .cloned()
+        .expect("testament has multiple nodes");
+
+    // Stage a preview against node A.
+    doc.selection = SelectionState::Single(nid_a.clone());
+    let mut edits = BorderConfigEdits::default();
+    edits.preset = OptionEdit::Set("heavy".into());
+    let _ = doc.set_border_preview(BorderPreviewTarget::Nodes(vec![nid_a.clone()]), edits);
+    assert!(doc.border_preview_covers_live_selection());
+
+    // Change the selection to node B — drift.
+    doc.selection = SelectionState::Single(nid_b);
+    assert!(
+        !doc.border_preview_covers_live_selection(),
+        "live selection no longer covers the preview's target"
+    );
+    // The slot itself is still populated until the next setter
+    // call — that's the defer-clear posture.
+    assert!(doc.border_preview.is_some());
+
+    // A subsequent cancel observes the drift and clears the slot,
+    // returning false (nothing was actively rendering anyway).
+    let cancelled = doc.cancel_border_preview();
+    assert!(!cancelled, "drifted preview is treated as already-cleared");
+    assert!(doc.border_preview.is_none());
+}
+
 /// A direct (non-preview) committing edit clears any active
 /// preview. Without this rule, typing `border preset=double`
 /// after `border preview preset=heavy` would render the heavy

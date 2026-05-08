@@ -487,6 +487,11 @@ impl MindMapDocument {
         target: BorderPreviewTarget,
         edits: BorderConfigEdits,
     ) -> BorderEditOutcome {
+        // Drop any orphan-by-drift preview before recording a new
+        // one. Defer-clear posture: the scene-build path treats a
+        // drifted preview as inactive; the actual slot empties
+        // here on the next setter call.
+        self.clear_orphan_preview_if_drifted();
         // Simulate the apply against a clone of the affected slot
         // so the outcome reflects what commit will produce. Pick
         // the slot per target variant; for multi-target
@@ -568,7 +573,53 @@ impl MindMapDocument {
     /// was active. O(1), no undo, no dirty — preview state is
     /// runtime-only.
     pub fn cancel_border_preview(&mut self) -> bool {
+        // If the preview drifted before the cancel, treat it as
+        // already-cleared so the bool reflects what the user
+        // observed (no preview was rendering).
+        if !self.border_preview_covers_live_selection() {
+            self.border_preview = None;
+            return false;
+        }
         self.border_preview.take().is_some()
+    }
+
+    /// `true` iff the active preview's `selection_snapshot` is
+    /// still covered by the live selection. With no preview
+    /// active, returns `true` (nothing to drift). Canvas-level
+    /// previews never drift (they're not selection-bound).
+    /// Node / section previews drift when the live selection no
+    /// longer matches the snapshot — the cheapest correct check
+    /// is structural equality, since `SelectionState` derives
+    /// `PartialEq` and a state-preserving click produces an equal
+    /// `SelectionState`. Used by `assemble_scene_overrides` to
+    /// decide whether to render the preview this frame
+    /// (defer-clear posture: an orphan-by-drift preview just
+    /// stops applying; the slot itself is cleared at the next
+    /// `set_*` / `cancel_*` / `commit_*` call).
+    pub(crate) fn border_preview_covers_live_selection(&self) -> bool {
+        let Some(preview) = self.border_preview.as_ref() else {
+            return true;
+        };
+        match &preview.target {
+            BorderPreviewTarget::Nodes(_) | BorderPreviewTarget::Sections(_) => {
+                preview.selection_snapshot == self.selection
+            }
+            // Canvas-level previews aren't selection-bound — they
+            // affect map-wide defaults regardless of who's selected.
+            BorderPreviewTarget::CanvasDefault
+            | BorderPreviewTarget::CanvasSectionFrame
+            | BorderPreviewTarget::CanvasSectionFrameFocused => true,
+        }
+    }
+
+    /// Drop an orphan-by-drift preview. Called by the three setters
+    /// at entry so a preview that's no longer covered by the live
+    /// selection is gone before the setter runs — keeps the
+    /// document state clean without 25-site selection-setter hooks.
+    fn clear_orphan_preview_if_drifted(&mut self) {
+        if !self.border_preview_covers_live_selection() {
+            self.border_preview = None;
+        }
     }
 
     /// Commit the active preview through the matching committing
@@ -583,6 +634,11 @@ impl MindMapDocument {
     /// `apply_edits` in `border/execute.rs`. Undoing a 5-node
     /// commit takes 5 Ctrl-Z's; intentional, not a regression.
     pub fn commit_border_preview(&mut self) -> Option<BorderEditOutcome> {
+        // Drift = nothing to commit; treat as no-op.
+        if !self.border_preview_covers_live_selection() {
+            self.border_preview = None;
+            return None;
+        }
         let preview = self.border_preview.take()?;
         let mut merged = BorderEditOutcome::default();
         match preview.target {
@@ -810,3 +866,4 @@ fn default_custom_glyphs() -> CustomBorderGlyphs {
         bottom_right: "\u{2518}".to_string(),
     }
 }
+
