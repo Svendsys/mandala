@@ -671,5 +671,108 @@ fn section_tree_build_benchmark(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, criterion_benchmark, section_tree_build_benchmark);
+/// One scene-rebuild pass at zoom 1 with the given resize-handle
+/// override configuration. Compares the cost of the three regimes:
+///
+/// - **Default mode** — `selected_section: None`, `selected_node_for_resize: None`.
+///   Pre-Batch-2 of `SECTIONS_BORDERS_RESIZE_PLAN.md`, this would have
+///   been any selection that wasn't `Single`/`Section`. Today it's the
+///   only thing emitting zero handles.
+/// - **Resize { Node }** — `selected_node_for_resize = Some(id)`.
+///   Triggers `build_selected_node_handles` (8 handle elements).
+/// - **Resize { Section }** — `selected_section = Some((id, idx))`.
+///   Triggers `build_selected_section_handles` (also 8, when sized).
+fn do_scene_rebuild_with_handle_overrides(
+    map: &MindMap,
+    cache: &mut SceneConnectionCache,
+    selected_node_for_resize: Option<&str>,
+    selected_section: Option<(&str, usize)>,
+) {
+    let _ = build_scene_with_cache(
+        map,
+        &HashMap::new(),
+        SceneSelectionContext {
+            edge: None,
+            edge_label: None,
+            portal_label: None,
+            label_edit: None,
+            selected_section,
+            selected_node_for_resize,
+        },
+        None,
+        None,
+        cache,
+        1.0,
+    );
+}
+
+fn resize_mode_rebuild_benchmark(c: &mut Criterion) {
+    // Plan §7.4: `bench_scene_rebuild_with_resize_mode_active`.
+    // Three regimes pin the cost of handle emission against the
+    // (pre-Batch-2-equivalent) no-handles baseline.
+    let bench_map = load_testament_map();
+    let any_node_id: String = bench_map
+        .nodes
+        .keys()
+        .next()
+        .cloned()
+        .expect("testament map must have nodes");
+
+    let mut default_cache = SceneConnectionCache::new();
+    do_scene_rebuild_with_handle_overrides(&bench_map, &mut default_cache, None, None);
+    c.bench_function("scene_rebuild_default_mode_no_handles", |b| {
+        b.iter(|| {
+            do_scene_rebuild_with_handle_overrides(&bench_map, &mut default_cache, None, None);
+        })
+    });
+
+    let mut node_cache = SceneConnectionCache::new();
+    do_scene_rebuild_with_handle_overrides(
+        &bench_map,
+        &mut node_cache,
+        Some(any_node_id.as_str()),
+        None,
+    );
+    c.bench_function("scene_rebuild_resize_mode_node_target", |b| {
+        b.iter(|| {
+            do_scene_rebuild_with_handle_overrides(
+                &bench_map,
+                &mut node_cache,
+                Some(any_node_id.as_str()),
+                None,
+            );
+        })
+    });
+
+    // Section handles are only emitted for `Some`-sized sections.
+    // The testament fixture uses single-section nodes whose sole
+    // section has size = None (fill-parent), so the section pass
+    // returns zero handles regardless. Bench is still useful: it
+    // pins the cost of *checking* the section override path at
+    // zero output.
+    let mut section_cache = SceneConnectionCache::new();
+    do_scene_rebuild_with_handle_overrides(
+        &bench_map,
+        &mut section_cache,
+        None,
+        Some((any_node_id.as_str(), 0)),
+    );
+    c.bench_function("scene_rebuild_resize_mode_section_target_fill_parent", |b| {
+        b.iter(|| {
+            do_scene_rebuild_with_handle_overrides(
+                &bench_map,
+                &mut section_cache,
+                None,
+                Some((any_node_id.as_str(), 0)),
+            );
+        })
+    });
+}
+
+criterion_group!(
+    benches,
+    criterion_benchmark,
+    section_tree_build_benchmark,
+    resize_mode_rebuild_benchmark
+);
 criterion_main!(benches);

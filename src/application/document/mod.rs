@@ -49,6 +49,8 @@ mod tests_nodes;
 #[cfg(test)]
 mod tests_reparent;
 #[cfg(test)]
+mod tests_resize;
+#[cfg(test)]
 mod tests_selection;
 
 // Cross-platform: consumers (`scene_rebuild.rs`, `event_mouse_click.rs`,

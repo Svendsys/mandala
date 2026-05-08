@@ -142,7 +142,7 @@ mod tests {
     }
 
     #[test]
-    fn mode_default_emits_set_default_side_effect() {
+    fn test_mode_default_emits_set_default_side_effect() {
         let mut doc = load_test_doc();
         let (result, side, close) = run_mode("mode default", &mut doc);
         assert!(matches!(result, ExecResult::Ok { .. }));
@@ -154,12 +154,15 @@ mod tests {
     }
 
     #[test]
-    fn mode_resize_with_single_node_selection_targets_node() {
+    fn test_mode_resize_with_single_node_selection_targets_node() {
         let mut doc = load_test_doc();
         let id = doc.mindmap.nodes.keys().next().expect("test doc has nodes").clone();
         doc.selection = SelectionState::Single(id.clone());
-        let (result, side, _close) = run_mode("mode resize", &mut doc);
+        let (result, side, close) = run_mode("mode resize", &mut doc);
         assert!(matches!(result, ExecResult::Ok { .. }));
+        // Successful Resize-mode entry closes the console so the
+        // anchors are visible without the user closing it manually.
+        assert!(close, "successful mode resize must set close_console=true");
         match side {
             Some(ConsoleSideEffect::SetInteractionMode(InteractionMode::Resize {
                 target: ResizeTarget::Node(target_id),
@@ -168,8 +171,31 @@ mod tests {
         }
     }
 
+    /// `SectionRange` shares the resolver path with `Section` —
+    /// pin that the verb routes both to the same Section target.
     #[test]
-    fn mode_resize_with_no_selection_errors() {
+    fn test_mode_resize_with_section_range_selection_targets_section() {
+        use crate::application::document::tests_common::pinned_two_section_node;
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::SectionRange {
+            sel: SectionSel { node_id: id.clone(), section_idx: 1 },
+            range: (0, 1),
+        };
+        let (result, side, _close) = run_mode("mode resize", &mut doc);
+        assert!(matches!(result, ExecResult::Ok { .. }));
+        match side {
+            Some(ConsoleSideEffect::SetInteractionMode(InteractionMode::Resize {
+                target: ResizeTarget::Section { node_id: tid, section_idx },
+            })) => {
+                assert_eq!(tid, id);
+                assert_eq!(section_idx, 1);
+            }
+            _ => panic!("expected Resize::Section for SectionRange selection"),
+        }
+    }
+
+    #[test]
+    fn test_mode_resize_with_no_selection_errors() {
         let mut doc = load_test_doc();
         doc.selection = SelectionState::None;
         let (result, side, _) = run_mode("mode resize", &mut doc);
@@ -179,7 +205,7 @@ mod tests {
     }
 
     #[test]
-    fn mode_resize_with_multi_selection_errors() {
+    fn test_mode_resize_with_multi_selection_errors() {
         let mut doc = load_test_doc();
         let ids: Vec<String> = doc.mindmap.nodes.keys().take(2).cloned().collect();
         assert_eq!(ids.len(), 2, "test doc must have at least 2 nodes");
@@ -188,8 +214,21 @@ mod tests {
         assert_err_contains(&result, "single-target only");
     }
 
+    /// MultiSection (≥ 2 sections selected) — Resize is single-target.
     #[test]
-    fn mode_resize_with_fill_parent_section_errors() {
+    fn test_mode_resize_with_multi_section_selection_errors() {
+        use crate::application::document::tests_common::pinned_two_section_node;
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::MultiSection(vec![
+            SectionSel { node_id: id.clone(), section_idx: 0 },
+            SectionSel { node_id: id, section_idx: 1 },
+        ]);
+        let (result, _, _) = run_mode("mode resize", &mut doc);
+        assert_err_contains(&result, "single-target only");
+    }
+
+    #[test]
+    fn test_mode_resize_with_fill_parent_section_errors() {
         let mut doc = load_test_doc();
         let nid = doc.mindmap.nodes.keys().next().expect("nodes").clone();
         // Force section 0 to fill-parent (size = None).
@@ -206,8 +245,66 @@ mod tests {
         assert_err_contains(&result, "fill-parent");
     }
 
+    /// Edge selection — not a resizable surface.
     #[test]
-    fn mode_unknown_subverb_errors() {
+    fn test_mode_resize_with_edge_selection_errors() {
+        let mut doc = load_test_doc();
+        let er = doc
+            .mindmap
+            .edges
+            .first()
+            .map(|e| EdgeRef::new(&e.from_id, &e.to_id, &e.edge_type))
+            .expect("test doc has edges");
+        doc.selection = SelectionState::Edge(er);
+        let (result, _, _) = run_mode("mode resize", &mut doc);
+        assert_err_contains(&result, "edge / label / portal");
+    }
+
+    /// EdgeLabel selection — same not-resizable arm as `Edge`.
+    #[test]
+    fn test_mode_resize_with_edge_label_selection_errors() {
+        let mut doc = load_test_doc();
+        let er = doc
+            .mindmap
+            .edges
+            .first()
+            .map(|e| EdgeRef::new(&e.from_id, &e.to_id, &e.edge_type))
+            .expect("test doc has edges");
+        doc.selection = SelectionState::EdgeLabel(EdgeLabelSel::new(er));
+        let (result, _, _) = run_mode("mode resize", &mut doc);
+        assert_err_contains(&result, "edge / label / portal");
+    }
+
+    /// PortalLabel selection — same not-resizable arm. The resolver
+    /// doesn't read the model for this arm so a synthetic key
+    /// matching no real edge is fine.
+    #[test]
+    fn test_mode_resize_with_portal_label_selection_errors() {
+        let mut doc = load_test_doc();
+        let sel = PortalLabelSel {
+            edge_key: EdgeKey::new("0", "1", "cross_link"),
+            endpoint_node_id: "1".into(),
+        };
+        doc.selection = SelectionState::PortalLabel(sel);
+        let (result, _, _) = run_mode("mode resize", &mut doc);
+        assert_err_contains(&result, "edge / label / portal");
+    }
+
+    /// PortalText selection — same not-resizable arm.
+    #[test]
+    fn test_mode_resize_with_portal_text_selection_errors() {
+        let mut doc = load_test_doc();
+        let sel = PortalLabelSel {
+            edge_key: EdgeKey::new("0", "1", "cross_link"),
+            endpoint_node_id: "1".into(),
+        };
+        doc.selection = SelectionState::PortalText(sel);
+        let (result, _, _) = run_mode("mode resize", &mut doc);
+        assert_err_contains(&result, "edge / label / portal");
+    }
+
+    #[test]
+    fn test_mode_unknown_subverb_errors() {
         let mut doc = load_test_doc();
         let (result, _, _) = run_mode("mode wibble", &mut doc);
         assert_err_contains(&result, "unknown subverb");
@@ -217,7 +314,7 @@ mod tests {
     }
 
     #[test]
-    fn mode_no_subverb_emits_usage() {
+    fn test_mode_no_subverb_emits_usage() {
         let mut doc = load_test_doc();
         let (result, _, _) = run_mode("mode", &mut doc);
         assert_err_contains(&result, "usage:");
