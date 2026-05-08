@@ -170,11 +170,62 @@ pub enum Action {
     OrphanSelection,
     /// Open the inline text editor on the currently selected single node
     /// with the node's existing text, cursor at end.
+    ///
+    /// **Today this is the umbrella "edit" Action** — for node /
+    /// section / SectionRange selections it dispatches through
+    /// [`Action::EnterNodeEdit`]; for `EdgeLabel` / `PortalLabel` /
+    /// `PortalText` it opens the relevant inline editor directly.
+    /// Multi / MultiSection / Edge / None silently no-op.
     #[action(context = Document, wasm = NativeOnly, destructive)]
     EditSelection,
     /// Same as `EditSelection` but opens the editor with an empty buffer.
     #[action(context = Document, wasm = NativeOnly, destructive)]
     EditSelectionClean,
+    /// Enter NodeEdit mode on the currently selected node.
+    /// Resolution rules:
+    /// - `Single(node)` / `Section(s)` / `SectionRange { sel: s, .. }` →
+    ///   `InteractionMode::NodeEdit { node_id }` (where `node_id` is
+    ///   the owning node).
+    /// - **Single-section short-circuit**: if the active node has
+    ///   `sections.len() == 1`, the helper opens the text editor on
+    ///   section 0 in the same call. This preserves today's
+    ///   "Enter on a node opens the editor" UX for legacy migrated
+    ///   maps. Multi-section nodes stay in NodeEdit and let the user
+    ///   pick which section to edit (a second Enter, or a click on
+    ///   a section followed by Enter).
+    /// - `Multi` / `MultiSection` / `Edge*` / `None` → no-op + log.
+    ///
+    /// **WASM: NativeOnly** — opening the text editor depends on
+    /// `TextEditState`, which is part of the native modal-stealer
+    /// cascade. The `apply_enter_node_edit` helper itself is
+    /// cross-platform-shaped; reclassification is a one-line change
+    /// once WASM gains the modal pipeline.
+    ///
+    /// `destructive` — the single-section short-circuit opens the
+    /// editor, which can clear text on the spot. User-tier-only via
+    /// the macro privilege gate.
+    #[action(context = Document, wasm = NativeOnly, destructive)]
+    EnterNodeEdit,
+    /// Same as [`Action::EnterNodeEdit`] but the (potentially-opened)
+    /// editor starts with an empty buffer rather than the section's
+    /// existing text. Mirrors the `EditSelectionClean` posture.
+    #[action(context = Document, wasm = NativeOnly, destructive)]
+    EnterNodeEditClean,
+    /// Open the section text editor on the active section while in
+    /// NodeEdit mode.
+    /// - Active mode must be `InteractionMode::NodeEdit { node_id }`.
+    /// - Selection determines the section: `Section(s)` /
+    ///   `SectionRange { sel: s, .. }` use `s.section_idx`;
+    ///   `Single(node_id)` defaults to section 0; anything else no-ops.
+    /// - The editor opens via `open_text_edit`. NodeEdit mode stays
+    ///   active; closing the editor (commit or cancel) returns to
+    ///   `NodeEdit` mode (not `Default` — `ExitMode` does that).
+    ///
+    /// Sits in [`InputContext::NodeEdit`] so binding it to `Enter`
+    /// at the NodeEdit context doesn't shadow the same key at the
+    /// Document level (which is bound to `EnterNodeEdit`).
+    #[action(context = NodeEdit, wasm = NativeOnly, destructive)]
+    EnterSectionEdit,
     /// Open (or toggle) the CLI console.
     #[action(context = Document, wasm = NativeOnly)]
     OpenConsole,

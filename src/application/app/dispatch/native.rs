@@ -211,6 +211,53 @@ pub(in crate::application::app) fn dispatch_action(
             super::action_core::with_doc_rebuild(&mut core, super::cross_dispatch::apply_enter_resize_mode);
             DispatchOutcome::Handled
         }
+        Action::EnterNodeEdit | Action::EnterNodeEditClean => {
+            // NodeEdit-mode entry. Single-section nodes
+            // short-circuit to the editor; multi-section nodes
+            // stop at NodeEdit and the user selects a section.
+            // `wasm = NativeOnly` because the editor depends on
+            // `TextEditState` (modal-stealer cascade is native).
+            let clean = matches!(action, Action::EnterNodeEditClean);
+            let (mut core, _ext) = ctx.split_borrow();
+            if let Some(doc) = core.document.as_deref_mut() {
+                let mut rc = super::cross_dispatch::RebuildContext {
+                    document: doc,
+                    mindmap_tree: core.mindmap_tree,
+                    app_scene: core.app_scene,
+                    renderer: core.renderer,
+                    scene_cache: core.scene_cache,
+                    interaction_mode: core.interaction_mode,
+                };
+                let _ = super::cross_dispatch::apply_enter_node_edit(
+                    clean,
+                    &mut rc,
+                    core.text_edit_state,
+                );
+            }
+            DispatchOutcome::Handled
+        }
+        Action::EnterSectionEdit => {
+            // SectionEdit (open text editor) on the active section
+            // while in NodeEdit. Same NativeOnly story as
+            // EnterNodeEdit — the editor is native-only.
+            let (mut core, _ext) = ctx.split_borrow();
+            if let Some(doc) = core.document.as_deref_mut() {
+                let mut rc = super::cross_dispatch::RebuildContext {
+                    document: doc,
+                    mindmap_tree: core.mindmap_tree,
+                    app_scene: core.app_scene,
+                    renderer: core.renderer,
+                    scene_cache: core.scene_cache,
+                    interaction_mode: core.interaction_mode,
+                };
+                let _ = super::cross_dispatch::apply_enter_section_edit(
+                    false,
+                    &mut rc,
+                    core.text_edit_state,
+                );
+            }
+            DispatchOutcome::Handled
+        }
         Action::EnterReparentMode => {
             if let Some(doc) = ctx.document.as_ref() {
                 let sel: Vec<String> = doc

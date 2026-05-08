@@ -548,6 +548,19 @@ pub(super) fn handle_mouse_input(
                             false
                         };
                         if !entered_label_select {
+                            // NodeEdit-mode outside-click: clicking
+                            // outside the active node's
+                            // overflow-aware AABB exits NodeEdit
+                            // back to Default before the click
+                            // registers, so the new selection lands
+                            // in Default mode (whole-node Single
+                            // for any node hit, including the
+                            // previously-active one).
+                            maybe_exit_node_edit_on_outside_click(
+                                ctx,
+                                cursor_pos_val,
+                                hit_node.as_deref(),
+                            );
                             handle_click(
                                 hit_node,
                                 hit_section_idx,
@@ -865,5 +878,61 @@ pub(super) fn handle_mouse_input(
             }
         }
         _ => {}
+    }
+}
+
+/// Outside-click NodeEdit-exit helper. When the active mode is
+/// `InteractionMode::NodeEdit { node_id }` and the release lands
+/// outside `node_id`'s overflow-aware AABB, dispatch
+/// `Action::ExitMode` to flip back to `Default`. This runs before
+/// the regular `handle_click` so the click that lands outside the
+/// active node registers in Default mode (whole-node Single).
+///
+/// "Outside" is determined by `point_in_node_aabb`, which is
+/// shape-aware and counts overflowing-section territory as
+/// inside — same rule the text-editor's click-outside-commit
+/// uses. Inside-AABB clicks (including hits on overflowing
+/// sections) keep NodeEdit active.
+///
+/// `hit_node` is the click hit's owning node id (`None` for empty
+/// canvas). `cursor_pos_val` is screen-space; we project to canvas
+/// inside.
+#[cfg(not(target_arch = "wasm32"))]
+fn maybe_exit_node_edit_on_outside_click(
+    ctx: &mut InputHandlerContext<'_>,
+    cursor_pos_val: (f64, f64),
+    hit_node: Option<&str>,
+) {
+    let active_node = match &*ctx.interaction_mode {
+        super::InteractionMode::NodeEdit { node_id } => node_id.clone(),
+        _ => return,
+    };
+    // Fast path: the click hit a different node than the active
+    // one. This catches sibling-click cleanly without the AABB
+    // computation.
+    if let Some(hit) = hit_node {
+        if hit != active_node {
+            let _ = super::dispatch::dispatch_action(Action::ExitMode, ctx, None);
+            return;
+        }
+        // Same-node hit: stay in NodeEdit.
+        return;
+    }
+    // Empty-canvas hit: confirm the cursor is actually outside the
+    // active node's AABB before exiting (overflowing sections
+    // count as inside). `ensure_subtree_aabbs` is needed because
+    // post-mutation AABB caches go dirty; same shape as the
+    // text-editor's click-outside-commit gate.
+    let release_canvas = ctx.renderer.screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
+    if let Some(tree) = ctx.mindmap_tree.as_mut() {
+        tree.tree.ensure_subtree_aabbs();
+    }
+    let inside = ctx
+        .mindmap_tree
+        .as_ref()
+        .map(|tree| crate::application::document::point_in_node_aabb(release_canvas, &active_node, tree))
+        .unwrap_or(false);
+    if !inside {
+        let _ = super::dispatch::dispatch_action(Action::ExitMode, ctx, None);
     }
 }

@@ -139,6 +139,7 @@ fn test_default_config_resolves_every_documented_binding() {
             InputContext::ColorPicker => "ColorPicker",
             InputContext::LabelEdit => "LabelEdit",
             InputContext::TextEdit => "TextEdit",
+            InputContext::NodeEdit => "NodeEdit",
             InputContext::Document => "Document",
         });
         assert_eq!(
@@ -395,6 +396,12 @@ fn test_wasm_compatibility_modal_actions_are_native_only() {
         Action::ReparentToTarget(None),
         Action::ConnectToTarget(None),
         Action::EnterResizeMode,
+        // EnterNodeEdit / EnterSectionEdit reach `open_text_edit`,
+        // which depends on the native modal-stealer cascade
+        // (`TextEditState`). Reclassification waits on Batch 4/7.
+        Action::EnterNodeEdit,
+        Action::EnterNodeEditClean,
+        Action::EnterSectionEdit,
         Action::PickerCancel,
         Action::PickerCommit,
         Action::LabelEditCancel,
@@ -483,6 +490,9 @@ fn test_is_destructive_destructive_set_is_pinned() {
         ActionKind::DoubleClickActivate,
         ActionKind::EditSelection,
         ActionKind::EditSelectionClean,
+        ActionKind::EnterNodeEdit,
+        ActionKind::EnterNodeEditClean,
+        ActionKind::EnterSectionEdit,
         ActionKind::LabelEditOnSelection,
         ActionKind::ReparentToTarget,
         ActionKind::ConnectToTarget,
@@ -947,6 +957,13 @@ fn test_action_context_assignment() {
     assert_eq!(Action::PickerNudgeHueDown.context(), InputContext::ColorPicker);
     assert_eq!(Action::LabelEditCancel.context(), InputContext::LabelEdit);
     assert_eq!(Action::TextEditCancel.context(), InputContext::TextEdit);
+    // EnterNodeEdit (and its Clean variant) lift from Document so a
+    // top-level press flips the node into NodeEdit mode. EnterSectionEdit
+    // sits in the NodeEdit context so binding it to Enter does not
+    // shadow the same key at the Document level.
+    assert_eq!(Action::EnterNodeEdit.context(), InputContext::Document);
+    assert_eq!(Action::EnterNodeEditClean.context(), InputContext::Document);
+    assert_eq!(Action::EnterSectionEdit.context(), InputContext::NodeEdit);
 }
 
 #[test]

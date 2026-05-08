@@ -52,6 +52,20 @@ pub struct KeybindConfig {
     pub orphan_selection: Vec<String>,
     pub edit_selection: Vec<String>,
     pub edit_selection_clean: Vec<String>,
+    /// Enter NodeEdit mode (Batch 3 of
+    /// `SECTIONS_BORDERS_RESIZE_PLAN.md`). The umbrella `Enter`
+    /// keybind dispatches `EditSelection` first (which fans out
+    /// here for node-bearing selections), so users normally don't
+    /// rebind `enter_node_edit` — but the explicit hook is here
+    /// for macros and future GUI buttons. Default unbound.
+    pub enter_node_edit: Vec<String>,
+    pub enter_node_edit_clean: Vec<String>,
+    /// Enter SectionEdit mode (text editor) on the active section
+    /// while in NodeEdit mode. Default `Enter` at the
+    /// `InputContext::NodeEdit` level — same key as `EditSelection`
+    /// at Document, since the contexts don't overlap (the modal
+    /// cascade picks NodeEdit over Document when NodeEdit is active).
+    pub enter_section_edit: Vec<String>,
     pub open_console: Vec<String>,
     pub save_document: Vec<String>,
     pub copy: Vec<String>,
@@ -235,6 +249,16 @@ impl Default for KeybindConfig {
             orphan_selection: vec!["Ctrl+O".into()],
             edit_selection: vec!["Enter".into()],
             edit_selection_clean: vec!["Backspace".into()],
+            // `enter_node_edit` is reachable via the umbrella
+            // `Enter` (EditSelection) keybind for node selections;
+            // an explicit binding is offered for users who want
+            // the no-fan-out version (e.g. macros).
+            enter_node_edit: vec![],
+            enter_node_edit_clean: vec![],
+            // `Enter` at the NodeEdit context — same key the
+            // umbrella uses at Document, but the cascade picks
+            // NodeEdit when active.
+            enter_section_edit: vec!["Enter".into()],
             open_console: vec!["/".into()],
             save_document: vec!["Ctrl+S".into()],
             copy: vec!["Ctrl+C".into(), "Copy".into()],
@@ -435,6 +459,9 @@ impl KeybindConfig {
             (Action::OrphanSelection, &self.orphan_selection),
             (Action::EditSelection, &self.edit_selection),
             (Action::EditSelectionClean, &self.edit_selection_clean),
+            (Action::EnterNodeEdit, &self.enter_node_edit),
+            (Action::EnterNodeEditClean, &self.enter_node_edit_clean),
+            (Action::EnterSectionEdit, &self.enter_section_edit),
             (Action::OpenConsole, &self.open_console),
             (Action::SaveDocument, &self.save_document),
             (Action::Copy, &self.copy),

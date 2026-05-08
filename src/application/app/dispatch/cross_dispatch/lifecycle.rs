@@ -105,11 +105,109 @@ pub(in crate::application::app) fn apply_open_text_edit_on_single(
     rc: &mut RebuildContext<'_>,
     text_edit_state: &mut super::super::super::text_edit::TextEditState,
 ) -> bool {
-    let Some(id) = rc.document.selection.primary_node_id().map(str::to_string) else {
+    apply_enter_node_edit(clean, rc, text_edit_state)
+}
+
+/// Enter NodeEdit mode on the currently-selected node. Resolves the
+/// owning node via `selection.primary_node_id()` (Single / Section /
+/// SectionRange). Multi / MultiSection / edge / None warn and bail.
+///
+/// **Single-section short-circuit**: when the active node has
+/// `sections.len() <= 1`, opens the text editor on section 0 in the
+/// same call. This preserves today's "Enter on a node opens the
+/// editor" UX for legacy migrated maps. Multi-section nodes stop
+/// at NodeEdit mode — the user picks a section (click or
+/// `section edit <idx>` console verb) and presses Enter again to
+/// enter SectionEdit.
+///
+/// `clean: true` opens the editor with an empty buffer (mirrors
+/// `EditSelectionClean`'s posture) — only used in the
+/// single-section short-circuit path.
+pub(in crate::application::app) fn apply_enter_node_edit(
+    clean: bool,
+    rc: &mut RebuildContext<'_>,
+    text_edit_state: &mut super::super::super::text_edit::TextEditState,
+) -> bool {
+    use super::super::super::interaction_mode::InteractionMode;
+
+    let Some(node_id) = rc.document.selection.primary_node_id().map(str::to_string) else {
+        log::warn!(
+            "EnterNodeEdit: selection has no primary node \
+             (Multi / MultiSection / Edge / None) — nothing to edit"
+        );
         return false;
     };
+
+    *rc.interaction_mode = InteractionMode::NodeEdit { node_id: node_id.clone() };
+
+    // Single-section short-circuit: open the editor immediately.
+    // `open_text_edit` triggers its own rebuild, so we don't run
+    // `rebuild_after_selection_change` separately here.
+    let section_count = rc
+        .document
+        .mindmap
+        .nodes
+        .get(&node_id)
+        .map(|n| n.sections.len())
+        .unwrap_or(0);
+    if section_count <= 1 {
+        super::super::super::text_edit::open_text_edit(
+            &node_id,
+            clean,
+            rc.document,
+            text_edit_state,
+            rc.mindmap_tree,
+            rc.app_scene,
+            rc.renderer,
+        );
+    } else {
+        // Multi-section: stop at NodeEdit. Rebuild so the future
+        // visual chrome (Batch 3 Phase B section frames + dimming)
+        // catches the mode change.
+        rc.rebuild_after_selection_change();
+    }
+    true
+}
+
+/// Open the section text editor on the active section while in
+/// NodeEdit mode. Preconditions:
+/// - `interaction_mode == InteractionMode::NodeEdit { node_id }`.
+/// - Selection picks the section: `Section(s)` / `SectionRange { sel: s, .. }`
+///   use `s.section_idx`; `Single(node_id)` defaults to section 0.
+///
+/// `clean: true` opens the editor with an empty buffer.
+///
+/// Returns `true` if the editor opened. Mode stays at `NodeEdit`
+/// (closing the editor returns to `NodeEdit`, not `Default`).
+pub(in crate::application::app) fn apply_enter_section_edit(
+    clean: bool,
+    rc: &mut RebuildContext<'_>,
+    text_edit_state: &mut super::super::super::text_edit::TextEditState,
+) -> bool {
+    use super::super::super::interaction_mode::InteractionMode;
+
+    let active_node = match &*rc.interaction_mode {
+        InteractionMode::NodeEdit { node_id } => node_id.clone(),
+        _ => {
+            log::warn!("EnterSectionEdit: no active NodeEdit mode; nothing to edit");
+            return false;
+        }
+    };
+    // Selection's owning node must match the active NodeEdit
+    // target. A mismatch means selection drifted to a different
+    // node (e.g. a click on a sibling) — the user wants to switch
+    // node targets, not edit a section of the wrong one.
+    let owner = rc.document.selection.primary_node_id();
+    if owner.map_or(true, |id| id != active_node) {
+        log::warn!(
+            "EnterSectionEdit: selection owner ≠ active NodeEdit node ({:?} vs {})",
+            owner, active_node
+        );
+        return false;
+    }
+
     super::super::super::text_edit::open_text_edit(
-        &id,
+        &active_node,
         clean,
         rc.document,
         text_edit_state,

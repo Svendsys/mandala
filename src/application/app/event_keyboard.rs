@@ -194,9 +194,22 @@ pub(super) fn handle_keyboard_input(
         return;
     }
 
+    // When NodeEdit mode is active and no other modal stole the
+    // key, try the NodeEdit context first. The cascade falls
+    // through to Document on miss (per
+    // `InputContext::NodeEdit::falls_through() == true`), so
+    // unmatched keys reach the global Action set normally.
+    // `action_for_context` itself does the fallthrough; we just
+    // pick the right starting context.
+    let starting_context =
+        if matches!(ctx.interaction_mode, super::InteractionMode::NodeEdit { .. }) {
+            crate::application::keybinds::InputContext::NodeEdit
+        } else {
+            crate::application::keybinds::InputContext::Document
+        };
     let action = key_name.as_deref().and_then(|k| {
         ctx.keybinds.action_for_context(
-            crate::application::keybinds::InputContext::Document,
+            starting_context,
             k,
             ctx.modifiers.control_key(),
             ctx.modifiers.shift_key(),
