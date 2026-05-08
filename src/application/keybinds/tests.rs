@@ -966,6 +966,32 @@ fn test_action_context_assignment() {
     assert_eq!(Action::EnterSectionEdit.context(), InputContext::NodeEdit);
 }
 
+/// `InputContext::NodeEdit` falls through to Document so global
+/// Document keybinds (Ctrl+S, Ctrl+Z, …) keep working while a
+/// NodeEdit session is active. Mirrors `ColorPicker`'s
+/// fallthrough discipline. A regression here would silently break
+/// every Document binding inside NodeEdit mode.
+#[test]
+fn test_input_context_node_edit_falls_through() {
+    assert!(
+        InputContext::NodeEdit.falls_through(),
+        "NodeEdit must fall through to Document for global keybinds"
+    );
+    // `Ctrl+S` is bound at Document; the cascade must surface it
+    // when the user is in NodeEdit context.
+    let resolved = KeybindConfig::default().resolve();
+    assert_eq!(
+        resolved.action_for_context(InputContext::NodeEdit, "s", true, false, false),
+        Some(Action::SaveDocument),
+        "SaveDocument must reach NodeEdit context via the cascade"
+    );
+    assert_eq!(
+        resolved.action_for_context(InputContext::NodeEdit, "z", true, false, false),
+        Some(Action::Undo),
+        "Undo must reach NodeEdit context via the cascade"
+    );
+}
+
 #[test]
 fn test_user_can_override_component_keybinds() {
     let json = r#"{ "picker_nudge_hue_down": ["j"], "picker_nudge_hue_up": ["k"] }"#;

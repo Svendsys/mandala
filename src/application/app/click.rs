@@ -392,6 +392,69 @@ mod tests {
         }
     }
 
+    /// Cross-node MultiSection: starting from a `MultiSection` set
+    /// containing sections of node A, shift-clicking a section of
+    /// node B (while in `NodeEdit { B }`) extends the set with the
+    /// new (node_id, section_idx) pair. The dedup-by-(node_id,
+    /// section_idx) identity is the load-bearing invariant the
+    /// docstring on `compute_node_click_selection` calls out.
+    #[test]
+    fn test_shift_click_extends_multi_section_across_distinct_nodes() {
+        let prev = SelectionState::MultiSection(vec![sec("a", 0), sec("a", 1)]);
+        let result = compute_node_click_selection(
+            &prev, "b", Some(0), true, &node_edit_for("b"),
+        );
+        match result {
+            SelectionState::MultiSection(secs) => {
+                assert_eq!(secs.len(), 3, "got {secs:?}");
+                assert!(secs.contains(&sec("a", 0)));
+                assert!(secs.contains(&sec("a", 1)));
+                assert!(secs.contains(&sec("b", 0)));
+            }
+            other => panic!("expected MultiSection of length 3, got {other:?}"),
+        }
+    }
+
+    /// `SectionRange` as the *starting* state: shift+click on a
+    /// node folds to fresh `Single` (the node-path takes the
+    /// non-section branch in the match arm). Pins the explicit
+    /// `SectionRange` arm in `compute_node_click_selection`.
+    #[test]
+    fn test_shift_click_node_from_section_range_collapses_to_single() {
+        let prev = SelectionState::SectionRange {
+            sel: sec("n0", 0),
+            range: (1, 3),
+        };
+        let result = compute_node_click_selection(
+            &prev, "n1", None, true, &InteractionMode::Default,
+        );
+        match result {
+            SelectionState::Single(id) => assert_eq!(id, "n1"),
+            other => panic!("expected Single(n1), got {other:?}"),
+        }
+    }
+
+    /// Cross-node MultiSection toggle-off: shift-clicking a section
+    /// already in the set removes only that pair, leaving the
+    /// other-node members alone.
+    #[test]
+    fn test_shift_click_removes_cross_node_section_from_multi_section() {
+        let prev =
+            SelectionState::MultiSection(vec![sec("a", 0), sec("a", 1), sec("b", 0)]);
+        let result = compute_node_click_selection(
+            &prev, "b", Some(0), true, &node_edit_for("b"),
+        );
+        match result {
+            SelectionState::MultiSection(secs) => {
+                assert_eq!(secs.len(), 2, "got {secs:?}");
+                assert!(secs.contains(&sec("a", 0)));
+                assert!(secs.contains(&sec("a", 1)));
+                assert!(!secs.contains(&sec("b", 0)));
+            }
+            other => panic!("expected MultiSection of length 2, got {other:?}"),
+        }
+    }
+
     // Plain click — non-section behaviour stays intact.
 
     #[test]

@@ -79,6 +79,15 @@ pub(super) fn build_node_elements(
     let mut text_elements = Vec::new();
     let mut border_elements = Vec::new();
     let mut node_aabbs: Vec<(Vec2, Vec2)> = Vec::new();
+    // Per-call dimming-color cache. `hex_with_alpha_scaled` parses
+    // → multiplies → re-formats; on a dense map in NodeEdit mode
+    // the same `(resolved_hex, factor)` pair recurs once per text
+    // run + once per border, often dozens of times. Caching by
+    // input hex amortises the parse cost. Key is `String` because
+    // resolved hex strings outlive the caller's borrow scope; the
+    // cache is local to one frame's `build_node_elements` call so
+    // size stays bounded by visible-node count.
+    let mut dim_cache: HashMap<String, String> = HashMap::new();
 
     for node in map.nodes.values() {
         if map.is_hidden_by_fold(node) {
@@ -172,7 +181,19 @@ pub(super) fn build_node_elements(
                     let mut r = run.clone();
                     let resolved = resolve_var(&run.color, vars);
                     r.color = if dim_this_node {
-                        hex_with_alpha_scaled(resolved, INACTIVE_NODE_ALPHA_MULTIPLIER)
+                        // Cache lookup keyed by the resolved hex —
+                        // every text run with the same color shares
+                        // one parse / multiply / format round trip.
+                        if let Some(hit) = dim_cache.get(resolved) {
+                            hit.clone()
+                        } else {
+                            let dimmed = hex_with_alpha_scaled(
+                                resolved,
+                                INACTIVE_NODE_ALPHA_MULTIPLIER,
+                            );
+                            dim_cache.insert(resolved.to_string(), dimmed.clone());
+                            dimmed
+                        }
                     } else {
                         resolved.to_string()
                     };
@@ -196,8 +217,17 @@ pub(super) fn build_node_elements(
         // resolver runs at most once per visible framed node.
         if let Some(mut border_style) = resolved_border {
             if dim_this_node {
-                border_style.color =
-                    hex_with_alpha_scaled(&border_style.color, INACTIVE_NODE_ALPHA_MULTIPLIER);
+                // Same per-call cache as the text-run branch above.
+                border_style.color = if let Some(hit) = dim_cache.get(&border_style.color) {
+                    hit.clone()
+                } else {
+                    let dimmed = hex_with_alpha_scaled(
+                        &border_style.color,
+                        INACTIVE_NODE_ALPHA_MULTIPLIER,
+                    );
+                    dim_cache.insert(border_style.color.clone(), dimmed.clone());
+                    dimmed
+                };
             }
             let fallback_rgba =
                 crate::util::color::hex_to_rgba_safe(&border_style.color, [1.0, 1.0, 1.0, 1.0]);

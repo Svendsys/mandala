@@ -320,6 +320,79 @@ mod tests {
         assert_eq!(hex_to_rgba_safe("", fb), fb);
     }
 
+    /// Round-trip: a 6-char `#RRGGBB` with alpha=1.0 multiplied by
+    /// 0.5 lands at `#RRGGBB80` (alpha=128/255 ≈ 0.502). Locks the
+    /// dimming pass's per-element use case (Plan §B.2 — inactive
+    /// nodes render at 50% alpha when NodeEdit is open).
+    #[test]
+    fn test_hex_with_alpha_scaled_halves_opaque_input() {
+        let got = hex_with_alpha_scaled("#ff0000", 0.5);
+        // `rgba_to_hex` emits 8-char form whenever alpha < 1.0.
+        assert_eq!(got, "#ff000080");
+    }
+
+    /// Factor 1.0 leaves 6-char `#RRGGBB` opaque hex unchanged
+    /// (the no-op fast path the Default-mode caller hits).
+    #[test]
+    fn test_hex_with_alpha_scaled_factor_one_round_trips() {
+        // `#ff8800` is exactly representable in 8-bit channels;
+        // round-trip through parse → re-format should be byte-equal.
+        assert_eq!(hex_with_alpha_scaled("#ff8800", 1.0), "#ff8800");
+    }
+
+    /// Factor 0.0 zeros the alpha channel — the resulting hex
+    /// shows alpha=00 (fully transparent).
+    #[test]
+    fn test_hex_with_alpha_scaled_factor_zero_zeros_alpha() {
+        let got = hex_with_alpha_scaled("#abcdef", 0.0);
+        assert_eq!(got, "#abcdef00");
+    }
+
+    /// Factor > 1.0 clamps alpha to 1.0 — protects against a
+    /// caller passing a misordered (multiplier, factor) pair from
+    /// promoting an already-saturated alpha into nonsense.
+    #[test]
+    fn test_hex_with_alpha_scaled_factor_above_one_clamps_to_full_alpha() {
+        // Start from `#80aabbcc` (alpha=0xcc / 255 ≈ 0.8) × 10.0
+        // would naively land at 8.0; expect clamp to 1.0 → 6-char form.
+        let got = hex_with_alpha_scaled("#aabbccdd", 10.0);
+        assert_eq!(got, "#aabbcc");
+    }
+
+    /// Existing 8-char `#RRGGBBAA` input — only the alpha mutates,
+    /// RGB channels round-trip byte-equal.
+    #[test]
+    fn test_hex_with_alpha_scaled_preserves_rgb_on_8_char_input() {
+        // `#10204080` × 0.5 → alpha 0x80 / 2 = 0x40
+        let got = hex_with_alpha_scaled("#10204080", 0.5);
+        assert_eq!(got, "#10204040");
+    }
+
+    /// Parse failure (malformed hex) returns the input verbatim.
+    /// Same forgiving posture as `hex_to_rgba_safe` — the dimming
+    /// pass shouldn't crash a frame over a typo in a theme variable.
+    #[test]
+    fn test_hex_with_alpha_scaled_parse_failure_passes_through() {
+        assert_eq!(hex_with_alpha_scaled("not-a-color", 0.5), "not-a-color");
+        assert_eq!(hex_with_alpha_scaled("var(--bg)", 0.5), "var(--bg)");
+        assert_eq!(hex_with_alpha_scaled("", 0.5), "");
+        assert_eq!(hex_with_alpha_scaled("#xyz", 0.5), "#xyz");
+    }
+
+    /// Composition pin: applying factor 0.5 twice yields factor
+    /// 0.25 — exercises the parse → multiply → re-serialise round
+    /// trip stability under repeated application.
+    #[test]
+    fn test_hex_with_alpha_scaled_composes() {
+        let once = hex_with_alpha_scaled("#ffffff", 0.5);
+        // 0xff × 0.5 = 0x7f.5 → rounded to 0x80 (`convert_f32_to_u8`
+        // uses .round()).
+        assert_eq!(once, "#ffffff80");
+        let twice = hex_with_alpha_scaled(&once, 0.5);
+        // 0x80 × 0.5 = 0x40 exactly.
+        assert_eq!(twice, "#ffffff40");
+    }
+
     #[test]
     fn hex_to_rgba_safe_with_alpha() {
         let got = hex_to_rgba_safe("#00ff0080", [0.0, 0.0, 0.0, 0.0]);
