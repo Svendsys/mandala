@@ -507,6 +507,13 @@ fn test_is_destructive_destructive_set_is_pinned() {
         // `set_section_aabb` on the right-button release that
         // ends the gesture — destructive per plan §6.10.
         ActionKind::FastResizeStart,
+        // Plan §4.6 — section text + structural mutators are
+        // destructive (rewrite text content, change the
+        // sections vector length).
+        ActionKind::SetSectionText,
+        ActionKind::AddSection,
+        ActionKind::DeleteSection,
+        ActionKind::SplitSection,
     ];
     for k in destructive {
         assert!(

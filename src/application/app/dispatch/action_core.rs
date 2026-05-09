@@ -427,6 +427,66 @@ pub(in crate::application::app) fn dispatch_compatible(
         Action::SetSectionSizeFillParent => with_doc_rebuild(core, |rc| {
             super::cross_dispatch::apply_set_section_size(None, rc)
         }),
+        Action::SetSectionOffsetAbs { x, y } => {
+            let (Some(x_v), Some(y_v)) = (x.parse::<f64>().ok(), y.parse::<f64>().ok()) else {
+                log::warn!("SetSectionOffsetAbs: invalid x='{}' or y='{}'", x, y);
+                return DispatchOutcome::Handled;
+            };
+            with_doc_rebuild(core, |rc| {
+                super::cross_dispatch::apply_set_section_offset_abs(x_v, y_v, rc)
+            });
+        }
+        Action::SetSectionText { text, runs_mode } => {
+            let clear_runs = match runs_mode.as_str() {
+                "clear" => true,
+                "preserve" | "" => false,
+                other => {
+                    log::warn!(
+                        "SetSectionText: runs_mode='{}' not recognised; use 'preserve' or 'clear'",
+                        other
+                    );
+                    return DispatchOutcome::Handled;
+                }
+            };
+            let text_owned = text.clone();
+            with_doc_rebuild(core, |rc| {
+                super::cross_dispatch::apply_set_section_text(text_owned, clear_runs, rc)
+            });
+        }
+        Action::AddSection { at, text } => {
+            let at_opt = match at.as_str() {
+                "" => None,
+                s => match s.parse::<usize>() {
+                    Ok(n) => Some(n),
+                    Err(_) => {
+                        log::warn!("AddSection: at='{}' is not a non-negative integer", s);
+                        return DispatchOutcome::Handled;
+                    }
+                },
+            };
+            let text_owned = text.clone();
+            with_doc_rebuild(core, |rc| {
+                super::cross_dispatch::apply_add_section(at_opt, text_owned, rc)
+            });
+        }
+        Action::DeleteSection => with_doc_rebuild(core, |rc| {
+            super::cross_dispatch::apply_delete_section(rc)
+        }),
+        Action::SplitSection { at } => {
+            let at_grapheme = match at.as_str() {
+                "" => None,
+                s => match s.parse::<usize>() {
+                    Ok(n) => Some(n),
+                    Err(_) => {
+                        log::warn!("SplitSection: at='{}' is not a non-negative integer", s);
+                        return DispatchOutcome::Handled;
+                    }
+                },
+            };
+            with_doc_rebuild(core, |rc| {
+                super::cross_dispatch::apply_split_section(at_grapheme, rc)
+            });
+        }
         // ── Clipboard ─────────────────────────────────────────
         // Compatible because `clipboard::{read,write}_clipboard`
         // are logged stubs on WASM (pending async-clipboard) and

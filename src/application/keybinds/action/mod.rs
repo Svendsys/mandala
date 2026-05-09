@@ -792,6 +792,45 @@ pub enum Action {
     /// keybind-stability.
     #[action(context = Document, wasm = Compatible)]
     SetSectionSizeFillParent,
+    /// Mirror `section move x=<x> y=<y> [section=<idx>]` — pin the
+    /// selected section's `offset` to `(x, y)` (absolute setter,
+    /// distinct from the `dx` / `dy` delta form). Plan §4.6.
+    /// `x` / `y` parsed at dispatch time (Action enum needs Hash +
+    /// Eq, so f64 can't ride directly). Same AABB validation as the
+    /// verb path; non-finite or out-of-bounds rejection surfaces as
+    /// a `log::warn!` and no-op.
+    #[action(context = Document, wasm = Compatible)]
+    SetSectionOffsetAbs { x: String, y: String },
+    /// Mirror `section text "<text>" [section=<idx>] [runs=preserve|clear]`
+    /// — replace the resolved section's text. `runs_mode` is the
+    /// stringly-typed form of the kv: `"preserve"` keeps existing
+    /// runs clipped to the new text length (via
+    /// `set_section_text_preserving_runs`); `"clear"` collapses to
+    /// a single run (via `set_section_text`). Plan §4.6. Destructive
+    /// (rewrites text content).
+    #[action(context = Document, wasm = Compatible, destructive)]
+    SetSectionText { text: String, runs_mode: String },
+    /// Mirror `section add [at=<idx>] [text="<text>"]` — insert a
+    /// new section into the selection's primary node. `at` is the
+    /// stringly-typed insertion index (empty / "" → append; "0"
+    /// prepend; "K" insert at K). `text` is the new section's text
+    /// payload (empty / "" → empty section). Plan §4.6. Destructive
+    /// (changes the sections vector length).
+    #[action(context = Document, wasm = Compatible, destructive)]
+    AddSection { at: String, text: String },
+    /// Mirror `section delete [section=<idx>]` — remove the
+    /// resolved section from the selection's primary node. Errors
+    /// when the node has only one section (the model invariant).
+    /// Plan §4.6. Destructive.
+    #[action(context = Document, wasm = Compatible, destructive)]
+    DeleteSection,
+    /// Mirror `section split [section=<idx>] [at=<grapheme>]` —
+    /// split the resolved section in two at a grapheme boundary.
+    /// `at` is the stringly-typed grapheme index (empty / "" →
+    /// end of text; "K" → split at grapheme K). Plan §4.6.
+    /// Destructive (changes the sections vector length).
+    #[action(context = Document, wasm = Compatible, destructive)]
+    SplitSection { at: String },
     /// Mirror `open <path>` — replace the current document with the
     /// one loaded from `path`. **NativeOnly** + **destructive**:
     /// touches the filesystem. Denylisted for non-User macro tiers
