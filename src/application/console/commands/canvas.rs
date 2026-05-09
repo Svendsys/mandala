@@ -53,7 +53,14 @@ pub const COMMAND: Command = Command {
     aliases: &[],
     summary: "Edit map-wide canvas defaults (border, section frame)",
     usage:
-        "canvas border show|reset|<key>=<value> … | canvas section-frame [focused] show|reset|<key>=<value> …",
+        "canvas border show|reset \
+         | canvas border preset <name> | canvas border color <value> | canvas border padding <px> \
+         | canvas border palette <name> [field=<...>] | canvas border font <family> [size=<pt>] \
+         | canvas border side <which> <pattern|reset> | canvas border corner <which> <glyph|reset> \
+         | canvas border <key>=<value> … \
+         | canvas section-frame [focused] show|reset|<key>=<value> … \
+         | canvas border preview <kv>=… | canvas border preview commit|cancel \
+         | canvas section-frame [focused] preview <kv>=… | canvas section-frame [focused] preview commit|cancel",
     tags: &[
         "canvas",
         "default",
@@ -161,20 +168,28 @@ pub fn execute_canvas(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
 }
 
 fn execute_border_subject(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
-    // tokens[1] is either show/reset/preview or the first kv.
-    // Skip the `subject` positional; everything else mirrors the
-    // per-node `border` verb's kv-form path. Case-insensitive
-    // for parity with the rest of the verb.
+    // Plan §5.7: positional subverbs mirror the per-node `border`
+    // verb's grammar so users can `canvas border preset heavy` /
+    // `canvas border color #fff` / etc. The kv form
+    // `canvas border preset=heavy` still works (alias for
+    // keybinds, per Plan §5.2).
     if let Some(verb) = args.positional(1) {
         match verb.to_ascii_lowercase().as_str() {
             "show" => return execute_show_border(eff),
             "reset" => return apply_border_edits(eff, clear_edits()),
             "preview" => return execute_canvas_border_preview(args, eff),
             other if !other.contains('=') => {
-                return ExecResult::err(format!(
-                    "canvas border: unknown subverb '{}'; use 'show', 'reset', 'preview', or kv form",
-                    other
-                ));
+                match positional_subverb_to_edits(other, args, 1) {
+                    Ok(Some(edits)) => return apply_border_edits(eff, edits),
+                    Ok(None) => {
+                        return ExecResult::err(format!(
+                            "canvas border: unknown subverb '{}'; use 'show', 'reset', 'preview', \
+                             'preset', 'color', 'padding', 'palette', 'font', 'side', 'corner', or kv form",
+                            other
+                        ));
+                    }
+                    Err(e) => return e,
+                }
             }
             _ => {}
         }
@@ -194,6 +209,139 @@ fn execute_border_subject(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     apply_border_edits(eff, edits)
 }
 
+/// Resolve a positional subverb (`preset` / `color` / `padding`
+/// / `palette` / `font` / `side` / `corner`) plus its value
+/// positionals into a `BorderConfigEdits`. Returns:
+///
+/// - `Ok(Some(edits))` when the subverb matched and parsed.
+/// - `Ok(None)` when the verb name didn't match any positional
+///   subverb — caller should surface its own "unknown subverb"
+///   error (the canvas dispatch's hint differs from a generic
+///   one).
+/// - `Err(ExecResult::Err(_))` when the subverb matched but the
+///   value parsing failed; caller bails with that.
+///
+/// `verb_pos` is the positional index of the subverb name —
+/// `1` for `canvas border <subverb>`, `2` (or `3` for `focused`)
+/// for `canvas section-frame <subverb>`. Subsequent positionals
+/// (the value(s)) live at `verb_pos + 1` (and `verb_pos + 2` for
+/// the two-positional `side` / `corner` forms).
+fn positional_subverb_to_edits(
+    verb: &str,
+    args: &Args,
+    verb_pos: usize,
+) -> Result<Option<BorderConfigEdits>, ExecResult> {
+    use baumhard::mindmap::border::preset_glyph_set;
+    use crate::application::document::BorderSide;
+    let value = args.positional(verb_pos + 1);
+    let mut edits = BorderConfigEdits::default();
+    match verb.to_ascii_lowercase().as_str() {
+        "preset" | "color" | "padding" | "palette" | "font" => {
+            let v = value.ok_or_else(|| {
+                ExecResult::err(format!("canvas border {}: missing value", verb))
+            })?;
+            stage_kv(&mut edits, &verb.to_ascii_lowercase(), v).map_err(ExecResult::err)?;
+            // Optional kvs (palette field=, font size=) compose.
+            if verb.eq_ignore_ascii_case("palette") {
+                if let Some((_, fv)) = args.kvs().find(|(k, _)| *k == "field") {
+                    stage_kv(&mut edits, "field", fv).map_err(ExecResult::err)?;
+                }
+            }
+            if verb.eq_ignore_ascii_case("font") {
+                if let Some((_, sv)) = args.kvs().find(|(k, _)| *k == "size") {
+                    stage_kv(&mut edits, "size", sv).map_err(ExecResult::err)?;
+                }
+            }
+        }
+        "side" => {
+            let which = value.ok_or_else(|| {
+                ExecResult::err("canvas border side: missing <top|bottom|left|right|all>")
+            })?;
+            let pattern = args.positional(verb_pos + 2).ok_or_else(|| {
+                ExecResult::err(format!(
+                    "canvas border side {}: missing pattern (or 'reset')",
+                    which
+                ))
+            })?;
+            let sides: Vec<BorderSide> = match which.to_ascii_lowercase().as_str() {
+                "top" => vec![BorderSide::Top],
+                "bottom" => vec![BorderSide::Bottom],
+                "left" => vec![BorderSide::Left],
+                "right" => vec![BorderSide::Right],
+                "all" => vec![BorderSide::Top, BorderSide::Bottom, BorderSide::Left, BorderSide::Right],
+                _ => return Err(ExecResult::err(format!(
+                    "canvas border side: '{}' unknown; pick top | bottom | left | right | all",
+                    which
+                ))),
+            };
+            let reset = pattern.eq_ignore_ascii_case("reset");
+            // Canvas-default's preset starts as "light" if no
+            // preset has been set. Reset writes the resolved
+            // preset's default for the named side(s).
+            let preset_name = "light".to_string();
+            let glyph_set = if reset {
+                Some(preset_glyph_set(&preset_name))
+            } else {
+                None
+            };
+            for side in sides {
+                if let Some(ref gs) = glyph_set {
+                    let ch = match side {
+                        BorderSide::Top => gs.top,
+                        BorderSide::Bottom => gs.bottom,
+                        BorderSide::Left => gs.left,
+                        BorderSide::Right => gs.right,
+                    };
+                    edits.with_side_pattern(side, &ch.to_string()).map_err(ExecResult::err)?;
+                } else {
+                    edits.with_side_pattern(side, pattern).map_err(ExecResult::err)?;
+                }
+            }
+        }
+        "corner" => {
+            let which = value.ok_or_else(|| {
+                ExecResult::err("canvas border corner: missing <tl|tr|bl|br|all>")
+            })?;
+            let glyph = args.positional(verb_pos + 2).ok_or_else(|| {
+                ExecResult::err(format!(
+                    "canvas border corner {}: missing glyph (or 'reset')",
+                    which
+                ))
+            })?;
+            let corners: Vec<&str> = match which.to_ascii_lowercase().as_str() {
+                "tl" => vec!["tl"],
+                "tr" => vec!["tr"],
+                "bl" => vec!["bl"],
+                "br" => vec!["br"],
+                "all" => vec!["tl", "tr", "bl", "br"],
+                _ => return Err(ExecResult::err(format!(
+                    "canvas border corner: '{}' unknown; pick tl | tr | bl | br | all",
+                    which
+                ))),
+            };
+            let reset = glyph.eq_ignore_ascii_case("reset");
+            for corner in corners {
+                if reset {
+                    let preset_name = "light".to_string();
+                    let gs = preset_glyph_set(&preset_name);
+                    let ch = match corner {
+                        "tl" => gs.top_left,
+                        "tr" => gs.top_right,
+                        "bl" => gs.bottom_left,
+                        "br" => gs.bottom_right,
+                        _ => unreachable!(),
+                    };
+                    stage_kv(&mut edits, corner, &ch.to_string()).map_err(ExecResult::err)?;
+                } else {
+                    stage_kv(&mut edits, corner, glyph).map_err(ExecResult::err)?;
+                }
+            }
+        }
+        _ => return Ok(None),
+    }
+    Ok(Some(edits))
+}
+
 fn execute_section_frame_subject(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     // tokens[1] may be the `focused` modifier or the first subverb /
     // kv. Match case-insensitively so the user's casing tolerance
@@ -210,11 +358,18 @@ fn execute_section_frame_subject(args: &Args, eff: &mut ConsoleEffects) -> ExecR
             "reset" => return apply_section_frame_edits(eff, focused, clear_edits()),
             "preview" => return execute_canvas_section_frame_preview(args, eff, focused),
             other if !other.contains('=') => {
-                return ExecResult::err(format!(
-                    "canvas section-frame{}: unknown subverb '{}'; use 'show', 'reset', 'preview', or kv form",
-                    if focused { " focused" } else { "" },
-                    other
-                ));
+                match positional_subverb_to_edits(other, args, verb_pos) {
+                    Ok(Some(edits)) => return apply_section_frame_edits(eff, focused, edits),
+                    Ok(None) => {
+                        return ExecResult::err(format!(
+                            "canvas section-frame{}: unknown subverb '{}'; use 'show', 'reset', 'preview', \
+                             'preset', 'color', 'padding', 'palette', 'font', 'side', 'corner', or kv form",
+                            if focused { " focused" } else { "" },
+                            other
+                        ));
+                    }
+                    Err(e) => return e,
+                }
             }
             _ => {}
         }
@@ -808,5 +963,73 @@ mod tests {
         assert_exec_ok(run("canvas border preview cancel", &mut doc));
         assert!(doc.border_preview.is_none());
         assert!(doc.mindmap.canvas.default_border.is_none());
+    }
+}
+
+#[cfg(test)]
+mod positional_tests {
+    use crate::application::console::tests::fixtures::{assert_exec_err_contains, assert_exec_ok, run};
+    use crate::application::document::tests_common::load_test_doc;
+
+    /// Plan §5.B6.10: `canvas border preset NAME` writes through
+    /// to canvas.default_border.
+    #[test]
+    fn canvas_border_preset_positional_writes_through() {
+        let mut doc = load_test_doc();
+        assert_exec_ok(run("canvas border preset heavy", &mut doc));
+        assert_eq!(
+            doc.mindmap.canvas.default_border.as_ref().map(|c| c.preset.as_str()),
+            Some("heavy")
+        );
+    }
+
+    #[test]
+    fn canvas_border_color_positional_writes_through() {
+        let mut doc = load_test_doc();
+        assert_exec_ok(run("canvas border color #112233", &mut doc));
+        assert_eq!(
+            doc.mindmap.canvas.default_border.as_ref().and_then(|c| c.color.as_deref()),
+            Some("#112233")
+        );
+    }
+
+    #[test]
+    fn canvas_border_padding_positional_writes_through() {
+        let mut doc = load_test_doc();
+        assert_exec_ok(run("canvas border padding 9", &mut doc));
+        assert_eq!(
+            doc.mindmap.canvas.default_border.as_ref().map(|c| c.padding),
+            Some(9.0)
+        );
+    }
+
+    #[test]
+    fn canvas_border_unknown_subverb_rejects_with_full_hint() {
+        let mut doc = load_test_doc();
+        assert_exec_err_contains(
+            run("canvas border frobnicate", &mut doc),
+            "use 'show', 'reset', 'preview', \
+             'preset', 'color', 'padding', 'palette', 'font', 'side', 'corner'",
+        );
+    }
+
+    #[test]
+    fn canvas_section_frame_preset_positional_writes_through() {
+        let mut doc = load_test_doc();
+        assert_exec_ok(run("canvas section-frame preset double", &mut doc));
+        assert_eq!(
+            doc.mindmap.canvas.default_section_frame_border.as_ref().map(|c| c.preset.as_str()),
+            Some("double")
+        );
+    }
+
+    #[test]
+    fn canvas_section_frame_focused_color_positional_writes_through() {
+        let mut doc = load_test_doc();
+        assert_exec_ok(run("canvas section-frame focused color #abcdef", &mut doc));
+        assert_eq!(
+            doc.mindmap.canvas.default_focused_section_frame_border.as_ref().and_then(|c| c.color.as_deref()),
+            Some("#abcdef")
+        );
     }
 }
