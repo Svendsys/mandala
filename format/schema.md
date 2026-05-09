@@ -35,6 +35,8 @@ Complete field reference for every type in `.mindmap.json`.
   "background_color": "#000000",
   "default_border": null,
   "default_connection": null,
+  "default_section_frame_border": null,
+  "default_focused_section_frame_border": null,
   "theme_variables": { "--bg": "#141414" },
   "theme_variants": { "dark": { "--bg": "#141414" }, "light": { "--bg": "#f5f1e8" } }
 }
@@ -45,6 +47,8 @@ Complete field reference for every type in `.mindmap.json`.
 | `background_color` | string | `#RRGGBB` or `var(--name)` |
 | `default_border` | object\|null | Fallback `GlyphBorderConfig` for every node |
 | `default_connection` | object\|null | Fallback `GlyphConnectionConfig` for every edge |
+| `default_section_frame_border` | object\|null | Fallback `GlyphBorderConfig` for unfocused section frames in NodeEdit mode. `null` → hardcoded `light`-preset thin line. See [`border-patterns.md`](./border-patterns.md#section-frames). |
+| `default_focused_section_frame_border` | object\|null | Fallback for the focused section's frame (the section whose text editor is open). `null` → hardcoded `heavy`-preset thick line. |
 | `theme_variables` | object | Live map from variable name (e.g. `--bg`) to color |
 | `theme_variants` | object | Named theme presets; one is copied to `theme_variables` |
 
@@ -137,7 +141,9 @@ Complete field reference for every type in `.mindmap.json`.
   "text_runs": [],
   "offset": { "x": 0.0, "y": 0.0 },
   "size": { "width": 240.0, "height": 60.0 },
-  "channel": 0
+  "channel": 0,
+  "trigger_bindings": [],
+  "frame_border": null
 }
 ```
 
@@ -148,6 +154,7 @@ Complete field reference for every type in `.mindmap.json`.
 | `offset.x`, `offset.y` | number | Top-left of the section AABB *relative to the owning node's `position`*, in canvas units. Defaults to `(0, 0)` (flush against the node's top-left). |
 | `size` | object\|null | Section AABB. `null` (the default) means "fill the parent node"; an explicit width/height overrides. AABB containment uses the *effective* size (`null` ⇒ `node.size`), so a `null`-sized section is only valid at `offset = (0, 0)` — any non-zero offset stretches past the parent's right / bottom edge and `maptool verify` flags it. See [sections.md](./sections.md#effective-size-for-aabb-containment). |
 | `channel` | integer | Mutation channel inside the parent node-area; defaults to the section's index in `MindNode.sections`. |
+| `frame_border` | object\|null | Per-section [`GlyphBorderConfig`](#glyphborderconfig) override for the cyan rectangle drawn around the section while the owning node is in NodeEdit mode. `null` (the default) falls through to `Canvas.default_section_frame_border` (or the focused variant), then to a hardcoded thin / heavy preset. Same vocabulary node borders use, so any preset / pattern / corner / palette / font / size works. See [`border-patterns.md`](./border-patterns.md#section-frames). |
 | `trigger_bindings` | array | Per-section [`TriggerBinding`s](./mutations.md). Section-level bindings fire *before* the whole-node bindings on `MindNode.trigger_bindings` — a section-targeted override (e.g. a different `OnClick` mutation per stratum of a multi-section node) takes precedence over catch-all node bindings. Defaults to empty. |
 
 See [sections.md](./sections.md) for the section concept and

@@ -202,6 +202,8 @@ pub(crate) fn blank_canvas() -> Canvas {
         background_color: "#000".into(),
         default_border: None,
         default_connection: None,
+        default_section_frame_border: None,
+        default_focused_section_frame_border: None,
         theme_variables: HashMap::new(),
         theme_variants: HashMap::new(),
     }

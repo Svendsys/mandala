@@ -25,6 +25,13 @@ pub enum InputContext {
     /// Text editor is open. Text-specific actions are tried
     /// first; unmatched keys do NOT fall through.
     TextEdit,
+    /// `InteractionMode::NodeEdit { .. }` is active and the text
+    /// editor is **not** open (entering the editor flips context to
+    /// `TextEdit`). NodeEdit-specific Actions (`EnterSectionEdit`)
+    /// are eligible here. Unmatched keys fall through to `Document`
+    /// so global keybinds (Ctrl+S, Ctrl+Z, Esc → ExitMode) keep
+    /// working inside NodeEdit.
+    NodeEdit,
 }
 
 impl InputContext {
@@ -39,6 +46,7 @@ impl InputContext {
             InputContext::ColorPicker => true,
             InputContext::LabelEdit => false,
             InputContext::TextEdit => false,
+            InputContext::NodeEdit => true,
         }
     }
 }

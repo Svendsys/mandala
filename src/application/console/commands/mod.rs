@@ -15,6 +15,7 @@ use crate::application::console::parser::Args;
 pub mod anchor;
 pub mod body;
 pub mod border;
+pub mod canvas;
 pub mod cap;
 pub mod color;
 pub mod edge;
@@ -22,6 +23,7 @@ pub mod font;
 pub mod fps;
 pub mod help;
 pub mod label;
+pub mod mode;
 pub mod mutation;
 pub mod new;
 pub mod node;
@@ -70,6 +72,7 @@ pub const COMMANDS: &[Command] = &[
     anchor::COMMAND,
     body::COMMAND,
     border::COMMAND,
+    canvas::COMMAND,
     cap::COMMAND,
     color::COMMAND,
     edge::COMMAND,
@@ -77,6 +80,7 @@ pub const COMMANDS: &[Command] = &[
     fps::COMMAND,
     spacing::COMMAND,
     label::COMMAND,
+    mode::COMMAND,
     mutation::COMMAND,
     save::COMMAND,
     open::COMMAND,

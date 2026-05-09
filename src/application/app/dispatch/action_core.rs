@@ -5,7 +5,7 @@
 //! Handles every Compatible-classified `Action` arm whose body
 //! has been factored into a `cross_dispatch::apply_*` helper, plus
 //! the cross-platform slice of two mixed-branch NativeOnly Actions
-//! (`Action::CancelMode`'s `last_click` clear,
+//! (`Action::ExitMode`'s mode reset + `last_click` clear,
 //! `Action::EditSelection*`-Single open). Returns `Handled` when
 //! the body ran; `Unhandled` for variants this dispatcher doesn't
 //! own — the caller's fall-through (native only) runs the
@@ -33,6 +33,7 @@ use crate::application::document::OptionEdit;
 use crate::application::keybinds::{Action, WasmCompatibility};
 
 use super::super::input_context_core::InputContextCore;
+use super::super::InteractionMode;
 use super::cross_dispatch::DispatchOutcome;
 
 /// Run `f` against a `RebuildContext` built from `core`, IF the
@@ -45,7 +46,7 @@ use super::cross_dispatch::DispatchOutcome;
 /// CODE_CONVENTIONS §5: "If a function is needed in two or more
 /// places, the answer is never to copy it." This helper closes
 /// that gap inside the dispatcher.
-fn with_doc_rebuild<F>(core: &mut InputContextCore<'_>, f: F)
+pub(in crate::application::app) fn with_doc_rebuild<F>(core: &mut InputContextCore<'_>, f: F)
 where
     F: FnOnce(&mut super::cross_dispatch::RebuildContext<'_>),
 {
@@ -57,8 +58,9 @@ where
 
 /// Lift `Unhandled → Handled` for the two mixed-branch arms whose
 /// cross-platform slice IS the totality of what WASM can do
-/// (`CancelMode`, `EditSelection*`). On native, `Unhandled` flows
-/// to the dispatcher's existing match for the AppMode-clear or
+/// (`ExitMode`, `EditSelection*`). On native, `Unhandled` flows
+/// to the dispatcher's existing match for the target-picker
+/// (Reparent / Connect) overlay clear or
 /// EdgeLabel/Portal editor open. WASM has no such fall-through —
 /// `WasmMacroDispatchTarget::dispatch_action` calls
 /// [`dispatch_compatible`] directly, so the macro loop's
@@ -75,7 +77,7 @@ pub(in crate::application::app) fn lift_mixed_branch_for_wasm_macro(
     if matches!(outcome, DispatchOutcome::Unhandled)
         && matches!(
             action,
-            Action::CancelMode | Action::EditSelection | Action::EditSelectionClean,
+            Action::ExitMode | Action::EditSelection | Action::EditSelectionClean,
         )
     {
         DispatchOutcome::Handled
@@ -95,27 +97,103 @@ pub(in crate::application::app) fn dispatch_compatible(
 ) -> DispatchOutcome {
     // Mixed-branch arms — handle the cross-platform slice here.
     // Caller's fall-through (native only) handles the residual
-    // NativeOnly branches (EdgeLabel / Portal editors, AppMode
-    // clearing). Returning `Unhandled` from a mixed arm means
-    // "the cross-platform slice ran (or wasn't applicable);
+    // NativeOnly branches (EdgeLabel / Portal editors,
+    // InteractionMode clearing). Returning `Unhandled` from a mixed
+    // arm means "the cross-platform slice ran (or wasn't applicable);
     // native may have more to do".
     match action {
-        Action::CancelMode => {
-            // Cross-platform slice: clear `last_click` so a
-            // post-Esc click isn't paired with a pre-Esc one.
-            // The AppMode side (clear `app_mode`, `hovered_node`,
-            // rebuild_all_with_mode) is native-only — caller's
-            // fall-through runs it.
+        Action::ExitMode => {
+            // Cross-platform slice runs first:
+            // 0. Cancel any active border preview. The plan's
+            //    intended Esc shape was "if a preview is up, Esc
+            //    cancels it; otherwise Esc falls through to the
+            //    rest of ExitMode". Since `cancel_border_preview`
+            //    can't share Esc with `exit_mode` through the
+            //    keybind resolver (first match wins, no chaining),
+            //    we collapse the chain into ExitMode's body — Esc
+            //    on a preview cancels the preview AND skips the
+            //    mode-clear, so a user previewing while in Resize
+            //    doesn't lose their resize mode just because they
+            //    typed Esc to drop a preview. C7 fix.
+            if let Some(doc) = core.document.as_deref_mut() {
+                if doc.cancel_border_preview() {
+                    let mut rc = super::cross_dispatch::RebuildContext {
+                        document: doc,
+                        mindmap_tree: core.mindmap_tree,
+                        app_scene: core.app_scene,
+                        renderer: core.renderer,
+                        scene_cache: core.scene_cache,
+                        interaction_mode: core.interaction_mode,
+                    };
+                    rc.rebuild_after_geometry_change();
+                    return DispatchOutcome::Handled;
+                }
+            }
+            // 1. Clear `last_click` so a post-Esc click isn't paired
+            //    with a pre-Esc one (was already in the pre-Batch-2
+            //    `ExitMode` cross-platform body).
+            // 2. Clear `interaction_mode` to `Default` and rebuild
+            //    when the active mode is `Resize { .. }` or
+            //    `NodeEdit { .. }`. Both modes need a way out: Resize
+            //    used to be NativeOnly (review-fix in Batch 2), and
+            //    NodeEdit was added by Batch 3 with no Esc-handler at
+            //    all — multi-section users got trapped (no outside-
+            //    click on WASM, no NodeEdit-context Esc binding). On
+            //    NodeEdit exit also lift selection back to
+            //    `Single(node_id)` so per-node verbs stay usable
+            //    after exit; a stale Section selection would point
+            //    at a dimming-cleared node and surprise the user.
+            //
+            // The native fallthrough still handles the
+            // Reparent / Connect target-picker overlay clear (which
+            // depends on `hovered_node` from `NativeContextExt`).
             *core.last_click = None;
+            let exit_target_node = match &*core.interaction_mode {
+                InteractionMode::Resize { .. } => Some(None),
+                InteractionMode::NodeEdit { node_id } => Some(Some(node_id.clone())),
+                _ => None,
+            };
+            if let Some(node_id_to_lift) = exit_target_node {
+                *core.interaction_mode = InteractionMode::Default;
+                if let Some(doc) = core.document.as_deref_mut() {
+                    if let Some(node_id) = node_id_to_lift {
+                        // Lift Section / SectionRange / Single
+                        // selections that point at the exited
+                        // NodeEdit node back to whole-node Single.
+                        // Other selection states (Multi, edge,
+                        // portal) stay untouched — the user steered
+                        // away from the active node deliberately.
+                        if doc
+                            .selection
+                            .primary_node_id()
+                            .map_or(false, |id| id == node_id)
+                        {
+                            doc.selection =
+                                crate::application::document::SelectionState::Single(node_id);
+                        }
+                    }
+                    let mut rc = super::cross_dispatch::RebuildContext {
+                        document: doc,
+                        mindmap_tree: core.mindmap_tree,
+                        app_scene: core.app_scene,
+                        renderer: core.renderer,
+                        scene_cache: core.scene_cache,
+                        interaction_mode: core.interaction_mode,
+                    };
+                    rc.rebuild_after_selection_change();
+                }
+                return DispatchOutcome::Handled;
+            }
             return DispatchOutcome::Unhandled;
         }
         Action::EditSelection | Action::EditSelectionClean => {
-            // Cross-platform slice: Single-selection branch
-            // opens the inline node text editor via
-            // `apply_open_text_edit_on_single`. Returns true
-            // iff selection was Single (and the editor opened).
-            // EdgeLabel + Portal branches are native-only; on
-            // false return, caller's fall-through tries them.
+            // Cross-platform slice: Single / Section / SectionRange
+            // selections route through `apply_enter_node_edit` —
+            // flips `InteractionMode::NodeEdit { node_id }` and (for
+            // single-section nodes) opens the inline editor in the
+            // same call. Returns true iff a node-scoped selection
+            // was found. EdgeLabel + Portal branches are native-only;
+            // on false return, caller's fall-through tries them.
             let clean = matches!(action, Action::EditSelectionClean);
             let opened = if let Some(doc) = core.document.as_deref_mut() {
                 let mut rc = super::cross_dispatch::RebuildContext {
@@ -124,8 +202,9 @@ pub(in crate::application::app) fn dispatch_compatible(
                     app_scene: core.app_scene,
                     renderer: core.renderer,
                     scene_cache: core.scene_cache,
+                    interaction_mode: core.interaction_mode,
                 };
-                super::cross_dispatch::apply_open_text_edit_on_single(clean, &mut rc, core.text_edit_state)
+                super::cross_dispatch::apply_enter_node_edit(clean, &mut rc, core.text_edit_state)
             } else {
                 false
             };
@@ -163,6 +242,7 @@ pub(in crate::application::app) fn dispatch_compatible(
                 super::super::text_edit::close_text_edit(
                     commit,
                     doc,
+                    core.interaction_mode,
                     core.text_edit_state,
                     core.mindmap_tree,
                     core.app_scene,
@@ -256,6 +336,19 @@ pub(in crate::application::app) fn dispatch_compatible(
         Action::SetBorderField { field, value } => with_doc_rebuild(core, |rc| {
             super::cross_dispatch::apply_set_border_field(field, value, rc)
         }),
+        Action::SetBorderPreview {
+            target_kind,
+            field,
+            value,
+        } => with_doc_rebuild(core, |rc| {
+            super::cross_dispatch::apply_set_border_preview(*target_kind, field, value, rc)
+        }),
+        Action::CommitBorderPreview => {
+            with_doc_rebuild(core, |rc| super::cross_dispatch::apply_commit_border_preview(rc))
+        }
+        Action::CancelBorderPreview => {
+            with_doc_rebuild(core, |rc| super::cross_dispatch::apply_cancel_border_preview(rc))
+        }
         Action::SetEdgeCap { from, to } => {
             with_doc_rebuild(core, |rc| super::cross_dispatch::apply_set_edge_cap(from, to, rc))
         }
@@ -422,8 +515,8 @@ mod tests {
     use crate::application::keybinds::Action;
 
     #[test]
-    fn cancel_mode_unhandled_lifts_to_handled() {
-        let out = lift_mixed_branch_for_wasm_macro(&Action::CancelMode, DispatchOutcome::Unhandled);
+    fn exit_mode_unhandled_lifts_to_handled() {
+        let out = lift_mixed_branch_for_wasm_macro(&Action::ExitMode, DispatchOutcome::Unhandled);
         assert_eq!(out, DispatchOutcome::Handled);
     }
 
@@ -446,7 +539,7 @@ mod tests {
         // Single selection returns Handled from the cross-platform
         // dispatcher; we don't want to alter that.)
         for action in [
-            Action::CancelMode,
+            Action::ExitMode,
             Action::EditSelection,
             Action::EditSelectionClean,
         ] {

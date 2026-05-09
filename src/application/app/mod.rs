@@ -71,6 +71,7 @@ mod event_keyboard;
 mod event_mouse_click;
 #[cfg(not(target_arch = "wasm32"))]
 mod freeze_watchdog;
+mod interaction_mode;
 #[cfg(not(target_arch = "wasm32"))]
 mod input_context;
 // Cross-platform context-bundles for the unified `dispatch_action`
@@ -121,12 +122,15 @@ pub(crate) use crate::application::common::now_ms;
 const EDGE_HIT_TOLERANCE_PX: f32 = 8.0;
 
 /// Screen-space click tolerance (in pixels) for grab-handle hit
-/// testing — applies uniformly to edge handles and section
-/// resize handles. Slightly larger than the edge-path tolerance
-/// above because handles are point-like and need a bit more
-/// grab-area to feel forgiving.
+/// testing — applies uniformly to edge handles and section / node
+/// resize handles. With explicit `InteractionMode::Resize` gating
+/// handle visibility, the press-time hit-test only competes with
+/// itself (no body-vs-handle ambiguity), so 8px is generous for a
+/// 14pt ☐ glyph at standard zoom. Touch / accessibility tuning
+/// will need this to grow — `KeybindConfig`-side configurability
+/// is a future seam.
 #[cfg(not(target_arch = "wasm32"))]
-const HANDLE_HIT_TOLERANCE_PX: f32 = 12.0;
+const HANDLE_HIT_TOLERANCE_PX: f32 = 8.0;
 
 /// What a single click targeted. Used by [`LastClick`] + the
 /// double-click detector so a portal-marker double-click (navigate)
@@ -344,27 +348,22 @@ fn click_hit_from_priority(
 }
 
 
-/// Tracks the high-level interaction mode. Normal handles the usual
-/// select/drag/pan flow; Reparent mode is entered via Ctrl+P and captures
-/// the next left-click as a "choose reparent target" gesture. Connect mode
-/// is entered via Ctrl+D and captures the next left-click as a "choose
-/// connection target" gesture to create a cross_link edge.
-#[cfg(not(target_arch = "wasm32"))]
-enum AppMode {
-    Normal,
-    /// Reparent mode: the user is choosing a new parent for `sources`.
-    /// The next left-click on a node attaches all sources as its last children;
-    /// a left-click on empty canvas promotes them to root. Esc cancels.
-    Reparent {
-        sources: Vec<String>,
-    },
-    /// Connect mode: the user is drawing a new cross_link edge from `source`.
-    /// The next left-click on a target node creates the edge; a left-click
-    /// on empty canvas cancels. Esc also cancels.
-    Connect {
-        source: String,
-    },
-}
+// Re-export the mode enum, the shared selection→target resolver,
+// and the resolver's typed error so the console layer can carry
+// `InteractionMode` inside `ConsoleSideEffect` and consumers across
+// `application::*` reach a uniform path. Full doc + variant prose
+// lives in `interaction_mode.rs`.
+pub(in crate::application) use interaction_mode::{
+    resolve_resize_target, InteractionMode, ResizeTargetError,
+};
+// `ResizeTarget` is constructed only inside `interaction_mode.rs`
+// (the resolver returns it); production consumers pattern-match
+// the result without naming the type. Tests assert on the variant
+// shape, so the re-export is `#[cfg(test)]`-gated to avoid an
+// unused-import warning on non-test builds. When Batch 4 (fast
+// resize) lands a non-test consumer, the gate moves.
+#[cfg(test)]
+pub(in crate::application) use interaction_mode::ResizeTarget;
 
 /// Tracks the current drag interaction state.
 ///

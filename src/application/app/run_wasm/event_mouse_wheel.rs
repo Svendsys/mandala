@@ -43,6 +43,7 @@ impl super::WasmApp {
             // node text tree — scene-only rebuild is enough.
             rebuild_scene_only(
                 &input.document,
+                &input.interaction_mode,
                 &mut input.app_scene,
                 renderer,
                 &mut input.scene_cache,

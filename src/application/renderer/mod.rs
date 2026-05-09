@@ -182,6 +182,18 @@ const RECT_VERTEX_SIZE: u64 = 36;
 /// perf changes, long enough to smooth out per-frame jitter.
 const FPS_WINDOW: usize = 200;
 
+/// Mode-status overlay layout: font size, screen-space position
+/// (top-left corner, in pixels), and shaping bounds (max width ×
+/// height in pixels). The position sits below the FPS overlay's
+/// row (`(8.0, 8.0)` + ~24 px line height). Width is generous so
+/// long node ids + section counts fit on one line; height matches
+/// the FPS overlay so vertical alignment is predictable when both
+/// are visible. Promoted to constants so future overlays can
+/// stack predictably below the mode-status row.
+const MODE_STATUS_FONT_SIZE_PT: f32 = 14.0;
+const MODE_STATUS_OVERLAY_POS: (f32, f32) = (8.0, 32.0);
+const MODE_STATUS_OVERLAY_BOUNDS: (f32, f32) = (640.0, 24.0);
+
 /// Fixed-size ring buffer of frame intervals (microseconds) with an
 /// O(1) running sum. Backs `FpsDisplayMode::Debug`'s rolling-average
 /// readout. Encapsulates the sum invariant — `sum` is always
@@ -285,6 +297,24 @@ pub struct Renderer {
     /// last. Used to skip re-shaping when the integer value hasn't
     /// changed since the last rebuild.
     last_fps_shaped: Option<usize>,
+    /// Pending mode-status overlay text, set by the app's
+    /// scene-rebuild path on every mode-affecting action and consumed
+    /// by [`Self::rebuild_mode_status_overlay_if_needed`] at the next
+    /// frame. `None` clears the overlay (Default mode); `Some(text)`
+    /// shows it. Computing the string in `scene_rebuild.rs` (rather
+    /// than the renderer) keeps the renderer model-agnostic and lets
+    /// the source of truth — `(mode, selection, doc)` — stay on the
+    /// app side.
+    mode_status_text: Option<String>,
+    /// Screen-space text buffer(s) carrying the mode-status line
+    /// (e.g. `editing: <node-id> — section [N of M]`). Sibling of
+    /// `fps_overlay_buffers`; same render path. Empty when
+    /// `mode_status_text` is `None`.
+    mode_status_overlay_buffers: Vec<MindMapTextBuffer>,
+    /// The `self.mode_status_text` value that was shaped into
+    /// `mode_status_overlay_buffers` last. Used to skip re-shaping
+    /// when the text hasn't changed.
+    last_mode_status_shaped: Option<String>,
     /// Wall-clock timestamp of the previous rendered frame. The
     /// difference between consecutive values is the actual frame
     /// interval, which is what FPS is derived from. Measuring
@@ -690,6 +720,9 @@ impl Renderer {
             fps_display_mode: FpsDisplayMode::Off,
             fps_overlay_buffers: Vec::new(),
             last_fps_shaped: None,
+            mode_status_text: None,
+            mode_status_overlay_buffers: Vec::new(),
+            last_mode_status_shaped: None,
             last_frame_instant: None,
             fps_clock: 0,
             fps_ring: FrameIntervalRing::new(),
@@ -821,6 +854,7 @@ impl Renderer {
                         self.tick_fps();
                         self.rebuild_fps_overlay_if_needed();
                     }
+                    self.rebuild_mode_status_overlay_if_needed();
                     let sw = StopWatch::new_start();
                     self.render();
                     self.last_render_time = sw.stop();
@@ -831,12 +865,68 @@ impl Renderer {
                     self.tick_fps();
                     self.rebuild_fps_overlay_if_needed();
                 }
+                self.rebuild_mode_status_overlay_if_needed();
                 let sw = StopWatch::new_start();
                 self.render();
                 self.last_render_time = sw.stop();
             }
         }
         self.run
+    }
+
+    /// Set the mode-status overlay text. `None` clears the overlay
+    /// (Default mode); `Some(text)` shows the line on the next
+    /// frame. Called from the app's scene-rebuild paths on every
+    /// mode-affecting action — the renderer trusts the app to
+    /// recompute the string when (mode, selection, doc) changes.
+    pub fn set_mode_status_text(&mut self, text: Option<String>) {
+        self.mode_status_text = text;
+    }
+
+    /// Re-shape the cyan mode-status line when `self.mode_status_text`
+    /// has changed since the last shape. Sibling of
+    /// [`Self::rebuild_fps_overlay_if_needed`]; same caching
+    /// discipline (skip when nothing changed). Silent on font-system
+    /// lock contention — the cache key advance is gated on a
+    /// successful shaping, so a missed lock retries on the next
+    /// process() cycle without permanently dropping the overlay.
+    #[inline]
+    fn rebuild_mode_status_overlay_if_needed(&mut self) {
+        // Same-string short-circuit — no parse / no allocation when
+        // the active mode hasn't changed (every drag-drain frame
+        // hits this path).
+        if self.mode_status_text.as_deref() == self.last_mode_status_shaped.as_deref() {
+            return;
+        }
+        let Ok(mut font_system) = fonts::FONT_SYSTEM.try_write() else {
+            // Lock contention — leave the cache state alone so the
+            // next process() cycle retries shaping. Pre-fix this
+            // advanced `last_mode_status_shaped` before the lock
+            // check, which permanently lost the overlay until the
+            // text changed again.
+            return;
+        };
+        self.mode_status_overlay_buffers.clear();
+        if let Some(text) = self.mode_status_text.as_deref() {
+            // Same cyan as `HIGHLIGHT_COLOR` (the selection-tint
+            // constant in `document::types`) so the status bar
+            // visually pairs with the selection highlight: both are
+            // the canonical "active" affordance.
+            // `HIGHLIGHT_COLOR = [0.0, 0.9, 1.0, 1.0]` → (0, 230, 255).
+            let attrs = Attrs::new().color(baumhard::font::Color::rgba(0, 230, 255, 255));
+            let buf = borders::create_border_buffer(
+                &mut font_system,
+                text,
+                &attrs,
+                MODE_STATUS_FONT_SIZE_PT,
+                MODE_STATUS_OVERLAY_POS,
+                MODE_STATUS_OVERLAY_BOUNDS,
+            );
+            self.mode_status_overlay_buffers.push(buf);
+        }
+        // Cache key advances only after a successful shape (or an
+        // empty-text path that explicitly cleared the buffers).
+        self.last_mode_status_shaped = self.mode_status_text.clone();
     }
 
     /// Re-shape the yellow "FPS: N" screen-space overlay when the

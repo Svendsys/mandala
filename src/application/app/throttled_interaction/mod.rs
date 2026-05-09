@@ -63,6 +63,11 @@ pub(in crate::application::app) struct DrainContext<'a> {
     pub renderer: &'a mut Renderer,
     pub scene_cache: &'a mut baumhard::mindmap::scene_cache::SceneConnectionCache,
     pub color_picker_state: &'a mut ColorPickerState,
+    /// Active interaction mode — drives `InteractionModeOverrides` for
+    /// every per-frame `build_scene_with_cache` call here. Read-only
+    /// because per-frame drains never mutate mode (mode transitions
+    /// are discrete actions, not gestures).
+    pub interaction_mode: &'a super::InteractionMode,
 }
 
 /// The mutually-exclusive throttled drag variants. Only one can be

@@ -29,6 +29,65 @@ pub struct EdgeColorPreview<'a> {
     pub color: &'a str,
 }
 
+/// View-side overrides telling the scene builder which node /
+/// section should receive mode-driven chrome this frame: resize
+/// handles on the active resize target, and inactive-node dimming
+/// when NodeEdit is open. Computed by the application layer
+/// (translating from its interaction-mode state) and threaded into
+/// [`build_scene_with_cache`] / [`build_scene_with_offsets_selection_and_overrides`].
+///
+/// `Default` is no handles + no dimming. Pre-Batch-2 of the
+/// sections / borders / resize UX overhaul, the scene builder read
+/// selection directly (`Single` → handles, `Section` → handles),
+/// which produced the "accidental resize on selection" UX bug.
+/// Decoupling the gate from selection — and putting it next to its
+/// consumer `SceneSelectionContext` — keeps the model/view boundary
+/// clean: the document doesn't know about modes, the app translates
+/// mode to override, the scene builder consumes the override.
+///
+/// One bundle per `build_scene_*` call — adding a third mode-derived
+/// override (e.g. `Resize`-mode body tinting) extends the struct
+/// rather than threading another parameter through the signature.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct InteractionModeOverrides<'a> {
+    /// Which node should auto-emit 8 resize handles this frame, or
+    /// `None` for no node handles.
+    pub node: Option<&'a str>,
+    /// Which section (`(node_id, section_idx)`) should auto-emit 8
+    /// resize handles, or `None` for no section handles. Sections
+    /// with `size == None` (fill-parent) emit zero handles inside
+    /// the builder regardless — there's no own AABB to stretch.
+    pub section: Option<(&'a str, usize)>,
+    /// Active NodeEdit target. When `Some(active)`, every node other
+    /// than `active` renders chrome + text at
+    /// [`super::node_pass::INACTIVE_NODE_ALPHA_MULTIPLIER`] alpha —
+    /// the "you are inside this node" affordance.
+    /// `None` (the Default-mode case) is the no-op fast path.
+    pub node_edit_for: Option<&'a str>,
+    /// Section currently inside the inline text editor, if any.
+    /// `Some((node_id, section_idx))` causes the matching
+    /// `SectionFrameElement` to emit `focused = true` so the
+    /// renderer draws its perimeter at a thicker stroke (Plan
+    /// §4.4). `None` is the no-op — every emitted frame draws at
+    /// the standard stroke. Read by the section-frame builder via
+    /// [`SceneSelectionContext::focused_section`].
+    pub focused_section: Option<(&'a str, usize)>,
+}
+
+impl<'a> InteractionModeOverrides<'a> {
+    /// All-`None` overrides — equivalent to `Default::default()`
+    /// but named for clarity at construction sites that want to
+    /// be explicit about "this rebuild emits no handles".
+    pub const fn none() -> Self {
+        Self {
+            node: None,
+            section: None,
+            node_edit_for: None,
+            focused_section: None,
+        }
+    }
+}
+
 /// Portal equivalent of `EdgeColorPreview`. Matched against the
 /// portal-mode edge's `EdgeKey`. A portal-mode edge and a line-mode
 /// edge with identical endpoints and `edge_type` would share the
@@ -39,6 +98,146 @@ pub struct EdgeColorPreview<'a> {
 pub struct PortalColorPreview<'a> {
     pub edge_key: &'a EdgeKey,
     pub color: &'a str,
+}
+
+/// Transient, scene-build-only substitution of a border's resolved
+/// configuration. Drives the `border preview …` /
+/// `section frame preview …` / `canvas border preview …` /
+/// `canvas section-frame [focused] preview …` console verbs.
+///
+/// While `Some(...)` is threaded through the build pipeline, the
+/// scene builder folds the previewed `edits` into a clone of the
+/// committed slot at the matching target before resolution — the
+/// committed model in `MindMap` is never mutated; this preview is
+/// purely a scene-level substitution. Borrow shape mirrors
+/// [`EdgeColorPreview`] / [`PortalColorPreview`]: the application
+/// layer owns the data, threads a borrow into the scene call.
+///
+/// `force_show_frame` lets `border preview preset=heavy` render
+/// against a node whose committed `style.show_frame == false` —
+/// otherwise the preview would be invisible and the user would
+/// think the verb was broken. Commit writes the explicit
+/// visibility flip through the normal setter, so the force flag
+/// only lives here on the scene-side struct.
+#[derive(Debug, Clone, Copy)]
+pub struct BorderPreview<'a> {
+    pub target: BorderPreviewTargetRef<'a>,
+    /// View carried by value — it's already a borrow of the
+    /// document's `BorderConfigEdits`, so cloning it just copies
+    /// 17 fields of `Option<&str>` / `Option<f32>` / `bool`. No
+    /// secondary borrow needed.
+    pub edits: BorderConfigEditsView<'a>,
+    pub force_show_frame: bool,
+}
+
+/// Borrowed view of the document-side `BorderPreviewTarget`. The
+/// scene builder reads through these slices without taking
+/// ownership of the doc's `Vec`s.
+#[derive(Debug, Clone, Copy)]
+pub enum BorderPreviewTargetRef<'a> {
+    Nodes(&'a [String]),
+    Sections(&'a [(String, usize)]),
+    CanvasDefault,
+    CanvasSectionFrame,
+    CanvasSectionFrameFocused,
+}
+
+/// Per-field tri-state edit, mirroring the application crate's
+/// `OptionEdit<T>` (`Keep` / `Clear` / `Set`). The scene-side
+/// view carries this so `OptionEdit::Clear` round-trips into the
+/// preview pipeline — pre-fix `BorderConfigEditsView` collapsed
+/// `Clear` to "no edit" and the rendered preview diverged from
+/// what commit produced (Risk #1 in the plan).
+///
+/// `Keep` = no edit (steady-state default); `Clear` = drop the
+/// field on the slot; `Set(v)` = write the borrowed value.
+/// `Default` is `Keep` so a `BorderConfigEditsView::default()`
+/// is a no-op view.
+#[derive(Debug, Clone, Copy, Default)]
+pub enum EditView<T: Copy> {
+    #[default]
+    Keep,
+    Clear,
+    Set(T),
+}
+
+impl<T: Copy> EditView<T> {
+    /// `true` iff the edit is `Set` or `Clear` — i.e. it touches
+    /// the field, vs `Keep` which leaves it alone. Used by the
+    /// "any field touched?" predicates that gate slot allocation
+    /// + force-show-frame logic.
+    pub fn is_edit(&self) -> bool {
+        !matches!(self, EditView::Keep)
+    }
+}
+
+/// Scene-side mirror of the application-crate `BorderConfigEdits`
+/// struct. The application crate owns `BorderConfigEdits` (it
+/// imports `OptionEdit` and shapes around the document layer);
+/// this view exposes just the resolved option-fields the slot
+/// helper needs at scene-build time. The application layer
+/// constructs an instance from the owned `BorderConfigEdits` and
+/// hands the borrow into [`BorderPreview`].
+///
+/// Mirrors the slot-helper's read shape — preset / font / size /
+/// color / palette / palette_field / padding / four sides / four
+/// corners — each as an [`EditView`] tri-state so that
+/// `OptionEdit::Clear` survives the projection. Plus a top-level
+/// `clear: bool` that empties the entire slot (mirrors
+/// `BorderConfigEdits.clear`).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BorderConfigEditsView<'a> {
+    pub preset: EditView<&'a str>,
+    pub font: EditView<&'a str>,
+    pub font_size_pt: EditView<f32>,
+    pub color: EditView<&'a str>,
+    pub padding: EditView<f32>,
+    pub color_palette: EditView<&'a str>,
+    pub color_palette_field: EditView<&'a str>,
+    pub side_top: EditView<&'a str>,
+    pub side_bottom: EditView<&'a str>,
+    pub side_left: EditView<&'a str>,
+    pub side_right: EditView<&'a str>,
+    pub corner_top_left: EditView<&'a str>,
+    pub corner_top_right: EditView<&'a str>,
+    pub corner_bottom_left: EditView<&'a str>,
+    pub corner_bottom_right: EditView<&'a str>,
+    /// `true` clears the slot entirely (the cascade falls through
+    /// to the canvas default or the hardcoded floor). Mirrors
+    /// `BorderConfigEdits.clear`.
+    pub clear: bool,
+}
+
+impl<'a> BorderConfigEditsView<'a> {
+    /// `true` iff any per-field axis is `Set` or `Clear`. Used by
+    /// the slot-allocation gate inside `apply_view_to_slot` and
+    /// by the force-show-frame predicate (along with `clear`,
+    /// which is its own axis).
+    pub fn touches_any_field(&self) -> bool {
+        self.preset.is_edit()
+            || self.font.is_edit()
+            || self.font_size_pt.is_edit()
+            || self.color.is_edit()
+            || self.padding.is_edit()
+            || self.color_palette.is_edit()
+            || self.color_palette_field.is_edit()
+            || self.touches_glyphs()
+    }
+
+    /// `true` iff any side- or corner-glyph axis is `Set` or
+    /// `Clear`. Mirrors the application-side `edits_touch_glyphs`
+    /// predicate; lifts the eight-way OR into the type so the
+    /// app side can drop its parallel copy.
+    pub fn touches_glyphs(&self) -> bool {
+        self.side_top.is_edit()
+            || self.side_bottom.is_edit()
+            || self.side_left.is_edit()
+            || self.side_right.is_edit()
+            || self.corner_top_left.is_edit()
+            || self.corner_top_right.is_edit()
+            || self.corner_bottom_left.is_edit()
+            || self.corner_bottom_right.is_edit()
+    }
 }
 
 /// Intermediate representation between MindMap data and GPU rendering.
@@ -67,6 +266,18 @@ pub struct RenderScene {
     /// positive size. 8 handles when populated (corners + edge
     /// midpoints).
     pub node_resize_handles: Vec<NodeResizeHandleElement>,
+    /// Section frames rendered on top of the active NodeEdit
+    /// node's sections. Always empty unless the scene was built
+    /// with `node_edit_for = Some(active)` AND the named node has
+    /// `sections.len() >= 2` (single-section nodes skip frames —
+    /// they would just duplicate the border, and the single-
+    /// section short-circuit bypasses NodeEdit anyway). One element
+    /// per section of the active node when populated; the renderer
+    /// draws each as a thin glyph rectangle in the cyan
+    /// SELECTED_EDGE_COLOR family. The element flagged `focused`
+    /// (the section currently inside the text editor, if any) is
+    /// rendered with a thicker / brighter stroke per Plan §4.4.
+    pub section_frames: Vec<SectionFrameElement>,
     /// Labels attached to edges whose `label` field is non-empty.
     /// One element per labeled edge, positioned along the connection
     /// path at `label_config.position_t` (defaulting to 0.5), shifted
@@ -116,6 +327,62 @@ pub struct BorderElement {
     /// hot rebuild path. Sibling of
     /// [`crate::mindmap::tree_builder::BorderNodeData::palette_cycle`].
     pub palette_cycle: Vec<[f32; 4]>,
+}
+
+/// A glyph-drawn rectangle outlining one section of the active
+/// NodeEdit node — the visual cue telling the user "this is the
+/// per-section subdivision you can pick from."
+///
+/// Section frames flow through the same [`BorderStyle`] machinery
+/// node borders do: any preset, any per-side `SidePattern`, any
+/// per-corner glyph, any font, any color, any palette. The
+/// resolver cascade (`resolve_section_frame_border` in
+/// `crate::mindmap::border`) is:
+///   1. `MindSection.frame_border` if `Some` (per-section author
+///      override).
+///   2. else `Canvas.default_section_frame_border` (or
+///      `default_focused_section_frame_border` when `focused`).
+///   3. else a hardcoded thin (default) / heavy (focused) floor.
+///
+/// One element per section of the active node when emitted. Empty
+/// for: Default mode, NodeEdit on a single-section node (frame
+/// would duplicate the border), NodeEdit on a missing /
+/// hidden-by-fold node.
+#[derive(Debug, Clone)]
+pub struct SectionFrameElement {
+    /// Owning MindNode id — same id every per-node element keys
+    /// on. Multiple `SectionFrameElement`s share this id when the
+    /// active node has multiple sections.
+    pub node_id: String,
+    /// Index into [`MindNode.sections`](crate::mindmap::model::MindNode::sections).
+    /// Stable across rebuilds for unchanged nodes.
+    pub section_idx: usize,
+    /// Top-left of the section's effective AABB in canvas space —
+    /// `node.position + section.offset`. Same value that the
+    /// matching `TextElement.position` carries; the renderer reads
+    /// from here to draw the perimeter glyphs.
+    pub position: (f32, f32),
+    /// Size of the section's effective AABB —
+    /// `section.size.unwrap_or(node.size)`. Mirrors
+    /// `TextElement.size`.
+    pub size: (f32, f32),
+    /// Resolved per-frame [`BorderStyle`] — preset, side patterns,
+    /// corners, font, size, color, palette field. Mirrors
+    /// [`BorderElement::border_style`]; consumers feed it to
+    /// `crate::mindmap::border::border_run_specs` for the four-side
+    /// run geometry.
+    pub border_style: BorderStyle,
+    /// Resolved per-cycle-position colors when the frame uses a
+    /// `color_palette`; empty otherwise. Mirrors
+    /// [`BorderElement::palette_cycle`].
+    pub palette_cycle: Vec<[f32; 4]>,
+    /// `true` when this section is the focus of an active text
+    /// editor. The renderer draws focused frames using the heavy-
+    /// preset floor (or the canvas-level
+    /// `default_focused_section_frame_border` when set) so the
+    /// user sees which section is being edited among the active
+    /// node's siblings. Plan §4.4.
+    pub focused: bool,
 }
 
 /// A connection (edge) between two nodes, with pre-computed glyph positions.
@@ -290,6 +557,7 @@ mod edge_handle;
 mod label;
 mod node_pass;
 mod node_resize_handle;
+mod section_frame;
 /// Portal-marker emission — one `PortalElement` per endpoint of
 /// each `display_mode = "portal"` edge, attached to its owning
 /// node's border at the point facing the opposite endpoint.
@@ -306,6 +574,7 @@ pub use builder::{
 pub use edge_handle::{build_edge_handles, edge_handle_channel_for};
 pub use node_resize_handle::{build_node_resize_handles, NodeResizeHandleElement};
 pub use portal::SelectedPortalLabel;
+pub use section_frame::build_section_frames;
 pub use section_resize_handle::{
     build_section_resize_handles, ResizeHandleSide, SectionResizeHandleElement,
     SECTION_RESIZE_HANDLE_FONT_SIZE_PT, SECTION_RESIZE_HANDLE_GLYPH,

@@ -14,6 +14,12 @@ use baumhard::mindmap::scene_cache::EdgeKey;
 /// Selection highlight color: bright cyan [R, G, B, A]
 pub const HIGHLIGHT_COLOR: [f32; 4] = [0.0, 0.9, 1.0, 1.0];
 
+// `InteractionModeOverrides` lives in baumhard
+// (`baumhard::mindmap::scene_builder::InteractionModeOverrides`) — its
+// home is next to the `SceneSelectionContext` it feeds. Re-exported
+// from `document/mod.rs` for the convenient `InteractionModeOverrides::none()`
+// path that production callers use.
+
 /// Per-active-mutation runtime record for the animation system.
 /// Carries the from/to `MindNode` snapshot and the driving
 /// `CustomMutation`; the dispatcher in
@@ -155,7 +161,7 @@ impl From<&EdgeKey> for EdgeRef {
 /// Portal-mode edges can still be selected through `Edge` (via
 /// the console) for whole-edge operations like flipping
 /// display mode.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum SelectionState {
     None,
     Single(String),
@@ -567,7 +573,7 @@ impl EdgeLabelSel {
 /// three strings. The asymmetry is a deliberate hot-path trade:
 /// per-frame scene builds stay allocation-free; the much rarer
 /// document-mutation path pays one conversion.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PortalLabelSel {
     /// Owning edge — kept as an `EdgeKey` (not `EdgeRef`) so the
     /// scene builder's `SelectedPortalLabel` can borrow it

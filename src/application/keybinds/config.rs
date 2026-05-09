@@ -43,12 +43,29 @@ pub struct KeybindConfig {
     pub undo: Vec<String>,
     pub enter_reparent_mode: Vec<String>,
     pub enter_connect_mode: Vec<String>,
+    /// Enter resize mode on the current selection — Batch 2 of
+    /// `SECTIONS_BORDERS_RESIZE_PLAN.md`. Default `r`.
+    pub enter_resize_mode: Vec<String>,
     pub delete_selection: Vec<String>,
-    pub cancel_mode: Vec<String>,
+    pub exit_mode: Vec<String>,
     pub create_orphan_node: Vec<String>,
     pub orphan_selection: Vec<String>,
     pub edit_selection: Vec<String>,
     pub edit_selection_clean: Vec<String>,
+    /// Enter NodeEdit mode (Batch 3 of
+    /// `SECTIONS_BORDERS_RESIZE_PLAN.md`). The umbrella `Enter`
+    /// keybind dispatches `EditSelection` first (which fans out
+    /// here for node-bearing selections), so users normally don't
+    /// rebind `enter_node_edit` — but the explicit hook is here
+    /// for macros and future GUI buttons. Default unbound.
+    pub enter_node_edit: Vec<String>,
+    pub enter_node_edit_clean: Vec<String>,
+    /// Enter SectionEdit mode (text editor) on the active section
+    /// while in NodeEdit mode. Default `Enter` at the
+    /// `InputContext::NodeEdit` level — same key as `EditSelection`
+    /// at Document, since the contexts don't overlap (the modal
+    /// cascade picks NodeEdit over Document when NodeEdit is active).
+    pub enter_section_edit: Vec<String>,
     pub open_console: Vec<String>,
     pub save_document: Vec<String>,
     pub copy: Vec<String>,
@@ -96,6 +113,33 @@ pub struct KeybindConfig {
 
     // ── Text Editor ──────────────────────────────────────────────
     pub text_edit_cancel: Vec<String>,
+
+    // ── Border Preview ───────────────────────────────────────────
+    /// Discard the active border preview.
+    ///
+    /// **Default: unbound** — but the user-visible Esc behaviour
+    /// is "if a preview is active, cancel it; otherwise exit the
+    /// current mode" because `Action::ExitMode` (the default Esc
+    /// binding) calls `cancel_border_preview()` first and
+    /// short-circuits if a preview was canceled. See
+    /// `app/dispatch/action_core.rs` for the chain. The chain
+    /// lives in `ExitMode`'s body rather than as a separate
+    /// keybind because the resolver maps `(context, key) →
+    /// Action` deterministically and can't fall through from
+    /// one Action to another based on document state.
+    ///
+    /// Bind this entry to opt out of the chain — e.g. to put
+    /// preview-cancel on a different key while leaving `Escape`
+    /// bound to plain `ExitMode`. The verb path `border preview
+    /// cancel` is the primary surface and works regardless.
+    pub cancel_border_preview: Vec<String>,
+    /// Commit the active border preview through the matching
+    /// committing setter. No default binding — users opt in.
+    /// Unlike `cancel_border_preview`, commit isn't part of any
+    /// implicit chain — the `border preview commit` verb is the
+    /// primary surface and a binding here is purely opt-in
+    /// muscle-memory.
+    pub commit_border_preview: Vec<String>,
 
     // ── Mouse-gesture Actions ────────────────────────────────────
     pub double_click_activate: Vec<String>,
@@ -173,6 +217,18 @@ pub struct KeybindConfig {
     /// and `value` is a color string (`#rrggbb`, `var(--name)`,
     /// palette key). Maps to [`Action::SetColor`].
     pub set_color: Vec<ParametricBinding>,
+    /// `args = [target_kind, field, value]` where `target_kind ∈
+    /// {node, section, canvas-border, canvas-sf, canvas-sf-focused}`
+    /// (kebab-case, matching [`crate::application::keybinds::BorderPreviewTargetKind`]'s
+    /// strum-`IntoStaticStr`-derived form). `field` is one of the
+    /// `border` kv keys (`preset`, `font`, `size`, `color`,
+    /// `palette`, `field`, `padding`, `top`, `bottom`, `left`,
+    /// `right`, `tl`, `tr`, `bl`, `br`); `value` is the same
+    /// kv-form string the verb accepts. Maps to
+    /// [`Action::SetBorderPreview`]. Pre-fix this Action variant
+    /// existed but was *unregistered* — users could not bind a
+    /// key to preview-set via JSON.
+    pub set_border_preview: Vec<ParametricBinding>,
     pub set_edge_type: Vec<ParametricBinding>,
     pub set_edge_display_mode: Vec<ParametricBinding>,
     pub reset_edge: Vec<ParametricBinding>,
@@ -225,12 +281,23 @@ impl Default for KeybindConfig {
             undo: vec!["Ctrl+Z".into(), "Undo".into()],
             enter_reparent_mode: vec!["Ctrl+P".into()],
             enter_connect_mode: vec!["Ctrl+D".into()],
+            enter_resize_mode: vec!["r".into()],
             delete_selection: vec!["Delete".into()],
-            cancel_mode: vec!["Escape".into()],
+            exit_mode: vec!["Escape".into()],
             create_orphan_node: vec!["Ctrl+N".into()],
             orphan_selection: vec!["Ctrl+O".into()],
             edit_selection: vec!["Enter".into()],
             edit_selection_clean: vec!["Backspace".into()],
+            // `enter_node_edit` is reachable via the umbrella
+            // `Enter` (EditSelection) keybind for node selections;
+            // an explicit binding is offered for users who want
+            // the no-fan-out version (e.g. macros).
+            enter_node_edit: vec![],
+            enter_node_edit_clean: vec![],
+            // `Enter` at the NodeEdit context — same key the
+            // umbrella uses at Document, but the cascade picks
+            // NodeEdit when active.
+            enter_section_edit: vec!["Enter".into()],
             open_console: vec!["/".into()],
             save_document: vec!["Ctrl+S".into()],
             copy: vec!["Ctrl+C".into(), "Copy".into()],
@@ -279,6 +346,21 @@ impl Default for KeybindConfig {
             // Text Editor
             text_edit_cancel: vec!["Escape".into()],
 
+            // Border Preview
+            //
+            // No default keybinding for `cancel` — Esc-cancels-preview
+            // is achieved by chaining inside `ExitMode`'s arm body
+            // (it calls `cancel_border_preview()` before mode-clear
+            // and short-circuits when a preview was canceled).
+            // Binding `Escape` here would shadow `exit_mode` because
+            // the resolver picks the first match per `(context, key)`
+            // and has no per-action active-state guard. Users who
+            // want `cancel` on a different key opt in via JSON.
+            // `commit_border_preview` is purely opt-in — there is
+            // no implicit chain for it.
+            cancel_border_preview: vec![],
+            commit_border_preview: vec![],
+
             // Mouse-gesture Actions. `create_orphan_node_and_edit`
             // is intentionally `vec![]` —
             // the user found the empty-canvas double-click annoying;
@@ -308,8 +390,8 @@ impl Default for KeybindConfig {
 
             // Selection.
             select_all: vec!["Ctrl+a".into()],
-            // Default unbound — Esc already cancels modes via
-            // `CancelMode`, and rebinding Esc here would conflict
+            // Default unbound — Esc already exits modes via
+            // `ExitMode`, and rebinding Esc here would conflict
             // with the modal-cascade contract. Users opt in by
             // binding e.g. `Ctrl+Shift+a`.
             deselect_all: vec![],
@@ -381,6 +463,7 @@ impl Default for KeybindConfig {
             set_border_field: vec![],
             set_edge_cap: vec![],
             set_color: vec![],
+            set_border_preview: vec![],
             set_edge_type: vec![],
             set_edge_display_mode: vec![],
             reset_edge: vec![],
@@ -424,12 +507,16 @@ impl KeybindConfig {
             (Action::Undo, &self.undo),
             (Action::EnterReparentMode, &self.enter_reparent_mode),
             (Action::EnterConnectMode, &self.enter_connect_mode),
+            (Action::EnterResizeMode, &self.enter_resize_mode),
             (Action::DeleteSelection, &self.delete_selection),
-            (Action::CancelMode, &self.cancel_mode),
+            (Action::ExitMode, &self.exit_mode),
             (Action::CreateOrphanNode, &self.create_orphan_node),
             (Action::OrphanSelection, &self.orphan_selection),
             (Action::EditSelection, &self.edit_selection),
             (Action::EditSelectionClean, &self.edit_selection_clean),
+            (Action::EnterNodeEdit, &self.enter_node_edit),
+            (Action::EnterNodeEditClean, &self.enter_node_edit_clean),
+            (Action::EnterSectionEdit, &self.enter_section_edit),
             (Action::OpenConsole, &self.open_console),
             (Action::SaveDocument, &self.save_document),
             (Action::Copy, &self.copy),
@@ -473,6 +560,9 @@ impl KeybindConfig {
             (Action::LabelEditCommit, &self.label_edit_commit),
             // Text Editor
             (Action::TextEditCancel, &self.text_edit_cancel),
+            // Border Preview
+            (Action::CancelBorderPreview, &self.cancel_border_preview),
+            (Action::CommitBorderPreview, &self.commit_border_preview),
             // Mouse-gesture Actions
             (Action::DoubleClickActivate, &self.double_click_activate),
             (Action::CreateOrphanNodeAndEdit, &self.create_orphan_node_and_edit),
@@ -612,6 +702,27 @@ impl KeybindConfig {
                 }),
             _ => None,
         });
+        // BorderPreview: `args = [target_kind, field, value]`.
+        // `target_kind.parse::<BorderPreviewTargetKind>()` is the
+        // strum-`EnumString`-derived round-trip; unknown tokens
+        // land in `Err` and `push_parametric` warns and skips.
+        push_parametric(
+            &mut binds,
+            "set_border_preview",
+            3,
+            &self.set_border_preview,
+            |args| match args {
+                [target_kind, field, value] => target_kind
+                    .parse::<super::BorderPreviewTargetKind>()
+                    .ok()
+                    .map(|target_kind| Action::SetBorderPreview {
+                        target_kind,
+                        field: field.clone(),
+                        value: value.clone(),
+                    }),
+                _ => None,
+            },
+        );
         // Edge structural — type / display_mode / reset.
         push_parametric(
             &mut binds,

@@ -35,4 +35,5 @@ mod node_background;
 mod node_basic;
 mod node_scale;
 mod portal;
+mod section_frame;
 mod sections;

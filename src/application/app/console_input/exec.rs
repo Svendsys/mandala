@@ -35,6 +35,7 @@ pub(in crate::application::app) fn execute_console_line(
     portal_text_edit_state: &mut PortalTextEditState,
     color_picker_state: &mut ColorPickerState,
     doc: &mut MindMapDocument,
+    interaction_mode: &mut super::super::InteractionMode,
     mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
     app_scene: &mut crate::application::scene_host::AppScene,
     renderer: &mut Renderer,
@@ -82,6 +83,7 @@ pub(in crate::application::app) fn execute_console_line(
     let post_rebuild = handle_pre_rebuild_side_effect(
         side_effect,
         doc,
+        interaction_mode,
         mindmap_tree,
         label_edit_state,
         portal_text_edit_state,
@@ -92,11 +94,12 @@ pub(in crate::application::app) fn execute_console_line(
 
     // Any successful command may have mutated the doc; rebuild.
     scene_cache.clear();
-    rebuild_all(doc, mindmap_tree, app_scene, renderer, scene_cache);
+    rebuild_all(doc, interaction_mode, mindmap_tree, app_scene, renderer, scene_cache);
 
     let opened_modal = handle_post_rebuild_side_effect(
         post_rebuild,
         doc,
+        interaction_mode,
         mindmap_tree,
         label_edit_state,
         portal_text_edit_state,
@@ -121,6 +124,7 @@ pub(in crate::application::app) fn execute_console_line(
 fn handle_pre_rebuild_side_effect(
     side_effect: Option<ConsoleSideEffect>,
     doc: &mut MindMapDocument,
+    interaction_mode: &mut super::super::InteractionMode,
     mindmap_tree: &mut Option<MindMapTree>,
     label_edit_state: &mut LabelEditState,
     portal_text_edit_state: &mut PortalTextEditState,
@@ -135,6 +139,16 @@ fn handle_pre_rebuild_side_effect(
             *label_edit_state = LabelEditState::Closed;
             *portal_text_edit_state = PortalTextEditState::Closed;
             *color_picker_state = ColorPickerState::Closed;
+            // Reset interaction mode: a stale `NodeEdit { node_id }`
+            // or `Resize { target }` from the prior document points
+            // at ids that don't exist in the new one — the next
+            // rebuild would render `editing: <stale-id>` overlay and
+            // dim the entire new map (no node matches the stale id).
+            *interaction_mode = super::super::InteractionMode::Default;
+            // Clear the renderer's status overlay too, in case the
+            // mode-status setter was last called for an
+            // already-stale mode value before this swap landed.
+            renderer.set_mode_status_text(None);
             // Rebuild the document-derived tiers (Map + Inline).
             // App and User tiers loaded at startup are untouched.
             // The single-entry helper enforces Map-then-Inline
@@ -152,6 +166,15 @@ fn handle_pre_rebuild_side_effect(
             renderer.set_fps_display(mode);
             None
         }
+        ConsoleSideEffect::SetInteractionMode(mode) => {
+            // Flip the mode in place so the rebuild that runs
+            // after this helper sees the new value when reading
+            // `interaction_mode.resize_handle_overrides()`. No
+            // separate rebuild here — `execute_console_line`'s
+            // post-handler `rebuild_all` covers it.
+            *interaction_mode = mode;
+            None
+        }
         other => Some(other),
     }
 }
@@ -162,6 +185,7 @@ fn handle_pre_rebuild_side_effect(
 fn handle_post_rebuild_side_effect(
     side_effect: Option<ConsoleSideEffect>,
     doc: &mut MindMapDocument,
+    interaction_mode: &super::super::InteractionMode,
     mindmap_tree: &mut Option<MindMapTree>,
     label_edit_state: &mut LabelEditState,
     portal_text_edit_state: &mut PortalTextEditState,
@@ -179,15 +203,16 @@ fn handle_post_rebuild_side_effect(
             open_portal_text_edit(&er, &endpoint, doc, portal_text_edit_state, app_scene, renderer);
         }
         ConsoleSideEffect::OpenColorPicker(target) => {
-            open_color_picker_contextual(target, doc, color_picker_state, app_scene, renderer, scene_cache);
+            open_color_picker_contextual(target, doc, color_picker_state, interaction_mode, app_scene, renderer, scene_cache);
         }
         ConsoleSideEffect::OpenColorPickerStandalone => {
-            open_color_picker_standalone(doc, color_picker_state, app_scene, renderer, scene_cache);
+            open_color_picker_standalone(doc, color_picker_state, interaction_mode, app_scene, renderer, scene_cache);
         }
         ConsoleSideEffect::CloseColorPicker => {
             close_color_picker_standalone(
                 color_picker_state,
                 doc,
+                interaction_mode,
                 mindmap_tree,
                 app_scene,
                 renderer,
@@ -195,9 +220,11 @@ fn handle_post_rebuild_side_effect(
             );
         }
         // Pre-rebuild variants — already consumed.
-        ConsoleSideEffect::ReplaceDocument(_) | ConsoleSideEffect::SetFpsDisplay(_) => {
+        ConsoleSideEffect::ReplaceDocument(_)
+        | ConsoleSideEffect::SetFpsDisplay(_)
+        | ConsoleSideEffect::SetInteractionMode(_) => {
             unreachable!(
-                "ReplaceDocument / SetFpsDisplay should be consumed by handle_pre_rebuild_side_effect"
+                "ReplaceDocument / SetFpsDisplay / SetInteractionMode should be consumed by handle_pre_rebuild_side_effect"
             )
         }
     }

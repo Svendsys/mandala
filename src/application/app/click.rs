@@ -11,7 +11,7 @@ use baumhard::mindmap::custom_mutation::PlatformContext;
 
 use super::click_triggers::fire_onclick_triggers;
 use super::scene_rebuild::{rebuild_all, rebuild_scene_only};
-use super::{now_ms, AppMode, EDGE_HIT_TOLERANCE_PX};
+use super::{now_ms, InteractionMode, EDGE_HIT_TOLERANCE_PX};
 use crate::application::document::{
     apply_tree_highlights, hit_test_edge, MindMapDocument, SectionSel, SelectionState,
     REPARENT_SOURCE_COLOR, REPARENT_TARGET_COLOR,
@@ -31,6 +31,7 @@ pub(super) fn handle_click(
     cursor_pos: (f64, f64),
     shift_pressed: bool,
     document: &mut Option<MindMapDocument>,
+    interaction_mode: &InteractionMode,
     mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
     app_scene: &mut crate::application::scene_host::AppScene,
     renderer: &mut Renderer,
@@ -53,101 +54,14 @@ pub(super) fn handle_click(
 
     // Update selection state
     match (&hit, shift_pressed) {
-        // Click on a specific section in a multi-section node:
-        // route to `SelectionState::Section` so per-section verbs
-        // (text edit, font, color) target that section. Single-
-        // section nodes always have `hit_section = None` from
-        // `hit_test_target`, falling through to the
-        // whole-node-Single arm below.
-        (Some(id), false) => {
-            if let Some(section_idx) = hit_section {
-                doc.selection = SelectionState::Section(SectionSel {
-                    node_id: id.clone(),
-                    section_idx,
-                });
-            } else {
-                doc.selection = SelectionState::Single(id.clone());
-            }
-        }
-        (Some(id), true) => {
-            // Shift+click: toggle node — or section, when the
-            // hit lands on a specific section in a multi-section
-            // node — in/out of the multi-selection.
-            if let Some(section_idx) = hit_section {
-                // Section-side shift+click: extends Section ↔
-                // MultiSection. Cross-node section sets are
-                // legal; the dedup'd-by-(node_id, section_idx)
-                // identity is the load-bearing invariant.
-                let new_sec = SectionSel {
-                    node_id: id.clone(),
-                    section_idx,
-                };
-                match &doc.selection {
-                    SelectionState::Section(existing) if existing == &new_sec => {
-                        // Toggle off — same section re-clicked.
-                        doc.selection = SelectionState::None;
-                    }
-                    SelectionState::Section(existing) => {
-                        doc.selection =
-                            SelectionState::MultiSection(vec![existing.clone(), new_sec]);
-                    }
-                    SelectionState::MultiSection(existing) => {
-                        let mut secs = existing.clone();
-                        if let Some(pos) = secs.iter().position(|s| s == &new_sec) {
-                            secs.remove(pos);
-                            doc.selection = SelectionState::from_sections(secs);
-                        } else {
-                            secs.push(new_sec);
-                            doc.selection = SelectionState::MultiSection(secs);
-                        }
-                    }
-                    _ => {
-                        // From any non-section state, shift+click
-                        // on a section starts a fresh `Section`
-                        // selection — gives the user a clean path
-                        // to build a MultiSection by additional
-                        // shift+clicks.
-                        doc.selection = SelectionState::Section(new_sec);
-                    }
-                }
-            } else {
-            // Whole-node shift+click — existing behaviour
-            // (toggle node in/out of Multi).
-            match &doc.selection {
-                // Any non-Single selection collapses to a fresh
-                // Single on shift+click of a different node —
-                // the user's intent is "start tracking this
-                // node" rather than "extend whatever set was
-                // here."
-                SelectionState::None
-                | SelectionState::Edge(_)
-                | SelectionState::EdgeLabel(_)
-                | SelectionState::PortalLabel(_)
-                | SelectionState::PortalText(_)
-                | SelectionState::Section(_)
-                | SelectionState::MultiSection(_)
-                | SelectionState::SectionRange { .. } => {
-                    doc.selection = SelectionState::Single(id.clone());
-                }
-                SelectionState::Single(existing) => {
-                    if existing == id {
-                        doc.selection = SelectionState::None;
-                    } else {
-                        doc.selection = SelectionState::Multi(vec![existing.clone(), id.clone()]);
-                    }
-                }
-                SelectionState::Multi(existing) => {
-                    let mut ids = existing.clone();
-                    if let Some(pos) = ids.iter().position(|i| i == id) {
-                        ids.remove(pos);
-                        doc.selection = SelectionState::from_ids(ids);
-                    } else {
-                        ids.push(id.clone());
-                        doc.selection = SelectionState::Multi(ids);
-                    }
-                }
-            }
-            }
+        (Some(id), shift) => {
+            doc.selection = compute_node_click_selection(
+                &doc.selection,
+                id,
+                hit_section,
+                shift,
+                interaction_mode,
+            );
         }
         (None, false) => {
             // Node miss — fall through: first try portal markers
@@ -192,7 +106,7 @@ pub(super) fn handle_click(
     }
 
     // Rebuild tree with selection highlight applied
-    rebuild_all(doc, mindmap_tree, app_scene, renderer, scene_cache);
+    rebuild_all(doc, interaction_mode, mindmap_tree, app_scene, renderer, scene_cache);
 }
 
 /// Rebuild tree, connections, and borders like `rebuild_all`, but additionally
@@ -202,7 +116,7 @@ pub(super) fn handle_click(
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn rebuild_all_with_mode(
     doc: &MindMapDocument,
-    app_mode: &AppMode,
+    interaction_mode: &InteractionMode,
     hovered_node: Option<&str>,
     mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
     app_scene: &mut crate::application::scene_host::AppScene,
@@ -229,8 +143,8 @@ pub(super) fn rebuild_all_with_mode(
     // threshold-cross promotion's `rebuild_selection_highlight`)
     // share one mapping.
     let mut highlights = super::scene_rebuild::selection_highlight_entries(&doc.selection);
-    match app_mode {
-        AppMode::Reparent { sources } => {
+    match interaction_mode {
+        InteractionMode::Reparent { sources } => {
             for s in sources {
                 highlights.push((s.as_str(), None, REPARENT_SOURCE_COLOR));
             }
@@ -240,7 +154,7 @@ pub(super) fn rebuild_all_with_mode(
                 }
             }
         }
-        AppMode::Connect { source } => {
+        InteractionMode::Connect { source } => {
             highlights.push((source.as_str(), None, REPARENT_SOURCE_COLOR));
             if let Some(h) = hovered_node {
                 if h != source {
@@ -248,17 +162,335 @@ pub(super) fn rebuild_all_with_mode(
                 }
             }
         }
-        AppMode::Normal => {}
+        // Default / NodeEdit / Resize don't contribute selection-
+        // tinting highlights — NodeEdit dimming and Resize tinting
+        // run through their own scene-builder seams (`node_pass.rs`
+        // alpha multiplier, scene_builder handle emission) rather
+        // than through `apply_tree_highlights`.
+        InteractionMode::Default | InteractionMode::NodeEdit { .. } | InteractionMode::Resize { .. } => {}
     }
     apply_tree_highlights(&mut new_tree, highlights);
     renderer.rebuild_buffers_from_tree(&new_tree.tree);
 
-    rebuild_scene_only(doc, app_scene, renderer, scene_cache);
+    rebuild_scene_only(doc, interaction_mode, app_scene, renderer, scene_cache);
+    renderer
+        .set_mode_status_text(super::scene_rebuild::mode_status_line(interaction_mode, doc));
 
     *mindmap_tree = Some(new_tree);
 }
 
-// `handle_connect_target_click` / `handle_reparent_target_click`
-// removed — the click handler dispatches through the funnel as
-// `Action::ConnectToTarget(target_id)` / `Action::ReparentToTarget(target)`.
-// See `dispatch.rs`'s arms.
+/// Pure selection-update helper for "click landed on a node."
+///
+/// Resolves the new [`SelectionState`] given the previous selection,
+/// the click hit (node id + optional section index), the shift modifier,
+/// and the current [`InteractionMode`]. Section routing is gated by
+/// [`InteractionMode::click_resolves_to_section`]: outside `NodeEdit { id }`
+/// (or in NodeEdit on a different node) every click on a multi-section
+/// node folds to whole-node `Single` / `Multi`. Single-section nodes
+/// always fold via `hit_test_target`'s short-circuit (they never
+/// produce `hit_section = Some(_)`), so their click behaviour is
+/// unchanged from pre-Batch-3.
+///
+/// Plain click:
+/// - `route_to_section` true → `Section { node_id, section_idx }`.
+/// - else → `Single(node_id)`.
+///
+/// Shift+click, section-routed:
+/// - `Section(s)` matching the new (node, idx) → `None` (toggle off).
+/// - `Section(s)` mismatching → promote to `MultiSection`.
+/// - `MultiSection` → toggle the (node, idx) pair in or out, narrowing
+///   back to `Section` when one remains.
+/// - any non-section starting state → start a fresh `Section`.
+///
+/// Shift+click, whole-node (route_to_section false):
+/// - `Single(existing)` matching → `None` (toggle off).
+/// - `Single(existing)` mismatching → `Multi(vec![existing, new])`.
+/// - `Multi` → toggle id in or out, narrowing back to `Single`.
+/// - any non-node starting state → fresh `Single`.
+pub(super) fn compute_node_click_selection(
+    existing: &SelectionState,
+    hit_id: &str,
+    hit_section: Option<usize>,
+    shift_pressed: bool,
+    interaction_mode: &InteractionMode,
+) -> SelectionState {
+    let route_to_section =
+        hit_section.is_some() && interaction_mode.click_resolves_to_section(hit_id);
+
+    if !shift_pressed {
+        return if route_to_section {
+            SelectionState::Section(SectionSel {
+                node_id: hit_id.to_string(),
+                section_idx: hit_section.expect("guarded above"),
+            })
+        } else {
+            SelectionState::Single(hit_id.to_string())
+        };
+    }
+
+    if route_to_section {
+        let new_sec = SectionSel {
+            node_id: hit_id.to_string(),
+            section_idx: hit_section.expect("guarded above"),
+        };
+        return match existing {
+            SelectionState::Section(prev) if prev == &new_sec => SelectionState::None,
+            SelectionState::Section(prev) => {
+                SelectionState::MultiSection(vec![prev.clone(), new_sec])
+            }
+            SelectionState::MultiSection(prev) => {
+                let mut secs = prev.clone();
+                if let Some(pos) = secs.iter().position(|s| s == &new_sec) {
+                    secs.remove(pos);
+                    SelectionState::from_sections(secs)
+                } else {
+                    secs.push(new_sec);
+                    SelectionState::MultiSection(secs)
+                }
+            }
+            _ => SelectionState::Section(new_sec),
+        };
+    }
+
+    // Whole-node shift+click: existing behaviour (toggle node in/out of Multi).
+    match existing {
+        SelectionState::None
+        | SelectionState::Edge(_)
+        | SelectionState::EdgeLabel(_)
+        | SelectionState::PortalLabel(_)
+        | SelectionState::PortalText(_)
+        | SelectionState::Section(_)
+        | SelectionState::MultiSection(_)
+        | SelectionState::SectionRange { .. } => SelectionState::Single(hit_id.to_string()),
+        SelectionState::Single(prev) => {
+            if prev == hit_id {
+                SelectionState::None
+            } else {
+                SelectionState::Multi(vec![prev.clone(), hit_id.to_string()])
+            }
+        }
+        SelectionState::Multi(prev) => {
+            let mut ids = prev.clone();
+            if let Some(pos) = ids.iter().position(|i| i == hit_id) {
+                ids.remove(pos);
+                SelectionState::from_ids(ids)
+            } else {
+                ids.push(hit_id.to_string());
+                SelectionState::Multi(ids)
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::document::SectionSel;
+
+    fn node_edit_for(id: &str) -> InteractionMode {
+        InteractionMode::NodeEdit { node_id: id.to_string() }
+    }
+
+    fn sec(node_id: &str, idx: usize) -> SectionSel {
+        SectionSel { node_id: node_id.to_string(), section_idx: idx }
+    }
+
+    // Plain click — section routing rules.
+
+    #[test]
+    fn test_plain_click_multi_section_in_node_edit_routes_to_section() {
+        let result = compute_node_click_selection(
+            &SelectionState::None, "n0", Some(2), false, &node_edit_for("n0"),
+        );
+        match result {
+            SelectionState::Section(s) => assert_eq!(s, sec("n0", 2)),
+            other => panic!("expected Section(n0,2), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_plain_click_multi_section_in_default_mode_folds_to_single() {
+        let result = compute_node_click_selection(
+            &SelectionState::None, "n0", Some(2), false, &InteractionMode::Default,
+        );
+        match result {
+            SelectionState::Single(id) => assert_eq!(id, "n0"),
+            other => panic!("expected Single(n0), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_plain_click_multi_section_in_node_edit_on_other_node_folds_to_single() {
+        let result = compute_node_click_selection(
+            &SelectionState::None, "n0", Some(2), false, &node_edit_for("n1"),
+        );
+        match result {
+            SelectionState::Single(id) => assert_eq!(id, "n0"),
+            other => panic!("expected Single(n0), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_plain_click_no_section_in_node_edit_returns_single() {
+        // hit_section = None → always Single regardless of mode.
+        let result = compute_node_click_selection(
+            &SelectionState::None, "n0", None, false, &node_edit_for("n0"),
+        );
+        match result {
+            SelectionState::Single(id) => assert_eq!(id, "n0"),
+            other => panic!("expected Single(n0), got {other:?}"),
+        }
+    }
+
+    // Shift+click — section routing rules.
+
+    #[test]
+    fn test_shift_click_same_section_in_node_edit_toggles_off() {
+        let result = compute_node_click_selection(
+            &SelectionState::Section(sec("n0", 1)),
+            "n0", Some(1), true, &node_edit_for("n0"),
+        );
+        assert!(matches!(result, SelectionState::None), "got {result:?}");
+    }
+
+    #[test]
+    fn test_shift_click_different_section_in_node_edit_promotes_to_multi_section() {
+        let result = compute_node_click_selection(
+            &SelectionState::Section(sec("n0", 0)),
+            "n0", Some(1), true, &node_edit_for("n0"),
+        );
+        match result {
+            SelectionState::MultiSection(secs) => {
+                assert_eq!(secs, vec![sec("n0", 0), sec("n0", 1)]);
+            }
+            other => panic!("expected MultiSection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_shift_click_section_outside_node_edit_falls_back_to_node_path() {
+        // Default mode + hit_section=Some → folds to whole-node shift+click.
+        // Starting from None: result is fresh Single.
+        let result = compute_node_click_selection(
+            &SelectionState::None, "n0", Some(1), true, &InteractionMode::Default,
+        );
+        match result {
+            SelectionState::Single(id) => assert_eq!(id, "n0"),
+            other => panic!("expected Single(n0), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_shift_click_multi_section_remove_narrows_to_single_section() {
+        let prev = SelectionState::MultiSection(vec![sec("n0", 0), sec("n0", 1)]);
+        let result = compute_node_click_selection(
+            &prev, "n0", Some(1), true, &node_edit_for("n0"),
+        );
+        match result {
+            SelectionState::Section(s) => assert_eq!(s, sec("n0", 0)),
+            other => panic!("expected Section(n0,0), got {other:?}"),
+        }
+    }
+
+    /// Cross-node MultiSection: starting from a `MultiSection` set
+    /// containing sections of node A, shift-clicking a section of
+    /// node B (while in `NodeEdit { B }`) extends the set with the
+    /// new (node_id, section_idx) pair. The dedup-by-(node_id,
+    /// section_idx) identity is the load-bearing invariant the
+    /// docstring on `compute_node_click_selection` calls out.
+    #[test]
+    fn test_shift_click_extends_multi_section_across_distinct_nodes() {
+        let prev = SelectionState::MultiSection(vec![sec("a", 0), sec("a", 1)]);
+        let result = compute_node_click_selection(
+            &prev, "b", Some(0), true, &node_edit_for("b"),
+        );
+        match result {
+            SelectionState::MultiSection(secs) => {
+                assert_eq!(secs.len(), 3, "got {secs:?}");
+                assert!(secs.contains(&sec("a", 0)));
+                assert!(secs.contains(&sec("a", 1)));
+                assert!(secs.contains(&sec("b", 0)));
+            }
+            other => panic!("expected MultiSection of length 3, got {other:?}"),
+        }
+    }
+
+    /// `SectionRange` as the *starting* state: shift+click on a
+    /// node folds to fresh `Single` (the node-path takes the
+    /// non-section branch in the match arm). Pins the explicit
+    /// `SectionRange` arm in `compute_node_click_selection`.
+    #[test]
+    fn test_shift_click_node_from_section_range_collapses_to_single() {
+        let prev = SelectionState::SectionRange {
+            sel: sec("n0", 0),
+            range: (1, 3),
+        };
+        let result = compute_node_click_selection(
+            &prev, "n1", None, true, &InteractionMode::Default,
+        );
+        match result {
+            SelectionState::Single(id) => assert_eq!(id, "n1"),
+            other => panic!("expected Single(n1), got {other:?}"),
+        }
+    }
+
+    /// Cross-node MultiSection toggle-off: shift-clicking a section
+    /// already in the set removes only that pair, leaving the
+    /// other-node members alone.
+    #[test]
+    fn test_shift_click_removes_cross_node_section_from_multi_section() {
+        let prev =
+            SelectionState::MultiSection(vec![sec("a", 0), sec("a", 1), sec("b", 0)]);
+        let result = compute_node_click_selection(
+            &prev, "b", Some(0), true, &node_edit_for("b"),
+        );
+        match result {
+            SelectionState::MultiSection(secs) => {
+                assert_eq!(secs.len(), 2, "got {secs:?}");
+                assert!(secs.contains(&sec("a", 0)));
+                assert!(secs.contains(&sec("a", 1)));
+                assert!(!secs.contains(&sec("b", 0)));
+            }
+            other => panic!("expected MultiSection of length 2, got {other:?}"),
+        }
+    }
+
+    // Plain click — non-section behaviour stays intact.
+
+    #[test]
+    fn test_plain_click_overrides_existing_multi_with_single() {
+        let prev = SelectionState::Multi(vec!["a".into(), "b".into()]);
+        let result = compute_node_click_selection(
+            &prev, "n0", None, false, &InteractionMode::Default,
+        );
+        match result {
+            SelectionState::Single(id) => assert_eq!(id, "n0"),
+            other => panic!("expected Single(n0), got {other:?}"),
+        }
+    }
+
+    // Shift+click — whole-node toggle behaviour stays intact.
+
+    #[test]
+    fn test_shift_click_same_single_node_toggles_off() {
+        let result = compute_node_click_selection(
+            &SelectionState::Single("n0".into()),
+            "n0", None, true, &InteractionMode::Default,
+        );
+        assert!(matches!(result, SelectionState::None), "got {result:?}");
+    }
+
+    #[test]
+    fn test_shift_click_different_single_node_promotes_to_multi() {
+        let result = compute_node_click_selection(
+            &SelectionState::Single("a".into()),
+            "b", None, true, &InteractionMode::Default,
+        );
+        match result {
+            SelectionState::Multi(ids) => {
+                assert_eq!(ids, vec!["a".to_string(), "b".to_string()]);
+            }
+            other => panic!("expected Multi, got {other:?}"),
+        }
+    }
+}

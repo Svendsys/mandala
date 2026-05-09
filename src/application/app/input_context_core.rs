@@ -12,7 +12,7 @@
 //!   `dispatch_action` takes post-Track-C; both targets' keyboard
 //!   handlers can construct one and call the same dispatcher.
 //! - [`NativeContextExt`] holds the 10 native-only fields (drag_state,
-//!   app_mode, console_state, console_history, label_edit_state,
+//!   interaction_mode, console_state, console_history, label_edit_state,
 //!   portal_text_edit_state, color_picker_state, hovered_node,
 //!   cursor_is_hand, picker_hover) — modal / console / picker state
 //!   that doesn't exist in the browser. Cfg-gated to native.
@@ -77,7 +77,7 @@ pub(in crate::application::app) struct InputContextCore<'a> {
     /// Single branch be cross-platform.
     pub text_edit_state: &'a mut TextEditState,
     /// Previous click (time, position, hit) for double-click
-    /// detection. Used by `CancelMode`'s WASM-relevant slice
+    /// detection. Used by `ExitMode`'s cross-platform slice
     /// (clear `last_click` so a post-Esc click isn't paired
     /// with a pre-Esc one).
     pub last_click: &'a mut Option<LastClick>,
@@ -93,6 +93,14 @@ pub(in crate::application::app) struct InputContextCore<'a> {
     /// Inline tiers refreshed by `loader::rebuild_document_macros`
     /// whenever a document loads. Cross-platform per Track B.
     pub macros: &'a mut MacroRegistry,
+    /// High-level interaction mode (Default / Reparent / Connect /
+    /// NodeEdit / Resize). Cross-platform — sits on the core because
+    /// the resize-handle gate, the click router, and the
+    /// `close_text_edit` rebuild path all need to read it. Mutating
+    /// arms (Enter*Mode, Exit*Mode, ReparentToTarget, ConnectToTarget)
+    /// take `&mut`; read paths (rebuild_all-callers, hit-test gates)
+    /// take `&`. See `super::interaction_mode::InteractionMode`.
+    pub interaction_mode: &'a mut super::InteractionMode,
 }
 
 /// Native-only extension carrying the modal / console / picker /
@@ -112,8 +120,6 @@ pub(in crate::application::app) struct InputContextCore<'a> {
 pub(in crate::application::app) struct NativeContextExt<'a> {
     /// Current pointer / drag state machine.
     pub drag_state: &'a mut super::DragState,
-    /// Reparent / Connect modal mode for the next click.
-    pub app_mode: &'a mut super::AppMode,
     /// Console (slash-command overlay) state.
     pub console_state: &'a mut crate::application::console::ConsoleState,
     /// Console command-history ring.

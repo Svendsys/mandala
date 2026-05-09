@@ -449,6 +449,8 @@ fn resolved_for_falls_back_to_canvas_default() {
         background_color: "#000".to_string(),
         default_border: None,
         default_connection: Some(canvas_cfg),
+        default_section_frame_border: None,
+        default_focused_section_frame_border: None,
         theme_variables: std::collections::HashMap::new(),
         theme_variants: std::collections::HashMap::new(),
     };
@@ -829,6 +831,7 @@ fn mindsection_trigger_bindings_round_trip() {
             mutation_id: "m_focus".into(),
             contexts: Vec::new(),
         }],
+        frame_border: None,
     };
     let json = serde_json::to_string(&section).expect("serialises");
     assert!(json.contains("trigger_bindings"));
@@ -836,6 +839,114 @@ fn mindsection_trigger_bindings_round_trip() {
     let back: MindSection = serde_json::from_str(&json).expect("round-trips");
     assert_eq!(back.trigger_bindings.len(), 1);
     assert_eq!(back.trigger_bindings[0].mutation_id, "m_focus");
+}
+
+/// `MindSection.frame_border` is `Option<GlyphBorderConfig>` —
+/// `None` (the default) must skip serialisation entirely so
+/// existing maps round-trip byte-identical, and `Some(cfg)` must
+/// preserve every field on the round trip.
+#[test]
+fn test_mindsection_frame_border_round_trip() {
+    use crate::mindmap::model::{CustomBorderGlyphs, GlyphBorderConfig};
+    // Default-constructed section: no `frame_border` key in JSON.
+    let plain = MindSection::new_default("hi".into(), Vec::new());
+    let json = serde_json::to_string(&plain).expect("serialises");
+    assert!(
+        !json.contains("frame_border"),
+        "None must skip serialisation: {}",
+        json
+    );
+
+    // Section with a per-section override survives the round-trip
+    // with every field intact, including the per-side `glyphs`
+    // payload.
+    let mut authored = MindSection::new_default("hi".into(), Vec::new());
+    authored.frame_border = Some(GlyphBorderConfig {
+        preset: "custom".into(),
+        font: Some("Liberation Mono".into()),
+        font_size_pt: 11.0,
+        color: Some("#ff8800".into()),
+        glyphs: Some(CustomBorderGlyphs {
+            top: "+=##=+".into(),
+            bottom: "─".into(),
+            left: "│".into(),
+            right: "│".into(),
+            top_left: "◆".into(),
+            top_right: "◇".into(),
+            bottom_left: "◇".into(),
+            bottom_right: "◆".into(),
+        }),
+        padding: 4.0,
+        color_palette: Some("rainbow".into()),
+        color_palette_field: Some("frame".into()),
+    });
+    let json = serde_json::to_string(&authored).expect("serialises");
+    assert!(json.contains("frame_border"));
+    assert!(json.contains("+=##=+"));
+    let back: MindSection = serde_json::from_str(&json).expect("round-trips");
+    let back_cfg = back.frame_border.expect("frame_border survives");
+    assert_eq!(back_cfg.preset, "custom");
+    assert_eq!(back_cfg.color.as_deref(), Some("#ff8800"));
+    assert_eq!(back_cfg.color_palette.as_deref(), Some("rainbow"));
+    let back_glyphs = back_cfg.glyphs.expect("glyphs survive");
+    assert_eq!(back_glyphs.top, "+=##=+");
+    assert_eq!(back_glyphs.top_left, "◆");
+    assert_eq!(back_glyphs.bottom_right, "◆");
+}
+
+/// `Canvas.default_section_frame_border` and
+/// `default_focused_section_frame_border` round-trip the same way
+/// — `None` skips serialisation, `Some(cfg)` survives the
+/// full serialize → deserialize cycle.
+#[test]
+fn test_canvas_section_frame_defaults_round_trip() {
+    use crate::mindmap::model::{Canvas, GlyphBorderConfig};
+    use std::collections::HashMap;
+
+    // Empty canvas: neither field appears in JSON.
+    let plain = Canvas {
+        background_color: "#000".into(),
+        default_border: None,
+        default_connection: None,
+        default_section_frame_border: None,
+        default_focused_section_frame_border: None,
+        theme_variables: HashMap::new(),
+        theme_variants: HashMap::new(),
+    };
+    let json = serde_json::to_string(&plain).expect("serialises");
+    assert!(!json.contains("default_section_frame_border"), "None skips: {}", json);
+    assert!(!json.contains("default_focused_section_frame_border"));
+
+    // Authored canvas: both fields land + round-trip.
+    let mut authored = plain.clone();
+    authored.default_section_frame_border = Some(GlyphBorderConfig {
+        preset: "double".into(),
+        font: None,
+        font_size_pt: 10.0,
+        color: Some("#aaaaaa".into()),
+        glyphs: None,
+        padding: 0.0,
+        color_palette: None,
+        color_palette_field: None,
+    });
+    authored.default_focused_section_frame_border = Some(GlyphBorderConfig {
+        preset: "heavy".into(),
+        font: None,
+        font_size_pt: 12.0,
+        color: Some("#ffffff".into()),
+        glyphs: None,
+        padding: 0.0,
+        color_palette: None,
+        color_palette_field: None,
+    });
+    let json = serde_json::to_string(&authored).expect("serialises");
+    let back: Canvas = serde_json::from_str(&json).expect("round-trips");
+    let unfocused = back.default_section_frame_border.expect("unfocused survives");
+    let focused = back.default_focused_section_frame_border.expect("focused survives");
+    assert_eq!(unfocused.preset, "double");
+    assert_eq!(unfocused.color.as_deref(), Some("#aaaaaa"));
+    assert_eq!(focused.preset, "heavy");
+    assert_eq!(focused.color.as_deref(), Some("#ffffff"));
 }
 
 /// `MindNode.display_text` joins every section's text with `'\n'`

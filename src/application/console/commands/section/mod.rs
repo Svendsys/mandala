@@ -9,6 +9,16 @@
 //! so a verb-rejected move and a `verify` violation read identically.
 //! `section resize none` flips a section's `size` back to `None`
 //! (fill-parent) — the only console-side path to that state today.
+//!
+//! ## `section frame …`
+//!
+//! Sibling subverb in [`frame`]: mirrors the top-level `border …`
+//! kv vocabulary but writes to a section's
+//! [`baumhard::mindmap::model::MindSection::frame_border`].
+//! Dispatched here so all per-section verbs share the same parent
+//! command surface in completion + help.
+
+mod frame;
 
 use super::Command;
 use crate::application::console::completion::{
@@ -20,24 +30,39 @@ use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
 use crate::application::document::{MindMapDocument, SectionSel, SelectionState};
 
 pub const KEYS: &[&str] = &["section"];
-pub const VERBS: &[&str] = &["move", "resize"];
+pub const VERBS: &[&str] = &["move", "resize", "frame"];
 
 pub const COMMAND: Command = Command {
     name: "section",
     aliases: &[],
-    summary: "Move or resize a section relative to its owning node",
+    summary: "Move, resize, or style a section's frame border",
     usage:
-        "section move <dx> <dy> [section=<idx>] | section resize <w> <h> [section=<idx>] | section resize none [section=<idx>]",
-    tags: &["section", "move", "resize", "offset", "size"],
+        "section move <dx> <dy> [section=<idx>] | section resize <w> <h>|none [section=<idx>] | section frame show|reset|<key>=<value> … [section=<idx>] | section frame preview <key>=<value> …|commit|cancel [section=<idx>]",
+    tags: &[
+        "section", "move", "resize", "offset", "size", "frame", "border", "preset", "glyph", "preview",
+    ],
     applicable: always,
     complete: complete_section,
     execute: execute_section,
 };
 
-fn complete_section(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completion> {
+fn complete_section(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Completion> {
+    // `state.tokens[0]` is the command name ("section"); the first
+    // arg (`move`, `resize`, or `frame`) lives at index 1. The
+    // engine's `Token { index }` already counts past the command,
+    // so `index: 0` means "the user is typing the first positional
+    // after `section`."
+    let first_arg = state.tokens.get(1).map(String::as_str);
+    // `frame` opens a sub-verb tree — once the user has typed
+    // `section frame …` we delegate every later token to the
+    // frame-specific completer (which surfaces the same kv keys
+    // the `border …` verb uses).
+    if first_arg == Some("frame") {
+        return frame::complete_section_frame(state, ctx);
+    }
     match &state.context {
         CompletionContext::Token { index: 0 } => prefix_filter(VERBS, state.partial),
-        CompletionContext::Token { index: 1 } => match state.tokens.first().map(String::as_str) {
+        CompletionContext::Token { index: 1 } => match first_arg {
             Some("resize") => prefix_filter(&["none"], state.partial),
             _ => Vec::new(),
         },
@@ -59,10 +84,17 @@ fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         Some(v) => v,
         None => {
             return ExecResult::err(
-                "usage: section move <dx> <dy> | section resize <w> <h> | section resize none",
+                "usage: section move <dx> <dy> | section resize <w> <h>|none | section frame …",
             )
         }
     };
+    // `frame` is a kv-form subverb whose own selection rules differ
+    // from move/resize (it tolerates Single + section=K, walks
+    // multiple nodes, doesn't require a positional dx/dy). Hand
+    // off before move/resize's resolver runs.
+    if verb == "frame" {
+        return frame::execute_section_frame(args, eff);
+    }
     let target_idx = match resolve_section_idx(args, &eff.document.selection) {
         Ok(idx) => idx,
         Err(msg) => return ExecResult::err(msg),

@@ -15,22 +15,34 @@ use super::SectionPayload;
 impl MindMapDocument {
     /// Snapshot + mutate + undo plumbing shared by every section
     /// setter that uses the `EditNodeStyle` undo envelope. The
-    /// caller verifies the section exists and that the edit is a
-    /// real change, then hands the actual field write here as a
-    /// closure; this fn snapshots `node.style` + `node.sections`
-    /// into a single undo entry, runs the closure under a mutable
-    /// borrow, and flips `dirty`. Callers that need post-write
-    /// auto-fit (`grow_one_node_to_fit_text` / `_border`) re-
-    /// acquire the node and run them; helper deliberately stays
-    /// out of that decision so colour-only setters
-    /// (`set_section_text_color`) skip the cost.
+    /// caller verifies the section exists, then hands the actual
+    /// field write here as a closure that returns `true` if the
+    /// mutation actually changed anything (or `false` to declare a
+    /// no-op). On `true`, this fn snapshots `node.style` +
+    /// `node.sections` into a single undo entry and flips `dirty`;
+    /// on `false`, neither happens — the section's pre-mutation
+    /// state is restored from the snapshot taken before the
+    /// closure ran. This shape lets a caller tell the helper
+    /// "mutate, but back it out if it ends up a no-op" without the
+    /// caller having to itself snapshot + post-hoc `undo_stack.pop`
+    /// (which doesn't restore `dirty` and breaks the undo-LIFO
+    /// invariant if any other entry slips between push and pop).
+    /// Callers that need post-write auto-fit
+    /// (`grow_one_node_to_fit_text` / `_border`) re-acquire the
+    /// node and run them; helper deliberately stays out of that
+    /// decision so colour-only setters (`set_section_text_color`)
+    /// skip the cost.
+    ///
+    /// Returns the closure's verdict so the caller can chain
+    /// post-write fix-ups conditionally.
     pub(super) fn mutate_section_with_style_undo<F>(
         &mut self,
         node_id: &str,
         section_idx: usize,
         mutate: F,
-    ) where
-        F: FnOnce(&mut baumhard::mindmap::model::MindSection),
+    ) -> bool
+    where
+        F: FnOnce(&mut baumhard::mindmap::model::MindSection) -> bool,
     {
         let node = self
             .mindmap
@@ -40,13 +52,25 @@ impl MindMapDocument {
         let before_style = node.style.clone();
         let before_sections = node.sections.clone();
         let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
-        mutate(&mut node.sections[section_idx]);
+        let changed = mutate(&mut node.sections[section_idx]);
+        if !changed {
+            // Closure declared a no-op — restore the pre-mutation
+            // section state from the snapshot we already cloned and
+            // skip the undo-entry / dirty bookkeeping. This is
+            // cheaper than a second clone-and-compare and avoids
+            // the `undo_stack.pop()` anti-pattern callers used to
+            // reach for.
+            let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
+            node.sections = before_sections;
+            return false;
+        }
         self.undo_stack.push(UndoAction::EditNodeStyle {
             node_id: node_id.to_string(),
             before_style,
             before_sections,
         });
         self.dirty = true;
+        true
     }
 
     /// Replace one section's `text` and collapse its `text_runs`
@@ -188,6 +212,7 @@ impl MindMapDocument {
                     run.color = color.clone();
                 }
             }
+            true
         });
         true
     }
@@ -220,6 +245,7 @@ impl MindMapDocument {
             for run in s.text_runs.iter_mut() {
                 run.size_pt = size_u;
             }
+            true
         });
         let node = self
             .mindmap
@@ -261,6 +287,7 @@ impl MindMapDocument {
             for run in s.text_runs.iter_mut() {
                 run.font = target_owned.clone();
             }
+            true
         });
         let node = self
             .mindmap
@@ -301,10 +328,9 @@ impl MindMapDocument {
         color: String,
     ) -> bool {
         // Text colour doesn't affect glyph advance — no grow.
-        self.mutate_section_runs_in_range(
-            node_id, section_idx, range_start, range_end, false,
-            |r| r.color = color.clone(),
-        )
+        self.mutate_section_runs_in_range(node_id, section_idx, range_start, range_end, false, |r| {
+            r.color = color.clone()
+        })
     }
 
     /// Set the font size on a sub-range of one section's text.
@@ -322,10 +348,9 @@ impl MindMapDocument {
             return false;
         }
         let size_u = size_pt.round().max(1.0) as u32;
-        self.mutate_section_runs_in_range(
-            node_id, section_idx, range_start, range_end, true,
-            move |r| r.size_pt = size_u,
-        )
+        self.mutate_section_runs_in_range(node_id, section_idx, range_start, range_end, true, move |r| {
+            r.size_pt = size_u
+        })
     }
 
     /// Set the font family on a sub-range of one section's text.
@@ -341,10 +366,9 @@ impl MindMapDocument {
         family: Option<&str>,
     ) -> bool {
         let target = family.unwrap_or("").to_string();
-        self.mutate_section_runs_in_range(
-            node_id, section_idx, range_start, range_end, true,
-            move |r| r.font = target.clone(),
-        )
+        self.mutate_section_runs_in_range(node_id, section_idx, range_start, range_end, true, move |r| {
+            r.font = target.clone()
+        })
     }
 
     /// Per-attribute range-aware setter shell. Clamps the range,
@@ -365,12 +389,11 @@ impl MindMapDocument {
     where
         F: FnMut(&mut baumhard::mindmap::model::TextRun),
     {
-        let (clamped_end, mut template) = match self
-            .clamp_range_and_build_template(node_id, section_idx, range_end)
-        {
-            Some(pair) => pair,
-            None => return false,
-        };
+        let (clamped_end, mut template) =
+            match self.clamp_range_and_build_template(node_id, section_idx, range_end) {
+                Some(pair) => pair,
+                None => return false,
+            };
         if range_start >= clamped_end {
             return false;
         }
@@ -391,6 +414,7 @@ impl MindMapDocument {
                 &template,
                 &mut mutate_run,
             );
+            true
         });
         let post = self
             .mindmap
@@ -430,21 +454,22 @@ impl MindMapDocument {
         let section = node.sections.get(section_idx)?;
         let total = baumhard::util::grapheme_chad::count_grapheme_clusters(&section.text);
         let clamped_end = range_end.min(total);
-        let template = section
-            .text_runs
-            .first()
-            .cloned()
-            .unwrap_or_else(|| baumhard::mindmap::model::TextRun {
-                start: 0,
-                end: 0,
-                bold: false,
-                italic: false,
-                underline: false,
-                font: "LiberationSans".to_string(),
-                size_pt: 24,
-                color: node.style.text_color.clone(),
-                hyperlink: None,
-            });
+        let template =
+            section
+                .text_runs
+                .first()
+                .cloned()
+                .unwrap_or_else(|| baumhard::mindmap::model::TextRun {
+                    start: 0,
+                    end: 0,
+                    bold: false,
+                    italic: false,
+                    underline: false,
+                    font: "LiberationSans".to_string(),
+                    size_pt: 24,
+                    color: node.style.text_color.clone(),
+                    hyperlink: None,
+                });
         Some((clamped_end, template))
     }
 
@@ -490,6 +515,7 @@ impl MindMapDocument {
             // public setter shouldn't trust its input enough to
             // leave runs whose ranges exceed the new text length.
             clamp_runs_to_text(s);
+            true
         });
         let node = self
             .mindmap
@@ -500,10 +526,11 @@ impl MindMapDocument {
         super::super::grow_one_node_to_fit_border(node, canvas_default.as_ref());
         true
     }
-
 }
 
-pub(in crate::application::document) fn clamp_runs_to_text(section: &mut baumhard::mindmap::model::MindSection) {
+pub(in crate::application::document) fn clamp_runs_to_text(
+    section: &mut baumhard::mindmap::model::MindSection,
+) {
     let max_end = baumhard::util::grapheme_chad::count_grapheme_clusters(&section.text);
     section.text_runs.retain_mut(|run| {
         if run.start >= max_end {
@@ -515,4 +542,3 @@ pub(in crate::application::document) fn clamp_runs_to_text(section: &mut baumhar
         run.start < run.end
     });
 }
-

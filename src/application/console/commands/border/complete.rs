@@ -10,17 +10,65 @@ use crate::application::console::completion::{
 use crate::application::console::ConsoleContext;
 
 pub fn complete_border(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Completion> {
+    // After `border preview ` the user gets `commit` / `cancel`
+    // plus the kv keys (preview accepts the same vocabulary as
+    // the committing kv-form). The engine's `Token { index: 0 }`
+    // is for the first positional after `border`; index 1 is
+    // for the position after `preview`.
+    let after_preview = state.tokens.get(1).map(String::as_str) == Some("preview");
     match &state.context {
         CompletionContext::Token { index: 0 } => verb_or_key(state.partial),
+        CompletionContext::Token { index: 1 } if after_preview => {
+            let mut out = preview_subverb_completions(state.partial);
+            out.extend(key_completions(state.partial));
+            out
+        }
         CompletionContext::Token { .. } => key_completions(state.partial),
-        CompletionContext::KvValue { key } => match key.as_str() {
-            "preset" => prefix_filter(super::PRESETS, state.partial),
-            "field" => prefix_filter(super::FIELDS, state.partial),
-            "color" => prefix_filter(super::COLOR_PRESETS, state.partial),
-            "palette" => palette_value_completions(state.partial, ctx),
-            "font" => font_family_completions(state.partial),
-            _ => Vec::new(),
-        },
+        CompletionContext::KvValue { key } => kv_value_completions(key.as_str(), state.partial, ctx),
+        _ => Vec::new(),
+    }
+}
+
+/// `border preview <TAB>` → `commit` / `cancel` rows with hints.
+/// C12 fix: the prior shape used `prefix_filter(PREVIEW_SUBVERBS, …)`
+/// which yields hint-less rows; users couldn't tell which subverb
+/// did what without reading the source. Re-exported for the
+/// section-frame and canvas verbs so all four preview surfaces
+/// share the same hint vocabulary.
+pub(crate) fn preview_subverb_completions(partial: &str) -> Vec<Completion> {
+    super::PREVIEW_SUBVERBS
+        .iter()
+        .filter(|s| s.starts_with(partial))
+        .map(|s| Completion {
+            text: s.to_string(),
+            display: s.to_string(),
+            hint: Some(preview_subverb_hint(s).to_string()),
+            font_family: None,
+        })
+        .collect()
+}
+
+fn preview_subverb_hint(s: &str) -> &'static str {
+    match s {
+        "commit" => "write the staged preview through and clear the slot",
+        "cancel" => "discard the staged preview, no model write",
+        _ => "",
+    }
+}
+
+/// Shared per-key value completer for the `border` kv vocabulary.
+/// Returns the set of completions to surface inside the popup when
+/// the cursor is on the *value* side of `<key>=<value>`. Reused by
+/// `section frame …` and `canvas …` so the popup vocabulary is
+/// byte-identical regardless of which border surface the user is
+/// editing.
+pub fn kv_value_completions(key: &str, partial: &str, ctx: &ConsoleContext) -> Vec<Completion> {
+    match key {
+        "preset" => prefix_filter(super::PRESETS, partial),
+        "field" => prefix_filter(super::FIELDS, partial),
+        "color" => prefix_filter(super::COLOR_PRESETS, partial),
+        "palette" => palette_value_completions(partial, ctx),
+        "font" => font_family_completions(partial),
         _ => Vec::new(),
     }
 }
@@ -60,23 +108,18 @@ fn verb_hint(v: &str) -> &'static str {
         "off" => "hide the border",
         "show" => "print the resolved config",
         "reset" => "drop the per-node override",
+        "preview" => "stage a preview without writing the model (commit/cancel terminates)",
         _ => "",
     }
 }
 
+/// Per-key hint for the verb-or-key surface (token 0 of `border`).
+/// Delegates to the shared [`super::kv_hint`] used across `border`,
+/// `section frame`, and `canvas` so the hint table lives in one
+/// place. Returns `""` for unknown keys to preserve the
+/// `&'static str` return shape this completer's row-emit expects.
 fn key_hint(k: &str) -> &'static str {
-    match k {
-        "preset" => "light | heavy | double | rounded | custom",
-        "font" => "font family for border glyphs (use `font list` for names)",
-        "size" => "border glyph size in points",
-        "color" => "#hex, var(--name), preset, or 'reset'",
-        "palette" => "palette name to cycle per-glyph colours, or 'off'",
-        "field" => "frame | background | text | title",
-        "padding" => "border-to-content padding in pixels",
-        "top" | "bottom" | "left" | "right" => "side pattern: `prefix(fill)suffix` or atomic",
-        "tl" | "tr" | "bl" | "br" => "single corner glyph (escapes apply)",
-        _ => "",
-    }
+    super::kv_hint(k).unwrap_or("")
 }
 
 fn palette_value_completions(partial: &str, ctx: &ConsoleContext) -> Vec<Completion> {

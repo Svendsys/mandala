@@ -52,6 +52,7 @@ pub(in crate::application::app) fn handle_color_picker_click(
     button: MouseButton,
     state: &mut crate::application::color_picker::ColorPickerState,
     doc: &mut MindMapDocument,
+    interaction_mode: &super::super::InteractionMode,
     mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
     app_scene: &mut crate::application::scene_host::AppScene,
     renderer: &mut Renderer,
@@ -95,7 +96,7 @@ pub(in crate::application::app) fn handle_color_picker_click(
                 return false;
             }
             // Contextual mode: click outside cancels.
-            cancel_color_picker(state, doc, mindmap_tree, app_scene, renderer, scene_cache);
+            cancel_color_picker(state, doc, interaction_mode, mindmap_tree, app_scene, renderer, scene_cache);
         }
         PickerHit::Hue(slot) => {
             if let ColorPickerState::Open {
@@ -133,11 +134,11 @@ pub(in crate::application::app) fn handle_color_picker_click(
             if is_standalone {
                 // Standalone mode: apply the current HSV to each
                 // item in the selection. Stay open.
-                commit_color_picker_to_selection(state, doc, mindmap_tree, app_scene, renderer, scene_cache);
+                commit_color_picker_to_selection(state, doc, interaction_mode, mindmap_tree, app_scene, renderer, scene_cache);
             } else {
                 // Contextual mode: commit to the bound target,
                 // close.
-                commit_color_picker(state, doc, mindmap_tree, app_scene, renderer, scene_cache);
+                commit_color_picker(state, doc, interaction_mode, mindmap_tree, app_scene, renderer, scene_cache);
             }
         }
         PickerHit::DragAnchor => {

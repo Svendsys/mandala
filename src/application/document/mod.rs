@@ -49,6 +49,8 @@ mod tests_nodes;
 #[cfg(test)]
 mod tests_reparent;
 #[cfg(test)]
+mod tests_resize;
+#[cfg(test)]
 mod tests_selection;
 
 // Cross-platform: consumers (`scene_rebuild.rs`, `event_mouse_click.rs`,
@@ -70,10 +72,25 @@ pub use hit_test::{
     apply_section_drag_delta_and_collect_patches, apply_section_resize_to_tree, hit_test_edge,
     hit_test_node_resize_handle, hit_test_section_resize_handle, rect_select,
 };
-pub use nodes::{BorderConfigEdits, BorderEditOutcome, BorderSide, OptionEdit, SectionPayload};
+pub use nodes::{
+    BorderConfigEdits, BorderEditOutcome, BorderPreview, BorderSide, OptionEdit, SectionPayload,
+};
+// `BorderPreviewTarget` is consumed only by the document setters
+// (and the upcoming preview verbs) — re-exported here so the
+// commits adding the verb files import it from the same place
+// the rest of the public document API lives. Triggers an
+// unused-import warning until commit 5 lands; suppress.
+#[allow(unused_imports)]
+pub use nodes::BorderPreviewTarget;
 pub use types::{
     AnimationInstance, EdgeLabelSel, EdgeRef, PortalLabelSel, SectionSel, SelectionState, HIGHLIGHT_COLOR,
 };
+// `InteractionModeOverrides` lives in baumhard (next to the
+// `SceneSelectionContext` it composes into). Re-exported here so
+// callers across the application crate that already
+// `use crate::application::document::*` for the doc API don't have
+// to reach across into baumhard's scene_builder for the value type.
+pub use baumhard::mindmap::scene_builder::InteractionModeOverrides;
 // Native-only: consumed by `app/click.rs`'s reparent / connect mode
 // rendering. WASM doesn't dispatch `EnterReparentMode` /
 // `EnterConnectMode` (NativeOnly per `wasm_compatibility`).
@@ -148,6 +165,21 @@ pub struct MindMapDocument {
     /// cancel both clear the preview; neither the committed model
     /// nor the undo stack is touched during hover.
     pub color_picker_preview: Option<ColorPickerPreview>,
+    /// Transient border-preview substitution. When `Some(...)`,
+    /// the scene builder substitutes `edits` (folded into a clone
+    /// of the committed slot) for the resolved border at the
+    /// matching target — node border, section frame, or canvas
+    /// default. Same discipline as the other `*_preview` fields:
+    /// never serialised, never push undo, never flip `dirty`.
+    /// Replaced atomically by a fresh `set_border_preview` call;
+    /// cleared by `cancel_border_preview` /
+    /// `commit_border_preview`; lazily ignored by the scene
+    /// builder when the live selection no longer covers the
+    /// preview's `selection_snapshot` (drift). Drives the
+    /// `border preview …` / `section frame preview …` /
+    /// `canvas border preview …` /
+    /// `canvas section-frame [focused] preview …` console verbs.
+    pub border_preview: Option<BorderPreview>,
 }
 
 /// Transient visual-only substitution of a color-pickerable element's
@@ -368,6 +400,7 @@ impl MindMapDocument {
             label_edit_preview: None,
             portal_text_edit_preview: None,
             color_picker_preview: None,
+            border_preview: None,
             active_animations: Vec::new(),
         };
         doc.build_mutation_registry();
@@ -471,12 +504,14 @@ impl MindMapDocument {
     /// so a portal-mode edge under the wheel picks it up on the
     /// marker pass). Borrowed from `&self`, so the returned tuple
     /// lives as long as `self`.
-    fn assemble_scene_overrides(
-        &self,
+    fn assemble_scene_overrides<'a>(
+        &'a self,
+        resize_overrides: InteractionModeOverrides<'a>,
     ) -> (
-        scene_builder::SceneSelectionContext<'_>,
-        Option<scene_builder::EdgeColorPreview<'_>>,
-        Option<scene_builder::PortalColorPreview<'_>>,
+        scene_builder::SceneSelectionContext<'a>,
+        Option<scene_builder::EdgeColorPreview<'a>>,
+        Option<scene_builder::PortalColorPreview<'a>>,
+        Option<scene_builder::BorderPreview<'a>>,
     ) {
         let edge = self
             .selection
@@ -498,29 +533,16 @@ impl MindMapDocument {
         };
         let portal_label = self.selection.selected_portal_label_scene_ref();
         let label_edit = self.label_edit_preview.as_ref().map(|(k, s)| (k, s.as_str()));
-        // Section selection drives resize-handle emission. The
-        // scene builder resolves the named section's AABB and
-        // emits 8 handles when the section has `Some` size; a
-        // `None`-sized (fill-parent) section emits nothing because
-        // there's no per-section AABB to stretch.
-        // Section AND SectionRange both surface a single owning
-        // section to the scene-builder via `selected_section()`
-        // — the carried sub-range doesn't change handle
-        // emission (handles attach to the section AABB, not the
-        // grapheme range).
-        let selected_section = self
-            .selection
-            .selected_section()
-            .map(|s| (s.node_id.as_str(), s.section_idx));
-        // Single-node selection drives node-resize-handle
-        // emission. Multi / Section / Edge / etc. produce no
-        // node handles. The `Single`-only gate matches the
-        // resize gesture's contract — multi-node resize is
-        // a Tier 2C+ concern.
-        let selected_node_for_resize = match &self.selection {
-            crate::application::document::SelectionState::Single(id) => Some(id.as_str()),
-            _ => None,
-        };
+        // Resize-handle emission + NodeEdit dimming are both driven
+        // by `InteractionMode`, not by selection — the application
+        // layer translates the active mode into `InteractionModeOverrides`
+        // and threads it through here. Fill-parent sections emit zero
+        // handles inside the scene builder regardless of the override
+        // value (no own AABB to stretch).
+        let selected_section = resize_overrides.section;
+        let selected_node_for_resize = resize_overrides.node;
+        let node_edit_for = resize_overrides.node_edit_for;
+        let focused_section = resize_overrides.focused_section;
         let selection = scene_builder::SceneSelectionContext {
             edge,
             edge_label,
@@ -528,6 +550,8 @@ impl MindMapDocument {
             label_edit,
             selected_section,
             selected_node_for_resize,
+            node_edit_for,
+            focused_section,
         };
         let (edge_preview, portal_preview) = match &self.color_picker_preview {
             Some(ColorPickerPreview { key, color }) => (
@@ -542,7 +566,21 @@ impl MindMapDocument {
             ),
             None => (None, None),
         };
-        (selection, edge_preview, portal_preview)
+        // Border preview: build a borrowed scene-side view from
+        // the owned `self.border_preview`. The view is borrowed
+        // straight from `self`, so the returned tuple lives as
+        // long as `&self`. Returns `None` when no preview is
+        // active OR when the preview's target is no longer
+        // covered by the live selection (defer-clear posture —
+        // the actual slot empties at the next `set_*` /
+        // `cancel_*` / `commit_*` call; here at scene-build
+        // time, an orphan-by-drift preview just stops applying).
+        let border_preview = if self.border_preview_covers_live_selection() {
+            self.border_preview.as_ref().map(build_border_preview_scene_view)
+        } else {
+            None
+        };
+        (selection, edge_preview, portal_preview, border_preview)
     }
 
     /// Cache-aware scene build. The drag drain in `app.rs` calls this
@@ -560,14 +598,17 @@ impl MindMapDocument {
         offsets: &HashMap<String, (f32, f32)>,
         cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
         camera_zoom: f32,
+        resize_overrides: InteractionModeOverrides<'_>,
     ) -> RenderScene {
-        let (selection, edge_preview, portal_preview) = self.assemble_scene_overrides();
+        let (selection, edge_preview, portal_preview, border_preview) =
+            self.assemble_scene_overrides(resize_overrides);
         scene_builder::build_scene_with_cache(
             &self.mindmap,
             offsets,
             selection,
             edge_preview,
             portal_preview,
+            border_preview,
             cache,
             camera_zoom,
         )
@@ -581,15 +622,153 @@ impl MindMapDocument {
     /// `label_edit_preview` and `color_picker_preview` into the scene
     /// build so live interaction previews are visible on any scene
     /// that flows through this entry point.
-    pub fn build_scene_with_selection(&self, camera_zoom: f32) -> RenderScene {
-        let (selection, edge_preview, portal_preview) = self.assemble_scene_overrides();
+    pub fn build_scene_with_selection(
+        &self,
+        camera_zoom: f32,
+        resize_overrides: InteractionModeOverrides<'_>,
+    ) -> RenderScene {
+        let (selection, edge_preview, portal_preview, border_preview) =
+            self.assemble_scene_overrides(resize_overrides);
         scene_builder::build_scene_with_offsets_selection_and_overrides(
             &self.mindmap,
             &HashMap::new(),
             selection,
             edge_preview,
             portal_preview,
+            border_preview,
             camera_zoom,
         )
     }
+}
+
+/// Build a borrowed scene-side `BorderPreview<'a>` from the owned
+/// document-side `BorderPreview`. The scene-side view is `Copy +
+/// 'a`; it holds `&'a str` borrows pointing at the owned
+/// `BorderConfigEdits` fields, so the resulting view lives as
+/// long as the document reference the caller already has.
+///
+/// `force_show_frame` fires when the preview's edits include any
+/// preset / glyph / pattern field — preview must be visible even
+/// when the committed `style.show_frame == false`, otherwise
+/// `border preview preset=heavy` on a frameless node renders
+/// nothing and the user thinks the verb is broken. Commit writes
+/// `style.show_frame = true` through the normal setter when the
+/// user wants the visibility flip persisted (today via
+/// `border on`).
+fn build_border_preview_scene_view<'a>(
+    bp: &'a BorderPreview,
+) -> scene_builder::BorderPreview<'a> {
+    let target = match &bp.target {
+        BorderPreviewTarget::Nodes(ids) => scene_builder::BorderPreviewTargetRef::Nodes(ids.as_slice()),
+        BorderPreviewTarget::Sections(ts) => {
+            scene_builder::BorderPreviewTargetRef::Sections(ts.as_slice())
+        }
+        BorderPreviewTarget::CanvasDefault => scene_builder::BorderPreviewTargetRef::CanvasDefault,
+        BorderPreviewTarget::CanvasSectionFrame => {
+            scene_builder::BorderPreviewTargetRef::CanvasSectionFrame
+        }
+        BorderPreviewTarget::CanvasSectionFrameFocused => {
+            scene_builder::BorderPreviewTargetRef::CanvasSectionFrameFocused
+        }
+    };
+    let edits = build_border_config_edits_view(&bp.edits);
+    let force_show_frame = view_implies_visible(&edits);
+    scene_builder::BorderPreview {
+        target,
+        edits,
+        force_show_frame,
+    }
+}
+
+/// Convert an owned `BorderConfigEdits` (from the application
+/// crate) into a borrowed scene-side `BorderConfigEditsView<'a>`
+/// the scene builder consumes. Per-field tri-state: `Keep` →
+/// `EditView::Keep`, `Clear` → `EditView::Clear`, `Set(v)` →
+/// `EditView::Set(&v)`. Pre-fix this projection collapsed both
+/// `Keep` and `Clear` to a single "no edit" sentinel, dropping
+/// the `Clear` axis entirely and breaking the parity contract
+/// with `apply_glyph_border_edits_to_slot` (Risk #1 in the plan).
+/// Test-only re-export of [`build_border_config_edits_view`].
+/// Used by the parity test in `tests_nodes.rs` that exercises
+/// `apply_view_to_slot` (baumhard) vs `apply_glyph_border_edits_to_slot`
+/// (application) against identical edits across every per-field
+/// axis. Keep `pub(crate)` — production callers go through
+/// `assemble_scene_overrides`.
+#[cfg(test)]
+pub(crate) fn build_border_config_edits_view_for_test(
+    edits: &BorderConfigEdits,
+) -> scene_builder::BorderConfigEditsView<'_> {
+    build_border_config_edits_view(edits)
+}
+
+/// Test-only proxy for the private `nodes::border::apply_glyph_border_edits_to_slot`
+/// — keeps the module-level visibility narrow while still letting
+/// the parity test in `tests_nodes.rs` exercise the helper directly.
+#[cfg(test)]
+pub(crate) fn nodes_border_apply_glyph_border_edits_to_slot_for_test(
+    slot: &mut Option<baumhard::mindmap::model::GlyphBorderConfig>,
+    edits: &BorderConfigEdits,
+    outcome: &mut BorderEditOutcome,
+) -> bool {
+    nodes::apply_glyph_border_edits_to_slot(slot, edits, outcome)
+}
+
+fn build_border_config_edits_view(edits: &BorderConfigEdits) -> scene_builder::BorderConfigEditsView<'_> {
+    use crate::application::document::OptionEdit;
+    use scene_builder::EditView;
+    fn opt_str(e: &OptionEdit<String>) -> EditView<&str> {
+        match e {
+            OptionEdit::Keep => EditView::Keep,
+            OptionEdit::Clear => EditView::Clear,
+            OptionEdit::Set(s) => EditView::Set(s.as_str()),
+        }
+    }
+    fn opt_f32(e: &OptionEdit<f32>) -> EditView<f32> {
+        match e {
+            OptionEdit::Keep => EditView::Keep,
+            OptionEdit::Clear => EditView::Clear,
+            OptionEdit::Set(v) => EditView::Set(*v),
+        }
+    }
+    fn opt_field(e: &OptionEdit<baumhard::mindmap::border::PaletteField>) -> EditView<&str> {
+        match e {
+            OptionEdit::Keep => EditView::Keep,
+            OptionEdit::Clear => EditView::Clear,
+            OptionEdit::Set(v) => EditView::Set(v.as_str()),
+        }
+    }
+    scene_builder::BorderConfigEditsView {
+        preset: opt_str(&edits.preset),
+        font: opt_str(&edits.font),
+        font_size_pt: opt_f32(&edits.font_size_pt),
+        color: opt_str(&edits.color),
+        padding: opt_f32(&edits.padding),
+        color_palette: opt_str(&edits.color_palette),
+        color_palette_field: opt_field(&edits.color_palette_field),
+        side_top: opt_str(&edits.side_top),
+        side_bottom: opt_str(&edits.side_bottom),
+        side_left: opt_str(&edits.side_left),
+        side_right: opt_str(&edits.side_right),
+        corner_top_left: opt_str(&edits.corner_top_left),
+        corner_top_right: opt_str(&edits.corner_top_right),
+        corner_bottom_left: opt_str(&edits.corner_bottom_left),
+        corner_bottom_right: opt_str(&edits.corner_bottom_right),
+        clear: edits.clear,
+    }
+}
+
+/// `true` iff `view`'s edits include at least one field that
+/// implies the resolved border should be visible — any field
+/// edit (`Set` or `Clear`) or the entire-slot `clear` flag.
+/// Force-show then ignores a committed `style.show_frame == false`
+/// for the duration of the preview so the user sees their staged
+/// edits even on a frameless node.
+///
+/// Delegates to [`scene_builder::BorderConfigEditsView::touches_any_field`]
+/// so the predicate stays in lockstep with the slot-allocation
+/// gate inside `apply_view_to_slot` (the previous parallel
+/// implementation drifted by one field — `clear` was excluded
+/// from this side and included on the other).
+fn view_implies_visible(view: &scene_builder::BorderConfigEditsView<'_>) -> bool {
+    view.touches_any_field() || view.clear
 }

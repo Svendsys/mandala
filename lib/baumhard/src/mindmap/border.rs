@@ -12,7 +12,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::core::primitives::{ColorFontRegion, ColorFontRegions, Range};
 use crate::mindmap::border_pattern::SidePattern;
-use crate::mindmap::model::{ColorGroup, CustomBorderGlyphs, GlyphBorderConfig};
+use crate::mindmap::model::{Canvas, ColorGroup, CustomBorderGlyphs, GlyphBorderConfig, MindSection};
 use crate::util::color::FloatRgba;
 
 /// Fraction of `font_size` by which a border's top/bottom runs
@@ -193,7 +193,7 @@ fn build_side_column(glyph: char, rows: usize) -> String {
 /// allowed by the type but actively normalised to the preset
 /// fallback during resolution, so the renderer never receives a
 /// corner with zero glyphs.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct BorderCorners {
     /// Glyphs at the top-left corner of the rectangle.
     pub top_left: String,
@@ -209,7 +209,7 @@ pub struct BorderCorners {
 /// renderer fits between the corners. Populated by
 /// [`resolve_border_style`] from the per-node config or the
 /// preset's defaults.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct SidePatternQuad {
     /// Pattern fitted between the top corners.
     pub top: SidePattern,
@@ -227,7 +227,7 @@ pub struct SidePatternQuad {
 /// today (`resolve_theme_colors` writes the same field into the
 /// resolved colours). Open seam — adding a new variant here is a
 /// localised change.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum PaletteField {
     /// Cycle the border across each `ColorGroup`'s `frame`
     /// channel — the historical default and the channel whose
@@ -673,6 +673,107 @@ pub fn resolve_border_style(
     }
 }
 
+/// Resolve a section-frame's [`BorderStyle`] against the same
+/// vocabulary node borders use. Drives the cyan rectangle drawn
+/// around each section while the owning node is in
+/// `InteractionMode::NodeEdit` mode (Plan §3.5 / §4.3).
+///
+/// Cascade (mirrors [`resolve_border_style`] but with section-
+/// frame-specific canvas defaults and floors):
+/// 1. `section.frame_border` if `Some` — per-section author override.
+/// 2. else `canvas.default_section_frame_border` (or
+///    `canvas.default_focused_section_frame_border` when `focused`)
+///    if `Some` — map-wide author default.
+/// 3. else a hardcoded floor `GlyphBorderConfig`: `light` preset
+///    for unfocused sections, `heavy` for the focused section.
+///    Synthesized so the cascade always routes through one
+///    `resolve_border_style` call — there are no inline glyph
+///    constants in the section-frame path.
+///
+/// `frame_color_resolved` is the cyan `SELECTED_EDGE_COLOR` the
+/// caller already resolved through `theme_variables`. The frame
+/// system is mode-driven chrome — the active-affordance signal
+/// (cyan) sits at the bottom of the cascade; an author who sets
+/// `section.frame_border.color = "#ff8800"` overrides the cyan
+/// fully, which is the desired shape for "make my borders tell a
+/// story". Authors who want the active-affordance signal preserved
+/// just leave `color` unset on their override.
+pub fn resolve_section_frame_border(
+    section: &MindSection,
+    canvas: &Canvas,
+    focused: bool,
+    frame_color_resolved: &str,
+) -> BorderStyle {
+    // Field-by-field cascade — same shape as `resolve_border_style`.
+    // Per-section override wins; otherwise the canvas-level default
+    // for the focused / unfocused state. When neither is set we
+    // synthesize a hardcoded floor `GlyphBorderConfig` so the
+    // returned `BorderStyle` flows through the same resolver every
+    // other border consumes — the floor is just another author
+    // default that authors can override at any cascade level.
+    let canvas_default = if focused {
+        canvas
+            .default_focused_section_frame_border
+            .as_ref()
+            .or(canvas.default_section_frame_border.as_ref())
+    } else {
+        canvas.default_section_frame_border.as_ref()
+    };
+    let chosen: &GlyphBorderConfig = section
+        .frame_border
+        .as_ref()
+        .or(canvas_default)
+        .unwrap_or_else(|| section_frame_floor_config(focused));
+    resolve_border_style(Some(chosen), None, frame_color_resolved)
+}
+
+/// Hardcoded fallback `GlyphBorderConfig` for section frames when
+/// both the per-section override and the canvas default are unset.
+/// Synthesized so the resolver path is the same for every section
+/// frame regardless of where its style comes from.
+///
+/// `focused = false` → light preset (┌─┐│└─┘).
+/// `focused = true`  → heavy preset (┏━┓┃┗━┛).
+pub fn section_frame_floor_config(focused: bool) -> &'static GlyphBorderConfig {
+    use std::sync::OnceLock;
+    static UNFOCUSED: OnceLock<GlyphBorderConfig> = OnceLock::new();
+    static FOCUSED: OnceLock<GlyphBorderConfig> = OnceLock::new();
+    let init = |preset: &'static str| GlyphBorderConfig {
+        preset: preset.to_string(),
+        font: None,
+        font_size_pt: SECTION_FRAME_FLOOR_FONT_SIZE_PT,
+        color: None,
+        glyphs: None,
+        padding: 0.0,
+        color_palette: None,
+        color_palette_field: None,
+    };
+    if focused {
+        FOCUSED.get_or_init(|| init("heavy"))
+    } else {
+        UNFOCUSED.get_or_init(|| init("light"))
+    }
+}
+
+/// Font size (pt) baked into the hardcoded floor
+/// `GlyphBorderConfig` returned by `section_frame_floor_config`.
+/// Smaller than the `GlyphBorderConfig` field default (14 pt) so
+/// the per-section subdivisions read as a finer-grained
+/// subdivision rather than competing with the node frame in the
+/// no-author-config path.
+///
+/// **Cascade caveat.** Authors who set a partial canvas-level
+/// override like `default_section_frame_border = { preset:
+/// "double" }` get the **`GlyphBorderConfig` field default of
+/// 14 pt**, not this 10 pt — `font_size_pt` is `f32`, not
+/// `Option<f32>`, so deserialization can't distinguish "author
+/// omitted" from "author wrote 14.0". Authors who want the
+/// smaller-grain feel inside their config write
+/// `font_size_pt: 10.0` (or any value they prefer) explicitly.
+/// This matches the pattern node borders use today and keeps
+/// the cascade lossless.
+const SECTION_FRAME_FLOOR_FONT_SIZE_PT: f32 = 10.0;
+
 /// Pick the [`BorderGlyphSet`] for a preset name, case-insensitively.
 /// Unknown preset names fall back to `light` and log a warning;
 /// the `"custom"` preset returns `light` here too — its corners /
@@ -797,12 +898,138 @@ fn default_custom_glyphs() -> CustomBorderGlyphs {
 /// in the map (logs a warning in the latter case per
 /// `CODE_CONVENTIONS.md` §9). Pre-resolution lets the renderer and
 /// tree builder consume the colour list without re-walking the
-/// palette every frame; the resolved cycle is stamped on
-/// [`crate::mindmap::scene_builder::BorderElement::palette_cycle`]
-/// and
-/// [`crate::mindmap::tree_builder::BorderNodeData::palette_cycle`]
-/// at scene-build time.
+/// Apply a [`crate::mindmap::scene_builder::BorderConfigEditsView`]
+/// to a slot for live-preview rendering. Mirrors the application-
+/// crate's `apply_glyph_border_edits_to_slot` shape but consumes
+/// borrowed strings rather than `OptionEdit<T>` so the scene
+/// builder can fold the staged preview edits into a clone of the
+/// committed slot without round-tripping back through the
+/// application layer.
 ///
+/// **Parity contract:** this function must produce the same
+/// post-state as `apply_glyph_border_edits_to_slot` for any
+/// committing edit. Both paths derive from the same field rules:
+/// per-field set-or-keep, side / corner edits force preset to
+/// `"custom"`, the `glyphs` slot materialises on first edit. A
+/// parity regression here means the preview lies about what
+/// commit will produce — Risk #1 in the plan.
+///
+/// `view.clear == true` empties the slot and short-circuits.
+/// Otherwise the helper materialises a fresh `GlyphBorderConfig`
+/// on first edit (mirroring the committing path's
+/// `default_glyph_border_config`) and folds each per-field
+/// override.
+pub fn apply_view_to_slot(
+    slot: &mut Option<GlyphBorderConfig>,
+    view: &crate::mindmap::scene_builder::BorderConfigEditsView<'_>,
+) {
+    use crate::mindmap::scene_builder::EditView;
+    // Top-level slot clear — empties the entire slot, falls back
+    // to the canvas default / hardcoded floor on resolve.
+    if view.clear {
+        *slot = None;
+        return;
+    }
+    if !view.touches_any_field() {
+        return;
+    }
+    let cfg = slot.get_or_insert_with(default_glyph_border_config);
+    // Per-field tri-state apply. `Keep` is no-op; `Clear` drops
+    // the field's `Option<String>` (or leaves a non-Option field
+    // at its default for `font_size_pt` / `padding`); `Set` writes
+    // the value. Mirrors the application-side
+    // `apply_glyph_border_edits_to_slot` field-by-field.
+    if let EditView::Set(p) = view.preset {
+        cfg.preset = p.to_string();
+    }
+    match view.font {
+        EditView::Keep => {}
+        EditView::Clear => cfg.font = None,
+        EditView::Set(f) => cfg.font = Some(f.to_string()),
+    }
+    if let EditView::Set(s) = view.font_size_pt {
+        cfg.font_size_pt = s;
+    }
+    match view.color {
+        EditView::Keep => {}
+        EditView::Clear => cfg.color = None,
+        EditView::Set(c) => cfg.color = Some(c.to_string()),
+    }
+    if let EditView::Set(p) = view.padding {
+        cfg.padding = p;
+    }
+    match view.color_palette {
+        EditView::Keep => {}
+        EditView::Clear => cfg.color_palette = None,
+        EditView::Set(p) => cfg.color_palette = Some(p.to_string()),
+    }
+    match view.color_palette_field {
+        EditView::Keep => {}
+        EditView::Clear => cfg.color_palette_field = None,
+        EditView::Set(f) => cfg.color_palette_field = Some(f.to_string()),
+    }
+    if view.touches_glyphs() {
+        if cfg.glyphs.is_none() {
+            cfg.glyphs = Some(default_custom_glyphs());
+        }
+        if !cfg.preset.eq_ignore_ascii_case("custom") {
+            cfg.preset = "custom".to_string();
+        }
+        let g = cfg.glyphs.as_mut().expect("just inserted");
+        // Side / corner glyphs are non-`Option<String>` on the
+        // model side (`CustomBorderGlyphs`), so `Clear` semantics
+        // for them mean "fall back to the preset's default char"
+        // — same posture the application-side helper takes
+        // (`apply_string_set` with no Clear handling).
+        if let EditView::Set(v) = view.side_top {
+            g.top = v.to_string();
+        }
+        if let EditView::Set(v) = view.side_bottom {
+            g.bottom = v.to_string();
+        }
+        if let EditView::Set(v) = view.side_left {
+            g.left = v.to_string();
+        }
+        if let EditView::Set(v) = view.side_right {
+            g.right = v.to_string();
+        }
+        if let EditView::Set(v) = view.corner_top_left {
+            g.top_left = v.to_string();
+        }
+        if let EditView::Set(v) = view.corner_top_right {
+            g.top_right = v.to_string();
+        }
+        if let EditView::Set(v) = view.corner_bottom_left {
+            g.bottom_left = v.to_string();
+        }
+        if let EditView::Set(v) = view.corner_bottom_right {
+            g.bottom_right = v.to_string();
+        }
+    }
+}
+
+/// Default `GlyphBorderConfig` shape — light preset, 14pt, no
+/// font, 4px padding, no palette. Used by the application-side
+/// committing setters as the "first edit materialises this" base
+/// (`set_node_border_config` etc.) and by the scene-side preview
+/// apply path so the two share one constant. Mirrors the
+/// loader-time defaults in
+/// [`crate::mindmap::model::node`]; centralised here so callers
+/// don't reach into the model module's private `default_*`
+/// factories.
+pub fn default_glyph_border_config() -> GlyphBorderConfig {
+    GlyphBorderConfig {
+        preset: "light".to_string(),
+        font: None,
+        font_size_pt: 14.0,
+        color: None,
+        glyphs: None,
+        padding: 4.0,
+        color_palette: None,
+        color_palette_field: None,
+    }
+}
+
 /// Cost: O(groups.len()) hex parses on names that resolve, O(1) on
 /// the unset / missing fallback paths.
 pub fn resolve_palette_cycle(

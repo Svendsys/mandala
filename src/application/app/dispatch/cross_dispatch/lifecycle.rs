@@ -88,36 +88,229 @@ pub(in crate::application::app) fn apply_delete_selection(rc: &mut RebuildContex
     }
 }
 
-/// Open the inline node text editor on a `Single`-selection.
-/// Returns `true` when the editor opened (selection was Single
-/// and the caller's editor-side bookkeeping should run); `false`
-/// when the selection wasn't a single node (caller may fall
-/// through to other branches — `Action::EditSelection` is
-/// classified `NativeOnly` because the EdgeLabel and Portal
-/// branches go to inline modal editors that only exist on
-/// native).
+/// What `apply_enter_node_edit` should do given the current
+/// (selection, model) state. Pure function output — the testable
+/// half of the action helper, separated from the renderer-driving
+/// side of `apply_enter_node_edit` itself (per `TEST_CONVENTIONS
+/// §T8`, the renderer-touching arms can't run under `cargo test`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::application::app) enum EnterNodeEditPlan {
+    /// Selection has no node target (Multi / MultiSection / Edge /
+    /// None). Caller logs a warning and bails.
+    NoTarget,
+    /// Single-section short-circuit: flip mode to `NodeEdit` AND
+    /// open the section editor on section 0 in the same call.
+    /// Preserves the legacy "Enter on a node opens the editor" UX
+    /// for migrated maps.
+    SingleSectionShortCircuit { node_id: String },
+    /// Multi-section: flip mode to `NodeEdit { node_id }` only;
+    /// the user picks a specific section before entering the
+    /// editor (a second Enter, or a click on a section).
+    EnterMultiSection { node_id: String },
+}
+
+/// Resolve the [`EnterNodeEditPlan`] from selection + model state
+/// without any renderer / tree side effects. Pulls the testable
+/// decision logic out of `apply_enter_node_edit` so unit tests can
+/// pin every branch (TEST_CONVENTIONS §T8 — no GPU dependency).
+pub(in crate::application::app) fn resolve_enter_node_edit_plan(
+    selection: &crate::application::document::SelectionState,
+    mindmap: &baumhard::mindmap::model::MindMap,
+) -> EnterNodeEditPlan {
+    let Some(node_id) = selection.primary_node_id().map(str::to_string) else {
+        return EnterNodeEditPlan::NoTarget;
+    };
+    let section_count = mindmap
+        .nodes
+        .get(&node_id)
+        .map(|n| n.sections.len())
+        .unwrap_or(0);
+    if section_count <= 1 {
+        EnterNodeEditPlan::SingleSectionShortCircuit { node_id }
+    } else {
+        EnterNodeEditPlan::EnterMultiSection { node_id }
+    }
+}
+
+/// Enter NodeEdit mode on the currently-selected node. Resolves the
+/// owning node via `selection.primary_node_id()` (Single / Section /
+/// SectionRange). Multi / MultiSection / edge / None warn and bail.
 ///
-/// The Single branch IS cross-platform: `open_text_edit`
-/// (`text_edit/editor.rs`) compiles on both targets and is
-/// renderer + document only.
-pub(in crate::application::app) fn apply_open_text_edit_on_single(
+/// **Single-section short-circuit**: when the active node has
+/// `sections.len() <= 1`, opens the text editor on section 0 in the
+/// same call. This preserves today's "Enter on a node opens the
+/// editor" UX for legacy migrated maps. Multi-section nodes stop
+/// at NodeEdit mode — the user picks a section (click or
+/// `section edit <idx>` console verb) and presses Enter again to
+/// enter SectionEdit.
+///
+/// `clean: true` opens the editor with an empty buffer (mirrors
+/// `EditSelectionClean`'s posture) — only used in the
+/// single-section short-circuit path.
+pub(in crate::application::app) fn apply_enter_node_edit(
     clean: bool,
     rc: &mut RebuildContext<'_>,
     text_edit_state: &mut super::super::super::text_edit::TextEditState,
 ) -> bool {
-    let Some(id) = rc.document.selection.primary_node_id().map(str::to_string) else {
-        return false;
+    use super::super::super::interaction_mode::InteractionMode;
+
+    let plan = resolve_enter_node_edit_plan(&rc.document.selection, &rc.document.mindmap);
+    match plan {
+        EnterNodeEditPlan::NoTarget => {
+            log::warn!(
+                "EnterNodeEdit: selection has no primary node \
+                 (Multi / MultiSection / Edge / None) — nothing to edit"
+            );
+            false
+        }
+        EnterNodeEditPlan::SingleSectionShortCircuit { node_id } => {
+            *rc.interaction_mode = InteractionMode::NodeEdit { node_id: node_id.clone() };
+            // Short-circuit path: this call ALSO flipped mode to
+            // NodeEdit, so on close the editor must revert mode to
+            // Default — a single-section node has nothing else to
+            // edit, so leaving the user in NodeEdit + dimming is a
+            // UX dead-end.
+            super::super::super::text_edit::open_text_edit_with_close_target(
+                &node_id,
+                clean,
+                true, // exit_to_default_on_close
+                rc.document,
+                text_edit_state,
+                rc.mindmap_tree,
+                rc.app_scene,
+                rc.renderer,
+            );
+            true
+        }
+        EnterNodeEditPlan::EnterMultiSection { node_id } => {
+            *rc.interaction_mode = InteractionMode::NodeEdit { node_id };
+            // Multi-section: stop at NodeEdit so the user can pick
+            // a section. Rebuild so the dimming + status-bar
+            // visuals catch the mode change.
+            rc.rebuild_after_selection_change();
+            true
+        }
+    }
+}
+
+/// What `apply_enter_section_edit` should do given the current
+/// (mode, selection) state. Pure function output — testable half
+/// of the action helper.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::application::app) enum EnterSectionEditPlan {
+    /// Mode wasn't NodeEdit. Caller logs a warning and bails.
+    NotInNodeEdit,
+    /// Mode was NodeEdit but the selection's owner mismatched the
+    /// active NodeEdit target (e.g. user clicked a sibling node).
+    /// Caller logs a warning naming both ids and bails.
+    OwnerMismatch { active_node: String, owner: Option<String> },
+    /// Open the section editor on `active_node`. The caller takes
+    /// the renderer-driving side from here.
+    OpenEditor { active_node: String },
+}
+
+/// Resolve the [`EnterSectionEditPlan`] from (mode, selection)
+/// without renderer / tree side effects. Lifts the testable
+/// preconditions out of `apply_enter_section_edit`.
+pub(in crate::application::app) fn resolve_enter_section_edit_plan(
+    interaction_mode: &super::super::super::interaction_mode::InteractionMode,
+    selection: &crate::application::document::SelectionState,
+) -> EnterSectionEditPlan {
+    use super::super::super::interaction_mode::InteractionMode;
+    let active_node = match interaction_mode {
+        InteractionMode::NodeEdit { node_id } => node_id.clone(),
+        _ => return EnterSectionEditPlan::NotInNodeEdit,
     };
-    super::super::super::text_edit::open_text_edit(
-        &id,
-        clean,
-        rc.document,
-        text_edit_state,
-        rc.mindmap_tree,
-        rc.app_scene,
-        rc.renderer,
-    );
-    true
+    let owner = selection.primary_node_id().map(str::to_string);
+    if owner.as_deref() != Some(&active_node) {
+        return EnterSectionEditPlan::OwnerMismatch {
+            active_node,
+            owner,
+        };
+    }
+    EnterSectionEditPlan::OpenEditor { active_node }
+}
+
+/// Open the section text editor on the active section while in
+/// NodeEdit mode. Preconditions:
+/// - `interaction_mode == InteractionMode::NodeEdit { node_id }`.
+/// - Selection picks the section: `Section(s)` / `SectionRange { sel: s, .. }`
+///   use `s.section_idx`; `Single(node_id)` defaults to section 0.
+///
+/// `clean: true` opens the editor with an empty buffer.
+///
+/// Returns `true` if the editor opened. Mode stays at `NodeEdit`
+/// (closing the editor returns to `NodeEdit`, not `Default`).
+pub(in crate::application::app) fn apply_enter_section_edit(
+    clean: bool,
+    rc: &mut RebuildContext<'_>,
+    text_edit_state: &mut super::super::super::text_edit::TextEditState,
+) -> bool {
+    let plan = resolve_enter_section_edit_plan(&*rc.interaction_mode, &rc.document.selection);
+    match plan {
+        EnterSectionEditPlan::NotInNodeEdit => {
+            log::warn!("EnterSectionEdit: no active NodeEdit mode; nothing to edit");
+            false
+        }
+        EnterSectionEditPlan::OwnerMismatch { active_node, owner } => {
+            log::warn!(
+                "EnterSectionEdit: selection owner ≠ active NodeEdit node ({:?} vs {})",
+                owner, active_node
+            );
+            false
+        }
+        EnterSectionEditPlan::OpenEditor { active_node } => {
+            super::super::super::text_edit::open_text_edit(
+                &active_node,
+                clean,
+                rc.document,
+                text_edit_state,
+                rc.mindmap_tree,
+                rc.app_scene,
+                rc.renderer,
+            );
+            true
+        }
+    }
+}
+
+/// Resolve the current `SelectionState` into a `ResizeTarget` and
+/// flip the active interaction mode to `Resize { target }`. On a
+/// non-resizable selection logs the resolution failure and leaves
+/// mode untouched. Cross-platform: touches mode + model + scene
+/// rebuild only.
+///
+/// Resolution logic is shared with the `mode resize` console verb
+/// via [`super::super::super::interaction_mode::resolve_resize_target`].
+pub(in crate::application::app) fn apply_enter_resize_mode(rc: &mut RebuildContext<'_>) {
+    use super::super::super::interaction_mode::{
+        resolve_resize_target, InteractionMode, ResizeTargetError,
+    };
+
+    match resolve_resize_target(&rc.document.selection, &rc.document.mindmap) {
+        Ok(target) => {
+            *rc.interaction_mode = InteractionMode::Resize { target };
+            rc.rebuild_after_selection_change();
+        }
+        Err(ResizeTargetError::NoSelection) => {
+            log::warn!("EnterResizeMode: no selection; nothing to resize");
+        }
+        Err(ResizeTargetError::MultiTarget) => {
+            log::warn!(
+                "EnterResizeMode: multi-target selection — single-target only; \
+                 select a single node or section first"
+            );
+        }
+        Err(ResizeTargetError::SectionFillParent { node_id, section_idx }) => {
+            log::warn!(
+                "EnterResizeMode: section {}[{}] is fill-parent (no Some size); cannot resize",
+                node_id, section_idx,
+            );
+        }
+        Err(ResizeTargetError::EdgeOrPortal) => {
+            log::warn!("EnterResizeMode: edge / label / portal selection — not resizable");
+        }
+    }
 }
 
 // ── Clipboard ───────────────────────────────────────────────────
@@ -274,12 +467,204 @@ fn split_paste_for_targets(text: &str, target_count: usize) -> Option<Vec<&str>>
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]
 mod tests {
-    use super::{apply_copy_or_cut, split_paste_for_targets, MULTI_TARGET_SEPARATOR};
+    use super::{
+        apply_copy_or_cut, resolve_enter_node_edit_plan, resolve_enter_section_edit_plan,
+        split_paste_for_targets, EnterNodeEditPlan, EnterSectionEditPlan,
+        MULTI_TARGET_SEPARATOR,
+    };
+    use crate::application::app::interaction_mode::InteractionMode;
     use crate::application::clipboard::{
         clear_section_clipboard, read_section_clipboard, write_section_clipboard,
     };
-    use crate::application::document::tests_common::pinned_two_section_node;
-    use crate::application::document::{SectionPayload, SectionSel, SelectionState};
+    use crate::application::document::tests_common::{load_test_doc, pinned_two_section_node};
+    use crate::application::document::{
+        EdgeRef, SectionPayload, SectionSel, SelectionState,
+    };
+
+    // ── EnterNodeEdit plan resolution ────────────────────────────
+
+    /// `Single(node_id)` selection on a multi-section node →
+    /// EnterMultiSection (mode flip only, no editor open).
+    #[test]
+    fn test_resolve_enter_node_edit_single_on_multi_section_enters_multi() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::Single(id.clone());
+        let plan = resolve_enter_node_edit_plan(&doc.selection, &doc.mindmap);
+        assert_eq!(plan, EnterNodeEditPlan::EnterMultiSection { node_id: id });
+    }
+
+    /// `Single` selection on a single-section node →
+    /// SingleSectionShortCircuit (mode + editor open in one call).
+    #[test]
+    fn test_resolve_enter_node_edit_single_on_single_section_short_circuits() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.mindmap.nodes.get_mut(&id).unwrap().sections.truncate(1);
+        doc.selection = SelectionState::Single(id.clone());
+        let plan = resolve_enter_node_edit_plan(&doc.selection, &doc.mindmap);
+        assert_eq!(plan, EnterNodeEditPlan::SingleSectionShortCircuit { node_id: id });
+    }
+
+    /// `Section` selection routes to its owning node.
+    #[test]
+    fn test_resolve_enter_node_edit_section_routes_to_owner_node() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::Section(SectionSel::new(&id, 1));
+        let plan = resolve_enter_node_edit_plan(&doc.selection, &doc.mindmap);
+        assert_eq!(plan, EnterNodeEditPlan::EnterMultiSection { node_id: id });
+    }
+
+    /// `SectionRange` selection (the post-shift-select close shape)
+    /// routes to its owning node — Plan §4.5 / `primary_node_id`
+    /// shape-equivalence.
+    #[test]
+    fn test_resolve_enter_node_edit_section_range_routes_to_owner_node() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::SectionRange {
+            sel: SectionSel::new(&id, 1),
+            range: (0, 3),
+        };
+        let plan = resolve_enter_node_edit_plan(&doc.selection, &doc.mindmap);
+        assert_eq!(plan, EnterNodeEditPlan::EnterMultiSection { node_id: id });
+    }
+
+    /// `None` selection → NoTarget (caller logs and bails).
+    #[test]
+    fn test_resolve_enter_node_edit_none_selection_returns_no_target() {
+        let mut doc = load_test_doc();
+        doc.selection = SelectionState::None;
+        let plan = resolve_enter_node_edit_plan(&doc.selection, &doc.mindmap);
+        assert_eq!(plan, EnterNodeEditPlan::NoTarget);
+    }
+
+    /// `Multi` selection → NoTarget. NodeEdit is single-target by
+    /// design.
+    #[test]
+    fn test_resolve_enter_node_edit_multi_selection_returns_no_target() {
+        let mut doc = load_test_doc();
+        let ids: Vec<String> = doc.mindmap.nodes.keys().take(2).cloned().collect();
+        doc.selection = SelectionState::Multi(ids);
+        let plan = resolve_enter_node_edit_plan(&doc.selection, &doc.mindmap);
+        assert_eq!(plan, EnterNodeEditPlan::NoTarget);
+    }
+
+    /// `Edge` selection → NoTarget — edges aren't node-scoped.
+    #[test]
+    fn test_resolve_enter_node_edit_edge_selection_returns_no_target() {
+        let mut doc = load_test_doc();
+        let er = doc
+            .mindmap
+            .edges
+            .first()
+            .map(|e| EdgeRef::new(&e.from_id, &e.to_id, &e.edge_type))
+            .expect("test doc has edges");
+        doc.selection = SelectionState::Edge(er);
+        let plan = resolve_enter_node_edit_plan(&doc.selection, &doc.mindmap);
+        assert_eq!(plan, EnterNodeEditPlan::NoTarget);
+    }
+
+    /// Stale selection pointing at a node that doesn't exist falls
+    /// to the SingleSection branch (section_count = 0). The caller
+    /// path then opens an editor on a missing node, which `open_text_edit`
+    /// handles gracefully (returns early). Pin so a future change
+    /// to the resolver makes this branch explicit rather than silent.
+    #[test]
+    fn test_resolve_enter_node_edit_stale_node_id_falls_to_short_circuit() {
+        let mut doc = load_test_doc();
+        doc.selection = SelectionState::Single("nonexistent-node".to_string());
+        let plan = resolve_enter_node_edit_plan(&doc.selection, &doc.mindmap);
+        assert_eq!(
+            plan,
+            EnterNodeEditPlan::SingleSectionShortCircuit {
+                node_id: "nonexistent-node".to_string()
+            }
+        );
+    }
+
+    // ── EnterSectionEdit plan resolution ─────────────────────────
+
+    /// Default mode → NotInNodeEdit. SectionEdit is only meaningful
+    /// inside NodeEdit (it's the modal scope under which per-section
+    /// editing makes sense).
+    #[test]
+    fn test_resolve_enter_section_edit_default_mode_returns_not_in_node_edit() {
+        let mut doc = load_test_doc();
+        let id = doc.mindmap.nodes.keys().next().cloned().expect("nodes");
+        doc.selection = SelectionState::Single(id);
+        let plan = resolve_enter_section_edit_plan(&InteractionMode::Default, &doc.selection);
+        assert_eq!(plan, EnterSectionEditPlan::NotInNodeEdit);
+    }
+
+    /// Resize mode → NotInNodeEdit (Resize is not NodeEdit; the
+    /// match is exhaustive on the variant tag, not a "modal-ish"
+    /// catch-all).
+    #[test]
+    fn test_resolve_enter_section_edit_resize_mode_returns_not_in_node_edit() {
+        use crate::application::app::interaction_mode::ResizeTarget;
+        let (doc, id) = pinned_two_section_node();
+        let mode = InteractionMode::Resize {
+            target: ResizeTarget::Node(id),
+        };
+        let plan = resolve_enter_section_edit_plan(&mode, &doc.selection);
+        assert_eq!(plan, EnterSectionEditPlan::NotInNodeEdit);
+    }
+
+    /// NodeEdit on node A + selection on node B → OwnerMismatch.
+    /// The user steered selection to a sibling; SectionEdit on A
+    /// would silently edit the wrong node.
+    #[test]
+    fn test_resolve_enter_section_edit_owner_mismatch() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::Single("other-node".to_string());
+        let mode = InteractionMode::NodeEdit { node_id: id.clone() };
+        let plan = resolve_enter_section_edit_plan(&mode, &doc.selection);
+        assert_eq!(
+            plan,
+            EnterSectionEditPlan::OwnerMismatch {
+                active_node: id,
+                owner: Some("other-node".to_string()),
+            }
+        );
+    }
+
+    /// Edge selection → OwnerMismatch with `owner = None` (the
+    /// edge has no node owner).
+    #[test]
+    fn test_resolve_enter_section_edit_edge_selection_returns_owner_mismatch_none() {
+        let (mut doc, id) = pinned_two_section_node();
+        let er = EdgeRef::new("a", "b", "cross_link");
+        doc.selection = SelectionState::Edge(er);
+        let mode = InteractionMode::NodeEdit { node_id: id.clone() };
+        let plan = resolve_enter_section_edit_plan(&mode, &doc.selection);
+        assert_eq!(
+            plan,
+            EnterSectionEditPlan::OwnerMismatch {
+                active_node: id,
+                owner: None,
+            }
+        );
+    }
+
+    /// NodeEdit on node A + Section selection on node A → OpenEditor.
+    /// The happy path.
+    #[test]
+    fn test_resolve_enter_section_edit_section_selection_opens_editor() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::Section(SectionSel::new(&id, 1));
+        let mode = InteractionMode::NodeEdit { node_id: id.clone() };
+        let plan = resolve_enter_section_edit_plan(&mode, &doc.selection);
+        assert_eq!(plan, EnterSectionEditPlan::OpenEditor { active_node: id });
+    }
+
+    /// NodeEdit + Single selection on the active node → OpenEditor
+    /// (defaults to section 0 inside `open_text_edit`).
+    #[test]
+    fn test_resolve_enter_section_edit_single_on_active_node_opens_editor() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::Single(id.clone());
+        let mode = InteractionMode::NodeEdit { node_id: id.clone() };
+        let plan = resolve_enter_section_edit_plan(&mode, &doc.selection);
+        assert_eq!(plan, EnterSectionEditPlan::OpenEditor { active_node: id });
+    }
 
     /// `\n\n` not `\n` — single-newline collisions with
     /// intra-section editor line breaks are the whole reason the

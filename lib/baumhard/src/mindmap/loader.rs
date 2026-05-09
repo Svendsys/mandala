@@ -206,8 +206,8 @@ mod tests {
         assert_eq!(map.version, "1.0");
         assert_eq!(map.name, "testament");
         assert_eq!(map.canvas.background_color, "#000000");
-        assert_eq!(map.nodes.len(), 243);
-        assert_eq!(map.edges.len(), 250);
+        assert_eq!(map.nodes.len(), 252);
+        assert_eq!(map.edges.len(), 258);
     }
 
     #[test]
@@ -453,7 +453,7 @@ mod tests {
                 edge.to_id
             );
         }
-        assert_eq!(straight_count + bezier_count, 250);
+        assert_eq!(straight_count + bezier_count, 258);
         assert!(straight_count > 200, "Expected most edges to be straight");
         assert!(bezier_count > 0, "Expected some Bezier edges");
     }
@@ -824,6 +824,8 @@ mod tests {
                 background_color: "#000000".to_string(),
                 default_border: None,
                 default_connection: None,
+                default_section_frame_border: None,
+                default_focused_section_frame_border: None,
                 theme_variables: HashMap::new(),
                 theme_variants: HashMap::new(),
             },

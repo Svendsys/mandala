@@ -22,7 +22,8 @@ use super::label_edit::{LabelEditState, PortalTextEditState};
 use super::run_native_init;
 use super::text_edit::TextEditState;
 use super::{
-    drain_frame, event_cursor_moved, event_keyboard, event_mouse_click, AppMode, Application, DragState,
+    drain_frame, event_cursor_moved, event_keyboard, event_mouse_click, Application, DragState,
+    InteractionMode,
     LastClick, Options,
 };
 use crate::application::common::RenderDecree;
@@ -207,7 +208,7 @@ pub(super) struct InitState {
     pub(super) app_scene: crate::application::scene_host::AppScene,
     pub(super) cursor_pos: (f64, f64),
     pub(super) drag_state: DragState,
-    pub(super) app_mode: AppMode,
+    pub(super) interaction_mode: InteractionMode,
     pub(super) console_state: ConsoleState,
     pub(super) console_history: Vec<String>,
     pub(super) label_edit_state: LabelEditState,
@@ -255,7 +256,7 @@ impl InitState {
             renderer: &mut self.renderer,
             scene_cache: &mut self.scene_cache,
             drag_state: &mut self.drag_state,
-            app_mode: &mut self.app_mode,
+            interaction_mode: &mut self.interaction_mode,
             console_state: &mut self.console_state,
             console_history: &mut self.console_history,
             label_edit_state: &mut self.label_edit_state,
@@ -528,6 +529,7 @@ impl InitState {
             color_picker_state,
             drag_state,
             picker_hover,
+            interaction_mode,
             ..
         } = self;
 
@@ -539,6 +541,7 @@ impl InitState {
                 renderer: &mut *renderer,
                 scene_cache: &mut *scene_cache,
                 color_picker_state: &mut *color_picker_state,
+                interaction_mode: &*interaction_mode,
             });
         }
 
@@ -550,6 +553,7 @@ impl InitState {
                 renderer: &mut *renderer,
                 scene_cache: &mut *scene_cache,
                 color_picker_state: &mut *color_picker_state,
+                interaction_mode: &*interaction_mode,
             });
         } else if picker_hover.has_pending() {
             // Picker closed while a throttle-deferred hover drain
@@ -583,6 +587,7 @@ impl InitState {
         drain_frame::drain_camera_geometry_rebuild(
             is_moving_node,
             &self.document,
+            &self.interaction_mode,
             &mut self.app_scene,
             &mut self.renderer,
             &mut self.scene_cache,
@@ -614,6 +619,7 @@ impl InitState {
         if !is_drag_with_tree_mutation {
             drain_frame::drain_animation_tick(
                 &mut self.document,
+                &self.interaction_mode,
                 &mut self.mindmap_tree,
                 &mut self.app_scene,
                 &mut self.renderer,

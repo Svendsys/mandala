@@ -29,6 +29,7 @@ pub(in crate::application::app) fn handle_color_picker_key(
     keybinds: &ResolvedKeybinds,
     state: &mut ColorPickerState,
     doc: &mut MindMapDocument,
+    interaction_mode: &super::super::InteractionMode,
     mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
     picker_hover: &mut ColorPickerHoverInteraction,
     app_scene: &mut crate::application::scene_host::AppScene,
@@ -67,14 +68,14 @@ pub(in crate::application::app) fn handle_color_picker_key(
             if state.is_standalone() {
                 return false;
             }
-            cancel_color_picker(state, doc, mindmap_tree, app_scene, renderer, scene_cache);
+            cancel_color_picker(state, doc, interaction_mode, mindmap_tree, app_scene, renderer, scene_cache);
             true
         }
         Some(Action::PickerCommit) => {
             if state.is_standalone() {
-                commit_color_picker_to_selection(state, doc, mindmap_tree, app_scene, renderer, scene_cache);
+                commit_color_picker_to_selection(state, doc, interaction_mode, mindmap_tree, app_scene, renderer, scene_cache);
             } else {
-                commit_color_picker(state, doc, mindmap_tree, app_scene, renderer, scene_cache);
+                commit_color_picker(state, doc, interaction_mode, mindmap_tree, app_scene, renderer, scene_cache);
             }
             true
         }

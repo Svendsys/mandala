@@ -21,7 +21,7 @@ use super::throttled_interaction::{
     EdgeHandleInteraction, EdgeLabelInteraction, MovingNodeInteraction, MovingSectionInteraction,
     NodeResizeInteraction, PortalLabelInteraction, SectionResizeInteraction, ThrottledDrag,
 };
-use super::{AppMode, DragState};
+use super::DragState;
 use crate::application::common::RenderDecree;
 use crate::application::document::{apply_tree_highlights, hit_test, SelectionState};
 
@@ -55,7 +55,7 @@ pub(super) fn handle_cursor_moved(
 
     // Reparent or Connect mode: hit-test under cursor to update the hover
     // target highlight. Skip the regular drag-state handling.
-    if matches!(*ctx.app_mode, AppMode::Reparent { .. } | AppMode::Connect { .. }) {
+    if ctx.interaction_mode.is_target_picker() {
         let new_hover = ctx.mindmap_tree.as_mut().and_then(|tree| {
             let canvas_pos = ctx
                 .renderer
@@ -67,7 +67,7 @@ pub(super) fn handle_cursor_moved(
             if let Some(doc) = ctx.document.as_ref() {
                 rebuild_all_with_mode(
                     doc,
-                    ctx.app_mode,
+                    ctx.interaction_mode,
                     ctx.hovered_node.as_deref(),
                     ctx.mindmap_tree,
                     ctx.app_scene,
@@ -232,6 +232,7 @@ pub(super) fn handle_cursor_moved(
                             rebuild_after_selection_change(
                                 &prev,
                                 doc,
+                                ctx.interaction_mode,
                                 ctx.mindmap_tree,
                                 ctx.app_scene,
                                 ctx.renderer,
@@ -265,6 +266,7 @@ pub(super) fn handle_cursor_moved(
                             ));
                             rebuild_all(
                                 doc,
+                                ctx.interaction_mode,
                                 ctx.mindmap_tree,
                                 ctx.app_scene,
                                 ctx.renderer,
@@ -432,6 +434,7 @@ pub(super) fn handle_cursor_moved(
                     // `hit_test_target`'s single-section fold.
                     if let Some((section_idx, ox, oy)) = resolve_section_drag_target(
                         ctx.document.as_ref(),
+                        ctx.interaction_mode,
                         &node_id,
                         *hit_section_idx,
                         ctx.modifiers.shift_key(),
@@ -567,17 +570,28 @@ fn canvas_delta(
 /// `start_offset`; `None` when the press should fall through to
 /// the existing whole-node path.
 ///
-/// The multi-section + non-shift gate mirrors `hit_test_target`'s
-/// single-section fold: single-section nodes never produce a
-/// `Section` hit; shift is reserved for multi-node selection so
-/// shift+drag-on-section deliberately falls through to whole-node.
+/// Three gates, applied in order:
+/// 1. **Shift** — reserved for multi-node selection; shift+drag on
+///    a section falls through to whole-node drag.
+/// 2. **Multi-section node** — `hit_test_target`'s single-section
+///    fold means single-section nodes never produce a section hit
+///    in the first place, but the redundant check here is a
+///    cheap defence against a future drift.
+/// 3. **`InteractionMode::NodeEdit { matching_id }`** — outside
+///    NodeEdit, drags on a section's area move the whole node
+///    (consistent with click-on-section folding to `Single` per
+///    `click_resolves_to_section`). Plan §4.1.
 pub(super) fn resolve_section_drag_target(
     doc: Option<&crate::application::document::MindMapDocument>,
+    interaction_mode: &super::InteractionMode,
     node_id: &str,
     hit_section_idx: Option<usize>,
     shift: bool,
 ) -> Option<(usize, f64, f64)> {
     if shift {
+        return None;
+    }
+    if !interaction_mode.click_resolves_to_section(node_id) {
         return None;
     }
     let idx = hit_section_idx?;
@@ -671,28 +685,68 @@ mod tests {
         resolve_section_drag_target, selection_after_node_drag_press,
         selection_after_section_drag_press,
     };
+    use crate::application::app::InteractionMode;
     use crate::application::document::tests_common::{load_test_doc, pinned_two_section_node};
     use crate::application::document::{SectionSel, SelectionState};
 
-    /// Multi-section node + non-shift + valid section_idx → drag
-    /// the section. Pins the threshold-cross promotion gate.
+    /// Helper: NodeEdit mode targeting `node_id` — the mode that
+    /// licences section-drag promotion.
+    fn node_edit_for(node_id: &str) -> InteractionMode {
+        InteractionMode::NodeEdit { node_id: node_id.to_string() }
+    }
+
+    /// Multi-section node + non-shift + valid section_idx + NodeEdit
+    /// mode → drag the section. Pins the threshold-cross promotion
+    /// gate.
     #[test]
     fn test_resolve_section_drag_target_multi_section_non_shift_returns_some() {
         let (doc, id) = pinned_two_section_node();
-        let result = resolve_section_drag_target(Some(&doc), &id, Some(1), false);
-        assert!(result.is_some(), "multi-section + non-shift must promote");
+        let mode = node_edit_for(&id);
+        let result = resolve_section_drag_target(Some(&doc), &mode, &id, Some(1), false);
+        assert!(result.is_some(), "multi-section + non-shift + NodeEdit must promote");
         let (idx, _, _) = result.unwrap();
         assert_eq!(idx, 1);
     }
 
     /// `section_idx=0` on a multi-section node also drags — the
-    /// gate is `sections.len() > 1`, not `idx > 0`. Closes the
-    /// review's test gap.
+    /// gate is `sections.len() > 1`, not `idx > 0`.
     #[test]
     fn test_resolve_section_drag_target_section_zero_on_multi_section_returns_some() {
         let (doc, id) = pinned_two_section_node();
-        let result = resolve_section_drag_target(Some(&doc), &id, Some(0), false);
+        let mode = node_edit_for(&id);
+        let result = resolve_section_drag_target(Some(&doc), &mode, &id, Some(0), false);
         assert!(result.is_some(), "section_idx=0 on multi-section must promote");
+    }
+
+    /// **NEW: Default mode never promotes.** Plan §4.1 — outside
+    /// NodeEdit, drag-on-section behaves identically to drag-on-
+    /// node-body (whole-node drag). Same Multi-section node, same
+    /// hit, but mode is `Default` instead of `NodeEdit`.
+    #[test]
+    fn test_resolve_section_drag_target_default_mode_returns_none() {
+        let (doc, id) = pinned_two_section_node();
+        let result = resolve_section_drag_target(
+            Some(&doc),
+            &InteractionMode::Default,
+            &id,
+            Some(1),
+            false,
+        );
+        assert!(result.is_none(), "Default mode must NOT promote section drag");
+    }
+
+    /// **NEW: NodeEdit on a different node never promotes.** A user
+    /// in `NodeEdit { "0" }` who drags on a section of `"1"` gets
+    /// whole-node drag, not section-drag.
+    #[test]
+    fn test_resolve_section_drag_target_node_edit_mismatch_returns_none() {
+        let (doc, id) = pinned_two_section_node();
+        let mode = node_edit_for("some-other-node-id");
+        let result = resolve_section_drag_target(Some(&doc), &mode, &id, Some(1), false);
+        assert!(
+            result.is_none(),
+            "NodeEdit on a different node must NOT promote section drag on this one"
+        );
     }
 
     /// Single-section node falls to whole-node drag — mirrors
@@ -700,23 +754,22 @@ mod tests {
     #[test]
     fn test_resolve_section_drag_target_single_section_returns_none() {
         let mut doc = load_test_doc();
-        // `first_testament_node_id` returns a node that may have
-        // multiple sections under some test orderings; force
-        // single-section by clearing extras.
         let nid = doc.mindmap.nodes.keys().next().unwrap().clone();
         if let Some(n) = doc.mindmap.nodes.get_mut(&nid) {
             n.sections.truncate(1);
         }
-        let result = resolve_section_drag_target(Some(&doc), &nid, Some(0), false);
+        let mode = node_edit_for(&nid);
+        let result = resolve_section_drag_target(Some(&doc), &mode, &nid, Some(0), false);
         assert!(result.is_none(), "single-section node must NOT promote");
     }
 
-    /// Shift+drag-on-section falls to whole-node drag (multi-
-    /// select discipline). Pins the second half of the gate.
+    /// Shift+drag-on-section falls to whole-node drag (multi-select
+    /// discipline). Pins the shift gate; mode-gate is moot here.
     #[test]
     fn test_resolve_section_drag_target_shift_returns_none() {
         let (doc, id) = pinned_two_section_node();
-        let result = resolve_section_drag_target(Some(&doc), &id, Some(1), true);
+        let mode = node_edit_for(&id);
+        let result = resolve_section_drag_target(Some(&doc), &mode, &id, Some(1), true);
         assert!(result.is_none(), "shift+drag must fall to whole-node");
     }
 
@@ -725,16 +778,20 @@ mod tests {
     #[test]
     fn test_resolve_section_drag_target_out_of_range_returns_none() {
         let (doc, id) = pinned_two_section_node();
-        let result = resolve_section_drag_target(Some(&doc), &id, Some(99), false);
+        let mode = node_edit_for(&id);
+        let result = resolve_section_drag_target(Some(&doc), &mode, &id, Some(99), false);
         assert!(result.is_none());
     }
 
     /// `None` document or `None` hit_section_idx → fall-through.
     #[test]
     fn test_resolve_section_drag_target_no_doc_or_idx_returns_none() {
-        assert!(resolve_section_drag_target(None, "0", Some(0), false).is_none());
+        assert!(
+            resolve_section_drag_target(None, &node_edit_for("0"), "0", Some(0), false).is_none()
+        );
         let (doc, id) = pinned_two_section_node();
-        assert!(resolve_section_drag_target(Some(&doc), &id, None, false).is_none());
+        let mode = node_edit_for(&id);
+        assert!(resolve_section_drag_target(Some(&doc), &mode, &id, None, false).is_none());
     }
 
     // ── Selection-after-press helpers ────────────────────────────

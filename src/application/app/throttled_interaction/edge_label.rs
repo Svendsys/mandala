@@ -66,6 +66,7 @@ impl ThrottledInteraction for EdgeLabelInteraction {
             app_scene,
             renderer,
             scene_cache,
+            interaction_mode,
             ..
         } = ctx;
 
@@ -80,7 +81,12 @@ impl ThrottledInteraction for EdgeLabelInteraction {
                 // geometry, so every edge hits the cache's fast
                 // path and only `build_label_elements` (which
                 // runs per-frame regardless) produces new work.
-                let scene = doc.build_scene_with_cache(&HashMap::new(), scene_cache, renderer.camera_zoom());
+                let scene = doc.build_scene_with_cache(
+                    &HashMap::new(),
+                    scene_cache,
+                    renderer.camera_zoom(),
+                    interaction_mode.resize_handle_overrides(),
+                );
                 update_connection_label_tree(&scene, app_scene, renderer);
                 flush_canvas_scene_buffers(app_scene, renderer);
             }

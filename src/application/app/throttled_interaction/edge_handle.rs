@@ -83,6 +83,7 @@ impl ThrottledInteraction for EdgeHandleInteraction {
             app_scene,
             renderer,
             scene_cache,
+            interaction_mode,
             ..
         } = ctx;
 
@@ -100,7 +101,12 @@ impl ThrottledInteraction for EdgeHandleInteraction {
             scene_cache.invalidate_edge(&edge_key);
 
             let offsets: HashMap<String, (f32, f32)> = HashMap::new();
-            let scene = doc.build_scene_with_cache(&offsets, scene_cache, renderer.camera_zoom());
+            let scene = doc.build_scene_with_cache(
+                &offsets,
+                scene_cache,
+                renderer.camera_zoom(),
+                interaction_mode.resize_handle_overrides(),
+            );
             update_connection_tree(&scene, app_scene);
             update_edge_handle_tree(&scene, app_scene);
             update_connection_label_tree(&scene, app_scene, renderer);

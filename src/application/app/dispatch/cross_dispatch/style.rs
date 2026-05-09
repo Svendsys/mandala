@@ -22,6 +22,86 @@ pub(in crate::application::app) fn apply_set_border_field(
     });
 }
 
+/// Stage a single-kv border preview against the live selection.
+/// `target_kind` discriminates between
+/// `node` / `section` / `canvas-border` / `canvas-sf` /
+/// `canvas-sf-focused`. Always returns `true` for the rebuild
+/// envelope (the scene needs to re-emit with the previewed
+/// edits visible). Unknown `target_kind` is a no-op + warn.
+pub(in crate::application::app) fn apply_set_border_preview(
+    target_kind: crate::application::keybinds::BorderPreviewTargetKind,
+    field: &str,
+    value: &str,
+    rc: &mut RebuildContext<'_>,
+) {
+    apply_with_rebuild(rc, |doc| {
+        use crate::application::console::commands::border::stage_kv;
+        use crate::application::document::{BorderConfigEdits, BorderPreviewTarget};
+        use crate::application::keybinds::BorderPreviewTargetKind;
+
+        let mut edits = BorderConfigEdits::default();
+        if let Err(msg) = stage_kv(&mut edits, field, value) {
+            log::warn!("apply_set_border_preview: stage_kv error: {msg}");
+            return false;
+        }
+
+        // Resolve `target_kind` → `BorderPreviewTarget`. The
+        // selection-bound variants (`Node`, `Section`) walk the
+        // live selection via the same resolvers the verb path
+        // uses; canvas variants are constants. Typed-enum
+        // dispatch — pre-fix this was a stringly-typed match
+        // with `unknown` arms warning at runtime.
+        let target = match target_kind {
+            BorderPreviewTargetKind::Node => {
+                let ids = match crate::application::console::commands::border::nodes_in_selection(
+                    &doc.selection,
+                    "border preview",
+                ) {
+                    Ok(ids) => ids,
+                    Err(_) => return false,
+                };
+                BorderPreviewTarget::Nodes(ids)
+            }
+            BorderPreviewTargetKind::Section => {
+                let pairs: Vec<(String, usize)> = match &doc.selection {
+                    crate::application::document::SelectionState::Section(s) => {
+                        vec![(s.node_id.clone(), s.section_idx)]
+                    }
+                    crate::application::document::SelectionState::SectionRange { sel, range } => {
+                        let (lo, hi) = (range.0.min(range.1), range.0.max(range.1));
+                        (lo..=hi).map(|i| (sel.node_id.clone(), i)).collect()
+                    }
+                    crate::application::document::SelectionState::MultiSection(sels) => sels
+                        .iter()
+                        .map(|s| (s.node_id.clone(), s.section_idx))
+                        .collect(),
+                    _ => return false,
+                };
+                BorderPreviewTarget::Sections(pairs)
+            }
+            BorderPreviewTargetKind::CanvasBorder => BorderPreviewTarget::CanvasDefault,
+            BorderPreviewTargetKind::CanvasSf => BorderPreviewTarget::CanvasSectionFrame,
+            BorderPreviewTargetKind::CanvasSfFocused => BorderPreviewTarget::CanvasSectionFrameFocused,
+        };
+        let _ = doc.set_border_preview(target, edits);
+        true
+    });
+}
+
+/// Commit the active border preview through the matching
+/// committing setter and clear the slot. No-op + no rebuild
+/// when no preview is active.
+pub(in crate::application::app) fn apply_commit_border_preview(rc: &mut RebuildContext<'_>) {
+    apply_with_rebuild(rc, |doc| doc.commit_border_preview().is_some());
+}
+
+/// Cancel the active border preview without writing the model.
+/// Returns `true` (rebuild) when a preview was actually cleared
+/// — the scene needs to re-emit without the staged edits.
+pub(in crate::application::app) fn apply_cancel_border_preview(rc: &mut RebuildContext<'_>) {
+    apply_with_rebuild(rc, |doc| doc.cancel_border_preview());
+}
+
 /// Set a single colour axis (`bg` / `frame` / `text` / `title`
 /// — see [`crate::application::keybinds::ColorAxis`]) to a
 /// hex / palette / `var(--name)` value across the current

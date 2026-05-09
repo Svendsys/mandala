@@ -18,7 +18,7 @@ use super::input_context::InputHandlerContext;
 use super::portal_label_drag::apply_portal_label_drag;
 use super::scene_rebuild::{rebuild_after_selection_change, rebuild_all, rebuild_scene_only};
 use super::throttled_interaction::ThrottledDrag;
-use super::{is_double_click, now_ms, AppMode, DragState, LastClick, HANDLE_HIT_TOLERANCE_PX};
+use super::{is_double_click, now_ms, DragState, InteractionMode, LastClick, HANDLE_HIT_TOLERANCE_PX};
 use crate::application::console::ConsoleState;
 use crate::application::document::{apply_drag_delta, rect_select, SelectionState, UndoAction};
 use crate::application::keybinds::Action;
@@ -69,6 +69,7 @@ pub(super) fn handle_mouse_input(
                     button,
                     ctx.color_picker_state,
                     doc,
+                    ctx.interaction_mode,
                     ctx.mindmap_tree,
                     ctx.app_scene,
                     ctx.renderer,
@@ -121,8 +122,8 @@ pub(super) fn handle_mouse_input(
             // In reparent or connect mode, left-click (release) is consumed as
             // a "choose target" gesture and never transitions to Pending/drag.
             // Hit-test inline so the dispatch arm receives a resolved target id;
-            // the arms read the source(s) from `ctx.app_mode` directly.
-            if matches!(ctx.app_mode, AppMode::Reparent { .. }) {
+            // the arms read the source(s) from `ctx.interaction_mode` directly.
+            if matches!(ctx.interaction_mode, InteractionMode::Reparent { .. }) {
                 if state == ElementState::Released {
                     let target: Option<String> = ctx.mindmap_tree.as_mut().and_then(|tree| {
                         let canvas_pos = ctx
@@ -139,7 +140,7 @@ pub(super) fn handle_mouse_input(
                     *ctx.last_click = None;
                 }
                 // Pressed: swallow — do not transition drag state
-            } else if matches!(ctx.app_mode, AppMode::Connect { .. }) {
+            } else if matches!(ctx.interaction_mode, InteractionMode::Connect { .. }) {
                 if state == ElementState::Released {
                     let target: Option<String> = ctx.mindmap_tree.as_mut().and_then(|tree| {
                         let canvas_pos = ctx
@@ -295,53 +296,45 @@ pub(super) fn handle_mouse_input(
                     },
                     None => None,
                 };
-                // If a `Some`-sized section is currently selected,
-                // check whether the cursor is over one of its 8
-                // resize handles. Same precedence shape as
-                // `hit_edge_handle` — the handle wins over the
-                // section / node behind it at threshold-cross
-                // time. `None`-sized sections (fill-parent) emit
-                // no handles, so this branch produces `None`.
-                // Section AND SectionRange both expose an inner
-                // SectionSel via `selected_section()`. Range-aware
-                // selections still emit resize handles on the
-                // owning section.
-                let hit_section_resize_handle = match ctx.document.as_ref() {
-                    Some(doc) => match doc.selection.selected_section() {
-                        Some(s) => {
-                            let tol = HANDLE_HIT_TOLERANCE_PX * ctx.renderer.canvas_per_pixel();
-                            crate::application::document::hit_test_section_resize_handle(
-                                &doc.mindmap,
-                                canvas_pos,
-                                &s.node_id,
-                                s.section_idx,
-                                tol,
-                            )
-                            .map(|side| (s.node_id.clone(), s.section_idx, side))
-                        }
-                        None => None,
-                    },
-                    None => None,
+                // Section resize handle press capture — only fires
+                // when the active mode is `Resize { Section { .. } }`.
+                // Fill-parent sections emit no handles regardless;
+                // `hit_test_section_resize_handle` filters them out
+                // internally.
+                let hit_section_resize_handle = match (
+                    ctx.document.as_ref(),
+                    ctx.interaction_mode.resize_handle_section(),
+                ) {
+                    (Some(doc), Some((node_id, section_idx))) => {
+                        let tol = HANDLE_HIT_TOLERANCE_PX * ctx.renderer.canvas_per_pixel();
+                        crate::application::document::hit_test_section_resize_handle(
+                            &doc.mindmap,
+                            canvas_pos,
+                            node_id,
+                            section_idx,
+                            tol,
+                        )
+                        .map(|side| (node_id.to_string(), section_idx, side))
+                    }
+                    _ => None,
                 };
-                // Node resize handle press capture — when a node
-                // is `Single`-selected, the cursor may land on
-                // one of its 8 handles. Same shape / tolerance
-                // as edge + section handles.
-                let hit_node_resize_handle = match ctx.document.as_ref() {
-                    Some(doc) => match &doc.selection {
-                        SelectionState::Single(id) => {
-                            let tol = HANDLE_HIT_TOLERANCE_PX * ctx.renderer.canvas_per_pixel();
-                            crate::application::document::hit_test_node_resize_handle(
-                                &doc.mindmap,
-                                canvas_pos,
-                                id,
-                                tol,
-                            )
-                            .map(|side| (id.clone(), side))
-                        }
-                        _ => None,
-                    },
-                    None => None,
+                // Node resize handle press capture — only fires when
+                // the active mode is `Resize { Node(_) }`.
+                let hit_node_resize_handle = match (
+                    ctx.document.as_ref(),
+                    ctx.interaction_mode.resize_handle_node(),
+                ) {
+                    (Some(doc), Some(node_id)) => {
+                        let tol = HANDLE_HIT_TOLERANCE_PX * ctx.renderer.canvas_per_pixel();
+                        crate::application::document::hit_test_node_resize_handle(
+                            &doc.mindmap,
+                            canvas_pos,
+                            node_id,
+                            tol,
+                        )
+                        .map(|side| (node_id.to_string(), side))
+                    }
+                    _ => None,
                 };
                 // Portal-label drag capture. Takes precedence
                 // over `hit_node` at threshold-cross time so
@@ -532,6 +525,22 @@ pub(super) fn handle_mouse_input(
                                     k.edge_type.as_str(),
                                 )
                             });
+                        // NodeEdit-mode outside-click: clicking
+                        // outside the active node's overflow-aware
+                        // AABB exits NodeEdit back to Default
+                        // BEFORE any selection routing fires, so
+                        // every selection branch below (edge-label,
+                        // node, empty-canvas) lands in Default mode.
+                        // Pre-fix this only ran for the node-hit
+                        // arm — clicking an edge label or portal
+                        // from inside NodeEdit left the user in
+                        // an orphan "NodeEdit + EdgeLabel selection"
+                        // state.
+                        maybe_exit_node_edit_on_outside_click(
+                            ctx,
+                            cursor_pos_val,
+                            hit_node.as_deref(),
+                        );
                         let entered_label_select = if let Some(er) = edge_label_target {
                             if let Some(doc) = ctx.document.as_mut() {
                                 let prev = doc.selection.clone();
@@ -541,6 +550,7 @@ pub(super) fn handle_mouse_input(
                                 rebuild_after_selection_change(
                                     &prev,
                                     doc,
+                                    ctx.interaction_mode,
                                     ctx.mindmap_tree,
                                     ctx.app_scene,
                                     ctx.renderer,
@@ -560,6 +570,7 @@ pub(super) fn handle_mouse_input(
                                 cursor_pos_val,
                                 ctx.modifiers.shift_key(),
                                 ctx.document,
+                                ctx.interaction_mode,
                                 ctx.mindmap_tree,
                                 ctx.app_scene,
                                 ctx.renderer,
@@ -618,6 +629,7 @@ pub(super) fn handle_mouse_input(
                             // Full rebuild from model
                             rebuild_all(
                                 doc,
+                                ctx.interaction_mode,
                                 ctx.mindmap_tree,
                                 ctx.app_scene,
                                 ctx.renderer,
@@ -657,6 +669,7 @@ pub(super) fn handle_mouse_input(
                             ctx.scene_cache.clear();
                             rebuild_all(
                                 doc,
+                                ctx.interaction_mode,
                                 ctx.mindmap_tree,
                                 ctx.app_scene,
                                 ctx.renderer,
@@ -686,6 +699,7 @@ pub(super) fn handle_mouse_input(
                             ctx.scene_cache.clear();
                             rebuild_all(
                                 doc,
+                                ctx.interaction_mode,
                                 ctx.mindmap_tree,
                                 ctx.app_scene,
                                 ctx.renderer,
@@ -726,6 +740,7 @@ pub(super) fn handle_mouse_input(
                             ctx.scene_cache.clear();
                             rebuild_all(
                                 doc,
+                                ctx.interaction_mode,
                                 ctx.mindmap_tree,
                                 ctx.app_scene,
                                 ctx.renderer,
@@ -762,6 +777,7 @@ pub(super) fn handle_mouse_input(
                             doc.commit_throttled_edge_drag(&edge_ref, original, |_, _| true);
                             rebuild_all(
                                 doc,
+                                ctx.interaction_mode,
                                 ctx.mindmap_tree,
                                 ctx.app_scene,
                                 ctx.renderer,
@@ -803,6 +819,7 @@ pub(super) fn handle_mouse_input(
                             });
                             rebuild_all(
                                 doc,
+                                ctx.interaction_mode,
                                 ctx.mindmap_tree,
                                 ctx.app_scene,
                                 ctx.renderer,
@@ -837,7 +854,7 @@ pub(super) fn handle_mouse_input(
                             // because node trees are untouched by a
                             // label move; the release commit is
                             // the same story.
-                            rebuild_scene_only(doc, ctx.app_scene, ctx.renderer, ctx.scene_cache);
+                            rebuild_scene_only(doc, ctx.interaction_mode, ctx.app_scene, ctx.renderer, ctx.scene_cache);
                         }
                     }
                     DragState::SelectingRect {
@@ -851,6 +868,7 @@ pub(super) fn handle_mouse_input(
                             doc.selection = SelectionState::from_ids(hits);
                             rebuild_all(
                                 doc,
+                                ctx.interaction_mode,
                                 ctx.mindmap_tree,
                                 ctx.app_scene,
                                 ctx.renderer,
@@ -863,5 +881,61 @@ pub(super) fn handle_mouse_input(
             }
         }
         _ => {}
+    }
+}
+
+/// Outside-click NodeEdit-exit helper. When the active mode is
+/// `InteractionMode::NodeEdit { node_id }` and the release lands
+/// outside `node_id`'s overflow-aware AABB, dispatch
+/// `Action::ExitMode` to flip back to `Default`. This runs before
+/// the regular `handle_click` so the click that lands outside the
+/// active node registers in Default mode (whole-node Single).
+///
+/// "Outside" is determined by `point_in_node_aabb`, which is
+/// shape-aware and counts overflowing-section territory as
+/// inside — same rule the text-editor's click-outside-commit
+/// uses. Inside-AABB clicks (including hits on overflowing
+/// sections) keep NodeEdit active.
+///
+/// `hit_node` is the click hit's owning node id (`None` for empty
+/// canvas). `cursor_pos_val` is screen-space; we project to canvas
+/// inside.
+#[cfg(not(target_arch = "wasm32"))]
+fn maybe_exit_node_edit_on_outside_click(
+    ctx: &mut InputHandlerContext<'_>,
+    cursor_pos_val: (f64, f64),
+    hit_node: Option<&str>,
+) {
+    let active_node = match &*ctx.interaction_mode {
+        super::InteractionMode::NodeEdit { node_id } => node_id.clone(),
+        _ => return,
+    };
+    // Fast path: the click hit a different node than the active
+    // one. This catches sibling-click cleanly without the AABB
+    // computation.
+    if let Some(hit) = hit_node {
+        if hit != active_node {
+            let _ = super::dispatch::dispatch_action(Action::ExitMode, ctx, None);
+            return;
+        }
+        // Same-node hit: stay in NodeEdit.
+        return;
+    }
+    // Empty-canvas hit: confirm the cursor is actually outside the
+    // active node's AABB before exiting (overflowing sections
+    // count as inside). `ensure_subtree_aabbs` is needed because
+    // post-mutation AABB caches go dirty; same shape as the
+    // text-editor's click-outside-commit gate.
+    let release_canvas = ctx.renderer.screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
+    if let Some(tree) = ctx.mindmap_tree.as_mut() {
+        tree.tree.ensure_subtree_aabbs();
+    }
+    let inside = ctx
+        .mindmap_tree
+        .as_ref()
+        .map(|tree| crate::application::document::point_in_node_aabb(release_canvas, &active_node, tree))
+        .unwrap_or(false);
+    if !inside {
+        let _ = super::dispatch::dispatch_action(Action::ExitMode, ctx, None);
     }
 }

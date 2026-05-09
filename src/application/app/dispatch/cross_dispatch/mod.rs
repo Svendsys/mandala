@@ -9,7 +9,7 @@
 //! (`super::super::run_wasm` — cfg-gated, hence the plain
 //! code-span). The split between native and WASM exists because
 //! the two dispatchers carry different context types — native has
-//! 21 fields including console / picker / app_mode / modifiers;
+//! 21 fields including console / picker / interaction_mode / modifiers;
 //! WASM has 9 fields, a strict subset. Arms whose bodies touch
 //! only the shared subset live here; native-only arms stay in
 //! [`super::native`].
@@ -149,6 +149,12 @@ pub(in crate::application::app) struct RebuildContext<'a> {
     pub app_scene: &'a mut AppScene,
     pub renderer: &'a mut Renderer,
     pub scene_cache: &'a mut SceneConnectionCache,
+    /// Active interaction mode. Mutable because `EnterResizeMode` /
+    /// `ExitMode` / `EnterReparentMode` etc. dispatch arms write
+    /// through this field; read-only consumers reborrow as `&*` to
+    /// pass to scene-rebuild helpers. Threaded through from the
+    /// caller's `InputContextCore::interaction_mode`.
+    pub interaction_mode: &'a mut super::super::InteractionMode,
 }
 
 impl<'a> RebuildContext<'a> {
@@ -168,6 +174,7 @@ impl<'a> RebuildContext<'a> {
         self.scene_cache.clear();
         rebuild_all(
             self.document,
+            &*self.interaction_mode,
             self.mindmap_tree,
             self.app_scene,
             self.renderer,
@@ -185,6 +192,7 @@ impl<'a> RebuildContext<'a> {
     pub fn rebuild_after_selection_change(&mut self) {
         rebuild_all(
             self.document,
+            &*self.interaction_mode,
             self.mindmap_tree,
             self.app_scene,
             self.renderer,
@@ -214,6 +222,7 @@ macro_rules! rebuild_ctx {
             app_scene: $ctx.app_scene,
             renderer: $ctx.renderer,
             scene_cache: $ctx.scene_cache,
+            interaction_mode: $ctx.interaction_mode,
         }
     };
 }

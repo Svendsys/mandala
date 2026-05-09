@@ -76,6 +76,7 @@ pub(super) fn drain_selecting_rect(
 pub(super) fn drain_camera_geometry_rebuild(
     is_moving_node: bool,
     document: &Option<MindMapDocument>,
+    interaction_mode: &super::InteractionMode,
     app_scene: &mut crate::application::scene_host::AppScene,
     renderer: &mut Renderer,
     scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
@@ -87,7 +88,12 @@ pub(super) fn drain_camera_geometry_rebuild(
             // also catch this, but clearing explicitly here keeps
             // the ordering readable next to the rebuild.
             scene_cache.clear();
-            let scene = doc.build_scene_with_cache(&HashMap::new(), scene_cache, renderer.camera_zoom());
+            let scene = doc.build_scene_with_cache(
+                &HashMap::new(),
+                scene_cache,
+                renderer.camera_zoom(),
+                interaction_mode.resize_handle_overrides(),
+            );
             update_connection_tree(&scene, app_scene);
             update_connection_label_tree(&scene, app_scene, renderer);
             update_portal_tree(doc, &HashMap::new(), app_scene, renderer);
@@ -114,6 +120,7 @@ pub(super) fn drain_camera_geometry_rebuild(
 /// next OS event.
 pub(super) fn drain_animation_tick(
     document: &mut Option<MindMapDocument>,
+    interaction_mode: &super::InteractionMode,
     mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
     app_scene: &mut crate::application::scene_host::AppScene,
     renderer: &mut Renderer,
@@ -132,7 +139,7 @@ pub(super) fn drain_animation_tick(
             // cache's `pre_clip_positions` go stale under both
             // paths. Clear before re-sampling.
             scene_cache.clear();
-            rebuild_all(doc, mindmap_tree, app_scene, renderer, scene_cache);
+            rebuild_all(doc, interaction_mode, mindmap_tree, app_scene, renderer, scene_cache);
         }
     }
 }

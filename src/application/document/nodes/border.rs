@@ -9,6 +9,19 @@
 //! slot — including the auto-promotion of `preset` to `"custom"`
 //! whenever a side- or corner-glyph edit is staged against a
 //! built-in preset.
+//!
+//! Also home of the [`BorderPreview`] / [`BorderPreviewTarget`]
+//! types and the three preview setters (`set_border_preview`,
+//! `commit_border_preview`, `cancel_border_preview`) — the
+//! live-preview surface for the four border verbs (per-node,
+//! per-section, two canvas defaults). Same discipline as
+//! `color_picker_preview`: never serialised, never push undo,
+//! never flip `dirty`. Cancel / commit clears the slot
+//! atomically; drift detection is lazy
+//! (`border_preview_covers_live_selection`); implicit cancel
+//! happens at the first line of each committing setter so a
+//! non-preview edit always wins. The scene-build plumbing
+//! lives in `assemble_scene_overrides`.
 
 use baumhard::mindmap::border::PaletteField;
 use baumhard::mindmap::border_pattern::SidePattern;
@@ -119,11 +132,75 @@ pub struct BorderEditOutcome {
     pub requested_preset: Option<String>,
 }
 
+/// Active live-preview substitution captured on
+/// [`MindMapDocument::border_preview`]. The scene builder reads
+/// this through a borrowed view (`scene_builder::BorderPreview<'a>`)
+/// and substitutes the previewed `edits` for the resolved border
+/// at the matching target. The model is never mutated; commit
+/// dispatches to the matching committing setter and clears the
+/// preview slot, cancel just clears.
+///
+/// `selection_snapshot` is the live selection at preview-set time —
+/// the scene builder treats the preview as inactive when the
+/// current `MindMapDocument.selection` no longer covers the
+/// snapshot's targets (drift). The actual clear happens at the
+/// next `set_*` / `commit_*` / `cancel_*` call; the steady-state
+/// "orphaned by drift" preview is harmless until then.
+///
+/// One preview at a time: a fresh `set_border_preview` replaces
+/// any active preview atomically.
+#[derive(Clone, Debug)]
+pub struct BorderPreview {
+    pub target: BorderPreviewTarget,
+    pub edits: BorderConfigEdits,
+    pub selection_snapshot: super::super::SelectionState,
+}
+
+/// Which border slot the preview substitutes for at scene-build
+/// time. Mirrors the four committing setters' shapes —
+/// `Nodes(ids)` → [`MindMapDocument::set_node_border_config`],
+/// `Sections((id, idx))` →
+/// [`MindMapDocument::set_section_frame_border_config`],
+/// `CanvasDefault` → [`MindMapDocument::set_canvas_default_border_config`],
+/// `CanvasSectionFrame` / `CanvasSectionFrameFocused` →
+/// [`MindMapDocument::set_canvas_default_section_frame_border_config`]
+/// (with `focused = false / true`).
+///
+/// Single preview, single target variant — multi-target previews
+/// (e.g. nodes *and* canvas-default at the same time) are
+/// deliberately out of scope: setting a new preview replaces the
+/// prior one.
+#[derive(Clone, Debug)]
+pub enum BorderPreviewTarget {
+    Nodes(Vec<String>),
+    Sections(Vec<(String, usize)>),
+    CanvasDefault,
+    CanvasSectionFrame,
+    CanvasSectionFrameFocused,
+}
+
 impl MindMapDocument {
     /// Toggle the node's frame visibility. Returns `true` if the
     /// flag actually changed. No-op + no undo on no change, like
     /// every other style setter.
+    ///
+    /// Implicit-cancel rule: `border on` / `border off` against a
+    /// node that's a target of an active per-node preview clears
+    /// the preview before flipping `show_frame`. Without this, a
+    /// preview's `force_show_frame` flag would keep rendering the
+    /// staged border on top of a `border off` commit, so the
+    /// user would see the border they just hid still on screen.
+    /// Same scope-gating as `set_node_border_config`: only
+    /// `Nodes(_)` / `CanvasDefault` previews cancel here; per-section
+    /// and canvas-section-frame previews live in orthogonal
+    /// surfaces and survive a node-visibility flip.
     pub fn set_node_border_visible(&mut self, node_id: &str, on: bool) -> bool {
+        if matches!(
+            self.border_preview.as_ref().map(|p| &p.target),
+            Some(BorderPreviewTarget::Nodes(_)) | Some(BorderPreviewTarget::CanvasDefault)
+        ) {
+            self.cancel_border_preview();
+        }
         super::set_node_style_field(self, node_id, |s| {
             if s.show_frame == on {
                 return false;
@@ -158,6 +235,20 @@ impl MindMapDocument {
     /// `preset=heavy top=…` request resulted in a `custom` border,
     /// not a `heavy` one with a side override.
     pub fn set_node_border_config(&mut self, node_id: &str, edits: BorderConfigEdits) -> BorderEditOutcome {
+        // Scope-gated implicit cancel: a committing per-node edit
+        // only clears previews whose visual scope it overlaps —
+        // `Nodes(_)` previews target the same surface, and
+        // `CanvasDefault` previews would render the canvas-default
+        // through every framed node (this commit included). Other
+        // preview kinds (per-section, canvas section-frame) live
+        // in orthogonal visual surfaces and survive the per-node
+        // commit. Pre-fix this cleared every preview unconditionally.
+        if matches!(
+            self.border_preview.as_ref().map(|p| &p.target),
+            Some(BorderPreviewTarget::Nodes(_)) | Some(BorderPreviewTarget::CanvasDefault)
+        ) {
+            self.cancel_border_preview();
+        }
         let canvas_default = self.mindmap.canvas.default_border.clone();
         let node = match self.mindmap.nodes.get_mut(node_id) {
             Some(n) => n,
@@ -193,17 +284,7 @@ impl MindMapDocument {
         // captured up-front in `outcome.requested_preset` by
         // `apply_border_edits`; here we compare against what
         // landed in the model.
-        if let Some(cfg) = node.style.border.as_ref() {
-            if cfg.preset.eq_ignore_ascii_case("custom") {
-                let was_already_custom = preset_before
-                    .as_deref()
-                    .map(|p| p.eq_ignore_ascii_case("custom"))
-                    .unwrap_or(false);
-                if !was_already_custom && outcome.requested_preset.is_some() {
-                    outcome.preset_auto_promoted = true;
-                }
-            }
-        }
+        detect_preset_auto_promote(node.style.border.as_ref(), preset_before.as_deref(), &mut outcome);
 
         // The size grow is monotonic by design (mirrors
         // `grow_node_sizes_to_fit_text`), so undoing a border edit
@@ -219,6 +300,515 @@ impl MindMapDocument {
         self.dirty = true;
         outcome.changed = true;
         outcome
+    }
+
+    /// Apply a bundle of border edits to one section's
+    /// `frame_border` atomically — the per-section equivalent of
+    /// [`Self::set_node_border_config`]. Drives the
+    /// `section frame …` console verb.
+    ///
+    /// `edits.clear == true` drops the per-section
+    /// `frame_border` override (the section falls back to
+    /// `Canvas.default_section_frame_border` and then to a
+    /// hardcoded floor — same cascade as
+    /// [`baumhard::mindmap::border::resolve_section_frame_border`]).
+    /// `edits.visible` is ignored: section frames don't carry a
+    /// per-frame visibility flag (NodeEdit drives their lifecycle).
+    ///
+    /// Returns the same [`BorderEditOutcome`] shape — the verb
+    /// surfaces auto-promotion identically whether the edit
+    /// landed on a node or a section.
+    pub fn set_section_frame_border_config(
+        &mut self,
+        node_id: &str,
+        section_idx: usize,
+        edits: BorderConfigEdits,
+    ) -> BorderEditOutcome {
+        // Scope-gated implicit cancel — only clear previews whose
+        // visual scope this commit overlaps: `Sections(_)` (same
+        // per-section surface) and the two `CanvasSectionFrame*`
+        // variants (which render through every section frame on
+        // the active node). See `set_node_border_config` for the
+        // rationale.
+        if matches!(
+            self.border_preview.as_ref().map(|p| &p.target),
+            Some(BorderPreviewTarget::Sections(_))
+                | Some(BorderPreviewTarget::CanvasSectionFrame)
+                | Some(BorderPreviewTarget::CanvasSectionFrameFocused)
+        ) {
+            self.cancel_border_preview();
+        }
+        // Validate node + section exist before we touch anything.
+        let node = match self.mindmap.nodes.get(node_id) {
+            Some(n) => n,
+            None => return BorderEditOutcome::default(),
+        };
+        let Some(section) = node.sections.get(section_idx) else {
+            return BorderEditOutcome::default();
+        };
+        let preset_before = section.frame_border.as_ref().map(|c| c.preset.clone());
+
+        let mut outcome = BorderEditOutcome::default();
+        if edits.clear {
+            if section.frame_border.is_none() {
+                return outcome;
+            }
+            self.mutate_section_with_style_undo(node_id, section_idx, |s| {
+                s.frame_border = None;
+                true
+            });
+            outcome.changed = true;
+            return outcome;
+        }
+
+        // Apply the staged edits to the section's frame_border slot
+        // through the helper. The closure returns its change verdict
+        // so the helper itself decides whether to push the undo
+        // entry + flip `dirty` — no post-hoc `undo_stack.pop()` and
+        // no leaked `dirty=true` on no-ops.
+        let changed = self.mutate_section_with_style_undo(node_id, section_idx, |s| {
+            apply_glyph_border_edits_to_slot(&mut s.frame_border, &edits, &mut outcome)
+        });
+        if !changed {
+            return outcome;
+        }
+
+        // Detect preset auto-promotion (light / heavy / etc. → custom)
+        // identically to the node-level setter.
+        let landed = self
+            .mindmap
+            .nodes
+            .get(node_id)
+            .and_then(|n| n.sections.get(section_idx))
+            .and_then(|s| s.frame_border.as_ref());
+        detect_preset_auto_promote(landed, preset_before.as_deref(), &mut outcome);
+
+        outcome.changed = true;
+        outcome
+    }
+
+    /// Apply a bundle of border edits to
+    /// [`baumhard::mindmap::model::Canvas::default_border`] —
+    /// the map-wide fallback every framed node falls back to when
+    /// it has no per-node `style.border` override. Drives the
+    /// `canvas border …` console verb.
+    ///
+    /// `edits.clear == true` drops the canvas default (every
+    /// unframed node falls back to the hardcoded floor). `visible`
+    /// is ignored: canvas-level defaults don't carry a visibility
+    /// flag — the per-node `show_frame` toggle is the
+    /// authoritative on/off.
+    ///
+    /// Captures the entire `Canvas` in a `CanvasSnapshot` undo
+    /// entry so undo restores every theme / palette / default
+    /// field in one step. Same posture as the
+    /// `theme switch` verb.
+    pub fn set_canvas_default_border_config(&mut self, edits: BorderConfigEdits) -> BorderEditOutcome {
+        // Scope-gated implicit cancel — `CanvasDefault` previews
+        // share the canvas-border slot directly; `Nodes(_)`
+        // previews render against per-node-resolved styles which
+        // include the canvas default in their cascade base.
+        // Per-section / canvas-section-frame previews live in a
+        // different visual surface and survive.
+        if matches!(
+            self.border_preview.as_ref().map(|p| &p.target),
+            Some(BorderPreviewTarget::CanvasDefault) | Some(BorderPreviewTarget::Nodes(_))
+        ) {
+            self.cancel_border_preview();
+        }
+        let preset_before = self
+            .mindmap
+            .canvas
+            .default_border
+            .as_ref()
+            .map(|c| c.preset.clone());
+        let canvas_snapshot = self.mindmap.canvas.clone();
+        let mut outcome = BorderEditOutcome::default();
+
+        let any_change = if edits.clear {
+            if self.mindmap.canvas.default_border.is_none() {
+                false
+            } else {
+                self.mindmap.canvas.default_border = None;
+                true
+            }
+        } else {
+            apply_glyph_border_edits_to_slot(&mut self.mindmap.canvas.default_border, &edits, &mut outcome)
+        };
+
+        if !any_change {
+            return outcome;
+        }
+
+        detect_preset_auto_promote(
+            self.mindmap.canvas.default_border.as_ref(),
+            preset_before.as_deref(),
+            &mut outcome,
+        );
+
+        self.undo_stack.push(UndoAction::CanvasSnapshot {
+            canvas: canvas_snapshot,
+        });
+        self.dirty = true;
+        outcome.changed = true;
+        outcome
+    }
+
+    /// Apply a bundle of border edits to either
+    /// [`baumhard::mindmap::model::Canvas::default_section_frame_border`]
+    /// (when `focused == false`) or
+    /// [`baumhard::mindmap::model::Canvas::default_focused_section_frame_border`]
+    /// (when `focused == true`). Drives the
+    /// `canvas section-frame …` and `canvas section-frame focused …`
+    /// console subverbs.
+    ///
+    /// Same `edits.clear` / `visible`-ignored / `CanvasSnapshot`
+    /// undo / auto-promotion-detection contract as
+    /// [`Self::set_canvas_default_border_config`].
+    pub fn set_canvas_default_section_frame_border_config(
+        &mut self,
+        focused: bool,
+        edits: BorderConfigEdits,
+    ) -> BorderEditOutcome {
+        // Scope-gated implicit cancel — clear previews whose
+        // visual scope this commit overlaps:
+        // `CanvasSectionFrame[Focused]` (same canvas slot) and
+        // `Sections(_)` (each section frame composes the canvas
+        // default into its cascade). Per-node / canvas-border
+        // previews live in an orthogonal surface and survive.
+        if matches!(
+            self.border_preview.as_ref().map(|p| &p.target),
+            Some(BorderPreviewTarget::CanvasSectionFrame)
+                | Some(BorderPreviewTarget::CanvasSectionFrameFocused)
+                | Some(BorderPreviewTarget::Sections(_))
+        ) {
+            self.cancel_border_preview();
+        }
+        let canvas_snapshot = self.mindmap.canvas.clone();
+        let mut outcome = BorderEditOutcome::default();
+
+        let preset_before = if focused {
+            self.mindmap
+                .canvas
+                .default_focused_section_frame_border
+                .as_ref()
+                .map(|c| c.preset.clone())
+        } else {
+            self.mindmap
+                .canvas
+                .default_section_frame_border
+                .as_ref()
+                .map(|c| c.preset.clone())
+        };
+
+        let any_change = if edits.clear {
+            let slot = if focused {
+                &mut self.mindmap.canvas.default_focused_section_frame_border
+            } else {
+                &mut self.mindmap.canvas.default_section_frame_border
+            };
+            if slot.is_none() {
+                false
+            } else {
+                *slot = None;
+                true
+            }
+        } else {
+            let slot = if focused {
+                &mut self.mindmap.canvas.default_focused_section_frame_border
+            } else {
+                &mut self.mindmap.canvas.default_section_frame_border
+            };
+            apply_glyph_border_edits_to_slot(slot, &edits, &mut outcome)
+        };
+
+        if !any_change {
+            return outcome;
+        }
+
+        let landed = if focused {
+            self.mindmap.canvas.default_focused_section_frame_border.as_ref()
+        } else {
+            self.mindmap.canvas.default_section_frame_border.as_ref()
+        };
+        detect_preset_auto_promote(landed, preset_before.as_deref(), &mut outcome);
+
+        self.undo_stack.push(UndoAction::CanvasSnapshot {
+            canvas: canvas_snapshot,
+        });
+        self.dirty = true;
+        outcome.changed = true;
+        outcome
+    }
+
+    /// Set or replace the active border preview. Returns the
+    /// outcome a *commit* would produce (`requested_preset`,
+    /// `preset_auto_promoted`) computed by simulating
+    /// `apply_glyph_border_edits_to_slot` against a clone of the
+    /// affected slot — never re-implements the apply path. The
+    /// console verb surfaces the simulated outcome so the user
+    /// sees auto-promotion notes up-front, identical to what
+    /// commit will report.
+    ///
+    /// No undo, no dirty, no model write. A prior preview is
+    /// replaced atomically; orphan-by-drift previews are cleared.
+    pub fn set_border_preview(
+        &mut self,
+        target: BorderPreviewTarget,
+        edits: BorderConfigEdits,
+    ) -> BorderEditOutcome {
+        // Drop any orphan-by-drift preview before recording a new
+        // one. Defer-clear posture: the scene-build path treats a
+        // drifted preview as inactive; the actual slot empties
+        // here on the next setter call. `cancel_border_preview`
+        // and `commit_border_preview` open-code the same shape
+        // because each wants a different *return* (false /
+        // `None`) when drift was detected.
+        if !self.border_preview_covers_live_selection() {
+            self.border_preview = None;
+        }
+        // Simulate the apply against a clone of the affected slot
+        // so the outcome reflects what commit will produce. Pick
+        // the slot per target variant; for multi-target
+        // (`Nodes(ids)` / `Sections(...)`), simulate against the
+        // first target — auto-promotion is a property of `edits`,
+        // not of the slot's pre-state, so any one slot is
+        // representative. Empty target lists fall through to a
+        // canvas-default-shaped slot just to drive the helper.
+        let mut outcome = BorderEditOutcome::default();
+        let mut slot_clone: Option<GlyphBorderConfig> = match &target {
+            BorderPreviewTarget::Nodes(ids) => ids
+                .first()
+                .and_then(|id| self.mindmap.nodes.get(id))
+                .and_then(|n| n.style.border.clone()),
+            BorderPreviewTarget::Sections(pairs) => pairs
+                .first()
+                .and_then(|(id, idx)| self.mindmap.nodes.get(id).and_then(|n| n.sections.get(*idx)))
+                .and_then(|s| s.frame_border.clone()),
+            BorderPreviewTarget::CanvasDefault => self.mindmap.canvas.default_border.clone(),
+            BorderPreviewTarget::CanvasSectionFrame => {
+                self.mindmap.canvas.default_section_frame_border.clone()
+            }
+            BorderPreviewTarget::CanvasSectionFrameFocused => self
+                .mindmap
+                .canvas
+                .default_focused_section_frame_border
+                .clone(),
+        };
+        apply_glyph_border_edits_to_slot(&mut slot_clone, &edits, &mut outcome);
+        // The post-state preset on the cloned slot drives auto-
+        // promotion detection; the same helper the four committing
+        // setters use.
+        let preset_before = match &target {
+            BorderPreviewTarget::Nodes(ids) => ids
+                .first()
+                .and_then(|id| self.mindmap.nodes.get(id))
+                .and_then(|n| n.style.border.as_ref())
+                .map(|c| c.preset.clone()),
+            BorderPreviewTarget::Sections(pairs) => pairs
+                .first()
+                .and_then(|(id, idx)| self.mindmap.nodes.get(id).and_then(|n| n.sections.get(*idx)))
+                .and_then(|s| s.frame_border.as_ref())
+                .map(|c| c.preset.clone()),
+            BorderPreviewTarget::CanvasDefault => self
+                .mindmap
+                .canvas
+                .default_border
+                .as_ref()
+                .map(|c| c.preset.clone()),
+            BorderPreviewTarget::CanvasSectionFrame => self
+                .mindmap
+                .canvas
+                .default_section_frame_border
+                .as_ref()
+                .map(|c| c.preset.clone()),
+            BorderPreviewTarget::CanvasSectionFrameFocused => self
+                .mindmap
+                .canvas
+                .default_focused_section_frame_border
+                .as_ref()
+                .map(|c| c.preset.clone()),
+        };
+        detect_preset_auto_promote(slot_clone.as_ref(), preset_before.as_deref(), &mut outcome);
+        // The outcome's `changed` field is meaningful for commit
+        // (where it gates the undo push); for preview-set we
+        // surface it so the verb can say "no visible change" if
+        // the staged edits are a no-op against the current slot.
+        // The simulation already populated it via the helper.
+
+        self.border_preview = Some(BorderPreview {
+            target,
+            edits,
+            selection_snapshot: self.selection.clone(),
+        });
+        outcome
+    }
+
+    /// Discard any active preview. Returns `true` if a preview
+    /// was active. O(1), no undo, no dirty — preview state is
+    /// runtime-only.
+    pub fn cancel_border_preview(&mut self) -> bool {
+        // If the preview drifted before the cancel, treat it as
+        // already-cleared so the bool reflects what the user
+        // observed (no preview was rendering).
+        if !self.border_preview_covers_live_selection() {
+            self.border_preview = None;
+            return false;
+        }
+        self.border_preview.take().is_some()
+    }
+
+    /// `true` iff the active preview's targets are still covered
+    /// by the live selection. With no preview active, returns
+    /// `true` (nothing to drift). Canvas-level previews never
+    /// drift (they're not selection-bound).
+    ///
+    /// **Subset semantics, not equality.** `Multi(["A","B"]) →
+    /// Single("A")` keeps `Nodes(["A"])` previews valid (A is
+    /// still selected). `Section(A/0) → MultiSection([A/0,
+    /// A/1])` keeps `Sections([(A,0)])` previews valid. Pre-fix
+    /// this used `selection_snapshot == self.selection` which
+    /// rejected state-preserving subtarget moves and produced
+    /// false-positive "preview vanishes for no reason" UX bugs.
+    /// Defer-clear posture: an orphan-by-drift preview just
+    /// stops applying; the slot itself is cleared at the next
+    /// `set_*` / `cancel_*` / `commit_*` call.
+    pub(crate) fn border_preview_covers_live_selection(&self) -> bool {
+        let Some(preview) = self.border_preview.as_ref() else {
+            return true;
+        };
+        match &preview.target {
+            BorderPreviewTarget::Nodes(target_ids) => {
+                let live = live_selection_node_ids(&self.selection);
+                target_ids.iter().all(|id| live.iter().any(|l| l == id))
+            }
+            BorderPreviewTarget::Sections(target_pairs) => {
+                let live = live_selection_section_pairs(&self.selection);
+                target_pairs.iter().all(|t| live.iter().any(|l| l == t))
+            }
+            // Canvas-level previews aren't selection-bound — they
+            // affect map-wide defaults regardless of who's selected.
+            BorderPreviewTarget::CanvasDefault
+            | BorderPreviewTarget::CanvasSectionFrame
+            | BorderPreviewTarget::CanvasSectionFrameFocused => true,
+        }
+    }
+
+    /// Commit the active preview through the matching committing
+    /// setter (`set_node_border_config` etc.) and clear the
+    /// preview slot. Returns `Some(outcome)` when a preview was
+    /// active (the outcome merges per-target results: first
+    /// auto-promotion wins; `changed` is `true` if any underlying
+    /// setter reported a change), `None` otherwise.
+    ///
+    /// Multi-node / multi-section commits push one undo entry per
+    /// affected node — same posture as the verb-level
+    /// `apply_edits` in `border/execute.rs`. Undoing a 5-node
+    /// commit takes 5 Ctrl-Z's; intentional, not a regression.
+    pub fn commit_border_preview(&mut self) -> Option<BorderEditOutcome> {
+        // Drift = nothing to commit; treat as no-op.
+        if !self.border_preview_covers_live_selection() {
+            self.border_preview = None;
+            return None;
+        }
+        let preview = self.border_preview.take()?;
+        // Force-show coupling: when the preview's edits implied
+        // visibility (any per-field edit, on a node whose
+        // committed `show_frame == false`), the *preview* showed
+        // the frame via the scene-side `force_show_frame` flag.
+        // Without coupling that into commit, the user sees the
+        // preview, hits commit, the frame disappears (the model's
+        // `show_frame` stays false). For `Nodes(_)` targets we
+        // therefore inject `visible = Set(true)` into the
+        // commit-time edits whenever the preview's edits touch
+        // any field — same predicate the scene-side preview used
+        // to set `force_show_frame`. Per-section / canvas previews
+        // don't carry a visibility axis (sections render in
+        // NodeEdit unconditionally; canvas defaults don't have a
+        // `show_frame` flag), so the coupling is `Nodes`-only.
+        let mut commit_edits = preview.edits.clone();
+        if matches!(preview.target, BorderPreviewTarget::Nodes(_)) && commit_edits.visible.is_none()
+        {
+            let touches_any_field = !matches!(commit_edits.preset, OptionEdit::Keep)
+                || !matches!(commit_edits.font, OptionEdit::Keep)
+                || !matches!(commit_edits.font_size_pt, OptionEdit::Keep)
+                || !matches!(commit_edits.color, OptionEdit::Keep)
+                || !matches!(commit_edits.padding, OptionEdit::Keep)
+                || !matches!(commit_edits.color_palette, OptionEdit::Keep)
+                || !matches!(commit_edits.color_palette_field, OptionEdit::Keep)
+                || edits_touch_glyphs(&commit_edits);
+            if touches_any_field || commit_edits.clear {
+                commit_edits.visible = Some(true);
+            }
+        }
+        let mut merged = BorderEditOutcome::default();
+        match preview.target {
+            BorderPreviewTarget::Nodes(ids) => {
+                for id in &ids {
+                    let outcome = self.set_node_border_config(id, commit_edits.clone());
+                    merge_outcome(&mut merged, outcome);
+                }
+            }
+            BorderPreviewTarget::Sections(pairs) => {
+                for (id, idx) in &pairs {
+                    let outcome = self.set_section_frame_border_config(id, *idx, commit_edits.clone());
+                    merge_outcome(&mut merged, outcome);
+                }
+            }
+            BorderPreviewTarget::CanvasDefault => {
+                merged = self.set_canvas_default_border_config(commit_edits);
+            }
+            BorderPreviewTarget::CanvasSectionFrame => {
+                merged = self.set_canvas_default_section_frame_border_config(false, commit_edits);
+            }
+            BorderPreviewTarget::CanvasSectionFrameFocused => {
+                merged = self.set_canvas_default_section_frame_border_config(true, commit_edits);
+            }
+        }
+        Some(merged)
+    }
+}
+
+/// Fold one per-target outcome into the running merged outcome.
+/// `changed` aggregates with OR; the first auto-promotion's
+/// `requested_preset` wins (same posture as
+/// `border/execute.rs::apply_edits`'s tally).
+fn merge_outcome(merged: &mut BorderEditOutcome, one: BorderEditOutcome) {
+    if one.changed {
+        merged.changed = true;
+    }
+    if one.preset_auto_promoted && !merged.preset_auto_promoted {
+        merged.preset_auto_promoted = true;
+        merged.requested_preset = one.requested_preset;
+    }
+}
+
+/// Set `outcome.preset_auto_promoted = true` when `landed`'s preset
+/// is `"custom"` (case-insensitive), the pre-edit preset wasn't
+/// already custom, and the user explicitly asked for some preset
+/// (i.e. their kv mentioned `preset=`). Shared between the four
+/// border-style setters (`set_node_border_config`,
+/// `set_section_frame_border_config`,
+/// `set_canvas_default_border_config`,
+/// `set_canvas_default_section_frame_border_config`) so the
+/// detection logic lives in exactly one place. When the auto-
+/// promote path is removed (per `SECTIONS_BORDERS_RESIZE_PLAN.md`
+/// §5.4), this function and the `BorderEditOutcome.preset_auto_promoted`
+/// field go together.
+pub(super) fn detect_preset_auto_promote(
+    landed: Option<&GlyphBorderConfig>,
+    preset_before: Option<&str>,
+    outcome: &mut BorderEditOutcome,
+) {
+    let Some(cfg) = landed else { return };
+    if !cfg.preset.eq_ignore_ascii_case("custom") {
+        return;
+    }
+    let was_already_custom = preset_before
+        .map(|p| p.eq_ignore_ascii_case("custom"))
+        .unwrap_or(false);
+    if !was_already_custom && outcome.requested_preset.is_some() {
+        outcome.preset_auto_promoted = true;
     }
 }
 
@@ -237,27 +827,51 @@ pub(super) fn apply_border_edits(
     outcome: &mut BorderEditOutcome,
 ) -> bool {
     let mut changed = false;
-    if let OptionEdit::Set(p) = &edits.preset {
-        outcome.requested_preset = Some(p.clone());
-    }
     if let Some(v) = edits.visible {
         if node.style.show_frame != v {
             node.style.show_frame = v;
             changed = true;
         }
     }
+    changed |= apply_glyph_border_edits_to_slot(&mut node.style.border, edits, outcome);
+    changed
+}
 
-    // Bring the per-node config into existence on first edit so
-    // every field has a slot to land in. Skip the slot allocation
-    // entirely when the only edit is `visible`, which writes
-    // `style.show_frame` and doesn't touch the GlyphBorderConfig.
-    let needs_cfg = edits_touch_cfg_field(edits);
-    if !needs_cfg {
-        return changed;
+/// Slot-level helper that applies every config-side field on
+/// `BorderConfigEdits` (preset / font / size / color / padding /
+/// palette / field / sides / corners) directly to a
+/// `&mut Option<GlyphBorderConfig>`. Skips the `visible` flag —
+/// that's a node-only concept that the per-node wrapper layers on
+/// top.
+///
+/// Shared between `apply_border_edits` (writes `node.style.border`)
+/// and [`MindMapDocument::set_section_frame_border_config`] (writes
+/// `section.frame_border`). The factoring is what lets the
+/// `border …` and `section frame …` verbs feed the same kv
+/// vocabulary into two different model slots.
+///
+/// `outcome.requested_preset` is set when the caller passed
+/// `preset=…` so the upper layer can phrase the "auto-promoted to
+/// custom" message after detecting the preset shift.
+pub(crate) fn apply_glyph_border_edits_to_slot(
+    slot: &mut Option<GlyphBorderConfig>,
+    edits: &BorderConfigEdits,
+    outcome: &mut BorderEditOutcome,
+) -> bool {
+    if let OptionEdit::Set(p) = &edits.preset {
+        outcome.requested_preset = Some(p.clone());
     }
 
-    let had_cfg = node.style.border.is_some();
-    let cfg = node.style.border.get_or_insert_with(default_glyph_border_config);
+    // Skip the slot allocation entirely when no config-side field
+    // was touched. The caller may still have written `visible`
+    // before us; that change is its bookkeeping, not ours.
+    if !edits_touch_cfg_field(edits) {
+        return false;
+    }
+
+    let mut changed = false;
+    let had_cfg = slot.is_some();
+    let cfg = slot.get_or_insert_with(default_glyph_border_config);
     if !had_cfg {
         changed = true;
     }
@@ -331,22 +945,12 @@ fn preset_is_custom(s: &str) -> bool {
     s.eq_ignore_ascii_case("custom")
 }
 
-fn default_glyph_border_config() -> GlyphBorderConfig {
-    // Mirrors the loader-time defaults from
-    // `baumhard::mindmap::model::node`. Centralised here so the
-    // setter doesn't need access to the private `default_*`
-    // factory functions in the model module.
-    GlyphBorderConfig {
-        preset: "light".to_string(),
-        font: None,
-        font_size_pt: 14.0,
-        color: None,
-        glyphs: None,
-        padding: 4.0,
-        color_palette: None,
-        color_palette_field: None,
-    }
-}
+// Single source of truth for the default `GlyphBorderConfig` lives
+// in baumhard (`baumhard::mindmap::border::default_glyph_border_config`)
+// — the scene-side preview apply path also reaches for it, so
+// keeping the constant in one place avoids the parity drift
+// CODE_CONVENTIONS §5 forbids.
+use baumhard::mindmap::border::default_glyph_border_config;
 
 fn default_custom_glyphs() -> CustomBorderGlyphs {
     // Light-preset corners (`┌┐└┘`) match the new default border
@@ -363,3 +967,43 @@ fn default_custom_glyphs() -> CustomBorderGlyphs {
         bottom_right: "\u{2518}".to_string(),
     }
 }
+
+/// Resolve the live selection's set of node ids — the same shape
+/// `border_preview_covers_live_selection` uses to compare against
+/// a `Nodes(ids)` snapshot. `Section` / `SectionRange` /
+/// `MultiSection` collapse to their owning node ids; non-node
+/// selections (edges / portal labels / etc.) yield an empty list,
+/// causing any node-targeted preview to read as drifted.
+fn live_selection_node_ids(sel: &super::super::SelectionState) -> Vec<String> {
+    use super::super::SelectionState;
+    match sel {
+        SelectionState::Single(id) => vec![id.clone()],
+        SelectionState::Multi(ids) => ids.clone(),
+        SelectionState::Section(s) => vec![s.node_id.clone()],
+        SelectionState::SectionRange { sel: s, .. } => vec![s.node_id.clone()],
+        SelectionState::MultiSection(_) => sel.dedup_owning_node_ids(),
+        _ => Vec::new(),
+    }
+}
+
+/// Resolve the live selection's set of `(node_id, section_idx)`
+/// pairs — the same shape
+/// `border_preview_covers_live_selection` uses against a
+/// `Sections(...)` snapshot. `SectionRange` expands; `MultiSection`
+/// fans out; non-section selections yield an empty list.
+fn live_selection_section_pairs(sel: &super::super::SelectionState) -> Vec<(String, usize)> {
+    use super::super::SelectionState;
+    match sel {
+        SelectionState::Section(s) => vec![(s.node_id.clone(), s.section_idx)],
+        SelectionState::SectionRange { sel, range } => {
+            let (lo, hi) = (range.0.min(range.1), range.0.max(range.1));
+            (lo..=hi).map(|i| (sel.node_id.clone(), i)).collect()
+        }
+        SelectionState::MultiSection(sels) => sels
+            .iter()
+            .map(|s| (s.node_id.clone(), s.section_idx))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+

@@ -94,7 +94,7 @@ fn test_default_config_resolves_every_documented_binding() {
         (None, "p", true, false, false, Action::EnterReparentMode),
         (None, "d", true, false, false, Action::EnterConnectMode),
         (None, "delete", false, false, false, Action::DeleteSelection),
-        (None, "escape", false, false, false, Action::CancelMode),
+        (None, "escape", false, false, false, Action::ExitMode),
         (None, "n", true, false, false, Action::CreateOrphanNode),
         (None, "o", true, false, false, Action::OrphanSelection),
         (None, "enter", false, false, false, Action::EditSelection),
@@ -139,6 +139,7 @@ fn test_default_config_resolves_every_documented_binding() {
             InputContext::ColorPicker => "ColorPicker",
             InputContext::LabelEdit => "LabelEdit",
             InputContext::TextEdit => "TextEdit",
+            InputContext::NodeEdit => "NodeEdit",
             InputContext::Document => "Document",
         });
         assert_eq!(
@@ -384,12 +385,23 @@ fn test_wasm_compatibility_console_modals_are_native_only() {
 #[test]
 fn test_wasm_compatibility_modal_actions_are_native_only() {
     use crate::application::keybinds::WasmCompatibility::NativeOnly;
+    // `ExitMode` is **not** in this list: the cross-platform mode-clear
+    // slice (drop `last_click`, reset `Resize` mode + rebuild) runs on
+    // both targets via `dispatch_compatible`; the native-only residual
+    // (Reparent/Connect overlay clear) is the fallthrough. WASM users
+    // press Esc to exit Resize mode the same way native users do.
     for a in [
         Action::EnterReparentMode,
         Action::EnterConnectMode,
         Action::ReparentToTarget(None),
         Action::ConnectToTarget(None),
-        Action::CancelMode,
+        Action::EnterResizeMode,
+        // EnterNodeEdit / EnterSectionEdit reach `open_text_edit`,
+        // which depends on the native modal-stealer cascade
+        // (`TextEditState`). Reclassification waits on Batch 4/7.
+        Action::EnterNodeEdit,
+        Action::EnterNodeEditClean,
+        Action::EnterSectionEdit,
         Action::PickerCancel,
         Action::PickerCommit,
         Action::LabelEditCancel,
@@ -478,6 +490,9 @@ fn test_is_destructive_destructive_set_is_pinned() {
         ActionKind::DoubleClickActivate,
         ActionKind::EditSelection,
         ActionKind::EditSelectionClean,
+        ActionKind::EnterNodeEdit,
+        ActionKind::EnterNodeEditClean,
+        ActionKind::EnterSectionEdit,
         ActionKind::LabelEditOnSelection,
         ActionKind::ReparentToTarget,
         ActionKind::ConnectToTarget,
@@ -567,6 +582,100 @@ fn test_double_click_activate_default_resolves_to_action() {
     assert_eq!(
         r.action_for_context(InputContext::Document, "doubleclick", false, false, false),
         Some(Action::DoubleClickActivate)
+    );
+}
+
+/// `Action::SetBorderPreview` round-trips through the JSON
+/// config — pre-fix the Action variant existed and was
+/// dispatched but had no `KeybindConfig` field, so users could
+/// not bind a key to preview-set via JSON.
+#[test]
+fn test_set_border_preview_keybind_round_trips_through_json() {
+    use crate::application::keybinds::BorderPreviewTargetKind;
+    let json = r#"{
+        "set_border_preview": [
+            { "combo": "Ctrl+H", "args": ["node", "preset", "heavy"] }
+        ]
+    }"#;
+    let cfg = KeybindConfig::from_json(json).unwrap();
+    assert_eq!(cfg.set_border_preview.len(), 1);
+    let r = cfg.resolve();
+    assert_eq!(
+        r.action_for_context(InputContext::Document, "h", true, false, false),
+        Some(Action::SetBorderPreview {
+            target_kind: BorderPreviewTargetKind::Node,
+            field: "preset".into(),
+            value: "heavy".into(),
+        })
+    );
+}
+
+/// All five `BorderPreviewTargetKind` variants round-trip
+/// through the strum-derived parser.
+#[test]
+fn test_border_preview_target_kind_strum_round_trip() {
+    use crate::application::keybinds::BorderPreviewTargetKind;
+    use std::str::FromStr;
+    for (s, expected) in [
+        ("node", BorderPreviewTargetKind::Node),
+        ("section", BorderPreviewTargetKind::Section),
+        ("canvas-border", BorderPreviewTargetKind::CanvasBorder),
+        ("canvas-sf", BorderPreviewTargetKind::CanvasSf),
+        ("canvas-sf-focused", BorderPreviewTargetKind::CanvasSfFocused),
+    ] {
+        let parsed = BorderPreviewTargetKind::from_str(s).unwrap_or_else(|_| panic!("parses {}", s));
+        assert_eq!(parsed, expected, "round-trip {} → variant", s);
+        let back: &'static str = expected.into();
+        assert_eq!(back, s, "round-trip variant → {}", s);
+    }
+    // Unknown tokens fail the parse — `push_parametric` warns
+    // and skips on these.
+    assert!(BorderPreviewTargetKind::from_str("canvas-sf-focsed").is_err());
+    assert!(BorderPreviewTargetKind::from_str("nodes").is_err());
+}
+
+/// `cancel_border_preview` ships unbound by default — the
+/// keybind system has no per-action active-state guard, so
+/// defaulting Esc would conflict with the existing Esc-bound
+/// actions in the Document context (`exit_mode` etc.). Users
+/// opt in via the JSON config; the verb path
+/// `border preview cancel` is the primary surface.
+#[test]
+fn test_cancel_border_preview_is_unbound_by_default() {
+    let cfg = KeybindConfig::default();
+    assert!(
+        cfg.cancel_border_preview.is_empty(),
+        "CancelBorderPreview must not have a default binding (would conflict with `exit_mode`)"
+    );
+    let r = cfg.resolve();
+    // No key resolves to CancelBorderPreview in the Document
+    // context with the default config.
+    assert!(
+        !r.has_any_binding_for(Action::CancelBorderPreview),
+        "default-resolved keybinds must not include CancelBorderPreview"
+    );
+}
+
+/// Users can opt in to a custom binding via the JSON config —
+/// pin the round-trip path that landing
+/// `cancel_border_preview` and `commit_border_preview` work.
+#[test]
+fn test_border_preview_keybinds_round_trip_through_json() {
+    let json = r#"{
+        "cancel_border_preview": ["Ctrl+Escape"],
+        "commit_border_preview": ["Ctrl+Enter"]
+    }"#;
+    let cfg = KeybindConfig::from_json(json).unwrap();
+    assert_eq!(cfg.cancel_border_preview, vec!["Ctrl+Escape"]);
+    assert_eq!(cfg.commit_border_preview, vec!["Ctrl+Enter"]);
+    let r = cfg.resolve();
+    assert_eq!(
+        r.action_for_context(InputContext::Document, "escape", true, false, false),
+        Some(Action::CancelBorderPreview)
+    );
+    assert_eq!(
+        r.action_for_context(InputContext::Document, "enter", true, false, false),
+        Some(Action::CommitBorderPreview)
     );
 }
 
@@ -762,7 +871,7 @@ fn test_all_document_defaults_resolve_via_action_for_context() {
         (Action::EnterReparentMode, "p", true, false, false),
         (Action::EnterConnectMode, "d", true, false, false),
         (Action::DeleteSelection, "delete", false, false, false),
-        (Action::CancelMode, "escape", false, false, false),
+        (Action::ExitMode, "escape", false, false, false),
         (Action::CreateOrphanNode, "n", true, false, false),
         (Action::OrphanSelection, "o", true, false, false),
         (Action::EditSelection, "enter", false, false, false),
@@ -809,7 +918,7 @@ fn test_partial_json_uses_defaults_for_missing_fields() {
     assert_eq!(cfg.undo, vec!["Ctrl+Y"]);
     // Other fields should still have defaults
     assert_eq!(cfg.enter_reparent_mode, vec!["Ctrl+P"]);
-    assert_eq!(cfg.cancel_mode, vec!["Escape"]);
+    assert_eq!(cfg.exit_mode, vec!["Escape"]);
 }
 
 #[test]
@@ -887,7 +996,7 @@ fn test_picker_context_falls_through_to_document() {
 #[test]
 fn test_picker_context_prefers_picker_action_over_document() {
     let resolved = KeybindConfig::default().resolve();
-    // Escape is CancelMode at Document level but PickerCancel at picker level
+    // Escape is ExitMode at Document level but PickerCancel at picker level
     assert_eq!(
         resolved.action_for_context(InputContext::ColorPicker, "escape", false, false, false),
         Some(Action::PickerCancel),
@@ -942,6 +1051,39 @@ fn test_action_context_assignment() {
     assert_eq!(Action::PickerNudgeHueDown.context(), InputContext::ColorPicker);
     assert_eq!(Action::LabelEditCancel.context(), InputContext::LabelEdit);
     assert_eq!(Action::TextEditCancel.context(), InputContext::TextEdit);
+    // EnterNodeEdit (and its Clean variant) lift from Document so a
+    // top-level press flips the node into NodeEdit mode. EnterSectionEdit
+    // sits in the NodeEdit context so binding it to Enter does not
+    // shadow the same key at the Document level.
+    assert_eq!(Action::EnterNodeEdit.context(), InputContext::Document);
+    assert_eq!(Action::EnterNodeEditClean.context(), InputContext::Document);
+    assert_eq!(Action::EnterSectionEdit.context(), InputContext::NodeEdit);
+}
+
+/// `InputContext::NodeEdit` falls through to Document so global
+/// Document keybinds (Ctrl+S, Ctrl+Z, …) keep working while a
+/// NodeEdit session is active. Mirrors `ColorPicker`'s
+/// fallthrough discipline. A regression here would silently break
+/// every Document binding inside NodeEdit mode.
+#[test]
+fn test_input_context_node_edit_falls_through() {
+    assert!(
+        InputContext::NodeEdit.falls_through(),
+        "NodeEdit must fall through to Document for global keybinds"
+    );
+    // `Ctrl+S` is bound at Document; the cascade must surface it
+    // when the user is in NodeEdit context.
+    let resolved = KeybindConfig::default().resolve();
+    assert_eq!(
+        resolved.action_for_context(InputContext::NodeEdit, "s", true, false, false),
+        Some(Action::SaveDocument),
+        "SaveDocument must reach NodeEdit context via the cascade"
+    );
+    assert_eq!(
+        resolved.action_for_context(InputContext::NodeEdit, "z", true, false, false),
+        Some(Action::Undo),
+        "Undo must reach NodeEdit context via the cascade"
+    );
 }
 
 #[test]
@@ -996,7 +1138,7 @@ fn test_partial_json_preserves_component_defaults() {
 
 #[test]
 fn test_empty_binding_list_disables_action() {
-    let json = r#"{ "cancel_mode": [] }"#;
+    let json = r#"{ "exit_mode": [] }"#;
     let cfg = KeybindConfig::from_json(json).unwrap();
     let resolved = cfg.resolve();
     assert_eq!(

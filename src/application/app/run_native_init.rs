@@ -22,7 +22,7 @@ use super::scene_rebuild::{
     update_section_resize_handle_tree, warm_handle_tree_arenas,
 };
 use super::text_edit::TextEditState;
-use super::{AppMode, DragState, Options};
+use super::{DragState, InteractionMode, Options};
 use crate::application::common::RenderDecree;
 use crate::application::console::ConsoleState;
 use crate::application::document::MindMapDocument;
@@ -89,10 +89,15 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
             // `scene_cache` is hot before the first interaction; the
             // first drag/zoom no longer pays the full per-edge
             // Bezier-sample cost.
+            // Init runs before any interaction — mode is `Default` and
+            // no resize handles emit. Pre-warm path uses the explicit
+            // `none()` overrides so the warm scene matches the first
+            // post-init frame's shape.
             let scene = doc.build_scene_with_cache(
                 &std::collections::HashMap::new(),
                 &mut scene_cache,
                 renderer.camera_zoom(),
+                crate::application::document::InteractionModeOverrides::none(),
             );
             update_connection_tree(&scene, &mut app_scene);
             update_border_tree_static(&doc, &mut app_scene);
@@ -162,8 +167,13 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
     // signature stamps so the first user-visible rebuild only
     // pays the diffing-cost portion.
     if let Some(doc) = document.as_ref() {
+        // Init runs in Default mode — no handles emit. Construct the
+        // mode locally rather than threading from the (still-empty)
+        // InitState; the post-init InitState will use its own field.
+        let init_mode = InteractionMode::Default;
         rebuild_all(
             doc,
+            &init_mode,
             &mut mindmap_tree,
             &mut app_scene,
             &mut renderer,
@@ -228,7 +238,7 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
         app_scene,
         cursor_pos: (0.0, 0.0),
         drag_state: DragState::None,
-        app_mode: AppMode::Normal,
+        interaction_mode: InteractionMode::Default,
         console_state: ConsoleState::Closed,
         console_history,
         label_edit_state: LabelEditState::Closed,

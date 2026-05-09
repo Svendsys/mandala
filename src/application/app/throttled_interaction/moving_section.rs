@@ -93,12 +93,8 @@ impl ThrottledInteraction for MovingSectionInteraction {
                 if let Some(node) = doc.mindmap.nodes.get(&self.node_id) {
                     if let Some(section) = node.sections.get(self.section_idx) {
                         let canvas_pos = Vec2::new(
-                            node.position.x as f32
-                                + section.offset.x as f32
-                                + self.total_delta.x,
-                            node.position.y as f32
-                                + section.offset.y as f32
-                                + self.total_delta.y,
+                            node.position.x as f32 + section.offset.x as f32 + self.total_delta.x,
+                            node.position.y as f32 + section.offset.y as f32 + self.total_delta.y,
                         );
                         let canvas_size = section
                             .size
@@ -117,6 +113,22 @@ impl ThrottledInteraction for MovingSectionInteraction {
             // Container/connections/borders/portals untouched —
             // those anchor to `node.position` which the section
             // drag doesn't change.
+            //
+            // Section frames are deliberately also untouched here:
+            // they're built from `MindSection.offset`, which the
+            // section drag patches in the rendered tree but not in
+            // the model (the patch path is `patch_drag_positions`,
+            // not a model setter). A per-frame rebuild would either
+            // need a transient model write — unsafe per-tick — or a
+            // dedicated tree-side patcher mirroring
+            // `apply_section_drag_delta_and_collect_patches`. The
+            // dragged section's frame visibly catches up at drag
+            // release when the model write lands and the next full
+            // `build_section_frames` runs. For sibling sections the
+            // drag is a no-op anyway. Pre-MovingNode-fix the same
+            // gap existed for whole-node drags too; the MovingNode
+            // drain now calls `update_section_frame_tree` because
+            // there `offsets` is a real, in-flight map.
             flush_canvas_scene_buffers(app_scene, renderer);
         }
 

@@ -39,6 +39,36 @@ pub enum ColorAxis {
     Border,
 }
 
+/// Which border-slot a [`Action::SetBorderPreview`] targets.
+/// Discriminator for the `<verb> preview <kv>=…` Action surface
+/// — five variants mirror the five committing setters
+/// (`set_node_border_config` /
+/// `set_section_frame_border_config` /
+/// `set_canvas_default_border_config` /
+/// `set_canvas_default_section_frame_border_config(focused=false|true)`).
+///
+/// Same strum-derive shape as [`ColorAxis`]: `Node.into() ==
+/// "node"`, `"node".parse::<BorderPreviewTargetKind>() ==
+/// Ok(Node)`. Replaces the prior `target_kind: String`
+/// stringly-typed discriminator that could accept typos at
+/// runtime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, IntoStaticStr, EnumString)]
+#[serde(rename_all = "kebab-case")]
+#[strum(serialize_all = "kebab-case")]
+pub enum BorderPreviewTargetKind {
+    /// `border preview` — per-node `style.border` for selected nodes.
+    Node,
+    /// `section frame preview` — per-section `frame_border` for
+    /// selected section pairs.
+    Section,
+    /// `canvas border preview` — `Canvas.default_border`.
+    CanvasBorder,
+    /// `canvas section-frame preview` — `Canvas.default_section_frame_border`.
+    CanvasSf,
+    /// `canvas section-frame focused preview` — `Canvas.default_focused_section_frame_border`.
+    CanvasSfFocused,
+}
+
 /// Which font slot a [`Action::SetFont`] targets. Mirrors the
 /// `size|min|max` kv key on the `font` console verb. Family
 /// (`SetFontFamily`) lives on its own Action because the verb
@@ -129,19 +159,20 @@ pub enum Action {
     EnterConnectMode,
     /// Confirm a reparent operation by clicking on a target node
     /// (or empty canvas to promote sources to root). Sources come
-    /// from `AppMode::Reparent { sources }`; the payload carries
-    /// the target node id (`None` for empty-canvas → root).
-    /// NativeOnly: depends on `AppMode`, which doesn't exist on
-    /// WASM. Classified `is_destructive = true` so the privilege
-    /// gate (`MacroSource::allows_action`) denylists non-User
-    /// macro tiers; the arm body's `mem::replace(.., Normal)` is
+    /// from `InteractionMode::Reparent { sources }`; the payload
+    /// carries the target node id (`None` for empty-canvas → root).
+    /// NativeOnly today because the click-handler path that surfaces
+    /// the hit target lives natively only; the mode enum itself is
+    /// cross-platform. Classified `is_destructive = true` so the
+    /// privilege gate (`MacroSource::allows_action`) denylists non-User
+    /// macro tiers; the arm body's `mem::replace(.., Default)` is
     /// an additional runtime guard (stale fire outside Reparent
     /// mode is a no-op).
     #[action(context = Document, wasm = NativeOnly, destructive)]
     ReparentToTarget(Option<String>),
     /// Confirm a connect operation by clicking on a target node
     /// (or empty canvas to exit Connect mode without creating an
-    /// edge). Source comes from `AppMode::Connect { source }`; the
+    /// edge). Source comes from `InteractionMode::Connect { source }`; the
     /// payload carries the target node id (`None` for empty-canvas
     /// → mode-exit only, mirroring `ReparentToTarget`'s shape).
     /// NativeOnly + `is_destructive = true` per the same reasoning
@@ -151,9 +182,16 @@ pub enum Action {
     /// Delete the current selection (currently: selected edge).
     #[action(context = Document, wasm = Compatible, destructive)]
     DeleteSelection,
-    /// Cancel the current mode (reparent / connect).
-    #[action(context = Document, wasm = NativeOnly)]
-    CancelMode,
+    /// Exit the active interaction mode (Reparent / Connect / Resize)
+    /// back to `Default`. Cross-platform: the mode-clear + scene
+    /// rebuild slice runs on both targets via `dispatch_compatible`;
+    /// the native-only residual (clearing `hovered_node` for the
+    /// Reparent/Connect overlay rebuild) runs in the native arm.
+    /// Replaces the pre-Batch-2 `CancelMode` per
+    /// `SECTIONS_BORDERS_RESIZE_PLAN.md` §3.3 + CODE_CONVENTIONS §10
+    /// (rename rather than alias).
+    #[action(context = Document, wasm = Compatible)]
+    ExitMode,
     /// Create a new unattached (orphan) node at the cursor position.
     #[action(context = Document, wasm = Compatible, destructive)]
     CreateOrphanNode,
@@ -162,11 +200,62 @@ pub enum Action {
     OrphanSelection,
     /// Open the inline text editor on the currently selected single node
     /// with the node's existing text, cursor at end.
+    ///
+    /// **Today this is the umbrella "edit" Action** — for node /
+    /// section / SectionRange selections it dispatches through
+    /// [`Action::EnterNodeEdit`]; for `EdgeLabel` / `PortalLabel` /
+    /// `PortalText` it opens the relevant inline editor directly.
+    /// Multi / MultiSection / Edge / None silently no-op.
     #[action(context = Document, wasm = NativeOnly, destructive)]
     EditSelection,
     /// Same as `EditSelection` but opens the editor with an empty buffer.
     #[action(context = Document, wasm = NativeOnly, destructive)]
     EditSelectionClean,
+    /// Enter NodeEdit mode on the currently selected node.
+    /// Resolution rules:
+    /// - `Single(node)` / `Section(s)` / `SectionRange { sel: s, .. }` →
+    ///   `InteractionMode::NodeEdit { node_id }` (where `node_id` is
+    ///   the owning node).
+    /// - **Single-section short-circuit**: if the active node has
+    ///   `sections.len() == 1`, the helper opens the text editor on
+    ///   section 0 in the same call. This preserves today's
+    ///   "Enter on a node opens the editor" UX for legacy migrated
+    ///   maps. Multi-section nodes stay in NodeEdit and let the user
+    ///   pick which section to edit (a second Enter, or a click on
+    ///   a section followed by Enter).
+    /// - `Multi` / `MultiSection` / `Edge*` / `None` → no-op + log.
+    ///
+    /// **WASM: NativeOnly** — opening the text editor depends on
+    /// `TextEditState`, which is part of the native modal-stealer
+    /// cascade. The `apply_enter_node_edit` helper itself is
+    /// cross-platform-shaped; reclassification is a one-line change
+    /// once WASM gains the modal pipeline.
+    ///
+    /// `destructive` — the single-section short-circuit opens the
+    /// editor, which can clear text on the spot. User-tier-only via
+    /// the macro privilege gate.
+    #[action(context = Document, wasm = NativeOnly, destructive)]
+    EnterNodeEdit,
+    /// Same as [`Action::EnterNodeEdit`] but the (potentially-opened)
+    /// editor starts with an empty buffer rather than the section's
+    /// existing text. Mirrors the `EditSelectionClean` posture.
+    #[action(context = Document, wasm = NativeOnly, destructive)]
+    EnterNodeEditClean,
+    /// Open the section text editor on the active section while in
+    /// NodeEdit mode.
+    /// - Active mode must be `InteractionMode::NodeEdit { node_id }`.
+    /// - Selection determines the section: `Section(s)` /
+    ///   `SectionRange { sel: s, .. }` use `s.section_idx`;
+    ///   `Single(node_id)` defaults to section 0; anything else no-ops.
+    /// - The editor opens via `open_text_edit`. NodeEdit mode stays
+    ///   active; closing the editor (commit or cancel) returns to
+    ///   `NodeEdit` mode (not `Default` — `ExitMode` does that).
+    ///
+    /// Sits in [`InputContext::NodeEdit`] so binding it to `Enter`
+    /// at the NodeEdit context doesn't shadow the same key at the
+    /// Document level (which is bound to `EnterNodeEdit`).
+    #[action(context = NodeEdit, wasm = NativeOnly, destructive)]
+    EnterSectionEdit,
     /// Open (or toggle) the CLI console.
     #[action(context = Document, wasm = NativeOnly)]
     OpenConsole,
@@ -190,6 +279,37 @@ pub enum Action {
     /// **WASM:** same stub posture as `Copy`.
     #[action(context = Document, wasm = Compatible, destructive)]
     Cut,
+    /// Enter resize mode on the current selection. Resolves the
+    /// selection into a [`crate::application::app::interaction_mode::ResizeTarget`]:
+    /// - `Single(node)` → `Resize { target: Node(node_id) }`.
+    /// - `Section(s)` / `SectionRange` with `s.size == Some(_)` →
+    ///   `Resize { target: Section { node_id, section_idx } }`.
+    /// - `Section` with `size == None` (fill-parent) → no-op + log
+    ///   (None-sized sections have no AABB to stretch).
+    /// - `Multi` / `MultiSection` / `Edge*` / `None` → no-op + log.
+    ///
+    /// On success the active node / section emits 8 resize handles
+    /// (NW, N, NE, E, SE, S, SW, W); anchor drag transitions
+    /// `DragState` through the existing throttled-resize gestures.
+    /// `ExitMode` (Esc) returns to `Default`.
+    ///
+    /// **WASM: NativeOnly until the resize gesture is wired
+    /// cross-platform.** The mode flip itself is target-agnostic
+    /// (the cross-platform `apply_enter_resize_mode` arm could
+    /// run on WASM today), but WASM has no `DragState`, no
+    /// throttled-drag pipeline, and no handle hit-test in
+    /// `run_wasm/event_mouse_click.rs` — so a flip on WASM would
+    /// render handles the user can't use. Per CODE_CONVENTIONS §5
+    /// (no half-features), the Action is `NativeOnly` until Batches
+    /// 4 / 7 land the WASM gesture pipeline. Reclassification is a
+    /// one-line change at that point.
+    ///
+    /// Non-destructive — flips a mode bit and triggers a scene
+    /// rebuild, no document mutation. The actual resize commit
+    /// happens later via `set_node_aabb` / `set_section_aabb` on
+    /// drag release; that path is gated separately.
+    #[action(context = Document, wasm = NativeOnly)]
+    EnterResizeMode,
 
     // ── Console ──────────────────────────────────────────────────
     /// Close the console (two-tier: dismiss popup first, then close).
@@ -518,6 +638,50 @@ pub enum Action {
     /// field|padding|top|bottom|left|right|tl|tr|bl|br`.
     #[action(context = Document, wasm = Compatible)]
     SetBorderField { field: String, value: String },
+    /// Stage a single-kv border preview against the live
+    /// selection. `target_kind: BorderPreviewTargetKind` is a
+    /// typed enum (kebab-case-serialised: `node` / `section` /
+    /// `canvas-border` / `canvas-sf` / `canvas-sf-focused`)
+    /// that picks the committing setter `commit_border_preview`
+    /// will route to; replaces the prior stringly-typed
+    /// discriminator that could accept typos at runtime. Single
+    /// kv per binding (preview-set keybinds; multi-kv preview
+    /// stays console-only). Mirrors the `<verb> preview
+    /// <field>=<value>` console path without the model write.
+    ///
+    /// **`Section` target requires a section-shaped selection**
+    /// (`Section` / `SectionRange` / `MultiSection`). On
+    /// `Single(node_id)` the resolver in
+    /// `apply_set_border_preview` falls through (no `section=K`
+    /// payload exists on the Action variant) and the keybind
+    /// becomes a no-op. The console verb path requires `section=K`
+    /// to disambiguate; the keybind has no kv side-channel so
+    /// authors who want a section preview keybind should bind it
+    /// to a navigation key that lands a section-shaped selection
+    /// first, or use the console verb.
+    #[action(context = Document, wasm = Compatible)]
+    SetBorderPreview {
+        target_kind: BorderPreviewTargetKind,
+        field: String,
+        value: String,
+    },
+    /// Commit the active border preview through the matching
+    /// committing setter and clear the preview slot. No-op when
+    /// no preview is active.
+    #[action(context = Document, wasm = Compatible)]
+    CommitBorderPreview,
+    /// Discard the active border preview without writing the
+    /// model. No-op when no preview is active. Default-bound to
+    /// **nothing** in `KeybindConfig::default()` — Esc cancels
+    /// previews through `Action::ExitMode`'s body (which calls
+    /// `cancel_border_preview()` first and short-circuits when a
+    /// preview was canceled). The chain lives inside ExitMode
+    /// because the keybind resolver maps `(context, key) →
+    /// Action` deterministically and can't fall through. Bind
+    /// this entry to opt out of the chain (e.g. preview-cancel
+    /// on a different key while leaving Esc on plain ExitMode).
+    #[action(context = Document, wasm = Compatible)]
+    CancelBorderPreview,
     /// Mirror `cap from=<arrow|circle|diamond|none> to=<...>` on the
     /// selected edge.
     #[action(context = Document, wasm = Compatible)]
@@ -647,8 +811,10 @@ pub enum WasmCompatibility {
     /// `dispatch_action_for_wasm` once that path is built.
     Compatible,
     /// Action requires a native-only system not yet ported to
-    /// WASM (`AppMode`, console, color picker, inline label /
-    /// portal-text editors, `DragState`, filesystem `save`).
+    /// WASM (console, color picker, inline label / portal-text
+    /// editors, `DragState`, filesystem `save`). The `InteractionMode`
+    /// enum itself is cross-platform; only the click-handler paths
+    /// that read it on native still gate Reparent / Connect arms here.
     /// Currently a no-op on WASM; the convergence path is to
     /// either port the underlying system or surface a WASM-
     /// specific equivalent and flip the classification to

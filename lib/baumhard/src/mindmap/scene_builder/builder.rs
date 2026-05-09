@@ -27,7 +27,7 @@ use super::portal::build_portal_elements;
 use super::portal::SelectedPortalLabel;
 use super::node_resize_handle::{build_node_resize_handles, NodeResizeHandleElement};
 use super::section_resize_handle::{build_section_resize_handles, SectionResizeHandleElement};
-use super::{EdgeColorPreview, PortalColorPreview, RenderScene};
+use super::{BorderPreview, EdgeColorPreview, PortalColorPreview, RenderScene};
 
 /// Bundle of "what is the user currently pointing at?" inputs
 /// threaded into the scene build. Groups the three selection-
@@ -79,6 +79,23 @@ pub struct SceneSelectionContext<'a> {
     /// empty otherwise. The scene includes 8 handles for the
     /// node when its size is finite + positive.
     pub selected_node_for_resize: Option<&'a str>,
+    /// Active NodeEdit target. When `Some(active)`, every node
+    /// other than `active` renders chrome + text at
+    /// [`super::node_pass::INACTIVE_NODE_ALPHA_MULTIPLIER`] alpha
+    /// — the "you are inside this node" affordance for
+    /// `InteractionMode::NodeEdit`. `None` (the Default-mode
+    /// case) is the no-op fast path: every node draws at full
+    /// opacity. Set from the application layer at the same call
+    /// site that fills `selected_node_for_resize` /
+    /// `selected_section`; routes to [`super::node_pass`] inside
+    /// [`build_scene_with_cache`].
+    pub node_edit_for: Option<&'a str>,
+    /// Section currently inside the inline text editor, if any.
+    /// Read by the section-frame pass to mark the matching
+    /// `SectionFrameElement.focused = true`. `None` = no editor
+    /// open or the editor's section isn't part of an emitted frame
+    /// set (Default mode, single-section node).
+    pub focused_section: Option<(&'a str, usize)>,
 }
 
 /// Substitution pair for the portal-text inline edit preview.
@@ -110,6 +127,7 @@ pub fn build_scene(map: &MindMap, camera_zoom: f32) -> RenderScene {
         SceneSelectionContext::default(),
         None,
         None,
+        None,
         &mut scratch,
         camera_zoom,
     )
@@ -129,6 +147,7 @@ pub fn build_scene_with_offsets(
         map,
         offsets,
         SceneSelectionContext::default(),
+        None,
         None,
         None,
         &mut scratch,
@@ -154,6 +173,7 @@ pub fn build_scene_with_offsets_selection_and_overrides(
     selection: SceneSelectionContext<'_>,
     edge_color_preview: Option<EdgeColorPreview<'_>>,
     portal_color_preview: Option<PortalColorPreview<'_>>,
+    border_preview: Option<BorderPreview<'_>>,
     camera_zoom: f32,
 ) -> RenderScene {
     let mut scratch = SceneConnectionCache::new();
@@ -163,6 +183,7 @@ pub fn build_scene_with_offsets_selection_and_overrides(
         selection,
         edge_color_preview,
         portal_color_preview,
+        border_preview,
         &mut scratch,
         camera_zoom,
     )
@@ -181,12 +202,27 @@ pub fn build_scene_with_offsets_selection_and_overrides(
 ///
 /// At the end of the build, any cached entry whose key was not seen this
 /// frame (i.e. the edge was deleted from the model) is evicted.
+// `clippy::too_many_arguments` is silenced here for an
+// architectural reason rather than a stylistic one: this is the
+// scene-build entry point and each argument has a different
+// caller-vs-builder lifetime relationship. `map` and `offsets`
+// borrow the persisted document; `selection` is a per-frame
+// snapshot; the three `*_preview` Options are short-lived
+// borrowed views constructed by `assemble_scene_overrides`;
+// `cache` is mut-borrowed across frames for memoisation;
+// `camera_zoom` is by-value. Bundling them into a struct would
+// either duplicate every field's lifetime/mutability annotation
+// or hide the borrow shape from the caller. Keep the function
+// signature as the documentation surface for "what this function
+// reads vs. writes".
+#[allow(clippy::too_many_arguments)]
 pub fn build_scene_with_cache(
     map: &MindMap,
     offsets: &HashMap<String, (f32, f32)>,
     selection: SceneSelectionContext<'_>,
     edge_color_preview: Option<EdgeColorPreview<'_>>,
     portal_color_preview: Option<PortalColorPreview<'_>>,
+    border_preview: Option<BorderPreview<'_>>,
     cache: &mut SceneConnectionCache,
     camera_zoom: f32,
 ) -> RenderScene {
@@ -197,6 +233,8 @@ pub fn build_scene_with_cache(
         label_edit: label_edit_override,
         selected_section,
         selected_node_for_resize,
+        node_edit_for,
+        focused_section,
     } = selection;
     // The per-edge sample spacing depends on the effective font size,
     // which depends on `camera_zoom`. Flush cached samples if the
@@ -206,7 +244,10 @@ pub fn build_scene_with_cache(
 
     // Per-node pass: emits `TextElement`s + `BorderElement`s and
     // computes the clip AABBs the connection pass below consumes.
-    let (text_elements, border_elements, node_aabbs) = build_node_elements(map, offsets);
+    // `node_edit_for` dims chrome on every other node — see
+    // `node_pass::INACTIVE_NODE_ALPHA_MULTIPLIER`.
+    let (text_elements, border_elements, node_aabbs) =
+        build_node_elements(map, offsets, node_edit_for, border_preview);
 
     // Connection pass — fast/slow cache path, clip filter against
     // `node_aabbs`, edge-handle emission for the selected edge.
@@ -269,6 +310,19 @@ pub fn build_scene_with_cache(
     // cases produce zero handles.
     let node_resize_handles = build_selected_node_handles(map, offsets, selected_node_for_resize);
 
+    // Section frames — one per section of the active NodeEdit
+    // node so the user sees the per-section subdivisions. Empty
+    // in Default mode and on single-section nodes (the
+    // single-section short-circuit bypasses NodeEdit entirely).
+    // Plan §3.5 / §4.3.
+    let section_frames = super::section_frame::build_section_frames(
+        map,
+        offsets,
+        node_edit_for,
+        focused_section,
+        border_preview,
+    );
+
     RenderScene {
         text_elements,
         border_elements,
@@ -277,6 +331,7 @@ pub fn build_scene_with_cache(
         edge_handles,
         section_resize_handles,
         node_resize_handles,
+        section_frames,
         connection_label_elements,
         background_color: resolve_var(&map.canvas.background_color, &map.canvas.theme_variables).to_string(),
     }
