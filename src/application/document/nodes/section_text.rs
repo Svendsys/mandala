@@ -230,6 +230,7 @@ impl MindMapDocument {
             return false;
         }
         let before_sections = node.sections.clone();
+        let count = baumhard::util::grapheme_chad::count_grapheme_clusters(&new_text);
         let template = section.text_runs.first().cloned().unwrap_or_else(|| TextRun {
             start: 0,
             end: 0,
@@ -241,11 +242,19 @@ impl MindMapDocument {
             color: "#ffffff".to_string(),
             hyperlink: None,
         });
-        let new_runs = vec![TextRun {
-            start: 0,
-            end: baumhard::util::grapheme_chad::count_grapheme_clusters(&new_text),
-            ..template
-        }];
+        // Empty text yields an empty runs vec; a `TextRun { start: 0,
+        // end: 0 }` would violate the `text_run_ops` invariant
+        // `start < end` and panic in debug builds on subsequent
+        // slice / splice / find_run_containing calls.
+        let new_runs = if count == 0 {
+            Vec::new()
+        } else {
+            vec![TextRun {
+                start: 0,
+                end: count,
+                ..template
+            }]
+        };
         let canvas_default = self.mindmap.canvas.default_border.clone();
         let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
         if let Some(section) = node.sections.get_mut(section_idx) {

@@ -1129,6 +1129,30 @@ fn test_set_section_text_out_of_range_is_noop() {
     assert!(!doc.dirty);
 }
 
+/// `set_section_text(_, _, "")` produces an empty `text_runs`
+/// vec, never a degenerate `TextRun { start: 0, end: 0 }`. The
+/// degenerate run violates `text_run_ops`'s `start < end`
+/// invariant (debug_assert_invariants in
+/// `lib/baumhard/.../text_run_ops.rs`) and panics in debug
+/// builds on subsequent slice / splice / find_run_containing
+/// calls. Pin the empty case so the §4.5 console verb
+/// `section text "" runs=clear` and the §4.6 keybind / macro
+/// `Action::SetSectionText { text: "", runs_mode: "clear" }`
+/// don't ship a debug-build crasher.
+#[test]
+fn test_set_section_text_empty_produces_empty_runs_not_degenerate() {
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    assert!(doc.set_section_text(&nid, 0, "".to_string()));
+    let section = &doc.mindmap.nodes.get(&nid).unwrap().sections[0];
+    assert!(section.text.is_empty());
+    assert!(
+        section.text_runs.is_empty(),
+        "empty text must yield empty runs vec; got {:?}",
+        section.text_runs
+    );
+}
+
 #[test]
 fn test_set_node_text_noop_on_unchanged() {
     let mut doc = load_test_doc();
