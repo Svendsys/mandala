@@ -199,7 +199,7 @@ pub(super) fn handle_cursor_moved(
         } => {
             let dist_x = cursor_pos_val.0 - start_pos.0;
             let dist_y = cursor_pos_val.1 - start_pos.1;
-            if dist_x * dist_x + dist_y * dist_y > 25.0 {
+            if dist_x * dist_x + dist_y * dist_y > super::DRAG_THRESHOLD_SQ_PX {
                 // Past threshold — promote `Pending` to the
                 // appropriate drag variant. At most one of
                 // `hit_edge_label` / `hit_portal_label` is set
@@ -580,9 +580,9 @@ pub(super) fn handle_cursor_moved(
             hit_section_idx,
         } => {
             // Threshold-cross arm for the right-button fast-resize
-            // gesture (`SECTIONS_BORDERS_RESIZE_PLAN.md` §6.3). Same
-            // 5px threshold (squared = 25.0) as the left-button
-            // arm above. The DispatchHit carries the **press-time**
+            // gesture (`SECTIONS_BORDERS_RESIZE_PLAN.md` §6.3).
+            // Same `DRAG_THRESHOLD_SQ_PX` as the left-button arm
+            // above. The DispatchHit carries the **press-time**
             // canvas position and hit (not the threshold-cross
             // values) so anchor inference fires from "where the
             // user pressed", not "where the cursor is now". Plan
@@ -590,7 +590,7 @@ pub(super) fn handle_cursor_moved(
             // continuously".
             let dist_x = cursor_pos_val.0 - start_pos.0;
             let dist_y = cursor_pos_val.1 - start_pos.1;
-            if dist_x * dist_x + dist_y * dist_y <= 25.0 {
+            if dist_x * dist_x + dist_y * dist_y <= super::DRAG_THRESHOLD_SQ_PX {
                 return;
             }
             // Look up the bound action via `action_for_gesture` so a
@@ -786,12 +786,35 @@ fn rebuild_selection_highlight(
 #[cfg(test)]
 mod tests {
     use super::{
-        resolve_section_drag_target, selection_after_node_drag_press,
-        selection_after_section_drag_press,
+        cursor_icon_for_resize_side, resolve_section_drag_target,
+        selection_after_node_drag_press, selection_after_section_drag_press,
     };
+    use baumhard::mindmap::scene_builder::ResizeHandleSide;
     use crate::application::app::InteractionMode;
     use crate::application::document::tests_common::{load_test_doc, pinned_two_section_node};
     use crate::application::document::{SectionSel, SelectionState};
+    use crate::application::platform::window::CursorIcon;
+
+    /// Pure 8→4 mapping: every `ResizeHandleSide` lands on the
+    /// matching winit `CursorIcon` for direction-appropriate
+    /// resize feedback. Pinned per-side so a future refactor that
+    /// (e.g.) swaps NW and SW silently leaves users with the
+    /// wrong cursor on every diagonal grab. Test agent flagged
+    /// this as the most important coverage gap in Batch 4.
+    #[test]
+    fn cursor_icon_for_resize_side_pin_per_side() {
+        // Diagonals share an axis: NW/SE = `\` = NwseResize.
+        //                          NE/SW = `/` = NeswResize.
+        assert_eq!(cursor_icon_for_resize_side(ResizeHandleSide::NW), CursorIcon::NwseResize);
+        assert_eq!(cursor_icon_for_resize_side(ResizeHandleSide::SE), CursorIcon::NwseResize);
+        assert_eq!(cursor_icon_for_resize_side(ResizeHandleSide::NE), CursorIcon::NeswResize);
+        assert_eq!(cursor_icon_for_resize_side(ResizeHandleSide::SW), CursorIcon::NeswResize);
+        // Edge midpoints.
+        assert_eq!(cursor_icon_for_resize_side(ResizeHandleSide::N), CursorIcon::NsResize);
+        assert_eq!(cursor_icon_for_resize_side(ResizeHandleSide::S), CursorIcon::NsResize);
+        assert_eq!(cursor_icon_for_resize_side(ResizeHandleSide::E), CursorIcon::EwResize);
+        assert_eq!(cursor_icon_for_resize_side(ResizeHandleSide::W), CursorIcon::EwResize);
+    }
 
     /// Helper: NodeEdit mode targeting `node_id` — the mode that
     /// licences section-drag promotion.

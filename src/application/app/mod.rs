@@ -132,6 +132,19 @@ const EDGE_HIT_TOLERANCE_PX: f32 = 8.0;
 #[cfg(not(target_arch = "wasm32"))]
 const HANDLE_HIT_TOLERANCE_PX: f32 = 8.0;
 
+/// Minimum cursor travel (squared screen-pixel distance) before
+/// a `Pending` / `PendingRight` press promotes to its respective
+/// drag gesture. The 5px threshold (squared = 25.0) splits "this
+/// was a click" from "this is a drag" — small enough that
+/// intentional drags engage immediately, large enough that
+/// trembling fingers don't accidentally start a drag-to-move
+/// from a click. Used by both threshold-cross arms in
+/// `event_cursor_moved.rs` (left-button `Pending` and right-
+/// button `PendingRight`); single source so a future tweak
+/// doesn't drift between the two arms.
+#[cfg(not(target_arch = "wasm32"))]
+const DRAG_THRESHOLD_SQ_PX: f64 = 25.0;
+
 /// What a single click targeted. Used by [`LastClick`] + the
 /// double-click detector so a portal-marker double-click (navigate)
 /// is distinguishable from a node double-click (edit text) and from

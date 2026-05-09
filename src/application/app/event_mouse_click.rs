@@ -387,7 +387,6 @@ pub(super) fn handle_mouse_input(
                     hit_node_resize_handle,
                 };
             } else {
-                // Released
                 match std::mem::replace(ctx.drag_state, DragState::None) {
                     DragState::Pending {
                         hit_node,
@@ -960,7 +959,6 @@ fn handle_right_button(
             hit_section_idx,
         };
     } else {
-        // Released
         match std::mem::replace(ctx.drag_state, DragState::None) {
             DragState::PendingRight { .. } => {
                 // No movement past threshold — fire the bound
@@ -1084,7 +1082,10 @@ fn finalize_node_resize_release(
 /// step, so a W-grow gesture (shrink offset, grow width) passes
 /// the right-edge guard the two-step `set_section_size` +
 /// `set_section_offset` path rejected (intermediate state had
-/// new size at old offset, overflowing).
+/// new size at old offset, overflowing). Pushes an
+/// `EditNodeStyle` undo entry via the section's parent node
+/// (sections share their owning node's style undo envelope —
+/// see `mutate_section_with_style_undo` in `nodes/`).
 #[cfg(not(target_arch = "wasm32"))]
 fn finalize_section_resize_release(
     interaction: &super::throttled_interaction::SectionResizeInteraction,
