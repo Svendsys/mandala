@@ -387,7 +387,7 @@ impl MindMapDocument {
 #[cfg(test)]
 mod tests {
     use super::super::super::tests_common::{first_testament_node_id, load_test_doc};
-    use baumhard::mindmap::model::{MindSection, Position, Size};
+    use baumhard::mindmap::model::{MindSection, Position};
 
     fn empty_section() -> MindSection {
         MindSection {

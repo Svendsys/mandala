@@ -17,14 +17,14 @@ use crate::application::console::predicates::always;
 use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
 use crate::application::document::SelectionState;
 
-pub const VERBS: &[&str] = &["resize", "fit"];
+pub const VERBS: &[&str] = &["resize", "fit", "edit"];
 
 pub const COMMAND: Command = Command {
     name: "node",
     aliases: &[],
-    summary: "Resize the selected node atomically, or fit it to its content",
-    usage: "node resize <w> <h> | node fit",
-    tags: &["node", "resize", "size", "fit", "shrink", "content"],
+    summary: "Resize the selected node, fit it to its content, or enter node-edit mode",
+    usage: "node resize <w> <h> | node fit | node edit",
+    tags: &["node", "resize", "size", "fit", "shrink", "content", "edit", "node-edit"],
     applicable: always,
     complete: complete_node,
     execute: execute_node,
@@ -40,13 +40,35 @@ fn complete_node(state: &CompletionState, _ctx: &ConsoleContext) -> Vec<Completi
 fn execute_node(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     let verb = match args.positional(0) {
         Some(v) => v,
-        None => return ExecResult::err("usage: node resize <w> <h> | node fit"),
+        None => return ExecResult::err("usage: node resize <w> <h> | node fit | node edit"),
     };
     match verb {
         "resize" => execute_resize(args, eff),
         "fit" => execute_fit(eff),
+        "edit" => execute_edit(eff),
         other => ExecResult::err(format!("node: unknown subverb '{}'", other)),
     }
+}
+
+/// `node edit` — sugar for `mode node-edit`. Plan §3.9. Same
+/// `SetInteractionMode(NodeEdit { ... })` side-effect; the
+/// node-id resolves from the active selection (Single, Section,
+/// SectionRange, or MultiSection's primary). Closes the console.
+fn execute_edit(eff: &mut ConsoleEffects) -> ExecResult {
+    let node_id = match &eff.document.selection {
+        SelectionState::Single(id) => id.clone(),
+        SelectionState::Section(s) => s.node_id.clone(),
+        SelectionState::SectionRange { sel, .. } => sel.node_id.clone(),
+        SelectionState::MultiSection(secs) if !secs.is_empty() => secs[0].node_id.clone(),
+        _ => return ExecResult::err(
+            "node edit: select a node first (Single / Section / MultiSection)"
+        ),
+    };
+    eff.side_effect = Some(crate::application::console::ConsoleSideEffect::SetInteractionMode(
+        crate::application::app::InteractionMode::NodeEdit { node_id: node_id.clone() },
+    ));
+    eff.close_console = true;
+    ExecResult::ok_msg(format!("entering node-edit mode on '{}'", node_id))
 }
 
 fn execute_fit(eff: &mut ConsoleEffects) -> ExecResult {
@@ -99,7 +121,10 @@ fn execute_resize(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::application::console::parser::Args;
     use crate::application::console::tests::fixtures::{assert_exec_err_contains, assert_exec_ok, run};
+    use crate::application::console::ExecResult;
     use crate::application::document::tests_common::{first_testament_node_id, load_test_doc};
     use crate::application::document::SelectionState;
 
@@ -234,5 +259,35 @@ mod tests {
         let mut doc = load_test_doc();
         doc.selection = SelectionState::None;
         assert_exec_err_contains(run("node fit", &mut doc), "single-node or section");
+    }
+
+    /// `node edit` is sugar for `mode node-edit` — emits the
+    /// same `SetInteractionMode(NodeEdit { ... })` side effect
+    /// and closes the console. Plan §3.9.
+    #[test]
+    fn node_edit_emits_set_interaction_mode_node_edit() {
+        let mut doc = load_test_doc();
+        let id = first_testament_node_id(&doc);
+        doc.selection = SelectionState::Single(id.clone());
+        let mut effects = crate::application::console::ConsoleEffects::new(&mut doc);
+        let args_owned: Vec<String> = vec!["edit".to_string()];
+        let result = execute_node(&Args::new(&args_owned), &mut effects);
+        assert!(matches!(result, ExecResult::Ok(_)));
+        match &effects.side_effect {
+            Some(crate::application::console::ConsoleSideEffect::SetInteractionMode(
+                crate::application::app::InteractionMode::NodeEdit { node_id },
+            )) => {
+                assert_eq!(node_id, &id);
+            }
+            other => panic!("expected SetInteractionMode(NodeEdit), got {:?}", other),
+        }
+        assert!(effects.close_console);
+    }
+
+    #[test]
+    fn node_edit_rejects_no_selection() {
+        let mut doc = load_test_doc();
+        doc.selection = SelectionState::None;
+        assert_exec_err_contains(run("node edit", &mut doc), "select a node first");
     }
 }
