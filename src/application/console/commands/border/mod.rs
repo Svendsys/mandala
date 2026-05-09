@@ -24,7 +24,7 @@
 use baumhard::mindmap::border::BORDER_PRESETS;
 
 use super::Command;
-use crate::application::console::predicates::always;
+use crate::application::console::predicates::node_or_section_selected;
 
 mod complete;
 mod execute;
@@ -96,7 +96,14 @@ pub const COMMAND: Command = Command {
         "border", "frame", "glyph", "preset", "corner", "side", "pattern", "palette", "padding", "rounded",
         "heavy", "double", "light", "custom",
     ],
-    applicable: always,
+    // Plan §5.5: borders are node-only, so the verb hides on
+    // edge / edge-label / portal selections in completion +
+    // help. Pre-fix the predicate was `always` which surfaced
+    // the verb and then errored at execute-time on the wrong
+    // selection — wasted user time. The predicate matches the
+    // `section` verb's surface (every section sits inside a
+    // node, so a section selection implies a node selection).
+    applicable: node_or_section_selected,
     complete: complete_border,
     execute: execute_border,
 };
