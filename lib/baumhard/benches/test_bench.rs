@@ -774,10 +774,126 @@ fn resize_mode_rebuild_benchmark(c: &mut Criterion) {
     });
 }
 
+/// Plan §7.4: `bench_scene_rebuild_with_node_edit_mode_active`.
+/// Pins the cost of the section-frame pass on a NodeEdit-active
+/// rebuild. Uses the synthetic 50-node × 5-section fixture so
+/// the section-frame chrome has real work to do (the testament
+/// map's nodes are mostly single-section).
+fn node_edit_mode_rebuild_benchmark(c: &mut Criterion) {
+    let bench_map = synthetic_multi_section_map(50, 5);
+    let any_node_id: String = bench_map
+        .nodes
+        .keys()
+        .next()
+        .expect("synthetic map has at least one node")
+        .clone();
+    let mut cache = SceneConnectionCache::new();
+    // Warm cache once so the bench measures steady-state.
+    let _ = build_scene_with_cache(
+        &bench_map,
+        &HashMap::new(),
+        SceneSelectionContext {
+            edge: None,
+            edge_label: None,
+            portal_label: None,
+            label_edit: None,
+            selected_section: None,
+            selected_node_for_resize: None,
+            node_edit_for: Some(any_node_id.as_str()),
+            focused_section: None,
+        },
+        None,
+        None,
+        None,
+        &mut cache,
+        1.0,
+    );
+    c.bench_function("scene_rebuild_node_edit_mode_active", |b| {
+        b.iter(|| {
+            let _ = build_scene_with_cache(
+                &bench_map,
+                &HashMap::new(),
+                SceneSelectionContext {
+                    edge: None,
+                    edge_label: None,
+                    portal_label: None,
+                    label_edit: None,
+                    selected_section: None,
+                    selected_node_for_resize: None,
+                    node_edit_for: Some(any_node_id.as_str()),
+                    focused_section: None,
+                },
+                None,
+                None,
+                None,
+                &mut cache,
+                1.0,
+            );
+        })
+    });
+}
+
+/// Plan §7.4: `bench_fast_resize_anchor_inference`. The pure
+/// quadrant-math helper; sub-microsecond per call. Pin against
+/// the eight quadrant cases.
+fn fast_resize_anchor_inference_benchmark(c: &mut Criterion) {
+    use baumhard::mindmap::scene_builder::infer_resize_anchor;
+    use glam::Vec2;
+    let aabb_pos = Vec2::new(0.0, 0.0);
+    let aabb_size = Vec2::new(200.0, 100.0);
+    let cases = [
+        Vec2::new(10.0, 10.0),
+        Vec2::new(190.0, 10.0),
+        Vec2::new(10.0, 90.0),
+        Vec2::new(190.0, 90.0),
+        Vec2::new(100.0, 10.0),
+        Vec2::new(10.0, 50.0),
+        Vec2::new(190.0, 50.0),
+        Vec2::new(100.0, 90.0),
+    ];
+    c.bench_function("fast_resize_anchor_inference", |b| {
+        b.iter(|| {
+            for cursor in &cases {
+                let _ = infer_resize_anchor(*cursor, aabb_pos, aabb_size);
+            }
+        })
+    });
+}
+
+/// Plan §7.4: `bench_section_frame_emission`. Isolates the
+/// section-frame scene-builder pass against a 50×5 synthetic
+/// map; pins the chrome-emission cost separate from the rest of
+/// the scene rebuild.
+fn section_frame_emission_benchmark(c: &mut Criterion) {
+    use baumhard::mindmap::scene_builder::build_section_frames;
+    let bench_map = synthetic_multi_section_map(50, 5);
+    let any_node_id: String = bench_map
+        .nodes
+        .keys()
+        .next()
+        .expect("synthetic map has at least one node")
+        .clone();
+    let offsets: HashMap<String, (f32, f32)> = HashMap::new();
+    c.bench_function("section_frame_emission_50x5_with_node_edit_active", |b| {
+        b.iter(|| {
+            let _ = build_section_frames(
+                &bench_map,
+                &offsets,
+                Some(any_node_id.as_str()),
+                None,
+                None,
+            );
+        })
+    });
+}
+
 criterion_group!(
     benches,
     criterion_benchmark,
     section_tree_build_benchmark,
-    resize_mode_rebuild_benchmark
+    resize_mode_rebuild_benchmark,
+    node_edit_mode_rebuild_benchmark,
+    fast_resize_anchor_inference_benchmark,
+    section_frame_emission_benchmark,
 );
 criterion_main!(benches);
