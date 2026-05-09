@@ -576,6 +576,6 @@ pub use node_resize_handle::{build_node_resize_handles, NodeResizeHandleElement}
 pub use portal::SelectedPortalLabel;
 pub use section_frame::build_section_frames;
 pub use section_resize_handle::{
-    build_section_resize_handles, ResizeHandleSide, SectionResizeHandleElement,
+    build_section_resize_handles, infer_resize_anchor, ResizeHandleSide, SectionResizeHandleElement,
     SECTION_RESIZE_HANDLE_FONT_SIZE_PT, SECTION_RESIZE_HANDLE_GLYPH,
 };
