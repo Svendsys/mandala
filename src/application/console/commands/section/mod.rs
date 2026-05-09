@@ -340,16 +340,25 @@ fn execute_show(doc: &MindMapDocument, node_id: &str, idx: usize) -> ExecResult 
 }
 
 /// `section text "<text>" [section=<idx>] [runs=preserve|clear]` —
-/// replace one section's text. `runs=preserve` (default) keeps
-/// per-grapheme styling on overlapping ranges via the existing
-/// `set_section_text_and_runs` editor path; `runs=clear` drops
-/// runs (collapses to single-run plain text via
-/// `set_section_text`). Plan §4.5 §9.8: today's console paths
-/// can't change a section's text — this closes that gap.
+/// replace one section's text.
 ///
-/// Text payload comes from the first positional or the `text=`
-/// kv. Quoted strings round-trip correctly through the
-/// tokenizer (multi-word values fit a single token when quoted).
+/// - `runs=preserve` (default) keeps existing runs to the extent
+///   the new text supports them. Runs wholly inside the new
+///   grapheme range carry through unchanged; runs straddling
+///   the new end clip at `new_grapheme_count`; runs entirely
+///   past the new end drop. Backed by
+///   `set_section_text_preserving_runs`.
+///
+/// - `runs=clear` drops every prior run and lays down a single
+///   run cloned from the first prior run's style attributes
+///   (so the new text inherits the section's effective color /
+///   font / size). Backed by `set_section_text`.
+///
+/// Plan §4.5 §9.8: closes the "console paths can't change a
+/// section's text" gap. Pre-fix `runs=preserve` was a phantom
+/// kv — both branches called `set_section_text` (which collapses
+/// runs unconditionally), so preserve and clear produced
+/// identical output.
 fn execute_text(args: &Args, doc: &mut MindMapDocument, node_id: &str, idx: usize) -> ExecResult {
     // Resolve the text payload: positional(1) or `text=` kv.
     // `text=` wins when both are present (the kv is the
@@ -389,14 +398,14 @@ fn execute_text(args: &Args, doc: &mut MindMapDocument, node_id: &str, idx: usiz
             ExecResult::ok_msg("section: no change")
         };
     }
-    // Preserve mode: build empty regions and let
-    // `set_section_text_and_runs` keep prior runs that map
-    // cleanly. Empty-regions short-circuits in the helper to
-    // `set_section_text`, which is the right thing here — the
-    // verb path doesn't carry per-grapheme region info.
-    let changed = doc.set_section_text(node_id, idx, new_text);
+    // Preserve mode: keep prior runs clipped to the new text
+    // length. Per-grapheme styling on overlapping ranges
+    // survives; uncovered tail (when the new text is longer
+    // than every prior run's `end`) falls through to section /
+    // node defaults per `format/text-runs.md`.
+    let changed = doc.set_section_text_preserving_runs(node_id, idx, new_text);
     if changed {
-        ExecResult::ok_msg(format!("section[{}] text replaced", idx))
+        ExecResult::ok_msg(format!("section[{}] text replaced (runs preserved)", idx))
     } else {
         ExecResult::ok_msg("section: no change")
     }
@@ -1089,6 +1098,123 @@ mod tests {
         assert_eq!(
             doc.mindmap.nodes.get(&id).unwrap().sections[1].text,
             "plain text"
+        );
+    }
+
+    /// Pin the divergence between `runs=preserve` and
+    /// `runs=clear`. Pre-fix both branches called
+    /// `set_section_text` (which collapses runs), making the kv
+    /// observably a phantom. The Full-Nelson runs-semantics
+    /// reviewer flagged this as a critical bug.
+    #[test]
+    fn section_text_preserve_keeps_multi_runs_distinguishably_from_clear() {
+        use baumhard::mindmap::model::TextRun;
+        // Build two parallel docs from the same fixture so both
+        // start with the same multi-run section[1]. `MindMapDocument`
+        // doesn't impl Clone, so we set up each side identically
+        // rather than clone.
+        let seed_runs = vec![
+            TextRun {
+                start: 0,
+                end: 3,
+                bold: true,
+                italic: false,
+                underline: false,
+                font: "Sans".into(),
+                size_pt: 12,
+                color: "#ff0000".into(),
+                hyperlink: None,
+            },
+            TextRun {
+                start: 3,
+                end: 6,
+                bold: false,
+                italic: true,
+                underline: false,
+                font: "Sans".into(),
+                size_pt: 12,
+                color: "#00ff00".into(),
+                hyperlink: None,
+            },
+        ];
+
+        let (mut doc_preserve, id_p) = pinned_two_section_node();
+        doc_preserve.set_section_text(&id_p, 1, "abcdef".to_string());
+        doc_preserve.mindmap.nodes.get_mut(&id_p).unwrap().sections[1].text_runs =
+            seed_runs.clone();
+        doc_preserve.selection = SelectionState::Section(SectionSel {
+            node_id: id_p.clone(),
+            section_idx: 1,
+        });
+
+        let (mut doc_clear, id_c) = pinned_two_section_node();
+        doc_clear.set_section_text(&id_c, 1, "abcdef".to_string());
+        doc_clear.mindmap.nodes.get_mut(&id_c).unwrap().sections[1].text_runs = seed_runs;
+        doc_clear.selection = SelectionState::Section(SectionSel {
+            node_id: id_c.clone(),
+            section_idx: 1,
+        });
+
+        // New text differs from prior so the setters' identity-
+        // shortcircuit doesn't bypass the run handling.
+        // Preserve: same length (6 graphemes) → both runs survive
+        // intact at their original [0..3) and [3..6) positions.
+        assert_exec_ok(run("section text \"ABCDEF\" runs=preserve", &mut doc_preserve));
+        let preserve_runs = &doc_preserve.mindmap.nodes.get(&id_p).unwrap().sections[1].text_runs;
+        assert_eq!(
+            preserve_runs.len(),
+            2,
+            "runs=preserve must keep both runs: {:?}",
+            preserve_runs
+        );
+        assert!(preserve_runs[0].bold);
+        assert!(preserve_runs[1].italic);
+
+        // Clear: collapses to one run regardless.
+        assert_exec_ok(run("section text \"ABCDEF\" runs=clear", &mut doc_clear));
+        let clear_runs = &doc_clear.mindmap.nodes.get(&id_c).unwrap().sections[1].text_runs;
+        assert_eq!(
+            clear_runs.len(),
+            1,
+            "runs=clear must collapse to one run: {:?}",
+            clear_runs
+        );
+    }
+
+    /// Preserve mode clips runs that straddle or overflow the
+    /// new (shorter) text length. Uncovered tail falls through
+    /// to section / node defaults per `format/text-runs.md`.
+    #[test]
+    fn section_text_preserve_clips_runs_to_shorter_text() {
+        use baumhard::mindmap::model::TextRun;
+        let (mut doc, id) = pinned_two_section_node();
+        doc.set_section_text(&id, 1, "abcdef".to_string());
+        {
+            let node = doc.mindmap.nodes.get_mut(&id).unwrap();
+            node.sections[1].text_runs = vec![TextRun {
+                start: 0,
+                end: 6,
+                bold: true,
+                italic: false,
+                underline: false,
+                font: "Sans".into(),
+                size_pt: 12,
+                color: "#ff0000".into(),
+                hyperlink: None,
+            }];
+        }
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id.clone(),
+            section_idx: 1,
+        });
+        // New text is 3 graphemes; the run [0..6) clips to [0..3).
+        assert_exec_ok(run("section text \"abc\" runs=preserve", &mut doc));
+        let runs = &doc.mindmap.nodes.get(&id).unwrap().sections[1].text_runs;
+        assert_eq!(runs.len(), 1);
+        assert_eq!(
+            (runs[0].start, runs[0].end),
+            (0, 3),
+            "run must clip to new grapheme count"
         );
     }
 
