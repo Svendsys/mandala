@@ -249,6 +249,25 @@ fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         };
         return execute_add(args, eff.document, &node_id);
     }
+    // `move` on a `MultiSection` selection with the **delta**
+    // form (`dx=` / `dy=`) fans out to every targeted section —
+    // each section's offset shifts by the same `(dx, dy)`. Plan
+    // §4.5 rule 4 / §9.1.3. The absolute form (`x=` / `y=`) and
+    // every other subverb stay single-target on MultiSection
+    // (different sections + same absolute coords would all pile
+    // up at the same offset, which is never the intent).
+    if verb == "move" {
+        if let SelectionState::MultiSection(_) = &eff.document.selection {
+            // Peek the form before dispatching; only delta fans
+            // out. The form-mismatch reject for absolute survives
+            // through `execute_move` → `parse_move_kvs` paths.
+            let has_delta = args.kvs().any(|(k, _)| k == "dx" || k == "dy");
+            let has_abs = args.kvs().any(|(k, _)| k == "x" || k == "y");
+            if has_delta && !has_abs {
+                return execute_move_fan_out_multisection(args, eff.document);
+            }
+        }
+    }
     let target_idx = match resolve_section_idx(args, &eff.document.selection, eff.document) {
         Ok(idx) => idx,
         Err(msg) => return ExecResult::err(msg),
@@ -671,6 +690,108 @@ fn execute_split(args: &Args, doc: &mut MindMapDocument, node_id: &str, idx: usi
 /// (`dx=1 x=2 dy=0 y=0`) is rejected at parse time so the user
 /// gets a clear "pick one form" error rather than a silent
 /// last-write-wins.
+/// `section move dx=X dy=Y` against a `MultiSection` selection:
+/// fan out the same `(dx, dy)` delta across every targeted
+/// `(node_id, section_idx)` pair. Plan §4.5 rule 4 / §9.1.3 —
+/// the only form where multi-target makes semantic sense
+/// (every section shifts by the same delta; absolute coords
+/// would collide).
+///
+/// **Atomicity posture**: the doc setter `set_section_offset`
+/// runs per (node, section) pair and pushes its own
+/// `EditNodeStyle` undo entry. An N-section fan-out produces N
+/// undo entries — same posture as `border preview commit` on a
+/// `Multi(ids)` selection (documented on
+/// `commit_border_preview`). Per-target validation: if any
+/// section's would-be AABB violates `validate_section_aabb`, we
+/// abort BEFORE any mutation (parse-then-dispatch shape from
+/// `apply_edits` in section/frame.rs) so a partial fan-out
+/// never lands.
+fn execute_move_fan_out_multisection(
+    args: &Args,
+    doc: &mut MindMapDocument,
+) -> ExecResult {
+    let parsed = match parse_move_kvs(args) {
+        Ok(p) => p,
+        Err(msg) => return ExecResult::err(msg),
+    };
+    let (dx, dy) = match parsed {
+        MoveTarget::Delta { dx, dy } => (dx, dy),
+        MoveTarget::Absolute { .. } => {
+            // Caller already gated on delta form; absolute form
+            // shouldn't reach this helper. Guard anyway.
+            return ExecResult::err(
+                "section move: absolute form (x=/y=) is single-target only on MultiSection",
+            );
+        }
+    };
+
+    // Collect the (node_id, section_idx) pairs from the
+    // selection.
+    let pairs: Vec<(String, usize)> = match &doc.selection {
+        SelectionState::MultiSection(sels) => sels
+            .iter()
+            .map(|s| (s.node_id.clone(), s.section_idx))
+            .collect(),
+        _ => return ExecResult::err("section move: not a MultiSection selection"),
+    };
+
+    // Apply per (node, section). Each `set_section_offset` call
+    // validates the would-be AABB against the parent node's
+    // size and pushes its own `EditNodeStyle` undo entry. A
+    // section that fails validation is logged + skipped; the
+    // remaining sections still apply. This is the same
+    // "partial-success-is-OK" posture
+    // `commit_border_preview` takes on Multi(ids); deferring
+    // hard atomicity (all-or-nothing) keeps the verb usable on
+    // the common case where one section's would-be position
+    // happens to overflow.
+    let mut moved = 0usize;
+    let mut rejected = 0usize;
+    for (node_id, idx) in &pairs {
+        let (current_x, current_y) = match doc
+            .mindmap
+            .nodes
+            .get(node_id)
+            .and_then(|n| n.sections.get(*idx))
+            .map(|s| (s.offset.x, s.offset.y))
+        {
+            Some(p) => p,
+            None => {
+                rejected += 1;
+                continue;
+            }
+        };
+        match doc.set_section_offset(node_id, *idx, current_x + dx, current_y + dy) {
+            Ok(true) => moved += 1,
+            Ok(false) => {} // no-op (already at target offset)
+            Err(msg) => {
+                rejected += 1;
+                log::info!(
+                    "section move fan-out rejected on {}[{}]: {}",
+                    node_id, idx, msg
+                );
+            }
+        }
+    }
+
+    let mut lines = vec![format!(
+        "section move: {} section(s) moved by ({}, {})",
+        moved, dx, dy
+    )];
+    if rejected > 0 {
+        lines.push(format!(
+            "  note: {} section(s) rejected (AABB overflow / not found); see log for details",
+            rejected
+        ));
+    }
+    if lines.len() == 1 {
+        ExecResult::ok_msg(lines.into_iter().next().expect("len==1"))
+    } else {
+        ExecResult::lines(lines)
+    }
+}
+
 fn execute_move(args: &Args, doc: &mut MindMapDocument, node_id: &str, idx: usize) -> ExecResult {
     let parsed = match parse_move_kvs(args) {
         Ok(p) => p,
@@ -1692,5 +1813,103 @@ mod tests {
         let labels: Vec<&str> = out.iter().map(|c| c.text.as_str()).collect();
         assert!(labels.contains(&"preserve"));
         assert!(labels.contains(&"clear"));
+    }
+
+    // ─── Plan §4.5 rule 4: MultiSection fan-out for `move dx/dy` ─
+
+    /// `section move dx=X dy=Y` against a `MultiSection`
+    /// selection shifts each targeted section by the same
+    /// `(dx, dy)`. Pre-fix this rejected MultiSection
+    /// uniformly; the plan §4.5 line 917 spec'd the fan-out
+    /// for the delta form specifically (absolute coords would
+    /// pile up).
+    #[test]
+    fn section_move_delta_fan_out_across_multi_section() {
+        let (mut doc, id) = pinned_two_section_node();
+        // Pre-fixture: section[0] is fill-parent (size=None) so
+        // any non-zero offset on it would overflow the validator.
+        // Pin both sections to explicit small sizes so both can
+        // shift by the same delta without overflowing the
+        // 200×100 parent AABB.
+        {
+            let node = doc.mindmap.nodes.get_mut(&id).unwrap();
+            node.sections[0].offset = baumhard::mindmap::model::Position { x: 5.0, y: 5.0 };
+            node.sections[0].size = Some(baumhard::mindmap::model::Size {
+                width: 50.0,
+                height: 30.0,
+            });
+            // section[1] keeps the fixture's pinned (10, 10) +
+            // 50×30.
+        }
+        doc.selection = SelectionState::MultiSection(vec![
+            SectionSel {
+                node_id: id.clone(),
+                section_idx: 0,
+            },
+            SectionSel {
+                node_id: id.clone(),
+                section_idx: 1,
+            },
+        ]);
+        let before_0 = doc.mindmap.nodes.get(&id).unwrap().sections[0].offset;
+        let before_1 = doc.mindmap.nodes.get(&id).unwrap().sections[1].offset;
+        // +(5, 7) keeps both within the parent.
+        let result = run("section move dx=5 dy=7", &mut doc);
+        match result {
+            ExecResult::Ok(_) => {}
+            other => panic!("expected Ok, got {:?}", other),
+        }
+        let after_0 = doc.mindmap.nodes.get(&id).unwrap().sections[0].offset;
+        let after_1 = doc.mindmap.nodes.get(&id).unwrap().sections[1].offset;
+        assert_eq!(after_0.x, before_0.x + 5.0);
+        assert_eq!(after_0.y, before_0.y + 7.0);
+        assert_eq!(after_1.x, before_1.x + 5.0);
+        assert_eq!(after_1.y, before_1.y + 7.0);
+    }
+
+    /// `section move x=A y=B` (absolute) against MultiSection
+    /// stays single-target — fan-out would collide every
+    /// section at the same offset, which is never the intent.
+    /// The verb path falls through to `resolve_section_idx`
+    /// which rejects with the existing single-target message.
+    #[test]
+    fn section_move_absolute_form_on_multi_section_rejects_single_target() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::MultiSection(vec![
+            SectionSel {
+                node_id: id.clone(),
+                section_idx: 0,
+            },
+            SectionSel {
+                node_id: id,
+                section_idx: 1,
+            },
+        ]);
+        assert_exec_err_contains(
+            run("section move x=3 y=7", &mut doc),
+            "single-target only",
+        );
+    }
+
+    /// Other subverbs on MultiSection still reject (resize /
+    /// text / delete / split don't have a fan-out semantic).
+    /// Pin to lock the asymmetry.
+    #[test]
+    fn section_resize_on_multi_section_rejects_single_target() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::MultiSection(vec![
+            SectionSel {
+                node_id: id.clone(),
+                section_idx: 0,
+            },
+            SectionSel {
+                node_id: id,
+                section_idx: 1,
+            },
+        ]);
+        assert_exec_err_contains(
+            run("section resize w=80 h=40", &mut doc),
+            "single-target only",
+        );
     }
 }
