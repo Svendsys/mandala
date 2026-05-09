@@ -258,6 +258,7 @@ impl MindMapDocument {
         let before_sections = node.sections.clone();
         let before_position = node.position;
         let before_size = node.size;
+        let before_selection = self.selection.clone();
         let preset_before = before_style.border.as_ref().map(|c| c.preset.clone());
 
         let mut outcome = BorderEditOutcome::default();
@@ -300,6 +301,7 @@ impl MindMapDocument {
             before_sections,
             before_position,
             before_size,
+            before_selection,
         });
         self.dirty = true;
         outcome.changed = true;

@@ -72,12 +72,14 @@ impl MindMapDocument {
                     before_sections,
                     before_position,
                     before_size,
+                    before_selection,
                 } => {
                     if let Some(node) = self.mindmap.nodes.get_mut(&node_id) {
                         node.sections = before_sections;
                         node.position = before_position;
                         node.size = before_size;
                     }
+                    self.selection = before_selection;
                 }
                 UndoAction::EditNodeStyle {
                     node_id,
@@ -85,17 +87,15 @@ impl MindMapDocument {
                     before_sections,
                     before_position,
                     before_size,
+                    before_selection,
                 } => {
                     if let Some(node) = self.mindmap.nodes.get_mut(&node_id) {
                         node.style = before_style;
                         node.sections = before_sections;
-                        // Restore pre-mutation AABB so the floor
-                        // passes' `grow_one_node_to_fit_*` writes
-                        // get reversed alongside the style /
-                        // sections changes.
                         node.position = before_position;
                         node.size = before_size;
                     }
+                    self.selection = before_selection;
                 }
                 UndoAction::EditNodeAabb {
                     node_id,

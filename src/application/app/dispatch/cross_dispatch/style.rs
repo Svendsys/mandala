@@ -8,6 +8,7 @@
 //! scene rebuild.
 
 use super::{apply_with_rebuild, RebuildContext};
+use crate::application::document::MindMapDocument;
 
 /// Set a named border field (e.g. `top` / `bottom` / `corner`)
 /// to a parsed `value` across the current selection. Border-glyph
@@ -256,14 +257,7 @@ pub(in crate::application::app) fn apply_set_section_size(
         log::warn!("SetSectionSize: no section selected");
         return;
     };
-    let exists = rc
-        .document
-        .mindmap
-        .nodes
-        .get(&node_id)
-        .map(|n| n.sections.get(idx).is_some())
-        .unwrap_or(false);
-    if !exists {
+    if !section_exists(&rc.document, &node_id, idx) {
         log::warn!("SetSectionSize: section[{}] not found on node '{}'", idx, node_id);
         return;
     }
@@ -290,6 +284,20 @@ pub(in crate::application::app) fn apply_set_section_offset_abs(
         log::warn!("SetSectionOffsetAbs: no section selected");
         return;
     };
+    let exists = rc
+        .document
+        .mindmap
+        .nodes
+        .get(&node_id)
+        .map(|n| n.sections.get(idx).is_some())
+        .unwrap_or(false);
+    if !exists {
+        log::warn!(
+            "SetSectionOffsetAbs: section[{}] not found on node '{}'",
+            idx, node_id
+        );
+        return;
+    }
     apply_with_rebuild(rc, |doc| {
         match doc.set_section_offset(&node_id, idx, x, y) {
             Ok(changed) => changed,
@@ -316,6 +324,10 @@ pub(in crate::application::app) fn apply_set_section_text(
         log::warn!("SetSectionText: no section selected");
         return;
     };
+    if !section_exists(&rc.document, &node_id, idx) {
+        log::warn!("SetSectionText: section[{}] not found on node '{}'", idx, node_id);
+        return;
+    }
     apply_with_rebuild(rc, |doc| {
         if clear_runs {
             doc.set_section_text(&node_id, idx, text)
@@ -323,6 +335,14 @@ pub(in crate::application::app) fn apply_set_section_text(
             doc.set_section_text_preserving_runs(&node_id, idx, text)
         }
     });
+}
+
+fn section_exists(doc: &MindMapDocument, node_id: &str, idx: usize) -> bool {
+    doc.mindmap
+        .nodes
+        .get(node_id)
+        .map(|n| n.sections.get(idx).is_some())
+        .unwrap_or(false)
 }
 
 /// Insert a new section into the selection's primary node.
@@ -373,6 +393,10 @@ pub(in crate::application::app) fn apply_delete_section(rc: &mut RebuildContext<
         log::warn!("DeleteSection: no section selected");
         return;
     };
+    if !section_exists(&rc.document, &node_id, idx) {
+        log::warn!("DeleteSection: section[{}] not found on node '{}'", idx, node_id);
+        return;
+    }
     apply_with_rebuild(rc, |doc| match doc.delete_section(&node_id, idx) {
         Ok(_) => true,
         Err(msg) => {
@@ -395,6 +419,10 @@ pub(in crate::application::app) fn apply_split_section(
         log::warn!("SplitSection: no section selected");
         return;
     };
+    if !section_exists(&rc.document, &node_id, idx) {
+        log::warn!("SplitSection: section[{}] not found on node '{}'", idx, node_id);
+        return;
+    }
     apply_with_rebuild(rc, |doc| {
         match doc.split_section(&node_id, idx, at_grapheme) {
             Ok(_) => true,

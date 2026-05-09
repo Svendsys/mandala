@@ -417,6 +417,7 @@ impl MindMapDocument {
         let before_sections = node.sections.clone();
         let before_position = node.position;
         let before_size = node.size;
+        let before_selection = self.selection.clone();
         // Collapse the first section to a single run spanning the new
         // text. Inherit formatting from the first original run on that
         // section, or fall back to the default-orphan defaults.
@@ -459,6 +460,7 @@ impl MindMapDocument {
             before_sections,
             before_position,
             before_size,
+            before_selection,
         });
         self.dirty = true;
         true
@@ -526,6 +528,7 @@ impl MindMapDocument {
         let before_sections = node.sections.clone();
         let before_position = node.position;
         let before_size = node.size;
+        let before_selection = self.selection.clone();
         let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
         node.style.text_color = color.clone();
         for section in node.sections.iter_mut() {
@@ -542,6 +545,7 @@ impl MindMapDocument {
             before_sections,
             before_position,
             before_size,
+            before_selection,
         });
         self.dirty = true;
         true
@@ -577,6 +581,7 @@ impl MindMapDocument {
         let before_sections = node.sections.clone();
         let before_position = node.position;
         let before_size = node.size;
+        let before_selection = self.selection.clone();
         let canvas_default = self.mindmap.canvas.default_border.clone();
         let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
         for section in node.sections.iter_mut() {
@@ -595,6 +600,7 @@ impl MindMapDocument {
             before_sections,
             before_position,
             before_size,
+            before_selection,
         });
         self.dirty = true;
         true
@@ -636,6 +642,7 @@ impl MindMapDocument {
         let before_sections = node.sections.clone();
         let before_position = node.position;
         let before_size = node.size;
+        let before_selection = self.selection.clone();
         let canvas_default = self.mindmap.canvas.default_border.clone();
         let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
         for section in node.sections.iter_mut() {
@@ -659,6 +666,7 @@ impl MindMapDocument {
             before_sections,
             before_position,
             before_size,
+            before_selection,
         });
         self.dirty = true;
         true
@@ -911,6 +919,7 @@ pub(super) fn set_node_style_field(
     let before_sections = node.sections.clone();
     let before_position = node.position;
     let before_size = node.size;
+    let before_selection = doc.selection.clone();
     if !mutate(&mut node.style) {
         return false;
     }
@@ -920,6 +929,7 @@ pub(super) fn set_node_style_field(
         before_sections,
         before_position,
         before_size,
+        before_selection,
     });
     doc.dirty = true;
     true

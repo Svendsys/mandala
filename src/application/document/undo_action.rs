@@ -5,6 +5,7 @@
 //! `undo()` dispatch lives in `undo.rs` and branches on these
 //! variants.
 
+use super::types::SelectionState;
 use baumhard::mindmap::model::{Canvas, MindEdge, MindNode, MindSection, NodeStyle, Position, Size};
 
 /// An undoable action that can be reversed.
@@ -55,6 +56,13 @@ pub enum UndoAction {
         before_sections: Vec<MindSection>,
         before_position: Position,
         before_size: Size,
+        /// Pre-mutation `doc.selection`. Text setters don't
+        /// fire `cleanup_after_structural_mutation` (sections.len
+        /// doesn't change), so this rarely shifts on text-only
+        /// changes — captured anyway for symmetry with
+        /// `EditNodeStyle` and to defend against future text
+        /// setters that might trigger selection cleanup.
+        before_selection: SelectionState,
     },
     /// A node's visual style was edited in place (bg / border / text
     /// color / font size). Captures the pre-edit `NodeStyle` plus the
@@ -82,6 +90,15 @@ pub enum UndoAction {
         /// and undo must restore it or the node stays inflated
         /// after the section/style mutation is undone.
         before_size: Size,
+        /// Pre-mutation `doc.selection`. Captured because the
+        /// structural-mutation cleanup
+        /// (`cleanup_after_structural_mutation`) actively
+        /// rewrites selection (e.g. `Section(idx=2)` →
+        /// `Single(node)` after `delete_section(2)`); without
+        /// restoring on undo, the user's pre-mutation selection
+        /// is lost forever. Pre-Tier-4 review surfaced this as
+        /// the missing leg.
+        before_selection: SelectionState,
     },
     /// A node's zoom-visibility window (`min_zoom_to_render` /
     /// `max_zoom_to_render`) was edited. Kept as its own variant —

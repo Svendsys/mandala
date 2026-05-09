@@ -53,6 +53,7 @@ impl MindMapDocument {
         let before_sections = node.sections.clone();
         let before_position = node.position;
         let before_size = node.size;
+        let before_selection = self.selection.clone();
         let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
         let changed = mutate(&mut node.sections[section_idx]);
         if !changed {
@@ -72,6 +73,7 @@ impl MindMapDocument {
             before_sections,
             before_position,
             before_size,
+            before_selection,
         });
         self.dirty = true;
         true
@@ -123,6 +125,7 @@ impl MindMapDocument {
         let before_sections = node.sections.clone();
         let before_position = node.position;
         let before_size = node.size;
+        let before_selection = self.selection.clone();
         let canvas_default = self.mindmap.canvas.default_border.clone();
         let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
         if let Some(section) = node.sections.get_mut(section_idx) {
@@ -137,6 +140,7 @@ impl MindMapDocument {
             before_sections,
             before_position,
             before_size,
+            before_selection,
         });
         self.dirty = true;
         true
@@ -208,6 +212,7 @@ impl MindMapDocument {
         let before_sections = node.sections.clone();
         let before_position = node.position;
         let before_size = node.size;
+        let before_selection = self.selection.clone();
         let canvas_default = self.mindmap.canvas.default_border.clone();
         let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
         if let Some(section) = node.sections.get_mut(section_idx) {
@@ -221,6 +226,7 @@ impl MindMapDocument {
             before_sections,
             before_position,
             before_size,
+            before_selection,
         });
         self.dirty = true;
         true
@@ -240,6 +246,7 @@ impl MindMapDocument {
         let before_sections = node.sections.clone();
         let before_position = node.position;
         let before_size = node.size;
+        let before_selection = self.selection.clone();
         let count = baumhard::util::grapheme_chad::count_grapheme_clusters(&new_text);
         let template = section.text_runs.first().cloned().unwrap_or_else(|| TextRun {
             start: 0,
@@ -278,6 +285,7 @@ impl MindMapDocument {
             before_sections,
             before_position,
             before_size,
+            before_selection,
         });
         self.dirty = true;
         true

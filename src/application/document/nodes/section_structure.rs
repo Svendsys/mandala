@@ -58,6 +58,7 @@ where
     let before_sections = node.sections.clone();
     let before_position = node.position;
     let before_size = node.size;
+    let before_selection = doc.selection.clone();
     let canvas_default = doc.mindmap.canvas.default_border.clone();
 
     let node = doc
@@ -73,6 +74,7 @@ where
         before_sections,
         before_position,
         before_size,
+        before_selection,
     });
     doc.dirty = true;
 
@@ -387,6 +389,7 @@ impl MindMapDocument {
 #[cfg(test)]
 mod tests {
     use super::super::super::tests_common::{first_testament_node_id, load_test_doc};
+    use super::super::super::{SectionSel, SelectionState};
     use baumhard::mindmap::model::{MindSection, Position};
 
     fn empty_section() -> MindSection {
@@ -727,6 +730,36 @@ mod tests {
             (before_size.width, before_size.height),
             "undo must restore node.size to pre-mutation value"
         );
+    }
+
+    /// `delete_section` rewrites `doc.selection` via
+    /// `cleanup_after_structural_mutation` — `Section(idx=2)` →
+    /// `Single(node)` after `delete_section(2)`. Pre-fix
+    /// `UndoAction::EditNodeStyle` snapshotted only the model
+    /// sections, leaving the user with `Single(node)` after
+    /// undo even though the data was restored. Post-fix
+    /// `before_selection` is captured + restored mirroring the
+    /// AABB-restore work, so undo gets the user back to where
+    /// they were.
+    #[test]
+    fn delete_section_undo_restores_selection() {
+        let mut doc = load_test_doc();
+        let id = first_testament_node_id(&doc);
+        // Add a second section so we can delete one without
+        // tripping the "last section" guard.
+        doc.add_section(&id, None, empty_section()).unwrap();
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id.clone(),
+            section_idx: 1,
+        });
+        let before_selection = doc.selection.clone();
+        doc.delete_section(&id, 1).unwrap();
+        assert!(matches!(doc.selection, SelectionState::Single(_)));
+        assert!(doc.undo());
+        // Undo restores both the deleted section AND the
+        // user's pre-mutation selection. Pre-fix the model came
+        // back but the user was stranded at `Single(node)`.
+        assert_eq!(doc.selection, before_selection);
     }
 
     /// Parallel pin for `set_section_text`: a long-text replace
