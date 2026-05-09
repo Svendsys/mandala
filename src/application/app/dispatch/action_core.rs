@@ -36,6 +36,32 @@ use super::super::input_context_core::InputContextCore;
 use super::super::InteractionMode;
 use super::cross_dispatch::DispatchOutcome;
 
+/// Parse the `runs_mode` payload on `Action::SetSectionText`.
+/// `"clear"` → `Some(true)`; `"preserve"` / `""` →
+/// `Some(false)`; any other string → `None` (caller logs and
+/// bails). The empty string accepts as preserve so a default-
+/// payload macro doesn't have to spell it out.
+pub(super) fn parse_action_runs_mode(s: &str) -> Option<bool> {
+    match s {
+        "clear" => Some(true),
+        "preserve" | "" => Some(false),
+        _ => None,
+    }
+}
+
+/// Parse the `at` / `at_grapheme` payload on
+/// `Action::AddSection` / `Action::SplitSection`. Empty string
+/// → `Some(None)` (default — append / end-of-text); parseable
+/// → `Some(Some(n))`; unparseable → `None` (caller logs +
+/// bails). Outer Option is "did the parse succeed?"; inner
+/// Option is the value semantics.
+pub(super) fn parse_action_optional_usize(s: &str) -> Option<Option<usize>> {
+    if s.is_empty() {
+        return Some(None);
+    }
+    s.parse::<usize>().ok().map(Some)
+}
+
 /// Run `f` against a `RebuildContext` built from `core`, IF the
 /// document is loaded. Skips silently otherwise. Captures the
 /// `if let Some(doc) = core.document.as_deref_mut() { let mut rc =
@@ -437,16 +463,12 @@ pub(in crate::application::app) fn dispatch_compatible(
             });
         }
         Action::SetSectionText { text, runs_mode } => {
-            let clear_runs = match runs_mode.as_str() {
-                "clear" => true,
-                "preserve" | "" => false,
-                other => {
-                    log::warn!(
-                        "SetSectionText: runs_mode='{}' not recognised; use 'preserve' or 'clear'",
-                        other
-                    );
-                    return DispatchOutcome::Handled;
-                }
+            let Some(clear_runs) = parse_action_runs_mode(runs_mode) else {
+                log::warn!(
+                    "SetSectionText: runs_mode='{}' not recognised; use 'preserve' or 'clear'",
+                    runs_mode
+                );
+                return DispatchOutcome::Handled;
             };
             let text_owned = text.clone();
             with_doc_rebuild(core, |rc| {
@@ -454,15 +476,9 @@ pub(in crate::application::app) fn dispatch_compatible(
             });
         }
         Action::AddSection { at, text } => {
-            let at_opt = match at.as_str() {
-                "" => None,
-                s => match s.parse::<usize>() {
-                    Ok(n) => Some(n),
-                    Err(_) => {
-                        log::warn!("AddSection: at='{}' is not a non-negative integer", s);
-                        return DispatchOutcome::Handled;
-                    }
-                },
+            let Some(at_opt) = parse_action_optional_usize(at) else {
+                log::warn!("AddSection: at='{}' is not a non-negative integer", at);
+                return DispatchOutcome::Handled;
             };
             let text_owned = text.clone();
             with_doc_rebuild(core, |rc| {
@@ -473,21 +489,15 @@ pub(in crate::application::app) fn dispatch_compatible(
             super::cross_dispatch::apply_delete_section(rc)
         }),
         Action::SplitSection { at_grapheme } => {
-            let at_grapheme = match at_grapheme.as_str() {
-                "" => None,
-                s => match s.parse::<usize>() {
-                    Ok(n) => Some(n),
-                    Err(_) => {
-                        log::warn!(
-                            "SplitSection: at_grapheme='{}' is not a non-negative integer",
-                            s
-                        );
-                        return DispatchOutcome::Handled;
-                    }
-                },
+            let Some(at_opt) = parse_action_optional_usize(at_grapheme) else {
+                log::warn!(
+                    "SplitSection: at_grapheme='{}' is not a non-negative integer",
+                    at_grapheme
+                );
+                return DispatchOutcome::Handled;
             };
             with_doc_rebuild(core, |rc| {
-                super::cross_dispatch::apply_split_section(at_grapheme, rc)
+                super::cross_dispatch::apply_split_section(at_opt, rc)
             });
         }
         // ── Clipboard ─────────────────────────────────────────
@@ -564,6 +574,69 @@ pub(in crate::application::app) fn dispatch_compatible(
         _ => return DispatchOutcome::Unhandled,
     }
     DispatchOutcome::Handled
+}
+
+#[cfg(test)]
+mod parsing_tests {
+    //! Pin the §4.6 Action payload-parsing helpers. The full
+    //! dispatch arms need a `Renderer` per `TEST_CONVENTIONS.md
+    //! §T8` so they aren't testable headless; the parsing
+    //! helpers are pure data and the load-bearing piece for
+    //! "did the macro author's payload reach the apply_*?".
+    //! Test Quality #1 flagged 0 tests for the §4.6 dispatch
+    //! arms; this mod is the parser-side leg.
+
+    use super::*;
+
+    #[test]
+    fn parse_action_runs_mode_clear() {
+        assert_eq!(parse_action_runs_mode("clear"), Some(true));
+    }
+
+    #[test]
+    fn parse_action_runs_mode_preserve() {
+        assert_eq!(parse_action_runs_mode("preserve"), Some(false));
+    }
+
+    #[test]
+    fn parse_action_runs_mode_empty_defaults_to_preserve() {
+        assert_eq!(parse_action_runs_mode(""), Some(false));
+    }
+
+    #[test]
+    fn parse_action_runs_mode_unknown_rejects() {
+        assert_eq!(parse_action_runs_mode("invalid"), None);
+        assert_eq!(parse_action_runs_mode("PRESERVE"), None);
+        assert_eq!(parse_action_runs_mode(" preserve"), None);
+    }
+
+    #[test]
+    fn parse_action_optional_usize_empty_is_none() {
+        assert_eq!(parse_action_optional_usize(""), Some(None));
+    }
+
+    #[test]
+    fn parse_action_optional_usize_zero_is_some_zero() {
+        assert_eq!(parse_action_optional_usize("0"), Some(Some(0)));
+    }
+
+    #[test]
+    fn parse_action_optional_usize_positive_is_some() {
+        assert_eq!(parse_action_optional_usize("42"), Some(Some(42)));
+    }
+
+    #[test]
+    fn parse_action_optional_usize_negative_rejects() {
+        // `usize::parse` rejects negative; `at=-1` should not silently round to 0.
+        assert_eq!(parse_action_optional_usize("-1"), None);
+    }
+
+    #[test]
+    fn parse_action_optional_usize_garbage_rejects() {
+        assert_eq!(parse_action_optional_usize("abc"), None);
+        assert_eq!(parse_action_optional_usize(" 5"), None);
+        assert_eq!(parse_action_optional_usize("5.0"), None);
+    }
 }
 
 #[cfg(test)]

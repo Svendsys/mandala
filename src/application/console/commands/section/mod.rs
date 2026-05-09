@@ -609,20 +609,10 @@ fn execute_edit(
     if let Err(msg) = reject_unknown_kvs(args, "edit", &["section"]) {
         return ExecResult::err(msg);
     }
-    // Validate the target before issuing the side effect — the
-    // pre-rebuild flow trusts (selection, mode) to be coherent
-    // and doesn't re-validate.
-    let Some(node) = eff.document.mindmap.nodes.get(node_id) else {
-        return ExecResult::err(format!("section edit: node '{}' not found", node_id));
-    };
-    if idx >= node.sections.len() {
-        return ExecResult::err(format!(
-            "section edit: section[{}] not found on node '{}' (has {} section(s))",
-            idx,
-            node_id,
-            node.sections.len()
-        ));
-    }
+    // (node_id, idx) already validated by the upstream
+    // `execute_section` resolver — both `mindmap.nodes.get(&node_id)`
+    // and `target_idx >= section_count` are gated there. No
+    // re-validation here.
     eff.side_effect = Some(crate::application::console::ConsoleSideEffect::OpenSectionEdit {
         node_id: node_id.to_string(),
         section_idx: idx,
@@ -1984,7 +1974,10 @@ mod tests {
     /// `section edit` validates the resolved index against the
     /// node's section count before issuing the side-effect.
     /// Out-of-range errors cleanly without leaving a dangling
-    /// modal-open request.
+    /// modal-open request. Routes through `execute_section`
+    /// (the upstream resolver), so the err message is the
+    /// resolver's "section[99] not found on node 'X'", and
+    /// the verb body never runs.
     #[test]
     fn section_edit_rejects_out_of_range_section_kv() {
         let (mut doc, id) = pinned_two_section_node();
@@ -1992,6 +1985,34 @@ mod tests {
         assert_exec_err_contains(
             run("section edit section=99", &mut doc),
             "not found on node",
+        );
+    }
+
+    /// Sharpened pin per Test Quality #5/6: when the verb's
+    /// own `reject_unknown_kvs` rejects (the only `execute_edit`
+    /// path that fires before the side-effect emit), no
+    /// `OpenSectionEdit` side-effect is emitted and
+    /// `close_console` stays false. Catches a regression that
+    /// might emit-then-error on a typo'd kv.
+    #[test]
+    fn section_edit_unknown_kv_emits_no_side_effect() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id,
+            section_idx: 0,
+        });
+        let mut effects = crate::application::console::ConsoleEffects::new(&mut doc);
+        let args_owned: Vec<String> = vec!["edit".to_string(), "bogus=42".to_string()];
+        let result = execute_section(&Args::new(&args_owned), &mut effects);
+        assert!(matches!(result, ExecResult::Err(_)));
+        assert!(
+            effects.side_effect.is_none(),
+            "rejection must NOT emit a side-effect: {:?}",
+            effects.side_effect
+        );
+        assert!(
+            !effects.close_console,
+            "rejection must NOT close the console"
         );
     }
 }

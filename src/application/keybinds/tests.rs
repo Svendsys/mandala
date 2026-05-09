@@ -345,6 +345,26 @@ fn test_wasm_compatibility_section_aabb_actions_are_compatible() {
             h: "50".into(),
         },
         Action::SetSectionSizeFillParent,
+        // §4.6 Action variants — pin Compatible explicitly so a
+        // future contributor flipping any of them to NativeOnly
+        // (e.g. for "this touches text-edit-state") trips this
+        // test instead of silently breaking WASM macro fan-out.
+        Action::SetSectionOffsetAbs {
+            x: "10".into(),
+            y: "20".into(),
+        },
+        Action::SetSectionText {
+            text: "x".into(),
+            runs_mode: "clear".into(),
+        },
+        Action::AddSection {
+            at: "".into(),
+            text: "x".into(),
+        },
+        Action::DeleteSection,
+        Action::SplitSection {
+            at_grapheme: "".into(),
+        },
     ] {
         assert_eq!(a.wasm_compatibility(), Compatible, "{:?} should be Compatible", a);
     }
