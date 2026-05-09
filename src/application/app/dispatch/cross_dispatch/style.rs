@@ -156,20 +156,52 @@ pub(in crate::application::app) fn apply_set_spacing(input: &str, rc: &mut Rebui
 }
 
 /// Resolve the (node_id, section_idx) the section-targeted
-/// Action variants apply to. Section / SectionRange use their
-/// inner SectionSel; MultiSection collapses to the first.
-/// `Single` is rejected — section verbs require an explicit
-/// section selection (matches the console verb path's contract;
-/// a node may have its title at section 0 and body at section 1
-/// and a silent "default to 0" would nudge the wrong section).
+/// Action variants apply to. Diverges from the console verb
+/// path on two axes — both pinned in this doc:
+///
+/// 1. **`Single(id)` is rejected here** even on a 1-section
+///    node, where the console verb path's `resolve_section_idx`
+///    rule 3 auto-resolves to `(id, 0)`. This helper doesn't
+///    have access to `MindMapDocument` to count sections;
+///    callers that want auto-resolve should switch the
+///    selection to `Section { node_id, section_idx: 0 }`
+///    explicitly before firing the Action.
+///
+/// 2. **`MultiSection(secs)` of length > 1 is rejected** with a
+///    `log::warn!`, mirroring the console verb path's
+///    "single-target only — pass section=<idx>" rejection for
+///    every subverb except `move dx/dy`. Pre-fix this silently
+///    collapsed to the first entry, losing the user's
+///    multi-section selection signal entirely. The verb path's
+///    `move dx/dy` fan-out lives at the verb layer
+///    (`execute_move_fan_out_multisection`); macro authors
+///    that want fan-out should script multiple Action steps.
+///
+/// `Section` / `SectionRange` resolve via `selected_section()`.
+/// `MultiSection` of length 1 collapses to its single entry
+/// (no ambiguity).
 fn target_section(
     sel: &crate::application::document::SelectionState,
 ) -> Option<(String, usize)> {
+    use crate::application::document::SelectionState;
     if let Some(s) = sel.selected_section() {
         return Some((s.node_id.clone(), s.section_idx));
     }
-    if let Some(first) = sel.selected_sections().first() {
-        return Some((first.node_id.clone(), first.section_idx));
+    if let SelectionState::MultiSection(secs) = sel {
+        match secs.len() {
+            0 => return None,
+            1 => return Some((secs[0].node_id.clone(), secs[0].section_idx)),
+            n => {
+                log::warn!(
+                    "section Action: MultiSection({} entries) rejected; \
+                     macro/keybind path is single-target — script multiple \
+                     Action steps for fan-out, or use the console verb \
+                     `section move dx=… dy=…` (delta form fans out)",
+                    n
+                );
+                return None;
+            }
+        }
     }
     None
 }
@@ -372,4 +404,56 @@ pub(in crate::application::app) fn apply_split_section(
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::document::{SectionSel, SelectionState};
+
+    /// `target_section` resolves `Section { node_id, section_idx }`
+    /// to its inner pair.
+    #[test]
+    fn target_section_resolves_section_variant() {
+        let sel = SelectionState::Section(SectionSel {
+            node_id: "n".into(),
+            section_idx: 2,
+        });
+        assert_eq!(target_section(&sel), Some(("n".into(), 2)));
+    }
+
+    /// `target_section` rejects `MultiSection` of length > 1
+    /// with a `log::warn!`. Pre-fix it silently collapsed to
+    /// the first entry, losing the user's multi-target signal
+    /// — three reviewers (Architecture #1-3, API/UX B1,
+    /// Correctness IMPORTANT) flagged this as the verb/Action
+    /// asymmetry that loses user intent.
+    #[test]
+    fn target_section_rejects_multisection_of_many() {
+        let sel = SelectionState::MultiSection(vec![
+            SectionSel { node_id: "n".into(), section_idx: 0 },
+            SectionSel { node_id: "n".into(), section_idx: 1 },
+        ]);
+        assert_eq!(target_section(&sel), None);
+    }
+
+    /// `MultiSection` of length 1 still resolves (no ambiguity).
+    #[test]
+    fn target_section_resolves_multisection_of_one() {
+        let sel = SelectionState::MultiSection(vec![SectionSel {
+            node_id: "n".into(),
+            section_idx: 3,
+        }]);
+        assert_eq!(target_section(&sel), Some(("n".into(), 3)));
+    }
+
+    /// `Single(id)` is rejected — verb-path rule 3
+    /// auto-resolve to `(id, 0)` lives at the verb layer (it
+    /// has the document to count sections); this helper does
+    /// not.
+    #[test]
+    fn target_section_rejects_single() {
+        let sel = SelectionState::Single("n".into());
+        assert_eq!(target_section(&sel), None);
+    }
 }
