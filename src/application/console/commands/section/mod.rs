@@ -42,7 +42,7 @@ use crate::application::console::completion::{
     kv_key_completions_with_hints, prefix_filter, Completion, CompletionContext, CompletionState,
 };
 use crate::application::console::parser::Args;
-use crate::application::console::predicates::always;
+use crate::application::console::predicates::node_or_section_selected;
 use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
 use crate::application::document::{MindMapDocument, SectionSel, SelectionState};
 
@@ -61,7 +61,7 @@ pub const COMMAND: Command = Command {
         "section", "show", "info", "move", "resize", "offset", "size", "text", "add", "delete",
         "split", "frame", "border", "preset", "glyph", "preview",
     ],
-    applicable: always,
+    applicable: node_or_section_selected,
     complete: complete_section,
     execute: execute_section,
 };

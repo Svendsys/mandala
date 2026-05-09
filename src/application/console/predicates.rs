@@ -22,6 +22,25 @@ pub fn always(_: &ConsoleContext) -> bool {
     true
 }
 
+/// True when the selection points at a node, a section of a
+/// node, a SectionRange of a node, or a MultiSection across
+/// nodes. Used by the `section …` verb so it disappears from
+/// `help` and completion when the selection is an edge / portal
+/// / nothing — pre-fix the verb was `applicable: always` and
+/// the user only learned it didn't apply by typing it. Plan
+/// §4.5 / SECTIONS_BORDERS_RESIZE_PLAN.md §5.4 in the console-
+/// patterns investigation.
+pub fn node_or_section_selected(ctx: &ConsoleContext) -> bool {
+    matches!(
+        &ctx.document.selection,
+        SelectionState::Single(_)
+            | SelectionState::Multi(_)
+            | SelectionState::Section(_)
+            | SelectionState::SectionRange { .. }
+            | SelectionState::MultiSection(_)
+    )
+}
+
 pub fn edge_selected(ctx: &ConsoleContext) -> bool {
     matches!(ctx.document.selection, SelectionState::Edge(_))
 }
