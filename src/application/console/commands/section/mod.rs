@@ -166,7 +166,7 @@ fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         };
         return execute_add(args, eff.document, &node_id);
     }
-    let target_idx = match resolve_section_idx(args, &eff.document.selection) {
+    let target_idx = match resolve_section_idx(args, &eff.document.selection, eff.document) {
         Ok(idx) => idx,
         Err(msg) => return ExecResult::err(msg),
     };
@@ -204,10 +204,23 @@ fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
 }
 
 /// Resolve `(node_id, section_idx)` from the current selection +
-/// optional `section=K` kv. A `Section` selection supplies both;
-/// a `Single` selection requires the kv (no implicit default —
-/// authors who want section 0 specifically should say so).
-fn resolve_section_idx(args: &Args, selection: &SelectionState) -> Result<usize, String> {
+/// optional `section=K` kv. Plan §4.5 §906-920 selection rules:
+///
+/// 1. `section=K` kv → that index, with the selection's
+///    primary node id.
+/// 2. `Section(s)` / `SectionRange { sel, .. }` → `s.section_idx`.
+/// 3. `Single(id)` AND `mindmap.nodes[id].sections.len() == 1`
+///    → `(id, 0)` — single-section nodes don't need an explicit
+///    `section=K` because there's only one option. Plan §4.5
+///    rule 3 (line 914): closes the §5.7 hostile error.
+/// 4. `Single(id)` on a multi-section node → error (the user
+///    needs to pick one).
+/// 5. `MultiSection(_)` → error with the single-target hint.
+fn resolve_section_idx(
+    args: &Args,
+    selection: &SelectionState,
+    doc: &MindMapDocument,
+) -> Result<usize, String> {
     let kv_idx = parse_section_kv(args)?;
     match (selection, kv_idx) {
         (_, Some(idx)) => Ok(idx),
@@ -215,17 +228,19 @@ fn resolve_section_idx(args: &Args, selection: &SelectionState) -> Result<usize,
         (SelectionState::SectionRange { sel: SectionSel { section_idx, .. }, .. }, None) => {
             Ok(*section_idx)
         }
-        (SelectionState::Single(_), None) => {
-            Err("section: select a specific section (multi-section node) or pass section=<idx>".into())
+        (SelectionState::Single(id), None) => {
+            // Plan §4.5 rule 3: a single-section node implies idx 0.
+            // Multi-section nodes still require explicit selection.
+            let n_sections = doc.mindmap.nodes.get(id).map(|n| n.sections.len()).unwrap_or(0);
+            if n_sections == 1 {
+                Ok(0)
+            } else {
+                Err(format!(
+                    "section: node '{}' has {} sections — pick one (click) or pass section=<idx>",
+                    id, n_sections
+                ))
+            }
         }
-        // Section move / resize is single-target by design (each
-        // gesture writes one section's offset / size). Fan-out
-        // across a MultiSection would imply each section moves
-        // by the same delta — semantically valid for `move` but
-        // ambiguous for `resize` (different starting sizes
-        // produce different post-resize shapes per section). For
-        // both, surface a clearer error than the generic
-        // "requires a node or section" pre-N3 message.
         (SelectionState::MultiSection(_), None) => Err(
             "section: multi-section selection — single-target only; pass section=<idx> or click one section first".into(),
         ),
@@ -702,9 +717,38 @@ mod tests {
 
     #[test]
     fn section_move_rejects_when_single_selection_lacks_section_kv() {
+        // Plan §4.5 rule 3: `Single(id)` on a multi-section node
+        // requires explicit `section=K`. A single-section node
+        // would auto-resolve to (id, 0); the fixture here is
+        // multi-section so the rejection branch runs.
         let (mut doc, id) = pinned_two_section_node();
         doc.selection = SelectionState::Single(id);
-        assert_exec_err_contains(run("section move dx=3 dy=4", &mut doc), "select a specific section");
+        assert_exec_err_contains(
+            run("section move dx=3 dy=4", &mut doc),
+            "has 2 sections",
+        );
+    }
+
+    /// Plan §4.5 rule 3: `Single(id)` on a single-section node
+    /// implicitly resolves to `(id, 0)` — closes the §5.7
+    /// "hostile error" the plan flagged.
+    #[test]
+    fn section_move_single_selection_auto_resolves_for_single_section_node() {
+        // Use load_test_doc — many testament nodes are single-
+        // section by construction.
+        let mut doc = load_test_doc();
+        // Pick the first node with exactly one section.
+        let id = doc
+            .mindmap
+            .nodes
+            .iter()
+            .find(|(_, n)| n.sections.len() == 1)
+            .map(|(id, _)| id.clone())
+            .expect("testament map has at least one single-section node");
+        doc.selection = SelectionState::Single(id.clone());
+        // Should resolve and apply without errors — no `section=K`
+        // required.
+        assert_exec_ok(run("section move dx=0 dy=0", &mut doc));
     }
 
     #[test]

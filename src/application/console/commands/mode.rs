@@ -135,7 +135,7 @@ fn format_resize_error(e: &ResizeTargetError) -> String {
         }
         ResizeTargetError::SectionFillParent { node_id, section_idx } => format!(
             "mode resize: section {}[{}] is fill-parent (size=None) — no AABB to stretch. \
-             Pin a size first via `section resize <w> <h>`",
+             Pin a size first via `section resize w=<w> h=<h>`",
             node_id, section_idx,
         ),
         ResizeTargetError::EdgeOrPortal => {

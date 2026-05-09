@@ -177,7 +177,8 @@ fn target_section(
 /// Nudge the selected section by `(dx, dy)` canvas units.
 /// AABB rejection on overflow surfaces as a `log::warn!` and
 /// no-op (the model setter returns `Err`). Mirror of
-/// `section move <dx> <dy>` for the keybind / macro path.
+/// `section move dx=<dx> dy=<dy>` for the keybind / macro
+/// path.
 pub(in crate::application::app) fn apply_set_section_offset_delta(
     dx: f64,
     dy: f64,
@@ -213,8 +214,8 @@ pub(in crate::application::app) fn apply_set_section_offset_delta(
 }
 
 /// Pin the selected section's size to `(w, h)` (or fill-parent
-/// when `size = None`). Mirror of `section resize <w> <h>` /
-/// `section resize none` for the keybind / macro path.
+/// when `size = None`). Mirror of `section resize w=<w> h=<h>`
+/// / `section resize fill` for the keybind / macro path.
 pub(in crate::application::app) fn apply_set_section_size(
     size: Option<baumhard::mindmap::model::Size>,
     rc: &mut RebuildContext<'_>,

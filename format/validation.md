@@ -102,7 +102,7 @@ For every `MindNode.sections[i]`:
 **Why**: an out-of-bounds section silently overflows its parent
 container at render time and breaks hit-testing; a NaN at the
 node level poisons every downstream AABB comparison. The console
-verbs `section move <dx> <dy>` and `section resize <w> <h>`
+verbs `section move dx=<dx> dy=<dy>` and `section resize w=<w> h=<h>`
 ([sections.md](./sections.md)) enforce these same rules at edit
 time and surface byte-equal rejection messages — a verb-rejected
 edit and a `verify` violation read identically.

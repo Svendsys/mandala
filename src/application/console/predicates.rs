@@ -26,15 +26,22 @@ pub fn always(_: &ConsoleContext) -> bool {
 /// node, a SectionRange of a node, or a MultiSection across
 /// nodes. Used by the `section …` verb so it disappears from
 /// `help` and completion when the selection is an edge / portal
-/// / nothing — pre-fix the verb was `applicable: always` and
-/// the user only learned it didn't apply by typing it. Plan
-/// §4.5 / SECTIONS_BORDERS_RESIZE_PLAN.md §5.4 in the console-
-/// patterns investigation.
+/// / nothing.
+///
+/// `Multi(_)` is **excluded** even though section sub-verbs run
+/// on a per-node basis — the per-section resolvers
+/// (`resolve_section_idx`, `resolve_node_id`) need a single
+/// primary node, and `Multi(_)`'s `primary_node_id()` returns
+/// `None`. Surfacing the verb as applicable when the runtime
+/// rejects every subverb produced a UX-vs-runtime mismatch
+/// flagged by the Full-Nelson predicate-ripple reviewer.
+///
+/// Plan §4.5 / SECTIONS_BORDERS_RESIZE_PLAN.md §5.4 in the
+/// console-patterns investigation.
 pub fn node_or_section_selected(ctx: &ConsoleContext) -> bool {
     matches!(
         &ctx.document.selection,
         SelectionState::Single(_)
-            | SelectionState::Multi(_)
             | SelectionState::Section(_)
             | SelectionState::SectionRange { .. }
             | SelectionState::MultiSection(_)
