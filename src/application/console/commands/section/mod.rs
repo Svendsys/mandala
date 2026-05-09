@@ -48,7 +48,7 @@ use crate::application::document::{MindMapDocument, SectionSel, SelectionState};
 
 pub const KEYS: &[&str] = &["section"];
 pub const VERBS: &[&str] = &[
-    "move", "resize", "show", "text", "add", "delete", "split", "frame",
+    "move", "resize", "show", "text", "edit", "add", "delete", "split", "frame",
 ];
 
 pub const COMMAND: Command = Command {
@@ -56,7 +56,7 @@ pub const COMMAND: Command = Command {
     aliases: &[],
     summary: "Inspect, move, resize, edit text, or structurally modify a section (add / delete / split)",
     usage:
-        "section show [section=<idx>] | section move dx=<f64> dy=<f64> [section=<idx>] | section move x=<f64> y=<f64> [section=<idx>] | section resize w=<f64> h=<f64>|fill [section=<idx>] | section text \"<text>\" [section=<idx>] [runs=preserve|clear] | section add [at=<idx>] [text=\"<text>\"] | section delete [section=<idx>] | section split [section=<idx>] [at=<grapheme>] | section frame show|reset|<key>=<value> … [section=<idx>] | section frame preview <key>=<value> …|commit|cancel [section=<idx>]",
+        "section show [section=<idx>] | section move dx=<f64> dy=<f64> [section=<idx>] | section move x=<f64> y=<f64> [section=<idx>] | section resize w=<f64> h=<f64>|fill [section=<idx>] | section text \"<text>\" [section=<idx>] [runs=preserve|clear] | section edit [section=<idx>] | section add [at=<idx>] [text=\"<text>\"] | section delete [section=<idx>] | section split [section=<idx>] [at=<grapheme>] | section frame show|reset|<key>=<value> … [section=<idx>] | section frame preview <key>=<value> …|commit|cancel [section=<idx>]",
     tags: &[
         "section", "show", "info", "move", "resize", "offset", "size", "text", "add", "delete",
         "split", "frame", "border", "preset", "glyph", "preview",
@@ -110,7 +110,7 @@ fn complete_section(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Comple
             Some("split") => {
                 kv_key_completions_with_hints(&["at", "section"], state.partial, kv_hint)
             }
-            Some("delete") | Some("show") => {
+            Some("delete") | Some("show") | Some("edit") => {
                 kv_key_completions_with_hints(&["section"], state.partial, kv_hint)
             }
             _ => Vec::new(),
@@ -157,6 +157,7 @@ fn verb_hint(v: &str) -> &'static str {
         "add" => "insert a new section",
         "delete" => "remove the section (errors when only one remains)",
         "split" => "split a section in two at a grapheme boundary",
+        "edit" => "open the section text editor on the resolved target",
         "frame" => "configure the section's frame border (subverb tree)",
         _ => "",
     }
@@ -294,6 +295,7 @@ fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         "resize" => execute_resize(args, eff.document, &node_id, target_idx),
         "show" => execute_show(args, eff.document, &node_id, target_idx),
         "text" => execute_text(args, eff.document, &node_id, target_idx),
+        "edit" => execute_edit(args, eff, &node_id, target_idx),
         "delete" => execute_delete(args, eff.document, &node_id, target_idx),
         "split" => execute_split(args, eff.document, &node_id, target_idx),
         // `add` doesn't use the `target_idx` resolver path (no
@@ -582,6 +584,51 @@ fn execute_text(args: &Args, doc: &mut MindMapDocument, node_id: &str, idx: usiz
     } else {
         ExecResult::ok_msg("section: no change")
     }
+}
+
+/// `section edit [section=<idx>]` — open the section text
+/// editor on the resolved target. Plan §4.5: lifts the user
+/// from "console-side authoring" to "inline interactive text
+/// editing" without leaving the section. Equivalent to clicking
+/// the section in NodeEdit mode and entering the editor.
+///
+/// Routes through a `ConsoleSideEffect::OpenSectionEdit` —
+/// pre-rebuild side handles the (selection + mode) flips so
+/// the rebuild sees the section-frame chrome on the right
+/// node; post-rebuild side opens the actual text editor
+/// (text_edit_state isn't accessible from the verb's
+/// ConsoleEffects).
+///
+/// Closes the console (the user is now editing text inline).
+fn execute_edit(
+    args: &Args,
+    eff: &mut ConsoleEffects,
+    node_id: &str,
+    idx: usize,
+) -> ExecResult {
+    if let Err(msg) = reject_unknown_kvs(args, "edit", &["section"]) {
+        return ExecResult::err(msg);
+    }
+    // Validate the target before issuing the side effect — the
+    // pre-rebuild flow trusts (selection, mode) to be coherent
+    // and doesn't re-validate.
+    let Some(node) = eff.document.mindmap.nodes.get(node_id) else {
+        return ExecResult::err(format!("section edit: node '{}' not found", node_id));
+    };
+    if idx >= node.sections.len() {
+        return ExecResult::err(format!(
+            "section edit: section[{}] not found on node '{}' (has {} section(s))",
+            idx,
+            node_id,
+            node.sections.len()
+        ));
+    }
+    eff.side_effect = Some(crate::application::console::ConsoleSideEffect::OpenSectionEdit {
+        node_id: node_id.to_string(),
+        section_idx: idx,
+    });
+    eff.close_console = true;
+    ExecResult::ok_msg(format!("opening editor on section[{}]…", idx))
 }
 
 /// `section add [at=<idx>] [text="<text>"]` — insert a new
@@ -1910,6 +1957,50 @@ mod tests {
         assert_exec_err_contains(
             run("section resize w=80 h=40", &mut doc),
             "single-target only",
+        );
+    }
+
+    // ─── §4.5: section edit subverb ────────────────────────────
+
+    /// `section edit` queues `OpenSectionEdit` side-effect with
+    /// the resolved (node, idx). The actual editor open happens
+    /// in the dispatcher (post-rebuild); the verb's job is to
+    /// validate + emit the side-effect + close the console.
+    #[test]
+    fn section_edit_emits_open_section_edit_side_effect() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id.clone(),
+            section_idx: 1,
+        });
+        let mut effects = crate::application::console::ConsoleEffects::new(&mut doc);
+        let args_owned: Vec<String> = vec!["edit".to_string()];
+        let result = execute_section(&Args::new(&args_owned), &mut effects);
+        assert!(matches!(result, ExecResult::Ok(_)));
+        match &effects.side_effect {
+            Some(crate::application::console::ConsoleSideEffect::OpenSectionEdit {
+                node_id,
+                section_idx,
+            }) => {
+                assert_eq!(node_id, &id);
+                assert_eq!(*section_idx, 1);
+            }
+            other => panic!("expected OpenSectionEdit, got {:?}", other),
+        }
+        assert!(effects.close_console);
+    }
+
+    /// `section edit` validates the resolved index against the
+    /// node's section count before issuing the side-effect.
+    /// Out-of-range errors cleanly without leaving a dangling
+    /// modal-open request.
+    #[test]
+    fn section_edit_rejects_out_of_range_section_kv() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::Single(id);
+        assert_exec_err_contains(
+            run("section edit section=99", &mut doc),
+            "not found on node",
         );
     }
 }

@@ -34,6 +34,7 @@ pub(in crate::application::app) fn execute_console_line(
     label_edit_state: &mut LabelEditState,
     portal_text_edit_state: &mut PortalTextEditState,
     color_picker_state: &mut ColorPickerState,
+    text_edit_state: &mut super::super::text_edit::TextEditState,
     doc: &mut MindMapDocument,
     interaction_mode: &mut super::super::InteractionMode,
     mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
@@ -104,6 +105,7 @@ pub(in crate::application::app) fn execute_console_line(
         label_edit_state,
         portal_text_edit_state,
         color_picker_state,
+        text_edit_state,
         app_scene,
         renderer,
         scene_cache,
@@ -175,6 +177,25 @@ fn handle_pre_rebuild_side_effect(
             *interaction_mode = mode;
             None
         }
+        ConsoleSideEffect::OpenSectionEdit { node_id, section_idx } => {
+            // Set the document selection + interaction mode before
+            // the rebuild so the rebuild sees the section-frame
+            // chrome on the right node. The actual text-editor
+            // open happens in `handle_post_rebuild_side_effect`
+            // (text_edit_state isn't in this handler's signature).
+            // Re-emit the side effect so the post-handler can
+            // pick it up.
+            doc.selection = crate::application::document::SelectionState::Section(
+                crate::application::document::SectionSel {
+                    node_id: node_id.clone(),
+                    section_idx,
+                },
+            );
+            *interaction_mode = super::super::InteractionMode::NodeEdit {
+                node_id: node_id.clone(),
+            };
+            Some(ConsoleSideEffect::OpenSectionEdit { node_id, section_idx })
+        }
         other => Some(other),
     }
 }
@@ -190,6 +211,7 @@ fn handle_post_rebuild_side_effect(
     label_edit_state: &mut LabelEditState,
     portal_text_edit_state: &mut PortalTextEditState,
     color_picker_state: &mut ColorPickerState,
+    text_edit_state: &mut super::super::text_edit::TextEditState,
     app_scene: &mut crate::application::scene_host::AppScene,
     renderer: &mut Renderer,
     scene_cache: &mut SceneConnectionCache,
@@ -218,6 +240,29 @@ fn handle_post_rebuild_side_effect(
                 renderer,
                 scene_cache,
             );
+        }
+        ConsoleSideEffect::OpenSectionEdit { .. } => {
+            // Pre-rebuild already wrote `selection` + flipped
+            // `interaction_mode = NodeEdit`. Open the section
+            // text editor on the active selection — the editor
+            // resolves the section index from `doc.selection`
+            // (set in pre-rebuild) and falls back to section 0
+            // if the selection drifted between handlers.
+            let primary_id = doc
+                .selection
+                .primary_node_id()
+                .map(str::to_string);
+            if let Some(node_id) = primary_id {
+                super::super::text_edit::open_text_edit(
+                    &node_id,
+                    /* from_creation */ false,
+                    doc,
+                    text_edit_state,
+                    mindmap_tree,
+                    app_scene,
+                    renderer,
+                );
+            }
         }
         // Pre-rebuild variants — already consumed.
         ConsoleSideEffect::ReplaceDocument(_)
