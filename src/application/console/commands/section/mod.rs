@@ -81,7 +81,7 @@ fn complete_section(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Comple
         return frame::complete_section_frame(state, ctx);
     }
     match &state.context {
-        CompletionContext::Token { index: 0 } => prefix_filter(VERBS, state.partial),
+        CompletionContext::Token { index: 0 } => verb_completions(state.partial),
         CompletionContext::Token { index: 1 } => match first_arg {
             // `section resize fill` is the only positional sentinel
             // — every other subverb takes kvs.
@@ -116,9 +116,92 @@ fn complete_section(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Comple
             _ => Vec::new(),
         },
         CompletionContext::Token { .. } => kv_key_completions_with_hints(KEYS, state.partial, kv_hint),
-        CompletionContext::KvValue { key } if key == "section" => Vec::new(),
+        // Value-side completers. The plan §4.5 spec calls for
+        // selection-aware integer completion on `section=K`
+        // showing `0..node.sections.len()` with each row's
+        // hint surfacing the section's preview text.
+        CompletionContext::KvValue { key } if key == "section" => {
+            section_idx_value_completions(ctx, state.partial)
+        }
+        // `runs=preserve|clear` — static two-value enum.
+        CompletionContext::KvValue { key } if key == "runs" => {
+            prefix_filter(&["preserve", "clear"], state.partial)
+        }
         _ => Vec::new(),
     }
+}
+
+/// `section <TAB>` at token 0 — surface every subverb with a
+/// one-line hint per the sibling-consistency reviewer
+/// (`border` / `font` / `color` already do this; section was
+/// the outlier shipping hint-less verb rows).
+fn verb_completions(partial: &str) -> Vec<Completion> {
+    VERBS
+        .iter()
+        .filter(|v| v.starts_with(partial))
+        .map(|v| Completion {
+            text: v.to_string(),
+            display: v.to_string(),
+            hint: Some(verb_hint(v).to_string()),
+            font_family: None,
+        })
+        .collect()
+}
+
+fn verb_hint(v: &str) -> &'static str {
+    match v {
+        "show" => "print the resolved per-section properties",
+        "move" => "shift section offset (dx/dy delta or x/y absolute)",
+        "resize" => "pin section size (w/h) or clear to fill-parent",
+        "text" => "replace section text (runs=preserve|clear)",
+        "add" => "insert a new section",
+        "delete" => "remove the section (errors when only one remains)",
+        "split" => "split a section in two at a grapheme boundary",
+        "frame" => "configure the section's frame border (subverb tree)",
+        _ => "",
+    }
+}
+
+/// Selection-aware integer completer for `section=<TAB>`.
+/// Surfaces `0..node.sections.len()` for the selection's
+/// primary node, with each row's hint showing a short text
+/// preview so the user can tell which section is which.
+fn section_idx_value_completions(
+    ctx: &ConsoleContext,
+    partial: &str,
+) -> Vec<Completion> {
+    use unicode_segmentation::UnicodeSegmentation;
+    let Some(primary_id) = ctx.document.selection.primary_node_id() else {
+        return Vec::new();
+    };
+    let Some(node) = ctx.document.mindmap.nodes.get(primary_id) else {
+        return Vec::new();
+    };
+    node.sections
+        .iter()
+        .enumerate()
+        .filter(|(idx, _)| idx.to_string().starts_with(partial))
+        .map(|(idx, section)| {
+            // Short text preview (≤20 graphemes, grapheme-aware so
+            // a multi-codepoint emoji doesn't slice mid-cluster).
+            // Empty sections render `(empty)` so the row isn't
+            // a bare bullet.
+            let preview: String = section.text.graphemes(true).take(20).collect();
+            let hint = if preview.is_empty() {
+                "(empty)".to_string()
+            } else if section.text.graphemes(true).count() > 20 {
+                format!("\"{}…\"", preview)
+            } else {
+                format!("\"{}\"", preview)
+            };
+            Completion {
+                text: idx.to_string(),
+                display: idx.to_string(),
+                hint: Some(hint),
+                font_family: None,
+            }
+        })
+        .collect()
 }
 
 fn kv_hint(key: &str) -> Option<&'static str> {
@@ -190,9 +273,9 @@ fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     match verb {
         "move" => execute_move(args, eff.document, &node_id, target_idx),
         "resize" => execute_resize(args, eff.document, &node_id, target_idx),
-        "show" => execute_show(eff.document, &node_id, target_idx),
+        "show" => execute_show(args, eff.document, &node_id, target_idx),
         "text" => execute_text(args, eff.document, &node_id, target_idx),
-        "delete" => execute_delete(eff.document, &node_id, target_idx),
+        "delete" => execute_delete(args, eff.document, &node_id, target_idx),
         "split" => execute_split(args, eff.document, &node_id, target_idx),
         // `add` doesn't use the `target_idx` resolver path (no
         // existing section needed); the verb's `at=` kv supplies
@@ -269,12 +352,34 @@ fn parse_section_kv(args: &Args) -> Result<Option<usize>, String> {
     Ok(None)
 }
 
+/// Reject any kv whose key isn't in `allowed`. Used by each
+/// subverb (`show`, `text`, `add`, `delete`, `split`) to catch
+/// typos like `sectoin=0` that pre-fix silently no-op'd. The
+/// `move` and `resize` parsers already do this inline; this
+/// helper covers the verbs that previously didn't.
+fn reject_unknown_kvs(args: &Args, verb: &str, allowed: &[&str]) -> Result<(), String> {
+    for (k, _) in args.kvs() {
+        if !allowed.iter().any(|a| *a == k) {
+            return Err(format!(
+                "section {}: unknown key '{}'; use {}",
+                verb,
+                k,
+                allowed.join("|")
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Multi-line readout of one section's resolved properties:
 /// text preview, run count breakdown, offset, size (with the
 /// fill-parent fallback noted), channel (with the index-default
 /// noted), and trigger-binding count. Mirrors `border show`'s
 /// shape — purely informational, no mutation. Plan §4.5.
-fn execute_show(doc: &MindMapDocument, node_id: &str, idx: usize) -> ExecResult {
+fn execute_show(args: &Args, doc: &MindMapDocument, node_id: &str, idx: usize) -> ExecResult {
+    if let Err(msg) = reject_unknown_kvs(args, "show", &["section"]) {
+        return ExecResult::err(msg);
+    }
     let Some(node) = doc.mindmap.nodes.get(node_id) else {
         return ExecResult::err(format!("section show: node '{}' not found", node_id));
     };
@@ -300,11 +405,25 @@ fn execute_show(doc: &MindMapDocument, node_id: &str, idx: usize) -> ExecResult 
 
     // Text preview: cap at ~40 graphemes so a long section
     // doesn't overflow the readout. Stay grapheme-aware so we
-    // don't slice mid-cluster.
+    // don't slice mid-cluster. Single-pass: take 41 graphemes;
+    // if 41 came back, we're past the cap and need an ellipsis.
+    // Pre-fix this walked the iterator twice (`take(40).collect()`
+    // + `count() > 40`), which is O(n) per call for the second
+    // walk. The completion popup hits this path on every key
+    // press in some flows.
     use unicode_segmentation::UnicodeSegmentation;
-    let preview: String = section.text.graphemes(true).take(40).collect();
-    let truncated = section.text.graphemes(true).count() > 40;
-    let text_display = if truncated {
+    let mut preview = String::with_capacity(160);
+    let mut grapheme_count = 0usize;
+    let mut overflow = false;
+    for g in section.text.graphemes(true) {
+        if grapheme_count == 40 {
+            overflow = true;
+            break;
+        }
+        preview.push_str(g);
+        grapheme_count += 1;
+    }
+    let text_display = if overflow {
         format!("\"{}…\"", preview)
     } else {
         format!("\"{}\"", preview)
@@ -392,6 +511,9 @@ fn execute_show(doc: &MindMapDocument, node_id: &str, idx: usize) -> ExecResult 
 /// runs unconditionally), so preserve and clear produced
 /// identical output.
 fn execute_text(args: &Args, doc: &mut MindMapDocument, node_id: &str, idx: usize) -> ExecResult {
+    if let Err(msg) = reject_unknown_kvs(args, "text", &["text", "runs", "section"]) {
+        return ExecResult::err(msg);
+    }
     // Resolve the text payload: positional(1) or `text=` kv.
     // `text=` wins when both are present (the kv is the
     // explicit-named form; the positional is the convenient
@@ -456,6 +578,9 @@ fn execute_text(args: &Args, doc: &mut MindMapDocument, node_id: &str, idx: usiz
 fn execute_add(args: &Args, doc: &mut MindMapDocument, node_id: &str) -> ExecResult {
     use baumhard::mindmap::model::{MindSection, Position};
 
+    if let Err(msg) = reject_unknown_kvs(args, "add", &["at", "text"]) {
+        return ExecResult::err(msg);
+    }
     let at_kv = match args.kvs().find(|(k, _)| *k == "at").map(|(_, v)| v.to_string()) {
         Some(v) => match v.parse::<usize>() {
             Ok(n) => Some(n),
@@ -494,7 +619,10 @@ fn execute_add(args: &Args, doc: &mut MindMapDocument, node_id: &str) -> ExecRes
 /// through `MindMapDocument::delete_section`. Plan §4.5. Errors
 /// when the node has only one section (model invariant) or the
 /// idx is out of range.
-fn execute_delete(doc: &mut MindMapDocument, node_id: &str, idx: usize) -> ExecResult {
+fn execute_delete(args: &Args, doc: &mut MindMapDocument, node_id: &str, idx: usize) -> ExecResult {
+    if let Err(msg) = reject_unknown_kvs(args, "delete", &["section"]) {
+        return ExecResult::err(msg);
+    }
     match doc.delete_section(node_id, idx) {
         Ok(_removed) => ExecResult::ok_msg(format!(
             "section[{}] deleted from node '{}'",
@@ -509,6 +637,9 @@ fn execute_delete(doc: &mut MindMapDocument, node_id: &str, idx: usize) -> ExecR
 /// `MindMapDocument::split_section`. Plan §4.5. `at=` defaults
 /// to end-of-text (an empty suffix section).
 fn execute_split(args: &Args, doc: &mut MindMapDocument, node_id: &str, idx: usize) -> ExecResult {
+    if let Err(msg) = reject_unknown_kvs(args, "split", &["at", "section"]) {
+        return ExecResult::err(msg);
+    }
     let at_grapheme = match args.kvs().find(|(k, _)| *k == "at").map(|(_, v)| v.to_string()) {
         Some(v) => match v.parse::<usize>() {
             Ok(n) => Some(n),
@@ -1433,5 +1564,133 @@ mod tests {
             run("section split at=not-a-number", &mut doc),
             "not a non-negative integer",
         );
+    }
+
+    // ─── Round 2 review: typo-rejection + completion hints ─────
+
+    /// Pin the silent-typo rejection added per the Full-Nelson
+    /// UX reviewer. `section delete sectoin=0` (typo) was a
+    /// silent no-op pre-fix because the only kv each subverb
+    /// read was its named one — unknown kvs flowed through
+    /// without complaint. Now every subverb error-rejects.
+    #[test]
+    fn section_text_rejects_unknown_kv_with_typo_hint() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id,
+            section_idx: 1,
+        });
+        assert_exec_err_contains(
+            run("section text \"x\" txet=hello", &mut doc),
+            "unknown key 'txet'",
+        );
+    }
+
+    #[test]
+    fn section_delete_rejects_unknown_kv_with_typo_hint() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id,
+            section_idx: 1,
+        });
+        assert_exec_err_contains(
+            run("section delete sectoin=0", &mut doc),
+            "unknown key 'sectoin'",
+        );
+    }
+
+    /// `section <TAB>` produces verb rows with hints — pre-fix
+    /// the popup showed bare verb names. Sibling consistency
+    /// with `border` / `font` / `color`.
+    #[test]
+    fn section_completion_token_zero_emits_hints() {
+        use crate::application::console::completion::{CompletionContext, CompletionState};
+        let doc = load_test_doc();
+        let ctx = crate::application::console::ConsoleContext::from_document(&doc);
+        let tokens = vec!["section".to_string()];
+        let state = CompletionState {
+            tokens: &tokens,
+            cursor_token: 0,
+            partial: "",
+            context: CompletionContext::Token { index: 0 },
+        };
+        let out = complete_section(&state, &ctx);
+        // Every verb has a hint.
+        assert!(!out.is_empty());
+        for c in &out {
+            assert!(
+                c.hint.as_ref().map_or(false, |h| !h.is_empty()),
+                "verb '{}' missing hint",
+                c.text
+            );
+        }
+        // Spot-check one specific verb.
+        let show = out.iter().find(|c| c.text == "show").expect("show in list");
+        assert!(
+            show.hint.as_ref().unwrap().contains("resolved"),
+            "show hint mentions resolved properties: {:?}",
+            show.hint
+        );
+    }
+
+    /// Selection-aware integer completion for `section=<TAB>`:
+    /// surfaces `0..node.sections.len()` for the selection's
+    /// primary node, with each row's hint showing a text
+    /// preview. Pre-fix the value side returned empty — Plan
+    /// §4.5 line 981 spec'd this as the discoverability path.
+    #[test]
+    fn section_kv_value_completion_lists_indices_with_text_preview() {
+        use crate::application::console::completion::{CompletionContext, CompletionState};
+        let (mut doc, id) = pinned_two_section_node();
+        // Seed distinct text on each section so the previews
+        // round-trip distinguishably.
+        doc.set_section_text(&id, 0, "first".to_string());
+        doc.set_section_text(&id, 1, "second".to_string());
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id.clone(),
+            section_idx: 0,
+        });
+        let ctx = crate::application::console::ConsoleContext::from_document(&doc);
+        let tokens = vec!["section".to_string(), "show".to_string()];
+        let state = CompletionState {
+            tokens: &tokens,
+            cursor_token: 0,
+            partial: "",
+            context: CompletionContext::KvValue {
+                key: "section".to_string(),
+            },
+        };
+        let out = complete_section(&state, &ctx);
+        let labels: Vec<&str> = out.iter().map(|c| c.text.as_str()).collect();
+        assert!(labels.iter().any(|l| l == &"0"), "idx 0 in completion: {:?}", labels);
+        assert!(labels.iter().any(|l| l == &"1"), "idx 1 in completion: {:?}", labels);
+        // Hints surface the section text preview.
+        let row0 = out.iter().find(|c| c.text == "0").unwrap();
+        assert!(
+            row0.hint.as_ref().unwrap().contains("first"),
+            "row 0 hint must include text preview: {:?}",
+            row0.hint
+        );
+    }
+
+    /// `runs=<TAB>` surfaces the two-value enum.
+    #[test]
+    fn section_runs_kv_value_completion_lists_preserve_clear() {
+        use crate::application::console::completion::{CompletionContext, CompletionState};
+        let doc = load_test_doc();
+        let ctx = crate::application::console::ConsoleContext::from_document(&doc);
+        let tokens = vec!["section".to_string(), "text".to_string()];
+        let state = CompletionState {
+            tokens: &tokens,
+            cursor_token: 0,
+            partial: "",
+            context: CompletionContext::KvValue {
+                key: "runs".to_string(),
+            },
+        };
+        let out = complete_section(&state, &ctx);
+        let labels: Vec<&str> = out.iter().map(|c| c.text.as_str()).collect();
+        assert!(labels.contains(&"preserve"));
+        assert!(labels.contains(&"clear"));
     }
 }

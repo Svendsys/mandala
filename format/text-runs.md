@@ -80,3 +80,29 @@ default font, default size. Valid.
 A run can set `"hyperlink": "https://example.com"`. The renderer draws
 the covered text as a clickable link styled with that URL. Runs without a
 hyperlink set the field to `null` (or omit it — it's serde-optional).
+
+## `section split` run partitioning
+
+The `section split [section=<idx>] [at=<grapheme>]` console verb
+(SECTIONS_BORDERS_RESIZE_PLAN.md §4.5) splits a section in two
+at a grapheme boundary; the prefix stays at `idx`, the suffix
+becomes a new section at `idx + 1`.
+
+`text_runs` partition grapheme-correctly via
+[`text_run_ops::slice`](../lib/baumhard/src/mindmap/model/text_run_ops.rs):
+- Runs wholly inside `[0, split_grapheme)` survive unchanged on
+  the prefix.
+- Runs wholly inside `[split_grapheme, total_graphemes)` survive
+  on the suffix with their `start` / `end` shifted by
+  `-split_grapheme` into the new section's coordinate space.
+- Runs **straddling** the split are clipped: prefix gets the
+  in-prefix portion clamped at `split_grapheme`; suffix gets
+  the in-suffix portion clamped at `0` (after the
+  `-split_grapheme` shift) — both halves carry the same style
+  attributes.
+
+The grapheme-correct partitioning means a styled section
+round-trips through a split → save → `maptool verify` cycle
+without invariant violations. Pre-Batch-5 `split_section`
+compared grapheme-indexed run boundaries against byte offsets,
+silently corrupting runs on any non-ASCII text.
