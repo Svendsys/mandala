@@ -484,3 +484,206 @@ fn apply_border_field_returns_false_for_edge_selection() {
         &mut doc, "preset", "heavy"
     ));
 }
+
+// ─── Plan §5.2 positional subverbs ─────────────────────────────────
+
+#[test]
+fn border_preset_positional_writes_through() {
+    let mut doc = fixture_doc();
+    let id = first_node_id(&doc);
+    doc.selection = SelectionState::Single(id.clone());
+    assert_exec_ok(run("border preset heavy", &mut doc));
+    assert_eq!(
+        doc.mindmap.nodes.get(&id).unwrap().style.border.as_ref().map(|c| c.preset.as_str()),
+        Some("heavy")
+    );
+}
+
+#[test]
+fn border_preset_cycle_advances_to_next_in_list() {
+    use baumhard::mindmap::border::BORDER_PRESETS;
+    let mut doc = fixture_doc();
+    let id = first_node_id(&doc);
+    doc.selection = SelectionState::Single(id.clone());
+    // Pin to the first preset, then cycle and assert second.
+    assert_exec_ok(run(
+        &format!("border preset {}", BORDER_PRESETS[0]),
+        &mut doc,
+    ));
+    assert_exec_ok(run("border preset cycle", &mut doc));
+    assert_eq!(
+        doc.mindmap.nodes.get(&id).unwrap().style.border.as_ref().map(|c| c.preset.as_str()),
+        Some(BORDER_PRESETS[1])
+    );
+}
+
+#[test]
+fn border_preset_cycle_wraps_at_last() {
+    use baumhard::mindmap::border::BORDER_PRESETS;
+    let mut doc = fixture_doc();
+    let id = first_node_id(&doc);
+    doc.selection = SelectionState::Single(id.clone());
+    // Pin to the last preset, cycle, expect wrap to first.
+    assert_exec_ok(run(
+        &format!("border preset {}", BORDER_PRESETS[BORDER_PRESETS.len() - 1]),
+        &mut doc,
+    ));
+    assert_exec_ok(run("border preset cycle", &mut doc));
+    assert_eq!(
+        doc.mindmap.nodes.get(&id).unwrap().style.border.as_ref().map(|c| c.preset.as_str()),
+        Some(BORDER_PRESETS[0])
+    );
+}
+
+#[test]
+fn border_preset_unknown_rejects_with_pick_one_hint() {
+    let mut doc = fixture_doc();
+    let id = first_node_id(&doc);
+    doc.selection = SelectionState::Single(id);
+    assert_exec_err_contains(run("border preset wibble", &mut doc), "pick one of");
+}
+
+#[test]
+fn border_color_positional_writes_through() {
+    let mut doc = fixture_doc();
+    let id = first_node_id(&doc);
+    doc.selection = SelectionState::Single(id.clone());
+    assert_exec_ok(run("border color #ff8800", &mut doc));
+    assert_eq!(
+        doc.mindmap.nodes.get(&id).unwrap().style.border.as_ref().and_then(|c| c.color.as_deref()),
+        Some("#ff8800")
+    );
+}
+
+#[test]
+fn border_padding_positional_writes_through() {
+    let mut doc = fixture_doc();
+    let id = first_node_id(&doc);
+    doc.selection = SelectionState::Single(id.clone());
+    assert_exec_ok(run("border padding 12", &mut doc));
+    assert_eq!(
+        doc.mindmap.nodes.get(&id).unwrap().style.border.as_ref().map(|c| c.padding),
+        Some(12.0)
+    );
+}
+
+#[test]
+fn border_palette_positional_with_field_kv_writes_both() {
+    let mut doc = fixture_doc();
+    let id = first_node_id(&doc);
+    doc.selection = SelectionState::Single(id.clone());
+    assert_exec_ok(run("border palette rainbow field=text", &mut doc));
+    let cfg = doc.mindmap.nodes.get(&id).unwrap().style.border.as_ref().unwrap();
+    assert_eq!(cfg.color_palette.as_deref(), Some("rainbow"));
+}
+
+#[test]
+fn border_toggle_flips_show_frame_per_node() {
+    let mut doc = fixture_doc();
+    let id = first_node_id(&doc);
+    doc.selection = SelectionState::Single(id.clone());
+    let before = doc.mindmap.nodes.get(&id).unwrap().style.show_frame;
+    assert_exec_ok(run("border toggle", &mut doc));
+    let after = doc.mindmap.nodes.get(&id).unwrap().style.show_frame;
+    assert_ne!(before, after, "toggle must flip show_frame");
+}
+
+#[test]
+fn border_side_top_positional_writes_through() {
+    let mut doc = fixture_doc();
+    let id = first_node_id(&doc);
+    doc.selection = SelectionState::Single(id.clone());
+    // Have to land preset=custom first; per the new posture, side
+    // overrides on non-custom presets fall under the auto-promote
+    // path until B6.7 lands the explicit error replacement.
+    assert_exec_ok(run("border preset custom", &mut doc));
+    assert_exec_ok(run("border side top \"=##=\"", &mut doc));
+    let cfg = doc.mindmap.nodes.get(&id).unwrap().style.border.as_ref().unwrap();
+    assert!(cfg.glyphs.is_some(), "side write must populate glyphs slot");
+}
+
+/// `border side top reset` must restore the cascade fall-
+/// through. The CustomBorderGlyphs fields are plain Strings
+/// not Options, so "reset" empties them; the renderer treats
+/// empty as "use the cascade default".
+#[test]
+fn border_side_reset_empties_per_node_override() {
+    let mut doc = fixture_doc();
+    let id = first_node_id(&doc);
+    doc.selection = SelectionState::Single(id.clone());
+    assert_exec_ok(run("border preset custom", &mut doc));
+    assert_exec_ok(run("border side top \"=##=\"", &mut doc));
+    let after_set = doc
+        .mindmap
+        .nodes
+        .get(&id)
+        .unwrap()
+        .style
+        .border
+        .as_ref()
+        .and_then(|c| c.glyphs.as_ref())
+        .map(|g| g.top.clone())
+        .unwrap_or_default();
+    assert_eq!(after_set, "=##=", "side write should land the pattern");
+    assert_exec_ok(run("border side top reset", &mut doc));
+    // After reset the per-node side override is gone (either glyphs
+    // is None or top is empty / default).
+    let after_reset = doc
+        .mindmap
+        .nodes
+        .get(&id)
+        .unwrap()
+        .style
+        .border
+        .as_ref()
+        .and_then(|c| c.glyphs.as_ref())
+        .map(|g| g.top.clone());
+    assert_ne!(
+        after_reset.as_deref(),
+        Some("=##="),
+        "reset must clear the per-side override"
+    );
+}
+
+#[test]
+fn border_side_unknown_which_rejects() {
+    let mut doc = fixture_doc();
+    let id = first_node_id(&doc);
+    doc.selection = SelectionState::Single(id);
+    assert_exec_err_contains(run("border side diagonal \"xxx\"", &mut doc), "unknown");
+}
+
+#[test]
+fn border_corner_positional_writes_through() {
+    let mut doc = fixture_doc();
+    let id = first_node_id(&doc);
+    doc.selection = SelectionState::Single(id.clone());
+    assert_exec_ok(run("border preset custom", &mut doc));
+    assert_exec_ok(run("border corner tl +", &mut doc));
+    let g = doc
+        .mindmap
+        .nodes
+        .get(&id)
+        .unwrap()
+        .style
+        .border
+        .as_ref()
+        .and_then(|c| c.glyphs.as_ref())
+        .expect("custom preset + corner write must populate glyphs");
+    assert_eq!(g.top_left, "+", "tl write must land the glyph");
+}
+
+#[test]
+fn border_corner_all_fans_to_four_corners() {
+    let mut doc = fixture_doc();
+    let id = first_node_id(&doc);
+    doc.selection = SelectionState::Single(id.clone());
+    assert_exec_ok(run("border preset custom", &mut doc));
+    assert_exec_ok(run("border corner all +", &mut doc));
+    let cfg = doc.mindmap.nodes.get(&id).unwrap().style.border.as_ref().unwrap();
+    let g = cfg.glyphs.as_ref().unwrap();
+    assert_eq!(g.top_left, "+");
+    assert_eq!(g.top_right, "+");
+    assert_eq!(g.bottom_left, "+");
+    assert_eq!(g.bottom_right, "+");
+}

@@ -38,14 +38,16 @@ pub(in crate::application::console) fn join_lines(
         .join("\n")
 }
 
-/// Assert `result` is `ExecResult::Ok(_)`, panicking with the
-/// alternate variant printed otherwise. Replaces the
-/// three-line `match { Ok(_) => {} other => panic!(...) }`
-/// idiom that 25+ command tests grew used to.
+/// Assert `result` is `ExecResult::Ok(_)` or `Lines(_)`,
+/// panicking on `Err(_)`. The two success variants are
+/// interchangeable for "did the verb apply" — single-line vs
+/// multi-line readout depends on output formatting (auto-
+/// promote hints, custom-preset hints, etc) which the test
+/// shouldn't have to enumerate.
 pub(in crate::application::console) fn assert_exec_ok(result: ExecResult) {
     match result {
-        ExecResult::Ok(_) => {}
-        other => panic!("expected Ok, got {:?}", other),
+        ExecResult::Ok(_) | ExecResult::Lines(_) => {}
+        other => panic!("expected Ok / Lines, got {:?}", other),
     }
 }
 

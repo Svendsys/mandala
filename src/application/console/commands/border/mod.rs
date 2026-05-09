@@ -63,8 +63,13 @@ pub const KEYS: &[&str] = &[
 ];
 
 /// Positional verbs surfaced as token-0 completions alongside kv
-/// keys.
-pub const VERBS: &[&str] = &["on", "off", "show", "reset", "preview"];
+/// keys. Plan §5.2 added the per-field positional subverbs
+/// (`preset` / `color` / `padding` / `palette` / `font` /
+/// `side` / `corner`) and `toggle`.
+pub const VERBS: &[&str] = &[
+    "on", "off", "toggle", "show", "reset", "preview",
+    "preset", "color", "padding", "palette", "font", "side", "corner",
+];
 
 /// Subverbs surfaced under `border preview` — the
 /// commit/cancel terminator pair plus the kv keys (handled
@@ -89,9 +94,16 @@ pub const COMMAND: Command = Command {
     name: "border",
     aliases: &[],
     summary: "Configure the node border (preset, font, color, custom glyphs, palette)",
-    usage: "border on|off|show|reset | border [preset=…] [font=…] [size=…] [color=…] \
-         [palette=…] [field=…] [padding=…] [top=…] [bottom=…] [left=…] [right=…] \
-         [tl=…] [tr=…] [bl=…] [br=…] | border preview <kv>=… | border preview commit|cancel",
+    usage: "border on|off|toggle|show|reset \
+         | border preset <name|cycle> \
+         | border color <#hex|var(--name)|preset|reset> \
+         | border padding <px> \
+         | border palette <name|off> [field=<frame|background|text|title>] \
+         | border font <family|off> [size=<pt>] \
+         | border side <top|bottom|left|right|all> <pattern|reset> \
+         | border corner <tl|tr|bl|br|all> <glyph|reset> \
+         | border [preset=…] [font=…] [size=…] [color=…] [palette=…] [field=…] [padding=…] [top=…] [bottom=…] [left=…] [right=…] [tl=…] [tr=…] [bl=…] [br=…] \
+         | border preview <kv>=… | border preview commit|cancel",
     tags: &[
         "border", "frame", "glyph", "preset", "corner", "side", "pattern", "palette", "padding", "rounded",
         "heavy", "double", "light", "custom",
