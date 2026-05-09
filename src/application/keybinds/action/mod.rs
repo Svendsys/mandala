@@ -776,8 +776,14 @@ pub enum Action {
     /// selected section by `(dx, dy)` canvas units. Keybind /
     /// macro path for the per-frame-safe section move. AABB
     /// rejection on overflow surfaces as a `log::warn!` and
-    /// no-op. `dx` / `dy` are parsed at dispatch time (Action
-    /// enum needs Hash + Eq, so f64 can't ride directly).
+    /// no-op.
+    //
+    // Stringly-typed payload convention: f64 / usize fields on
+    // `Action` variants ride as `String` because the enum
+    // derives Hash + Eq + Serialize / Deserialize across every
+    // variant, and f64 doesn't `Hash`. Dispatch arms parse
+    // them. This applies to every `Set/Add/Split/...Section*`
+    // variant and to any future numeric-payload Action.
     #[action(context = Document, wasm = Compatible)]
     SetSectionOffsetDelta { dx: String, dy: String },
     /// Mirror `section resize w=<w> h=<h>` — pin the selected
@@ -792,45 +798,42 @@ pub enum Action {
     /// keybind-stability.
     #[action(context = Document, wasm = Compatible)]
     SetSectionSizeFillParent,
-    /// Mirror `section move x=<x> y=<y> [section=<idx>]` — pin the
-    /// selected section's `offset` to `(x, y)` (absolute setter,
-    /// distinct from the `dx` / `dy` delta form). Plan §4.6.
-    /// `x` / `y` parsed at dispatch time (Action enum needs Hash +
-    /// Eq, so f64 can't ride directly). Same AABB validation as the
-    /// verb path; non-finite or out-of-bounds rejection surfaces as
-    /// a `log::warn!` and no-op.
+    /// Mirror `section move x=<x> y=<y> [section=<idx>]` —
+    /// macro-only target (not bindable to a key today; no
+    /// `KeybindConfig` field). Pin the selected section's
+    /// `offset` to `(x, y)` (absolute setter, distinct from the
+    /// `dx` / `dy` delta form). Plan §4.6.
     #[action(context = Document, wasm = Compatible)]
     SetSectionOffsetAbs { x: String, y: String },
-    /// Mirror `section text "<text>" [section=<idx>] [runs=preserve|clear]`
-    /// — replace the resolved section's text. `runs_mode` is the
-    /// stringly-typed form of the kv: `"preserve"` keeps existing
-    /// runs clipped to the new text length (via
-    /// `set_section_text_preserving_runs`); `"clear"` collapses to
-    /// a single run (via `set_section_text`). Plan §4.6. Destructive
-    /// (rewrites text content).
+    /// Mirror `section text "<text>" [runs=preserve|clear]` —
+    /// macro-only target (not bindable to a key today; no
+    /// `KeybindConfig` field — the string-arg payload makes
+    /// keybinding awkward). `runs_mode = "preserve"` clips
+    /// existing runs to the new text length;  `"clear"`
+    /// collapses to a single run. Plan §4.6. Destructive.
     #[action(context = Document, wasm = Compatible, destructive)]
     SetSectionText { text: String, runs_mode: String },
-    /// Mirror `section add [at=<idx>] [text="<text>"]` — insert a
-    /// new section into the selection's primary node. `at` is the
-    /// stringly-typed insertion index (empty / "" → append; "0"
-    /// prepend; "K" insert at K). `text` is the new section's text
-    /// payload (empty / "" → empty section). Plan §4.6. Destructive
-    /// (changes the sections vector length).
+    /// Mirror `section add [at=<idx>] [text="<text>"]` —
+    /// macro-only target (not bindable to a key today; no
+    /// `KeybindConfig` field). `at = ""` → append; `"K"` →
+    /// insert at K. `text = ""` → empty section. Plan §4.6.
+    /// Destructive.
     #[action(context = Document, wasm = Compatible, destructive)]
     AddSection { at: String, text: String },
-    /// Mirror `section delete [section=<idx>]` — remove the
-    /// resolved section from the selection's primary node. Errors
-    /// when the node has only one section (the model invariant).
-    /// Plan §4.6. Destructive.
+    /// Mirror `section delete [section=<idx>]` — macro-only
+    /// target (not bindable to a key today; no `KeybindConfig`
+    /// field). Errors when the node has only one section (the
+    /// model invariant). Plan §4.6. Destructive.
     #[action(context = Document, wasm = Compatible, destructive)]
     DeleteSection,
-    /// Mirror `section split [section=<idx>] [at=<grapheme>]` —
-    /// split the resolved section in two at a grapheme boundary.
-    /// `at` is the stringly-typed grapheme index (empty / "" →
-    /// end of text; "K" → split at grapheme K). Plan §4.6.
-    /// Destructive (changes the sections vector length).
+    /// Mirror `section split [at=<grapheme>]` — macro-only
+    /// target (not bindable to a key today; no `KeybindConfig`
+    /// field). `at_grapheme = ""` → end of text; `"K"` → split
+    /// at grapheme K. Field name disambiguates from
+    /// `AddSection { at }`'s section-vector index (different
+    /// units). Plan §4.6. Destructive.
     #[action(context = Document, wasm = Compatible, destructive)]
-    SplitSection { at: String },
+    SplitSection { at_grapheme: String },
     /// Mirror `open <path>` — replace the current document with the
     /// one loaded from `path`. **NativeOnly** + **destructive**:
     /// touches the filesystem. Denylisted for non-User macro tiers

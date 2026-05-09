@@ -472,13 +472,16 @@ pub(in crate::application::app) fn dispatch_compatible(
         Action::DeleteSection => with_doc_rebuild(core, |rc| {
             super::cross_dispatch::apply_delete_section(rc)
         }),
-        Action::SplitSection { at } => {
-            let at_grapheme = match at.as_str() {
+        Action::SplitSection { at_grapheme } => {
+            let at_grapheme = match at_grapheme.as_str() {
                 "" => None,
                 s => match s.parse::<usize>() {
                     Ok(n) => Some(n),
                     Err(_) => {
-                        log::warn!("SplitSection: at='{}' is not a non-negative integer", s);
+                        log::warn!(
+                            "SplitSection: at_grapheme='{}' is not a non-negative integer",
+                            s
+                        );
                         return DispatchOutcome::Handled;
                     }
                 },

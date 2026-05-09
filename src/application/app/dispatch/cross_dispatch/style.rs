@@ -248,7 +248,7 @@ pub(in crate::application::app) fn apply_set_section_size(
 
 /// Pin the selected section's `offset` to `(x, y)` (absolute,
 /// not delta). Mirror of `section move x=<x> y=<y>` for the
-/// keybind / macro path. Plan §4.6 `Action::SetSectionOffsetAbs`.
+/// macro path. Plan §4.6 `Action::SetSectionOffsetAbs`.
 pub(in crate::application::app) fn apply_set_section_offset_abs(
     x: f64,
     y: f64,
@@ -273,7 +273,7 @@ pub(in crate::application::app) fn apply_set_section_offset_abs(
 /// drops every prior run and lays down a single template-cloned
 /// run; `false` (the default for `runs=preserve`) clips existing
 /// runs to the new text length. Mirror of `section text "<text>"
-/// [runs=preserve|clear]` for the keybind / macro path. Plan §4.6
+/// [runs=preserve|clear]` for the macro path. Plan §4.6
 /// `Action::SetSectionText`. Destructive.
 pub(in crate::application::app) fn apply_set_section_text(
     text: String,
@@ -296,7 +296,7 @@ pub(in crate::application::app) fn apply_set_section_text(
 /// Insert a new section into the selection's primary node.
 /// `at = None` appends; `Some(K)` inserts at index `K` (clamped
 /// to `[0, len]`). Mirror of `section add [at=<idx>]
-/// [text="<text>"]` for the keybind / macro path. Plan §4.6
+/// [text="<text>"]` for the macro path. Plan §4.6
 /// `Action::AddSection`. Destructive.
 pub(in crate::application::app) fn apply_add_section(
     at: Option<usize>,
@@ -334,8 +334,8 @@ pub(in crate::application::app) fn apply_add_section(
 /// Remove the resolved section from the selection's primary
 /// node. Errors when the node has only one section (model
 /// invariant: every renderable node has at least one section).
-/// Mirror of `section delete [section=<idx>]` for the keybind /
-/// macro path. Plan §4.6 `Action::DeleteSection`. Destructive.
+/// Mirror of `section delete [section=<idx>]` for the macro
+/// path. Plan §4.6 `Action::DeleteSection`. Destructive.
 pub(in crate::application::app) fn apply_delete_section(rc: &mut RebuildContext<'_>) {
     let Some((node_id, idx)) = target_section(&rc.document.selection) else {
         log::warn!("DeleteSection: no section selected");
@@ -353,7 +353,7 @@ pub(in crate::application::app) fn apply_delete_section(rc: &mut RebuildContext<
 /// Split the resolved section in two at a grapheme boundary.
 /// `at_grapheme = None` defaults to end-of-text (empty suffix).
 /// Mirror of `section split [section=<idx>] [at=<grapheme>]`
-/// for the keybind / macro path. Plan §4.6 `Action::SplitSection`.
+/// for the macro path. Plan §4.6 `Action::SplitSection`.
 /// Destructive.
 pub(in crate::application::app) fn apply_split_section(
     at_grapheme: Option<usize>,
