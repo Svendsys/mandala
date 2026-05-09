@@ -879,6 +879,47 @@ fn handle_right_button(
     ctx: &mut InputHandlerContext<'_>,
 ) {
     if state == ElementState::Pressed {
+        // Mode + modal guards: don't arm a fast-resize gesture
+        // when the user's intent is unambiguously elsewhere.
+        // Architecture-review findings I3 + I4 + I5:
+        //
+        // - **Reparent / Connect modes** consume left-click as
+        //   "pick target" — accepting right-presses here would
+        //   strand `PendingRight` invisibly behind the picker
+        //   chrome, and a release-without-movement would fire
+        //   whatever `RightClick` action the user happens to
+        //   have bound, into the wrong context.
+        // - **Text editors** (label / portal-text / section-text)
+        //   are modal — the left-button path already commits-
+        //   outside-click before any resize logic runs. Right-
+        //   button has no equivalent commit funnel; better to
+        //   block until one exists than to fast-resize a
+        //   different node while the editor stays open with a
+        //   half-edited buffer.
+        // - **Resize mode** with handles visible on node X: the
+        //   user's intent is "I'm resizing X". A Ctrl+RightDrag
+        //   on node Y would resize Y while X's handles stay
+        //   drawn — visible chrome disagreeing with the active
+        //   gesture. Block to preserve the mode's meaning.
+        if ctx.interaction_mode.is_target_picker() {
+            log::debug!("right-button press ignored (target-picker mode active)");
+            return;
+        }
+        if ctx.text_edit_state.is_open()
+            || ctx.label_edit_state.is_open()
+            || ctx.portal_text_edit_state.is_open()
+        {
+            log::debug!("right-button press ignored (modal text editor open)");
+            return;
+        }
+        if matches!(
+            *ctx.interaction_mode,
+            super::InteractionMode::Resize { .. }
+        ) {
+            log::debug!("right-button press ignored (Resize mode active; use the visible handles)");
+            return;
+        }
+
         // Body-only hit-test; no edge-handle / portal-label / resize-
         // handle hits — the fast-resize gesture deliberately bypasses
         // those because it's a corner-anchored resize from anywhere
