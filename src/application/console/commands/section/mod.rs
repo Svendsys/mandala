@@ -30,16 +30,17 @@ use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
 use crate::application::document::{MindMapDocument, SectionSel, SelectionState};
 
 pub const KEYS: &[&str] = &["section"];
-pub const VERBS: &[&str] = &["move", "resize", "frame"];
+pub const VERBS: &[&str] = &["move", "resize", "show", "frame"];
 
 pub const COMMAND: Command = Command {
     name: "section",
     aliases: &[],
-    summary: "Move, resize, or style a section's frame border",
+    summary: "Inspect, move, resize, or style a section's frame border",
     usage:
-        "section move <dx> <dy> [section=<idx>] | section resize <w> <h>|none [section=<idx>] | section frame show|reset|<key>=<value> … [section=<idx>] | section frame preview <key>=<value> …|commit|cancel [section=<idx>]",
+        "section show [section=<idx>] | section move <dx> <dy> [section=<idx>] | section resize <w> <h>|none [section=<idx>] | section frame show|reset|<key>=<value> … [section=<idx>] | section frame preview <key>=<value> …|commit|cancel [section=<idx>]",
     tags: &[
-        "section", "move", "resize", "offset", "size", "frame", "border", "preset", "glyph", "preview",
+        "section", "show", "info", "move", "resize", "offset", "size", "frame", "border", "preset",
+        "glyph", "preview",
     ],
     applicable: always,
     complete: complete_section,
@@ -119,6 +120,7 @@ fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     match verb {
         "move" => execute_move(args, eff.document, &node_id, target_idx),
         "resize" => execute_resize(args, eff.document, &node_id, target_idx),
+        "show" => execute_show(eff.document, &node_id, target_idx),
         other => ExecResult::err(format!("section: unknown subverb '{}'", other)),
     }
 }
@@ -172,6 +174,91 @@ fn parse_section_kv(args: &Args) -> Result<Option<usize>, String> {
         }
     }
     Ok(None)
+}
+
+/// Multi-line readout of one section's resolved properties:
+/// text preview, run count breakdown, offset, size (with the
+/// fill-parent fallback noted), channel (with the index-default
+/// noted), and trigger-binding count. Mirrors `border show`'s
+/// shape — purely informational, no mutation. Plan §4.5.
+fn execute_show(doc: &MindMapDocument, node_id: &str, idx: usize) -> ExecResult {
+    let Some(node) = doc.mindmap.nodes.get(node_id) else {
+        return ExecResult::err(format!("section show: node '{}' not found", node_id));
+    };
+    let Some(section) = node.sections.get(idx) else {
+        return ExecResult::err(format!(
+            "section show: section[{}] not found on node '{}'",
+            idx, node_id
+        ));
+    };
+
+    // Run breakdown: count unique flag-bearing runs by axis. Two
+    // bold runs spanning disjoint ranges count as 2; a single run
+    // that's both bold + italic counts as 1 in each.
+    let total_runs = section.text_runs.len();
+    let bold = section.text_runs.iter().filter(|r| r.bold).count();
+    let italic = section.text_runs.iter().filter(|r| r.italic).count();
+    let underline = section.text_runs.iter().filter(|r| r.underline).count();
+    let hyperlink = section
+        .text_runs
+        .iter()
+        .filter(|r| r.hyperlink.is_some())
+        .count();
+
+    // Text preview: cap at ~40 graphemes so a long section
+    // doesn't overflow the readout. Stay grapheme-aware so we
+    // don't slice mid-cluster.
+    use unicode_segmentation::UnicodeSegmentation;
+    let preview: String = section.text.graphemes(true).take(40).collect();
+    let truncated = section.text.graphemes(true).count() > 40;
+    let text_display = if truncated {
+        format!("\"{}…\"", preview)
+    } else {
+        format!("\"{}\"", preview)
+    };
+
+    // Size readout: show the explicit Some pin, or annotate the
+    // None case with the parent-derived effective size so the
+    // user sees what the renderer is using.
+    let size_display = match section.size {
+        Some(s) => format!("Some({} × {}) [explicit pin]", s.width, s.height),
+        None => format!(
+            "None [fill parent: {} × {}]",
+            node.size.width, node.size.height
+        ),
+    };
+
+    // Channel readout: show the explicit Some, or annotate the
+    // None case with the index the tree builder substitutes.
+    let channel_display = match section.channel {
+        Some(c) => format!("Some({})", c),
+        None => format!("None [→ index {}]", idx),
+    };
+
+    let mut lines = vec![
+        format!("section[{}] of node \"{}\"", idx, node_id),
+        format!("  text:     {}", text_display),
+        format!(
+            "  runs:     {} runs ({} bold, {} italic, {} underline, {} hyperlink)",
+            total_runs, bold, italic, underline, hyperlink
+        ),
+        format!("  offset:   ({}, {})", section.offset.x, section.offset.y),
+        format!("  size:     {}", size_display),
+        format!("  channel:  {}", channel_display),
+        format!(
+            "  bindings: {} trigger(s)",
+            section.trigger_bindings.len()
+        ),
+    ];
+    // Surface frame_border presence so the user sees the per-
+    // section override status without running `section frame
+    // show` separately.
+    let frame_status = match &section.frame_border {
+        Some(_) => "per-section override",
+        None => "(falls back to canvas default / floor)",
+    };
+    lines.push(format!("  frame:    {}", frame_status));
+    ExecResult::lines(lines)
 }
 
 fn execute_move(args: &Args, doc: &mut MindMapDocument, node_id: &str, idx: usize) -> ExecResult {
@@ -447,6 +534,91 @@ mod tests {
         assert_exec_err_contains(
             run("section move 1 1", &mut doc),
             "requires a node or section selection",
+        );
+    }
+
+    #[test]
+    fn section_show_emits_resolved_readout() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.set_section_text(&id, 1, "hello world".to_string());
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id.clone(),
+            section_idx: 1,
+        });
+        let result = run("section show", &mut doc);
+        let blob = match result {
+            ExecResult::Lines(ls) => ls.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join("\n"),
+            other => panic!("expected ExecResult::Lines, got {:?}", other),
+        };
+        assert!(blob.contains(&format!("section[1] of node \"{}\"", id)));
+        assert!(blob.contains("text:"));
+        assert!(blob.contains("hello world"), "preview must echo the text: {}", blob);
+        assert!(blob.contains("offset:"));
+        assert!(blob.contains("size:"));
+        assert!(blob.contains("channel:"));
+    }
+
+    #[test]
+    fn section_show_truncates_long_text_at_grapheme_boundary() {
+        let (mut doc, id) = pinned_two_section_node();
+        let long_text = "abcdefghijklmnopqrstuvwxyz1234567890ABCDEFGHIJ".to_string();
+        doc.set_section_text(&id, 1, long_text);
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id,
+            section_idx: 1,
+        });
+        let result = run("section show", &mut doc);
+        let blob = match result {
+            ExecResult::Lines(ls) => ls.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join("\n"),
+            other => panic!("expected ExecResult::Lines, got {:?}", other),
+        };
+        assert!(blob.contains("…"), "truncated preview must include ellipsis: {}", blob);
+        assert!(!blob.contains("ABCDEFGHIJ"), "tail past 40 graphemes shouldn't appear");
+    }
+
+    #[test]
+    fn section_show_size_none_annotates_fill_parent() {
+        let (mut doc, id) = pinned_two_section_node();
+        // Section[1] starts with explicit size; clear to fill-
+        // parent for this test (offset must be (0, 0) for the
+        // None case to pass section-AABB validation).
+        {
+            let node = doc.mindmap.nodes.get_mut(&id).unwrap();
+            node.sections[1].offset = baumhard::mindmap::model::Position { x: 0.0, y: 0.0 };
+        }
+        let _ = doc.set_section_size(&id, 1, None);
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id,
+            section_idx: 1,
+        });
+        let result = run("section show", &mut doc);
+        let blob = match result {
+            ExecResult::Lines(ls) => ls.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join("\n"),
+            other => panic!("expected ExecResult::Lines, got {:?}", other),
+        };
+        assert!(
+            blob.contains("None [fill parent:"),
+            "fill-parent annotation missing: {}",
+            blob
+        );
+    }
+
+    #[test]
+    fn section_show_channel_none_annotates_index_fallback() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id,
+            section_idx: 1,
+        });
+        let result = run("section show", &mut doc);
+        let blob = match result {
+            ExecResult::Lines(ls) => ls.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join("\n"),
+            other => panic!("expected ExecResult::Lines, got {:?}", other),
+        };
+        assert!(
+            blob.contains("None [→ index 1]"),
+            "channel index-fallback annotation missing: {}",
+            blob
         );
     }
 }
