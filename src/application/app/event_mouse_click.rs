@@ -696,75 +696,10 @@ pub(super) fn handle_mouse_input(
                         }
                     }
                     DragState::Throttled(ThrottledDrag::NodeResize(i)) => {
-                        // Single atomic setter call on release.
-                        // `set_node_aabb` validates the new
-                        // (position, size) pair and writes both
-                        // under one `EditNodeAabb` undo entry.
-                        // Rejection (NaN, non-positive, astronomical)
-                        // logs and falls through to `rebuild_all`
-                        // — node snaps back to pre-drag AABB.
-                        if let Some(doc) = ctx.document.as_mut() {
-                            let (new_position, new_size) = i.resolve(i.total_delta);
-                            match doc.set_node_aabb(&i.node_id, new_position, new_size) {
-                                Ok(true) => {}
-                                Ok(false) => {
-                                    log::debug!("node resize committed no-op on '{}'", i.node_id);
-                                }
-                                Err(msg) => {
-                                    log::info!("node resize release rejected: {} (snapping back)", msg);
-                                }
-                            }
-                            ctx.scene_cache.clear();
-                            rebuild_all(
-                                doc,
-                                ctx.interaction_mode,
-                                ctx.mindmap_tree,
-                                ctx.app_scene,
-                                ctx.renderer,
-                                ctx.scene_cache,
-                            );
-                        }
+                        finalize_node_resize_release(&i, "node resize", ctx);
                     }
                     DragState::Throttled(ThrottledDrag::SectionResize(i)) => {
-                        // Single atomic setter call on release.
-                        // `set_section_aabb` validates the
-                        // post-mutation `(offset, size)` against
-                        // the parent — so a W-grow gesture that
-                        // shrinks `offset.x` and grows `size.width`
-                        // by the same delta passes the right-edge
-                        // guard that the two-step
-                        // `set_section_size` + `set_section_offset`
-                        // path rejected (intermediate state had
-                        // new size at old offset, overflowing).
-                        // Rejection (NaN, negative, overflow,
-                        // astronomical) logs and falls through to
-                        // `rebuild_all` from the unchanged model —
-                        // section snaps back to pre-drag AABB.
-                        if let Some(doc) = ctx.document.as_mut() {
-                            let (new_offset, new_size) = i.resolve(i.total_delta);
-                            match doc.set_section_aabb(&i.node_id, i.section_idx, new_offset, new_size) {
-                                Ok(true) => {}
-                                Ok(false) => {
-                                    log::debug!(
-                                        "section resize committed no-op on '{}' section[{}]",
-                                        i.node_id,
-                                        i.section_idx
-                                    );
-                                }
-                                Err(msg) => {
-                                    log::info!("section resize release rejected: {} (snapping back)", msg);
-                                }
-                            }
-                            ctx.scene_cache.clear();
-                            rebuild_all(
-                                doc,
-                                ctx.interaction_mode,
-                                ctx.mindmap_tree,
-                                ctx.app_scene,
-                                ctx.renderer,
-                                ctx.scene_cache,
-                            );
-                        }
+                        finalize_section_resize_release(&i, "section resize", ctx);
                     }
                     DragState::Throttled(ThrottledDrag::EdgeHandle(i)) => {
                         // The drain loop has been writing
@@ -934,9 +869,10 @@ pub(super) fn handle_mouse_input(
 ///    nothing; users opt in. State resets to `None`.
 /// 2. `Throttled(NodeResize | SectionResize)` (threshold-cross
 ///    promoted to fast-resize via `Action::FastResizeStart`) —
-///    finalize via `set_node_aabb` / `set_section_aabb`, exactly
-///    as the left-button release does. Reuses `finalize_resize_release`
-///    so the commit shape stays single-source.
+///    finalize via [`finalize_node_resize_release`] /
+///    [`finalize_section_resize_release`], the same helpers the
+///    left-button release path uses. Single-source commit shape
+///    regardless of which button started the gesture.
 fn handle_right_button(
     state: ElementState,
     cursor_pos_val: (f64, f64),
@@ -1003,72 +939,18 @@ fn handle_right_button(
                 }
             }
             // Threshold-cross promoted PendingRight to one of the
-            // resize Throttled variants — finalize the same way
-            // left-button release does. Logic intentionally
-            // duplicates the relevant arms in the left-release
-            // path; extracting a helper is a follow-up after the
-            // gesture is in. Reusing `set_node_aabb` /
-            // `set_section_aabb` (atomic post-state validate +
-            // single undo entry) keeps the commit shape identical
-            // regardless of which button started the gesture.
+            // resize Throttled variants — finalize via the shared
+            // helpers (`finalize_node_resize_release` /
+            // `finalize_section_resize_release`) so the commit
+            // shape stays single-source with the left-button
+            // release. Gesture label distinguishes the log line
+            // origin so users grepping "rejected" can tell handle-
+            // driven resizes apart from fast-resize.
             DragState::Throttled(ThrottledDrag::NodeResize(i)) => {
-                if let Some(doc) = ctx.document.as_mut() {
-                    let (new_position, new_size) = i.resolve(i.total_delta);
-                    match doc.set_node_aabb(&i.node_id, new_position, new_size) {
-                        Ok(true) => {}
-                        Ok(false) => {
-                            log::debug!(
-                                "fast-resize node release committed no-op on '{}'",
-                                i.node_id
-                            );
-                        }
-                        Err(msg) => {
-                            log::info!(
-                                "fast-resize node release rejected: {} (snapping back)",
-                                msg
-                            );
-                        }
-                    }
-                    ctx.scene_cache.clear();
-                    rebuild_all(
-                        doc,
-                        ctx.interaction_mode,
-                        ctx.mindmap_tree,
-                        ctx.app_scene,
-                        ctx.renderer,
-                        ctx.scene_cache,
-                    );
-                }
+                finalize_node_resize_release(&i, "fast-resize node", ctx);
             }
             DragState::Throttled(ThrottledDrag::SectionResize(i)) => {
-                if let Some(doc) = ctx.document.as_mut() {
-                    let (new_offset, new_size) = i.resolve(i.total_delta);
-                    match doc.set_section_aabb(&i.node_id, i.section_idx, new_offset, new_size) {
-                        Ok(true) => {}
-                        Ok(false) => {
-                            log::debug!(
-                                "fast-resize section release committed no-op on '{}' section[{}]",
-                                i.node_id,
-                                i.section_idx
-                            );
-                        }
-                        Err(msg) => {
-                            log::info!(
-                                "fast-resize section release rejected: {} (snapping back)",
-                                msg
-                            );
-                        }
-                    }
-                    ctx.scene_cache.clear();
-                    rebuild_all(
-                        doc,
-                        ctx.interaction_mode,
-                        ctx.mindmap_tree,
-                        ctx.app_scene,
-                        ctx.renderer,
-                        ctx.scene_cache,
-                    );
-                }
+                finalize_section_resize_release(&i, "fast-resize section", ctx);
             }
             // Any other state on right-release: put it back. Right-
             // button release shouldn't terminate a left-button
@@ -1097,6 +979,115 @@ fn handle_right_button(
 /// `hit_node` is the click hit's owning node id (`None` for empty
 /// canvas). `cursor_pos_val` is screen-space; we project to canvas
 /// inside.
+/// Finalize a `Throttled(NodeResize)` drag: write the resolved
+/// `(position, size)` through `set_node_aabb` (atomic, single
+/// `EditNodeAabb` undo entry), clear the scene cache, rebuild
+/// the scene from the authoritative model.
+///
+/// `gesture_label` distinguishes the log-line origin
+/// ("node resize" for handle-driven left-button drags vs
+/// "fast-resize node" for right-button corner-anchored drags) —
+/// users grepping logs for "rejected" can tell the two apart.
+/// Rejection (NaN, non-positive size, astronomical) logs and
+/// falls through to `rebuild_all` from the unchanged model so
+/// the node snaps back to its pre-drag AABB.
+///
+/// Single-source for both the left-release and right-release
+/// finalization paths — pre-fix, the two arms held byte-near
+/// duplicates of this body. CODE_CONVENTIONS §5: "If a function
+/// is needed in two or more places, the answer is never to copy
+/// it, but to use a single function called in two or more
+/// places." C6 of the 9-agent review.
+#[cfg(not(target_arch = "wasm32"))]
+fn finalize_node_resize_release(
+    interaction: &super::throttled_interaction::NodeResizeInteraction,
+    gesture_label: &str,
+    ctx: &mut InputHandlerContext<'_>,
+) {
+    let Some(doc) = ctx.document.as_mut() else {
+        return;
+    };
+    let (new_position, new_size) = interaction.resolve(interaction.total_delta);
+    match doc.set_node_aabb(&interaction.node_id, new_position, new_size) {
+        Ok(true) => {}
+        Ok(false) => {
+            log::debug!(
+                "{} release committed no-op on '{}'",
+                gesture_label,
+                interaction.node_id
+            );
+        }
+        Err(msg) => {
+            log::info!(
+                "{} release rejected: {} (snapping back)",
+                gesture_label,
+                msg
+            );
+        }
+    }
+    ctx.scene_cache.clear();
+    rebuild_all(
+        doc,
+        ctx.interaction_mode,
+        ctx.mindmap_tree,
+        ctx.app_scene,
+        ctx.renderer,
+        ctx.scene_cache,
+    );
+}
+
+/// Finalize a `Throttled(SectionResize)` drag — see
+/// [`finalize_node_resize_release`] for the shape rationale.
+/// Routes through `set_section_aabb` which validates the
+/// post-mutation `(offset, size)` against the parent in one
+/// step, so a W-grow gesture (shrink offset, grow width) passes
+/// the right-edge guard the two-step `set_section_size` +
+/// `set_section_offset` path rejected (intermediate state had
+/// new size at old offset, overflowing).
+#[cfg(not(target_arch = "wasm32"))]
+fn finalize_section_resize_release(
+    interaction: &super::throttled_interaction::SectionResizeInteraction,
+    gesture_label: &str,
+    ctx: &mut InputHandlerContext<'_>,
+) {
+    let Some(doc) = ctx.document.as_mut() else {
+        return;
+    };
+    let (new_offset, new_size) = interaction.resolve(interaction.total_delta);
+    match doc.set_section_aabb(
+        &interaction.node_id,
+        interaction.section_idx,
+        new_offset,
+        new_size,
+    ) {
+        Ok(true) => {}
+        Ok(false) => {
+            log::debug!(
+                "{} release committed no-op on '{}' section[{}]",
+                gesture_label,
+                interaction.node_id,
+                interaction.section_idx
+            );
+        }
+        Err(msg) => {
+            log::info!(
+                "{} release rejected: {} (snapping back)",
+                gesture_label,
+                msg
+            );
+        }
+    }
+    ctx.scene_cache.clear();
+    rebuild_all(
+        doc,
+        ctx.interaction_mode,
+        ctx.mindmap_tree,
+        ctx.app_scene,
+        ctx.renderer,
+        ctx.scene_cache,
+    );
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn maybe_exit_node_edit_on_outside_click(
     ctx: &mut InputHandlerContext<'_>,
