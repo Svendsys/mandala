@@ -55,6 +55,8 @@ impl MindMapDocument {
 
         let before_style = node.style.clone();
         let before_sections = node.sections.clone();
+        let before_position = node.position;
+        let before_size = node.size;
         let canvas_default = self.mindmap.canvas.default_border.clone();
         let node = self
             .mindmap
@@ -67,6 +69,8 @@ impl MindMapDocument {
             node_id: node_id.to_string(),
             before_style,
             before_sections,
+            before_position,
+            before_size,
         });
         self.dirty = true;
 
@@ -122,6 +126,8 @@ impl MindMapDocument {
 
         let before_style = node.style.clone();
         let before_sections = node.sections.clone();
+        let before_position = node.position;
+        let before_size = node.size;
         let canvas_default = self.mindmap.canvas.default_border.clone();
         let node = self
             .mindmap
@@ -134,6 +140,8 @@ impl MindMapDocument {
             node_id: node_id.to_string(),
             before_style,
             before_sections,
+            before_position,
+            before_size,
         });
         self.dirty = true;
 
@@ -267,6 +275,8 @@ impl MindMapDocument {
 
         let before_style = node.style.clone();
         let before_sections = node.sections.clone();
+        let before_position = node.position;
+        let before_size = node.size;
         let canvas_default = self.mindmap.canvas.default_border.clone();
         let node = self
             .mindmap
@@ -283,6 +293,8 @@ impl MindMapDocument {
             node_id: node_id.to_string(),
             before_style,
             before_sections,
+            before_position,
+            before_size,
         });
         self.dirty = true;
 
@@ -610,6 +622,37 @@ mod tests {
         );
         assert!(run.italic);
         assert_eq!(run.color, "#00ff00");
+    }
+
+    /// Pin the `node.size` undo restoration. Pre-fix the floor
+    /// pass after `add_section` could grow `node.size` to
+    /// accommodate the inserted section's measured-text floor;
+    /// `EditNodeStyle` only restored `style` + `sections`, leaving
+    /// the node visibly inflated after undo. Now restored
+    /// alongside.
+    #[test]
+    fn add_section_undo_restores_node_size_when_floor_pass_grew_it() {
+        use baumhard::mindmap::model::{MindSection, Position};
+        let mut doc = load_test_doc();
+        let id = first_testament_node_id(&doc);
+        let before_size = doc.mindmap.nodes.get(&id).unwrap().size;
+        let new_section = MindSection {
+            text: "this is a long section that may grow the node".repeat(3),
+            text_runs: Vec::new(),
+            offset: Position::default(),
+            size: None,
+            channel: None,
+            trigger_bindings: Vec::new(),
+            frame_border: None,
+        };
+        doc.add_section(&id, None, new_section).unwrap();
+        assert!(doc.undo());
+        let after_undo_size = doc.mindmap.nodes.get(&id).unwrap().size;
+        assert_eq!(
+            (after_undo_size.width, after_undo_size.height),
+            (before_size.width, before_size.height),
+            "undo must restore node.size to pre-mutation value"
+        );
     }
 
     /// A run straddling the split — partitioned: the prefix gets

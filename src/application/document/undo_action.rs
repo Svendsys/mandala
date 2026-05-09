@@ -61,6 +61,19 @@ pub enum UndoAction {
         node_id: String,
         before_style: NodeStyle,
         before_sections: Vec<MindSection>,
+        /// Pre-mutation `node.position`. Captured because some
+        /// style setters (and the structural section mutators
+        /// added in Batch 5) trigger `grow_one_node_to_fit_text`
+        /// / `grow_one_node_to_fit_border` floor passes that can
+        /// shift the node's AABB; without restoring `position`
+        /// on undo, the node would visibly drift after style →
+        /// undo.
+        before_position: Position,
+        /// Pre-mutation `node.size`. Same rationale as
+        /// `before_position` — the floor passes can grow `size`,
+        /// and undo must restore it or the node stays inflated
+        /// after the section/style mutation is undone.
+        before_size: Size,
     },
     /// A node's zoom-visibility window (`min_zoom_to_render` /
     /// `max_zoom_to_render`) was edited. Kept as its own variant —

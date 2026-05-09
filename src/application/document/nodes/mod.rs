@@ -487,6 +487,8 @@ impl MindMapDocument {
         }
         let before_style = node.style.clone();
         let before_sections = node.sections.clone();
+        let before_position = node.position;
+        let before_size = node.size;
         let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
         node.style.text_color = color.clone();
         for section in node.sections.iter_mut() {
@@ -501,6 +503,8 @@ impl MindMapDocument {
             node_id: node_id.to_string(),
             before_style,
             before_sections,
+            before_position,
+            before_size,
         });
         self.dirty = true;
         true
@@ -534,6 +538,8 @@ impl MindMapDocument {
         }
         let before_style = node.style.clone();
         let before_sections = node.sections.clone();
+        let before_position = node.position;
+        let before_size = node.size;
         let canvas_default = self.mindmap.canvas.default_border.clone();
         let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
         for section in node.sections.iter_mut() {
@@ -550,6 +556,8 @@ impl MindMapDocument {
             node_id: node_id.to_string(),
             before_style,
             before_sections,
+            before_position,
+            before_size,
         });
         self.dirty = true;
         true
@@ -589,6 +597,8 @@ impl MindMapDocument {
         }
         let before_style = node.style.clone();
         let before_sections = node.sections.clone();
+        let before_position = node.position;
+        let before_size = node.size;
         let canvas_default = self.mindmap.canvas.default_border.clone();
         let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
         for section in node.sections.iter_mut() {
@@ -610,6 +620,8 @@ impl MindMapDocument {
             node_id: node_id.to_string(),
             before_style,
             before_sections,
+            before_position,
+            before_size,
         });
         self.dirty = true;
         true
@@ -860,6 +872,8 @@ pub(super) fn set_node_style_field(
     };
     let before_style = node.style.clone();
     let before_sections = node.sections.clone();
+    let before_position = node.position;
+    let before_size = node.size;
     if !mutate(&mut node.style) {
         return false;
     }
@@ -867,6 +881,8 @@ pub(super) fn set_node_style_field(
         node_id: node_id.to_string(),
         before_style,
         before_sections,
+        before_position,
+        before_size,
     });
     doc.dirty = true;
     true

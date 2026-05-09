@@ -51,6 +51,8 @@ impl MindMapDocument {
             .expect("caller verified node exists");
         let before_style = node.style.clone();
         let before_sections = node.sections.clone();
+        let before_position = node.position;
+        let before_size = node.size;
         let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
         let changed = mutate(&mut node.sections[section_idx]);
         if !changed {
@@ -68,6 +70,8 @@ impl MindMapDocument {
             node_id: node_id.to_string(),
             before_style,
             before_sections,
+            before_position,
+            before_size,
         });
         self.dirty = true;
         true
