@@ -121,6 +121,8 @@ impl MindMapDocument {
             return false;
         }
         let before_sections = node.sections.clone();
+        let before_position = node.position;
+        let before_size = node.size;
         let canvas_default = self.mindmap.canvas.default_border.clone();
         let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
         if let Some(section) = node.sections.get_mut(section_idx) {
@@ -133,6 +135,8 @@ impl MindMapDocument {
         self.undo_stack.push(UndoAction::EditNodeText {
             node_id: node_id.to_string(),
             before_sections,
+            before_position,
+            before_size,
         });
         self.dirty = true;
         true
@@ -202,6 +206,8 @@ impl MindMapDocument {
             .collect();
 
         let before_sections = node.sections.clone();
+        let before_position = node.position;
+        let before_size = node.size;
         let canvas_default = self.mindmap.canvas.default_border.clone();
         let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
         if let Some(section) = node.sections.get_mut(section_idx) {
@@ -213,6 +219,8 @@ impl MindMapDocument {
         self.undo_stack.push(UndoAction::EditNodeText {
             node_id: node_id.to_string(),
             before_sections,
+            before_position,
+            before_size,
         });
         self.dirty = true;
         true
@@ -230,6 +238,8 @@ impl MindMapDocument {
             return false;
         }
         let before_sections = node.sections.clone();
+        let before_position = node.position;
+        let before_size = node.size;
         let count = baumhard::util::grapheme_chad::count_grapheme_clusters(&new_text);
         let template = section.text_runs.first().cloned().unwrap_or_else(|| TextRun {
             start: 0,
@@ -266,6 +276,8 @@ impl MindMapDocument {
         self.undo_stack.push(UndoAction::EditNodeText {
             node_id: node_id.to_string(),
             before_sections,
+            before_position,
+            before_size,
         });
         self.dirty = true;
         true

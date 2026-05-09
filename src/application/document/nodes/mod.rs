@@ -382,6 +382,8 @@ impl MindMapDocument {
             return false;
         }
         let before_sections = node.sections.clone();
+        let before_position = node.position;
+        let before_size = node.size;
         // Collapse the first section to a single run spanning the new
         // text. Inherit formatting from the first original run on that
         // section, or fall back to the default-orphan defaults.
@@ -422,6 +424,8 @@ impl MindMapDocument {
         self.undo_stack.push(UndoAction::EditNodeText {
             node_id: node_id.to_string(),
             before_sections,
+            before_position,
+            before_size,
         });
         self.dirty = true;
         true

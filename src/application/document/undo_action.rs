@@ -44,9 +44,17 @@ pub enum UndoAction {
     /// [`MindSection`]). The full pre-edit `sections` array is
     /// snapshotted so undo restores text *and* per-run formatting on
     /// every section, not just the one that was edited.
+    ///
+    /// `before_position` / `before_size` mirror the `EditNodeStyle`
+    /// fields: text setters trigger `grow_one_node_to_fit_text` /
+    /// `grow_one_node_to_fit_border` floor passes that can grow the
+    /// node's AABB; without restoring them, undo of a long-text-
+    /// replace leaves the node visibly inflated.
     EditNodeText {
         node_id: String,
         before_sections: Vec<MindSection>,
+        before_position: Position,
+        before_size: Size,
     },
     /// A node's visual style was edited in place (bg / border / text
     /// color / font size). Captures the pre-edit `NodeStyle` plus the

@@ -729,6 +729,46 @@ mod tests {
         );
     }
 
+    /// Parallel pin for `set_section_text`: a long-text replace
+    /// triggers `grow_one_node_to_fit_text` which inflates
+    /// `node.size`. Pre-fix, `UndoAction::EditNodeText` only
+    /// restored `node.sections`, leaving the inflated AABB in
+    /// place after undo. Post-fix, `before_position` and
+    /// `before_size` are captured + restored mirroring
+    /// `EditNodeStyle`.
+    #[test]
+    fn set_section_text_undo_restores_node_size_when_floor_pass_grew_it() {
+        let mut doc = load_test_doc();
+        let id = first_testament_node_id(&doc);
+        let before_size = doc.mindmap.nodes.get(&id).unwrap().size;
+        let before_position = doc.mindmap.nodes.get(&id).unwrap().position;
+        // Replace section[0]'s text with content long enough to
+        // force the floor pass to grow the node.
+        let long = "extremely long replacement text that will force the floor pass to grow the parent node beyond its original AABB by a noticeable amount".repeat(2);
+        assert!(doc.set_section_text(&id, 0, long));
+        let after_set_size = doc.mindmap.nodes.get(&id).unwrap().size;
+        // Sanity: the floor pass actually grew the node.
+        assert!(
+            after_set_size.width > before_size.width
+                || after_set_size.height > before_size.height,
+            "fixture-validity check: long text must trigger floor-pass growth (before: {:?}, after: {:?})",
+            before_size, after_set_size
+        );
+        assert!(doc.undo());
+        let after_undo_size = doc.mindmap.nodes.get(&id).unwrap().size;
+        let after_undo_position = doc.mindmap.nodes.get(&id).unwrap().position;
+        assert_eq!(
+            (after_undo_size.width, after_undo_size.height),
+            (before_size.width, before_size.height),
+            "undo must restore node.size to pre-mutation value"
+        );
+        assert_eq!(
+            (after_undo_position.x, after_undo_position.y),
+            (before_position.x, before_position.y),
+            "undo must restore node.position to pre-mutation value"
+        );
+    }
+
     /// A run straddling the split — partitioned: the prefix gets
     /// the in-prefix portion clamped, the suffix gets the
     /// in-suffix portion shifted.

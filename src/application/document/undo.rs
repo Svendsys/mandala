@@ -70,9 +70,13 @@ impl MindMapDocument {
                 UndoAction::EditNodeText {
                     node_id,
                     before_sections,
+                    before_position,
+                    before_size,
                 } => {
                     if let Some(node) = self.mindmap.nodes.get_mut(&node_id) {
                         node.sections = before_sections;
+                        node.position = before_position;
+                        node.size = before_size;
                     }
                 }
                 UndoAction::EditNodeStyle {
