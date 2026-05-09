@@ -298,10 +298,6 @@ fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         "edit" => execute_edit(args, eff, &node_id, target_idx),
         "delete" => execute_delete(args, eff.document, &node_id, target_idx),
         "split" => execute_split(args, eff.document, &node_id, target_idx),
-        // `add` doesn't use the `target_idx` resolver path (no
-        // existing section needed); the verb's `at=` kv supplies
-        // the insertion index. Routed before resolve_section_idx
-        // would have a chance to error on Single + no kv.
         "add" => unreachable!("section add routed earlier in execute_section"),
         other => ExecResult::err(format!("section: unknown subverb '{}'", other)),
     }
@@ -587,19 +583,9 @@ fn execute_text(args: &Args, doc: &mut MindMapDocument, node_id: &str, idx: usiz
 }
 
 /// `section edit [section=<idx>]` — open the section text
-/// editor on the resolved target. Plan §4.5: lifts the user
-/// from "console-side authoring" to "inline interactive text
-/// editing" without leaving the section. Equivalent to clicking
-/// the section in NodeEdit mode and entering the editor.
-///
-/// Routes through a `ConsoleSideEffect::OpenSectionEdit` —
-/// pre-rebuild side handles the (selection + mode) flips so
-/// the rebuild sees the section-frame chrome on the right
-/// node; post-rebuild side opens the actual text editor
-/// (text_edit_state isn't accessible from the verb's
-/// ConsoleEffects).
-///
-/// Closes the console (the user is now editing text inline).
+/// editor on the resolved target. Plan §4.5. Routes through
+/// `ConsoleSideEffect::OpenSectionEdit`; closes the console
+/// (modal handoff to the editor).
 fn execute_edit(
     args: &Args,
     eff: &mut ConsoleEffects,
@@ -609,10 +595,6 @@ fn execute_edit(
     if let Err(msg) = reject_unknown_kvs(args, "edit", &["section"]) {
         return ExecResult::err(msg);
     }
-    // (node_id, idx) already validated by the upstream
-    // `execute_section` resolver — both `mindmap.nodes.get(&node_id)`
-    // and `target_idx >= section_count` are gated there. No
-    // re-validation here.
     eff.side_effect = Some(crate::application::console::ConsoleSideEffect::OpenSectionEdit {
         node_id: node_id.to_string(),
         section_idx: idx,

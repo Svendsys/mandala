@@ -265,13 +265,20 @@ fn handle_post_rebuild_side_effect(
                 text_edit_state,
             );
         }
-        // Pre-rebuild variants — already consumed.
+        // Pre-rebuild variants — already consumed. Per
+        // CODE_CONVENTIONS §9 (interactive paths must not panic),
+        // log + soft-skip instead of `unreachable!`. A future
+        // contributor adding a variant that forgets the pre-
+        // rebuild arm will see a loud log line, not a crash.
         ConsoleSideEffect::ReplaceDocument(_)
         | ConsoleSideEffect::SetFpsDisplay(_)
         | ConsoleSideEffect::SetInteractionMode(_) => {
-            unreachable!(
-                "ReplaceDocument / SetFpsDisplay / SetInteractionMode should be consumed by handle_pre_rebuild_side_effect"
-            )
+            log::error!(
+                "{:?} reached post-rebuild handler; should have been consumed by \
+                 handle_pre_rebuild_side_effect — ignoring to avoid crash",
+                eff
+            );
+            return false;
         }
     }
     true
