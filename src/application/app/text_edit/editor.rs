@@ -639,11 +639,14 @@ pub(in crate::application::app) fn handle_text_edit_key(
     };
 
     if changed {
-        // Text editing only mutates the live tree during typing; the
-        // model is untouched until commit (click-outside) or rolled
-        // back on cancel (Esc). Clone the relevant fields to release
-        // the mutable borrow on `text_edit_state` before calling
-        // `apply_text_edit_to_tree`.
+        // Text editing only mutates the live tree during typing;
+        // the model is untouched until commit (click-outside) or
+        // rolled back on cancel (Esc). The mutable borrow on
+        // `text_edit_state` ends with the action / literal-char
+        // call above; reborrow immutably here so
+        // `apply_text_edit_to_tree` can read the buffer + regions
+        // without forcing a per-keystroke clone of either (the
+        // function takes `&str` / `&ColorFontRegions`).
         let TextEditState::Open {
             node_id,
             section_idx,
@@ -651,21 +654,16 @@ pub(in crate::application::app) fn handle_text_edit_key(
             cursor_grapheme_pos,
             buffer_regions,
             ..
-        } = text_edit_state
+        } = &*text_edit_state
         else {
             return;
         };
-        let node_id_owned = node_id.clone();
-        let section_idx_snapshot = *section_idx;
-        let buffer_owned = buffer.clone();
-        let regions_owned = buffer_regions.clone();
-        let cursor_snapshot = *cursor_grapheme_pos;
         apply_text_edit_to_tree(
-            &node_id_owned,
-            section_idx_snapshot,
-            &buffer_owned,
-            &regions_owned,
-            cursor_snapshot,
+            node_id,
+            *section_idx,
+            buffer,
+            buffer_regions,
+            *cursor_grapheme_pos,
             mindmap_tree,
             renderer,
         );

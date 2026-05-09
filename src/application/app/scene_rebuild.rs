@@ -903,12 +903,12 @@ pub(in crate::application::app) fn update_section_frame_tree(
     scene: &baumhard::mindmap::scene_builder::RenderScene,
     app_scene: &mut crate::application::scene_host::AppScene,
 ) {
-    use crate::application::scene_host::{hash_canvas_signature, CanvasDispatch, CanvasRole};
+    use crate::application::scene_host::{CanvasDispatch, CanvasRole};
     use baumhard::mindmap::tree_builder::{
         build_section_frame_tree, section_frame_identity_sequence,
     };
 
-    let signature = hash_canvas_signature(&section_frame_identity_sequence(&scene.section_frames));
+    let signature = section_frame_identity_sequence(&scene.section_frames);
     match app_scene.canvas_dispatch(CanvasRole::SectionFrames, signature) {
         CanvasDispatch::InPlaceMutator => {
             // Signature matched the registered tree — nothing
