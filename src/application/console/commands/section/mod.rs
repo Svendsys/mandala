@@ -1,14 +1,31 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! `section move <dx> <dy>` and `section resize <w> <h>` — per-
-//! section position and size verbs targeting either the selection's
-//! section (when the selection is `SelectionState::Section`) or an
-//! explicit `section=K` kv (when the selection is a single node).
+//! `section …` — kv-form per-section verbs targeting either the
+//! selection's section (when the selection is
+//! `SelectionState::Section` / `SectionRange`) or an explicit
+//! `section=K` kv (when the selection is a single node). Subverbs
+//! (per `SECTIONS_BORDERS_RESIZE_PLAN.md` §4.5):
 //!
-//! Validation messages mirror `crates/maptool/src/verify/sections.rs`
-//! so a verb-rejected move and a `verify` violation read identically.
-//! `section resize none` flips a section's `size` back to `None`
-//! (fill-parent) — the only console-side path to that state today.
+//! - `section show [section=<idx>]` — multi-line resolved-property
+//!   readout (text preview / runs / offset / size / channel /
+//!   bindings / frame override).
+//! - `section move dx=<f64> dy=<f64>` (delta) or
+//!   `section move x=<f64> y=<f64>` (absolute) — delta and
+//!   absolute forms are mutually exclusive; mixing rejects.
+//! - `section resize w=<f64> h=<f64>` or `section resize fill` —
+//!   the `fill` literal renames the prior `none` (which read as
+//!   "remove the section"); `fill` clears `size = None` so the
+//!   tree builder fills the parent's AABB.
+//! - `section text "<text>" [runs=preserve|clear]` — replace
+//!   text with optional run handling.
+//! - `section add [at=<idx>] [text="<text>"]` — insert.
+//! - `section delete [section=<idx>]` — remove.
+//! - `section split [section=<idx>] [at=<grapheme>]` — split in
+//!   two at a grapheme boundary.
+//!
+//! Validation messages on `move` / `resize` mirror
+//! `crates/maptool/src/verify/sections.rs` so a verb-rejected
+//! mutation and a `verify` violation read identically.
 //!
 //! ## `section frame …`
 //!
@@ -39,7 +56,7 @@ pub const COMMAND: Command = Command {
     aliases: &[],
     summary: "Inspect, move, resize, edit, or structurally modify a section",
     usage:
-        "section show [section=<idx>] | section move <dx> <dy> [section=<idx>] | section resize <w> <h>|none [section=<idx>] | section text \"<text>\" [section=<idx>] [runs=preserve|clear] | section add [at=<idx>] [text=\"<text>\"] | section delete [section=<idx>] | section split [section=<idx>] [at=<grapheme>] | section frame show|reset|<key>=<value> … [section=<idx>] | section frame preview <key>=<value> …|commit|cancel [section=<idx>]",
+        "section show [section=<idx>] | section move dx=<f64> dy=<f64> [section=<idx>] | section move x=<f64> y=<f64> [section=<idx>] | section resize w=<f64> h=<f64>|fill [section=<idx>] | section text \"<text>\" [section=<idx>] [runs=preserve|clear] | section add [at=<idx>] [text=\"<text>\"] | section delete [section=<idx>] | section split [section=<idx>] [at=<grapheme>] | section frame show|reset|<key>=<value> … [section=<idx>] | section frame preview <key>=<value> …|commit|cancel [section=<idx>]",
     tags: &[
         "section", "show", "info", "move", "resize", "offset", "size", "text", "add", "delete",
         "split", "frame", "border", "preset", "glyph", "preview",
@@ -66,7 +83,36 @@ fn complete_section(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Comple
     match &state.context {
         CompletionContext::Token { index: 0 } => prefix_filter(VERBS, state.partial),
         CompletionContext::Token { index: 1 } => match first_arg {
-            Some("resize") => prefix_filter(&["none"], state.partial),
+            // `section resize fill` is the only positional sentinel
+            // — every other subverb takes kvs.
+            Some("resize") => {
+                let mut out = prefix_filter(&["fill"], state.partial);
+                out.extend(kv_key_completions_with_hints(
+                    &["w", "h", "section"],
+                    state.partial,
+                    kv_hint,
+                ));
+                out
+            }
+            Some("move") => kv_key_completions_with_hints(
+                &["dx", "dy", "x", "y", "section"],
+                state.partial,
+                kv_hint,
+            ),
+            Some("text") => kv_key_completions_with_hints(
+                &["text", "runs", "section"],
+                state.partial,
+                kv_hint,
+            ),
+            Some("add") => {
+                kv_key_completions_with_hints(&["at", "text"], state.partial, kv_hint)
+            }
+            Some("split") => {
+                kv_key_completions_with_hints(&["at", "section"], state.partial, kv_hint)
+            }
+            Some("delete") | Some("show") => {
+                kv_key_completions_with_hints(&["section"], state.partial, kv_hint)
+            }
             _ => Vec::new(),
         },
         CompletionContext::Token { .. } => kv_key_completions_with_hints(KEYS, state.partial, kv_hint),
@@ -78,6 +124,15 @@ fn complete_section(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Comple
 fn kv_hint(key: &str) -> Option<&'static str> {
     match key {
         "section" => Some("target section index inside a multi-section node"),
+        "dx" => Some("relative move along x axis (canvas units)"),
+        "dy" => Some("relative move along y axis (canvas units)"),
+        "x" => Some("absolute x offset within parent node"),
+        "y" => Some("absolute y offset within parent node"),
+        "w" => Some("section width (canvas units)"),
+        "h" => Some("section height (canvas units)"),
+        "text" => Some("section text payload (quote multi-word values)"),
+        "runs" => Some("preserve|clear — keep or drop per-grapheme styling"),
+        "at" => Some("insertion / split index"),
         _ => None,
     }
 }
@@ -87,7 +142,7 @@ fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         Some(v) => v,
         None => {
             return ExecResult::err(
-                "usage: section move <dx> <dy> | section resize <w> <h>|none | section frame …",
+                "usage: section move dx=<f64> dy=<f64> | section move x=<f64> y=<f64> | section resize w=<f64> h=<f64> | section resize fill | section show | section text \"<text>\" | section add | section delete | section split | section frame …",
             )
         }
     };
@@ -435,46 +490,139 @@ fn execute_split(args: &Args, doc: &mut MindMapDocument, node_id: &str, idx: usi
     }
 }
 
+/// `section move dx=<f64> dy=<f64>` (delta) or `section move
+/// x=<f64> y=<f64>` (absolute). Plan §4.5: kv form replaces the
+/// pre-Batch-5 positional `<dx> <dy>` per CODE_CONVENTIONS §10
+/// — no compatibility shim, users update muscle memory.
+///
+/// `dx`/`dy` and `x`/`y` are mutually exclusive: passing both
+/// (`dx=1 x=2 dy=0 y=0`) is rejected at parse time so the user
+/// gets a clear "pick one form" error rather than a silent
+/// last-write-wins.
 fn execute_move(args: &Args, doc: &mut MindMapDocument, node_id: &str, idx: usize) -> ExecResult {
-    let dx = match parse_positional_f64(args, 1, "dx") {
-        Ok(v) => v,
+    let parsed = match parse_move_kvs(args) {
+        Ok(p) => p,
         Err(msg) => return ExecResult::err(msg),
     };
-    let dy = match parse_positional_f64(args, 2, "dy") {
-        Ok(v) => v,
-        Err(msg) => return ExecResult::err(msg),
+    let (target_x, target_y) = match parsed {
+        MoveTarget::Delta { dx, dy } => {
+            let (current_x, current_y) = match doc
+                .mindmap
+                .nodes
+                .get(node_id)
+                .and_then(|n| n.sections.get(idx))
+                .map(|s| (s.offset.x, s.offset.y))
+            {
+                Some(p) => p,
+                None => {
+                    return ExecResult::err(format!(
+                        "section[{}] not found on node '{}'",
+                        idx, node_id
+                    ));
+                }
+            };
+            (current_x + dx, current_y + dy)
+        }
+        MoveTarget::Absolute { x, y } => (x, y),
     };
-    let (current_x, current_y) = match doc
-        .mindmap
-        .nodes
-        .get(node_id)
-        .and_then(|n| n.sections.get(idx))
-        .map(|s| (s.offset.x, s.offset.y))
-    {
-        Some(p) => p,
-        None => return ExecResult::err(format!("section[{}] not found on node '{}'", idx, node_id)),
-    };
-    match doc.set_section_offset(node_id, idx, current_x + dx, current_y + dy) {
+    match doc.set_section_offset(node_id, idx, target_x, target_y) {
         Ok(true) => ExecResult::ok_msg(format!("section[{}] moved", idx)),
         Ok(false) => ExecResult::ok_msg("section: no change"),
         Err(msg) => ExecResult::err(msg),
     }
 }
 
+/// Parsed `section move` arguments — either delta (`dx`/`dy`) or
+/// absolute (`x`/`y`). Mixed forms (any of dx/dy combined with
+/// any of x/y) reject at the parser level.
+#[derive(Debug, Clone, Copy)]
+enum MoveTarget {
+    Delta { dx: f64, dy: f64 },
+    Absolute { x: f64, y: f64 },
+}
+
+fn parse_move_kvs(args: &Args) -> Result<MoveTarget, String> {
+    let mut dx: Option<f64> = None;
+    let mut dy: Option<f64> = None;
+    let mut x: Option<f64> = None;
+    let mut y: Option<f64> = None;
+    for (k, v) in args.kvs() {
+        let target = match k {
+            "dx" => &mut dx,
+            "dy" => &mut dy,
+            "x" => &mut x,
+            "y" => &mut y,
+            "section" => continue, // consumed by the resolver
+            other => {
+                return Err(format!(
+                    "section move: unknown key '{}'; use dx|dy|x|y|section",
+                    other
+                ));
+            }
+        };
+        let parsed: f64 = v
+            .parse()
+            .map_err(|_| format!("section move: {}='{}' is not a number", k, v))?;
+        if !parsed.is_finite() {
+            return Err(format!("section move: {}={} is not finite", k, v));
+        }
+        *target = Some(parsed);
+    }
+    let any_delta = dx.is_some() || dy.is_some();
+    let any_abs = x.is_some() || y.is_some();
+    if any_delta && any_abs {
+        return Err(
+            "section move: cannot mix delta form (dx/dy) and absolute form (x/y) — pick one"
+                .into(),
+        );
+    }
+    if !any_delta && !any_abs {
+        return Err(
+            "usage: section move dx=<f64> dy=<f64> | section move x=<f64> y=<f64> [section=<idx>]"
+                .into(),
+        );
+    }
+    if any_delta {
+        Ok(MoveTarget::Delta {
+            dx: dx.unwrap_or(0.0),
+            dy: dy.unwrap_or(0.0),
+        })
+    } else {
+        // Absolute: missing axis defaults to 0.0 (mirrors delta's
+        // posture). Authors who want to set just one axis can
+        // write `section move x=10` and the other axis stays at
+        // 0; if they want "leave x untouched" they use the delta
+        // form with `dx=0`.
+        Ok(MoveTarget::Absolute {
+            x: x.unwrap_or(0.0),
+            y: y.unwrap_or(0.0),
+        })
+    }
+}
+
+/// `section resize w=<f64> h=<f64>` or `section resize fill`.
+/// Plan §4.5: kv form replaces the pre-Batch-5 positional `<w>
+/// <h>`; the `fill` literal replaces `none` ("none" reads as
+/// "remove the section" rather than "fill the parent" — `fill`
+/// is the clearer rename).
 fn execute_resize(args: &Args, doc: &mut MindMapDocument, node_id: &str, idx: usize) -> ExecResult {
-    if args.positional(1).map(str::to_ascii_lowercase).as_deref() == Some("none") {
+    // `fill` arrives as the first positional. Match case-
+    // insensitively so users typing "FILL" or "Fill" don't
+    // surprise themselves with a "not a number" parse error.
+    if args
+        .positional(1)
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+        == Some("fill")
+    {
         return match doc.set_section_size(node_id, idx, None) {
             Ok(true) => ExecResult::ok_msg(format!("section[{}] size cleared (fill parent)", idx)),
             Ok(false) => ExecResult::ok_msg("section: no change"),
             Err(msg) => ExecResult::err(msg),
         };
     }
-    let w = match parse_positional_f64(args, 1, "w") {
-        Ok(v) => v,
-        Err(msg) => return ExecResult::err(msg),
-    };
-    let h = match parse_positional_f64(args, 2, "h") {
-        Ok(v) => v,
+    let (w, h) = match parse_resize_kvs(args) {
+        Ok(p) => p,
         Err(msg) => return ExecResult::err(msg),
     };
     let new_size = baumhard::mindmap::model::Size { width: w, height: h };
@@ -485,12 +633,33 @@ fn execute_resize(args: &Args, doc: &mut MindMapDocument, node_id: &str, idx: us
     }
 }
 
-fn parse_positional_f64(args: &Args, index: usize, name: &str) -> Result<f64, String> {
-    let raw = args
-        .positional(index)
-        .ok_or_else(|| format!("section: missing positional <{}>", name))?;
-    raw.parse::<f64>()
-        .map_err(|_| format!("section: <{}>='{}' is not a number", name, raw))
+fn parse_resize_kvs(args: &Args) -> Result<(f64, f64), String> {
+    let mut w: Option<f64> = None;
+    let mut h: Option<f64> = None;
+    for (k, v) in args.kvs() {
+        let target = match k {
+            "w" => &mut w,
+            "h" => &mut h,
+            "section" => continue,
+            other => {
+                return Err(format!(
+                    "section resize: unknown key '{}'; use w|h|section",
+                    other
+                ));
+            }
+        };
+        let parsed: f64 = v
+            .parse()
+            .map_err(|_| format!("section resize: {}='{}' is not a number", k, v))?;
+        *target = Some(parsed);
+    }
+    let (Some(w), Some(h)) = (w, h) else {
+        return Err(
+            "usage: section resize w=<f64> h=<f64> | section resize fill [section=<idx>]"
+                .into(),
+        );
+    };
+    Ok((w, h))
 }
 
 #[cfg(test)]
@@ -506,7 +675,7 @@ mod tests {
             node_id: id.clone(),
             section_idx: 1,
         });
-        assert_exec_ok(run("section move 5 7", &mut doc));
+        assert_exec_ok(run("section move dx=5 dy=7", &mut doc));
         let s = &doc.mindmap.nodes.get(&id).unwrap().sections[1];
         assert_eq!(s.offset.x, 15.0);
         assert_eq!(s.offset.y, 17.0);
@@ -516,7 +685,7 @@ mod tests {
     fn section_move_kv_overrides_selection_idx() {
         let (mut doc, id) = pinned_two_section_node();
         doc.selection = SelectionState::Single(id.clone());
-        assert_exec_ok(run("section move 3 4 section=1", &mut doc));
+        assert_exec_ok(run("section move dx=3 dy=4 section=1", &mut doc));
         let s = &doc.mindmap.nodes.get(&id).unwrap().sections[1];
         assert_eq!(s.offset.x, 13.0);
         assert_eq!(s.offset.y, 14.0);
@@ -526,7 +695,7 @@ mod tests {
     fn section_move_rejects_when_single_selection_lacks_section_kv() {
         let (mut doc, id) = pinned_two_section_node();
         doc.selection = SelectionState::Single(id);
-        assert_exec_err_contains(run("section move 3 4", &mut doc), "select a specific section");
+        assert_exec_err_contains(run("section move dx=3 dy=4", &mut doc), "select a specific section");
     }
 
     #[test]
@@ -539,7 +708,7 @@ mod tests {
         // section[1] starts at offset (10,10) size 50×30; node is
         // 200×100. Moving by (200,0) puts right edge at 260 > 200.
         assert_exec_err_contains(
-            run("section move 200 0", &mut doc),
+            run("section move dx=200 dy=0", &mut doc),
             "extends past node right edge",
         );
     }
@@ -553,7 +722,7 @@ mod tests {
         });
         // Move (-50, 0) from offset (10,10) → -40, would-be negative.
         assert_exec_err_contains(
-            run("section move -50 0", &mut doc),
+            run("section move dx=-50 dy=0", &mut doc),
             "section[1].offset.x is negative",
         );
     }
@@ -565,7 +734,7 @@ mod tests {
             node_id: id,
             section_idx: 1,
         });
-        assert_exec_err_contains(run("section move not-a-number 0", &mut doc), "not a number");
+        assert_exec_err_contains(run("section move dx=not-a-number", &mut doc), "not a number");
     }
 
     #[test]
@@ -575,7 +744,7 @@ mod tests {
             node_id: id,
             section_idx: 1,
         });
-        let result = run("section move 0 0", &mut doc);
+        let result = run("section move dx=0 dy=0", &mut doc);
         assert!(matches!(result, ExecResult::Ok(_)));
     }
 
@@ -586,7 +755,7 @@ mod tests {
             node_id: id.clone(),
             section_idx: 1,
         });
-        assert_exec_ok(run("section move 7 3", &mut doc));
+        assert_exec_ok(run("section move dx=7 dy=3", &mut doc));
         let s = &doc.mindmap.nodes.get(&id).unwrap().sections[1];
         assert_eq!(s.offset.x, 17.0);
         assert_eq!(s.offset.y, 13.0);
@@ -604,7 +773,7 @@ mod tests {
     fn section_move_out_of_range_section_kv_errors() {
         let (mut doc, id) = pinned_two_section_node();
         doc.selection = SelectionState::Single(id);
-        assert_exec_err_contains(run("section move 1 1 section=99", &mut doc), "not found on node");
+        assert_exec_err_contains(run("section move dx=1 dy=1 section=99", &mut doc), "not found on node");
     }
 
     #[test]
@@ -614,7 +783,7 @@ mod tests {
             node_id: id.clone(),
             section_idx: 1,
         });
-        assert_exec_ok(run("section resize 80 40", &mut doc));
+        assert_exec_ok(run("section resize w=80 h=40", &mut doc));
         let s = &doc.mindmap.nodes.get(&id).unwrap().sections[1];
         assert_eq!(s.size.as_ref().unwrap().width, 80.0);
         assert_eq!(s.size.as_ref().unwrap().height, 40.0);
@@ -624,7 +793,7 @@ mod tests {
     fn section_resize_none_clears_size() {
         let (mut doc, id) = pinned_two_section_node();
         // The fixture pins section[1] at offset (10, 10) with
-        // an explicit size; `section resize none` flatten-to-
+        // an explicit size; `section resize fill` flatten-to-
         // fill-parent is only legal at offset (0, 0) post the
         // effective-size fix, so reset offset first.
         {
@@ -635,7 +804,7 @@ mod tests {
             node_id: id.clone(),
             section_idx: 1,
         });
-        assert_exec_ok(run("section resize none", &mut doc));
+        assert_exec_ok(run("section resize fill", &mut doc));
         assert!(doc.mindmap.nodes.get(&id).unwrap().sections[1].size.is_none());
     }
 
@@ -648,7 +817,7 @@ mod tests {
         });
         // Offset (10,10) + width 250 = 260 > node.size.width 200.
         assert_exec_err_contains(
-            run("section resize 250 30", &mut doc),
+            run("section resize w=250 h=30", &mut doc),
             "extends past node right edge",
         );
     }
@@ -660,7 +829,7 @@ mod tests {
             node_id: id,
             section_idx: 1,
         });
-        assert_exec_err_contains(run("section resize 0 30", &mut doc), "is not positive");
+        assert_exec_err_contains(run("section resize w=0 h=30", &mut doc), "is not positive");
     }
 
     #[test]
@@ -672,7 +841,7 @@ mod tests {
         });
         // node.size.width=200, 100× = 20000. 25000 trips the typo guard.
         assert_exec_err_contains(
-            run("section resize 25000 30", &mut doc),
+            run("section resize w=25000 h=30", &mut doc),
             "over 100× the node's width",
         );
     }
@@ -685,7 +854,7 @@ mod tests {
             section_idx: 1,
         });
         let before = doc.mindmap.nodes.get(&id).unwrap().sections[1].size.clone();
-        assert_exec_ok(run("section resize 80 40", &mut doc));
+        assert_exec_ok(run("section resize w=80 h=40", &mut doc));
         assert!(doc.undo());
         let restored = doc.mindmap.nodes.get(&id).unwrap().sections[1].size.clone();
         assert_eq!(restored, before, "undo restores prior size");
@@ -701,12 +870,92 @@ mod tests {
         assert_exec_err_contains(run("section frobnicate 1 2", &mut doc), "unknown subverb");
     }
 
+    /// Plan §4.5 NEW: absolute-move form via `x=` / `y=`.
+    #[test]
+    fn section_move_absolute_form_writes_offset_directly() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id.clone(),
+            section_idx: 1,
+        });
+        // Section[1] starts at offset (10,10); absolute (3,7)
+        // writes through to that exact offset.
+        assert_exec_ok(run("section move x=3 y=7", &mut doc));
+        let s = &doc.mindmap.nodes.get(&id).unwrap().sections[1];
+        assert_eq!(s.offset.x, 3.0);
+        assert_eq!(s.offset.y, 7.0);
+    }
+
+    /// Mixing delta and absolute kvs rejects with a clear
+    /// diagnostic. Pre-fix, last-write-wins would have made the
+    /// gesture's intent ambiguous.
+    #[test]
+    fn section_move_rejects_mixed_delta_and_absolute_form() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id,
+            section_idx: 1,
+        });
+        assert_exec_err_contains(
+            run("section move dx=1 x=2", &mut doc),
+            "cannot mix delta form",
+        );
+    }
+
+    /// Empty kvs on `section move` yields the usage line, not
+    /// a silent "no change" no-op (which would hide a missed
+    /// argument from the user).
+    #[test]
+    fn section_move_no_kvs_errors_with_usage() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id,
+            section_idx: 1,
+        });
+        assert_exec_err_contains(run("section move", &mut doc), "usage:");
+    }
+
+    /// Unknown kv on `section move` rejects with a key-list
+    /// hint rather than silently accepting and producing a
+    /// no-op.
+    #[test]
+    fn section_move_unknown_key_errors_with_hint() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id,
+            section_idx: 1,
+        });
+        assert_exec_err_contains(
+            run("section move foo=1", &mut doc),
+            "unknown key 'foo'",
+        );
+    }
+
+    /// `section resize fill` (renamed from the prior `none`
+    /// literal) clears `size` to fill-parent. Plan §4.5.
+    #[test]
+    fn section_resize_fill_literal_clears_size() {
+        let (mut doc, id) = pinned_two_section_node();
+        // Move offset to (0,0) so the fill-parent state passes
+        // section-AABB validation.
+        {
+            let node = doc.mindmap.nodes.get_mut(&id).unwrap();
+            node.sections[1].offset = baumhard::mindmap::model::Position { x: 0.0, y: 0.0 };
+        }
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id.clone(),
+            section_idx: 1,
+        });
+        assert_exec_ok(run("section resize fill", &mut doc));
+        assert!(doc.mindmap.nodes.get(&id).unwrap().sections[1].size.is_none());
+    }
+
     #[test]
     fn section_no_selection_errors() {
         let mut doc = load_test_doc();
         doc.selection = SelectionState::None;
         assert_exec_err_contains(
-            run("section move 1 1", &mut doc),
+            run("section move dx=1 dy=1", &mut doc),
             "requires a node or section selection",
         );
     }
