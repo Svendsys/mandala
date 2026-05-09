@@ -19,8 +19,101 @@
 use baumhard::mindmap::model::MindSection;
 
 use super::super::undo_action::UndoAction;
-use super::super::MindMapDocument;
+use super::super::{MindMapDocument, SectionSel, SelectionState};
 use super::{grow_one_node_to_fit_border, validate_section_aabb};
+
+/// In-doc cleanup hook that runs after a structural section
+/// mutation (add / delete / split) on `node_id`. Cancels any
+/// active border preview that targeted the affected sections
+/// (its index reference is now potentially stale), and clamps
+/// the live `selection` so a `Section` / `SectionRange` /
+/// `MultiSection` selection that pointed past the new section
+/// count gets retargeted to a valid index (or demoted to a
+/// whole-node selection when the original section is gone).
+///
+/// **Scope**: covers the doc-side state (`border_preview` and
+/// `selection`). App-side state — `TextEditState`,
+/// `DragState::Throttled(SectionResize)`, `LabelEditState` —
+/// lives in `InitState` and is reachable only from the app
+/// layer; those concerns are handled at the console verb
+/// dispatch site (see `console::commands::section::mod.rs`).
+fn cleanup_after_structural_mutation(doc: &mut MindMapDocument, node_id: &str) {
+    let new_count = doc
+        .mindmap
+        .nodes
+        .get(node_id)
+        .map(|n| n.sections.len())
+        .unwrap_or(0);
+
+    // Cancel any active border preview whose Section / Sections
+    // target lands on this node — a structural mutation
+    // invalidates the preview's idx reference. The drift
+    // mechanism in `border_preview_covers_live_selection` only
+    // catches selection-vs-target drift, not target-shift after
+    // a structural mutation.
+    let preview_targets_this_node = doc
+        .border_preview
+        .as_ref()
+        .map(|p| match &p.target {
+            super::BorderPreviewTarget::Sections(pairs) => {
+                pairs.iter().any(|(id, _)| id == node_id)
+            }
+            super::BorderPreviewTarget::Nodes(ids) => ids.iter().any(|id| id == node_id),
+            // Canvas-default previews are orthogonal to per-section
+            // structural changes — they don't reference the node.
+            _ => false,
+        })
+        .unwrap_or(false);
+    if preview_targets_this_node {
+        doc.cancel_border_preview();
+    }
+
+    // Clamp the selection's section_idx to the new count. A
+    // `Section` selection past the end demotes to `Single(node)`
+    // (the natural "section is gone" lift). `SectionRange`
+    // clamps both ends; if the range collapses to nothing,
+    // demote. `MultiSection` filters out the dead pairs; if
+    // none survive, demote.
+    match &doc.selection {
+        SelectionState::Section(s) if s.node_id == node_id && s.section_idx >= new_count => {
+            doc.selection = SelectionState::Single(node_id.to_string());
+        }
+        SelectionState::SectionRange { sel, range } if sel.node_id == node_id => {
+            let max_idx = new_count.saturating_sub(1);
+            let lo = range.0.min(range.1).min(max_idx);
+            let hi = range.0.max(range.1).min(max_idx);
+            if new_count == 0 {
+                doc.selection = SelectionState::Single(node_id.to_string());
+            } else if sel.section_idx >= new_count {
+                // Anchor section gone — demote to a single
+                // surviving section selection at the closest
+                // remaining idx.
+                doc.selection = SelectionState::Section(SectionSel {
+                    node_id: node_id.to_string(),
+                    section_idx: lo,
+                });
+            } else {
+                doc.selection = SelectionState::SectionRange {
+                    sel: sel.clone(),
+                    range: (lo, hi),
+                };
+            }
+        }
+        SelectionState::MultiSection(sels) => {
+            let surviving: Vec<SectionSel> = sels
+                .iter()
+                .filter(|s| s.node_id != node_id || s.section_idx < new_count)
+                .cloned()
+                .collect();
+            doc.selection = match surviving.len() {
+                0 => SelectionState::Single(node_id.to_string()),
+                1 => SelectionState::Section(surviving.into_iter().next().expect("len==1")),
+                _ => SelectionState::MultiSection(surviving),
+            };
+        }
+        _ => {} // Single / Multi / Edge / Portal / None — no idx to clamp.
+    }
+}
 
 impl MindMapDocument {
     /// Insert a new section into `node_id.sections` at `at` (default
@@ -85,6 +178,7 @@ impl MindMapDocument {
         super::super::grow_one_node_to_fit_text(node);
         grow_one_node_to_fit_border(node, canvas_default.as_ref());
 
+        cleanup_after_structural_mutation(self, node_id);
         Ok(insert_at)
     }
 
@@ -157,6 +251,7 @@ impl MindMapDocument {
         super::super::grow_one_node_to_fit_text(node);
         grow_one_node_to_fit_border(node, canvas_default.as_ref());
 
+        cleanup_after_structural_mutation(self, node_id);
         Ok(removed)
     }
 
@@ -306,6 +401,7 @@ impl MindMapDocument {
         super::super::grow_one_node_to_fit_text(node);
         grow_one_node_to_fit_border(node, canvas_default.as_ref());
 
+        cleanup_after_structural_mutation(self, node_id);
         Ok(new_idx)
     }
 }
@@ -694,5 +790,63 @@ mod tests {
         assert_eq!((suffix_runs[0].start, suffix_runs[0].end), (0, 2));
         assert!(suffix_runs[0].bold);
         assert_eq!(suffix_runs[0].color, "#0000ff");
+    }
+
+    /// `delete_section` clamps a `Section` selection that
+    /// pointed past the new section count back to a
+    /// `Single(node)` selection. Pre-fix the selection stayed
+    /// at the deleted idx, so subsequent verbs operated on the
+    /// shifted-in section[K+1] thinking it was section[K]
+    /// (silent misapplication).
+    #[test]
+    fn delete_section_clamps_section_selection_to_valid_idx() {
+        let mut doc = load_test_doc();
+        let id = first_testament_node_id(&doc);
+        // Two sections so delete is allowed; selection on the last.
+        doc.add_section(&id, None, empty_section()).unwrap();
+        let last_idx = doc.mindmap.nodes.get(&id).unwrap().sections.len() - 1;
+        doc.selection = crate::application::document::SelectionState::Section(crate::application::document::SectionSel {
+            node_id: id.clone(),
+            section_idx: last_idx,
+        });
+        doc.delete_section(&id, last_idx).unwrap();
+        // Selection demotes to Single — the section is gone.
+        assert!(
+            matches!(&doc.selection, crate::application::document::SelectionState::Single(s) if s == &id),
+            "selection must demote to Single after deleted section: {:?}",
+            doc.selection
+        );
+    }
+
+    /// `add_section` cancels an active border preview targeting
+    /// this node's sections — the preview's idx reference is
+    /// potentially stale after the structural change.
+    #[test]
+    fn add_section_cancels_active_section_border_preview() {
+        use crate::application::document::{BorderConfigEdits, BorderPreviewTarget, OptionEdit};
+        let mut doc = load_test_doc();
+        let id = first_testament_node_id(&doc);
+        doc.selection = crate::application::document::SelectionState::Section(crate::application::document::SectionSel {
+            node_id: id.clone(),
+            section_idx: 0,
+        });
+
+        // Stage a section-targeted border preview.
+        let mut edits = BorderConfigEdits::default();
+        edits.preset = OptionEdit::Set("heavy".into());
+        let _ = doc.set_border_preview(
+            BorderPreviewTarget::Sections(vec![(id.clone(), 0)]),
+            edits,
+        );
+        assert!(doc.border_preview.is_some());
+
+        // Add a section — preview must cancel because the idx
+        // reference is potentially stale after the structural
+        // change.
+        doc.add_section(&id, Some(0), empty_section()).unwrap();
+        assert!(
+            doc.border_preview.is_none(),
+            "structural mutation must cancel section-targeted preview"
+        );
     }
 }
