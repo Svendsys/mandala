@@ -211,6 +211,21 @@ pub(in crate::application::app) fn dispatch_action(
             super::action_core::with_doc_rebuild(&mut core, super::cross_dispatch::apply_enter_resize_mode);
             DispatchOutcome::Handled
         }
+        Action::FastResizeStart => {
+            // Fast-resize gesture start. Reads the press-time hit
+            // off `ctx.drag_state` (PendingRight, set by the
+            // right-button press in `event_mouse_click.rs`) and the
+            // threshold-cross cursor position from
+            // `hit.canvas_pos`. Computes a corner anchor via
+            // `infer_resize_anchor` and transitions
+            // `PendingRight → Throttled(NodeResize | SectionResize)`
+            // with the chosen `ResizeHandleSide`. Drag drains and
+            // release commit follow the existing left-button
+            // resize plumbing (commit goes through `set_node_aabb`
+            // / `set_section_aabb` on right-button release).
+            apply_fast_resize_start(ctx, hit);
+            DispatchOutcome::Handled
+        }
         Action::EnterNodeEdit | Action::EnterNodeEditClean => {
             // NodeEdit-mode entry. Single-section nodes
             // short-circuit to the editor; multi-section nodes
@@ -997,6 +1012,120 @@ pub(in crate::application::app) fn dispatch_custom_mutation_for_key(
 }
 
 /// Inline helper for the empty-canvas orphan-and-edit gesture so
+/// Fast-resize gesture start (`Action::FastResizeStart`).
+///
+/// Threshold-cross arm in `event_cursor_moved.rs` dispatches this
+/// when a `DragState::PendingRight` press has moved past the drag
+/// threshold. This helper reads the press-time hit off the
+/// `PendingRight` state and the cursor's threshold-cross position
+/// off `hit.canvas_pos`, computes the corner anchor via
+/// `infer_resize_anchor`, and transitions
+/// `PendingRight → Throttled(NodeResize | SectionResize)` so the
+/// existing per-frame drain + right-button release commit handles
+/// the rest.
+///
+/// No-op on:
+/// - hit was empty (right-press on empty canvas)
+/// - section's `size` is `None` (fill-parent — can't resize)
+/// - node / section vanished between press and threshold (e.g.
+///   the user deleted via console while right-button was held)
+/// In each case the state resets to `None` so the cursor doesn't
+/// re-fire the threshold-cross.
+fn apply_fast_resize_start(ctx: &mut InputHandlerContext<'_>, hit: Option<&DispatchHit>) {
+    use baumhard::mindmap::scene_builder::infer_resize_anchor;
+    use glam::Vec2;
+
+    use super::super::throttled_interaction::{
+        NodeResizeInteraction, SectionResizeInteraction, ThrottledDrag,
+    };
+
+    let Some(h) = hit else {
+        log::debug!("FastResizeStart: no DispatchHit; skipping");
+        return;
+    };
+    // Snapshot press-time hit out of PendingRight. If the state
+    // doesn't match, the threshold-cross caller already moved on
+    // (race with another gesture) — log + bail without mutating.
+    let (hit_node, hit_section_idx) = match ctx.drag_state {
+        DragState::PendingRight {
+            hit_node,
+            hit_section_idx,
+            ..
+        } => (hit_node.clone(), *hit_section_idx),
+        _ => {
+            log::debug!("FastResizeStart: drag_state isn't PendingRight; skipping");
+            return;
+        }
+    };
+    let Some(node_id) = hit_node else {
+        // Empty-canvas right-press — no fast-resize target.
+        log::debug!("FastResizeStart: press landed on empty canvas; skipping");
+        *ctx.drag_state = DragState::None;
+        return;
+    };
+
+    let Some(doc) = ctx.document.as_mut() else {
+        log::debug!("FastResizeStart: no document; skipping");
+        *ctx.drag_state = DragState::None;
+        return;
+    };
+
+    // Two paths: section target (multi-section node hit) or node
+    // target (whole-node hit, including single-section nodes).
+    if let Some(section_idx) = hit_section_idx {
+        let Some(node) = doc.mindmap.nodes.get(&node_id) else {
+            log::debug!("FastResizeStart: node '{}' not found; skipping", node_id);
+            *ctx.drag_state = DragState::None;
+            return;
+        };
+        let Some(section) = node.sections.get(section_idx) else {
+            log::debug!(
+                "FastResizeStart: section[{}] not found on '{}'; skipping",
+                section_idx,
+                node_id
+            );
+            *ctx.drag_state = DragState::None;
+            return;
+        };
+        let Some(start_size) = section.size else {
+            // fill-parent section — no AABB to anchor against.
+            log::info!(
+                "FastResizeStart: section[{}] of '{}' is fill-parent (size=None); cannot fast-resize",
+                section_idx,
+                node_id
+            );
+            *ctx.drag_state = DragState::None;
+            return;
+        };
+        let start_offset = section.offset;
+        let aabb_pos = Vec2::new(
+            (node.position.x + start_offset.x) as f32,
+            (node.position.y + start_offset.y) as f32,
+        );
+        let aabb_size = Vec2::new(start_size.width as f32, start_size.height as f32);
+        let side = infer_resize_anchor(h.canvas_pos, aabb_pos, aabb_size);
+        ctx.scene_cache.clear();
+        *ctx.drag_state = DragState::Throttled(ThrottledDrag::SectionResize(
+            SectionResizeInteraction::new(node_id, section_idx, side, start_offset, start_size),
+        ));
+    } else {
+        let Some(node) = doc.mindmap.nodes.get(&node_id) else {
+            log::debug!("FastResizeStart: node '{}' not found; skipping", node_id);
+            *ctx.drag_state = DragState::None;
+            return;
+        };
+        let start_position = node.position;
+        let start_size = node.size;
+        let aabb_pos = Vec2::new(start_position.x as f32, start_position.y as f32);
+        let aabb_size = Vec2::new(start_size.width as f32, start_size.height as f32);
+        let side = infer_resize_anchor(h.canvas_pos, aabb_pos, aabb_size);
+        ctx.scene_cache.clear();
+        *ctx.drag_state = DragState::Throttled(ThrottledDrag::NodeResize(
+            NodeResizeInteraction::new(node_id, side, start_position, start_size),
+        ));
+    }
+}
+
 /// `DoubleClickActivate` and `CreateOrphanNodeAndEdit` share one
 /// implementation.
 fn dispatch_create_orphan_and_edit(ctx: &mut InputHandlerContext<'_>, hit: &DispatchHit) {

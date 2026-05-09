@@ -544,11 +544,52 @@ pub(super) fn handle_cursor_moved(
                 .renderer
                 .screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
         }
-        // Threshold-cross arm for the right-button fast-resize
-        // gesture lands in Commit 4 of Batch 4 (Action::FastResizeStart).
-        // This commit ships the `PendingRight` data shape; the
-        // dispatch lives in the next commit.
-        DragState::PendingRight { .. } => {}
+        DragState::PendingRight { start_pos, .. } => {
+            // Threshold-cross arm for the right-button fast-resize
+            // gesture (`SECTIONS_BORDERS_RESIZE_PLAN.md` §6.3). Same
+            // 5px threshold (squared = 25.0) as the left-button
+            // arm above. Cursor position at threshold-cross goes to
+            // the dispatch arm via `DispatchHit::canvas_pos`; the
+            // press-time hit lives on `DragState::PendingRight`
+            // and the arm reads it from `ctx.drag_state`.
+            let dist_x = cursor_pos_val.0 - start_pos.0;
+            let dist_y = cursor_pos_val.1 - start_pos.1;
+            if dist_x * dist_x + dist_y * dist_y <= 25.0 {
+                return;
+            }
+            // Look up the bound action via `action_for_gesture` so a
+            // user can rebind `RightDrag` away from `FastResizeStart`
+            // (or onto bare `RightDrag` without the Ctrl modifier).
+            let name = crate::application::keybinds::MouseGesture::RightDrag.key_name();
+            let action = ctx.keybinds.action_for_gesture(
+                name,
+                ctx.modifiers.control_key(),
+                ctx.modifiers.shift_key(),
+                ctx.modifiers.alt_key(),
+            );
+            if let Some(a) = action {
+                let canvas_pos = ctx
+                    .renderer
+                    .screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
+                let dispatch_hit = super::dispatch::DispatchHit {
+                    // FastResizeStart's body reads the press-time
+                    // hit from `ctx.drag_state` (PendingRight); the
+                    // `click_hit` field is unused here. Empty matches
+                    // the "no specific hit at dispatch time" posture.
+                    click_hit: super::ClickHit::Empty,
+                    canvas_pos,
+                };
+                super::dispatch::dispatch_action(a, ctx, Some(&dispatch_hit));
+            }
+            // After dispatch the state should be `Throttled(...)` if
+            // the arm took ownership of the gesture. If the arm
+            // didn't run (no binding) or couldn't resolve a target,
+            // reset to None so subsequent cursor moves don't re-fire
+            // the threshold-cross.
+            if matches!(*ctx.drag_state, DragState::PendingRight { .. }) {
+                *ctx.drag_state = DragState::None;
+            }
+        }
         DragState::None => {}
     }
 }

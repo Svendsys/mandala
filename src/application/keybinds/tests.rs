@@ -399,6 +399,7 @@ fn test_wasm_compatibility_modal_actions_are_native_only() {
         Action::ReparentToTarget(None),
         Action::ConnectToTarget(None),
         Action::EnterResizeMode,
+        Action::FastResizeStart,
         // EnterNodeEdit / EnterSectionEdit reach `open_text_edit`,
         // which depends on the native modal-stealer cascade
         // (`TextEditState`). Reclassification waits on Batch 4/7.

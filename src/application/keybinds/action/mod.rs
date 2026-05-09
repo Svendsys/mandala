@@ -310,6 +310,33 @@ pub enum Action {
     /// drag release; that path is gated separately.
     #[action(context = Document, wasm = NativeOnly)]
     EnterResizeMode,
+    /// Start a corner-anchored fast-resize gesture from the
+    /// active right-button press. Threshold-cross arm in
+    /// `event_cursor_moved.rs` dispatches this Action when the
+    /// `DragState::PendingRight` press has moved past the drag
+    /// threshold; the dispatch arm reads the press-time hit
+    /// from a `DispatchHit` payload, computes the corner anchor
+    /// via `infer_resize_anchor`, and transitions
+    /// `DragState::PendingRight → Throttled(NodeResize |
+    /// SectionResize)` with the chosen `ResizeHandleSide`. The
+    /// release path on the right-button (Commit 3) finalizes
+    /// via `set_node_aabb` / `set_section_aabb`.
+    ///
+    /// **Destructive on commit** (the release at the end of the
+    /// drag writes through), but the *Action itself* is just a
+    /// gesture-start signal — it doesn't mutate the document.
+    /// User-tier-only macro privilege mirrors the EnterNodeEdit /
+    /// EnterSectionEdit split: the gesture starts a
+    /// destructive flow, even though the start itself is
+    /// non-mutating.
+    ///
+    /// **WASM: NativeOnly** — the gesture relies on the
+    /// `DragState` machinery in `event_mouse_click.rs` /
+    /// `event_cursor_moved.rs` which is `cfg(not(target_arch =
+    /// "wasm32"))`. WASM gets fast-resize when the touch parity
+    /// batch (§6.6) lands the `TwoFingerDrag` synthetic gesture.
+    #[action(context = Document, wasm = NativeOnly)]
+    FastResizeStart,
 
     // ── Console ──────────────────────────────────────────────────
     /// Close the console (two-tier: dismiss popup first, then close).
