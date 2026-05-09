@@ -79,23 +79,54 @@ pub(super) fn handle_cursor_moved(
         return;
     }
 
-    // Hand cursor over button-like nodes (nodes with any
-    // trigger bindings). Only recomputed when idle — during
-    // a drag the cursor should stay as-is.
-    if matches!(*ctx.drag_state, DragState::None) {
-        let over_button = match (ctx.document.as_ref(), ctx.mindmap_tree.as_mut()) {
-            (Some(doc), Some(tree)) => {
-                let canvas_pos = ctx
-                    .renderer
-                    .screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
-                hit_test(canvas_pos, tree)
-                    .and_then(|id| doc.mindmap.nodes.get(&id))
-                    .map(|n| !n.trigger_bindings.is_empty())
-                    .unwrap_or(false)
-            }
-            _ => false,
-        };
-        if over_button != *ctx.cursor_is_hand {
+    // Cursor icon update — three branches:
+    //   1. Throttled resize drag (handle drag in Resize mode OR
+    //      fast-resize via `Action::FastResizeStart`): show a
+    //      direction-appropriate resize cursor based on the
+    //      `ResizeHandleSide`.
+    //   2. Idle (DragState::None): hand cursor over button-like
+    //      nodes, default elsewhere.
+    //   3. Other drags (Pending / Panning / SelectingRect /
+    //      non-resize Throttled): cursor stays as-is from the
+    //      gesture's start.
+    //
+    // `cursor_is_hand` only tracks the idle branch's hand-vs-not
+    // state. During a resize drag we set the cursor unconditionally
+    // each frame (cheap, winit dedupes redundant sets) so the user
+    // gets immediate visual feedback per `SECTIONS_BORDERS_RESIZE_PLAN.md`
+    // §6.5.
+    match ctx.drag_state {
+        DragState::Throttled(ThrottledDrag::NodeResize(i)) => {
+            window.set_cursor(cursor_icon_for_resize_side(i.side));
+        }
+        DragState::Throttled(ThrottledDrag::SectionResize(i)) => {
+            window.set_cursor(cursor_icon_for_resize_side(i.side));
+        }
+        DragState::None => {
+            let over_button = match (ctx.document.as_ref(), ctx.mindmap_tree.as_mut()) {
+                (Some(doc), Some(tree)) => {
+                    let canvas_pos = ctx
+                        .renderer
+                        .screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
+                    hit_test(canvas_pos, tree)
+                        .and_then(|id| doc.mindmap.nodes.get(&id))
+                        .map(|n| !n.trigger_bindings.is_empty())
+                        .unwrap_or(false)
+                }
+                _ => false,
+            };
+            // Force a cursor set on every idle frame whenever the
+            // last set wasn't the idle cursor (i.e. the previous
+            // frame was a resize drag and we need to clear back
+            // to Pointer / Default). The `cursor_is_hand` flag
+            // doesn't capture the resize-cursor state — without
+            // this unconditional reset, the cursor would stick
+            // on `NwseResize` until the user happens to wander
+            // over a button-like node and back.
+            //
+            // Cheap: winit dedupes same-cursor sets, so the
+            // per-frame call is idle-state-equivalent to the
+            // pre-fix `if changed` gate.
             window.set_cursor(if over_button {
                 CursorIcon::Pointer
             } else {
@@ -103,6 +134,7 @@ pub(super) fn handle_cursor_moved(
             });
             *ctx.cursor_is_hand = over_button;
         }
+        _ => {}
     }
 
     match ctx.drag_state {
@@ -607,6 +639,26 @@ fn canvas_delta(
     let prev_canvas = renderer.screen_to_canvas(prev.0 as f32, prev.1 as f32);
     let curr_canvas = renderer.screen_to_canvas(curr.0 as f32, curr.1 as f32);
     curr_canvas - prev_canvas
+}
+
+/// Map a `ResizeHandleSide` to the matching winit `CursorIcon`
+/// for the corresponding 8-handle resize cursor. Diagonal corners
+/// map to `NwseResize` / `NeswResize`; edge midpoints map to the
+/// vertical / horizontal resize cursors. Used by both
+/// handle-driven Resize-mode drags and right-button fast-resize
+/// gestures (`SECTIONS_BORDERS_RESIZE_PLAN.md` §6.5).
+fn cursor_icon_for_resize_side(
+    side: baumhard::mindmap::scene_builder::ResizeHandleSide,
+) -> CursorIcon {
+    use baumhard::mindmap::scene_builder::ResizeHandleSide as S;
+    match side {
+        // Diagonal corners — NW/SE share \ axis, NE/SW share / axis.
+        S::NW | S::SE => CursorIcon::NwseResize,
+        S::NE | S::SW => CursorIcon::NeswResize,
+        // Edge midpoints.
+        S::N | S::S => CursorIcon::NsResize,
+        S::E | S::W => CursorIcon::EwResize,
+    }
 }
 
 /// Decide whether a press on `node_id` with `hit_section_idx` and
