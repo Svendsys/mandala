@@ -159,21 +159,29 @@ impl MindMapDocument {
     /// defaults to the end of the existing text — equivalent to
     /// "clone this section with empty text and insert it after".
     ///
-    /// **`text_runs` are dropped on the new section** (the split
-    /// inherits a single empty `text_runs: Vec` rather than
-    /// trying to split styled runs at an arbitrary grapheme
-    /// boundary, which is a deeper concern that pulls in
-    /// `TextRun::range` arithmetic; punted to a follow-up). The
-    /// prefix section's runs are truncated to the split point so
-    /// per-grapheme styling on the kept prefix survives.
+    /// **TextRun handling**: `text_runs` are split grapheme-
+    /// correctly at the boundary using
+    /// [`baumhard::mindmap::model::text_run_ops::slice`], so
+    /// per-grapheme styling survives on both halves. A run
+    /// straddling the split is partitioned: the prefix's
+    /// portion stays on the prefix; the suffix's portion lands
+    /// on the new section with its `start`/`end` shifted into
+    /// the new section's coordinate space. `slice` is the
+    /// canonical entry point for range-aware run extraction —
+    /// pre-fix this used a byte-vs-grapheme comparison
+    /// (`r.end <= split_byte` against grapheme-indexed `end`)
+    /// which silently corrupted runs on any non-ASCII text and
+    /// dropped suffix runs entirely.
     ///
     /// `frame_border`, `channel`, and `trigger_bindings` are
     /// **cloned** onto the new section — splitting visually
     /// creates two slices of the same authoring intent, and per-
     /// section overrides (frame style, click bindings, mutation
-    /// channel) typically apply to both halves. Authors who want
-    /// asymmetric overrides can edit the new section after the
-    /// split.
+    /// channel) typically apply to both halves. `offset` and
+    /// `size` are also cloned — the split preserves the original
+    /// AABB on both halves so the user sees a same-shape split.
+    /// Authors who want asymmetric overrides edit the new
+    /// section after.
     ///
     /// Pushes one `EditNodeStyle` undo entry. Returns the new
     /// section's index (`idx + 1`). Errors on missing node,
@@ -185,6 +193,9 @@ impl MindMapDocument {
         idx: usize,
         at_grapheme: Option<usize>,
     ) -> Result<usize, String> {
+        use baumhard::mindmap::model::text_run_ops;
+        use unicode_segmentation::UnicodeSegmentation;
+
         let node = match self.mindmap.nodes.get(node_id) {
             Some(n) => n,
             None => return Err(format!("split_section: node '{}' not found", node_id)),
@@ -199,26 +210,60 @@ impl MindMapDocument {
         };
 
         let original_text = &section.text;
-        // Resolve the grapheme split into a byte offset. `None`
-        // means "split at end of text" — the new section gets
-        // empty text. `Some(g)` resolves the grapheme cluster
-        // boundary; `g > grapheme_count` errors.
-        let split_byte = resolve_split_byte_index(original_text, at_grapheme)?;
+        // Resolve `at_grapheme` against the section's text. We need
+        // both the byte offset (for slicing the text) and the
+        // grapheme index (for partitioning the runs — `TextRun.start`
+        // / `.end` are grapheme-cluster indices per
+        // `format/text-runs.md`). Walking once gives us both.
+        let total_graphemes = original_text.graphemes(true).count();
+        let split_grapheme = match at_grapheme {
+            Some(g) if g > total_graphemes => {
+                return Err(format!(
+                    "split_section: at_grapheme={} > grapheme_count={}",
+                    g, total_graphemes
+                ));
+            }
+            Some(g) => g,
+            None => total_graphemes,
+        };
+        let split_byte = if split_grapheme == total_graphemes {
+            original_text.len()
+        } else {
+            // The g-th grapheme boundary is the byte offset of
+            // the start of the g-th grapheme cluster.
+            original_text
+                .grapheme_indices(true)
+                .nth(split_grapheme)
+                .map(|(b, _)| b)
+                .unwrap_or(original_text.len())
+        };
 
         let prefix_text = original_text[..split_byte].to_string();
         let suffix_text = original_text[split_byte..].to_string();
 
+        // Partition the runs grapheme-correctly via `slice`.
+        // Prefix gets the runs in `[0, split_grapheme)` (clipped
+        // to the slice bounds); suffix gets `[split_grapheme,
+        // total_graphemes)` shifted into the new section's
+        // coordinate space (`-split_grapheme`).
+        let prefix_runs = text_run_ops::slice(&section.text_runs, 0, split_grapheme);
+        let suffix_runs_at_original_coords =
+            text_run_ops::slice(&section.text_runs, split_grapheme, total_graphemes);
+        let suffix_runs: Vec<_> = suffix_runs_at_original_coords
+            .into_iter()
+            .map(|mut r| {
+                r.start -= split_grapheme;
+                r.end -= split_grapheme;
+                r
+            })
+            .collect();
+
         // Build the new (suffix) section. Clone the per-section
         // metadata that semantically applies to both halves
-        // (channel, trigger_bindings, frame_border); offset / size
-        // are re-derived from the original below.
+        // (offset, size, channel, trigger_bindings, frame_border).
         let mut new_section = section.clone();
         new_section.text = suffix_text;
-        // Drop runs on the new section — splitting per-grapheme
-        // styled runs at an arbitrary boundary is a deeper
-        // concern than this verb wants to land. Authors who need
-        // styled splits re-author after.
-        new_section.text_runs.clear();
+        new_section.text_runs = suffix_runs;
 
         let before_style = node.style.clone();
         let before_sections = node.sections.clone();
@@ -228,15 +273,8 @@ impl MindMapDocument {
             .nodes
             .get_mut(node_id)
             .expect("just confirmed exists");
-        // Truncate the prefix's text + drop runs that overflow the
-        // split. Index-preserving runs (start..end fully within
-        // the prefix byte range) survive; runs that straddle the
-        // split or live in the suffix are dropped, matching the
-        // "drop runs on the new section" posture.
         node.sections[idx].text = prefix_text;
-        node.sections[idx]
-            .text_runs
-            .retain(|r| r.end <= split_byte);
+        node.sections[idx].text_runs = prefix_runs;
 
         let new_idx = idx + 1;
         node.sections.insert(new_idx, new_section);
@@ -258,36 +296,6 @@ impl MindMapDocument {
 
         Ok(new_idx)
     }
-}
-
-/// Resolve a grapheme-cluster index into a byte offset within
-/// `text`. `None` → end-of-text (text.len()). `Some(g)` → the byte
-/// position of the start of the `g`-th grapheme cluster, or
-/// `text.len()` when `g == grapheme_count`. Errors when `g >
-/// grapheme_count`.
-fn resolve_split_byte_index(text: &str, at_grapheme: Option<usize>) -> Result<usize, String> {
-    use unicode_segmentation::UnicodeSegmentation;
-    let Some(g) = at_grapheme else {
-        return Ok(text.len());
-    };
-    // Build a vector of (byte_index, grapheme) pairs once. For
-    // typical section text lengths this is sub-microsecond; the
-    // alternative (iter::nth) requires walking the iter twice
-    // because we need both the grapheme count for the bounds
-    // check and the byte index for the `g`-th boundary.
-    let pairs: Vec<(usize, &str)> = text.grapheme_indices(true).collect();
-    if g > pairs.len() {
-        return Err(format!(
-            "split_section: at_grapheme={} > grapheme_count={} (text='{}')",
-            g,
-            pairs.len(),
-            text
-        ));
-    }
-    if g == pairs.len() {
-        return Ok(text.len());
-    }
-    Ok(pairs[g].0)
 }
 
 #[cfg(test)]
@@ -520,5 +528,128 @@ mod tests {
             "abcdef",
             "undo restores the original text"
         );
+    }
+
+    /// Pinning the byte/grapheme bug fix: a section with a
+    /// multi-byte text and a `TextRun` that lands wholly inside
+    /// the prefix range must survive the split with its run
+    /// intact (not silently dropped or mistruncated).
+    /// Pre-fix the retain predicate compared grapheme-indexed
+    /// `r.end` against a byte-offset `split_byte`, which silently
+    /// dropped runs on any non-ASCII text.
+    #[test]
+    fn split_section_preserves_prefix_run_on_multibyte_text() {
+        use baumhard::mindmap::model::TextRun;
+        let mut doc = load_test_doc();
+        let id = first_testament_node_id(&doc);
+        // 5 multi-byte graphemes (Greek lowercase): each is 2 bytes.
+        doc.set_section_text(&id, 0, "αβγδε".to_string());
+        // Style the first two graphemes (αβ) as a single run.
+        {
+            let node = doc.mindmap.nodes.get_mut(&id).unwrap();
+            node.sections[0].text_runs = vec![TextRun {
+                start: 0,
+                end: 2,
+                bold: true,
+                italic: false,
+                underline: false,
+                font: "Sans".into(),
+                size_pt: 12,
+                color: "#ff0000".into(),
+                hyperlink: None,
+            }];
+        }
+        // Split at grapheme 3 → prefix αβγ, suffix δε. The bold
+        // run [0..2) sits wholly inside the prefix and must
+        // survive.
+        let _new = doc.split_section(&id, 0, Some(3)).unwrap();
+        let sections = &doc.mindmap.nodes.get(&id).unwrap().sections;
+        assert_eq!(sections[0].text, "αβγ");
+        assert_eq!(sections[0].text_runs.len(), 1);
+        let run = &sections[0].text_runs[0];
+        assert_eq!((run.start, run.end), (0, 2), "prefix run must survive intact");
+        assert!(run.bold, "prefix run's bold must survive");
+        assert_eq!(run.color, "#ff0000");
+    }
+
+    /// Suffix runs survive the split with their indices shifted
+    /// into the new section's coordinate space. Pre-fix all
+    /// suffix runs were dropped.
+    #[test]
+    fn split_section_preserves_suffix_run_with_shifted_indices() {
+        use baumhard::mindmap::model::TextRun;
+        let mut doc = load_test_doc();
+        let id = first_testament_node_id(&doc);
+        doc.set_section_text(&id, 0, "abcdef".to_string());
+        {
+            let node = doc.mindmap.nodes.get_mut(&id).unwrap();
+            node.sections[0].text_runs = vec![TextRun {
+                start: 4,
+                end: 6,
+                bold: false,
+                italic: true,
+                underline: false,
+                font: "Sans".into(),
+                size_pt: 12,
+                color: "#00ff00".into(),
+                hyperlink: None,
+            }];
+        }
+        // Split at grapheme 3 → prefix abc, suffix def. The italic
+        // run [4..6) sits wholly inside the suffix; it should land
+        // on the new section at [1..3) (shifted by -3).
+        let new_idx = doc.split_section(&id, 0, Some(3)).unwrap();
+        let sections = &doc.mindmap.nodes.get(&id).unwrap().sections;
+        assert_eq!(sections[new_idx].text, "def");
+        assert_eq!(sections[new_idx].text_runs.len(), 1, "suffix run must survive");
+        let run = &sections[new_idx].text_runs[0];
+        assert_eq!(
+            (run.start, run.end),
+            (1, 3),
+            "suffix run indices must shift into new-section coords"
+        );
+        assert!(run.italic);
+        assert_eq!(run.color, "#00ff00");
+    }
+
+    /// A run straddling the split — partitioned: the prefix gets
+    /// the in-prefix portion clamped, the suffix gets the
+    /// in-suffix portion shifted.
+    #[test]
+    fn split_section_partitions_straddling_run() {
+        use baumhard::mindmap::model::TextRun;
+        let mut doc = load_test_doc();
+        let id = first_testament_node_id(&doc);
+        doc.set_section_text(&id, 0, "abcdef".to_string());
+        {
+            let node = doc.mindmap.nodes.get_mut(&id).unwrap();
+            node.sections[0].text_runs = vec![TextRun {
+                start: 1,
+                end: 5,
+                bold: true,
+                italic: false,
+                underline: false,
+                font: "Sans".into(),
+                size_pt: 12,
+                color: "#0000ff".into(),
+                hyperlink: None,
+            }];
+        }
+        // Split at grapheme 3 → prefix abc, suffix def. The bold
+        // run [1..5) straddles: prefix side gets [1..3), suffix
+        // side gets [3..5) shifted to [0..2).
+        let new_idx = doc.split_section(&id, 0, Some(3)).unwrap();
+        let sections = &doc.mindmap.nodes.get(&id).unwrap().sections;
+
+        let prefix_runs = &sections[0].text_runs;
+        assert_eq!(prefix_runs.len(), 1, "prefix gets in-range portion");
+        assert_eq!((prefix_runs[0].start, prefix_runs[0].end), (1, 3));
+        assert!(prefix_runs[0].bold);
+
+        let suffix_runs = &sections[new_idx].text_runs;
+        assert_eq!(suffix_runs.len(), 1, "suffix gets shifted portion");
+        assert_eq!((suffix_runs[0].start, suffix_runs[0].end), (0, 2));
+        assert!(suffix_runs[0].bold);
+        assert_eq!(suffix_runs[0].color, "#0000ff");
     }
 }
