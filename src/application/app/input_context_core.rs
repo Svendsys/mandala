@@ -135,6 +135,11 @@ pub(in crate::application::app) struct NativeContextExt<'a> {
     /// Per-frame cursor-icon flag — flipped to "hand" over a
     /// button node by the cursor-move handler.
     pub cursor_is_hand: &'a mut bool,
+    /// Last cursor icon written via `Window::set_cursor`. Cached
+    /// so the cursor_moved handler skips the per-frame call when
+    /// the desired icon hasn't changed (winit doesn't dedup
+    /// `set_cursor` on Windows / Wayland).
+    pub cursor_icon_last: &'a mut winit::window::CursorIcon,
     /// Throttled color-picker hover interaction.
     pub picker_hover: &'a mut super::throttled_interaction::ColorPickerHoverInteraction,
 }

@@ -13,7 +13,7 @@ use winit::application::ApplicationHandler;
 use winit::event::{ElementState, Event, KeyEvent, MouseScrollDelta, StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::ModifiersState;
-use winit::window::{Window, WindowId};
+use winit::window::{CursorIcon, Window, WindowId};
 
 use super::color_picker_flow::rebuild_color_picker_overlay;
 use super::freeze_watchdog::FreezeWatchdog;
@@ -219,6 +219,15 @@ pub(super) struct InitState {
     pub(super) hovered_node: Option<String>,
     pub(super) modifiers: ModifiersState,
     pub(super) cursor_is_hand: bool,
+    /// Last cursor icon written via `Window::set_cursor`. Used by
+    /// the cursor_moved handler to dedup redundant `set_cursor`
+    /// calls — winit dedupes these on macOS / X11 but NOT on
+    /// Windows (every call → `LoadCursorW` + `SetCursor` + mutex
+    /// lock) or Wayland (calls into pointer manager every time),
+    /// so the per-event cursor icon update needs an
+    /// application-side gate. Initialised to `Default` to match
+    /// the as-launched cursor.
+    pub(super) cursor_icon_last: CursorIcon,
     /// Throttled, coexistent-with-drag color-picker hover.
     /// Continues to update independently of the active drag
     /// variant (if any), hence a sibling field rather than a
@@ -268,6 +277,7 @@ impl InitState {
             cursor_pos: &mut self.cursor_pos,
             modifiers: &self.modifiers,
             cursor_is_hand: &mut self.cursor_is_hand,
+            cursor_icon_last: &mut self.cursor_icon_last,
             picker_hover: &mut self.picker_hover,
             keybinds: &self.keybinds,
             macros: &mut self.macros,

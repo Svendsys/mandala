@@ -86,21 +86,24 @@ pub(super) fn handle_cursor_moved(
     //      `ResizeHandleSide`.
     //   2. Idle (DragState::None): hand cursor over button-like
     //      nodes, default elsewhere.
-    //   3. Other drags (Pending / Panning / SelectingRect /
-    //      non-resize Throttled): cursor stays as-is from the
-    //      gesture's start.
+    //   3. Other drags (Pending / PendingRight / Panning /
+    //      SelectingRect / non-resize Throttled): cursor stays
+    //      as-is from the gesture's start.
     //
-    // `cursor_is_hand` only tracks the idle branch's hand-vs-not
-    // state. During a resize drag we set the cursor unconditionally
-    // each frame (cheap, winit dedupes redundant sets) so the user
-    // gets immediate visual feedback per `SECTIONS_BORDERS_RESIZE_PLAN.md`
-    // §6.5.
-    match ctx.drag_state {
+    // The desired cursor goes through `set_cursor_if_changed` so
+    // a redundant `set_cursor` call (same icon as last frame) is
+    // a Rust-side branch instead of a winit FFI hop. winit dedupes
+    // on macOS / X11 but NOT on Windows (`LoadCursorW` +
+    // `SetCursor` + mutex lock per call) or Wayland (calls into
+    // the pointer manager every time), so the application-side
+    // gate matters on those targets. `cursor_icon_last` lives on
+    // `InitState` — see its doc-comment for the rationale.
+    let desired = match ctx.drag_state {
         DragState::Throttled(ThrottledDrag::NodeResize(i)) => {
-            window.set_cursor(cursor_icon_for_resize_side(i.side));
+            Some(cursor_icon_for_resize_side(i.side))
         }
         DragState::Throttled(ThrottledDrag::SectionResize(i)) => {
-            window.set_cursor(cursor_icon_for_resize_side(i.side));
+            Some(cursor_icon_for_resize_side(i.side))
         }
         DragState::None => {
             let over_button = match (ctx.document.as_ref(), ctx.mindmap_tree.as_mut()) {
@@ -115,26 +118,20 @@ pub(super) fn handle_cursor_moved(
                 }
                 _ => false,
             };
-            // Force a cursor set on every idle frame whenever the
-            // last set wasn't the idle cursor (i.e. the previous
-            // frame was a resize drag and we need to clear back
-            // to Pointer / Default). The `cursor_is_hand` flag
-            // doesn't capture the resize-cursor state — without
-            // this unconditional reset, the cursor would stick
-            // on `NwseResize` until the user happens to wander
-            // over a button-like node and back.
-            //
-            // Cheap: winit dedupes same-cursor sets, so the
-            // per-frame call is idle-state-equivalent to the
-            // pre-fix `if changed` gate.
-            window.set_cursor(if over_button {
+            *ctx.cursor_is_hand = over_button;
+            Some(if over_button {
                 CursorIcon::Pointer
             } else {
                 CursorIcon::Default
-            });
-            *ctx.cursor_is_hand = over_button;
+            })
         }
-        _ => {}
+        _ => None,
+    };
+    if let Some(icon) = desired {
+        if icon != *ctx.cursor_icon_last {
+            window.set_cursor(icon);
+            *ctx.cursor_icon_last = icon;
+        }
     }
 
     match ctx.drag_state {
