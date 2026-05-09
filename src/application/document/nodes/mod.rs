@@ -70,6 +70,12 @@ impl MindMapDocument {
         x: f64,
         y: f64,
     ) -> Result<bool, String> {
+        // Validate before mutating so callers that pre-flight
+        // (e.g. `execute_move_fan_out_multisection`'s atomic
+        // parse-then-dispatch) can reuse the same predicate via
+        // [`Self::validate_section_offset_change`] and get
+        // identical error messages.
+        self.validate_section_offset_change(node_id, section_idx, x, y)?;
         let node = match self.mindmap.nodes.get(node_id) {
             Some(n) => n,
             None => return Ok(false),
@@ -78,7 +84,6 @@ impl MindMapDocument {
             return Ok(false);
         };
         let new_offset = baumhard::mindmap::model::Position { x, y };
-        validate_section_aabb(node.size, section_idx, new_offset, section.size)?;
         if section.offset == new_offset {
             return Ok(false);
         }
@@ -102,6 +107,34 @@ impl MindMapDocument {
         super::grow_one_node_to_fit_text(node);
         super::grow_one_node_to_fit_border(node, canvas_default.as_ref());
         Ok(true)
+    }
+
+    /// Pre-validate `set_section_offset(node, idx, x, y)` without
+    /// mutating. Returns the same `Err(msg)` the setter would
+    /// produce, or `Ok(())` if the call would succeed
+    /// (including the "section not found → silent Ok(false)"
+    /// case — the validator only rejects bad geometry, not
+    /// stale ids).
+    ///
+    /// Used by `execute_move_fan_out_multisection` to pre-flight
+    /// every (node, section) pair before any mutation, matching
+    /// the parse-then-dispatch shape of `section/frame.rs::apply_edits`
+    /// so a partial fan-out can never land.
+    pub fn validate_section_offset_change(
+        &self,
+        node_id: &str,
+        section_idx: usize,
+        x: f64,
+        y: f64,
+    ) -> Result<(), String> {
+        let Some(node) = self.mindmap.nodes.get(node_id) else {
+            return Ok(());
+        };
+        let Some(section) = node.sections.get(section_idx) else {
+            return Ok(());
+        };
+        let new_offset = baumhard::mindmap::model::Position { x, y };
+        validate_section_aabb(node.size, section_idx, new_offset, section.size)
     }
 
     /// Set one section's `size`. `None` means fill-parent;

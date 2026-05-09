@@ -744,16 +744,13 @@ fn execute_split(args: &Args, doc: &mut MindMapDocument, node_id: &str, idx: usi
 /// (every section shifts by the same delta; absolute coords
 /// would collide).
 ///
-/// **Atomicity posture**: the doc setter `set_section_offset`
-/// runs per (node, section) pair and pushes its own
-/// `EditNodeStyle` undo entry. An N-section fan-out produces N
-/// undo entries — same posture as `border preview commit` on a
-/// `Multi(ids)` selection (documented on
-/// `commit_border_preview`). Per-target validation: if any
-/// section's would-be AABB violates `validate_section_aabb`, we
-/// abort BEFORE any mutation (parse-then-dispatch shape from
-/// `apply_edits` in section/frame.rs) so a partial fan-out
-/// never lands.
+/// **Atomicity**: parse-then-dispatch — pre-validate every
+/// pair's would-be AABB via
+/// `MindMapDocument::validate_section_offset_change`; if any
+/// fails, abort the whole fan-out before mutating. Mirrors
+/// `section/frame.rs::apply_edits`. On success, an N-section
+/// fan-out produces N `EditNodeStyle` undo entries (same as
+/// the per-pair setter — undo unwinds one section at a time).
 fn execute_move_fan_out_multisection(
     args: &Args,
     doc: &mut MindMapDocument,
@@ -765,16 +762,12 @@ fn execute_move_fan_out_multisection(
     let (dx, dy) = match parsed {
         MoveTarget::Delta { dx, dy } => (dx, dy),
         MoveTarget::Absolute { .. } => {
-            // Caller already gated on delta form; absolute form
-            // shouldn't reach this helper. Guard anyway.
             return ExecResult::err(
                 "section move: absolute form (x=/y=) is single-target only on MultiSection",
             );
         }
     };
 
-    // Collect the (node_id, section_idx) pairs from the
-    // selection.
     let pairs: Vec<(String, usize)> = match &doc.selection {
         SelectionState::MultiSection(sels) => sels
             .iter()
@@ -783,60 +776,58 @@ fn execute_move_fan_out_multisection(
         _ => return ExecResult::err("section move: not a MultiSection selection"),
     };
 
-    // Apply per (node, section). Each `set_section_offset` call
-    // validates the would-be AABB against the parent node's
-    // size and pushes its own `EditNodeStyle` undo entry. A
-    // section that fails validation is logged + skipped; the
-    // remaining sections still apply. This is the same
-    // "partial-success-is-OK" posture
-    // `commit_border_preview` takes on Multi(ids); deferring
-    // hard atomicity (all-or-nothing) keeps the verb usable on
-    // the common case where one section's would-be position
-    // happens to overflow.
-    let mut moved = 0usize;
-    let mut rejected = 0usize;
+    // Phase 1 — validate every pair's would-be offset. The first
+    // rejection aborts the whole fan-out so partial mutation
+    // can't land.
+    let mut targets: Vec<(String, usize, f64, f64)> = Vec::with_capacity(pairs.len());
     for (node_id, idx) in &pairs {
-        let (current_x, current_y) = match doc
+        let Some(section) = doc
             .mindmap
             .nodes
             .get(node_id)
             .and_then(|n| n.sections.get(*idx))
-            .map(|s| (s.offset.x, s.offset.y))
-        {
-            Some(p) => p,
-            None => {
-                rejected += 1;
-                continue;
-            }
+        else {
+            // Stale (node, idx) — the setter would silently
+            // Ok(false). Skip without recording a target.
+            continue;
         };
-        match doc.set_section_offset(node_id, *idx, current_x + dx, current_y + dy) {
+        let new_x = section.offset.x + dx;
+        let new_y = section.offset.y + dy;
+        if let Err(msg) = doc.validate_section_offset_change(node_id, *idx, new_x, new_y) {
+            return ExecResult::err(format!(
+                "section move: aborted on {}[{}] — {} (no sections moved)",
+                node_id, idx, msg
+            ));
+        }
+        targets.push((node_id.clone(), *idx, new_x, new_y));
+    }
+
+    // Phase 2 — apply. Validation already passed; the setter's
+    // own validator is idempotent (re-runs the same checks) but
+    // we trust phase 1's parse-then-dispatch.
+    let mut moved = 0usize;
+    for (node_id, idx, x, y) in &targets {
+        match doc.set_section_offset(node_id, *idx, *x, *y) {
             Ok(true) => moved += 1,
             Ok(false) => {} // no-op (already at target offset)
             Err(msg) => {
-                rejected += 1;
-                log::info!(
-                    "section move fan-out rejected on {}[{}]: {}",
+                // Phase 1 said this would pass; the setter
+                // disagreeing is a bug — log and continue
+                // applying the rest (giving up halfway would be
+                // worse than the loud-but-partial outcome).
+                log::warn!(
+                    "section move fan-out: setter rejected post-validation on {}[{}]: {} \
+                     (validate_section_offset_change → set_section_offset drift)",
                     node_id, idx, msg
                 );
             }
         }
     }
 
-    let mut lines = vec![format!(
+    ExecResult::ok_msg(format!(
         "section move: {} section(s) moved by ({}, {})",
         moved, dx, dy
-    )];
-    if rejected > 0 {
-        lines.push(format!(
-            "  note: {} section(s) rejected (AABB overflow / not found); see log for details",
-            rejected
-        ));
-    }
-    if lines.len() == 1 {
-        ExecResult::ok_msg(lines.into_iter().next().expect("len==1"))
-    } else {
-        ExecResult::lines(lines)
-    }
+    ))
 }
 
 fn execute_move(args: &Args, doc: &mut MindMapDocument, node_id: &str, idx: usize) -> ExecResult {
