@@ -98,14 +98,15 @@ pub enum ConsoleSideEffect {
     SetInteractionMode(crate::application::app::InteractionMode),
     /// Enter the section text editor on `(node_id, section_idx)`.
     /// Set by the `section edit [section=<idx>]` console verb.
-    /// The dispatcher: (1) writes
-    /// `SelectionState::Section { node_id, section_idx }`, (2)
-    /// flips `InteractionMode::NodeEdit { node_id }`, (3) opens
-    /// the section text editor via `open_text_edit_with_close_target`.
-    /// Mirrors what `Action::EnterSectionEdit` does on the
-    /// keybind path, but routed through a console-side effect
-    /// because the verb is the user-named effect (no second
-    /// dispatch site needed).
+    /// The dispatcher splits the work: pre-rebuild writes
+    /// `SelectionState::Section { node_id, section_idx }` +
+    /// `InteractionMode::NodeEdit { node_id }`; post-rebuild
+    /// delegates to `apply_enter_section_edit` (the canonical
+    /// Action-side path used by `Action::EnterSectionEdit` on
+    /// the keybind path), which validates `OwnerMismatch` and
+    /// opens the editor. Single source of truth for "open
+    /// section editor"; the verb is the only producer of this
+    /// variant.
     OpenSectionEdit {
         node_id: String,
         section_idx: usize,

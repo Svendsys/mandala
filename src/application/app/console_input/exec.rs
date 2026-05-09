@@ -206,7 +206,7 @@ fn handle_pre_rebuild_side_effect(
 fn handle_post_rebuild_side_effect(
     side_effect: Option<ConsoleSideEffect>,
     doc: &mut MindMapDocument,
-    interaction_mode: &super::super::InteractionMode,
+    interaction_mode: &mut super::super::InteractionMode,
     mindmap_tree: &mut Option<MindMapTree>,
     label_edit_state: &mut LabelEditState,
     portal_text_edit_state: &mut PortalTextEditState,
@@ -242,27 +242,28 @@ fn handle_post_rebuild_side_effect(
             );
         }
         ConsoleSideEffect::OpenSectionEdit { .. } => {
-            // Pre-rebuild already wrote `selection` + flipped
-            // `interaction_mode = NodeEdit`. Open the section
-            // text editor on the active selection — the editor
-            // resolves the section index from `doc.selection`
-            // (set in pre-rebuild) and falls back to section 0
-            // if the selection drifted between handlers.
-            let primary_id = doc
-                .selection
-                .primary_node_id()
-                .map(str::to_string);
-            if let Some(node_id) = primary_id {
-                super::super::text_edit::open_text_edit(
-                    &node_id,
-                    /* from_creation */ false,
-                    doc,
-                    text_edit_state,
-                    mindmap_tree,
-                    app_scene,
-                    renderer,
-                );
-            }
+            // Pre-rebuild handler already wrote `doc.selection =
+            // Section { node_id, section_idx }` + flipped
+            // `interaction_mode = NodeEdit { node_id }`. Delegate
+            // the actual editor open to `apply_enter_section_edit`
+            // — the canonical Action-side path — for the
+            // `OwnerMismatch` validation and consistent posture
+            // with `Action::EnterSectionEdit`. Pre-fix this
+            // re-implemented `open_text_edit` directly,
+            // bypassing the validation (Architecture #4).
+            let mut rc = super::super::dispatch::cross_dispatch::RebuildContext {
+                document: doc,
+                mindmap_tree,
+                app_scene,
+                renderer,
+                scene_cache,
+                interaction_mode,
+            };
+            super::super::dispatch::cross_dispatch::apply_enter_section_edit(
+                /* clean */ false,
+                &mut rc,
+                text_edit_state,
+            );
         }
         // Pre-rebuild variants — already consumed.
         ConsoleSideEffect::ReplaceDocument(_)
