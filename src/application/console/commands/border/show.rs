@@ -17,11 +17,40 @@ use crate::application::console::parser::Args;
 use crate::application::console::{ConsoleEffects, ExecResult, OutputLine};
 use crate::application::document::SelectionState;
 
-pub fn execute_border_show(_args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
+/// `border show [side=<top|bottom|left|right|all>] [verbose]`
+/// — Plan §5.2 / §5.3.
+///
+/// `side=` filters to one of the four sides plus the matching
+/// corners — useful when the user only wants to see what a
+/// single side looks like (the default 11-line readout is
+/// scrollback-heavy).
+///
+/// `verbose` is a bare positional that surfaces the dual color
+/// surface (`style.frame_color` set via `color border=…` vs
+/// `style.border.color` set via `border color`) so the user can
+/// see why their border colour doesn't match — Plan §5.4 #2 calls
+/// this out as a UX bug bake-in.
+pub fn execute_border_show(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     let id = match first_selected_node_id(&eff.document.selection) {
         Ok(id) => id,
         Err(msg) => return ExecResult::err(msg),
     };
+    let side_filter = args
+        .kvs()
+        .find(|(k, _)| *k == "side")
+        .map(|(_, v)| v.to_ascii_lowercase());
+    if let Some(ref s) = side_filter {
+        if !matches!(s.as_str(), "top" | "bottom" | "left" | "right" | "all") {
+            return ExecResult::err(format!(
+                "border show: side='{}' unknown; pick top | bottom | left | right | all",
+                s
+            ));
+        }
+    }
+    let verbose = args
+        .positionals()
+        .skip(1)
+        .any(|p| p.eq_ignore_ascii_case("verbose"));
     let node = match eff.document.mindmap.nodes.get(&id) {
         Some(n) => n,
         None => return ExecResult::err(format!("border: node '{}' not found", id)),
@@ -30,6 +59,8 @@ pub fn execute_border_show(_args: &Args, eff: &mut ConsoleEffects) -> ExecResult
         node,
         eff.document.mindmap.canvas.default_border.as_ref(),
         &eff.document.mindmap.palettes,
+        side_filter.as_deref(),
+        verbose,
     ))
 }
 
@@ -49,6 +80,8 @@ fn format_border_readout(
     node: &MindNode,
     canvas_default: Option<&baumhard::mindmap::model::GlyphBorderConfig>,
     palettes: &std::collections::HashMap<String, baumhard::mindmap::model::Palette>,
+    side_filter: Option<&str>,
+    verbose: bool,
 ) -> Vec<OutputLine> {
     let style = resolve_border_style(
         node.style.border.as_ref(),
@@ -93,7 +126,30 @@ fn format_border_readout(
         face.as_deref().unwrap_or("(default)"),
         style.font_size_pt
     )));
-    lines.push(OutputLine::plain(format!("color:   {}", style.color)));
+    if verbose {
+        // Plan §5.4 #2: surface both color surfaces so the user
+        // can see why their border colour doesn't match what they
+        // expected. `style.frame_color` is set via `color border=`;
+        // `style.border.color` is set via `border color`. Different
+        // verbs, different fields, identical-looking authoring.
+        lines.push(OutputLine::plain("color (cascade):".to_string()));
+        lines.push(OutputLine::plain(format!(
+            "  style.frame_color    = {:?}          # set via `color border=`",
+            node.style.frame_color
+        )));
+        let per_node_color = node
+            .style
+            .border
+            .as_ref()
+            .and_then(|c| c.color.as_deref());
+        let cascade_target = per_node_color.unwrap_or(node.style.frame_color.as_str());
+        lines.push(OutputLine::plain(format!(
+            "  style.border.color   = {:?} [\u{2192} {}]   # set via `border color`",
+            per_node_color, cascade_target
+        )));
+    } else {
+        lines.push(OutputLine::plain(format!("color:   {}", style.color)));
+    }
     lines.push(OutputLine::plain(format!("palette: {}", palette_summary)));
     // Padding cascades per-node → canvas-default → 4px hardcoded
     // floor. Always print the resolved value so the readout is
@@ -113,31 +169,50 @@ fn format_border_readout(
     )));
 
     let side_face = face.clone();
-    lines.push(side_line(
-        "top:    ",
-        &style.side_patterns.top,
-        char_count,
-        &side_face,
-    ));
-    lines.push(side_line(
-        "bottom: ",
-        &style.side_patterns.bottom,
-        char_count,
-        &side_face,
-    ));
-    lines.push(side_line(
-        "left:   ",
-        &style.side_patterns.left,
-        row_count,
-        &side_face,
-    ));
-    lines.push(side_line(
-        "right:  ",
-        &style.side_patterns.right,
-        row_count,
-        &side_face,
-    ));
-    lines.push(corner_line(&style, &face));
+    let want = |s: &str| match side_filter {
+        None => true,
+        Some("all") => true,
+        Some(f) => f == s,
+    };
+    if want("top") {
+        lines.push(side_line(
+            "top:    ",
+            &style.side_patterns.top,
+            char_count,
+            &side_face,
+        ));
+    }
+    if want("bottom") {
+        lines.push(side_line(
+            "bottom: ",
+            &style.side_patterns.bottom,
+            char_count,
+            &side_face,
+        ));
+    }
+    if want("left") {
+        lines.push(side_line(
+            "left:   ",
+            &style.side_patterns.left,
+            row_count,
+            &side_face,
+        ));
+    }
+    if want("right") {
+        lines.push(side_line(
+            "right:  ",
+            &style.side_patterns.right,
+            row_count,
+            &side_face,
+        ));
+    }
+    // Corners always render — they're cheap (one line) and
+    // pruning by side would force a half-truth ("top" filter
+    // shouldn't include bl / br corners). With no filter or
+    // `all`, render unmodified; otherwise skip.
+    if side_filter.is_none() || side_filter == Some("all") {
+        lines.push(corner_line(&style, &face));
+    }
     lines
 }
 

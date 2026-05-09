@@ -730,3 +730,76 @@ fn border_side_reset_works_on_non_custom_preset() {
     assert!(matches!(r, ExecResult::Ok(_) | ExecResult::Lines(_)),
         "reset on non-custom must succeed: {:?}", r);
 }
+
+/// Plan §5.2 / §5.3: `border show side=top` filters to one
+/// side row plus the universal header rows (visible / preset /
+/// font / color / palette / padding / size). Corners are
+/// pruned alongside the side filter — `top` filter shouldn't
+/// include bl/br corners.
+#[test]
+fn border_show_side_filter_prunes_other_sides() {
+    let mut doc = fixture_doc();
+    doc.selection = SelectionState::Single(first_node_id(&doc));
+    let lines = match run("border show side=top", &mut doc) {
+        ExecResult::Lines(rows) => rows,
+        other => panic!("expected Lines, got {:?}", other),
+    };
+    let blob = join_lines(&lines);
+    assert!(blob.contains("top:"), "top side should appear: {}", blob);
+    assert!(!blob.contains("\nbottom:"), "bottom should be filtered out: {}", blob);
+    assert!(!blob.contains("\nleft:"), "left should be filtered out: {}", blob);
+    assert!(!blob.contains("\nright:"), "right should be filtered out: {}", blob);
+    assert!(!blob.contains("corners:"), "corners should be filtered out: {}", blob);
+}
+
+/// `side=all` is the explicit equivalent of no filter.
+#[test]
+fn border_show_side_all_includes_every_side() {
+    let mut doc = fixture_doc();
+    doc.selection = SelectionState::Single(first_node_id(&doc));
+    let lines = match run("border show side=all", &mut doc) {
+        ExecResult::Lines(rows) => rows,
+        other => panic!("expected Lines, got {:?}", other),
+    };
+    let blob = join_lines(&lines);
+    for label in &["top:", "bottom:", "left:", "right:", "corners:"] {
+        assert!(blob.contains(label), "missing {}: {}", label, blob);
+    }
+}
+
+/// `side=diagonal` (unknown) errors with the pick-one hint.
+#[test]
+fn border_show_side_filter_unknown_rejects() {
+    let mut doc = fixture_doc();
+    doc.selection = SelectionState::Single(first_node_id(&doc));
+    assert_exec_err_contains(run("border show side=diagonal", &mut doc), "pick top");
+}
+
+/// Plan §5.4 #2: `border show verbose` surfaces the dual color
+/// surface (`style.frame_color` set via `color border=` vs
+/// `style.border.color` set via `border color`). Without
+/// verbose the readout collapses to a single resolved-cascade
+/// line.
+#[test]
+fn border_show_verbose_surfaces_dual_color_surface() {
+    let mut doc = fixture_doc();
+    doc.selection = SelectionState::Single(first_node_id(&doc));
+    let lines = match run("border show verbose", &mut doc) {
+        ExecResult::Lines(rows) => rows,
+        other => panic!("expected Lines, got {:?}", other),
+    };
+    let blob = join_lines(&lines);
+    assert!(blob.contains("color (cascade):"), "cascade header missing: {}", blob);
+    assert!(blob.contains("style.frame_color"), "frame_color row missing: {}", blob);
+    assert!(blob.contains("style.border.color"), "border.color row missing: {}", blob);
+    assert!(
+        blob.contains("set via `color border=`"),
+        "frame_color verb annotation missing: {}",
+        blob
+    );
+    assert!(
+        blob.contains("set via `border color`"),
+        "border.color verb annotation missing: {}",
+        blob
+    );
+}
