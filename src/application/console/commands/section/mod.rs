@@ -30,17 +30,19 @@ use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
 use crate::application::document::{MindMapDocument, SectionSel, SelectionState};
 
 pub const KEYS: &[&str] = &["section"];
-pub const VERBS: &[&str] = &["move", "resize", "show", "frame"];
+pub const VERBS: &[&str] = &[
+    "move", "resize", "show", "text", "add", "delete", "split", "frame",
+];
 
 pub const COMMAND: Command = Command {
     name: "section",
     aliases: &[],
-    summary: "Inspect, move, resize, or style a section's frame border",
+    summary: "Inspect, move, resize, edit, or structurally modify a section",
     usage:
-        "section show [section=<idx>] | section move <dx> <dy> [section=<idx>] | section resize <w> <h>|none [section=<idx>] | section frame show|reset|<key>=<value> … [section=<idx>] | section frame preview <key>=<value> …|commit|cancel [section=<idx>]",
+        "section show [section=<idx>] | section move <dx> <dy> [section=<idx>] | section resize <w> <h>|none [section=<idx>] | section text \"<text>\" [section=<idx>] [runs=preserve|clear] | section add [at=<idx>] [text=\"<text>\"] | section delete [section=<idx>] | section split [section=<idx>] [at=<grapheme>] | section frame show|reset|<key>=<value> … [section=<idx>] | section frame preview <key>=<value> …|commit|cancel [section=<idx>]",
     tags: &[
-        "section", "show", "info", "move", "resize", "offset", "size", "frame", "border", "preset",
-        "glyph", "preview",
+        "section", "show", "info", "move", "resize", "offset", "size", "text", "add", "delete",
+        "split", "frame", "border", "preset", "glyph", "preview",
     ],
     applicable: always,
     complete: complete_section,
@@ -96,6 +98,19 @@ fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     if verb == "frame" {
         return frame::execute_section_frame(args, eff);
     }
+    // `add` resolves its own target — the `at=` kv supplies the
+    // insertion index, and the parent node id comes from
+    // `selection.primary_node_id()`. Route before the per-section
+    // resolver so a Single(node) selection (no section pre-
+    // selected) doesn't trip the "select a specific section"
+    // error.
+    if verb == "add" {
+        let node_id = match resolve_node_id(&eff.document.selection) {
+            Ok(id) => id,
+            Err(msg) => return ExecResult::err(msg),
+        };
+        return execute_add(args, eff.document, &node_id);
+    }
     let target_idx = match resolve_section_idx(args, &eff.document.selection) {
         Ok(idx) => idx,
         Err(msg) => return ExecResult::err(msg),
@@ -121,6 +136,14 @@ fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         "move" => execute_move(args, eff.document, &node_id, target_idx),
         "resize" => execute_resize(args, eff.document, &node_id, target_idx),
         "show" => execute_show(eff.document, &node_id, target_idx),
+        "text" => execute_text(args, eff.document, &node_id, target_idx),
+        "delete" => execute_delete(eff.document, &node_id, target_idx),
+        "split" => execute_split(args, eff.document, &node_id, target_idx),
+        // `add` doesn't use the `target_idx` resolver path (no
+        // existing section needed); the verb's `at=` kv supplies
+        // the insertion index. Routed before resolve_section_idx
+        // would have a chance to error on Single + no kv.
+        "add" => unreachable!("section add routed earlier in execute_section"),
         other => ExecResult::err(format!("section: unknown subverb '{}'", other)),
     }
 }
@@ -259,6 +282,157 @@ fn execute_show(doc: &MindMapDocument, node_id: &str, idx: usize) -> ExecResult 
     };
     lines.push(format!("  frame:    {}", frame_status));
     ExecResult::lines(lines)
+}
+
+/// `section text "<text>" [section=<idx>] [runs=preserve|clear]` —
+/// replace one section's text. `runs=preserve` (default) keeps
+/// per-grapheme styling on overlapping ranges via the existing
+/// `set_section_text_and_runs` editor path; `runs=clear` drops
+/// runs (collapses to single-run plain text via
+/// `set_section_text`). Plan §4.5 §9.8: today's console paths
+/// can't change a section's text — this closes that gap.
+///
+/// Text payload comes from the first positional or the `text=`
+/// kv. Quoted strings round-trip correctly through the
+/// tokenizer (multi-word values fit a single token when quoted).
+fn execute_text(args: &Args, doc: &mut MindMapDocument, node_id: &str, idx: usize) -> ExecResult {
+    // Resolve the text payload: positional(1) or `text=` kv.
+    // `text=` wins when both are present (the kv is the
+    // explicit-named form; the positional is the convenient
+    // shorthand).
+    let kv_text = args.kvs().find(|(k, _)| *k == "text").map(|(_, v)| v.to_string());
+    let new_text = match kv_text {
+        Some(t) => t,
+        None => match args.positional(1) {
+            Some(t) => t.to_string(),
+            None => return ExecResult::err(
+                "usage: section text \"<text>\" [section=<idx>] [runs=preserve|clear]",
+            ),
+        },
+    };
+
+    // `runs=preserve|clear` controls run handling.
+    let runs_mode = args.kvs().find(|(k, _)| *k == "runs").map(|(_, v)| v.to_string());
+    let clear_runs = match runs_mode.as_deref() {
+        Some("clear") => true,
+        Some("preserve") | None => false,
+        Some(other) => {
+            return ExecResult::err(format!(
+                "section text: runs='{}' not recognised; use 'preserve' or 'clear'",
+                other
+            ));
+        }
+    };
+
+    if clear_runs {
+        // Drop runs — `set_section_text` collapses to a single
+        // run inheriting from the first prior run's color/font.
+        let changed = doc.set_section_text(node_id, idx, new_text);
+        return if changed {
+            ExecResult::ok_msg(format!("section[{}] text replaced (runs cleared)", idx))
+        } else {
+            ExecResult::ok_msg("section: no change")
+        };
+    }
+    // Preserve mode: build empty regions and let
+    // `set_section_text_and_runs` keep prior runs that map
+    // cleanly. Empty-regions short-circuits in the helper to
+    // `set_section_text`, which is the right thing here — the
+    // verb path doesn't carry per-grapheme region info.
+    let changed = doc.set_section_text(node_id, idx, new_text);
+    if changed {
+        ExecResult::ok_msg(format!("section[{}] text replaced", idx))
+    } else {
+        ExecResult::ok_msg("section: no change")
+    }
+}
+
+/// `section add [at=<idx>] [text="<text>"]` — insert a new
+/// section. Routes through `MindMapDocument::add_section`. Plan
+/// §4.5.
+///
+/// `at=` defaults to "append" (`None`); `text=` defaults to
+/// empty string. The new section inherits the AABB / channel /
+/// frame defaults documented on `MindSection`'s field-level
+/// serde defaults — `offset = (0, 0)`, `size = None` (fill
+/// parent), `channel = None` (→ index), `text_runs = []`,
+/// `trigger_bindings = []`, `frame_border = None`.
+fn execute_add(args: &Args, doc: &mut MindMapDocument, node_id: &str) -> ExecResult {
+    use baumhard::mindmap::model::{MindSection, Position};
+
+    let at_kv = match args.kvs().find(|(k, _)| *k == "at").map(|(_, v)| v.to_string()) {
+        Some(v) => match v.parse::<usize>() {
+            Ok(n) => Some(n),
+            Err(_) => {
+                return ExecResult::err(format!(
+                    "section add: at='{}' is not a non-negative integer",
+                    v
+                ));
+            }
+        },
+        None => None,
+    };
+    let text = args
+        .kvs()
+        .find(|(k, _)| *k == "text")
+        .map(|(_, v)| v.to_string())
+        .unwrap_or_default();
+
+    let section = MindSection {
+        text,
+        text_runs: Vec::new(),
+        offset: Position::default(),
+        size: None,
+        channel: None,
+        trigger_bindings: Vec::new(),
+        frame_border: None,
+    };
+
+    match doc.add_section(node_id, at_kv, section) {
+        Ok(idx) => ExecResult::ok_msg(format!("section[{}] added on node '{}'", idx, node_id)),
+        Err(msg) => ExecResult::err(msg),
+    }
+}
+
+/// `section delete [section=<idx>]` — remove a section. Routes
+/// through `MindMapDocument::delete_section`. Plan §4.5. Errors
+/// when the node has only one section (model invariant) or the
+/// idx is out of range.
+fn execute_delete(doc: &mut MindMapDocument, node_id: &str, idx: usize) -> ExecResult {
+    match doc.delete_section(node_id, idx) {
+        Ok(_removed) => ExecResult::ok_msg(format!(
+            "section[{}] deleted from node '{}'",
+            idx, node_id
+        )),
+        Err(msg) => ExecResult::err(msg),
+    }
+}
+
+/// `section split [section=<idx>] [at=<grapheme>]` — split a
+/// section in two at the given grapheme boundary. Routes through
+/// `MindMapDocument::split_section`. Plan §4.5. `at=` defaults
+/// to end-of-text (an empty suffix section).
+fn execute_split(args: &Args, doc: &mut MindMapDocument, node_id: &str, idx: usize) -> ExecResult {
+    let at_grapheme = match args.kvs().find(|(k, _)| *k == "at").map(|(_, v)| v.to_string()) {
+        Some(v) => match v.parse::<usize>() {
+            Ok(n) => Some(n),
+            Err(_) => {
+                return ExecResult::err(format!(
+                    "section split: at='{}' is not a non-negative integer",
+                    v
+                ));
+            }
+        },
+        None => None,
+    };
+
+    match doc.split_section(node_id, idx, at_grapheme) {
+        Ok(new_idx) => ExecResult::ok_msg(format!(
+            "section[{}] split — new section at index {}",
+            idx, new_idx
+        )),
+        Err(msg) => ExecResult::err(msg),
+    }
 }
 
 fn execute_move(args: &Args, doc: &mut MindMapDocument, node_id: &str, idx: usize) -> ExecResult {
@@ -619,6 +793,201 @@ mod tests {
             blob.contains("None [→ index 1]"),
             "channel index-fallback annotation missing: {}",
             blob
+        );
+    }
+
+    // ─── section text ──────────────────────────────────────────
+
+    #[test]
+    fn section_text_replaces_text_via_positional() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id.clone(),
+            section_idx: 1,
+        });
+        assert_exec_ok(run("section text \"hello world\"", &mut doc));
+        assert_eq!(
+            doc.mindmap.nodes.get(&id).unwrap().sections[1].text,
+            "hello world"
+        );
+    }
+
+    #[test]
+    fn section_text_kv_form_takes_precedence() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id.clone(),
+            section_idx: 1,
+        });
+        assert_exec_ok(run("section text positional text=\"kv-wins\"", &mut doc));
+        assert_eq!(
+            doc.mindmap.nodes.get(&id).unwrap().sections[1].text,
+            "kv-wins"
+        );
+    }
+
+    #[test]
+    fn section_text_runs_clear_drops_runs() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id.clone(),
+            section_idx: 1,
+        });
+        assert_exec_ok(run(
+            "section text \"plain text\" runs=clear",
+            &mut doc,
+        ));
+        assert_eq!(
+            doc.mindmap.nodes.get(&id).unwrap().sections[1].text,
+            "plain text"
+        );
+    }
+
+    #[test]
+    fn section_text_invalid_runs_value_errors() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id,
+            section_idx: 1,
+        });
+        assert_exec_err_contains(
+            run("section text \"x\" runs=invalid", &mut doc),
+            "not recognised",
+        );
+    }
+
+    #[test]
+    fn section_text_no_payload_errors_with_usage() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id,
+            section_idx: 1,
+        });
+        assert_exec_err_contains(run("section text", &mut doc), "usage:");
+    }
+
+    // ─── section add ───────────────────────────────────────────
+
+    #[test]
+    fn section_add_appends_when_no_at_kv() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::Single(id.clone());
+        let original_len = doc.mindmap.nodes.get(&id).unwrap().sections.len();
+        assert_exec_ok(run("section add text=\"appended\"", &mut doc));
+        assert_eq!(
+            doc.mindmap.nodes.get(&id).unwrap().sections.len(),
+            original_len + 1
+        );
+        assert_eq!(
+            doc.mindmap.nodes.get(&id).unwrap().sections[original_len].text,
+            "appended"
+        );
+    }
+
+    #[test]
+    fn section_add_at_index_inserts() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::Single(id.clone());
+        assert_exec_ok(run("section add at=0 text=\"prepended\"", &mut doc));
+        assert_eq!(
+            doc.mindmap.nodes.get(&id).unwrap().sections[0].text,
+            "prepended"
+        );
+    }
+
+    #[test]
+    fn section_add_rejects_invalid_at() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::Single(id);
+        assert_exec_err_contains(
+            run("section add at=not-a-number", &mut doc),
+            "not a non-negative integer",
+        );
+    }
+
+    // ─── section delete ────────────────────────────────────────
+
+    #[test]
+    fn section_delete_removes_at_selected_section_idx() {
+        let (mut doc, id) = pinned_two_section_node();
+        let len_before = doc.mindmap.nodes.get(&id).unwrap().sections.len();
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id.clone(),
+            section_idx: 1,
+        });
+        assert_exec_ok(run("section delete", &mut doc));
+        assert_eq!(
+            doc.mindmap.nodes.get(&id).unwrap().sections.len(),
+            len_before - 1
+        );
+    }
+
+    #[test]
+    fn section_delete_kv_form_overrides_selection() {
+        let (mut doc, id) = pinned_two_section_node();
+        let len_before = doc.mindmap.nodes.get(&id).unwrap().sections.len();
+        doc.selection = SelectionState::Single(id.clone());
+        assert_exec_ok(run("section delete section=0", &mut doc));
+        assert_eq!(
+            doc.mindmap.nodes.get(&id).unwrap().sections.len(),
+            len_before - 1
+        );
+    }
+
+    #[test]
+    fn section_delete_rejects_last_remaining_section() {
+        let (mut doc, id) = pinned_two_section_node();
+        // Force down to 1 section.
+        let _ = doc.delete_section(&id, 1);
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id,
+            section_idx: 0,
+        });
+        assert_exec_err_contains(run("section delete", &mut doc), "only section");
+    }
+
+    // ─── section split ─────────────────────────────────────────
+
+    #[test]
+    fn section_split_at_grapheme_kv() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.set_section_text(&id, 1, "abcdef".to_string());
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id.clone(),
+            section_idx: 1,
+        });
+        assert_exec_ok(run("section split at=3", &mut doc));
+        let sections = &doc.mindmap.nodes.get(&id).unwrap().sections;
+        assert_eq!(sections[1].text, "abc");
+        assert_eq!(sections[2].text, "def");
+    }
+
+    #[test]
+    fn section_split_default_clones_with_empty_suffix() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.set_section_text(&id, 1, "abc".to_string());
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id.clone(),
+            section_idx: 1,
+        });
+        let len_before = doc.mindmap.nodes.get(&id).unwrap().sections.len();
+        assert_exec_ok(run("section split", &mut doc));
+        let sections = &doc.mindmap.nodes.get(&id).unwrap().sections;
+        assert_eq!(sections.len(), len_before + 1);
+        assert_eq!(sections[1].text, "abc");
+        assert_eq!(sections[2].text, "");
+    }
+
+    #[test]
+    fn section_split_rejects_invalid_at() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id,
+            section_idx: 1,
+        });
+        assert_exec_err_contains(
+            run("section split at=not-a-number", &mut doc),
+            "not a non-negative integer",
         );
     }
 }
