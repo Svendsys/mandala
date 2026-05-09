@@ -56,10 +56,27 @@ fn execute_help(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
 fn help_for(name: &str, _ctx: &ConsoleContext) -> ExecResult {
     match command_by_name(name) {
         Some(cmd) => {
-            let mut lines = vec![
-                format!("{} — {}", cmd.name, cmd.summary),
-                format!("usage: {}", cmd.usage),
-            ];
+            let mut lines = vec![format!("{} — {}", cmd.name, cmd.summary)];
+            // Split the usage string on the verb-form separator
+            // " | " (space-pipe-space). Each form gets its own
+            // `usage:` line so multi-form verbs (like
+            // `section …` with 8 subverbs) stay readable
+            // instead of producing a 700-char wall-of-text. The
+            // separator is space-aware so value enums like
+            // `<arrow|circle|diamond|none>` (no spaces around
+            // the pipe) survive intact.
+            let forms: Vec<&str> = cmd.usage.split(" | ").collect();
+            if forms.len() == 1 {
+                lines.push(format!("usage: {}", forms[0]));
+            } else {
+                lines.push(format!("usage: {}", forms[0].trim()));
+                for form in forms.iter().skip(1) {
+                    // Continuation lines align with the first
+                    // form's start so the pipe-separation is
+                    // visually preserved.
+                    lines.push(format!("       {}", form.trim()));
+                }
+            }
             if !cmd.aliases.is_empty() {
                 lines.push(format!("aliases: {}", cmd.aliases.join(", ")));
             }
@@ -111,5 +128,71 @@ mod tests {
     fn test_help_summary_line_is_not_empty() {
         assert!(!COMMAND.summary.is_empty());
         assert!(!COMMAND.usage.is_empty());
+    }
+
+    /// `help section` splits the multi-form usage string on the
+    /// " | " separator so each form lands on its own line.
+    /// Pre-fix the help output for `section` was a single
+    /// 700-char wall-of-text; the Full-Nelson UX reviewer
+    /// flagged it as the highest-leverage discoverability fix.
+    #[test]
+    fn test_help_for_section_splits_multi_form_usage_to_separate_lines() {
+        let doc = crate::application::document::tests_common::load_test_doc();
+        let ctx = crate::application::console::ConsoleContext::from_document(&doc);
+        let result = help_for("section", &ctx);
+        let lines = match result {
+            crate::application::console::ExecResult::Lines(ls) => ls,
+            other => panic!("expected Lines, got {:?}", other),
+        };
+        // First line is the summary; subsequent lines include
+        // every "usage:" / continuation row.
+        let usage_lines: Vec<&str> = lines
+            .iter()
+            .filter(|l| l.text.starts_with("usage:") || l.text.starts_with("       "))
+            .map(|l| l.text.as_str())
+            .collect();
+        assert!(
+            usage_lines.len() >= 2,
+            "section's multi-form usage must split into multiple lines: {:?}",
+            usage_lines
+        );
+        // No single line should be wall-of-text length.
+        for line in &usage_lines {
+            assert!(
+                line.len() < 250,
+                "no usage line should be wall-of-text: {} chars: {}",
+                line.len(),
+                line
+            );
+        }
+    }
+
+    /// Single-form verbs (e.g. `cap`) keep their one-line
+    /// usage. The split shouldn't fire when there's no `|`
+    /// separator at the form level — value enums like
+    /// `<arrow|circle|diamond|none>` (no spaces around the
+    /// pipe) survive intact.
+    #[test]
+    fn test_help_for_single_form_keeps_one_usage_line() {
+        let doc = crate::application::document::tests_common::load_test_doc();
+        let ctx = crate::application::console::ConsoleContext::from_document(&doc);
+        let result = help_for("cap", &ctx);
+        let lines = match result {
+            crate::application::console::ExecResult::Lines(ls) => ls,
+            other => panic!("expected Lines, got {:?}", other),
+        };
+        let usage_count = lines
+            .iter()
+            .filter(|l| l.text.starts_with("usage:"))
+            .count();
+        let cont_count = lines
+            .iter()
+            .filter(|l| l.text.starts_with("       "))
+            .count();
+        assert_eq!(usage_count, 1);
+        assert_eq!(
+            cont_count, 0,
+            "single-form usage shouldn't produce continuation lines"
+        );
     }
 }
