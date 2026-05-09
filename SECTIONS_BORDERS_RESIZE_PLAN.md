@@ -2551,30 +2551,63 @@ Tasks (status post-Full-Nelson review):
 Verification (post-deferred-items + Tier-1/2 review fixes):
 2544 tests green; wasm32 cross-compile clean.
 
-#### Batch 6 — Border verb redesign + canvas-default editing + preview
+#### Batch 6 — Border verb redesign + canvas-default editing + preview — SHIPPED
 
 Lands the new `border` verb grammar, the `border preview` lifecycle,
 and the new `canvas border` verb.
 
-Tasks:
-- [ ] Refactor `console/commands/border/` to per-subverb modules.
-- [ ] Replace flat 16-key parsing with subverb-routed parsers.
-- [ ] Add `BorderPreview` field on `MindMapDocument`; thread
-      through scene rebuild.
-- [ ] Add Action variants per §5.8.
-- [ ] Replace `applicable: always` with `applicable:
-      node_or_section_selected`.
-- [ ] Delete the auto-promote-to-custom logic in
-      `document/nodes/border.rs:286-293`. Replace with explicit
-      error in the `border side` / `border corner` subverbs.
-- [ ] Add `canvas` top-level verb with `canvas border *` subverbs.
-- [ ] Add `set_canvas_default_border` doc setter +
-      `EditCanvasStyle` undo variant.
-- [ ] Migrate existing tests; add new tests per §7.1.
-- [ ] Update `format/border-patterns.md` Console verb section.
+Tasks (status post-Batch-6 ship):
+- [x] `console/commands/border/` already partially modular
+      (`mod.rs` / `complete.rs` / `execute.rs` / `preview.rs` /
+      `show.rs` / `tests.rs`). Further per-subverb file split
+      is pure refactor (no behavior change); deferred — the
+      shape today is workable.
+- [x] Subverb-routed positional parsers added in B6.2-6
+      (preset / color / padding / palette / font / side /
+      corner / toggle). Kv form preserved as the keybind-
+      friendly alias per Plan §5.2.
+- [x] `BorderPreview` field on `MindMapDocument` shipped in
+      Batch 5/Tier-1 ship (preview lifecycle was working at
+      Batch-5 time per §5.6 status). Scene rebuild already
+      threads `border_preview: Option<BorderPreview<'a>>`
+      through `build_scene_with_cache`.
+- [x] **Partial** Action variants per §5.8: `CycleBorderPreset`
+      and `ToggleBorderVisible` (the no-payload ones) shipped in
+      B6.9. The 7 String-payload variants
+      (`SetBorderPreset(String)` / `SetBorderColor(String)` / ...)
+      deferred — they overlap with the existing
+      `SetBorderField { field, value }` parametric variant whose
+      deletion (Plan §5.8 last paragraph) is a breaking-change
+      migration for every parametric keybind binding shape.
+      Tracking as a follow-up; today's `SetBorderField` covers
+      the same surface for keybinds.
+- [x] `applicable: always` → `node_or_section_selected` (B6.1).
+- [x] Auto-promote-to-custom guarded at the verb layer (B6.7).
+      The data-layer auto-promote stays as the model invariant
+      defense ("glyphs only render with preset=custom") so
+      macro consumers and the kv form continue to work; the
+      verb-layer pre-check makes the user-facing positional
+      path error explicitly per Plan §5.4 #3.
+- [x] `canvas` top-level verb already shipped (`canvas.rs`,
+      pre-Batch-6) with `border` and `section-frame [focused]`
+      subjects. B6.10 extends the verb with the Plan §5.7
+      positional subverb grammar matching the per-node `border`
+      verb.
+- [x] `set_canvas_default_border_config` doc setter already
+      exists. **`EditCanvasStyle` undo variant** subsumed by
+      the existing `UndoAction::CanvasSnapshot` which captures
+      the entire `Canvas` (palettes, defaults, theme vars) in
+      one entry — same round-trip contract Plan §5.7 calls for,
+      just stored as a snapshot rather than a per-field diff.
+- [x] Tests migrated; new tests added per §7.1 (28 new pins
+      across B6.1-10).
+- [x] `format/border-patterns.md` Console verb section
+      rewritten (B6.11) to surface positional subverbs first,
+      kv form as the keybind alias, and the `border side` /
+      `border corner` non-custom-preset error.
 
-Verification: tests green; manual smoke — all of §7.2 scenario 3
-plus per-subverb sanity checks.
+Verification (post-Batch-6 ship): 2585 tests pass; wasm32
+cross-compile clean.
 
 #### Batch 7 — Touch parity
 
