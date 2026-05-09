@@ -336,9 +336,18 @@ fn apply_font_positional(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
 
 /// `border side <top|bottom|left|right|all> <pattern|reset>` —
 /// per-side pattern setter. Plan §5.2. `all` fans to the four
-/// sides in one call; `reset` clears the per-node override on
-/// the named side(s) so the resolution falls back through the
-/// preset → canvas-default → hardcoded-floor cascade.
+/// sides in one call; `reset` restores the side(s) to the
+/// current preset's default glyphs (model fields are plain
+/// Strings, so reset writes the preset's default value rather
+/// than clearing).
+///
+/// Plan §5.4 #3 + §5.5: per-side glyphs only render when the
+/// preset is `custom`. Pre-fix the model auto-promoted the
+/// preset silently, which made the user think a `border preset
+/// heavy; border side top …` flow worked when really the heavy
+/// preset got silently swapped to custom. Post-fix the verb
+/// pre-checks the resolved preset and errors with the
+/// "run `border preset custom` first" hint when it isn't custom.
 fn apply_side_positional(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     let which = match args.positional(1) {
         Some(v) => v,
@@ -366,6 +375,17 @@ fn apply_side_positional(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             ));
         }
     };
+    if !pattern.eq_ignore_ascii_case("reset") {
+        if let Some(non_custom) = first_non_custom_preset(eff) {
+            return ExecResult::err(format!(
+                "border side {}: cannot set side glyph against preset '{}'. \
+                 run `border preset custom` first, then set the side \
+                 (Plan §5.4 #3 — pre-fix the verb silently auto-promoted \
+                 the preset to 'custom' which surprised users).",
+                which, non_custom
+            ));
+        }
+    }
     let mut edits = BorderConfigEdits::default();
     let reset = pattern.eq_ignore_ascii_case("reset");
     if reset {
@@ -408,6 +428,43 @@ fn apply_side_positional(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     apply_edits(eff, edits)
 }
 
+/// Return the first selected node's resolved preset when it
+/// isn't `custom`; `None` when every selection target is
+/// already custom (or selection resolution fails — the
+/// downstream apply path will surface that error).
+///
+/// Used by `apply_side_positional` / `apply_corner_positional`
+/// to gate "must run preset=custom first" before any mutation.
+/// First-non-custom rather than all-non-custom because (a) a
+/// fan to multiple nodes typically wants every node to land at
+/// custom anyway, and (b) the error message lists the offending
+/// preset by name so the user knows which preset they were on.
+fn first_non_custom_preset(eff: &ConsoleEffects) -> Option<String> {
+    let ids = nodes_in_selection(&eff.document.selection, "border").ok()?;
+    for id in &ids {
+        let preset = eff
+            .document
+            .mindmap
+            .nodes
+            .get(id)
+            .and_then(|n| n.style.border.as_ref())
+            .map(|c| c.preset.clone())
+            .or_else(|| {
+                eff.document
+                    .mindmap
+                    .canvas
+                    .default_border
+                    .as_ref()
+                    .map(|c| c.preset.clone())
+            })
+            .unwrap_or_else(|| "light".to_string());
+        if !preset.eq_ignore_ascii_case("custom") {
+            return Some(preset);
+        }
+    }
+    None
+}
+
 fn parse_side_selector(s: &str) -> Option<Vec<BorderSide>> {
     match s.to_ascii_lowercase().as_str() {
         "top" => Some(vec![BorderSide::Top]),
@@ -425,8 +482,8 @@ fn parse_side_selector(s: &str) -> Option<Vec<BorderSide>> {
 }
 
 /// `border corner <tl|tr|bl|br|all> <glyph|reset>`. Same shape
-/// as `border side`; `all` fans, `reset` clears the per-node
-/// override on the named corner(s).
+/// as `border side`; `all` fans, `reset` writes the preset's
+/// default. Same auto-promote-replacement story per Plan §5.4 #3.
 fn apply_corner_positional(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     let which = match args.positional(1) {
         Some(v) => v,
@@ -450,6 +507,15 @@ fn apply_corner_positional(args: &Args, eff: &mut ConsoleEffects) -> ExecResult 
             ));
         }
     };
+    if !glyph.eq_ignore_ascii_case("reset") {
+        if let Some(non_custom) = first_non_custom_preset(eff) {
+            return ExecResult::err(format!(
+                "border corner {}: cannot set corner glyph against preset '{}'. \
+                 run `border preset custom` first, then set the corner.",
+                which, non_custom
+            ));
+        }
+    }
     let mut edits = BorderConfigEdits::default();
     let reset = glyph.eq_ignore_ascii_case("reset");
     let glyph_set = if reset {

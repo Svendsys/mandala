@@ -687,3 +687,46 @@ fn border_corner_all_fans_to_four_corners() {
     assert_eq!(g.bottom_left, "+");
     assert_eq!(g.bottom_right, "+");
 }
+
+/// Plan §5.4 #3: setting a side glyph on a non-custom preset
+/// errors with the explicit "run `border preset custom` first"
+/// hint instead of silently auto-promoting the preset.
+#[test]
+fn border_side_on_non_custom_preset_errors_with_hint() {
+    let mut doc = fixture_doc();
+    let id = first_node_id(&doc);
+    doc.selection = SelectionState::Single(id);
+    assert_exec_ok(run("border preset heavy", &mut doc));
+    assert_exec_err_contains(
+        run("border side top \"=##=\"", &mut doc),
+        "run `border preset custom` first",
+    );
+}
+
+#[test]
+fn border_corner_on_non_custom_preset_errors_with_hint() {
+    let mut doc = fixture_doc();
+    let id = first_node_id(&doc);
+    doc.selection = SelectionState::Single(id);
+    assert_exec_ok(run("border preset rounded", &mut doc));
+    assert_exec_err_contains(
+        run("border corner tl +", &mut doc),
+        "run `border preset custom` first",
+    );
+}
+
+/// `border side WHICH reset` is allowed on any preset — the
+/// reset path doesn't need preset=custom because it's restoring
+/// the preset's own default.
+#[test]
+fn border_side_reset_works_on_non_custom_preset() {
+    let mut doc = fixture_doc();
+    let id = first_node_id(&doc);
+    doc.selection = SelectionState::Single(id);
+    assert_exec_ok(run("border preset heavy", &mut doc));
+    // reset on heavy is a no-op (heavy already has its own default
+    // top), so we just assert it doesn't error.
+    let r = run("border side top reset", &mut doc);
+    assert!(matches!(r, ExecResult::Ok(_) | ExecResult::Lines(_)),
+        "reset on non-custom must succeed: {:?}", r);
+}
