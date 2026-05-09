@@ -1016,10 +1016,13 @@ pub(in crate::application::app) fn dispatch_custom_mutation_for_key(
 ///
 /// Threshold-cross arm in `event_cursor_moved.rs` dispatches this
 /// when a `DragState::PendingRight` press has moved past the drag
-/// threshold. This helper reads the press-time hit off the
-/// `PendingRight` state and the cursor's threshold-cross position
-/// off `hit.canvas_pos`, computes the corner anchor via
-/// `infer_resize_anchor`, and transitions
+/// threshold. The threshold-cross arm packs the **press-time**
+/// canvas position into `hit.canvas_pos` (not the threshold-cross
+/// position) so anchor inference fires from where the user pressed
+/// — plan §6.3: "Quadrant determined at press time, not
+/// continuously". This helper reads that press-time canvas pos,
+/// reads the press-time hit off `PendingRight`, computes the
+/// corner anchor via `infer_resize_anchor`, and transitions
 /// `PendingRight → Throttled(NodeResize | SectionResize)` so the
 /// existing per-frame drain + right-button release commit handles
 /// the rest.

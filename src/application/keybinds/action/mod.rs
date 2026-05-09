@@ -335,7 +335,12 @@ pub enum Action {
     /// `event_cursor_moved.rs` which is `cfg(not(target_arch =
     /// "wasm32"))`. WASM gets fast-resize when the touch parity
     /// batch (§6.6) lands the `TwoFingerDrag` synthetic gesture.
-    #[action(context = Document, wasm = NativeOnly)]
+    ///
+    /// Marked `destructive` so the macro privilege gate
+    /// (`MacroSource::allows_action`) blocks System / Plugin /
+    /// Project tiers; only User-tier macros (the user's keybind
+    /// config + interactive console) can fire it. Plan §6.10.
+    #[action(context = Document, wasm = NativeOnly, destructive)]
     FastResizeStart,
 
     // ── Console ──────────────────────────────────────────────────

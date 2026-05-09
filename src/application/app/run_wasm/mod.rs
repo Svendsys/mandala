@@ -427,6 +427,25 @@ impl WasmApp {
                 self.handle_mouse_input(state);
                 redraw_after = true;
             }
+            WindowEvent::MouseInput {
+                state,
+                button: MouseButton::Right,
+                ..
+            } => {
+                // WASM right-button: `DragState` machinery is
+                // `cfg(not(target_arch = "wasm32"))` so there's no
+                // `PendingRight` → `FastResizeStart` pipeline yet
+                // (lands with §6.6 touch parity / `TwoFingerDrag`).
+                // What we *can* do today is dispatch the bound
+                // `MouseGesture::RightClick` action on release —
+                // single-press right-click is just an action lookup,
+                // no DragState involved. Default-unbound so it's a
+                // no-op for users who didn't opt in; users who did
+                // get the action they bound. Without this arm the
+                // event drops silently.
+                self.handle_right_button(state);
+                redraw_after = true;
+            }
             WindowEvent::MouseWheel { delta, .. } => {
                 self.handle_mouse_wheel(delta);
                 redraw_after = true;
@@ -530,15 +549,28 @@ pub(super) fn run(mut app: Application) {
     // SECTIONS_BORDERS_RESIZE_PLAN.md §6.3). Without this, every
     // right-press on the canvas would pop the browser's context
     // menu and the gesture would never reach the threshold-cross.
-    // Always-on regardless of binding state — the gesture
-    // pipeline owns the right button on the canvas, and a user
-    // who unbinds every right-button action just gets a no-op
-    // press-release pair.
+    //
+    // **Shift+RightClick bypass**: holding Shift on the right-press
+    // lets the browser's default context menu through. Standard
+    // browser convention for "let me get to the OS / dev menu past
+    // a page handler" — users debugging the canvas (Inspect Element,
+    // screenshotting glyph layout, filing bug reports) get the
+    // ergonomic path back. Shift modifier is also unused by any
+    // shipped right-button binding, so the convention doesn't
+    // collide with anything.
     {
-        let pd_cb =
-            wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::Event)>::new(move |evt: web_sys::Event| {
-                evt.prevent_default();
-            });
+        let pd_cb = wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::Event)>::new(
+            move |evt: web_sys::Event| {
+                use wasm_bindgen::JsCast;
+                let allow_default = evt
+                    .dyn_ref::<web_sys::MouseEvent>()
+                    .map(|me| me.shift_key())
+                    .unwrap_or(false);
+                if !allow_default {
+                    evt.prevent_default();
+                }
+            },
+        );
         canvas
             .add_event_listener_with_callback("contextmenu", pd_cb.as_ref().unchecked_ref())
             .ok();

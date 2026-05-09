@@ -450,6 +450,16 @@ enum DragState {
     /// unbound) and resets to `None`.
     PendingRight {
         start_pos: (f64, f64),
+        /// Canvas-space cursor position at press time (already
+        /// converted via `Renderer::screen_to_canvas`). Carried
+        /// through to `Action::FastResizeStart` so the corner
+        /// anchor is computed from where the user *pressed*, not
+        /// from where the cursor sat at threshold-cross — plan
+        /// §6.3: "Quadrant determined at press time, not
+        /// continuously". Without this snapshot the user gets
+        /// whichever corner they happened to drag *toward*, which
+        /// inverts the gesture's intent on small nodes.
+        start_canvas: glam::Vec2,
         /// Press-time hit, body-only. `None` for a press on
         /// empty canvas — release fires `RightClick` regardless
         /// of where the cursor is, but the threshold-cross arm

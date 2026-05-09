@@ -576,14 +576,21 @@ pub(super) fn handle_cursor_moved(
                 .renderer
                 .screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
         }
-        DragState::PendingRight { start_pos, .. } => {
+        DragState::PendingRight {
+            start_pos,
+            start_canvas,
+            hit_node,
+            hit_section_idx,
+        } => {
             // Threshold-cross arm for the right-button fast-resize
             // gesture (`SECTIONS_BORDERS_RESIZE_PLAN.md` §6.3). Same
             // 5px threshold (squared = 25.0) as the left-button
-            // arm above. Cursor position at threshold-cross goes to
-            // the dispatch arm via `DispatchHit::canvas_pos`; the
-            // press-time hit lives on `DragState::PendingRight`
-            // and the arm reads it from `ctx.drag_state`.
+            // arm above. The DispatchHit carries the **press-time**
+            // canvas position and hit (not the threshold-cross
+            // values) so anchor inference fires from "where the
+            // user pressed", not "where the cursor is now". Plan
+            // §6.3: "Quadrant determined at press time, not
+            // continuously".
             let dist_x = cursor_pos_val.0 - start_pos.0;
             let dist_y = cursor_pos_val.1 - start_pos.1;
             if dist_x * dist_x + dist_y * dist_y <= 25.0 {
@@ -600,16 +607,18 @@ pub(super) fn handle_cursor_moved(
                 ctx.modifiers.alt_key(),
             );
             if let Some(a) = action {
-                let canvas_pos = ctx
-                    .renderer
-                    .screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
+                // Snapshot press-time data BEFORE dispatch (which
+                // may consume PendingRight). Cloning the String is
+                // cheap and the alternative — reading post-dispatch
+                // — would race with the arm's state mutation.
+                let click_hit = match (hit_node.clone(), *hit_section_idx) {
+                    (Some(id), Some(idx)) => super::ClickHit::Node(id, Some(idx)),
+                    (Some(id), None) => super::ClickHit::Node(id, None),
+                    (None, _) => super::ClickHit::Empty,
+                };
                 let dispatch_hit = super::dispatch::DispatchHit {
-                    // FastResizeStart's body reads the press-time
-                    // hit from `ctx.drag_state` (PendingRight); the
-                    // `click_hit` field is unused here. Empty matches
-                    // the "no specific hit at dispatch time" posture.
-                    click_hit: super::ClickHit::Empty,
-                    canvas_pos,
+                    click_hit,
+                    canvas_pos: *start_canvas,
                 };
                 super::dispatch::dispatch_action(a, ctx, Some(&dispatch_hit));
             }

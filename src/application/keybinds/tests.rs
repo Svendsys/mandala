@@ -503,6 +503,10 @@ fn test_is_destructive_destructive_set_is_pinned() {
         ActionKind::OpenDocument,
         ActionKind::SaveDocumentAs,
         ActionKind::NewDocumentAt,
+        // FastResizeStart commits through `set_node_aabb` /
+        // `set_section_aabb` on the right-button release that
+        // ends the gesture — destructive per plan §6.10.
+        ActionKind::FastResizeStart,
     ];
     for k in destructive {
         assert!(

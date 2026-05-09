@@ -358,6 +358,24 @@ pub(super) fn handle_mouse_input(
                 // ordering in `event_cursor_moved.rs` still
                 // gives portal-label / edge-handle drag higher
                 // precedence when multiple hits overlap.
+                //
+                // Don't clobber a right-button gesture in flight.
+                // Symmetric with the right-press guard in
+                // `handle_right_button` (`if !matches!(.., None)
+                // { return }`). Pre-fix, a left-press during a
+                // `PendingRight` would silently overwrite the
+                // right-button state, the user's intended
+                // RightClick / FastResizeStart would never fire,
+                // and the put-back arm in the left-release match
+                // (`other @ DragState::PendingRight => …`) was
+                // unreachable in Default mode. C3 from the
+                // 9-agent review.
+                if matches!(*ctx.drag_state, DragState::PendingRight { .. }) {
+                    log::debug!(
+                        "left-button press ignored (right-button gesture in flight); state stays put"
+                    );
+                    return;
+                }
                 *ctx.drag_state = DragState::Pending {
                     start_pos: cursor_pos_val,
                     hit_node,
@@ -877,13 +895,17 @@ pub(super) fn handle_mouse_input(
                         }
                     }
                     DragState::Panning | DragState::None => {}
-                    // Left-button release while a right-button gesture is
-                    // pending or in-flight: the `mem::replace` above
-                    // already swapped in `None`, so put the original
-                    // state back so the right-button release path can
-                    // act on it. Both-buttons-down is unusual but the
-                    // user's right-button gesture shouldn't get
-                    // silently clobbered by a left-button release.
+                    // Left-button release while a right-button gesture
+                    // is pending: the `mem::replace` above already
+                    // swapped in `None`, so put the original state
+                    // back so the right-button release path can act
+                    // on it. Reachable in Reparent / Connect modes
+                    // (where the left-press path swallows the press
+                    // without setting `Pending`) and at startup
+                    // before any drag has fired. In Default mode the
+                    // left-press gate at line 361 short-circuits when
+                    // `PendingRight` is active, so the path through
+                    // here from a Default-mode press is unreachable.
                     other @ DragState::PendingRight { .. } => {
                         *ctx.drag_state = other;
                     }
@@ -956,6 +978,7 @@ fn handle_right_button(
         }
         *ctx.drag_state = DragState::PendingRight {
             start_pos: cursor_pos_val,
+            start_canvas: canvas_pos,
             hit_node,
             hit_section_idx,
         };
