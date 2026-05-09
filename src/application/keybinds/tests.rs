@@ -370,6 +370,21 @@ fn test_wasm_compatibility_section_aabb_actions_are_compatible() {
     }
 }
 
+/// Plan §5.B6.9: pin the new no-payload border Action variants
+/// as Compatible so a future contributor flipping any of them
+/// to NativeOnly trips this test instead of silently breaking
+/// WASM keybind reach for the cycle / toggle one-press flows.
+#[test]
+fn test_wasm_compatibility_border_no_payload_actions_are_compatible() {
+    use crate::application::keybinds::WasmCompatibility::Compatible;
+    for a in [
+        Action::CycleBorderPreset,
+        Action::ToggleBorderVisible,
+    ] {
+        assert_eq!(a.wasm_compatibility(), Compatible, "{:?} should be Compatible", a);
+    }
+}
+
 #[test]
 fn test_wasm_compatibility_selection_actions_are_compatible() {
     use crate::application::keybinds::WasmCompatibility::Compatible;

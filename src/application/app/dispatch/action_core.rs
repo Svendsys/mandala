@@ -362,6 +362,12 @@ pub(in crate::application::app) fn dispatch_compatible(
         Action::SetBorderField { field, value } => with_doc_rebuild(core, |rc| {
             super::cross_dispatch::apply_set_border_field(field, value, rc)
         }),
+        Action::CycleBorderPreset => {
+            with_doc_rebuild(core, |rc| super::cross_dispatch::apply_cycle_border_preset(rc))
+        }
+        Action::ToggleBorderVisible => {
+            with_doc_rebuild(core, |rc| super::cross_dispatch::apply_toggle_border_visible(rc))
+        }
         Action::SetBorderPreview {
             target_kind,
             field,

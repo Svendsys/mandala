@@ -668,8 +668,29 @@ pub enum Action {
     /// Single kv per binding (multi-kv border edits stay
     /// console-only). Field names: `preset|font|size|color|palette|
     /// field|padding|top|bottom|left|right|tl|tr|bl|br`.
+    ///
+    /// Plan §5.8 calls for replacing this with per-field
+    /// variants (`SetBorderPreset` / `SetBorderColor` / ...)
+    /// for keybind ergonomics — `SetBorderField` stays as the
+    /// generic catch-all for the kv form and for callers that
+    /// want one-binding-many-fields semantics; deletion is a
+    /// follow-up breaking-change commit pending the full
+    /// parametric-binding migration.
     #[action(context = Document, wasm = Compatible)]
     SetBorderField { field: String, value: String },
+    /// Mirror `border preset cycle` — advance the selected
+    /// node(s)' border preset to the next entry in
+    /// `BORDER_PRESETS`, wrapping at the end. No payload, so
+    /// bindable to a single key for one-press preset cycling.
+    /// Plan §5.8.
+    #[action(context = Document, wasm = Compatible)]
+    CycleBorderPreset,
+    /// Mirror `border toggle` — flip `style.show_frame` per
+    /// selected node. No payload (each node toggled
+    /// independently); bindable to a single key for one-press
+    /// border-on/off cycling. Plan §5.8.
+    #[action(context = Document, wasm = Compatible)]
+    ToggleBorderVisible,
     /// Stage a single-kv border preview against the live
     /// selection. `target_kind: BorderPreviewTargetKind` is a
     /// typed enum (kebab-case-serialised: `node` / `section` /

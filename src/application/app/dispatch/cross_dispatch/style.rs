@@ -23,6 +23,77 @@ pub(in crate::application::app) fn apply_set_border_field(
     });
 }
 
+/// `Action::CycleBorderPreset` — advance the selected node(s)'
+/// border preset to the next entry in `BORDER_PRESETS`. Mirrors
+/// `border preset cycle`; samples the first selected node's
+/// resolved preset to decide where to step from. Plan §5.8.
+pub(in crate::application::app) fn apply_cycle_border_preset(rc: &mut RebuildContext<'_>) {
+    use baumhard::mindmap::border::BORDER_PRESETS;
+    apply_with_rebuild(rc, |doc| {
+        let primary = match crate::application::console::commands::border::nodes_in_selection(
+            &doc.selection,
+            "border",
+        ) {
+            Ok(ids) => ids,
+            Err(_) => {
+                log::warn!("CycleBorderPreset: no border-applicable selection");
+                return false;
+            }
+        };
+        let current = primary
+            .first()
+            .and_then(|id| doc.mindmap.nodes.get(id))
+            .and_then(|n| n.style.border.as_ref())
+            .map(|c| c.preset.as_str())
+            .or(doc
+                .mindmap
+                .canvas
+                .default_border
+                .as_ref()
+                .map(|c| c.preset.as_str()))
+            .unwrap_or("light");
+        let idx = BORDER_PRESETS
+            .iter()
+            .position(|p| p.eq_ignore_ascii_case(current))
+            .unwrap_or(BORDER_PRESETS.len() - 1);
+        let target = BORDER_PRESETS[(idx + 1) % BORDER_PRESETS.len()];
+        crate::application::console::commands::border::apply_border_field_to_selection(
+            doc, "preset", target,
+        )
+    });
+}
+
+/// `Action::ToggleBorderVisible` — flip `style.show_frame` per
+/// selected node. Each node toggled independently (no global
+/// "all on / all off"). Plan §5.8.
+pub(in crate::application::app) fn apply_toggle_border_visible(rc: &mut RebuildContext<'_>) {
+    apply_with_rebuild(rc, |doc| {
+        let ids = match crate::application::console::commands::border::nodes_in_selection(
+            &doc.selection,
+            "border",
+        ) {
+            Ok(ids) => ids,
+            Err(_) => {
+                log::warn!("ToggleBorderVisible: no border-applicable selection");
+                return false;
+            }
+        };
+        let mut any = false;
+        for id in &ids {
+            let cur = doc
+                .mindmap
+                .nodes
+                .get(id)
+                .map(|n| n.style.show_frame)
+                .unwrap_or(true);
+            if doc.set_node_border_visible(id, !cur) {
+                any = true;
+            }
+        }
+        any
+    });
+}
+
 /// Stage a single-kv border preview against the live selection.
 /// `target_kind` discriminates between
 /// `node` / `section` / `canvas-border` / `canvas-sf` /
