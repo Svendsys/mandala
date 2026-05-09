@@ -20,7 +20,7 @@
 //!   text with optional run handling.
 //! - `section add [at=<idx>] [text="<text>"]` — insert.
 //! - `section delete [section=<idx>]` — remove.
-//! - `section split [section=<idx>] [at=<grapheme>]` — split in
+//! - `section split [section=<idx>] at=<grapheme>` — split in
 //!   two at a grapheme boundary.
 //!
 //! Validation messages on `move` / `resize` mirror
@@ -56,7 +56,7 @@ pub const COMMAND: Command = Command {
     aliases: &[],
     summary: "Inspect, move, resize, edit text, or structurally modify a section (add / delete / split)",
     usage:
-        "section show [section=<idx>] | section move dx=<f64> dy=<f64> [section=<idx>] | section move x=<f64> y=<f64> [section=<idx>] | section resize w=<f64> h=<f64> [section=<idx>] | section resize fill [section=<idx>] | section text \"<text>\" [section=<idx>] [runs=preserve|clear] | section edit [section=<idx>] | section add [at=<idx>] [text=\"<text>\"] | section delete [section=<idx>] | section split [section=<idx>] [at=<grapheme>] | section frame show|reset|<key>=<value> … [section=<idx>] | section frame preview <key>=<value> …|commit|cancel [section=<idx>]",
+        "section show [section=<idx>] | section move dx=<f64> dy=<f64> [section=<idx>] | section move x=<f64> y=<f64> [section=<idx>] | section resize w=<f64> h=<f64> [section=<idx>] | section resize fill [section=<idx>] | section text \"<text>\" [section=<idx>] [runs=preserve|clear] | section edit [section=<idx>] | section add [at=<idx>] [text=\"<text>\"] | section delete [section=<idx>] | section split [section=<idx>] at=<grapheme> | section frame show|reset|<key>=<value> … [section=<idx>] | section frame preview <key>=<value> …|commit|cancel [section=<idx>]",
     tags: &[
         "section", "show", "info", "move", "resize", "offset", "size", "text", "add", "delete",
         "split", "frame", "border", "preset", "glyph", "preview",
@@ -632,7 +632,7 @@ fn execute_edit(
 /// parent), `channel = None` (→ index), `text_runs = []`,
 /// `trigger_bindings = []`, `frame_border = None`.
 fn execute_add(args: &Args, doc: &mut MindMapDocument, node_id: &str) -> ExecResult {
-    use baumhard::mindmap::model::{MindSection, Position};
+    use baumhard::mindmap::model::MindSection;
 
     if let Err(msg) = reject_unknown_kvs(args, "add", &["at", "text"]) {
         return ExecResult::err(msg);
@@ -655,15 +655,7 @@ fn execute_add(args: &Args, doc: &mut MindMapDocument, node_id: &str) -> ExecRes
         .map(|(_, v)| v.to_string())
         .unwrap_or_default();
 
-    let section = MindSection {
-        text,
-        text_runs: Vec::new(),
-        offset: Position::default(),
-        size: None,
-        channel: None,
-        trigger_bindings: Vec::new(),
-        frame_border: None,
-    };
+    let section = MindSection::new_default(text, Vec::new());
 
     match doc.add_section(node_id, at_kv, section) {
         Ok(idx) => ExecResult::ok_msg(format!("section[{}] added on node '{}'", idx, node_id)),
@@ -688,28 +680,42 @@ fn execute_delete(args: &Args, doc: &mut MindMapDocument, node_id: &str, idx: us
     }
 }
 
-/// `section split [section=<idx>] [at=<grapheme>]` — split a
+/// `section split section=<idx> at=<grapheme>` — split a
 /// section in two at the given grapheme boundary. Routes through
-/// `MindMapDocument::split_section`. Plan §4.5. `at=` defaults
-/// to end-of-text (an empty suffix section).
+/// `MindMapDocument::split_section`. Plan §4.5. `at=` is now
+/// **required** (per the Full-Nelson API/UX reviewer's foot-gun
+/// finding): pre-fix the default was end-of-text, which created
+/// an empty suffix section the user almost never wanted, and
+/// the success message gave no hint that the new section was
+/// empty. Forcing the user to spell out `at=` makes the intent
+/// explicit; `section show` surfaces the section's grapheme
+/// count so picking a value is one verb away.
 fn execute_split(args: &Args, doc: &mut MindMapDocument, node_id: &str, idx: usize) -> ExecResult {
     if let Err(msg) = reject_unknown_kvs(args, "split", &["at", "section"]) {
         return ExecResult::err(msg);
     }
-    let at_grapheme = match args.kvs().find(|(k, _)| *k == "at").map(|(_, v)| v.to_string()) {
-        Some(v) => match v.parse::<usize>() {
-            Ok(n) => Some(n),
-            Err(_) => {
-                return ExecResult::err(format!(
-                    "section split: at='{}' is not a non-negative integer",
-                    v
-                ));
-            }
-        },
-        None => None,
+    let at_str = match args.kvs().find(|(k, _)| *k == "at").map(|(_, v)| v.to_string()) {
+        Some(v) => v,
+        None => {
+            return ExecResult::err(
+                "section split: at=<grapheme> required — \
+                 pass an integer grapheme index (use `section show` to see \
+                 the current section's grapheme count); split-at-end-of-text \
+                 (the prior default) silently created an empty suffix section",
+            );
+        }
+    };
+    let at_grapheme = match at_str.parse::<usize>() {
+        Ok(n) => n,
+        Err(_) => {
+            return ExecResult::err(format!(
+                "section split: at='{}' is not a non-negative integer",
+                at_str
+            ));
+        }
     };
 
-    match doc.split_section(node_id, idx, at_grapheme) {
+    match doc.split_section(node_id, idx, Some(at_grapheme)) {
         Ok(new_idx) => ExecResult::ok_msg(format!(
             "section[{}] split — new section at index {}",
             idx, new_idx
@@ -1686,8 +1692,29 @@ mod tests {
         assert_eq!(sections[2].text, "def");
     }
 
+    /// Pre-fix `section split` defaulted to end-of-text (empty
+    /// suffix), creating a useless empty section the user
+    /// almost never wanted (Full-Nelson API/UX reviewer B2 —
+    /// foot-gun finding). Post-fix `at=` is required; the bare
+    /// `section split` form errors with a hint pointing at
+    /// `section show` for the grapheme count.
     #[test]
-    fn section_split_default_clones_with_empty_suffix() {
+    fn section_split_no_at_rejects_with_hint() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.set_section_text(&id, 1, "abc".to_string());
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id,
+            section_idx: 1,
+        });
+        let result = run("section split", &mut doc);
+        assert_exec_err_contains(result, "at=<grapheme> required");
+    }
+
+    /// Explicit `at=N` still works — pin the happy path post-
+    /// requirement-tightening to match the old default
+    /// (empty-suffix) behaviour at the user's explicit choice.
+    #[test]
+    fn section_split_at_end_of_text_creates_empty_suffix() {
         let (mut doc, id) = pinned_two_section_node();
         doc.set_section_text(&id, 1, "abc".to_string());
         doc.selection = SelectionState::Section(SectionSel {
@@ -1695,7 +1722,9 @@ mod tests {
             section_idx: 1,
         });
         let len_before = doc.mindmap.nodes.get(&id).unwrap().sections.len();
-        assert_exec_ok(run("section split", &mut doc));
+        // 3 graphemes ("abc") → split at index 3 = end-of-text
+        // (the prior silent default; now spelled out).
+        assert_exec_ok(run("section split at=3", &mut doc));
         let sections = &doc.mindmap.nodes.get(&id).unwrap().sections;
         assert_eq!(sections.len(), len_before + 1);
         assert_eq!(sections[1].text, "abc");

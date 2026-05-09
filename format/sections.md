@@ -124,7 +124,7 @@ no compatibility shims). Nine subverbs:
 | `section edit` | `[section=<idx>]` | Open the section text editor on the resolved target. Closes the console; modal handoff to the editor. |
 | `section add` | `[at=<idx>] [text="<text>"]` | Insert a new section. `at=` defaults to append. |
 | `section delete` | `[section=<idx>]` | Remove. Errors when only one section remains. |
-| `section split` | `[section=<idx>] [at=<grapheme>]` | Split in two at a grapheme boundary. `at=` defaults to end-of-text (empty suffix). |
+| `section split` | `[section=<idx>] at=<grapheme>` | Split in two at the given grapheme boundary. `at=` is required (use `section show` to see the section's grapheme count); pass `at=N` where `N` equals the count to split at end-of-text (creates an empty suffix). |
 
 Mutually exclusive forms reject at the parser layer:
 `section move dx=1 x=2` errors with "cannot mix delta form

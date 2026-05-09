@@ -205,7 +205,7 @@ impl MindMapDocument {
     ) -> Result<usize, String> {
         let node = match self.mindmap.nodes.get(node_id) {
             Some(n) => n,
-            None => return Err(format!("add_section: node '{}' not found", node_id)),
+            None => return Err(format!("section add: node '{}' not found", node_id)),
         };
         let len = node.sections.len();
         let insert_at = at.unwrap_or(len).min(len);
@@ -240,11 +240,11 @@ impl MindMapDocument {
     ) -> Result<MindSection, String> {
         let node = match self.mindmap.nodes.get(node_id) {
             Some(n) => n,
-            None => return Err(format!("delete_section: node '{}' not found", node_id)),
+            None => return Err(format!("section delete: node '{}' not found", node_id)),
         };
         if idx >= node.sections.len() {
             return Err(format!(
-                "delete_section: section[{}] not found on node '{}' (has {} section(s))",
+                "section delete: section[{}] not found on node '{}' (has {} section(s))",
                 idx,
                 node_id,
                 node.sections.len()
@@ -252,8 +252,10 @@ impl MindMapDocument {
         }
         if node.sections.len() == 1 {
             return Err(format!(
-                "delete_section: cannot delete the only section on node '{}' \
-                 (every renderable node has at least one section)",
+                "section delete: cannot delete the only section on node '{}' \
+                 (every renderable node has at least one section); use \
+                 `section text \"\"` to clear its content, or `topology delete` \
+                 to remove the whole node",
                 node_id
             ));
         }
@@ -309,11 +311,11 @@ impl MindMapDocument {
 
         let node = match self.mindmap.nodes.get(node_id) {
             Some(n) => n,
-            None => return Err(format!("split_section: node '{}' not found", node_id)),
+            None => return Err(format!("section split: node '{}' not found", node_id)),
         };
         let Some(section) = node.sections.get(idx) else {
             return Err(format!(
-                "split_section: section[{}] not found on node '{}' (has {} section(s))",
+                "section split: section[{}] not found on node '{}' (has {} section(s))",
                 idx,
                 node_id,
                 node.sections.len()
@@ -330,8 +332,9 @@ impl MindMapDocument {
         let split_grapheme = match at_grapheme {
             Some(g) if g > total_graphemes => {
                 return Err(format!(
-                    "split_section: at_grapheme={} > grapheme_count={}",
-                    g, total_graphemes
+                    "section split: at={} > section's {} graphemes \
+                     (pass at in [0, {}] or use `section show` to see the count)",
+                    g, total_graphemes, total_graphemes
                 ));
             }
             Some(g) => g,

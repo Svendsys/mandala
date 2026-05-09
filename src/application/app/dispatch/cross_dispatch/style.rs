@@ -355,25 +355,17 @@ pub(in crate::application::app) fn apply_add_section(
     text: String,
     rc: &mut RebuildContext<'_>,
 ) {
-    use baumhard::mindmap::model::{MindSection, Position};
+    use baumhard::mindmap::model::MindSection;
     let Some(node_id) = rc
         .document
         .selection
         .primary_node_id()
         .map(str::to_string)
     else {
-        log::warn!("AddSection: no node selected");
+        log::warn!("AddSection: no node selected (Multi/None selection or no primary)");
         return;
     };
-    let section = MindSection {
-        text,
-        text_runs: Vec::new(),
-        offset: Position::default(),
-        size: None,
-        channel: None,
-        trigger_bindings: Vec::new(),
-        frame_border: None,
-    };
+    let section = MindSection::new_default(text, Vec::new());
     apply_with_rebuild(rc, |doc| match doc.add_section(&node_id, at, section) {
         Ok(_) => true,
         Err(msg) => {
