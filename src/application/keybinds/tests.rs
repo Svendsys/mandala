@@ -280,6 +280,9 @@ fn test_keybind_mouse_gesture_round_trip_pascal_case() {
         "Shift+DoubleClick",
         "Ctrl+WheelUp",
         "Ctrl+Shift+LeftDrag",
+        "RightClick",
+        "RightDrag",
+        "Ctrl+RightDrag",
     ];
     for c in cases {
         let parsed = KeyBind::parse(c).unwrap();
