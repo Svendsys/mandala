@@ -877,10 +877,184 @@ pub(super) fn handle_mouse_input(
                         }
                     }
                     DragState::Panning | DragState::None => {}
+                    // Left-button release while a right-button gesture is
+                    // pending or in-flight: the `mem::replace` above
+                    // already swapped in `None`, so put the original
+                    // state back so the right-button release path can
+                    // act on it. Both-buttons-down is unusual but the
+                    // user's right-button gesture shouldn't get
+                    // silently clobbered by a left-button release.
+                    other @ DragState::PendingRight { .. } => {
+                        *ctx.drag_state = other;
+                    }
                 }
             }
         }
+        MouseButton::Right => {
+            handle_right_button(state, cursor_pos_val, ctx);
+        }
         _ => {}
+    }
+}
+
+/// Right-button press / release handler — fast-resize gesture
+/// substrate (`SECTIONS_BORDERS_RESIZE_PLAN.md` §6.3).
+///
+/// Press: stash the press-time hit (body of any node / section,
+/// no edge-handle / portal-label / resize-handle precedence — the
+/// gesture is "grab a corner from anywhere on this body") into
+/// `DragState::PendingRight`. Skips when an active drag is in
+/// flight to avoid clobbering it; logs and falls through.
+///
+/// Release: two cases:
+/// 1. `PendingRight` (no movement past threshold) — fire the bound
+///    `MouseGesture::RightClick` action lookup. Default-bound to
+///    nothing; users opt in. State resets to `None`.
+/// 2. `Throttled(NodeResize | SectionResize)` (threshold-cross
+///    promoted to fast-resize via `Action::FastResizeStart`) —
+///    finalize via `set_node_aabb` / `set_section_aabb`, exactly
+///    as the left-button release does. Reuses `finalize_resize_release`
+///    so the commit shape stays single-source.
+fn handle_right_button(
+    state: ElementState,
+    cursor_pos_val: (f64, f64),
+    ctx: &mut InputHandlerContext<'_>,
+) {
+    if state == ElementState::Pressed {
+        // Body-only hit-test; no edge-handle / portal-label / resize-
+        // handle hits — the fast-resize gesture deliberately bypasses
+        // those because it's a corner-anchored resize from anywhere
+        // on the body. Resize-handle hits would compete with the
+        // press-time corner inference; portal/edge-label hits would
+        // promote the gesture to label-drag and never reach FastResize.
+        let canvas_pos = ctx
+            .renderer
+            .screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
+        let (hit_node, hit_section_idx) = match ctx.mindmap_tree.as_mut() {
+            Some(tree) => match crate::application::document::hit_test_target(canvas_pos, tree) {
+                Some(crate::application::document::HitTarget::Section { node_id, section_idx }) => {
+                    (Some(node_id), Some(section_idx))
+                }
+                Some(crate::application::document::HitTarget::NodeContainer { node_id }) => {
+                    (Some(node_id), None)
+                }
+                None => (None, None),
+            },
+            None => (None, None),
+        };
+        // Don't clobber an active drag. If state is already
+        // Pending / PendingRight / Throttled / Panning / SelectingRect,
+        // log + ignore. Mirror's middle-click's posture (which
+        // unconditionally overwrites) is intentionally not chosen
+        // here — fast-resize is a meaningful gesture; clobbering an
+        // in-flight resize with a stray right-press would be visible.
+        if !matches!(*ctx.drag_state, DragState::None) {
+            log::debug!(
+                "right-button press ignored (drag already in flight); state stays put"
+            );
+            return;
+        }
+        *ctx.drag_state = DragState::PendingRight {
+            start_pos: cursor_pos_val,
+            hit_node,
+            hit_section_idx,
+        };
+    } else {
+        // Released
+        match std::mem::replace(ctx.drag_state, DragState::None) {
+            DragState::PendingRight { .. } => {
+                // No movement past threshold — fire the bound
+                // RightClick action (default-unbound). The action
+                // lookup uses `action_for_gesture` so a user can
+                // bind `Ctrl+RightClick` separately from bare
+                // `RightClick`, with the standard modifier-fallback.
+                let name = crate::application::keybinds::MouseGesture::RightClick.key_name();
+                let action = ctx.keybinds.action_for_gesture(
+                    name,
+                    ctx.modifiers.control_key(),
+                    ctx.modifiers.shift_key(),
+                    ctx.modifiers.alt_key(),
+                );
+                if let Some(a) = action {
+                    let _ = super::dispatch::dispatch_action(a, ctx, None);
+                }
+            }
+            // Threshold-cross promoted PendingRight to one of the
+            // resize Throttled variants — finalize the same way
+            // left-button release does. Logic intentionally
+            // duplicates the relevant arms in the left-release
+            // path; extracting a helper is a follow-up after the
+            // gesture is in. Reusing `set_node_aabb` /
+            // `set_section_aabb` (atomic post-state validate +
+            // single undo entry) keeps the commit shape identical
+            // regardless of which button started the gesture.
+            DragState::Throttled(ThrottledDrag::NodeResize(i)) => {
+                if let Some(doc) = ctx.document.as_mut() {
+                    let (new_position, new_size) = i.resolve(i.total_delta);
+                    match doc.set_node_aabb(&i.node_id, new_position, new_size) {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            log::debug!(
+                                "fast-resize node release committed no-op on '{}'",
+                                i.node_id
+                            );
+                        }
+                        Err(msg) => {
+                            log::info!(
+                                "fast-resize node release rejected: {} (snapping back)",
+                                msg
+                            );
+                        }
+                    }
+                    ctx.scene_cache.clear();
+                    rebuild_all(
+                        doc,
+                        ctx.interaction_mode,
+                        ctx.mindmap_tree,
+                        ctx.app_scene,
+                        ctx.renderer,
+                        ctx.scene_cache,
+                    );
+                }
+            }
+            DragState::Throttled(ThrottledDrag::SectionResize(i)) => {
+                if let Some(doc) = ctx.document.as_mut() {
+                    let (new_offset, new_size) = i.resolve(i.total_delta);
+                    match doc.set_section_aabb(&i.node_id, i.section_idx, new_offset, new_size) {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            log::debug!(
+                                "fast-resize section release committed no-op on '{}' section[{}]",
+                                i.node_id,
+                                i.section_idx
+                            );
+                        }
+                        Err(msg) => {
+                            log::info!(
+                                "fast-resize section release rejected: {} (snapping back)",
+                                msg
+                            );
+                        }
+                    }
+                    ctx.scene_cache.clear();
+                    rebuild_all(
+                        doc,
+                        ctx.interaction_mode,
+                        ctx.mindmap_tree,
+                        ctx.app_scene,
+                        ctx.renderer,
+                        ctx.scene_cache,
+                    );
+                }
+            }
+            // Any other state on right-release: put it back. Right-
+            // button release shouldn't terminate a left-button
+            // drag, a panning gesture, a rubber-band selection,
+            // or any of the non-resize Throttled variants.
+            other => {
+                *ctx.drag_state = other;
+            }
+        }
     }
 }
 

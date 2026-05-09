@@ -544,6 +544,11 @@ pub(super) fn handle_cursor_moved(
                 .renderer
                 .screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
         }
+        // Threshold-cross arm for the right-button fast-resize
+        // gesture lands in Commit 4 of Batch 4 (Action::FastResizeStart).
+        // This commit ships the `PendingRight` data shape; the
+        // dispatch lives in the next commit.
+        DragState::PendingRight { .. } => {}
         DragState::None => {}
     }
 }

@@ -439,6 +439,30 @@ enum DragState {
         /// a move-node drag.
         hit_node_resize_handle: Option<(String, baumhard::mindmap::scene_builder::ResizeHandleSide)>,
     },
+    /// Right-button is down + cursor hasn't moved past the drag
+    /// threshold. Press-time hit captures the body of any node /
+    /// section under the cursor (no edge-handle / portal-label /
+    /// resize-handle precedence — fast-resize is body-only by
+    /// design). Threshold-cross promotes to
+    /// `Throttled(NodeResize | SectionResize)` via
+    /// `Action::FastResizeStart`; release-without-movement fires
+    /// the bound `MouseGesture::RightClick` action (default
+    /// unbound) and resets to `None`.
+    PendingRight {
+        start_pos: (f64, f64),
+        /// Press-time hit, body-only. `None` for a press on
+        /// empty canvas — release fires `RightClick` regardless
+        /// of where the cursor is, but the threshold-cross arm
+        /// won't promote to `FastResizeStart` without a node
+        /// target.
+        hit_node: Option<String>,
+        /// Section index inside `hit_node.sections` when the
+        /// press landed on a specific section in a multi-section
+        /// node. Mirrors the `hit_section_idx` semantics on
+        /// `Pending`. `None` for empty-canvas / single-section /
+        /// non-node hits.
+        hit_section_idx: Option<usize>,
+    },
     /// Dragging to pan the camera (started on empty space).
     /// Unthrottled — emits a `CameraPan` decree directly, no
     /// tree or model mutation involved.
