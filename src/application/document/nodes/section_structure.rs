@@ -16,11 +16,77 @@
 //!
 //! Per `SECTIONS_BORDERS_RESIZE_PLAN.md` §4.5 (Batch 5).
 
-use baumhard::mindmap::model::MindSection;
+use baumhard::mindmap::model::{MindNode, MindSection};
 
 use super::super::undo_action::UndoAction;
 use super::super::{MindMapDocument, SectionSel, SelectionState};
 use super::{grow_one_node_to_fit_border, validate_section_aabb};
+
+/// Wrap a node-mutating closure with the snapshot+undo+
+/// floor-pass+cleanup envelope every structural section
+/// mutator (`add_section` / `delete_section` / `split_section`)
+/// shares. Captures pre-mutation `style` / `sections` /
+/// `position` / `size` for undo, runs the closure, pushes
+/// `EditNodeStyle`, sets `dirty`, runs the floor passes, and
+/// fires `cleanup_after_structural_mutation`.
+///
+/// Caller is responsible for validating against the immutable
+/// node *before* calling this helper — pre-validation lives
+/// outside so callers can return verb-specific error messages
+/// using fields the closure doesn't see (`node.size` for AABB
+/// validation, `sections.len()` for the "≥1 section" invariant).
+/// Once the closure runs, the mutation is committed; no
+/// rollback path.
+///
+/// CODE_CONVENTIONS §5: pre-fix the three structural mutators
+/// triplicated a 25-line snapshot+undo dance. This helper
+/// folds them to one site.
+fn mutate_node_with_style_undo<F, R>(
+    doc: &mut MindMapDocument,
+    node_id: &str,
+    mutate: F,
+) -> R
+where
+    F: FnOnce(&mut MindNode) -> R,
+{
+    let node = doc
+        .mindmap
+        .nodes
+        .get(node_id)
+        .expect("caller verified node exists");
+    let before_style = node.style.clone();
+    let before_sections = node.sections.clone();
+    let before_position = node.position;
+    let before_size = node.size;
+    let canvas_default = doc.mindmap.canvas.default_border.clone();
+
+    let node = doc
+        .mindmap
+        .nodes
+        .get_mut(node_id)
+        .expect("just confirmed exists");
+    let result = mutate(node);
+
+    doc.undo_stack.push(UndoAction::EditNodeStyle {
+        node_id: node_id.to_string(),
+        before_style,
+        before_sections,
+        before_position,
+        before_size,
+    });
+    doc.dirty = true;
+
+    let node = doc
+        .mindmap
+        .nodes
+        .get_mut(node_id)
+        .expect("just mutated");
+    super::super::grow_one_node_to_fit_text(node);
+    grow_one_node_to_fit_border(node, canvas_default.as_ref());
+
+    cleanup_after_structural_mutation(doc, node_id);
+    result
+}
 
 /// In-doc cleanup hook that runs after a structural section
 /// mutation (add / delete / split) on `node_id`. Cancels any
@@ -143,43 +209,15 @@ impl MindMapDocument {
         let insert_at = at.unwrap_or(len).min(len);
         // Validate against the parent node's size — same shape the
         // index-preserving setters use, parameterised on the
-        // would-be index.
+        // would-be index. Validation lives in the caller (not
+        // the helper closure) because the node's `size` isn't
+        // visible inside `&mut MindNode` after the snapshot.
         validate_section_aabb(node.size, insert_at, section.offset, section.size)?;
 
-        let before_style = node.style.clone();
-        let before_sections = node.sections.clone();
-        let before_position = node.position;
-        let before_size = node.size;
-        let canvas_default = self.mindmap.canvas.default_border.clone();
-        let node = self
-            .mindmap
-            .nodes
-            .get_mut(node_id)
-            .expect("just confirmed exists");
-        node.sections.insert(insert_at, section);
-
-        self.undo_stack.push(UndoAction::EditNodeStyle {
-            node_id: node_id.to_string(),
-            before_style,
-            before_sections,
-            before_position,
-            before_size,
-        });
-        self.dirty = true;
-
-        // Adding a fill-parent section (size=None) can shift the
-        // measured-text floor; run the floor passes so the next
-        // unrelated edit doesn't see a stale under-floor node.
-        let node = self
-            .mindmap
-            .nodes
-            .get_mut(node_id)
-            .expect("just inserted");
-        super::super::grow_one_node_to_fit_text(node);
-        grow_one_node_to_fit_border(node, canvas_default.as_ref());
-
-        cleanup_after_structural_mutation(self, node_id);
-        Ok(insert_at)
+        Ok(mutate_node_with_style_undo(self, node_id, |node| {
+            node.sections.insert(insert_at, section);
+            insert_at
+        }))
     }
 
     /// Remove the section at `idx` from `node_id.sections`. Returns
@@ -218,41 +256,9 @@ impl MindMapDocument {
             ));
         }
 
-        let before_style = node.style.clone();
-        let before_sections = node.sections.clone();
-        let before_position = node.position;
-        let before_size = node.size;
-        let canvas_default = self.mindmap.canvas.default_border.clone();
-        let node = self
-            .mindmap
-            .nodes
-            .get_mut(node_id)
-            .expect("just confirmed exists");
-        let removed = node.sections.remove(idx);
-
-        self.undo_stack.push(UndoAction::EditNodeStyle {
-            node_id: node_id.to_string(),
-            before_style,
-            before_sections,
-            before_position,
-            before_size,
-        });
-        self.dirty = true;
-
-        // Same floor-pass discipline as `add_section`: removing a
-        // section can change the measured-text floor (and therefore
-        // the node's required height), so re-run the passes against
-        // the updated structure.
-        let node = self
-            .mindmap
-            .nodes
-            .get_mut(node_id)
-            .expect("just removed from");
-        super::super::grow_one_node_to_fit_text(node);
-        grow_one_node_to_fit_border(node, canvas_default.as_ref());
-
-        cleanup_after_structural_mutation(self, node_id);
-        Ok(removed)
+        Ok(mutate_node_with_style_undo(self, node_id, |node| {
+            node.sections.remove(idx)
+        }))
     }
 
     /// Split the section at `idx` into two adjacent sections.
@@ -368,41 +374,13 @@ impl MindMapDocument {
         new_section.text = suffix_text;
         new_section.text_runs = suffix_runs;
 
-        let before_style = node.style.clone();
-        let before_sections = node.sections.clone();
-        let before_position = node.position;
-        let before_size = node.size;
-        let canvas_default = self.mindmap.canvas.default_border.clone();
-        let node = self
-            .mindmap
-            .nodes
-            .get_mut(node_id)
-            .expect("just confirmed exists");
-        node.sections[idx].text = prefix_text;
-        node.sections[idx].text_runs = prefix_runs;
-
         let new_idx = idx + 1;
-        node.sections.insert(new_idx, new_section);
-
-        self.undo_stack.push(UndoAction::EditNodeStyle {
-            node_id: node_id.to_string(),
-            before_style,
-            before_sections,
-            before_position,
-            before_size,
-        });
-        self.dirty = true;
-
-        let node = self
-            .mindmap
-            .nodes
-            .get_mut(node_id)
-            .expect("just split");
-        super::super::grow_one_node_to_fit_text(node);
-        grow_one_node_to_fit_border(node, canvas_default.as_ref());
-
-        cleanup_after_structural_mutation(self, node_id);
-        Ok(new_idx)
+        Ok(mutate_node_with_style_undo(self, node_id, move |node| {
+            node.sections[idx].text = prefix_text;
+            node.sections[idx].text_runs = prefix_runs;
+            node.sections.insert(new_idx, new_section);
+            new_idx
+        }))
     }
 }
 
