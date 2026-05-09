@@ -1809,13 +1809,22 @@ to the right element.
   node (single-section migrated nodes still route through
   `Single` so today's whole-node verbs keep firing on the whole
   node target). Per-section setters cover text
-  (`set_section_text`, `set_section_text_and_runs`), colour
+  (`set_section_text`, `set_section_text_and_runs`,
+  `set_section_text_preserving_runs`), colour
   (`set_section_text_color`), font (`set_section_font_size`,
   `set_section_font_family`), position + size
-  (`set_section_offset`, `set_section_size`), and the
-  structured-clipboard payload (`apply_section_payload`); the
-  trait dispatcher and the `section move` / `section resize`
-  console verbs route here from a `SelectionState::Section`.
+  (`set_section_offset`, `set_section_size`), the
+  structured-clipboard payload (`apply_section_payload`), and —
+  added in Batch 5 — structural mutators that change the
+  `sections` vector length: `add_section` (insert with AABB
+  validation against the parent), `delete_section` (remove
+  with the "≥1 section per node" invariant enforced), and
+  `split_section` (split text at a grapheme boundary; runs
+  partitioned via `text_run_ops::slice`). The trait dispatcher
+  and the `section …` console verbs route here from a
+  `SelectionState::Section`, or from `Single(id)` on a
+  single-section node (which §4.5 rule 3 auto-resolves to
+  `(id, 0)`).
 - `MultiSection(Vec<SectionSel>)` — two or more sections,
   possibly across distinct nodes. Built by shift+click on a
   section while another section (or section-set) is selected;

@@ -54,7 +54,7 @@ pub const VERBS: &[&str] = &[
 pub const COMMAND: Command = Command {
     name: "section",
     aliases: &[],
-    summary: "Inspect, move, resize, edit, or structurally modify a section",
+    summary: "Inspect, move, resize, edit text, or structurally modify a section (add / delete / split)",
     usage:
         "section show [section=<idx>] | section move dx=<f64> dy=<f64> [section=<idx>] | section move x=<f64> y=<f64> [section=<idx>] | section resize w=<f64> h=<f64>|fill [section=<idx>] | section text \"<text>\" [section=<idx>] [runs=preserve|clear] | section add [at=<idx>] [text=\"<text>\"] | section delete [section=<idx>] | section split [section=<idx>] [at=<grapheme>] | section frame show|reset|<key>=<value> … [section=<idx>] | section frame preview <key>=<value> …|commit|cancel [section=<idx>]",
     tags: &[
@@ -312,11 +312,15 @@ fn execute_show(doc: &MindMapDocument, node_id: &str, idx: usize) -> ExecResult 
 
     // Size readout: show the explicit Some pin, or annotate the
     // None case with the parent-derived effective size so the
-    // user sees what the renderer is using.
+    // user sees what the renderer is using. `{:.1}` keeps the
+    // f64 type signal visible (0.0 prints as `0.0`, not `0`)
+    // and bounds tiny-value rendering at one decimal place
+    // (default `Display` for f64 prints `1e-20` as a string of
+    // 20 zero digits).
     let size_display = match section.size {
-        Some(s) => format!("Some({} × {}) [explicit pin]", s.width, s.height),
+        Some(s) => format!("Some({:.1} × {:.1}) [explicit pin]", s.width, s.height),
         None => format!(
-            "None [fill parent: {} × {}]",
+            "None [fill parent: {:.1} × {:.1}]",
             node.size.width, node.size.height
         ),
     };
@@ -328,27 +332,40 @@ fn execute_show(doc: &MindMapDocument, node_id: &str, idx: usize) -> ExecResult 
         None => format!("None [→ index {}]", idx),
     };
 
+    // Plural / singular agreement on the bindings line —
+    // "1 trigger" reads natural, "0 triggers" / "5 triggers"
+    // also natural; "1 trigger(s)" was the pre-fix awkwardness
+    // the section-show reviewer flagged.
+    let n_bindings = section.trigger_bindings.len();
+    let bindings_word = if n_bindings == 1 { "trigger" } else { "triggers" };
+
+    // Run breakdown wording: the four sub-counts (bold /
+    // italic / underline / hyperlink) overlap freely (a single
+    // run can carry multiple flags), so the parenthetical isn't
+    // a partition of the total. "flags:" reads as "this is a
+    // breakdown across orthogonal axes" rather than "these
+    // numbers sum to the total".
     let mut lines = vec![
         format!("section[{}] of node \"{}\"", idx, node_id),
         format!("  text:     {}", text_display),
         format!(
-            "  runs:     {} runs ({} bold, {} italic, {} underline, {} hyperlink)",
+            "  runs:     {} runs (flags: {} bold, {} italic, {} underline, {} hyperlink)",
             total_runs, bold, italic, underline, hyperlink
         ),
-        format!("  offset:   ({}, {})", section.offset.x, section.offset.y),
+        format!("  offset:   ({:.1}, {:.1})", section.offset.x, section.offset.y),
         format!("  size:     {}", size_display),
         format!("  channel:  {}", channel_display),
-        format!(
-            "  bindings: {} trigger(s)",
-            section.trigger_bindings.len()
-        ),
+        format!("  bindings: {} {}", n_bindings, bindings_word),
     ];
-    // Surface frame_border presence so the user sees the per-
-    // section override status without running `section frame
-    // show` separately.
+    // Surface frame_border state. When a per-section override
+    // is set, also surface the preset (the most useful one-line
+    // identifier of the override's shape) so the user sees
+    // *which* override is in force without running `section
+    // frame show`. The richer-than-pre-fix readout was flagged
+    // by the section-show reviewer.
     let frame_status = match &section.frame_border {
-        Some(_) => "per-section override",
-        None => "(falls back to canvas default / floor)",
+        Some(cfg) => format!("per-section override (preset={})", cfg.preset),
+        None => "(falls back to canvas default / floor)".to_string(),
     };
     lines.push(format!("  frame:    {}", frame_status));
     ExecResult::lines(lines)
@@ -675,6 +692,14 @@ fn parse_resize_kvs(args: &Args) -> Result<(f64, f64), String> {
         let parsed: f64 = v
             .parse()
             .map_err(|_| format!("section resize: {}='{}' is not a number", k, v))?;
+        // Reject non-finite at the verb layer for parity with
+        // `parse_move_kvs`. Pre-fix, NaN/Inf reached
+        // `set_section_size`'s validator and surfaced a less
+        // specific layer-mismatched message; rejecting here
+        // keeps both forms diagnostically symmetric.
+        if !parsed.is_finite() {
+            return Err(format!("section resize: {}={} is not finite", k, v));
+        }
         *target = Some(parsed);
     }
     let (Some(w), Some(h)) = (w, h) else {

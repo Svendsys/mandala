@@ -2435,61 +2435,85 @@ Tasks:
 Verification: tests green; manual smoke — full §7.2 scenario 1 by
 hand on native and WASM.
 
-#### Batch 4 — Fast-resize gesture
+#### Batch 4 — Fast-resize gesture — SHIPPED
 
 Adds RightClick / RightDrag MouseGesture variants and the
 Ctrl+RightDrag fast-resize gesture. No new visual chrome (the
 gesture works against any node, including not-currently-selected
 ones). Touch is deferred to Batch 7.
 
-Tasks:
-- [ ] Add `MouseGesture::RightClick`, `RightDrag` to `bind.rs`.
-- [ ] Add `MouseButton::Right` arm in `event_mouse_click.rs`
-      handling press → `DragState::Pending` (carries `is_right`
-      bit), release → `RightClick` action lookup or
-      `Throttled(NodeResize) → set_node_aabb` commit.
-- [ ] Add right-button threshold-cross arm in `event_cursor_moved.rs`
-      that dispatches `Action::FastResizeStart` with hit context.
-- [ ] Add `Action::FastResizeStart` + dispatch arm; arm reads
-      `DispatchHit`, computes quadrant via `infer_resize_anchor`,
-      transitions DragState to Throttled(NodeResize|SectionResize).
-- [ ] Implement `infer_resize_anchor` in `section_resize_handle.rs`.
-- [ ] Default keybinds: `fast_resize_start: vec![ParametricBinding {
-      combo: "Ctrl+RightDrag", args: vec![] }]`.
-- [ ] Add `cursor_icon: CursorIconHint` plumbing for the visual
-      cursor change during fast-resize.
-- [ ] Tests per §7.1 (fast-resize rows).
+Tasks (status post-9-agent review fixes):
+- [x] `MouseGesture::RightClick` / `RightDrag` in `bind.rs`.
+- [x] `MouseButton::Right` press / release arms in
+      `event_mouse_click.rs` (separate `DragState::PendingRight`
+      variant carrying press-time hit + canvas pos for press-time
+      quadrant inference).
+- [x] Threshold-cross arm in `event_cursor_moved.rs` dispatches
+      `Action::FastResizeStart` with the press-time hit and
+      canvas pos in `DispatchHit`.
+- [x] `Action::FastResizeStart` + dispatch arm; computes
+      anchor via `infer_resize_anchor`; transitions DragState
+      into `Throttled(NodeResize | SectionResize)`. Marked
+      `destructive` per §6.10.
+- [x] `infer_resize_anchor` in `scene_builder/section_resize_handle.rs`.
+- [x] Default keybind `fast_resize_start: ["Ctrl+RightDrag"]`
+      (kept on `Vec<String>` since the Action takes no payload).
+- [x] Cursor icon plumbing via `cursor_icon_last: CursorIcon`
+      on `InitState` + `cursor_icon_for_resize_side` mapping.
+- [x] WASM `contextmenu` event suppression (with Shift+RightClick
+      bypass for browser-context-menu access).
+- [x] Tests: 8 new (anchor math, gesture round-trips, cursor
+      mapping pin, keybind resolution, default destructive set).
 
-Verification: tests green; manual smoke — Ctrl+RightDrag from each
-of the four quadrants resizes from the matching corner; release
-commits; undo works; without Ctrl, right-drag does nothing.
+Verification: 2523 tests green post-9-agent review fixes;
+wasm32 cross-compile clean.
 
-#### Batch 5 — Section console verb redesign + new doc setters
+#### Batch 5 — Section console verb redesign + new doc setters — SHIPPED
 
 Lands the new `section` verb grammar and the `add_section` /
 `delete_section` / `split_section` doc setters.
 
-Tasks:
-- [ ] Refactor `console/commands/section.rs` into
-      `console/commands/section/` directory with subverb modules
-      (`move.rs`, `resize.rs`, `show.rs`, `edit.rs`, `text.rs`,
-      `add.rs`, `delete.rs`, `split.rs`, `complete.rs`).
-- [ ] Add new doc setters in `document/nodes/mod.rs` and
-      `document/nodes/section_text.rs`:
-      - `add_section(node_id, at, section)`
-      - `delete_section(node_id, idx)`
-      - `split_section(node_id, idx, at_grapheme)`
-- [ ] Add new Action variants per §4.6: `SetSectionOffsetAbs`,
+Tasks (status post-Full-Nelson review):
+- [x] Section verb grammar lives in `console/commands/section/`
+      (`mod.rs` + `frame.rs`); per-subverb-file split deferred —
+      the single `mod.rs` ~700 LoC houses every subverb's
+      `execute_*` and the shared parsers, mirroring the shape
+      Batch 6's `border/` settled on after its own evolution.
+- [x] Doc setters `add_section` / `delete_section` /
+      `split_section` shipped in `nodes/section_structure.rs`
+      with full undo discipline (`EditNodeStyle` extended with
+      `before_position` / `before_size`).
+- [x] kv-form migration: `move dx=/dy=`, `move x=/y=` (NEW
+      absolute), `resize w=/h=`, `resize fill` (renamed from
+      `none`).
+- [x] New subverbs: `show`, `text`, `add`, `delete`, `split`.
+      `text` honours `runs=preserve|clear` (preserve uses the
+      new `set_section_text_preserving_runs` helper; clear
+      collapses via `set_section_text`).
+- [x] `node_or_section_selected` predicate added in
+      `predicates.rs:33`; `Multi(_)` excluded to avoid
+      predicate-vs-runtime mismatch flagged by the Full-Nelson
+      review.
+- [x] §4.5 rule 3: `Single(id)` on a single-section node
+      auto-resolves to `(id, 0)` (closes the §5.7 hostile
+      error).
+- [x] `format/sections.md` rewritten with the 8-subverb table.
+- [ ] **Deferred**: §4.5 rule 4 (MultiSection fan-out for
+      `move dx=X dy=Y`) — substantial change requiring per-
+      section delta evaluation + multi-target undo bundling.
+- [ ] **Deferred**: §4.6 Action variants — `SetSectionOffsetAbs`,
       `SetSectionText`, `AddSection`, `DeleteSection`,
-      `SplitSection`. Their dispatch arms call the new helpers.
-- [ ] Replace `applicable: always` with
-      `applicable: node_or_section_selected` (new predicate in
-      `predicates.rs`).
-- [ ] Migrate existing tests; add new tests per §7.1.
-- [ ] Update `format/sections.md` to document the new console
-      grammar.
+      `SplitSection`. Console verb is the primary surface;
+      keybinding section ops is a follow-up. Existing
+      `SetSectionOffsetDelta` / `SetSectionSizeAbs` /
+      `SetSectionSizeFillParent` Action variants are still
+      wired and have their doc-comments updated to the kv form.
+- [ ] **Deferred**: `section edit` subverb — entered SectionEdit
+      mode is reachable via `Action::EnterSectionEdit` from
+      Batch 3; the console-side equivalent is a follow-up.
 
-Verification: tests green; manual smoke — full §7.2 scenarios 1, 2.
+Verification: 2523 tests green post-Round-1 review fixes;
+wasm32 cross-compile clean.
 
 #### Batch 6 — Border verb redesign + canvas-default editing + preview
 
