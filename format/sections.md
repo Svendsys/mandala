@@ -111,7 +111,7 @@ references verbatim.
 The `section …` verb takes kv-style arguments per
 SECTIONS_BORDERS_RESIZE_PLAN.md §4.5 — the prior positional
 `<dx> <dy>` / `<w> <h>` forms are gone (CODE_CONVENTIONS §10:
-no compatibility shims). Eight subverbs:
+no compatibility shims). Nine subverbs:
 
 | Verb | Form | Effect |
 |---|---|---|
@@ -121,6 +121,7 @@ no compatibility shims). Eight subverbs:
 | `section resize` | `w=<f64> h=<f64> [section=<idx>]` | Pin `size = Some({w, h})`. |
 | `section resize` | `fill [section=<idx>]` | Clear `size = None` (renamed from `none`). |
 | `section text` | `"<text>" [section=<idx>] [runs=preserve\|clear]` | Replace text. `runs=preserve` (default) keeps per-grapheme styling on overlapping ranges; `runs=clear` collapses to single-run plaintext. |
+| `section edit` | `[section=<idx>]` | Open the section text editor on the resolved target. Closes the console; modal handoff to the editor. |
 | `section add` | `[at=<idx>] [text="<text>"]` | Insert a new section. `at=` defaults to append. |
 | `section delete` | `[section=<idx>]` | Remove. Errors when only one section remains. |
 | `section split` | `[section=<idx>] [at=<grapheme>]` | Split in two at a grapheme boundary. `at=` defaults to end-of-text (empty suffix). |
@@ -132,9 +133,15 @@ last-write-wins. Empty / unknown kvs surface usage hints.
 
 Selection resolution: `Section` / `SectionRange` supplies the
 index implicitly; `Single(node)` requires `section=<idx>`;
-`MultiSection` rejects with a single-target hint (each gesture
-writes one section's offset / size — multi-target fan-out is a
-deeper concern for §6).
+`MultiSection` rejects with a single-target hint for every
+subverb **except** `section move dx=… dy=…`, which fans out
+the same delta across every selected section atomically (Plan
+§4.5 rule 4 — abort on first AABB rejection so a partial fan-
+out never lands; absolute `x=`/`y=` form stays single-target
+because identical absolute coords would collide). Macro / Action
+path (`Action::SetSectionOffsetDelta`) is single-target on
+MultiSection by design — script multiple Action steps for fan-
+out.
 
 Both verbs validate against the rules `maptool verify`'s
 [`verify::sections`](./validation.md) enforces — finite +

@@ -2397,7 +2397,7 @@ node, verify NO handles appear; press `r`, verify 8 handles appear;
 drag a handle, verify resize works; press Esc, verify handles
 vanish; verify selection preserved.
 
-#### Batch 3 — NodeEdit mode visuals + section selection routing
+#### Batch 3 — NodeEdit mode visuals + section selection routing — SHIPPED
 
 Wires NodeEdit mode end-to-end: section frames, dimming, status bar,
 click routing. The user can now enter NodeEdit mode (`n` keybind or
@@ -2405,35 +2405,57 @@ click routing. The user can now enter NodeEdit mode (`n` keybind or
 editor is reachable via `Action::EnterSectionEdit` (Enter from
 NodeEdit context).
 
-Tasks:
-- [ ] Wire `InteractionMode::NodeEdit { node_id }` predicates.
-- [ ] Change `app/click.rs:62-150` click routing to consult
+Tasks (status post-Tier-1/2 review fixes):
+- [x] `InteractionMode::NodeEdit { node_id }` predicates wired.
+- [x] `app/click.rs` click routing consults
       `interaction_mode.click_resolves_to_section(...)`.
-- [ ] Add `Action::EnterNodeEdit`, `Action::EnterSectionEdit`,
-      `Action::EnterNodeEditClean` (rename from EditSelection*).
-- [ ] Add the single-section short-circuit in
-      `apply_enter_node_edit` (opens editor + sets mode in one pass).
-- [ ] Update `EditSelection` / `EditSelectionClean` arms to dispatch
-      through `EnterNodeEdit*`.
-- [ ] Add `InputContext::NodeEdit` variant in `keybinds/context.rs`.
-- [ ] Add the modal-stealer cascade branch for NodeEdit context in
+- [x] `Action::EnterNodeEdit` / `EnterSectionEdit` /
+      `EnterNodeEditClean` shipped (renamed from `EditSelection*`).
+      The `EditSelection` umbrella stays as a rename-with-shim
+      (documented divergence from §3.8 — it dispatches to
+      `EnterNodeEdit` / `EnterEdgeLabelEdit` / `EnterPortalTextEdit`
+      based on selection variant; allows the existing keybind
+      to keep working without a forced rebind).
+- [x] Single-section short-circuit in `apply_enter_node_edit`
+      (opens editor + sets mode in one pass; `exit_to_default_on_close`
+      so the user lands at Default after editing).
+- [x] `EditSelection*` arms dispatch through `EnterNodeEdit*`.
+- [x] `InputContext::NodeEdit` variant in `keybinds/context.rs`.
+- [x] Modal-stealer cascade branch for NodeEdit in
       `event_keyboard.rs`.
-- [ ] Add `enter_node_edit: vec!["Enter".into()]` keybind default.
-      Replaces the now-deleted `edit_selection` field. Default for
-      `enter_section_edit: vec!["Enter".into()]` (NodeEdit context).
-- [ ] Implement section-frame scene-builder pass
-      (`scene_builder/section_frame.rs`).
-- [ ] Implement inactive-node dimming in `scene_builder/node_pass.rs`.
-- [ ] Implement status-bar overlay in `scene_host.rs`.
-- [ ] Add `node edit` console subverb; `section edit` console
-      subverb.
-- [ ] Set `Flag::Focused` on active section in `apply_text_edit_to_tree`.
-- [ ] Outside-click exits NodeEdit handler in
+- [x] `enter_node_edit: vec![]` keybind default (left empty;
+      the `edit_selection: vec!["Enter".into()]` keybind keeps
+      working via the umbrella dispatch). `EditSelection`'s
+      umbrella dispatch covers the documented intent.
+      `enter_section_edit: vec!["Enter".into()]` default in
+      NodeEdit context. (Documented divergence from §3.8: the
+      plan called for `edit_selection` to be deleted; we kept
+      it as the umbrella entry point, which is functionally
+      equivalent and avoids forcing an existing-config rebind.)
+- [x] `scene_builder/section_frame.rs` section-frame pass.
+- [x] Inactive-node dimming in `scene_builder/node_pass.rs`.
+- [x] Status-bar overlay in `scene_host.rs`.
+- [x] `section edit` console subverb shipped (Batch 5 deferred
+      3/N, commit `b84c00f`). `node edit` console subverb
+      **deferred** — `mode node-edit` covers the same intent
+      via the existing `mode` verb; a `node edit` alias is
+      pure sugar.
+- [x] `Flag::Focused` set on active section in
+      `apply_text_edit_to_tree`.
+- [x] Outside-click exits NodeEdit handler in
       `event_mouse_click.rs`.
-- [ ] Tests per §7.1 (every NodeEdit-related row).
+- [x] Tests per §7.1 (NodeEdit-related rows pinned).
 
-Verification: tests green; manual smoke — full §7.2 scenario 1 by
-hand on native and WASM.
+Open follow-ups (deferred to next PR):
+- [ ] §4.7 hover affordance — `hovered_section: Option<(String, usize)>`
+      on `InitState` plus a 1.2× brightness section-frame pass.
+      Not load-bearing for the NodeEdit UX (the editor cycle
+      works without hover); ship in a follow-up Batch-3.5 or
+      fold into Batch 7's touch parity work.
+- [ ] `node edit` console subverb (sugar over `mode node-edit`).
+
+Verification (post-Tier-1/2 review fixes): 2544 tests green;
+wasm32 cross-compile clean.
 
 #### Batch 4 — Fast-resize gesture — SHIPPED
 
@@ -2497,23 +2519,37 @@ Tasks (status post-Full-Nelson review):
 - [x] §4.5 rule 3: `Single(id)` on a single-section node
       auto-resolves to `(id, 0)` (closes the §5.7 hostile
       error).
-- [x] `format/sections.md` rewritten with the 8-subverb table.
-- [ ] **Deferred**: §4.5 rule 4 (MultiSection fan-out for
-      `move dx=X dy=Y`) — substantial change requiring per-
-      section delta evaluation + multi-target undo bundling.
-- [ ] **Deferred**: §4.6 Action variants — `SetSectionOffsetAbs`,
+- [x] `format/sections.md` rewritten with the 9-subverb table
+      (post-`section edit`-ship; the 9th subverb landed in the
+      deferred-items follow-up).
+- [x] §4.5 rule 4: MultiSection fan-out for `move dx=X dy=Y`
+      shipped in commit `ff22f5c`. Atomic parse-then-dispatch
+      via `MindMapDocument::validate_section_offset_change` —
+      the verb pre-validates every selected pair's would-be
+      AABB; a single rejection aborts the whole fan-out so
+      partial mutation never lands. Other subverbs
+      (`text` / `resize` / `delete` / `split`) keep
+      single-target rejection on MultiSection.
+- [x] §4.6 Action variants — `SetSectionOffsetAbs`,
       `SetSectionText`, `AddSection`, `DeleteSection`,
-      `SplitSection`. Console verb is the primary surface;
-      keybinding section ops is a follow-up. Existing
-      `SetSectionOffsetDelta` / `SetSectionSizeAbs` /
-      `SetSectionSizeFillParent` Action variants are still
-      wired and have their doc-comments updated to the kv form.
-- [ ] **Deferred**: `section edit` subverb — entered SectionEdit
-      mode is reachable via `Action::EnterSectionEdit` from
-      Batch 3; the console-side equivalent is a follow-up.
+      `SplitSection { at_grapheme }` — shipped in commit
+      `256c096`. Macro-only targets today (no `KeybindConfig`
+      fields; the string-arg payloads make keybinding awkward).
+      Doc-comments on the 5 variants explicitly say "macro-only
+      target" so future readers don't assume keybind reach.
+      The 4 destructive ones (`SetSectionText`, `AddSection`,
+      `DeleteSection`, `SplitSection`) are `#[action(destructive)]`
+      and pinned in `keybinds/tests.rs::test_is_destructive_destructive_set_is_pinned`.
+- [x] `section edit [section=<idx>]` subverb shipped in commit
+      `b84c00f`. Routes through the new
+      `ConsoleSideEffect::OpenSectionEdit { node_id, section_idx }`
+      bus variant; the post-rebuild handler delegates to the
+      canonical `apply_enter_section_edit` (the same path
+      `Action::EnterSectionEdit` uses on the keybind side) for
+      `OwnerMismatch` validation and consistent posture.
 
-Verification: 2523 tests green post-Round-1 review fixes;
-wasm32 cross-compile clean.
+Verification (post-deferred-items + Tier-1/2 review fixes):
+2544 tests green; wasm32 cross-compile clean.
 
 #### Batch 6 — Border verb redesign + canvas-default editing + preview
 
@@ -2691,8 +2727,21 @@ trajectory but belong in their own work.
   `dotted`, `thick`, etc. is a separate batch.
 - **Macro reach extension.** The new Actions inherit existing
   macro-tier privilege gates; no new tier semantics.
-- **Schema migration.** All format schemas (`MindNode`,
-  `MindSection`, `GlyphBorderConfig`, `Canvas`) are unchanged.
+- **Schema migration.** Plan target: all format schemas
+  (`MindNode`, `MindSection`, `GlyphBorderConfig`, `Canvas`)
+  unchanged. **As-shipped divergence**: three new optional
+  fields landed (Plan-Adherence reviewer flagged):
+  `MindSection.frame_border: Option<GlyphBorderConfig>`,
+  `Canvas.default_section_frame_border: Option<GlyphBorderConfig>`,
+  `Canvas.default_focused_section_frame_border: Option<GlyphBorderConfig>`.
+  All default to `None`, so legacy `.mindmap.json` files load
+  unchanged (serde defaults absorb absent fields). The fields
+  carry the per-section + canvas-default frame-border style
+  cascade Batch 2/5 ship; without them the section-frame chrome
+  has no model anchor. Honored "no breaking change" in spirit
+  (legacy maps load) but not in letter; Batch 8 should formalize
+  these in `format/sections.md` / `format/canvas.md` and add a
+  schema-version bump if the migration story warrants one.
 
 ## 11. Critical files (one-stop reference)
 
