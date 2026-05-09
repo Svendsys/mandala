@@ -56,7 +56,7 @@ pub const COMMAND: Command = Command {
     aliases: &[],
     summary: "Inspect, move, resize, edit text, or structurally modify a section (add / delete / split)",
     usage:
-        "section show [section=<idx>] | section move dx=<f64> dy=<f64> [section=<idx>] | section move x=<f64> y=<f64> [section=<idx>] | section resize w=<f64> h=<f64>|fill [section=<idx>] | section text \"<text>\" [section=<idx>] [runs=preserve|clear] | section edit [section=<idx>] | section add [at=<idx>] [text=\"<text>\"] | section delete [section=<idx>] | section split [section=<idx>] [at=<grapheme>] | section frame show|reset|<key>=<value> … [section=<idx>] | section frame preview <key>=<value> …|commit|cancel [section=<idx>]",
+        "section show [section=<idx>] | section move dx=<f64> dy=<f64> [section=<idx>] | section move x=<f64> y=<f64> [section=<idx>] | section resize w=<f64> h=<f64> [section=<idx>] | section resize fill [section=<idx>] | section text \"<text>\" [section=<idx>] [runs=preserve|clear] | section edit [section=<idx>] | section add [at=<idx>] [text=\"<text>\"] | section delete [section=<idx>] | section split [section=<idx>] [at=<grapheme>] | section frame show|reset|<key>=<value> … [section=<idx>] | section frame preview <key>=<value> …|commit|cancel [section=<idx>]",
     tags: &[
         "section", "show", "info", "move", "resize", "offset", "size", "text", "add", "delete",
         "split", "frame", "border", "preset", "glyph", "preview",
