@@ -753,6 +753,73 @@ fn test_action_for_gesture_falls_back_to_unmodified_binding() {
     );
 }
 
+/// Default `Ctrl+RightDrag` resolves to `FastResizeStart`. Pins
+/// the Batch 4 gesture binding — without it, threshold-cross on
+/// PendingRight would no-op silently.
+#[test]
+fn test_default_ctrl_right_drag_resolves_to_fast_resize_start() {
+    let r = KeybindConfig::default().resolve();
+    assert_eq!(
+        r.action_for_gesture("rightdrag", true, false, false),
+        Some(Action::FastResizeStart),
+        "Ctrl+RightDrag should resolve to FastResizeStart"
+    );
+}
+
+/// Bare `RightDrag` (no Ctrl) returns `None` with the default
+/// config — only `Ctrl+RightDrag` is bound. The
+/// modifier-fallback mechanism flows the *other* way: a key
+/// pressed with modifiers can fall back to a bare binding, but
+/// a key pressed bare can't escalate to a modified binding.
+/// This pins the default posture so a user pressing right-drag
+/// without Ctrl doesn't accidentally trigger fast-resize.
+#[test]
+fn test_bare_right_drag_returns_none_with_default_config() {
+    let r = KeybindConfig::default().resolve();
+    assert_eq!(
+        r.action_for_gesture("rightdrag", false, false, false),
+        None,
+        "bare RightDrag must not resolve to anything by default; \
+         the default binding is Ctrl+RightDrag and modifier-fallback \
+         doesn't escalate from bare to modified"
+    );
+}
+
+/// Users can opt in to bare `RightDrag` for fast-resize by
+/// rebinding `fast_resize_start` to remove the Ctrl modifier.
+/// Pins the user-customisation path the doc-comment promises.
+#[test]
+fn test_user_rebind_to_bare_right_drag_works() {
+    let cfg = KeybindConfig {
+        fast_resize_start: vec!["RightDrag".into()],
+        ..KeybindConfig::default()
+    };
+    let r = cfg.resolve();
+    assert_eq!(
+        r.action_for_gesture("rightdrag", false, false, false),
+        Some(Action::FastResizeStart),
+        "user-rebind to bare RightDrag should resolve to FastResizeStart"
+    );
+    // Modifier fallback still works: Ctrl+RightDrag → bare RightDrag → FastResizeStart.
+    assert_eq!(
+        r.action_for_gesture("rightdrag", true, false, false),
+        Some(Action::FastResizeStart),
+        "Ctrl+RightDrag should still resolve to FastResizeStart via fallback"
+    );
+}
+
+/// `RightClick` ships unbound by default. Pins the default
+/// posture — users opt in via JSON config.
+#[test]
+fn test_right_click_is_unbound_by_default() {
+    let r = KeybindConfig::default().resolve();
+    assert_eq!(
+        r.action_for_gesture("rightclick", false, false, false),
+        None,
+        "RightClick must not have a default binding"
+    );
+}
+
 #[test]
 fn test_action_for_gesture_exact_modifier_match_wins_over_fallback() {
     // Clear default zoom_in (also bound to WheelUp) so the test

@@ -523,6 +523,28 @@ pub(super) fn run(mut app: Application) {
         focus_cb.forget(); // leak — lives for the page lifetime
     }
 
+    // Suppress the browser's default context menu on right-click
+    // so the canvas can use right-button gestures
+    // (`MouseGesture::RightClick` / `RightDrag`,
+    // `Action::FastResizeStart` per Batch 4 of
+    // SECTIONS_BORDERS_RESIZE_PLAN.md §6.3). Without this, every
+    // right-press on the canvas would pop the browser's context
+    // menu and the gesture would never reach the threshold-cross.
+    // Always-on regardless of binding state — the gesture
+    // pipeline owns the right button on the canvas, and a user
+    // who unbinds every right-button action just gets a no-op
+    // press-release pair.
+    {
+        let pd_cb =
+            wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::Event)>::new(move |evt: web_sys::Event| {
+                evt.prevent_default();
+            });
+        canvas
+            .add_event_listener_with_callback("contextmenu", pd_cb.as_ref().unchecked_ref())
+            .ok();
+        pd_cb.forget(); // leak — lives for the page lifetime
+    }
+
     // preventDefault on keydown while the text editor is open so
     // Tab/Enter/Backspace/arrows don't fire browser defaults
     // (tab-navigation, history-back, page-scroll).
