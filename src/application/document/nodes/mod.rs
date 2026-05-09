@@ -15,6 +15,7 @@ use super::MindMapDocument;
 
 mod border;
 mod option_edit;
+mod section_structure;
 mod section_text;
 
 pub use border::{BorderConfigEdits, BorderEditOutcome, BorderPreview, BorderPreviewTarget, BorderSide};
