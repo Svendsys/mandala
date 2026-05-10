@@ -221,8 +221,8 @@ as the keybind-friendly alias).
 Bare-positional subverbs:
 
 ```
-border on                       # show_frame = true
-border off                      # show_frame = false
+border on                       # show the border
+border off                      # hide the border
 border toggle                   # flip show_frame per node
 border show [side=<...>] [verbose]
                                 # readout; side= filters to one
@@ -237,7 +237,9 @@ Per-field positional subverbs:
 
 ```
 border preset <light|heavy|double|rounded|custom|cycle>
-              # `cycle` advances to the next preset, wrapping
+              # `cycle` advances to the next preset, wrapping;
+              # samples the first selected node's preset so a
+              # multi-node selection converges to one target
 border color  <#hex|var(--name)|preset|reset>
 border padding <px>
 border palette <name|off> [field=<frame|background|text|title>]

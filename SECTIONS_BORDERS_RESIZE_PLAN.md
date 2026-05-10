@@ -2606,8 +2606,61 @@ Tasks (status post-Batch-6 ship):
       kv form as the keybind alias, and the `border side` /
       `border corner` non-custom-preset error.
 
-Verification (post-Batch-6 ship): 2585 tests pass; wasm32
-cross-compile clean.
+Verification (post-Batch-6 ship + opus review remediation):
+2646 tests pass; wasm32 cross-compile clean.
+
+##### Open follow-ups flagged by the opus review
+
+Honest deferrals that the original Batch-6 ticking missed.
+Track here so Batch 8 (or earlier follow-ups) can pick them up:
+
+- **§5.5 `BorderEditOutcome` removal**: the spec calls for
+  removing the bespoke `BorderEditOutcome` and routing through
+  `helpers::ApplyTally::finalize`. Still present at
+  `border.rs:118-133`, returned by 4+ setters. Substantial
+  refactor across every border setter; not Batch-6-shipping.
+- **§5.5 typed `Outcome::Lines` from the `preset` subverb**:
+  spec calls for the auto-promote message to be emitted by
+  the `preset` subverb's success path. Today the message
+  still rides via `apply_edits`'s shared formatter (which
+  fires regardless of which subverb invoked it).
+- **§5.4 #3 verb-strict vs macro-permissive**: the verb-layer
+  `border side|corner` now errors on non-custom presets. The
+  data-layer auto-promote (`apply_glyph_border_edits_to_slot`)
+  stays as the model invariant defense, so
+  `Action::SetBorderField { field: "top", value: "..." }` from
+  a macro still silently auto-promotes. Deliberate (kv-form
+  back-compat); pin a regression test in `macros/tests.rs`
+  that names the verb-strict-vs-macro-permissive contract so
+  a future contributor doesn't tighten one without the other.
+- **§5.7 doc-setter naming**: spec calls for
+  `set_canvas_default_border`; reality is
+  `set_canvas_default_border_config`. Cosmetic; rename in a
+  follow-up commit.
+- **§5.8 7 of 9 typed Action variants**: `SetBorderPreset(String)`
+  / `SetBorderColor(String)` / `SetBorderPadding(String)` /
+  `SetBorderPalette { palette, field }` / `SetBorderFont {
+  family, size_pt }` / `SetBorderSide { side, pattern }` /
+  `SetBorderCorner { corner, glyph }`. `SetBorderField`
+  preserves the keybind surface for now; Batch 8 should land
+  the typed variants and `#[deprecated]` `SetBorderField`.
+- **§5.9 completion templates**: the rendered-in-border-font
+  pattern templates for `border side WHICH <TAB>` (6 templates)
+  and the glyph candidates for `border corner WHICH <TAB>`
+  (13 candidates) need a typed catalogue + font-renderer
+  integration; the `reset` completion shipped in T4 covers
+  the high-value discoverability gap.
+- **§5.10 inline action hints in `border show`**: shipped in T5
+  with the `(toggle: ...)` / `(cycle: ...)` / `(override: ...)`
+  annotations.
+- **§5.11 test migration**: kept additive (kv-form tests still
+  green alongside positional-form tests). Plan called for
+  rewrite; the additive shape catches both regressions and
+  costs little.
+- **canvas verb parity**: `canvas border show` doesn't accept
+  `side=` filter / `verbose` flag (only the per-node `border
+  show` does); `canvas border preset cycle` not supported.
+  Cosmetic asymmetries; document or extend.
 
 #### Batch 7 — Touch parity
 

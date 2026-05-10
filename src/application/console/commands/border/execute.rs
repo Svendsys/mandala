@@ -31,7 +31,7 @@ pub fn execute_border(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         // subverb name (e.g. "Palette") is coincidental and should
         // route to the quoting-hint branch below, not the
         // positional dispatcher.
-        let positional_came_first = args
+        let first_token_is_positional = args
             .tokens()
             .first()
             .map(|t| !t.contains('='))
@@ -43,9 +43,9 @@ pub fn execute_border(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         match verb.to_ascii_lowercase().as_str() {
             // Bare-positional subverbs reject trailing arguments so
             // `border on preset=heavy` doesn't silently drop the kv.
-            "on" => return reject_extras(args, "on", &[]).unwrap_or_else(|| apply_visible_only(eff, true)),
-            "off" => return reject_extras(args, "off", &[]).unwrap_or_else(|| apply_visible_only(eff, false)),
-            "toggle" => return reject_extras(args, "toggle", &[]).unwrap_or_else(|| apply_visible_toggle(eff)),
+            "on" => return reject_extras(args, "on", &[]).unwrap_or_else(|| apply_set_visible(eff, true)),
+            "off" => return reject_extras(args, "off", &[]).unwrap_or_else(|| apply_set_visible(eff, false)),
+            "toggle" => return reject_extras(args, "toggle", &[]).unwrap_or_else(|| apply_toggle_visible(eff)),
             "show" => return execute_border_show(args, eff),
             "reset" => return reject_extras(args, "reset", &[]).unwrap_or_else(|| apply_reset(eff)),
             "preview" => return super::preview::execute_border_preview(args, eff),
@@ -53,17 +53,17 @@ pub fn execute_border(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             // as the value and routes through `apply_edits`. The
             // kv form (`border preset=heavy`) still works as the
             // keybind-friendly alias. Gated on
-            // `positional_came_first` so an unquoted `palette=My
+            // `first_token_is_positional` so an unquoted `palette=My
             // Palette` typo falls to the quoting-hint branch
             // rather than dispatching `apply_palette_positional`
             // with the wrong value.
-            "preset" if positional_came_first => return apply_preset_positional(args, eff),
-            "color" if positional_came_first => return apply_color_positional(args, eff),
-            "padding" if positional_came_first => return apply_padding_positional(args, eff),
-            "palette" if positional_came_first => return apply_palette_positional(args, eff),
-            "font" if positional_came_first => return apply_font_positional(args, eff),
-            "side" if positional_came_first => return apply_side_positional(args, eff),
-            "corner" if positional_came_first => return apply_corner_positional(args, eff),
+            "preset" if first_token_is_positional => return apply_preset_positional(args, eff),
+            "color" if first_token_is_positional => return apply_color_positional(args, eff),
+            "padding" if first_token_is_positional => return apply_padding_positional(args, eff),
+            "palette" if first_token_is_positional => return apply_palette_positional(args, eff),
+            "font" if first_token_is_positional => return apply_font_positional(args, eff),
+            "side" if first_token_is_positional => return apply_side_positional(args, eff),
+            "corner" if first_token_is_positional => return apply_corner_positional(args, eff),
             other if !other.contains('=') => {
                 // A bare positional alongside a recognised kv almost
                 // always means the user typed an unquoted multi-word
@@ -103,7 +103,7 @@ pub fn execute_border(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     apply_edits(eff, edits)
 }
 
-fn apply_visible_only(eff: &mut ConsoleEffects, on: bool) -> ExecResult {
+fn apply_set_visible(eff: &mut ConsoleEffects, on: bool) -> ExecResult {
     let ids = match nodes_in_selection(&eff.document.selection, "border") {
         Ok(ids) => ids,
         Err(e) => return e,
@@ -207,7 +207,7 @@ fn first_selection_preset(eff: &ConsoleEffects) -> String {
         .unwrap_or_else(|| "light".to_string())
 }
 
-fn apply_visible_toggle(eff: &mut ConsoleEffects) -> ExecResult {
+fn apply_toggle_visible(eff: &mut ConsoleEffects) -> ExecResult {
     let ids = match nodes_in_selection(&eff.document.selection, "border") {
         Ok(ids) => ids,
         Err(e) => return e,
