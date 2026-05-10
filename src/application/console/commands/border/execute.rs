@@ -111,13 +111,7 @@ pub fn execute_border(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                         verb, verb
                     ));
                 }
-                return ExecResult::err(format!(
-                    "border: unknown subverb '{}'; use \
-                     'on', 'off', 'toggle', 'show', 'reset', 'preview', \
-                     'preset', 'color', 'padding', 'palette', 'font', \
-                     'side', 'corner', or kv form",
-                    verb
-                ));
+                return ExecResult::err(unknown_subverb_message(verb));
             }
             _ => {}
         }
@@ -159,6 +153,23 @@ fn apply_visible_only(eff: &mut ConsoleEffects, on: bool) -> ExecResult {
         if on { "on" } else { "off" },
         changed
     ))
+}
+
+/// `border <typo>` — multi-line error grouping subverbs by
+/// kind. API/UX I7: the prior single-line ~155-char enum
+/// wrapped mid-quote-list on 80-col terminals. The grouped
+/// shape is also load-bearing as a discoverability surface
+/// when the user has clearly misspelled a verb.
+fn unknown_subverb_message(verb: &str) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("border: unknown subverb '{}'\n", verb));
+    out.push_str("  visibility: on | off | toggle | reset\n");
+    out.push_str("  readout:    show [side=…] [verbose]\n");
+    out.push_str("  per-field:  preset | color | padding | palette | font\n");
+    out.push_str("  glyphs:     side <which> <pattern|reset> | corner <which> <glyph|reset>\n");
+    out.push_str("  staged:     preview <kv>=… | preview commit | preview cancel\n");
+    out.push_str("  composed:   <key>=<value> [<key>=<value> …]");
+    out
 }
 
 /// Plan §5.4 #1: bare-positional subverbs (`on` / `off` /
@@ -291,8 +302,17 @@ fn apply_preset_positional(args: &Args, eff: &mut ConsoleEffects) -> ExecResult 
             );
         }
     };
+    if let Some(extra) = args.positionals().nth(2) {
+        return ExecResult::err(format!(
+            "border preset {}: unexpected extra positional '{}'. \
+             Compose multiple edits via the kv form \
+             (`border preset=heavy padding=8`) or stage with `border preview …`.",
+            value, extra
+        ));
+    }
     let name_lc = value.to_ascii_lowercase();
-    let target = if name_lc == "cycle" {
+    let was_cycle = name_lc == "cycle";
+    let target = if was_cycle {
         let current = first_selection_preset(eff);
         baumhard::mindmap::border::next_border_preset(&current).to_string()
     } else {
@@ -306,8 +326,34 @@ fn apply_preset_positional(args: &Args, eff: &mut ConsoleEffects) -> ExecResult 
         name_lc
     };
     let mut edits = BorderConfigEdits::default();
-    edits.preset = OptionEdit::Set(target);
-    apply_edits(eff, edits)
+    edits.preset = OptionEdit::Set(target.clone());
+    let outcome = apply_edits(eff, edits);
+    // Plan §5.B6.10 / API-UX I2: surface the resolved preset
+    // name when `cycle` lands so the user knows which preset
+    // they ended up at without running `border show`. Pre-fix
+    // a heterogeneous Multi selection saw "border applied to N
+    // node(s)" with no hint.
+    if was_cycle {
+        prepend_line(outcome, format!("border preset → '{}' (cycle)", target))
+    } else {
+        outcome
+    }
+}
+
+/// Prepend a synthetic header line to an `ExecResult`. `Err`
+/// passes through unchanged. `Ok(_)` lifts to `Lines` so the
+/// header survives.
+fn prepend_line(result: ExecResult, header: String) -> ExecResult {
+    use crate::application::console::OutputLine;
+    match result {
+        ExecResult::Err(_) => result,
+        ExecResult::Ok(msg) => ExecResult::lines(vec![header, msg]),
+        ExecResult::Lines(rows) => {
+            let mut out = vec![OutputLine::plain(header)];
+            out.extend(rows);
+            ExecResult::Lines(out)
+        }
+    }
 }
 
 fn apply_color_positional(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
@@ -319,6 +365,13 @@ fn apply_color_positional(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             );
         }
     };
+    if let Some(extra) = args.positionals().nth(2) {
+        return ExecResult::err(format!(
+            "border color: unexpected extra positional '{}'. \
+             Compose via the kv form (`border color=#fff padding=8`).",
+            extra
+        ));
+    }
     let mut edits = BorderConfigEdits::default();
     if let Err(e) = stage_color(&mut edits, value) {
         return ExecResult::err(e);
@@ -331,6 +384,13 @@ fn apply_padding_positional(args: &Args, eff: &mut ConsoleEffects) -> ExecResult
         Some(v) => v,
         None => return ExecResult::err("usage: border padding <px>"),
     };
+    if let Some(extra) = args.positionals().nth(2) {
+        return ExecResult::err(format!(
+            "border padding: unexpected extra positional '{}'. \
+             Compose via the kv form (`border padding=8 color=#fff`).",
+            extra
+        ));
+    }
     let mut edits = BorderConfigEdits::default();
     if let Err(e) = stage_padding(&mut edits, value) {
         return ExecResult::err(e);
@@ -427,9 +487,7 @@ fn apply_side_positional(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         if let Some(non_custom) = first_non_custom_preset(eff) {
             return ExecResult::err(format!(
                 "border side {}: cannot set side glyph against preset '{}'. \
-                 run `border preset custom` first, then set the side \
-                 (Plan §5.4 #3 — pre-fix the verb silently auto-promoted \
-                 the preset to 'custom' which surprised users).",
+                 run `border preset custom` first, then set the side.",
                 which, non_custom
             ));
         }

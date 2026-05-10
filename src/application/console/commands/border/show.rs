@@ -55,13 +55,39 @@ pub fn execute_border_show(args: &Args, eff: &mut ConsoleEffects) -> ExecResult 
         Some(n) => n,
         None => return ExecResult::err(format!("border: node '{}' not found", id)),
     };
-    ExecResult::Lines(format_border_readout(
+    let mut lines = format_border_readout(
         node,
         eff.document.mindmap.canvas.default_border.as_ref(),
         &eff.document.mindmap.palettes,
         side_filter.as_deref(),
         verbose,
-    ))
+    );
+    // API/UX M4: when the selection covers more than one node,
+    // the readout silently rolls up to the first one. Prepend a
+    // single-line note so the user knows there are siblings —
+    // mirrors the `font show` Multi-rollup posture.
+    if let Some(extra) = multi_rollup_count(&eff.document.selection) {
+        lines.insert(
+            0,
+            crate::application::console::OutputLine::plain(format!(
+                "note: showing first of {} selected nodes; per-node configs may differ",
+                extra
+            )),
+        );
+    }
+    ExecResult::Lines(lines)
+}
+
+/// `Some(n)` when the selection covers more than one node-shape
+/// target (so `border show` rolled up); `None` otherwise.
+/// `Section` / `SectionRange` collapse to one owning node so
+/// they don't trigger the rollup hint.
+fn multi_rollup_count(sel: &SelectionState) -> Option<usize> {
+    match sel {
+        SelectionState::Multi(ids) if ids.len() > 1 => Some(ids.len()),
+        SelectionState::MultiSection(secs) if secs.len() > 1 => Some(secs.len()),
+        _ => None,
+    }
 }
 
 /// Resolve the first node id `border show` should report on.
@@ -129,15 +155,30 @@ fn format_border_readout(
 
     let face = style.font_name.clone();
     let mut lines: Vec<OutputLine> = Vec::with_capacity(12);
+    // Plan §5.10 inline action hints: each row's right-hand side
+    // surfaces the verb that flips that field, so the readout
+    // doubles as a discoverability surface — users learn the
+    // verb shape from the show output.
     lines.push(OutputLine::plain(format!(
-        "visible: {}",
+        "visible: {:<3}  (toggle: `border toggle`)",
         if visible { "on" } else { "off" }
     )));
-    lines.push(OutputLine::plain(format!("preset:  {}", preset_name)));
     lines.push(OutputLine::plain(format!(
-        "font:    {} ({} pt)",
-        face.as_deref().unwrap_or("(default)"),
-        style.font_size_pt
+        "preset:  {:<8}  (cycle: `border preset cycle`)",
+        preset_name
+    )));
+    let face_str = face.as_deref().unwrap_or("(default)");
+    let font_override = node
+        .style
+        .border
+        .as_ref()
+        .and_then(|c| c.font.as_deref())
+        .map(|_| "per-node override")
+        .or_else(|| canvas_default.and_then(|c| c.font.as_deref()).map(|_| "canvas default"))
+        .unwrap_or("hardcoded floor");
+    lines.push(OutputLine::plain(format!(
+        "font:    {} ({} pt)  (override: `border font <family>`, source: {})",
+        face_str, style.font_size_pt, font_override
     )));
     if verbose {
         // Plan §5.4 #2: surface both color surfaces so the user

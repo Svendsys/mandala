@@ -908,3 +908,137 @@ fn border_reset_with_extras_errors() {
         "takes no arguments",
     );
 }
+
+// ─── Opus review T5 (API/UX) pins ────────────────────────────────
+
+/// API/UX I2: `border preset cycle` success message includes
+/// the resolved preset name so the user knows what they got
+/// without running `border show`.
+#[test]
+fn border_preset_cycle_message_names_resolved_preset() {
+    let mut doc = fixture_doc();
+    let id = first_node_id(&doc);
+    doc.selection = SelectionState::Single(id);
+    assert_exec_ok(run("border preset light", &mut doc));
+    let result = run("border preset cycle", &mut doc);
+    let blob = match result {
+        ExecResult::Lines(rows) => join_lines(&rows),
+        ExecResult::Ok(s) => s,
+        other => panic!("expected Ok/Lines, got {:?}", other),
+    };
+    assert!(
+        blob.contains("→ 'heavy'") && blob.contains("(cycle)"),
+        "cycle message should name the resolved preset: {}",
+        blob
+    );
+}
+
+/// API/UX I1: error message no longer surfaces "Plan §5.4 #3"
+/// internal reference to the user's terminal.
+#[test]
+fn border_side_error_does_not_leak_plan_section_to_user() {
+    let mut doc = fixture_doc();
+    doc.selection = SelectionState::Single(first_node_id(&doc));
+    assert_exec_ok(run("border preset heavy", &mut doc));
+    let r = run("border side top \"=##=\"", &mut doc);
+    let msg = match r {
+        ExecResult::Err(s) => s,
+        other => panic!("expected Err, got {:?}", other),
+    };
+    assert!(
+        !msg.contains("Plan §"),
+        "error must not surface plan section reference: {}",
+        msg
+    );
+    assert!(
+        msg.contains("run `border preset custom` first"),
+        "actionable hint must remain: {}",
+        msg
+    );
+}
+
+/// API/UX I3: extra positionals after a positional subverb
+/// error with a hint pointing at the kv form.
+#[test]
+fn border_preset_extra_positional_errors() {
+    let mut doc = fixture_doc();
+    doc.selection = SelectionState::Single(first_node_id(&doc));
+    assert_exec_err_contains(
+        run("border preset cycle 5", &mut doc),
+        "unexpected extra positional",
+    );
+}
+
+#[test]
+fn border_padding_extra_positional_errors() {
+    let mut doc = fixture_doc();
+    doc.selection = SelectionState::Single(first_node_id(&doc));
+    assert_exec_err_contains(
+        run("border padding 12 50", &mut doc),
+        "unexpected extra positional",
+    );
+}
+
+#[test]
+fn border_color_extra_positional_errors() {
+    let mut doc = fixture_doc();
+    doc.selection = SelectionState::Single(first_node_id(&doc));
+    assert_exec_err_contains(
+        run("border color #fff garbage", &mut doc),
+        "unexpected extra positional",
+    );
+}
+
+/// API/UX I7: unknown-subverb error breaks into multiple lines
+/// grouped by kind so the 80-col terminal stays readable.
+#[test]
+fn border_unknown_subverb_error_is_grouped_multiline() {
+    let mut doc = fixture_doc();
+    doc.selection = SelectionState::Single(first_node_id(&doc));
+    let r = run("border frobnicate", &mut doc);
+    let msg = match r {
+        ExecResult::Err(s) => s,
+        other => panic!("expected Err, got {:?}", other),
+    };
+    assert!(msg.contains("\n  visibility:"), "missing kind groups: {}", msg);
+    assert!(msg.contains("\n  per-field:"), "missing kind groups: {}", msg);
+    assert!(msg.contains("\n  staged:"), "missing kind groups: {}", msg);
+}
+
+/// Plan §5.10 inline action hints — `border show` annotates
+/// each row with the verb that flips it (`(toggle: ...)`,
+/// `(cycle: ...)`, `(override: ...)`).
+#[test]
+fn border_show_includes_toggle_and_cycle_hints() {
+    let mut doc = fixture_doc();
+    doc.selection = SelectionState::Single(first_node_id(&doc));
+    let lines = match run("border show", &mut doc) {
+        ExecResult::Lines(rows) => rows,
+        other => panic!("expected Lines, got {:?}", other),
+    };
+    let blob = join_lines(&lines);
+    assert!(blob.contains("(toggle: `border toggle`)"), "missing toggle hint: {}", blob);
+    assert!(blob.contains("(cycle: `border preset cycle`)"), "missing cycle hint: {}", blob);
+    assert!(blob.contains("(override: `border font"), "missing override hint: {}", blob);
+}
+
+/// API/UX M4: `border show` against `Multi(>=2)` selection
+/// surfaces a "showing first of N" rollup hint so the user
+/// knows there are siblings.
+#[test]
+fn border_show_multi_selection_surfaces_rollup_hint() {
+    let mut doc = fixture_doc();
+    let id1 = first_node_id(&doc);
+    let id2 = doc.mindmap.nodes.keys().nth(1).cloned().unwrap();
+    doc.selection = SelectionState::Multi(vec![id1, id2]);
+    let lines = match run("border show", &mut doc) {
+        ExecResult::Lines(rows) => rows,
+        other => panic!("expected Lines, got {:?}", other),
+    };
+    let blob = join_lines(&lines);
+    assert!(
+        blob.contains("showing first of 2 selected nodes"),
+        "missing rollup hint: {}",
+        blob
+    );
+}
