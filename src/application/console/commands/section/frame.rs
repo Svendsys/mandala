@@ -208,6 +208,42 @@ fn apply_edits(args: &Args, eff: &mut ConsoleEffects, edits: BorderConfigEdits) 
         targets.push((node_id.clone(), section_idx));
     }
 
+    // Parity with `border` / `canvas border`: glyph-field writes
+    // (per-side / per-corner overrides) only render against a
+    // `custom` preset. Pre-fix the kv form silently auto-
+    // promoted at the data layer; the verb-layer pre-check makes
+    // the intent explicit and matches the per-node verb's posture.
+    if edits_has_glyph_field(&edits) {
+        for (node_id, section_idx) in &targets {
+            let section = eff
+                .document
+                .mindmap
+                .nodes
+                .get(node_id)
+                .and_then(|n| n.sections.get(*section_idx));
+            let resolved_preset = section
+                .and_then(|s| s.frame_border.as_ref())
+                .map(|c| c.preset.as_str())
+                .or_else(|| {
+                    eff.document
+                        .mindmap
+                        .canvas
+                        .default_section_frame_border
+                        .as_ref()
+                        .map(|c| c.preset.as_str())
+                })
+                .unwrap_or("light");
+            if !resolved_preset.eq_ignore_ascii_case("custom") {
+                return ExecResult::err(format!(
+                    "section frame: cannot set side / corner glyph against \
+                     preset '{}' on section[{}] of node '{}'. Run \
+                     `section frame preset=custom` first, then set the glyph.",
+                    resolved_preset, section_idx, node_id
+                ));
+            }
+        }
+    }
+
     let mut changed = 0usize;
     let mut auto_promoted: Option<String> = None;
     for (node_id, section_idx) in &targets {
@@ -540,17 +576,42 @@ mod tests {
     }
 
     #[test]
-    fn section_frame_top_pattern_auto_promotes_preset_to_custom() {
+    fn section_frame_glyph_against_non_custom_preset_errors() {
         let (mut doc, id) = pinned_two_section_node();
         doc.selection = SelectionState::Section(SectionSel {
             node_id: id.clone(),
             section_idx: 1,
         });
-        // `preset=heavy` plus a side glyph: the staged top forces
-        // the preset to "custom" because non-custom presets ignore
-        // the per-side override. Verb returns `Lines` because the
-        // auto-promotion note rides alongside the success message.
+        // `preset=heavy` plus a side glyph: parity with `border` /
+        // `canvas border` — the verb gates glyph writes against
+        // non-custom presets so the user picks `custom` explicitly
+        // before authoring per-side overrides. Pre-fix the kv form
+        // silently auto-promoted; post-fix it errors.
         let result = run("section frame preset=heavy top=\"###(*)###\"", &mut doc);
+        match result {
+            ExecResult::Err(s) => {
+                assert!(
+                    s.contains("section frame preset=custom"),
+                    "error should hint at running preset=custom first: {}",
+                    s
+                );
+            }
+            other => panic!("expected Err on non-custom + glyph, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn section_frame_glyph_with_custom_preset_in_same_kv_bundle_succeeds() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::Section(SectionSel {
+            node_id: id.clone(),
+            section_idx: 1,
+        });
+        // Pre-set custom, then add the glyph in a follow-up kv —
+        // the gate samples the resolved (post-write) preset, so
+        // this two-step sequence works as expected.
+        assert_exec_ok(run("section frame preset=custom", &mut doc));
+        let result = run("section frame top=\"###(*)###\"", &mut doc);
         match result {
             ExecResult::Ok(_) | ExecResult::Lines(_) => {}
             other => panic!("expected success, got {:?}", other),
@@ -751,6 +812,7 @@ mod tests {
             node_id: id,
             section_idx: 1,
         });
+        assert_exec_ok(run("section frame preset=custom", &mut doc));
         assert_exec_ok(run("section frame top=\"###(*)###\"", &mut doc));
         let result = run("section frame show", &mut doc);
         let blob = match result {
