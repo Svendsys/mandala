@@ -264,7 +264,15 @@ fn positional_subverb_to_edits(
             let v = value.ok_or_else(|| {
                 ExecResult::err(format!("{}: {} missing value", slot.label(), verb))
             })?;
-            stage_kv(&mut edits, &verb.to_ascii_lowercase(), v).map_err(ExecResult::err)?;
+            // `canvas border preset cycle` advances to the next
+            // preset, wrapping. Mirrors the per-node `border preset
+            // cycle` (Plan §5.B6.10 acknowledged the gap).
+            let resolved = if verb.eq_ignore_ascii_case("preset") && v.eq_ignore_ascii_case("cycle") {
+                baumhard::mindmap::border::next_border_preset(&slot.current_preset(eff.document)).to_string()
+            } else {
+                v.to_string()
+            };
+            stage_kv(&mut edits, &verb.to_ascii_lowercase(), &resolved).map_err(ExecResult::err)?;
             // Optional kvs (palette field=, font size=) compose.
             if verb.eq_ignore_ascii_case("palette") {
                 if let Some((_, fv)) = args.kvs().find(|(k, _)| *k == "field") {
@@ -470,7 +478,7 @@ fn clear_edits() -> BorderConfigEdits {
 /// applies map-wide to every framed node without a per-node
 /// override; commit writes through the same setter the
 /// committing `canvas border …` path uses
-/// (`set_canvas_default_border_config`).
+/// (`set_canvas_default_border`).
 fn execute_canvas_border_preview(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     use crate::application::document::BorderPreviewTarget;
     super::border::dispatch_border_preview(
@@ -516,7 +524,7 @@ fn apply_border_edits(eff: &mut ConsoleEffects, edits: BorderConfigEdits) -> Exe
         OptionEdit::Set(ref s) if s.eq_ignore_ascii_case("custom")
     ) && !edits_has_glyph_field(&edits);
 
-    let outcome: BorderEditOutcome = eff.document.set_canvas_default_border_config(edits);
+    let outcome: BorderEditOutcome = eff.document.set_canvas_default_border(edits);
     finish(outcome, "canvas border", bare_custom)
 }
 
@@ -1187,6 +1195,39 @@ mod blocker_pins {
         assert_eq!(
             tl, "╔",
             "reset must use double's tl glyph, not light's ┌"
+        );
+    }
+}
+
+#[cfg(test)]
+mod cycle_pin {
+    use crate::application::console::tests::fixtures::{assert_exec_ok, run};
+    use crate::application::document::tests_common::load_test_doc;
+
+    /// `canvas border preset cycle` advances the canvas-default
+    /// preset by one, wrapping. Pin parity with the per-node
+    /// `border preset cycle` shipped in B6.4.
+    #[test]
+    fn canvas_border_preset_cycle_advances_canvas_default() {
+        let mut doc = load_test_doc();
+        assert_exec_ok(run("canvas border preset light", &mut doc));
+        assert_exec_ok(run("canvas border preset cycle", &mut doc));
+        assert_eq!(
+            doc.mindmap.canvas.default_border.as_ref().map(|c| c.preset.as_str()),
+            Some("heavy")
+        );
+    }
+
+    /// Cycle wraps from the last entry (`custom`) back to the
+    /// first (`light`).
+    #[test]
+    fn canvas_section_frame_preset_cycle_wraps() {
+        let mut doc = load_test_doc();
+        assert_exec_ok(run("canvas section-frame preset custom", &mut doc));
+        assert_exec_ok(run("canvas section-frame preset cycle", &mut doc));
+        assert_eq!(
+            doc.mindmap.canvas.default_section_frame_border.as_ref().map(|c| c.preset.as_str()),
+            Some("light")
         );
     }
 }

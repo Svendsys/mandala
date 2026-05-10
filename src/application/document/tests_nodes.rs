@@ -2297,7 +2297,7 @@ fn test_border_preview_drift_clears_on_selection_change() {
 /// stale until the user manually cancelled. The implicit-cancel
 /// fires on every committing setter:
 /// `set_node_border_config`, `set_section_frame_border_config`,
-/// `set_canvas_default_border_config`,
+/// `set_canvas_default_border`,
 /// `set_canvas_default_section_frame_border_config`.
 #[test]
 fn test_committing_set_node_border_config_clears_active_preview() {

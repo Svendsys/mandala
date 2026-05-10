@@ -44,7 +44,7 @@ pub enum ColorAxis {
 /// — five variants mirror the five committing setters
 /// (`set_node_border_config` /
 /// `set_section_frame_border_config` /
-/// `set_canvas_default_border_config` /
+/// `set_canvas_default_border` /
 /// `set_canvas_default_section_frame_border_config(focused=false|true)`).
 ///
 /// Same strum-derive shape as [`ColorAxis`]: `Node.into() ==

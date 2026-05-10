@@ -1211,3 +1211,37 @@ fn border_preset_cycle_falls_through_to_canvas_default() {
         "cycle should advance from canvas-default heavy"
     );
 }
+
+/// **Verb-strict vs macro-permissive contract** (Plan §5.4 #3
+/// + Architecture A5 from the Batch-6 opus review): the verb
+/// path (`border side`/`corner`) errors with the explicit
+/// "preset custom first" hint when the resolved preset isn't
+/// custom. The macro path (`Action::SetBorderField { field:
+/// "top", value: "..." }` → `apply_border_field_to_selection`
+/// → `set_node_border_config` → data-layer auto-promote) still
+/// silently promotes the preset to "custom" — by design, for
+/// kv-form back-compat. Pin both legs so a future contributor
+/// who tightens one without the other trips this test.
+#[test]
+fn apply_border_field_to_selection_auto_promotes_preset_to_custom() {
+    let mut doc = fixture_doc();
+    let id = first_node_id(&doc);
+    doc.selection = SelectionState::Single(id.clone());
+    // Land heavy preset first so the auto-promote is observable.
+    let _ = super::apply_border_field_to_selection(&mut doc, "preset", "heavy");
+    assert_eq!(
+        doc.mindmap.nodes.get(&id).unwrap().style.border.as_ref().map(|c| c.preset.as_str()),
+        Some("heavy"),
+        "fixture: preset should be heavy before the side write"
+    );
+    // Macro-tier write — bypasses the verb-layer gate. Auto-promotes.
+    let changed = super::apply_border_field_to_selection(&mut doc, "top", "###(*)###");
+    assert!(changed, "macro write must succeed (verb-strict gate is verb-layer-only)");
+    assert_eq!(
+        doc.mindmap.nodes.get(&id).unwrap().style.border.as_ref().map(|c| c.preset.as_str()),
+        Some("custom"),
+        "macro path should auto-promote preset to 'custom' silently \
+         (kv-form back-compat — verb path errors instead, see \
+         border_side_on_non_custom_preset_errors_with_hint)"
+    );
+}
