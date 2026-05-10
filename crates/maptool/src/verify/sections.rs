@@ -2,7 +2,8 @@
 
 //! Section-bounds invariants. The `MindNode` docstring promises
 //! `maptool verify` flags out-of-bounds sections; this module
-//! delivers on that promise. Checks per [`MindSection`]:
+//! delivers on that promise. Checks per
+//! [`baumhard::mindmap::model::MindSection`]:
 //!
 //! - `offset.{x,y}` finite and non-negative,
 //! - `size.{width,height}` (when set) finite and strictly positive,

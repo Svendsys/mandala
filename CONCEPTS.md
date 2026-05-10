@@ -1906,6 +1906,47 @@ Native-only today — both modes are gated `#[cfg(not(target_arch
 = "wasm32"))]`. The mode is stored on `InitState` and consulted
 by the click handler.
 
+### `InteractionMode`
+
+The broader user-interaction modal: `Default` / `Resize {
+target }` / `NodeEdit { node_id }`. Distinct from `AppMode`
+(which is about *operation continuations* like reparent /
+connect that span multiple clicks); `InteractionMode` is about
+what the user is *doing right now* — navigating, resizing, or
+editing inside a node.
+
+- `Default` — normal canvas navigation. Click selects, drag
+  pans, edges snap.
+- `Resize { target }` — chrome shows resize handles on the
+  target (a `ResizeTarget::Node(id)` or
+  `ResizeTarget::Section(node_id, idx)`). Drag a handle to
+  resize; Esc returns to `Default`. Triggered by `r` keybind
+  on a selectable AABB or by `mode resize`.
+- `NodeEdit { node_id }` — chrome dims sibling nodes and frames
+  the active node's sections in cyan. Click a section to lift
+  it into a `Section` selection; Enter (or `section edit`)
+  opens the inline text editor on the active section. Esc /
+  outside-click returns to `Default`. Triggered by `n` /
+  `mode node-edit` / `node edit`.
+
+`src/application/app/interaction_mode.rs`. Cross-platform — both
+modes work identically on native and WASM. The variant lives on
+`InitState` and is mutated through `Action::EnterResizeMode` /
+`Action::EnterNodeEdit` / `Action::ExitMode`. Modal-stealer
+cascades route keystrokes per active mode (the keybind resolver
+keys on `(InputContext, key)` and the modal stealer can
+intercept e.g. Esc before normal dispatch).
+
+The console verbs `mode resize` / `mode node-edit` /
+`mode default` ride the same surface; `section edit
+[section=<idx>]` and `node edit` are sugar over the
+mode-flip + side-effect handler.
+
+See `SECTIONS_BORDERS_RESIZE_PLAN.md` §2 for the design
+problem this lifted, and §3-§4 for the resize / node-edit
+mode UX. Plan §1 captured the three problems the
+`InteractionMode` enum unified.
+
 ### `DragState`
 
 The drag state machine: `None` / `Pending` /
@@ -2360,6 +2401,37 @@ BorderPreviewTargetKind, field, value }`,
 `Action::CommitBorderPreview`, `Action::CancelBorderPreview`
 expose the keybind / dispatch surface; `Esc` cancels through
 `Action::ExitMode`'s body before mode-clear.
+
+### `SectionFrameElement` and section-frame chrome
+
+The cyan rectangles drawn around an active node's sections
+while the user is in `InteractionMode::NodeEdit { node_id }`.
+Each section gets one rectangle keyed on `(node_id,
+section_idx, focused)`; the frame is heavier (or
+canvas-default-overridden) on the section currently being
+text-edited so the user sees which section their keystrokes
+land in.
+
+The chrome is a parallel canvas — it doesn't belong to the
+node's own `GfxElement` tree, so a node move or text rebuild
+doesn't re-emit the frames. The dedicated canvas role
+`CanvasRole::SectionFrames` registers its own
+`InPlaceMutator` slot; rebuild-or-skip dispatch keys on
+`section_frame_identity_sequence(elements) -> u64` which
+streams every identity-bearing field directly into a hasher
+(no intermediate Vec) so the signature comparison runs
+allocation-free per `Plan §7.4`.
+
+`lib/baumhard/src/mindmap/scene_builder/section_frame.rs`
+(the element shape and the build pass) +
+`lib/baumhard/src/mindmap/tree_builder/section_frame.rs`
+(the tree builder + identity hasher). Three style cascades
+feed the resolution: per-section `frame_border` →
+`canvas.default_section_frame_border` (or
+`default_focused_section_frame_border` for focused) →
+hardcoded floor. Each cascade is editable through the
+`section frame …` and `canvas section-frame [focused] …`
+console verbs, plus the `BorderPreview` lifecycle.
 
 ### Console
 

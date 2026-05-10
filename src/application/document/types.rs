@@ -177,7 +177,7 @@ pub enum SelectionState {
     /// Two or more sections — possibly across distinct nodes —
     /// each addressed by `(node_id, section_idx)`. Per-section
     /// verbs (`color text=…`, `font size=…`, `font family=…`)
-    /// fan out via [`super::super::console::traits::view::selection_targets`]
+    /// fan out via [`super::super::console::traits::selection_targets`]
     /// and apply to every section in the set. Resize and move
     /// gestures stay single-target — a `MultiSection` selection
     /// emits no resize handles, and threshold-cross promotion

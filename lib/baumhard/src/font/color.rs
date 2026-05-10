@@ -5,7 +5,8 @@
 //! every renderer / picker call site that needs to hand cosmic-text
 //! a colour or read one back goes through these two helpers, which
 //! delegate to [`crate::util::color_conversion::convert_f32_to_u8`]
-//! / [`convert_u8_to_f32`] so the arithmetic stays single-sourced.
+//! / [`crate::util::color_conversion::convert_u8_to_f32`] so the
+//! arithmetic stays single-sourced.
 
 use crate::util::color_conversion::{convert_f32_to_u8, convert_u8_to_f32};
 
@@ -21,8 +22,9 @@ pub fn cosmic_color_from_rgba(rgba: [f32; 4]) -> cosmic_text::Color {
 
 /// Read a [`cosmic_text::Color`]'s byte channels back into a
 /// `[f32; 4]` RGBA in `[0, 1]`. Inverse of [`cosmic_color_from_rgba`]
-/// within rounding slack; routes through [`convert_u8_to_f32`] so
-/// every byte→float quantisation in the project lands on the same
+/// within rounding slack; routes through
+/// [`crate::util::color_conversion::convert_u8_to_f32`] so every
+/// byte→float quantisation in the project lands on the same
 /// arithmetic.
 #[inline]
 pub fn cosmic_color_to_rgba(color: cosmic_text::Color) -> [f32; 4] {

@@ -785,7 +785,7 @@ pub(in crate::application::app) fn update_connection_label_tree(
 /// **§B2 dispatch.** Dragging a handle moves only its position;
 /// the handle set's *identity sequence* (the
 /// kind-derived channels emitted by
-/// [`baumhard::mindmap::tree_builder::edge_handle_identity_sequence`])
+/// [`baumhard::mindmap::tree_builder::handle_identity_sequence`])
 /// stays constant for the duration of one drag. We take the in-place
 /// mutator path under that condition, reusing the existing arena
 /// instead of allocating a fresh one each frame. When the handle
@@ -885,7 +885,8 @@ pub(in crate::application::app) fn update_section_resize_handle_tree_from_slice(
 ///
 /// Section-frame visibility is mode-driven (NodeEdit on / off),
 /// not gesture-driven. The dispatch's structural signature is
-/// the [`section_frame_identity_sequence`] output, which captures
+/// the [`baumhard::mindmap::tree_builder::section_frame_identity_sequence`]
+/// output, which captures
 /// `(node_id, section_idx, focused, color, per-side rendered
 /// text)`. Any visible style change — preset, pattern, corner,
 /// color, focus toggle — moves the signature, so the dispatch

@@ -280,7 +280,8 @@ pub enum Action {
     #[action(context = Document, wasm = Compatible, destructive)]
     Cut,
     /// Enter resize mode on the current selection. Resolves the
-    /// selection into a [`crate::application::app::interaction_mode::ResizeTarget`]:
+    /// selection into a `ResizeTarget` (see
+    /// `application::app::interaction_mode`):
     /// - `Single(node)` → `Resize { target: Node(node_id) }`.
     /// - `Section(s)` / `SectionRange` with `s.size == Some(_)` →
     ///   `Resize { target: Section { node_id, section_idx } }`.

@@ -59,10 +59,10 @@ pub struct InteractionModeOverrides<'a> {
     /// the builder regardless — there's no own AABB to stretch.
     pub section: Option<(&'a str, usize)>,
     /// Active NodeEdit target. When `Some(active)`, every node other
-    /// than `active` renders chrome + text at
-    /// [`super::node_pass::INACTIVE_NODE_ALPHA_MULTIPLIER`] alpha —
-    /// the "you are inside this node" affordance.
-    /// `None` (the Default-mode case) is the no-op fast path.
+    /// than `active` renders chrome + text at the inactive-alpha
+    /// multiplier (see `node_pass::INACTIVE_NODE_ALPHA_MULTIPLIER`)
+    /// — the "you are inside this node" affordance. `None` (the
+    /// Default-mode case) is the no-op fast path.
     pub node_edit_for: Option<&'a str>,
     /// Section currently inside the inline text editor, if any.
     /// `Some((node_id, section_idx))` causes the matching

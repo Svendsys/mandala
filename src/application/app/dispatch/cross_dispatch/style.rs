@@ -235,7 +235,7 @@ pub(in crate::application::app) fn apply_set_spacing(input: &str, rc: &mut Rebui
 ///
 /// 2. **`MultiSection(secs)` of length > 1 is rejected** with a
 ///    `log::warn!`, mirroring the console verb path's
-///    "single-target only — pass section=<idx>" rejection for
+///    "single-target only — pass `section=<idx>`" rejection for
 ///    every subverb except `move dx/dy`. Pre-fix this silently
 ///    collapsed to the first entry, losing the user's
 ///    multi-section selection signal entirely. The verb path's
