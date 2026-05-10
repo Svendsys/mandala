@@ -98,6 +98,13 @@ pub use baumhard::mindmap::scene_builder::InteractionModeOverrides;
 pub use types::{REPARENT_SOURCE_COLOR, REPARENT_TARGET_COLOR};
 pub use undo_action::UndoAction;
 
+/// Hard cap on `MindNode.sections.len()` enforced by `add_section`
+/// and the loader. Defends against hostile mindmaps with `"sections":
+/// [{},{},…10M…]` that would OOM on load. The number is generous
+/// (no real authoring use case approaches 1024 sections per node)
+/// and bounded enough to make exhaustion-style attacks visible.
+pub const MAX_SECTIONS_PER_NODE: usize = 1024;
+
 /// Owns the MindMap data model and provides scene-building for the Renderer.
 pub struct MindMapDocument {
     pub mindmap: MindMap,

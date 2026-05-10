@@ -5,6 +5,7 @@
 //! `undo()` dispatch lives in `undo.rs` and branches on these
 //! variants.
 
+use super::types::SelectionState;
 use baumhard::mindmap::model::{Canvas, MindEdge, MindNode, MindSection, NodeStyle, Position, Size};
 
 /// An undoable action that can be reversed.
@@ -44,9 +45,24 @@ pub enum UndoAction {
     /// [`MindSection`]). The full pre-edit `sections` array is
     /// snapshotted so undo restores text *and* per-run formatting on
     /// every section, not just the one that was edited.
+    ///
+    /// `before_position` / `before_size` mirror the `EditNodeStyle`
+    /// fields: text setters trigger `grow_one_node_to_fit_text` /
+    /// `grow_one_node_to_fit_border` floor passes that can grow the
+    /// node's AABB; without restoring them, undo of a long-text-
+    /// replace leaves the node visibly inflated.
     EditNodeText {
         node_id: String,
         before_sections: Vec<MindSection>,
+        before_position: Position,
+        before_size: Size,
+        /// Pre-mutation `doc.selection`. Text setters don't
+        /// fire `cleanup_after_structural_mutation` (sections.len
+        /// doesn't change), so this rarely shifts on text-only
+        /// changes — captured anyway for symmetry with
+        /// `EditNodeStyle` and to defend against future text
+        /// setters that might trigger selection cleanup.
+        before_selection: SelectionState,
     },
     /// A node's visual style was edited in place (bg / border / text
     /// color / font size). Captures the pre-edit `NodeStyle` plus the
@@ -61,6 +77,28 @@ pub enum UndoAction {
         node_id: String,
         before_style: NodeStyle,
         before_sections: Vec<MindSection>,
+        /// Pre-mutation `node.position`. Captured because some
+        /// style setters (and the structural section mutators
+        /// added in Batch 5) trigger `grow_one_node_to_fit_text`
+        /// / `grow_one_node_to_fit_border` floor passes that can
+        /// shift the node's AABB; without restoring `position`
+        /// on undo, the node would visibly drift after style →
+        /// undo.
+        before_position: Position,
+        /// Pre-mutation `node.size`. Same rationale as
+        /// `before_position` — the floor passes can grow `size`,
+        /// and undo must restore it or the node stays inflated
+        /// after the section/style mutation is undone.
+        before_size: Size,
+        /// Pre-mutation `doc.selection`. Captured because the
+        /// structural-mutation cleanup
+        /// (`cleanup_after_structural_mutation`) actively
+        /// rewrites selection (e.g. `Section(idx=2)` →
+        /// `Single(node)` after `delete_section(2)`); without
+        /// restoring on undo, the user's pre-mutation selection
+        /// is lost forever. Pre-Tier-4 review surfaced this as
+        /// the missing leg.
+        before_selection: SelectionState,
     },
     /// A node's zoom-visibility window (`min_zoom_to_render` /
     /// `max_zoom_to_render`) was edited. Kept as its own variant —

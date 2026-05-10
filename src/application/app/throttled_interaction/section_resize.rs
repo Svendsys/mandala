@@ -38,6 +38,12 @@ pub(in crate::application::app) struct SectionResizeInteraction {
     pub pending_delta: Vec2,
     /// Per-interaction adaptive throttle.
     pub throttle: MutationFrequencyThrottle,
+    /// `true` when the drag was started by the right mouse
+    /// button (fast-resize gesture); `false` for left-button
+    /// handle drags. Right-release finalize gates on this so
+    /// a stray right-click during a left-button drag doesn't
+    /// terminate the resize prematurely.
+    pub started_with_right: bool,
 }
 
 impl SectionResizeInteraction {
@@ -47,6 +53,7 @@ impl SectionResizeInteraction {
         side: ResizeHandleSide,
         start_offset: Position,
         start_size: Size,
+        started_with_right: bool,
     ) -> Self {
         Self {
             node_id,
@@ -57,6 +64,7 @@ impl SectionResizeInteraction {
             total_delta: Vec2::ZERO,
             pending_delta: Vec2::ZERO,
             throttle: MutationFrequencyThrottle::with_default_budget(),
+            started_with_right,
         }
     }
 
@@ -155,6 +163,7 @@ mod tests {
                 width: 100.0,
                 height: 50.0,
             },
+            false,
         )
     }
 

@@ -30,6 +30,7 @@ mod event_modifiers;
 mod event_mouse_click;
 mod event_mouse_wheel;
 mod event_resized;
+mod event_touch;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -143,6 +144,13 @@ pub(super) struct WasmInputState {
     /// document is loaded. Consulted by the keyboard handler's
     /// Action → Macro → CustomMutation fall-through.
     pub macros: crate::application::macros::MacroRegistry,
+    /// Touch gesture recogniser. Cross-platform peer of native's
+    /// `InitState.touch_recognizer`. WASM mobile is the *primary*
+    /// surface this targets (mobile-browser tap-and-hold is
+    /// unreachable through `MouseInput`/`CursorMoved` events
+    /// alone — winit dispatches them as
+    /// `WindowEvent::Touch` instead).
+    pub touch_recognizer: super::touch_gesture::TouchGestureRecognizer,
 }
 
 impl WasmInputState {
@@ -427,19 +435,37 @@ impl WasmApp {
                 self.handle_mouse_input(state);
                 redraw_after = true;
             }
+            WindowEvent::MouseInput {
+                state,
+                button: MouseButton::Right,
+                ..
+            } => {
+                // WASM right-button: `DragState` machinery is
+                // `cfg(not(target_arch = "wasm32"))` so there's no
+                // `PendingRight` → `FastResizeStart` pipeline yet
+                // (lands with §6.6 touch parity / `TwoFingerDrag`).
+                // What we *can* do today is dispatch the bound
+                // `MouseGesture::RightClick` action on release —
+                // single-press right-click is just an action lookup,
+                // no DragState involved. Default-unbound so it's a
+                // no-op for users who didn't opt in; users who did
+                // get the action they bound. Without this arm the
+                // event drops silently.
+                self.handle_right_button(state);
+                redraw_after = true;
+            }
             WindowEvent::MouseWheel { delta, .. } => {
                 self.handle_mouse_wheel(delta);
                 redraw_after = true;
             }
+            WindowEvent::Touch(touch) => {
+                if self.handle_touch_event(touch) {
+                    redraw_after = true;
+                }
+            }
             // Catch-all for winit `WindowEvent` variants WASM
             // doesn't yet route. The notable un-wired ones:
             //
-            // - `WindowEvent::Touch` — primary mobile-browser
-            //   input. Wiring this requires an event_touch.rs
-            //   sibling + the gesture-recognizer state machine
-            //   that native already has. Mobile budget is
-            //   binding (CODE_CONVENTIONS §4); landing this
-            //   is on the named trajectory.
             // - `WindowEvent::Ime` — IME composition strings.
             //   Required for non-Latin text editing inside the
             //   inline node-text editor. Modal-handler-side
@@ -521,6 +547,41 @@ pub(super) fn run(mut app: Application) {
             .add_event_listener_with_callback("mousedown", focus_cb.as_ref().unchecked_ref())
             .ok();
         focus_cb.forget(); // leak — lives for the page lifetime
+    }
+
+    // Suppress the browser's default context menu on right-click
+    // so the canvas can use right-button gestures
+    // (`MouseGesture::RightClick` / `RightDrag`,
+    // `Action::FastResizeStart` per Batch 4 of
+    // SECTIONS_BORDERS_RESIZE_PLAN.md §6.3). Without this, every
+    // right-press on the canvas would pop the browser's context
+    // menu and the gesture would never reach the threshold-cross.
+    //
+    // **Shift+RightClick bypass**: holding Shift on the right-press
+    // lets the browser's default context menu through. Standard
+    // browser convention for "let me get to the OS / dev menu past
+    // a page handler" — users debugging the canvas (Inspect Element,
+    // screenshotting glyph layout, filing bug reports) get the
+    // ergonomic path back. Shift modifier is also unused by any
+    // shipped right-button binding, so the convention doesn't
+    // collide with anything.
+    {
+        let pd_cb = wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::Event)>::new(
+            move |evt: web_sys::Event| {
+                use wasm_bindgen::JsCast;
+                let allow_default = evt
+                    .dyn_ref::<web_sys::MouseEvent>()
+                    .map(|me| me.shift_key())
+                    .unwrap_or(false);
+                if !allow_default {
+                    evt.prevent_default();
+                }
+            },
+        );
+        canvas
+            .add_event_listener_with_callback("contextmenu", pd_cb.as_ref().unchecked_ref())
+            .ok();
+        pd_cb.forget(); // leak — lives for the page lifetime
     }
 
     // preventDefault on keydown while the text editor is open so
@@ -759,6 +820,7 @@ pub(super) fn run(mut app: Application) {
                 app_scene: init_app_scene,
                 scene_cache: init_scene_cache,
                 macros,
+                touch_recognizer: super::touch_gesture::TouchGestureRecognizer::new(),
             });
         }
 

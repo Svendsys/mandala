@@ -1809,13 +1809,22 @@ to the right element.
   node (single-section migrated nodes still route through
   `Single` so today's whole-node verbs keep firing on the whole
   node target). Per-section setters cover text
-  (`set_section_text`, `set_section_text_and_runs`), colour
+  (`set_section_text`, `set_section_text_and_runs`,
+  `set_section_text_preserving_runs`), colour
   (`set_section_text_color`), font (`set_section_font_size`,
   `set_section_font_family`), position + size
-  (`set_section_offset`, `set_section_size`), and the
-  structured-clipboard payload (`apply_section_payload`); the
-  trait dispatcher and the `section move` / `section resize`
-  console verbs route here from a `SelectionState::Section`.
+  (`set_section_offset`, `set_section_size`), the
+  structured-clipboard payload (`apply_section_payload`), and —
+  added in Batch 5 — structural mutators that change the
+  `sections` vector length: `add_section` (insert with AABB
+  validation against the parent), `delete_section` (remove
+  with the "≥1 section per node" invariant enforced), and
+  `split_section` (split text at a grapheme boundary; runs
+  partitioned via `text_run_ops::slice`). The trait dispatcher
+  and the `section …` console verbs route here from a
+  `SelectionState::Section`, or from `Single(id)` on a
+  single-section node (which §4.5 rule 3 auto-resolves to
+  `(id, 0)`).
 - `MultiSection(Vec<SectionSel>)` — two or more sections,
   possibly across distinct nodes. Built by shift+click on a
   section while another section (or section-set) is selected;
@@ -1879,23 +1888,68 @@ method walks the edge vector linearly; this is fine because
 edges are sparse and the lookup happens at user-event frequency,
 not in hot loops.
 
-### `AppMode`
+### `InteractionMode`
 
-The transient modal state for reparent and connect
-operations: `Normal` / `Reparent { sources }` / `Connect {
-source }`.
+The single cross-platform interaction-mode enum that absorbed
+the pre-redesign `AppMode` (Reparent / Connect) plus the new
+Resize / NodeEdit modes the section-borders-resize PR added.
+Five variants today: `Default` / `Reparent { sources }` /
+`Connect { source }` / `NodeEdit { node_id }` / `Resize {
+target }`.
 
-Some user actions take two clicks: select a
-source, then click a target. Modes encode the in-between state.
-Pressing Ctrl+R on a selection enters `Reparent`; the next click
-on a node attaches the sources as its last children, and Esc
-cancels. Pressing Ctrl+D on one node enters `Connect`; the next
-click on another node creates a `cross_link` edge.
+Some user actions take two clicks (select a source, then click
+a target); some put the canvas into a sub-context where chrome
+and click-routing diverge (resize handles / per-section frames).
+`InteractionMode` is the modal substrate for both shapes — what
+the user is *doing right now*.
 
-`src/application/app/mod.rs:328-338`.
-Native-only today — both modes are gated `#[cfg(not(target_arch
-= "wasm32"))]`. The mode is stored on `InitState` and consulted
-by the click handler.
+- `Default` — normal canvas navigation. Click selects, drag
+  pans, edges snap.
+- `Reparent { sources }` — the next left-click on a node
+  attaches `sources` as its last children; left-click on empty
+  canvas promotes them to root; Esc cancels. Triggered by
+  Ctrl+R on a selection.
+- `Connect { source }` — the next left-click on a target node
+  creates a `cross_link` edge from `source`; left-click on
+  empty canvas cancels. Esc also cancels. Triggered by Ctrl+D
+  on one node.
+- `Resize { target }` — chrome shows resize handles on the
+  target (a `ResizeTarget::Node(id)` or
+  `ResizeTarget::Section { node_id, section_idx }`). Drag a
+  handle to resize; Esc returns to `Default`. Triggered by `r`
+  keybind on a selectable AABB or by `mode resize`. Touch peer
+  shipped in Batch 7: `LongPress`.
+- `NodeEdit { node_id }` — chrome dims sibling nodes and frames
+  the active node's sections in cyan. Click a section to lift
+  it into a `Section` selection; Enter (or `section edit`)
+  opens the inline text editor on the active section. Esc /
+  outside-click returns to `Default`. Triggered by `n` /
+  `mode node-edit` / `node edit`.
+
+`src/application/app/interaction_mode.rs`. The enum is cross-
+platform (compiles + the field plumbs through `InitState` /
+`WasmInputState`); several entry-point Actions
+(`EnterResizeMode`, `EnterNodeEdit{,Clean}`, `EnterSectionEdit`,
+`FastResizeStart`) are NativeOnly today because they depend on
+the cursor-driven modal-stealer + DragState machinery that's
+native-gated — the `LongPress` / `TwoFingerDrag` touch defaults
+shipped in Batch 7 dispatch the same NativeOnly Actions and
+therefore drop silently on WASM, an acknowledged limitation
+(see `SECTIONS_BORDERS_RESIZE_PLAN.md` "Open follow-ups").
+Modal-stealer cascades route keystrokes per active mode (the
+keybind resolver keys on `(InputContext, key)` and the modal
+stealer can intercept e.g. Esc before normal dispatch).
+
+The console verbs `mode resize` / `mode node-edit` /
+`mode default` ride the same surface; `section edit
+[section=<idx>]` and `node edit` are sugar over the
+mode-flip + side-effect handler.
+
+See `SECTIONS_BORDERS_RESIZE_PLAN.md` §2 for the design
+problem this lifted, and §3-§4 for the resize / node-edit
+mode UX. Plan §1 captured the three problems the
+`InteractionMode` enum unified (the consolidation of the
+pre-redesign `AppMode` into this enum is one of those).
 
 ### `DragState`
 
@@ -2352,6 +2406,37 @@ BorderPreviewTargetKind, field, value }`,
 expose the keybind / dispatch surface; `Esc` cancels through
 `Action::ExitMode`'s body before mode-clear.
 
+### `SectionFrameElement` and section-frame chrome
+
+The cyan rectangles drawn around an active node's sections
+while the user is in `InteractionMode::NodeEdit { node_id }`.
+Each section gets one rectangle keyed on `(node_id,
+section_idx, focused)`; the frame is heavier (or
+canvas-default-overridden) on the section currently being
+text-edited so the user sees which section their keystrokes
+land in.
+
+The chrome is a parallel canvas — it doesn't belong to the
+node's own `GfxElement` tree, so a node move or text rebuild
+doesn't re-emit the frames. The dedicated canvas role
+`CanvasRole::SectionFrames` registers its own
+`InPlaceMutator` slot; rebuild-or-skip dispatch keys on
+`section_frame_identity_sequence(elements) -> u64` which
+streams every identity-bearing field directly into a hasher
+(no intermediate Vec) so the signature comparison runs
+allocation-free per `Plan §7.4`.
+
+`lib/baumhard/src/mindmap/scene_builder/section_frame.rs`
+(the element shape and the build pass) +
+`lib/baumhard/src/mindmap/tree_builder/section_frame.rs`
+(the tree builder + identity hasher). Three style cascades
+feed the resolution: per-section `frame_border` →
+`canvas.default_section_frame_border` (or
+`default_focused_section_frame_border` for focused) →
+hardcoded floor. Each cascade is editable through the
+`section frame …` and `canvas section-frame [focused] …`
+console verbs, plus the `BorderPreview` lifecycle.
+
 ### Console
 
 A CLI-style command palette (Ctrl+;) for mutations,
@@ -2399,7 +2484,7 @@ layers:
 - `Action` enum (`action.rs`) — high-level intents:
   `Undo`, `CreateOrphanNode`, `EnterReparentMode`,
   `EnterConnectMode`, `DeleteSelection`, `EditSelection`,
-  `OpenConsole`, `Copy`, `Paste`, `Cut`, `CancelMode`, etc.
+  `OpenConsole`, `Copy`, `Paste`, `Cut`, `ExitMode`, etc.
 - `KeyBind` parser (`bind.rs`) — string syntax like `"Ctrl+Z"`
   → modifier mask + key code.
 - `ResolvedKeybinds` (`resolved.rs`) — fast `O(1)` lookup

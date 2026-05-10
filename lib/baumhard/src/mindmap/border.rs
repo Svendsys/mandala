@@ -828,6 +828,20 @@ pub const BORDER_PRESETS: &[&str] = &{
     out
 };
 
+/// Advance to the next preset in [`BORDER_PRESETS`], wrapping
+/// at the end. Used by the `border preset cycle` console verb
+/// and the `Action::CycleBorderPreset` dispatch arm — single
+/// source of truth for the wrap order so the verb and the
+/// keybind can't drift. Unknown `current` falls through to the
+/// last entry, so the next call lands at index 0 (`light`).
+pub fn next_border_preset(current: &str) -> &'static str {
+    let idx = BORDER_PRESETS
+        .iter()
+        .position(|p| p.eq_ignore_ascii_case(current))
+        .unwrap_or(BORDER_PRESETS.len() - 1);
+    BORDER_PRESETS[(idx + 1) % BORDER_PRESETS.len()]
+}
+
 fn corners_and_patterns_from_custom(
     g: &CustomBorderGlyphs,
     fallback: &BorderGlyphSet,

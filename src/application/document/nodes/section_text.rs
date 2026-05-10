@@ -51,6 +51,9 @@ impl MindMapDocument {
             .expect("caller verified node exists");
         let before_style = node.style.clone();
         let before_sections = node.sections.clone();
+        let before_position = node.position;
+        let before_size = node.size;
+        let before_selection = self.selection.clone();
         let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
         let changed = mutate(&mut node.sections[section_idx]);
         if !changed {
@@ -68,13 +71,14 @@ impl MindMapDocument {
             node_id: node_id.to_string(),
             before_style,
             before_sections,
+            before_position,
+            before_size,
+            before_selection,
         });
         self.dirty = true;
         true
     }
 
-    /// Replace one section's `text` and collapse its `text_runs`
-    /// to a single run inheriting the first original run's
     /// Write both `text` and `text_runs` atomically, merging the
     /// editor's `ColorFontRegions` back to `Vec<TextRun>` via
     /// `region_to_text_run` so per-run attributes the regions
@@ -117,6 +121,9 @@ impl MindMapDocument {
             return false;
         }
         let before_sections = node.sections.clone();
+        let before_position = node.position;
+        let before_size = node.size;
+        let before_selection = self.selection.clone();
         let canvas_default = self.mindmap.canvas.default_border.clone();
         let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
         if let Some(section) = node.sections.get_mut(section_idx) {
@@ -129,13 +136,95 @@ impl MindMapDocument {
         self.undo_stack.push(UndoAction::EditNodeText {
             node_id: node_id.to_string(),
             before_sections,
+            before_position,
+            before_size,
+            before_selection,
         });
         self.dirty = true;
         true
     }
 
-    /// No-op (returns `false`, no undo push) when the section
-    /// doesn't exist or its text already matches.
+    /// Replace the section's `text` while preserving as much of
+    /// the existing `text_runs` as the new text supports. Runs
+    /// wholly inside the new text length carry through unchanged;
+    /// runs that straddle the new end get clipped at the new
+    /// `grapheme_count`; runs entirely past the new end are
+    /// dropped. Uncovered ranges (anything past the last surviving
+    /// run's `end`) fall through to section / node defaults per
+    /// `format/text-runs.md`. No-op (returns `false`, no undo push)
+    /// when the section doesn't exist or its text already matches.
+    ///
+    /// Distinct from [`Self::set_section_text`] which collapses
+    /// every prior run to a single run cloned from
+    /// `text_runs.first()` — that path is the right shape for
+    /// "I want one uniform style on the new text"; this path is
+    /// the right shape for "I want my multi-run styling to
+    /// survive a text rewrite to the extent the new text covers
+    /// the same graphemes". Backs the
+    /// `section text "<text>" runs=preserve` console path.
+    pub fn set_section_text_preserving_runs(
+        &mut self,
+        node_id: &str,
+        section_idx: usize,
+        new_text: String,
+    ) -> bool {
+        let node = match self.mindmap.nodes.get(node_id) {
+            Some(n) => n,
+            None => return false,
+        };
+        let Some(section) = node.sections.get(section_idx) else {
+            return false;
+        };
+        if section.text == new_text {
+            return false;
+        }
+        let new_grapheme_count = baumhard::util::grapheme_chad::count_grapheme_clusters(&new_text);
+        // Clip runs to the new text length: keep runs whose
+        // `start < new_grapheme_count`; clamp `end` down to
+        // `new_grapheme_count`. Runs entirely past the new end
+        // (start >= new_grapheme_count) drop out. The
+        // text_run_ops invariants (sorted, no-overlap, half-open)
+        // are preserved by clamping in-place.
+        let new_runs: Vec<TextRun> = section
+            .text_runs
+            .iter()
+            .filter(|r| r.start < new_grapheme_count)
+            .map(|r| {
+                let mut clipped = r.clone();
+                if clipped.end > new_grapheme_count {
+                    clipped.end = new_grapheme_count;
+                }
+                clipped
+            })
+            // After clamping, a run with start == end is degenerate;
+            // filter it out (the clamp can collapse a run when the
+            // new text ends exactly at the run's start).
+            .filter(|r| r.start < r.end)
+            .collect();
+
+        let before_sections = node.sections.clone();
+        let before_position = node.position;
+        let before_size = node.size;
+        let before_selection = self.selection.clone();
+        let canvas_default = self.mindmap.canvas.default_border.clone();
+        let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
+        if let Some(section) = node.sections.get_mut(section_idx) {
+            section.text = new_text;
+            section.text_runs = new_runs;
+        }
+        super::super::grow_one_node_to_fit_text(node);
+        super::super::grow_one_node_to_fit_border(node, canvas_default.as_ref());
+        self.undo_stack.push(UndoAction::EditNodeText {
+            node_id: node_id.to_string(),
+            before_sections,
+            before_position,
+            before_size,
+            before_selection,
+        });
+        self.dirty = true;
+        true
+    }
+
     pub fn set_section_text(&mut self, node_id: &str, section_idx: usize, new_text: String) -> bool {
         let node = match self.mindmap.nodes.get(node_id) {
             Some(n) => n,
@@ -148,6 +237,10 @@ impl MindMapDocument {
             return false;
         }
         let before_sections = node.sections.clone();
+        let before_position = node.position;
+        let before_size = node.size;
+        let before_selection = self.selection.clone();
+        let count = baumhard::util::grapheme_chad::count_grapheme_clusters(&new_text);
         let template = section.text_runs.first().cloned().unwrap_or_else(|| TextRun {
             start: 0,
             end: 0,
@@ -159,11 +252,19 @@ impl MindMapDocument {
             color: "#ffffff".to_string(),
             hyperlink: None,
         });
-        let new_runs = vec![TextRun {
-            start: 0,
-            end: baumhard::util::grapheme_chad::count_grapheme_clusters(&new_text),
-            ..template
-        }];
+        // Empty text yields an empty runs vec; a `TextRun { start: 0,
+        // end: 0 }` would violate the `text_run_ops` invariant
+        // `start < end` and panic in debug builds on subsequent
+        // slice / splice / find_run_containing calls.
+        let new_runs = if count == 0 {
+            Vec::new()
+        } else {
+            vec![TextRun {
+                start: 0,
+                end: count,
+                ..template
+            }]
+        };
         let canvas_default = self.mindmap.canvas.default_border.clone();
         let node = self.mindmap.nodes.get_mut(node_id).expect("just checked");
         if let Some(section) = node.sections.get_mut(section_idx) {
@@ -175,6 +276,9 @@ impl MindMapDocument {
         self.undo_stack.push(UndoAction::EditNodeText {
             node_id: node_id.to_string(),
             before_sections,
+            before_position,
+            before_size,
+            before_selection,
         });
         self.dirty = true;
         true

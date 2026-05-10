@@ -46,6 +46,7 @@ multiplicity is the only thing the renderer notices.
 | `size` | object\|null | `null` | Section AABB. `null` means "fill the parent node" — the typical migration-default shape, where every node has one section that occupies its whole AABB. An explicit `{width, height}` lets a section occupy only part of the parent node, leaving room for siblings. |
 | `channel` | integer\|null | `null` (falls through to section's index) | Mutation channel inside the parent node-area. `null` lets the tree builder substitute the section's index — a three-section node with no authored channels gets channels `[0, 1, 2]`. `Some(0)` is honoured even at idx > 0, so an author can deliberately collide with a sibling mind-node on channel 0 to broadcast. |
 | `trigger_bindings` | array | `[]` | Per-section [`TriggerBinding`s](./mutations.md). The click dispatcher fires section-level bindings *before* the whole-node bindings on `MindNode.trigger_bindings` — a section-targeted override (e.g. a different `OnClick` mutation per stratum of a multi-section node) takes precedence over catch-all node bindings. |
+| `frame_border` | object\|null | `null` | Per-section override of the cyan-rectangle frame drawn around the section in NodeEdit mode. Same shape as `MindNode.style.border` (preset / font / size / color / palette / glyphs / padding). `null` falls through to `Canvas.default_section_frame_border` (or `default_focused_section_frame_border` for the actively-edited section). The console verb `section frame …` authors this field; see [border-patterns.md](./border-patterns.md) for the full grammar. |
 
 ## Migration
 
@@ -106,17 +107,42 @@ will see the variable replaced with a hex literal. The
 setters bypass the round trip and preserve `var(--name)`
 references verbatim.
 
-### Position and size verbs
+### Subverbs (Batch 5 redesign)
 
-`section move <dx> <dy> [section=<idx>]` shifts the section's
-`offset` by `(dx, dy)` relative to the owning node's `position`.
-`section resize <w> <h> [section=<idx>]` pins `section.size` to
-`Some({w, h})`; `section resize none` flips it back to `None`
-(fill-parent — the migration default). The `section=<idx>` kv is
-required when the active selection is a single node (no implicit
-default — authors who want section 0 specifically should say
-so); a `SelectionState::Section` selection supplies the index
-unless the kv overrides it.
+The `section …` verb takes kv-style arguments per
+SECTIONS_BORDERS_RESIZE_PLAN.md §4.5 — the prior positional
+`<dx> <dy>` / `<w> <h>` forms are gone (CODE_CONVENTIONS §10:
+no compatibility shims). Nine subverbs:
+
+| Verb | Form | Effect |
+|---|---|---|
+| `section show` | `[section=<idx>]` | Multi-line resolved-property readout (text preview / runs / offset / size / channel / bindings / frame override). |
+| `section move` | `dx=<f64> dy=<f64> [section=<idx>]` | Relative shift — `offset += (dx, dy)`. |
+| `section move` | `x=<f64> y=<f64> [section=<idx>]` | Absolute set — `offset = (x, y)`. |
+| `section resize` | `w=<f64> h=<f64> [section=<idx>]` | Pin `size = Some({w, h})`. |
+| `section resize` | `fill [section=<idx>]` | Clear `size = None` (renamed from `none`). |
+| `section text` | `"<text>" [section=<idx>] [runs=preserve\|clear]` | Replace text. `runs=preserve` (default) keeps per-grapheme styling on overlapping ranges; `runs=clear` collapses to single-run plaintext. |
+| `section edit` | `[section=<idx>]` | Open the section text editor on the resolved target. Closes the console; modal handoff to the editor. |
+| `section add` | `[at=<idx>] [text="<text>"]` | Insert a new section. `at=` defaults to append. |
+| `section delete` | `[section=<idx>]` | Remove. Errors when only one section remains. |
+| `section split` | `[section=<idx>] at=<grapheme>` | Split in two at the given grapheme boundary. `at=` is required (use `section show` to see the section's grapheme count); pass `at=N` where `N` equals the count to split at end-of-text (creates an empty suffix). |
+
+Mutually exclusive forms reject at the parser layer:
+`section move dx=1 x=2` errors with "cannot mix delta form
+(dx/dy) and absolute form (x/y) — pick one" rather than
+last-write-wins. Empty / unknown kvs surface usage hints.
+
+Selection resolution: `Section` / `SectionRange` supplies the
+index implicitly; `Single(node)` requires `section=<idx>`;
+`MultiSection` rejects with a single-target hint for every
+subverb **except** `section move dx=… dy=…`, which fans out
+the same delta across every selected section atomically (Plan
+§4.5 rule 4 — abort on first AABB rejection so a partial fan-
+out never lands; absolute `x=`/`y=` form stays single-target
+because identical absolute coords would collide). Macro / Action
+path (`Action::SetSectionOffsetDelta`) is single-target on
+MultiSection by design — script multiple Action steps for fan-
+out.
 
 Both verbs validate against the rules `maptool verify`'s
 [`verify::sections`](./validation.md) enforces — finite +
@@ -137,7 +163,7 @@ edge — verify flags it, both `set_section_offset` and
 skipped the check entirely, leaving fill-parent sections
 free to visually escape the parent (a degenerate state
 authors could reach through `section move`, `section
-resize none`, or the drag gesture without any error
+resize fill`, or the drag gesture without any error
 feedback).
 
 The shared
@@ -206,7 +232,7 @@ alternative — shrinking the node automatically on every
 text-edit that frees space — fights with manually-set sizes
 and produces janky resize-on-every-keystroke behavior.
 
-**Section-side shrink path** is `section resize none` (flatten
+**Section-side shrink path** is `section resize fill` (flatten
 to fill-parent). A per-section `fit-to-content` is
 intentionally absent — section text floor is folded into the
 parent's `compute_one_node_text_floor`, so a `node fit` on a

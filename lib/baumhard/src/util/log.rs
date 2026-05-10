@@ -12,7 +12,7 @@
 //! What WAS scattered across `src/main.rs` was the per-target
 //! init — `env_logger::init()` on native, `console_log::init_with_level`
 //! on WASM, plus the panic hook wiring on WASM. This module
-//! collapses both onto one [`init`] call.
+//! collapses both onto one [`crate::util::log::init`] call.
 
 /// Initialise the global logger for whichever target this binary
 /// is built for. Native uses `env_logger` (reads `RUST_LOG`);

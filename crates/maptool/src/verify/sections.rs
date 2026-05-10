@@ -2,7 +2,8 @@
 
 //! Section-bounds invariants. The `MindNode` docstring promises
 //! `maptool verify` flags out-of-bounds sections; this module
-//! delivers on that promise. Checks per [`MindSection`]:
+//! delivers on that promise. Checks per
+//! [`baumhard::mindmap::model::MindSection`]:
 //!
 //! - `offset.{x,y}` finite and non-negative,
 //! - `size.{width,height}` (when set) finite and strictly positive,
@@ -28,6 +29,7 @@ pub fn check(map: &MindMap) -> Vec<Violation> {
         // AABB-containment math, so flagging here surfaces the
         // root cause before downstream "section overflow" cascades.
         check_node_size_finite(node, &mut out);
+        check_section_count_cap(node, &mut out);
         check_section_channel_collisions(node, &mut out);
         for (s_idx, section) in node.sections.iter().enumerate() {
             check_offset_finite(node, s_idx, section, &mut out);
@@ -84,6 +86,28 @@ fn check_node_size_finite(
             CATEGORY,
             node,
             format!("node.size.height is not positive ({})", node.size.height),
+        ));
+    }
+}
+
+/// Defends against hostile mindmaps with absurd section counts
+/// — a `"sections": [{},{},…10M…]` JSON payload would OOM at
+/// load. Mirrors the `add_section`'s runtime cap so the model
+/// invariant is checked at every entry point.
+fn check_section_count_cap(
+    node: &baumhard::mindmap::model::MindNode,
+    out: &mut Vec<Violation>,
+) {
+    const MAX_SECTIONS_PER_NODE: usize = 1024;
+    if node.sections.len() > MAX_SECTIONS_PER_NODE {
+        out.push(Violation::node(
+            CATEGORY,
+            node,
+            format!(
+                "node.sections.len()={} exceeds cap {}",
+                node.sections.len(),
+                MAX_SECTIONS_PER_NODE
+            ),
         ));
     }
 }

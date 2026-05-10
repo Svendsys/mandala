@@ -59,10 +59,10 @@ pub struct InteractionModeOverrides<'a> {
     /// the builder regardless — there's no own AABB to stretch.
     pub section: Option<(&'a str, usize)>,
     /// Active NodeEdit target. When `Some(active)`, every node other
-    /// than `active` renders chrome + text at
-    /// [`super::node_pass::INACTIVE_NODE_ALPHA_MULTIPLIER`] alpha —
-    /// the "you are inside this node" affordance.
-    /// `None` (the Default-mode case) is the no-op fast path.
+    /// than `active` renders chrome + text at the inactive-alpha
+    /// multiplier (see `node_pass::INACTIVE_NODE_ALPHA_MULTIPLIER`)
+    /// — the "you are inside this node" affordance. `None` (the
+    /// Default-mode case) is the no-op fast path.
     pub node_edit_for: Option<&'a str>,
     /// Section currently inside the inline text editor, if any.
     /// `Some((node_id, section_idx))` causes the matching
@@ -576,6 +576,6 @@ pub use node_resize_handle::{build_node_resize_handles, NodeResizeHandleElement}
 pub use portal::SelectedPortalLabel;
 pub use section_frame::build_section_frames;
 pub use section_resize_handle::{
-    build_section_resize_handles, ResizeHandleSide, SectionResizeHandleElement,
+    build_section_resize_handles, infer_resize_anchor, ResizeHandleSide, SectionResizeHandleElement,
     SECTION_RESIZE_HANDLE_FONT_SIZE_PT, SECTION_RESIZE_HANDLE_GLYPH,
 };

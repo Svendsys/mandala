@@ -46,6 +46,19 @@ pub struct KeybindConfig {
     /// Enter resize mode on the current selection — Batch 2 of
     /// `SECTIONS_BORDERS_RESIZE_PLAN.md`. Default `r`.
     pub enter_resize_mode: Vec<String>,
+    /// Start a corner-anchored fast-resize gesture from a
+    /// right-button drag. Default: `["Ctrl+RightDrag"]`. Lookup
+    /// goes through `action_for_gesture` so the standard
+    /// modifier-fallback applies — a user who clears the default
+    /// and binds bare `["RightDrag"]` gets fast-resize on plain
+    /// right-drag, no Ctrl required.
+    ///
+    /// Parametric on the keybind side (a parametric binding has
+    /// no payload arms here — `Action::FastResizeStart` itself
+    /// takes no payload), but kept on the regular `Vec<String>`
+    /// surface for ergonomic JSON. Mirrors the
+    /// `enter_resize_mode` shape.
+    pub fast_resize_start: Vec<String>,
     pub delete_selection: Vec<String>,
     pub exit_mode: Vec<String>,
     pub create_orphan_node: Vec<String>,
@@ -281,7 +294,8 @@ impl Default for KeybindConfig {
             undo: vec!["Ctrl+Z".into(), "Undo".into()],
             enter_reparent_mode: vec!["Ctrl+P".into()],
             enter_connect_mode: vec!["Ctrl+D".into()],
-            enter_resize_mode: vec!["r".into()],
+            enter_resize_mode: vec!["r".into(), "LongPress".into()],
+            fast_resize_start: vec!["Ctrl+RightDrag".into(), "TwoFingerDrag".into()],
             delete_selection: vec!["Delete".into()],
             exit_mode: vec!["Escape".into()],
             create_orphan_node: vec!["Ctrl+N".into()],
@@ -508,6 +522,7 @@ impl KeybindConfig {
             (Action::EnterReparentMode, &self.enter_reparent_mode),
             (Action::EnterConnectMode, &self.enter_connect_mode),
             (Action::EnterResizeMode, &self.enter_resize_mode),
+            (Action::FastResizeStart, &self.fast_resize_start),
             (Action::DeleteSelection, &self.delete_selection),
             (Action::ExitMode, &self.exit_mode),
             (Action::CreateOrphanNode, &self.create_orphan_node),

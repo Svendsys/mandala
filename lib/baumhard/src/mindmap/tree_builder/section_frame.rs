@@ -30,69 +30,53 @@ use crate::util::color::hex_to_rgba_safe;
 /// font + font_size + palette + palette_field), the position +
 /// bounds (so a node move while in NodeEdit re-registers the
 /// frames), and the resolved palette cycle (so an authored palette
-/// edit triggers a rebuild). Hashing inputs — not the rendered
-/// output — is both correct (no missed shifts that happen to
-/// preserve cluster_count) and cheap (zero allocations on the
-/// hot path; pre-fix the function ran `border_run_specs` four
-/// times per frame on every NodeEdit rebuild for the side
-/// strings, which were then thrown away after the hash compare).
+/// edit triggers a rebuild).
+///
+/// Pre-fix the function materialised a `Vec<SectionFrameIdentity>`
+/// whose only consumer was `hash_canvas_signature` — N×String
+/// clones + a 7-field clone-Vec per call, all thrown away after
+/// the hash compare. Combined with the `InPlaceMutator` early-
+/// return in `update_section_frame_tree`, the signature path runs
+/// on every NodeEdit-mode rebuild *to decide whether to skip*, so
+/// the allocations were paying for nothing. Post-fix the function
+/// streams the same fields directly into the hasher (no Vec, no
+/// clones — `&str` borrows for String fields, `to_bits()` for
+/// floats).
 ///
 /// Combined with the `InPlaceMutator` early-return in
 /// `update_section_frame_tree`, the completeness of this signature
 /// is load-bearing: a missed delta means the dispatch declares
 /// "no work needed" and the screen keeps stale glyphs.
-pub fn section_frame_identity_sequence(elements: &[SectionFrameElement]) -> Vec<SectionFrameIdentity> {
-    elements
-        .iter()
-        .map(|e| {
-            let bs = &e.border_style;
-            SectionFrameIdentity {
-                node_id: e.node_id.clone(),
-                section_idx: e.section_idx,
-                focused: e.focused,
-                position_bits: (e.position.0.to_bits(), e.position.1.to_bits()),
-                size_bits: (e.size.0.to_bits(), e.size.1.to_bits()),
-                color: bs.color.clone(),
-                font_name: bs.font_name.clone(),
-                font_size_pt_bits: bs.font_size_pt.to_bits(),
-                color_palette: bs.color_palette.clone(),
-                palette_field: bs.palette_field,
-                corners: bs.corners.clone(),
-                side_patterns: bs.side_patterns.clone(),
-                palette_cycle_bits: e
-                    .palette_cycle
-                    .iter()
-                    .map(|c| [c[0].to_bits(), c[1].to_bits(), c[2].to_bits(), c[3].to_bits()])
-                    .collect(),
-            }
-        })
-        .collect()
-}
-
-/// One row of the structural signature returned by
-/// [`section_frame_identity_sequence`]. Hashable so the
-/// `AppScene` dispatch can compare against the last frame's
-/// signature without re-walking the elements.
-///
-/// Float fields ride as their `to_bits()` `u32` form so the struct
-/// can derive `Hash`/`Eq` directly (NaN equality is irrelevant —
-/// the only NaN that survives upstream is a parse error, which the
-/// scene-builder gate filters out).
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub struct SectionFrameIdentity {
-    pub node_id: String,
-    pub section_idx: usize,
-    pub focused: bool,
-    pub position_bits: (u32, u32),
-    pub size_bits: (u32, u32),
-    pub color: String,
-    pub font_name: Option<String>,
-    pub font_size_pt_bits: u32,
-    pub color_palette: Option<String>,
-    pub palette_field: crate::mindmap::border::PaletteField,
-    pub corners: crate::mindmap::border::BorderCorners,
-    pub side_patterns: crate::mindmap::border::SidePatternQuad,
-    pub palette_cycle_bits: Vec<[u32; 4]>,
+pub fn section_frame_identity_sequence(elements: &[SectionFrameElement]) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut h = DefaultHasher::new();
+    elements.len().hash(&mut h);
+    for e in elements {
+        let bs = &e.border_style;
+        e.node_id.as_str().hash(&mut h);
+        e.section_idx.hash(&mut h);
+        e.focused.hash(&mut h);
+        e.position.0.to_bits().hash(&mut h);
+        e.position.1.to_bits().hash(&mut h);
+        e.size.0.to_bits().hash(&mut h);
+        e.size.1.to_bits().hash(&mut h);
+        bs.color.as_str().hash(&mut h);
+        bs.font_name.as_deref().hash(&mut h);
+        bs.font_size_pt.to_bits().hash(&mut h);
+        bs.color_palette.as_deref().hash(&mut h);
+        bs.palette_field.hash(&mut h);
+        bs.corners.hash(&mut h);
+        bs.side_patterns.hash(&mut h);
+        e.palette_cycle.len().hash(&mut h);
+        for cycle in &e.palette_cycle {
+            cycle[0].to_bits().hash(&mut h);
+            cycle[1].to_bits().hash(&mut h);
+            cycle[2].to_bits().hash(&mut h);
+            cycle[3].to_bits().hash(&mut h);
+        }
+    }
+    h.finish()
 }
 
 /// Build a `Tree<GfxElement, GfxMutator>` from a slice of

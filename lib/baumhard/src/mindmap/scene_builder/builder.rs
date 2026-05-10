@@ -80,14 +80,14 @@ pub struct SceneSelectionContext<'a> {
     /// node when its size is finite + positive.
     pub selected_node_for_resize: Option<&'a str>,
     /// Active NodeEdit target. When `Some(active)`, every node
-    /// other than `active` renders chrome + text at
-    /// [`super::node_pass::INACTIVE_NODE_ALPHA_MULTIPLIER`] alpha
+    /// other than `active` renders chrome + text at the inactive-
+    /// alpha multiplier (see `node_pass::INACTIVE_NODE_ALPHA_MULTIPLIER`)
     /// — the "you are inside this node" affordance for
     /// `InteractionMode::NodeEdit`. `None` (the Default-mode
     /// case) is the no-op fast path: every node draws at full
     /// opacity. Set from the application layer at the same call
     /// site that fills `selected_node_for_resize` /
-    /// `selected_section`; routes to [`super::node_pass`] inside
+    /// `selected_section`; routes through `node_pass` inside
     /// [`build_scene_with_cache`].
     pub node_edit_for: Option<&'a str>,
     /// Section currently inside the inline text editor, if any.

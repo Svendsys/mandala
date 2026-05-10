@@ -79,6 +79,12 @@ pub(in crate::application::app) struct InputHandlerContext<'a> {
     /// Per-frame cursor-icon flag — flipped to "hand" over a button
     /// node by the cursor-move handler.
     pub cursor_is_hand: &'a mut bool,
+    /// Last cursor icon written via `Window::set_cursor`. The
+    /// cursor_moved handler skips the per-frame `set_cursor`
+    /// when the desired icon equals this. Required because winit
+    /// dedupes `set_cursor` only on macOS / X11; Windows + Wayland
+    /// re-issue the underlying OS call every time.
+    pub cursor_icon_last: &'a mut winit::window::CursorIcon,
     /// Throttled color-picker hover interaction. The picker's
     /// input paths set `.dirty` when HSV state changes; the
     /// per-frame drain rebuilds the scene + overlay through the
@@ -142,6 +148,7 @@ impl<'a> InputHandlerContext<'a> {
                 color_picker_state: &mut *self.color_picker_state,
                 hovered_node: &mut *self.hovered_node,
                 cursor_is_hand: &mut *self.cursor_is_hand,
+                cursor_icon_last: &mut *self.cursor_icon_last,
                 picker_hover: &mut *self.picker_hover,
             },
         )

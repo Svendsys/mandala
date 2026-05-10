@@ -193,7 +193,13 @@ fn execute_zoom(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         SelectionState::PortalLabel(_) => "portal label",
         SelectionState::PortalText(_) => "portal text",
         SelectionState::None => return ExecResult::err("zoom: no selection"),
-        SelectionState::Multi(_) => unreachable!("Multi handled above"),
+        SelectionState::Multi(_) => {
+            // Multi is handled in the early branch; defensive Err
+            // per CODE_CONVENTIONS §9 if structural drift lets it
+            // through.
+            log::error!("zoom: Multi reached the per-target dispatcher; expected upstream routing");
+            return ExecResult::err("internal: zoom Multi routing miss");
+        }
     };
     let changed = apply_zoom_to_selection(doc, min_edit, max_edit);
     super::applied_or_no_change("zoom", kind, changed)

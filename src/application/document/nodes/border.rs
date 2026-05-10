@@ -161,7 +161,7 @@ pub struct BorderPreview {
 /// `Nodes(ids)` → [`MindMapDocument::set_node_border_config`],
 /// `Sections((id, idx))` →
 /// [`MindMapDocument::set_section_frame_border_config`],
-/// `CanvasDefault` → [`MindMapDocument::set_canvas_default_border_config`],
+/// `CanvasDefault` → [`MindMapDocument::set_canvas_default_border`],
 /// `CanvasSectionFrame` / `CanvasSectionFrameFocused` →
 /// [`MindMapDocument::set_canvas_default_section_frame_border_config`]
 /// (with `focused = false / true`).
@@ -256,6 +256,9 @@ impl MindMapDocument {
         };
         let before_style = node.style.clone();
         let before_sections = node.sections.clone();
+        let before_position = node.position;
+        let before_size = node.size;
+        let before_selection = self.selection.clone();
         let preset_before = before_style.border.as_ref().map(|c| c.preset.clone());
 
         let mut outcome = BorderEditOutcome::default();
@@ -296,6 +299,9 @@ impl MindMapDocument {
             node_id: node_id.to_string(),
             before_style,
             before_sections,
+            before_position,
+            before_size,
+            before_selection,
         });
         self.dirty = true;
         outcome.changed = true;
@@ -403,7 +409,7 @@ impl MindMapDocument {
     /// entry so undo restores every theme / palette / default
     /// field in one step. Same posture as the
     /// `theme switch` verb.
-    pub fn set_canvas_default_border_config(&mut self, edits: BorderConfigEdits) -> BorderEditOutcome {
+    pub fn set_canvas_default_border(&mut self, edits: BorderConfigEdits) -> BorderEditOutcome {
         // Scope-gated implicit cancel — `CanvasDefault` previews
         // share the canvas-border slot directly; `Nodes(_)`
         // previews render against per-node-resolved styles which
@@ -464,7 +470,7 @@ impl MindMapDocument {
     ///
     /// Same `edits.clear` / `visible`-ignored / `CanvasSnapshot`
     /// undo / auto-promotion-detection contract as
-    /// [`Self::set_canvas_default_border_config`].
+    /// [`Self::set_canvas_default_border`].
     pub fn set_canvas_default_section_frame_border_config(
         &mut self,
         focused: bool,
@@ -756,7 +762,7 @@ impl MindMapDocument {
                 }
             }
             BorderPreviewTarget::CanvasDefault => {
-                merged = self.set_canvas_default_border_config(commit_edits);
+                merged = self.set_canvas_default_border(commit_edits);
             }
             BorderPreviewTarget::CanvasSectionFrame => {
                 merged = self.set_canvas_default_section_frame_border_config(false, commit_edits);
@@ -789,7 +795,7 @@ fn merge_outcome(merged: &mut BorderEditOutcome, one: BorderEditOutcome) {
 /// (i.e. their kv mentioned `preset=`). Shared between the four
 /// border-style setters (`set_node_border_config`,
 /// `set_section_frame_border_config`,
-/// `set_canvas_default_border_config`,
+/// `set_canvas_default_border`,
 /// `set_canvas_default_section_frame_border_config`) so the
 /// detection logic lives in exactly one place. When the auto-
 /// promote path is removed (per `SECTIONS_BORDERS_RESIZE_PLAN.md`

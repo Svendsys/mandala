@@ -44,7 +44,7 @@ pub enum ColorAxis {
 /// — five variants mirror the five committing setters
 /// (`set_node_border_config` /
 /// `set_section_frame_border_config` /
-/// `set_canvas_default_border_config` /
+/// `set_canvas_default_border` /
 /// `set_canvas_default_section_frame_border_config(focused=false|true)`).
 ///
 /// Same strum-derive shape as [`ColorAxis`]: `Node.into() ==
@@ -280,7 +280,8 @@ pub enum Action {
     #[action(context = Document, wasm = Compatible, destructive)]
     Cut,
     /// Enter resize mode on the current selection. Resolves the
-    /// selection into a [`crate::application::app::interaction_mode::ResizeTarget`]:
+    /// selection into a `ResizeTarget` (see
+    /// `application::app::interaction_mode`):
     /// - `Single(node)` → `Resize { target: Node(node_id) }`.
     /// - `Section(s)` / `SectionRange` with `s.size == Some(_)` →
     ///   `Resize { target: Section { node_id, section_idx } }`.
@@ -299,8 +300,7 @@ pub enum Action {
     /// run on WASM today), but WASM has no `DragState`, no
     /// throttled-drag pipeline, and no handle hit-test in
     /// `run_wasm/event_mouse_click.rs` — so a flip on WASM would
-    /// render handles the user can't use. Per CODE_CONVENTIONS §5
-    /// (no half-features), the Action is `NativeOnly` until Batches
+    /// render handles the user can't use.    /// (no half-features), the Action is `NativeOnly` until Batches
     /// 4 / 7 land the WASM gesture pipeline. Reclassification is a
     /// one-line change at that point.
     ///
@@ -310,6 +310,38 @@ pub enum Action {
     /// drag release; that path is gated separately.
     #[action(context = Document, wasm = NativeOnly)]
     EnterResizeMode,
+    /// Start a corner-anchored fast-resize gesture from the
+    /// active right-button press. Threshold-cross arm in
+    /// `event_cursor_moved.rs` dispatches this Action when the
+    /// `DragState::PendingRight` press has moved past the drag
+    /// threshold; the dispatch arm reads the press-time hit
+    /// from a `DispatchHit` payload, computes the corner anchor
+    /// via `infer_resize_anchor`, and transitions
+    /// `DragState::PendingRight → Throttled(NodeResize |
+    /// SectionResize)` with the chosen `ResizeHandleSide`. The
+    /// release path on the right-button (Commit 3) finalizes
+    /// via `set_node_aabb` / `set_section_aabb`.
+    ///
+    /// **Destructive on commit** (the release at the end of the
+    /// drag writes through), but the *Action itself* is just a
+    /// gesture-start signal — it doesn't mutate the document.
+    /// User-tier-only macro privilege mirrors the EnterNodeEdit /
+    /// EnterSectionEdit split: the gesture starts a
+    /// destructive flow, even though the start itself is
+    /// non-mutating.
+    ///
+    /// **WASM: NativeOnly** — the gesture relies on the
+    /// `DragState` machinery in `event_mouse_click.rs` /
+    /// `event_cursor_moved.rs` which is `cfg(not(target_arch =
+    /// "wasm32"))`. WASM gets fast-resize when the touch parity
+    /// batch (§6.6) lands the `TwoFingerDrag` synthetic gesture.
+    ///
+    /// Marked `destructive` so the macro privilege gate
+    /// (`MacroSource::allows_action`) blocks System / Plugin /
+    /// Project tiers; only User-tier macros (the user's keybind
+    /// config + interactive console) can fire it.   
+    #[action(context = Document, wasm = NativeOnly, destructive)]
+    FastResizeStart,
 
     // ── Console ──────────────────────────────────────────────────
     /// Close the console (two-tier: dismiss popup first, then close).
@@ -636,8 +668,28 @@ pub enum Action {
     /// Single kv per binding (multi-kv border edits stay
     /// console-only). Field names: `preset|font|size|color|palette|
     /// field|padding|top|bottom|left|right|tl|tr|bl|br`.
+    ///
+    ///calls for replacing this with per-field
+    /// variants (`SetBorderPreset` / `SetBorderColor` / ...)
+    /// for keybind ergonomics — `SetBorderField` stays as the
+    /// generic catch-all for the kv form and for callers that
+    /// want one-binding-many-fields semantics; deletion is a
+    /// follow-up breaking-change commit pending the full
+    /// parametric-binding migration.
     #[action(context = Document, wasm = Compatible)]
     SetBorderField { field: String, value: String },
+    /// Mirror `border preset cycle` — advance the selected
+    /// node(s)' border preset to the next entry in
+    /// `BORDER_PRESETS`, wrapping at the end. No payload, so
+    /// bindable to a single key for one-press preset cycling.
+    #[action(context = Document, wasm = Compatible)]
+    CycleBorderPreset,
+    /// Mirror `border toggle` — flip `style.show_frame` per
+    /// selected node. No payload (each node toggled
+    /// independently); bindable to a single key for one-press
+    /// border-on/off cycling.   
+    #[action(context = Document, wasm = Compatible)]
+    ToggleBorderVisible,
     /// Stage a single-kv border preview against the live
     /// selection. `target_kind: BorderPreviewTargetKind` is a
     /// typed enum (kebab-case-serialised: `node` / `section` /
@@ -740,23 +792,67 @@ pub enum Action {
     /// variant — no payload.
     #[action(context = Document, wasm = Compatible)]
     ClearZoom,
-    /// Mirror `section move <dx> <dy>` — nudge the selected
-    /// section by `(dx, dy)` canvas units. Keybind / macro path
-    /// for the per-frame-safe section move. AABB rejection on
-    /// overflow surfaces as a `log::warn!` and no-op. `dx` /
-    /// `dy` are parsed at dispatch time (Action enum needs
-    /// Hash + Eq, so f64 can't ride directly).
+    /// Mirror `section move dx=<dx> dy=<dy>` — nudge the
+    /// selected section by `(dx, dy)` canvas units. Keybind /
+    /// macro path for the per-frame-safe section move. AABB
+    /// rejection on overflow surfaces as a `log::warn!` and
+    /// no-op.
+    //
+    // Stringly-typed payload convention: f64 / usize fields on
+    // `Action` variants ride as `String` because the enum
+    // derives Hash + Eq + Serialize / Deserialize across every
+    // variant, and f64 doesn't `Hash`. Dispatch arms parse
+    // them. This applies to every `Set/Add/Split/...Section*`
+    // variant and to any future numeric-payload Action.
     #[action(context = Document, wasm = Compatible)]
     SetSectionOffsetDelta { dx: String, dy: String },
-    /// Mirror `section resize <w> <h>` — pin the selected
+    /// Mirror `section resize w=<w> h=<h>` — pin the selected
     /// section's size to `(w, h)`. Same AABB validation as the
     /// verb path. `w` / `h` are parsed at dispatch time.
     #[action(context = Document, wasm = Compatible)]
     SetSectionSizeAbs { w: String, h: String },
-    /// Mirror `section resize none` — flip the selected section
-    /// back to fill-parent (`size = None`).
+    /// Mirror `section resize fill` — flip the selected section
+    /// back to fill-parent (`size = None`). Renamed from `none`
+    /// in Batch 5 (the prior literal misleadingly read as "remove
+    /// the section"); this Action's name stays `FillParent` for
+    /// keybind-stability.
     #[action(context = Document, wasm = Compatible)]
     SetSectionSizeFillParent,
+    /// Mirror `section move x=<x> y=<y> [section=<idx>]` —
+    /// macro-only target (not bindable to a key today; no
+    /// `KeybindConfig` field). Pin the selected section's
+    /// `offset` to `(x, y)` (absolute setter, distinct from the
+    /// `dx` / `dy` delta form).   
+    #[action(context = Document, wasm = Compatible)]
+    SetSectionOffsetAbs { x: String, y: String },
+    /// Mirror `section text "<text>" [runs=preserve|clear]` —
+    /// macro-only target (not bindable to a key today; no
+    /// `KeybindConfig` field — the string-arg payload makes
+    /// keybinding awkward). `runs_mode = "preserve"` clips
+    /// existing runs to the new text length;  `"clear"`
+    /// collapses to a single run.Destructive.
+    #[action(context = Document, wasm = Compatible, destructive)]
+    SetSectionText { text: String, runs_mode: String },
+    /// Mirror `section add [at=<idx>] [text="<text>"]` —
+    /// macro-only target (not bindable to a key today; no
+    /// `KeybindConfig` field). `at = ""` → append; `"K"` →
+    /// insert at K. `text = ""` → empty section.    /// Destructive.
+    #[action(context = Document, wasm = Compatible, destructive)]
+    AddSection { at: String, text: String },
+    /// Mirror `section delete [section=<idx>]` — macro-only
+    /// target (not bindable to a key today; no `KeybindConfig`
+    /// field). Errors when the node has only one section (the
+    /// model invariant).Destructive.
+    #[action(context = Document, wasm = Compatible, destructive)]
+    DeleteSection,
+    /// Mirror `section split [at=<grapheme>]` — macro-only
+    /// target (not bindable to a key today; no `KeybindConfig`
+    /// field). `at_grapheme = ""` → end of text; `"K"` → split
+    /// at grapheme K. Field name disambiguates from
+    /// `AddSection { at }`'s section-vector index (different
+    /// units).Destructive.
+    #[action(context = Document, wasm = Compatible, destructive)]
+    SplitSection { at_grapheme: String },
     /// Mirror `open <path>` — replace the current document with the
     /// one loaded from `path`. **NativeOnly** + **destructive**:
     /// touches the filesystem. Denylisted for non-User macro tiers

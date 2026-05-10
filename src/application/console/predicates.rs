@@ -22,6 +22,50 @@ pub fn always(_: &ConsoleContext) -> bool {
     true
 }
 
+/// True when the selection has a node-shape (Single, Multi,
+/// Section, SectionRange, or MultiSection). Used by the
+/// `border` verb — border edits collapse to per-node-id
+/// fan-out via `nodes_in_selection`, so all five shapes
+/// dispatch cleanly.
+///
+/// The `section` verb uses the stricter sibling
+/// [`node_or_section_selected_single_node`] which excludes
+/// `Multi(_)` because section subverbs need a single-node
+/// target.
+pub fn node_or_section_selected(ctx: &ConsoleContext) -> bool {
+    matches!(
+        &ctx.document.selection,
+        SelectionState::Single(_)
+            | SelectionState::Multi(_)
+            | SelectionState::Section(_)
+            | SelectionState::SectionRange { .. }
+            | SelectionState::MultiSection(_)
+    )
+}
+
+/// Stricter sibling of [`node_or_section_selected`] for the
+/// `section` verb specifically — admits the same selection
+/// shapes EXCEPT `Multi(_)`. Every section subverb resolves to
+/// one `(node, section_idx)` target (or fans across MultiSection
+/// for `move dx=/dy=` and `add` for primary-node), and there's
+/// no honest "fan section verbs across multiple nodes" semantics
+/// — the user has to pick which node they want first.
+///
+/// `border` uses `node_or_section_selected` (admits `Multi`)
+/// because border edits collapse to per-node-id fan-out via
+/// `nodes_in_selection`. The two predicates diverge deliberately
+/// to keep the section verb's UX in sync with its runtime
+/// rejection of Multi.
+pub fn node_or_section_selected_single_node(ctx: &ConsoleContext) -> bool {
+    matches!(
+        &ctx.document.selection,
+        SelectionState::Single(_)
+            | SelectionState::Section(_)
+            | SelectionState::SectionRange { .. }
+            | SelectionState::MultiSection(_)
+    )
+}
+
 pub fn edge_selected(ctx: &ConsoleContext) -> bool {
     matches!(ctx.document.selection, SelectionState::Edge(_))
 }
@@ -203,4 +247,67 @@ pub fn portal_marker_is(ctx: &ConsoleContext, glyph: &str) -> bool {
         return false;
     }
     effective_body_glyph(ctx).map(|g| g == glyph).unwrap_or(false)
+}
+
+#[cfg(test)]
+mod predicate_divergence_tests {
+    use super::*;
+    use crate::application::document::{SectionSel, SelectionState};
+
+    fn ctx_with_selection(sel: SelectionState) -> ConsoleContext<'static> {
+        // Leak a fixture document — predicate tests just need
+        // `ctx.document.selection`, no real model state.
+        let doc = Box::leak(Box::new(
+            crate::application::document::tests_common::load_test_doc(),
+        ));
+        doc.selection = sel;
+        ConsoleContext::from_document(doc)
+    }
+
+    /// `border`'s predicate (`node_or_section_selected`) admits
+    /// `Multi(_)` because border edits collapse to per-node
+    /// fan-out via `nodes_in_selection`.
+    #[test]
+    fn border_predicate_admits_multi_selection() {
+        let ctx = ctx_with_selection(SelectionState::Multi(vec!["a".into(), "b".into()]));
+        assert!(node_or_section_selected(&ctx));
+    }
+
+    /// `section`'s stricter sibling rejects `Multi(_)` so the
+    /// verb hides on multi-node selections in completion + help.
+    /// Runtime would reject anyway (every section subverb needs
+    /// a single-node target); pinning here keeps the UX in sync.
+    #[test]
+    fn section_predicate_rejects_multi_selection() {
+        let ctx = ctx_with_selection(SelectionState::Multi(vec!["a".into(), "b".into()]));
+        assert!(!node_or_section_selected_single_node(&ctx));
+    }
+
+    /// Both predicates admit `Single`, `Section`, `SectionRange`,
+    /// `MultiSection`. Pin the parity to catch a future drift
+    /// where one is widened without the other.
+    #[test]
+    fn predicates_agree_on_single_section_sectionrange_multisection() {
+        let cases = [
+            SelectionState::Single("a".into()),
+            SelectionState::Section(SectionSel { node_id: "a".into(), section_idx: 0 }),
+            SelectionState::SectionRange {
+                sel: SectionSel { node_id: "a".into(), section_idx: 0 },
+                range: (0, 0),
+            },
+            SelectionState::MultiSection(vec![SectionSel {
+                node_id: "a".into(),
+                section_idx: 0,
+            }]),
+        ];
+        for sel in cases {
+            let ctx = ctx_with_selection(sel.clone());
+            assert!(node_or_section_selected(&ctx), "border should admit {:?}", sel);
+            assert!(
+                node_or_section_selected_single_node(&ctx),
+                "section should admit {:?}",
+                sel
+            );
+        }
+    }
 }

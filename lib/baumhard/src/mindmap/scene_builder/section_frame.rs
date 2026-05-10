@@ -45,7 +45,8 @@ use crate::util::color::{hex_to_rgba_safe, resolve_var};
 ///   `TextElement` emission, so frames track the same set of
 ///   "renderable" sections.
 ///
-/// Each emitted element carries a fully-resolved [`BorderStyle`]
+/// Each emitted element carries a fully-resolved
+/// [`crate::mindmap::border::BorderStyle`]
 /// plus a `palette_cycle`. The matching
 /// `(active_node, focused_section_idx)` section emits
 /// `focused = true`; the resolver flips to the focused-variant

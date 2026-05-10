@@ -782,37 +782,38 @@ fn test_shift_home_seeds_anchor_at_line_start() {
 
 // ── Editor close → SectionRange lift (N4-C.b.2) ──────────────────
 
-/// `lift_anchor_to_section_range` returns `Some(SectionRange)`
-/// when an anchor is set and differs from cursor. The range is
-/// the half-open `[min, max)` regardless of which side is the
-/// anchor — pin both `cursor > anchor` and `cursor < anchor`
-/// shapes.
+/// `lift_anchor_to_section_range` lifts the editor's
+/// shift-select pair into a `Section(SectionSel)` selection
+/// when the anchor differs from the cursor — the function name
+/// is historical; today it discards the grapheme range because
+/// every `SectionRange` consumer interprets the field as
+/// section indices, so writing grapheme positions silently
+/// broke downstream fan-out (`border preview`, structural
+/// cleanup, `commit_border_preview`'s `Sections` target). The
+/// post-commit selection lands at the section the user was
+/// editing — the right anchor for follow-up per-section verbs.
 #[test]
-fn test_lift_anchor_returns_section_range_when_anchor_below_cursor() {
+fn test_lift_anchor_lifts_to_section_when_anchor_below_cursor() {
     use super::editor::lift_anchor_to_section_range;
     use crate::application::document::SelectionState;
     let lifted =
         lift_anchor_to_section_range(Some(3), 7, "node-1", 2).expect("anchor != cursor → lift");
     match lifted {
-        SelectionState::SectionRange { sel, range } => {
+        SelectionState::Section(sel) => {
             assert_eq!(sel.node_id, "node-1");
             assert_eq!(sel.section_idx, 2);
-            assert_eq!(range, (3, 7));
         }
-        _ => panic!("expected SectionRange"),
+        other => panic!("expected Section, got {:?}", other),
     }
 }
 
 #[test]
-fn test_lift_anchor_returns_section_range_when_anchor_above_cursor() {
+fn test_lift_anchor_lifts_to_section_when_anchor_above_cursor() {
     use super::editor::lift_anchor_to_section_range;
     use crate::application::document::SelectionState;
     let lifted =
         lift_anchor_to_section_range(Some(7), 3, "node-1", 2).expect("anchor != cursor → lift");
-    match lifted {
-        SelectionState::SectionRange { range, .. } => assert_eq!(range, (3, 7)),
-        _ => panic!("expected SectionRange"),
-    }
+    assert!(matches!(lifted, SelectionState::Section(_)));
 }
 
 /// `lift_anchor_to_section_range` returns `None` when the

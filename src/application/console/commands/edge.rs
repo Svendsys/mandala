@@ -134,7 +134,11 @@ fn execute_edge(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                         "curve" => "connection already curved",
                         "style" => "no style override to reset",
                         "position" => "position already at default",
-                        _ => unreachable!("outer guard restricts to 4 kinds"),
+                        // Outer guard restricts to 4 kinds; this
+                        // arm is statically unreachable but
+                        // CODE_CONVENTIONS §9 forbids panic in
+                        // interactive paths.
+                        _ => "no change",
                     };
                     let already_msg = already_msg.to_string();
                     tally.note(changed, || already_msg);

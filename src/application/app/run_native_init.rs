@@ -252,6 +252,12 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
         // bindings (a "button"). Tracked so we only call set_cursor
         // on transitions instead of every CursorMoved event.
         cursor_is_hand: false,
+        // Last cursor icon written via Window::set_cursor — used by
+        // the cursor_moved handler to skip redundant per-frame
+        // set_cursor calls on platforms (Windows, Wayland) where
+        // winit doesn't dedup. Initialised to Default to match the
+        // as-launched cursor.
+        cursor_icon_last: winit::window::CursorIcon::Default,
         // Picker hover gate: cursor-moves into the picker update
         // HSV + preview synchronously (cheap), but scene + overlay
         // rebuild runs through the unified adaptive throttle in
@@ -262,6 +268,9 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
         keybinds,
         macros,
         anim_pause_start_ms: None,
+        // Touch gesture recogniser. State machine starts Idle;
+        // first `WindowEvent::Touch` lands a finger.
+        touch_recognizer: super::touch_gesture::TouchGestureRecognizer::new(),
     }
 }
 

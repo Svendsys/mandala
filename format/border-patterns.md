@@ -195,6 +195,17 @@ section frame palette=rainbow field=frame
 section frame preset=heavy section=2     # explicit section index when selection is a single node
 ```
 
+`section frame` is **kv-only** today — the per-node `border` and
+the canvas-default `canvas border` verbs accept positional
+subverbs (`border preset heavy`, `canvas border side top "..."`)
+but `section frame` doesn't. Tracked as a follow-up; the kv form
+covers every shape until the unified dispatcher lands.
+
+Per-side / per-corner glyph writes (`top=` / `tl=` etc.) require
+`preset=custom` first — same gate the per-node `border side` and
+`canvas border side` paths enforce. The data layer's
+auto-promote-to-custom safety net stays for macro consumers.
+
 Map-wide defaults are authored through the `canvas` command:
 
 ```
@@ -215,27 +226,47 @@ across surfaces.
 
 Per-node configuration runs through the
 [`border` console verb](../src/application/console/commands/border).
-Verbs:
+Plan §5.2 ships positional subverbs alongside the kv form (kept
+as the keybind-friendly alias).
+
+Bare-positional subverbs:
 
 ```
-border on                 # show_frame = true
-border off                # show_frame = false
-border show               # multi-line readout of the resolved config
-border reset              # drop the per-node override
+border on                       # show the border
+border off                      # hide the border
+border toggle                   # flip show_frame per node
+border show [side=<...>] [verbose]
+                                # readout; side= filters to one
+                                # of top|bottom|left|right|all;
+                                # verbose surfaces the dual color
+                                # surface (style.frame_color vs
+                                # style.border.color — see §5.4 #2)
+border reset                    # drop the per-node override
 ```
 
-Composable kv form (every key is optional; multiple kvs apply
-atomically):
+Per-field positional subverbs:
 
 ```
-border preset=<light|heavy|double|rounded|custom>
-border font=<family> size=<pt>
-border color=<#hex|var(--name)|preset|reset>
-border palette=<name|off> [field=<frame|background|text|title>]
-border top="<pattern>" bottom="<pattern>" \
-       left="<pattern>" right="<pattern>"
-border tl="<glyph>" tr="<glyph>" bl="<glyph>" br="<glyph>"
-border padding=<px>
+border preset <light|heavy|double|rounded|custom|cycle>
+              # `cycle` advances to the next preset, wrapping;
+              # samples the first selected node's preset so a
+              # multi-node selection converges to one target
+border color  <#hex|var(--name)|preset|reset>
+border padding <px>
+border palette <name|off> [field=<frame|background|text|title>]
+border font <family|off> [size=<pt>]
+border side <top|bottom|left|right|all> <pattern|reset>
+border corner <tl|tr|bl|br|all> <glyph|reset>
+```
+
+Composable kv form (kept for keybinds; every key is optional;
+multiple kvs apply atomically):
+
+```
+border preset=<...> font=<...> size=<...> color=<...>
+       palette=<...> field=<...> padding=<...>
+       top="<pattern>" bottom="<pattern>" left="<pattern>" right="<pattern>"
+       tl="<glyph>" tr="<glyph>" bl="<glyph>" br="<glyph>"
 ```
 
 `light` is the default preset. Its corner glyphs (`┌┐└┘`) extend
@@ -244,9 +275,15 @@ monospace face. `rounded` (`╭╮╰╯`) curves inward and leaves a
 small visible gap at every corner — pick it deliberately if that's
 the look you want.
 
-Setting any side or corner glyph automatically promotes the
-preset to `"custom"`. Quoted patterns survive the tokenizer
-unchanged so `(` / `)` / spaces don't need shell escaping.
+**`border side` / `border corner` against a non-custom preset
+errors** (Plan §5.4 #3) with a `run \`border preset custom\` first`
+hint. Pre-fix the verb silently auto-promoted the preset to
+`custom`, surprising users who picked an explicit preset and
+then set one side. The `reset` form skips the gate (restoring a
+preset's own default doesn't require `custom`).
+
+Quoted patterns survive the tokenizer unchanged so `(` / `)` /
+spaces don't need shell escaping.
 
 ### Live preview
 

@@ -88,6 +88,21 @@ fn macro_source_allows_action_gates_destructive_actions_for_non_user() {
         Action::OpenDocument("/tmp/x.mindmap.json".into()),
         Action::SaveDocumentAs("/tmp/x.mindmap.json".into()),
         Action::NewDocumentAt("/tmp/x.mindmap.json".into()),
+        // §4.6 destructive section variants — User tier passes;
+        // non-User tier rejects (next block).
+        Action::SetSectionText {
+            text: "x".into(),
+            runs_mode: "clear".into(),
+        },
+        Action::AddSection {
+            at: "".into(),
+            text: "x".into(),
+        },
+        Action::DeleteSection,
+        Action::SplitSection {
+            at_grapheme: "".into(),
+        },
+        Action::FastResizeStart,
     ] {
         assert!(
             MacroSource::User.allows_action(&a),
@@ -127,6 +142,28 @@ fn macro_source_allows_action_gates_destructive_actions_for_non_user() {
             Action::OpenDocument("/tmp/x.mindmap.json".into()),
             Action::SaveDocumentAs("/tmp/x.mindmap.json".into()),
             Action::NewDocumentAt("/tmp/x.mindmap.json".into()),
+            // §4.6 destructive section variants — pin the gate
+            // value-explicitly per Test Quality #2 + Security
+            // M-2. Structural exhaustiveness via `ActionKind::iter()`
+            // covers them transitively, but a load-bearing
+            // explicit pin catches a future refactor that
+            // bypassed `is_destructive()` for any reason.
+            Action::SetSectionText {
+                text: "x".into(),
+                runs_mode: "clear".into(),
+            },
+            Action::AddSection {
+                at: "".into(),
+                text: "x".into(),
+            },
+            Action::DeleteSection,
+            Action::SplitSection {
+                at_grapheme: "".into(),
+            },
+            // Batch 4 destructive-on-commit variant — pin
+            // explicitly so the `set_node_aabb` / `set_section_aabb`
+            // commit on right-button release stays gated.
+            Action::FastResizeStart,
         ] {
             assert!(!tier.allows_action(&a), "{:?} tier should reject {:?}", tier, a);
         }

@@ -13,15 +13,14 @@
 //!   "set mode" only — for the legacy "Enter on a node opens the
 //!   editor" UX, use the keybind).
 //!
-//! `mode section-edit` is intentionally absent: the `ConsoleSideEffect`
-//! bus only carries `SetInteractionMode` today, but opening the
-//! section editor needs the full modal cascade
-//! (`apply_enter_section_edit` consumes a `RebuildContext` + the
-//! native modal-stealer). Per CODE_CONVENTIONS §5 (no half-features),
-//! we don't surface a verb that the bus can't drive — keybind users
-//! get the full functionality today via `Action::EnterSectionEdit`
-//! (Enter inside `InputContext::NodeEdit`). When the bus gains a
-//! richer variant (e.g. `OpenSectionEditor`), the verb lands then.
+//! `mode section-edit` is intentionally absent: the user-named
+//! verb for "open the section editor" is `section edit` (with
+//! `[section=<idx>]`), not `mode section-edit` — the bus
+//! carries `OpenSectionEdit { node_id, section_idx }` and the
+//! section verb is the only producer. Authors who think in
+//! "modes" should reach for `section edit` to drop into the
+//! editor; `mode default` exits any mode including the editor
+//! via the post-rebuild close-target logic.
 //!
 //! `mode show` is intentionally absent until a later batch plumbs
 //! the active mode through `ConsoleEffects` (same §5 reasoning —
@@ -134,8 +133,8 @@ fn format_resize_error(e: &ResizeTargetError) -> String {
             "mode resize: multi-target selection — single-target only".into()
         }
         ResizeTargetError::SectionFillParent { node_id, section_idx } => format!(
-            "mode resize: section {}[{}] is fill-parent (size=None) — no AABB to stretch. \
-             Pin a size first via `section resize <w> <h>`",
+            "mode resize: section {}[{}] fills its parent — no AABB to stretch. \
+             Pin a size first via `section resize w=<w> h=<h>`",
             node_id, section_idx,
         ),
         ResizeTargetError::EdgeOrPortal => {
@@ -287,7 +286,7 @@ mod tests {
             section_idx: 0,
         });
         let (result, _, _) = run_mode("mode resize", &mut doc);
-        assert_err_contains(&result, "fill-parent");
+        assert_err_contains(&result, "fills its parent");
     }
 
     /// Edge selection — not a resizable surface.

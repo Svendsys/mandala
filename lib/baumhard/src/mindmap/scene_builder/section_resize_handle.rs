@@ -84,17 +84,22 @@ impl ResizeHandleSide {
         let (fx, fy) = self.axis_factors();
         let dx = total_delta.x as f64;
         let dy = total_delta.y as f64;
+        // `axis_factors()` is exhaustively pinned to {-1, 0, 1}; the
+        // wildcard arm is mathematically dead. Per CODE_CONVENTIONS §9
+        // (no panic in interactive paths) we fall through to the
+        // "no axis movement" identity rather than `unreachable!()` —
+        // this code runs on every resize-drag drain, and a bug
+        // upstream that ever produced an out-of-range factor would
+        // otherwise crash the gesture mid-drag.
         let (off_x, size_w) = match fx {
             -1 => (start_offset.x + dx, start_size.width - dx),
-            0 => (start_offset.x, start_size.width),
             1 => (start_offset.x, start_size.width + dx),
-            _ => unreachable!("axis_factors only emits -1/0/+1"),
+            _ => (start_offset.x, start_size.width),
         };
         let (off_y, size_h) = match fy {
             -1 => (start_offset.y + dy, start_size.height - dy),
-            0 => (start_offset.y, start_size.height),
             1 => (start_offset.y, start_size.height + dy),
-            _ => unreachable!("axis_factors only emits -1/0/+1"),
+            _ => (start_offset.y, start_size.height),
         };
         (
             crate::mindmap::model::Position { x: off_x, y: off_y },
@@ -121,6 +126,33 @@ impl ResizeHandleSide {
             Self::SW => 7,
             Self::W => 8,
         }
+    }
+}
+
+/// Pick a corner anchor for a fast-resize gesture from the cursor's
+/// position within an AABB. Returns one of the four corner sides
+/// (`NW` / `NE` / `SW` / `SE`). Edge handles (`N` / `E` / `S` / `W`)
+/// are deliberately not picked here — single-axis resize is a
+/// finer-grained operation that needs explicit Resize-mode handle
+/// targeting; the fast-resize gesture is "grab a corner from
+/// anywhere in this body".
+///
+/// Quadrant boundaries are split at the AABB centre. A cursor
+/// exactly on the centreline rounds south and east (`>=` on both
+/// axes). Tested as a pure function — no GPU, no scene state.
+pub fn infer_resize_anchor(
+    cursor_canvas: Vec2,
+    aabb_pos: Vec2,
+    aabb_size: Vec2,
+) -> ResizeHandleSide {
+    let center = aabb_pos + aabb_size * 0.5;
+    let east = cursor_canvas.x >= center.x;
+    let south = cursor_canvas.y >= center.y;
+    match (east, south) {
+        (false, false) => ResizeHandleSide::NW,
+        (true, false) => ResizeHandleSide::NE,
+        (false, true) => ResizeHandleSide::SW,
+        (true, true) => ResizeHandleSide::SE,
     }
 }
 
@@ -332,5 +364,65 @@ mod tests {
         assert_eq!(format!("{}", ResizeHandleSide::NW), "nw");
         assert_eq!(format!("{}", ResizeHandleSide::E), "e");
         assert_eq!(format!("{}", ResizeHandleSide::SE), "se");
+    }
+
+    #[test]
+    fn infer_resize_anchor_picks_quadrant_corner() {
+        // 100×80 AABB at (10, 20) → centre (60, 60).
+        let pos = Vec2::new(10.0, 20.0);
+        let size = Vec2::new(100.0, 80.0);
+        // Strictly NW of centre.
+        assert_eq!(
+            infer_resize_anchor(Vec2::new(20.0, 30.0), pos, size),
+            ResizeHandleSide::NW
+        );
+        // Strictly NE.
+        assert_eq!(
+            infer_resize_anchor(Vec2::new(100.0, 30.0), pos, size),
+            ResizeHandleSide::NE
+        );
+        // Strictly SW.
+        assert_eq!(
+            infer_resize_anchor(Vec2::new(20.0, 90.0), pos, size),
+            ResizeHandleSide::SW
+        );
+        // Strictly SE.
+        assert_eq!(
+            infer_resize_anchor(Vec2::new(100.0, 90.0), pos, size),
+            ResizeHandleSide::SE
+        );
+    }
+
+    #[test]
+    fn infer_resize_anchor_centre_rounds_south_east() {
+        // Cursor exactly on the AABB centre — tie-breaker rounds
+        // SE (the `>=` comparison on both axes). The convention
+        // matters only for cursor-on-centre; in practice the press
+        // is almost never exactly at centre, but pinning the
+        // tie-break behaviour locks the code path.
+        let pos = Vec2::new(0.0, 0.0);
+        let size = Vec2::new(100.0, 100.0);
+        assert_eq!(
+            infer_resize_anchor(Vec2::new(50.0, 50.0), pos, size),
+            ResizeHandleSide::SE
+        );
+    }
+
+    #[test]
+    fn infer_resize_anchor_off_aabb_still_resolves_a_quadrant() {
+        // The function doesn't bounds-check; a cursor outside the
+        // AABB still resolves to whichever quadrant the centre-
+        // relative coords land in. Keeps the function pure and
+        // composable with off-AABB hit-tests downstream.
+        let pos = Vec2::new(0.0, 0.0);
+        let size = Vec2::new(10.0, 10.0);
+        assert_eq!(
+            infer_resize_anchor(Vec2::new(-100.0, -100.0), pos, size),
+            ResizeHandleSide::NW
+        );
+        assert_eq!(
+            infer_resize_anchor(Vec2::new(1000.0, 1000.0), pos, size),
+            ResizeHandleSide::SE
+        );
     }
 }

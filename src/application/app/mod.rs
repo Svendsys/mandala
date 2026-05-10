@@ -89,6 +89,7 @@ mod run_native_init;
 mod run_wasm;
 #[cfg(not(target_arch = "wasm32"))]
 mod throttled_interaction;
+mod touch_gesture;
 
 // `InputHandlerContext` has 21 fields. Drift surface for new
 // fields: the struct in `input_context.rs`, the
@@ -131,6 +132,19 @@ const EDGE_HIT_TOLERANCE_PX: f32 = 8.0;
 /// is a future seam.
 #[cfg(not(target_arch = "wasm32"))]
 const HANDLE_HIT_TOLERANCE_PX: f32 = 8.0;
+
+/// Minimum cursor travel (squared screen-pixel distance) before
+/// a `Pending` / `PendingRight` press promotes to its respective
+/// drag gesture. The 5px threshold (squared = 25.0) splits "this
+/// was a click" from "this is a drag" — small enough that
+/// intentional drags engage immediately, large enough that
+/// trembling fingers don't accidentally start a drag-to-move
+/// from a click. Used by both threshold-cross arms in
+/// `event_cursor_moved.rs` (left-button `Pending` and right-
+/// button `PendingRight`); single source so a future tweak
+/// doesn't drift between the two arms.
+#[cfg(not(target_arch = "wasm32"))]
+const DRAG_THRESHOLD_SQ_PX: f64 = 25.0;
 
 /// What a single click targeted. Used by [`LastClick`] + the
 /// double-click detector so a portal-marker double-click (navigate)
@@ -438,6 +452,40 @@ enum DragState {
         /// a selected node is a resize, not a re-selection or
         /// a move-node drag.
         hit_node_resize_handle: Option<(String, baumhard::mindmap::scene_builder::ResizeHandleSide)>,
+    },
+    /// Right-button is down + cursor hasn't moved past the drag
+    /// threshold. Press-time hit captures the body of any node /
+    /// section under the cursor (no edge-handle / portal-label /
+    /// resize-handle precedence — fast-resize is body-only by
+    /// design). Threshold-cross promotes to
+    /// `Throttled(NodeResize | SectionResize)` via
+    /// `Action::FastResizeStart`; release-without-movement fires
+    /// the bound `MouseGesture::RightClick` action (default
+    /// unbound) and resets to `None`.
+    PendingRight {
+        start_pos: (f64, f64),
+        /// Canvas-space cursor position at press time (already
+        /// converted via `Renderer::screen_to_canvas`). Carried
+        /// through to `Action::FastResizeStart` so the corner
+        /// anchor is computed from where the user *pressed*, not
+        /// from where the cursor sat at threshold-cross — plan
+        /// §6.3: "Quadrant determined at press time, not
+        /// continuously". Without this snapshot the user gets
+        /// whichever corner they happened to drag *toward*, which
+        /// inverts the gesture's intent on small nodes.
+        start_canvas: glam::Vec2,
+        /// Press-time hit, body-only. `None` for a press on
+        /// empty canvas — release fires `RightClick` regardless
+        /// of where the cursor is, but the threshold-cross arm
+        /// won't promote to `FastResizeStart` without a node
+        /// target.
+        hit_node: Option<String>,
+        /// Section index inside `hit_node.sections` when the
+        /// press landed on a specific section in a multi-section
+        /// node. Mirrors the `hit_section_idx` semantics on
+        /// `Pending`. `None` for empty-canvas / single-section /
+        /// non-node hits.
+        hit_section_idx: Option<usize>,
     },
     /// Dragging to pan the camera (started on empty space).
     /// Unthrottled — emits a `CameraPan` decree directly, no

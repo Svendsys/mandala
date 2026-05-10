@@ -815,7 +815,7 @@ impl Renderer {
         std::mem::replace(&mut self.connection_geometry_dirty, false)
     }
 
-    /// Non-consuming peek of [`take_connection_geometry_dirty`].
+    /// Non-consuming peek of [`Self::take_connection_geometry_dirty`].
     /// Used by the idle-CPU `needs_continuation` predicate to
     /// decide whether the loop should keep iterating without
     /// burning the flag — `take` would consume it before the

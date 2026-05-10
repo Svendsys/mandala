@@ -102,7 +102,7 @@ impl ThrottledDrag {
         }
     }
 
-    /// `&self` widening counterpart of [`as_dyn_mut`]. Predicates
+    /// `&self` widening counterpart of [`Self::as_dyn_mut`]. Predicates
     /// like [`ThrottledInteraction::needs_continuation`] read state
     /// without mutation; an immutable borrow lets callers ask the
     /// active variant whether the event loop should keep iterating

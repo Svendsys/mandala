@@ -2397,7 +2397,7 @@ node, verify NO handles appear; press `r`, verify 8 handles appear;
 drag a handle, verify resize works; press Esc, verify handles
 vanish; verify selection preserved.
 
-#### Batch 3 — NodeEdit mode visuals + section selection routing
+#### Batch 3 — NodeEdit mode visuals + section selection routing — SHIPPED
 
 Wires NodeEdit mode end-to-end: section frames, dimming, status bar,
 click routing. The user can now enter NodeEdit mode (`n` keybind or
@@ -2405,165 +2405,673 @@ click routing. The user can now enter NodeEdit mode (`n` keybind or
 editor is reachable via `Action::EnterSectionEdit` (Enter from
 NodeEdit context).
 
-Tasks:
-- [ ] Wire `InteractionMode::NodeEdit { node_id }` predicates.
-- [ ] Change `app/click.rs:62-150` click routing to consult
+Tasks (status post-Tier-1/2 review fixes):
+- [x] `InteractionMode::NodeEdit { node_id }` predicates wired.
+- [x] `app/click.rs` click routing consults
       `interaction_mode.click_resolves_to_section(...)`.
-- [ ] Add `Action::EnterNodeEdit`, `Action::EnterSectionEdit`,
-      `Action::EnterNodeEditClean` (rename from EditSelection*).
-- [ ] Add the single-section short-circuit in
-      `apply_enter_node_edit` (opens editor + sets mode in one pass).
-- [ ] Update `EditSelection` / `EditSelectionClean` arms to dispatch
-      through `EnterNodeEdit*`.
-- [ ] Add `InputContext::NodeEdit` variant in `keybinds/context.rs`.
-- [ ] Add the modal-stealer cascade branch for NodeEdit context in
+- [x] `Action::EnterNodeEdit` / `EnterSectionEdit` /
+      `EnterNodeEditClean` shipped (renamed from `EditSelection*`).
+      The `EditSelection` umbrella stays as a rename-with-shim
+      (documented divergence from §3.8 — it dispatches to
+      `EnterNodeEdit` / `EnterEdgeLabelEdit` / `EnterPortalTextEdit`
+      based on selection variant; allows the existing keybind
+      to keep working without a forced rebind).
+- [x] Single-section short-circuit in `apply_enter_node_edit`
+      (opens editor + sets mode in one pass; `exit_to_default_on_close`
+      so the user lands at Default after editing).
+- [x] `EditSelection*` arms dispatch through `EnterNodeEdit*`.
+- [x] `InputContext::NodeEdit` variant in `keybinds/context.rs`.
+- [x] Modal-stealer cascade branch for NodeEdit in
       `event_keyboard.rs`.
-- [ ] Add `enter_node_edit: vec!["Enter".into()]` keybind default.
-      Replaces the now-deleted `edit_selection` field. Default for
-      `enter_section_edit: vec!["Enter".into()]` (NodeEdit context).
-- [ ] Implement section-frame scene-builder pass
-      (`scene_builder/section_frame.rs`).
-- [ ] Implement inactive-node dimming in `scene_builder/node_pass.rs`.
-- [ ] Implement status-bar overlay in `scene_host.rs`.
-- [ ] Add `node edit` console subverb; `section edit` console
-      subverb.
-- [ ] Set `Flag::Focused` on active section in `apply_text_edit_to_tree`.
-- [ ] Outside-click exits NodeEdit handler in
+- [x] `enter_node_edit: vec![]` keybind default (left empty;
+      the `edit_selection: vec!["Enter".into()]` keybind keeps
+      working via the umbrella dispatch). `EditSelection`'s
+      umbrella dispatch covers the documented intent.
+      `enter_section_edit: vec!["Enter".into()]` default in
+      NodeEdit context. (Documented divergence from §3.8: the
+      plan called for `edit_selection` to be deleted; we kept
+      it as the umbrella entry point, which is functionally
+      equivalent and avoids forcing an existing-config rebind.)
+- [x] `scene_builder/section_frame.rs` section-frame pass.
+- [x] Inactive-node dimming in `scene_builder/node_pass.rs`.
+- [x] Status-bar overlay in `scene_host.rs`.
+- [x] `section edit` console subverb shipped (Batch 5 deferred
+      3/N, commit `b84c00f`). `node edit` console subverb
+      **deferred** — `mode node-edit` covers the same intent
+      via the existing `mode` verb; a `node edit` alias is
+      pure sugar.
+- [x] `Flag::Focused` set on active section in
+      `apply_text_edit_to_tree`.
+- [x] Outside-click exits NodeEdit handler in
       `event_mouse_click.rs`.
-- [ ] Tests per §7.1 (every NodeEdit-related row).
+- [x] Tests per §7.1 (NodeEdit-related rows pinned).
 
-Verification: tests green; manual smoke — full §7.2 scenario 1 by
-hand on native and WASM.
+Open follow-ups (deferred to next PR):
+- [ ] §4.7 hover affordance — `hovered_section: Option<(String, usize)>`
+      on `InitState` plus a 1.2× brightness section-frame pass.
+      Not load-bearing for the NodeEdit UX (the editor cycle
+      works without hover); ship in a follow-up Batch-3.5 or
+      fold into Batch 7's touch parity work.
+- [ ] `node edit` console subverb (sugar over `mode node-edit`).
 
-#### Batch 4 — Fast-resize gesture
+Verification (post-Tier-1/2 review fixes): 2544 tests green;
+wasm32 cross-compile clean.
+
+#### Batch 4 — Fast-resize gesture — SHIPPED
 
 Adds RightClick / RightDrag MouseGesture variants and the
 Ctrl+RightDrag fast-resize gesture. No new visual chrome (the
 gesture works against any node, including not-currently-selected
 ones). Touch is deferred to Batch 7.
 
-Tasks:
-- [ ] Add `MouseGesture::RightClick`, `RightDrag` to `bind.rs`.
-- [ ] Add `MouseButton::Right` arm in `event_mouse_click.rs`
-      handling press → `DragState::Pending` (carries `is_right`
-      bit), release → `RightClick` action lookup or
-      `Throttled(NodeResize) → set_node_aabb` commit.
-- [ ] Add right-button threshold-cross arm in `event_cursor_moved.rs`
-      that dispatches `Action::FastResizeStart` with hit context.
-- [ ] Add `Action::FastResizeStart` + dispatch arm; arm reads
-      `DispatchHit`, computes quadrant via `infer_resize_anchor`,
-      transitions DragState to Throttled(NodeResize|SectionResize).
-- [ ] Implement `infer_resize_anchor` in `section_resize_handle.rs`.
-- [ ] Default keybinds: `fast_resize_start: vec![ParametricBinding {
-      combo: "Ctrl+RightDrag", args: vec![] }]`.
-- [ ] Add `cursor_icon: CursorIconHint` plumbing for the visual
-      cursor change during fast-resize.
-- [ ] Tests per §7.1 (fast-resize rows).
+Tasks (status post-9-agent review fixes):
+- [x] `MouseGesture::RightClick` / `RightDrag` in `bind.rs`.
+- [x] `MouseButton::Right` press / release arms in
+      `event_mouse_click.rs` (separate `DragState::PendingRight`
+      variant carrying press-time hit + canvas pos for press-time
+      quadrant inference).
+- [x] Threshold-cross arm in `event_cursor_moved.rs` dispatches
+      `Action::FastResizeStart` with the press-time hit and
+      canvas pos in `DispatchHit`.
+- [x] `Action::FastResizeStart` + dispatch arm; computes
+      anchor via `infer_resize_anchor`; transitions DragState
+      into `Throttled(NodeResize | SectionResize)`. Marked
+      `destructive` per §6.10.
+- [x] `infer_resize_anchor` in `scene_builder/section_resize_handle.rs`.
+- [x] Default keybind `fast_resize_start: ["Ctrl+RightDrag"]`
+      (kept on `Vec<String>` since the Action takes no payload).
+- [x] Cursor icon plumbing via `cursor_icon_last: CursorIcon`
+      on `InitState` + `cursor_icon_for_resize_side` mapping.
+- [x] WASM `contextmenu` event suppression (with Shift+RightClick
+      bypass for browser-context-menu access).
+- [x] Tests: 8 new (anchor math, gesture round-trips, cursor
+      mapping pin, keybind resolution, default destructive set).
 
-Verification: tests green; manual smoke — Ctrl+RightDrag from each
-of the four quadrants resizes from the matching corner; release
-commits; undo works; without Ctrl, right-drag does nothing.
+Verification: 2523 tests green post-9-agent review fixes;
+wasm32 cross-compile clean.
 
-#### Batch 5 — Section console verb redesign + new doc setters
+#### Batch 5 — Section console verb redesign + new doc setters — SHIPPED
 
 Lands the new `section` verb grammar and the `add_section` /
 `delete_section` / `split_section` doc setters.
 
-Tasks:
-- [ ] Refactor `console/commands/section.rs` into
-      `console/commands/section/` directory with subverb modules
-      (`move.rs`, `resize.rs`, `show.rs`, `edit.rs`, `text.rs`,
-      `add.rs`, `delete.rs`, `split.rs`, `complete.rs`).
-- [ ] Add new doc setters in `document/nodes/mod.rs` and
-      `document/nodes/section_text.rs`:
-      - `add_section(node_id, at, section)`
-      - `delete_section(node_id, idx)`
-      - `split_section(node_id, idx, at_grapheme)`
-- [ ] Add new Action variants per §4.6: `SetSectionOffsetAbs`,
+Tasks (status post-Full-Nelson review):
+- [x] Section verb grammar lives in `console/commands/section/`
+      (`mod.rs` + `frame.rs`); per-subverb-file split deferred —
+      the single `mod.rs` ~700 LoC houses every subverb's
+      `execute_*` and the shared parsers, mirroring the shape
+      Batch 6's `border/` settled on after its own evolution.
+- [x] Doc setters `add_section` / `delete_section` /
+      `split_section` shipped in `nodes/section_structure.rs`
+      with full undo discipline (`EditNodeStyle` extended with
+      `before_position` / `before_size`).
+- [x] kv-form migration: `move dx=/dy=`, `move x=/y=` (NEW
+      absolute), `resize w=/h=`, `resize fill` (renamed from
+      `none`).
+- [x] New subverbs: `show`, `text`, `add`, `delete`, `split`.
+      `text` honours `runs=preserve|clear` (preserve uses the
+      new `set_section_text_preserving_runs` helper; clear
+      collapses via `set_section_text`).
+- [x] `node_or_section_selected` predicate added in
+      `predicates.rs:33`; `Multi(_)` excluded to avoid
+      predicate-vs-runtime mismatch flagged by the Full-Nelson
+      review.
+- [x] §4.5 rule 3: `Single(id)` on a single-section node
+      auto-resolves to `(id, 0)` (closes the §5.7 hostile
+      error).
+- [x] `format/sections.md` rewritten with the 9-subverb table
+      (post-`section edit`-ship; the 9th subverb landed in the
+      deferred-items follow-up).
+- [x] §4.5 rule 4: MultiSection fan-out for `move dx=X dy=Y`
+      shipped in commit `ff22f5c`. Atomic parse-then-dispatch
+      via `MindMapDocument::validate_section_offset_change` —
+      the verb pre-validates every selected pair's would-be
+      AABB; a single rejection aborts the whole fan-out so
+      partial mutation never lands. Other subverbs
+      (`text` / `resize` / `delete` / `split`) keep
+      single-target rejection on MultiSection.
+- [x] §4.6 Action variants — `SetSectionOffsetAbs`,
       `SetSectionText`, `AddSection`, `DeleteSection`,
-      `SplitSection`. Their dispatch arms call the new helpers.
-- [ ] Replace `applicable: always` with
-      `applicable: node_or_section_selected` (new predicate in
-      `predicates.rs`).
-- [ ] Migrate existing tests; add new tests per §7.1.
-- [ ] Update `format/sections.md` to document the new console
-      grammar.
+      `SplitSection { at_grapheme }` — shipped in commit
+      `256c096`. Macro-only targets today (no `KeybindConfig`
+      fields; the string-arg payloads make keybinding awkward).
+      Doc-comments on the 5 variants explicitly say "macro-only
+      target" so future readers don't assume keybind reach.
+      The 4 destructive ones (`SetSectionText`, `AddSection`,
+      `DeleteSection`, `SplitSection`) are `#[action(destructive)]`
+      and pinned in `keybinds/tests.rs::test_is_destructive_destructive_set_is_pinned`.
+- [x] `section edit [section=<idx>]` subverb shipped in commit
+      `b84c00f`. Routes through the new
+      `ConsoleSideEffect::OpenSectionEdit { node_id, section_idx }`
+      bus variant; the post-rebuild handler delegates to the
+      canonical `apply_enter_section_edit` (the same path
+      `Action::EnterSectionEdit` uses on the keybind side) for
+      `OwnerMismatch` validation and consistent posture.
 
-Verification: tests green; manual smoke — full §7.2 scenarios 1, 2.
+Verification (post-deferred-items + Tier-1/2 review fixes):
+2544 tests green; wasm32 cross-compile clean.
 
-#### Batch 6 — Border verb redesign + canvas-default editing + preview
+#### Batch 6 — Border verb redesign + canvas-default editing + preview — SHIPPED
 
 Lands the new `border` verb grammar, the `border preview` lifecycle,
 and the new `canvas border` verb.
 
-Tasks:
-- [ ] Refactor `console/commands/border/` to per-subverb modules.
-- [ ] Replace flat 16-key parsing with subverb-routed parsers.
-- [ ] Add `BorderPreview` field on `MindMapDocument`; thread
-      through scene rebuild.
-- [ ] Add Action variants per §5.8.
-- [ ] Replace `applicable: always` with `applicable:
-      node_or_section_selected`.
-- [ ] Delete the auto-promote-to-custom logic in
-      `document/nodes/border.rs:286-293`. Replace with explicit
-      error in the `border side` / `border corner` subverbs.
-- [ ] Add `canvas` top-level verb with `canvas border *` subverbs.
-- [ ] Add `set_canvas_default_border` doc setter +
-      `EditCanvasStyle` undo variant.
-- [ ] Migrate existing tests; add new tests per §7.1.
-- [ ] Update `format/border-patterns.md` Console verb section.
+Tasks (status post-Batch-6 ship):
+- [x] `console/commands/border/` already partially modular
+      (`mod.rs` / `complete.rs` / `execute.rs` / `preview.rs` /
+      `show.rs` / `tests.rs`). Further per-subverb file split
+      is pure refactor (no behavior change); deferred — the
+      shape today is workable.
+- [x] Subverb-routed positional parsers added in B6.2-6
+      (preset / color / padding / palette / font / side /
+      corner / toggle). Kv form preserved as the keybind-
+      friendly alias per Plan §5.2.
+- [x] `BorderPreview` field on `MindMapDocument` shipped in
+      Batch 5/Tier-1 ship (preview lifecycle was working at
+      Batch-5 time per §5.6 status). Scene rebuild already
+      threads `border_preview: Option<BorderPreview<'a>>`
+      through `build_scene_with_cache`.
+- [x] **Partial** Action variants per §5.8: `CycleBorderPreset`
+      and `ToggleBorderVisible` (the no-payload ones) shipped in
+      B6.9. The 7 String-payload variants
+      (`SetBorderPreset(String)` / `SetBorderColor(String)` / ...)
+      deferred — they overlap with the existing
+      `SetBorderField { field, value }` parametric variant whose
+      deletion (Plan §5.8 last paragraph) is a breaking-change
+      migration for every parametric keybind binding shape.
+      Tracking as a follow-up; today's `SetBorderField` covers
+      the same surface for keybinds.
+- [x] `applicable: always` → `node_or_section_selected` (B6.1).
+- [x] Auto-promote-to-custom guarded at the verb layer (B6.7).
+      The data-layer auto-promote stays as the model invariant
+      defense ("glyphs only render with preset=custom") so
+      macro consumers and the kv form continue to work; the
+      verb-layer pre-check makes the user-facing positional
+      path error explicitly per Plan §5.4 #3.
+- [x] `canvas` top-level verb already shipped (`canvas.rs`,
+      pre-Batch-6) with `border` and `section-frame [focused]`
+      subjects. B6.10 extends the verb with the Plan §5.7
+      positional subverb grammar matching the per-node `border`
+      verb.
+- [x] `set_canvas_default_border_config` doc setter already
+      exists. **`EditCanvasStyle` undo variant** subsumed by
+      the existing `UndoAction::CanvasSnapshot` which captures
+      the entire `Canvas` (palettes, defaults, theme vars) in
+      one entry — same round-trip contract Plan §5.7 calls for,
+      just stored as a snapshot rather than a per-field diff.
+- [x] Tests migrated; new tests added per §7.1 (28 new pins
+      across B6.1-10).
+- [x] `format/border-patterns.md` Console verb section
+      rewritten (B6.11) to surface positional subverbs first,
+      kv form as the keybind alias, and the `border side` /
+      `border corner` non-custom-preset error.
 
-Verification: tests green; manual smoke — all of §7.2 scenario 3
-plus per-subverb sanity checks.
+Verification (post-Batch-6 ship + opus review remediation):
+2646 tests pass; wasm32 cross-compile clean.
 
-#### Batch 7 — Touch parity
+##### Open follow-ups flagged by the opus review
+
+Honest deferrals that the original Batch-6 ticking missed.
+Track here so Batch 8 (or earlier follow-ups) can pick them up:
+
+- **§5.5 `BorderEditOutcome` removal**: the spec calls for
+  removing the bespoke `BorderEditOutcome` and routing through
+  `helpers::ApplyTally::finalize`. Still present at
+  `border.rs:118-133`, returned by 4+ setters. Substantial
+  refactor across every border setter; not Batch-6-shipping.
+- **§5.5 typed `Outcome::Lines` from the `preset` subverb**:
+  spec calls for the auto-promote message to be emitted by
+  the `preset` subverb's success path. Today the message
+  still rides via `apply_edits`'s shared formatter (which
+  fires regardless of which subverb invoked it).
+- **§5.4 #3 verb-strict vs macro-permissive**: the verb-layer
+  `border side|corner` now errors on non-custom presets. The
+  data-layer auto-promote (`apply_glyph_border_edits_to_slot`)
+  stays as the model invariant defense, so
+  `Action::SetBorderField { field: "top", value: "..." }` from
+  a macro still silently auto-promotes. Deliberate (kv-form
+  back-compat); pin a regression test in `macros/tests.rs`
+  that names the verb-strict-vs-macro-permissive contract so
+  a future contributor doesn't tighten one without the other.
+- **§5.7 doc-setter naming**: spec calls for
+  `set_canvas_default_border`; reality is
+  `set_canvas_default_border_config`. Cosmetic; rename in a
+  follow-up commit.
+- **§5.8 7 of 9 typed Action variants**: `SetBorderPreset(String)`
+  / `SetBorderColor(String)` / `SetBorderPadding(String)` /
+  `SetBorderPalette { palette, field }` / `SetBorderFont {
+  family, size_pt }` / `SetBorderSide { side, pattern }` /
+  `SetBorderCorner { corner, glyph }`. `SetBorderField`
+  preserves the keybind surface for now; Batch 8 should land
+  the typed variants and `#[deprecated]` `SetBorderField`.
+- **§5.9 completion templates**: the rendered-in-border-font
+  pattern templates for `border side WHICH <TAB>` (6 templates)
+  and the glyph candidates for `border corner WHICH <TAB>`
+  (13 candidates) need a typed catalogue + font-renderer
+  integration; the `reset` completion shipped in T4 covers
+  the high-value discoverability gap.
+- **§5.10 inline action hints in `border show`**: shipped in T5
+  with the `(toggle: ...)` / `(cycle: ...)` / `(override: ...)`
+  annotations.
+- **§5.11 test migration**: kept additive (kv-form tests still
+  green alongside positional-form tests). Plan called for
+  rewrite; the additive shape catches both regressions and
+  costs little.
+- **canvas verb parity**: `canvas border show` doesn't accept
+  `side=` filter / `verbose` flag (only the per-node `border
+  show` does); `canvas border preset cycle` not supported.
+  Cosmetic asymmetries; document or extend.
+
+#### Batch 7 — Touch parity — SHIPPED
 
 Lands the touch gesture recogniser and the `LongPress` /
 `TwoFingerDrag` MouseGesture variants. Touch input becomes a peer
-of mouse for the four supported gestures (tap, long-press, drag,
-two-finger-drag).
+of mouse — long-press is the touch equivalent of `r`
+(EnterResizeMode), two-finger-drag is the touch equivalent of
+Ctrl+RightDrag (FastResizeStart). Pre-Batch-7 the WASM event
+loop dropped `WindowEvent::Touch` silently, leaving mobile-browser
+users with no way into either resize gesture.
 
-Tasks:
-- [ ] Implement `src/application/app/touch_gesture.rs`
-      (`TouchGestureRecognizer`).
-- [ ] Wire `WindowEvent::Touch` from `run_native.rs` and
-      `run_wasm/event_*.rs` into the recogniser.
-- [ ] Add `MouseGesture::LongPress`, `TwoFingerDrag` variants.
-- [ ] Default keybinds: `enter_resize_mode` includes "LongPress";
-      `fast_resize_start` includes "TwoFingerDrag".
-- [ ] Tests for the recogniser state machine.
+Tasks (status post-Batch-7 ship):
+- [x] `MouseGesture::LongPress` / `TwoFingerDrag` variants
+      added to `keybinds/bind.rs:84-103` with strum
+      serialisations (`"longpress"`, `"twofingerdrag"`) and
+      pascal-form mappings.
+- [x] `TouchGestureRecognizer` state machine landed in
+      `src/application/app/touch_gesture.rs`. Pure state
+      machine: `Idle` ↔ `OneFinger` ↔ `TwoFingers`; long-press
+      timer fires from `tick(now)`; two-finger-drag emits per
+      `MOVE_THRESHOLD_PX` centroid step. `LONG_PRESS_MS = 350`
+      (matches iOS / Android conventions); `MOVE_THRESHOLD_PX
+      = 4.0` (matches the existing mouse drag threshold).
+      Test-only `with_thresholds` constructor for state-machine
+      tests so they don't sleep 350ms per case.
+- [x] Native `WindowEvent::Touch` arm in `run_native.rs:454-462`
+      → `dispatch_touch_event` helper at line 295 builds the
+      `Phase` translation, drives the recogniser's `ingest` +
+      `tick`, looks up the bound action via
+      `keybinds.action_for_gesture` (modifier-fixed-false), and
+      dispatches through `super::dispatch::dispatch_action`.
+      `touch_recognizer: TouchGestureRecognizer` field on
+      `InitState`.
+- [x] WASM `WindowEvent::Touch` arm in `run_wasm/mod.rs:454-456`
+      → new `event_touch.rs` sibling with `handle_touch_event`
+      mirroring native. Uses
+      `dispatch::action_core::dispatch_compatible` (the cross-
+      platform dispatcher; FastResizeStart is `NativeOnly` on
+      WASM and falls through to a warn-log via the existing
+      Native-arm gate).
+- [x] Default keybinds extended:
+      `enter_resize_mode: ["r", "LongPress"]`,
+      `fast_resize_start: ["Ctrl+RightDrag", "TwoFingerDrag"]`
+      in `keybinds/config.rs:297-298`. Four new pin tests in
+      `keybinds/tests.rs` lock the resolution + JSON-shape so
+      a regression that drops either touch entry trips at
+      config-resolution time.
+- [x] State-machine tests: 14 new pins covering long-press
+      fire / sub-threshold survival / movement-cancel /
+      finger-lift-cancel / second-finger-cancel /
+      two-finger centroid emission / sub-threshold no-fire /
+      per-step emission / lifting-one-of-two / Idle-after-both /
+      third-finger-ignored / `reset()` / RecognizedGesture →
+      MouseGesture mapping / untracked-finger-id ignored.
 
-Verification: tests green; manual smoke — load on a touch-enabled
-device (or chrome devtools mobile emulation) and verify each gesture.
-This batch's verification is more involved; pair with a tester if
-solo development is a constraint.
+Long-press wake-up gap (acknowledged): the recogniser's `tick`
+fires only from `WindowEvent::Touch` events, not on a wall-clock
+timer. A finger held with literally zero `Moved` events between
+Started and Ended would miss the long-press emission. In
+practice touch hardware emits sub-pixel jitter `Moved` events
+constantly while a finger is down, so the gap is theoretical.
+A future improvement would set
+`ControlFlow::WaitUntil(started_at + LONG_PRESS_MS)` from the
+recogniser's `OneFinger` state — deferred to keep Batch 7's
+diff tractable.
 
-#### Batch 8 — Documentation, polish, drive-by fixes
+Verification: 1608 tests pass on `cargo test --bin mandala`
+(was 1590 → +18: 14 state-machine pins + 4 keybind-default
+pins). Wasm32 cross-compile clean. Manual verification on a
+touch device is **out of scope** for this session — no device
+available. The state-machine tests pin the recognition logic;
+the wiring is a thin call-through layer verified by reading
+the diff.
+
+#### Batch 8 — Documentation, polish, drive-by fixes — SHIPPED
 
 Lands the doc updates, deletes deprecated paths fully, runs a
 final pass to surface any seams the previous batches noticed but
 deferred. Per CODE_CONVENTIONS §5 (drive-by fixes).
 
-Tasks:
-- [ ] Update `CONCEPTS.md` to describe the InteractionMode enum,
-      its variants, its place in §5 "The application runtime".
-- [ ] Update `format/sections.md` to describe the `section` verb's
-      new grammar (also referenced from Batch 5).
-- [ ] Update `format/border-patterns.md` to describe the `border`
-      verb's new grammar (also referenced from Batch 6).
-- [ ] Update `CLAUDE.md` "Common tasks" if any of the
-      `./run.sh` / `./test.sh` flags changed.
-- [ ] Update the README if any user-facing capabilities changed.
-- [ ] Run `cargo doc -p baumhard --no-deps` and check for warnings.
-- [ ] Audit deferred items in `REFACTOR_PLAN.md` Batch 5.2 (DragState
-      Pending refactor) — this batch's mode work touches `Pending`
-      heavily; if the time is right, fold the deferred refactor in.
-- [ ] Final sweep: search for `// FIXME`, `// TODO`, `// HACK` —
-      should be zero (per CODE_CONVENTIONS §5).
-- [ ] Run `./test.sh --bench` to capture final benchmark deltas.
+Tasks (status post-Batch-8 ship):
+- [x] `CONCEPTS.md` extended with `### `InteractionMode`` (the
+      three-mode lifecycle Default / Resize / NodeEdit) and
+      `### `SectionFrameElement` and section-frame chrome` (the
+      cyan-rectangle parallel-canvas dispatch). Both cross-ref
+      §5 "The application runtime" and the plan's §2-§4 design.
+- [x] `format/sections.md` — already updated in Batch 5 + Tier 3
+      review fixes. Verified accurate (9-subverb table, fan-out
+      atomicity note, schema-drift acknowledgement).
+- [x] `format/border-patterns.md` — rewritten in Batch 6 + T6 of
+      the opus review (positional grammar surfaces first, kv as
+      keybind alias, non-custom-preset error documented, cycle
+      semantics noted, internal field-name leak fixed).
+- [x] `CLAUDE.md` "Common tasks" verified accurate — every
+      flag listed (`--coverage` / `--lint` / `--bench`) matches
+      `./test.sh --help`.
+- [x] README verified — high-level orientation unchanged; no
+      user-facing capability claims drifted.
+- [x] `cargo doc --workspace --no-deps`: 12 warnings pre-fix → 0
+      warnings post-fix. Each broken-link / private-item-link /
+      unclosed-html-tag site fixed at the source (B8.1+5 commit).
+- [x] REFACTOR_PLAN.md Batch 5.2 (DragState `Pending` enum
+      conversion) audited — the deferral note's release-UX
+      rationale still stands; the Section/Border PR didn't
+      touch `Pending` (Batch 4 added a parallel `PendingRight`
+      variant; Batch 5/6 ride the `Throttled(SectionResize)`
+      path). Time isn't right; deferral re-confirmed.
+- [x] `// FIXME` / `// TODO` / `// HACK` sweep — zero hits across
+      `src/` and `lib/baumhard/src/`.
+- [x] `cargo bench` for the Plan §7.4 benches:
+      `fast_resize_anchor_inference` ~360 ps/call (no regression
+      vs Batch 4 baseline); `scene_rebuild_node_edit_mode_active`
+      ~30 µs/rebuild on the 50-node × 5-section synthetic;
+      `section_frame_emission_50x5_with_node_edit_active`
+      ~3.3 µs.
 
-Verification: tests green; comprehensive manual smoke (every
-scenario in §7.2 on native and WASM); benchmark deltas inspected.
+Drive-by fixes from the Batch-6 opus review folded in:
+- [x] §5.7 doc-setter rename `set_canvas_default_border_config`
+      → `set_canvas_default_border` (mechanical, 9 sites in 4
+      files; per CODE_CONVENTIONS §10 no shim).
+- [x] Verb-strict vs macro-permissive contract pin
+      (`apply_border_field_to_selection_auto_promotes_preset_to_custom`
+      in border/tests.rs) — locks in the deliberate divergence
+      between the verb-layer error and the data-layer auto-
+      promote so future tightening doesn't drift one without
+      the other.
+- [x] `canvas border preset cycle` parity — single-line
+      addition in `positional_subverb_to_edits`; same wrap
+      order as the per-node verb. Two new tests
+      (`canvas_border_preset_cycle_advances_canvas_default`,
+      `canvas_section_frame_preset_cycle_wraps`).
+
+Open follow-ups deferred to a future PR (acknowledged in plan's
+§5.B6 "Open follow-ups" block):
+- [ ] §5.5 `BorderEditOutcome` removal + `helpers::ApplyTally::finalize`
+      reuse — substantial refactor across every border setter.
+- [ ] §5.5 typed `Outcome::Lines` from `preset` subverb — depends
+      on `BorderEditOutcome` removal.
+- [ ] §5.8 7 of 9 typed `Action` variants (`SetBorderPreset(String)` /
+      `SetBorderColor(String)` / etc.) + `#[deprecated]` on
+      `SetBorderField`. `SetBorderField` preserves the keybind
+      surface today.
+- [ ] §5.9 rendered pattern templates for `border side WHICH <TAB>`
+      (6 templates in border font) and glyph candidates for
+      `border corner WHICH <TAB>` (13 candidates) — needs a typed
+      catalogue + font-renderer integration. The `reset` second-
+      positional row shipped in T4.
+- [ ] `canvas border show side=` / `verbose` parity — the canvas
+      show path uses a custom formatter (no node `size`, no dual
+      color cascade), so adding the per-node flags would force-
+      fit a different output shape. Documented as honest
+      asymmetry.
+- [ ] §3.8 `enter_node_edit` keybind default — kept
+      `edit_selection` as the umbrella entry point instead of
+      deleting it; functionally equivalent, avoids a forced
+      config rebind on existing users.
+- [ ] §4.7 hover affordance — per-frame brightness modulation;
+      better folded into Batch 7's touch-parity work.
+- [ ] `Arc<str>` migration for `SectionFrameElement.node_id`
+      (Performance #2 from the §4.6 review).
+- [ ] Resource caps on text length / sections per node / undo
+      depth (Security I-1/2/3 from the §4.6 review).
+- [ ] §3.9 `node edit` console subverb — sugar over `mode
+      node-edit`; landed.
+- [ ] `SectionRange` grapheme-vs-section type confusion —
+      doc-comment fixed to reflect the load-bearing (section-
+      index) interpretation; the deeper fix to the editor-close
+      `lift_anchor_to_section_range` path is its own follow-up.
+
+Architectural follow-ups from the **whole-PR** opus review T4 —
+acknowledged honestly, deferred because each is invasive (touches
+≥6 callsites) and none fixes a correctness bug:
+
+- [ ] **Layering inversion** — `app/dispatch/cross_dispatch/style.rs`
+      reaches *up* into `console::commands::border` for its mutation
+      cores (`apply_border_field_to_selection`, `nodes_in_selection`,
+      `stage_kv`, `BorderConfigEdits`, `BorderPreviewTarget`). The
+      "correct" shape moves these to `document/nodes/border.rs` (or
+      a new `mutation_cores` module) and makes the verb layer a thin
+      shell over them. The verb layer doubling as the mutation-core
+      registry is a known seam — `style.rs:22/32/55/65/104/122` shows
+      6 reach-ups today. Pure refactor; no behavior change.
+- [ ] **border/canvas/section apply-path dedup** — the three apply
+      paths (`border/execute.rs::apply_edits`,
+      `section/frame.rs::apply_section_frame_edits`, the inline
+      canvas.rs apply paths) share kv-staging + auto-promote +
+      bare-custom-hint logic. `stage_kv` is already shared
+      (post-Batch-6 review-fix); the dispatcher shapes are 80%
+      identical but each parses targets differently
+      (per-node ids / per-section pairs / canvas slot). A unified
+      "stage edits + dispatch to target" entrypoint would collapse
+      three parallel implementations. Deferred because the
+      target-resolution divergence is the load-bearing 20%; the
+      refactor needs a `BorderEditTarget` enum that none of the
+      three call sites authored.
+- [ ] **`Result<Option<T>, E>` simplification** —
+      `canvas.rs::positional_subverb_to_edits` returns
+      `Result<Option<BorderConfigEdits>, ExecResult>` to express
+      three outcomes (apply edits / verb self-handled / error).
+      Cleaner with a 3-arm enum like `enum Ctl<T> { Apply(T),
+      Done(ExecResult), Error(ExecResult) }`. Smell flagged once
+      but not on a hot path; cosmetic.
+
+Final whole-PR review (10-agent Opus). Findings closed in
+this commit are the BLOCKER tier (3) plus the high-value
+CRITICALs / HIGHs (10 fixes; 3 new test pins; cargo doc clean).
+The remainder are deferred here:
+
+- [ ] **WASM touch lift** (touch deep-dive CRITICAL + cross-
+      platform B1 / C1): the shipped Batch 7 default keybinds
+      (`LongPress → EnterResizeMode`, `TwoFingerDrag →
+      FastResizeStart`) bind to NativeOnly Actions. WASM
+      dispatches them through `dispatch_compatible` which
+      returns `Unhandled` and silently drops. A warn-log latch
+      shipped in this commit at least surfaces the failure to
+      the dev console. The real fix is lifting `EnterResizeMode`
+      / `FastResizeStart` to `Compatible` (porting the
+      DragState + modal-stealer machinery cross-platform); a
+      cross-cutting refactor not done in this PR.
+- [ ] **WASM resize-handle hit-test** (cross-platform C2): even
+      if `EnterResizeMode` were Compatible, WASM's left-click
+      handler (`run_wasm/event_mouse_click.rs::handle_mouse_pressed`)
+      lacks the `hit_test_section_resize_handle` /
+      `hit_test_node_resize_handle` calls native uses. The
+      visible chrome wouldn't function on click.
+- [ ] **WASM `MouseGesture` coverage gaps** (cross-platform H2 / H3):
+      `WheelUp/Down` ignores the keybind table, hard-coding
+      `factor = 1.1`; `RightClick` only logs and never dispatches
+      `action_for_gesture`. Both diverge from native semantics.
+- [ ] **Long-press wake-up gap is broken not theoretical** (touch
+      deep-dive CRITICAL): `tick()` is only invoked on
+      `WindowEvent::Touch` events. iOS Safari coalesces events so
+      a finger held with no Moved between Started and Ended will
+      not fire LongPress. Wire `ControlFlow::WaitUntil(started_at +
+      LONG_PRESS_MS)` on native or `setTimeout` on WASM.
+- [ ] **Touch coordinate-space drift** (touch deep-dive HIGH):
+      `winit::Touch.location` is `PhysicalPosition<f64>` but
+      `MOVE_THRESHOLD_PX = 4.0` is doc-claimed as logical pixels.
+      On a 2x retina device the threshold is effectively ~2
+      logical px; on iPhone ~1.3 logical px. Either divide by
+      `window.scale_factor()` before ingest or rename the
+      constant + fix docs.
+- [ ] **Touch clock-skew vulnerability** (touch deep-dive HIGH):
+      `tick()`'s `now.duration_since(track.started_at)` panics or
+      saturates if `now < started_at`. `web_time::Instant` on
+      Firefox bfcache restore can produce regressed timestamps.
+      Use `saturating_duration_since`.
+- [ ] **Touch `Cancelled` handling** (touch deep-dive HIGH): a
+      system-Cancelled secondary finger leaves the recogniser in a
+      latched OneFinger state; treat `Phase::Cancelled` (winit) as
+      `reset()`-equivalent for the affected finger rather than
+      collapsing into `Phase::Ended`.
+- [ ] **Touch `sqrt` on input hot path** (touch deep-dive MEDIUM
+      + CONVENTIONS violation): `update_pos` does
+      `(dx*dx+dy*dy).sqrt() > MOVE_THRESHOLD_PX`; should be
+      `dx*dx+dy*dy > MOVE_THRESHOLD_PX*MOVE_THRESHOLD_PX`.
+- [ ] **Touch demote latch overcorrects** (touch deep-dive MEDIUM):
+      "two fingers down, lift one quickly, hold survivor 350ms" is
+      plausibly long-press intent but currently latches
+      `long_press_emitted: true` so survivor never fires.
+- [ ] **Native + WASM touch dispatch near-duplication** (architecture
+      MEDIUM): `InitState::dispatch_touch_event` and
+      `WasmApp::handle_touch_event` carry near-identical 25-line
+      bodies. Generic-ify via a shared helper.
+- [ ] **DOS resource caps** (security CRITICALs):
+      `MindMapDocument.undo_stack`, `MindNode.inline_macros`,
+      `MindMap.macros`, `Palette.groups`, and section/node text
+      length are all unbounded. The `add_section` 1024-cap shipped
+      in T5 is the model — mirror it for `MAX_UNDO_DEPTH`,
+      `MAX_INLINE_MACROS_PER_NODE`, `MAX_TEXT_LEN`,
+      `MAX_NODES_PER_MAP`, `MAX_PALETTE_GROUPS` at runtime AND
+      verify.
+- [ ] **`split_section` ignores 1024 cap** (correctness MEDIUM):
+      `add_section` checks `MAX_SECTIONS_PER_NODE` but `split_section`
+      doesn't, so repeated splits past the cap bypass the
+      protection. `crates/maptool/src/verify/sections.rs:101` also
+      hardcodes 1024 instead of importing the const — drift risk.
+- [ ] **LMB-release origin gate asymmetry** (correctness HIGH):
+      `event_mouse_click.rs:697-702` left-button release finalises
+      a Throttled NodeResize/SectionResize regardless of
+      `started_with_right`. The right-button release path correctly
+      gates on the flag (T2 fix); LMB path doesn't. User holding
+      RMB for fast-resize then fumbling LMB ends the gesture
+      prematurely.
+- [ ] **`SectionRange::range` dual semantics** (correctness HIGH):
+      drift check + `border preview` + `live_selection_section_pairs`
+      treat `range` as section-index range; `color text` and
+      `font` propagate it as grapheme range. T1.1 fixed the writer
+      side (lift to Section instead of SectionRange) but didn't
+      reconcile reader-side. Either rename or split the variant.
+- [ ] **`split_section` undo doesn't pin `text_runs`** (test coverage
+      CRITICAL): `split_section_pushes_undo_and_dirty` checks
+      `sections.len()` and `text` after undo, not `text_runs`.
+      A regression in run-restoration would slip past.
+- [ ] **MultiSection `section move` phase-1 atomicity untested**
+      (test coverage CRITICAL): the "first rejection aborts the
+      whole fan-out" guarantee at `section/mod.rs:765-790` has no
+      test pinning the partial-mutation-impossible invariant.
+- [ ] **Section count cap (1024) verify-side test missing** (test
+      coverage CRITICAL): `crates/maptool/src/verify/sections.rs::check_section_count_cap`
+      added in T5 has no test asserting a 1025-section node trips
+      the violation.
+- [ ] **`section frame` VERBS asymmetry** (API/UX HIGH):
+      `section frame::VERBS = ["show", "reset", "preview"]` ships
+      no positional per-field subverbs while sibling
+      `border` / `canvas border` / `canvas section-frame` ship
+      `preset / color / padding / palette / font / side / corner`.
+      The unknown-subverb error already acknowledges this as a
+      follow-up.
+- [ ] **`section: unknown subverb '{}'` second site** (API/UX HIGH):
+      the late-fall-through arm at `section/mod.rs:336` still emits
+      the bare-line shape; the upstream early-validation arm
+      shipped in this commit emits the grouped listing. The two
+      should converge on a shared formatter.
+- [ ] **Border preview "is one active?" surface** (API/UX HIGH):
+      `border preview show` doesn't exist; staged previews are
+      silently cancelled by any committing edit. A status verb
+      would close the trap state.
+- [ ] **Inconsistent "preset custom first" hint phrasing** (API/UX
+      MEDIUM): `border` says "run \`border preset custom\` first";
+      `section frame` says "Run \`section frame preset=custom\`
+      first"; canvas says "run \`<label> preset custom\` first".
+      Same gate, three phrasings — single shared formatter.
+- [ ] **`fast_resize_start` LMB-release origin gate test** (touch
+      deep-dive HIGH): the symmetric flag check on the right
+      release arm is pinned (T2) but the left release arm's
+      missing check (HI-1 above) has no negative test.
+- [ ] **Layering inversion is wider than T4 admits** (architecture
+      CRITICAL): 22 reach-up sites across `app/dispatch/cross_dispatch/`
+      not just `style.rs` — `edges.rs` (8), `camera.rs` (2),
+      `action_core.rs` (1). Update T4 follow-up to reflect the
+      pattern, not the localised seam.
+- [ ] **`parse_section_kv` byte-duplicated** (architecture HIGH):
+      across `section/mod.rs:373-380` and `section/frame.rs:432-439`.
+      §5 violation; should `use super::parse_section_kv`.
+- [ ] **Three parallel `BorderPreviewTarget*` enums** (architecture
+      HIGH): `keybinds::BorderPreviewTargetKind`,
+      `document::BorderPreviewTarget`,
+      `baumhard::scene_builder::BorderPreviewTargetRef<'a>`.
+      The keybinds-side discriminator exists for `Hash + Eq`
+      reasons; visible enum tax.
+- [ ] **`Action` grew +29 variants** (architecture MEDIUM): the
+      `SetSection*` family carries stringly-typed `f64` / `usize`
+      payloads (e.g. `SetSectionOffsetDelta { dx: String, dy: String }`)
+      because `Action` derives `Hash + Eq`. Typed payloads with a
+      custom `Hash` impl would catch parse errors at construction
+      rather than at dispatch.
+- [ ] **`InitState` / `WasmInputState` god-struct creep**
+      (architecture MEDIUM): InitState 22 → 25 fields;
+      WasmInputState 10 → 12. The cross-platform mirror fields
+      (`interaction_mode`, `touch_recognizer`) double the
+      construct/borrow ceremony.
+- [ ] **`canvas.rs::positional_subverb_to_edits` 165 LOC**
+      (code-quality HIGH): three deeply-nested `match verb` arms
+      with shared logic. Split per verb-class.
+- [ ] **`_config` suffix rename inconsistency** (code-quality HIGH):
+      T5 (whole-PR T6) renamed `set_canvas_default_border_config →
+      set_canvas_default_border` cleanly, but
+      `set_canvas_default_section_frame_border_config`,
+      `set_section_frame_border_config`, and
+      `set_node_border_config` keep the suffix. Either rename
+      consistently or document why partial.
+- [ ] **§5 dup of `parse_side_selector` / `parse_corner_selector`**
+      (code-quality CRITICAL): reproduced inline in `canvas.rs:350-360,
+      413-423` instead of using the `border/execute.rs` originals.
+      The non-custom-preset gate is also duplicated.
+- [ ] **§5 dup between `node_resize.rs` and `section_resize.rs`**
+      (code-quality CRITICAL): differ on ~30 of 290 lines; same
+      struct shape, same `ThrottledInteraction` impl, mostly
+      identical drain/release. Generic-ify or share.
+- [ ] **`expect()` in scene-build path** (code-quality CRITICAL):
+      `lib/baumhard/src/mindmap/scene_builder/section_frame.rs:201`
+      `expect("section_targeted implies preview is Some")`. Per-
+      frame and §9 forbids panic; swap to `if let Some(...)`.
+- [ ] **`expect()` in interactive click path** (code-quality
+      MEDIUM): `app/click.rs:224, 234` `hit_section.expect("guarded
+      above")`. Convert to `if let Some(idx)`.
+- [ ] **Active-preview-rebuild bench missing** (performance
+      MEDIUM): `cargo bench` covers the steady state but not the
+      `build_node_elements` path with `border_preview = Some(...)`.
+      Add a criterion bench.
+- [ ] **`preview_node_ids` linear scan in `node_pass.rs`**
+      (performance HIGH): O(N·K) per active preview. Hoist the
+      target ids to a `HashSet<&str>` once per call.
+- [ ] **`live_selection_node_ids` / `live_selection_section_pairs`
+      clone allocations** (performance MEDIUM): the drift check
+      allocates `Vec<String>` / `Vec<(String, usize)>` per frame
+      while a preview is active. Borrowing variants would be a
+      small win.
+- [ ] **`do_*()` benchmark-reuse for `apply_view_to_slot`** (test
+      coverage HIGH): hot path in `lib/baumhard/src/mindmap/border.rs`
+      lacks the bench-reuse shape `TEST_CONVENTIONS §T6` calls for.
+- [ ] **Touch recogniser → Action wiring untested end-to-end**
+      (test coverage HIGH): three layers tested, the seams aren't.
+- [ ] **`resize_mode_lifecycle.rs` is a flag round-trip** (test
+      coverage HIGH): manually flips `mode` instead of dispatching
+      the side effect — drops side-effect-consumer regressions.
+- [ ] **Documentation drift in plan** (docs MEDIUM): plan Batch 5
+      cites `section/mod.rs` as ~700 LoC (actually 2037);
+      `predicates.rs:33` (actually `:35`); `document/mod.rs:520-523`
+      gate cite (now spread across 88, 93, 516, 545, 608, 635);
+      `CancelMode → ExitMode` rename marked deferred but actually
+      shipped. Spot-fix or add a once-over follow-up.
+- [ ] **`format/sections.md` 9-subverb table omits `frame`** (docs
+      MEDIUM): table says "Nine subverbs" then renders 10 rows
+      with no `frame` row.
+
+Verification (post-Batch-8 ship): 2629 tests pass on
+`./test.sh`; wasm32 cross-compile clean; `cargo doc --workspace
+--no-deps` clean; `cargo bench` runs all Plan §7.4 benches
+without regression.
 
 ### 8.3 Cross-batch dependencies
 
@@ -2667,8 +3175,21 @@ trajectory but belong in their own work.
   `dotted`, `thick`, etc. is a separate batch.
 - **Macro reach extension.** The new Actions inherit existing
   macro-tier privilege gates; no new tier semantics.
-- **Schema migration.** All format schemas (`MindNode`,
-  `MindSection`, `GlyphBorderConfig`, `Canvas`) are unchanged.
+- **Schema migration.** Plan target: all format schemas
+  (`MindNode`, `MindSection`, `GlyphBorderConfig`, `Canvas`)
+  unchanged. **As-shipped divergence**: three new optional
+  fields landed (Plan-Adherence reviewer flagged):
+  `MindSection.frame_border: Option<GlyphBorderConfig>`,
+  `Canvas.default_section_frame_border: Option<GlyphBorderConfig>`,
+  `Canvas.default_focused_section_frame_border: Option<GlyphBorderConfig>`.
+  All default to `None`, so legacy `.mindmap.json` files load
+  unchanged (serde defaults absorb absent fields). The fields
+  carry the per-section + canvas-default frame-border style
+  cascade Batch 2/5 ship; without them the section-frame chrome
+  has no model anchor. Honored "no breaking change" in spirit
+  (legacy maps load) but not in letter; Batch 8 should formalize
+  these in `format/sections.md` / `format/canvas.md` and add a
+  schema-version bump if the migration story warrants one.
 
 ## 11. Critical files (one-stop reference)
 

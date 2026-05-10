@@ -358,6 +358,24 @@ pub(super) fn handle_mouse_input(
                 // ordering in `event_cursor_moved.rs` still
                 // gives portal-label / edge-handle drag higher
                 // precedence when multiple hits overlap.
+                //
+                // Don't clobber a right-button gesture in flight.
+                // Symmetric with the right-press guard in
+                // `handle_right_button` (`if !matches!(.., None)
+                // { return }`). Pre-fix, a left-press during a
+                // `PendingRight` would silently overwrite the
+                // right-button state, the user's intended
+                // RightClick / FastResizeStart would never fire,
+                // and the put-back arm in the left-release match
+                // (`other @ DragState::PendingRight => …`) was
+                // unreachable in Default mode. C3 from the
+                // 9-agent review.
+                if matches!(*ctx.drag_state, DragState::PendingRight { .. }) {
+                    log::debug!(
+                        "left-button press ignored (right-button gesture in flight); state stays put"
+                    );
+                    return;
+                }
                 *ctx.drag_state = DragState::Pending {
                     start_pos: cursor_pos_val,
                     hit_node,
@@ -369,7 +387,6 @@ pub(super) fn handle_mouse_input(
                     hit_node_resize_handle,
                 };
             } else {
-                // Released
                 match std::mem::replace(ctx.drag_state, DragState::None) {
                     DragState::Pending {
                         hit_node,
@@ -678,75 +695,10 @@ pub(super) fn handle_mouse_input(
                         }
                     }
                     DragState::Throttled(ThrottledDrag::NodeResize(i)) => {
-                        // Single atomic setter call on release.
-                        // `set_node_aabb` validates the new
-                        // (position, size) pair and writes both
-                        // under one `EditNodeAabb` undo entry.
-                        // Rejection (NaN, non-positive, astronomical)
-                        // logs and falls through to `rebuild_all`
-                        // — node snaps back to pre-drag AABB.
-                        if let Some(doc) = ctx.document.as_mut() {
-                            let (new_position, new_size) = i.resolve(i.total_delta);
-                            match doc.set_node_aabb(&i.node_id, new_position, new_size) {
-                                Ok(true) => {}
-                                Ok(false) => {
-                                    log::debug!("node resize committed no-op on '{}'", i.node_id);
-                                }
-                                Err(msg) => {
-                                    log::info!("node resize release rejected: {} (snapping back)", msg);
-                                }
-                            }
-                            ctx.scene_cache.clear();
-                            rebuild_all(
-                                doc,
-                                ctx.interaction_mode,
-                                ctx.mindmap_tree,
-                                ctx.app_scene,
-                                ctx.renderer,
-                                ctx.scene_cache,
-                            );
-                        }
+                        finalize_node_resize_release(&i, "node resize", ctx);
                     }
                     DragState::Throttled(ThrottledDrag::SectionResize(i)) => {
-                        // Single atomic setter call on release.
-                        // `set_section_aabb` validates the
-                        // post-mutation `(offset, size)` against
-                        // the parent — so a W-grow gesture that
-                        // shrinks `offset.x` and grows `size.width`
-                        // by the same delta passes the right-edge
-                        // guard that the two-step
-                        // `set_section_size` + `set_section_offset`
-                        // path rejected (intermediate state had
-                        // new size at old offset, overflowing).
-                        // Rejection (NaN, negative, overflow,
-                        // astronomical) logs and falls through to
-                        // `rebuild_all` from the unchanged model —
-                        // section snaps back to pre-drag AABB.
-                        if let Some(doc) = ctx.document.as_mut() {
-                            let (new_offset, new_size) = i.resolve(i.total_delta);
-                            match doc.set_section_aabb(&i.node_id, i.section_idx, new_offset, new_size) {
-                                Ok(true) => {}
-                                Ok(false) => {
-                                    log::debug!(
-                                        "section resize committed no-op on '{}' section[{}]",
-                                        i.node_id,
-                                        i.section_idx
-                                    );
-                                }
-                                Err(msg) => {
-                                    log::info!("section resize release rejected: {} (snapping back)", msg);
-                                }
-                            }
-                            ctx.scene_cache.clear();
-                            rebuild_all(
-                                doc,
-                                ctx.interaction_mode,
-                                ctx.mindmap_tree,
-                                ctx.app_scene,
-                                ctx.renderer,
-                                ctx.scene_cache,
-                            );
-                        }
+                        finalize_section_resize_release(&i, "section resize", ctx);
                     }
                     DragState::Throttled(ThrottledDrag::EdgeHandle(i)) => {
                         // The drain loop has been writing
@@ -877,10 +829,185 @@ pub(super) fn handle_mouse_input(
                         }
                     }
                     DragState::Panning | DragState::None => {}
+                    // Left-button release while a right-button gesture
+                    // is pending: the `mem::replace` above already
+                    // swapped in `None`, so put the original state
+                    // back so the right-button release path can act
+                    // on it. Reachable in Reparent / Connect modes
+                    // (where the left-press path swallows the press
+                    // without setting `Pending`) and at startup
+                    // before any drag has fired. In Default mode the
+                    // left-press gate at line 361 short-circuits when
+                    // `PendingRight` is active, so the path through
+                    // here from a Default-mode press is unreachable.
+                    other @ DragState::PendingRight { .. } => {
+                        *ctx.drag_state = other;
+                    }
                 }
             }
         }
+        MouseButton::Right => {
+            handle_right_button(state, cursor_pos_val, ctx);
+        }
         _ => {}
+    }
+}
+
+/// Right-button press / release handler — fast-resize gesture
+/// substrate (`SECTIONS_BORDERS_RESIZE_PLAN.md` §6.3).
+///
+/// Press: stash the press-time hit (body of any node / section,
+/// no edge-handle / portal-label / resize-handle precedence — the
+/// gesture is "grab a corner from anywhere on this body") into
+/// `DragState::PendingRight`. Skips when an active drag is in
+/// flight to avoid clobbering it; logs and falls through.
+///
+/// Release: two cases:
+/// 1. `PendingRight` (no movement past threshold) — fire the bound
+///    `MouseGesture::RightClick` action lookup. Default-bound to
+///    nothing; users opt in. State resets to `None`.
+/// 2. `Throttled(NodeResize | SectionResize)` (threshold-cross
+///    promoted to fast-resize via `Action::FastResizeStart`) —
+///    finalize via [`finalize_node_resize_release`] /
+///    [`finalize_section_resize_release`], the same helpers the
+///    left-button release path uses. Single-source commit shape
+///    regardless of which button started the gesture.
+fn handle_right_button(
+    state: ElementState,
+    cursor_pos_val: (f64, f64),
+    ctx: &mut InputHandlerContext<'_>,
+) {
+    if state == ElementState::Pressed {
+        // Mode + modal guards: don't arm a fast-resize gesture
+        // when the user's intent is unambiguously elsewhere.
+        // Architecture-review findings I3 + I4 + I5:
+        //
+        // - **Reparent / Connect modes** consume left-click as
+        //   "pick target" — accepting right-presses here would
+        //   strand `PendingRight` invisibly behind the picker
+        //   chrome, and a release-without-movement would fire
+        //   whatever `RightClick` action the user happens to
+        //   have bound, into the wrong context.
+        // - **Text editors** (label / portal-text / section-text)
+        //   are modal — the left-button path already commits-
+        //   outside-click before any resize logic runs. Right-
+        //   button has no equivalent commit funnel; better to
+        //   block until one exists than to fast-resize a
+        //   different node while the editor stays open with a
+        //   half-edited buffer.
+        // - **Resize mode** with handles visible on node X: the
+        //   user's intent is "I'm resizing X". A Ctrl+RightDrag
+        //   on node Y would resize Y while X's handles stay
+        //   drawn — visible chrome disagreeing with the active
+        //   gesture. Block to preserve the mode's meaning.
+        if ctx.interaction_mode.is_target_picker() {
+            log::debug!("right-button press ignored (target-picker mode active)");
+            return;
+        }
+        if ctx.text_edit_state.is_open()
+            || ctx.label_edit_state.is_open()
+            || ctx.portal_text_edit_state.is_open()
+        {
+            log::debug!("right-button press ignored (modal text editor open)");
+            return;
+        }
+        if matches!(
+            *ctx.interaction_mode,
+            super::InteractionMode::Resize { .. }
+        ) {
+            log::debug!("right-button press ignored (Resize mode active; use the visible handles)");
+            return;
+        }
+
+        // Body-only hit-test; no edge-handle / portal-label / resize-
+        // handle hits — the fast-resize gesture deliberately bypasses
+        // those because it's a corner-anchored resize from anywhere
+        // on the body. Resize-handle hits would compete with the
+        // press-time corner inference; portal/edge-label hits would
+        // promote the gesture to label-drag and never reach FastResize.
+        let canvas_pos = ctx
+            .renderer
+            .screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
+        let (hit_node, hit_section_idx) = match ctx.mindmap_tree.as_mut() {
+            Some(tree) => match crate::application::document::hit_test_target(canvas_pos, tree) {
+                Some(crate::application::document::HitTarget::Section { node_id, section_idx }) => {
+                    (Some(node_id), Some(section_idx))
+                }
+                Some(crate::application::document::HitTarget::NodeContainer { node_id }) => {
+                    (Some(node_id), None)
+                }
+                None => (None, None),
+            },
+            None => (None, None),
+        };
+        // Don't clobber an active drag. If state is already
+        // Pending / PendingRight / Throttled / Panning / SelectingRect,
+        // log + ignore. Mirror's middle-click's posture (which
+        // unconditionally overwrites) is intentionally not chosen
+        // here — fast-resize is a meaningful gesture; clobbering an
+        // in-flight resize with a stray right-press would be visible.
+        if !matches!(*ctx.drag_state, DragState::None) {
+            log::debug!(
+                "right-button press ignored (drag already in flight); state stays put"
+            );
+            return;
+        }
+        *ctx.drag_state = DragState::PendingRight {
+            start_pos: cursor_pos_val,
+            start_canvas: canvas_pos,
+            hit_node,
+            hit_section_idx,
+        };
+    } else {
+        match std::mem::replace(ctx.drag_state, DragState::None) {
+            DragState::PendingRight { .. } => {
+                // No movement past threshold — fire the bound
+                // RightClick action (default-unbound). The action
+                // lookup uses `action_for_gesture` so a user can
+                // bind `Ctrl+RightClick` separately from bare
+                // `RightClick`, with the standard modifier-fallback.
+                let name = crate::application::keybinds::MouseGesture::RightClick.key_name();
+                let action = ctx.keybinds.action_for_gesture(
+                    name,
+                    ctx.modifiers.control_key(),
+                    ctx.modifiers.shift_key(),
+                    ctx.modifiers.alt_key(),
+                );
+                if let Some(a) = action {
+                    let _ = super::dispatch::dispatch_action(a, ctx, None);
+                }
+            }
+            // Threshold-cross promoted `PendingRight` to one of
+            // the resize Throttled variants — finalize via the
+            // shared helpers. Gate on `started_with_right` so an
+            // accidental right-click during a left-button-driven
+            // handle drag doesn't terminate the resize: the
+            // left-button release is the rightful finalizer.
+            DragState::Throttled(ThrottledDrag::NodeResize(i)) if i.started_with_right => {
+                finalize_node_resize_release(&i, "fast-resize node", ctx);
+            }
+            DragState::Throttled(ThrottledDrag::SectionResize(i)) if i.started_with_right => {
+                finalize_section_resize_release(&i, "fast-resize section", ctx);
+            }
+            // Left-button-driven Throttled resize that survived
+            // a stray right-release — restore the state and let
+            // the eventual left-button release finalize it.
+            other @ DragState::Throttled(ThrottledDrag::NodeResize(_))
+            | other @ DragState::Throttled(ThrottledDrag::SectionResize(_)) => {
+                log::debug!(
+                    "right-release on left-button resize ignored; left-button release \
+                     will finalize"
+                );
+                *ctx.drag_state = other;
+            }
+            // Any other state on right-release: put it back. Right-
+            // button release shouldn't terminate a left-button
+            // drag, a panning gesture, a rubber-band selection,
+            // or any of the non-resize Throttled variants.
+            other => {
+                *ctx.drag_state = other;
+            }
+        }
     }
 }
 
@@ -900,6 +1027,118 @@ pub(super) fn handle_mouse_input(
 /// `hit_node` is the click hit's owning node id (`None` for empty
 /// canvas). `cursor_pos_val` is screen-space; we project to canvas
 /// inside.
+/// Finalize a `Throttled(NodeResize)` drag: write the resolved
+/// `(position, size)` through `set_node_aabb` (atomic, single
+/// `EditNodeAabb` undo entry), clear the scene cache, rebuild
+/// the scene from the authoritative model.
+///
+/// `gesture_label` distinguishes the log-line origin
+/// ("node resize" for handle-driven left-button drags vs
+/// "fast-resize node" for right-button corner-anchored drags) —
+/// users grepping logs for "rejected" can tell the two apart.
+/// Rejection (NaN, non-positive size, astronomical) logs and
+/// falls through to `rebuild_all` from the unchanged model so
+/// the node snaps back to its pre-drag AABB.
+///
+/// Single-source for both the left-release and right-release
+/// finalization paths — pre-fix, the two arms held byte-near
+/// duplicates of this body. CODE_CONVENTIONS §5: "If a function
+/// is needed in two or more places, the answer is never to copy
+/// it, but to use a single function called in two or more
+/// places." C6 of the 9-agent review.
+#[cfg(not(target_arch = "wasm32"))]
+fn finalize_node_resize_release(
+    interaction: &super::throttled_interaction::NodeResizeInteraction,
+    gesture_label: &str,
+    ctx: &mut InputHandlerContext<'_>,
+) {
+    let Some(doc) = ctx.document.as_mut() else {
+        return;
+    };
+    let (new_position, new_size) = interaction.resolve(interaction.total_delta);
+    match doc.set_node_aabb(&interaction.node_id, new_position, new_size) {
+        Ok(true) => {}
+        Ok(false) => {
+            log::debug!(
+                "{} release committed no-op on '{}'",
+                gesture_label,
+                interaction.node_id
+            );
+        }
+        Err(msg) => {
+            log::info!(
+                "{} release rejected: {} (snapping back)",
+                gesture_label,
+                msg
+            );
+        }
+    }
+    ctx.scene_cache.clear();
+    rebuild_all(
+        doc,
+        ctx.interaction_mode,
+        ctx.mindmap_tree,
+        ctx.app_scene,
+        ctx.renderer,
+        ctx.scene_cache,
+    );
+}
+
+/// Finalize a `Throttled(SectionResize)` drag — see
+/// [`finalize_node_resize_release`] for the shape rationale.
+/// Routes through `set_section_aabb` which validates the
+/// post-mutation `(offset, size)` against the parent in one
+/// step, so a W-grow gesture (shrink offset, grow width) passes
+/// the right-edge guard the two-step `set_section_size` +
+/// `set_section_offset` path rejected (intermediate state had
+/// new size at old offset, overflowing). Pushes an
+/// `EditNodeStyle` undo entry via the section's parent node
+/// (sections share their owning node's style undo envelope —
+/// see `mutate_section_with_style_undo` in `nodes/`).
+#[cfg(not(target_arch = "wasm32"))]
+fn finalize_section_resize_release(
+    interaction: &super::throttled_interaction::SectionResizeInteraction,
+    gesture_label: &str,
+    ctx: &mut InputHandlerContext<'_>,
+) {
+    let Some(doc) = ctx.document.as_mut() else {
+        return;
+    };
+    let (new_offset, new_size) = interaction.resolve(interaction.total_delta);
+    match doc.set_section_aabb(
+        &interaction.node_id,
+        interaction.section_idx,
+        new_offset,
+        new_size,
+    ) {
+        Ok(true) => {}
+        Ok(false) => {
+            log::debug!(
+                "{} release committed no-op on '{}' section[{}]",
+                gesture_label,
+                interaction.node_id,
+                interaction.section_idx
+            );
+        }
+        Err(msg) => {
+            log::info!(
+                "{} release rejected: {} (snapping back)",
+                gesture_label,
+                msg
+            );
+        }
+    }
+    ctx.scene_cache.clear();
+    rebuild_all(
+        doc,
+        ctx.interaction_mode,
+        ctx.mindmap_tree,
+        ctx.app_scene,
+        ctx.renderer,
+        ctx.scene_cache,
+    );
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn maybe_exit_node_edit_on_outside_click(
     ctx: &mut InputHandlerContext<'_>,

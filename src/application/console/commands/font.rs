@@ -351,10 +351,10 @@ fn apply_font_args(
 /// Outcome formatter for the `Multi` / `MultiSection` fanout
 /// arms. `applied_iter` yields one bool per attempted target
 /// (true = the setter changed the doc); `kind` is the singular
-/// noun used in the "applied to N <kind>(s)" line.
+/// noun used in the "applied to N `kind`(s)" line.
 ///
 /// The `min` / `max` arms surface a single
-/// "min/max: <kind>s have no screen-space clamps" message rather
+/// "min/max: `kind`s have no screen-space clamps" message rather
 /// than one per target — the message is identical across nodes
 /// and sections; the only difference is the noun.
 fn fanout_size_outcome(

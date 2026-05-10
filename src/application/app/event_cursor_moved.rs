@@ -79,29 +79,58 @@ pub(super) fn handle_cursor_moved(
         return;
     }
 
-    // Hand cursor over button-like nodes (nodes with any
-    // trigger bindings). Only recomputed when idle — during
-    // a drag the cursor should stay as-is.
-    if matches!(*ctx.drag_state, DragState::None) {
-        let over_button = match (ctx.document.as_ref(), ctx.mindmap_tree.as_mut()) {
-            (Some(doc), Some(tree)) => {
-                let canvas_pos = ctx
-                    .renderer
-                    .screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
-                hit_test(canvas_pos, tree)
-                    .and_then(|id| doc.mindmap.nodes.get(&id))
-                    .map(|n| !n.trigger_bindings.is_empty())
-                    .unwrap_or(false)
-            }
-            _ => false,
-        };
-        if over_button != *ctx.cursor_is_hand {
-            window.set_cursor(if over_button {
+    // Cursor icon update — three branches:
+    //   1. Throttled resize drag (handle drag in Resize mode OR
+    //      fast-resize via `Action::FastResizeStart`): show a
+    //      direction-appropriate resize cursor based on the
+    //      `ResizeHandleSide`.
+    //   2. Idle (DragState::None): hand cursor over button-like
+    //      nodes, default elsewhere.
+    //   3. Other drags (Pending / PendingRight / Panning /
+    //      SelectingRect / non-resize Throttled): cursor stays
+    //      as-is from the gesture's start.
+    //
+    // The desired cursor goes through `set_cursor_if_changed` so
+    // a redundant `set_cursor` call (same icon as last frame) is
+    // a Rust-side branch instead of a winit FFI hop. winit dedupes
+    // on macOS / X11 but NOT on Windows (`LoadCursorW` +
+    // `SetCursor` + mutex lock per call) or Wayland (calls into
+    // the pointer manager every time), so the application-side
+    // gate matters on those targets. `cursor_icon_last` lives on
+    // `InitState` — see its doc-comment for the rationale.
+    let desired = match ctx.drag_state {
+        DragState::Throttled(ThrottledDrag::NodeResize(i)) => {
+            Some(cursor_icon_for_resize_side(i.side))
+        }
+        DragState::Throttled(ThrottledDrag::SectionResize(i)) => {
+            Some(cursor_icon_for_resize_side(i.side))
+        }
+        DragState::None => {
+            let over_button = match (ctx.document.as_ref(), ctx.mindmap_tree.as_mut()) {
+                (Some(doc), Some(tree)) => {
+                    let canvas_pos = ctx
+                        .renderer
+                        .screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
+                    hit_test(canvas_pos, tree)
+                        .and_then(|id| doc.mindmap.nodes.get(&id))
+                        .map(|n| !n.trigger_bindings.is_empty())
+                        .unwrap_or(false)
+                }
+                _ => false,
+            };
+            *ctx.cursor_is_hand = over_button;
+            Some(if over_button {
                 CursorIcon::Pointer
             } else {
                 CursorIcon::Default
-            });
-            *ctx.cursor_is_hand = over_button;
+            })
+        }
+        _ => None,
+    };
+    if let Some(icon) = desired {
+        if icon != *ctx.cursor_icon_last {
+            window.set_cursor(icon);
+            *ctx.cursor_icon_last = icon;
         }
     }
 
@@ -170,7 +199,7 @@ pub(super) fn handle_cursor_moved(
         } => {
             let dist_x = cursor_pos_val.0 - start_pos.0;
             let dist_y = cursor_pos_val.1 - start_pos.1;
-            if dist_x * dist_x + dist_y * dist_y > 25.0 {
+            if dist_x * dist_x + dist_y * dist_y > super::DRAG_THRESHOLD_SQ_PX {
                 // Past threshold — promote `Pending` to the
                 // appropriate drag variant. At most one of
                 // `hit_edge_label` / `hit_portal_label` is set
@@ -348,6 +377,9 @@ pub(super) fn handle_cursor_moved(
                                         side,
                                         start_position,
                                         start_size,
+                                        // Left-button handle drag — `right_release`
+                                        // finalize must not fire on this.
+                                        false,
                                     ),
                                 ));
                                 return;
@@ -404,6 +436,8 @@ pub(super) fn handle_cursor_moved(
                                             side,
                                             start_offset,
                                             start_size,
+                                            // Left-button handle drag.
+                                            false,
                                         ),
                                     ));
                                     return;
@@ -544,6 +578,61 @@ pub(super) fn handle_cursor_moved(
                 .renderer
                 .screen_to_canvas(cursor_pos_val.0 as f32, cursor_pos_val.1 as f32);
         }
+        DragState::PendingRight {
+            start_pos,
+            start_canvas,
+            hit_node,
+            hit_section_idx,
+        } => {
+            // Threshold-cross arm for the right-button fast-resize
+            // gesture (`SECTIONS_BORDERS_RESIZE_PLAN.md` §6.3).
+            // Same `DRAG_THRESHOLD_SQ_PX` as the left-button arm
+            // above. The DispatchHit carries the **press-time**
+            // canvas position and hit (not the threshold-cross
+            // values) so anchor inference fires from "where the
+            // user pressed", not "where the cursor is now". Plan
+            // §6.3: "Quadrant determined at press time, not
+            // continuously".
+            let dist_x = cursor_pos_val.0 - start_pos.0;
+            let dist_y = cursor_pos_val.1 - start_pos.1;
+            if dist_x * dist_x + dist_y * dist_y <= super::DRAG_THRESHOLD_SQ_PX {
+                return;
+            }
+            // Look up the bound action via `action_for_gesture` so a
+            // user can rebind `RightDrag` away from `FastResizeStart`
+            // (or onto bare `RightDrag` without the Ctrl modifier).
+            let name = crate::application::keybinds::MouseGesture::RightDrag.key_name();
+            let action = ctx.keybinds.action_for_gesture(
+                name,
+                ctx.modifiers.control_key(),
+                ctx.modifiers.shift_key(),
+                ctx.modifiers.alt_key(),
+            );
+            if let Some(a) = action {
+                // Snapshot press-time data BEFORE dispatch (which
+                // may consume PendingRight). Cloning the String is
+                // cheap and the alternative — reading post-dispatch
+                // — would race with the arm's state mutation.
+                let click_hit = match (hit_node.clone(), *hit_section_idx) {
+                    (Some(id), Some(idx)) => super::ClickHit::Node(id, Some(idx)),
+                    (Some(id), None) => super::ClickHit::Node(id, None),
+                    (None, _) => super::ClickHit::Empty,
+                };
+                let dispatch_hit = super::dispatch::DispatchHit {
+                    click_hit,
+                    canvas_pos: *start_canvas,
+                };
+                super::dispatch::dispatch_action(a, ctx, Some(&dispatch_hit));
+            }
+            // After dispatch the state should be `Throttled(...)` if
+            // the arm took ownership of the gesture. If the arm
+            // didn't run (no binding) or couldn't resolve a target,
+            // reset to None so subsequent cursor moves don't re-fire
+            // the threshold-cross.
+            if matches!(*ctx.drag_state, DragState::PendingRight { .. }) {
+                *ctx.drag_state = DragState::None;
+            }
+        }
         DragState::None => {}
     }
 }
@@ -561,6 +650,26 @@ fn canvas_delta(
     let prev_canvas = renderer.screen_to_canvas(prev.0 as f32, prev.1 as f32);
     let curr_canvas = renderer.screen_to_canvas(curr.0 as f32, curr.1 as f32);
     curr_canvas - prev_canvas
+}
+
+/// Map a `ResizeHandleSide` to the matching winit `CursorIcon`
+/// for the corresponding 8-handle resize cursor. Diagonal corners
+/// map to `NwseResize` / `NeswResize`; edge midpoints map to the
+/// vertical / horizontal resize cursors. Used by both
+/// handle-driven Resize-mode drags and right-button fast-resize
+/// gestures (`SECTIONS_BORDERS_RESIZE_PLAN.md` §6.5).
+fn cursor_icon_for_resize_side(
+    side: baumhard::mindmap::scene_builder::ResizeHandleSide,
+) -> CursorIcon {
+    use baumhard::mindmap::scene_builder::ResizeHandleSide as S;
+    match side {
+        // Diagonal corners — NW/SE share \ axis, NE/SW share / axis.
+        S::NW | S::SE => CursorIcon::NwseResize,
+        S::NE | S::SW => CursorIcon::NeswResize,
+        // Edge midpoints.
+        S::N | S::S => CursorIcon::NsResize,
+        S::E | S::W => CursorIcon::EwResize,
+    }
 }
 
 /// Decide whether a press on `node_id` with `hit_section_idx` and
@@ -682,12 +791,35 @@ fn rebuild_selection_highlight(
 #[cfg(test)]
 mod tests {
     use super::{
-        resolve_section_drag_target, selection_after_node_drag_press,
-        selection_after_section_drag_press,
+        cursor_icon_for_resize_side, resolve_section_drag_target,
+        selection_after_node_drag_press, selection_after_section_drag_press,
     };
+    use baumhard::mindmap::scene_builder::ResizeHandleSide;
     use crate::application::app::InteractionMode;
     use crate::application::document::tests_common::{load_test_doc, pinned_two_section_node};
     use crate::application::document::{SectionSel, SelectionState};
+    use crate::application::platform::window::CursorIcon;
+
+    /// Pure 8→4 mapping: every `ResizeHandleSide` lands on the
+    /// matching winit `CursorIcon` for direction-appropriate
+    /// resize feedback. Pinned per-side so a future refactor that
+    /// (e.g.) swaps NW and SW silently leaves users with the
+    /// wrong cursor on every diagonal grab. Test agent flagged
+    /// this as the most important coverage gap in Batch 4.
+    #[test]
+    fn cursor_icon_for_resize_side_pin_per_side() {
+        // Diagonals share an axis: NW/SE = `\` = NwseResize.
+        //                          NE/SW = `/` = NeswResize.
+        assert_eq!(cursor_icon_for_resize_side(ResizeHandleSide::NW), CursorIcon::NwseResize);
+        assert_eq!(cursor_icon_for_resize_side(ResizeHandleSide::SE), CursorIcon::NwseResize);
+        assert_eq!(cursor_icon_for_resize_side(ResizeHandleSide::NE), CursorIcon::NeswResize);
+        assert_eq!(cursor_icon_for_resize_side(ResizeHandleSide::SW), CursorIcon::NeswResize);
+        // Edge midpoints.
+        assert_eq!(cursor_icon_for_resize_side(ResizeHandleSide::N), CursorIcon::NsResize);
+        assert_eq!(cursor_icon_for_resize_side(ResizeHandleSide::S), CursorIcon::NsResize);
+        assert_eq!(cursor_icon_for_resize_side(ResizeHandleSide::E), CursorIcon::EwResize);
+        assert_eq!(cursor_icon_for_resize_side(ResizeHandleSide::W), CursorIcon::EwResize);
+    }
 
     /// Helper: NodeEdit mode targeting `node_id` — the mode that
     /// licences section-drag promotion.

@@ -177,7 +177,7 @@ pub enum SelectionState {
     /// Two or more sections — possibly across distinct nodes —
     /// each addressed by `(node_id, section_idx)`. Per-section
     /// verbs (`color text=…`, `font size=…`, `font family=…`)
-    /// fan out via [`super::super::console::traits::view::selection_targets`]
+    /// fan out via [`super::super::console::traits::selection_targets`]
     /// and apply to every section in the set. Resize and move
     /// gestures stay single-target — a `MultiSection` selection
     /// emits no resize handles, and threshold-cross promotion
@@ -186,12 +186,14 @@ pub enum SelectionState {
     /// callers that may produce 0 / 1 entries should route
     /// through that constructor.
     MultiSection(Vec<SectionSel>),
-    /// One section with a sub-range of its grapheme indices —
-    /// the editor's shift-select anchor lifts the cursor +
-    /// anchor pair into this variant on close. Per-section
-    /// verbs (`color text=…`, `font size=…`, `font family=…`)
-    /// see the range and route to the range-aware setter
-    /// (`set_section_text_color_range` etc.); accessors that
+    /// `range` is a `(lo, hi)` pair of **section indices** on
+    /// the owning node, `[lo, hi]` inclusive. Fanned out by
+    /// `border` / `style` verbs through
+    /// `border.rs::expand_section_pairs` and
+    /// `cross_dispatch/style.rs::commit_border_preview`. Clamped
+    /// by `cleanup_after_structural_mutation` on add/delete/split
+    /// against `sections.len()`. Per-section verbs see the
+    /// range and route to the range-aware setter; accessors that
     /// only care about the owning section (`selected_section`,
     /// `selected_ids`, `is_selected`) treat it identically to
     /// [`Self::Section`].

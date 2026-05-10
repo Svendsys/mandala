@@ -46,6 +46,37 @@ impl super::WasmApp {
         }
     }
 
+    /// WASM right-button handler.
+    ///
+    /// `DragState::PendingRight` and the `Action::FastResizeStart`
+    /// gesture pipeline are `cfg(not(target_arch = "wasm32"))` —
+    /// the throttled-drag machinery doesn't exist on WASM yet
+    /// (pending §6.6 touch parity / `TwoFingerDrag`). What this
+    /// shim *does* do is prevent the right-button event from being
+    /// silently dropped, and surface a one-time warn so a user
+    /// who tries Ctrl+RightDrag on WASM sees evidence in the
+    /// console rather than wondering why the binding is dead.
+    /// Single-press `RightClick` actions stay unreachable on
+    /// WASM until the dispatch table grows a path for non-Action
+    /// MouseGesture lookups; that's tracked alongside the touch
+    /// parity work since both want the same `MouseGesture` →
+    /// dispatch wiring.
+    pub(super) fn handle_right_button(&mut self, state: ElementState) {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        static WARNED: AtomicBool = AtomicBool::new(false);
+        if state == ElementState::Released
+            && !WARNED.swap(true, Ordering::Relaxed)
+        {
+            log::warn!(
+                "right-button gesture on WASM is currently a no-op \
+                 (Action::FastResizeStart is NativeOnly until §6.6 \
+                 touch parity ships TwoFingerDrag); browser context \
+                 menu suppressed via canvas oncontextmenu, \
+                 Shift+RightClick bypasses the suppression"
+            );
+        }
+    }
+
     fn handle_mouse_pressed(&mut self) {
         // --- Left mouse Pressed ---
         let mut input_borrow = self.input.borrow_mut();

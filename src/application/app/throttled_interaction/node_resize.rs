@@ -31,6 +31,13 @@ pub(in crate::application::app) struct NodeResizeInteraction {
     pub pending_delta: Vec2,
     /// Per-interaction adaptive throttle.
     pub throttle: MutationFrequencyThrottle,
+    /// `true` when the drag was started by the right mouse
+    /// button (fast-resize gesture from `PendingRight`); `false`
+    /// when it was started by the left button (handle drag).
+    /// The right-button release path uses this to skip
+    /// finalizing left-button drags when the user accidentally
+    /// clicks the right button mid-drag.
+    pub started_with_right: bool,
 }
 
 impl NodeResizeInteraction {
@@ -39,6 +46,7 @@ impl NodeResizeInteraction {
         side: ResizeHandleSide,
         start_position: Position,
         start_size: Size,
+        started_with_right: bool,
     ) -> Self {
         Self {
             node_id,
@@ -48,6 +56,7 @@ impl NodeResizeInteraction {
             total_delta: Vec2::ZERO,
             pending_delta: Vec2::ZERO,
             throttle: MutationFrequencyThrottle::with_default_budget(),
+            started_with_right,
         }
     }
 
@@ -122,6 +131,10 @@ mod tests {
                 width: 200.0,
                 height: 80.0,
             },
+            // Test fixture default: not started by right
+            // mouse button (the released-tested path is the
+            // common left-button-handle drag).
+            false,
         )
     }
 
@@ -231,5 +244,27 @@ mod tests {
         set_pending = |i: &mut NodeResizeInteraction| {
             i.pending_delta = Vec2::new(1.0, 0.0);
         },
+    }
+
+    /// Whole-PR opus review T2: pin the origin-button gate.
+    /// A stray right-click during a left-button resize must not
+    /// terminate the resize prematurely (gated in
+    /// `event_mouse_click.rs`'s right-release path).
+    #[test]
+    fn left_handle_drag_marks_started_with_right_false() {
+        let i = fixture(ResizeHandleSide::SE);
+        assert!(!i.started_with_right);
+    }
+
+    #[test]
+    fn fast_resize_marks_started_with_right_true() {
+        let i = NodeResizeInteraction::new(
+            "n".to_string(),
+            ResizeHandleSide::SE,
+            Position { x: 0.0, y: 0.0 },
+            Size { width: 100.0, height: 50.0 },
+            true,
+        );
+        assert!(i.started_with_right);
     }
 }

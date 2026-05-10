@@ -96,6 +96,21 @@ pub enum ConsoleSideEffect {
     /// `InteractionMode::Resize { ... }` resolved from the
     /// selection inside the verb body.
     SetInteractionMode(crate::application::app::InteractionMode),
+    /// Enter the section text editor on `(node_id, section_idx)`.
+    /// Set by the `section edit [section=<idx>]` console verb.
+    /// The dispatcher splits the work: pre-rebuild writes
+    /// `SelectionState::Section { node_id, section_idx }` +
+    /// `InteractionMode::NodeEdit { node_id }`; post-rebuild
+    /// delegates to `apply_enter_section_edit` (the canonical
+    /// Action-side path used by `Action::EnterSectionEdit` on
+    /// the keybind path), which validates `OwnerMismatch` and
+    /// opens the editor. Single source of truth for "open
+    /// section editor"; the verb is the only producer of this
+    /// variant.
+    OpenSectionEdit {
+        node_id: String,
+        section_idx: usize,
+    },
 }
 
 impl std::fmt::Debug for ConsoleSideEffect {
@@ -115,6 +130,11 @@ impl std::fmt::Debug for ConsoleSideEffect {
             Self::SetFpsDisplay(m) => f.debug_tuple("SetFpsDisplay").field(m).finish(),
             Self::ReplaceDocument(_) => write!(f, "ReplaceDocument(<doc>)"),
             Self::SetInteractionMode(m) => f.debug_tuple("SetInteractionMode").field(m).finish(),
+            Self::OpenSectionEdit { node_id, section_idx } => f
+                .debug_struct("OpenSectionEdit")
+                .field("node_id", node_id)
+                .field("section_idx", section_idx)
+                .finish(),
         }
     }
 }

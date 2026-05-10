@@ -34,6 +34,7 @@ pub(in crate::application::app) fn execute_console_line(
     label_edit_state: &mut LabelEditState,
     portal_text_edit_state: &mut PortalTextEditState,
     color_picker_state: &mut ColorPickerState,
+    text_edit_state: &mut super::super::text_edit::TextEditState,
     doc: &mut MindMapDocument,
     interaction_mode: &mut super::super::InteractionMode,
     mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
@@ -104,6 +105,7 @@ pub(in crate::application::app) fn execute_console_line(
         label_edit_state,
         portal_text_edit_state,
         color_picker_state,
+        text_edit_state,
         app_scene,
         renderer,
         scene_cache,
@@ -175,6 +177,25 @@ fn handle_pre_rebuild_side_effect(
             *interaction_mode = mode;
             None
         }
+        ConsoleSideEffect::OpenSectionEdit { node_id, section_idx } => {
+            // Set the document selection + interaction mode before
+            // the rebuild so the rebuild sees the section-frame
+            // chrome on the right node. The actual text-editor
+            // open happens in `handle_post_rebuild_side_effect`
+            // (text_edit_state isn't in this handler's signature).
+            // Re-emit the side effect so the post-handler can
+            // pick it up.
+            doc.selection = crate::application::document::SelectionState::Section(
+                crate::application::document::SectionSel {
+                    node_id: node_id.clone(),
+                    section_idx,
+                },
+            );
+            *interaction_mode = super::super::InteractionMode::NodeEdit {
+                node_id: node_id.clone(),
+            };
+            Some(ConsoleSideEffect::OpenSectionEdit { node_id, section_idx })
+        }
         other => Some(other),
     }
 }
@@ -185,11 +206,12 @@ fn handle_pre_rebuild_side_effect(
 fn handle_post_rebuild_side_effect(
     side_effect: Option<ConsoleSideEffect>,
     doc: &mut MindMapDocument,
-    interaction_mode: &super::super::InteractionMode,
+    interaction_mode: &mut super::super::InteractionMode,
     mindmap_tree: &mut Option<MindMapTree>,
     label_edit_state: &mut LabelEditState,
     portal_text_edit_state: &mut PortalTextEditState,
     color_picker_state: &mut ColorPickerState,
+    text_edit_state: &mut super::super::text_edit::TextEditState,
     app_scene: &mut crate::application::scene_host::AppScene,
     renderer: &mut Renderer,
     scene_cache: &mut SceneConnectionCache,
@@ -219,13 +241,44 @@ fn handle_post_rebuild_side_effect(
                 scene_cache,
             );
         }
-        // Pre-rebuild variants — already consumed.
+        ConsoleSideEffect::OpenSectionEdit { .. } => {
+            // Pre-rebuild handler already wrote `doc.selection =
+            // Section { node_id, section_idx }` + flipped
+            // `interaction_mode = NodeEdit { node_id }`. Delegate
+            // the actual editor open to `apply_enter_section_edit`
+            // — the canonical Action-side path — for the
+            // `OwnerMismatch` validation and consistent posture
+            // with `Action::EnterSectionEdit`. Pre-fix this
+            // re-implemented `open_text_edit` directly,
+            // bypassing the validation (Architecture #4).
+            let mut rc = super::super::dispatch::cross_dispatch::RebuildContext {
+                document: doc,
+                mindmap_tree,
+                app_scene,
+                renderer,
+                scene_cache,
+                interaction_mode,
+            };
+            super::super::dispatch::cross_dispatch::apply_enter_section_edit(
+                /* clean */ false,
+                &mut rc,
+                text_edit_state,
+            );
+        }
+        // Pre-rebuild variants — already consumed. Per
+        // CODE_CONVENTIONS §9 (interactive paths must not panic),
+        // log + soft-skip instead of `unreachable!`. A future
+        // contributor adding a variant that forgets the pre-
+        // rebuild arm will see a loud log line, not a crash.
         ConsoleSideEffect::ReplaceDocument(_)
         | ConsoleSideEffect::SetFpsDisplay(_)
         | ConsoleSideEffect::SetInteractionMode(_) => {
-            unreachable!(
-                "ReplaceDocument / SetFpsDisplay / SetInteractionMode should be consumed by handle_pre_rebuild_side_effect"
-            )
+            log::error!(
+                "{:?} reached post-rebuild handler; should have been consumed by \
+                 handle_pre_rebuild_side_effect — ignoring to avoid crash",
+                eff
+            );
+            return false;
         }
     }
     true

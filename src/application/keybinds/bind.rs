@@ -37,10 +37,12 @@ pub struct KeyBind {
 /// itself; [`MouseGesture::pascal_form`] returns it via the same
 /// `EnumIter` walk both directions share.
 ///
-/// `LeftClick` and `RightClick` were previously reserved-but-not-
-/// dispatched; per CODE_CONVENTIONS §5 (no half-features) they were
-/// removed. A future commit that adds a real dispatch site can
-/// reintroduce the variant in the same patch as its body.
+/// `LeftClick` is still absent — CODE_CONVENTIONS §5 forbids
+/// reserved-but-not-dispatched variants, and no Action today
+/// binds bare `LeftClick`. `RightClick` and `RightDrag` are
+/// reintroduced below alongside their dispatch sites in
+/// `event_mouse_click.rs` / `event_cursor_moved.rs` —
+/// fast-resize gesture per `SECTIONS_BORDERS_RESIZE_PLAN.md` §6.3.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum_macros::EnumIter, strum_macros::IntoStaticStr)]
 pub enum MouseGesture {
     /// Left-button held down + cursor movement past the drag threshold,
@@ -63,6 +65,44 @@ pub enum MouseGesture {
     /// One mouse-wheel tick downward (zoom-out by convention). Same.
     #[strum(serialize = "wheeldown")]
     WheelDown,
+    /// Single right-button press (no movement past threshold).
+    /// Default-bound to nothing — exists so users / future GUIs
+    /// can bind context menus or other actions to it without us
+    /// needing to lift it into a half-feature later. The press
+    /// path is wired (release fires the bound `Action`); without
+    /// a binding, the right-button press still consumes the
+    /// browser context menu on WASM and otherwise is a no-op.
+    #[strum(serialize = "rightclick")]
+    RightClick,
+    /// Right-button held + cursor movement past the drag threshold.
+    /// Continuous; dispatches the bound `Action` when the press's
+    /// pending state crosses the threshold. Default-bound to
+    /// `Action::FastResizeStart` (Ctrl+RightDrag), the corner-
+    /// anchored fast-resize gesture from anywhere on a node body.
+    #[strum(serialize = "rightdrag")]
+    RightDrag,
+    /// Touch: a single finger held in place for ≥ 350ms with no
+    /// significant movement. Emitted by `TouchGestureRecognizer`
+    /// (in `app/touch_gesture.rs` — private module, intra-doc
+    /// link omitted) from `WindowEvent::Touch` events.
+    /// Default-bound to `Action::EnterResizeMode` per
+    /// `SECTIONS_BORDERS_RESIZE_PLAN.md` §6.6 — long-press is
+    /// the touch peer of the keyboard's `r` for entering Resize
+    /// mode on the selected target. The "no significant movement"
+    /// half is the cancel rule: any drag past `MOVE_THRESHOLD_PX`
+    /// (~4 logical pixels) before the timer fires aborts the
+    /// long-press candidate.
+    #[strum(serialize = "longpress")]
+    LongPress,
+    /// Touch: two fingers down with the midpoint travelling past
+    /// the drag threshold. Same dispatch shape as `RightDrag` —
+    /// the recogniser emits the gesture when the second finger
+    /// lands and the centroid moves; the bound Action runs once
+    /// per recognition. Default-bound to `Action::FastResizeStart`
+    /// alongside `Ctrl+RightDrag` so the fast-resize anchor-from-
+    /// quadrant math sees both inputs identically.
+    #[strum(serialize = "twofingerdrag")]
+    TwoFingerDrag,
 }
 
 impl MouseGesture {
@@ -88,6 +128,10 @@ impl MouseGesture {
             MouseGesture::MiddleClick => "MiddleClick",
             MouseGesture::WheelUp => "WheelUp",
             MouseGesture::WheelDown => "WheelDown",
+            MouseGesture::RightClick => "RightClick",
+            MouseGesture::RightDrag => "RightDrag",
+            MouseGesture::LongPress => "LongPress",
+            MouseGesture::TwoFingerDrag => "TwoFingerDrag",
         }
     }
 }

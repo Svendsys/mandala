@@ -280,6 +280,9 @@ fn test_keybind_mouse_gesture_round_trip_pascal_case() {
         "Shift+DoubleClick",
         "Ctrl+WheelUp",
         "Ctrl+Shift+LeftDrag",
+        "RightClick",
+        "RightDrag",
+        "Ctrl+RightDrag",
     ];
     for c in cases {
         let parsed = KeyBind::parse(c).unwrap();
@@ -342,6 +345,41 @@ fn test_wasm_compatibility_section_aabb_actions_are_compatible() {
             h: "50".into(),
         },
         Action::SetSectionSizeFillParent,
+        // §4.6 Action variants — pin Compatible explicitly so a
+        // future contributor flipping any of them to NativeOnly
+        // (e.g. for "this touches text-edit-state") trips this
+        // test instead of silently breaking WASM macro fan-out.
+        Action::SetSectionOffsetAbs {
+            x: "10".into(),
+            y: "20".into(),
+        },
+        Action::SetSectionText {
+            text: "x".into(),
+            runs_mode: "clear".into(),
+        },
+        Action::AddSection {
+            at: "".into(),
+            text: "x".into(),
+        },
+        Action::DeleteSection,
+        Action::SplitSection {
+            at_grapheme: "".into(),
+        },
+    ] {
+        assert_eq!(a.wasm_compatibility(), Compatible, "{:?} should be Compatible", a);
+    }
+}
+
+/// Plan §5.B6.9: pin the new no-payload border Action variants
+/// as Compatible so a future contributor flipping any of them
+/// to NativeOnly trips this test instead of silently breaking
+/// WASM keybind reach for the cycle / toggle one-press flows.
+#[test]
+fn test_wasm_compatibility_border_no_payload_actions_are_compatible() {
+    use crate::application::keybinds::WasmCompatibility::Compatible;
+    for a in [
+        Action::CycleBorderPreset,
+        Action::ToggleBorderVisible,
     ] {
         assert_eq!(a.wasm_compatibility(), Compatible, "{:?} should be Compatible", a);
     }
@@ -396,6 +434,7 @@ fn test_wasm_compatibility_modal_actions_are_native_only() {
         Action::ReparentToTarget(None),
         Action::ConnectToTarget(None),
         Action::EnterResizeMode,
+        Action::FastResizeStart,
         // EnterNodeEdit / EnterSectionEdit reach `open_text_edit`,
         // which depends on the native modal-stealer cascade
         // (`TextEditState`). Reclassification waits on Batch 4/7.
@@ -499,6 +538,17 @@ fn test_is_destructive_destructive_set_is_pinned() {
         ActionKind::OpenDocument,
         ActionKind::SaveDocumentAs,
         ActionKind::NewDocumentAt,
+        // FastResizeStart commits through `set_node_aabb` /
+        // `set_section_aabb` on the right-button release that
+        // ends the gesture — destructive per plan §6.10.
+        ActionKind::FastResizeStart,
+        // Plan §4.6 — section text + structural mutators are
+        // destructive (rewrite text content, change the
+        // sections vector length).
+        ActionKind::SetSectionText,
+        ActionKind::AddSection,
+        ActionKind::DeleteSection,
+        ActionKind::SplitSection,
     ];
     for k in destructive {
         assert!(
@@ -746,6 +796,131 @@ fn test_action_for_gesture_falls_back_to_unmodified_binding() {
         r.action_for_gesture("middleclick", true, true, true),
         Some(Action::PanCanvas),
         "Ctrl+Shift+Alt+MiddleClick should fall back"
+    );
+}
+
+/// Default `Ctrl+RightDrag` resolves to `FastResizeStart`. Pins
+/// the Batch 4 gesture binding — without it, threshold-cross on
+/// PendingRight would no-op silently.
+#[test]
+fn test_default_ctrl_right_drag_resolves_to_fast_resize_start() {
+    let r = KeybindConfig::default().resolve();
+    assert_eq!(
+        r.action_for_gesture("rightdrag", true, false, false),
+        Some(Action::FastResizeStart),
+        "Ctrl+RightDrag should resolve to FastResizeStart"
+    );
+}
+
+/// Bare `RightDrag` (no Ctrl) returns `None` with the default
+/// config — only `Ctrl+RightDrag` is bound. The
+/// modifier-fallback mechanism flows the *other* way: a key
+/// pressed with modifiers can fall back to a bare binding, but
+/// a key pressed bare can't escalate to a modified binding.
+/// This pins the default posture so a user pressing right-drag
+/// without Ctrl doesn't accidentally trigger fast-resize.
+#[test]
+fn test_bare_right_drag_returns_none_with_default_config() {
+    let r = KeybindConfig::default().resolve();
+    assert_eq!(
+        r.action_for_gesture("rightdrag", false, false, false),
+        None,
+        "bare RightDrag must not resolve to anything by default; \
+         the default binding is Ctrl+RightDrag and modifier-fallback \
+         doesn't escalate from bare to modified"
+    );
+}
+
+/// Users can opt in to bare `RightDrag` for fast-resize by
+/// rebinding `fast_resize_start` to remove the Ctrl modifier.
+/// Pins the user-customisation path the doc-comment promises.
+#[test]
+fn test_user_rebind_to_bare_right_drag_works() {
+    let cfg = KeybindConfig {
+        fast_resize_start: vec!["RightDrag".into()],
+        ..KeybindConfig::default()
+    };
+    let r = cfg.resolve();
+    assert_eq!(
+        r.action_for_gesture("rightdrag", false, false, false),
+        Some(Action::FastResizeStart),
+        "user-rebind to bare RightDrag should resolve to FastResizeStart"
+    );
+    // Modifier fallback still works: Ctrl+RightDrag → bare RightDrag → FastResizeStart.
+    assert_eq!(
+        r.action_for_gesture("rightdrag", true, false, false),
+        Some(Action::FastResizeStart),
+        "Ctrl+RightDrag should still resolve to FastResizeStart via fallback"
+    );
+}
+
+/// `LongPress` resolves to `EnterResizeMode` by default — the
+/// touch peer of the keyboard's `r`. Plan §6.6 / Batch 7.
+#[test]
+fn test_default_long_press_resolves_to_enter_resize_mode() {
+    let r = KeybindConfig::default().resolve();
+    assert_eq!(
+        r.action_for_gesture("longpress", false, false, false),
+        Some(Action::EnterResizeMode),
+        "LongPress should be the touch peer of `r` for EnterResizeMode"
+    );
+}
+
+/// `TwoFingerDrag` resolves to `FastResizeStart` by default —
+/// the touch peer of `Ctrl+RightDrag`. Plan §6.6 / Batch 7.
+#[test]
+fn test_default_two_finger_drag_resolves_to_fast_resize_start() {
+    let r = KeybindConfig::default().resolve();
+    assert_eq!(
+        r.action_for_gesture("twofingerdrag", false, false, false),
+        Some(Action::FastResizeStart),
+        "TwoFingerDrag should be the touch peer of Ctrl+RightDrag"
+    );
+}
+
+/// Default `enter_resize_mode` config carries both `r` (kbd)
+/// and `LongPress` (touch). Pins the JSON-default shape so a
+/// regression that drops the touch entry is caught at config-
+/// resolution time.
+#[test]
+fn test_default_enter_resize_mode_includes_long_press() {
+    let cfg = KeybindConfig::default();
+    assert!(
+        cfg.enter_resize_mode.iter().any(|s| s == "LongPress"),
+        "default enter_resize_mode must include LongPress; got: {:?}",
+        cfg.enter_resize_mode
+    );
+    assert!(
+        cfg.enter_resize_mode.iter().any(|s| s == "r"),
+        "default enter_resize_mode must still include `r`; got: {:?}",
+        cfg.enter_resize_mode
+    );
+}
+
+#[test]
+fn test_default_fast_resize_start_includes_two_finger_drag() {
+    let cfg = KeybindConfig::default();
+    assert!(
+        cfg.fast_resize_start.iter().any(|s| s == "TwoFingerDrag"),
+        "default fast_resize_start must include TwoFingerDrag; got: {:?}",
+        cfg.fast_resize_start
+    );
+    assert!(
+        cfg.fast_resize_start.iter().any(|s| s == "Ctrl+RightDrag"),
+        "default fast_resize_start must still include Ctrl+RightDrag; got: {:?}",
+        cfg.fast_resize_start
+    );
+}
+
+/// `RightClick` ships unbound by default. Pins the default
+/// posture — users opt in via JSON config.
+#[test]
+fn test_right_click_is_unbound_by_default() {
+    let r = KeybindConfig::default().resolve();
+    assert_eq!(
+        r.action_for_gesture("rightclick", false, false, false),
+        None,
+        "RightClick must not have a default binding"
     );
 }
 

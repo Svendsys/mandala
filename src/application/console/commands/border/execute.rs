@@ -1,39 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! `border` execute path: positional dispatch + atomic kv apply.
+//! `border` execute path. Positional dispatch + atomic kv apply
+//! into a single `BorderConfigEdits` bundle that the document
+//! setter applies whole-or-nothing per node.
 //!
-//! The kv form parses every recognised key into a
-//! [`crate::application::document::BorderConfigEdits`] up front,
-//! validates each value against its typed parser, then hands the
-//! whole bundle to
-//! [`crate::application::document::MindMapDocument::set_node_border_config`]
-//! per selected node. Validation failures abort before any node
-//! is mutated.
-//!
-//! ## Why parse-then-dispatch instead of `apply_kvs` / capability traits
-//!
-//! The `color` verb dispatches per-kv through `apply_kvs` against
-//! the capability traits on `TargetView` (`HasBgColor`,
-//! `HasTextColor`, `HasBorderColor`) because each kv targets a
-//! *different* trait channel — `bg=#x text=#y border=#z` writes
-//! three independent fields, each of which can have its own
-//! "not applicable to this selection" answer.
-//!
-//! `border` and `font` (see `commands/font.rs`) are
-//! single-channel verbs: every kv targets the same per-node
-//! `GlyphBorderConfig` (or, for `font`, the same edge / label /
-//! portal channel). The right shape there is to parse every kv
-//! up front, validate the bundle, and hand it to one document
-//! setter that applies the whole bundle atomically — exactly
-//! what this file does. A `HasBorder` trait would be
-//! multi-method, only ever implemented on `TargetView::Node`
-//! with `NotApplicable` everywhere else, and would force one
-//! trait call per kv per node which breaks the atomic-apply
-//! invariant the verb relies on for parse-error rejection.
-//!
-//! Recorded so a future reviewer doesn't relitigate this. See
-//! `apply_kvs` (`src/application/console/traits/dispatch.rs`)
-//! and `font.rs::execute_font` for the two precedents.
+//! Single-channel verb: every kv targets `GlyphBorderConfig`,
+//! so the parse-then-dispatch shape (vs `apply_kvs`'s per-kv
+//! trait dispatch) is the right one — see `font.rs` for the
+//! sibling pattern.
 
 use baumhard::mindmap::border::PaletteField;
 use baumhard::mindmap::border_pattern::SidePattern;
@@ -49,16 +23,47 @@ use super::show::execute_border_show;
 
 pub fn execute_border(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     if let Some(verb) = args.positional(0) {
+        // Discriminate "user typed positional subverb" from "user
+        // typed kv form with an unquoted multi-word value". When
+        // the first raw token is a kv (e.g. `palette=My`) and the
+        // first positional comes later, the user clearly meant the
+        // kv form — `args.positional(0)` happening to match a
+        // subverb name (e.g. "Palette") is coincidental and should
+        // route to the quoting-hint branch below, not the
+        // positional dispatcher.
+        let first_token_is_positional = args
+            .tokens()
+            .first()
+            .map(|t| !t.contains('='))
+            .unwrap_or(false);
         // C14: case-insensitive subverb match — same posture as
         // `border preview` already uses, and as `canvas …` and
         // top-level command lookup. Without normalising here,
         // `border Show` falls through to the unknown-subverb arm.
         match verb.to_ascii_lowercase().as_str() {
-            "on" => return apply_visible_only(eff, true),
-            "off" => return apply_visible_only(eff, false),
+            // Bare-positional subverbs reject trailing arguments so
+            // `border on preset=heavy` doesn't silently drop the kv.
+            "on" => return reject_extras(args, "on", &[]).unwrap_or_else(|| apply_set_visible(eff, true)),
+            "off" => return reject_extras(args, "off", &[]).unwrap_or_else(|| apply_set_visible(eff, false)),
+            "toggle" => return reject_extras(args, "toggle", &[]).unwrap_or_else(|| apply_toggle_visible(eff)),
             "show" => return execute_border_show(args, eff),
-            "reset" => return apply_reset(eff),
+            "reset" => return reject_extras(args, "reset", &[]).unwrap_or_else(|| apply_reset(eff)),
             "preview" => return super::preview::execute_border_preview(args, eff),
+            // Positional subverbs. Each pulls the next positional
+            // as the value and routes through `apply_edits`. The
+            // kv form (`border preset=heavy`) still works as the
+            // keybind-friendly alias. Gated on
+            // `first_token_is_positional` so an unquoted `palette=My
+            // Palette` typo falls to the quoting-hint branch
+            // rather than dispatching `apply_palette_positional`
+            // with the wrong value.
+            "preset" if first_token_is_positional => return apply_preset_positional(args, eff),
+            "color" if first_token_is_positional => return apply_color_positional(args, eff),
+            "padding" if first_token_is_positional => return apply_padding_positional(args, eff),
+            "palette" if first_token_is_positional => return apply_palette_positional(args, eff),
+            "font" if first_token_is_positional => return apply_font_positional(args, eff),
+            "side" if first_token_is_positional => return apply_side_positional(args, eff),
+            "corner" if first_token_is_positional => return apply_corner_positional(args, eff),
             other if !other.contains('=') => {
                 // A bare positional alongside a recognised kv almost
                 // always means the user typed an unquoted multi-word
@@ -75,11 +80,7 @@ pub fn execute_border(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                         verb, verb
                     ));
                 }
-                return ExecResult::err(format!(
-                    "border: unknown subverb '{}'; use \
-                     'on', 'off', 'show', 'reset', 'preview', or kv form",
-                    verb
-                ));
+                return ExecResult::err(unknown_subverb_message(verb));
             }
             _ => {}
         }
@@ -102,7 +103,7 @@ pub fn execute_border(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     apply_edits(eff, edits)
 }
 
-fn apply_visible_only(eff: &mut ConsoleEffects, on: bool) -> ExecResult {
+fn apply_set_visible(eff: &mut ConsoleEffects, on: bool) -> ExecResult {
     let ids = match nodes_in_selection(&eff.document.selection, "border") {
         Ok(ids) => ids,
         Err(e) => return e,
@@ -123,12 +124,474 @@ fn apply_visible_only(eff: &mut ConsoleEffects, on: bool) -> ExecResult {
     ))
 }
 
+/// `border <typo>` — multi-line error grouping subverbs by
+/// kind. API/UX I7: the prior single-line ~155-char enum
+/// wrapped mid-quote-list on 80-col terminals. The grouped
+/// shape is also load-bearing as a discoverability surface
+/// when the user has clearly misspelled a verb.
+fn unknown_subverb_message(verb: &str) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("border: unknown subverb '{}'\n", verb));
+    out.push_str("  visibility: on | off | toggle | reset\n");
+    out.push_str("  readout:    show [side=…] [verbose]\n");
+    out.push_str("  per-field:  preset | color | padding | palette | font\n");
+    out.push_str("  glyphs:     side <which> <pattern|reset> | corner <which> <glyph|reset>\n");
+    out.push_str("  staged:     preview <kv>=… | preview commit | preview cancel\n");
+    out.push_str("  composed:   <key>=<value> [<key>=<value> …]");
+    out
+}
+
+/// `Some(err)` when the subverb received any unexpected kv or
+/// extra positional, otherwise `None`. Lets bare-positional
+/// subverbs (`on`/`off`/`toggle`/`reset`) reject typos that
+/// would otherwise silently drop arguments.
+fn reject_extras(
+    args: &Args,
+    subverb: &'static str,
+    expected_kvs: &[&'static str],
+) -> Option<ExecResult> {
+    let extra_kvs: Vec<&str> = args
+        .kvs()
+        .filter(|(k, _)| !expected_kvs.contains(k))
+        .map(|(k, _)| k)
+        .collect();
+    let extra_positionals: Vec<&str> = args.positionals().skip(1).collect();
+    if extra_kvs.is_empty() && extra_positionals.is_empty() {
+        return None;
+    }
+    let mut bits = Vec::new();
+    if !extra_kvs.is_empty() {
+        bits.push(format!("kvs: {}", extra_kvs.join(", ")));
+    }
+    if !extra_positionals.is_empty() {
+        bits.push(format!("extras: {}", extra_positionals.join(" ")));
+    }
+    Some(ExecResult::err(format!(
+        "border {}: takes no arguments — got {}. \
+         For composed edits use the kv form (`border preset=heavy padding=8`) \
+         or stage with `border preview …`.",
+        subverb,
+        bits.join("; ")
+    )))
+}
+
 fn apply_reset(eff: &mut ConsoleEffects) -> ExecResult {
     let edits = BorderConfigEdits {
         clear: true,
         ..BorderConfigEdits::default()
     };
     apply_edits(eff, edits)
+}
+
+/// First selected node's stored preset, falling back to the
+/// canvas-default's preset, then `"light"`. Shared by the
+/// `border preset cycle` resolver and the `border side|corner
+/// reset` resolver.
+fn first_selection_preset(eff: &ConsoleEffects) -> String {
+    let ids = match nodes_in_selection(&eff.document.selection, "border") {
+        Ok(ids) => ids,
+        Err(_) => return "light".to_string(),
+    };
+    ids.first()
+        .and_then(|id| eff.document.mindmap.nodes.get(id))
+        .and_then(|n| n.style.border.as_ref())
+        .map(|c| c.preset.clone())
+        .or_else(|| {
+            eff.document
+                .mindmap
+                .canvas
+                .default_border
+                .as_ref()
+                .map(|c| c.preset.clone())
+        })
+        .unwrap_or_else(|| "light".to_string())
+}
+
+fn apply_toggle_visible(eff: &mut ConsoleEffects) -> ExecResult {
+    let ids = match nodes_in_selection(&eff.document.selection, "border") {
+        Ok(ids) => ids,
+        Err(e) => return e,
+    };
+    let mut toggled = 0usize;
+    let mut now_on = 0usize;
+    let mut now_off = 0usize;
+    for id in &ids {
+        let cur = eff
+            .document
+            .mindmap
+            .nodes
+            .get(id)
+            .map(|n| n.style.show_frame)
+            .unwrap_or(true);
+        if eff.document.set_node_border_visible(id, !cur) {
+            toggled += 1;
+            if !cur {
+                now_on += 1;
+            } else {
+                now_off += 1;
+            }
+        }
+    }
+    if toggled == 0 {
+        return ExecResult::ok_msg("border: no change");
+    }
+    if toggled == 1 {
+        ExecResult::ok_msg(format!(
+            "border toggled \u{2192} {}",
+            if now_on == 1 { "on" } else { "off" }
+        ))
+    } else {
+        ExecResult::ok_msg(format!(
+            "border toggled on {} node(s) \u{2192} {} on, {} off",
+            toggled, now_on, now_off
+        ))
+    }
+}
+
+/// `border preset <name|cycle>`. `cycle` samples the first
+/// selected node's preset (canvas-default-aware) and advances
+/// one in `BORDER_PRESETS` — multi-node selections converge.
+fn apply_preset_positional(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
+    let value = match args.positional(1) {
+        Some(v) => v,
+        None => {
+            return ExecResult::err(
+                "usage: border preset <light|heavy|double|rounded|custom|cycle>",
+            );
+        }
+    };
+    if let Some(extra) = args.positionals().nth(2) {
+        return ExecResult::err(format!(
+            "border preset {}: unexpected extra positional '{}'. \
+             Compose multiple edits via the kv form \
+             (`border preset=heavy padding=8`) or stage with `border preview …`.",
+            value, extra
+        ));
+    }
+    let name_lc = value.to_ascii_lowercase();
+    let was_cycle = name_lc == "cycle";
+    let target = if was_cycle {
+        let current = first_selection_preset(eff);
+        baumhard::mindmap::border::next_border_preset(&current).to_string()
+    } else {
+        if !super::PRESETS.iter().any(|p| *p == name_lc) {
+            return ExecResult::err(format!(
+                "preset '{}' unknown; pick one of {} | cycle",
+                value,
+                super::PRESETS.join(" | ")
+            ));
+        }
+        name_lc
+    };
+    let mut edits = BorderConfigEdits::default();
+    edits.preset = OptionEdit::Set(target.clone());
+    let outcome = apply_edits(eff, edits);
+    // On `cycle`, prepend the resolved preset so heterogeneous
+    // Multi selections see what they converged to.
+    if was_cycle {
+        prepend_line(outcome, format!("border preset → '{}' (cycle)", target))
+    } else {
+        outcome
+    }
+}
+
+/// Prepend a synthetic header line to an `ExecResult`. `Err`
+/// passes through unchanged. `Ok(_)` lifts to `Lines` so the
+/// header survives.
+fn prepend_line(result: ExecResult, header: String) -> ExecResult {
+    use crate::application::console::OutputLine;
+    match result {
+        ExecResult::Err(_) => result,
+        ExecResult::Ok(msg) => ExecResult::lines(vec![header, msg]),
+        ExecResult::Lines(rows) => {
+            let mut out = vec![OutputLine::plain(header)];
+            out.extend(rows);
+            ExecResult::Lines(out)
+        }
+    }
+}
+
+fn apply_color_positional(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
+    let value = match args.positional(1) {
+        Some(v) => v,
+        None => {
+            return ExecResult::err(
+                "usage: border color <#hex|var(--name)|preset|reset>",
+            );
+        }
+    };
+    if let Some(extra) = args.positionals().nth(2) {
+        return ExecResult::err(format!(
+            "border color: unexpected extra positional '{}'. \
+             Compose via the kv form (`border color=#fff padding=8`).",
+            extra
+        ));
+    }
+    let mut edits = BorderConfigEdits::default();
+    if let Err(e) = stage_color(&mut edits, value) {
+        return ExecResult::err(e);
+    }
+    apply_edits(eff, edits)
+}
+
+fn apply_padding_positional(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
+    let value = match args.positional(1) {
+        Some(v) => v,
+        None => return ExecResult::err("usage: border padding <px>"),
+    };
+    if let Some(extra) = args.positionals().nth(2) {
+        return ExecResult::err(format!(
+            "border padding: unexpected extra positional '{}'. \
+             Compose via the kv form (`border padding=8 color=#fff`).",
+            extra
+        ));
+    }
+    let mut edits = BorderConfigEdits::default();
+    if let Err(e) = stage_padding(&mut edits, value) {
+        return ExecResult::err(e);
+    }
+    apply_edits(eff, edits)
+}
+
+/// `border palette <name|off> [field=<frame|background|text|title>]`
+/// — `name` writes the palette; `off` clears it. Optional
+/// `field=` kv routes through the same `stage_field` parser
+/// `palette field=` does on the kv form.
+fn apply_palette_positional(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
+    let value = match args.positional(1) {
+        Some(v) => v,
+        None => {
+            return ExecResult::err(
+                "usage: border palette <name|off> [field=<frame|background|text|title>]",
+            );
+        }
+    };
+    let mut edits = BorderConfigEdits::default();
+    if let Err(e) = stage_palette(&mut edits, value) {
+        return ExecResult::err(e);
+    }
+    if let Some((_, fv)) = args.kvs().find(|(k, _)| *k == "field") {
+        if let Err(e) = stage_field(&mut edits, fv) {
+            return ExecResult::err(e);
+        }
+    }
+    apply_edits(eff, edits)
+}
+
+/// `border font <family|off> [size=<pt>]`. Optional `size=` kv
+/// routes through `stage_size`.
+fn apply_font_positional(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
+    let value = match args.positional(1) {
+        Some(v) => v,
+        None => return ExecResult::err("usage: border font <family|off> [size=<pt>]"),
+    };
+    let mut edits = BorderConfigEdits::default();
+    if let Err(e) = stage_font(&mut edits, value) {
+        return ExecResult::err(e);
+    }
+    if let Some((_, sv)) = args.kvs().find(|(k, _)| *k == "size") {
+        if let Err(e) = stage_size(&mut edits, sv) {
+            return ExecResult::err(e);
+        }
+    }
+    apply_edits(eff, edits)
+}
+
+/// `border side <which> <pattern|reset>`. `all` fans; `reset`
+/// writes the current preset's default glyph for the named
+/// side(s) (the schema's per-side fields are plain Strings, so
+/// `OptionEdit::Clear` is a no-op — restoring the preset's own
+/// default is the user-meaningful semantics). Errors when the
+/// resolved preset isn't `custom` so the user picks `custom`
+/// explicitly before glyph writes (no silent auto-promote).
+fn apply_side_positional(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
+    let which = match args.positional(1) {
+        Some(v) => v,
+        None => {
+            return ExecResult::err(
+                "usage: border side <top|bottom|left|right|all> <pattern|reset>",
+            );
+        }
+    };
+    let pattern = match args.positional(2) {
+        Some(v) => v,
+        None => {
+            return ExecResult::err(format!(
+                "border side {}: missing pattern (or 'reset' to clear)",
+                which
+            ));
+        }
+    };
+    let sides = match parse_side_selector(which) {
+        Some(s) => s,
+        None => {
+            return ExecResult::err(format!(
+                "border side: '{}' unknown; pick top | bottom | left | right | all",
+                which
+            ));
+        }
+    };
+    if !pattern.eq_ignore_ascii_case("reset") {
+        if let Some(non_custom) = first_non_custom_preset(eff) {
+            return ExecResult::err(format!(
+                "border side {}: cannot set side glyph against preset '{}'. \
+                 run `border preset custom` first, then set the side.",
+                which, non_custom
+            ));
+        }
+    }
+    let mut edits = BorderConfigEdits::default();
+    let reset = pattern.eq_ignore_ascii_case("reset");
+    if reset {
+        // CustomBorderGlyphs stores per-side glyphs as plain
+        // Strings, so `OptionEdit::Clear` is a no-op. Restoring
+        // means writing the preset's own default glyph back.
+        let glyph_set =
+            baumhard::mindmap::border::preset_glyph_set(&first_selection_preset(eff));
+        for side in sides {
+            let ch = match side {
+                BorderSide::Top => glyph_set.top,
+                BorderSide::Bottom => glyph_set.bottom,
+                BorderSide::Left => glyph_set.left,
+                BorderSide::Right => glyph_set.right,
+            };
+            if let Err(e) = edits.with_side_pattern(side, &ch.to_string()) {
+                return ExecResult::err(e);
+            }
+        }
+    } else {
+        for side in sides {
+            if let Err(e) = edits.with_side_pattern(side, pattern) {
+                return ExecResult::err(e);
+            }
+        }
+    }
+    apply_edits(eff, edits)
+}
+
+/// First selected node whose resolved preset isn't `custom`,
+/// or `None` if every node is already on custom. Walks the
+/// whole selection so heterogeneous Multi trips the gate too.
+fn first_non_custom_preset(eff: &ConsoleEffects) -> Option<String> {
+    let ids = nodes_in_selection(&eff.document.selection, "border").ok()?;
+    for id in &ids {
+        let preset = eff
+            .document
+            .mindmap
+            .nodes
+            .get(id)
+            .and_then(|n| n.style.border.as_ref())
+            .map(|c| c.preset.as_str())
+            .or_else(|| {
+                eff.document
+                    .mindmap
+                    .canvas
+                    .default_border
+                    .as_ref()
+                    .map(|c| c.preset.as_str())
+            })
+            .unwrap_or("light");
+        if !preset.eq_ignore_ascii_case("custom") {
+            return Some(preset.to_string());
+        }
+    }
+    None
+}
+
+fn parse_side_selector(s: &str) -> Option<Vec<BorderSide>> {
+    match s.to_ascii_lowercase().as_str() {
+        "top" => Some(vec![BorderSide::Top]),
+        "bottom" => Some(vec![BorderSide::Bottom]),
+        "left" => Some(vec![BorderSide::Left]),
+        "right" => Some(vec![BorderSide::Right]),
+        "all" => Some(vec![
+            BorderSide::Top,
+            BorderSide::Bottom,
+            BorderSide::Left,
+            BorderSide::Right,
+        ]),
+        _ => None,
+    }
+}
+
+/// `border corner <which> <glyph|reset>`. Same shape as
+/// [`apply_side_positional`].
+fn apply_corner_positional(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
+    let which = match args.positional(1) {
+        Some(v) => v,
+        None => return ExecResult::err("usage: border corner <tl|tr|bl|br|all> <glyph|reset>"),
+    };
+    let glyph = match args.positional(2) {
+        Some(v) => v,
+        None => {
+            return ExecResult::err(format!(
+                "border corner {}: missing glyph (or 'reset' to clear)",
+                which
+            ));
+        }
+    };
+    let corners = match parse_corner_selector(which) {
+        Some(c) => c,
+        None => {
+            return ExecResult::err(format!(
+                "border corner: '{}' unknown; pick tl | tr | bl | br | all",
+                which
+            ));
+        }
+    };
+    if !glyph.eq_ignore_ascii_case("reset") {
+        if let Some(non_custom) = first_non_custom_preset(eff) {
+            return ExecResult::err(format!(
+                "border corner {}: cannot set corner glyph against preset '{}'. \
+                 run `border preset custom` first, then set the corner.",
+                which, non_custom
+            ));
+        }
+    }
+    let mut edits = BorderConfigEdits::default();
+    let reset = glyph.eq_ignore_ascii_case("reset");
+    let glyph_set = reset.then(|| {
+        baumhard::mindmap::border::preset_glyph_set(&first_selection_preset(eff))
+    });
+    for corner in corners {
+        // CODE_CONVENTIONS §9: interactive paths must not panic.
+        // `parse_corner_selector` currently only emits the four
+        // corners, but a future extension shouldn't crash an
+        // interactive session.
+        let slot = match corner {
+            "tl" => &mut edits.corner_top_left,
+            "tr" => &mut edits.corner_top_right,
+            "bl" => &mut edits.corner_bottom_left,
+            "br" => &mut edits.corner_bottom_right,
+            _ => return ExecResult::err(format!("internal: unrecognised corner '{}'", corner)),
+        };
+        if let Some(ref gs) = glyph_set {
+            let ch = match corner {
+                "tl" => gs.top_left,
+                "tr" => gs.top_right,
+                "bl" => gs.bottom_left,
+                "br" => gs.bottom_right,
+                _ => return ExecResult::err(format!("internal: unrecognised corner '{}'", corner)),
+            };
+            if let Err(e) = stage_corner_or_err(slot, corner, &ch.to_string()) {
+                return ExecResult::err(e);
+            }
+        } else if let Err(e) = stage_corner_or_err(slot, corner, glyph) {
+            return ExecResult::err(e);
+        }
+    }
+    apply_edits(eff, edits)
+}
+
+fn parse_corner_selector(s: &str) -> Option<Vec<&'static str>> {
+    match s.to_ascii_lowercase().as_str() {
+        "tl" => Some(vec!["tl"]),
+        "tr" => Some(vec!["tr"]),
+        "bl" => Some(vec!["bl"]),
+        "br" => Some(vec!["br"]),
+        "all" => Some(vec!["tl", "tr", "bl", "br"]),
+        _ => None,
+    }
 }
 
 fn apply_edits(eff: &mut ConsoleEffects, edits: BorderConfigEdits) -> ExecResult {
@@ -284,20 +747,11 @@ pub(crate) fn kv_hint(key: &str) -> Option<&'static str> {
     }
 }
 
-/// Resolve the current selection into a list of node ids, or an
-/// `ExecResult::Err` describing why it can't apply (no selection /
-/// non-node selection). Edge-adjacent selections surface a single
-/// "not applicable" line — borders are node-only.
-/// Resolve the current selection into a list of node ids, or an
-/// `ExecResult::Err` describing why the verb can't apply (no
-/// selection / edge-adjacent selection). `verb_label` is the string
-/// prepended to every error message — `"border"` for the per-node
-/// verb, `"section frame"` for the per-section verb, etc. The
-/// label is part of the contract because callers want the exact
-/// not-applicable variant surfaced (edge / edge-label / portal-label
-/// / portal-text / section-text / no-selection are five distinct
-/// reasons; collapsing them all into a single "no selection" line
-/// hides what the user actually clicked on).
+/// Resolve the selection into a list of node ids — borders
+/// attach to the node, so section-shaped selections collapse to
+/// their owning node. `verb_label` prefixes every not-applicable
+/// error so the same helper serves `border` / `section frame` /
+/// `canvas …` and reports which verb the user typed.
 pub(crate) fn nodes_in_selection(sel: &SelectionState, verb_label: &str) -> Result<Vec<String>, ExecResult> {
     match sel {
         SelectionState::Single(id) => Ok(vec![id.clone()]),

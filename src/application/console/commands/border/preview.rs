@@ -218,7 +218,9 @@ fn finish_preview(outcome: BorderEditOutcome, verb_label: &'static str, bare_cus
 
 #[cfg(test)]
 mod tests {
-    use crate::application::console::tests::fixtures::{assert_exec_err_contains, assert_exec_ok, run};
+    use crate::application::console::tests::fixtures::{
+        assert_exec_err_contains, assert_exec_ok, assert_exec_ok_strict, run,
+    };
     use crate::application::console::ExecResult;
     use crate::application::document::tests_common::load_test_doc;
     use crate::application::document::SelectionState;
@@ -289,7 +291,11 @@ mod tests {
             .as_ref()
             .map(|c| c.preset.clone());
         assert_exec_ok(run("border preview preset=heavy", &mut doc));
-        assert_exec_ok(run("border preview cancel", &mut doc));
+        // Strict-Ok: cancel always returns single-line `Ok` —
+        // pin that contract so a future change that turns it
+        // into a `Lines` (e.g. surfacing the pre-cancel slot)
+        // trips this test.
+        assert_exec_ok_strict(run("border preview cancel", &mut doc));
         assert!(doc.border_preview.is_none(), "cancel clears the slot");
         assert_eq!(
             doc.mindmap.nodes.get(&nid).unwrap().style.border.as_ref().map(|c| c.preset.clone()),
