@@ -179,7 +179,7 @@ fn execute_border_subject(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             "reset" => return apply_border_edits(eff, clear_edits()),
             "preview" => return execute_canvas_border_preview(args, eff),
             other if !other.contains('=') => {
-                match positional_subverb_to_edits(other, args, 1) {
+                match positional_subverb_to_edits(other, args, 1, CanvasSlot::Border, eff) {
                     Ok(Some(edits)) => return apply_border_edits(eff, edits),
                     Ok(None) => {
                         return ExecResult::err(format!(
@@ -226,10 +226,52 @@ fn execute_border_subject(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
 /// for `canvas section-frame <subverb>`. Subsequent positionals
 /// (the value(s)) live at `verb_pos + 1` (and `verb_pos + 2` for
 /// the two-positional `side` / `corner` forms).
+/// Which canvas slot is being edited. Drives the reset-glyph
+/// resolution: `border side WHICH reset` writes the **active**
+/// slot's preset's default glyph (not a hardcoded "light"),
+/// so the user gets a coherent restore against whichever
+/// preset they last set on that slot.
+#[derive(Clone, Copy)]
+enum CanvasSlot {
+    Border,
+    SectionFrame,
+    SectionFrameFocused,
+}
+
+impl CanvasSlot {
+    fn label(self) -> &'static str {
+        match self {
+            CanvasSlot::Border => "canvas border",
+            CanvasSlot::SectionFrame => "canvas section-frame",
+            CanvasSlot::SectionFrameFocused => "canvas section-frame focused",
+        }
+    }
+
+    /// Resolve the slot's currently-stored preset, falling back
+    /// to "light" when the slot is unset (the model default).
+    /// Reset paths use this so a user who set the slot's preset
+    /// to "heavy" gets heavy's default glyph back, not light's.
+    fn current_preset(self, doc: &crate::application::document::MindMapDocument) -> String {
+        let slot = match self {
+            CanvasSlot::Border => doc.mindmap.canvas.default_border.as_ref(),
+            CanvasSlot::SectionFrame => doc.mindmap.canvas.default_section_frame_border.as_ref(),
+            CanvasSlot::SectionFrameFocused => doc
+                .mindmap
+                .canvas
+                .default_focused_section_frame_border
+                .as_ref(),
+        };
+        slot.map(|c| c.preset.clone())
+            .unwrap_or_else(|| "light".to_string())
+    }
+}
+
 fn positional_subverb_to_edits(
     verb: &str,
     args: &Args,
     verb_pos: usize,
+    slot: CanvasSlot,
+    eff: &ConsoleEffects,
 ) -> Result<Option<BorderConfigEdits>, ExecResult> {
     use baumhard::mindmap::border::preset_glyph_set;
     use crate::application::document::BorderSide;
@@ -238,7 +280,7 @@ fn positional_subverb_to_edits(
     match verb.to_ascii_lowercase().as_str() {
         "preset" | "color" | "padding" | "palette" | "font" => {
             let v = value.ok_or_else(|| {
-                ExecResult::err(format!("canvas border {}: missing value", verb))
+                ExecResult::err(format!("{}: {} missing value", slot.label(), verb))
             })?;
             stage_kv(&mut edits, &verb.to_ascii_lowercase(), v).map_err(ExecResult::err)?;
             // Optional kvs (palette field=, font size=) compose.
@@ -275,12 +317,30 @@ fn positional_subverb_to_edits(
                 ))),
             };
             let reset = pattern.eq_ignore_ascii_case("reset");
-            // Canvas-default's preset starts as "light" if no
-            // preset has been set. Reset writes the resolved
-            // preset's default for the named side(s).
-            let preset_name = "light".to_string();
+            // Plan §5.4 #3 parity with the per-node `border side`
+            // path: setting a side glyph on a non-custom preset
+            // errors with the explicit "preset custom first"
+            // hint, instead of silently auto-promoting the slot.
+            // The reset arm skips the gate (restoring the
+            // current preset's own default doesn't require
+            // custom).
+            if !reset {
+                let preset = slot.current_preset(eff.document);
+                if !preset.eq_ignore_ascii_case("custom") {
+                    return Err(ExecResult::err(format!(
+                        "{} side {}: cannot set side glyph against preset '{}'. \
+                         run `{} preset custom` first, then set the side.",
+                        slot.label(),
+                        which,
+                        preset,
+                        slot.label()
+                    )));
+                }
+            }
+            // Reset writes the slot's current preset's default
+            // glyph for the named side(s).
             let glyph_set = if reset {
-                Some(preset_glyph_set(&preset_name))
+                Some(preset_glyph_set(&slot.current_preset(eff.document)))
             } else {
                 None
             };
@@ -320,16 +380,39 @@ fn positional_subverb_to_edits(
                 ))),
             };
             let reset = glyph.eq_ignore_ascii_case("reset");
+            if !reset {
+                let preset = slot.current_preset(eff.document);
+                if !preset.eq_ignore_ascii_case("custom") {
+                    return Err(ExecResult::err(format!(
+                        "{} corner {}: cannot set corner glyph against preset '{}'. \
+                         run `{} preset custom` first, then set the corner.",
+                        slot.label(),
+                        which,
+                        preset,
+                        slot.label()
+                    )));
+                }
+            }
+            // Sample the slot's current preset once outside the
+            // loop — same value every iteration. Pre-fix the
+            // loop hardcoded "light" per Plan §5.7 reset path.
+            let reset_glyph_set = reset.then(|| preset_glyph_set(&slot.current_preset(eff.document)));
             for corner in corners {
-                if reset {
-                    let preset_name = "light".to_string();
-                    let gs = preset_glyph_set(&preset_name);
+                if let Some(ref gs) = reset_glyph_set {
                     let ch = match corner {
                         "tl" => gs.top_left,
                         "tr" => gs.top_right,
                         "bl" => gs.bottom_left,
                         "br" => gs.bottom_right,
-                        _ => unreachable!(),
+                        // Defensive: parse_corner_selector
+                        // currently only emits the four corners,
+                        // but per CODE_CONVENTIONS §9 interactive
+                        // paths must not panic on a future
+                        // selector extension.
+                        _ => return Err(ExecResult::err(format!(
+                            "internal: unrecognised corner '{}'",
+                            corner
+                        ))),
                     };
                     stage_kv(&mut edits, corner, &ch.to_string()).map_err(ExecResult::err)?;
                 } else {
@@ -358,7 +441,12 @@ fn execute_section_frame_subject(args: &Args, eff: &mut ConsoleEffects) -> ExecR
             "reset" => return apply_section_frame_edits(eff, focused, clear_edits()),
             "preview" => return execute_canvas_section_frame_preview(args, eff, focused),
             other if !other.contains('=') => {
-                match positional_subverb_to_edits(other, args, verb_pos) {
+                let slot = if focused {
+                    CanvasSlot::SectionFrameFocused
+                } else {
+                    CanvasSlot::SectionFrame
+                };
+                match positional_subverb_to_edits(other, args, verb_pos, slot, eff) {
                     Ok(Some(edits)) => return apply_section_frame_edits(eff, focused, edits),
                     Ok(None) => {
                         return ExecResult::err(format!(
@@ -1030,6 +1118,102 @@ mod positional_tests {
         assert_eq!(
             doc.mindmap.canvas.default_focused_section_frame_border.as_ref().and_then(|c| c.color.as_deref()),
             Some("#abcdef")
+        );
+    }
+}
+
+#[cfg(test)]
+mod blocker_pins {
+    //! Regression pins for the canvas-side blockers from the
+    //! Batch-6 opus review:
+    //!
+    //! 1. `canvas border|section-frame side|corner reset` used
+    //!    to hardcode "light" preset glyphs. Now resolves the
+    //!    target slot's actual preset.
+    //! 2. `canvas border|section-frame side|corner WHICH PATTERN`
+    //!    silently auto-promoted the slot's preset to "custom".
+    //!    Now errors with the same `run \`<verb> preset custom\`
+    //!    first` hint the per-node `border` verb uses.
+
+    use crate::application::console::tests::fixtures::{assert_exec_err_contains, assert_exec_ok, run};
+    use crate::application::document::tests_common::load_test_doc;
+
+    #[test]
+    fn canvas_border_side_reset_uses_actual_preset_not_hardcoded_light() {
+        let mut doc = load_test_doc();
+        // Set canvas default to heavy first; then put it into
+        // custom (so we can write per-side glyphs); then write
+        // a top override; then reset top.
+        assert_exec_ok(run("canvas border preset heavy", &mut doc));
+        assert_exec_ok(run("canvas border preset custom", &mut doc));
+        assert_exec_ok(run("canvas border side top \"###\"", &mut doc));
+        // Now flip back to heavy and reset the top side. Reset
+        // should write heavy's `━`, not light's `─`.
+        assert_exec_ok(run("canvas border preset heavy", &mut doc));
+        assert_exec_ok(run("canvas border side top reset", &mut doc));
+        let top = doc
+            .mindmap
+            .canvas
+            .default_border
+            .as_ref()
+            .and_then(|c| c.glyphs.as_ref())
+            .map(|g| g.top.clone())
+            .expect("custom + side write must populate glyphs");
+        assert_eq!(
+            top, "━",
+            "reset must use heavy's default top glyph, not light's"
+        );
+    }
+
+    #[test]
+    fn canvas_border_side_on_non_custom_preset_errors() {
+        let mut doc = load_test_doc();
+        assert_exec_ok(run("canvas border preset heavy", &mut doc));
+        assert_exec_err_contains(
+            run("canvas border side top \"=##=\"", &mut doc),
+            "run `canvas border preset custom` first",
+        );
+    }
+
+    #[test]
+    fn canvas_border_corner_on_non_custom_preset_errors() {
+        let mut doc = load_test_doc();
+        assert_exec_ok(run("canvas border preset rounded", &mut doc));
+        assert_exec_err_contains(
+            run("canvas border corner tl +", &mut doc),
+            "run `canvas border preset custom` first",
+        );
+    }
+
+    #[test]
+    fn canvas_section_frame_focused_side_on_non_custom_preset_errors() {
+        let mut doc = load_test_doc();
+        assert_exec_ok(run("canvas section-frame focused preset double", &mut doc));
+        assert_exec_err_contains(
+            run("canvas section-frame focused side top \"###\"", &mut doc),
+            "run `canvas section-frame focused preset custom` first",
+        );
+    }
+
+    #[test]
+    fn canvas_section_frame_corner_reset_uses_actual_preset() {
+        let mut doc = load_test_doc();
+        assert_exec_ok(run("canvas section-frame preset double", &mut doc));
+        assert_exec_ok(run("canvas section-frame preset custom", &mut doc));
+        assert_exec_ok(run("canvas section-frame corner tl +", &mut doc));
+        assert_exec_ok(run("canvas section-frame preset double", &mut doc));
+        assert_exec_ok(run("canvas section-frame corner tl reset", &mut doc));
+        let tl = doc
+            .mindmap
+            .canvas
+            .default_section_frame_border
+            .as_ref()
+            .and_then(|c| c.glyphs.as_ref())
+            .map(|g| g.top_left.clone())
+            .expect("custom + corner write must populate glyphs");
+        assert_eq!(
+            tl, "╔",
+            "reset must use double's tl glyph, not light's ┌"
         );
     }
 }
