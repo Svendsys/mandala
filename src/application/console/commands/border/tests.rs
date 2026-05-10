@@ -803,3 +803,108 @@ fn border_show_verbose_surfaces_dual_color_surface() {
         blob
     );
 }
+
+// ─── Opus review T2 pins ─────────────────────────────────────────
+
+/// Predicate now includes `Multi(_)` — discoverability fix for
+/// users who shift-select two nodes and look for `border` in
+/// completion / help.
+#[test]
+fn border_verb_applicable_on_multi_selection() {
+    use crate::application::console::ConsoleContext;
+    use crate::application::console::predicates::node_or_section_selected;
+    let mut doc = fixture_doc();
+    let id1 = first_node_id(&doc);
+    let id2 = doc.mindmap.nodes.keys().nth(1).cloned().unwrap();
+    doc.selection = SelectionState::Multi(vec![id1, id2]);
+    let ctx = ConsoleContext::from_document(&doc);
+    assert!(
+        node_or_section_selected(&ctx),
+        "border applicability must include Multi(_)"
+    );
+}
+
+/// `border show` against a `Section(_)` selection collapses to
+/// the owning node (same posture every other border subverb uses
+/// via `nodes_in_selection`). Pre-fix `border show` errored
+/// "not applicable" despite the predicate advertising the verb
+/// as applicable.
+#[test]
+fn border_show_works_on_section_selection() {
+    use crate::application::document::SectionSel;
+    let mut doc = fixture_doc();
+    let id = first_node_id(&doc);
+    doc.selection = SelectionState::Section(SectionSel {
+        node_id: id.clone(),
+        section_idx: 0,
+    });
+    match run("border show", &mut doc) {
+        ExecResult::Lines(rows) => {
+            let blob = join_lines(&rows);
+            assert!(blob.contains("preset:"), "show output missing preset row: {}", blob);
+        }
+        other => panic!("expected Lines for show on Section, got {:?}", other),
+    }
+}
+
+#[test]
+fn border_show_works_on_section_range_selection() {
+    use crate::application::document::SectionSel;
+    let mut doc = fixture_doc();
+    let id = first_node_id(&doc);
+    doc.selection = SelectionState::SectionRange {
+        sel: SectionSel {
+            node_id: id.clone(),
+            section_idx: 0,
+        },
+        range: (0, 0),
+    };
+    assert!(
+        matches!(run("border show", &mut doc), ExecResult::Lines(_)),
+        "show should accept SectionRange"
+    );
+}
+
+/// Plan §5.4 #1 silent-drop bug: `border on preset=heavy`
+/// pre-fix dropped `preset=heavy` silently. Post-fix any kvs
+/// or extra positionals on bare-positional subverbs error
+/// with a hint pointing at the kv form.
+#[test]
+fn border_on_with_extra_kv_errors() {
+    let mut doc = fixture_doc();
+    doc.selection = SelectionState::Single(first_node_id(&doc));
+    assert_exec_err_contains(
+        run("border on preset=heavy", &mut doc),
+        "takes no arguments",
+    );
+}
+
+#[test]
+fn border_off_with_extra_positional_errors() {
+    let mut doc = fixture_doc();
+    doc.selection = SelectionState::Single(first_node_id(&doc));
+    assert_exec_err_contains(
+        run("border off something", &mut doc),
+        "takes no arguments",
+    );
+}
+
+#[test]
+fn border_toggle_with_extra_kv_errors() {
+    let mut doc = fixture_doc();
+    doc.selection = SelectionState::Single(first_node_id(&doc));
+    assert_exec_err_contains(
+        run("border toggle padding=8", &mut doc),
+        "takes no arguments",
+    );
+}
+
+#[test]
+fn border_reset_with_extras_errors() {
+    let mut doc = fixture_doc();
+    doc.selection = SelectionState::Single(first_node_id(&doc));
+    assert_exec_err_contains(
+        run("border reset preset=heavy", &mut doc),
+        "takes no arguments",
+    );
+}

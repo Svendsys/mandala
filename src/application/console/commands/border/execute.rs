@@ -67,11 +67,16 @@ pub fn execute_border(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         // top-level command lookup. Without normalising here,
         // `border Show` falls through to the unknown-subverb arm.
         match verb.to_ascii_lowercase().as_str() {
-            "on" => return apply_visible_only(eff, true),
-            "off" => return apply_visible_only(eff, false),
-            "toggle" => return apply_visible_toggle(eff),
+            // Plan §5.4 #1: bare-positional subverbs reject
+            // trailing kvs / positionals so `border on preset=heavy`
+            // doesn't silently drop the `preset=heavy`. The plan
+            // promised "silent-drop impossible by construction";
+            // honour it by checking before dispatch.
+            "on" => return reject_extras(args, "on", &[]).unwrap_or_else(|| apply_visible_only(eff, true)),
+            "off" => return reject_extras(args, "off", &[]).unwrap_or_else(|| apply_visible_only(eff, false)),
+            "toggle" => return reject_extras(args, "toggle", &[]).unwrap_or_else(|| apply_visible_toggle(eff)),
             "show" => return execute_border_show(args, eff),
-            "reset" => return apply_reset(eff),
+            "reset" => return reject_extras(args, "reset", &[]).unwrap_or_else(|| apply_reset(eff)),
             "preview" => return super::preview::execute_border_preview(args, eff),
             // Plan §5.2 positional subverbs. Each pulls the second
             // positional as the value, builds a single-field
@@ -154,6 +159,50 @@ fn apply_visible_only(eff: &mut ConsoleEffects, on: bool) -> ExecResult {
         if on { "on" } else { "off" },
         changed
     ))
+}
+
+/// Plan §5.4 #1: bare-positional subverbs (`on` / `off` /
+/// `toggle` / `reset`) take no kvs and no extra positionals.
+/// Pre-fix the verb silently dropped them; post-fix any extra
+/// errors with a hint pointing at the kv form (which is the
+/// composable shape) or `border preview` (the staged-edits
+/// shape).
+///
+/// `expected_kvs` is the allowlist of kv keys the subverb does
+/// accept (none, today — but the parameter is here so future
+/// subverbs that accept e.g. `--quiet` can extend without
+/// rewiring).
+///
+/// Returns `Some(err)` to bubble; `None` to fall through to the
+/// normal apply.
+fn reject_extras(
+    args: &Args,
+    subverb: &'static str,
+    expected_kvs: &[&'static str],
+) -> Option<ExecResult> {
+    let extra_kvs: Vec<&str> = args
+        .kvs()
+        .filter(|(k, _)| !expected_kvs.contains(k))
+        .map(|(k, _)| k)
+        .collect();
+    let extra_positionals: Vec<&str> = args.positionals().skip(1).collect();
+    if extra_kvs.is_empty() && extra_positionals.is_empty() {
+        return None;
+    }
+    let mut bits = Vec::new();
+    if !extra_kvs.is_empty() {
+        bits.push(format!("kvs: {}", extra_kvs.join(", ")));
+    }
+    if !extra_positionals.is_empty() {
+        bits.push(format!("extras: {}", extra_positionals.join(" ")));
+    }
+    Some(ExecResult::err(format!(
+        "border {}: takes no arguments — got {}. \
+         For composed edits use the kv form (`border preset=heavy padding=8`) \
+         or stage with `border preview …`.",
+        subverb,
+        bits.join("; ")
+    )))
 }
 
 fn apply_reset(eff: &mut ConsoleEffects) -> ExecResult {
@@ -535,12 +584,16 @@ fn apply_corner_positional(args: &Args, eff: &mut ConsoleEffects) -> ExecResult 
         None
     };
     for corner in corners {
+        // CODE_CONVENTIONS §9: interactive paths must not panic.
+        // `parse_corner_selector` currently only emits the four
+        // corners, but a future extension shouldn't crash an
+        // interactive session.
         let slot = match corner {
             "tl" => &mut edits.corner_top_left,
             "tr" => &mut edits.corner_top_right,
             "bl" => &mut edits.corner_bottom_left,
             "br" => &mut edits.corner_bottom_right,
-            _ => unreachable!("parse_corner_selector only yields the four corners"),
+            _ => return ExecResult::err(format!("internal: unrecognised corner '{}'", corner)),
         };
         if let Some(ref gs) = glyph_set {
             let ch = match corner {
@@ -548,7 +601,7 @@ fn apply_corner_positional(args: &Args, eff: &mut ConsoleEffects) -> ExecResult 
                 "tr" => gs.top_right,
                 "bl" => gs.bottom_left,
                 "br" => gs.bottom_right,
-                _ => unreachable!(),
+                _ => return ExecResult::err(format!("internal: unrecognised corner '{}'", corner)),
             };
             if let Err(e) = stage_corner_or_err(slot, corner, &ch.to_string()) {
                 return ExecResult::err(e);

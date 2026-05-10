@@ -64,12 +64,25 @@ pub fn execute_border_show(args: &Args, eff: &mut ConsoleEffects) -> ExecResult 
     ))
 }
 
+/// Resolve the first node id `border show` should report on.
+/// Section / SectionRange / MultiSection selections collapse
+/// to the section's owning node — same posture every other
+/// border subverb takes via `nodes_in_selection` (Section
+/// borders attach to the node, not the section). Pre-fix
+/// `border show` rejected those variants despite the verb's
+/// `node_or_section_selected` predicate advertising them.
 fn first_selected_node_id(sel: &SelectionState) -> Result<String, String> {
     match sel {
         SelectionState::Single(id) => Ok(id.clone()),
         SelectionState::Multi(ids) => ids
             .first()
             .cloned()
+            .ok_or_else(|| "border: empty selection".to_string()),
+        SelectionState::Section(s) => Ok(s.node_id.clone()),
+        SelectionState::SectionRange { sel: s, .. } => Ok(s.node_id.clone()),
+        SelectionState::MultiSection(secs) => secs
+            .first()
+            .map(|s| s.node_id.clone())
             .ok_or_else(|| "border: empty selection".to_string()),
         SelectionState::None => Err("border: no selection".to_string()),
         _ => Err("border: not applicable to this selection".to_string()),

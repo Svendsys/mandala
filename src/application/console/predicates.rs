@@ -42,6 +42,7 @@ pub fn node_or_section_selected(ctx: &ConsoleContext) -> bool {
     matches!(
         &ctx.document.selection,
         SelectionState::Single(_)
+            | SelectionState::Multi(_)
             | SelectionState::Section(_)
             | SelectionState::SectionRange { .. }
             | SelectionState::MultiSection(_)
