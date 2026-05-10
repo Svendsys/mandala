@@ -2684,32 +2684,105 @@ device (or chrome devtools mobile emulation) and verify each gesture.
 This batch's verification is more involved; pair with a tester if
 solo development is a constraint.
 
-#### Batch 8 — Documentation, polish, drive-by fixes
+#### Batch 8 — Documentation, polish, drive-by fixes — SHIPPED
 
 Lands the doc updates, deletes deprecated paths fully, runs a
 final pass to surface any seams the previous batches noticed but
 deferred. Per CODE_CONVENTIONS §5 (drive-by fixes).
 
-Tasks:
-- [ ] Update `CONCEPTS.md` to describe the InteractionMode enum,
-      its variants, its place in §5 "The application runtime".
-- [ ] Update `format/sections.md` to describe the `section` verb's
-      new grammar (also referenced from Batch 5).
-- [ ] Update `format/border-patterns.md` to describe the `border`
-      verb's new grammar (also referenced from Batch 6).
-- [ ] Update `CLAUDE.md` "Common tasks" if any of the
-      `./run.sh` / `./test.sh` flags changed.
-- [ ] Update the README if any user-facing capabilities changed.
-- [ ] Run `cargo doc -p baumhard --no-deps` and check for warnings.
-- [ ] Audit deferred items in `REFACTOR_PLAN.md` Batch 5.2 (DragState
-      Pending refactor) — this batch's mode work touches `Pending`
-      heavily; if the time is right, fold the deferred refactor in.
-- [ ] Final sweep: search for `// FIXME`, `// TODO`, `// HACK` —
-      should be zero (per CODE_CONVENTIONS §5).
-- [ ] Run `./test.sh --bench` to capture final benchmark deltas.
+Tasks (status post-Batch-8 ship):
+- [x] `CONCEPTS.md` extended with `### `InteractionMode`` (the
+      three-mode lifecycle Default / Resize / NodeEdit) and
+      `### `SectionFrameElement` and section-frame chrome` (the
+      cyan-rectangle parallel-canvas dispatch). Both cross-ref
+      §5 "The application runtime" and the plan's §2-§4 design.
+- [x] `format/sections.md` — already updated in Batch 5 + Tier 3
+      review fixes. Verified accurate (9-subverb table, fan-out
+      atomicity note, schema-drift acknowledgement).
+- [x] `format/border-patterns.md` — rewritten in Batch 6 + T6 of
+      the opus review (positional grammar surfaces first, kv as
+      keybind alias, non-custom-preset error documented, cycle
+      semantics noted, internal field-name leak fixed).
+- [x] `CLAUDE.md` "Common tasks" verified accurate — every
+      flag listed (`--coverage` / `--lint` / `--bench`) matches
+      `./test.sh --help`.
+- [x] README verified — high-level orientation unchanged; no
+      user-facing capability claims drifted.
+- [x] `cargo doc --workspace --no-deps`: 12 warnings pre-fix → 0
+      warnings post-fix. Each broken-link / private-item-link /
+      unclosed-html-tag site fixed at the source (B8.1+5 commit).
+- [x] REFACTOR_PLAN.md Batch 5.2 (DragState `Pending` enum
+      conversion) audited — the deferral note's release-UX
+      rationale still stands; the Section/Border PR didn't
+      touch `Pending` (Batch 4 added a parallel `PendingRight`
+      variant; Batch 5/6 ride the `Throttled(SectionResize)`
+      path). Time isn't right; deferral re-confirmed.
+- [x] `// FIXME` / `// TODO` / `// HACK` sweep — zero hits across
+      `src/` and `lib/baumhard/src/`.
+- [x] `cargo bench` for the Plan §7.4 benches:
+      `fast_resize_anchor_inference` ~360 ps/call (no regression
+      vs Batch 4 baseline); `scene_rebuild_node_edit_mode_active`
+      ~30 µs/rebuild on the 50-node × 5-section synthetic;
+      `section_frame_emission_50x5_with_node_edit_active`
+      ~3.3 µs.
 
-Verification: tests green; comprehensive manual smoke (every
-scenario in §7.2 on native and WASM); benchmark deltas inspected.
+Drive-by fixes from the Batch-6 opus review folded in:
+- [x] §5.7 doc-setter rename `set_canvas_default_border_config`
+      → `set_canvas_default_border` (mechanical, 9 sites in 4
+      files; per CODE_CONVENTIONS §10 no shim).
+- [x] Verb-strict vs macro-permissive contract pin
+      (`apply_border_field_to_selection_auto_promotes_preset_to_custom`
+      in border/tests.rs) — locks in the deliberate divergence
+      between the verb-layer error and the data-layer auto-
+      promote so future tightening doesn't drift one without
+      the other.
+- [x] `canvas border preset cycle` parity — single-line
+      addition in `positional_subverb_to_edits`; same wrap
+      order as the per-node verb. Two new tests
+      (`canvas_border_preset_cycle_advances_canvas_default`,
+      `canvas_section_frame_preset_cycle_wraps`).
+
+Open follow-ups deferred to a future PR (acknowledged in plan's
+§5.B6 "Open follow-ups" block):
+- [ ] §5.5 `BorderEditOutcome` removal + `helpers::ApplyTally::finalize`
+      reuse — substantial refactor across every border setter.
+- [ ] §5.5 typed `Outcome::Lines` from `preset` subverb — depends
+      on `BorderEditOutcome` removal.
+- [ ] §5.8 7 of 9 typed `Action` variants (`SetBorderPreset(String)` /
+      `SetBorderColor(String)` / etc.) + `#[deprecated]` on
+      `SetBorderField`. `SetBorderField` preserves the keybind
+      surface today.
+- [ ] §5.9 rendered pattern templates for `border side WHICH <TAB>`
+      (6 templates in border font) and glyph candidates for
+      `border corner WHICH <TAB>` (13 candidates) — needs a typed
+      catalogue + font-renderer integration. The `reset` second-
+      positional row shipped in T4.
+- [ ] `canvas border show side=` / `verbose` parity — the canvas
+      show path uses a custom formatter (no node `size`, no dual
+      color cascade), so adding the per-node flags would force-
+      fit a different output shape. Documented as honest
+      asymmetry.
+- [ ] §3.8 `enter_node_edit` keybind default — kept
+      `edit_selection` as the umbrella entry point instead of
+      deleting it; functionally equivalent, avoids a forced
+      config rebind on existing users.
+- [ ] §4.7 hover affordance — per-frame brightness modulation;
+      better folded into Batch 7's touch-parity work.
+- [ ] `Arc<str>` migration for `SectionFrameElement.node_id`
+      (Performance #2 from the §4.6 review).
+- [ ] Resource caps on text length / sections per node / undo
+      depth (Security I-1/2/3 from the §4.6 review).
+- [ ] §3.9 `node edit` console subverb — sugar over `mode
+      node-edit`; landed.
+- [ ] `SectionRange` grapheme-vs-section type confusion —
+      doc-comment fixed to reflect the load-bearing (section-
+      index) interpretation; the deeper fix to the editor-close
+      `lift_anchor_to_section_range` path is its own follow-up.
+
+Verification (post-Batch-8 ship): 2629 tests pass on
+`./test.sh`; wasm32 cross-compile clean; `cargo doc --workspace
+--no-deps` clean; `cargo bench` runs all Plan §7.4 benches
+without regression.
 
 ### 8.3 Cross-batch dependencies
 
