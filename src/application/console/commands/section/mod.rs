@@ -42,7 +42,7 @@ use crate::application::console::completion::{
     kv_key_completions_with_hints, prefix_filter, Completion, CompletionContext, CompletionState,
 };
 use crate::application::console::parser::Args;
-use crate::application::console::predicates::node_or_section_selected;
+use crate::application::console::predicates::node_or_section_selected_single_node;
 use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
 use crate::application::document::{MindMapDocument, SectionSel, SelectionState};
 
@@ -61,7 +61,13 @@ pub const COMMAND: Command = Command {
         "section", "show", "info", "move", "resize", "offset", "size", "text", "add", "delete",
         "split", "frame", "border", "preset", "glyph", "preview",
     ],
-    applicable: node_or_section_selected,
+    // Stricter than `border` — section subverbs need a single
+    // node target (or section), so `Multi(_)` is excluded. Pre-
+    // fix the shared predicate admitted Multi but the section
+    // runtime rejected it with a generic catch-all error,
+    // reintroducing the UX-vs-runtime mismatch Critical #5 was
+    // meant to fix.
+    applicable: node_or_section_selected_single_node,
     complete: complete_section,
     execute: execute_section,
 };
