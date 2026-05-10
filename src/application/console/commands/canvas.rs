@@ -44,7 +44,14 @@ use crate::application::document::{BorderConfigEdits, BorderEditOutcome, OptionE
 /// Subverbs surfaced as token-0 completions.
 pub const VERBS: &[&str] = &["border", "section-frame"];
 /// Subverbs surfaced under `border` / `section-frame`.
-pub const SUBVERBS: &[&str] = &["show", "reset", "preview"];
+pub const SUBVERBS: &[&str] = &[
+    "show", "reset", "preview",
+    // Per-field positional subverbs — same vocabulary the per-node
+    // `border` verb surfaces. Pre-fix this list omitted them so
+    // tab-completion silently hid `canvas border preset heavy` etc.
+    // even though `execute_border_subject` accepts them.
+    "preset", "color", "padding", "palette", "font", "side", "corner",
+];
 /// Modifier under `section-frame` (followed by show|reset|kv).
 pub const SECTION_FRAME_MODIFIERS: &[&str] = &["focused"];
 
@@ -117,11 +124,35 @@ fn complete_canvas(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Complet
             out.extend(kv_key_completions_with_hints(BORDER_KEYS, state.partial, kv_hint));
             out
         }
+        // Per-field positional value completion for `canvas border <verb>`:
+        // mirror the per-node `border` verb's Plan §5.9 work. Without
+        // this, `canvas border preset <TAB>` returned kv keys (the
+        // wrong vocabulary).
+        CompletionContext::Token { index: 2 } if subject == Some("border") => {
+            let verb = state.tokens.get(2).map(|s| s.to_ascii_lowercase());
+            canvas_value_completions(verb.as_deref(), state.partial, ctx)
+        }
+        // Same for `canvas section-frame <verb>` (one positional later
+        // when the `focused` modifier is absent).
+        CompletionContext::Token { index: 2 } if subject == Some("section-frame")
+            && state.tokens.get(2).map(String::as_str) != Some("focused") =>
+        {
+            let verb = state.tokens.get(2).map(|s| s.to_ascii_lowercase());
+            canvas_value_completions(verb.as_deref(), state.partial, ctx)
+        }
         // Index 3: after `canvas section-frame focused preview`.
         CompletionContext::Token { index: 3 } if after_focused_preview => {
             let mut out = super::border::preview_subverb_completions(state.partial);
             out.extend(kv_key_completions_with_hints(BORDER_KEYS, state.partial, kv_hint));
             out
+        }
+        // `canvas section-frame focused <verb> <value>` — value position
+        // for the per-field verbs after the `focused` modifier.
+        CompletionContext::Token { index: 3 } if subject == Some("section-frame")
+            && state.tokens.get(2).map(String::as_str) == Some("focused") =>
+        {
+            let verb = state.tokens.get(3).map(|s| s.to_ascii_lowercase());
+            canvas_value_completions(verb.as_deref(), state.partial, ctx)
         }
         // Anything else past index 1 is always kv-form.
         CompletionContext::Token { .. } => kv_key_completions_with_hints(BORDER_KEYS, state.partial, kv_hint),
@@ -139,6 +170,27 @@ fn complete_canvas(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Complet
 /// Per-key hint table — delegates to the shared
 /// [`super::border::kv_hint`] so `border …`, `section frame …`, and
 /// `canvas …` surface identical hints.
+/// Per-field positional-value completion for `canvas border <verb>
+/// <TAB>` and `canvas section-frame [focused] <verb> <TAB>`.
+/// Routes through the same per-node `border::kv_value_completions`
+/// vocabulary so canvas users see the same preset / palette / font
+/// rows the per-node verb surfaces.
+fn canvas_value_completions(
+    verb: Option<&str>,
+    partial: &str,
+    ctx: &ConsoleContext,
+) -> Vec<Completion> {
+    match verb {
+        Some("preset") | Some("color") | Some("palette") | Some("font") => {
+            super::border::kv_value_completions(verb.unwrap(), partial, ctx)
+        }
+        Some("side") => prefix_filter(&["top", "bottom", "left", "right", "all"], partial),
+        Some("corner") => prefix_filter(&["tl", "tr", "bl", "br", "all"], partial),
+        // `padding` takes a number — no candidate vocabulary.
+        _ => Vec::new(),
+    }
+}
+
 fn kv_hint(key: &str) -> Option<&'static str> {
     super::border::kv_hint(key)
 }
@@ -1229,5 +1281,97 @@ mod cycle_pin {
             doc.mindmap.canvas.default_section_frame_border.as_ref().map(|c| c.preset.as_str()),
             Some("light")
         );
+    }
+}
+
+#[cfg(test)]
+mod completion_pins {
+    use super::*;
+    use crate::application::console::completion::CompletionContext;
+
+    fn fixture_doc() -> crate::application::document::MindMapDocument {
+        crate::application::document::tests_common::load_test_doc()
+    }
+
+    fn at_token<'a>(
+        index: usize,
+        partial: &'a str,
+        tokens: &'a [String],
+    ) -> CompletionState<'a> {
+        CompletionState {
+            tokens,
+            cursor_token: index,
+            partial,
+            context: CompletionContext::Token { index },
+        }
+    }
+
+    /// `canvas border <TAB>` surfaces every positional subverb,
+    /// not just show/reset/preview.
+    #[test]
+    fn canvas_border_token1_lists_all_positional_subverbs() {
+        let doc = fixture_doc();
+        let ctx = ConsoleContext::from_document(&doc);
+        let tokens = vec!["canvas".to_string(), "border".to_string()];
+        let s = at_token(1, "", &tokens);
+        let labels: Vec<String> = complete_canvas(&s, &ctx).into_iter().map(|c| c.display).collect();
+        for v in &["show", "reset", "preview", "preset", "color", "padding", "palette", "font", "side", "corner"] {
+            assert!(
+                labels.iter().any(|l| l == v),
+                "canvas border completion missing '{}': {:?}",
+                v,
+                labels
+            );
+        }
+    }
+
+    #[test]
+    fn canvas_border_preset_value_completion() {
+        let doc = fixture_doc();
+        let ctx = ConsoleContext::from_document(&doc);
+        let tokens = vec!["canvas".to_string(), "border".to_string(), "preset".to_string()];
+        let s = at_token(2, "", &tokens);
+        let labels: Vec<String> = complete_canvas(&s, &ctx).into_iter().map(|c| c.display).collect();
+        for v in &["light", "heavy", "double", "rounded", "custom", "cycle"] {
+            assert!(
+                labels.iter().any(|l| l == v),
+                "canvas border preset value completion missing '{}': {:?}",
+                v,
+                labels
+            );
+        }
+    }
+
+    #[test]
+    fn canvas_border_side_value_completion() {
+        let doc = fixture_doc();
+        let ctx = ConsoleContext::from_document(&doc);
+        let tokens = vec!["canvas".to_string(), "border".to_string(), "side".to_string()];
+        let s = at_token(2, "", &tokens);
+        let labels: Vec<String> = complete_canvas(&s, &ctx).into_iter().map(|c| c.display).collect();
+        for v in &["top", "bottom", "left", "right", "all"] {
+            assert!(
+                labels.iter().any(|l| l == v),
+                "canvas border side value completion missing '{}': {:?}",
+                v,
+                labels
+            );
+        }
+    }
+
+    #[test]
+    fn canvas_section_frame_focused_preset_value_completion() {
+        let doc = fixture_doc();
+        let ctx = ConsoleContext::from_document(&doc);
+        let tokens = vec![
+            "canvas".to_string(),
+            "section-frame".to_string(),
+            "focused".to_string(),
+            "preset".to_string(),
+        ];
+        let s = at_token(3, "", &tokens);
+        let labels: Vec<String> = complete_canvas(&s, &ctx).into_iter().map(|c| c.display).collect();
+        assert!(labels.iter().any(|l| l == "heavy"));
+        assert!(labels.iter().any(|l| l == "cycle"));
     }
 }
