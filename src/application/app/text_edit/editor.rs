@@ -260,11 +260,21 @@ pub(in crate::application::app) fn revert_node_text_on_tree(
 /// inline logic so the lift contract can be unit-tested without
 /// the full renderer / tree / scene plumbing.
 ///
-/// Returns `Some(new_sel)` when `anchor.is_some()` AND
-/// `anchor != cursor` — the range is the half-open
-/// `[min(anchor, cursor), max(anchor, cursor))`. Returns `None`
-/// when the anchor is unset or coincides with the cursor (no
-/// shift-select happened, or the shift-select collapsed back).
+/// Lift the editor's `(anchor, cursor)` shift-select pair into a
+/// `Section(SectionSel)` selection on commit — when the anchor
+/// is set AND differs from the cursor (i.e. the user actually
+/// shift-selected text). The grapheme range itself is discarded:
+/// every `SectionRange` consumer in the codebase interprets the
+/// `range` field as section indices, not grapheme positions, so
+/// writing grapheme positions there silently breaks downstream
+/// fan-out (`border preview`, `cleanup_after_structural_mutation`,
+/// `commit_border_preview`'s `Sections` target). Lifting to
+/// `Section` keeps the post-commit selection at the section the
+/// user was editing — the right anchor for follow-up per-section
+/// verbs without the grapheme/section type confusion.
+///
+/// Returns `None` when no shift-select happened (anchor unset or
+/// coincides with cursor) — caller leaves the selection alone.
 pub(in crate::application::app) fn lift_anchor_to_section_range(
     selection_anchor: Option<usize>,
     cursor_grapheme_pos: usize,
@@ -275,15 +285,12 @@ pub(in crate::application::app) fn lift_anchor_to_section_range(
     if anchor == cursor_grapheme_pos {
         return None;
     }
-    let start = anchor.min(cursor_grapheme_pos);
-    let end = anchor.max(cursor_grapheme_pos);
-    Some(crate::application::document::SelectionState::SectionRange {
-        sel: crate::application::document::SectionSel {
+    Some(crate::application::document::SelectionState::Section(
+        crate::application::document::SectionSel {
             node_id: node_id.to_string(),
             section_idx,
         },
-        range: (start, end),
-    })
+    ))
 }
 
 /// Commit or cancel the open text editor. Commit writes the

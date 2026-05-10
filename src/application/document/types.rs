@@ -187,32 +187,16 @@ pub enum SelectionState {
     /// through that constructor.
     MultiSection(Vec<SectionSel>),
     /// `range` is a `(lo, hi)` pair of **section indices** on
-    /// the owning node — `[lo, hi]` inclusive, fanned out by
-    /// `border` / `style` verbs to multiple `(node_id, idx)`
-    /// pairs (see `border.rs::expand_section_pairs` and
-    /// `cross_dispatch/style.rs::commit_border_preview`).
-    /// Pre-fix the doc said "grapheme indices" — that was a
-    /// lie inherited from an earlier shape; the editor's
-    /// shift-select anchor (which DOES carry grapheme
-    /// positions) routes through `lift_anchor_to_section_range`
-    /// but the resulting selection's `range` is then re-
-    /// interpreted as section indices by every consumer. The
-    /// editor-close path needs a separate concept (a future
-    /// `GraphemeRange` variant?) to carry text-position
-    /// selections cleanly; until that lands, callers that lift
-    /// from the editor should clamp grapheme positions to the
-    /// section's own index pair `(s.section_idx, s.section_idx)`
-    /// — but in practice every existing call site that builds
-    /// `SectionRange` writes a section-index range. Pre-Tier-4
-    /// review uncovered this confusion; the structural cleanup
-    /// in `cleanup_after_structural_mutation` clamps `range`
-    /// against `sections.len()` correctly, confirming the
-    /// section-index interpretation is the load-bearing one.
-    /// Per-section verbs (`color text=…`, `font size=…`,
-    /// `font family=…`) see the range and route to the range-
-    /// aware setter; accessors that only care about the owning
-    /// section (`selected_section`, `selected_ids`,
-    /// `is_selected`) treat it identically to [`Self::Section`].
+    /// the owning node, `[lo, hi]` inclusive. Fanned out by
+    /// `border` / `style` verbs through
+    /// `border.rs::expand_section_pairs` and
+    /// `cross_dispatch/style.rs::commit_border_preview`. Clamped
+    /// by `cleanup_after_structural_mutation` on add/delete/split
+    /// against `sections.len()`. Per-section verbs see the
+    /// range and route to the range-aware setter; accessors that
+    /// only care about the owning section (`selected_section`,
+    /// `selected_ids`, `is_selected`) treat it identically to
+    /// [`Self::Section`].
     SectionRange { sel: SectionSel, range: (usize, usize) },
     Edge(EdgeRef),
     /// Line-mode label selection: the edge's text label sits
