@@ -10,23 +10,142 @@ use crate::application::console::completion::{
 use crate::application::console::ConsoleContext;
 
 pub fn complete_border(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Completion> {
-    // After `border preview ` the user gets `commit` / `cancel`
-    // plus the kv keys (preview accepts the same vocabulary as
-    // the committing kv-form). The engine's `Token { index: 0 }`
-    // is for the first positional after `border`; index 1 is
-    // for the position after `preview`.
-    let after_preview = state.tokens.get(1).map(String::as_str) == Some("preview");
+    // The engine's `Token { index: N }` indexes positionals
+    // *after* the verb name (`border`). The dispatch reads
+    // tokens[1..] (tokens[0] is "border" itself); first
+    // positional after the verb name is at engine index 0.
+    let token1 = state.tokens.get(1).map(String::as_str);
+    let token2 = state.tokens.get(2).map(String::as_str);
+    let after_preview = token1 == Some("preview");
     match &state.context {
         CompletionContext::Token { index: 0 } => verb_or_key(state.partial),
+        // Plan §5.9 positional-subverb value completion. When
+        // tokens[1] is a known positional subverb, the next
+        // positional is its value — surface a typed vocabulary
+        // instead of falling through to kv keys (which would
+        // suggest `preset=` / `color=` etc., the wrong context).
         CompletionContext::Token { index: 1 } if after_preview => {
             let mut out = preview_subverb_completions(state.partial);
             out.extend(key_completions(state.partial));
             out
         }
+        CompletionContext::Token { index: 1 } => match token1.map(str::to_ascii_lowercase).as_deref() {
+            Some("preset") => preset_value_completions(state.partial),
+            Some("color") => prefix_filter(super::COLOR_PRESETS, state.partial),
+            Some("palette") => palette_value_completions(state.partial, ctx),
+            Some("font") => font_family_completions(state.partial),
+            Some("side") => prefix_filter(SIDE_VALUES, state.partial),
+            Some("corner") => prefix_filter(CORNER_VALUES, state.partial),
+            Some("show") => show_arg_completions(state.partial),
+            // padding takes a number — no candidate vocabulary;
+            // toggle / on / off / reset take nothing — same.
+            _ => Vec::new(),
+        },
+        // Plan §5.9 second-positional value: side <TAB> takes
+        // pattern (free-form) or `reset`; corner <TAB> takes a
+        // single glyph (free-form) or `reset`.
+        CompletionContext::Token { index: 2 } => match token1.map(str::to_ascii_lowercase).as_deref() {
+            Some("side") => side_pattern_completions(state.partial, token2),
+            Some("corner") => corner_glyph_completions(state.partial),
+            _ => Vec::new(),
+        },
         CompletionContext::Token { .. } => key_completions(state.partial),
         CompletionContext::KvValue { key } => kv_value_completions(key.as_str(), state.partial, ctx),
         _ => Vec::new(),
     }
+}
+
+const SIDE_VALUES: &[&str] = &["top", "bottom", "left", "right", "all"];
+const CORNER_VALUES: &[&str] = &["tl", "tr", "bl", "br", "all"];
+
+/// `border preset <TAB>` and `border preset=<TAB>` value
+/// completion. Plan §5.9: every entry from `BORDER_PRESETS`
+/// plus `cycle`.
+fn preset_value_completions(partial: &str) -> Vec<Completion> {
+    let mut out: Vec<Completion> = super::PRESETS
+        .iter()
+        .filter(|p| p.starts_with(partial))
+        .map(|p| Completion {
+            text: p.to_string(),
+            display: p.to_string(),
+            hint: Some(preset_hint(p).to_string()),
+            font_family: None,
+        })
+        .collect();
+    if "cycle".starts_with(partial) {
+        out.push(Completion {
+            text: "cycle".to_string(),
+            display: "cycle".to_string(),
+            hint: Some("advance to the next preset (wraps)".to_string()),
+            font_family: None,
+        });
+    }
+    out
+}
+
+fn preset_hint(p: &str) -> &'static str {
+    match p {
+        "light" => "thin lines (default)",
+        "heavy" => "bold lines",
+        "double" => "double lines",
+        "rounded" => "thin lines with rounded corners",
+        "custom" => "user-supplied per-side / per-corner glyphs",
+        _ => "",
+    }
+}
+
+/// `border show <TAB>` surfaces the optional `side=` filter
+/// kv and the `verbose` positional flag (Plan §5.9 / B6.8).
+/// Pre-fix neither was discoverable from completion.
+fn show_arg_completions(partial: &str) -> Vec<Completion> {
+    let mut out = Vec::new();
+    if "side=".starts_with(partial) || "side".starts_with(partial) {
+        out.push(Completion {
+            text: "side=".to_string(),
+            display: "side=".to_string(),
+            hint: Some("filter readout to one side (top|bottom|left|right|all)".to_string()),
+            font_family: None,
+        });
+    }
+    if "verbose".starts_with(partial) {
+        out.push(Completion {
+            text: "verbose".to_string(),
+            display: "verbose".to_string(),
+            hint: Some("surface the dual color cascade (frame_color vs border.color)".to_string()),
+            font_family: None,
+        });
+    }
+    out
+}
+
+/// `border side WHICH <TAB>` — pattern templates plus `reset`.
+/// Templates are free-form so we don't surface a glyph
+/// catalogue, but `reset` is the discoverability gap (users
+/// won't guess "reset" without seeing it).
+fn side_pattern_completions(partial: &str, _which: Option<&str>) -> Vec<Completion> {
+    let mut out = Vec::new();
+    if "reset".starts_with(partial) {
+        out.push(Completion {
+            text: "reset".to_string(),
+            display: "reset".to_string(),
+            hint: Some("restore the slot's preset's default glyph".to_string()),
+            font_family: None,
+        });
+    }
+    out
+}
+
+fn corner_glyph_completions(partial: &str) -> Vec<Completion> {
+    let mut out = Vec::new();
+    if "reset".starts_with(partial) {
+        out.push(Completion {
+            text: "reset".to_string(),
+            display: "reset".to_string(),
+            hint: Some("restore the slot's preset's default glyph".to_string()),
+            font_family: None,
+        });
+    }
+    out
 }
 
 /// `border preview <TAB>` → `commit` / `cancel` rows with hints.
@@ -64,7 +183,7 @@ fn preview_subverb_hint(s: &str) -> &'static str {
 /// editing.
 pub fn kv_value_completions(key: &str, partial: &str, ctx: &ConsoleContext) -> Vec<Completion> {
     match key {
-        "preset" => prefix_filter(super::PRESETS, partial),
+        "preset" => preset_value_completions(partial),
         "field" => prefix_filter(super::FIELDS, partial),
         "color" => prefix_filter(super::COLOR_PRESETS, partial),
         "palette" => palette_value_completions(partial, ctx),
@@ -106,9 +225,17 @@ fn verb_hint(v: &str) -> &'static str {
     match v {
         "on" => "show the border",
         "off" => "hide the border",
-        "show" => "print the resolved config",
+        "toggle" => "flip show_frame per node",
+        "show" => "print the resolved config (use [side=…] [verbose])",
         "reset" => "drop the per-node override",
         "preview" => "stage a preview without writing the model (commit/cancel terminates)",
+        "preset" => "pick light|heavy|double|rounded|custom or `cycle`",
+        "color" => "set border color (#hex|var|preset|reset)",
+        "padding" => "set border padding in pixels",
+        "palette" => "cycle a palette across glyphs (or `off`)",
+        "font" => "set border glyph font family (with optional size=)",
+        "side" => "set per-side glyph (top|bottom|left|right|all)",
+        "corner" => "set per-corner glyph (tl|tr|bl|br|all)",
         _ => "",
     }
 }
@@ -324,5 +451,206 @@ mod tests {
                 "every font-completion row must tag its display family"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod plan_5_9_tests {
+    //! Plan §5.9 completion improvements — pin the new
+    //! positional-subverb value rows the prior `complete.rs`
+    //! never surfaced (Plan Adherence reviewer flagged the
+    //! gap as silently-deferred).
+
+    use super::*;
+    use crate::application::console::completion::CompletionContext;
+
+    fn fixture_doc() -> crate::application::document::MindMapDocument {
+        crate::application::document::tests_common::load_test_doc()
+    }
+
+    fn at_token1<'a>(
+        partial: &'a str,
+        tokens: &'a [String],
+    ) -> CompletionState<'a> {
+        CompletionState {
+            tokens,
+            cursor_token: 1,
+            partial,
+            context: CompletionContext::Token { index: 1 },
+        }
+    }
+
+    fn at_token2<'a>(
+        partial: &'a str,
+        tokens: &'a [String],
+    ) -> CompletionState<'a> {
+        CompletionState {
+            tokens,
+            cursor_token: 2,
+            partial,
+            context: CompletionContext::Token { index: 2 },
+        }
+    }
+
+    /// `border preset <TAB>` surfaces every preset name + `cycle`.
+    #[test]
+    fn preset_positional_completion_includes_cycle() {
+        let doc = fixture_doc();
+        let ctx = ConsoleContext::from_document(&doc);
+        let tokens = vec!["border".to_string(), "preset".to_string()];
+        let s = at_token1("", &tokens);
+        let labels: Vec<String> = complete_border(&s, &ctx)
+            .into_iter()
+            .map(|c| c.display)
+            .collect();
+        for p in &["light", "heavy", "double", "rounded", "custom", "cycle"] {
+            assert!(
+                labels.iter().any(|l| l == p),
+                "preset completion missing '{}': {:?}",
+                p,
+                labels
+            );
+        }
+    }
+
+    #[test]
+    fn preset_kv_value_completion_includes_cycle() {
+        let doc = fixture_doc();
+        let ctx = ConsoleContext::from_document(&doc);
+        let tokens = vec!["border".to_string()];
+        let s = CompletionState {
+            tokens: &tokens,
+            cursor_token: 1,
+            partial: "",
+            context: CompletionContext::KvValue {
+                key: "preset".to_string(),
+            },
+        };
+        let labels: Vec<String> = complete_border(&s, &ctx)
+            .into_iter()
+            .map(|c| c.display)
+            .collect();
+        assert!(
+            labels.iter().any(|l| l == "cycle"),
+            "preset= completion missing 'cycle': {:?}",
+            labels
+        );
+    }
+
+    #[test]
+    fn side_positional_completion_lists_four_sides_and_all() {
+        let doc = fixture_doc();
+        let ctx = ConsoleContext::from_document(&doc);
+        let tokens = vec!["border".to_string(), "side".to_string()];
+        let s = at_token1("", &tokens);
+        let labels: Vec<String> = complete_border(&s, &ctx)
+            .into_iter()
+            .map(|c| c.display)
+            .collect();
+        for v in &["top", "bottom", "left", "right", "all"] {
+            assert!(
+                labels.iter().any(|l| l == v),
+                "side completion missing '{}': {:?}",
+                v,
+                labels
+            );
+        }
+    }
+
+    #[test]
+    fn corner_positional_completion_lists_four_corners_and_all() {
+        let doc = fixture_doc();
+        let ctx = ConsoleContext::from_document(&doc);
+        let tokens = vec!["border".to_string(), "corner".to_string()];
+        let s = at_token1("", &tokens);
+        let labels: Vec<String> = complete_border(&s, &ctx)
+            .into_iter()
+            .map(|c| c.display)
+            .collect();
+        for v in &["tl", "tr", "bl", "br", "all"] {
+            assert!(
+                labels.iter().any(|l| l == v),
+                "corner completion missing '{}': {:?}",
+                v,
+                labels
+            );
+        }
+    }
+
+    #[test]
+    fn side_second_positional_offers_reset() {
+        let doc = fixture_doc();
+        let ctx = ConsoleContext::from_document(&doc);
+        let tokens = vec!["border".to_string(), "side".to_string(), "top".to_string()];
+        let s = at_token2("", &tokens);
+        let labels: Vec<String> = complete_border(&s, &ctx)
+            .into_iter()
+            .map(|c| c.display)
+            .collect();
+        assert!(labels.iter().any(|l| l == "reset"));
+    }
+
+    #[test]
+    fn corner_second_positional_offers_reset() {
+        let doc = fixture_doc();
+        let ctx = ConsoleContext::from_document(&doc);
+        let tokens = vec!["border".to_string(), "corner".to_string(), "tl".to_string()];
+        let s = at_token2("", &tokens);
+        let labels: Vec<String> = complete_border(&s, &ctx)
+            .into_iter()
+            .map(|c| c.display)
+            .collect();
+        assert!(labels.iter().any(|l| l == "reset"));
+    }
+
+    #[test]
+    fn show_arg_completion_offers_side_and_verbose() {
+        let doc = fixture_doc();
+        let ctx = ConsoleContext::from_document(&doc);
+        let tokens = vec!["border".to_string(), "show".to_string()];
+        let s = at_token1("", &tokens);
+        let labels: Vec<String> = complete_border(&s, &ctx)
+            .into_iter()
+            .map(|c| c.display)
+            .collect();
+        assert!(labels.iter().any(|l| l == "side="));
+        assert!(labels.iter().any(|l| l == "verbose"));
+    }
+
+    /// `border palette <TAB>` (positional form) lists palette
+    /// names + `off` — same vocabulary the kv `palette=<TAB>`
+    /// surfaces.
+    #[test]
+    fn palette_positional_completion_lists_palettes_and_off() {
+        let doc = fixture_doc();
+        let ctx = ConsoleContext::from_document(&doc);
+        let tokens = vec!["border".to_string(), "palette".to_string()];
+        let s = at_token1("", &tokens);
+        let labels: Vec<String> = complete_border(&s, &ctx)
+            .into_iter()
+            .map(|c| c.display)
+            .collect();
+        assert!(labels.iter().any(|l| l == "off"), "palette positional missing 'off'");
+        // At least one palette name should surface (testament fixture has palettes).
+        assert!(
+            labels.iter().any(|l| l != "off"),
+            "palette positional should list palette names: {:?}",
+            labels
+        );
+    }
+
+    #[test]
+    fn color_positional_completion_lists_color_presets() {
+        let doc = fixture_doc();
+        let ctx = ConsoleContext::from_document(&doc);
+        let tokens = vec!["border".to_string(), "color".to_string()];
+        let s = at_token1("", &tokens);
+        let labels: Vec<String> = complete_border(&s, &ctx)
+            .into_iter()
+            .map(|c| c.display)
+            .collect();
+        // COLOR_PRESETS includes `accent`, `edge`, `fg`, `reset`.
+        assert!(labels.iter().any(|l| l == "accent"));
+        assert!(labels.iter().any(|l| l == "reset"));
     }
 }
