@@ -2779,6 +2779,40 @@ Open follow-ups deferred to a future PR (acknowledged in plan's
       index) interpretation; the deeper fix to the editor-close
       `lift_anchor_to_section_range` path is its own follow-up.
 
+Architectural follow-ups from the **whole-PR** opus review T4 —
+acknowledged honestly, deferred because each is invasive (touches
+≥6 callsites) and none fixes a correctness bug:
+
+- [ ] **Layering inversion** — `app/dispatch/cross_dispatch/style.rs`
+      reaches *up* into `console::commands::border` for its mutation
+      cores (`apply_border_field_to_selection`, `nodes_in_selection`,
+      `stage_kv`, `BorderConfigEdits`, `BorderPreviewTarget`). The
+      "correct" shape moves these to `document/nodes/border.rs` (or
+      a new `mutation_cores` module) and makes the verb layer a thin
+      shell over them. The verb layer doubling as the mutation-core
+      registry is a known seam — `style.rs:22/32/55/65/104/122` shows
+      6 reach-ups today. Pure refactor; no behavior change.
+- [ ] **border/canvas/section apply-path dedup** — the three apply
+      paths (`border/execute.rs::apply_edits`,
+      `section/frame.rs::apply_section_frame_edits`, the inline
+      canvas.rs apply paths) share kv-staging + auto-promote +
+      bare-custom-hint logic. `stage_kv` is already shared
+      (post-Batch-6 review-fix); the dispatcher shapes are 80%
+      identical but each parses targets differently
+      (per-node ids / per-section pairs / canvas slot). A unified
+      "stage edits + dispatch to target" entrypoint would collapse
+      three parallel implementations. Deferred because the
+      target-resolution divergence is the load-bearing 20%; the
+      refactor needs a `BorderEditTarget` enum that none of the
+      three call sites authored.
+- [ ] **`Result<Option<T>, E>` simplification** —
+      `canvas.rs::positional_subverb_to_edits` returns
+      `Result<Option<BorderConfigEdits>, ExecResult>` to express
+      three outcomes (apply edits / verb self-handled / error).
+      Cleaner with a 3-arm enum like `enum Ctl<T> { Apply(T),
+      Done(ExecResult), Error(ExecResult) }`. Smell flagged once
+      but not on a hot path; cosmetic.
+
 Verification (post-Batch-8 ship): 2629 tests pass on
 `./test.sh`; wasm32 cross-compile clean; `cargo doc --workspace
 --no-deps` clean; `cargo bench` runs all Plan §7.4 benches
