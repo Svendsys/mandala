@@ -218,6 +218,35 @@ fn apply_reset(eff: &mut ConsoleEffects) -> ExecResult {
 /// on / all off" behaviour). Reports `N node(s) toggled`. The
 /// per-node-toggle posture matches `font toggle` and
 /// `node toggle-fold`.
+/// Resolve the first selected node's stored preset, falling
+/// back to the canvas-default's preset, then to `"light"`. The
+/// `border preset cycle` resolver and the `border side|corner
+/// reset` resolver both need this.
+///
+/// Borrows `&ConsoleEffects` rather than the previous shape that
+/// did `.nodes.get(&id).cloned()` (which cloned the entire
+/// `MindNode` to extract one preset string — Performance LOW
+/// finding from the opus review).
+fn first_selection_preset(eff: &ConsoleEffects) -> String {
+    let ids = match nodes_in_selection(&eff.document.selection, "border") {
+        Ok(ids) => ids,
+        Err(_) => return "light".to_string(),
+    };
+    ids.first()
+        .and_then(|id| eff.document.mindmap.nodes.get(id))
+        .and_then(|n| n.style.border.as_ref())
+        .map(|c| c.preset.clone())
+        .or_else(|| {
+            eff.document
+                .mindmap
+                .canvas
+                .default_border
+                .as_ref()
+                .map(|c| c.preset.clone())
+        })
+        .unwrap_or_else(|| "light".to_string())
+}
+
 fn apply_visible_toggle(eff: &mut ConsoleEffects) -> ExecResult {
     let ids = match nodes_in_selection(&eff.document.selection, "border") {
         Ok(ids) => ids,
@@ -264,24 +293,8 @@ fn apply_preset_positional(args: &Args, eff: &mut ConsoleEffects) -> ExecResult 
     };
     let name_lc = value.to_ascii_lowercase();
     let target = if name_lc == "cycle" {
-        let ids = match nodes_in_selection(&eff.document.selection, "border") {
-            Ok(ids) => ids,
-            Err(e) => return e,
-        };
-        let current = ids
-            .first()
-            .and_then(|id| eff.document.mindmap.nodes.get(id))
-            .and_then(|n| n.style.border.as_ref())
-            .map(|c| c.preset.as_str())
-            .or(eff
-                .document
-                .mindmap
-                .canvas
-                .default_border
-                .as_ref()
-                .map(|c| c.preset.as_str()))
-            .unwrap_or("light");
-        next_preset(current)
+        let current = first_selection_preset(eff);
+        baumhard::mindmap::border::next_border_preset(&current).to_string()
     } else {
         if !super::PRESETS.iter().any(|p| *p == name_lc) {
             return ExecResult::err(format!(
@@ -295,20 +308,6 @@ fn apply_preset_positional(args: &Args, eff: &mut ConsoleEffects) -> ExecResult 
     let mut edits = BorderConfigEdits::default();
     edits.preset = OptionEdit::Set(target);
     apply_edits(eff, edits)
-}
-
-/// Cycle through `super::PRESETS` returning the entry following
-/// `current`. Wraps on the last entry. Falls back to the first
-/// preset when `current` isn't recognised — defensive for forks
-/// where `super::PRESETS` is reordered or extended without
-/// updating callers.
-fn next_preset(current: &str) -> String {
-    let presets = super::PRESETS;
-    let idx = presets
-        .iter()
-        .position(|p| p.eq_ignore_ascii_case(current))
-        .unwrap_or(presets.len() - 1);
-    presets[(idx + 1) % presets.len()].to_string()
 }
 
 fn apply_color_positional(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
@@ -448,14 +447,8 @@ fn apply_side_positional(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         // converge to that node's preset for the reset value;
         // each node's per-side glyphs are then identically
         // overwritten).
-        let preset_name = nodes_in_selection(&eff.document.selection, "border")
-            .ok()
-            .as_ref()
-            .and_then(|ids| ids.first().cloned())
-            .and_then(|id| eff.document.mindmap.nodes.get(&id).cloned())
-            .and_then(|n| n.style.border.as_ref().map(|c| c.preset.clone()))
-            .unwrap_or_else(|| "light".to_string());
-        let glyph_set = baumhard::mindmap::border::preset_glyph_set(&preset_name);
+        let glyph_set =
+            baumhard::mindmap::border::preset_glyph_set(&first_selection_preset(eff));
         for side in sides {
             let ch = match side {
                 BorderSide::Top => glyph_set.top,
@@ -477,17 +470,16 @@ fn apply_side_positional(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     apply_edits(eff, edits)
 }
 
-/// Return the first selected node's resolved preset when it
-/// isn't `custom`; `None` when every selection target is
-/// already custom (or selection resolution fails — the
-/// downstream apply path will surface that error).
+/// Walk the selection looking for any node whose resolved
+/// preset isn't `custom`; returns the first such preset name,
+/// or `None` if every node is already on custom. Drives the
+/// "must run preset=custom first" gate in
+/// `apply_side_positional` / `apply_corner_positional`.
 ///
-/// Used by `apply_side_positional` / `apply_corner_positional`
-/// to gate "must run preset=custom first" before any mutation.
-/// First-non-custom rather than all-non-custom because (a) a
-/// fan to multiple nodes typically wants every node to land at
-/// custom anyway, and (b) the error message lists the offending
-/// preset by name so the user knows which preset they were on.
+/// Walks every node (not just first) because multi-node Multi
+/// can carry heterogeneous presets — if any one isn't custom,
+/// the gate must fire so the user converges to custom across
+/// the whole selection before glyph writes land.
 fn first_non_custom_preset(eff: &ConsoleEffects) -> Option<String> {
     let ids = nodes_in_selection(&eff.document.selection, "border").ok()?;
     for id in &ids {
@@ -497,18 +489,18 @@ fn first_non_custom_preset(eff: &ConsoleEffects) -> Option<String> {
             .nodes
             .get(id)
             .and_then(|n| n.style.border.as_ref())
-            .map(|c| c.preset.clone())
+            .map(|c| c.preset.as_str())
             .or_else(|| {
                 eff.document
                     .mindmap
                     .canvas
                     .default_border
                     .as_ref()
-                    .map(|c| c.preset.clone())
+                    .map(|c| c.preset.as_str())
             })
-            .unwrap_or_else(|| "light".to_string());
+            .unwrap_or("light");
         if !preset.eq_ignore_ascii_case("custom") {
-            return Some(preset);
+            return Some(preset.to_string());
         }
     }
     None
@@ -567,22 +559,9 @@ fn apply_corner_positional(args: &Args, eff: &mut ConsoleEffects) -> ExecResult 
     }
     let mut edits = BorderConfigEdits::default();
     let reset = glyph.eq_ignore_ascii_case("reset");
-    let glyph_set = if reset {
-        // Same rationale as `apply_side_positional`'s reset arm:
-        // CustomBorderGlyphs corner fields are plain Strings, so
-        // restore the preset's default rather than writing
-        // OptionEdit::Clear (a no-op for these slots).
-        let preset_name = nodes_in_selection(&eff.document.selection, "border")
-            .ok()
-            .as_ref()
-            .and_then(|ids| ids.first().cloned())
-            .and_then(|id| eff.document.mindmap.nodes.get(&id).cloned())
-            .and_then(|n| n.style.border.as_ref().map(|c| c.preset.clone()))
-            .unwrap_or_else(|| "light".to_string());
-        Some(baumhard::mindmap::border::preset_glyph_set(&preset_name))
-    } else {
-        None
-    };
+    let glyph_set = reset.then(|| {
+        baumhard::mindmap::border::preset_glyph_set(&first_selection_preset(eff))
+    });
     for corner in corners {
         // CODE_CONVENTIONS §9: interactive paths must not panic.
         // `parse_corner_selector` currently only emits the four

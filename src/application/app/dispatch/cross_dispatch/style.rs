@@ -28,9 +28,8 @@ pub(in crate::application::app) fn apply_set_border_field(
 /// `border preset cycle`; samples the first selected node's
 /// resolved preset to decide where to step from. Plan §5.8.
 pub(in crate::application::app) fn apply_cycle_border_preset(rc: &mut RebuildContext<'_>) {
-    use baumhard::mindmap::border::BORDER_PRESETS;
     apply_with_rebuild(rc, |doc| {
-        let primary = match crate::application::console::commands::border::nodes_in_selection(
+        let ids = match crate::application::console::commands::border::nodes_in_selection(
             &doc.selection,
             "border",
         ) {
@@ -40,7 +39,7 @@ pub(in crate::application::app) fn apply_cycle_border_preset(rc: &mut RebuildCon
                 return false;
             }
         };
-        let current = primary
+        let current = ids
             .first()
             .and_then(|id| doc.mindmap.nodes.get(id))
             .and_then(|n| n.style.border.as_ref())
@@ -52,11 +51,7 @@ pub(in crate::application::app) fn apply_cycle_border_preset(rc: &mut RebuildCon
                 .as_ref()
                 .map(|c| c.preset.as_str()))
             .unwrap_or("light");
-        let idx = BORDER_PRESETS
-            .iter()
-            .position(|p| p.eq_ignore_ascii_case(current))
-            .unwrap_or(BORDER_PRESETS.len() - 1);
-        let target = BORDER_PRESETS[(idx + 1) % BORDER_PRESETS.len()];
+        let target = baumhard::mindmap::border::next_border_preset(current);
         crate::application::console::commands::border::apply_border_field_to_selection(
             doc, "preset", target,
         )
