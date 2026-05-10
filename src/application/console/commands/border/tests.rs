@@ -1036,3 +1036,178 @@ fn border_show_multi_selection_surfaces_rollup_hint() {
         blob
     );
 }
+
+// ─── Opus T7 test pins ───────────────────────────────────────────
+
+/// `border preset` with no value emits the usage line (was
+/// untested per Test Quality H3).
+#[test]
+fn border_preset_missing_value_emits_usage() {
+    let mut doc = fixture_doc();
+    doc.selection = SelectionState::Single(first_node_id(&doc));
+    assert_exec_err_contains(run("border preset", &mut doc), "usage: border preset");
+}
+
+#[test]
+fn border_color_missing_value_emits_usage() {
+    let mut doc = fixture_doc();
+    doc.selection = SelectionState::Single(first_node_id(&doc));
+    assert_exec_err_contains(run("border color", &mut doc), "usage: border color");
+}
+
+#[test]
+fn border_padding_missing_value_emits_usage() {
+    let mut doc = fixture_doc();
+    doc.selection = SelectionState::Single(first_node_id(&doc));
+    assert_exec_err_contains(run("border padding", &mut doc), "usage: border padding");
+}
+
+#[test]
+fn border_palette_missing_value_emits_usage() {
+    let mut doc = fixture_doc();
+    doc.selection = SelectionState::Single(first_node_id(&doc));
+    assert_exec_err_contains(run("border palette", &mut doc), "usage: border palette");
+}
+
+#[test]
+fn border_font_missing_value_emits_usage() {
+    let mut doc = fixture_doc();
+    doc.selection = SelectionState::Single(first_node_id(&doc));
+    assert_exec_err_contains(run("border font", &mut doc), "usage: border font");
+}
+
+#[test]
+fn border_side_missing_pattern_emits_usage() {
+    let mut doc = fixture_doc();
+    doc.selection = SelectionState::Single(first_node_id(&doc));
+    assert_exec_ok(run("border preset custom", &mut doc));
+    assert_exec_err_contains(run("border side top", &mut doc), "missing pattern");
+}
+
+#[test]
+fn border_corner_missing_glyph_emits_usage() {
+    let mut doc = fixture_doc();
+    doc.selection = SelectionState::Single(first_node_id(&doc));
+    assert_exec_ok(run("border preset custom", &mut doc));
+    assert_exec_err_contains(run("border corner tl", &mut doc), "missing glyph");
+}
+
+/// `border side all reset` fans the reset across all four
+/// sides — exercises the side-fan + reset combination
+/// (Test Quality H4 gap).
+#[test]
+fn border_side_all_reset_writes_preset_default_to_all_four() {
+    let mut doc = fixture_doc();
+    let id = first_node_id(&doc);
+    doc.selection = SelectionState::Single(id.clone());
+    // Custom preset, write all four overrides, then reset all.
+    assert_exec_ok(run("border preset custom", &mut doc));
+    assert_exec_ok(run("border side all \"=##=\"", &mut doc));
+    assert_exec_ok(run("border preset heavy", &mut doc));
+    assert_exec_ok(run("border preset custom", &mut doc));
+    assert_exec_ok(run("border side all reset", &mut doc));
+    let g = doc
+        .mindmap
+        .nodes
+        .get(&id)
+        .unwrap()
+        .style
+        .border
+        .as_ref()
+        .and_then(|c| c.glyphs.as_ref())
+        .expect("custom preset should have glyphs");
+    // After reset against custom preset (no preset switch), the
+    // glyphs land at the "custom" preset's default (which falls
+    // back to "light" via `preset_glyph_set`'s `unwrap_or`).
+    // The key invariant is: all four sides agree.
+    assert_eq!(g.top, "─");
+    assert_eq!(g.bottom, "─");
+    assert_eq!(g.left, "│");
+    assert_eq!(g.right, "│");
+}
+
+#[test]
+fn border_corner_all_reset_writes_preset_default_to_all_four() {
+    let mut doc = fixture_doc();
+    let id = first_node_id(&doc);
+    doc.selection = SelectionState::Single(id.clone());
+    assert_exec_ok(run("border preset custom", &mut doc));
+    assert_exec_ok(run("border corner all *", &mut doc));
+    assert_exec_ok(run("border corner all reset", &mut doc));
+    let g = doc
+        .mindmap
+        .nodes
+        .get(&id)
+        .unwrap()
+        .style
+        .border
+        .as_ref()
+        .and_then(|c| c.glyphs.as_ref())
+        .expect("custom preset should have glyphs");
+    assert_eq!(g.top_left, "┌");
+    assert_eq!(g.top_right, "┐");
+    assert_eq!(g.bottom_left, "└");
+    assert_eq!(g.bottom_right, "┘");
+}
+
+/// Combined `border show side=top verbose` exercises both
+/// the filter and the verbose flag in one invocation
+/// (Test Quality H5 gap).
+#[test]
+fn border_show_side_filter_and_verbose_combined() {
+    let mut doc = fixture_doc();
+    doc.selection = SelectionState::Single(first_node_id(&doc));
+    let lines = match run("border show side=top verbose", &mut doc) {
+        ExecResult::Lines(rows) => rows,
+        other => panic!("expected Lines, got {:?}", other),
+    };
+    let blob = join_lines(&lines);
+    // Filter applied: top present, bottom absent.
+    assert!(blob.contains("\ntop:"), "missing top row: {}", blob);
+    assert!(!blob.contains("\nbottom:"), "bottom should be filtered: {}", blob);
+    // Verbose applied: cascade rows present.
+    assert!(blob.contains("color (cascade):"), "verbose missing: {}", blob);
+}
+
+/// `border preset heavy` against `Multi(N)` selection writes
+/// to every node (Test Quality H6 gap — Multi through positional
+/// form was previously unpinned).
+#[test]
+fn border_preset_positional_against_multi_selection() {
+    let mut doc = fixture_doc();
+    let id1 = first_node_id(&doc);
+    let id2 = doc.mindmap.nodes.keys().nth(1).cloned().unwrap();
+    doc.selection = SelectionState::Multi(vec![id1.clone(), id2.clone()]);
+    assert_exec_ok(run("border preset heavy", &mut doc));
+    for id in &[id1, id2] {
+        assert_eq!(
+            doc.mindmap.nodes.get(id).unwrap().style.border.as_ref().map(|c| c.preset.as_str()),
+            Some("heavy"),
+            "preset should land on every Multi target"
+        );
+    }
+}
+
+/// `border preset cycle` after canvas-default preset is set
+/// (no per-node border) advances from the canvas-default
+/// (Test Quality H2 gap — cascade fall-through to canvas-default
+/// was previously unpinned).
+#[test]
+fn border_preset_cycle_falls_through_to_canvas_default() {
+    let mut doc = fixture_doc();
+    let id = first_node_id(&doc);
+    doc.selection = SelectionState::Single(id.clone());
+    // Strip per-node border, set canvas default to heavy.
+    if let Some(node) = doc.mindmap.nodes.get_mut(&id) {
+        node.style.border = None;
+    }
+    assert_exec_ok(run("canvas border preset heavy", &mut doc));
+    doc.selection = SelectionState::Single(id.clone());
+    assert_exec_ok(run("border preset cycle", &mut doc));
+    // From canvas-default heavy, cycle → double.
+    assert_eq!(
+        doc.mindmap.nodes.get(&id).unwrap().style.border.as_ref().map(|c| c.preset.as_str()),
+        Some("double"),
+        "cycle should advance from canvas-default heavy"
+    );
+}

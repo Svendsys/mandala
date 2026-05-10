@@ -39,15 +39,23 @@ pub(in crate::application::console) fn join_lines(
 }
 
 /// Assert `result` is `ExecResult::Ok(_)` or `Lines(_)`,
-/// panicking on `Err(_)`. The two success variants are
-/// interchangeable for "did the verb apply" — single-line vs
-/// multi-line readout depends on output formatting (auto-
-/// promote hints, custom-preset hints, etc) which the test
-/// shouldn't have to enumerate.
+/// panicking on `Err(_)`. Reach for `assert_exec_ok_strict`
+/// when the test cares that the result is a single-line `Ok`
+/// specifically (no auto-promote hint, no custom-preset hint).
 pub(in crate::application::console) fn assert_exec_ok(result: ExecResult) {
     match result {
         ExecResult::Ok(_) | ExecResult::Lines(_) => {}
         other => panic!("expected Ok / Lines, got {:?}", other),
+    }
+}
+
+/// Strict-`Ok` flavour: rejects `Lines` so a test that means
+/// "no hint should fire" can pin the absence of the hint
+/// instead of accepting any successful result.
+pub(in crate::application::console) fn assert_exec_ok_strict(result: ExecResult) {
+    match result {
+        ExecResult::Ok(_) => {}
+        other => panic!("expected single-line Ok (strict), got {:?}", other),
     }
 }
 
