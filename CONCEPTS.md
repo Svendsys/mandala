@@ -1919,7 +1919,7 @@ editing inside a node.
   pans, edges snap.
 - `Resize { target }` — chrome shows resize handles on the
   target (a `ResizeTarget::Node(id)` or
-  `ResizeTarget::Section(node_id, idx)`). Drag a handle to
+  `ResizeTarget::Section { node_id, section_idx }`). Drag a handle to
   resize; Esc returns to `Default`. Triggered by `r` keybind
   on a selectable AABB or by `mode resize`.
 - `NodeEdit { node_id }` — chrome dims sibling nodes and frames
@@ -1929,13 +1929,16 @@ editing inside a node.
   outside-click returns to `Default`. Triggered by `n` /
   `mode node-edit` / `node edit`.
 
-`src/application/app/interaction_mode.rs`. Cross-platform — both
-modes work identically on native and WASM. The variant lives on
-`InitState` and is mutated through `Action::EnterResizeMode` /
-`Action::EnterNodeEdit` / `Action::ExitMode`. Modal-stealer
-cascades route keystrokes per active mode (the keybind resolver
-keys on `(InputContext, key)` and the modal stealer can
-intercept e.g. Esc before normal dispatch).
+`src/application/app/interaction_mode.rs`. The enum is cross-
+platform (compiles + the field plumbs through `InitState` /
+`WasmInputState`); the entry-point Actions (`EnterResizeMode`,
+`EnterNodeEdit{,Clean}`, `EnterSectionEdit`, `FastResizeStart`)
+are NativeOnly today because they depend on the cursor-driven
+modal-stealer + DragState machinery that's native-gated.
+Touch-parity (Batch 7) will lift the WASM-side gestures.
+Modal-stealer cascades route keystrokes per active mode (the
+keybind resolver keys on `(InputContext, key)` and the modal
+stealer can intercept e.g. Esc before normal dispatch).
 
 The console verbs `mode resize` / `mode node-edit` /
 `mode default` ride the same surface; `section edit
@@ -2480,7 +2483,7 @@ layers:
 - `Action` enum (`action.rs`) — high-level intents:
   `Undo`, `CreateOrphanNode`, `EnterReparentMode`,
   `EnterConnectMode`, `DeleteSelection`, `EditSelection`,
-  `OpenConsole`, `Copy`, `Paste`, `Cut`, `CancelMode`, etc.
+  `OpenConsole`, `Copy`, `Paste`, `Cut`, `ExitMode`, etc.
 - `KeyBind` parser (`bind.rs`) — string syntax like `"Ctrl+Z"`
   → modifier mask + key code.
 - `ResolvedKeybinds` (`resolved.rs`) — fast `O(1)` lookup

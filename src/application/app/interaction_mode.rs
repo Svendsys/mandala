@@ -23,11 +23,9 @@
 //! the dispatcher arms that open / close the editor; this module only
 //! defines the mode shape.
 //!
-//! `NodeEdit` is defined for use by Batch 3 of
-//! `SECTIONS_BORDERS_RESIZE_PLAN.md` (NodeEdit visuals + section
-//! selection routing). The `click_resolves_to_section` predicate is
-//! consumed by `app/click.rs` once Batch 3 lands; today it's reachable
-//! from console / future GUI but no per-frame consumer reads it.
+//! The `click_resolves_to_section` predicate is consumed by
+//! `app/click.rs` per-frame to route clicks to the active section
+//! while in NodeEdit mode.
 
 /// What the user is doing right now at the canvas level.
 ///
