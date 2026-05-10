@@ -133,7 +133,7 @@ fn format_resize_error(e: &ResizeTargetError) -> String {
             "mode resize: multi-target selection — single-target only".into()
         }
         ResizeTargetError::SectionFillParent { node_id, section_idx } => format!(
-            "mode resize: section {}[{}] is fill-parent (size=None) — no AABB to stretch. \
+            "mode resize: section {}[{}] fills its parent — no AABB to stretch. \
              Pin a size first via `section resize w=<w> h=<h>`",
             node_id, section_idx,
         ),
@@ -286,7 +286,7 @@ mod tests {
             section_idx: 0,
         });
         let (result, _, _) = run_mode("mode resize", &mut doc);
-        assert_err_contains(&result, "fill-parent");
+        assert_err_contains(&result, "fills its parent");
     }
 
     /// Edge selection — not a resizable surface.

@@ -188,7 +188,7 @@ fn format_border_readout(
         // verbs, different fields, identical-looking authoring.
         lines.push(OutputLine::plain("color (cascade):".to_string()));
         lines.push(OutputLine::plain(format!(
-            "  style.frame_color    = {:?}          # set via `color border=`",
+            "  style.frame_color    = {}          # set via `color border=`",
             node.style.frame_color
         )));
         let per_node_color = node
@@ -197,9 +197,10 @@ fn format_border_readout(
             .as_ref()
             .and_then(|c| c.color.as_deref());
         let cascade_target = per_node_color.unwrap_or(node.style.frame_color.as_str());
+        let per_node_label = per_node_color.unwrap_or("(unset)");
         lines.push(OutputLine::plain(format!(
-            "  style.border.color   = {:?} [\u{2192} {}]   # set via `border color`",
-            per_node_color, cascade_target
+            "  style.border.color   = {} [\u{2192} {}]   # set via `border color`",
+            per_node_label, cascade_target
         )));
     } else {
         lines.push(OutputLine::plain(format!("color:   {}", style.color)));

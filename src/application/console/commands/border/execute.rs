@@ -213,6 +213,8 @@ fn apply_toggle_visible(eff: &mut ConsoleEffects) -> ExecResult {
         Err(e) => return e,
     };
     let mut toggled = 0usize;
+    let mut now_on = 0usize;
+    let mut now_off = 0usize;
     for id in &ids {
         let cur = eff
             .document
@@ -223,12 +225,27 @@ fn apply_toggle_visible(eff: &mut ConsoleEffects) -> ExecResult {
             .unwrap_or(true);
         if eff.document.set_node_border_visible(id, !cur) {
             toggled += 1;
+            if !cur {
+                now_on += 1;
+            } else {
+                now_off += 1;
+            }
         }
     }
     if toggled == 0 {
         return ExecResult::ok_msg("border: no change");
     }
-    ExecResult::ok_msg(format!("border toggled on {} node(s)", toggled))
+    if toggled == 1 {
+        ExecResult::ok_msg(format!(
+            "border toggled \u{2192} {}",
+            if now_on == 1 { "on" } else { "off" }
+        ))
+    } else {
+        ExecResult::ok_msg(format!(
+            "border toggled on {} node(s) \u{2192} {} on, {} off",
+            toggled, now_on, now_off
+        ))
+    }
 }
 
 /// `border preset <name|cycle>`. `cycle` samples the first
