@@ -300,8 +300,7 @@ pub enum Action {
     /// run on WASM today), but WASM has no `DragState`, no
     /// throttled-drag pipeline, and no handle hit-test in
     /// `run_wasm/event_mouse_click.rs` — so a flip on WASM would
-    /// render handles the user can't use. Per CODE_CONVENTIONS §5
-    /// (no half-features), the Action is `NativeOnly` until Batches
+    /// render handles the user can't use.    /// (no half-features), the Action is `NativeOnly` until Batches
     /// 4 / 7 land the WASM gesture pipeline. Reclassification is a
     /// one-line change at that point.
     ///
@@ -340,7 +339,7 @@ pub enum Action {
     /// Marked `destructive` so the macro privilege gate
     /// (`MacroSource::allows_action`) blocks System / Plugin /
     /// Project tiers; only User-tier macros (the user's keybind
-    /// config + interactive console) can fire it. Plan §6.10.
+    /// config + interactive console) can fire it.   
     #[action(context = Document, wasm = NativeOnly, destructive)]
     FastResizeStart,
 
@@ -670,7 +669,7 @@ pub enum Action {
     /// console-only). Field names: `preset|font|size|color|palette|
     /// field|padding|top|bottom|left|right|tl|tr|bl|br`.
     ///
-    /// Plan §5.8 calls for replacing this with per-field
+    ///calls for replacing this with per-field
     /// variants (`SetBorderPreset` / `SetBorderColor` / ...)
     /// for keybind ergonomics — `SetBorderField` stays as the
     /// generic catch-all for the kv form and for callers that
@@ -683,13 +682,12 @@ pub enum Action {
     /// node(s)' border preset to the next entry in
     /// `BORDER_PRESETS`, wrapping at the end. No payload, so
     /// bindable to a single key for one-press preset cycling.
-    /// Plan §5.8.
     #[action(context = Document, wasm = Compatible)]
     CycleBorderPreset,
     /// Mirror `border toggle` — flip `style.show_frame` per
     /// selected node. No payload (each node toggled
     /// independently); bindable to a single key for one-press
-    /// border-on/off cycling. Plan §5.8.
+    /// border-on/off cycling.   
     #[action(context = Document, wasm = Compatible)]
     ToggleBorderVisible,
     /// Stage a single-kv border preview against the live
@@ -824,7 +822,7 @@ pub enum Action {
     /// macro-only target (not bindable to a key today; no
     /// `KeybindConfig` field). Pin the selected section's
     /// `offset` to `(x, y)` (absolute setter, distinct from the
-    /// `dx` / `dy` delta form). Plan §4.6.
+    /// `dx` / `dy` delta form).   
     #[action(context = Document, wasm = Compatible)]
     SetSectionOffsetAbs { x: String, y: String },
     /// Mirror `section text "<text>" [runs=preserve|clear]` —
@@ -832,20 +830,19 @@ pub enum Action {
     /// `KeybindConfig` field — the string-arg payload makes
     /// keybinding awkward). `runs_mode = "preserve"` clips
     /// existing runs to the new text length;  `"clear"`
-    /// collapses to a single run. Plan §4.6. Destructive.
+    /// collapses to a single run.Destructive.
     #[action(context = Document, wasm = Compatible, destructive)]
     SetSectionText { text: String, runs_mode: String },
     /// Mirror `section add [at=<idx>] [text="<text>"]` —
     /// macro-only target (not bindable to a key today; no
     /// `KeybindConfig` field). `at = ""` → append; `"K"` →
-    /// insert at K. `text = ""` → empty section. Plan §4.6.
-    /// Destructive.
+    /// insert at K. `text = ""` → empty section.    /// Destructive.
     #[action(context = Document, wasm = Compatible, destructive)]
     AddSection { at: String, text: String },
     /// Mirror `section delete [section=<idx>]` — macro-only
     /// target (not bindable to a key today; no `KeybindConfig`
     /// field). Errors when the node has only one section (the
-    /// model invariant). Plan §4.6. Destructive.
+    /// model invariant).Destructive.
     #[action(context = Document, wasm = Compatible, destructive)]
     DeleteSection,
     /// Mirror `section split [at=<grapheme>]` — macro-only
@@ -853,7 +850,7 @@ pub enum Action {
     /// field). `at_grapheme = ""` → end of text; `"K"` → split
     /// at grapheme K. Field name disambiguates from
     /// `AddSection { at }`'s section-vector index (different
-    /// units). Plan §4.6. Destructive.
+    /// units).Destructive.
     #[action(context = Document, wasm = Compatible, destructive)]
     SplitSection { at_grapheme: String },
     /// Mirror `open <path>` — replace the current document with the

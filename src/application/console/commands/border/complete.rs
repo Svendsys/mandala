@@ -19,7 +19,7 @@ pub fn complete_border(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Com
     let after_preview = token1 == Some("preview");
     match &state.context {
         CompletionContext::Token { index: 0 } => verb_or_key(state.partial),
-        // Plan §5.9 positional-subverb value completion. When
+        //positional-subverb value completion. When
         // tokens[1] is a known positional subverb, the next
         // positional is its value — surface a typed vocabulary
         // instead of falling through to kv keys (which would
@@ -41,7 +41,7 @@ pub fn complete_border(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Com
             // toggle / on / off / reset take nothing — same.
             _ => Vec::new(),
         },
-        // Plan §5.9 second-positional value: side <TAB> takes
+        //second-positional value: side <TAB> takes
         // pattern (free-form) or `reset`; corner <TAB> takes a
         // single glyph (free-form) or `reset`.
         CompletionContext::Token { index: 2 } => match token1.map(str::to_ascii_lowercase).as_deref() {
@@ -59,7 +59,7 @@ const SIDE_VALUES: &[&str] = &["top", "bottom", "left", "right", "all"];
 const CORNER_VALUES: &[&str] = &["tl", "tr", "bl", "br", "all"];
 
 /// `border preset <TAB>` and `border preset=<TAB>` value
-/// completion. Plan §5.9: every entry from `BORDER_PRESETS`
+/// completion.every entry from `BORDER_PRESETS`
 /// plus `cycle`.
 fn preset_value_completions(partial: &str) -> Vec<Completion> {
     let mut out: Vec<Completion> = super::PRESETS
@@ -95,7 +95,7 @@ fn preset_hint(p: &str) -> &'static str {
 }
 
 /// `border show <TAB>` surfaces the optional `side=` filter
-/// kv and the `verbose` positional flag (Plan §5.9 / B6.8).
+/// kv and the `verbose` positional flag (/ B6.8).
 /// Pre-fix neither was discoverable from completion.
 fn show_arg_completions(partial: &str) -> Vec<Completion> {
     let mut out = Vec::new();
@@ -456,7 +456,7 @@ mod tests {
 
 #[cfg(test)]
 mod plan_5_9_tests {
-    //! Plan §5.9 completion improvements — pin the new
+    //!completion improvements — pin the new
     //! positional-subverb value rows the prior `complete.rs`
     //! never surfaced (Plan Adherence reviewer flagged the
     //! gap as silently-deferred).

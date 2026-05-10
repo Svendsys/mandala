@@ -18,7 +18,7 @@ use crate::application::console::{ConsoleEffects, ExecResult, OutputLine};
 use crate::application::document::SelectionState;
 
 /// `border show [side=<top|bottom|left|right|all>] [verbose]`
-/// — Plan §5.2 / §5.3.
+/// —/ §5.3.
 ///
 /// `side=` filters to one of the four sides plus the matching
 /// corners — useful when the user only wants to see what a
@@ -28,7 +28,7 @@ use crate::application::document::SelectionState;
 /// `verbose` is a bare positional that surfaces the dual color
 /// surface (`style.frame_color` set via `color border=…` vs
 /// `style.border.color` set via `border color`) so the user can
-/// see why their border colour doesn't match — Plan §5.4 #2 calls
+/// see why their border colour doesn't match —calls
 /// this out as a UX bug bake-in.
 pub fn execute_border_show(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     let id = match first_selected_node_id(&eff.document.selection) {
@@ -155,7 +155,7 @@ fn format_border_readout(
 
     let face = style.font_name.clone();
     let mut lines: Vec<OutputLine> = Vec::with_capacity(12);
-    // Plan §5.10 inline action hints: each row's right-hand side
+    //inline action hints: each row's right-hand side
     // surfaces the verb that flips that field, so the readout
     // doubles as a discoverability surface — users learn the
     // verb shape from the show output.
@@ -181,7 +181,7 @@ fn format_border_readout(
         face_str, style.font_size_pt, font_override
     )));
     if verbose {
-        // Plan §5.4 #2: surface both color surfaces so the user
+        //surface both color surfaces so the user
         // can see why their border colour doesn't match what they
         // expected. `style.frame_color` is set via `color border=`;
         // `style.border.color` is set via `border color`. Different

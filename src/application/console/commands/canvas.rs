@@ -125,7 +125,7 @@ fn complete_canvas(state: &CompletionState, ctx: &ConsoleContext) -> Vec<Complet
             out
         }
         // Per-field positional value completion for `canvas border <verb>`:
-        // mirror the per-node `border` verb's Plan §5.9 work. Without
+        // mirror the per-node `border` verb'swork. Without
         // this, `canvas border preset <TAB>` returned kv keys (the
         // wrong vocabulary).
         CompletionContext::Token { index: 2 } if subject == Some("border") => {
@@ -318,7 +318,7 @@ fn positional_subverb_to_edits(
             })?;
             // `canvas border preset cycle` advances to the next
             // preset, wrapping. Mirrors the per-node `border preset
-            // cycle` (Plan §5.B6.10 acknowledged the gap).
+            // cycle` (acknowledged the gap).
             let resolved = if verb.eq_ignore_ascii_case("preset") && v.eq_ignore_ascii_case("cycle") {
                 baumhard::mindmap::border::next_border_preset(&slot.current_preset(eff.document)).to_string()
             } else {
@@ -447,7 +447,7 @@ fn positional_subverb_to_edits(
                         "br" => gs.bottom_right,
                         // Defensive: parse_corner_selector
                         // currently only emits the four corners,
-                        // but per CODE_CONVENTIONS §9 interactive
+                        // butinteractive
                         // paths must not panic on a future
                         // selector extension.
                         _ => return Err(ExecResult::err(format!(

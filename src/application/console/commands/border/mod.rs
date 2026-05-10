@@ -63,7 +63,7 @@ pub const KEYS: &[&str] = &[
 ];
 
 /// Positional verbs surfaced as token-0 completions alongside kv
-/// keys. Plan §5.2 added the per-field positional subverbs
+/// keys.added the per-field positional subverbs
 /// (`preset` / `color` / `padding` / `palette` / `font` /
 /// `side` / `corner`) and `toggle`.
 pub const VERBS: &[&str] = &[
@@ -108,7 +108,7 @@ pub const COMMAND: Command = Command {
         "border", "frame", "glyph", "preset", "corner", "side", "pattern", "palette", "padding", "rounded",
         "heavy", "double", "light", "custom",
     ],
-    // Plan §5.5: borders are node-only, so the verb hides on
+    //borders are node-only, so the verb hides on
     // edge / edge-label / portal selections in completion +
     // help. Pre-fix the predicate was `always` which surfaced
     // the verb and then errored at execute-time on the wrong
