@@ -1111,7 +1111,12 @@ fn apply_fast_resize_start(ctx: &mut InputHandlerContext<'_>, hit: Option<&Dispa
         let side = infer_resize_anchor(h.canvas_pos, aabb_pos, aabb_size);
         ctx.scene_cache.clear();
         *ctx.drag_state = DragState::Throttled(ThrottledDrag::SectionResize(
-            SectionResizeInteraction::new(node_id, section_idx, side, start_offset, start_size),
+            SectionResizeInteraction::new(
+                node_id, section_idx, side, start_offset, start_size,
+                // Fast-resize gesture (`PendingRight` promotion) — the
+                // right-button release path may finalize this drag.
+                true,
+            ),
         ));
     } else {
         let Some(node) = doc.mindmap.nodes.get(&node_id) else {
@@ -1126,7 +1131,7 @@ fn apply_fast_resize_start(ctx: &mut InputHandlerContext<'_>, hit: Option<&Dispa
         let side = infer_resize_anchor(h.canvas_pos, aabb_pos, aabb_size);
         ctx.scene_cache.clear();
         *ctx.drag_state = DragState::Throttled(ThrottledDrag::NodeResize(
-            NodeResizeInteraction::new(node_id, side, start_position, start_size),
+            NodeResizeInteraction::new(node_id, side, start_position, start_size, true),
         ));
     }
 }

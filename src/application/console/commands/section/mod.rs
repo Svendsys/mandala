@@ -304,7 +304,12 @@ fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         "edit" => execute_edit(args, eff, &node_id, target_idx),
         "delete" => execute_delete(args, eff.document, &node_id, target_idx),
         "split" => execute_split(args, eff.document, &node_id, target_idx),
-        "add" => unreachable!("section add routed earlier in execute_section"),
+        "add" => {
+            // Should be routed earlier; defensive Err per
+            // CODE_CONVENTIONS §9 (interactive paths must not panic).
+            log::error!("section add reached the per-section dispatcher; expected upstream routing");
+            ExecResult::err("internal: section add routing miss")
+        }
         other => ExecResult::err(format!("section: unknown subverb '{}'", other)),
     }
 }

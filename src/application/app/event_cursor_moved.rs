@@ -377,6 +377,9 @@ pub(super) fn handle_cursor_moved(
                                         side,
                                         start_position,
                                         start_size,
+                                        // Left-button handle drag — `right_release`
+                                        // finalize must not fire on this.
+                                        false,
                                     ),
                                 ));
                                 return;
@@ -433,6 +436,8 @@ pub(super) fn handle_cursor_moved(
                                             side,
                                             start_offset,
                                             start_size,
+                                            // Left-button handle drag.
+                                            false,
                                         ),
                                     ));
                                     return;

@@ -977,19 +977,28 @@ fn handle_right_button(
                     let _ = super::dispatch::dispatch_action(a, ctx, None);
                 }
             }
-            // Threshold-cross promoted PendingRight to one of the
-            // resize Throttled variants — finalize via the shared
-            // helpers (`finalize_node_resize_release` /
-            // `finalize_section_resize_release`) so the commit
-            // shape stays single-source with the left-button
-            // release. Gesture label distinguishes the log line
-            // origin so users grepping "rejected" can tell handle-
-            // driven resizes apart from fast-resize.
-            DragState::Throttled(ThrottledDrag::NodeResize(i)) => {
+            // Threshold-cross promoted `PendingRight` to one of
+            // the resize Throttled variants — finalize via the
+            // shared helpers. Gate on `started_with_right` so an
+            // accidental right-click during a left-button-driven
+            // handle drag doesn't terminate the resize: the
+            // left-button release is the rightful finalizer.
+            DragState::Throttled(ThrottledDrag::NodeResize(i)) if i.started_with_right => {
                 finalize_node_resize_release(&i, "fast-resize node", ctx);
             }
-            DragState::Throttled(ThrottledDrag::SectionResize(i)) => {
+            DragState::Throttled(ThrottledDrag::SectionResize(i)) if i.started_with_right => {
                 finalize_section_resize_release(&i, "fast-resize section", ctx);
+            }
+            // Left-button-driven Throttled resize that survived
+            // a stray right-release — restore the state and let
+            // the eventual left-button release finalize it.
+            other @ DragState::Throttled(ThrottledDrag::NodeResize(_))
+            | other @ DragState::Throttled(ThrottledDrag::SectionResize(_)) => {
+                log::debug!(
+                    "right-release on left-button resize ignored; left-button release \
+                     will finalize"
+                );
+                *ctx.drag_state = other;
             }
             // Any other state on right-release: put it back. Right-
             // button release shouldn't terminate a left-button
