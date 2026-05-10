@@ -82,16 +82,16 @@ pub enum MouseGesture {
     #[strum(serialize = "rightdrag")]
     RightDrag,
     /// Touch: a single finger held in place for ≥ 350ms with no
-    /// significant movement. Emitted by
-    /// [`crate::application::app::touch_gesture::TouchGestureRecognizer`]
-    /// from `WindowEvent::Touch` events. Default-bound to
-    /// `Action::EnterResizeMode` per
+    /// significant movement. Emitted by `TouchGestureRecognizer`
+    /// (in `app/touch_gesture.rs` — private module, intra-doc
+    /// link omitted) from `WindowEvent::Touch` events.
+    /// Default-bound to `Action::EnterResizeMode` per
     /// `SECTIONS_BORDERS_RESIZE_PLAN.md` §6.6 — long-press is
     /// the touch peer of the keyboard's `r` for entering Resize
     /// mode on the selected target. The "no significant movement"
-    /// half is the cancel rule: any drag past
-    /// [`crate::application::app::touch_gesture::MOVE_THRESHOLD_PX`]
-    /// before the timer fires aborts the long-press candidate.
+    /// half is the cancel rule: any drag past `MOVE_THRESHOLD_PX`
+    /// (~4 logical pixels) before the timer fires aborts the
+    /// long-press candidate.
     #[strum(serialize = "longpress")]
     LongPress,
     /// Touch: two fingers down with the midpoint travelling past

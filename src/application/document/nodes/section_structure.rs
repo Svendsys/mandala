@@ -255,8 +255,8 @@ impl MindMapDocument {
             return Err(format!(
                 "section delete: cannot delete the only section on node '{}' \
                  (every renderable node has at least one section); use \
-                 `section text \"\"` to clear its content, or `topology delete` \
-                 to remove the whole node",
+                 `section text \"\"` to clear its content, or press Delete \
+                 (the `delete_selection` keybind) to remove the whole node",
                 node_id
             ));
         }

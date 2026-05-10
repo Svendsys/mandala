@@ -1888,40 +1888,37 @@ method walks the edge vector linearly; this is fine because
 edges are sparse and the lookup happens at user-event frequency,
 not in hot loops.
 
-### `AppMode`
-
-The transient modal state for reparent and connect
-operations: `Normal` / `Reparent { sources }` / `Connect {
-source }`.
-
-Some user actions take two clicks: select a
-source, then click a target. Modes encode the in-between state.
-Pressing Ctrl+R on a selection enters `Reparent`; the next click
-on a node attaches the sources as its last children, and Esc
-cancels. Pressing Ctrl+D on one node enters `Connect`; the next
-click on another node creates a `cross_link` edge.
-
-`src/application/app/mod.rs:328-338`.
-Native-only today — both modes are gated `#[cfg(not(target_arch
-= "wasm32"))]`. The mode is stored on `InitState` and consulted
-by the click handler.
-
 ### `InteractionMode`
 
-The broader user-interaction modal: `Default` / `Resize {
-target }` / `NodeEdit { node_id }`. Distinct from `AppMode`
-(which is about *operation continuations* like reparent /
-connect that span multiple clicks); `InteractionMode` is about
-what the user is *doing right now* — navigating, resizing, or
-editing inside a node.
+The single cross-platform interaction-mode enum that absorbed
+the pre-redesign `AppMode` (Reparent / Connect) plus the new
+Resize / NodeEdit modes the section-borders-resize PR added.
+Five variants today: `Default` / `Reparent { sources }` /
+`Connect { source }` / `NodeEdit { node_id }` / `Resize {
+target }`.
+
+Some user actions take two clicks (select a source, then click
+a target); some put the canvas into a sub-context where chrome
+and click-routing diverge (resize handles / per-section frames).
+`InteractionMode` is the modal substrate for both shapes — what
+the user is *doing right now*.
 
 - `Default` — normal canvas navigation. Click selects, drag
   pans, edges snap.
+- `Reparent { sources }` — the next left-click on a node
+  attaches `sources` as its last children; left-click on empty
+  canvas promotes them to root; Esc cancels. Triggered by
+  Ctrl+R on a selection.
+- `Connect { source }` — the next left-click on a target node
+  creates a `cross_link` edge from `source`; left-click on
+  empty canvas cancels. Esc also cancels. Triggered by Ctrl+D
+  on one node.
 - `Resize { target }` — chrome shows resize handles on the
   target (a `ResizeTarget::Node(id)` or
-  `ResizeTarget::Section { node_id, section_idx }`). Drag a handle to
-  resize; Esc returns to `Default`. Triggered by `r` keybind
-  on a selectable AABB or by `mode resize`.
+  `ResizeTarget::Section { node_id, section_idx }`). Drag a
+  handle to resize; Esc returns to `Default`. Triggered by `r`
+  keybind on a selectable AABB or by `mode resize`. Touch peer
+  shipped in Batch 7: `LongPress`.
 - `NodeEdit { node_id }` — chrome dims sibling nodes and frames
   the active node's sections in cyan. Click a section to lift
   it into a `Section` selection; Enter (or `section edit`)
@@ -1931,11 +1928,14 @@ editing inside a node.
 
 `src/application/app/interaction_mode.rs`. The enum is cross-
 platform (compiles + the field plumbs through `InitState` /
-`WasmInputState`); the entry-point Actions (`EnterResizeMode`,
-`EnterNodeEdit{,Clean}`, `EnterSectionEdit`, `FastResizeStart`)
-are NativeOnly today because they depend on the cursor-driven
-modal-stealer + DragState machinery that's native-gated.
-Touch-parity (Batch 7) will lift the WASM-side gestures.
+`WasmInputState`); several entry-point Actions
+(`EnterResizeMode`, `EnterNodeEdit{,Clean}`, `EnterSectionEdit`,
+`FastResizeStart`) are NativeOnly today because they depend on
+the cursor-driven modal-stealer + DragState machinery that's
+native-gated — the `LongPress` / `TwoFingerDrag` touch defaults
+shipped in Batch 7 dispatch the same NativeOnly Actions and
+therefore drop silently on WASM, an acknowledged limitation
+(see `SECTIONS_BORDERS_RESIZE_PLAN.md` "Open follow-ups").
 Modal-stealer cascades route keystrokes per active mode (the
 keybind resolver keys on `(InputContext, key)` and the modal
 stealer can intercept e.g. Esc before normal dispatch).
@@ -1948,7 +1948,8 @@ mode-flip + side-effect handler.
 See `SECTIONS_BORDERS_RESIZE_PLAN.md` §2 for the design
 problem this lifted, and §3-§4 for the resize / node-edit
 mode UX. Plan §1 captured the three problems the
-`InteractionMode` enum unified.
+`InteractionMode` enum unified (the consolidation of the
+pre-redesign `AppMode` into this enum is one of those).
 
 ### `DragState`
 

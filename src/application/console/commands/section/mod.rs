@@ -256,6 +256,29 @@ fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         };
         return execute_add(args, eff.document, &node_id);
     }
+    // CRIT-1 (whole-PR review): validate the verb against the known
+    // set BEFORE the per-section resolver runs. Pre-fix a `section
+    // <typo>` against `Single(node)` (multi-section) ran
+    // `resolve_section_idx` first, which surfaced the
+    // "node 'X' has N sections — pick one" error — making the
+    // typo masquerade as a selection problem. Surface the actual
+    // typo with a grouped subverb listing (mirrors the `border`
+    // verb's error shape at `border/execute.rs::unknown_subverb_message`).
+    const KNOWN_VERBS: &[&str] = &[
+        "move", "resize", "show", "text", "edit", "delete", "split", "frame", "add",
+    ];
+    if !KNOWN_VERBS.iter().any(|v| *v == verb) {
+        return ExecResult::err(format!(
+            "section: unknown subverb '{}'\n  \
+             readout:   show\n  \
+             text:      text \"<text>\" [runs=preserve|clear]\n  \
+             geometry:  move dx=… dy=… | move x=… y=… | resize w=… h=… | resize fill\n  \
+             structure: add | delete | split\n  \
+             subject:   frame …  (per-section frame border)\n  \
+             editor:    edit",
+            verb
+        ));
+    }
     // `move` on a `MultiSection` selection with the **delta**
     // form (`dx=` / `dy=`) fans out to every targeted section —
     // each section's offset shifts by the same `(dx, dy)`. Plan
@@ -992,6 +1015,7 @@ fn parse_resize_kvs(args: &Args) -> Result<(f64, f64), String> {
 mod tests {
     use super::*;
     use crate::application::console::tests::fixtures::{assert_exec_err_contains, assert_exec_ok, run};
+    use crate::application::console::ExecResult;
     use crate::application::document::tests_common::{load_test_doc, pinned_two_section_node};
 
     #[test]
@@ -1223,6 +1247,46 @@ mod tests {
             section_idx: 1,
         });
         assert_exec_err_contains(run("section frobnicate 1 2", &mut doc), "unknown subverb");
+    }
+
+    /// Whole-PR review CRIT-1: a `section <typo>` against
+    /// `Single(node)` (multi-section) used to run
+    /// `resolve_section_idx` first, surfacing the
+    /// "node 'X' has N sections — pick one" error and making the
+    /// typo masquerade as a selection problem. After the fix, the
+    /// verb-match runs first → the user sees "unknown subverb" +
+    /// the grouped subverb listing.
+    #[test]
+    fn section_typo_against_single_selection_surfaces_unknown_subverb_not_selection_error() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::Single(id);
+        let result = run("section frobnicate", &mut doc);
+        match result {
+            ExecResult::Err(s) => {
+                assert!(
+                    s.contains("unknown subverb 'frobnicate'"),
+                    "expected unknown-subverb error, got: {}",
+                    s
+                );
+                assert!(
+                    !s.contains("pick one (click) or pass section="),
+                    "must not surface the selection-resolver error \
+                     (the typo should not be misdiagnosed as a selection \
+                     problem); got: {}",
+                    s
+                );
+                // Grouped subverb listing surfaces the actual
+                // vocabulary so the user can self-correct.
+                for kind in &["readout:", "geometry:", "structure:", "subject:"] {
+                    assert!(
+                        s.contains(kind),
+                        "expected grouped subverb listing to include '{}'; got: {}",
+                        kind, s
+                    );
+                }
+            }
+            other => panic!("expected Err for unknown subverb, got {:?}", other),
+        }
     }
 
     ///NEW: absolute-move form via `x=` / `y=`.

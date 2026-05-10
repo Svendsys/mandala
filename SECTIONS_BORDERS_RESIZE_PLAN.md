@@ -2864,6 +2864,210 @@ acknowledged honestly, deferred because each is invasive (touches
       Done(ExecResult), Error(ExecResult) }`. Smell flagged once
       but not on a hot path; cosmetic.
 
+Final whole-PR review (10-agent Opus). Findings closed in
+this commit are the BLOCKER tier (3) plus the high-value
+CRITICALs / HIGHs (10 fixes; 3 new test pins; cargo doc clean).
+The remainder are deferred here:
+
+- [ ] **WASM touch lift** (touch deep-dive CRITICAL + cross-
+      platform B1 / C1): the shipped Batch 7 default keybinds
+      (`LongPress → EnterResizeMode`, `TwoFingerDrag →
+      FastResizeStart`) bind to NativeOnly Actions. WASM
+      dispatches them through `dispatch_compatible` which
+      returns `Unhandled` and silently drops. A warn-log latch
+      shipped in this commit at least surfaces the failure to
+      the dev console. The real fix is lifting `EnterResizeMode`
+      / `FastResizeStart` to `Compatible` (porting the
+      DragState + modal-stealer machinery cross-platform); a
+      cross-cutting refactor not done in this PR.
+- [ ] **WASM resize-handle hit-test** (cross-platform C2): even
+      if `EnterResizeMode` were Compatible, WASM's left-click
+      handler (`run_wasm/event_mouse_click.rs::handle_mouse_pressed`)
+      lacks the `hit_test_section_resize_handle` /
+      `hit_test_node_resize_handle` calls native uses. The
+      visible chrome wouldn't function on click.
+- [ ] **WASM `MouseGesture` coverage gaps** (cross-platform H2 / H3):
+      `WheelUp/Down` ignores the keybind table, hard-coding
+      `factor = 1.1`; `RightClick` only logs and never dispatches
+      `action_for_gesture`. Both diverge from native semantics.
+- [ ] **Long-press wake-up gap is broken not theoretical** (touch
+      deep-dive CRITICAL): `tick()` is only invoked on
+      `WindowEvent::Touch` events. iOS Safari coalesces events so
+      a finger held with no Moved between Started and Ended will
+      not fire LongPress. Wire `ControlFlow::WaitUntil(started_at +
+      LONG_PRESS_MS)` on native or `setTimeout` on WASM.
+- [ ] **Touch coordinate-space drift** (touch deep-dive HIGH):
+      `winit::Touch.location` is `PhysicalPosition<f64>` but
+      `MOVE_THRESHOLD_PX = 4.0` is doc-claimed as logical pixels.
+      On a 2x retina device the threshold is effectively ~2
+      logical px; on iPhone ~1.3 logical px. Either divide by
+      `window.scale_factor()` before ingest or rename the
+      constant + fix docs.
+- [ ] **Touch clock-skew vulnerability** (touch deep-dive HIGH):
+      `tick()`'s `now.duration_since(track.started_at)` panics or
+      saturates if `now < started_at`. `web_time::Instant` on
+      Firefox bfcache restore can produce regressed timestamps.
+      Use `saturating_duration_since`.
+- [ ] **Touch `Cancelled` handling** (touch deep-dive HIGH): a
+      system-Cancelled secondary finger leaves the recogniser in a
+      latched OneFinger state; treat `Phase::Cancelled` (winit) as
+      `reset()`-equivalent for the affected finger rather than
+      collapsing into `Phase::Ended`.
+- [ ] **Touch `sqrt` on input hot path** (touch deep-dive MEDIUM
+      + CONVENTIONS violation): `update_pos` does
+      `(dx*dx+dy*dy).sqrt() > MOVE_THRESHOLD_PX`; should be
+      `dx*dx+dy*dy > MOVE_THRESHOLD_PX*MOVE_THRESHOLD_PX`.
+- [ ] **Touch demote latch overcorrects** (touch deep-dive MEDIUM):
+      "two fingers down, lift one quickly, hold survivor 350ms" is
+      plausibly long-press intent but currently latches
+      `long_press_emitted: true` so survivor never fires.
+- [ ] **Native + WASM touch dispatch near-duplication** (architecture
+      MEDIUM): `InitState::dispatch_touch_event` and
+      `WasmApp::handle_touch_event` carry near-identical 25-line
+      bodies. Generic-ify via a shared helper.
+- [ ] **DOS resource caps** (security CRITICALs):
+      `MindMapDocument.undo_stack`, `MindNode.inline_macros`,
+      `MindMap.macros`, `Palette.groups`, and section/node text
+      length are all unbounded. The `add_section` 1024-cap shipped
+      in T5 is the model — mirror it for `MAX_UNDO_DEPTH`,
+      `MAX_INLINE_MACROS_PER_NODE`, `MAX_TEXT_LEN`,
+      `MAX_NODES_PER_MAP`, `MAX_PALETTE_GROUPS` at runtime AND
+      verify.
+- [ ] **`split_section` ignores 1024 cap** (correctness MEDIUM):
+      `add_section` checks `MAX_SECTIONS_PER_NODE` but `split_section`
+      doesn't, so repeated splits past the cap bypass the
+      protection. `crates/maptool/src/verify/sections.rs:101` also
+      hardcodes 1024 instead of importing the const — drift risk.
+- [ ] **LMB-release origin gate asymmetry** (correctness HIGH):
+      `event_mouse_click.rs:697-702` left-button release finalises
+      a Throttled NodeResize/SectionResize regardless of
+      `started_with_right`. The right-button release path correctly
+      gates on the flag (T2 fix); LMB path doesn't. User holding
+      RMB for fast-resize then fumbling LMB ends the gesture
+      prematurely.
+- [ ] **`SectionRange::range` dual semantics** (correctness HIGH):
+      drift check + `border preview` + `live_selection_section_pairs`
+      treat `range` as section-index range; `color text` and
+      `font` propagate it as grapheme range. T1.1 fixed the writer
+      side (lift to Section instead of SectionRange) but didn't
+      reconcile reader-side. Either rename or split the variant.
+- [ ] **`split_section` undo doesn't pin `text_runs`** (test coverage
+      CRITICAL): `split_section_pushes_undo_and_dirty` checks
+      `sections.len()` and `text` after undo, not `text_runs`.
+      A regression in run-restoration would slip past.
+- [ ] **MultiSection `section move` phase-1 atomicity untested**
+      (test coverage CRITICAL): the "first rejection aborts the
+      whole fan-out" guarantee at `section/mod.rs:765-790` has no
+      test pinning the partial-mutation-impossible invariant.
+- [ ] **Section count cap (1024) verify-side test missing** (test
+      coverage CRITICAL): `crates/maptool/src/verify/sections.rs::check_section_count_cap`
+      added in T5 has no test asserting a 1025-section node trips
+      the violation.
+- [ ] **`section frame` VERBS asymmetry** (API/UX HIGH):
+      `section frame::VERBS = ["show", "reset", "preview"]` ships
+      no positional per-field subverbs while sibling
+      `border` / `canvas border` / `canvas section-frame` ship
+      `preset / color / padding / palette / font / side / corner`.
+      The unknown-subverb error already acknowledges this as a
+      follow-up.
+- [ ] **`section: unknown subverb '{}'` second site** (API/UX HIGH):
+      the late-fall-through arm at `section/mod.rs:336` still emits
+      the bare-line shape; the upstream early-validation arm
+      shipped in this commit emits the grouped listing. The two
+      should converge on a shared formatter.
+- [ ] **Border preview "is one active?" surface** (API/UX HIGH):
+      `border preview show` doesn't exist; staged previews are
+      silently cancelled by any committing edit. A status verb
+      would close the trap state.
+- [ ] **Inconsistent "preset custom first" hint phrasing** (API/UX
+      MEDIUM): `border` says "run \`border preset custom\` first";
+      `section frame` says "Run \`section frame preset=custom\`
+      first"; canvas says "run \`<label> preset custom\` first".
+      Same gate, three phrasings — single shared formatter.
+- [ ] **`fast_resize_start` LMB-release origin gate test** (touch
+      deep-dive HIGH): the symmetric flag check on the right
+      release arm is pinned (T2) but the left release arm's
+      missing check (HI-1 above) has no negative test.
+- [ ] **Layering inversion is wider than T4 admits** (architecture
+      CRITICAL): 22 reach-up sites across `app/dispatch/cross_dispatch/`
+      not just `style.rs` — `edges.rs` (8), `camera.rs` (2),
+      `action_core.rs` (1). Update T4 follow-up to reflect the
+      pattern, not the localised seam.
+- [ ] **`parse_section_kv` byte-duplicated** (architecture HIGH):
+      across `section/mod.rs:373-380` and `section/frame.rs:432-439`.
+      §5 violation; should `use super::parse_section_kv`.
+- [ ] **Three parallel `BorderPreviewTarget*` enums** (architecture
+      HIGH): `keybinds::BorderPreviewTargetKind`,
+      `document::BorderPreviewTarget`,
+      `baumhard::scene_builder::BorderPreviewTargetRef<'a>`.
+      The keybinds-side discriminator exists for `Hash + Eq`
+      reasons; visible enum tax.
+- [ ] **`Action` grew +29 variants** (architecture MEDIUM): the
+      `SetSection*` family carries stringly-typed `f64` / `usize`
+      payloads (e.g. `SetSectionOffsetDelta { dx: String, dy: String }`)
+      because `Action` derives `Hash + Eq`. Typed payloads with a
+      custom `Hash` impl would catch parse errors at construction
+      rather than at dispatch.
+- [ ] **`InitState` / `WasmInputState` god-struct creep**
+      (architecture MEDIUM): InitState 22 → 25 fields;
+      WasmInputState 10 → 12. The cross-platform mirror fields
+      (`interaction_mode`, `touch_recognizer`) double the
+      construct/borrow ceremony.
+- [ ] **`canvas.rs::positional_subverb_to_edits` 165 LOC**
+      (code-quality HIGH): three deeply-nested `match verb` arms
+      with shared logic. Split per verb-class.
+- [ ] **`_config` suffix rename inconsistency** (code-quality HIGH):
+      T5 (whole-PR T6) renamed `set_canvas_default_border_config →
+      set_canvas_default_border` cleanly, but
+      `set_canvas_default_section_frame_border_config`,
+      `set_section_frame_border_config`, and
+      `set_node_border_config` keep the suffix. Either rename
+      consistently or document why partial.
+- [ ] **§5 dup of `parse_side_selector` / `parse_corner_selector`**
+      (code-quality CRITICAL): reproduced inline in `canvas.rs:350-360,
+      413-423` instead of using the `border/execute.rs` originals.
+      The non-custom-preset gate is also duplicated.
+- [ ] **§5 dup between `node_resize.rs` and `section_resize.rs`**
+      (code-quality CRITICAL): differ on ~30 of 290 lines; same
+      struct shape, same `ThrottledInteraction` impl, mostly
+      identical drain/release. Generic-ify or share.
+- [ ] **`expect()` in scene-build path** (code-quality CRITICAL):
+      `lib/baumhard/src/mindmap/scene_builder/section_frame.rs:201`
+      `expect("section_targeted implies preview is Some")`. Per-
+      frame and §9 forbids panic; swap to `if let Some(...)`.
+- [ ] **`expect()` in interactive click path** (code-quality
+      MEDIUM): `app/click.rs:224, 234` `hit_section.expect("guarded
+      above")`. Convert to `if let Some(idx)`.
+- [ ] **Active-preview-rebuild bench missing** (performance
+      MEDIUM): `cargo bench` covers the steady state but not the
+      `build_node_elements` path with `border_preview = Some(...)`.
+      Add a criterion bench.
+- [ ] **`preview_node_ids` linear scan in `node_pass.rs`**
+      (performance HIGH): O(N·K) per active preview. Hoist the
+      target ids to a `HashSet<&str>` once per call.
+- [ ] **`live_selection_node_ids` / `live_selection_section_pairs`
+      clone allocations** (performance MEDIUM): the drift check
+      allocates `Vec<String>` / `Vec<(String, usize)>` per frame
+      while a preview is active. Borrowing variants would be a
+      small win.
+- [ ] **`do_*()` benchmark-reuse for `apply_view_to_slot`** (test
+      coverage HIGH): hot path in `lib/baumhard/src/mindmap/border.rs`
+      lacks the bench-reuse shape `TEST_CONVENTIONS §T6` calls for.
+- [ ] **Touch recogniser → Action wiring untested end-to-end**
+      (test coverage HIGH): three layers tested, the seams aren't.
+- [ ] **`resize_mode_lifecycle.rs` is a flag round-trip** (test
+      coverage HIGH): manually flips `mode` instead of dispatching
+      the side effect — drops side-effect-consumer regressions.
+- [ ] **Documentation drift in plan** (docs MEDIUM): plan Batch 5
+      cites `section/mod.rs` as ~700 LoC (actually 2037);
+      `predicates.rs:33` (actually `:35`); `document/mod.rs:520-523`
+      gate cite (now spread across 88, 93, 516, 545, 608, 635);
+      `CancelMode → ExitMode` rename marked deferred but actually
+      shipped. Spot-fix or add a once-over follow-up.
+- [ ] **`format/sections.md` 9-subverb table omits `frame`** (docs
+      MEDIUM): table says "Nine subverbs" then renders 10 rows
+      with no `frame` row.
+
 Verification (post-Batch-8 ship): 2629 tests pass on
 `./test.sh`; wasm32 cross-compile clean; `cargo doc --workspace
 --no-deps` clean; `cargo bench` runs all Plan §7.4 benches

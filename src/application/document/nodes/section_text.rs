@@ -79,8 +79,6 @@ impl MindMapDocument {
         true
     }
 
-    /// Replace one section's `text` and collapse its `text_runs`
-    /// to a single run inheriting the first original run's
     /// Write both `text` and `text_runs` atomically, merging the
     /// editor's `ColorFontRegions` back to `Vec<TextRun>` via
     /// `region_to_text_run` so per-run attributes the regions
@@ -146,8 +144,6 @@ impl MindMapDocument {
         true
     }
 
-    /// No-op (returns `false`, no undo push) when the section
-    /// doesn't exist or its text already matches.
     /// Replace the section's `text` while preserving as much of
     /// the existing `text_runs` as the new text supports. Runs
     /// wholly inside the new text length carry through unchanged;
@@ -155,7 +151,8 @@ impl MindMapDocument {
     /// `grapheme_count`; runs entirely past the new end are
     /// dropped. Uncovered ranges (anything past the last surviving
     /// run's `end`) fall through to section / node defaults per
-    /// `format/text-runs.md`.
+    /// `format/text-runs.md`. No-op (returns `false`, no undo push)
+    /// when the section doesn't exist or its text already matches.
     ///
     /// Distinct from [`Self::set_section_text`] which collapses
     /// every prior run to a single run cloned from
@@ -163,12 +160,8 @@ impl MindMapDocument {
     /// "I want one uniform style on the new text"; this path is
     /// the right shape for "I want my multi-run styling to
     /// survive a text rewrite to the extent the new text covers
-    /// the same graphemes".
-    ///
-    /// Backs the `section text "<text>" runs=preserve` console
-    /// path. Pre-fix the verb claimed preserve mode but called
-    /// `set_section_text` (which collapses), making the kv a
-    /// phantom. Plan §4.5 §9.8.
+    /// the same graphemes". Backs the
+    /// `section text "<text>" runs=preserve` console path.
     pub fn set_section_text_preserving_runs(
         &mut self,
         node_id: &str,

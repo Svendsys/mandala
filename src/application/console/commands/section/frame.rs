@@ -29,7 +29,7 @@
 use baumhard::mindmap::border::resolve_section_frame_border;
 
 use crate::application::console::commands::border::{
-    custom_preset_hint, edits_has_glyph_field, nodes_in_selection as border_nodes_in_selection, stage_kv,
+    custom_preset_hint, edits_has_glyph_field, nodes_in_selection, stage_kv,
     KEYS as BORDER_KEYS,
 };
 use crate::application::console::completion::{
@@ -122,15 +122,15 @@ pub fn execute_section_frame(args: &Args, eff: &mut ConsoleEffects) -> ExecResul
                     ));
                 }
                 return ExecResult::err(format!(
-                    "section frame: unknown subverb '{}'\n\
-                     \n  positional today: show | reset | preview\n\
-                     \n  per-field grammar lives in the kv form for now — `section\n\
-                     \n  frame preset=heavy padding=8` etc. Per-node `border` and\n\
-                     \n  `canvas border` accept positional `preset / color / padding /\n\
-                     \n  palette / font / side / corner`; section-frame parity is\n\
-                     \n  tracked as a follow-up.\n\
-                     \n  staged: preview <kv>=… | preview commit | preview cancel\n\
-                     \n  composed: <key>=<value> [<key>=<value> …]",
+                    "section frame: unknown subverb '{}'\n  \
+                     positional today: show | reset | preview\n  \
+                     per-field grammar lives in the kv form for now — \
+                     `section frame preset=heavy padding=8` etc. Per-node \
+                     `border` and `canvas border` accept positional \
+                     `preset / color / padding / palette / font / side / corner`; \
+                     section-frame parity is tracked as a follow-up.\n  \
+                     staged: preview <kv>=… | preview commit | preview cancel\n  \
+                     composed: <key>=<value> [<key>=<value> …]",
                     verb
                 ));
             }
@@ -173,7 +173,7 @@ fn apply_edits(args: &Args, eff: &mut ConsoleEffects, edits: BorderConfigEdits) 
     // `nodes_in_selection` rather than collapsing all five branches
     // (no selection / edge / edge-label / portal-label / portal-text)
     // into a single misleading "select a section" message.
-    let node_ids = match border_nodes_in_selection(&eff.document.selection, "section frame") {
+    let node_ids = match nodes_in_selection(&eff.document.selection, "section frame") {
         Ok(ids) => ids,
         Err(e) => return e,
     };
@@ -196,7 +196,19 @@ fn apply_edits(args: &Args, eff: &mut ConsoleEffects, edits: BorderConfigEdits) 
     // hiding a partial commit.
     let mut targets: Vec<(String, usize)> = Vec::with_capacity(node_ids.len());
     for node_id in &node_ids {
-        let section_idx = match resolve_section_idx_for(&eff.document.selection, node_id, kv_idx) {
+        let n_sections = eff
+            .document
+            .mindmap
+            .nodes
+            .get(node_id)
+            .map(|n| n.sections.len())
+            .unwrap_or(0);
+        let section_idx = match resolve_section_idx_for(
+            &eff.document.selection,
+            node_id,
+            kv_idx,
+            n_sections,
+        ) {
             Ok(idx) => idx,
             Err(msg) => return ExecResult::err(msg),
         };
@@ -297,7 +309,7 @@ fn apply_edits(args: &Args, eff: &mut ConsoleEffects, edits: BorderConfigEdits) 
 fn execute_show(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     // Surface the specific not-applicable variant — same shape as
     // `apply_edits`. See its comment for the rationale.
-    let node_ids = match border_nodes_in_selection(&eff.document.selection, "section frame show") {
+    let node_ids = match nodes_in_selection(&eff.document.selection, "section frame show") {
         Ok(ids) => ids,
         Err(e) => return e,
     };
@@ -309,7 +321,19 @@ fn execute_show(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         Ok(v) => v,
         Err(msg) => return ExecResult::err(msg),
     };
-    let section_idx = match resolve_section_idx_for(&eff.document.selection, &node_id, kv_idx) {
+    let n_sections = eff
+        .document
+        .mindmap
+        .nodes
+        .get(&node_id)
+        .map(|n| n.sections.len())
+        .unwrap_or(0);
+    let section_idx = match resolve_section_idx_for(
+        &eff.document.selection,
+        &node_id,
+        kv_idx,
+        n_sections,
+    ) {
         Ok(idx) => idx,
         Err(msg) => return ExecResult::err(msg),
     };
@@ -438,10 +462,26 @@ fn parse_section_kv(args: &Args) -> Result<Option<usize>, String> {
     Ok(None)
 }
 
+/// Resolve `(node_id, section_idx)` for a `section frame …` write.
+///
+/// Cascade matching `section/mod.rs::resolve_section_idx`'s rule
+/// table (kept in sync; review-fix CRIT-2 closed the divergence
+/// where this resolver lacked the rule-3 single-section
+/// auto-resolve, so `section frame preset=heavy` against a
+/// `Single(node)` with one section spuriously errored "node 'X'
+/// has multiple sections" while `section preset=heavy` worked):
+///
+/// 1. `kv_idx` (from a `section=K` kv) → that idx.
+/// 2. `Section` / `SectionRange` whose `node_id` matches → that idx.
+/// 3. `n_sections == 1` (caller passes the section count for the
+///    target node) → `Ok(0)`. Mirrors `section/mod.rs` rule 3.
+/// 4. Multi-section node with no Section selection → error with
+///    the count + the `section=<idx>` hint.
 fn resolve_section_idx_for(
     sel: &SelectionState,
     node_id: &str,
     kv_idx: Option<usize>,
+    n_sections: usize,
 ) -> Result<usize, String> {
     if let Some(idx) = kv_idx {
         return Ok(idx);
@@ -458,9 +498,11 @@ fn resolve_section_idx_for(
             },
             ..
         } if nid == node_id => Ok(*section_idx),
+        _ if n_sections == 1 => Ok(0),
         _ => Err(format!(
-            "section frame: node '{}' has multiple sections — pass section=<idx>",
-            node_id
+            "section frame: node '{}' has {} sections — pick one (click) \
+             or pass section=<idx>",
+            node_id, n_sections
         )),
     }
 }
@@ -491,12 +533,27 @@ fn execute_section_frame_preview(args: &Args, eff: &mut ConsoleEffects) -> ExecR
         Ok(v) => v,
         Err(msg) => return ExecResult::err(msg),
     };
+    // Snapshot per-node section counts before entering the closure
+    // so the preview-side `resolve_section_idx_for` can apply the
+    // single-section auto-resolve (CRIT-2: pre-fix `Single(node)`
+    // with one section spuriously errored). Cloning the model into
+    // a closure-captured map is cheaper than re-borrowing
+    // `eff.document` inside the closure (the closure is `FnOnce`,
+    // doc is already borrowed mutably for the dispatch_border_preview
+    // call).
+    let section_counts: std::collections::HashMap<String, usize> = eff
+        .document
+        .mindmap
+        .nodes
+        .iter()
+        .map(|(id, n)| (id.clone(), n.sections.len()))
+        .collect();
     super::super::border::dispatch_border_preview(
         args,
         eff,
         "section frame preview",
         /* subverb_pos */ 2,
-        |sel| {
+        move |sel| {
             // `MultiSection([(A,0),(A,1),(B,0)])` already encodes
             // distinct (node_id, section_idx) pairs — drop them
             // straight into `BorderPreviewTarget::Sections` rather
@@ -513,10 +570,11 @@ fn execute_section_frame_preview(args: &Args, eff: &mut ConsoleEffects) -> ExecR
                     .collect();
                 return Ok(BorderPreviewTarget::Sections(pairs));
             }
-            let node_ids = super::super::border::nodes_in_selection(sel, "section frame preview")?;
+            let node_ids = nodes_in_selection(sel, "section frame preview")?;
             let mut pairs: Vec<(String, usize)> = Vec::with_capacity(node_ids.len());
             for nid in &node_ids {
-                let idx = match resolve_section_idx_for(sel, nid, kv_idx) {
+                let n_sections = section_counts.get(nid).copied().unwrap_or(0);
+                let idx = match resolve_section_idx_for(sel, nid, kv_idx, n_sections) {
                     Ok(i) => i,
                     Err(msg) => {
                         return Err(crate::application::console::ExecResult::err(msg));
@@ -535,8 +593,66 @@ mod tests {
         assert_exec_err_contains, assert_exec_ok, assert_exec_ok_strict, run,
     };
     use crate::application::console::ExecResult;
-    use crate::application::document::tests_common::pinned_two_section_node;
+    use crate::application::document::tests_common::{load_test_doc, pinned_two_section_node};
     use crate::application::document::{SectionSel, SelectionState};
+
+    /// Whole-PR review CRIT-2: `section frame preset=heavy`
+    /// against a `Single(node)` selection where the node has
+    /// exactly one section auto-resolves to that section. Pre-fix
+    /// the resolver lacked the rule-3 single-section auto-resolve
+    /// that `section/mod.rs::resolve_section_idx` ships, so
+    /// sibling verbs disagreed: `section preset=heavy` worked,
+    /// `section frame preset=heavy` errored "node 'X' has multiple
+    /// sections". Pin the parity.
+    #[test]
+    fn section_frame_single_node_auto_resolves_to_section_zero() {
+        let mut doc = load_test_doc();
+        let id = doc
+            .mindmap
+            .nodes
+            .iter()
+            .find(|(_, n)| n.sections.len() == 1)
+            .map(|(id, _)| id.clone())
+            .expect("testament map has at least one single-section node");
+        doc.selection = SelectionState::Single(id.clone());
+        // Should resolve and apply without errors — no `section=K`
+        // required because the node only has one section.
+        let result = run("section frame preset=heavy", &mut doc);
+        match result {
+            ExecResult::Ok(_) | ExecResult::Lines(_) => {}
+            other => panic!(
+                "expected single-section auto-resolve to succeed, got {:?}",
+                other
+            ),
+        }
+        let cfg = doc.mindmap.nodes.get(&id).unwrap().sections[0]
+            .frame_border
+            .as_ref()
+            .expect("section[0]'s frame_border populated");
+        assert_eq!(cfg.preset, "heavy");
+    }
+
+    /// Multi-section + Single selection still requires explicit
+    /// `section=K` — pin the negative case so the auto-resolve
+    /// doesn't accidentally trigger when the picker is genuinely
+    /// ambiguous. Error message includes the section count + the
+    /// `section=<idx>` hint (matches `section/mod.rs`'s wording).
+    #[test]
+    fn section_frame_multi_section_single_selection_errors_with_count_and_hint() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::Single(id);
+        let r = run("section frame preset=heavy", &mut doc);
+        let msg = match r {
+            ExecResult::Err(s) => s,
+            other => panic!("expected Err, got {:?}", other),
+        };
+        assert!(msg.contains("has 2 sections"), "missing count: {}", msg);
+        assert!(
+            msg.contains("section=<idx>"),
+            "missing kv hint: {}",
+            msg
+        );
+    }
 
     #[test]
     fn section_frame_preset_writes_section_frame_border() {

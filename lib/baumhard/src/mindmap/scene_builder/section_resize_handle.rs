@@ -84,17 +84,22 @@ impl ResizeHandleSide {
         let (fx, fy) = self.axis_factors();
         let dx = total_delta.x as f64;
         let dy = total_delta.y as f64;
+        // `axis_factors()` is exhaustively pinned to {-1, 0, 1}; the
+        // wildcard arm is mathematically dead. Per CODE_CONVENTIONS §9
+        // (no panic in interactive paths) we fall through to the
+        // "no axis movement" identity rather than `unreachable!()` —
+        // this code runs on every resize-drag drain, and a bug
+        // upstream that ever produced an out-of-range factor would
+        // otherwise crash the gesture mid-drag.
         let (off_x, size_w) = match fx {
             -1 => (start_offset.x + dx, start_size.width - dx),
-            0 => (start_offset.x, start_size.width),
             1 => (start_offset.x, start_size.width + dx),
-            _ => unreachable!("axis_factors only emits -1/0/+1"),
+            _ => (start_offset.x, start_size.width),
         };
         let (off_y, size_h) = match fy {
             -1 => (start_offset.y + dy, start_size.height - dy),
-            0 => (start_offset.y, start_size.height),
             1 => (start_offset.y, start_size.height + dy),
-            _ => unreachable!("axis_factors only emits -1/0/+1"),
+            _ => (start_offset.y, start_size.height),
         };
         (
             crate::mindmap::model::Position { x: off_x, y: off_y },
