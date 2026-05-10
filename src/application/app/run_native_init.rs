@@ -268,6 +268,9 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
         keybinds,
         macros,
         anim_pause_start_ms: None,
+        // Touch gesture recogniser. State machine starts Idle;
+        // first `WindowEvent::Touch` lands a finger.
+        touch_recognizer: super::touch_gesture::TouchGestureRecognizer::new(),
     }
 }
 

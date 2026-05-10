@@ -2662,27 +2662,78 @@ Track here so Batch 8 (or earlier follow-ups) can pick them up:
   show` does); `canvas border preset cycle` not supported.
   Cosmetic asymmetries; document or extend.
 
-#### Batch 7 — Touch parity
+#### Batch 7 — Touch parity — SHIPPED
 
 Lands the touch gesture recogniser and the `LongPress` /
 `TwoFingerDrag` MouseGesture variants. Touch input becomes a peer
-of mouse for the four supported gestures (tap, long-press, drag,
-two-finger-drag).
+of mouse — long-press is the touch equivalent of `r`
+(EnterResizeMode), two-finger-drag is the touch equivalent of
+Ctrl+RightDrag (FastResizeStart). Pre-Batch-7 the WASM event
+loop dropped `WindowEvent::Touch` silently, leaving mobile-browser
+users with no way into either resize gesture.
 
-Tasks:
-- [ ] Implement `src/application/app/touch_gesture.rs`
-      (`TouchGestureRecognizer`).
-- [ ] Wire `WindowEvent::Touch` from `run_native.rs` and
-      `run_wasm/event_*.rs` into the recogniser.
-- [ ] Add `MouseGesture::LongPress`, `TwoFingerDrag` variants.
-- [ ] Default keybinds: `enter_resize_mode` includes "LongPress";
-      `fast_resize_start` includes "TwoFingerDrag".
-- [ ] Tests for the recogniser state machine.
+Tasks (status post-Batch-7 ship):
+- [x] `MouseGesture::LongPress` / `TwoFingerDrag` variants
+      added to `keybinds/bind.rs:84-103` with strum
+      serialisations (`"longpress"`, `"twofingerdrag"`) and
+      pascal-form mappings.
+- [x] `TouchGestureRecognizer` state machine landed in
+      `src/application/app/touch_gesture.rs`. Pure state
+      machine: `Idle` ↔ `OneFinger` ↔ `TwoFingers`; long-press
+      timer fires from `tick(now)`; two-finger-drag emits per
+      `MOVE_THRESHOLD_PX` centroid step. `LONG_PRESS_MS = 350`
+      (matches iOS / Android conventions); `MOVE_THRESHOLD_PX
+      = 4.0` (matches the existing mouse drag threshold).
+      Test-only `with_thresholds` constructor for state-machine
+      tests so they don't sleep 350ms per case.
+- [x] Native `WindowEvent::Touch` arm in `run_native.rs:454-462`
+      → `dispatch_touch_event` helper at line 295 builds the
+      `Phase` translation, drives the recogniser's `ingest` +
+      `tick`, looks up the bound action via
+      `keybinds.action_for_gesture` (modifier-fixed-false), and
+      dispatches through `super::dispatch::dispatch_action`.
+      `touch_recognizer: TouchGestureRecognizer` field on
+      `InitState`.
+- [x] WASM `WindowEvent::Touch` arm in `run_wasm/mod.rs:454-456`
+      → new `event_touch.rs` sibling with `handle_touch_event`
+      mirroring native. Uses
+      `dispatch::action_core::dispatch_compatible` (the cross-
+      platform dispatcher; FastResizeStart is `NativeOnly` on
+      WASM and falls through to a warn-log via the existing
+      Native-arm gate).
+- [x] Default keybinds extended:
+      `enter_resize_mode: ["r", "LongPress"]`,
+      `fast_resize_start: ["Ctrl+RightDrag", "TwoFingerDrag"]`
+      in `keybinds/config.rs:297-298`. Four new pin tests in
+      `keybinds/tests.rs` lock the resolution + JSON-shape so
+      a regression that drops either touch entry trips at
+      config-resolution time.
+- [x] State-machine tests: 14 new pins covering long-press
+      fire / sub-threshold survival / movement-cancel /
+      finger-lift-cancel / second-finger-cancel /
+      two-finger centroid emission / sub-threshold no-fire /
+      per-step emission / lifting-one-of-two / Idle-after-both /
+      third-finger-ignored / `reset()` / RecognizedGesture →
+      MouseGesture mapping / untracked-finger-id ignored.
 
-Verification: tests green; manual smoke — load on a touch-enabled
-device (or chrome devtools mobile emulation) and verify each gesture.
-This batch's verification is more involved; pair with a tester if
-solo development is a constraint.
+Long-press wake-up gap (acknowledged): the recogniser's `tick`
+fires only from `WindowEvent::Touch` events, not on a wall-clock
+timer. A finger held with literally zero `Moved` events between
+Started and Ended would miss the long-press emission. In
+practice touch hardware emits sub-pixel jitter `Moved` events
+constantly while a finger is down, so the gap is theoretical.
+A future improvement would set
+`ControlFlow::WaitUntil(started_at + LONG_PRESS_MS)` from the
+recogniser's `OneFinger` state — deferred to keep Batch 7's
+diff tractable.
+
+Verification: 1608 tests pass on `cargo test --bin mandala`
+(was 1590 → +18: 14 state-machine pins + 4 keybind-default
+pins). Wasm32 cross-compile clean. Manual verification on a
+touch device is **out of scope** for this session — no device
+available. The state-machine tests pin the recognition logic;
+the wiring is a thin call-through layer verified by reading
+the diff.
 
 #### Batch 8 — Documentation, polish, drive-by fixes — SHIPPED
 

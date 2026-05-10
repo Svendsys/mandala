@@ -81,6 +81,28 @@ pub enum MouseGesture {
     /// anchored fast-resize gesture from anywhere on a node body.
     #[strum(serialize = "rightdrag")]
     RightDrag,
+    /// Touch: a single finger held in place for ≥ 350ms with no
+    /// significant movement. Emitted by
+    /// [`crate::application::app::touch_gesture::TouchGestureRecognizer`]
+    /// from `WindowEvent::Touch` events. Default-bound to
+    /// `Action::EnterResizeMode` per
+    /// `SECTIONS_BORDERS_RESIZE_PLAN.md` §6.6 — long-press is
+    /// the touch peer of the keyboard's `r` for entering Resize
+    /// mode on the selected target. The "no significant movement"
+    /// half is the cancel rule: any drag past
+    /// [`crate::application::app::touch_gesture::MOVE_THRESHOLD_PX`]
+    /// before the timer fires aborts the long-press candidate.
+    #[strum(serialize = "longpress")]
+    LongPress,
+    /// Touch: two fingers down with the midpoint travelling past
+    /// the drag threshold. Same dispatch shape as `RightDrag` —
+    /// the recogniser emits the gesture when the second finger
+    /// lands and the centroid moves; the bound Action runs once
+    /// per recognition. Default-bound to `Action::FastResizeStart`
+    /// alongside `Ctrl+RightDrag` so the fast-resize anchor-from-
+    /// quadrant math sees both inputs identically.
+    #[strum(serialize = "twofingerdrag")]
+    TwoFingerDrag,
 }
 
 impl MouseGesture {
@@ -108,6 +130,8 @@ impl MouseGesture {
             MouseGesture::WheelDown => "WheelDown",
             MouseGesture::RightClick => "RightClick",
             MouseGesture::RightDrag => "RightDrag",
+            MouseGesture::LongPress => "LongPress",
+            MouseGesture::TwoFingerDrag => "TwoFingerDrag",
         }
     }
 }

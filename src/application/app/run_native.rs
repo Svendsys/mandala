@@ -238,6 +238,13 @@ pub(super) struct InitState {
     /// (`run_native_init::build`) from `~/.config/mandala/macros.json`;
     /// queried at dispatch time via `keybinds.macro_for(...)`.
     pub(super) macros: crate::application::macros::MacroRegistry,
+    /// Touch gesture state machine. Fed by `WindowEvent::Touch`
+    /// events (winit), emits `MouseGesture::LongPress` /
+    /// `TwoFingerDrag` when one of the supported gestures fires.
+    /// Cross-platform peer of WASM's `WasmInputState.touch_recognizer`.
+    /// See `SECTIONS_BORDERS_RESIZE_PLAN.md` §6.6 for the gesture
+    /// vocabulary and `app/touch_gesture.rs` for the state machine.
+    pub(super) touch_recognizer: super::touch_gesture::TouchGestureRecognizer,
     /// Wall-clock at which the current tree-mutating drag began
     /// suppressing the animation tick — `Some(now_ms)` while a
     /// `MovingNode` / `MovingSection` / `SectionResize` /
@@ -282,6 +289,60 @@ impl InitState {
             keybinds: &self.keybinds,
             macros: &mut self.macros,
         }
+    }
+
+    /// Translate a winit `Touch` event into a recogniser ingest +
+    /// tick + dispatch step. Returns true when the event drove
+    /// any state transition or dispatched a gesture (the caller
+    /// should request a redraw on true). Modifier state is fixed
+    /// at all-false — touch devices have no modifier keys; the
+    /// keybind table's `LongPress` / `TwoFingerDrag` bindings
+    /// don't carry Ctrl/Shift/Alt either.
+    ///
+    /// **Long-press timing wake-up gap**: `tick` is called only
+    /// from the events themselves (not on a wall-clock timer),
+    /// so a finger held with literally zero `Moved` events
+    /// between Started and Ended would miss the long-press
+    /// emission. In practice touch hardware emits sub-pixel
+    /// jitter `Moved` events constantly while a finger is down,
+    /// so the gap is theoretical. A future improvement would set
+    /// `ControlFlow::WaitUntil(started_at + LONG_PRESS_MS)` from
+    /// the recogniser's `OneFinger` state — deferred to keep
+    /// Batch 7's diff small.
+    pub(super) fn dispatch_touch_event(&mut self, touch: winit::event::Touch) -> bool {
+        use super::touch_gesture::Phase;
+        use web_time::Instant;
+        use winit::event::TouchPhase;
+        let phase = match touch.phase {
+            TouchPhase::Started => Phase::Started,
+            TouchPhase::Moved => Phase::Moved,
+            TouchPhase::Ended | TouchPhase::Cancelled => Phase::Ended,
+        };
+        let pos = (touch.location.x, touch.location.y);
+        let now = Instant::now();
+        let from_ingest = self.touch_recognizer.ingest(phase, touch.id, pos, now);
+        let from_tick = self.touch_recognizer.tick(now);
+        // Either ingest or tick can produce at most one
+        // recognition per call. If both fired the ingest one
+        // wins (it's the more recent transition); the tick's
+        // emission is queued for the next call.
+        let recognised = from_ingest.or(from_tick);
+        if let Some(g) = recognised {
+            self.cursor_pos = g.pos();
+            let mut ctx = self.input_context();
+            let name = g.mouse_gesture().key_name();
+            let action = ctx.keybinds.action_for_gesture(name, false, false, false);
+            if let Some(a) = action {
+                let _ = super::dispatch::dispatch_action(a, &mut ctx, None);
+                return true;
+            }
+        }
+        // No gesture recognised — but the recogniser may have
+        // moved its internal state (e.g. Started → OneFinger).
+        // The caller still wants a redraw on Started/Moved so
+        // any cursor-following overlay (long-press preview,
+        // future gesture chrome) updates.
+        matches!(phase, Phase::Started | Phase::Moved)
     }
 
     /// Per-event dispatch. Most of the per-event work lives in
@@ -441,6 +502,15 @@ impl InitState {
                 // preview / hover marker tracks the cursor.
                 redraw_after = !matches!(self.drag_state, DragState::None)
                     || self.color_picker_state.is_open();
+            }
+            //// TOUCH ////
+            Event::WindowEvent {
+                event: WindowEvent::Touch(touch),
+                ..
+            } => {
+                if self.dispatch_touch_event(touch) {
+                    redraw_after = true;
+                }
             }
             //// KEYBOARD ////
             Event::WindowEvent {

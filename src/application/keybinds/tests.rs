@@ -854,6 +854,64 @@ fn test_user_rebind_to_bare_right_drag_works() {
     );
 }
 
+/// `LongPress` resolves to `EnterResizeMode` by default — the
+/// touch peer of the keyboard's `r`. Plan §6.6 / Batch 7.
+#[test]
+fn test_default_long_press_resolves_to_enter_resize_mode() {
+    let r = KeybindConfig::default().resolve();
+    assert_eq!(
+        r.action_for_gesture("longpress", false, false, false),
+        Some(Action::EnterResizeMode),
+        "LongPress should be the touch peer of `r` for EnterResizeMode"
+    );
+}
+
+/// `TwoFingerDrag` resolves to `FastResizeStart` by default —
+/// the touch peer of `Ctrl+RightDrag`. Plan §6.6 / Batch 7.
+#[test]
+fn test_default_two_finger_drag_resolves_to_fast_resize_start() {
+    let r = KeybindConfig::default().resolve();
+    assert_eq!(
+        r.action_for_gesture("twofingerdrag", false, false, false),
+        Some(Action::FastResizeStart),
+        "TwoFingerDrag should be the touch peer of Ctrl+RightDrag"
+    );
+}
+
+/// Default `enter_resize_mode` config carries both `r` (kbd)
+/// and `LongPress` (touch). Pins the JSON-default shape so a
+/// regression that drops the touch entry is caught at config-
+/// resolution time.
+#[test]
+fn test_default_enter_resize_mode_includes_long_press() {
+    let cfg = KeybindConfig::default();
+    assert!(
+        cfg.enter_resize_mode.iter().any(|s| s == "LongPress"),
+        "default enter_resize_mode must include LongPress; got: {:?}",
+        cfg.enter_resize_mode
+    );
+    assert!(
+        cfg.enter_resize_mode.iter().any(|s| s == "r"),
+        "default enter_resize_mode must still include `r`; got: {:?}",
+        cfg.enter_resize_mode
+    );
+}
+
+#[test]
+fn test_default_fast_resize_start_includes_two_finger_drag() {
+    let cfg = KeybindConfig::default();
+    assert!(
+        cfg.fast_resize_start.iter().any(|s| s == "TwoFingerDrag"),
+        "default fast_resize_start must include TwoFingerDrag; got: {:?}",
+        cfg.fast_resize_start
+    );
+    assert!(
+        cfg.fast_resize_start.iter().any(|s| s == "Ctrl+RightDrag"),
+        "default fast_resize_start must still include Ctrl+RightDrag; got: {:?}",
+        cfg.fast_resize_start
+    );
+}
+
 /// `RightClick` ships unbound by default. Pins the default
 /// posture — users opt in via JSON config.
 #[test]

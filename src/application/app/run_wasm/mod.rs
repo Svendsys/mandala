@@ -30,6 +30,7 @@ mod event_modifiers;
 mod event_mouse_click;
 mod event_mouse_wheel;
 mod event_resized;
+mod event_touch;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -143,6 +144,13 @@ pub(super) struct WasmInputState {
     /// document is loaded. Consulted by the keyboard handler's
     /// Action → Macro → CustomMutation fall-through.
     pub macros: crate::application::macros::MacroRegistry,
+    /// Touch gesture recogniser. Cross-platform peer of native's
+    /// `InitState.touch_recognizer`. WASM mobile is the *primary*
+    /// surface this targets (mobile-browser tap-and-hold is
+    /// unreachable through `MouseInput`/`CursorMoved` events
+    /// alone — winit dispatches them as
+    /// `WindowEvent::Touch` instead).
+    pub touch_recognizer: super::touch_gesture::TouchGestureRecognizer,
 }
 
 impl WasmInputState {
@@ -450,15 +458,14 @@ impl WasmApp {
                 self.handle_mouse_wheel(delta);
                 redraw_after = true;
             }
+            WindowEvent::Touch(touch) => {
+                if self.handle_touch_event(touch) {
+                    redraw_after = true;
+                }
+            }
             // Catch-all for winit `WindowEvent` variants WASM
             // doesn't yet route. The notable un-wired ones:
             //
-            // - `WindowEvent::Touch` — primary mobile-browser
-            //   input. Wiring this requires an event_touch.rs
-            //   sibling + the gesture-recognizer state machine
-            //   that native already has. Mobile budget is
-            //   binding (CODE_CONVENTIONS §4); landing this
-            //   is on the named trajectory.
             // - `WindowEvent::Ime` — IME composition strings.
             //   Required for non-Latin text editing inside the
             //   inline node-text editor. Modal-handler-side
@@ -813,6 +820,7 @@ pub(super) fn run(mut app: Application) {
                 app_scene: init_app_scene,
                 scene_cache: init_scene_cache,
                 macros,
+                touch_recognizer: super::touch_gesture::TouchGestureRecognizer::new(),
             });
         }
 

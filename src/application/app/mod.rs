@@ -89,6 +89,7 @@ mod run_native_init;
 mod run_wasm;
 #[cfg(not(target_arch = "wasm32"))]
 mod throttled_interaction;
+mod touch_gesture;
 
 // `InputHandlerContext` has 21 fields. Drift surface for new
 // fields: the struct in `input_context.rs`, the
