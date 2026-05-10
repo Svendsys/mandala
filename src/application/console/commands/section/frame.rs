@@ -122,7 +122,15 @@ pub fn execute_section_frame(args: &Args, eff: &mut ConsoleEffects) -> ExecResul
                     ));
                 }
                 return ExecResult::err(format!(
-                    "section frame: unknown subverb '{}'; use 'show', 'reset', 'preview', or kv form",
+                    "section frame: unknown subverb '{}'\n\
+                     \n  positional today: show | reset | preview\n\
+                     \n  per-field grammar lives in the kv form for now — `section\n\
+                     \n  frame preset=heavy padding=8` etc. Per-node `border` and\n\
+                     \n  `canvas border` accept positional `preset / color / padding /\n\
+                     \n  palette / font / side / corner`; section-frame parity is\n\
+                     \n  tracked as a follow-up.\n\
+                     \n  staged: preview <kv>=… | preview commit | preview cancel\n\
+                     \n  composed: <key>=<value> [<key>=<value> …]",
                     verb
                 ));
             }

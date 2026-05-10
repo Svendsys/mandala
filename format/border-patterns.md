@@ -195,6 +195,17 @@ section frame palette=rainbow field=frame
 section frame preset=heavy section=2     # explicit section index when selection is a single node
 ```
 
+`section frame` is **kv-only** today — the per-node `border` and
+the canvas-default `canvas border` verbs accept positional
+subverbs (`border preset heavy`, `canvas border side top "..."`)
+but `section frame` doesn't. Tracked as a follow-up; the kv form
+covers every shape until the unified dispatcher lands.
+
+Per-side / per-corner glyph writes (`top=` / `tl=` etc.) require
+`preset=custom` first — same gate the per-node `border side` and
+`canvas border side` paths enforce. The data layer's
+auto-promote-to-custom safety net stays for macro consumers.
+
 Map-wide defaults are authored through the `canvas` command:
 
 ```
