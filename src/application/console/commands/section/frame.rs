@@ -531,7 +531,9 @@ fn execute_section_frame_preview(args: &Args, eff: &mut ConsoleEffects) -> ExecR
 
 #[cfg(test)]
 mod tests {
-    use crate::application::console::tests::fixtures::{assert_exec_err_contains, assert_exec_ok, run};
+    use crate::application::console::tests::fixtures::{
+        assert_exec_err_contains, assert_exec_ok, assert_exec_ok_strict, run,
+    };
     use crate::application::console::ExecResult;
     use crate::application::document::tests_common::pinned_two_section_node;
     use crate::application::document::{SectionSel, SelectionState};
@@ -543,7 +545,9 @@ mod tests {
             node_id: id.clone(),
             section_idx: 1,
         });
-        assert_exec_ok(run("section frame preset=heavy", &mut doc));
+        // Strict-Ok: single-section preset write, no auto-promote,
+        // no bare-custom — single-line success is the contract.
+        assert_exec_ok_strict(run("section frame preset=heavy", &mut doc));
         let cfg = doc.mindmap.nodes.get(&id).unwrap().sections[1]
             .frame_border
             .as_ref()

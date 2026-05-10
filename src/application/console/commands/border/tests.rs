@@ -7,7 +7,7 @@
 //! model fields.
 
 use crate::application::console::tests::fixtures::{
-    assert_exec_err_contains, assert_exec_ok, join_lines, run,
+    assert_exec_err_contains, assert_exec_ok, assert_exec_ok_strict, join_lines, run,
 };
 use crate::application::console::ExecResult;
 use crate::application::document::tests_common::{
@@ -22,9 +22,11 @@ fn border_on_then_off_toggles_show_frame() {
     doc.selection = SelectionState::Single(id.clone());
     // Testament fixture defaults to show_frame=false; turn on
     // first, then back off, and assert each leg actually moved.
-    assert_exec_ok(run("border on", &mut doc));
+    // Strict-Ok pin: visibility flips return single-line `Ok` —
+    // any hint emission would indicate a regression.
+    assert_exec_ok_strict(run("border on", &mut doc));
     assert!(doc.mindmap.nodes.get(&id).unwrap().style.show_frame);
-    assert_exec_ok(run("border off", &mut doc));
+    assert_exec_ok_strict(run("border off", &mut doc));
     assert!(!doc.mindmap.nodes.get(&id).unwrap().style.show_frame);
 }
 
@@ -33,7 +35,9 @@ fn border_preset_writes_field() {
     let mut doc = fixture_doc();
     let id = first_node_id(&doc);
     doc.selection = SelectionState::Single(id.clone());
-    assert_exec_ok(run("border preset=heavy", &mut doc));
+    // Strict-Ok: single-node preset write, no auto-promote, no
+    // bare-custom — single-line success is the contract.
+    assert_exec_ok_strict(run("border preset=heavy", &mut doc));
     let cfg = doc
         .mindmap
         .nodes
@@ -165,7 +169,8 @@ fn border_palette_records_palette_name() {
     doc.selection = SelectionState::Single(first_node_id(&doc));
     let palette_name = parser_friendly_palette_name(&doc);
     let line = format!("border palette={}", palette_name);
-    assert_exec_ok(run(&line, &mut doc));
+    // Strict-Ok: palette-only edit — no hint paths fire.
+    assert_exec_ok_strict(run(&line, &mut doc));
     let id = first_node_id(&doc);
     let cfg = doc
         .mindmap
@@ -490,7 +495,9 @@ fn border_preset_positional_writes_through() {
     let mut doc = fixture_doc();
     let id = first_node_id(&doc);
     doc.selection = SelectionState::Single(id.clone());
-    assert_exec_ok(run("border preset heavy", &mut doc));
+    // Strict-Ok: positional preset write, no cycle-prefix, no
+    // auto-promote — single-line success.
+    assert_exec_ok_strict(run("border preset heavy", &mut doc));
     assert_eq!(
         doc.mindmap.nodes.get(&id).unwrap().style.border.as_ref().map(|c| c.preset.as_str()),
         Some("heavy")
@@ -546,7 +553,8 @@ fn border_color_positional_writes_through() {
     let mut doc = fixture_doc();
     let id = first_node_id(&doc);
     doc.selection = SelectionState::Single(id.clone());
-    assert_exec_ok(run("border color #ff8800", &mut doc));
+    // Strict-Ok: color edit only, no hint paths.
+    assert_exec_ok_strict(run("border color #ff8800", &mut doc));
     assert_eq!(
         doc.mindmap.nodes.get(&id).unwrap().style.border.as_ref().and_then(|c| c.color.as_deref()),
         Some("#ff8800")
@@ -558,7 +566,8 @@ fn border_padding_positional_writes_through() {
     let mut doc = fixture_doc();
     let id = first_node_id(&doc);
     doc.selection = SelectionState::Single(id.clone());
-    assert_exec_ok(run("border padding 12", &mut doc));
+    // Strict-Ok: padding edit only, no hint paths.
+    assert_exec_ok_strict(run("border padding 12", &mut doc));
     assert_eq!(
         doc.mindmap.nodes.get(&id).unwrap().style.border.as_ref().map(|c| c.padding),
         Some(12.0)
@@ -570,7 +579,8 @@ fn border_palette_positional_with_field_kv_writes_both() {
     let mut doc = fixture_doc();
     let id = first_node_id(&doc);
     doc.selection = SelectionState::Single(id.clone());
-    assert_exec_ok(run("border palette rainbow field=text", &mut doc));
+    // Strict-Ok: palette + field kvs, no glyph fields, no hints.
+    assert_exec_ok_strict(run("border palette rainbow field=text", &mut doc));
     let cfg = doc.mindmap.nodes.get(&id).unwrap().style.border.as_ref().unwrap();
     assert_eq!(cfg.color_palette.as_deref(), Some("rainbow"));
 }
@@ -581,7 +591,8 @@ fn border_toggle_flips_show_frame_per_node() {
     let id = first_node_id(&doc);
     doc.selection = SelectionState::Single(id.clone());
     let before = doc.mindmap.nodes.get(&id).unwrap().style.show_frame;
-    assert_exec_ok(run("border toggle", &mut doc));
+    // Strict-Ok: visibility toggle, no hint paths.
+    assert_exec_ok_strict(run("border toggle", &mut doc));
     let after = doc.mindmap.nodes.get(&id).unwrap().style.show_frame;
     assert_ne!(before, after, "toggle must flip show_frame");
 }
