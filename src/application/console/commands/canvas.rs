@@ -168,11 +168,11 @@ pub fn execute_canvas(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
 }
 
 fn execute_border_subject(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
-    // Plan §5.7: positional subverbs mirror the per-node `border`
+    //positional subverbs mirror the per-node `border`
     // verb's grammar so users can `canvas border preset heavy` /
     // `canvas border color #fff` / etc. The kv form
     // `canvas border preset=heavy` still works (alias for
-    // keybinds, per Plan §5.2).
+    // keybinds, per).
     if let Some(verb) = args.positional(1) {
         match verb.to_ascii_lowercase().as_str() {
             "show" => return execute_show_border(eff),
@@ -209,28 +209,10 @@ fn execute_border_subject(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     apply_border_edits(eff, edits)
 }
 
-/// Resolve a positional subverb (`preset` / `color` / `padding`
-/// / `palette` / `font` / `side` / `corner`) plus its value
-/// positionals into a `BorderConfigEdits`. Returns:
-///
-/// - `Ok(Some(edits))` when the subverb matched and parsed.
-/// - `Ok(None)` when the verb name didn't match any positional
-///   subverb — caller should surface its own "unknown subverb"
-///   error (the canvas dispatch's hint differs from a generic
-///   one).
-/// - `Err(ExecResult::Err(_))` when the subverb matched but the
-///   value parsing failed; caller bails with that.
-///
-/// `verb_pos` is the positional index of the subverb name —
-/// `1` for `canvas border <subverb>`, `2` (or `3` for `focused`)
-/// for `canvas section-frame <subverb>`. Subsequent positionals
-/// (the value(s)) live at `verb_pos + 1` (and `verb_pos + 2` for
-/// the two-positional `side` / `corner` forms).
-/// Which canvas slot is being edited. Drives the reset-glyph
-/// resolution: `border side WHICH reset` writes the **active**
-/// slot's preset's default glyph (not a hardcoded "light"),
-/// so the user gets a coherent restore against whichever
-/// preset they last set on that slot.
+/// Which canvas slot the helpers write to. `verb_pos` (param
+/// on `positional_subverb_to_edits`) lets the same dispatcher
+/// service `canvas border` (subverb at index 1) and
+/// `canvas section-frame [focused]` (subverb at index 2 or 3).
 #[derive(Clone, Copy)]
 enum CanvasSlot {
     Border,
@@ -317,7 +299,7 @@ fn positional_subverb_to_edits(
                 ))),
             };
             let reset = pattern.eq_ignore_ascii_case("reset");
-            // Plan §5.4 #3 parity with the per-node `border side`
+            //parity with the per-node `border side`
             // path: setting a side glyph on a non-custom preset
             // errors with the explicit "preset custom first"
             // hint, instead of silently auto-promoting the slot.
@@ -394,8 +376,7 @@ fn positional_subverb_to_edits(
                 }
             }
             // Sample the slot's current preset once outside the
-            // loop — same value every iteration. Pre-fix the
-            // loop hardcoded "light" per Plan §5.7 reset path.
+            // loop.
             let reset_glyph_set = reset.then(|| preset_glyph_set(&slot.current_preset(eff.document)));
             for corner in corners {
                 if let Some(ref gs) = reset_glyph_set {
@@ -619,10 +600,7 @@ fn execute_show_section_frame(eff: &mut ConsoleEffects, focused: bool) -> ExecRe
     };
     // Cascade matches `resolve_section_frame_border`: focused
     // frames fall through to the unfocused canvas slot before
-    // hitting the hardcoded floor. Pre-fix the focused branch
-    // only consulted `default_focused_section_frame_border`,
-    // reporting "no map-wide default" while the renderer was
-    // actually using the unfocused slot through fallback (C9).
+    // hitting the hardcoded floor.
     let (cfg, source) = if focused {
         match (
             map.canvas.default_focused_section_frame_border.as_ref(),
@@ -787,11 +765,10 @@ mod tests {
         assert_eq!(glyphs.top, "###(*)###");
     }
 
-    /// `canvas section-frame` (unfocused branch) must auto-promote
-    /// preset to `"custom"` when a side or corner glyph is set.
-    /// Pre-fix only the per-node and per-section paths were
-    /// covered; the canvas section-frame paths are different
-    /// setters writing different model slots.
+    /// `canvas section-frame` (unfocused branch) must auto-
+    /// promote preset to `"custom"` when a side or corner
+    /// glyph is set — different setter from per-node /
+    /// per-section so it needs its own pin.
     #[test]
     fn canvas_section_frame_top_pattern_auto_promotes_preset_to_custom() {
         let mut doc = load_test_doc();
@@ -851,9 +828,7 @@ mod tests {
     }
 
     /// `canvas border show` after setting palette + field must
-    /// surface both in the readout — pre-fix only the preset/color
-    /// pair was asserted; a regression that dropped palette from
-    /// `format_resolved` would have shipped silently.
+    /// surface both in the readout.
     #[test]
     fn canvas_border_show_reports_palette_and_field() {
         let mut doc = load_test_doc();
@@ -882,9 +857,7 @@ mod tests {
         );
     }
 
-    /// Subverbs accept mixed-case input. Pre-fix `Focused` and
-    /// `Border` were exact-matched and a casing typo errored as
-    /// "unknown subverb".
+    /// Subverbs accept mixed-case input.
     #[test]
     fn canvas_subverb_dispatch_is_case_insensitive() {
         let mut doc = load_test_doc();
@@ -1059,7 +1032,7 @@ mod positional_tests {
     use crate::application::console::tests::fixtures::{assert_exec_err_contains, assert_exec_ok, run};
     use crate::application::document::tests_common::load_test_doc;
 
-    /// Plan §5.B6.10: `canvas border preset NAME` writes through
+    ///B6.10: `canvas border preset NAME` writes through
     /// to canvas.default_border.
     #[test]
     fn canvas_border_preset_positional_writes_through() {

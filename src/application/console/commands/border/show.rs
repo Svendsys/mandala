@@ -260,10 +260,8 @@ fn format_border_readout(
             &side_face,
         ));
     }
-    // Corners always render — they're cheap (one line) and
-    // pruning by side would force a half-truth ("top" filter
-    // shouldn't include bl / br corners). With no filter or
-    // `all`, render unmodified; otherwise skip.
+    // Corners are pruned alongside any side filter — `top`
+    // shouldn't include bl / br corners.
     if side_filter.is_none() || side_filter == Some("all") {
         lines.push(corner_line(&style, &face));
     }

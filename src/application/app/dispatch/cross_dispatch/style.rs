@@ -24,9 +24,9 @@ pub(in crate::application::app) fn apply_set_border_field(
 }
 
 /// `Action::CycleBorderPreset` — advance the selected node(s)'
-/// border preset to the next entry in `BORDER_PRESETS`. Mirrors
-/// `border preset cycle`; samples the first selected node's
-/// resolved preset to decide where to step from. Plan §5.8.
+/// border preset to the next entry in `BORDER_PRESETS`. Samples
+/// the first selected node's resolved preset; multi-node
+/// selections converge to the same target.
 pub(in crate::application::app) fn apply_cycle_border_preset(rc: &mut RebuildContext<'_>) {
     apply_with_rebuild(rc, |doc| {
         let ids = match crate::application::console::commands::border::nodes_in_selection(
@@ -59,8 +59,7 @@ pub(in crate::application::app) fn apply_cycle_border_preset(rc: &mut RebuildCon
 }
 
 /// `Action::ToggleBorderVisible` — flip `style.show_frame` per
-/// selected node. Each node toggled independently (no global
-/// "all on / all off"). Plan §5.8.
+/// selected node. Each node toggled independently.
 pub(in crate::application::app) fn apply_toggle_border_visible(rc: &mut RebuildContext<'_>) {
     apply_with_rebuild(rc, |doc| {
         let ids = match crate::application::console::commands::border::nodes_in_selection(

@@ -294,10 +294,8 @@ fn border_unquoted_multi_word_value_hints_at_quoting() {
 }
 
 /// Multi-node selection fans the same edit across every selected
-/// node — the loop in `apply_edits` must invoke
-/// `set_node_border_config` once per id and report a multi-node
-/// success message. Pre-fix the loop was untested through the
-/// console layer (only `Single` selections had coverage).
+/// node — `apply_edits`'s loop must call `set_node_border_config`
+/// per id and report a multi-node success message.
 #[test]
 fn border_multi_node_selection_applies_to_all() {
     let mut doc = fixture_doc();
@@ -323,10 +321,10 @@ fn border_multi_node_selection_applies_to_all() {
 }
 
 /// `border show` must work on a node with no per-node border
-/// override (`style.border = None`) — it falls back through the
-/// canvas-default cascade and the readout reports the resolved
-/// values without panicking. Pre-fix, the padding line was gated
-/// on `cfg.is_some()` so a default-only node had no padding row.
+/// override (`style.border = None`) — falls back through the
+/// canvas-default cascade and the readout reports resolved
+/// values without panicking. Pins the padding row through the
+/// no-override path.
 #[test]
 fn border_show_on_node_without_per_node_override() {
     let mut doc = fixture_doc();
@@ -485,7 +483,7 @@ fn apply_border_field_returns_false_for_edge_selection() {
     ));
 }
 
-// ─── Plan §5.2 positional subverbs ─────────────────────────────────
+// ─── positional subverbs ─────────────────────────────────
 
 #[test]
 fn border_preset_positional_writes_through() {
@@ -688,7 +686,7 @@ fn border_corner_all_fans_to_four_corners() {
     assert_eq!(g.bottom_right, "+");
 }
 
-/// Plan §5.4 #3: setting a side glyph on a non-custom preset
+/// setting a side glyph on a non-custom preset
 /// errors with the explicit "run `border preset custom` first"
 /// hint instead of silently auto-promoting the preset.
 #[test]
@@ -731,7 +729,7 @@ fn border_side_reset_works_on_non_custom_preset() {
         "reset on non-custom must succeed: {:?}", r);
 }
 
-/// Plan §5.2 / §5.3: `border show side=top` filters to one
+/// / §5.3: `border show side=top` filters to one
 /// side row plus the universal header rows (visible / preset /
 /// font / color / palette / padding / size). Corners are
 /// pruned alongside the side filter — `top` filter shouldn't
@@ -775,7 +773,7 @@ fn border_show_side_filter_unknown_rejects() {
     assert_exec_err_contains(run("border show side=diagonal", &mut doc), "pick top");
 }
 
-/// Plan §5.4 #2: `border show verbose` surfaces the dual color
+/// `border show verbose` surfaces the dual color
 /// surface (`style.frame_color` set via `color border=` vs
 /// `style.border.color` set via `border color`). Without
 /// verbose the readout collapses to a single resolved-cascade
@@ -825,10 +823,8 @@ fn border_verb_applicable_on_multi_selection() {
 }
 
 /// `border show` against a `Section(_)` selection collapses to
-/// the owning node (same posture every other border subverb uses
-/// via `nodes_in_selection`). Pre-fix `border show` errored
-/// "not applicable" despite the predicate advertising the verb
-/// as applicable.
+/// the owning node (same posture every other border subverb
+/// uses via `nodes_in_selection`).
 #[test]
 fn border_show_works_on_section_selection() {
     use crate::application::document::SectionSel;
@@ -865,10 +861,8 @@ fn border_show_works_on_section_range_selection() {
     );
 }
 
-/// Plan §5.4 #1 silent-drop bug: `border on preset=heavy`
-/// pre-fix dropped `preset=heavy` silently. Post-fix any kvs
-/// or extra positionals on bare-positional subverbs error
-/// with a hint pointing at the kv form.
+/// Bare-positional subverbs error on extras instead of silently
+/// dropping kvs (so `border on preset=heavy` doesn't lose the kv).
 #[test]
 fn border_on_with_extra_kv_errors() {
     let mut doc = fixture_doc();
@@ -911,7 +905,7 @@ fn border_reset_with_extras_errors() {
 
 // ─── Opus review T5 (API/UX) pins ────────────────────────────────
 
-/// API/UX I2: `border preset cycle` success message includes
+/// `border preset cycle` success message includes
 /// the resolved preset name so the user knows what they got
 /// without running `border show`.
 #[test]
@@ -933,7 +927,7 @@ fn border_preset_cycle_message_names_resolved_preset() {
     );
 }
 
-/// API/UX I1: error message no longer surfaces "Plan §5.4 #3"
+/// error message no longer surfaces "Plan §5.4 #3"
 /// internal reference to the user's terminal.
 #[test]
 fn border_side_error_does_not_leak_plan_section_to_user() {
@@ -957,7 +951,7 @@ fn border_side_error_does_not_leak_plan_section_to_user() {
     );
 }
 
-/// API/UX I3: extra positionals after a positional subverb
+/// extra positionals after a positional subverb
 /// error with a hint pointing at the kv form.
 #[test]
 fn border_preset_extra_positional_errors() {
@@ -989,7 +983,7 @@ fn border_color_extra_positional_errors() {
     );
 }
 
-/// API/UX I7: unknown-subverb error breaks into multiple lines
+/// unknown-subverb error breaks into multiple lines
 /// grouped by kind so the 80-col terminal stays readable.
 #[test]
 fn border_unknown_subverb_error_is_grouped_multiline() {
@@ -1005,7 +999,7 @@ fn border_unknown_subverb_error_is_grouped_multiline() {
     assert!(msg.contains("\n  staged:"), "missing kind groups: {}", msg);
 }
 
-/// Plan §5.10 inline action hints — `border show` annotates
+/// inline action hints — `border show` annotates
 /// each row with the verb that flips it (`(toggle: ...)`,
 /// `(cycle: ...)`, `(override: ...)`).
 #[test]
@@ -1022,7 +1016,7 @@ fn border_show_includes_toggle_and_cycle_hints() {
     assert!(blob.contains("(override: `border font"), "missing override hint: {}", blob);
 }
 
-/// API/UX M4: `border show` against `Multi(>=2)` selection
+/// `border show` against `Multi(>=2)` selection
 /// surfaces a "showing first of N" rollup hint so the user
 /// knows there are siblings.
 #[test]

@@ -1,39 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! `border` execute path: positional dispatch + atomic kv apply.
+//! `border` execute path. Positional dispatch + atomic kv apply
+//! into a single `BorderConfigEdits` bundle that the document
+//! setter applies whole-or-nothing per node.
 //!
-//! The kv form parses every recognised key into a
-//! [`crate::application::document::BorderConfigEdits`] up front,
-//! validates each value against its typed parser, then hands the
-//! whole bundle to
-//! [`crate::application::document::MindMapDocument::set_node_border_config`]
-//! per selected node. Validation failures abort before any node
-//! is mutated.
-//!
-//! ## Why parse-then-dispatch instead of `apply_kvs` / capability traits
-//!
-//! The `color` verb dispatches per-kv through `apply_kvs` against
-//! the capability traits on `TargetView` (`HasBgColor`,
-//! `HasTextColor`, `HasBorderColor`) because each kv targets a
-//! *different* trait channel — `bg=#x text=#y border=#z` writes
-//! three independent fields, each of which can have its own
-//! "not applicable to this selection" answer.
-//!
-//! `border` and `font` (see `commands/font.rs`) are
-//! single-channel verbs: every kv targets the same per-node
-//! `GlyphBorderConfig` (or, for `font`, the same edge / label /
-//! portal channel). The right shape there is to parse every kv
-//! up front, validate the bundle, and hand it to one document
-//! setter that applies the whole bundle atomically — exactly
-//! what this file does. A `HasBorder` trait would be
-//! multi-method, only ever implemented on `TargetView::Node`
-//! with `NotApplicable` everywhere else, and would force one
-//! trait call per kv per node which breaks the atomic-apply
-//! invariant the verb relies on for parse-error rejection.
-//!
-//! Recorded so a future reviewer doesn't relitigate this. See
-//! `apply_kvs` (`src/application/console/traits/dispatch.rs`)
-//! and `font.rs::execute_font` for the two precedents.
+//! Single-channel verb: every kv targets `GlyphBorderConfig`,
+//! so the parse-then-dispatch shape (vs `apply_kvs`'s per-kv
+//! trait dispatch) is the right one — see `font.rs` for the
+//! sibling pattern.
 
 use baumhard::mindmap::border::PaletteField;
 use baumhard::mindmap::border_pattern::SidePattern;
@@ -67,25 +41,20 @@ pub fn execute_border(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         // top-level command lookup. Without normalising here,
         // `border Show` falls through to the unknown-subverb arm.
         match verb.to_ascii_lowercase().as_str() {
-            // Plan §5.4 #1: bare-positional subverbs reject
-            // trailing kvs / positionals so `border on preset=heavy`
-            // doesn't silently drop the `preset=heavy`. The plan
-            // promised "silent-drop impossible by construction";
-            // honour it by checking before dispatch.
+            // Bare-positional subverbs reject trailing arguments so
+            // `border on preset=heavy` doesn't silently drop the kv.
             "on" => return reject_extras(args, "on", &[]).unwrap_or_else(|| apply_visible_only(eff, true)),
             "off" => return reject_extras(args, "off", &[]).unwrap_or_else(|| apply_visible_only(eff, false)),
             "toggle" => return reject_extras(args, "toggle", &[]).unwrap_or_else(|| apply_visible_toggle(eff)),
             "show" => return execute_border_show(args, eff),
             "reset" => return reject_extras(args, "reset", &[]).unwrap_or_else(|| apply_reset(eff)),
             "preview" => return super::preview::execute_border_preview(args, eff),
-            // Plan §5.2 positional subverbs. Each pulls the second
-            // positional as the value, builds a single-field
-            // `BorderConfigEdits`, and routes through `apply_edits`.
-            // The kv form `border preset=heavy` still works (Plan
-            // §5.2 alias-for-keybinds carve-out — keybinds want a
-            // single token they can bind to). Gated on
+            // Positional subverbs. Each pulls the next positional
+            // as the value and routes through `apply_edits`. The
+            // kv form (`border preset=heavy`) still works as the
+            // keybind-friendly alias. Gated on
             // `positional_came_first` so an unquoted `palette=My
-            // Palette` typo falls to the quoting-hint branch below
+            // Palette` typo falls to the quoting-hint branch
             // rather than dispatching `apply_palette_positional`
             // with the wrong value.
             "preset" if positional_came_first => return apply_preset_positional(args, eff),
@@ -172,20 +141,10 @@ fn unknown_subverb_message(verb: &str) -> String {
     out
 }
 
-/// Plan §5.4 #1: bare-positional subverbs (`on` / `off` /
-/// `toggle` / `reset`) take no kvs and no extra positionals.
-/// Pre-fix the verb silently dropped them; post-fix any extra
-/// errors with a hint pointing at the kv form (which is the
-/// composable shape) or `border preview` (the staged-edits
-/// shape).
-///
-/// `expected_kvs` is the allowlist of kv keys the subverb does
-/// accept (none, today — but the parameter is here so future
-/// subverbs that accept e.g. `--quiet` can extend without
-/// rewiring).
-///
-/// Returns `Some(err)` to bubble; `None` to fall through to the
-/// normal apply.
+/// `Some(err)` when the subverb received any unexpected kv or
+/// extra positional, otherwise `None`. Lets bare-positional
+/// subverbs (`on`/`off`/`toggle`/`reset`) reject typos that
+/// would otherwise silently drop arguments.
 fn reject_extras(
     args: &Args,
     subverb: &'static str,
@@ -224,20 +183,10 @@ fn apply_reset(eff: &mut ConsoleEffects) -> ExecResult {
     apply_edits(eff, edits)
 }
 
-/// Plan §5.2 / §5.3: `border toggle` flips `style.show_frame`
-/// per node (each node toggled independently — no global "all
-/// on / all off" behaviour). Reports `N node(s) toggled`. The
-/// per-node-toggle posture matches `font toggle` and
-/// `node toggle-fold`.
-/// Resolve the first selected node's stored preset, falling
-/// back to the canvas-default's preset, then to `"light"`. The
+/// First selected node's stored preset, falling back to the
+/// canvas-default's preset, then `"light"`. Shared by the
 /// `border preset cycle` resolver and the `border side|corner
-/// reset` resolver both need this.
-///
-/// Borrows `&ConsoleEffects` rather than the previous shape that
-/// did `.nodes.get(&id).cloned()` (which cloned the entire
-/// `MindNode` to extract one preset string — Performance LOW
-/// finding from the opus review).
+/// reset` resolver.
 fn first_selection_preset(eff: &ConsoleEffects) -> String {
     let ids = match nodes_in_selection(&eff.document.selection, "border") {
         Ok(ids) => ids,
@@ -282,17 +231,9 @@ fn apply_visible_toggle(eff: &mut ConsoleEffects) -> ExecResult {
     ExecResult::ok_msg(format!("border toggled on {} node(s)", toggled))
 }
 
-/// `border preset <name|cycle>` — name picks an explicit preset;
-/// `cycle` advances to the next preset in the list, wrapping at
-/// the end. Plan §5.2 / §5.3 (the `cycle` form is NEW; named
-/// form mirrors the existing kv `preset=` path).
-///
-/// `cycle` resolves the current preset by sampling the first
-/// selected node's resolved preset (canvas default-aware), then
-/// advances to the next entry in `super::PRESETS`. Multi-node
-/// selections all advance to the same target so the user sees
-/// consistent state across the selection — different starting
-/// presets converge.
+/// `border preset <name|cycle>`. `cycle` samples the first
+/// selected node's preset (canvas-default-aware) and advances
+/// one in `BORDER_PRESETS` — multi-node selections converge.
 fn apply_preset_positional(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     let value = match args.positional(1) {
         Some(v) => v,
@@ -328,11 +269,8 @@ fn apply_preset_positional(args: &Args, eff: &mut ConsoleEffects) -> ExecResult 
     let mut edits = BorderConfigEdits::default();
     edits.preset = OptionEdit::Set(target.clone());
     let outcome = apply_edits(eff, edits);
-    // Plan §5.B6.10 / API-UX I2: surface the resolved preset
-    // name when `cycle` lands so the user knows which preset
-    // they ended up at without running `border show`. Pre-fix
-    // a heterogeneous Multi selection saw "border applied to N
-    // node(s)" with no hint.
+    // On `cycle`, prepend the resolved preset so heterogeneous
+    // Multi selections see what they converged to.
     if was_cycle {
         prepend_line(outcome, format!("border preset → '{}' (cycle)", target))
     } else {
@@ -442,20 +380,13 @@ fn apply_font_positional(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     apply_edits(eff, edits)
 }
 
-/// `border side <top|bottom|left|right|all> <pattern|reset>` —
-/// per-side pattern setter. Plan §5.2. `all` fans to the four
-/// sides in one call; `reset` restores the side(s) to the
-/// current preset's default glyphs (model fields are plain
-/// Strings, so reset writes the preset's default value rather
-/// than clearing).
-///
-/// Plan §5.4 #3 + §5.5: per-side glyphs only render when the
-/// preset is `custom`. Pre-fix the model auto-promoted the
-/// preset silently, which made the user think a `border preset
-/// heavy; border side top …` flow worked when really the heavy
-/// preset got silently swapped to custom. Post-fix the verb
-/// pre-checks the resolved preset and errors with the
-/// "run `border preset custom` first" hint when it isn't custom.
+/// `border side <which> <pattern|reset>`. `all` fans; `reset`
+/// writes the current preset's default glyph for the named
+/// side(s) (the schema's per-side fields are plain Strings, so
+/// `OptionEdit::Clear` is a no-op — restoring the preset's own
+/// default is the user-meaningful semantics). Errors when the
+/// resolved preset isn't `custom` so the user picks `custom`
+/// explicitly before glyph writes (no silent auto-promote).
 fn apply_side_positional(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     let which = match args.positional(1) {
         Some(v) => v,
@@ -495,16 +426,9 @@ fn apply_side_positional(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     let mut edits = BorderConfigEdits::default();
     let reset = pattern.eq_ignore_ascii_case("reset");
     if reset {
-        // The schema stores per-side glyphs as plain Strings on
-        // CustomBorderGlyphs (not Option<String>), so an
-        // `OptionEdit::Clear` is a no-op (filtered in
-        // `apply_string_set`). To restore "the side to the
-        // preset's default" per Plan §5.2, look up the resolved
-        // preset's per-side glyph and write it back. Sample the
-        // first selected node's preset (multi-node selections
-        // converge to that node's preset for the reset value;
-        // each node's per-side glyphs are then identically
-        // overwritten).
+        // CustomBorderGlyphs stores per-side glyphs as plain
+        // Strings, so `OptionEdit::Clear` is a no-op. Restoring
+        // means writing the preset's own default glyph back.
         let glyph_set =
             baumhard::mindmap::border::preset_glyph_set(&first_selection_preset(eff));
         for side in sides {
@@ -528,16 +452,9 @@ fn apply_side_positional(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     apply_edits(eff, edits)
 }
 
-/// Walk the selection looking for any node whose resolved
-/// preset isn't `custom`; returns the first such preset name,
-/// or `None` if every node is already on custom. Drives the
-/// "must run preset=custom first" gate in
-/// `apply_side_positional` / `apply_corner_positional`.
-///
-/// Walks every node (not just first) because multi-node Multi
-/// can carry heterogeneous presets — if any one isn't custom,
-/// the gate must fire so the user converges to custom across
-/// the whole selection before glyph writes land.
+/// First selected node whose resolved preset isn't `custom`,
+/// or `None` if every node is already on custom. Walks the
+/// whole selection so heterogeneous Multi trips the gate too.
 fn first_non_custom_preset(eff: &ConsoleEffects) -> Option<String> {
     let ids = nodes_in_selection(&eff.document.selection, "border").ok()?;
     for id in &ids {
@@ -580,9 +497,8 @@ fn parse_side_selector(s: &str) -> Option<Vec<BorderSide>> {
     }
 }
 
-/// `border corner <tl|tr|bl|br|all> <glyph|reset>`. Same shape
-/// as `border side`; `all` fans, `reset` writes the preset's
-/// default. Same auto-promote-replacement story per Plan §5.4 #3.
+/// `border corner <which> <glyph|reset>`. Same shape as
+/// [`apply_side_positional`].
 fn apply_corner_positional(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     let which = match args.positional(1) {
         Some(v) => v,
@@ -814,20 +730,11 @@ pub(crate) fn kv_hint(key: &str) -> Option<&'static str> {
     }
 }
 
-/// Resolve the current selection into a list of node ids, or an
-/// `ExecResult::Err` describing why it can't apply (no selection /
-/// non-node selection). Edge-adjacent selections surface a single
-/// "not applicable" line — borders are node-only.
-/// Resolve the current selection into a list of node ids, or an
-/// `ExecResult::Err` describing why the verb can't apply (no
-/// selection / edge-adjacent selection). `verb_label` is the string
-/// prepended to every error message — `"border"` for the per-node
-/// verb, `"section frame"` for the per-section verb, etc. The
-/// label is part of the contract because callers want the exact
-/// not-applicable variant surfaced (edge / edge-label / portal-label
-/// / portal-text / section-text / no-selection are five distinct
-/// reasons; collapsing them all into a single "no selection" line
-/// hides what the user actually clicked on).
+/// Resolve the selection into a list of node ids — borders
+/// attach to the node, so section-shaped selections collapse to
+/// their owning node. `verb_label` prefixes every not-applicable
+/// error so the same helper serves `border` / `section frame` /
+/// `canvas …` and reports which verb the user typed.
 pub(crate) fn nodes_in_selection(sel: &SelectionState, verb_label: &str) -> Result<Vec<String>, ExecResult> {
     match sel {
         SelectionState::Single(id) => Ok(vec![id.clone()]),
