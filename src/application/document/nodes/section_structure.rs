@@ -208,12 +208,13 @@ impl MindMapDocument {
             None => return Err(format!("section add: node '{}' not found", node_id)),
         };
         let len = node.sections.len();
+        if len >= crate::application::document::MAX_SECTIONS_PER_NODE {
+            return Err(format!(
+                "section add: node '{}' already has {} sections (cap = {})",
+                node_id, len, crate::application::document::MAX_SECTIONS_PER_NODE
+            ));
+        }
         let insert_at = at.unwrap_or(len).min(len);
-        // Validate against the parent node's size — same shape the
-        // index-preserving setters use, parameterised on the
-        // would-be index. Validation lives in the caller (not
-        // the helper closure) because the node's `size` isn't
-        // visible inside `&mut MindNode` after the snapshot.
         validate_section_aabb(node.size, insert_at, section.offset, section.size)?;
 
         Ok(mutate_node_with_style_undo(self, node_id, |node| {
@@ -710,6 +711,35 @@ mod tests {
     /// `EditNodeStyle` only restored `style` + `sections`, leaving
     /// the node visibly inflated after undo. Now restored
     /// alongside.
+    #[test]
+    /// Hostile-mindmap defense: `add_section` rejects when the
+    /// node is already at the section-count cap. Pre-fix the
+    /// cap was unenforced and a Map-tier macro firing AddSection
+    /// in a loop could OOM the host. Tests against a synthetic
+    /// 1024-section node.
+    #[test]
+    fn add_section_rejects_at_cap() {
+        let mut doc = load_test_doc();
+        let id = first_testament_node_id(&doc);
+        // Reach the cap quickly — the cap is 1024.
+        if let Some(node) = doc.mindmap.nodes.get_mut(&id) {
+            for _ in 0..(crate::application::document::MAX_SECTIONS_PER_NODE - node.sections.len()) {
+                node.sections.push(empty_section());
+            }
+        }
+        let result = doc.add_section(&id, None, empty_section());
+        match result {
+            Err(msg) => {
+                assert!(
+                    msg.contains("cap = 1024"),
+                    "error should name the cap: {}",
+                    msg
+                );
+            }
+            Ok(idx) => panic!("expected cap-rejection error, got Ok({})", idx),
+        }
+    }
+
     #[test]
     fn add_section_undo_restores_node_size_when_floor_pass_grew_it() {
         use baumhard::mindmap::model::{MindSection, Position};
