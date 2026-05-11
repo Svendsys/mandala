@@ -59,8 +59,16 @@ impl Renderer {
                 let regions =
                     build_border_regions(spec.cluster_count, cycle, fallback_rgba, spec.palette_offset);
                 let families = RegionFamilies::resolve(&regions, &mut font_system);
-                let spans = rich_text_spans_from_regions(&spec.text, &families, font_size, font_size, None);
-                let mut buf = buffer::create_square(&mut font_system, font_size);
+                // Plan revision 4: per-spec line_height. Vertical
+                // fill rails set this to the measured ink-height
+                // of the fill glyph so consecutive cluster rows
+                // touch (no inter-row gap from cosmic-text's
+                // default line_height = font_size). Horizontal
+                // rails + corners default to line_height_pt =
+                // font_size_pt (the existing behaviour).
+                let line_h = spec.line_height_pt.max(1.0);
+                let spans = rich_text_spans_from_regions(&spec.text, &families, font_size, line_h, None);
+                let mut buf = buffer::create(&mut font_system, font_size, line_h);
                 buf.set_size(&mut font_system, Some(spec.bounds.0), Some(spec.bounds.1));
                 buf.set_rich_text(&mut font_system, spans, &Attrs::new(), SHAPING_ADVANCED, None);
                 buf.shape_until_scroll(&mut font_system, false);
