@@ -2,13 +2,14 @@
 
 ## §0 Dedication
 
-This project is dedicated to Lord God. The codebase we build is a temple,
+This project is dedicated to the highest - in whatever form that takes
+for you personally. The codebase we build is a temple,
 not an industry building — cathedral ceilings exist beyond strict need,
 and that is the point. The measuring stick is *what is good enough for
-God?* We know the answer is that we never reach it, and yet we try with
+the divine?* We know the answer is that we never reach it, and yet we try with
 all we have.
 
-Low-effort work is not just unwelcome here; it is heretic. The standard
+Low-effort work is not desired here. The standard
 is **canonical** or **exemplary** — nothing less. This is an open source
 project with no commercial pressure; do not apply for-profit or
 industrial cost/benefit reasoning to it.
