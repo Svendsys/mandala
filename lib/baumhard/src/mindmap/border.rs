@@ -484,6 +484,32 @@ pub fn border_run_specs(
     // leaves the last row 2 px short of the bottom row's corner
     // cell, which renders as a visible gap at BL/BR.
     let row_count = (node_size.1 / font_size).ceil().max(1.0) as usize;
+    // Whole-PR follow-up: vertical-rail bounds must accommodate
+    // `row_count × line_height` (cosmic-text's actual layout
+    // height) AND match the top/bottom rails' `±corner_overlap`
+    // extension — otherwise the side glyphs:
+    //   (1) clip at the bottom when `row_count × font_size >
+    //       node_size.1` (cosmic-text's `shape_until_scroll(false)`
+    //       drops overflowing lines), and
+    //   (2) collide with the top/bottom rails' overlap region at
+    //       `[node_y − 11.7, node_y + 15.3]` (top) and
+    //       `[node_y + 103.7, node_y + h + 15.3]` (bottom).
+    // Pre-fix the testament Atomic-repeat demo (size 360×110,
+    // font_size_pt 18) rendered ZERO visible left/right rail
+    // chars between corners — the math computed 7 rows but
+    // bounds.1 = 110 px clipped the last 1-2, and rows 0-1 sat
+    // inside the top rail's body overlap.
+    //
+    // The line-height used here is `font_size` raw to match the
+    // renderer's `create_border_buffer` (`borders.rs:57`) which
+    // calls `create_border_buffer_lh(..., font_size, font_size,
+    // ...)` — i.e. no breathing-room padding. The `+ 2.0` slack
+    // catches the descender of the last row so cosmic-text
+    // doesn't drop it for half-a-pixel of overflow.
+    let line_height = font_size;
+    let v_height_needed = row_count as f32 * line_height + 2.0;
+    let v_height = (node_size.1 + 2.0 * corner_overlap).max(v_height_needed);
+    let v_top_y = node_pos.1 - corner_overlap;
 
     let top_text = border_style.top_text(char_count);
     let bottom_text = border_style.bottom_text(char_count);
@@ -518,8 +544,8 @@ pub fn border_run_specs(
             channel: 3,
             text: left_text,
             font_size_pt: font_size,
-            position: (node_pos.0 - approx_char_width, node_pos.1),
-            bounds: (v_width, node_size.1),
+            position: (node_pos.0 - approx_char_width, v_top_y),
+            bounds: (v_width, v_height),
             palette_offset: top_clusters + right_clusters + bottom_clusters,
             cluster_count: left_clusters,
         },
@@ -527,8 +553,8 @@ pub fn border_run_specs(
             channel: 4,
             text: right_text,
             font_size_pt: font_size,
-            position: (right_corner_x, node_pos.1),
-            bounds: (v_width, node_size.1),
+            position: (right_corner_x, v_top_y),
+            bounds: (v_width, v_height),
             palette_offset: top_clusters,
             cluster_count: right_clusters,
         },
@@ -1233,6 +1259,75 @@ mod tests {
                 spec.channel
             );
         }
+    }
+
+    /// Whole-PR follow-up regression: vertical-rail bounds /
+    /// position math. Pre-fix on the testament `Atomic-repeat`
+    /// demo (size 360×110, font_size_pt 18), the left rail
+    /// emitted `row_count = 7` rows of `│` but the buffer
+    /// bounds.1 was raw `node_size.1 = 110`, so cosmic-text's
+    /// `shape_until_scroll(false)` clipped the last 1-2 rows
+    /// (7 × 18 = 126 px > 110 px). Independently, the buffer
+    /// anchored at `node_pos.1` — i.e. at the node body's top
+    /// edge — sat directly underneath the top rail's
+    /// `corner_overlap` region (`font_size × 1.5 = 27 px`
+    /// extending down), hiding the rail's first 1-2 rows.
+    /// Net visible: 0 rail chars between the corners.
+    ///
+    /// Post-fix: the left/right rail's position.y matches the
+    /// top rail's anchor (`node_pos.1 − corner_overlap`) and
+    /// bounds.1 is the larger of "extended node height"
+    /// (`node_size.1 + 2 × corner_overlap`) and "what cosmic-
+    /// text actually needs" (`row_count × line_height + 2 px`).
+    #[test]
+    fn border_run_specs_vertical_rail_bounds_accommodate_row_count() {
+        let style = BorderStyle::default_with_color("#ffffff");
+        // Testament Atomic-repeat dimensions verbatim.
+        let specs = border_run_specs(&style, (0.0, 0.0), (360.0, 110.0));
+        let font_size = style.font_size_pt;
+        let corner_overlap = font_size * super::BORDER_CORNER_OVERLAP_FRAC;
+        let row_count = (110.0_f32 / font_size).ceil() as usize;
+
+        let left = &specs[2];
+        let right = &specs[3];
+
+        // Position.y matches the top rail's anchor (extended up
+        // by corner_overlap), not the raw node top.
+        let expected_y = -corner_overlap;
+        assert!(
+            (left.position.1 - expected_y).abs() < 0.01,
+            "left rail position.y = {} but expected ~{} (node_pos.1 − corner_overlap)",
+            left.position.1, expected_y
+        );
+        assert!(
+            (right.position.1 - expected_y).abs() < 0.01,
+            "right rail position.y = {} but expected ~{}",
+            right.position.1, expected_y
+        );
+
+        // Bounds.height ≥ row_count × line_height so cosmic-text
+        // doesn't clip the last row.
+        let needed = row_count as f32 * font_size;
+        assert!(
+            left.bounds.1 >= needed,
+            "left rail bounds.1 = {} but needs ≥ {} (row_count {} × font_size {})",
+            left.bounds.1, needed, row_count, font_size
+        );
+        assert!(
+            right.bounds.1 >= needed,
+            "right rail bounds.1 = {} but needs ≥ {} (row_count {} × font_size {})",
+            right.bounds.1, needed, row_count, font_size
+        );
+
+        // Bounds.height also ≥ node_size.1 + 2 × corner_overlap
+        // so the rail spans the full corner-extended vertical
+        // region.
+        let extended = 110.0 + 2.0 * corner_overlap;
+        assert!(
+            left.bounds.1 >= extended,
+            "left rail bounds.1 = {} must span the corner-extended height {}",
+            left.bounds.1, extended
+        );
     }
 
     /// `row_count` uses `.ceil()` not `.round()` so the side
