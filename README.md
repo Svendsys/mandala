@@ -23,8 +23,6 @@ certainly make it happen.
 Very much still learning how to optimally work with Claude Code. I'm working on exposing an LLM-friendly
 IPC interface so that I can give Claude a better feedback loop.
 
-I have left all conversations with Claude Code open for anyone to view, these can be found in the pull requests.
-
 ## Quickstart
 
 ```sh
