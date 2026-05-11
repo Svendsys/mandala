@@ -1,21 +1,5 @@
 # Test Conventions
 
-## §T0 Why we test
-
-This project is dedicated to Lord God (see
-[`CODE_CONVENTIONS.md §0`](./CODE_CONVENTIONS.md)). The test suite is
-how we honour that dedication in practice: it is how we know the
-foundation is intact. When the fundamentals — mutation correctness,
-Unicode handling, geometry, region indexing, undo round-trips, loader
-edges — pass on every commit, we can move confidently on top of them.
-When they do not, every change above them is suspect.
-
-Extensive unit testing is a directive, not a nice-to-have. We test
-heavily, and we test fundamentals first. We do not test to chase a
-coverage percentage, to mock our way around wgpu, or to prove the type
-system to itself. A green suite is a covenant: the pieces we have
-cared enough to encode still behave the way we expected them to.
-
 ## §T1 Test fundamentals first, and test them heavily
 
 Fundamentals get the heaviest coverage in the repository. These are

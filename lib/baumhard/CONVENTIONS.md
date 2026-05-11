@@ -9,9 +9,7 @@ foundation has stricter needs than what is built on top of it.
 
 ## §B0 Baumhard is ours
 
-This project is dedicated to Lord God (see
-[`CODE_CONVENTIONS.md §0`](../../CODE_CONVENTIONS.md)), and Baumhard is
-part of it. Baumhard is not a vendored library we accommodate; it is
+Baumhard is not a vendored library we accommodate; it is
 the foundation we are building together with the application — *our
 work*, not a dependency. We maintain and develop both. The most
 important consequence: **"I cannot change Baumhard" is never a reason.**

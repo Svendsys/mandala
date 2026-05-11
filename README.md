@@ -9,6 +9,19 @@ as a WebAssembly build. `.mindmap.json` files load and render as
 interactive canvases where every visual element — text, borders,
 connection paths — is laid out as positioned font glyphs.
 
+## What..?
+
+A few years ago I decided to start developing a "next-gen ascii art" game engine (Baumhard, under lib/baumhard). 
+I would then use that engine to develop a game, but I eventually scrapped the idea. 
+Then in 2026 I was studying the Old Testament for fun, and I started mapping out the family tree in my favorite 
+mind-mapping app. Eventually the tree became too big for the app, and I couldn't find any good open source replacement.
+
+So I figured that maybe I can use Claude Code to build a mind-mapping tool based on Baumhard, and so here we are.
+My time and resources are quite limited these days so things do take time, but I have a crystal clear vision and I will
+certainly make it happen.
+
+I have left all conversations with Claude Code open for anyone to view, these can be found in the pull requests.
+
 ## Quickstart
 
 ```sh

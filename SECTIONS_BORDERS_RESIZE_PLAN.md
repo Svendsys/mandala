@@ -1,6 +1,6 @@
 # Sections, Borders & Resize — UX Overhaul Plan
 
-> **Status.** Plan, not yet started. This document is the contract that
+> **Status.** Under development. This document is the contract that
 > follow-up sessions execute against. Every batch is a discrete commit
 > (or a small commit chain) that leaves the tree in `./test.sh`-green
 > shape. Tick boxes flip as items land.
