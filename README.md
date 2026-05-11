@@ -20,8 +20,19 @@ So I figured that maybe I can use Claude Code to build a mind-mapping tool based
 My time and resources are quite limited these days so things do take time, but I have a crystal clear vision and I will
 certainly make it happen.
 
+My plan is to use the foundation I laid out in Baumhard to create a fully **animatable** mind-map. 
+
 Very much still learning how to optimally work with Claude Code. I'm working on exposing an LLM-friendly
 IPC interface so that I can give Claude a better feedback loop.
+
+## Animatable mind-map
+
+I find visual graphs to be one of the most powerful ways that you can present information. Flow-charts, relational trees, 
+file systems, decision-trees, it's everywhere. Typical mind-mapping apps are very static, I want to take it one step further
+and create a tool that allows users to embed scripts and animations within the map. Then, although you can obviously use it just like a normal mind-mapping tool, you have the option to create something more interactable. For example embedding different color themes, different layouts, sequential mutation of the map, and so forth. 
+
+So the codebase right now contains a lot of unconnected dots that will start to make sense as development continues. 
+
 
 ## Quickstart
 
