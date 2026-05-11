@@ -44,7 +44,7 @@ trunk serve                                 # WASM only (loads via ?map=…)
 
 | Document                                        | What it covers                                                            |
 | ----------------------------------------------- | ------------------------------------------------------------------------- |
-| [`CLAUDE.md`](CLAUDE.md)                        | Project orientation; the canonical entry point for new contributors       |
+| [`CLAUDE.md`](CLAUDE.md)                        | Special instructions for Claude                                           |
 | [`CONCEPTS.md`](CONCEPTS.md)                    | Conceptual building-blocks (`GlyphArea`, `MutatorTree`, `Channel`, ...)   |
 | [`CODE_CONVENTIONS.md`](CODE_CONVENTIONS.md)    | Workspace-wide coding conventions and philosophy (mandatory)              |
 | [`lib/baumhard/CONVENTIONS.md`](lib/baumhard/CONVENTIONS.md) | Crate-local rules for Baumhard (mutation-not-rebuild, arena, ...)        |
