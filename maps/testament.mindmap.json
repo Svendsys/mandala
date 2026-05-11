@@ -19452,9 +19452,19 @@
       "style": {
         "background_color": "#0a0a0a",
         "border": {
-          "preset": "light",
+          "preset": "custom",
           "font_size_pt": 18.0,
-          "padding": 6.0
+          "padding": 6.0,
+          "glyphs": {
+            "top": "━",
+            "bottom": "━",
+            "left": "┃",
+            "right": "┃",
+            "top_left": "◆",
+            "top_right": "◆",
+            "bottom_left": "◆",
+            "bottom_right": "◆"
+          }
         },
         "corner_radius_percent": 0.0,
         "frame_color": "#9be96a",
@@ -20138,7 +20148,7 @@
           }
         },
         {
-          "text": "Per-section frame: double",
+          "text": "Per-section frame: double\n(enter NodeEdit to see frame)",
           "text_runs": [
             {
               "bold": true,
@@ -20149,6 +20159,17 @@
               "italic": false,
               "size_pt": 18,
               "start": 0,
+              "underline": false
+            },
+            {
+              "bold": false,
+              "color": "#ffffff",
+              "end": 55,
+              "font": "LiberationSans",
+              "hyperlink": null,
+              "italic": false,
+              "size_pt": 18,
+              "start": 25,
               "underline": false
             }
           ],
@@ -20168,7 +20189,7 @@
           }
         },
         {
-          "text": "Per-section frame: rounded + summer palette",
+          "text": "Per-section frame: rounded + summer palette\n(enter NodeEdit to see frame)",
           "text_runs": [
             {
               "bold": true,
@@ -20179,6 +20200,17 @@
               "italic": false,
               "size_pt": 18,
               "start": 0,
+              "underline": false
+            },
+            {
+              "bold": false,
+              "color": "#ffffff",
+              "end": 73,
+              "font": "LiberationSans",
+              "hyperlink": null,
+              "italic": false,
+              "size_pt": 18,
+              "start": 43,
               "underline": false
             }
           ],
