@@ -42,9 +42,6 @@ flat battery.
 - **Write Baumhard code that is readable *and* fast.** When they
   genuinely conflict — and they rarely do — prefer fast and leave a
   short comment explaining what the readable version would have cost.
-  "Readable" is optimism about future maintenance; "fast" is a
-  commitment to the user sitting in front of a 60 Hz frame budget on a
-  device the developer is not holding.
 
 ## §B2 Mutation, not rebuild
 
@@ -87,7 +84,7 @@ concept; "number of grapheme clusters" is, and it is what users see.
   that file: `replace_graphemes_until_newline`, `split_off_graphemes`,
   `count_grapheme_clusters`, `find_nth_line_grapheme_range`,
   `delete_back_unicode`, `delete_front_unicode`, or one of their
-  neighbours. Do not reach for `str::chars()`, `str::bytes()`, or
+  neighbors. Do not reach for `str::chars()`, `str::bytes()`, or
   `String::split_off` when the offset comes from a user-facing count.
 - **Never slice by byte offset when the offset is user-derived.** If
   you need the position of the 10th cluster, call
@@ -109,8 +106,8 @@ it with respect.
   Do not collect into a `Vec<NodeId>` unless the borrow checker forces
   your hand, and when it does, reuse the vector across iterations if
   you can.
-- **Node access is O(1) via `NodeId`.** If you find yourself linear-
-  scanning the arena to find a node, you have lost a `NodeId`
+- **Node access is O(1) via `NodeId`.** 
+  If you find yourself linear-scanning the arena to find a node, you have lost a `NodeId`
   somewhere up the call stack. Find it and thread it through.
 - **`GfxElement` and its field enums are the mutation surface.**
   `GlyphAreaField` (in `lib/baumhard/src/gfx_structs/area.rs`) and
@@ -149,9 +146,9 @@ access to it.
 ## §B6 Regions and spatial indexing
 
 `RegionIndexer` (`lib/baumhard/src/gfx_structs/util/regions.rs`)
-maintains a spatial index over the tree's colour and font regions so
+maintains a spatial index over the tree's color and font regions so
 that hit-testing and selection highlighting are O(log n) instead of
-O(n). It is maintained as a side-effect of `MutatorTree::apply_to`.
+O(n). It is maintained as a side effect of `MutatorTree::apply_to`.
 
 - **Never mutate `ColorFontRegions` outside the mutator pipeline.**
   Direct writes skip the index update, the index drifts, and selection
@@ -235,7 +232,7 @@ and a script API tomorrow — read its docs via `cargo doc`. Treat
 - **Examples in doc comments** are welcome on anything non-trivial,
   especially mutator construction. A two-line example of building a
   `MutatorTree` to change text is worth more than a paragraph.
-- **Update doc comments when you change behaviour.** A doc comment
+- **Update doc comments when you change behavior.** A doc comment
   that lies about its function is worse than no doc comment at all.
 
 ## §B10 Forward-compatible API design

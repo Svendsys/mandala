@@ -87,7 +87,7 @@ integrate.
   every interaction; a scene-builder change ripples into every frame.
 - **No two components look alike, but they fit together.** Repetition
   of *shape* (near-duplicate code) is a smell; repetition of *idiom*
-  (same naming, error posture, lock discipline) is the point. Honour
+  (same naming, error posture, lock discipline) is the point. Honor
   the idioms; unify the shapes.
 
 ## §3 Architectural invariants
@@ -126,7 +126,7 @@ decision, not a drive-by edit.
   recognition, viewport math, anything that must behave identically on
   native and WASM lives in functions taking plain values.
 - **Single dispatch funnel.** Every user-driven application-level
-  behaviour is reified as an `Action` and dispatched via
+  behavior is reified as an `Action` and dispatched via
   `dispatch_action` (`src/application/app/dispatch/native.rs`). New gestures,
   new console verbs that mutate state, new navigation keys: variant,
   default binding, dispatch arm — in that order. No second copy of
@@ -153,11 +153,11 @@ decision, not a drive-by edit.
     + exit (the press → `Action::PanCanvas`); the per-frame body
     is not a discrete-action concern.
 
-  Anything else — a new gesture or a new console-verb behaviour that
+  Anything else — a new gesture or a new console-verb behavior that
   mutates document state or changes view state — must go through the
   funnel.
 
-  **Macro-tier privilege gates are mandatory before non-User tiers
+  **Macro-tier privilege gates are mandatory before non-user tiers
   ship.** Macros loaded from `~/.config/mandala/macros.json` share
   trust posture with `keybinds.json` — the user owns the file. The
   dispatcher gates two things on `MacroSource`:
@@ -211,7 +211,7 @@ first-class deployments. The lowest-spec target sets the budget.
   a feature genuinely belongs native-only, the `cfg` guard sits at the
   module boundary and an entry appears in `CLAUDE.md`'s "Dual-target
   status" section naming the reason. "I'll add WASM later" is not a
-  contract this repo recognises. `./test.sh`'s WASM type-check gate,
+  contract this repo recognizes. `./test.sh`'s WASM type-check gate,
   `./build.sh --wasm`, and CI (`.github/workflows/test.yml`) enforce
   this.
 
@@ -239,7 +239,7 @@ it. This is the single strongest rule in the document.
   is never to copy it, but to use a single function called in two or more places.
 - **We do drive-by refactors and fixes.** There are always a million excuses as to why cleaning up something should be postponed. But the quality of our codebase is priority #1, so whenever something not-ideal is spotted we ADDRESS it. It doesn't matter if we get mixed pull requests.
 - **Always explicitly look for opportunities to improve the quality of existing code.**
-- **Never accept "good enough". No one has asked you for "good enough".**
+- **Never accept "good enough". No one has asked you for "good enough".** No deferring the "hard parts" until later while shipping a "good enough" now. Do it.
 
 ## §6 Modular design by default
 
