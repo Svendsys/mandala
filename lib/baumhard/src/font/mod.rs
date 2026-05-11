@@ -28,7 +28,15 @@ pub mod fonts;
 pub mod hex;
 /// Font-metric approximations (`monospace_advance` + the underlying
 /// `MONOSPACE_ADVANCE_RATIO`) usable without a live `FontSystem`.
+/// Deprecated in favour of [`metric_cache::glyph_advance`] for any
+/// caller that has an `AppFont` in scope — the cache returns the
+/// measured advance from cosmic-text and the ratio's static
+/// calibration drift goes away.
 pub mod metrics;
+/// Per-`(face, size, grapheme)` measured glyph advances + ink
+/// heights, cached. Replaces `metrics::monospace_advance` at every
+/// border-rail callsite.
+pub mod metric_cache;
 /// Test bodies exposed via `pub mod tests` so `benches/test_bench.rs`
 /// can reuse the `do_*()` functions as micro-benchmarks (§B8).
 pub mod tests;

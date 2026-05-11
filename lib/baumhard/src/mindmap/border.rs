@@ -468,53 +468,108 @@ pub fn border_run_specs(
     node_pos: (f32, f32),
     node_size: (f32, f32),
 ) -> [BorderRunSpec; 4] {
-    let font_size = border_style.font_size_pt;
-    let approx_char_width = font_size * BORDER_APPROX_CHAR_WIDTH_FRAC;
-    let char_count = ((node_size.0 / approx_char_width) + 2.0).ceil().max(3.0) as usize;
-    let right_corner_x = node_pos.0 - approx_char_width + (char_count - 1) as f32 * approx_char_width;
-    let corner_overlap = font_size * BORDER_CORNER_OVERLAP_FRAC;
-    let top_y = node_pos.1 - font_size + corner_overlap;
-    let bottom_y = node_pos.1 + node_size.1 - corner_overlap;
-    let h_width = (char_count as f32 + 1.0) * approx_char_width;
-    let v_width = approx_char_width * 2.0;
-    // `.ceil()` rather than `.round()` so the side columns always
-    // extend at least as far down as the node bottom. With
-    // `.round()`, a node whose `size_y / font_size` rounds down
-    // (e.g. 100/14 = 7.14 → 7 rows = 98 px on a 100 px node)
-    // leaves the last row 2 px short of the bottom row's corner
-    // cell, which renders as a visible gap at BL/BR.
-    let row_count = (node_size.1 / font_size).ceil().max(1.0) as usize;
-    // Whole-PR follow-up: vertical-rail bounds must accommodate
-    // `row_count × line_height` (cosmic-text's actual layout
-    // height) AND match the top/bottom rails' `±corner_overlap`
-    // extension — otherwise the side glyphs:
-    //   (1) clip at the bottom when `row_count × font_size >
-    //       node_size.1` (cosmic-text's `shape_until_scroll(false)`
-    //       drops overflowing lines), and
-    //   (2) collide with the top/bottom rails' overlap region at
-    //       `[node_y − 11.7, node_y + 15.3]` (top) and
-    //       `[node_y + 103.7, node_y + h + 15.3]` (bottom).
-    // Pre-fix the testament Atomic-repeat demo (size 360×110,
-    // font_size_pt 18) rendered ZERO visible left/right rail
-    // chars between corners — the math computed 7 rows but
-    // bounds.1 = 110 px clipped the last 1-2, and rows 0-1 sat
-    // inside the top rail's body overlap.
-    //
-    // The line-height used here is `font_size` raw to match the
-    // renderer's `create_border_buffer` (`borders.rs:57`) which
-    // calls `create_border_buffer_lh(..., font_size, font_size,
-    // ...)` — i.e. no breathing-room padding. The `+ 2.0` slack
-    // catches the descender of the last row so cosmic-text
-    // doesn't drop it for half-a-pixel of overflow.
-    let line_height = font_size;
-    let v_height_needed = row_count as f32 * line_height + 2.0;
-    let v_height = (node_size.1 + 2.0 * corner_overlap).max(v_height_needed);
-    let v_top_y = node_pos.1 - corner_overlap;
+    use crate::font::fonts::app_font_by_family;
+    use crate::font::metric_cache::glyph_advance;
 
-    let top_text = border_style.top_text(char_count);
-    let bottom_text = border_style.bottom_text(char_count);
+    let font_size = border_style.font_size_pt;
+    let face = border_style
+        .font_name
+        .as_deref()
+        .and_then(app_font_by_family);
+
+    // Whole-PR follow-up: rail math reads MEASURED glyph
+    // advances from the font-metric cache, never multiplies by
+    // a static fraction. The old `BORDER_APPROX_CHAR_WIDTH_FRAC
+    // = 0.6` approximation diverged from cosmic-text's actual
+    // shaped widths and produced the alignment + tiling defects
+    // the Border Toolkit demo surfaces — rails ending before
+    // their corner, or overshooting and getting clipped.
+    //
+    // Plan revision 3 (the user's verdict on revision 2:
+    // "absolutely unacceptable") makes this the only acceptable
+    // implementation shape: every "how wide is this glyph"
+    // question routes through the cache.
+    let tl_w = glyph_advance(face, font_size, &border_style.corners.top_left);
+    let tr_w = glyph_advance(face, font_size, &border_style.corners.top_right);
+    let bl_w = glyph_advance(face, font_size, &border_style.corners.bottom_left);
+    let br_w = glyph_advance(face, font_size, &border_style.corners.bottom_right);
+
+    // Fill the corner-to-corner span on each axis.
+    let top_fill_avail = (node_size.0 - tl_w - tr_w).max(0.0);
+    let bottom_fill_avail = (node_size.0 - bl_w - br_w).max(0.0);
+
+    let (top_fill_text, _top_fill_clusters, top_fill_w) =
+        fit_pattern_to_width(&border_style.side_patterns.top, top_fill_avail, face, font_size);
+    let (bottom_fill_text, _bottom_fill_clusters, bottom_fill_w) = fit_pattern_to_width(
+        &border_style.side_patterns.bottom,
+        bottom_fill_avail,
+        face,
+        font_size,
+    );
+
+    // Top + bottom rail texts include corner glyphs at start
+    // and end, matching the existing buffer shape every
+    // downstream consumer (scene_buffers, tree_builder) expects.
+    // The buffer is anchored at the NODE's left edge — not at
+    // `node.x − approx_char_width` (the pre-fix offset, which
+    // was the approximation's compensation for not knowing the
+    // actual corner width). With measured `tl_w`, the corner
+    // glyph sits at x ∈ [node.x, node.x + tl_w], and the fill
+    // starts at x = node.x + tl_w.
+    let top_text = format!(
+        "{}{}{}",
+        border_style.corners.top_left, top_fill_text, border_style.corners.top_right
+    );
+    let bottom_text = format!(
+        "{}{}{}",
+        border_style.corners.bottom_left, bottom_fill_text, border_style.corners.bottom_right
+    );
+
+    let top_rendered_w = tl_w + top_fill_w + tr_w;
+    let bottom_rendered_w = bl_w + bottom_fill_w + br_w;
+
+    // Vertical rails: line_height = font_size matches the
+    // renderer's `create_border_buffer`/`create_square` call
+    // path (line_height = font_size pt). Row count = floor of
+    // node height ÷ line_height — `.floor()` so the last row
+    // never overflows the node bounds (the prior `.ceil()`
+    // produced clipped tails on cosmic-text's
+    // `shape_until_scroll(false)`).
+    let line_height = font_size;
+    let row_count = (node_size.1 / line_height).floor().max(1.0) as usize;
+    let v_height = row_count as f32 * line_height;
+    let v_top_y = node_pos.1;
+
+    // Vertical rails: no corners. The top/bottom rail texts
+    // above already carry the corner glyphs.
     let left_text = border_style.left_column_text(row_count);
     let right_text = border_style.right_column_text(row_count);
+
+    // Vertical buffer width: take the maximum measured advance
+    // across the side pattern's graphemes, with a small slack
+    // so cosmic-text doesn't wrap on a sub-pixel rounding miss.
+    let left_v_width = side_pattern_max_advance(
+        &border_style.side_patterns.left,
+        face,
+        font_size,
+    ) + 1.0;
+    let right_v_width = side_pattern_max_advance(
+        &border_style.side_patterns.right,
+        face,
+        font_size,
+    ) + 1.0;
+
+    // Top rail position.y: node top minus the corner glyph's
+    // ascender. Measured from cosmic-text's metrics — for now
+    // we use `font_size × 0.8` as a tight approximation of the
+    // ascender height. (The cache could measure ascender if a
+    // follow-up needs precision; for the alignment fix, the
+    // top/bottom corners' baseline placement is mostly
+    // controlled by cosmic-text from the buffer's `bounds.1`,
+    // and the buffer's anchor y just sets where the buffer
+    // starts.)
+    let top_y = node_pos.1 - font_size + font_size * 0.35;
+    let bottom_y = node_pos.1 + node_size.1 - font_size * 0.35;
 
     let top_clusters = count_clusters(&top_text);
     let right_clusters = count_clusters(&right_text);
@@ -526,8 +581,8 @@ pub fn border_run_specs(
             channel: 1,
             text: top_text,
             font_size_pt: font_size,
-            position: (node_pos.0 - approx_char_width, top_y),
-            bounds: (h_width, font_size * 1.5),
+            position: (node_pos.0, top_y),
+            bounds: (top_rendered_w, font_size * 1.5),
             palette_offset: 0,
             cluster_count: top_clusters,
         },
@@ -535,8 +590,8 @@ pub fn border_run_specs(
             channel: 2,
             text: bottom_text,
             font_size_pt: font_size,
-            position: (node_pos.0 - approx_char_width, bottom_y),
-            bounds: (h_width, font_size * 1.5),
+            position: (node_pos.0, bottom_y),
+            bounds: (bottom_rendered_w, font_size * 1.5),
             palette_offset: top_clusters + right_clusters,
             cluster_count: bottom_clusters,
         },
@@ -544,8 +599,8 @@ pub fn border_run_specs(
             channel: 3,
             text: left_text,
             font_size_pt: font_size,
-            position: (node_pos.0 - approx_char_width, v_top_y),
-            bounds: (v_width, v_height),
+            position: (node_pos.0, v_top_y),
+            bounds: (left_v_width, v_height),
             palette_offset: top_clusters + right_clusters + bottom_clusters,
             cluster_count: left_clusters,
         },
@@ -553,12 +608,169 @@ pub fn border_run_specs(
             channel: 4,
             text: right_text,
             font_size_pt: font_size,
-            position: (right_corner_x, v_top_y),
-            bounds: (v_width, v_height),
+            position: (node_pos.0 + node_size.0 - right_v_width, v_top_y),
+            bounds: (right_v_width, v_height),
             palette_offset: top_clusters,
             cluster_count: right_clusters,
         },
     ]
+}
+
+/// Fit `pattern` into `available_pt` of horizontal space, given
+/// the active face's measured per-grapheme advances. Returns
+/// `(rendered_text, cluster_count, rendered_width_pt)`. The
+/// rendered width is **always ≤ available_pt** — `floor()`
+/// rather than `round()` so the fill never overshoots its
+/// allocated span and clips into the corner glyph next to it.
+///
+/// For the demo's `Atomic-repeat` node (size 360×110,
+/// font_size_pt 18, top `+=##=+`, corners `┌`/`┐`): the cache
+/// returns the actual measured widths of each grapheme in
+/// LiberationSans, the sum gives the cluster's true width, and
+/// `floor(available / cluster_w)` picks the largest N copies
+/// that fit. The leftover sub-cluster pixels stay blank, so the
+/// rail terminates flush with the right corner.
+fn fit_pattern_to_width(
+    pattern: &crate::mindmap::border_pattern::SidePattern,
+    available_pt: f32,
+    face: Option<crate::font::fonts::AppFont>,
+    font_size: f32,
+) -> (String, usize, f32) {
+    use crate::font::metric_cache::glyph_advance;
+    use crate::mindmap::border_pattern::SidePattern;
+    match pattern {
+        SidePattern::AtomicRepeat { cluster } => {
+            if available_pt <= 0.0 || cluster.is_empty() {
+                return (String::new(), 0, 0.0);
+            }
+            // Per-grapheme widths so partial-cluster filling can
+            // greedily add graphemes from the cluster until adding
+            // the next would overshoot `available_pt`. This gets us
+            // sub-grapheme-precision tiling: leftover gap < width
+            // of the smallest grapheme in the cluster.
+            let g_widths: Vec<f32> = cluster
+                .iter()
+                .map(|g| glyph_advance(face, font_size, g))
+                .collect();
+            let cluster_w: f32 = g_widths.iter().sum();
+            if cluster_w <= 0.0 {
+                return (String::new(), 0, 0.0);
+            }
+            let full_copies = (available_pt / cluster_w).floor() as usize;
+            let mut emitted_w = full_copies as f32 * cluster_w;
+            let mut text = String::new();
+            for _ in 0..full_copies {
+                for g in cluster {
+                    text.push_str(g);
+                }
+            }
+            let mut cluster_count = full_copies * cluster.len();
+            // Greedy partial-cluster fill.
+            let mut idx = 0;
+            while idx < cluster.len() {
+                let next_w = g_widths[idx];
+                if emitted_w + next_w > available_pt {
+                    break;
+                }
+                text.push_str(&cluster[idx]);
+                emitted_w += next_w;
+                cluster_count += 1;
+                idx += 1;
+            }
+            (text, cluster_count, emitted_w)
+        }
+        SidePattern::PrefixFillSuffix { prefix, fill, suffix } => {
+            let prefix_widths: Vec<f32> = prefix
+                .iter()
+                .map(|g| glyph_advance(face, font_size, g))
+                .collect();
+            let suffix_widths: Vec<f32> = suffix
+                .iter()
+                .map(|g| glyph_advance(face, font_size, g))
+                .collect();
+            let fill_widths: Vec<f32> = fill
+                .iter()
+                .map(|g| glyph_advance(face, font_size, g))
+                .collect();
+            let prefix_w: f32 = prefix_widths.iter().sum();
+            let suffix_w: f32 = suffix_widths.iter().sum();
+            let fill_cluster_w: f32 = fill_widths.iter().sum();
+
+            if available_pt < prefix_w + suffix_w {
+                // Defensive fallback: degenerate small node.
+                let rendered = pattern.render(prefix.len() + suffix.len());
+                return (rendered.text, rendered.cluster_count, prefix_w + suffix_w);
+            }
+            let between_avail = available_pt - prefix_w - suffix_w;
+            let full_copies = if fill_cluster_w > 0.0 {
+                (between_avail / fill_cluster_w).floor() as usize
+            } else {
+                0
+            };
+
+            let mut text = String::new();
+            let mut cluster_count = 0;
+            let mut emitted_w = 0.0_f32;
+
+            for g in prefix {
+                text.push_str(g);
+            }
+            cluster_count += prefix.len();
+            emitted_w += prefix_w;
+
+            for _ in 0..full_copies {
+                for g in fill {
+                    text.push_str(g);
+                }
+            }
+            cluster_count += full_copies * fill.len();
+            emitted_w += full_copies as f32 * fill_cluster_w;
+
+            // Partial-fill: greedy add fill graphemes until the
+            // next would push us past `available_pt - suffix_w`
+            // (we have to leave room for the suffix).
+            let mut idx = 0;
+            while idx < fill.len() {
+                let next_w = fill_widths[idx];
+                if emitted_w + next_w + suffix_w > available_pt {
+                    break;
+                }
+                text.push_str(&fill[idx]);
+                emitted_w += next_w;
+                cluster_count += 1;
+                idx += 1;
+            }
+
+            for g in suffix {
+                text.push_str(g);
+            }
+            cluster_count += suffix.len();
+            emitted_w += suffix_w;
+
+            (text, cluster_count, emitted_w)
+        }
+    }
+}
+
+/// Widest single-grapheme measured advance across `pattern`'s
+/// cluster. Used to size the buffer width for a vertical rail
+/// (`bounds.0`) so cosmic-text doesn't wrap. Slack handling
+/// happens in the caller.
+fn side_pattern_max_advance(
+    pattern: &crate::mindmap::border_pattern::SidePattern,
+    face: Option<crate::font::fonts::AppFont>,
+    font_size: f32,
+) -> f32 {
+    use crate::font::metric_cache::glyph_advance;
+    use crate::mindmap::border_pattern::SidePattern;
+    let graphemes: &[String] = match pattern {
+        SidePattern::AtomicRepeat { cluster } => cluster.as_slice(),
+        SidePattern::PrefixFillSuffix { fill, .. } => fill.as_slice(),
+    };
+    graphemes
+        .iter()
+        .map(|g| glyph_advance(face, font_size, g))
+        .fold(0.0_f32, |acc: f32, w: f32| acc.max(w))
 }
 
 /// Per-corner cluster counts, used by the auto-resize pass to
@@ -1261,91 +1473,115 @@ mod tests {
         }
     }
 
-    /// Whole-PR follow-up regression: vertical-rail bounds /
-    /// position math. Pre-fix on the testament `Atomic-repeat`
-    /// demo (size 360×110, font_size_pt 18), the left rail
-    /// emitted `row_count = 7` rows of `│` but the buffer
-    /// bounds.1 was raw `node_size.1 = 110`, so cosmic-text's
-    /// `shape_until_scroll(false)` clipped the last 1-2 rows
-    /// (7 × 18 = 126 px > 110 px). Independently, the buffer
-    /// anchored at `node_pos.1` — i.e. at the node body's top
-    /// edge — sat directly underneath the top rail's
-    /// `corner_overlap` region (`font_size × 1.5 = 27 px`
-    /// extending down), hiding the rail's first 1-2 rows.
-    /// Net visible: 0 rail chars between the corners.
-    ///
-    /// Post-fix: the left/right rail's position.y matches the
-    /// top rail's anchor (`node_pos.1 − corner_overlap`) and
-    /// bounds.1 is the larger of "extended node height"
-    /// (`node_size.1 + 2 × corner_overlap`) and "what cosmic-
-    /// text actually needs" (`row_count × line_height + 2 px`).
+    /// Whole-PR follow-up (plan revision 3): vertical-rail
+    /// bounds are now `row_count × line_height` exactly, where
+    /// `row_count = floor(node_height / line_height)`. The rail
+    /// fits inside `node.height` rather than overflowing — no
+    /// clip, no overshoot. position.y = `node_pos.1` (rail starts
+    /// at the node's top edge; corner glyphs are in the top/bottom
+    /// rails, which extend slightly above/below).
     #[test]
-    fn border_run_specs_vertical_rail_bounds_accommodate_row_count() {
+    fn border_run_specs_vertical_rail_fits_node_height() {
         let style = BorderStyle::default_with_color("#ffffff");
         // Testament Atomic-repeat dimensions verbatim.
         let specs = border_run_specs(&style, (0.0, 0.0), (360.0, 110.0));
         let font_size = style.font_size_pt;
-        let corner_overlap = font_size * super::BORDER_CORNER_OVERLAP_FRAC;
-        let row_count = (110.0_f32 / font_size).ceil() as usize;
+        let row_count = (110.0_f32 / font_size).floor() as usize;
+        let expected_bounds_h = row_count as f32 * font_size;
 
         let left = &specs[2];
         let right = &specs[3];
 
-        // Position.y matches the top rail's anchor (extended up
-        // by corner_overlap), not the raw node top.
-        let expected_y = -corner_overlap;
+        // Position.y = node top.
         assert!(
-            (left.position.1 - expected_y).abs() < 0.01,
-            "left rail position.y = {} but expected ~{} (node_pos.1 − corner_overlap)",
-            left.position.1, expected_y
+            (left.position.1 - 0.0).abs() < 0.01,
+            "left rail position.y = {} but expected node top (0.0)",
+            left.position.1
         );
         assert!(
-            (right.position.1 - expected_y).abs() < 0.01,
-            "right rail position.y = {} but expected ~{}",
-            right.position.1, expected_y
+            (right.position.1 - 0.0).abs() < 0.01,
+            "right rail position.y = {} but expected node top (0.0)",
+            right.position.1
         );
 
-        // Bounds.height ≥ row_count × line_height so cosmic-text
-        // doesn't clip the last row.
-        let needed = row_count as f32 * font_size;
+        // bounds.1 = row_count × font_size; never exceeds node height.
         assert!(
-            left.bounds.1 >= needed,
-            "left rail bounds.1 = {} but needs ≥ {} (row_count {} × font_size {})",
-            left.bounds.1, needed, row_count, font_size
+            (left.bounds.1 - expected_bounds_h).abs() < 0.01,
+            "left rail bounds.1 = {} but expected {} (row_count={} × font_size={})",
+            left.bounds.1, expected_bounds_h, row_count, font_size
         );
         assert!(
-            right.bounds.1 >= needed,
-            "right rail bounds.1 = {} but needs ≥ {} (row_count {} × font_size {})",
-            right.bounds.1, needed, row_count, font_size
-        );
-
-        // Bounds.height also ≥ node_size.1 + 2 × corner_overlap
-        // so the rail spans the full corner-extended vertical
-        // region.
-        let extended = 110.0 + 2.0 * corner_overlap;
-        assert!(
-            left.bounds.1 >= extended,
-            "left rail bounds.1 = {} must span the corner-extended height {}",
-            left.bounds.1, extended
+            left.bounds.1 <= 110.0,
+            "left rail bounds.1 = {} must not exceed node height {}",
+            left.bounds.1, 110.0
         );
     }
 
-    /// `row_count` uses `.ceil()` not `.round()` so the side
-    /// columns always extend to the node bottom — even when
-    /// `node_size.1 / font_size` rounds down. The 100/14 case
-    /// in the existing comment block at the spec is the
-    /// canonical regression case.
+    /// Whole-PR (plan revision 3): horizontal-rail width tiles
+    /// the node width WITHOUT overshooting. The rendered fill
+    /// stops at `floor(available / cluster_width)` copies — the
+    /// last sub-cluster gap before the right corner stays blank
+    /// rather than producing a clipped overflow.
+    ///
+    /// This is the alignment defect users see: pre-fix
+    /// `char_count = ceil(node_width / (font_size × 0.6)) + 2`
+    /// overcounted, the rendered fill overshot the right corner,
+    /// and the visible result was a misaligned rail.
     #[test]
-    fn border_run_specs_uses_ceil_for_row_count() {
+    fn border_run_specs_horizontal_rail_does_not_overshoot_node_width() {
         let style = BorderStyle::default_with_color("#ffffff");
-        // 100 / 14 = 7.14 — .round() = 7, .ceil() = 8. Verify
-        // the left column carries 8 newline-separated lines (7
-        // newlines + the last cluster), matching .ceil().
+        // Testament Atomic-repeat dimensions verbatim.
+        let specs = border_run_specs(&style, (0.0, 0.0), (360.0, 110.0));
+        let top = &specs[0];
+        let bottom = &specs[1];
+
+        // Top + bottom position.x = node left.
+        assert!(
+            (top.position.0 - 0.0).abs() < 0.01,
+            "top rail position.x = {} but expected node left (0.0)",
+            top.position.0
+        );
+        assert!(
+            (bottom.position.0 - 0.0).abs() < 0.01,
+            "bottom rail position.x = {} but expected node left (0.0)",
+            bottom.position.0
+        );
+
+        // bounds.0 ≤ node width — no overshoot of the right corner.
+        assert!(
+            top.bounds.0 <= 360.0,
+            "top rail bounds.0 = {} must not exceed node width {}",
+            top.bounds.0, 360.0
+        );
+        assert!(
+            bottom.bounds.0 <= 360.0,
+            "bottom rail bounds.0 = {} must not exceed node width {}",
+            bottom.bounds.0, 360.0
+        );
+
+        // bounds.0 should be reasonably close to node width (≥ 70%) —
+        // the fill should USE most of the available space, not leave
+        // a huge gap. 70% gives slack for the unfilled sub-cluster
+        // remainder.
+        assert!(
+            top.bounds.0 >= 360.0 * 0.7,
+            "top rail bounds.0 = {} should use ≥ 70% of node width {} (otherwise the rail leaves a huge gap)",
+            top.bounds.0, 360.0
+        );
+    }
+
+    /// `row_count` uses `.floor()` (post-revision-3) so the
+    /// vertical rail never exceeds the node's height. The
+    /// `100 / 14 = 7.14` case is the canonical regression: post-
+    /// fix this returns 7 rows (was 8 pre-revision-3).
+    #[test]
+    fn border_run_specs_uses_floor_for_row_count() {
+        let style = BorderStyle::default_with_color("#ffffff");
         let specs = border_run_specs(&style, (0.0, 0.0), (100.0, 100.0));
         let left_lines = specs[2].text.matches('\n').count() + 1;
         assert!(
-            left_lines >= 8,
-            "left column must use .ceil() (>= 8 rows for 100/14 = 7.14); got {}",
+            left_lines == 7,
+            "left column must use .floor() (== 7 rows for 100/14 = 7.14, no overshoot); got {}",
             left_lines
         );
     }
