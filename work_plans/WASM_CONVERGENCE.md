@@ -6,10 +6,10 @@ input pipelines. Mandala targets both platforms as first-class deployments
 of the modals, gestures, and Actions that native ships.
 
 If you're picking this work up, **start here, then read in order**:
-[`CONCEPTS.md §5 "Action dispatch"`](./CONCEPTS.md), the
+[`CONCEPTS.md §5 "Action dispatch"`](../CONCEPTS.md), the
 `Action::wasm_compatibility` method in
-[`src/application/keybinds/action/mod.rs`](./src/application/keybinds/action/mod.rs),
-[`src/application/app/dispatch/native.rs`](./src/application/app/dispatch/native.rs)
+[`src/application/keybinds/action/mod.rs`](../src/application/keybinds/action/mod.rs),
+[`src/application/app/dispatch/native.rs`](../src/application/app/dispatch/native.rs)
 (the reference implementation), and
 [`src/application/app/run_wasm/`](./src/application/app/run_wasm/).
 
@@ -50,7 +50,7 @@ with WASM gradually gaining the missing systems so more Actions
 flip from `NativeOnly` to `Compatible`.
 
 The `Action::wasm_compatibility(&self) -> WasmCompatibility` method
-([`src/application/keybinds/action/mod.rs`](./src/application/keybinds/action/mod.rs))
+([`src/application/keybinds/action/mod.rs`](../src/application/keybinds/action/mod.rs))
 is the typed API surface. It classifies every Action as
 `Compatible` or `NativeOnly`. The match is exhaustive on `Action`
 (an open enum via `#[non_exhaustive]`); a developer adding a new
@@ -108,7 +108,7 @@ dispatchers. **Three paths**, in order of preference:
 The macro privilege gate (`MacroSource::allows_console_line`,
 `allows_action`, fail-closed in `dispatch_macro`) MUST remain
 single-sourced on both targets. The
-[`format/macros.md`](./format/macros.md) "Privilege model"
+[`format/macros.md`](../format/macros.md) "Privilege model"
 section is the authoritative spec; the implementation lives in
 `src/application/macros/mod.rs` and the enforcement loop in
 `src/application/app/dispatch/macro_core.rs`. The
