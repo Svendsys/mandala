@@ -70,25 +70,27 @@ fn border_tree_applies_drag_offset() {
     let mut offsets: HashMap<String, (f32, f32)> = HashMap::new();
     offsets.insert("a".into(), (50.0, 25.0));
     let tree = build_border_tree(&map, &offsets);
-    // Drag offset must show up on the *top* run's position.x
-    // (which is `pos_x - approx_char_width`).
+    // Drag offset must show up on the *top* run's position.
+    // Post-revision-3 the top rail anchors at the node's left
+    // edge (no `-approx_char_width` shift) since corner widths
+    // are now measured, not approximated.
     let parent = tree.root.children(&tree.arena).next().unwrap();
     let top_run = parent.children(&tree.arena).next().unwrap();
     let area = tree.arena.get(top_run).unwrap().get().glyph_area().unwrap();
-    // pos_x + offset = 0 + 50 = 50, then shifted by
-    // -approx_char_width (0.6 * font_size).
-    let font_size = 14.0_f32;
-    let approx_char_width = font_size * BORDER_APPROX_CHAR_WIDTH_FRAC;
-    let expected_x = 50.0 - approx_char_width;
+    // pos_x + offset = 0 + 50 = 50 (no further shift).
+    let expected_x = 50.0_f32;
     assert!(
         (area.position.x.0 - expected_x).abs() < 0.001,
         "top-run x ({}) should match drag-applied layout ({})",
         area.position.x.0,
         expected_x
     );
-    // y follows pos_y + offset - font_size + corner_overlap.
-    let corner_overlap = font_size * BORDER_CORNER_OVERLAP_FRAC;
-    let expected_y = 25.0 - font_size + corner_overlap;
+    // y still uses the corner-overlap extension (this part of
+    // the math doesn't change: the top rail starts above the
+    // body by `font_size × 0.35` to give the corner glyph room
+    // above the body).
+    let font_size = 14.0_f32;
+    let expected_y = 25.0 - font_size + font_size * 0.35;
     assert!((area.position.y.0 - expected_y).abs() < 0.001);
 }
 
@@ -297,18 +299,17 @@ fn border_identity_sequence_changes_on_show_frame_toggle() {
     assert_ne!(before, after);
 }
 
-/// `row_count` for the side columns must use `.ceil()` rather
-/// than `.round()` — with `.round()`, a node whose `size_y / fs`
-/// rounds *down* (e.g. 100/14 = 7.14 → 7 rows = 98 px on a 100 px
-/// node) leaves the bottom row's corner cell hanging below the
-/// last `│`, rendering as a visible gap at BL/BR.
+/// `row_count` for the side columns now uses `.floor()` (post-
+/// revision-3): the vertical rail must NEVER exceed the node's
+/// height. With `.ceil()` the last row would overflow the node
+/// bounds — cosmic-text's `shape_until_scroll(false)` then
+/// dropped it, producing a visible gap above the bottom corner.
+/// `.floor()` keeps the rendered rail within `node_height`
+/// exactly.
 ///
-/// We assert structurally rather than by counting characters: the
-/// emitted left-column text must contain at least
-/// `ceil(size_y / fs)` clusters (separated by `\n`). For
-/// nh=100, fs=14 this is 8.
+/// For nh=100, fs=14: `floor(100/14) = 7` clusters.
 #[test]
-fn border_tree_left_column_rows_use_ceil_not_round() {
+fn border_tree_left_column_rows_use_floor_not_ceil() {
     let mut map = synthetic_map(vec![synthetic_node("a", None, 0.0, 0.0)], vec![]);
     let node = map.nodes.get_mut("a").unwrap();
     node.size.width = 200.0;
@@ -333,10 +334,12 @@ fn border_tree_left_column_rows_use_ceil_not_round() {
     }
     let text = left_col_text.expect("left column run found in tree");
     let cluster_count = text.split('\n').filter(|s| !s.is_empty()).count();
-    // ceil(100 / 14) = 8 clusters, NOT round(100/14) = 7.
+    // floor(100 / 14) = 7 clusters. Post-revision-3 the rail
+    // must NOT exceed the node's height; `.floor()` rather
+    // than `.ceil()` keeps the rendered rail within bounds.
     assert_eq!(
-        cluster_count, 8,
-        "left column should have ceil(100/14)=8 rows, got {}: '{}'",
+        cluster_count, 7,
+        "left column should have floor(100/14)=7 rows (no overshoot of node height), got {}: '{}'",
         cluster_count, text
     );
 }
