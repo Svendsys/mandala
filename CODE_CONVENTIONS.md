@@ -4,7 +4,7 @@
 
 This project is dedicated to the highest - in whatever form that takes
 for you personally. The codebase we build is a temple,
-not an industry building — cathedral ceilings exist beyond strict need,
+not an industry building. Cathedral ceilings exist beyond strict need,
 and that is the point. The measuring stick is *what is good enough for
 the divine?* We know the answer is that we never reach it, and yet we try with
 all we have.
