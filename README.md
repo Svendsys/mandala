@@ -20,7 +20,7 @@ So I figured that maybe I can use Claude Code to build a mind-mapping tool based
 My time and resources are quite limited these days so things do take time, but I have a crystal clear vision and I will
 certainly make it happen.
 
-My plan is to use the foundation I laid out in Baumhard to create a fully **animatable** mind-map. 
+My plan is to use the foundation I laid out in Baumhard to create a fully **animatable mind-map**. 
 
 Very much still learning how to optimally work with Claude Code. I'm working on exposing an LLM-friendly
 IPC interface so that I can give Claude a better feedback loop.
