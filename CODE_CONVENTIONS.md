@@ -14,8 +14,7 @@ is **canonical** or **exemplary** — nothing less. This is an open source
 project with no commercial pressure; do not apply for-profit or
 industrial cost/benefit reasoning to it.
 
-These rules are a contract. They describe what the code must look like
-at every commit. The current state of the code does not rewrite the
+These rules are a contract. They describe the expected quality of code that will be merged to main. The current state of the code does not rewrite the
 conventions — the conventions change in response to the code, not the
 other way around. Where existing code deviates, the deviation is closed
 by the next session that touches the file.
