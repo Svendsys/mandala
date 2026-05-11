@@ -56,20 +56,62 @@
 //!   smaller, producing visible gaps between glyphs).
 
 use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping};
+use cosmic_text::SwashCache;
 use lazy_static::lazy_static;
 use ordered_float::OrderedFloat;
 use rustc_hash::FxHashMap;
-use std::sync::RwLock;
+use std::sync::{Mutex, RwLock};
 
-use crate::font::fonts::{face_family_name_for_pin, AppFont, FONT_SYSTEM};
+use crate::font::fonts::{
+    face_family_name_for_pin, measure_glyph_ink_bounds, AppFont, FONT_SYSTEM,
+};
 
 type CacheKey = (Option<AppFont>, OrderedFloat<f32>, String);
+
+/// Ink extent of one grapheme cluster at a given face + size.
+///
+/// `advance` is the horizontal advance (same value the
+/// `glyph_advance` cache returns; included here for the
+/// `glyph_ink` callers who want both together without two
+/// cache lookups).
+///
+/// `ink_height` is the vertical pixel span the rasterized
+/// glyph occupies (`y_max − y_min` from
+/// `measure_glyph_ink_bounds`). For a corner glyph this is
+/// the value the renderer uses as the corner buffer's height
+/// AND as the side-rail's vertical offset from the node's
+/// top/bottom edges. For a fill grapheme this is the value
+/// the vertical rail uses as its `line_height` — using this
+/// makes consecutive cluster rows TOUCH (no inter-row gap
+/// from the font's larger em-height).
+///
+/// `ink_top` is the y_min from `measure_glyph_ink_bounds` —
+/// signed offset from the glyph's baseline to the topmost
+/// ink pixel. Negative for ink above baseline. The renderer
+/// uses this to compute the buffer's `position.y` so the
+/// ink's top edge lands at the target pixel.
+#[derive(Copy, Clone, Debug)]
+pub struct InkExtent {
+    pub advance: f32,
+    pub ink_height: f32,
+    pub ink_top: f32,
+}
 
 lazy_static! {
     static ref ADVANCE_CACHE: RwLock<FxHashMap<CacheKey, f32>> =
         RwLock::new(FxHashMap::default());
     static ref INK_HEIGHT_CACHE: RwLock<FxHashMap<CacheKey, f32>> =
         RwLock::new(FxHashMap::default());
+    static ref INK_EXTENT_CACHE: RwLock<FxHashMap<CacheKey, InkExtent>> =
+        RwLock::new(FxHashMap::default());
+    /// Singleton `SwashCache` for the `glyph_ink` measurement
+    /// path. `measure_glyph_ink_bounds` requires a mutable
+    /// `SwashCache` to rasterise glyphs; we hold one process-
+    /// lifetime and reuse it across all `glyph_ink` cache misses.
+    /// Behind a `Mutex` because cosmic-text's `SwashCache` is
+    /// `!Sync`; reads-only-on-hit paths consult `INK_EXTENT_CACHE`
+    /// directly without acquiring this lock.
+    static ref SWASH_CACHE: Mutex<SwashCache> = Mutex::new(SwashCache::new());
 }
 
 /// Width (in pt) of `grapheme` when shaped by cosmic-text
@@ -137,6 +179,73 @@ pub fn cluster_width(face: Option<AppFont>, size_pt: f32, graphemes: &[String]) 
         .iter()
         .map(|g| glyph_advance(face, size_pt, g))
         .sum()
+}
+
+/// Full ink extent of `grapheme` at `face` × `size_pt`:
+/// advance + ink_height + ink_top (signed baseline offset).
+///
+/// Cache: read-locked hit ≈ 100 ns; miss acquires both
+/// `FONT_SYSTEM.write()` and `SWASH_CACHE.lock()` to rasterise
+/// the glyph through `measure_glyph_ink_bounds`. Once-per-
+/// (face, size, grapheme) cost.
+///
+/// Returns a defensive fallback (`advance` from the cheaper
+/// advance-only path, `ink_height = size_pt`, `ink_top =
+/// -size_pt × 0.75`) if rasterisation produces no ink — this
+/// happens for whitespace, control characters, or missing
+/// glyphs. The fallback values match what the prior
+/// approximation produced, so callers downstream don't see a
+/// regression on degenerate glyphs.
+pub fn glyph_ink(face: Option<AppFont>, size_pt: f32, grapheme: &str) -> InkExtent {
+    let key = (face, OrderedFloat(size_pt), grapheme.to_string());
+    if let Ok(cache) = INK_EXTENT_CACHE.read() {
+        if let Some(&v) = cache.get(&key) {
+            return v;
+        }
+    }
+    let measured = shape_ink_extent(face, size_pt, grapheme);
+    if let Ok(mut cache) = INK_EXTENT_CACHE.write() {
+        cache.insert(key, measured);
+    }
+    measured
+}
+
+fn shape_ink_extent(face: Option<AppFont>, size_pt: f32, grapheme: &str) -> InkExtent {
+    let mut font_system_guard = FONT_SYSTEM
+        .write()
+        .expect("FONT_SYSTEM poisoned in metric_cache::shape_ink_extent");
+    let mut swash_guard = SWASH_CACHE
+        .lock()
+        .expect("SWASH_CACHE poisoned in metric_cache::shape_ink_extent");
+    let bounds = measure_glyph_ink_bounds(
+        &mut font_system_guard,
+        &mut swash_guard,
+        face,
+        grapheme,
+        size_pt,
+    );
+    let ink_height = (bounds.y_max - bounds.y_min).max(0.0);
+    if ink_height > 0.0 && bounds.advance > 0.0 {
+        InkExtent {
+            advance: bounds.advance,
+            ink_height,
+            ink_top: bounds.y_min,
+        }
+    } else {
+        // Defensive fallback for whitespace / tofu / missing
+        // glyphs. Matches the prior approximation's defaults
+        // so callers see no behavioural regression on
+        // degenerate input.
+        InkExtent {
+            advance: if bounds.advance > 0.0 {
+                bounds.advance
+            } else {
+                size_pt * 0.6
+            },
+            ink_height: size_pt,
+            ink_top: -size_pt * 0.75,
+        }
+    }
 }
 
 fn shape_advance(face: Option<AppFont>, size_pt: f32, grapheme: &str) -> f32 {

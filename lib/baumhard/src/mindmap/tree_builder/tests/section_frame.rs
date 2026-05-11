@@ -63,12 +63,13 @@ fn test_section_frame_tree_one_void_parent_per_frame() {
 }
 
 #[test]
-fn test_section_frame_tree_four_runs_per_frame() {
+fn test_section_frame_tree_eight_runs_per_frame() {
     let frames = [frame("n", 0, false)];
     let tree = build_section_frame_tree(&frames);
     let parent = tree.root.children(&tree.arena).next().expect("one parent");
     let runs: Vec<_> = parent.children(&tree.arena).collect();
-    assert_eq!(runs.len(), 4, "top + bottom + left + right = 4 runs");
+    // Plan revision 4: 4 fill rails + 4 corners = 8 runs.
+    assert_eq!(runs.len(), 8, "4 rails + 4 corners = 8 runs");
 }
 
 #[test]
@@ -76,19 +77,19 @@ fn test_section_frame_tree_focused_uses_heavy_preset_top_corner() {
     let frames = [frame("n", 0, true)];
     let tree = build_section_frame_tree(&frames);
     let parent = tree.root.children(&tree.arena).next().expect("one parent");
-    // Top run = first child by channel order. Heavy preset uses
-    // ┏ (U+250F) at the top-left corner.
-    let top_run_id = parent.children(&tree.arena).next().expect("top run");
+    // Plan revision 4: TL corner is its own spec at index 4
+    // (channels 5-8 are corners). Heavy preset uses ┏ (U+250F).
+    let tl_corner_id = parent.children(&tree.arena).nth(4).expect("TL corner run");
     let area = tree
         .arena
-        .get(top_run_id)
+        .get(tl_corner_id)
         .unwrap()
         .get()
         .glyph_area()
         .expect("GlyphArea");
-    assert!(
-        area.text.starts_with('\u{250F}'),
-        "focused frame's heavy preset must start with ┏, got {:?}",
+    assert_eq!(
+        area.text, "\u{250F}",
+        "focused frame's heavy preset TL must be ┏, got {:?}",
         area.text
     );
 }
@@ -98,17 +99,18 @@ fn test_section_frame_tree_unfocused_uses_light_preset_top_corner() {
     let frames = [frame("n", 0, false)];
     let tree = build_section_frame_tree(&frames);
     let parent = tree.root.children(&tree.arena).next().expect("one parent");
-    let top_run_id = parent.children(&tree.arena).next().expect("top run");
+    // Plan revision 4: TL corner at index 4 (channel 5).
+    let tl_corner_id = parent.children(&tree.arena).nth(4).expect("TL corner run");
     let area = tree
         .arena
-        .get(top_run_id)
+        .get(tl_corner_id)
         .unwrap()
         .get()
         .glyph_area()
         .expect("GlyphArea");
-    assert!(
-        area.text.starts_with('\u{250C}'),
-        "unfocused frame's light preset must start with ┌, got {:?}",
+    assert_eq!(
+        area.text, "\u{250C}",
+        "unfocused frame's light preset TL must be ┌, got {:?}",
         area.text
     );
 }
@@ -150,6 +152,8 @@ fn test_section_frame_tree_custom_preset_renders_author_glyphs() {
     };
     let tree = build_section_frame_tree(&[elem]);
     let parent = tree.root.children(&tree.arena).next().expect("one parent");
+    // Plan revision 4: top fill rail (index 0, channel 1) carries
+    // ONLY the fill `A` glyph — corners are separate specs.
     let top_run_id = parent.children(&tree.arena).next().expect("top run");
     let area = tree
         .arena
@@ -158,18 +162,19 @@ fn test_section_frame_tree_custom_preset_renders_author_glyphs() {
         .get()
         .glyph_area()
         .expect("GlyphArea");
-    // The top run starts with the author's `top_left` corner '+'
-    // and ends with `top_right` '*'.
     assert!(
-        area.text.starts_with('+'),
-        "custom-preset top must start with author's tl '+', got {:?}",
+        !area.text.is_empty() && area.text.chars().all(|c| c == 'A'),
+        "custom-preset top fill must contain only author's 'A' (no corners baked in); got {:?}",
         area.text
     );
-    assert!(
-        area.text.ends_with('*'),
-        "custom-preset top must end with author's tr '*', got {:?}",
-        area.text
-    );
+    // TL corner spec (index 4, channel 5) = author's '+'.
+    let tl_id = parent.children(&tree.arena).nth(4).expect("TL corner");
+    let tl_area = tree.arena.get(tl_id).unwrap().get().glyph_area().expect("GlyphArea");
+    assert_eq!(tl_area.text, "+", "TL corner text");
+    // TR corner spec (index 5, channel 6) = author's '*'.
+    let tr_id = parent.children(&tree.arena).nth(5).expect("TR corner");
+    let tr_area = tree.arena.get(tr_id).unwrap().get().glyph_area().expect("GlyphArea");
+    assert_eq!(tr_area.text, "*", "TR corner text");
     // The fill between corners uses the author's 'A' glyph.
     assert!(
         area.text.contains('A'),
