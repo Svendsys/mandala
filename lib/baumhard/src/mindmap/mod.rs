@@ -41,6 +41,7 @@ pub mod tree_builder;
 
 #[cfg(test)]
 pub(crate) mod test_helpers;
+mod border_tests;
 
 /// Cyan selection highlight applied at scene / tree emission time
 /// (selected edges, edge handles, portal markers, portal mutator

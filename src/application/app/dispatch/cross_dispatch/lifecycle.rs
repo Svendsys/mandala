@@ -184,7 +184,7 @@ pub(in crate::application::app) fn apply_enter_node_edit(
         }
         EnterNodeEditPlan::EnterMultiSection { node_id } => {
             *rc.interaction_mode = InteractionMode::NodeEdit { node_id };
-            // Multi-section: stop at NodeEdit so the user can pick
+            // Multisection: stop at NodeEdit so the user can pick
             // a section. Rebuild so the dimming + status-bar
             // visuals catch the mode change.
             rc.rebuild_after_selection_change();
@@ -273,6 +273,7 @@ pub(in crate::application::app) fn apply_enter_section_edit(
         }
     }
 }
+use crate::application::app::interaction_mode;
 
 /// Resolve the current `SelectionState` into a `ResizeTarget` and
 /// flip the active interaction mode to `Resize { target }`. On a
@@ -281,9 +282,9 @@ pub(in crate::application::app) fn apply_enter_section_edit(
 /// rebuild only.
 ///
 /// Resolution logic is shared with the `mode resize` console verb
-/// via [`super::super::super::interaction_mode::resolve_resize_target`].
+/// via [`interaction_mode::resolve_resize_target`].
 pub(in crate::application::app) fn apply_enter_resize_mode(rc: &mut RebuildContext<'_>) {
-    use super::super::super::interaction_mode::{
+    use interaction_mode::{
         resolve_resize_target, InteractionMode, ResizeTargetError,
     };
 
@@ -331,7 +332,7 @@ pub(in crate::application::app) fn apply_enter_resize_mode(rc: &mut RebuildConte
 /// over every target and join the produced texts with
 /// `MULTI_TARGET_SEPARATOR` so the paste path can reverse-split by
 /// counting separators. The in-process structured buffer is
-/// cleared up-front because a multi-section copy has no payload
+/// cleared up-front because a mlti-section copy has no payload
 /// variant today; a stale single-section payload from a prior
 /// copy would otherwise win the byte-equal probe on the next paste.
 pub(in crate::application::app) fn apply_copy_or_cut(is_cut: bool, doc: &mut MindMapDocument) -> bool {
@@ -443,7 +444,7 @@ pub(in crate::application::app) fn apply_paste(rc: &mut RebuildContext<'_>) {
 /// pasted-from-another-app blob with a 2-target selection that
 /// happens to match by coincidence will round-trip; that's
 /// indistinguishable from a Mandala copy by content alone, so the
-/// behaviour matches what the user typed on the source side.
+/// behavior matches what the user typed on the source side.
 /// True when a paste must clear the structured section buffer:
 /// fragments couldn't be split per-target AND there's more than
 /// one target. Without the clear, a stale single-section payload
@@ -483,7 +484,7 @@ mod tests {
 
     // ── EnterNodeEdit plan resolution ────────────────────────────
 
-    /// `Single(node_id)` selection on a multi-section node →
+    /// `Single(node_id)` selection on a muli-section node →
     /// EnterMultiSection (mode flip only, no editor open).
     #[test]
     fn test_resolve_enter_node_edit_single_on_multi_section_enters_multi() {
@@ -789,53 +790,48 @@ mod tests {
         );
     }
 
-    /// **End-to-end multi-section round-trip.** Copy two sections
-    /// (joined to OS clipboard with `\n\n`), then drive the
-    /// per-target paste machinery against a *different*
-    /// `MultiSection` set with the same cardinality and verify
+    /// **End-to-end multi-section round-trip.** Drive the per-target
+    /// paste plumbing against a `MultiSection` selection and verify
     /// each section receives the correct fragment 1:1. Pins the
-    /// copy → split → paste contract end-to-end (the helper
-    /// tests pin each leg in isolation; this fills the
-    /// integration gap the cross-cutting reviewer flagged).
+    /// split → zip → paste contract end-to-end (helper tests pin
+    /// each leg in isolation; this fills the integration gap).
     ///
-    /// `apply_paste` is bypassed because it needs a full
-    /// `RebuildContext` (renderer, scene, tree) — we inline the
-    /// pure parts here: `read_clipboard`, `selection_targets`,
-    /// `split_paste_for_targets`, and `view.clipboard_paste` per
-    /// target. That's the same plumbing `apply_paste` calls; the
-    /// only piece skipped is the rebuild side-effect.
+    /// The OS clipboard is bypassed deliberately. `arboard` is a
+    /// process-global shared resource and the sibling
+    /// `apply_copy_or_cut` tests in this module write to it in
+    /// parallel, which made the original round-trip read flaky
+    /// (~50% under the full file run, always-green under the
+    /// debugger). The contract under test is
+    /// `split_paste_for_targets` → zip → per-target
+    /// `clipboard_paste` given a joined string; that string can be
+    /// synthesised directly. The source-side
+    /// `MULTI_TARGET_SEPARATOR` join is pinned by the helper-level
+    /// `apply_copy_or_cut` tests above.
     #[test]
     fn test_multi_section_copy_paste_round_trip() {
-        use crate::application::clipboard::read_clipboard;
         use crate::application::console::traits::{
             selection_targets, view_for, HandlesPaste, Outcome,
         };
 
         clear_section_clipboard();
         let (mut doc, id) = pinned_two_section_node();
-        // Make the section texts asymmetric so a swap or
-        // first-wins bug would be visible in the assertions.
-        doc.mindmap.nodes.get_mut(&id).unwrap().sections[0].text = "alpha".into();
-        doc.mindmap.nodes.get_mut(&id).unwrap().sections[1].text = "beta".into();
+
+        // Pre-paste state: sentinel content that neither matches
+        // the fragments nor sourced them. A no-op paste would
+        // leave "wiped" in place and fail the assertions below.
+        doc.mindmap.nodes.get_mut(&id).unwrap().sections[0].text = "wiped".into();
+        doc.mindmap.nodes.get_mut(&id).unwrap().sections[1].text = "wiped".into();
         doc.selection = SelectionState::MultiSection(vec![
             SectionSel::new(&id, 0),
             SectionSel::new(&id, 1),
         ]);
-        apply_copy_or_cut(false, &mut doc);
 
-        // Mutate the source sections to make sure the paste
-        // overwrites with the captured clipboard content rather
-        // than no-op'ing because they happen to match.
-        doc.mindmap.nodes.get_mut(&id).unwrap().sections[0].text = "wiped".into();
-        doc.mindmap.nodes.get_mut(&id).unwrap().sections[1].text = "wiped".into();
+        // Synthesize the joined clipboard string that
+        // `apply_copy_or_cut` would have produced from sections
+        // holding "alpha" / "beta". Asymmetric on purpose: a swap
+        // or first-wins bug shows up in the per-section asserts.
+        let text = ["alpha", "beta"].join(MULTI_TARGET_SEPARATOR);
 
-        // Drive the same paste plumbing `apply_paste` runs.
-        let Some(text) = read_clipboard() else {
-            // CI without a real clipboard — `arboard` returned
-            // nothing on read. Skip rather than fail; the
-            // helper-level tests still pin the contract.
-            return;
-        };
         let targets = selection_targets(&doc.selection);
         assert_eq!(targets.len(), 2);
         let fragments = super::split_paste_for_targets(&text, targets.len())

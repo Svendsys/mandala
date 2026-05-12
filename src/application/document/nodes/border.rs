@@ -25,7 +25,7 @@
 
 use baumhard::mindmap::border::PaletteField;
 use baumhard::mindmap::border_pattern::SidePattern;
-use baumhard::mindmap::model::{CustomBorderGlyphs, GlyphBorderConfig};
+use baumhard::mindmap::model::GlyphBorderConfig;
 
 use super::option_edit::{apply_option_edit, apply_string_set, apply_value_set, OptionEdit};
 use super::{grow_one_node_to_fit_border, MindMapDocument, UndoAction};
@@ -153,7 +153,7 @@ pub struct BorderEditOutcome {
 pub struct BorderPreview {
     pub target: BorderPreviewTarget,
     pub edits: BorderConfigEdits,
-    pub selection_snapshot: super::super::SelectionState,
+    pub selection_snapshot: SelectionState,
 }
 
 /// Which border slot the preview substitutes for at scene-build
@@ -595,11 +595,9 @@ impl MindMapDocument {
             BorderPreviewTarget::CanvasSectionFrame => {
                 self.mindmap.canvas.default_section_frame_border.clone()
             }
-            BorderPreviewTarget::CanvasSectionFrameFocused => self
-                .mindmap
-                .canvas
-                .default_focused_section_frame_border
-                .clone(),
+            BorderPreviewTarget::CanvasSectionFrameFocused => {
+                self.mindmap.canvas.default_focused_section_frame_border.clone()
+            }
         };
         apply_glyph_border_edits_to_slot(&mut slot_clone, &edits, &mut outcome);
         // The post-state preset on the cloned slot drives auto-
@@ -733,8 +731,7 @@ impl MindMapDocument {
         // NodeEdit unconditionally; canvas defaults don't have a
         // `show_frame` flag), so the coupling is `Nodes`-only.
         let mut commit_edits = preview.edits.clone();
-        if matches!(preview.target, BorderPreviewTarget::Nodes(_)) && commit_edits.visible.is_none()
-        {
+        if matches!(preview.target, BorderPreviewTarget::Nodes(_)) && commit_edits.visible.is_none() {
             let touches_any_field = !matches!(commit_edits.preset, OptionEdit::Keep)
                 || !matches!(commit_edits.font, OptionEdit::Keep)
                 || !matches!(commit_edits.font_size_pt, OptionEdit::Keep)
@@ -951,28 +948,8 @@ fn preset_is_custom(s: &str) -> bool {
     s.eq_ignore_ascii_case("custom")
 }
 
-// Single source of truth for the default `GlyphBorderConfig` lives
-// in baumhard (`baumhard::mindmap::border::default_glyph_border_config`)
-// — the scene-side preview apply path also reaches for it, so
-// keeping the constant in one place avoids the parity drift
-// CODE_CONVENTIONS §5 forbids.
+use baumhard::mindmap::border::default_custom_glyphs;
 use baumhard::mindmap::border::default_glyph_border_config;
-
-fn default_custom_glyphs() -> CustomBorderGlyphs {
-    // Light-preset corners (`┌┐└┘`) match the new default border
-    // preset, so a `custom` payload that omits a corner falls back
-    // to the same join-cleanly shape the surrounding sides expect.
-    CustomBorderGlyphs {
-        top: "\u{2500}".to_string(),
-        bottom: "\u{2500}".to_string(),
-        left: "\u{2502}".to_string(),
-        right: "\u{2502}".to_string(),
-        top_left: "\u{250C}".to_string(),
-        top_right: "\u{2510}".to_string(),
-        bottom_left: "\u{2514}".to_string(),
-        bottom_right: "\u{2518}".to_string(),
-    }
-}
 
 /// Resolve the live selection's set of node ids — the same shape
 /// `border_preview_covers_live_selection` uses to compare against
@@ -980,8 +957,9 @@ fn default_custom_glyphs() -> CustomBorderGlyphs {
 /// `MultiSection` collapse to their owning node ids; non-node
 /// selections (edges / portal labels / etc.) yield an empty list,
 /// causing any node-targeted preview to read as drifted.
-fn live_selection_node_ids(sel: &super::super::SelectionState) -> Vec<String> {
-    use super::super::SelectionState;
+use crate::application::document::SelectionState;
+
+fn live_selection_node_ids(sel: &SelectionState) -> Vec<String> {
     match sel {
         SelectionState::Single(id) => vec![id.clone()],
         SelectionState::Multi(ids) => ids.clone(),
@@ -997,19 +975,16 @@ fn live_selection_node_ids(sel: &super::super::SelectionState) -> Vec<String> {
 /// `border_preview_covers_live_selection` uses against a
 /// `Sections(...)` snapshot. `SectionRange` expands; `MultiSection`
 /// fans out; non-section selections yield an empty list.
-fn live_selection_section_pairs(sel: &super::super::SelectionState) -> Vec<(String, usize)> {
-    use super::super::SelectionState;
+fn live_selection_section_pairs(sel: &SelectionState) -> Vec<(String, usize)> {
     match sel {
         SelectionState::Section(s) => vec![(s.node_id.clone(), s.section_idx)],
         SelectionState::SectionRange { sel, range } => {
             let (lo, hi) = (range.0.min(range.1), range.0.max(range.1));
             (lo..=hi).map(|i| (sel.node_id.clone(), i)).collect()
         }
-        SelectionState::MultiSection(sels) => sels
-            .iter()
-            .map(|s| (s.node_id.clone(), s.section_idx))
-            .collect(),
+        SelectionState::MultiSection(sels) => {
+            sels.iter().map(|s| (s.node_id.clone(), s.section_idx)).collect()
+        }
         _ => Vec::new(),
     }
 }
-

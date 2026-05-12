@@ -256,7 +256,7 @@ pub(in crate::application::app) fn dispatch_console_action(
     }
 }
 
-/// Apply the side-effects of an edit: recompute completions if the
+/// Apply the side effects of an edit: recompute completions if the
 /// input changed, then rebuild the overlay so the next frame
 /// reflects the new state. `pub(in crate::application::app)` so
 /// the funneled `Action::Console*` dispatch arms in `dispatch.rs`
@@ -284,13 +284,15 @@ pub(in crate::application::app) fn after_state_change(
     }
 }
 
+use crate::application::app::input_context::InputHandlerContext;
+
 /// Take the current input line, append to history + scrollback,
 /// execute via `execute_console_line`, and rebuild the overlay.
 /// `pub(in crate::application::app)` so the funneled
 /// `Action::ConsoleSubmit` dispatch arm in `dispatch.rs` reaches it.
 #[cfg(not(target_arch = "wasm32"))]
 pub(in crate::application::app) fn submit_line(
-    ctx: &mut super::super::input_context::InputHandlerContext<'_>,
+    ctx: &mut InputHandlerContext<'_>,
 ) {
     // Local re-bindings preserve the original
     // SubmitLineContext-destructure shape. Without these, `match

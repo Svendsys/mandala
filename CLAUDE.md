@@ -10,6 +10,8 @@ not whatever is the default. Opus or if available Mythos
 
 §5 NEVER defer the hard parts until later, and then proceed to ship a "good enough" or "approximate" now unless specifically instructed to. The hard parts are the work, there is nothing else.
 
+§6 Use American English for consistency, not British English
+
 "API error: Stream idle timeout - partial response received" is an error that occurs regularly these days. 
 To avoid it, please make sure that any large files such as (but not limited to) plan files are written in 
 smaller pieces first, and then finally combined into the full file.
