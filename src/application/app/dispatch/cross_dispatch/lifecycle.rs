@@ -323,19 +323,27 @@ pub(in crate::application::app) fn apply_enter_resize_mode(rc: &mut RebuildConte
 // reaches into the document model, not the cfg-gated console
 // runtime.
 
-/// Copy or Cut the current selection's clipboard-eligible content
-/// to the system clipboard. Cut additionally clears the source
-/// component's text where the trait supports it. Read-only on the
-/// document — no rebuild.
+pub(in crate::application::app) struct ComputedCopy {
+    pub joined_text: String,
+    /// `Some((text, payload))` only for single-section copies that
+    /// produced a structured payload; `None` for plain-text targets
+    /// and for multi-section copies (no payload variant exists today).
+    pub structured: Option<(String, crate::application::document::SectionPayload)>,
+    pub any_target_accepted: bool,
+}
+
+/// Iterate the current selection's clipboard-eligible targets and
+/// compute what `apply_copy_or_cut` would write, without touching the
+/// OS clipboard. Clears the thread-local structured buffer up-front
+/// (a stale single-section payload from a prior copy would otherwise
+/// win the byte-equal probe on the next paste). Returns `None` if no
+/// target accepted; `Some(ComputedCopy)` otherwise.
 ///
-/// Multi-target selections (`Multi(ids)`, `MultiSection`) fan out
-/// over every target and join the produced texts with
-/// `MULTI_TARGET_SEPARATOR` so the paste path can reverse-split by
-/// counting separators. The in-process structured buffer is
-/// cleared up-front because a mlti-section copy has no payload
-/// variant today; a stale single-section payload from a prior
-/// copy would otherwise win the byte-equal probe on the next paste.
-pub(in crate::application::app) fn apply_copy_or_cut(is_cut: bool, doc: &mut MindMapDocument) -> bool {
+/// Cut path mutates `doc` (clears source text per `clipboard_cut`).
+pub(in crate::application::app) fn compute_copy_or_cut(
+    is_cut: bool,
+    doc: &mut MindMapDocument,
+) -> Option<ComputedCopy> {
     use crate::application::console::traits::{
         selection_targets, view_for, ClipboardContent, HandlesCopy, HandlesCut,
     };
@@ -348,11 +356,7 @@ pub(in crate::application::app) fn apply_copy_or_cut(is_cut: bool, doc: &mut Min
     let mut any_target_accepted = false;
     for tid in &targets {
         let mut view = view_for(doc, tid);
-        let content = if is_cut {
-            view.clipboard_cut()
-        } else {
-            view.clipboard_copy()
-        };
+        let content = if is_cut { view.clipboard_cut() } else { view.clipboard_copy() };
         match content {
             ClipboardContent::Text(text) => {
                 text_payloads.push(text);
@@ -369,23 +373,38 @@ pub(in crate::application::app) fn apply_copy_or_cut(is_cut: bool, doc: &mut Min
         }
     }
     if !text_payloads.is_empty() {
-        let joined = text_payloads.join(MULTI_TARGET_SEPARATOR);
-        crate::application::clipboard::write_clipboard(&joined);
-        return any_target_accepted;
+        return Some(ComputedCopy {
+            joined_text: text_payloads.join(MULTI_TARGET_SEPARATOR),
+            structured: None,
+            any_target_accepted,
+        });
     }
     if !section_texts.is_empty() {
-        let joined = section_texts.join(MULTI_TARGET_SEPARATOR);
-        crate::application::clipboard::write_clipboard(&joined);
-        if section_texts.len() == 1 {
-            if let Some(payload) = first_section_payload {
-                crate::application::clipboard::write_section_clipboard(
-                    section_texts.into_iter().next().expect("len == 1"),
-                    payload,
-                );
-            }
-        }
+        let joined_text = section_texts.join(MULTI_TARGET_SEPARATOR);
+        let structured = if section_texts.len() == 1 {
+            first_section_payload
+                .map(|p| (section_texts.into_iter().next().expect("len == 1"), p))
+        } else {
+            None
+        };
+        return Some(ComputedCopy { joined_text, structured, any_target_accepted });
     }
-    any_target_accepted
+    None
+}
+
+/// Copy or Cut the current selection's clipboard-eligible content
+/// to the system clipboard. Cut additionally clears the source
+/// component's text where the trait supports it. Read-only on the
+/// document — no rebuild. Clearing + iteration are handled by
+/// `compute_copy_or_cut`; this wrapper applies the OS clipboard
+/// and structured buffer side effects.
+pub(in crate::application::app) fn apply_copy_or_cut(is_cut: bool, doc: &mut MindMapDocument) -> bool {
+    let Some(c) = compute_copy_or_cut(is_cut, doc) else { return false };
+    crate::application::clipboard::write_clipboard(&c.joined_text);
+    if let Some((text, payload)) = c.structured {
+        crate::application::clipboard::write_section_clipboard(text, payload);
+    }
+    c.any_target_accepted
 }
 
 /// Read the system clipboard and paste into every clipboard-eligible
@@ -469,7 +488,7 @@ fn split_paste_for_targets(text: &str, target_count: usize) -> Option<Vec<&str>>
 #[cfg(not(target_arch = "wasm32"))]
 mod tests {
     use super::{
-        apply_copy_or_cut, resolve_enter_node_edit_plan, resolve_enter_section_edit_plan,
+        compute_copy_or_cut, resolve_enter_node_edit_plan, resolve_enter_section_edit_plan,
         split_paste_for_targets, EnterNodeEditPlan, EnterSectionEditPlan,
         MULTI_TARGET_SEPARATOR,
     };
@@ -744,7 +763,7 @@ mod tests {
             SectionSel::new(&id, 0),
             SectionSel::new(&id, 1),
         ]);
-        apply_copy_or_cut(false, &mut doc);
+        let _ = compute_copy_or_cut(false, &mut doc);
 
         assert!(
             read_section_clipboard("stale-probe").is_none(),
@@ -762,10 +781,11 @@ mod tests {
         let (mut doc, id) = pinned_two_section_node();
         doc.selection = SelectionState::Section(SectionSel::new(&id, 1));
         let probe_text = doc.mindmap.nodes.get(&id).unwrap().sections[1].text.clone();
-        apply_copy_or_cut(false, &mut doc);
-        assert!(
-            read_section_clipboard(&probe_text).is_some(),
-            "single-section copy must populate the structured buffer"
+        let c = compute_copy_or_cut(false, &mut doc).expect("section copy populates");
+        assert_eq!(
+            c.structured.as_ref().map(|(t, _)| t.as_str()),
+            Some(probe_text.as_str()),
+            "single-section copy must produce a structured payload"
         );
     }
 
@@ -782,11 +802,10 @@ mod tests {
             SectionSel::new(&id, 0),
             SectionSel::new(&id, 1),
         ]);
-        let s0_text = doc.mindmap.nodes.get(&id).unwrap().sections[0].text.clone();
-        apply_copy_or_cut(false, &mut doc);
+        let c = compute_copy_or_cut(false, &mut doc).expect("multi-section copy populates");
         assert!(
-            read_section_clipboard(&s0_text).is_none(),
-            "multi-section copy must not populate the structured buffer"
+            c.structured.is_none(),
+            "multi-section copy must not produce a structured payload"
         );
     }
 
