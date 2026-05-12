@@ -69,7 +69,7 @@ pub fn write_section_clipboard(text: String, payload: SectionPayload) {
 }
 
 /// Drop the in-process structured section buffer. Called by
-/// `apply_copy_or_cut` before iterating (a stale single-section
+/// `prepare_copy_or_cut` before iterating (a stale single-section
 /// payload from a prior copy would otherwise win the byte-equal
 /// probe on the next paste — silently substituting the OS
 /// clipboard's joined blob with one section's structured
