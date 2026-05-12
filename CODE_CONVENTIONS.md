@@ -33,8 +33,7 @@ Baumhard is not a vendored dependency; it is the foundation we are
 building together with the application. Both crates are ours. The two
 rise and fall together.
 
-**Never work around Baumhard. Extend it.** "I cannot change Baumhard" is
-never a reason.
+**Never work around Baumhard. Extend it.** "I shouldn't touch Baumha-" yes you should.
 
 - **Text** through `baumhard::util::grapheme_chad` — grapheme-aware
   primitives for every `String`/`&str` manipulation. Never slice by byte
@@ -73,7 +72,7 @@ Mandala and Baumhard are carefully designed systems. A feature that
 circumvents the design is not a feature, it is damage. It is not
 possible to implement a new feature here without a thorough
 understanding of the surrounding code, because you need to know how to
-integrate.
+integrate. 
 
 - **Read before writing.** Contributions require reading the call sites,
   the adjacent modules, and the primitives you are reaching for. Pattern-
@@ -314,7 +313,7 @@ industrial cost/benefit reasoning. This is not license for speculation.
   `Renderer::new`, `fonts::init`, the initial `loader::load_from_file`,
   the `?map=` parser on WASM. Bare `unwrap()` outside tests is a bug.
 
-## §10 No backwards-compatibility assumptions
+## §10 No backwards-compatibility assumptions until V1
 
 We have no known users. We do not owe migration paths, deprecation
 cycles, or backward-compatible shims.
@@ -343,8 +342,7 @@ Workspace-level commitment:
 ## §12 Commit hygiene
 
 - **Tests land in the commit that introduces the code they test.**
-- **`./test.sh` is green before committing.** `./test.sh --lint` is
-  advisory; review it. `./test.sh --bench` for performance-conscious
+- **`./test.sh` is green before committing.** `./test.sh --lint` is advisory; review it. `./test.sh --bench` for performance-conscious
   Baumhard commits.
 - **`./build.sh` is green for cross-platform changes.** Anything
   outside an explicit `cfg` guard must build for
