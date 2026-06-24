@@ -1,5 +1,7 @@
 # Mandala
 
+Note: This project is not abandoned, I just have to prioritize other things right now. 
+
 Mandala is a Rust mindmap application built on
 [wgpu](https://wgpu.rs/) and
 [cosmic-text](https://github.com/pop-os/cosmic-text), using the
