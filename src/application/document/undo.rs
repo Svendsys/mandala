@@ -126,18 +126,33 @@ impl MindMapDocument {
                     orphaned_children,
                 } => {
                     let restored_id = node.id.clone();
-                    self.mindmap.nodes.insert(restored_id.clone(), node);
-                    for (idx, edge) in removed_edges {
-                        let idx = idx.min(self.mindmap.edges.len());
-                        self.mindmap.edges.insert(idx, edge);
-                    }
-                    // Reverse the cascade rename for each orphaned child:
-                    // rename from root-level ID back to original subtree ID,
-                    // then restore parent_id to the deleted node.
-                    for (old_id, root_id) in orphaned_children {
-                        self.cascade_rename(&root_id, &old_id);
-                        if let Some(child) = self.mindmap.nodes.get_mut(&old_id) {
-                            child.parent_id = Some(restored_id.clone());
+                    // Defense in depth (CODE_CONVENTIONS §9): never clobber a
+                    // live node. The historical collision bug re-rooted an
+                    // orphaned child onto the deleted node's own id; blindly
+                    // re-inserting the deleted node here then destroyed that
+                    // child and dangled its parent_id. The `delete_node` fix
+                    // keeps `restored_id` free, so this branch always holds —
+                    // but if a stale or foreign `UndoAction` ever lands on an
+                    // occupied id, skip the whole restore rather than corrupt.
+                    if self.mindmap.nodes.contains_key(&restored_id) {
+                        log::error!(
+                            "undo DeleteNode: id '{restored_id}' is already occupied; \
+                             refusing to overwrite a live node (undo skipped)"
+                        );
+                    } else {
+                        self.mindmap.nodes.insert(restored_id.clone(), node);
+                        for (idx, edge) in removed_edges {
+                            let idx = idx.min(self.mindmap.edges.len());
+                            self.mindmap.edges.insert(idx, edge);
+                        }
+                        // Reverse the cascade rename for each orphaned child:
+                        // rename from root-level ID back to original subtree ID,
+                        // then restore parent_id to the deleted node.
+                        for (old_id, root_id) in orphaned_children {
+                            self.cascade_rename(&root_id, &old_id);
+                            if let Some(child) = self.mindmap.nodes.get_mut(&old_id) {
+                                child.parent_id = Some(restored_id.clone());
+                            }
                         }
                     }
                 }
