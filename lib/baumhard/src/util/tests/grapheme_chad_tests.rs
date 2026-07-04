@@ -27,6 +27,12 @@ lazy_static! {
         ("", 2, "", ""),
     ];
     pub static ref REMOVE_PREFIX_TESTS: Vec<(&'static str, usize, &'static str)> = vec![
+        // n = 0 must be a no-op, never eating a leading grapheme — regardless of
+        // whether that grapheme is ASCII, a multi-scalar emoji, or a ZWJ cluster.
+        ("abcd", 0, "abcd"),
+        ("🙏🏻abcd", 0, "🙏🏻abcd"),
+        ("👨‍👩‍👧abcd", 0, "👨‍👩‍👧abcd"),
+        ("", 0, ""),
         ("abcd🍕1234", 3, "d🍕1234"),
         ("\n\nabcd🍕1234", 3, "bcd🍕1234"),
         ("\n\n bcd🍕1234", 3, "bcd🍕1234"),
@@ -42,6 +48,11 @@ lazy_static! {
         ("🍕🍕🍕🍕🍕🍕🍕🍕🍕🍕", 2, "🍕🍕🍕🍕🍕🍕🍕🍕"),
     ];
     pub static ref TRUNCATE_TESTS: Vec<(&'static str, usize, &'static str)> = vec![
+        // n = 0 is a no-op on the tail too — the symmetric partner of the
+        // delete_front_unicode(_, 0) no-op above.
+        ("abcd", 0, "abcd"),
+        ("abcd🙏🏻", 0, "abcd🙏🏻"),
+        ("", 0, ""),
         ("abcd🍕1234", 3, "abcd🍕1"),
         ("abcd🍕1234", 4, "abcd🍕"),
         ("abcd🍕1234", 5, "abcd"),

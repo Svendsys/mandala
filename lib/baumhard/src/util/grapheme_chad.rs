@@ -402,13 +402,12 @@ pub fn delete_front_unicode(s: &mut String, n: usize) {
 
     for grapheme in UnicodeSegmentation::graphemes(s.as_str(), true) {
         grapheme_count += 1;
-        char_count += grapheme.len();
-
-        if grapheme_count >= n {
+        if grapheme_count > n {
             break;
         }
+        char_count += grapheme.len();
     }
-    if grapheme_count < n {
+    if grapheme_count <= n {
         s.clear();
         return;
     }
