@@ -52,11 +52,13 @@ impl MindMapDocument {
 
         // Orphan immediate children (by `parent_id`): each gets a fresh
         // root-level id, and every id-prefix descendant cascades with it.
+        // `children_of` returns them in `id_sort_key` order, so fresh roots
+        // are assigned deterministically regardless of `HashMap` iteration
+        // order — stable across runs, platforms, and saved output.
         let child_ids: Vec<String> = self
             .mindmap
-            .nodes
-            .values()
-            .filter(|n| n.parent_id.as_deref() == Some(node_id))
+            .children_of(node_id)
+            .iter()
             .map(|n| n.id.clone())
             .collect();
         let mut orphaned_children: Vec<(String, String)> = Vec::new();
@@ -137,16 +139,23 @@ impl MindMapDocument {
             })
             .collect();
 
+        // old → new lookup, built once up front and shared by both the
+        // collision guard (its keys are exactly the old ids being vacated)
+        // and the parent_id / edge rewrites below. Replaces the former inner
+        // `for (ro, rn) in &renames` linear scans (CODE_CONVENTIONS §5):
+        // O(renames) + O(edges) instead of O(renames²) + O(edges·renames).
+        let rename_map: std::collections::HashMap<&str, &str> =
+            renames.iter().map(|(o, n)| (o.as_str(), n.as_str())).collect();
+
         // Defense in depth (CODE_CONVENTIONS §9: degrade, don't corrupt).
         // A target id already occupied by a node *outside* this rename set
-        // means the caller minted a colliding id — the historical
-        // delete+undo corruption. Refuse the whole rename rather than let
-        // the `nodes.insert(new, ..)` below silently clobber a live node.
-        // With the `delete_node` fix this never fires; it is a backstop
-        // against any future caller that hands us a bad target.
-        let old_keys: std::collections::HashSet<&str> = renames.iter().map(|(o, _)| o.as_str()).collect();
+        // (i.e. not one of the old ids we're vacating) means the caller
+        // minted a colliding id — the historical delete+undo corruption.
+        // Refuse the whole rename rather than let the `nodes.insert(new, ..)`
+        // below silently clobber a live node. With the `delete_node` fix this
+        // never fires; it is a backstop against any future bad caller.
         for (_, new) in &renames {
-            if !old_keys.contains(new.as_str()) && self.mindmap.nodes.contains_key(new) {
+            if !rename_map.contains_key(new.as_str()) && self.mindmap.nodes.contains_key(new) {
                 log::error!(
                     "cascade_rename({old_id} -> {new_id}): target id '{new}' is already \
                      occupied by an unrelated node; aborting rename to avoid corrupting the map"
@@ -154,13 +163,6 @@ impl MindMapDocument {
                 return false;
             }
         }
-
-        // old → new lookup, replacing the former inner `for (ro, rn) in
-        // &renames` linear scans (CODE_CONVENTIONS §5): the parent_id and
-        // edge rewrites were O(renames²) + O(edges·renames); with the map
-        // they are O(renames) + O(edges).
-        let rename_map: std::collections::HashMap<&str, &str> =
-            renames.iter().map(|(o, n)| (o.as_str(), n.as_str())).collect();
 
         // Rename nodes in the HashMap.
         for (old, new) in &renames {

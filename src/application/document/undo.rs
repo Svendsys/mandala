@@ -12,6 +12,28 @@ use super::MindMapDocument;
 impl MindMapDocument {
     /// Undo the last action. Returns true if something was undone.
     pub fn undo(&mut self) -> bool {
+        // A `DeleteNode` restore whose id is already occupied must NOT
+        // consume the action: dropping it would lose the node payload +
+        // removed edges + orphan mapping (permanent data loss) while `undo()`
+        // still returns `true`, so the caller reports a successful undo on a
+        // no-op and the next Ctrl-Z applies the action *below* it to a
+        // one-delete-out-of-sync state. Peek first, leave the action on the
+        // stack, and return `false` so undo visibly stalls instead of lying.
+        // Unreachable given the `delete_node` minting fix; the `debug_assert!`
+        // makes any future regression fail `./test.sh` instead of silently
+        // corrupting the history.
+        if let Some(UndoAction::DeleteNode { node, .. }) = self.undo_stack.last() {
+            if self.mindmap.nodes.contains_key(node.id.as_str()) {
+                log::error!(
+                    "undo DeleteNode: id '{}' is already occupied; refusing to overwrite a \
+                     live node and leaving the action on the undo stack",
+                    node.id
+                );
+                debug_assert!(false, "undo DeleteNode landed on an occupied id");
+                return false;
+            }
+        }
+
         if let Some(action) = self.undo_stack.pop() {
             match action {
                 UndoAction::MoveNodes { original_positions } => {
@@ -126,30 +148,24 @@ impl MindMapDocument {
                     orphaned_children,
                 } => {
                     let restored_id = node.id.clone();
-                    // Defense in depth (CODE_CONVENTIONS §9): never clobber a
-                    // live node. The historical collision bug re-rooted an
-                    // orphaned child onto the deleted node's own id; blindly
-                    // re-inserting the deleted node here then destroyed that
-                    // child and dangled its parent_id. The `delete_node` fix
-                    // keeps `restored_id` free, so this branch always holds —
-                    // but if a stale or foreign `UndoAction` ever lands on an
-                    // occupied id, skip the whole restore rather than corrupt.
-                    if self.mindmap.nodes.contains_key(&restored_id) {
-                        log::error!(
-                            "undo DeleteNode: id '{restored_id}' is already occupied; \
-                             refusing to overwrite a live node (undo skipped)"
-                        );
-                    } else {
-                        self.mindmap.nodes.insert(restored_id.clone(), node);
-                        for (idx, edge) in removed_edges {
-                            let idx = idx.min(self.mindmap.edges.len());
-                            self.mindmap.edges.insert(idx, edge);
-                        }
-                        // Reverse the cascade rename for each orphaned child:
-                        // rename from root-level ID back to original subtree ID,
-                        // then restore parent_id to the deleted node.
-                        for (old_id, root_id) in orphaned_children {
-                            self.cascade_rename(&root_id, &old_id);
+                    // Precondition (`restored_id` free) is verified by the
+                    // peek-before-pop guard at the top of `undo()`, so the
+                    // insert never clobbers a live node.
+                    self.mindmap.nodes.insert(restored_id.clone(), node);
+                    for (idx, edge) in removed_edges {
+                        let idx = idx.min(self.mindmap.edges.len());
+                        self.mindmap.edges.insert(idx, edge);
+                    }
+                    // Reverse the cascade rename for each orphaned child:
+                    // rename from root-level ID back to original subtree ID,
+                    // then restore parent_id to the deleted node — but only
+                    // when the reverse rename actually applied. If it were
+                    // refused (`old_id` occupied by an unrelated node), a blind
+                    // `get_mut(&old_id)` would find that foreign occupant and
+                    // re-hang its subtree under the restored node. Gating on
+                    // the `bool` avoids re-parenting a stranger (§9).
+                    for (old_id, root_id) in orphaned_children {
+                        if self.cascade_rename(&root_id, &old_id) {
                             if let Some(child) = self.mindmap.nodes.get_mut(&old_id) {
                                 child.parent_id = Some(restored_id.clone());
                             }
