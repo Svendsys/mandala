@@ -73,6 +73,52 @@ fn mutation_targets_absolute_position(m: &baumhard::gfx_structs::mutator::Mutati
     }
 }
 
+/// The tree-side `GlyphArea` fields a single [`Mutation`] touches
+/// that [`MindMapDocument::sync_node_from_tree`] has **no model
+/// home for** — so a mutation writing them lands on the display
+/// tree for one frame and reverts on the next rebuild-from-model.
+///
+/// The sync-back persists position, section offset / size, text,
+/// colour / font runs, and font size (`scale`). Everything else a
+/// `GfxMutator` can reach — line-height (derived as `scale * 1.2`,
+/// no independent home), the outline halo, the node shape, and the
+/// zoom-visibility window — has a tree representation but no
+/// reverse converter, so it can't survive a `rebuild_all`. Returns
+/// the human-readable names of any such fields the mutation writes.
+fn unsupported_fields_of_mutation(m: &baumhard::gfx_structs::mutator::Mutation) -> Vec<&'static str> {
+    use baumhard::gfx_structs::area::GlyphAreaCommand as Cmd;
+    use baumhard::gfx_structs::area_fields::GlyphAreaFieldType as FieldType;
+    use baumhard::gfx_structs::mutator::Mutation;
+    let mut out = Vec::new();
+    match m {
+        Mutation::AreaCommand(cmd) => {
+            if matches!(
+                **cmd,
+                Cmd::SetLineHeight(_) | Cmd::GrowLineHeight(_) | Cmd::ShrinkLineHeight(_)
+            ) {
+                out.push("line-height");
+            }
+        }
+        Mutation::AreaDelta(delta) => {
+            // A delta can touch several fields at once; report each
+            // unsupported one so the warning names the full gap.
+            for key in delta.fields.keys() {
+                match key {
+                    FieldType::LineHeight => out.push("line-height"),
+                    FieldType::Outline => out.push("outline"),
+                    FieldType::Shape => out.push("shape"),
+                    FieldType::ZoomVisibility => out.push("zoom-visibility"),
+                    _ => {}
+                }
+            }
+        }
+        // `ModelDelta` / `ModelCommand` / `Event` / `None` don't
+        // reach the section-area sync path at all.
+        _ => {}
+    }
+    out
+}
+
 fn warn_if_predicate_filtered_everything(mutation_id: &str, has_predicate: bool, seen: usize, passed: usize) {
     if has_predicate && seen > 0 && passed == 0 {
         log::warn!(
@@ -187,15 +233,41 @@ impl MindMapDocument {
         // override of the same id keeps the declarative path so the
         // user's mutator is honoured. See
         // [`Self::will_dispatch_to_handler`] for the rationale.
-        if self.will_dispatch_to_handler(&custom.id) {
+        //
+        // `changed` is the load-bearing verdict: only a mutation that
+        // actually moved the model earns an undo entry and the dirty
+        // flag. Pre-fix every apply pushed undo unconditionally, so
+        // a `grow-font` (whose scale change wasn't synced back), a
+        // `flat_mutations`-failed skip, or a predicate that filtered
+        // every candidate all left a dead undo entry that ate a real
+        // Ctrl-Z step.
+        let changed = if self.will_dispatch_to_handler(&custom.id) {
             if let Some(handler) = self.mutation_handlers.get(&custom.id).copied() {
                 handler(self, node_id);
             }
+            // Imperative handlers (flower-layout, tree-cascade) mutate
+            // the model directly — they're layout algorithms that
+            // reposition their targets, and there's no cheap post-hoc
+            // model diff to gate on. Treat a dispatched handler as a
+            // real change; the snapshot taken above is its undo home.
+            true
         } else if let Some(tree) = tree.as_deref_mut() {
+            // Surface any mutator field the sync-back can't persist
+            // *before* applying, so a partially-supported mutation
+            // doesn't silently drop half its effect on the next
+            // rebuild (§5 no half-features).
+            self.warn_unsupported_mutator_fields(custom);
             self.apply_to_tree(custom, node_id, tree);
+            // Sync every affected node and OR the per-node verdicts.
+            // An explicit loop (not `|=`) keeps `sync_node_from_tree`
+            // — which is `#[must_use]` — running for every node.
+            let mut any_changed = false;
             for id in &affected_ids {
-                self.sync_node_from_tree(id, tree);
+                if self.sync_node_from_tree(id, tree) {
+                    any_changed = true;
+                }
             }
+            any_changed
         } else {
             log::warn!(
                 "apply_custom_mutation: declarative mutation '{}' called with None tree; \
@@ -203,16 +275,86 @@ impl MindMapDocument {
                  handler-dispatched.",
                 custom.id
             );
-            // Fall through: document_actions still push undo below,
-            // but no tree/model changes occurred.
+            // Nothing applied, nothing to sync — leave the undo stack
+            // and dirty flag untouched.
             return;
-        }
+        };
 
-        if !snapshots.is_empty() {
+        if changed && !snapshots.is_empty() {
             self.undo_stack.push(UndoAction::CustomMutation {
                 node_snapshots: snapshots,
             });
             self.dirty = true;
+        }
+    }
+
+    /// Log a `warn!` when `custom`'s flat mutation list writes any
+    /// tree-side field the sync-back can't persist (line-height,
+    /// outline, shape, zoom-visibility). Silent partial application
+    /// is the worst outcome — the change flashes for one frame then
+    /// reverts, and the author is left chasing a vanishing effect.
+    /// Naming the field at apply time turns that into a diagnosable
+    /// event (§5 no half-features).
+    ///
+    /// Non-flat mutators (no extractable list) and mutator-less
+    /// document-action mutations are silently skipped here — they
+    /// have their own diagnostics on the apply path.
+    fn warn_unsupported_mutator_fields(&self, custom: &CustomMutation) {
+        let Some(mutator) = custom.mutator.as_ref() else {
+            return;
+        };
+        let Some(mutations) = flat_mutations(mutator) else {
+            return;
+        };
+        let mut fields: Vec<&'static str> = Vec::new();
+        for m in &mutations {
+            for name in unsupported_fields_of_mutation(m) {
+                if !fields.contains(&name) {
+                    fields.push(name);
+                }
+            }
+        }
+        if !fields.is_empty() {
+            log::warn!(
+                "mutation '{}': writes field(s) [{}] that have no model home; the change \
+                 applies to the display tree but is NOT persisted and reverts on the next \
+                 rebuild. Persisted fields: position, section offset/size, text, colour/font \
+                 runs, font size.",
+                custom.id,
+                fields.join(", "),
+            );
+        }
+    }
+
+    /// Re-stamp every active toggle's tree-side visual onto a
+    /// freshly-built tree. Called by
+    /// [`MindMapDocument::build_tree`](super::MindMapDocument::build_tree)
+    /// after the model→tree projection, because a `rebuild_all`
+    /// throws the prior tree away and rebuilds from the model — and
+    /// Toggle mutations, by design, live only on the tree (they
+    /// never sync to the model, per CONCEPTS §4). Without this
+    /// re-application a toggle-on's visual would die at the end of
+    /// the same dispatch that turned it on: nothing re-applied it,
+    /// so "second trigger reverses" had no first-trigger effect left
+    /// to reverse.
+    ///
+    /// Toggles always take the declarative flat-apply path — the
+    /// Toggle branch of [`Self::apply_custom_mutation`] never
+    /// dispatches to a Rust handler — so re-application is the same
+    /// [`Self::apply_to_tree`] call, keyed by the `(node_id,
+    /// mutation_id)` pairs in `active_toggles`. A pair whose mutation
+    /// left the registry, or whose node left the model, is skipped
+    /// (the lookups return `None` / `apply_to_tree` no-ops on a
+    /// missing arena id).
+    pub(super) fn reapply_active_toggles(&self, tree: &mut MindMapTree) {
+        if self.active_toggles.is_empty() {
+            return;
+        }
+        for (node_id, mutation_id) in &self.active_toggles {
+            let Some(custom) = self.mutation_registry.get(mutation_id) else {
+                continue;
+            };
+            self.apply_to_tree(custom, node_id, tree);
         }
     }
 
@@ -594,5 +736,103 @@ impl MindMapDocument {
                 })
                 .unwrap_or_default(),
         }
+    }
+}
+
+#[cfg(test)]
+mod unsupported_field_tests {
+    use super::unsupported_fields_of_mutation;
+    use baumhard::core::primitives::ApplyOperation;
+    use baumhard::gfx_structs::area::{DeltaGlyphArea, GlyphArea, GlyphAreaCommand, GlyphAreaField};
+    use baumhard::gfx_structs::mutator::Mutation;
+    use baumhard::gfx_structs::shape::NodeShape;
+
+    /// Font-size commands (`GrowFont` / `ShrinkFont` / `SetFontSize`)
+    /// ARE persisted by the sync-back, so they must NOT be flagged —
+    /// this is the whole point of the P0-02 fix.
+    #[test]
+    fn grow_and_shrink_font_are_supported() {
+        for cmd in [
+            GlyphAreaCommand::GrowFont(2.0),
+            GlyphAreaCommand::ShrinkFont(2.0),
+            GlyphAreaCommand::SetFontSize(20.0),
+        ] {
+            let m = Mutation::area_command(cmd);
+            assert!(
+                unsupported_fields_of_mutation(&m).is_empty(),
+                "font-size command {:?} must be treated as supported",
+                cmd
+            );
+        }
+    }
+
+    /// Position / bounds commands persist too (node position, section
+    /// offset/size), so they're not flagged.
+    #[test]
+    fn position_and_bounds_commands_are_supported() {
+        for cmd in [
+            GlyphAreaCommand::NudgeRight(5.0),
+            GlyphAreaCommand::MoveTo(1.0, 2.0),
+            GlyphAreaCommand::SetBounds(10.0, 10.0),
+        ] {
+            let m = Mutation::area_command(cmd);
+            assert!(unsupported_fields_of_mutation(&m).is_empty());
+        }
+    }
+
+    /// Line-height commands have no model home (line-height is
+    /// derived as `scale * 1.2` on every rebuild) — they must be
+    /// flagged so the author isn't left chasing a vanishing change.
+    #[test]
+    fn line_height_commands_are_flagged() {
+        for cmd in [
+            GlyphAreaCommand::SetLineHeight(1.5),
+            GlyphAreaCommand::GrowLineHeight(0.2),
+            GlyphAreaCommand::ShrinkLineHeight(0.2),
+        ] {
+            let m = Mutation::area_command(cmd);
+            assert_eq!(
+                unsupported_fields_of_mutation(&m),
+                vec!["line-height"],
+                "line-height command {:?} must be flagged unsupported",
+                cmd
+            );
+        }
+    }
+
+    /// A delta touching `shape` / `outline` / `zoom_visibility` — all
+    /// tree-only fields with no reverse converter — is flagged, one
+    /// name per unsupported field it writes.
+    #[test]
+    fn shape_outline_zoom_delta_fields_are_flagged() {
+        let area = GlyphArea::new(14.0, 16.8, glam::Vec2::ZERO, glam::Vec2::new(10.0, 10.0));
+        // `full_assign_from` emits Text/position/bounds/scale/
+        // line_height/regions/Outline/ZoomVisibility/Operation — a
+        // superset that exercises the delta-key scan. Add Shape too.
+        let mut delta = DeltaGlyphArea::full_assign_from(&area);
+        delta.fields.insert(
+            baumhard::gfx_structs::area_fields::GlyphAreaFieldType::Shape,
+            GlyphAreaField::Shape(NodeShape::Ellipse),
+        );
+        let m = Mutation::area_delta(delta);
+        let mut flagged = unsupported_fields_of_mutation(&m);
+        flagged.sort_unstable();
+        assert_eq!(
+            flagged,
+            vec!["line-height", "outline", "shape", "zoom-visibility"]
+        );
+    }
+
+    /// A delta that only touches persisted fields (position + scale)
+    /// is NOT flagged.
+    #[test]
+    fn supported_only_delta_is_clean() {
+        let delta = DeltaGlyphArea::new(vec![
+            GlyphAreaField::position(1.0, 2.0),
+            GlyphAreaField::scale(20.0),
+            GlyphAreaField::Operation(ApplyOperation::Assign),
+        ]);
+        let m = Mutation::area_delta(delta);
+        assert!(unsupported_fields_of_mutation(&m).is_empty());
     }
 }

@@ -486,8 +486,20 @@ impl MindMapDocument {
 
     /// Build a Baumhard mutation tree from the MindMap hierarchy.
     /// Each MindNode becomes a GlyphArea in the tree, preserving parent-child structure.
+    ///
+    /// After projecting the model, re-stamps every active Toggle
+    /// mutation's visual onto the fresh tree via
+    /// [`Self::reapply_active_toggles`]. Toggle mutations live only
+    /// on the display tree (they never sync to the model — CONCEPTS
+    /// §4), so a rebuild-from-model would otherwise wipe them; this
+    /// is the single point where "the caller rebuilds the tree next
+    /// frame" re-materialises the toggle. `active_toggles` is empty
+    /// on the common path, so this is a no-op for the vast majority
+    /// of rebuilds.
     pub fn build_tree(&self) -> MindMapTree {
-        tree_builder::build_mindmap_tree(&self.mindmap)
+        let mut tree = tree_builder::build_mindmap_tree(&self.mindmap);
+        self.reapply_active_toggles(&mut tree);
+        tree
     }
 
     /// Build a RenderScene from the current MindMap state.
