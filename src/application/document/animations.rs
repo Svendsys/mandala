@@ -14,6 +14,7 @@ use baumhard::mindmap::tree_builder::MindMapTree;
 
 use super::mutations_loader::MutationSource;
 use super::types::AnimationInstance;
+use super::undo_action::UndoAction;
 use super::MindMapDocument;
 
 /// Apply position-bearing `Mutation`s to a `MindNode` to derive
@@ -335,11 +336,13 @@ impl MindMapDocument {
     /// scene rebuild).
     ///
     /// Animations whose elapsed time has reached `duration_ms +
-    /// delay_ms` complete: their final state is committed via
-    /// `apply_custom_mutation` (so the standard
-    /// model-sync + undo-push path runs exactly once), then the
-    /// instance is dropped. Drain order is back-to-front so
-    /// `swap_remove` is safe.
+    /// delay_ms` complete via [`Self::commit_animation_completion`],
+    /// which resets the target's position to its pre-animation `from`
+    /// baseline before routing the final state through
+    /// `apply_custom_mutation` (so the standard model-sync + undo-push
+    /// path runs exactly once from the true baseline, not on top of the
+    /// last lerped frame), then the instance is dropped. Drain order is
+    /// back-to-front so `swap_remove` is safe.
     pub fn tick_animations(&mut self, now_ms: u64, mut tree: Option<&mut MindMapTree>) -> bool {
         if self.active_animations.is_empty() {
             return false;
@@ -375,29 +378,133 @@ impl MindMapDocument {
         }
 
         if !completed_indices.is_empty() {
-            // Drain completed animations. Apply each one's final
-            // state through `apply_custom_mutation` — that's the
-            // single path that handles model-sync + undo-push for
-            // both Persistent and Toggle behaviour, so the tree
-            // animation's commit is indistinguishable from the
-            // instant-mode equivalent.
+            // Drain completed animations. Each commits its final
+            // state through `commit_animation_completion`, which
+            // resets the target's position to its pre-animation `from`
+            // baseline (model + tree) and then routes the full mutation
+            // through `apply_custom_mutation` exactly once — so the
+            // commit is indistinguishable from the instant-mode
+            // equivalent, both in final state and in the undo entry.
             for idx in completed_indices.into_iter().rev() {
                 let anim = self.active_animations.swap_remove(idx);
-                if let Some(tree) = tree.as_deref_mut() {
-                    self.apply_custom_mutation(&anim.cm, &anim.target_id, Some(tree));
-                } else {
-                    // No tree available — at minimum restore the
-                    // model to the `to` snapshot so the next
-                    // rebuild_all sees the post-animation state.
-                    if let Some(node) = self.mindmap.nodes.get_mut(&anim.target_id) {
-                        node.position = anim.to_node.position.clone();
-                    }
-                }
+                self.commit_animation_completion(anim, tree.as_deref_mut());
                 any_advanced = true;
             }
         }
 
         any_advanced
+    }
+
+    /// Commit one completed animation's final state through the same
+    /// model-sync + undo path an instant mutation would take.
+    ///
+    /// **Why the reset.** By the completing frame the *model* already
+    /// carries the last lerped position — `from + delta·t_prev`,
+    /// where `t_prev` is the easing value of the last advancing tick.
+    /// Routing the full mutation through `apply_custom_mutation` from
+    /// *that* state was wrong on two counts:
+    ///
+    /// 1. **Double-apply.** `apply_custom_mutation` builds its sync
+    ///    tree from the model, so a relative mutation (e.g. a +50
+    ///    nudge) applied on top of `from + delta·t_prev` lands at
+    ///    `from + delta·(1 + t_prev)` — approaching double the delta
+    ///    for any animation longer than one frame.
+    /// 2. **Mid-lerp undo baseline.** The undo snapshot
+    ///    `apply_custom_mutation` takes reads the model, so it
+    ///    captured the mid-lerp position, not `from`. Ctrl-Z restored
+    ///    `from + delta·t_prev` instead of the true pre-animation
+    ///    state.
+    ///
+    /// Resetting the target's `position` — the sole interpolated
+    /// field — to the `from` baseline (model *and* the caller's
+    /// interactive tree) before the apply fixes both: the mutation
+    /// applies exactly once from the true baseline, and the snapshot
+    /// inside `apply_custom_mutation` captures `from`. This keeps the
+    /// "animated commit is indistinguishable from instant mode"
+    /// property the lifecycle comments promise. Resetting only
+    /// `position` (rather than re-inserting the whole `from_node`)
+    /// deliberately preserves any unrelated edit made to the node
+    /// while the animation was running, and — paired with the
+    /// existence guard below — cannot resurrect a node deleted
+    /// mid-flight.
+    ///
+    /// The interactive tree is rebuilt from the just-reset model so
+    /// the display side applies the mutation once too — the frame
+    /// between this commit and the next `rebuild_all` reads that tree
+    /// for render / hit-test. The rebuild is cheap relative to the
+    /// per-frame `rebuild_all` the animation already ran on every
+    /// advancing tick.
+    ///
+    /// **No-tree fallback.** Without a tree, `apply_custom_mutation`'s
+    /// declarative path can't run, so we commit the `to` snapshot's
+    /// position directly and push the undo entry the tree path would
+    /// have — snapshotting `from_node` — so this completion path is
+    /// undoable too. The push is gated on `to != from` to mirror the
+    /// tree path's `changed` gate: a no-op animation (absolute
+    /// `MoveTo`, whose model snapshot leaves `to == from`, or a
+    /// zero-magnitude nudge) must not leave a dead undo entry. Pre-fix
+    /// this path wrote the `to` position with no undo entry at all
+    /// ("caller's responsibility", which no caller took).
+    ///
+    /// **Scope.** Only the triggering node is reset — the sole node
+    /// the tick loop interpolates. Single animations of any
+    /// `target_scope` are handled correctly (non-`SelfOnly` affected
+    /// nodes never drift under one animation). The unhandled case is
+    /// two *concurrent* animations whose scopes overlap on a shared
+    /// non-trigger node: that node can still be mid-lerp from one when
+    /// the other completes. Fully closing it needs a `from` snapshot
+    /// per affected node (not just the trigger), which the current
+    /// single-node `AnimationInstance` doesn't carry — tracked as a
+    /// known limitation rather than papered over.
+    fn commit_animation_completion(&mut self, anim: AnimationInstance, tree: Option<&mut MindMapTree>) {
+        // Bail if the target was deleted while the animation was still
+        // in flight: nothing purges `active_animations` on a node
+        // delete (the tick loop merely skips a missing target), so a
+        // queued instance can reach completion after its node is gone.
+        // Pre-fix both branches were null-safe — the tree path no-op'd
+        // through `apply_custom_mutation`'s empty snapshots, the no-tree
+        // path was `if let Some` — so re-establish that guard here: a
+        // deleted node must never be resurrected by the completion.
+        if !self.mindmap.nodes.contains_key(&anim.target_id) {
+            return;
+        }
+
+        if let Some(tree) = tree {
+            // Reset ONLY `position` — the sole field the tick loop
+            // interpolates — back to the pre-animation baseline, then
+            // rebuild the interactive tree from it. This is the
+            // load-bearing step: `apply_custom_mutation` derives both
+            // its undo snapshot and its sync tree from the model, so a
+            // `from`-position model yields a `from` undo baseline and a
+            // single, non-doubled mutation application. Resetting just
+            // the interpolated field (not re-inserting the whole
+            // `from_node`) leaves any unrelated edit made to the node
+            // during the animation intact.
+            if let Some(node) = self.mindmap.nodes.get_mut(&anim.target_id) {
+                node.position = anim.from_node.position.clone();
+            }
+            *tree = self.build_tree();
+            self.apply_custom_mutation(&anim.cm, &anim.target_id, Some(tree));
+        } else {
+            // No tree — `apply_custom_mutation`'s declarative path can't
+            // run, so commit the `to` position directly (only `position`
+            // is interpolated in v1) and push the undo entry the tree
+            // path would have. Gate the push on an actual displacement,
+            // mirroring the tree path's `changed` gate: an absolute
+            // `MoveTo` (or a zero-magnitude nudge) leaves `to == from`,
+            // so the commit is a no-op that must not eat a Ctrl-Z or
+            // flag the document dirty.
+            let moved = anim.to_node.position != anim.from_node.position;
+            if let Some(node) = self.mindmap.nodes.get_mut(&anim.target_id) {
+                node.position = anim.to_node.position.clone();
+            }
+            if moved {
+                self.undo_stack.push(UndoAction::CustomMutation {
+                    node_snapshots: vec![(anim.target_id.clone(), anim.from_node.clone())],
+                });
+                self.dirty = true;
+            }
+        }
     }
 
     /// `true` while one or more animations are still ticking.
@@ -438,6 +545,14 @@ impl MindMapDocument {
     /// Drains `active_animations` wholesale. Order within the
     /// drain doesn't matter because each instance commits
     /// independently and pushes its own undo entry.
+    ///
+    /// Shares [`Self::commit_animation_completion`] with the natural
+    /// `tick_animations` boundary, so a mid-animation Ctrl-Z gets the
+    /// same reset-then-apply commit: a relative mutation snapped to
+    /// completion lands at exactly `from + delta` (not doubled), and
+    /// the pushed undo entry captures `from` — so the follow-up
+    /// `undo()` restores the true pre-animation state even when the
+    /// model was mid-lerp at the moment Ctrl-Z fired.
     pub fn fast_forward_animations(&mut self, tree: Option<&mut MindMapTree>) {
         if self.active_animations.is_empty() {
             return;
@@ -445,15 +560,7 @@ impl MindMapDocument {
         let drained = std::mem::take(&mut self.active_animations);
         let mut tree = tree;
         for anim in drained {
-            if let Some(tree) = tree.as_deref_mut() {
-                self.apply_custom_mutation(&anim.cm, &anim.target_id, Some(tree));
-            } else if let Some(node) = self.mindmap.nodes.get_mut(&anim.target_id) {
-                // No tree available — restore the model to the
-                // `to` snapshot directly. Undo path is then the
-                // caller's responsibility, matching what
-                // `tick_animations` does on its no-tree path.
-                node.position = anim.to_node.position.clone();
-            }
+            self.commit_animation_completion(anim, tree.as_deref_mut());
         }
     }
 }
