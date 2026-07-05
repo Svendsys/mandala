@@ -180,13 +180,6 @@ impl MindMap {
     /// `self.nodes.len()` entries, so the cap never fires on
     /// legitimate input.
     fn collect_descendants(&self, node_id: &str, result: &mut Vec<String>, budget: usize) {
-        if result.len() >= budget {
-            log::error!(
-                "collect_descendants: parent_id cycle detected walking down from node {:?}; truncating",
-                node_id
-            );
-            return;
-        }
         for child in self.children_of(node_id) {
             if result.len() >= budget {
                 log::error!(

@@ -6,7 +6,9 @@
 
 use super::*;
 use crate::mindmap::loader;
-use crate::mindmap::test_helpers::{blank_canvas, testament_map_path as test_map_path};
+use crate::mindmap::test_helpers::{
+    blank_canvas, synthetic_map, synthetic_node_full, testament_map_path as test_map_path,
+};
 use crate::util::geometry::is_positive_finite;
 
 #[test]
@@ -975,14 +977,13 @@ fn node_and_edge_locations_empty_on_blank_map() {
     assert_eq!(map.edge_locations().count(), 0);
 }
 
-/// Defense in depth (P0-05): `loader::load_from_str` rejects a
-/// `parent_id` cycle before a `MindMap` value ever exists, but these
-/// three walkers can in principle be reached with a cycle built by
-/// other means (e.g. a future in-memory mutation bug), so each one
-/// caps its own walk instead of trusting the loader alone. These
-/// tests build the cyclic map directly via `synthetic_map` —
-/// bypassing the loader entirely — to exercise that cap.
-use crate::mindmap::test_helpers::{synthetic_map, synthetic_node_full};
+// Defense in depth (P0-05): `loader::load_from_str` rejects a
+// `parent_id` cycle before a `MindMap` value ever exists, but these
+// three walkers can in principle be reached with a cycle built by
+// other means (e.g. a future in-memory mutation bug), so each one
+// caps its own walk instead of trusting the loader alone. These
+// tests build the cyclic map directly via `synthetic_map` —
+// bypassing the loader entirely — to exercise that cap.
 
 #[test]
 fn is_hidden_by_fold_does_not_hang_on_parent_cycle() {

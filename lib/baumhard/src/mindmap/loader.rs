@@ -161,15 +161,13 @@ fn detect_legacy_shape(json: &str) -> Option<String> {
 /// but rejecting the cycle here means the map never loads at all
 /// instead of silently degrading.
 ///
-/// One O(n) pass: each node's parent chain is walked at most once
-/// overall by memoizing every node proven acyclic (`resolved`) so a
-/// later start that reaches an already-resolved node stops
-/// immediately instead of re-walking the chain. Nodes are visited in
+/// Cost: O(n) overall, not O(n) per node — nodes proven acyclic are
+/// memoized so a later walk that reaches one stops immediately
+/// rather than re-walking the same suffix. Nodes are visited in
 /// sorted-id order so the reported node is deterministic across
-/// `HashMap` iteration order. A node whose `parent_id` doesn't
-/// resolve to an existing node (a dangling reference — a separate,
-/// pre-existing invariant this function doesn't police) is treated
-/// like a root: the walk simply stops there.
+/// `HashMap` iteration order. A dangling `parent_id` (referencing a
+/// node absent from the map — a separate, pre-existing invariant
+/// this function doesn't police) is treated like a root.
 fn detect_parent_cycle(map: &MindMap) -> Option<String> {
     let mut resolved: HashSet<&str> = HashSet::new();
     let mut ids: Vec<&String> = map.nodes.keys().collect();
@@ -198,7 +196,7 @@ fn detect_parent_cycle(map: &MindMap) -> Option<String> {
                     .collect::<Vec<_>>()
                     .join(" → ");
                 return Some(format!(
-                    "node '{}': parent chain contains a cycle ({}); fix parent_id",
+                    "node {:?}: parent chain contains a cycle ({}); fix parent_id",
                     chain[cycle_start], path
                 ));
             }
