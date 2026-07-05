@@ -1239,6 +1239,37 @@ fn make_animated_mutation(id: &str, duration_ms: u32) -> CM {
         .build()
 }
 
+/// Build an animated **absolute-position** mutation: a
+/// `MoveTo(tx, ty)` (which `mutation_targets_absolute_position`
+/// classifies as absolute) wrapped in linear timing. The relative
+/// `make_animated_mutation` above covers the delta case; this
+/// covers the Assign case the P0-03 completion fix must not
+/// regress.
+fn make_animated_moveto_mutation(id: &str, duration_ms: u32, tx: f32, ty: f32) -> CM {
+    use baumhard::gfx_structs::area::GlyphAreaCommand;
+    use baumhard::gfx_structs::mutator::Mutation;
+    use baumhard::mindmap::custom_mutation::scope;
+    CM {
+        id: id.into(),
+        name: id.into(),
+        description: String::new(),
+        contexts: vec![],
+        mutator: Some(scope::self_only(vec![Mutation::area_command(
+            GlyphAreaCommand::MoveTo(tx, ty),
+        )])),
+        target_scope: TS::SelfOnly,
+        behavior: MB::Persistent,
+        predicate: None,
+        document_actions: vec![],
+        timing: Some(AnimationTiming {
+            duration_ms,
+            delay_ms: 0,
+            easing: Easing::Linear,
+            then: None,
+        }),
+    }
+}
+
 #[test]
 fn test_start_animation_creates_instance() {
     let mut doc = load_test_doc();
@@ -1454,6 +1485,142 @@ fn test_fast_forward_animations_snaps_to_end() {
     assert!(
         (final_x - expected).abs() < 0.001,
         "fast-forward should snap to to_node position",
+    );
+}
+
+/// **P0-03 regression — relative mutation, live tree.** Completion
+/// with a live `Some(tree)` after ≥2 advancing ticks must land the
+/// node at exactly `from + delta`, not `from + delta·(1 + t_prev)`.
+/// Every prior animation test drove `tree = None`, so the
+/// production completion path (which routes the final state through
+/// `apply_custom_mutation`) had zero coverage — and pre-fix it
+/// re-applied the full nudge on top of the already-lerped model,
+/// approaching double the delta, while snapshotting the mid-lerp
+/// position for undo. Fails on current main; passes with the
+/// reset-then-apply fix.
+#[test]
+fn test_tick_completion_live_tree_relative_no_double_apply() {
+    let mut doc = load_test_doc();
+    let node_id = first_testament_node_id(&doc);
+    let orig_x = doc.mindmap.nodes.get(&node_id).unwrap().position.x;
+
+    // NudgeRight(100) over 1000 ms, linear.
+    let cm = make_animated_mutation("anim-live-rel", 1000);
+    doc.undo_stack.clear();
+    doc.dirty = false;
+
+    let mut tree = doc.build_tree();
+    doc.start_animation(&cm, &node_id, 0);
+
+    // Two advancing ticks drift the MODEL toward `to`; rebuild the
+    // interactive tree from the lerped model between frames, exactly
+    // as the event loop's `drain_animation_tick` → `rebuild_all`
+    // does — so the completing tick sees a mid-lerp tree too.
+    assert!(doc.tick_animations(300, Some(&mut tree)));
+    tree = doc.build_tree();
+    assert!(doc.tick_animations(700, Some(&mut tree)));
+    tree = doc.build_tree();
+    assert!(doc.has_active_animations());
+
+    // Completing tick with the live (mid-lerp) tree.
+    assert!(doc.tick_animations(1200, Some(&mut tree)));
+    assert!(!doc.has_active_animations());
+
+    // Model lands at exactly from + delta — instant-mode parity, not
+    // the ~from+170 a double-apply would produce.
+    let final_x = doc.mindmap.nodes.get(&node_id).unwrap().position.x;
+    assert!(
+        (final_x - (orig_x + 100.0)).abs() < 0.01,
+        "animated relative mutation must land at from+delta ({}); got {final_x} \
+         (double-apply would give ~{})",
+        orig_x + 100.0,
+        orig_x + 170.0,
+    );
+
+    // The interactive tree the mutation committed to reflects the
+    // same single application — not the mid-lerp + delta the pre-fix
+    // display side carried until the next rebuild.
+    let arena_id = tree.arena_id_for(&node_id).expect("node in tree");
+    let tree_x = tree
+        .tree
+        .arena
+        .get(arena_id)
+        .unwrap()
+        .get()
+        .glyph_area()
+        .unwrap()
+        .position
+        .x
+        .0 as f64;
+    assert!(
+        (tree_x - (orig_x + 100.0)).abs() < 0.01,
+        "interactive tree must also reflect from+delta once; got {tree_x}, expected {}",
+        orig_x + 100.0,
+    );
+
+    // Ctrl-Z restores exactly the pre-animation position (the undo
+    // snapshot captured `from`, not the mid-lerp model).
+    assert!(doc.undo());
+    let after_undo = doc.mindmap.nodes.get(&node_id).unwrap().position.x;
+    assert!(
+        (after_undo - orig_x).abs() < 1e-6,
+        "undo after an animated mutation must restore the exact pre-animation position; \
+         got {after_undo}, expected {orig_x}",
+    );
+}
+
+/// **P0-03 regression — absolute mutation, live tree.** The
+/// companion to the relative test: an animated absolute `MoveTo`
+/// must commit the exact target (an overwrite, not a delta) and be
+/// undoable back to `from`. Absolute commands don't drift mid-lerp
+/// (`apply_position_mutations_to_node` leaves `to == from` for
+/// them, so the tween is visually inert), so this guards that the
+/// reset-then-apply fix repairs the relative path without
+/// regressing the Assign path.
+#[test]
+fn test_tick_completion_live_tree_absolute_lands_and_undo_restores() {
+    let mut doc = load_test_doc();
+    let node_id = first_testament_node_id(&doc);
+    let orig = doc.mindmap.nodes.get(&node_id).unwrap().position.clone();
+
+    let target = (orig.x + 250.0, orig.y - 120.0);
+    let cm = make_animated_moveto_mutation("anim-live-abs", 1000, target.0 as f32, target.1 as f32);
+    doc.undo_stack.clear();
+    doc.dirty = false;
+
+    let mut tree = doc.build_tree();
+    doc.start_animation(&cm, &node_id, 0);
+
+    // Two advancing ticks, then the completing tick — all live-tree.
+    assert!(doc.tick_animations(300, Some(&mut tree)));
+    tree = doc.build_tree();
+    assert!(doc.tick_animations(700, Some(&mut tree)));
+    tree = doc.build_tree();
+    assert!(doc.tick_animations(1200, Some(&mut tree)));
+    assert!(!doc.has_active_animations());
+
+    // Absolute mutation commits the exact target position.
+    let final_pos = doc.mindmap.nodes.get(&node_id).unwrap().position.clone();
+    assert!(
+        (final_pos.x - target.0).abs() < 0.05 && (final_pos.y - target.1).abs() < 0.05,
+        "animated absolute mutation must land at the MoveTo target ({}, {}); got ({}, {})",
+        target.0,
+        target.1,
+        final_pos.x,
+        final_pos.y,
+    );
+
+    // Ctrl-Z restores the exact pre-animation position.
+    assert!(doc.undo());
+    let after = doc.mindmap.nodes.get(&node_id).unwrap().position.clone();
+    assert!(
+        (after.x - orig.x).abs() < 1e-6 && (after.y - orig.y).abs() < 1e-6,
+        "undo of an animated absolute mutation must restore the pre-animation position; \
+         got ({}, {}), expected ({}, {})",
+        after.x,
+        after.y,
+        orig.x,
+        orig.y,
     );
 }
 
