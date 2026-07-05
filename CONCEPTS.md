@@ -88,9 +88,9 @@ threads, no `tokio`, no `std::thread::spawn` in any interactive
 path. The one sanctioned exception running today is the native
 [`FreezeWatchdog`](#freezewatchdog) thread, which only *reads* an
 `AtomicU64` ping; CODE_CONVENTIONS §3 additionally sanctions the
-IPC boundary thread pair (design: `work_plans/LLM_IPC.md`; lands
-with IPC-02), which moves protocol bytes and never touches app
-state. Lock scopes stay trivial because of this.
+IPC boundary threads (design: `work_plans/LLM_IPC.md`; lands with
+IPC-02), which move protocol bytes and never touch app state. Lock
+scopes stay trivial because of this.
 
 ### Model / view separation
 
@@ -2204,7 +2204,7 @@ loop, a same-thread `RwLock` re-entry, or a blocking GPU call
 would hang indefinitely with no actionable error. The watchdog
 turns a hang into a fast, diagnostic crash. It is the only
 sanctioned background thread running today — CODE_CONVENTIONS
-§3 additionally sanctions the IPC boundary pair that lands with
+§3 additionally sanctions the IPC boundary threads that land with
 IPC-02 (`work_plans/LLM_IPC.md` §D2) — and the single-threaded
 invariant for the model/view pipeline is preserved because the
 watchdog only *reads* a shared `AtomicU64`, never touching app

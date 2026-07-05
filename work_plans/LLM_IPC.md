@@ -117,7 +117,7 @@ subscriptions, so if a real multi-client consumer ever appears
 to the transport module and D2's queues — the envelope does not
 change.
 
-## D2 — §3 integration: two I/O threads, a queue boundary, and a proxy wake
+## D2 — §3 integration: boundary threads, a queue boundary, and a proxy wake
 
 **The problem.** CODE_CONVENTIONS §3: single-threaded event loop, no
 channels, no worker threads in interactive paths. The loop parks in
@@ -127,43 +127,68 @@ design starves while the app idles — and idle is precisely when an
 agent drives the app. Something must block on the socket, and it
 cannot be the main thread.
 
-**Decision.** When `--ipc` is active, exactly two dedicated, named
-threads exist for the process lifetime:
+**Decision.** When `--ipc` is active, dedicated named boundary
+threads own the socket. Two are persistent (acceptor, outbound); a
+reader is spawned per controller connection and exits when that
+controller disconnects. None touches app state.
 
 ```
-            client (agent / mandalactl)
+            clients (agent / mandalactl)
                       │ unix socket, NDJSON
-      ┌───────────────┴────────────────┐
-      │ mandala-ipc-intake             │ mandala-ipc-outbound
-      │  blocking read → parse →       │  blocking recv → serialize
-      │  enqueue IpcRequest →          │  → blocking write
-      │  EventLoopProxy::send_event    │
-      └───────┬────────────────────────┘
-              │ std::sync::mpsc                ▲ std::sync::mpsc
-              │ (request queue, cap 1024)      │ (outbound queue, cap 256)
-              ▼                                │
-   ┌──────────────────────────────────────────┴───────┐
+   ┌──────────────────┴───────────────────────────────┐
+   │ mandala-ipc-acceptor  (persistent)                │
+   │  loop { accept();                                 │
+   │    controller busy? → write connection_rejected,  │
+   │                        close (immediate)          │
+   │    else → install controller, spawn reader }      │
+   └──────────────────┬────────────────────────────────┘
+                      │ hands the stream to
+                      ▼
+   ┌───────────────────────────────┐   ┌───────────────────────────┐
+   │ mandala-ipc-reader            │   │ mandala-ipc-outbound      │
+   │  (per controller)             │   │  (persistent)             │
+   │  blocking read → 1 MiB cap →  │   │  recv value → serialize   │
+   │  parse → enqueue IpcRequest → │   │  (8 MiB cap / too_large)  │
+   │  EventLoopProxy::send_event   │   │  → blocking write         │
+   └───────┬───────────────────────┘   └──────────▲────────────────┘
+           │ mpsc request queue (cap 1024)         │ mpsc outbound queue
+           ▼                                       │ (cap 256)
+   ┌───────────────────────────────────────────────┴──┐
    │ main thread — winit event loop                   │
    │  user_event(IpcWake): drain request queue,       │
    │  execute each command against InitState (same    │
-   │  access as any input handler), push replies      │
+   │  access as any input handler), push replies,     │
+   │  request_redraw if any command changed pixels    │
    └──────────────────────────────────────────────────┘
 ```
 
-- **The intake thread** owns the listener and the read half: reads
-  lines, enforces the 1 MiB cap, parses the envelope, and either
-  enqueues a well-formed `IpcRequest` and wakes the loop via
-  `EventLoopProxy::send_event(IpcWake)`, or pushes a pre-formed
-  `parse_error` reply straight onto the outbound queue (parse
-  errors never need app state, so they never cross into the loop).
+- **The acceptor thread** always waits on `accept()`, independent of
+  controller state — this is what makes `connection_rejected`
+  *immediate*. A single thread that both accepted and read the
+  controller could not honor the single-controller promise: while
+  blocked in the controller's `read()`, nothing calls `accept()`, so
+  a second client would sit in the OS backlog until the controller
+  left instead of being told it's busy. The acceptor rejects a
+  second connection with one direct blocking write + close (no app
+  state, no queue) and returns to accepting; the first connection it
+  installs as controller and hands to a reader.
+- **The reader thread** (one per controller) owns that connection's
+  read half: reads lines, enforces the 1 MiB cap, parses the
+  envelope, and either enqueues a well-formed `IpcRequest` and wakes
+  the loop via `EventLoopProxy::send_event(IpcWake)`, or pushes a
+  pre-formed `parse_error` reply straight onto the outbound queue
+  (parse errors never need app state, so they never cross into the
+  loop). On EOF/error it clears the controller slot and exits, and
+  the acceptor's next accept can install a fresh controller.
 - **The outbound thread** owns the write half: receives reply and
-  event *values* (from the main thread; plus intake's pre-formed
+  event *values* (from the main thread; plus the reader's pre-formed
   parse-error replies), serializes them — the 8 MiB cap check and
   the `reply_too_large` substitution live here, off the interactive
-  path — and performs every blocking write. If the client stops
-  reading and the bounded queue fills, the connection is declared
-  dead and torn down — **the app is never backpressured by a slow
-  client**, and the `FreezeWatchdog` never sees IPC I/O.
+  path — and performs every blocking write to the current
+  controller. If the client stops reading and the bounded queue
+  fills, the connection is declared dead and torn down — **the app
+  is never backpressured by a slow client**, and the
+  `FreezeWatchdog` never sees IPC I/O.
 - **The main thread** is the only place commands execute. IPC-02
   changes the event loop to
   `EventLoop::<IpcWake>::with_user_event()` and implements
@@ -173,11 +198,29 @@ threads exist for the process lifetime:
   no-op (winit delivers one user event per `send_event`, but an
   earlier wake's drain may already have consumed requests enqueued
   just before a later wake was sent), execute each command via the
-  registry against
-  `InitState` (the same access `input_context()` gives an input
-  handler), enqueue replies, fall through to the normal
-  `about_to_wait` drain. The one type ripple: `handle_event`'s
-  `Event<()>` becomes `Event<IpcWake>`.
+  registry against `InitState` (the same access `input_context()`
+  gives an input handler), enqueue replies, and — the seam that
+  keeps the watched window and screenshots truthful — **request a
+  redraw whenever a command changed pixels**, then fall through to
+  the normal `about_to_wait` drain. The one type ripple:
+  `handle_event`'s `Event<()>` becomes `Event<IpcWake>`.
+
+**Pixels-affecting commands must request a redraw (and bump the
+render revision).** The existing winit handlers set
+`redraw_after = true` → `Window::request_redraw()` after any
+mutating input, because `about_to_wait`'s continuation check alone
+does *not* schedule a present for a one-shot change that leaves
+`needs_continuation()` false (a selection, a style write, a single
+zoom). The `user_event` drain mirrors that exactly: each command
+reports whether it touched pixels (document mutation *or* view /
+selection change), and the drain requests a redraw and advances the
+render revision (IPC-14's counter — a *render*-affecting revision,
+not merely a document one) if any did. Without this, an
+`act.action` zoom would update buffers that never present, and a
+following `clock.wait until=settled` + screenshot would capture the
+stale frame — the exact race `settled` exists to prevent. This is
+why `settled` (D7) keys on the presented render revision, not the
+document revision.
 
 **Why this is a §3 amendment and not a violation.** The covenant's
 purpose is that *app state has exactly one thread*: no interleaving,
@@ -202,16 +245,22 @@ mobile-budget ethos says idle apps sleep; long enough to be cheap
 latency, hundreds of times per session. Polling also still needs
 either a non-blocking accept/read on the main thread (I/O in the
 interactive path — a worse §3 breach than threads that touch
-nothing) or the same intake thread anyway. The proxy wake gives
+nothing) or the boundary reader thread anyway. The proxy wake gives
 zero idle cost *and* sub-millisecond dispatch latency; winit built
-`EventLoopProxy` for precisely this.
+`EventLoopProxy` for precisely this. (`WaitUntil` still earns its
+keep for the two *timer* cases — a pending `clock.wait` deadline and
+an active recording's frame cadence — where the loop must wake at a
+known instant, not on socket readiness.)
 
-**Rejected: one thread with a poll(2)/mio readiness loop.** Fewer
-threads on paper, but it trades two dumb blocking loops for a
-hand-rolled readiness state machine with partial-write buffering —
-more code, more failure modes, identical covenant surface. Two
-threads whose entire body is "blocking call, forward, repeat" is
-the most auditable shape this boundary can have.
+**Rejected: one thread with a poll(2)/mio readiness loop.** Folding
+accept + read + write onto one multiplexed thread is fewer threads
+on paper, but it trades dumb blocking loops for a hand-rolled
+readiness state machine with partial-write buffering — more code,
+more failure modes, identical covenant surface. Threads whose
+entire body is "blocking call, forward, repeat" are the most
+auditable shape this boundary can have; the single-controller
+promise (D-transport) is exactly why accept and read are *separate*
+blocking loops rather than one.
 
 **Watchdog interplay (pinned invariants).** `user_event` ticks
 `unparked()` on entry like every handler, so a command that wedges
@@ -419,23 +468,52 @@ shapes without waiting.
   (`<path>.geometry.json`), not baked into the image — agents
   hit-test by arithmetic, humans view clean PNGs, and the sidecar
   schema can grow keys additively.
+- **Bounded before allocating / running.** A malformed agent frame
+  must degrade, not detonate: `capture.*` clamps each side to
+  `1..=16384` and the pixel budget (`w × h × scale²`) to 64 Mpx —
+  an offscreen texture is a real GPU allocation — and `clock.step`
+  clamps `frames`/`ms` per call (`≤ 100_000` / one virtual hour)
+  because its heartbeats run synchronously on the main thread and an
+  unbounded step would trip the `FreezeWatchdog`. Over-bound
+  requests are `invalid_params`; clients chunk. Exact numbers:
+  `format/ipc.md` §capture / §clock.
 - **Recording emits frames + manifest; assembly is external.**
   GIF/video encoding in-app would drag an encoder dependency into
   the render path for a job `ffmpeg`/`gifski` do better; the
   `manifest.json` (with per-frame `t_ms` on the capture clock) is
   the contract between IPC-08's recorder and IPC-13's assembly
-  skill. `t_ms` under an active virtual clock yields perfectly
-  paced sequences — the IPC-08 ↔ IPC-09 interlock EPIC #60 warns
-  about is confined to that one field's semantics.
+  skill. An **active recording is a continuation/timer source** —
+  on a static scene the loop would park and capture nothing, so
+  while recording it parks in `WaitUntil(next frame deadline)` at
+  the requested `fps` (under the virtual clock, `clock.step` drives
+  frames instead). `t_ms` under an active virtual clock yields
+  perfectly paced sequences — the IPC-08 ↔ IPC-09 interlock EPIC
+  #60 warns about is confined to that one field's semantics.
+- **`act.console` reads a typed result, not a live scrollback.**
+  `execute_console_line` today returns `()` and pushes verb output
+  into a `ConsoleState` scrollback that only exists when the modal
+  is `Open`. IPC must not fake an open modal to scrape it; IPC-03
+  extracts the parse-and-execute core to return the `ExecResult`
+  the command already produces (`Ok`/`Lines`/`Err`), which the
+  modal path keeps rendering to scrollback and IPC reads directly.
+  Threading the result out is sanctioned §2 seam work; pinned in
+  `format/ipc.md` §act so IPC-03 doesn't improvise a UI-scraping
+  path.
 - **`clock.wait` is a deferred reply** evaluated at heartbeat
   boundaries and at its deadline (D2/D3), with two conditions only:
-  `animations_complete` and `settled`. **`settled`** is defined
-  against the per-frame `drain_frame` heartbeat and means "the
+  `animations_complete` and `settled`. **`settled`** means "the
   pixels on screen are the final consequence of everything sent so
-  far": `needs_continuation()` false, IPC input queue empty, and a
-  frame presented at the current document revision (the IPC-14
-  counter arbitrates; if wave order ever runs IPC-09 first, IPC-09
-  carries the trivial counter field itself).
+  far" and keys on a **render revision**, not the document
+  revision: `needs_continuation()` false, IPC input queue empty, no
+  redraw pending, and the presented frame carries the current
+  render revision — the counter that advances on *every*
+  pixels-affecting command, view-only ones (zoom, pan, selection)
+  included. Keying on the document revision alone would resolve
+  `settled` before a view-only repaint presented, because those
+  commands don't mutate the document (this is why D2 has the IPC
+  drain request a redraw and bump the render revision per
+  pixels-affecting command). IPC-14 owns the counter; if wave order
+  runs IPC-09 first, IPC-09 carries the field itself.
   `MindMapDocument.dirty` deliberately plays no role: despite the
   name it is the *unsaved-changes* flag — set by document setters,
   cleared only at construction and on `save`, read by `open`'s
@@ -508,12 +586,12 @@ design takes no dependency on that decision in either direction.
 
 Documents moved by this design, in the same PR that pinned it:
 
-- **CODE_CONVENTIONS §3** — the sanctioned IPC boundary: two named
-  I/O threads, `std::sync::mpsc` carrying protocol values only,
-  proxy wake, main-thread-only command execution, no blocking IPC
-  I/O on the main thread. The covenant's scope line ("in
-  interactive paths") now has its second sanctioned boundary case
-  after the watchdog.
+- **CODE_CONVENTIONS §3** — the sanctioned IPC boundary: named
+  boundary threads (acceptor + per-controller reader + outbound),
+  `std::sync::mpsc` carrying protocol values only, proxy wake,
+  main-thread-only command execution, no blocking IPC I/O on the
+  main thread. The covenant's scope line ("in interactive paths")
+  now has its second sanctioned boundary case after the watchdog.
 - **CLAUDE.md "Dual-target status"** — section created (it was
   referenced by §4, CONCEPTS §1, and `freeze_watchdog.rs` but never
   existed); IPC carve-out entry added; existing documented

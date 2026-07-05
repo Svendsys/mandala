@@ -41,24 +41,36 @@ mandala maps/testament.mindmap.json --ipc /run/user/1000/mandala.sock
   the process lifetime.
 - **Startup, not runtime.** Bind failures are startup errors per
   CODE_CONVENTIONS §9: fail with `expect("<reason>")`, never limp
-  along with IPC silently missing. A stale socket file (bind fails,
-  a probe `connect` is refused) is unlinked and re-bound; a *live*
-  socket (probe connect succeeds) means another instance owns the
-  path and startup fails with a message saying so.
+  along with IPC silently missing.
+- **Stale-socket self-heal is type-gated — never a blind unlink.**
+  When bind fails because the path already exists, the server
+  unlinks and re-binds **only** after confirming, by `stat`, that
+  the existing path is a Unix socket (`S_ISSOCK`) owned by the
+  current user *and* that a probe `connect` to it is refused (no
+  live listener). Any other existing path — a regular file, a FIFO,
+  a directory, a socket owned by someone else, or a socket with a
+  live listener — is left untouched and startup fails with a message
+  naming the path. A typo'd `--ipc ~/thesis.txt` must fail loudly,
+  never delete the file.
 - The socket file is unlinked on graceful exit. After an unclean
-  exit the stale-socket probe above makes the next launch self-heal.
+  exit the type-gated probe above makes the next launch self-heal.
 
 ### Ownership and permissions
 
 The socket is as security-sensitive as `~/.config/mandala/macros.json`
 (see [Trust model](#trust-model)). The server creates it with
-owner-only permissions (`0600`, in a directory the user owns) and
-refuses to bind when the parent directory is world-writable without
-the sticky bit — a mechanically checkable predicate. A sticky-bit
-world-writable parent (e.g. `/tmp`) is accepted but second-best;
-the recommended location is `$XDG_RUNTIME_DIR` (already `0700` on
-every mainstream distro). Never a TCP port: filesystem permissions
-are the access-control mechanism.
+owner-only permissions (`0600`, in a directory the user owns). The
+`0600` mode protects the socket's *bytes*, but the socket's *name*
+is only as trustworthy as its parent directory — a directory another
+user can write to lets them unlink or replace the path while Mandala
+runs. So the server refuses to bind when the parent directory is
+writable by anyone but the owner (group- **or** world-writable)
+without the sticky bit — one mechanically checkable predicate
+covering both. A sticky-bit shared directory (e.g. `/tmp`) is
+accepted but second-best; the recommended location is
+`$XDG_RUNTIME_DIR` (already `0700` on every mainstream distro).
+Never a TCP port: filesystem permissions are the access-control
+mechanism.
 
 ### Single controller
 
@@ -67,10 +79,13 @@ Exactly **one client** is served at a time.
 - The first connection becomes the controller.
 - While a controller is connected, additional connections receive a
   single frame `{"event":"connection_rejected","data":{"reason":"busy"}}`
-  and are closed. No queueing, no arbitration — two agents dragging
-  the same node concurrently is not a coherent workflow, and an
-  arbitration layer would be complexity with no named consumer
-  (CODE_CONVENTIONS §7).
+  and are closed **immediately** — a dedicated acceptor keeps calling
+  `accept()` regardless of controller state, so a second agent learns
+  it's busy at once rather than blocking in the OS backlog until the
+  controller disconnects (mechanism: `work_plans/LLM_IPC.md` §D2). No
+  queueing, no arbitration — two agents dragging the same node
+  concurrently is not a coherent workflow, and an arbitration layer
+  would be complexity with no named consumer (CODE_CONVENTIONS §7).
 - When the controller disconnects (EOF, error, teardown), the
   listener accepts the next connection. **No session state survives
   a disconnect**: event subscriptions reset, pending `clock.wait`s
@@ -156,12 +171,26 @@ Three frame shapes exist on the wire: **requests** (client → server),
 |---|---|---|
 | `id` | string or integer | Required. Client-chosen, echoed verbatim on the reply, ≤ 256 bytes serialized (a longer id is answered `invalid_params` with `"id": null` — the oversized value is not echoed). The server treats it as opaque and does not deduplicate — reusing an in-flight id is the client's own confusion. |
 | `cmd` | string | Required. A registered command name: `family.verb`, lowercase snake_case on both sides of the dot. Exactly two bootstrap commands are unnamespaced: `describe` and `ping`. |
-| *params* | — | Command parameters sit **flat at the top level** beside `id` and `cmd`. `id` and `cmd` are reserved words no command may use as a parameter name. Unknown parameters are rejected with `invalid_params` (strictness catches agent typos early; a tolerant server would silently ignore `regoin=`). |
+| *params* | — | Command parameters sit **flat at the top level** beside `id` and `cmd`. `id` and `cmd` are reserved words no command may use as a parameter name (see the rule below). Unknown parameters are rejected with `invalid_params` (strictness catches agent typos early; a tolerant server would silently ignore `regoin=`). |
 
 Flat parameters (rather than a nested `"params"` object) are a
 deliberate ergonomic choice for the primary consumer — an LLM
 composing frames by hand: one less nesting level to get right, and
 the common commands read as a sentence.
+
+**Reserved-word rule (load-bearing for the flat layout).** Because
+params share the top level with the envelope, no command may name a
+parameter `id` or `cmd`. Commands that genuinely need to *reference*
+a request id or a command name give the parameter a distinct name —
+`describe` filters on `command` (not `cmd`), `act.macro` targets a
+`macro_id` (not `id`), `input.touch` carries a `pointer_id` (not
+`id`). This is what keeps flat params unambiguous; the registry's
+compile-time parameter descriptors (see
+[Command registry](#command-registry-and-describe)) enforce it — a
+command declaring an `id` or `cmd` param fails to compile, so the
+collision can't reach the wire. (A nested `params` object would
+dodge the rule but cost every frame the nesting level flat params
+exist to save; the rule is the cheaper trade.)
 
 ### Reply
 
@@ -182,7 +211,7 @@ the common commands read as a sentence.
 | `result` | object | Command-specific payload. Present iff `ok:true`; `{}` when a command has nothing to say. |
 | `error` | object | `{"code", "message", "data"?}`. Present iff `ok:false`. See [Errors](#errors). |
 | `warnings` | array | Optional; omitted when empty. See [Warnings](#warnings--per-command-diagnostics). |
-| `revision` | integer | Reserved. Once IPC-14 lands, every reply carries the document revision observed after the command executed, so agents can order replies against `document_changed` events without an extra round-trip. Absent until then. |
+| `revision` | integer | Reserved. Once IPC-14 lands, every reply carries the render revision observed after the command executed (the pixels-affecting counter — see [`events`](#events--event-stream--revision-ipc-14)), so agents can order replies against change events without an extra round-trip. Absent until then. |
 
 Replies are **not guaranteed to arrive in request order**. Most
 commands reply immediately and in order, but deferred-reply commands
@@ -403,12 +432,16 @@ The full architecture is CODE_CONVENTIONS §3 (amended by IPC-01) and
   the same access an input handler has. IPC never races user input;
   a command observes a consistent document and its effects are
   ordered with respect to the user's own actions.
-- The socket is serviced by two dedicated I/O threads that never
-  touch app state, so the app never blocks on a slow client. The
-  cost of that protection: if a client stops reading long enough
-  for **256 outbound frames** to queue, the server declares the
-  client dead and drops the connection (reconnect and resubscribe;
-  see [Single controller](#single-controller)).
+- The socket is serviced by dedicated boundary threads that never
+  touch app state, so the app never blocks on a slow client. An
+  **acceptor** always waits on `accept()` — that is what lets a
+  second client get its `connection_rejected` *immediately* rather
+  than sitting in the OS backlog until the controller leaves (see
+  [Single controller](#single-controller)); a per-controller
+  **reader** parses inbound lines; an **outbound** writer serializes
+  replies and events. If a client stops reading long enough for
+  **256 outbound frames** to queue, the server declares the client
+  dead and drops the connection (reconnect and resubscribe).
 - More than **1024 queued unexecuted requests** answers further
   requests with `overloaded` until the queue drains.
 - A wedged main loop (the `FreezeWatchdog` scenario) also wedges
@@ -432,15 +465,19 @@ Registration is **self-describing by construction**: a command's
 registry entry carries its name, summary, parameter descriptors
 (name / type / required / doc) and result descriptors, and the
 constructor requires them — a command without documentation does not
-compile. `describe` renders the table:
+compile. The same constructor rejects a parameter named `id` or
+`cmd` (the [reserved-word rule](#request)), so an envelope collision
+is a compile error, never a wire ambiguity. `describe` renders the
+table:
 
 ### `describe`
 
-Params: `cmd` (string, optional — describe one command instead of
-everything).
+Params: `command` (string, optional — describe just this one command
+instead of the whole table; named `command`, not `cmd`, per the
+reserved-word rule).
 
 ```jsonc
-{"id": 1, "cmd": "describe"}
+{"id": 1, "cmd": "describe", "command": "clock.step"}
 ```
 
 ```jsonc
@@ -519,18 +556,32 @@ performed by hand.
   `{"outcome": "handled" | "unhandled"}` (`unhandled` = the action
   didn't apply in the current context, e.g. a `Console*` action with
   the console closed — same semantics as `DispatchOutcome`).
-- **`act.console`** — params: `line` (string). Routes through
-  `execute_console_line` — the same parse → execute → drain-effects
-  path the console modal uses, **without** opening the modal.
-  Result: `{"output": ["<line>", …]}` mirroring the verb's
-  scrollback output (`ExecResult::Ok`/`Lines`); any console-layer
-  rejection — an unknown verb at the parse layer or a verb-reported
-  failure (`ExecResult::Err`) — is `ok:false` with code
-  `console_error` carrying the console's own message; a blank line
-  is `ok:true` with empty `output`.
-- **`act.macro`** — params: `id` (string). Routes through
+- **`act.console`** — params: `line` (string). Runs a console verb
+  through the same parse → execute → drain-effects path the console
+  modal uses, **without** opening the modal. Result:
+  `{"output": ["<line>", …]}` carrying the verb's result lines; an
+  unknown verb at the parse layer or a verb-reported failure is
+  `ok:false`, code `console_error`, with the console's own message;
+  a blank line is `ok:true` with empty `output`.
+
+  **Result path (IPC-03 seam, pinned so it isn't improvised).**
+  Today `execute_console_line` returns `()` and pushes verb output
+  into a live `ConsoleState` scrollback (`push_scrollback_*`), which
+  only exists when the modal is `Open`. IPC must **not** fabricate a
+  fake open modal to scrape it. Instead IPC-03 captures the typed
+  `ExecResult` the command already produces — `(cmd.execute)(&args,
+  &mut effects)` returns `ExecResult::{Ok, Err, Lines}` at
+  `console_input/exec.rs` before it is folded into scrollback — by
+  extracting the parse-and-execute core to return that value (the
+  modal path keeps its scrollback rendering; IPC reads the result
+  directly). Mapping: `Ok`/`Lines` → `output`; the parser's
+  `Unknown` and a verb `Err` → `console_error`. Threading the
+  result out instead of through the UI is sanctioned §2 seam work,
+  not a parallel path.
+- **`act.macro`** — params: `macro_id` (string — named `macro_id`,
+  not `id`, per the [reserved-word rule](#request)). Routes through
   `dispatch_macro` under the macro's own loader-pinned tier (see
-  [Trust model](#trust-model)). Unknown id is `not_found`. Result:
+  [Trust model](#trust-model)). Unknown macro is `not_found`. Result:
   `{"ran": <bool>}` (the dispatcher's any-step-executed flag);
   privilege-gate aborts surface as `macro_gate_rejected` warnings.
 
@@ -567,7 +618,9 @@ are not discrete Actions: drags, hovers, modal typing, IME-ish text.
 `input.wheel` (`dy`, optional position), `input.key` (logical key +
 modifiers, press/release), `input.text` (string, delivered to the
 open modal editor as typed characters), `input.touch` (`phase`,
-`id`, `x`, `y` — the recognizer's vocabulary). The fidelity contract:
+`pointer_id`, `x`, `y` — the recognizer's vocabulary; the finger
+identifier is `pointer_id`, not `id`, per the
+[reserved-word rule](#request)). The fidelity contract:
 these enter **the same handler entry points** winit events enter, so
 selection state machines, drag thresholds, double-click timing, and
 modal steals behave byte-for-byte as with real input. Field-level
@@ -587,7 +640,7 @@ IPC-10) no display at all.
 | param | type | default | meaning |
 |---|---|---|---|
 | `path` | string | server-chosen file in a per-session artifacts dir | Absolute path for the PNG. Parent dir must exist. |
-| `width`, `height` | integer | current surface size | Offscreen target size in physical pixels; camera center/zoom preserved, aspect follows the target. |
+| `width`, `height` | integer | current surface size | Offscreen target size in physical pixels; camera center/zoom preserved, aspect follows the target. Each side is clamped to `1..=16384`, and `width × height × scale²` must not exceed **67,108,864** device pixels (64 Mpx, ~8K square); a request over either bound is `invalid_params`, never a best-effort giant allocation (degrade-don't-crash — an offscreen texture is a real GPU allocation). |
 | `region` | object | — | `{"x","y","w","h"}` in the `space` coordinate space: frame this rect instead of the current camera view. `width`/`height` still set the target resolution; the aspect rule below governs mismatches. |
 | `space` | string | `"canvas"` | Coordinate space of `region`: `"canvas"` (default) or `"surface"` (converted through the camera as of capture time). Ignored without `region`. |
 | `scale` | number | `1.0` | Supersampling factor, clamped to `0.1..=4.0`. |
@@ -646,6 +699,17 @@ An in-flight recording is **app state, not session state**: it
 keeps capturing across a client disconnect, and a reconnecting
 controller stops it with `capture.record_stop`.
 
+An active recording is a **continuation/timer source**: on an
+otherwise static scene the loop would park in `ControlFlow::Wait`
+and no heartbeat would fire, so nothing would be captured until an
+unrelated event woke it. While a recording runs, the loop instead
+parks in `WaitUntil(next frame deadline)` (`now + 1000/fps` ms) —
+the same idle-timer shape the FPS grace already uses — so frames
+land at the requested cadence with the canvas idle. Under
+`clock.set_mode virtual` the recording is instead driven frame-exact
+by `clock.step` and installs no wall-clock timer (the interplay
+IPC-08 owns against IPC-09).
+
 `capture.record_stop` params: none. Result: `{"dir", "frames",
 "manifest_path", "dropped_frames"}`.
 
@@ -676,8 +740,14 @@ settling primitive every capture workflow needs.
 - **`clock.step`** — params: exactly one of `ms` (integer) or
   `frames` (integer) — neither, or both, is `invalid_params`:
   advance virtual time and run heartbeats until caught up. Error
-  `invalid_params` in real mode. Result: `{"now_ms",
-  "frames_run"}`.
+  `invalid_params` in real mode. **Bounded per call** so one frame
+  can't monopolize the main thread and trip the `FreezeWatchdog`:
+  `frames` is clamped to `1..=100_000` and `ms` to
+  `1..=3_600_000` (one virtual hour); a value over the bound is
+  `invalid_params` (the client chunks large advances into successive
+  steps). The heartbeats run synchronously — the step's whole point
+  is deterministic catch-up — but the ceiling keeps that run
+  watchdog-safe. Result: `{"now_ms", "frames_run"}`.
 - **`clock.wait`** — params: `until` (`"settled"` /
   `"animations_complete"`), `timeout_ms` (integer, default
   `10_000`, clamped `1..=60_000`; always **wall-clock**
@@ -699,17 +769,32 @@ heartbeat (CONCEPTS §5 "Event loop and `drain_frame`"):
 
 - **`animations_complete`** — `MindMapDocument` reports no active
   animations.
-- **`settled`** — at an evaluation point: `needs_continuation()`
-  is false (no throttled drag pending, no picker-hover pending, no
-  active animations, no dirty connection geometry), no IPC-injected
-  input remains queued, and the renderer has presented a frame at
-  the current document revision (the IPC-14 revision counter is the
-  arbiter — the presented-vs-current comparison is what proves the
-  last rebuild and render landed; if the epic's wave order ever
-  runs IPC-09 first, IPC-09 carries the trivial counter field
-  forward itself). In plain terms: **the pixels on screen are the
-  final consequence of everything sent so far**, and screenshotting
-  now is race-free.
+- **`settled`** — at an evaluation point, all of: (a)
+  `needs_continuation()` is false (no throttled drag pending, no
+  picker-hover pending, no active animations, no dirty connection
+  geometry); (b) no IPC-injected input remains queued; (c) **no
+  redraw is pending** — every pixels-affecting command has requested
+  its redraw and none is outstanding; and (d) the renderer has
+  **presented** the frame reflecting the most recent pixels-affecting
+  command. In plain terms: **the pixels on screen are the final
+  consequence of everything sent so far**, and screenshotting now is
+  race-free.
+
+  **The arbiter is a render revision, not the document revision.**
+  The naive "presented at the current *document* revision" is
+  insufficient: view-only commands — a wheel zoom, an `act.action`
+  pan, a selection-highlight change — repaint without mutating the
+  document, so a stale pre-command frame would already match the
+  document revision and `settled` would resolve before the repaint
+  presents. The counter that gates `settled` therefore advances on
+  **every pixels-affecting command** (document mutation *or*
+  view/selection change), and each such command **requests a redraw**
+  (see [`work_plans/LLM_IPC.md`](../work_plans/LLM_IPC.md) §D2 — the
+  IPC drain mirrors the existing winit handlers' `request_redraw`
+  exactly). `settled` holds only once the presented frame carries
+  that render revision. IPC-14 introduces the counter as a
+  render-affecting revision for this reason; if wave order runs
+  IPC-09 first, IPC-09 carries the field forward itself.
 
   `MindMapDocument.dirty` deliberately plays no role here: despite
   the name it is the *unsaved-changes* flag — set by every document
@@ -730,8 +815,12 @@ that observes behavior and must not become observable behavior.
 Push notifications, opt-in per class: `events.subscribe`
 (`classes`: array of class names), `events.unsubscribe` (`classes`
 optional — omit for all), `events.revision` (result:
-`{"revision"}` — the monotonic document revision counter IPC-14
-introduces; also surfaces as the reply-envelope `revision` key).
+`{"revision"}` — the monotonic revision counter IPC-14 introduces;
+also surfaces as the reply-envelope `revision` key). The counter
+advances on every **pixels-affecting** change — document mutations
+and view/selection changes alike — so it doubles as the `settled`
+arbiter (see `clock.wait`); a change that repaints without touching
+the document still bumps it.
 
 Reserved event classes at pin time: `hello`, `shutdown`,
 `connection_rejected` (the three transport-level classes, never

@@ -103,19 +103,22 @@ decision, not a drive-by edit.
   - The native `FreezeWatchdog`
     (`src/application/app/freeze_watchdog.rs`) — reads a liveness
     atomic, never touches app state.
-  - The IPC boundary pair (design: `work_plans/LLM_IPC.md` §D2,
+  - The IPC boundary threads (design: `work_plans/LLM_IPC.md` §D2,
     protocol: `format/ipc.md`; lands with IPC-02). When `--ipc` is
-    active: one intake thread (blocking socket read → parse →
-    enqueue → wake the loop via a winit `EventLoopProxy` user
-    event) and one outbound thread (dequeue → serialize → blocking
-    write). Both see only protocol value types; every IPC command
-    executes on the main thread in the `user_event` arm with the
-    same access as any input handler. The `std::sync::mpsc` queues
-    at this boundary carry serialized protocol values only — they
-    are not a license for channels between app components — and
-    blocking IPC I/O on the main thread stays forbidden: a stalled
-    client must never trip the `FreezeWatchdog`; the bounded
-    outbound queue tears the connection down instead.
+    active: an acceptor thread (always `accept()`ing, so a second
+    client is rejected immediately), a per-controller reader thread
+    (blocking read → parse → enqueue → wake the loop via a winit
+    `EventLoopProxy` user event), and an outbound thread (dequeue →
+    serialize → blocking write). All see only protocol value types;
+    every IPC command executes on the main thread in the
+    `user_event` arm with the same access as any input handler, and
+    a command that changes pixels requests a redraw just as the
+    winit input handlers do. The `std::sync::mpsc` queues at this
+    boundary carry protocol values only — they are not a license for
+    channels between app components — and blocking IPC I/O on the
+    main thread stays forbidden: a stalled client must never trip
+    the `FreezeWatchdog`; the bounded outbound queue tears the
+    connection down instead.
 - **Model / view separation.** `MindMapDocument` owns the data model;
   `Renderer` owns GPU resources. The renderer reads intermediate
   representations (`Tree<GfxElement, GfxMutator>`, `RenderScene`). The
