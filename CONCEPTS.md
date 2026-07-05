@@ -85,9 +85,12 @@ goes where", not "add a new pipeline".
 
 `Application` owns the `Renderer` directly. No channels, no worker
 threads, no `tokio`, no `std::thread::spawn` in any interactive
-path. The one sanctioned exception is the native
+path. The one sanctioned exception running today is the native
 [`FreezeWatchdog`](#freezewatchdog) thread, which only *reads* an
-`AtomicU64` ping. Lock scopes stay trivial because of this.
+`AtomicU64` ping; CODE_CONVENTIONS §3 additionally sanctions the
+IPC boundary thread pair (design: `work_plans/LLM_IPC.md`; lands
+with IPC-02), which moves protocol bytes and never touches app
+state. Lock scopes stay trivial because of this.
 
 ### Model / view separation
 

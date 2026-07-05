@@ -54,6 +54,33 @@ borders, connection paths — is laid out as positioned font glyphs.
 - **`src/application/`** — the app shell: event loop, document state,
   rendering pipeline, and input handling.
 
+## Dual-target status
+
+Native desktop and the browser build are first-class peers
+(CODE_CONVENTIONS §4). This section is the live registry of
+sanctioned native-only carve-outs; each entry names the reason and
+the parity trajectory (or why none is owed):
+
+- **IPC** (`--ipc`, `src/application/ipc/`) — native-only by
+  transport nature: browsers cannot serve local sockets, and the
+  consumer is an agent driving a desktop/Xvfb instance. Protocol:
+  `format/ipc.md`; design: `work_plans/LLM_IPC.md`. The browser
+  trajectory (WebSocket transport + browser-side capture, same
+  envelope and commands) is parked in IPC-15 (#75).
+- **Console modal shell** (`src/application/console/`) — the modal
+  UI is native-gated; the verb implementations are cross-platform.
+  Parity is the named next step in CONCEPTS §6 "Console", not yet
+  scheduled.
+- **FreezeWatchdog** (`src/application/app/freeze_watchdog.rs`) —
+  native-only by design: browsers ship their own unresponsive-tab
+  dialog; no parity owed.
+- **Clipboard OS layer** (`src/application/clipboard.rs`) — native
+  is backed by `arboard`; WASM is stubbed pending async-clipboard
+  integration (CONCEPTS §6 "Clipboard").
+- **`fps` console verb** — native because the console shell is; the
+  render-side FPS plumbing compiles on both targets and browsers
+  expose frame timing via DevTools (CONCEPTS §5 "FPS overlay").
+
 ## Common tasks
 
 - **Run tests**: `./test.sh` runs the full suite across both crates,

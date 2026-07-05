@@ -35,7 +35,11 @@ precedence (later writers override earlier ones with the same `id`):
           so Inline's higher precedence wins on id collision.
        4. src/application/macros/loader.rs — the parse_*_macros /
           rebuild_*_macros helpers themselves.
-     Update all five in the same commit. -->
+       5. format/ipc.md §"Trust model" + work_plans/LLM_IPC.md §D4
+          — the IPC surface is pinned to the User tier (it is
+          deliberately NOT a tier of its own); adding or reordering
+          tiers must re-evaluate that mapping.
+     Update all six in the same commit. -->
 
 1. **Application bundle** — `assets/macros/application.json`,
    compiled into the binary via `include_str!`. Lowest precedence so
@@ -118,6 +122,13 @@ rest of the macro on a rejected step so a hostile pattern like
 sneak its outer steps past the gate. Honest mistakes (unbound
 action, no document loaded) keep the existing best-effort
 `continue` semantic.
+
+**IPC is not a tier.** Commands arriving over the `--ipc` socket
+([`format/ipc.md`](./ipc.md)) execute at `User` posture — the user
+owns the flag exactly as they own this file. Macros fired *via* IPC
+(`act.macro`) keep their own loader-pinned tier: IPC initiates, it
+never escalates, and the fail-closed gates above run unchanged.
+Rationale: `work_plans/LLM_IPC.md` §D4.
 
 ### Threat model
 
