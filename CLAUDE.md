@@ -61,16 +61,18 @@ Native desktop and the browser build are first-class peers
 sanctioned native-only carve-outs; each entry names the reason and
 the parity trajectory (or why none is owed):
 
-- **IPC** (`--ipc`, `src/application/ipc/`) — native-only by
-  transport nature: browsers cannot serve local sockets, and the
-  consumer is an agent driving a desktop/Xvfb instance. Protocol:
-  `format/ipc.md`; design: `work_plans/LLM_IPC.md`. The browser
-  trajectory (WebSocket transport + browser-side capture, same
-  envelope and commands) is parked in IPC-15 (#75).
-- **Console modal shell** (`src/application/console/`) — the modal
-  UI is native-gated; the verb implementations are cross-platform.
-  Parity is the named next step in CONCEPTS §6 "Console", not yet
-  scheduled.
+- **IPC** (`--ipc`, `src/application/ipc/`; lands with IPC-02/#62)
+  — native-only by transport nature: browsers cannot serve local
+  sockets, and the consumer is an agent driving a desktop/Xvfb
+  instance. Protocol: `format/ipc.md`; design:
+  `work_plans/LLM_IPC.md`. The browser trajectory (WebSocket
+  transport + browser-side capture, same envelope and commands) is
+  parked in IPC-15 (#75).
+- **Console modal shell** (`src/application/app/console_input/`) —
+  the modal shell and its exec path are native-gated; the
+  verb/parser layer (`src/application/console/`) is
+  cross-platform. Parity is the named next step in CONCEPTS §6
+  "Console", not yet scheduled.
 - **FreezeWatchdog** (`src/application/app/freeze_watchdog.rs`) —
   native-only by design: browsers ship their own unresponsive-tab
   dialog; no parity owed.

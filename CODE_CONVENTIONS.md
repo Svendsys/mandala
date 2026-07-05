@@ -175,8 +175,8 @@ decision, not a drive-by edit.
   mutates document state or changes view state — must go through the
   funnel.
 
-  **Macro-tier privilege gates are mandatory before non-user tiers
-  ship.** Macros loaded from `~/.config/mandala/macros.json` share
+  **Macro-tier privilege gates are mandatory.** Macros loaded from
+  `~/.config/mandala/macros.json` share
   trust posture with `keybinds.json` — the user owns the file. The
   dispatcher gates two things on `MacroSource`:
   - `MacroStep::ConsoleLine` runs an arbitrary console verb, so it's
@@ -189,9 +189,9 @@ decision, not a drive-by edit.
   Privilege rejections **fail-closed** — the rest of the macro
   aborts so a `[DeleteSelection, ConsoleLine(rejected),
   SaveDocument]` pattern can't sneak its outer steps past the gate.
-  Today only the User tier loads, so the gates are dormant; they
-  MUST hold before app-bundle / map-inline / node-inline tiers
-  ship.
+  All four tiers load today, so the gates are fully active; they
+  MUST hold as new dispatch surfaces are added (IPC included —
+  `format/ipc.md` §"Trust model").
 
   `DocumentAction` (carried by `MacroStep::CustomMutation`) is
   `#[non_exhaustive]`. Today every variant is a pure in-memory

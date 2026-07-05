@@ -22,7 +22,7 @@ Four loader tiers contribute to the active registry, in ascending
 precedence (later writers override earlier ones with the same `id`):
 
 <!-- SOURCE-OF-TRUTH: the tier order below is also encoded in
-     four other places that must move together when the order or
+     five other places that must move together when the order or
      set of tiers changes:
        1. src/application/macros/mod.rs — MacroSource enum variant
           order.

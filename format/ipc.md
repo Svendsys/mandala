@@ -53,9 +53,9 @@ mandala maps/testament.mindmap.json --ipc /run/user/1000/mandala.sock
 The socket is as security-sensitive as `~/.config/mandala/macros.json`
 (see [Trust model](#trust-model)). The server creates it with
 owner-only permissions (`0600`, in a directory the user owns) and
-refuses to bind a path whose parent directory is world-writable
-(e.g. bare `/tmp`) unless it is sticky-bit-protected and the final
-path component is unpredictable enough for the user's threat model —
+refuses to bind when the parent directory is world-writable without
+the sticky bit — a mechanically checkable predicate. A sticky-bit
+world-writable parent (e.g. `/tmp`) is accepted but second-best;
 the recommended location is `$XDG_RUNTIME_DIR` (already `0700` on
 every mainstream distro). Never a TCP port: filesystem permissions
 are the access-control mechanism.
@@ -74,8 +74,10 @@ Exactly **one client** is served at a time.
 - When the controller disconnects (EOF, error, teardown), the
   listener accepts the next connection. **No session state survives
   a disconnect**: event subscriptions reset, pending `clock.wait`s
-  are canceled, undelivered frames are discarded. A reconnecting
-  client starts from the `hello` greeting like any fresh client.
+  are canceled, undelivered frames are discarded. (An in-flight
+  recording is app state, not session state — see
+  `capture.record_start`.) A reconnecting client starts from the
+  `hello` greeting like any fresh client.
 
 Attach-after-launch and re-attach are first-class: the intended
 workflow is a human launching (or already running) the app and an
@@ -94,10 +96,13 @@ consent dialogs. Everything above and below the byte stream is
 identical — framing, envelope, and commands are transport-agnostic.
 
 IPC-02 ships the Unix transport; the named-pipe adapter is a
-self-contained follow-up inside the same transport module. Until it
-lands, `--ipc` on a Windows build fails at startup with a message
-pointing at this section (honest fail-fast per §9/§10 — no silent
-no-op of a user-requested feature).
+self-contained follow-up inside the same transport module, **owned
+by IPC-02 (#62)**: it lands there if a Windows environment is
+available when IPC-02 does, and otherwise filing the tracked
+follow-up issue is part of IPC-02's acceptance. Until it lands,
+`--ipc` on a Windows build fails at startup with a message pointing
+at this section (honest fail-fast per §9/§10 — no silent no-op of a
+user-requested feature).
 
 ### WASM
 
@@ -149,7 +154,7 @@ Three frame shapes exist on the wire: **requests** (client → server),
 
 | key | type | notes |
 |---|---|---|
-| `id` | string or integer | Required. Client-chosen, echoed verbatim on the reply, ≤ 256 bytes serialized. The server treats it as opaque and does not deduplicate — reusing an in-flight id is the client's own confusion. |
+| `id` | string or integer | Required. Client-chosen, echoed verbatim on the reply, ≤ 256 bytes serialized (a longer id is answered `invalid_params` with `"id": null` — the oversized value is not echoed). The server treats it as opaque and does not deduplicate — reusing an in-flight id is the client's own confusion. |
 | `cmd` | string | Required. A registered command name: `family.verb`, lowercase snake_case on both sides of the dot. Exactly two bootstrap commands are unnamespaced: `describe` and `ping`. |
 | *params* | — | Command parameters sit **flat at the top level** beside `id` and `cmd`. `id` and `cmd` are reserved words no command may use as a parameter name. Unknown parameters are rejected with `invalid_params` (strictness catches agent typos early; a tolerant server would silently ignore `regoin=`). |
 
@@ -183,9 +188,14 @@ Replies are **not guaranteed to arrive in request order**. Most
 commands reply immediately and in order, but deferred-reply commands
 (`clock.wait`, and any future long-running command) reply when their
 condition resolves while later requests keep executing. Correlate by
-`id`, always — a client that assumes ordering will break the moment
-it pipelines `clock.wait` + `capture.screenshot`, which is the
-canonical agent sequence.
+`id`, always. The corollary: a pending deferred reply is **not a
+barrier** — a request sent while a `clock.wait` is pending executes
+immediately, against whatever state it finds. A command that must
+observe the settled state (the canonical mutate → `clock.wait` →
+`capture.screenshot` sequence) is sent **after** the wait's reply
+arrives; that round-trip is the synchronization point. Pipelining
+the screenshot behind a still-pending wait reintroduces exactly the
+race the wait exists to prevent.
 
 ### Event
 
@@ -198,9 +208,11 @@ canonical agent sequence.
 | `event` | string | Event class name, snake_case. |
 | `data` | object | Class-specific payload; always present, `{}` allowed. |
 
-Events are opt-in via `events.subscribe` (IPC-14), with two
-exceptions that are always delivered: `hello` and `shutdown`.
-Reserved classes are listed under
+Events are opt-in via `events.subscribe` (IPC-14). Three classes
+are transport-level and never subscription-gated: `hello` and
+`shutdown` always go to the controller; `connection_rejected` goes
+to a refused connection instead of any reply. Reserved classes are
+listed under
 [`events` — event stream + revision](#events--event-stream--revision-ipc-14).
 
 ### Handshake and versioning
@@ -233,9 +245,10 @@ On accept, before reading anything, the server greets:
   honest by unit tests asserting the registry matches the documented
   surface; the IPC-16 sweep re-verifies before the epic closes.
 
-On graceful shutdown (window close, `quit`), the server best-effort
-sends `{"event":"shutdown","data":{}}` before closing the socket, so
-agents can distinguish "app exited" from "connection died".
+On graceful shutdown (window close — the only quit path today), the
+server best-effort sends `{"event":"shutdown","data":{}}` before
+closing the socket, so agents can distinguish "app exited" from
+"connection died".
 
 ### Errors
 
@@ -270,7 +283,7 @@ additions are non-breaking):
 | `reply_too_large` | Serialized reply exceeded 8 MiB; `data.hint` names the file-sidecar parameter. |
 | `no_document` | Command needs a loaded document and none is. |
 | `not_found` | A referenced entity (node id, macro id, mutation id) does not exist. |
-| `console_error` | `act.console` line parsed but the verb reported an error; `message` is the verb's own text. |
+| `console_error` | The console rejected the `act.console` line (unknown verb) or the verb reported an error; `message` is the console's own text. |
 | `timeout` | Deferred command hit its deadline (`clock.wait`). |
 | `internal` | The degrade-don't-crash catch-all: the command hit a state it could not honor; details in `message`. |
 
@@ -440,10 +453,10 @@ everything).
      "family": "clock",
      "summary": "Advance the virtual clock and run frames until caught up.",
      "params": [
-       {"name": "ms", "type": "integer", "required": true,
-        "doc": "Milliseconds of virtual time to advance."},
+       {"name": "ms", "type": "integer", "required": false,
+        "doc": "Virtual milliseconds to advance. Exactly one of ms / frames."},
        {"name": "frames", "type": "integer", "required": false,
-        "doc": "Exact heartbeat count to run instead of deriving from ms."}
+        "doc": "Exact heartbeat count to run. Exactly one of ms / frames."}
      ],
      "result": [
        {"name": "now_ms", "type": "number", "doc": "Virtual clock after the step."},
@@ -497,10 +510,12 @@ funnels**, never a parallel control path. Everything they do is
 undoable, gated, and behaviorally identical to the same operation
 performed by hand.
 
-- **`act.action`** — params: `action` (the serde JSON of an `Action`
-  variant, exactly as `format/macros.md` step objects carry it: a
-  string for unit variants — `"Undo"` — or an object for payload
-  variants). Routes through `dispatch_action`. Result:
+- **`act.action`** — params: `action` (the serde JSON of an
+  `Action` variant — the same externally-tagged representation
+  macro `Action` steps deserialize through: a string for unit
+  variants — `"Undo"` — and a `{"Variant": payload}` object for
+  payload-carrying variants; `format/macros.md`'s examples show
+  only the string form). Routes through `dispatch_action`. Result:
   `{"outcome": "handled" | "unhandled"}` (`unhandled` = the action
   didn't apply in the current context, e.g. a `Console*` action with
   the console closed — same semantics as `DispatchOutcome`).
@@ -508,9 +523,11 @@ performed by hand.
   `execute_console_line` — the same parse → execute → drain-effects
   path the console modal uses, **without** opening the modal.
   Result: `{"output": ["<line>", …]}` mirroring the verb's
-  scrollback output (`ExecResult::Ok`/`Lines`); a verb-reported
-  failure (`ExecResult::Err`) is `ok:false` with code
-  `console_error` and the verb's message.
+  scrollback output (`ExecResult::Ok`/`Lines`); any console-layer
+  rejection — an unknown verb at the parse layer or a verb-reported
+  failure (`ExecResult::Err`) — is `ok:false` with code
+  `console_error` carrying the console's own message; a blank line
+  is `ok:true` with empty `output`.
 - **`act.macro`** — params: `id` (string). Routes through
   `dispatch_macro` under the macro's own loader-pinned tier (see
   [Trust model](#trust-model)). Unknown id is `not_found`. Result:
@@ -571,13 +588,22 @@ IPC-10) no display at all.
 |---|---|---|---|
 | `path` | string | server-chosen file in a per-session artifacts dir | Absolute path for the PNG. Parent dir must exist. |
 | `width`, `height` | integer | current surface size | Offscreen target size in physical pixels; camera center/zoom preserved, aspect follows the target. |
-| `region` | object | — | `{"x","y","w","h"}` in `canvas` space (override with `space`): frame exactly this rect instead of the current camera view. `width`/`height` still set the target resolution; `region` only decides what the camera frames. |
+| `region` | object | — | `{"x","y","w","h"}` in the `space` coordinate space: frame this rect instead of the current camera view. `width`/`height` still set the target resolution; the aspect rule below governs mismatches. |
+| `space` | string | `"canvas"` | Coordinate space of `region`: `"canvas"` (default) or `"surface"` (converted through the camera as of capture time). Ignored without `region`. |
 | `scale` | number | `1.0` | Supersampling factor, clamped to `0.1..=4.0`. |
 | `format` | string | `"png"` | `"png"` is the only value at pin time; the param exists so adding one is non-breaking. |
 | `sidecar` | boolean | `true` | Write the geometry sidecar next to the PNG (`<path>.geometry.json`). |
 
 Result: `{"path", "sidecar_path"?, "width", "height"}` (plus
 `revision` at the envelope level once IPC-14 lands).
+
+**Aspect rule.** When `region`'s aspect ratio differs from the
+target's, the capture is **extended, never distorted or
+letterboxed**: the camera frames the smallest aspect-matching rect
+that contains `region`, center-preserved. Everything inside
+`region` is guaranteed visible, extra canvas may appear along one
+axis, and the pixel↔canvas mapping stays a single uniform zoom —
+so the sidecar's rect math remains trivially affine.
 
 **Geometry sidecar** — the pixels↔ids map that lets an agent point
 at what it sees:
@@ -613,7 +639,12 @@ starting while recording is `invalid_params`, stopping while idle is
 `fps` (integer, default `30`, clamped `1..=60`), `max_frames`
 (integer, default `600`, hard cap `3600` — the recorder stops itself
 and warns rather than filling a disk), plus `width`/`height`/
-`region`/`scale` exactly as `capture.screenshot`. Result: `{"dir"}`.
+`region`/`space`/`scale` exactly as `capture.screenshot`. Result:
+`{"dir"}`.
+
+An in-flight recording is **app state, not session state**: it
+keeps capturing across a client disconnect, and a reconnecting
+controller stops it with `capture.record_stop`.
 
 `capture.record_stop` params: none. Result: `{"dir", "frames",
 "manifest_path", "dropped_frames"}`.
@@ -642,34 +673,52 @@ settling primitive every capture workflow needs.
   In virtual mode the app-observed clock advances **only** via
   `clock.step`; animation and timing behavior becomes a pure
   function of the step sequence. Result: `{"mode", "now_ms"}`.
-- **`clock.step`** — params: `ms` (integer, required) or `frames`
-  (integer): advance virtual time and run heartbeats until caught
-  up. Error `invalid_params` in real mode. Result: `{"now_ms",
+- **`clock.step`** — params: exactly one of `ms` (integer) or
+  `frames` (integer) — neither, or both, is `invalid_params`:
+  advance virtual time and run heartbeats until caught up. Error
+  `invalid_params` in real mode. Result: `{"now_ms",
   "frames_run"}`.
 - **`clock.wait`** — params: `until` (`"settled"` /
   `"animations_complete"`), `timeout_ms` (integer, default
-  `10_000`, clamped `1..=60_000`). **Deferred reply**: evaluated at
-  the end of every heartbeat; other commands keep executing while a
-  wait is pending; a disconnect cancels it. On success:
-  `{"elapsed_ms"}`. On deadline: `ok:false`, code `timeout`,
-  `data.elapsed_ms`.
+  `10_000`, clamped `1..=60_000`; always **wall-clock**
+  milliseconds — the deadline is a client-liveness guard, so a
+  frozen virtual clock must not disable it). **Deferred reply**:
+  the condition is evaluated at the end of every heartbeat and at
+  the deadline; other commands keep executing while a wait is
+  pending; a disconnect cancels it; a pending wait is **not a
+  barrier** (see [Reply](#reply)). While a wait is pending and the
+  loop would otherwise park in `ControlFlow::Wait`, it parks in
+  `WaitUntil(nearest deadline)` instead — the FPS idle-grace
+  precedent already in `run_native.rs` — so a deadline fires even
+  when no heartbeat would otherwise run, without polling. On
+  success: `{"elapsed_ms"}`. On deadline: `ok:false`, code
+  `timeout`, `data.elapsed_ms`.
 
-Wait conditions, defined against the six-step `drain_frame`
+Wait conditions, defined against the per-frame `drain_frame`
 heartbeat (CONCEPTS §5 "Event loop and `drain_frame`"):
 
 - **`animations_complete`** — `MindMapDocument` reports no active
   animations.
-- **`settled`** — at a heartbeat boundary: `needs_continuation()`
+- **`settled`** — at an evaluation point: `needs_continuation()`
   is false (no throttled drag pending, no picker-hover pending, no
-  active animations, no dirty connection geometry), the document
-  `dirty` flag is clear (the scene rebuild ran), no IPC-injected
+  active animations, no dirty connection geometry), no IPC-injected
   input remains queued, and the renderer has presented a frame at
   the current document revision (the IPC-14 revision counter is the
-  arbiter; `clock.wait` consumes it, and if the epic's wave order
-  ever runs IPC-09 first, IPC-09 carries the trivial counter field
+  arbiter — the presented-vs-current comparison is what proves the
+  last rebuild and render landed; if the epic's wave order ever
+  runs IPC-09 first, IPC-09 carries the trivial counter field
   forward itself). In plain terms: **the pixels on screen are the
   final consequence of everything sent so far**, and screenshotting
   now is race-free.
+
+  `MindMapDocument.dirty` deliberately plays no role here: despite
+  the name it is the *unsaved-changes* flag — set by every document
+  setter, cleared only at construction and on a successful `save`,
+  read by the `open` verb's guard — not a rebuild-pending signal.
+  (A design-time correction: issue #61's sketch assumed otherwise,
+  as did CONCEPTS' "Dirty flag" entry, fixed alongside this
+  document. A settled condition gated on it would never resolve
+  after any unsaved mutation.)
 
 There is deliberately **no** third `"idle"` condition: once settled,
 the loop parks by construction (`ControlFlow::Wait`), and the only
@@ -686,7 +735,9 @@ introduces; also surfaces as the reply-envelope `revision` key).
 
 Reserved event classes at pin time: `hello`, `shutdown`,
 `connection_rejected` (the three transport-level classes, never
-subscription-gated), `document_changed`, `selection_changed`,
+subscription-gated; `connection_rejected` is delivered to the
+refused connection, not the controller), `document_changed`,
+`selection_changed`,
 `camera_changed`, `mode_changed`, `animation_started`,
 `animation_completed`. IPC-14 owns the class list and payloads and
 appends them here; a `log_line` class is possible **only** under

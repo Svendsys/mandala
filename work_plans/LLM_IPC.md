@@ -86,10 +86,10 @@ workflow — *attach after launch, user watches while agent drives*.
 The app is launched standalone (`run.sh`, a desktop session, an
 already-running instance the user wants help in); a stdio protocol
 would exist only for app instances an agent itself spawned, would
-allow exactly one controller ever, and would put protocol frames in
-the same stream as `eprintln!` diagnostics (the watchdog banner) and
-future stdout noise. A socket also gives reconnect-after-drop for
-free, which stdio structurally cannot.
+allow exactly one controller ever, and would leave protocol framing
+one stray `println!` away from corruption on a stream the app has
+never treated as an API surface. A socket also gives
+reconnect-after-drop for free, which stdio structurally cannot.
 
 **Why not localhost TCP.** No filesystem permissions — on a
 multi-user machine any local user could connect; ports collide;
@@ -156,9 +156,11 @@ threads exist for the process lifetime:
   `EventLoopProxy::send_event(IpcWake)`, or pushes a pre-formed
   `parse_error` reply straight onto the outbound queue (parse
   errors never need app state, so they never cross into the loop).
-- **The outbound thread** owns the write half: receives serialized
-  frames (replies from the main thread, events, intake's parse
-  errors) and performs every blocking write. If the client stops
+- **The outbound thread** owns the write half: receives reply and
+  event *values* (from the main thread; plus intake's pre-formed
+  parse-error replies), serializes them — the 8 MiB cap check and
+  the `reply_too_large` substitution live here, off the interactive
+  path — and performs every blocking write. If the client stops
   reading and the bounded queue fills, the connection is declared
   dead and torn down — **the app is never backpressured by a slow
   client**, and the `FreezeWatchdog` never sees IPC I/O.
@@ -167,8 +169,11 @@ threads exist for the process lifetime:
   `EventLoop::<IpcWake>::with_user_event()` and implements
   `ApplicationHandler::user_event` on `NativeApp`: tick the
   watchdog (`unparked`, like every other handler), drain the
-  request queue to exhaustion (never assume one wake per request —
-  wakes coalesce), execute each command via the registry against
+  request queue to exhaustion and treat an empty-queue wake as a
+  no-op (winit delivers one user event per `send_event`, but an
+  earlier wake's drain may already have consumed requests enqueued
+  just before a later wake was sent), execute each command via the
+  registry against
   `InitState` (the same access `input_context()` gives an input
   handler), enqueue replies, fall through to the normal
   `about_to_wait` drain. The one type ripple: `handle_event`'s
@@ -227,7 +232,7 @@ greeting carrying `protocol: 1`; stable snake_case error codes;
 oversized dumps steered to `to_file`.
 
 **Error posture (§9, hostile-input precedent PR #59).** Errors are
-structured JSON strings — `{"code", "message", "data"?}` — never
+structured JSON values — `{"code", "message", "data"?}` — never
 Rust error types (no `anyhow`/`thiserror`/custom enums anywhere in
 the implementation) and never panics: a malformed, oversized, or
 hostile frame degrades to a `parse_error`/`invalid_params` reply
@@ -297,8 +302,9 @@ cheaper and safer:
   variant waiting to confuse someone.
 - Against those non-benefits: a fifth variant ripples through every
   entry in the SOURCE-OF-TRUTH list (`MacroSource` order, two
-  loader call-site groups, the loader helpers, the registry's
-  hand-written tier walk), forces an answer to "does `Ipc` allow
+  loader call-site groups, the loader helpers) plus the registry's
+  hand-written tier walk beside that list, forces an answer to
+  "does `Ipc` allow
   ConsoleLine?" whose only sensible value duplicates `User`, and
   permanently widens the threat-model reference everyone must read.
   §7 over-engineers for *named* trajectories; "maybe IPC should be
@@ -422,17 +428,30 @@ shapes without waiting.
   paced sequences — the IPC-08 ↔ IPC-09 interlock EPIC #60 warns
   about is confined to that one field's semantics.
 - **`clock.wait` is a deferred reply** evaluated at heartbeat
-  boundaries (D2/D3), with two conditions only:
+  boundaries and at its deadline (D2/D3), with two conditions only:
   `animations_complete` and `settled`. **`settled`** is defined
-  against the six-step `drain_frame` heartbeat and means "the
+  against the per-frame `drain_frame` heartbeat and means "the
   pixels on screen are the final consequence of everything sent so
-  far": `needs_continuation()` false, document `dirty` flag clear,
-  IPC input queue empty, and a frame presented at the current
-  document revision (the IPC-14 counter arbitrates; if wave order
-  ever runs IPC-09 first, IPC-09 carries the trivial counter field
-  itself). A third `idle` condition was considered and dropped:
-  post-settled the loop parks by construction, and the only
-  residual timer is the FPS overlay's idle-grace flip — a
+  far": `needs_continuation()` false, IPC input queue empty, and a
+  frame presented at the current document revision (the IPC-14
+  counter arbitrates; if wave order ever runs IPC-09 first, IPC-09
+  carries the trivial counter field itself).
+  `MindMapDocument.dirty` deliberately plays no role: despite the
+  name it is the *unsaved-changes* flag — set by document setters,
+  cleared only at construction and on `save`, read by `open`'s
+  guard — not a rebuild signal. Issue #61's sketch assumed
+  otherwise, as did CONCEPTS' "Dirty flag" entry; both corrections
+  land with this design, because a settled condition gated on
+  `dirty` would never resolve after any unsaved mutation. The
+  `timeout_ms` deadline is wall-clock even under a virtual clock
+  (it guards client liveness, not simulation time), and a pending
+  wait converts an idle park from `ControlFlow::Wait` to
+  `WaitUntil(nearest deadline)` — the FPS idle-grace precedent —
+  so deadlines fire without polling and without a wake-starved
+  hang. A wait is not a barrier: dependent commands are sent after
+  its reply (D3). A third `idle` condition was considered and
+  dropped: post-settled the loop parks by construction, and the
+  only residual timer is the FPS overlay's idle-grace flip — a
   diagnostic that observes behavior and must not become observable
   behavior.
 - **Virtual time is a mode, not a per-command flag.**
@@ -499,9 +518,13 @@ Documents moved by this design, in the same PR that pinned it:
   referenced by §4, CONCEPTS §1, and `freeze_watchdog.rs` but never
   existed); IPC carve-out entry added; existing documented
   native-only surfaces backfilled.
-- **CONCEPTS.md §1 "Single-threaded event loop"** — one sentence:
-  the watchdog is no longer the *only* sanctioned thread shape once
-  IPC-02 lands; points here and at §3.
+- **CONCEPTS.md** — §1 "Single-threaded event loop" and §5
+  "FreezeWatchdog" both stop claiming the watchdog is the *only*
+  sanctioned thread (they now point at the §3 amendment). §5
+  "Dirty flag" is rewritten to match code — it is the
+  unsaved-changes flag, not a rebuild trigger; drift caught while
+  pinning D7's `settled` — and the event-loop step list drops its
+  stale dirty-gated-rebuild claim.
 - **`format/macros.md`** — SOURCE-OF-TRUTH tier list gains the
   IPC-maps-to-User entry; privilege-model section states the
   composition rule (D4).
