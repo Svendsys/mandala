@@ -74,20 +74,11 @@ use std::sync::{Mutex, RwLock};
 use std::time::Duration;
 
 use crate::font::fonts::{
-    acquire_font_system_write, acquire_font_system_write_with_timeout,
+    acquire_font_system_write, acquire_font_system_write_with_timeout, ensure_warm,
     face_family_name_for_pin, measure_glyph_ink_bounds, AppFont,
 };
 
 type CacheKey = (Option<AppFont>, OrderedFloat<f32>, String);
-
-/// Wall-clock ceiling for the `FONT_SYSTEM` write acquire on a
-/// metric-cache miss made by an *unlocked* caller. Same value and
-/// rationale as `fonts::FONT_SYSTEM_LOCK_TIMEOUT`: Mandala is
-/// single-threaded, so a healthy miss finds the lock free; a wait
-/// this long means the calling thread already holds the guard (and
-/// should have called a `*_with` variant), so we panic with a site
-/// tag rather than hang forever on a re-entrant `RwLock::write()`.
-const MISS_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Ink extent of one grapheme cluster at a given face + size.
 ///
@@ -148,15 +139,23 @@ lazy_static! {
 /// cosmic-text and caches. Subsequent calls return the cached
 /// value. The cache is process-lifetime.
 pub fn glyph_advance(face: Option<AppFont>, size_pt: f32, grapheme: &str) -> f32 {
-    glyph_advance_within(face, size_pt, grapheme, MISS_LOCK_TIMEOUT)
+    glyph_advance_with_timeout(
+        face,
+        size_pt,
+        grapheme,
+        crate::font::fonts::FONT_SYSTEM_LOCK_TIMEOUT,
+    )
 }
 
-/// [`glyph_advance`] with a caller-chosen acquire timeout. Split
-/// out (crate-visible) so the re-entrancy regression test can drive
-/// the timeout path on a short budget without the production 5 s
-/// wait — the same shape `fonts::acquire_font_system_write` /
-/// `acquire_font_system_write_with_timeout` use.
-pub(crate) fn glyph_advance_within(
+/// [`glyph_advance`]'s shared body, parameterized by the acquire
+/// timeout — the public wrapper calls this with the standard
+/// `FONT_SYSTEM_LOCK_TIMEOUT` budget. The `acquire_timeout` parameter
+/// exists so the re-entrancy regression test can drive the timeout
+/// path on a short budget instead of waiting the full production one;
+/// it mirrors the `acquire_font_system_write` /
+/// `acquire_font_system_write_with_timeout` pair in `fonts.rs`.
+/// `pub(crate)` — not public API surface.
+pub(crate) fn glyph_advance_with_timeout(
     face: Option<AppFont>,
     size_pt: f32,
     grapheme: &str,
@@ -169,9 +168,11 @@ pub(crate) fn glyph_advance_within(
             return v;
         }
     }
-    // Miss: acquire the write guard through the timeout-guarded
-    // helper (never a raw `.write()`), then delegate to the
-    // guard-threading variant.
+    // Miss: warm the font lazy-statics BEFORE acquiring so a
+    // `Some(face)` pin lookup under the guard can't re-enter
+    // `load_fonts` (see `ensure_warm`), then acquire through the
+    // timeout-guarded helper (never a raw `.write()`) and shape.
+    ensure_warm();
     let mut guard =
         acquire_font_system_write_with_timeout("metric_cache::glyph_advance", acquire_timeout);
     glyph_advance_with(&mut guard, face, size_pt, grapheme)
@@ -220,14 +221,20 @@ pub fn glyph_ink_height(face: Option<AppFont>, size_pt: f32, grapheme: &str) -> 
             return v;
         }
     }
+    // Warm before acquiring (see `ensure_warm`) so a `Some(face)` pin
+    // lookup under the guard can't re-enter `load_fonts`.
+    ensure_warm();
     let mut guard = acquire_font_system_write("metric_cache::glyph_ink_height");
     glyph_ink_height_with(&mut guard, face, size_pt, grapheme)
 }
 
-/// [`glyph_ink_height`] for callers that already hold the
-/// `FONT_SYSTEM` write guard. Shapes any cache miss through the
-/// passed `font_system`.
-pub fn glyph_ink_height_with(
+/// [`glyph_ink_height`] for a caller that already holds the
+/// `FONT_SYSTEM` write guard. `pub(crate)` rather than `pub`: no
+/// guard-holding consumer exists outside this crate today (the
+/// border rails read `glyph_ink(...).ink_height`, not this), so it
+/// stays internal until one is named (§B10). Shapes any cache miss
+/// through the passed `font_system`.
+pub(crate) fn glyph_ink_height_with(
     font_system: &mut FontSystem,
     face: Option<AppFont>,
     size_pt: f32,
@@ -262,23 +269,6 @@ pub fn cluster_width(face: Option<AppFont>, size_pt: f32, graphemes: &[String]) 
         .sum()
 }
 
-/// [`cluster_width`] for callers that already hold the `FONT_SYSTEM`
-/// write guard — sums `glyph_advance_with` per grapheme through the
-/// passed `font_system` so a cold cluster measures without a nested
-/// acquire.
-pub fn cluster_width_with(
-    font_system: &mut FontSystem,
-    face: Option<AppFont>,
-    size_pt: f32,
-    graphemes: &[String],
-) -> f32 {
-    let mut total = 0.0f32;
-    for g in graphemes {
-        total += glyph_advance_with(font_system, face, size_pt, g);
-    }
-    total
-}
-
 /// Full ink extent of `grapheme` at `face` × `size_pt`:
 /// advance + ink_height + ink_top (signed baseline offset).
 ///
@@ -303,6 +293,9 @@ pub fn glyph_ink(face: Option<AppFont>, size_pt: f32, grapheme: &str) -> InkExte
             return v;
         }
     }
+    // Warm before acquiring (see `ensure_warm`) so a `Some(face)` pin
+    // lookup under the guard can't re-enter `load_fonts`.
+    ensure_warm();
     let mut guard = acquire_font_system_write("metric_cache::glyph_ink");
     glyph_ink_with(&mut guard, face, size_pt, grapheme)
 }
@@ -525,25 +518,30 @@ mod tests {
         assert_eq!(h, 18.0, "whitespace ink_height should fall back to size_pt");
     }
 
-    /// The guard-threading `*_with` variant agrees with the
-    /// lock-acquiring wrapper: same key, same measured value,
-    /// same shared cache. Exercises the renderer's path (measure
-    /// while holding the write guard) without deadlocking.
+    /// `glyph_advance_with` shapes a COLD key while the write guard
+    /// is held — measured FIRST so the call reaches `shape_advance_with`
+    /// (the actual shape path) rather than a cache hit — and the
+    /// unlocked wrapper then agrees on the value the `_with` shape
+    /// cached. This is exactly the renderer's path: measure under a
+    /// held guard with no nested acquire.
     #[test]
-    fn glyph_advance_with_matches_unlocked_wrapper() {
+    fn glyph_advance_with_shapes_cold_key_under_held_guard() {
         use crate::font::fonts::acquire_font_system_write;
         crate::font::fonts::init();
-        let unlocked = glyph_advance(None, 18.0, "━");
-        // Now measure the same key while holding the guard — the
-        // `_with` variant must not re-acquire (that would hang).
-        let mut guard = acquire_font_system_write("test_glyph_advance_with");
-        let with = glyph_advance_with(&mut guard, None, 18.0, "━");
-        drop(guard);
+        // (27.0, "┃") is warmed by no other test, so this first call
+        // misses the cache and drives the shape path under the guard.
+        let with = {
+            let mut guard = acquire_font_system_write("test_glyph_advance_with_cold");
+            glyph_advance_with(&mut guard, None, 27.0, "┃")
+        };
+        // The unlocked wrapper now hits the cache the `_with` shape
+        // filled; the values must match.
+        let unlocked = glyph_advance(None, 27.0, "┃");
         assert_eq!(
-            unlocked, with,
-            "glyph_advance_with must agree with glyph_advance on a shared key"
+            with, unlocked,
+            "glyph_advance_with cold shape must equal the wrapper's cached value"
         );
-        assert!(with > 0.0, "━ should have positive advance, got {with}");
+        assert!(with > 0.0, "┃ should have positive advance, got {with}");
     }
 
     /// A different (uncached) key measured *only* through the
@@ -587,7 +585,7 @@ mod tests {
         let cold = "\u{2591}\u{2593}reentry";
         let guard = acquire_font_system_write("metric_cache_reentrancy_test_holder");
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            glyph_advance_within(None, 41.5, cold, Duration::from_millis(200))
+            glyph_advance_with_timeout(None, 41.5, cold, Duration::from_millis(200))
         }));
         drop(guard);
         let payload =
