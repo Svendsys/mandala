@@ -6,6 +6,7 @@
 //! pointer instead of silently dropping data.
 
 use crate::mindmap::model::MindMap;
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
@@ -56,6 +57,9 @@ pub fn load_from_str(json: &str) -> Result<MindMap, String> {
                 if let Some(err) = detect_legacy_shape(json) {
                     return Err(err);
                 }
+            }
+            if let Some(err) = detect_parent_cycle(&map) {
+                return Err(err);
             }
             Ok(map)
         }
@@ -139,6 +143,76 @@ fn detect_legacy_shape(json: &str) -> Option<String> {
                  to migrate, or add an explicit `sections` array.",
                 id
             ));
+        }
+    }
+    None
+}
+
+/// Reject a `MindMap` whose `parent_id` links form a cycle. A cycle
+/// is worse than the legacy-shape rejections above: every model
+/// walker that follows `parent_id` (`is_hidden_by_fold`,
+/// `all_descendants`, `is_ancestor_or_self`) assumes the chain
+/// terminates at a root, and a hand-edited or hostile file is under
+/// no such obligation. Left unchecked, the first scene build after
+/// load walks straight into an infinite loop or an uncatchable stack
+/// overflow (see `format/macros.md`'s "opening any `.mindmap.json`
+/// from an untrusted source IS a privilege event"). The three
+/// walkers also carry their own iteration caps as defense in depth,
+/// but rejecting the cycle here means the map never loads at all
+/// instead of silently degrading.
+///
+/// One O(n) pass: each node's parent chain is walked at most once
+/// overall by memoizing every node proven acyclic (`resolved`) so a
+/// later start that reaches an already-resolved node stops
+/// immediately instead of re-walking the chain. Nodes are visited in
+/// sorted-id order so the reported node is deterministic across
+/// `HashMap` iteration order. A node whose `parent_id` doesn't
+/// resolve to an existing node (a dangling reference — a separate,
+/// pre-existing invariant this function doesn't police) is treated
+/// like a root: the walk simply stops there.
+fn detect_parent_cycle(map: &MindMap) -> Option<String> {
+    let mut resolved: HashSet<&str> = HashSet::new();
+    let mut ids: Vec<&String> = map.nodes.keys().collect();
+    ids.sort();
+
+    for start_id in ids {
+        if resolved.contains(start_id.as_str()) {
+            continue;
+        }
+        let mut chain: Vec<&str> = Vec::new();
+        let mut on_chain: HashSet<&str> = HashSet::new();
+        let mut current_id: &str = start_id.as_str();
+        loop {
+            if resolved.contains(current_id) {
+                for id in &chain {
+                    resolved.insert(id);
+                }
+                break;
+            }
+            if on_chain.contains(current_id) {
+                let cycle_start = chain.iter().position(|&id| id == current_id).unwrap();
+                let path = chain[cycle_start..]
+                    .iter()
+                    .chain(std::iter::once(&current_id))
+                    .copied()
+                    .collect::<Vec<_>>()
+                    .join(" → ");
+                return Some(format!(
+                    "node '{}': parent chain contains a cycle ({}); fix parent_id",
+                    chain[cycle_start], path
+                ));
+            }
+            chain.push(current_id);
+            on_chain.insert(current_id);
+            match map.nodes.get(current_id).and_then(|n| n.parent_id.as_deref()) {
+                Some(parent_id) => current_id = parent_id,
+                None => {
+                    for id in &chain {
+                        resolved.insert(id);
+                    }
+                    break;
+                }
+            }
         }
     }
     None
@@ -875,5 +949,85 @@ mod tests {
         assert!(!children.is_empty());
         // The root is not folded by default, so its children are visible
         assert!(!map.is_hidden_by_fold(children[0]));
+    }
+
+    /// Minimal single-node-per-id JSON fragment for cycle tests —
+    /// only `id` and `parent_id` vary between call sites.
+    fn node_json(id: &str, parent_id: &str) -> String {
+        format!(
+            r##""{id}": {{
+                "id": "{id}", "parent_id": {parent_id},
+                "position": {{"x": 0, "y": 0}},
+                "size": {{"width": 100, "height": 50}},
+                "sections": [{{"text": "n"}}],
+                "style": {{"background_color":"#000","frame_color":"#000",
+                          "text_color":"#fff","shape":"rectangle",
+                          "corner_radius_percent":0,"frame_thickness":0,
+                          "show_frame":false,"show_shadow":false}},
+                "layout": {{"type":"map","direction":"auto","spacing":0}},
+                "folded": false, "notes": "",
+                "color_schema": null
+            }}"##
+        )
+    }
+
+    fn map_json_with_nodes(nodes_json: &str) -> String {
+        format!(
+            r##"{{
+                "version": "1.0",
+                "name": "cycle-test",
+                "canvas": {{"background_color": "#000", "default_border": null,
+                           "default_connection": null, "theme_variables": {{}},
+                           "theme_variants": {{}}}},
+                "nodes": {{{nodes_json}}},
+                "edges": []
+            }}"##
+        )
+    }
+
+    /// A 2-cycle `a → b → a` (`P0-05`) must be rejected at load time
+    /// — with no check, `is_hidden_by_fold` walking this chain never
+    /// terminates.
+    #[test]
+    fn test_two_node_parent_cycle_rejected() {
+        let nodes = format!("{},{}", node_json("a", "\"b\""), node_json("b", "\"a\""));
+        let json = map_json_with_nodes(&nodes);
+        let err = load_from_str(&json).expect_err("2-cycle must be rejected");
+        assert!(err.contains("cycle"), "error must mention cycle: {err}");
+        assert!(
+            err.contains("fix parent_id"),
+            "error must point at parent_id: {err}"
+        );
+        assert!(
+            err.contains('a') && err.contains('b'),
+            "error must name the nodes in the cycle: {err}"
+        );
+    }
+
+    /// A self-parented node `a → a` is the degenerate 1-cycle and
+    /// must be rejected the same way as the general case.
+    #[test]
+    fn test_self_parent_cycle_rejected() {
+        let nodes = node_json("a", "\"a\"");
+        let json = map_json_with_nodes(&nodes);
+        let err = load_from_str(&json).expect_err("self-parent cycle must be rejected");
+        assert!(err.contains("cycle"), "error must mention cycle: {err}");
+        assert!(err.contains('a'), "error must name node 'a': {err}");
+    }
+
+    /// A valid 3-generation chain (no cycle) must load without error
+    /// — pairs with the cycle-rejection tests to confirm the checker
+    /// doesn't false-positive on an ordinary tree.
+    #[test]
+    fn test_acyclic_chain_not_rejected() {
+        let nodes = format!(
+            "{},{},{}",
+            node_json("0", "null"),
+            node_json("0.0", "\"0\""),
+            node_json("0.0.0", "\"0.0\"")
+        );
+        let json = map_json_with_nodes(&nodes);
+        let map = load_from_str(&json).expect("acyclic chain must load");
+        assert_eq!(map.nodes.len(), 3);
     }
 }
