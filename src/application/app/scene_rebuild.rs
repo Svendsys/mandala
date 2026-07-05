@@ -373,7 +373,14 @@ pub(in crate::application::app) fn rebuild_all(
     scene_cache: &mut baumhard::mindmap::scene_cache::SceneConnectionCache,
 ) {
     let mut new_tree = doc.build_tree();
+    // Render-layer overlays, applied to the tree the renderer sees
+    // but deliberately NOT to the pure `build_tree` projection the
+    // Persistent apply path syncs from. Active toggles join the
+    // existing selection-highlight overlay here so a toggle-on's
+    // visual survives this rebuild-from-model (CONCEPTS §4) without
+    // ever leaking into the persisted model.
     apply_tree_highlights(&mut new_tree, selection_highlight_entries(&doc.selection));
+    doc.reapply_active_toggles(&mut new_tree);
     renderer.rebuild_buffers_from_tree(&new_tree.tree);
 
     rebuild_scene_only(doc, interaction_mode, app_scene, renderer, scene_cache);

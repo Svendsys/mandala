@@ -33,6 +33,120 @@ pub(super) const DEFAULT_TEXT_RUN_COLOR: &str = "#ffffff";
 /// Mirrors `cosmic_text`'s 14pt fallback used at scene-build time.
 pub(super) const DEFAULT_TEXT_RUN_SIZE_PT: u32 = 14;
 
+/// Floor the reverse converter clamps `size_pt` to. A
+/// `shrink-font` mutation drives tree-side `scale` toward (and
+/// past) zero without a floor of its own; model `size_pt` is a
+/// `u32`, so a naive cast of a negative scale would saturate to 0
+/// and render invisible, un-regrowable text. Clamp to 1pt so a
+/// shrunk run stays legible and can be grown back.
+pub(super) const MIN_TEXT_RUN_SIZE_PT: u32 = 1;
+
+/// Push the tree-side font `scale` back onto a section's model
+/// runs — the reverse of the forward path's
+/// `scale = max(run.size_pt)` collapse
+/// (`tree_builder/node.rs::mindnode_section_area`). Without this,
+/// the bundled `grow-font-2pt` / `shrink-font-2pt` mutations land
+/// on the tree for one frame and then vanish on the next
+/// rebuild-from-model, because no model field carried the size.
+///
+/// The forward map is lossy: it takes the **largest** `size_pt`
+/// across a section's runs (or [`DEFAULT_TEXT_RUN_SIZE_PT`] when
+/// the section has none) and derives `line_height = scale * 1.2`.
+/// The reverse therefore has to answer "the max just moved from A
+/// to B — how do the individual runs move?". We distribute the
+/// change as a **delta** (`tree_scale - old_scale`) added to every
+/// run rather than overwriting each run with `tree_scale`, so the
+/// *relative* sizing of a multi-run section survives: a
+/// `[14pt, 74pt]` section grown 2pt becomes `[16pt, 76pt]`, not
+/// `[76pt, 76pt]`. Grow/shrink-font are pure deltas so this is
+/// exact for them; an absolute `SetFontSize` reduces to "shift the
+/// section so its largest run hits the target", which keeps the
+/// same relative spread — the only self-consistent inverse of a
+/// max-collapsing forward map.
+///
+/// **Line-height** has no independent model home: the forward path
+/// unconditionally recomputes it as `scale * 1.2`, so persisting
+/// `scale` is sufficient and the next rebuild reproduces the right
+/// line-height for free. A mutation that touches *only* line-height
+/// is surfaced at apply time by
+/// [`super::warn_unsupported_mutator_fields`].
+///
+/// **Runless sections** have nowhere to store a size, so the change
+/// would evaporate. To honour it we synthesize one run spanning the
+/// whole text carrying the new size and the section's effective
+/// default colour (`default_color`) so rendering is unchanged
+/// except for the size.
+///
+/// `old_scale` is the section's effective scale **before** this
+/// sync ran — i.e. the value the forward path put in the tree,
+/// captured by the caller *before* the text/regions round-trip may
+/// have rewritten `section.text_runs`. Taking it as a parameter
+/// (rather than recomputing from the current runs) is load-bearing:
+/// a text/region mutation that drops the largest run — `PopBack`
+/// deleting the tail run, `DeleteColorFontRegion` / `ChangeRegionRange`
+/// dropping the 40pt span of a `[14pt, 40pt]` section — would leave
+/// a stale `tree_scale` (40) against a freshly-shrunk current max
+/// (14), and a recomputed delta of +26 would wrongly inflate the
+/// surviving run to 40pt and record a phantom font-size change.
+///
+/// Returns `true` when it wrote anything.
+fn sync_section_font_size(
+    section: &mut baumhard::mindmap::model::MindSection,
+    tree_scale: f32,
+    old_scale: f32,
+    default_color: &str,
+) -> bool {
+    use baumhard::util::grapheme_chad::count_grapheme_clusters;
+
+    let delta = tree_scale - old_scale;
+    // `size_pt` is an integer point size, so a sub-half-point delta
+    // rounds to no change on every run. Treat it as "scale
+    // untouched" so a position-only or colour-only mutation doesn't
+    // churn run sizes (or spuriously report a change).
+    if delta.abs() < 0.5 {
+        return false;
+    }
+
+    if section.text_runs.is_empty() {
+        let end = count_grapheme_clusters(&section.text);
+        if end == 0 {
+            // Empty text: no glyphs to size, and a zero-length run
+            // would be dropped by `clamp_runs_to_text` anyway.
+            return false;
+        }
+        let size_pt = tree_scale.round().max(MIN_TEXT_RUN_SIZE_PT as f32) as u32;
+        let color = if default_color.is_empty() {
+            DEFAULT_TEXT_RUN_COLOR.to_string()
+        } else {
+            default_color.to_string()
+        };
+        section.text_runs.push(TextRun {
+            start: 0,
+            end,
+            bold: false,
+            italic: false,
+            underline: false,
+            font: String::new(),
+            size_pt,
+            color,
+            hyperlink: None,
+        });
+        return true;
+    }
+
+    let mut changed = false;
+    for run in section.text_runs.iter_mut() {
+        let new_size = (run.size_pt as f32 + delta)
+            .round()
+            .max(MIN_TEXT_RUN_SIZE_PT as f32) as u32;
+        if new_size != run.size_pt {
+            run.size_pt = new_size;
+            changed = true;
+        }
+    }
+    changed
+}
+
 /// Roll a tree-side [`ColorFontRegion`] back into a model-side
 /// [`TextRun`], merging fields the tree dropped during the
 /// forward conversion against a `prior` run when the prior
@@ -148,11 +262,11 @@ pub(crate) fn exact_or_dominant_overlap<'a>(
 impl MindMapDocument {
     /// Sync the document model from the live tree — pull
     /// `node.position` from the container's glyph area and every
-    /// section's `(text, text_runs, offset, size)` from its
-    /// section-area, with a per-section selective gate that skips
-    /// the lossy text/regions round-trip when the tree side hasn't
-    /// diverged from the model. Position / offset / size always
-    /// write back; text + runs gate on the
+    /// section's `(text, text_runs, offset, size, font size)` from
+    /// its section-area, with a per-section selective gate that
+    /// skips the lossy text/regions round-trip when the tree side
+    /// hasn't diverged from the model. Position / offset / size /
+    /// font-size always write back; text + runs gate on the
     /// `(range, colour, font)` triple.
     ///
     /// Used by the `Persistent` apply path to commit a custom
@@ -162,15 +276,24 @@ impl MindMapDocument {
     /// `bold` / `italic` / `underline` / `size_pt` / `hyperlink`;
     /// an unconditional round-trip would silently strip those
     /// fields from sections the mutation didn't touch.
-    pub(super) fn sync_node_from_tree(&mut self, node_id: &str, tree: &MindMapTree) {
+    ///
+    /// Returns `true` when this call actually changed the model.
+    /// The caller ([`super::MindMapDocument::apply_custom_mutation`])
+    /// uses the verdict to gate the undo-stack push and the `dirty`
+    /// flag — a mutation whose tree edits round-trip to no model
+    /// change (a no-op apply, a `flat_mutations`-failed skip, or a
+    /// predicate that filtered every candidate) must not leave a
+    /// dead undo entry behind.
+    #[must_use]
+    pub(super) fn sync_node_from_tree(&mut self, node_id: &str, tree: &MindMapTree) -> bool {
         let Some(tree_nid) = tree.arena_id_for(node_id) else {
-            return;
+            return false;
         };
         let Some(element) = tree.tree.arena.get(tree_nid).map(|n| n.get()) else {
-            return;
+            return false;
         };
         let Some(area) = element.glyph_area() else {
-            return;
+            return false;
         };
         let new_pos = (area.position.x.0 as f64, area.position.y.0 as f64);
 
@@ -193,6 +316,11 @@ impl MindMapDocument {
             regions: Vec<ColorFontRegion>,
             tree_position: (f32, f32),
             tree_size: (f32, f32),
+            /// Tree-side font scale (points). The forward path sets
+            /// this to the largest `run.size_pt`; the reverse
+            /// distributes any change back across the runs. See
+            /// [`sync_section_font_size`].
+            tree_scale: f32,
         }
         let mut section_snapshots: Vec<Option<SectionSnapshot>> = Vec::with_capacity(section_count);
         for idx in 0..section_count {
@@ -210,19 +338,39 @@ impl MindMapDocument {
                         .collect::<Vec<ColorFontRegion>>(),
                     tree_position: (sec_area.position.x.0, sec_area.position.y.0),
                     tree_size: (sec_area.render_bounds.x.0, sec_area.render_bounds.y.0),
+                    tree_scale: sec_area.scale.0,
                 });
             section_snapshots.push(snapshot);
         }
 
         let Some(model_node) = self.mindmap.nodes.get_mut(node_id) else {
-            return;
+            return false;
         };
-        model_node.position.x = new_pos.0;
-        model_node.position.y = new_pos.1;
-        let node_pos_x = new_pos.0 as f32;
-        let node_pos_y = new_pos.1 as f32;
+        let mut changed = false;
+        // Compare in f32 space — the tree stores positions as `f32`,
+        // so projecting the model down to `f32` is exactly the value
+        // the forward path put in the tree. Comparing the wider model
+        // `f64` against the narrower tree `f32` would flag a spurious
+        // change for every node whose authored `f64` position isn't
+        // exactly `f32`-representable, and that false "changed"
+        // verdict would push a dead undo entry for a no-op mutation.
+        let tree_px = new_pos.0 as f32;
+        let tree_py = new_pos.1 as f32;
+        if model_node.position.x as f32 != tree_px || model_node.position.y as f32 != tree_py {
+            model_node.position.x = new_pos.0;
+            model_node.position.y = new_pos.1;
+            changed = true;
+        }
+        let node_pos_x = tree_px;
+        let node_pos_y = tree_py;
         let node_size_x = model_node.size.width as f32;
         let node_size_y = model_node.size.height as f32;
+        // Effective default colour for a runless section, captured
+        // before the section loop takes `&mut section` — used to
+        // colour a synthesized run when a font-size mutation lands
+        // on a section that carries no runs (see
+        // [`sync_section_font_size`]).
+        let node_text_color = model_node.style.text_color.clone();
 
         for (idx, snapshot) in section_snapshots.into_iter().enumerate() {
             let Some(snapshot) = snapshot else {
@@ -230,6 +378,26 @@ impl MindMapDocument {
             };
             let Some(section) = model_node.sections.get_mut(idx) else {
                 continue;
+            };
+
+            // Capture the section's effective scale BEFORE the
+            // text/regions round-trip below can rewrite `text_runs`.
+            // This is the value the forward path put in the tree
+            // (`scale = max(run.size_pt)`, or the default for a
+            // runless section), and the correct baseline for the
+            // font-size delta — recomputing it after the round-trip
+            // would misread a run-dropping mutation as a size change.
+            let pre_round_trip_scale = {
+                let max = section
+                    .text_runs
+                    .iter()
+                    .map(|r| r.size_pt as f32)
+                    .fold(0.0_f32, f32::max);
+                if max > 0.0 {
+                    max
+                } else {
+                    DEFAULT_TEXT_RUN_SIZE_PT as f32
+                }
             };
 
             // Write `section.offset` back from the tree's section-
@@ -242,11 +410,17 @@ impl MindMapDocument {
             // unit, just wider. Without this, a `Translate` /
             // `MoveTo` on a section-area lands on the live tree
             // and reverts on the next `rebuild_all`.
-            let new_offset_x = (snapshot.tree_position.0 - node_pos_x) as f64;
-            let new_offset_y = (snapshot.tree_position.1 - node_pos_y) as f64;
-            if section.offset.x != new_offset_x || section.offset.y != new_offset_y {
-                section.offset.x = new_offset_x;
-                section.offset.y = new_offset_y;
+            // Compare in f32 space (see the node-position note above):
+            // the tree carries `node_pos + section.offset` as `f32`,
+            // so project the model offset the same way. A raw `f64`
+            // compare would flag a phantom change for any authored
+            // offset that isn't `f32`-exact and push a dead undo entry.
+            let projected_sx = node_pos_x + section.offset.x as f32;
+            let projected_sy = node_pos_y + section.offset.y as f32;
+            if projected_sx != snapshot.tree_position.0 || projected_sy != snapshot.tree_position.1 {
+                section.offset.x = (snapshot.tree_position.0 - node_pos_x) as f64;
+                section.offset.y = (snapshot.tree_position.1 - node_pos_y) as f64;
+                changed = true;
             }
             // Write `section.size` back when the model carries an
             // explicit size. `None` size means "fill the parent
@@ -260,10 +434,23 @@ impl MindMapDocument {
             let tree_size_diverges = (snapshot.tree_size.0 - node_size_x).abs() > f32::EPSILON
                 || (snapshot.tree_size.1 - node_size_y).abs() > f32::EPSILON;
             if section.size.is_some() || tree_size_diverges {
-                section.size = Some(baumhard::mindmap::model::Size {
-                    width: snapshot.tree_size.0 as f64,
-                    height: snapshot.tree_size.1 as f64,
-                });
+                // Project the model's current size to f32 (fill-parent
+                // `None` resolves to the node's size, exactly as the
+                // forward path does) and only rewrite when the tree's
+                // post-mutation bounds actually diverge — comparing the
+                // model `f64` against the tree `f32` directly would flag
+                // a phantom change for any non-`f32`-exact size.
+                let (cur_w, cur_h) = match section.size {
+                    Some(s) => (s.width as f32, s.height as f32),
+                    None => (node_size_x, node_size_y),
+                };
+                if cur_w != snapshot.tree_size.0 || cur_h != snapshot.tree_size.1 {
+                    section.size = Some(baumhard::mindmap::model::Size {
+                        width: snapshot.tree_size.0 as f64,
+                        height: snapshot.tree_size.1 as f64,
+                    });
+                    changed = true;
+                }
             }
 
             // Selective gate: tree-side state matches the model
@@ -335,38 +522,61 @@ impl MindMapDocument {
                     };
                     region_font_name == model_font_name
                 });
-            if section.text == snapshot.text && model_regions_match {
-                continue;
+            // Selective gate: only run the lossy text/regions
+            // round-trip when the tree side diverged. Note this is
+            // NOT a `continue` — the font-size sync below must run
+            // regardless, since a pure `grow-font` mutation leaves
+            // text and regions byte-identical yet still needs its
+            // `scale` change persisted.
+            if !(section.text == snapshot.text && model_regions_match) {
+                // Build the new run list by merging each tree-side
+                // region with the prior run sharing the **same
+                // range, or the dominant overlapping range** when
+                // the mutation resized / split / shifted the run
+                // boundary. A range-strict lookup loses every prior
+                // styling (bold / italic / underline / size_pt /
+                // hyperlink) on `ChangeRegionRange`-style mutations
+                // because no prior matches the new range exactly;
+                // the overlap fallback inherits from the prior whose
+                // intersection is largest, preserving authored
+                // styling across range edits.
+                let prior_runs: Vec<&TextRun> = section.text_runs.iter().collect();
+                let new_runs: Vec<TextRun> = snapshot
+                    .regions
+                    .iter()
+                    .map(|region| {
+                        let prior =
+                            exact_or_dominant_overlap(&prior_runs, region.range.start, region.range.end);
+                        region_to_text_run(region, prior)
+                    })
+                    .collect();
+
+                section.text = snapshot.text;
+                section.text_runs = new_runs;
+                // Ensure no run extends past the new grapheme count —
+                // `clamp_runs_to_text` is already idempotent on
+                // already-clean run lists.
+                clamp_runs_to_text(section);
+                changed = true;
             }
 
-            // Build the new run list by merging each tree-side
-            // region with the prior run sharing the **same range,
-            // or the dominant overlapping range** when the
-            // mutation resized / split / shifted the run boundary.
-            // A range-strict lookup loses every prior styling
-            // (bold / italic / underline / size_pt / hyperlink)
-            // on `ChangeRegionRange`-style mutations because no
-            // prior matches the new range exactly; the overlap
-            // fallback inherits from the prior whose intersection
-            // is largest, preserving authored styling across
-            // range edits.
-            let prior_runs: Vec<&TextRun> = section.text_runs.iter().collect();
-            let new_runs: Vec<TextRun> = snapshot
-                .regions
-                .iter()
-                .map(|region| {
-                    let prior = exact_or_dominant_overlap(&prior_runs, region.range.start, region.range.end);
-                    region_to_text_run(region, prior)
-                })
-                .collect();
-
-            section.text = snapshot.text;
-            section.text_runs = new_runs;
-            // Ensure no run extends past the new grapheme count —
-            // `clamp_runs_to_text` is already idempotent on
-            // already-clean run lists.
-            clamp_runs_to_text(section);
+            // Font-size sync — runs *after* the text/runs round-trip
+            // (so it operates on the final run list and isn't
+            // clobbered by it) and *unconditionally* (so a
+            // scale-only mutation that skips the round-trip above is
+            // still persisted). Distributes the tree-side `scale`
+            // delta across the section's runs; see
+            // [`sync_section_font_size`].
+            if sync_section_font_size(
+                section,
+                snapshot.tree_scale,
+                pre_round_trip_scale,
+                &node_text_color,
+            ) {
+                changed = true;
+            }
         }
+        changed
     }
 }
 

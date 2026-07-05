@@ -1594,10 +1594,27 @@ for "highlight this", "expand this preview", "show debug
 overlay".
 
 Persistent: snapshot affected nodes, apply,
-sync back, push undo. Toggle: apply to tree only, insert
+sync back, push undo. The sync-back
+(`document/custom/sync.rs::sync_node_from_tree`) persists node
+position, section offset / size / text / colour+font runs, and
+**font size** (the tree-side `scale` is distributed back across a
+section's run `size_pt` values as a delta, preserving relative
+run sizing); line-height is derived (`scale * 1.2`) so it needs no
+separate home. Fields with no reverse converter (outline, shape,
+zoom-visibility, line-height) are `warn!`-flagged at apply time
+rather than silently applied-then-reverted. The undo entry and the
+`dirty` flag are gated on the sync-back reporting an actual model
+change, so a no-op apply (predicate filtered everything, non-flat
+mutator skipped, or a mutation that changed nothing) leaves no
+dead entry behind. Toggle: apply to tree only, insert
 `(node_id, mutation_id)` into `MindMapDocument::active_toggles`;
 on second trigger from the same anchor, remove the pair (undo
-stack gets no entry — re-triggering is the reverse).
+stack gets no entry — re-triggering is the reverse). Because a
+rebuild projects the tree from the model and toggles never touch
+the model, `build_tree` re-stamps every active toggle
+(`reapply_active_toggles`) after each rebuild — without that
+re-application a toggle-on's visual would die at the end of the
+same dispatch and have nothing left to reverse.
 
 ### Contexts taxonomy
 
