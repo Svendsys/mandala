@@ -131,9 +131,26 @@ impl MindMap {
 
     /// Returns true if any ancestor of this node is folded, meaning
     /// this node should be hidden from view.
+    ///
+    /// Defense in depth against a `parent_id` cycle that somehow
+    /// reaches this walker despite the loader's load-time rejection
+    /// (e.g. a cycle introduced by a future mutation path): the walk
+    /// is capped at `self.nodes.len()` steps, since a valid parent
+    /// chain can never exceed the node count. Hitting the cap logs
+    /// and treats the node as visible rather than hanging — see
+    /// CODE_CONVENTIONS §9 ("interactive paths must not panic").
     pub fn is_hidden_by_fold(&self, node: &MindNode) -> bool {
         let mut current_id = node.parent_id.as_deref();
+        let mut steps = 0usize;
         while let Some(pid) = current_id {
+            if steps > self.nodes.len() {
+                log::error!(
+                    "is_hidden_by_fold: parent_id cycle detected walking up from node {:?}; treating as visible",
+                    node.id
+                );
+                return false;
+            }
+            steps += 1;
             match self.nodes.get(pid) {
                 Some(parent) => {
                     if parent.folded {
@@ -150,29 +167,57 @@ impl MindMap {
     /// Collect all descendant IDs of a node (recursive), not including the node itself.
     pub fn all_descendants(&self, node_id: &str) -> Vec<String> {
         let mut result = Vec::new();
-        self.collect_descendants(node_id, &mut result);
+        self.collect_descendants(node_id, &mut result, self.nodes.len());
         result
     }
 
-    fn collect_descendants(&self, node_id: &str, result: &mut Vec<String>) {
+    /// Defense in depth against a `parent_id` cycle: `budget` bounds
+    /// the number of nodes this walk may still push onto `result`
+    /// before it bails out with a `log::error!` instead of recursing
+    /// forever (a cycle turns this into infinite mutual recursion —
+    /// an uncatchable stack overflow — since a cycle has no leaf to
+    /// stop at). A valid tree can never push more than
+    /// `self.nodes.len()` entries, so the cap never fires on
+    /// legitimate input.
+    fn collect_descendants(&self, node_id: &str, result: &mut Vec<String>, budget: usize) {
         for child in self.children_of(node_id) {
+            if result.len() >= budget {
+                log::error!(
+                    "collect_descendants: parent_id cycle detected walking down from node {:?}; truncating",
+                    node_id
+                );
+                return;
+            }
             result.push(child.id.clone());
-            self.collect_descendants(&child.id, result);
+            self.collect_descendants(&child.id, result, budget);
         }
     }
 
     /// Returns true if `candidate_ancestor` equals `node_id` or is a (transitive)
     /// ancestor of it. Used to prevent reparenting a node under itself or under
     /// one of its own descendants (which would create a cycle).
+    ///
+    /// Defense in depth: caps the walk at `self.nodes.len()` steps
+    /// so a `parent_id` cycle can't hang this call — see
+    /// `is_hidden_by_fold` for the same reasoning.
     pub fn is_ancestor_or_self(&self, candidate_ancestor: &str, node_id: &str) -> bool {
         if candidate_ancestor == node_id {
             return true;
         }
         let mut current = self.nodes.get(node_id).and_then(|n| n.parent_id.as_deref());
+        let mut steps = 0usize;
         while let Some(pid) = current {
             if pid == candidate_ancestor {
                 return true;
             }
+            if steps > self.nodes.len() {
+                log::error!(
+                    "is_ancestor_or_self: parent_id cycle detected walking up from node {:?}; treating {:?} as not an ancestor",
+                    node_id, candidate_ancestor
+                );
+                return false;
+            }
+            steps += 1;
             current = self.nodes.get(pid).and_then(|n| n.parent_id.as_deref());
         }
         false

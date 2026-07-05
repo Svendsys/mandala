@@ -6,7 +6,9 @@
 
 use super::*;
 use crate::mindmap::loader;
-use crate::mindmap::test_helpers::{blank_canvas, testament_map_path as test_map_path};
+use crate::mindmap::test_helpers::{
+    blank_canvas, synthetic_map, synthetic_node_full, testament_map_path as test_map_path,
+};
 use crate::util::geometry::is_positive_finite;
 
 #[test]
@@ -973,4 +975,43 @@ fn node_and_edge_locations_empty_on_blank_map() {
     let map = MindMap::new_blank("blank");
     assert_eq!(map.node_locations().count(), 0);
     assert_eq!(map.edge_locations().count(), 0);
+}
+
+// Defense in depth (P0-05): `loader::load_from_str` rejects a
+// `parent_id` cycle before a `MindMap` value ever exists, but these
+// three walkers can in principle be reached with a cycle built by
+// other means (e.g. a future in-memory mutation bug), so each one
+// caps its own walk instead of trusting the loader alone. These
+// tests build the cyclic map directly via `synthetic_map` —
+// bypassing the loader entirely — to exercise that cap.
+
+#[test]
+fn is_hidden_by_fold_does_not_hang_on_parent_cycle() {
+    let a = synthetic_node_full("a", Some("b"), 0.0, 0.0, 10.0, 10.0, false);
+    let b = synthetic_node_full("b", Some("a"), 0.0, 0.0, 10.0, 10.0, false);
+    let map = synthetic_map(vec![a, b], vec![]);
+    let node = map.nodes.get("a").unwrap();
+    // Must return rather than loop forever; the guarded default is "not hidden".
+    assert!(!map.is_hidden_by_fold(node));
+}
+
+#[test]
+fn all_descendants_does_not_overflow_on_parent_cycle() {
+    let a = synthetic_node_full("a", Some("b"), 0.0, 0.0, 10.0, 10.0, false);
+    let b = synthetic_node_full("b", Some("a"), 0.0, 0.0, 10.0, 10.0, false);
+    let map = synthetic_map(vec![a, b], vec![]);
+    // Must return a bounded result rather than recurse forever.
+    let descendants = map.all_descendants("a");
+    assert!(descendants.len() <= map.nodes.len());
+}
+
+#[test]
+fn is_ancestor_or_self_does_not_hang_on_parent_cycle() {
+    let a = synthetic_node_full("a", Some("b"), 0.0, 0.0, 10.0, 10.0, false);
+    let b = synthetic_node_full("b", Some("a"), 0.0, 0.0, 10.0, 10.0, false);
+    let c = synthetic_node_full("c", None, 0.0, 0.0, 10.0, 10.0, false);
+    let map = synthetic_map(vec![a, b, c], vec![]);
+    // "c" is not part of the cycle and not an ancestor of "a"; the
+    // walk up "a"'s cyclic parent chain must terminate and say so.
+    assert!(!map.is_ancestor_or_self("c", "a"));
 }
