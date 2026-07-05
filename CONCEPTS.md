@@ -85,9 +85,12 @@ goes where", not "add a new pipeline".
 
 `Application` owns the `Renderer` directly. No channels, no worker
 threads, no `tokio`, no `std::thread::spawn` in any interactive
-path. The one sanctioned exception is the native
+path. The one sanctioned exception running today is the native
 [`FreezeWatchdog`](#freezewatchdog) thread, which only *reads* an
-`AtomicU64` ping. Lock scopes stay trivial because of this.
+`AtomicU64` ping; CODE_CONVENTIONS §3 additionally sanctions the
+IPC boundary threads (design: `work_plans/LLM_IPC.md`; lands with
+IPC-02), which move protocol bytes and never touch app state. Lock
+scopes stay trivial because of this.
 
 ### Model / view separation
 
@@ -1758,12 +1761,12 @@ throttled interactions, advance animations, rebuild geometry,
 rebuild scene if dirty, render, log frame interval.
 
 Every frame runs the same six steps in the
-same order. Inputs arriving between frames mutate the document
-and set the `dirty` flag; the next `drain_frame` consults the
-flag and rebuilds only what changed. This decouples mutation
-frequency (often per-input-sample) from rebuild frequency
-(at most once per frame), so a flurry of pointer events doesn't
-trigger a flurry of scene rebuilds.
+same order. Inputs arriving between frames mutate the document;
+the throttled-interaction shells and the per-frame geometry
+flags ensure the next `drain_frame` rebuilds only what changed.
+This decouples mutation frequency (often per-input-sample) from
+rebuild frequency (at most once per frame), so a flurry of
+pointer events doesn't trigger a flurry of scene rebuilds.
 
 `src/application/app/drain_frame.rs`. Called
 on every winit `AboutToWait` event. Step order:
@@ -1773,8 +1776,10 @@ on every winit `AboutToWait` event. Step order:
    apply pending delta if the throttle says drain.
 2. Advance running animations; on completion, push undo entry.
 3. Rebuild connection geometry if edges moved.
-4. If `dirty` and no modal editor is open, schedule a scene
-   rebuild.
+4. Rebuild the scene where the frame's work requires it —
+   mutation-path rebuilds run at their call sites
+   (`rebuild_all`); the [dirty flag](#dirty-flag) is the
+   unsaved-changes marker, not a rebuild trigger.
 5. Dispatch to `Renderer::process` to push GPU buffers.
 6. Update FPS rolling-average / snapshot counter.
 
@@ -2142,20 +2147,27 @@ only), `update_portal_tree` (portals only),
 
 ### Dirty flag
 
-A single `bool` on `MindMapDocument` set by
-mutations and consulted by `drain_frame`.
+A single `bool` on `MindMapDocument` marking
+unsaved changes: set by every document setter, cleared at
+construction and on a successful `save`.
 
-Decouples mutation frequency from rebuild
-frequency. A drag handler that fires 200 mutations per second
-does not trigger 200 rebuilds; it sets `dirty = true` once and
-the next frame's drain rebuilds once. After rebuild, the flag
-resets.
+The user must not silently lose work. The
+flag is the "there are changes worth saving" bit guarding
+destructive document swaps.
 
-Read at the top of `drain_frame`'s rebuild
-step; reset at the bottom. Modal editors check it implicitly —
-if a text-edit modal is open, the rebuild step is suppressed
-because edits are visualised through the in-flight preview, not
-the model.
+`src/application/document/mod.rs` (the `dirty`
+field). Set by the setter families under
+`document/{nodes,edges}/`; cleared at construction
+(`document/mod.rs`), by the `save` console verb
+(`console/commands/save.rs`), and by the Ctrl+S save
+(`save_document_to_bound_path`, `app/console_input/exec.rs`);
+read by the `open` and `new` verbs' guards, which refuse to
+replace a dirty document ("unsaved changes; save before…").
+Despite the name it is **not** a render or rebuild signal —
+scene rebuilds are call-site-driven (`rebuild_all` after
+mutations), and the per-frame drain consults the renderer's
+separate `connection_geometry_dirty` flag instead
+(`app/drain_frame.rs`).
 
 ### FPS overlay
 
@@ -2192,11 +2204,13 @@ threshold.
 Mandala is single-threaded; an infinite
 loop, a same-thread `RwLock` re-entry, or a blocking GPU call
 would hang indefinitely with no actionable error. The watchdog
-turns a hang into a fast, diagnostic crash. It is the **only**
-sanctioned background thread in the project — the
-single-threaded invariant for the model/view pipeline is
-preserved because the watchdog only *reads* a shared
-`AtomicU64`, never touching app state.
+turns a hang into a fast, diagnostic crash. It is the only
+sanctioned background thread running today — CODE_CONVENTIONS
+§3 additionally sanctions the IPC boundary threads that land with
+IPC-02 (`work_plans/LLM_IPC.md` §D2) — and the single-threaded
+invariant for the model/view pipeline is preserved because the
+watchdog only *reads* a shared `AtomicU64`, never touching app
+state.
 
 `src/application/app/freeze_watchdog.rs:38-134`. Main thread
 calls `tick()` at every event-loop boundary; watchdog reads

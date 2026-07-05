@@ -96,6 +96,35 @@ decision, not a drive-by edit.
 - **Single-threaded event loop.** `Application` owns `Renderer` directly.
   No channels, no worker threads, no `tokio`, no `std::thread::spawn` in
   interactive paths.
+
+  **Sanctioned boundary threads.** Two narrow exceptions exist, both
+  shaped so that app state (`InitState`, `MindMapDocument`,
+  `Renderer`) still has exactly one thread:
+  - The native `FreezeWatchdog`
+    (`src/application/app/freeze_watchdog.rs`) — reads a liveness
+    atomic, never touches app state.
+  - The IPC boundary threads (design: `work_plans/LLM_IPC.md` §D2,
+    protocol: `format/ipc.md`; lands with IPC-02). When `--ipc` is
+    active: a persistent acceptor thread (always `accept()`ing, so a
+    second client is rejected immediately with a non-blocking write),
+    plus a per-controller reader thread (blocking read → parse →
+    enqueue → wake the loop via a winit `EventLoopProxy` user event)
+    and a per-controller outbound thread (dequeue → serialize →
+    blocking write) that are spawned and torn down together per
+    connection. Each connection carries a monotonic generation stamp
+    on its requests/replies/events/pending-waits, and the reader's
+    disconnect sends a user event so the main thread cancels that
+    generation's waits and subscriptions — nothing crosses to a
+    successor controller. All see only protocol value types; every
+    IPC command executes on the main thread in the `user_event` arm
+    with the same access as any input handler, and a command that
+    changes pixels requests a redraw just as the winit input handlers
+    do. The `std::sync::mpsc` queues at this boundary carry protocol
+    values only — they are not a license for channels between app
+    components — and blocking IPC I/O on the main thread stays
+    forbidden: a stalled client must never trip
+    the `FreezeWatchdog`; the bounded outbound queue tears the
+    connection down instead.
 - **Model / view separation.** `MindMapDocument` owns the data model;
   `Renderer` owns GPU resources. The renderer reads intermediate
   representations (`Tree<GfxElement, GfxMutator>`, `RenderScene`). The
@@ -155,8 +184,8 @@ decision, not a drive-by edit.
   mutates document state or changes view state — must go through the
   funnel.
 
-  **Macro-tier privilege gates are mandatory before non-user tiers
-  ship.** Macros loaded from `~/.config/mandala/macros.json` share
+  **Macro-tier privilege gates are mandatory.** Macros loaded from
+  `~/.config/mandala/macros.json` share
   trust posture with `keybinds.json` — the user owns the file. The
   dispatcher gates two things on `MacroSource`:
   - `MacroStep::ConsoleLine` runs an arbitrary console verb, so it's
@@ -169,9 +198,9 @@ decision, not a drive-by edit.
   Privilege rejections **fail-closed** — the rest of the macro
   aborts so a `[DeleteSelection, ConsoleLine(rejected),
   SaveDocument]` pattern can't sneak its outer steps past the gate.
-  Today only the User tier loads, so the gates are dormant; they
-  MUST hold before app-bundle / map-inline / node-inline tiers
-  ship.
+  All four tiers load today, so the gates are fully active; they
+  MUST hold as new dispatch surfaces are added (IPC included —
+  `format/ipc.md` §"Trust model").
 
   `DocumentAction` (carried by `MacroStep::CustomMutation`) is
   `#[non_exhaustive]`. Today every variant is a pure in-memory
