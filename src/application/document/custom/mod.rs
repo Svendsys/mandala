@@ -184,11 +184,14 @@ impl MindMapDocument {
                 // conventional shape; trigger dispatchers that keep
                 // a persistent tree across events must explicitly
                 // call `build_tree()` after a toggle-off.
-                self.active_toggles.remove(&key);
+                self.active_toggles.retain(|k| k != &key);
                 self.dirty = true;
                 return;
             }
-            self.active_toggles.insert(key);
+            // Not yet active (the `contains` above returned false), so
+            // append — preserving activation order for the ordered
+            // re-stamp in `reapply_active_toggles`.
+            self.active_toggles.push(key);
             // Toggle mutations apply to tree only (visual), no model sync.
             if let Some(tree) = tree.as_deref_mut() {
                 self.apply_to_tree(custom, node_id, tree);
@@ -257,13 +260,30 @@ impl MindMapDocument {
             // doesn't silently drop half its effect on the next
             // rebuild (§5 no half-features).
             self.warn_unsupported_mutator_fields(custom);
+            // Apply to the caller's interactive tree so the change is
+            // immediately visible / hit-testable before the next
+            // rebuild (the render, keybind, and click paths read this
+            // tree's post-apply state).
             self.apply_to_tree(custom, node_id, tree);
+            // But sync from a **fresh, pure** projection, never the
+            // caller's tree. The interactive tree (the stored render
+            // tree the keybind / click dispatchers pass) can carry
+            // render-layer overlays — selection highlights and
+            // active-toggle visuals stamped in `rebuild_all` — that
+            // must NEVER round-trip into the persisted model (a nudge
+            // toggle would become a permanent move; a selection
+            // highlight would repaint the run cyan on disk). Applying
+            // the same mutation to an overlay-free `build_tree` and
+            // syncing from that writes back exactly the mutation's own
+            // effect and nothing else.
+            let mut pure_tree = self.build_tree();
+            self.apply_to_tree(custom, node_id, &mut pure_tree);
             // Sync every affected node and OR the per-node verdicts.
             // An explicit loop (not `|=`) keeps `sync_node_from_tree`
             // — which is `#[must_use]` — running for every node.
             let mut any_changed = false;
             for id in &affected_ids {
-                if self.sync_node_from_tree(id, tree) {
+                if self.sync_node_from_tree(id, &pure_tree) {
                     any_changed = true;
                 }
             }
@@ -346,7 +366,12 @@ impl MindMapDocument {
     /// left the registry, or whose node left the model, is skipped
     /// (the lookups return `None` / `apply_to_tree` no-ops on a
     /// missing arena id).
-    pub(super) fn reapply_active_toggles(&self, tree: &mut MindMapTree) {
+    ///
+    /// Iterated in insertion order (`active_toggles` is an ordered
+    /// list, not a hash set) so a rebuild re-stamps non-commutative
+    /// toggles in the same sequence the user activated them — the
+    /// post-rebuild visual matches the pre-rebuild one.
+    pub(in crate::application) fn reapply_active_toggles(&self, tree: &mut MindMapTree) {
         if self.active_toggles.is_empty() {
             return;
         }

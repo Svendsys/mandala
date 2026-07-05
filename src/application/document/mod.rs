@@ -7,7 +7,7 @@
 //! file carries only the struct definition, construction, and the
 //! scene-build entry points.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::Path;
 
 use log::{error, info};
@@ -129,8 +129,17 @@ pub struct MindMapDocument {
     /// directly; `target_scope` tells the undo path which nodes to
     /// snapshot before the handler runs.
     pub mutation_handlers: HashMap<String, mutations::DynamicMutationHandler>,
-    /// Tracks active toggle mutations per node: (node_id, mutation_id).
-    pub active_toggles: HashSet<(String, String)>,
+    /// Active toggle mutations, each a `(node_id, mutation_id)` pair,
+    /// in **activation order**. An ordered `Vec` rather than a
+    /// `HashSet` so `reapply_active_toggles` re-stamps them in the
+    /// same sequence the user turned them on — non-commutative
+    /// toggles on the same element (two font-size toggles, a `MoveTo`
+    /// plus a nudge) would otherwise render a different final visual
+    /// after a rebuild than they did on activation. Membership is
+    /// checked with a linear scan; the active set is tiny (a user
+    /// holds at most a handful of inspection toggles), so the `Vec`
+    /// beats a hash set on both footprint and determinism.
+    pub active_toggles: Vec<(String, String)>,
     /// Currently-running animations. Each instance carries the
     /// from/to snapshot of its target node and the timing
     /// envelope; [`Self::tick_animations`] interpolates and
@@ -403,7 +412,7 @@ impl MindMapDocument {
             mutation_registry: HashMap::new(),
             mutation_sources: HashMap::new(),
             mutation_handlers: HashMap::new(),
-            active_toggles: HashSet::new(),
+            active_toggles: Vec::new(),
             label_edit_preview: None,
             portal_text_edit_preview: None,
             color_picker_preview: None,
@@ -487,19 +496,18 @@ impl MindMapDocument {
     /// Build a Baumhard mutation tree from the MindMap hierarchy.
     /// Each MindNode becomes a GlyphArea in the tree, preserving parent-child structure.
     ///
-    /// After projecting the model, re-stamps every active Toggle
-    /// mutation's visual onto the fresh tree via
-    /// [`Self::reapply_active_toggles`]. Toggle mutations live only
-    /// on the display tree (they never sync to the model — CONCEPTS
-    /// §4), so a rebuild-from-model would otherwise wipe them; this
-    /// is the single point where "the caller rebuilds the tree next
-    /// frame" re-materialises the toggle. `active_toggles` is empty
-    /// on the common path, so this is a no-op for the vast majority
-    /// of rebuilds.
+    /// This is a **pure** projection of the model — it carries no
+    /// transient visual overlays (selection highlights, active
+    /// toggles). Those are render-layer decorations applied by
+    /// `rebuild_all` to the tree it hands the renderer, deliberately
+    /// *not* here: `build_tree` is also the projection the
+    /// `Persistent` custom-mutation apply path syncs back to the
+    /// model, and an overlay baked in here would be written into the
+    /// saved model (a nudge toggle would become a permanent move).
+    /// Keeping `build_tree` overlay-free is what makes
+    /// `sync_node_from_tree` safe.
     pub fn build_tree(&self) -> MindMapTree {
-        let mut tree = tree_builder::build_mindmap_tree(&self.mindmap);
-        self.reapply_active_toggles(&mut tree);
-        tree
+        tree_builder::build_mindmap_tree(&self.mindmap)
     }
 
     /// Build a RenderScene from the current MindMap state.

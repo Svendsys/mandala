@@ -1713,11 +1713,16 @@ fn test_toggle_mutation_survives_rebuild_and_reverts_off() {
         document_actions: vec![],
         timing: None,
     };
-    // Register so `build_tree`'s re-application can find the mutation.
+    // Register so the toggle re-application can find the mutation.
     doc.mutation_registry.insert("toggle-nudge".into(), cm.clone());
 
+    // Simulate the render path (`rebuild_all`): build the pure,
+    // overlay-free tree, then stamp active-toggle visuals onto it
+    // exactly as the renderer sees them. `build_tree` itself stays
+    // overlay-free so the Persistent sync path never reads a toggle.
     let container_x = |doc: &MindMapDocument| -> f32 {
-        let tree = doc.build_tree();
+        let mut tree = doc.build_tree();
+        doc.reapply_active_toggles(&mut tree);
         let aid = tree.arena_id_for(&nid).unwrap();
         tree.tree
             .arena
@@ -1829,4 +1834,226 @@ fn test_predicate_filtered_all_apply_pushes_no_undo() {
         "a predicate that filters every candidate must not push an undo entry"
     );
     assert!(!doc.dirty);
+}
+
+// ----- Review follow-ups: overlay-leak + delta-baseline + ordering -----
+
+/// A Persistent mutation applied against an interactive tree that
+/// carries a selection-highlight overlay must persist only its own
+/// effect — never the cyan highlight. Regression for the P1 review
+/// finding: `sync_node_from_tree` now reads a fresh, overlay-free
+/// `build_tree`, not the caller's decorated render tree.
+#[test]
+fn test_persistent_apply_does_not_leak_highlight_overlay_into_model() {
+    use crate::application::document::{apply_tree_highlights, HIGHLIGHT_COLOR};
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    let orig_color = doc.mindmap.nodes.get(&nid).unwrap().sections[0].text_runs[0].color.clone();
+    let orig_x = doc.mindmap.nodes.get(&nid).unwrap().position.x;
+
+    // Simulate `rebuild_all`'s stored render tree: a pure projection
+    // plus the selection-highlight overlay stamped on the node.
+    let mut interactive = doc.build_tree();
+    apply_tree_highlights(&mut interactive, vec![(nid.as_str(), None, HIGHLIGHT_COLOR)]);
+
+    // Apply a Persistent nudge against the OVERLAID interactive tree.
+    let cm = TestNudgeMutation::new("nudge-over-highlight", TS::SelfOnly)
+        .magnitude(5.0)
+        .build();
+    doc.apply_custom_mutation(&cm, &nid, Some(&mut interactive));
+
+    // The mutation's own effect persists...
+    let after_x = doc.mindmap.nodes.get(&nid).unwrap().position.x;
+    assert!(
+        (after_x - orig_x - 5.0).abs() < 1e-3,
+        "the nudge itself must persist to the model"
+    );
+    // ...but the highlight overlay must NOT be written back.
+    let after_color = doc.mindmap.nodes.get(&nid).unwrap().sections[0].text_runs[0].color.clone();
+    assert_eq!(
+        after_color, orig_color,
+        "selection-highlight overlay must not leak into the persisted model"
+    );
+}
+
+/// A Persistent mutation applied while a visual toggle is active on
+/// the same node must persist only the Persistent mutation's effect
+/// — the toggle's tree-only nudge must not become a saved model
+/// move. Regression for the P1 review finding.
+#[test]
+fn test_persistent_apply_does_not_leak_active_toggle_into_model() {
+    use baumhard::gfx_structs::area::GlyphAreaCommand;
+    use baumhard::gfx_structs::mutator::Mutation;
+    use baumhard::mindmap::custom_mutation::{scope, CustomMutation};
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    let orig_x = doc.mindmap.nodes.get(&nid).unwrap().position.x;
+
+    // A visual toggle that nudges the node right by 100px.
+    let toggle = CustomMutation {
+        id: "vis-toggle".into(),
+        name: "vis".into(),
+        description: String::new(),
+        contexts: vec![],
+        mutator: Some(scope::self_only(vec![Mutation::area_command(
+            GlyphAreaCommand::NudgeRight(100.0),
+        )])),
+        target_scope: TS::SelfOnly,
+        behavior: MB::Toggle,
+        predicate: None,
+        document_actions: vec![],
+        timing: None,
+    };
+    doc.mutation_registry.insert("vis-toggle".into(), toggle.clone());
+    {
+        let mut t = doc.build_tree();
+        doc.apply_custom_mutation(&toggle, &nid, Some(&mut t));
+    }
+
+    // Interactive render tree WITH the toggle overlay (as rebuild_all
+    // would produce), then a Persistent +5 nudge on the same node.
+    let mut interactive = doc.build_tree();
+    doc.reapply_active_toggles(&mut interactive);
+    let persistent = TestNudgeMutation::new("persist-nudge", TS::SelfOnly)
+        .magnitude(5.0)
+        .build();
+    doc.apply_custom_mutation(&persistent, &nid, Some(&mut interactive));
+
+    let after_x = doc.mindmap.nodes.get(&nid).unwrap().position.x;
+    assert!(
+        (after_x - orig_x - 5.0).abs() < 1e-3,
+        "only the Persistent +5 may persist; the toggle's +100 must not leak (got orig+{})",
+        after_x - orig_x
+    );
+}
+
+/// A text/region mutation that drops the section's largest run must
+/// NOT inflate the surviving runs to the stale tree scale. Regression
+/// for the P2 review finding: the font-size delta uses the section's
+/// scale captured *before* the round-trip rewrites `text_runs`.
+#[test]
+fn test_font_size_delta_ignores_run_dropped_by_round_trip() {
+    use baumhard::core::primitives::Range;
+    use baumhard::gfx_structs::area::GlyphAreaCommand;
+    use baumhard::gfx_structs::mutator::Mutation;
+    use baumhard::mindmap::custom_mutation::{scope, CustomMutation};
+    use baumhard::mindmap::model::TextRun;
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+    {
+        let node = doc.mindmap.nodes.get_mut(&nid).unwrap();
+        node.sections[0].text = "abcdef".into();
+        node.sections[0].text_runs = vec![
+            TextRun {
+                start: 0,
+                end: 3,
+                bold: false,
+                italic: false,
+                underline: false,
+                font: "LiberationSans".into(),
+                size_pt: 14,
+                color: "#ffffff".into(),
+                hyperlink: None,
+            },
+            TextRun {
+                start: 3,
+                end: 6,
+                bold: false,
+                italic: false,
+                underline: false,
+                font: "LiberationSans".into(),
+                size_pt: 40,
+                color: "#ff0000".into(),
+                hyperlink: None,
+            },
+        ];
+    }
+    // Delete the region carrying the largest (40pt) run. The tree's
+    // `scale` stays 40 (deleting a colour region doesn't touch it),
+    // and the round-trip rebuilds the model with only the 14pt run.
+    let cm = CustomMutation {
+        id: "drop-large".into(),
+        name: "drop".into(),
+        description: String::new(),
+        contexts: vec![],
+        mutator: Some(scope::self_only(vec![Mutation::area_command(
+            GlyphAreaCommand::DeleteColorFontRegion(Range::new(3, 6)),
+        )])),
+        target_scope: TS::SelfOnly,
+        behavior: MB::Persistent,
+        predicate: None,
+        document_actions: vec![],
+        timing: None,
+    };
+    let mut tree = doc.build_tree();
+    doc.apply_custom_mutation(&cm, &nid, Some(&mut tree));
+
+    let runs = &doc.mindmap.nodes.get(&nid).unwrap().sections[0].text_runs;
+    assert!(
+        runs.iter().all(|r| r.size_pt == 14),
+        "surviving run(s) must keep their authored 14pt, not inflate to the stale 40pt scale; got {:?}",
+        runs.iter().map(|r| r.size_pt).collect::<Vec<_>>()
+    );
+}
+
+/// Toggles replay in activation order after a rebuild. Two
+/// non-commutative `MoveTo` toggles on the same node must leave the
+/// node at the *second* toggle's target (last-writer-wins in
+/// activation order) — `active_toggles` is an ordered list, so the
+/// post-rebuild visual is deterministic. Regression for the P2
+/// ordering finding.
+#[test]
+fn test_active_toggles_replay_in_activation_order() {
+    use baumhard::gfx_structs::area::GlyphAreaCommand;
+    use baumhard::gfx_structs::mutator::Mutation;
+    use baumhard::mindmap::custom_mutation::{scope, CustomMutation};
+    let mut doc = load_test_doc();
+    let nid = first_testament_node_id(&doc);
+
+    let move_toggle = |id: &str, x: f32| CustomMutation {
+        id: id.into(),
+        name: id.into(),
+        description: String::new(),
+        contexts: vec![],
+        mutator: Some(scope::self_only(vec![Mutation::area_command(
+            GlyphAreaCommand::MoveTo(x, 0.0),
+        )])),
+        target_scope: TS::SelfOnly,
+        behavior: MB::Toggle,
+        predicate: None,
+        document_actions: vec![],
+        timing: None,
+    };
+    let first = move_toggle("move-a", 111.0);
+    let second = move_toggle("move-b", 222.0);
+    doc.mutation_registry.insert("move-a".into(), first.clone());
+    doc.mutation_registry.insert("move-b".into(), second.clone());
+
+    // Activate in order: A then B.
+    {
+        let mut t = doc.build_tree();
+        doc.apply_custom_mutation(&first, &nid, Some(&mut t));
+    }
+    {
+        let mut t = doc.build_tree();
+        doc.apply_custom_mutation(&second, &nid, Some(&mut t));
+    }
+    assert_eq!(
+        doc.active_toggles,
+        vec![
+            (nid.clone(), "move-a".to_string()),
+            (nid.clone(), "move-b".to_string())
+        ],
+        "active_toggles must record activation order"
+    );
+
+    // Render-path rebuild: the last-activated toggle (B → x=222) wins.
+    let mut tree = doc.build_tree();
+    doc.reapply_active_toggles(&mut tree);
+    let aid = tree.arena_id_for(&nid).unwrap();
+    let x = tree.tree.arena.get(aid).unwrap().get().glyph_area().unwrap().position.x.0;
+    assert!(
+        (x - 222.0).abs() < 1e-3,
+        "ordered replay must apply move-a then move-b, leaving x at 222 (got {x})"
+    );
 }

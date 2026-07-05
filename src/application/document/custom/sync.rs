@@ -54,7 +54,7 @@ pub(super) const MIN_TEXT_RUN_SIZE_PT: u32 = 1;
 /// the section has none) and derives `line_height = scale * 1.2`.
 /// The reverse therefore has to answer "the max just moved from A
 /// to B — how do the individual runs move?". We distribute the
-/// change as a **delta** (`tree_scale - old_max`) added to every
+/// change as a **delta** (`tree_scale - old_scale`) added to every
 /// run rather than overwriting each run with `tree_scale`, so the
 /// *relative* sizing of a multi-run section survives: a
 /// `[14pt, 74pt]` section grown 2pt becomes `[16pt, 76pt]`, not
@@ -77,26 +77,27 @@ pub(super) const MIN_TEXT_RUN_SIZE_PT: u32 = 1;
 /// default colour (`default_color`) so rendering is unchanged
 /// except for the size.
 ///
+/// `old_scale` is the section's effective scale **before** this
+/// sync ran — i.e. the value the forward path put in the tree,
+/// captured by the caller *before* the text/regions round-trip may
+/// have rewritten `section.text_runs`. Taking it as a parameter
+/// (rather than recomputing from the current runs) is load-bearing:
+/// a text/region mutation that drops the largest run — `PopBack`
+/// deleting the tail run, `DeleteColorFontRegion` / `ChangeRegionRange`
+/// dropping the 40pt span of a `[14pt, 40pt]` section — would leave
+/// a stale `tree_scale` (40) against a freshly-shrunk current max
+/// (14), and a recomputed delta of +26 would wrongly inflate the
+/// surviving run to 40pt and record a phantom font-size change.
+///
 /// Returns `true` when it wrote anything.
 fn sync_section_font_size(
     section: &mut baumhard::mindmap::model::MindSection,
     tree_scale: f32,
+    old_scale: f32,
     default_color: &str,
 ) -> bool {
     use baumhard::util::grapheme_chad::count_grapheme_clusters;
 
-    // The forward path's effective scale for this section — the
-    // value the tree started at before the mutation ran.
-    let old_max = section
-        .text_runs
-        .iter()
-        .map(|r| r.size_pt as f32)
-        .fold(0.0_f32, f32::max);
-    let old_scale = if old_max > 0.0 {
-        old_max
-    } else {
-        DEFAULT_TEXT_RUN_SIZE_PT as f32
-    };
     let delta = tree_scale - old_scale;
     // `size_pt` is an integer point size, so a sub-half-point delta
     // rounds to no change on every run. Treat it as "scale
@@ -379,6 +380,26 @@ impl MindMapDocument {
                 continue;
             };
 
+            // Capture the section's effective scale BEFORE the
+            // text/regions round-trip below can rewrite `text_runs`.
+            // This is the value the forward path put in the tree
+            // (`scale = max(run.size_pt)`, or the default for a
+            // runless section), and the correct baseline for the
+            // font-size delta — recomputing it after the round-trip
+            // would misread a run-dropping mutation as a size change.
+            let pre_round_trip_scale = {
+                let max = section
+                    .text_runs
+                    .iter()
+                    .map(|r| r.size_pt as f32)
+                    .fold(0.0_f32, f32::max);
+                if max > 0.0 {
+                    max
+                } else {
+                    DEFAULT_TEXT_RUN_SIZE_PT as f32
+                }
+            };
+
             // Write `section.offset` back from the tree's section-
             // area position so a `SectionsOnly` translate mutation
             // persists. The forward path computes
@@ -546,7 +567,12 @@ impl MindMapDocument {
             // still persisted). Distributes the tree-side `scale`
             // delta across the section's runs; see
             // [`sync_section_font_size`].
-            if sync_section_font_size(section, snapshot.tree_scale, &node_text_color) {
+            if sync_section_font_size(
+                section,
+                snapshot.tree_scale,
+                pre_round_trip_scale,
+                &node_text_color,
+            ) {
                 changed = true;
             }
         }
