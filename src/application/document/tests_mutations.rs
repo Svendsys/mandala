@@ -1569,14 +1569,16 @@ fn test_tick_completion_live_tree_relative_no_double_apply() {
     );
 }
 
-/// **P0-03 regression — absolute mutation, live tree.** The
-/// companion to the relative test: an animated absolute `MoveTo`
-/// must commit the exact target (an overwrite, not a delta) and be
-/// undoable back to `from`. Absolute commands don't drift mid-lerp
-/// (`apply_position_mutations_to_node` leaves `to == from` for
-/// them, so the tween is visually inert), so this guards that the
-/// reset-then-apply fix repairs the relative path without
-/// regressing the Assign path.
+/// **P0-03 parity guard — absolute mutation, live tree.** The
+/// companion to the relative regression test. An animated absolute
+/// `MoveTo` must commit the exact target (an overwrite, not a delta)
+/// and be undoable back to `from`. Absolute commands are inert under
+/// the tween (`apply_position_mutations_to_node` leaves `to == from`
+/// for them), so — unlike the relative test — this one also passes on
+/// pre-fix code; it exists to prove the reset-then-apply fix doesn't
+/// regress the Assign path. It asserts the tween really is inert (the
+/// model stays at `from` mid-flight) so the final landing provably
+/// comes from the completion apply, not the lerp.
 #[test]
 fn test_tick_completion_live_tree_absolute_lands_and_undo_restores() {
     let mut doc = load_test_doc();
@@ -1593,6 +1595,20 @@ fn test_tick_completion_live_tree_absolute_lands_and_undo_restores() {
 
     // Two advancing ticks, then the completing tick — all live-tree.
     assert!(doc.tick_animations(300, Some(&mut tree)));
+    // MoveTo is inert under the tween: `to == from`, so mid-flight the
+    // model must still sit at `from` (a real drift toward the target
+    // would be +75 on x by t=0.3). The tolerance clears the f32
+    // round-trip noise of the lerp (~3e-6 at these magnitudes) while
+    // staying far below any real movement.
+    let mid = doc.mindmap.nodes.get(&node_id).unwrap().position.clone();
+    assert!(
+        (mid.x - orig.x).abs() < 1e-3 && (mid.y - orig.y).abs() < 1e-3,
+        "absolute MoveTo must not drift the model mid-tween; got ({}, {}), expected ({}, {})",
+        mid.x,
+        mid.y,
+        orig.x,
+        orig.y,
+    );
     tree = doc.build_tree();
     assert!(doc.tick_animations(700, Some(&mut tree)));
     tree = doc.build_tree();
@@ -1621,6 +1637,128 @@ fn test_tick_completion_live_tree_absolute_lands_and_undo_restores() {
         after.y,
         orig.x,
         orig.y,
+    );
+}
+
+/// **P0-03 — a node deleted mid-animation must not be resurrected.**
+/// Nothing purges `active_animations` when a node is deleted, so a
+/// queued instance reaches completion after its target is gone. The
+/// completion must skip it cleanly, exactly as the pre-fix path did
+/// (via `apply_custom_mutation`'s empty snapshots). Regression guard
+/// against a whole-node `insert(from_node)` at completion, which would
+/// re-insert the deleted node at `from+delta` with a ghost undo entry.
+#[test]
+fn test_tick_completion_deleted_node_not_resurrected() {
+    let mut doc = load_test_doc();
+    let node_id = first_testament_node_id(&doc);
+    let cm = make_animated_mutation("anim-del", 1000);
+    doc.undo_stack.clear();
+    doc.dirty = false;
+
+    let mut tree = doc.build_tree();
+    doc.start_animation(&cm, &node_id, 0);
+    assert!(doc.tick_animations(500, Some(&mut tree)));
+
+    // Delete the node mid-flight (model removal mirrors the
+    // `mindmap.nodes` side of `delete_node`); the animation stays
+    // queued because the delete doesn't touch `active_animations`.
+    doc.mindmap.nodes.remove(&node_id);
+    assert!(doc.has_active_animations());
+
+    // Completing tick. The completion checks the MODEL for the target's
+    // existence (not the tree), so the stale `tree` is never read — but
+    // it must still not resurrect the node.
+    doc.tick_animations(1200, Some(&mut tree));
+    assert!(!doc.has_active_animations(), "the instance still drains");
+    assert!(
+        !doc.mindmap.nodes.contains_key(&node_id),
+        "a node deleted mid-animation must stay deleted at completion"
+    );
+    assert!(
+        doc.undo_stack.is_empty(),
+        "no undo entry should be pushed for a completion on a deleted node"
+    );
+}
+
+/// **P0-03 — no-tree completion of a displacing mutation is
+/// undoable.** Production always passes a tree, but tests and any
+/// future headless caller hit the no-tree fallback. A relative nudge
+/// completing without a tree must land at `from+delta` and push
+/// exactly one undo entry that restores `from`. Pre-fix this path
+/// pushed none ("caller's responsibility", which no caller took —
+/// defect 3).
+#[test]
+fn test_tick_completion_no_tree_relative_is_undoable() {
+    let mut doc = load_test_doc();
+    let node_id = first_testament_node_id(&doc);
+    let orig_x = doc.mindmap.nodes.get(&node_id).unwrap().position.x;
+    let cm = make_animated_mutation("anim-notree-rel", 1000);
+    doc.undo_stack.clear();
+    doc.dirty = false;
+
+    doc.start_animation(&cm, &node_id, 0);
+    doc.tick_animations(1200, None);
+    assert!(!doc.has_active_animations());
+
+    let after = doc.mindmap.nodes.get(&node_id).unwrap().position.x;
+    assert!(
+        (after - (orig_x + 100.0)).abs() < 1e-3,
+        "no-tree nudge completion lands at from+delta; got {after}, expected {}",
+        orig_x + 100.0,
+    );
+    assert_eq!(
+        doc.undo_stack.len(),
+        1,
+        "a displacing no-tree completion pushes exactly one undo entry"
+    );
+
+    assert!(doc.undo());
+    let restored = doc.mindmap.nodes.get(&node_id).unwrap().position.x;
+    assert!(
+        (restored - orig_x).abs() < 1e-6,
+        "undo restores the pre-animation position; got {restored}, expected {orig_x}"
+    );
+}
+
+/// **P0-03 — no-tree completion of a no-op mutation pushes no undo
+/// entry.** An animated absolute `MoveTo` leaves `to == from` in the
+/// model snapshot (`apply_position_mutations_to_node` is a no-op for
+/// absolute commands), and the no-tree path can't run the declarative
+/// MoveTo, so the commit is a no-op that must NOT leave a dead undo
+/// entry or a spurious `dirty` — mirroring the tree path's `changed`
+/// gate (P0-02).
+#[test]
+fn test_tick_completion_no_tree_noop_pushes_no_undo() {
+    let mut doc = load_test_doc();
+    let node_id = first_testament_node_id(&doc);
+    let orig = doc.mindmap.nodes.get(&node_id).unwrap().position.clone();
+    let cm = make_animated_moveto_mutation(
+        "anim-notree-abs",
+        1000,
+        (orig.x + 250.0) as f32,
+        (orig.y - 120.0) as f32,
+    );
+    doc.undo_stack.clear();
+    doc.dirty = false;
+
+    doc.start_animation(&cm, &node_id, 0);
+    doc.tick_animations(1200, None);
+    assert!(!doc.has_active_animations());
+
+    let after = doc.mindmap.nodes.get(&node_id).unwrap().position.clone();
+    assert!(
+        (after.x - orig.x).abs() < 1e-9 && (after.y - orig.y).abs() < 1e-9,
+        "no-tree absolute completion is inert (to == from); got ({}, {})",
+        after.x,
+        after.y,
+    );
+    assert!(
+        doc.undo_stack.is_empty(),
+        "a no-op no-tree completion must push no undo entry"
+    );
+    assert!(
+        !doc.dirty,
+        "a no-op no-tree completion must not flag the document dirty"
     );
 }
 
