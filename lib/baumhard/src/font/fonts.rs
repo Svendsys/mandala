@@ -38,12 +38,17 @@ fn load_font_sources() -> FxHashMap<AppFont, Source> {
 /// Register every compiled-in font with [`FONT_SYSTEM`], returning
 /// the `AppFont → fontdb ID` map callers use to resolve faces.
 ///
-/// Acquires the `FONT_SYSTEM` **write** lock; callers that already
-/// hold any lock on it will deadlock. Costs: one lock acquisition
-/// plus one `load_font_source` call per entry in [`FONT_SOURCES`].
+/// Acquires the `FONT_SYSTEM` **write** guard through
+/// [`acquire_font_system_write`] (§B5: every write acquire routes
+/// through the helper). A caller already holding any `FONT_SYSTEM`
+/// guard on this thread makes the acquire time out and panic with a
+/// site tag instead of hanging — but that never happens in practice
+/// because [`init`] runs `load_fonts` at startup, before any guard
+/// is held. Costs: one lock acquisition plus one `load_font_source`
+/// call per entry in [`FONT_SOURCES`].
 fn load_fonts() -> FxHashMap<AppFont, TinyVec<[ID; 8]>> {
     debug!("Waiting for font-system write lock");
-    let mut font_system = FONT_SYSTEM.write().expect("Failed to retrieve font system lock");
+    let mut font_system = acquire_font_system_write("load_fonts");
     let mut compiled_font_id_map = FxHashMap::default();
     do_for_all_sources(|x, source| {
         let font_id = font_system.db_mut().load_font_source(source.clone());
@@ -306,12 +311,29 @@ const FONT_SYSTEM_LOCK_POLL: Duration = Duration::from_millis(1);
 /// Acquire the `FONT_SYSTEM` write guard with a bounded timeout,
 /// panicking with `site` in the message on timeout or poison.
 ///
-/// Every `FONT_SYSTEM.write()` call site in the codebase should go
-/// through this helper instead of calling `RwLock::write` directly.
-/// The rationale is in the `FONT_SYSTEM_LOCK_TIMEOUT` doc above:
-/// a timeout here is a re-entrancy bug, and without the helper that
-/// bug would hang the main thread indefinitely. With the helper, it
-/// produces a stack trace pointing at the second acquisition site.
+/// There are exactly **two sanctioned shapes** for taking the
+/// `FONT_SYSTEM` write lock; a raw `FONT_SYSTEM.write()` is neither:
+///
+/// 1. **Blocking-with-timeout via this helper** — the default. Used
+///    by every call site that must measure or shape and can afford
+///    to wait a frame: `load_fonts`, the metric cache's miss path
+///    (`metric_cache::glyph_*`), and the renderer's border /
+///    handle / overlay rebuilds. A timeout here is a re-entrancy
+///    bug (this thread already holds the guard); without the helper
+///    that bug would hang the main thread forever, so instead we
+///    panic with a stack trace pointing at the second acquisition.
+/// 2. **Non-blocking `try_write` + frame-degrade** — the renderer's
+///    interactive paths (`renderer::mod::rebuild_mode_status_overlay_if_needed`,
+///    `rebuild_fps_overlay_if_needed`, `render::prepare_text_for_pass`)
+///    take `FONT_SYSTEM.try_write()` directly and skip the frame on
+///    `WouldBlock` rather than block or panic. This is legitimate:
+///    a contended lock there means another pass is mid-shape, and
+///    dropping one overlay frame is cheaper than stalling render.
+///    These sites retry on the next `process()` cycle.
+///
+/// Guard-holding callers that need to measure a nested value must
+/// thread their `&mut FontSystem` into a `*_with` variant (see
+/// `metric_cache` / `border_run_specs_with`) rather than re-acquire.
 ///
 /// `site` is a short static string naming the call site; it appears
 /// in the panic message so the stack makes the culprit obvious even
