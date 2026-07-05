@@ -25,10 +25,20 @@
 //!   default fallback face); the `String` is the grapheme cluster
 //!   ("│", "◆·", etc.) — multi-grapheme clusters shape together
 //!   so the cache key has to preserve them as a unit.
-//! - Hit: read-locked `RwLock`, O(1).
-//! - Miss: acquires `FONT_SYSTEM.write()`, shapes the cluster
-//!   through cosmic-text, stores the result. Subsequent calls
-//!   for the same key hit the cache.
+//! - Hit: read-locked `RwLock`, O(1); no `FONT_SYSTEM` access.
+//! - Miss (unlocked caller): acquires the `FONT_SYSTEM` write
+//!   guard through `acquire_font_system_write` — the timeout-
+//!   guarded helper, never a raw `.write()` (CONVENTIONS §B5) —
+//!   shapes the cluster through cosmic-text, stores the result.
+//!   Subsequent calls for the same key hit the cache.
+//! - Miss (caller already holding the guard): use the
+//!   `*_with(&mut FontSystem, ...)` variants, which shape through
+//!   the passed guard instead of acquiring a second one. The
+//!   renderer's border-rebuild loop holds the write guard across
+//!   the whole loop and MUST use these — a nested same-thread
+//!   acquire is a guaranteed deadlock. This mirrors the
+//!   `measure_glyph_ink_bounds` / `measure_text_block_unbounded`
+//!   composable design in `font/fonts.rs`.
 //! - Invalidation: implicit. When the user swaps the active
 //!   font, the new `AppFont` discriminator produces a different
 //!   cache key; old entries become dead memory until process
@@ -61,12 +71,23 @@ use lazy_static::lazy_static;
 use ordered_float::OrderedFloat;
 use rustc_hash::FxHashMap;
 use std::sync::{Mutex, RwLock};
+use std::time::Duration;
 
 use crate::font::fonts::{
-    face_family_name_for_pin, measure_glyph_ink_bounds, AppFont, FONT_SYSTEM,
+    acquire_font_system_write, acquire_font_system_write_with_timeout,
+    face_family_name_for_pin, measure_glyph_ink_bounds, AppFont,
 };
 
 type CacheKey = (Option<AppFont>, OrderedFloat<f32>, String);
+
+/// Wall-clock ceiling for the `FONT_SYSTEM` write acquire on a
+/// metric-cache miss made by an *unlocked* caller. Same value and
+/// rationale as `fonts::FONT_SYSTEM_LOCK_TIMEOUT`: Mandala is
+/// single-threaded, so a healthy miss finds the lock free; a wait
+/// this long means the calling thread already holds the guard (and
+/// should have called a `*_with` variant), so we panic with a site
+/// tag rather than hang forever on a re-entrant `RwLock::write()`.
+const MISS_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Ink extent of one grapheme cluster at a given face + size.
 ///
@@ -127,13 +148,53 @@ lazy_static! {
 /// cosmic-text and caches. Subsequent calls return the cached
 /// value. The cache is process-lifetime.
 pub fn glyph_advance(face: Option<AppFont>, size_pt: f32, grapheme: &str) -> f32 {
+    glyph_advance_within(face, size_pt, grapheme, MISS_LOCK_TIMEOUT)
+}
+
+/// [`glyph_advance`] with a caller-chosen acquire timeout. Split
+/// out (crate-visible) so the re-entrancy regression test can drive
+/// the timeout path on a short budget without the production 5 s
+/// wait — the same shape `fonts::acquire_font_system_write` /
+/// `acquire_font_system_write_with_timeout` use.
+pub(crate) fn glyph_advance_within(
+    face: Option<AppFont>,
+    size_pt: f32,
+    grapheme: &str,
+    acquire_timeout: Duration,
+) -> f32 {
+    // Fast path: a cache hit needs no `FONT_SYSTEM` access at all.
     let key = (face, OrderedFloat(size_pt), grapheme.to_string());
     if let Ok(cache) = ADVANCE_CACHE.read() {
         if let Some(&v) = cache.get(&key) {
             return v;
         }
     }
-    let measured = shape_advance(face, size_pt, grapheme);
+    // Miss: acquire the write guard through the timeout-guarded
+    // helper (never a raw `.write()`), then delegate to the
+    // guard-threading variant.
+    let mut guard =
+        acquire_font_system_write_with_timeout("metric_cache::glyph_advance", acquire_timeout);
+    glyph_advance_with(&mut guard, face, size_pt, grapheme)
+}
+
+/// [`glyph_advance`] for callers that already hold the `FONT_SYSTEM`
+/// write guard (the renderer's border-rebuild loop). Shapes any
+/// cache miss through the passed `font_system` instead of acquiring
+/// a second guard — the composable design §B5 and the
+/// `measure_glyph_ink_bounds` primitive share.
+pub fn glyph_advance_with(
+    font_system: &mut FontSystem,
+    face: Option<AppFont>,
+    size_pt: f32,
+    grapheme: &str,
+) -> f32 {
+    let key = (face, OrderedFloat(size_pt), grapheme.to_string());
+    if let Ok(cache) = ADVANCE_CACHE.read() {
+        if let Some(&v) = cache.get(&key) {
+            return v;
+        }
+    }
+    let measured = shape_advance_with(font_system, face, size_pt, grapheme);
     if let Ok(mut cache) = ADVANCE_CACHE.write() {
         cache.insert(key, measured);
     }
@@ -152,13 +213,33 @@ pub fn glyph_advance(face: Option<AppFont>, size_pt: f32, grapheme: &str) -> f32
 /// approximation produced and keeps callers safe from
 /// degenerate-zero division.
 pub fn glyph_ink_height(face: Option<AppFont>, size_pt: f32, grapheme: &str) -> f32 {
+    // Fast path: a cache hit needs no `FONT_SYSTEM` access.
     let key = (face, OrderedFloat(size_pt), grapheme.to_string());
     if let Ok(cache) = INK_HEIGHT_CACHE.read() {
         if let Some(&v) = cache.get(&key) {
             return v;
         }
     }
-    let measured = shape_ink_height(face, size_pt, grapheme);
+    let mut guard = acquire_font_system_write("metric_cache::glyph_ink_height");
+    glyph_ink_height_with(&mut guard, face, size_pt, grapheme)
+}
+
+/// [`glyph_ink_height`] for callers that already hold the
+/// `FONT_SYSTEM` write guard. Shapes any cache miss through the
+/// passed `font_system`.
+pub fn glyph_ink_height_with(
+    font_system: &mut FontSystem,
+    face: Option<AppFont>,
+    size_pt: f32,
+    grapheme: &str,
+) -> f32 {
+    let key = (face, OrderedFloat(size_pt), grapheme.to_string());
+    if let Ok(cache) = INK_HEIGHT_CACHE.read() {
+        if let Some(&v) = cache.get(&key) {
+            return v;
+        }
+    }
+    let measured = shape_ink_height_with(font_system, face, size_pt, grapheme);
     let resolved = if measured > 0.0 { measured } else { size_pt };
     if let Ok(mut cache) = INK_HEIGHT_CACHE.write() {
         cache.insert(key, resolved);
@@ -181,13 +262,31 @@ pub fn cluster_width(face: Option<AppFont>, size_pt: f32, graphemes: &[String]) 
         .sum()
 }
 
+/// [`cluster_width`] for callers that already hold the `FONT_SYSTEM`
+/// write guard — sums `glyph_advance_with` per grapheme through the
+/// passed `font_system` so a cold cluster measures without a nested
+/// acquire.
+pub fn cluster_width_with(
+    font_system: &mut FontSystem,
+    face: Option<AppFont>,
+    size_pt: f32,
+    graphemes: &[String],
+) -> f32 {
+    let mut total = 0.0f32;
+    for g in graphemes {
+        total += glyph_advance_with(font_system, face, size_pt, g);
+    }
+    total
+}
+
 /// Full ink extent of `grapheme` at `face` × `size_pt`:
 /// advance + ink_height + ink_top (signed baseline offset).
 ///
-/// Cache: read-locked hit ≈ 100 ns; miss acquires both
-/// `FONT_SYSTEM.write()` and `SWASH_CACHE.lock()` to rasterise
-/// the glyph through `measure_glyph_ink_bounds`. Once-per-
-/// (face, size, grapheme) cost.
+/// Cache: read-locked hit ≈ 100 ns; miss acquires the `FONT_SYSTEM`
+/// write guard (via `acquire_font_system_write`) plus
+/// `SWASH_CACHE.lock()` to rasterise the glyph through
+/// `measure_glyph_ink_bounds`. Once-per-(face, size, grapheme) cost.
+/// Callers already holding the guard must use [`glyph_ink_with`].
 ///
 /// Returns a defensive fallback (`advance` from the cheaper
 /// advance-only path, `ink_height = size_pt`, `ink_top =
@@ -197,28 +296,52 @@ pub fn cluster_width(face: Option<AppFont>, size_pt: f32, graphemes: &[String]) 
 /// approximation produced, so callers downstream don't see a
 /// regression on degenerate glyphs.
 pub fn glyph_ink(face: Option<AppFont>, size_pt: f32, grapheme: &str) -> InkExtent {
+    // Fast path: a cache hit needs no `FONT_SYSTEM` access.
     let key = (face, OrderedFloat(size_pt), grapheme.to_string());
     if let Ok(cache) = INK_EXTENT_CACHE.read() {
         if let Some(&v) = cache.get(&key) {
             return v;
         }
     }
-    let measured = shape_ink_extent(face, size_pt, grapheme);
+    let mut guard = acquire_font_system_write("metric_cache::glyph_ink");
+    glyph_ink_with(&mut guard, face, size_pt, grapheme)
+}
+
+/// [`glyph_ink`] for callers that already hold the `FONT_SYSTEM`
+/// write guard (the renderer's border-rebuild loop). Rasterises any
+/// cache miss through the passed `font_system` — plus its own
+/// `SWASH_CACHE.lock()`, which is a distinct lock and so re-entrancy-
+/// safe — instead of acquiring a second `FONT_SYSTEM` guard.
+pub fn glyph_ink_with(
+    font_system: &mut FontSystem,
+    face: Option<AppFont>,
+    size_pt: f32,
+    grapheme: &str,
+) -> InkExtent {
+    let key = (face, OrderedFloat(size_pt), grapheme.to_string());
+    if let Ok(cache) = INK_EXTENT_CACHE.read() {
+        if let Some(&v) = cache.get(&key) {
+            return v;
+        }
+    }
+    let measured = shape_ink_extent_with(font_system, face, size_pt, grapheme);
     if let Ok(mut cache) = INK_EXTENT_CACHE.write() {
         cache.insert(key, measured);
     }
     measured
 }
 
-fn shape_ink_extent(face: Option<AppFont>, size_pt: f32, grapheme: &str) -> InkExtent {
-    let mut font_system_guard = FONT_SYSTEM
-        .write()
-        .expect("FONT_SYSTEM poisoned in metric_cache::shape_ink_extent");
+fn shape_ink_extent_with(
+    font_system: &mut FontSystem,
+    face: Option<AppFont>,
+    size_pt: f32,
+    grapheme: &str,
+) -> InkExtent {
     let mut swash_guard = SWASH_CACHE
         .lock()
         .expect("SWASH_CACHE poisoned in metric_cache::shape_ink_extent");
     let bounds = measure_glyph_ink_bounds(
-        &mut font_system_guard,
+        font_system,
         &mut swash_guard,
         face,
         grapheme,
@@ -248,13 +371,6 @@ fn shape_ink_extent(face: Option<AppFont>, size_pt: f32, grapheme: &str) -> InkE
     }
 }
 
-fn shape_advance(face: Option<AppFont>, size_pt: f32, grapheme: &str) -> f32 {
-    let mut guard = FONT_SYSTEM
-        .write()
-        .expect("FONT_SYSTEM poisoned in metric_cache::shape_advance");
-    shape_advance_with(&mut guard, face, size_pt, grapheme)
-}
-
 fn shape_advance_with(
     font_system: &mut FontSystem,
     face: Option<AppFont>,
@@ -278,11 +394,12 @@ fn shape_advance_with(
     total
 }
 
-fn shape_ink_height(face: Option<AppFont>, size_pt: f32, grapheme: &str) -> f32 {
-    let mut guard = FONT_SYSTEM
-        .write()
-        .expect("FONT_SYSTEM poisoned in metric_cache::shape_ink_height");
-    let font_system: &mut FontSystem = &mut guard;
+fn shape_ink_height_with(
+    font_system: &mut FontSystem,
+    face: Option<AppFont>,
+    size_pt: f32,
+    grapheme: &str,
+) -> f32 {
     // We approximate ink height from cosmic-text's layout-glyph
     // `y_offset`/font_size metrics rather than rasterising
     // through swash. This is cheaper (no SwashCache needed) and
@@ -406,5 +523,83 @@ mod tests {
         crate::font::fonts::init();
         let h = glyph_ink_height(None, 18.0, " ");
         assert_eq!(h, 18.0, "whitespace ink_height should fall back to size_pt");
+    }
+
+    /// The guard-threading `*_with` variant agrees with the
+    /// lock-acquiring wrapper: same key, same measured value,
+    /// same shared cache. Exercises the renderer's path (measure
+    /// while holding the write guard) without deadlocking.
+    #[test]
+    fn glyph_advance_with_matches_unlocked_wrapper() {
+        use crate::font::fonts::acquire_font_system_write;
+        crate::font::fonts::init();
+        let unlocked = glyph_advance(None, 18.0, "━");
+        // Now measure the same key while holding the guard — the
+        // `_with` variant must not re-acquire (that would hang).
+        let mut guard = acquire_font_system_write("test_glyph_advance_with");
+        let with = glyph_advance_with(&mut guard, None, 18.0, "━");
+        drop(guard);
+        assert_eq!(
+            unlocked, with,
+            "glyph_advance_with must agree with glyph_advance on a shared key"
+        );
+        assert!(with > 0.0, "━ should have positive advance, got {with}");
+    }
+
+    /// A different (uncached) key measured *only* through the
+    /// `_with` variant while the guard is held proves cold keys
+    /// shape without a nested acquire — the exact renderer scenario
+    /// P0-06 guards against.
+    #[test]
+    fn glyph_ink_with_cold_key_under_held_guard() {
+        use crate::font::fonts::acquire_font_system_write;
+        crate::font::fonts::init();
+        let mut guard = acquire_font_system_write("test_glyph_ink_with");
+        let ink = glyph_ink_with(&mut guard, None, 23.0, "◆");
+        drop(guard);
+        assert!(ink.advance > 0.0, "◆ advance should be positive");
+        assert!(ink.ink_height > 0.0, "◆ ink_height should be positive");
+    }
+
+    /// Freeze-hardening regression, the metric-cache twin of
+    /// `fonts::test_acquire_font_system_write_panics_on_timeout`: a
+    /// cache **miss** taken while the `FONT_SYSTEM` write guard is
+    /// already held must route through `acquire_font_system_write`
+    /// and PANIC with the site tag — not hang forever on a
+    /// re-entrant `RwLock::write()`. This is the exact deadlock the
+    /// renderer's border-rebuild loop would hit if it called
+    /// `glyph_advance` (instead of `glyph_advance_with`) on a cold
+    /// key.
+    ///
+    /// We hold the guard on the test thread and drive the miss under
+    /// `catch_unwind`, then drop the guard cleanly: the panic is
+    /// caught while the guard is still live, so it never unwinds
+    /// past the guard and `FONT_SYSTEM` is left un-poisoned for
+    /// sibling tests. A short acquire timeout keeps the test fast —
+    /// the panic path and message are identical to production's 5 s
+    /// budget.
+    #[test]
+    fn glyph_advance_miss_under_held_guard_panics_not_hangs() {
+        use crate::font::fonts::acquire_font_system_write;
+        crate::font::fonts::init();
+        // A grapheme + size pair no other test warms, so the call is
+        // guaranteed to miss the cache and reach the acquire.
+        let cold = "\u{2591}\u{2593}reentry";
+        let guard = acquire_font_system_write("metric_cache_reentrancy_test_holder");
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            glyph_advance_within(None, 41.5, cold, Duration::from_millis(200))
+        }));
+        drop(guard);
+        let payload =
+            outcome.expect_err("re-entrant glyph_advance miss must panic, not hang");
+        let msg = payload
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| payload.downcast_ref::<&str>().copied())
+            .unwrap_or("");
+        assert!(
+            msg.contains("metric_cache::glyph_advance"),
+            "panic must name the metric-cache site; got: {msg:?}"
+        );
     }
 }
