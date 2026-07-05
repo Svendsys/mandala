@@ -86,6 +86,19 @@ lazy_static! {
 /// builder, the lazy path would deadlock. Eager init at startup
 /// makes that impossible.
 pub fn init() {
+    ensure_warm();
+}
+
+/// Force the font lazy-statics a `FONT_SYSTEM` write acquire depends
+/// on to build **now** — `COMPILED_FONT_ID_MAP` (via `load_fonts`,
+/// which itself takes the write guard) and `FAMILY_INDEX` (via
+/// `build_family_index`, which takes the read guard). Library-callable
+/// counterpart to the app-only [`init`]: a caller that is about to
+/// hold the write guard and will reach `face_family_name_for_pin` /
+/// `app_font_by_family` under it calls this **first**, so the lazy
+/// build doesn't re-enter the same-thread lock. Idempotent — a no-op
+/// once warm; both stores are `OnceLock`/`lazy_static`. §B5.
+pub(crate) fn ensure_warm() {
     COMPILED_FONT_ID_MAP.capacity();
     FAMILY_INDEX.get_or_init(build_family_index);
 }
@@ -301,7 +314,11 @@ pub(crate) fn face_family_name_for_pin(
 /// `std::sync::RwLock::write()` would otherwise block on forever.
 /// 5 s is orders of magnitude beyond any legitimate frame budget and
 /// conservative enough to never fire on a healthy system.
-const FONT_SYSTEM_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
+///
+/// `pub(crate)` so the metric cache reuses the *same* budget for its
+/// miss-path acquires rather than duplicating the literal — the
+/// "same value" the two sites want is then compiler-enforced.
+pub(crate) const FONT_SYSTEM_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Poll interval while waiting for the `FONT_SYSTEM` write guard.
 /// Short enough that a lock release is noticed promptly; long enough
