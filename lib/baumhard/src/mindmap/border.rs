@@ -486,30 +486,27 @@ pub struct BorderRunSpec {
 /// per visible glyph, so the indices line up with the per-cluster
 /// regions [`build_border_regions`] emits.
 ///
-/// Cost: shapes each corner + fill grapheme once through the metric
-/// cache (hot re-renders hit the cache; only cold keys touch
-/// cosmic-text), 4 `String` allocations, 4 `count_grapheme_clusters`
-/// walks. Same inputs → same array.
+/// Cost: acquires the `FONT_SYSTEM` **write** guard once per call —
+/// unconditionally, even when every glyph is a cache hit (unlike the
+/// metric-cache wrappers, which check the cache before locking).
+/// Shapes each corner + fill grapheme once through the metric cache
+/// (hot re-renders hit the cache; only cold keys touch cosmic-text),
+/// 4 `String` allocations, 4 `count_grapheme_clusters` walks. Same
+/// inputs → same array.
 pub fn border_run_specs(
     border_style: &BorderStyle,
     node_pos: (f32, f32),
     node_size: (f32, f32),
 ) -> Vec<BorderRunSpec> {
-    use crate::font::fonts::{acquire_font_system_write, app_font_by_family};
-
-    // Warm the family index BEFORE taking the guard. Resolving the
-    // face lazily builds `FAMILY_INDEX` on first use, and that build
-    // acquires `FONT_SYSTEM.write()` via `load_fonts`; doing it while
-    // holding our own guard would re-enter the same-thread write lock
-    // and time out. Production warms this at `fonts::init()`, so this
-    // is a no-op there — it only matters for unlocked callers that
-    // skip `init()` (the tree-builder path, unit tests). The result
-    // is reused by `border_run_specs_with` off the now-warm index.
-    let _warm = border_style
-        .font_name
-        .as_deref()
-        .and_then(app_font_by_family);
-    let mut font_system = acquire_font_system_write("border_run_specs");
+    // Warm the font lazy-statics BEFORE taking the guard. Resolving a
+    // face under the guard lazily builds `FAMILY_INDEX` /
+    // `COMPILED_FONT_ID_MAP`, and that build acquires `FONT_SYSTEM`
+    // via `load_fonts` — a same-thread re-entry that would time out.
+    // Production warms this at `fonts::init()`, so this is a no-op
+    // there; it only matters for unlocked callers that skip `init()`
+    // (the tree-builder path, unit tests). See `fonts::ensure_warm`.
+    crate::font::fonts::ensure_warm();
+    let mut font_system = crate::font::fonts::acquire_font_system_write("border_run_specs");
     border_run_specs_with(&mut font_system, border_style, node_pos, node_size)
 }
 
