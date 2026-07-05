@@ -2157,14 +2157,16 @@ destructive document swaps.
 
 `src/application/document/mod.rs` (the `dirty`
 field). Set by the setter families under
-`document/{nodes,edges}/`; cleared at construction and in the
-`save` verb's success arm (`app/console_input/exec.rs`); read by
-the `open` verb, which refuses to replace a dirty document
-("unsaved changes; save before opening another map"). Despite
-the name it is **not** a render or rebuild signal — scene
-rebuilds are call-site-driven (`rebuild_all` after mutations),
-and the per-frame drain consults the renderer's separate
-`connection_geometry_dirty` flag instead
+`document/{nodes,edges}/`; cleared at construction
+(`document/mod.rs`), by the `save` console verb
+(`console/commands/save.rs`), and by the Ctrl+S save
+(`save_document_to_bound_path`, `app/console_input/exec.rs`);
+read by the `open` and `new` verbs' guards, which refuse to
+replace a dirty document ("unsaved changes; save before…").
+Despite the name it is **not** a render or rebuild signal —
+scene rebuilds are call-site-driven (`rebuild_all` after
+mutations), and the per-frame drain consults the renderer's
+separate `connection_geometry_dirty` flag instead
 (`app/drain_frame.rs`).
 
 ### FPS overlay

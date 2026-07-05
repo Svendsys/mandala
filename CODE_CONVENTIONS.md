@@ -105,18 +105,24 @@ decision, not a drive-by edit.
     atomic, never touches app state.
   - The IPC boundary threads (design: `work_plans/LLM_IPC.md` §D2,
     protocol: `format/ipc.md`; lands with IPC-02). When `--ipc` is
-    active: an acceptor thread (always `accept()`ing, so a second
-    client is rejected immediately), a per-controller reader thread
-    (blocking read → parse → enqueue → wake the loop via a winit
-    `EventLoopProxy` user event), and an outbound thread (dequeue →
-    serialize → blocking write). All see only protocol value types;
-    every IPC command executes on the main thread in the
-    `user_event` arm with the same access as any input handler, and
-    a command that changes pixels requests a redraw just as the
-    winit input handlers do. The `std::sync::mpsc` queues at this
-    boundary carry protocol values only — they are not a license for
-    channels between app components — and blocking IPC I/O on the
-    main thread stays forbidden: a stalled client must never trip
+    active: a persistent acceptor thread (always `accept()`ing, so a
+    second client is rejected immediately with a non-blocking write),
+    plus a per-controller reader thread (blocking read → parse →
+    enqueue → wake the loop via a winit `EventLoopProxy` user event)
+    and a per-controller outbound thread (dequeue → serialize →
+    blocking write) that are spawned and torn down together per
+    connection. Each connection carries a monotonic generation stamp
+    on its requests/replies/events/pending-waits, and the reader's
+    disconnect sends a user event so the main thread cancels that
+    generation's waits and subscriptions — nothing crosses to a
+    successor controller. All see only protocol value types; every
+    IPC command executes on the main thread in the `user_event` arm
+    with the same access as any input handler, and a command that
+    changes pixels requests a redraw just as the winit input handlers
+    do. The `std::sync::mpsc` queues at this boundary carry protocol
+    values only — they are not a license for channels between app
+    components — and blocking IPC I/O on the main thread stays
+    forbidden: a stalled client must never trip
     the `FreezeWatchdog`; the bounded outbound queue tears the
     connection down instead.
 - **Model / view separation.** `MindMapDocument` owns the data model;

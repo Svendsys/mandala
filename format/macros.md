@@ -33,7 +33,7 @@ precedence (later writers override earlier ones with the same `id`):
           rebuild_map_macros + rebuild_inline_macros invocations
           in the document-replace path. Inline rebuilds AFTER Map
           so Inline's higher precedence wins on id collision.
-       4. src/application/macros/loader.rs — the parse_*_macros /
+       4. src/application/macros/loader/ — the parse_*_macros /
           rebuild_*_macros helpers themselves.
        5. format/ipc.md §"Trust model" + work_plans/LLM_IPC.md §D4
           — the IPC surface is pinned to the User tier (it is
@@ -204,7 +204,7 @@ input use.
 ```
 
 The `action` value is the variant name from
-`src/application/keybinds/action.rs`. Examples: `"Undo"`,
+`src/application/keybinds/action/mod.rs`. Examples: `"Undo"`,
 `"SaveDocument"`, `"ZoomReset"`, `"SelectAll"`,
 `"DoubleClickActivate"`. Modal-context actions (`TextEditCursorLeft`,
 `PickerCommit`, `ConsoleSubmit` etc.) are accepted but only fire

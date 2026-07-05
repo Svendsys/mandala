@@ -51,7 +51,10 @@ mandala maps/testament.mindmap.json --ipc /run/user/1000/mandala.sock
   a directory, a socket owned by someone else, or a socket with a
   live listener — is left untouched and startup fails with a message
   naming the path. A typo'd `--ipc ~/thesis.txt` must fail loudly,
-  never delete the file.
+  never delete the file. The parent-directory permission check (next
+  section) runs **before** this stat→unlink→bind sequence — an
+  untrusted parent dir aborts startup outright, closing the
+  unlink-then-someone-swaps-the-inode TOCTOU window.
 - The socket file is unlinked on graceful exit. After an unclean
   exit the type-gated probe above makes the next launch self-heal.
 
@@ -82,7 +85,10 @@ Exactly **one client** is served at a time.
   and are closed **immediately** — a dedicated acceptor keeps calling
   `accept()` regardless of controller state, so a second agent learns
   it's busy at once rather than blocking in the OS backlog until the
-  controller disconnects (mechanism: `work_plans/LLM_IPC.md` §D2). No
+  controller disconnects (mechanism: `work_plans/LLM_IPC.md` §D2).
+  The reject write is non-blocking (best-effort; on `EWOULDBLOCK` the
+  rejectee is simply closed) so a rejectee that never reads can't
+  stall the acceptor and starve the real controller's reconnect. No
   queueing, no arbitration — two agents dragging the same node
   concurrently is not a coherent workflow, and an arbitration layer
   would be complexity with no named consumer (CODE_CONVENTIONS §7).
@@ -92,7 +98,14 @@ Exactly **one client** is served at a time.
   are canceled, undelivered frames are discarded. (An in-flight
   recording is app state, not session state — see
   `capture.record_start`.) A reconnecting client starts from the
-  `hello` greeting like any fresh client.
+  `hello` greeting like any fresh client. This is enforced by a
+  **controller generation** (a counter incremented on each accept):
+  every request, reply, event, and pending wait is stamped with the
+  generation it belongs to, the boundary drops any frame whose
+  generation isn't current, and the reader's disconnect wakes the
+  main thread to cancel that generation's pending waits and reset its
+  subscriptions — so a departed controller's late `timeout` reply can
+  never land on its successor (design: `work_plans/LLM_IPC.md` §D2).
 
 Attach-after-launch and re-attach are first-class: the intended
 workflow is a human launching (or already running) the app and an
@@ -107,8 +120,14 @@ the closest Windows analog to a `0600` socket in `$XDG_RUNTIME_DIR`.
 Localhost TCP was rejected: it is reachable by every local user on
 a multi-user machine (weaker than file permissions), it collides
 with other services on port allocation, and it triggers firewall
-consent dialogs. Everything above and below the byte stream is
-identical — framing, envelope, and commands are transport-agnostic.
+consent dialogs. The **envelope and command semantics** are
+transport-agnostic and carry over unchanged; the *framing* (NDJSON
+line-delimiting) and the byte caps below are byte-stream constructs,
+re-expressed per transport — a named pipe keeps them, and the parked
+WebSocket transport (IPC-15) replaces `\n`-delimited lines with
+WebSocket message boundaries and re-expresses the size caps as
+max-message limits. "Same protocol" means the same envelope and
+commands, not the same framing bytes.
 
 IPC-02 ships the Unix transport; the named-pipe adapter is a
 self-contained follow-up inside the same transport module, **owned
@@ -146,6 +165,14 @@ gap by nature, not a design gap.
   keys are answered with `parse_error` / `invalid_params` and never
   terminate the process — hostile input degrades, it does not crash
   (same posture as the loader's cycle rejection, CODE_CONVENTIONS §9).
+- A `parse_error` reply carries `data.line` — a monotonic
+  0-based index of the inbound line that failed. Because a
+  `parse_error` has `id: null` (there was no parseable id to echo)
+  **and** is written ahead of any in-flight command replies (the
+  reader emits it directly, without a main-thread round-trip), it is
+  the one reply a pipelining client can neither correlate by `id`
+  nor locate by stream position; `data.line` is how the client
+  identifies which sent line was rejected.
 
 Why NDJSON and not JSON-RPC 2.0 or length-prefixed binary: the
 consumers are LLM agents and shell tools — one `socat` away from a
@@ -258,6 +285,14 @@ On accept, before reading anything, the server greets:
 }}
 ```
 
+All `hello` fields except `map` are process-static
+(`protocol`/`app`/`version`/`pid`); `map` is live app state
+(`MindMapDocument.file_path`). The state-free boundary threads do
+not read it directly — the main thread publishes the current path
+into a shared snapshot (an `Arc` swapped on document load), which
+the acceptor reads when composing the greeting, preserving the "I/O
+threads never touch app state" invariant (§D2).
+
 - `protocol` is a single integer, currently **1**. Pre-V1 there is
   no compatibility machinery beyond it (CODE_CONVENTIONS §10: break
   freely, delete rather than deprecate): **any** breaking change to
@@ -265,14 +300,23 @@ On accept, before reading anything, the server greets:
   same commit that changes this document. Additive changes (new
   commands, new optional params, new result keys, new warning
   codes) do not bump it — clients must tolerate unknown keys in
-  replies and events.
+  replies and events. **Widening an existing enum-valued field
+  (a new `outcome`, `mode`, `state`, or event-class value a client
+  branches on) is breaking, not additive** — it bumps the integer,
+  because a client's exhaustive branch would silently misclassify
+  the new value. Clients should still treat an unrecognized enum
+  value as the safe default for that field (e.g. an unknown
+  `act.action` `outcome` → treat as `"unhandled"`).
 - Clients pin against this document, check `protocol` in `hello`,
   and refuse to drive a server they don't understand (`mandalactl`
   refuses unless `--force`). There are no version-negotiation
   frames; there is exactly one live protocol per binary.
-- `describe` (below) is the runtime mirror of this document, kept
-  honest by unit tests asserting the registry matches the documented
-  surface; the IPC-16 sweep re-verifies before the epic closes.
+- `describe` (below) is the runtime mirror of this document for
+  every *merged* command, kept honest by unit tests asserting the
+  registry matches the documented surface; the IPC-16 sweep
+  re-verifies before the epic closes. (This document's family map
+  also lists not-yet-merged commands as forward contract; `describe`
+  reflects only what the running binary actually registers.)
 
 On graceful shutdown (window close — the only quit path today), the
 server best-effort sends `{"event":"shutdown","data":{}}` before
@@ -303,11 +347,11 @@ additions are non-breaking):
 
 | code | meaning |
 |---|---|
-| `parse_error` | Frame was not a JSON object / exceeded the 1 MiB line cap. `id` is `null`. |
+| `parse_error` | Frame was not a JSON object / exceeded the 1 MiB line cap. `id` is `null`; `data.line` locates the failed inbound line. |
 | `unknown_cmd` | `cmd` names nothing in the registry. |
 | `invalid_params` | Missing/mistyped/unknown parameter. `data.param` names the offender. |
 | `unsupported` | Command exists but not on this platform/build (e.g. future Windows gaps). |
-| `busy` | Reserved for request-level contention (the connection-level form is the `connection_rejected` event). |
+| `busy` | A single-instance command was already pending when another was issued — today, a second `clock.wait` while one is in flight (waits are exclusive per controller). Distinct from the connection-level `connection_rejected` event. |
 | `overloaded` | Request queue full (1024 pending); resend after draining replies. |
 | `reply_too_large` | Serialized reply exceeded 8 MiB; `data.hint` names the file-sidecar parameter. |
 | `no_document` | Command needs a loaded document and none is. |
@@ -438,10 +482,23 @@ The full architecture is CODE_CONVENTIONS §3 (amended by IPC-01) and
   second client get its `connection_rejected` *immediately* rather
   than sitting in the OS backlog until the controller leaves (see
   [Single controller](#single-controller)); a per-controller
-  **reader** parses inbound lines; an **outbound** writer serializes
-  replies and events. If a client stops reading long enough for
-  **256 outbound frames** to queue, the server declares the client
-  dead and drops the connection (reconnect and resubscribe).
+  **reader** parses inbound lines; a per-controller **outbound**
+  writer serializes replies and events (per-controller so its queue
+  is discarded by construction when the controller leaves — nothing
+  crosses to the successor).
+- **Backpressure is asymmetric by frame kind.** *Replies* are
+  contractual: if the outbound queue holds **256** undelivered
+  frames the client is declared dead and the connection dropped
+  (reconnect and resubscribe). *Unsolicited events* the client
+  never paced itself against (`camera_changed`, `animation_*`, …)
+  are instead **coalesced/dropped-oldest by revision** under
+  pressure rather than triggering teardown — an agent that pauses to
+  think for a few seconds while an animation emits a flood of events
+  must not have its live connection torn down. So a slow-reading
+  client loses *stale events*, not its session; only a client not
+  draining *replies* is killed. (IPC-14 owns the coalescing rule;
+  the event carries a `revision`, so "keep the newest per class" is
+  well-defined.)
 - More than **1024 queued unexecuted requests** answers further
   requests with `overloaded` until the queue drains.
 - A wedged main loop (the `FreezeWatchdog` scenario) also wedges
@@ -460,6 +517,23 @@ family, mirroring the console's `COMMANDS` slice
 through IPC-14) therefore land in parallel without conflicts
 (CODE_CONVENTIONS §6): each adds its own module plus one registrar
 line.
+
+**Reaching the funnels across a module boundary.** The seams a
+command invokes — `dispatch_action`, `dispatch_macro`,
+`execute_console_line`, and `InitState` / `input_context()` — are
+`pub(in crate::application::app)`, but `crate::application::ipc` is a
+*sibling* of `app`, so they are not directly visible from a command
+handler. Command handlers therefore run against an **app-side
+execution context** (an `&mut dyn` target that holds `&mut
+InitState` and exposes exactly the operations commands need),
+implemented inside `app` and passed into the `ipc` handlers — the
+same indirection `dispatch_macro` already uses via
+`MacroDispatchTarget` (`app/dispatch/macro_core.rs`), which is why
+native and WASM share one macro loop. This keeps the funnels private
+and the `ipc` modules free of `app` internals; wiring that trait is
+IPC-03's job. (Widening the seams to `pub(in crate::application)`
+instead is an acceptable equivalent, but the trait shim is the
+§2/§7-aligned choice and matches the existing precedent.)
 
 Registration is **self-describing by construction**: a command's
 registry entry carries its name, summary, parameter descriptors
@@ -502,9 +576,15 @@ reserved-word rule).
   ],
   "events": [
     {"name": "document_changed", "doc": "Fires after any committed document mutation; data carries the revision."}
+    // … the full reserved-event catalog; abbreviated here
   ]
 }}
 ```
+
+The `events` array is always the complete registered event catalog
+(IPC-14 finalizes it) — it is not narrowed by the `command` filter,
+which scopes only the `commands` array. Above it is abbreviated to
+one entry for space.
 
 The type vocabulary is deliberately small: `string`, `integer`,
 `number`, `boolean`, `object`, `array`. Enum-valued strings document
@@ -577,7 +657,12 @@ performed by hand.
   directly). Mapping: `Ok`/`Lines` → `output`; the parser's
   `Unknown` and a verb `Err` → `console_error`. Threading the
   result out instead of through the UI is sanctioned §2 seam work,
-  not a parallel path.
+  not a parallel path. **The extracted core still runs the full
+  side-effect drain** — `ConsoleSideEffect::ReplaceDocument` (the
+  document swap for `open` / `new`), `rebuild_all`, and any modal
+  handoff — because "behaviorally identical to a human typing it"
+  (§2) requires those effects, not just the return value. Only the
+  scrollback rendering is dropped.
 - **`act.macro`** — params: `macro_id` (string — named `macro_id`,
   not `id`, per the [reserved-word rule](#request)). Routes through
   `dispatch_macro` under the macro's own loader-pinned tier (see
@@ -626,10 +711,40 @@ selection state machines, drag thresholds, double-click timing, and
 modal steals behave byte-for-byte as with real input. Field-level
 reference lands with IPC-06, appended here.
 
+**Pacing model (pinned here because `settled` and virtual time
+depend on it).** A gesture whose fidelity depends on events landing
+in *different* frames — a drag (press, then moves past threshold,
+then release), a double-click (two clicks within the time window) —
+cannot fire its sub-events in a single `user_event` drain or they
+collapse to one instant and the timing logic misreads them. So
+`input.*` events that carry a frame-spanning gesture enqueue into a
+bounded **injected-input queue** (cap **1024**; overflow →
+`overloaded`) that the heartbeat drains **one sample per frame**,
+stamped with the current `now_ms()`. Under `clock.set_mode virtual`,
+`clock.step` advances this queue one sample per virtual heartbeat,
+so injected drags/double-clicks are deterministic too. A single
+discrete injection (one `mouse_move`, one `key` press) applies
+immediately. `clock.wait until=settled` requires this queue empty
+(condition (b) below), so "wait until my synthesized drag finished"
+is expressible. The queue, the one-per-frame cadence, and the
+virtual-clock coupling are IPC-06's to implement, but their shape is
+pinned here so IPC-09's `settled` and IPC-06's fidelity contract
+agree on one model rather than each inventing its own.
+
 ## `capture` — screenshots and recordings (IPC-07, IPC-08)
 
 Shapes pinned here in full; `mandalactl` and the `mandala-drive` /
 `mandala-record` skills build against them.
+
+**Artifact lifecycle.** The per-item caps (64 Mpx per image, 3600
+frames per recording) bound each artifact but not their number. The
+**server-chosen** artifacts dir is bounded: it is created under
+`$XDG_RUNTIME_DIR` (or a temp dir), scoped to the process, capped at
+a total byte budget with oldest-evicted (ring-buffer), and removed
+on graceful exit — a long session cannot silently fill the disk.
+Artifacts written to a **client-supplied** `path` / `dir` are the
+client's to manage; the server neither caps nor reclaims them (the
+client asked for that location explicitly).
 
 ### `capture.screenshot` (IPC-07)
 
@@ -639,10 +754,11 @@ IPC-10) no display at all.
 
 | param | type | default | meaning |
 |---|---|---|---|
-| `path` | string | server-chosen file in a per-session artifacts dir | Absolute path for the PNG. Parent dir must exist. |
+| `path` | string | server-chosen file in a per-session artifacts dir | Absolute path for the PNG. Parent dir must exist. Write guards (same-user trust tier, but an LLM composing a path clobbers by accident far more readily than a human): the server does **not** follow a symlink at `path` (`O_NOFOLLOW`), and refuses to overwrite an existing file **outside** the per-session artifacts dir unless `overwrite: true` is set — an unset `overwrite` hitting an existing external file is `invalid_params`. |
+| `overwrite` | boolean | `false` | Allow overwriting an existing file outside the artifacts dir. Inside the artifacts dir, overwrite is always allowed. |
 | `width`, `height` | integer | current surface size | Offscreen target size in physical pixels; camera center/zoom preserved, aspect follows the target. Each side is clamped to `1..=16384`, and `width × height × scale²` must not exceed **67,108,864** device pixels (64 Mpx, ~8K square); a request over either bound is `invalid_params`, never a best-effort giant allocation (degrade-don't-crash — an offscreen texture is a real GPU allocation). |
 | `region` | object | — | `{"x","y","w","h"}` in the `space` coordinate space: frame this rect instead of the current camera view. `width`/`height` still set the target resolution; the aspect rule below governs mismatches. |
-| `space` | string | `"canvas"` | Coordinate space of `region`: `"canvas"` (default) or `"surface"` (converted through the camera as of capture time). Ignored without `region`. |
+| `space` | string | `"canvas"` | Coordinate space of `region`: `"canvas"` (default) or `"surface"` (converted through the camera as of capture time). For `"surface"`, the pixel grid is the **live window surface** (the camera's current surface size), *not* the requested `width`/`height` offscreen target — the region is resolved against the window the human sees, then the camera it derives is rendered into the offscreen target. Ignored without `region`. |
 | `scale` | number | `1.0` | Supersampling factor, clamped to `0.1..=4.0`. |
 | `format` | string | `"png"` | `"png"` is the only value at pin time; the param exists so adding one is non-breaking. |
 | `sidecar` | boolean | `true` | Write the geometry sidecar next to the PNG (`<path>.geometry.json`). |
@@ -706,9 +822,16 @@ unrelated event woke it. While a recording runs, the loop instead
 parks in `WaitUntil(next frame deadline)` (`now + 1000/fps` ms) —
 the same idle-timer shape the FPS grace already uses — so frames
 land at the requested cadence with the canvas idle. Under
-`clock.set_mode virtual` the recording is instead driven frame-exact
-by `clock.step` and installs no wall-clock timer (the interplay
-IPC-08 owns against IPC-09).
+`clock.set_mode virtual` the recording is instead driven by
+`clock.step`, and the **frame-emission rule** is pinned so the
+manifest is deterministic: a frame is captured each time virtual
+`now_ms()` crosses a `1000/fps` boundary, **not** once per internal
+heartbeat. So `clock.step ms=1000` at `fps=30` emits exactly 30
+frames regardless of how many heartbeats the step ran, and each
+frame's `t_ms` is its `1000/fps` boundary. (Real mode uses the same
+boundary rule against the wall clock; a frame that would land late
+because a heartbeat overran is dropped and counted in
+`dropped_frames`.)
 
 `capture.record_stop` params: none. Result: `{"dir", "frames",
 "manifest_path", "dropped_frames"}`.
@@ -736,29 +859,43 @@ settling primitive every capture workflow needs.
 - **`clock.set_mode`** — params: `mode` (`"real"` / `"virtual"`).
   In virtual mode the app-observed clock advances **only** via
   `clock.step`; animation and timing behavior becomes a pure
-  function of the step sequence. Result: `{"mode", "now_ms"}`.
+  function of the step sequence. Virtual time reshapes **every**
+  `now_ms()` consumer, not just animations — throttled-interaction
+  pacing, the drag anim-pause, double-click detection, and FPS
+  timing all read the same bridge — so under virtual mode the whole
+  interactive clock is stepped, which is what makes captures
+  deterministic (IPC-09 owns how the bridge is virtualized). Result:
+  `{"mode", "now_ms"}`.
 - **`clock.step`** — params: exactly one of `ms` (integer) or
-  `frames` (integer) — neither, or both, is `invalid_params`:
-  advance virtual time and run heartbeats until caught up. Error
-  `invalid_params` in real mode. **Bounded per call** so one frame
-  can't monopolize the main thread and trip the `FreezeWatchdog`:
-  `frames` is clamped to `1..=100_000` and `ms` to
-  `1..=3_600_000` (one virtual hour); a value over the bound is
-  `invalid_params` (the client chunks large advances into successive
-  steps). The heartbeats run synchronously — the step's whole point
-  is deterministic catch-up — but the ceiling keeps that run
-  watchdog-safe. Result: `{"now_ms", "frames_run"}`.
+  `frames` (integer) — neither, or both, is `invalid_params`.
+  Virtual time advances at a pinned cadence of **one heartbeat per
+  16 ms** (≈60 fps — the rate the app targets), so `ms` and `frames`
+  are two spellings of the same work: `frames = ceil(ms / 16)`, and
+  each is clamped to the *same* budget, **`frames ≤ 100_000`**
+  (⇒ `ms ≤ 1_600_000`, ~27 virtual minutes); a value over the bound
+  is `invalid_params` and the client chunks. The heartbeats run
+  synchronously — deterministic catch-up is the point — and the loop
+  **ticks the `FreezeWatchdog` (`unparked`) once per heartbeat inside
+  the step**, so the run is watchdog-safe *by construction* (a
+  genuinely stuck single heartbeat still trips the 10 s threshold;
+  the bound is a responsiveness/DoS limit, not the safety mechanism).
+  Result: `{"now_ms", "frames_run"}`.
 - **`clock.wait`** — params: `until` (`"settled"` /
   `"animations_complete"`), `timeout_ms` (integer, default
   `10_000`, clamped `1..=60_000`; always **wall-clock**
   milliseconds — the deadline is a client-liveness guard, so a
-  frozen virtual clock must not disable it). **Deferred reply**:
-  the condition is evaluated at the end of every heartbeat and at
-  the deadline; other commands keep executing while a wait is
-  pending; a disconnect cancels it; a pending wait is **not a
-  barrier** (see [Reply](#reply)). While a wait is pending and the
-  loop would otherwise park in `ControlFlow::Wait`, it parks in
-  `WaitUntil(nearest deadline)` instead — the FPS idle-grace
+  frozen virtual clock must not disable it). **Exclusive per
+  controller**: only one `clock.wait` may be pending at a time; a
+  second while one is in flight is rejected `busy` (there is no named
+  use for concurrent waits, and unbounded pending waits would be a
+  memory/scan-cost vector). Its `id` stays in flight until the wait
+  resolves or is canceled — a client must not reuse that `id` before
+  then. **Deferred reply**: the condition is evaluated at the end of
+  every heartbeat and at the deadline; other commands keep executing
+  while a wait is pending; a disconnect cancels it; a pending wait is
+  **not a barrier** (see [Reply](#reply)). While a wait is pending
+  and the loop would otherwise park in `ControlFlow::Wait`, it parks
+  in `WaitUntil(nearest deadline)` instead — the FPS idle-grace
   precedent already in `run_native.rs` — so a deadline fires even
   when no heartbeat would otherwise run, without polling. On
   success: `{"elapsed_ms"}`. On deadline: `ok:false`, code
@@ -775,35 +912,73 @@ heartbeat (CONCEPTS §5 "Event loop and `drain_frame`"):
   geometry); (b) no IPC-injected input remains queued; (c) **no
   redraw is pending** — every pixels-affecting command has requested
   its redraw and none is outstanding; and (d) the renderer has
-  **presented** the frame reflecting the most recent pixels-affecting
-  command. In plain terms: **the pixels on screen are the final
-  consequence of everything sent so far**, and screenshotting now is
-  race-free.
+  **rendered** the frame reflecting the most recent pixels-affecting
+  command — i.e. the render pass ran and the GPU buffers are current
+  for that revision. In plain terms: **the rendered scene is the
+  final consequence of every command the agent has sent so far**, and
+  capturing now is race-free *with respect to the agent's own
+  commands*. (It is not fenced against a concurrent human — see the
+  scope note below.)
+
+  **Rendered, not on-screen-presented.** Condition (d) is
+  deliberately about the *render* completing, not a swapchain
+  *present*. `capture.screenshot` is offscreen and must work under an
+  occluded/minimized window and (post IPC-10) with no display at all
+  — where the compositor never presents. Gating `settled` on an
+  on-screen present would make every capture workflow time out in
+  exactly the containerized/Xvfb environment the epic targets. So
+  `settled` observes that the render for the current revision has
+  executed (buffers current), which the offscreen capture path can
+  satisfy without a surface. This also settles the IPC-10 headless
+  interaction here rather than deferring it downstream.
 
   **The arbiter is a render revision, not the document revision.**
-  The naive "presented at the current *document* revision" is
+  The naive "rendered at the current *document* revision" is
   insufficient: view-only commands — a wheel zoom, an `act.action`
   pan, a selection-highlight change — repaint without mutating the
   document, so a stale pre-command frame would already match the
   document revision and `settled` would resolve before the repaint
-  presents. The counter that gates `settled` therefore advances on
+  renders. The counter that gates `settled` therefore advances on
   **every pixels-affecting command** (document mutation *or*
   view/selection change), and each such command **requests a redraw**
   (see [`work_plans/LLM_IPC.md`](../work_plans/LLM_IPC.md) §D2 — the
   IPC drain mirrors the existing winit handlers' `request_redraw`
-  exactly). `settled` holds only once the presented frame carries
-  that render revision. IPC-14 introduces the counter as a
+  exactly). `settled` holds only once the rendered frame carries that
+  render revision. IPC-14 introduces the counter as a
   render-affecting revision for this reason; if wave order runs
   IPC-09 first, IPC-09 carries the field forward itself.
+
+  **Scope: `settled` fences the agent, not the human.** The
+  "race-free" guarantee is only against the agent's own prior
+  commands. In the "human watches while agent drives" workflow a
+  human can move the mouse, type, or pan the canvas between the
+  `clock.wait` reply and the following `capture.screenshot`, and that
+  input is *not* fenced (nor could it be). Worse, a human's
+  continuous camera-pan drag is an inline per-frame gesture
+  (CODE_CONVENTIONS §3 carve-out) that changes pixels **without**
+  going through a command or bumping the render revision, so
+  `needs_continuation()` can read false mid-drag-pause and `settled`
+  can resolve while the human is mid-gesture. For byte-reproducible
+  captures the agent should drive an instance with no concurrent
+  human (the container/Xvfb case); the guarantee is exact there.
 
   `MindMapDocument.dirty` deliberately plays no role here: despite
   the name it is the *unsaved-changes* flag — set by every document
   setter, cleared only at construction and on a successful `save`,
-  read by the `open` verb's guard — not a rebuild-pending signal.
-  (A design-time correction: issue #61's sketch assumed otherwise,
-  as did CONCEPTS' "Dirty flag" entry, fixed alongside this
-  document. A settled condition gated on it would never resolve
+  read by the `open` / `new` verbs' guards — not a rebuild-pending
+  signal. (A design-time correction: issue #61's sketch assumed
+  otherwise, as did CONCEPTS' "Dirty flag" entry, fixed alongside
+  this document. A settled condition gated on it would never resolve
   after any unsaved mutation.)
+
+  One residual non-determinism to know about: with the FPS overlay
+  on (a native `fps` diagnostic, off by default), its idle-grace flip
+  repaints the overlay region *after* `settled` resolves without
+  bumping the render revision, so two "settled" screenshots can
+  differ in that corner. A diagnostic must not become observable
+  behavior (the reason it isn't a continuation source), so `settled`
+  ignores it — capture with the overlay off for byte-identical
+  frames.
 
 There is deliberately **no** third `"idle"` condition: once settled,
 the loop parks by construction (`ControlFlow::Wait`), and the only

@@ -37,8 +37,12 @@ time:
   `dispatch_action` / custom mutations / `execute_console_line`.
 - **`execute_console_line`**
   (`src/application/app/console_input/exec.rs`) — a string-in /
-  typed-result-out interpreter over ~20 verbs, callable with the
-  console UI closed.
+  void-out interpreter over ~20 verbs, callable with the console UI
+  closed. It runs each verb's typed `ExecResult` internally and
+  folds it into the console scrollback rather than returning it — so
+  the `act.console` command extracts that result (see D7 and
+  `format/ipc.md` §act); the parse → execute → drain-effects path is
+  the reusable seam.
 - **`MacroSource { App | User | Map | Inline }`** — the
   loader-pinned, fail-closed privilege model (`format/macros.md`).
 - **The winit event loop** (`src/application/app/run_native.rs`) —
@@ -128,9 +132,11 @@ agent drives the app. Something must block on the socket, and it
 cannot be the main thread.
 
 **Decision.** When `--ipc` is active, dedicated named boundary
-threads own the socket. Two are persistent (acceptor, outbound); a
-reader is spawned per controller connection and exits when that
-controller disconnects. None touches app state.
+threads own the socket. The acceptor is persistent; a reader **and**
+an outbound writer are spawned per controller connection and both
+exit when that controller disconnects (per-controller outbound so a
+departed controller's queued frames are dropped by construction —
+see the generation stamp below). None touches app state.
 
 ```
             clients (agent / mandalactl)
@@ -138,18 +144,19 @@ controller disconnects. None touches app state.
    ┌──────────────────┴───────────────────────────────┐
    │ mandala-ipc-acceptor  (persistent)                │
    │  loop { accept();                                 │
-   │    controller busy? → write connection_rejected,  │
-   │                        close (immediate)          │
-   │    else → install controller, spawn reader }      │
+   │    controller busy? → nonblocking write           │
+   │                        connection_rejected, close │
+   │    else → gen+=1, install controller, spawn       │
+   │           reader+outbound for this gen }          │
    └──────────────────┬────────────────────────────────┘
                       │ hands the stream to
                       ▼
    ┌───────────────────────────────┐   ┌───────────────────────────┐
    │ mandala-ipc-reader            │   │ mandala-ipc-outbound      │
-   │  (per controller)             │   │  (persistent)             │
+   │  (per controller, gen G)      │   │  (per controller, gen G)  │
    │  blocking read → 1 MiB cap →  │   │  recv value → serialize   │
-   │  parse → enqueue IpcRequest → │   │  (8 MiB cap / too_large)  │
-   │  EventLoopProxy::send_event   │   │  → blocking write         │
+   │  parse → enqueue IpcRequest   │   │  (8 MiB cap / too_large)  │
+   │  {gen:G} → send_event         │   │  → blocking write         │
    └───────┬───────────────────────┘   └──────────▲────────────────┘
            │ mpsc request queue (cap 1024)         │ mpsc outbound queue
            ▼                                       │ (cap 256)
@@ -169,41 +176,67 @@ controller disconnects. None touches app state.
   blocked in the controller's `read()`, nothing calls `accept()`, so
   a second client would sit in the OS backlog until the controller
   left instead of being told it's busy. The acceptor rejects a
-  second connection with one direct blocking write + close (no app
-  state, no queue) and returns to accepting; the first connection it
-  installs as controller and hands to a reader.
-- **The reader thread** (one per controller) owns that connection's
-  read half: reads lines, enforces the 1 MiB cap, parses the
-  envelope, and either enqueues a well-formed `IpcRequest` and wakes
-  the loop via `EventLoopProxy::send_event(IpcWake)`, or pushes a
-  pre-formed `parse_error` reply straight onto the outbound queue
-  (parse errors never need app state, so they never cross into the
-  loop). On EOF/error it clears the controller slot and exits, and
-  the acceptor's next accept can install a fresh controller.
-- **The outbound thread** owns the write half: receives reply and
-  event *values* (from the main thread; plus the reader's pre-formed
-  parse-error replies), serializes them — the 8 MiB cap check and
-  the `reply_too_large` substitution live here, off the interactive
-  path — and performs every blocking write to the current
-  controller. If the client stops reading and the bounded queue
-  fills, the connection is declared dead and torn down — **the app
-  is never backpressured by a slow client**, and the
-  `FreezeWatchdog` never sees IPC I/O.
+  second connection with one **non-blocking** write + close (no app
+  state, no queue; on `EWOULDBLOCK` it just closes — a rejectee that
+  never reads must not stall the acceptor and re-starve the real
+  controller, which is the whole reason accept is its own thread) and
+  returns to accepting; the first connection it installs as
+  controller — bumping a monotonic **generation** counter G — and
+  spawns a reader + outbound pair tagged G.
+- **The reader thread** (one per controller, gen G) owns that
+  connection's read half: reads lines, enforces the 1 MiB cap,
+  parses the envelope, and either enqueues a well-formed `IpcRequest`
+  stamped `{gen:G}` and wakes the loop via
+  `EventLoopProxy::send_event(IpcWake)`, or pushes a pre-formed
+  `parse_error` reply straight onto its outbound queue (parse errors
+  never need app state, so they never cross into the loop). On
+  EOF/error it sends a `send_event(IpcGone{gen:G})` so the main
+  thread cancels this generation's pending `clock.wait` and resets
+  its subscriptions, then it and its outbound peer exit; the
+  acceptor's next accept installs a fresh controller at G+1.
+- **The outbound thread** (per controller, gen G) owns the write
+  half: receives reply and event *values* (from the main thread;
+  plus the reader's pre-formed parse-error replies), serializes them
+  — the 8 MiB cap check and the `reply_too_large` substitution live
+  here, off the interactive path — and performs every blocking write.
+  Its queue dies with the connection, so a reply the main thread
+  computed for a departed controller is discarded rather than
+  delivered to the successor. Backpressure is **asymmetric**: 256
+  undelivered *replies* → teardown, but unsolicited *events* are
+  coalesced/dropped-oldest-by-revision rather than triggering
+  teardown (a thinking agent that pauses while events flood must keep
+  its session). **The app is never backpressured by a slow client**,
+  and the `FreezeWatchdog` never sees IPC I/O.
+- **The generation stamp** is what keeps a single persistent-looking
+  reply/event stream honest across reconnects: every `IpcRequest`,
+  reply, event, and pending wait carries the gen it belongs to; the
+  main thread only routes to the current gen's outbound and only
+  honors an `IpcGone{gen}` for the live gen. This is the mechanism
+  behind `format/ipc.md`'s "no session state survives a disconnect."
 - **The main thread** is the only place commands execute. IPC-02
   changes the event loop to
-  `EventLoop::<IpcWake>::with_user_event()` and implements
+  `EventLoop::<IpcUserEvent>::with_user_event()` (the user-event type
+  is a small enum — `IpcWake` and `IpcGone{gen}`) and implements
   `ApplicationHandler::user_event` on `NativeApp`: tick the
   watchdog (`unparked`, like every other handler), drain the
   request queue to exhaustion and treat an empty-queue wake as a
   no-op (winit delivers one user event per `send_event`, but an
   earlier wake's drain may already have consumed requests enqueued
-  just before a later wake was sent), execute each command via the
-  registry against `InitState` (the same access `input_context()`
-  gives an input handler), enqueue replies, and — the seam that
-  keeps the watched window and screenshots truthful — **request a
-  redraw whenever a command changed pixels**, then fall through to
-  the normal `about_to_wait` drain. The one type ripple:
-  `handle_event`'s `Event<()>` becomes `Event<IpcWake>`.
+  just before a later wake was sent), execute each current-gen
+  command via the registry against `InitState` (the same access
+  `input_context()` gives an input handler), enqueue replies, and —
+  the seam that keeps the watched window and screenshots truthful —
+  **request a redraw whenever a command changed pixels**, then fall
+  through to the normal `about_to_wait` drain. `hello`'s `map` field
+  is live app state, so the main thread publishes the current file
+  path into an `Arc`-swapped snapshot on document load and the
+  acceptor reads *that* (never `MindMapDocument`) when greeting — the
+  state-free-boundary invariant holds. Note the winit event *type*
+  changes (`Event<()>` → `Event<IpcUserEvent>`), but
+  `handle_event` — which only ever receives `WindowEvent`s — needs
+  no signature change; user events land in the separate `user_event`
+  method. (The `redraw_after → request_redraw()` pattern the drain
+  reuses is already in `handle_event`.)
 
 **Pixels-affecting commands must request a redraw (and bump the
 render revision).** The existing winit handlers set
@@ -216,11 +249,12 @@ reports whether it touched pixels (document mutation *or* view /
 selection change), and the drain requests a redraw and advances the
 render revision (IPC-14's counter — a *render*-affecting revision,
 not merely a document one) if any did. Without this, an
-`act.action` zoom would update buffers that never present, and a
+`act.action` zoom would update buffers that never re-render, and a
 following `clock.wait until=settled` + screenshot would capture the
 stale frame — the exact race `settled` exists to prevent. This is
-why `settled` (D7) keys on the presented render revision, not the
-document revision.
+why `settled` (D7) keys on the *rendered* render revision (render
+pass executed, not swapchain-presented — so headless/occluded
+capture still terminates), not the document revision.
 
 **Why this is a §3 amendment and not a violation.** The covenant's
 purpose is that *app state has exactly one thread*: no interleaving,
@@ -401,7 +435,7 @@ IPC-16 audits at epic close).
 ```
 src/application/ipc/            #[cfg(not(target_arch = "wasm32"))]
 ├── mod.rs         module doc: the D2 boundary contract
-├── transport.rs   listener + intake/outbound threads (IPC-02)
+├── transport.rs   acceptor + per-controller reader + outbound threads (IPC-02)
 ├── envelope.rs    IpcRequest / reply / event value types (IPC-02)
 ├── registry.rs    CommandSpec, the one assembly table, describe (IPC-03)
 └── commands/
@@ -419,6 +453,24 @@ src/application/ipc/            #[cfg(not(target_arch = "wasm32"))]
 Known micro-overlaps (from EPIC #60's parallel map, unchanged):
 the camera read accessor (IPC-04 ∩ IPC-05 — first to land adds it),
 the `document/mod.rs` revision field (IPC-14; IPC-09 consumes).
+
+**Crossing the `app` boundary.** `crate::application::ipc` is a
+*sibling* of `crate::application::app`, but every funnel a command
+reaches — `dispatch_action`, `dispatch_macro`,
+`execute_console_line`, `InitState` / `input_context()` — is
+`pub(in crate::application::app)`, so a command handler cannot call
+them directly. IPC-03 therefore reaches them through an app-side
+**execution-context trait** (holding `&mut InitState`, implemented
+inside `app`, passed into the `ipc` handlers) — the exact
+indirection `dispatch_macro` already uses via `MacroDispatchTarget`
+(`app/dispatch/macro_core.rs`), which is why native and WASM share
+one macro loop. This keeps the funnels private and the `ipc` modules
+free of `app` internals. Widening the seams to
+`pub(in crate::application)` is an acceptable equivalent, but the
+trait shim is the §2/§7-aligned choice and reuses an existing
+precedent; it is IPC-03's to wire and is called out here so the
+"reaches the funnels" language in §D5/`format/ipc.md` isn't read as
+"calls private items across a module boundary."
 
 ## D6 — Cross-platform stance (§4): explicit native carve-out
 
@@ -468,15 +520,26 @@ shapes without waiting.
   (`<path>.geometry.json`), not baked into the image — agents
   hit-test by arithmetic, humans view clean PNGs, and the sidecar
   schema can grow keys additively.
-- **Bounded before allocating / running.** A malformed agent frame
-  must degrade, not detonate: `capture.*` clamps each side to
-  `1..=16384` and the pixel budget (`w × h × scale²`) to 64 Mpx —
-  an offscreen texture is a real GPU allocation — and `clock.step`
-  clamps `frames`/`ms` per call (`≤ 100_000` / one virtual hour)
-  because its heartbeats run synchronously on the main thread and an
-  unbounded step would trip the `FreezeWatchdog`. Over-bound
-  requests are `invalid_params`; clients chunk. Exact numbers:
-  `format/ipc.md` §capture / §clock.
+- **Bounded before allocating / running, and write-guarded.** A
+  malformed agent frame must degrade, not detonate: `capture.*`
+  clamps each side to `1..=16384` and the pixel budget
+  (`w × h × scale²`) to 64 Mpx — an offscreen texture is a real GPU
+  allocation. `clock.step` clamps to **one** budget: since virtual
+  time advances at a pinned 16 ms/heartbeat, `frames = ceil(ms/16)`
+  and both spellings clamp to `frames ≤ 100_000` (⇒ `ms ≤ 1_600_000`,
+  ~27 min) — the earlier "`ms ≤ 1 h`" let the two params bound
+  different work, now reconciled. And the clamp is *not* the
+  watchdog-safety mechanism: the step loop **ticks the watchdog per
+  internal heartbeat**, so a bounded catch-up is safe by
+  construction while a genuinely stuck single heartbeat still trips
+  the 10 s threshold; the clamp is a responsiveness/DoS limit.
+  Because an LLM clobbers a path by accident more readily than a
+  human, `capture.*` also **write-guards** client-supplied `path` /
+  `dir` (no symlink-follow; no overwrite outside the artifacts dir
+  without `overwrite:true`) and bounds the **server-chosen**
+  artifacts dir (ring-buffer, removed on exit) — client-supplied
+  paths are the client's to reclaim. Over-bound/guarded requests are
+  `invalid_params`. Exact numbers: `format/ipc.md` §capture / §clock.
 - **Recording emits frames + manifest; assembly is external.**
   GIF/video encoding in-app would drag an encoder dependency into
   the render path for a job `ffmpeg`/`gifski` do better; the
@@ -486,9 +549,12 @@ shapes without waiting.
   on a static scene the loop would park and capture nothing, so
   while recording it parks in `WaitUntil(next frame deadline)` at
   the requested `fps` (under the virtual clock, `clock.step` drives
-  frames instead). `t_ms` under an active virtual clock yields
-  perfectly paced sequences — the IPC-08 ↔ IPC-09 interlock EPIC
-  #60 warns about is confined to that one field's semantics.
+  frames instead). The **frame-emission rule** is pinned so the
+  manifest is deterministic: emit a frame each time the capture
+  clock crosses a `1000/fps` boundary — **not** once per heartbeat —
+  so `clock.step ms=1000` at `fps=30` yields exactly 30 frames no
+  matter how many heartbeats ran. That one rule is the whole IPC-08 ↔
+  IPC-09 interlock EPIC #60 warns about.
 - **`act.console` reads a typed result, not a live scrollback.**
   `execute_console_line` today returns `()` and pushes verb output
   into a `ConsoleState` scrollback that only exists when the modal
@@ -501,27 +567,41 @@ shapes without waiting.
   path.
 - **`clock.wait` is a deferred reply** evaluated at heartbeat
   boundaries and at its deadline (D2/D3), with two conditions only:
-  `animations_complete` and `settled`. **`settled`** means "the
-  pixels on screen are the final consequence of everything sent so
-  far" and keys on a **render revision**, not the document
-  revision: `needs_continuation()` false, IPC input queue empty, no
-  redraw pending, and the presented frame carries the current
-  render revision — the counter that advances on *every*
-  pixels-affecting command, view-only ones (zoom, pan, selection)
-  included. Keying on the document revision alone would resolve
-  `settled` before a view-only repaint presented, because those
-  commands don't mutate the document (this is why D2 has the IPC
-  drain request a redraw and bump the render revision per
-  pixels-affecting command). IPC-14 owns the counter; if wave order
-  runs IPC-09 first, IPC-09 carries the field itself.
-  `MindMapDocument.dirty` deliberately plays no role: despite the
-  name it is the *unsaved-changes* flag — set by document setters,
-  cleared only at construction and on `save`, read by `open`'s
-  guard — not a rebuild signal. Issue #61's sketch assumed
-  otherwise, as did CONCEPTS' "Dirty flag" entry; both corrections
-  land with this design, because a settled condition gated on
-  `dirty` would never resolve after any unsaved mutation. The
-  `timeout_ms` deadline is wall-clock even under a virtual clock
+  `animations_complete` and `settled`, and **exclusive per
+  controller** (a second pending wait → `busy`; unbounded pending
+  waits would be a memory/scan-cost vector, and there's no named use
+  for concurrent waits). **`settled`** means "the rendered scene is
+  the final consequence of every command the agent sent" and keys on
+  a **render revision**, not the document revision:
+  `needs_continuation()` false, injected-input queue empty (the
+  one-sample-per-frame queue from D5/§input — pinned so `settled`
+  and IPC-06 share one model), no redraw pending, and the frame has
+  been **rendered** (render pass ran, buffers current) at the
+  current render revision. Two subtleties the review surfaced, both
+  now pinned: (1) `settled` keys on *rendered*, **not**
+  swapchain-*presented* — an offscreen/headless (IPC-10) or occluded
+  capture never presents, so a present-gated `settled` would time
+  out in exactly the target environment; and (2) "race-free" is
+  scoped to the agent's own commands — a concurrent human's input
+  between the wait reply and the screenshot, and especially an inline
+  human pan-drag that changes pixels without bumping the revision, is
+  not fenced. The counter advances on *every* pixels-affecting
+  command, view-only ones (zoom, pan, selection) included; keying on
+  the document revision alone would resolve `settled` before a
+  view-only repaint rendered (this is why D2 has the IPC drain
+  request a redraw and bump the render revision per pixels-affecting
+  command). IPC-14 owns the counter (overlapping the
+  `document_changed`/`camera_changed`/`selection_changed` emission it
+  already builds — the many-site instrumentation is not net-new
+  scope); if wave order runs IPC-09 first, IPC-09 carries the field
+  itself. `MindMapDocument.dirty` deliberately plays no role: despite
+  the name it is the *unsaved-changes* flag — set by document
+  setters, cleared only at construction and on `save`, read by the
+  `open` / `new` guards — not a rebuild signal. Issue #61's sketch
+  assumed otherwise, as did CONCEPTS' "Dirty flag" entry; both
+  corrections land with this design, because a settled condition
+  gated on `dirty` would never resolve after any unsaved mutation.
+  The `timeout_ms` deadline is wall-clock even under a virtual clock
   (it guards client liveness, not simulation time), and a pending
   wait converts an idle park from `ControlFlow::Wait` to
   `WaitUntil(nearest deadline)` — the FPS idle-grace precedent —
@@ -571,23 +651,24 @@ design takes no dependency on that decision in either direction.
 | IPC-03 | registry + `act` bridge + gates | D5 (registry/`describe`), D4 (User posture, composition rule), D3 (envelope, error codes), D8 (warning sink plumbing) |
 | IPC-04 | `query` family | D5 (module/table), D3, D8; camera accessor micro-overlap note |
 | IPC-05 | `scene` family | D5, D3 (`to_file` discipline), coordinate spaces; canonical hit-test rule (never fork) |
-| IPC-06 | `input` family | D5, D3; fidelity contract (same handler entry points as winit events) |
-| IPC-07 | screenshot engine | D7 shapes (params/sidecar), offscreen mandate, #7 coordination |
-| IPC-08 | recorder | D7 shapes (manifest), external-assembly split, capture-clock `t_ms` |
-| IPC-09 | virtual clock + wait | D7 (`clock.*` shapes, `settled` definition), D2 (deferred replies) |
-| IPC-10 | headless | D7 (offscreen capture path), `Options.should_exit` seam; app-shell freeze per EPIC #60 |
-| IPC-11 | `mandalactl` | D3 (protocol pinning/refusal), `format/ipc.md` as its command source |
+| IPC-06 | `input` family | D5, D3; fidelity contract (same handler entry points as winit events); the injected-input queue + one-sample-per-frame pacing (shared with `settled`) |
+| IPC-07 | screenshot engine | D7 shapes (params/sidecar/`space` grid/write-guards), offscreen mandate, #7 coordination |
+| IPC-08 | recorder | D7 shapes (manifest), external-assembly split, capture-clock `t_ms`, the virtual-clock frame-emission rule |
+| IPC-09 | virtual clock + wait | D7 (`clock.*` shapes; `settled` keys on *rendered* not presented; wait exclusivity; watchdog-per-heartbeat; injected-input queue), D2 (deferred replies) |
+| IPC-10 | headless | D7 (offscreen capture path; `settled`-on-rendered makes headless capture terminate), `Options.should_exit` seam; app-shell freeze per EPIC #60 |
+| IPC-11 | `mandalactl` | D3 (protocol pinning/refusal; enum-widening is breaking), `format/ipc.md` as its command source |
 | IPC-12/13 | skills | pinned capture/wait shapes; artifacts + manifest layout |
-| IPC-14 | events + revision | D3 (event frames, reserved classes, envelope `revision`), D8 (#45 boundary), #43 boundary (app-funnel only) |
-| IPC-15 | WASM parity | D6 (parked trajectory: WebSocket transport, envelope verbatim), `wasm_compatibility` taxonomy |
+| IPC-14 | events + revision | D3 (event frames, reserved classes, envelope `revision`); the render-affecting revision counter + event backpressure coalescing; D8 (#45 boundary), #43 boundary (app-funnel only) |
+| IPC-15 | WASM parity | D6 (parked trajectory: WebSocket transport reusing the *envelope + commands*; framing/caps re-expressed per transport), `wasm_compatibility` taxonomy |
 | IPC-16 | docs sweep | Change-discipline section of `format/ipc.md`; `describe` byte-honesty audit |
 
 ## Amendment ledger
 
 Documents moved by this design, in the same PR that pinned it:
 
-- **CODE_CONVENTIONS §3** — the sanctioned IPC boundary: named
-  boundary threads (acceptor + per-controller reader + outbound),
+- **CODE_CONVENTIONS §3** — the sanctioned IPC boundary: a
+  persistent acceptor plus a per-controller reader + outbound pair
+  (generation-stamped, torn down together on disconnect),
   `std::sync::mpsc` carrying protocol values only, proxy wake,
   main-thread-only command execution, no blocking IPC I/O on the
   main thread. The covenant's scope line ("in interactive paths")
