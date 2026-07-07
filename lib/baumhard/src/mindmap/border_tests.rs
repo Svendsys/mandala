@@ -40,6 +40,32 @@ mod tests {
         assert_eq!(specs[4].palette_offset, 0, "TL corner palette offset");
     }
 
+    /// `border_run_specs` handles a font-PINNED style
+    /// (`font_name = Some(registered family)`) without deadlocking.
+    /// Every other border test uses the default `font_name: None`,
+    /// so this is the only coverage of the `Some(face)` path through
+    /// `border_run_specs_with` — face resolution,
+    /// `face_family_name_for_pin`, and the guard-threaded
+    /// `glyph_ink_with` — and of the wrapper's warm-before-guard
+    /// step (`fonts::ensure_warm`) that keeps that path
+    /// re-entrancy-free (issue P0-06). These tests do not call
+    /// `fonts::init()`, so the wrapper's own warm is what makes the
+    /// guarded face lookup safe.
+    #[test]
+    fn border_run_specs_with_font_pin_does_not_deadlock() {
+        // `loaded_families_iter` yields names that round-trip through
+        // `app_font_by_family` (see fonts_tests), so this pins a real
+        // resolvable face — exercising the guarded pin lookup.
+        let family = crate::font::fonts::loaded_families_iter()
+            .next()
+            .expect("at least one bundled family")
+            .to_string();
+        let mut style = BorderStyle::default_with_color("#ffffff");
+        style.font_name = Some(family);
+        let specs = border_run_specs(&style, (0.0, 0.0), (200.0, 80.0));
+        assert_eq!(specs.len(), 8, "font-pinned border still emits 8 specs");
+    }
+
     /// Each spec's `cluster_count` is consistent with
     /// `count_grapheme_clusters(text)` — the field exists so
     /// consumers handing the spec to `build_border_regions`

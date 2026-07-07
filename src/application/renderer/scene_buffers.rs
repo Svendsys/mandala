@@ -31,11 +31,27 @@ impl Renderer {
         // `retain(|k, _| seen.contains(k))` at the end of the loop —
         // the two halves are complementary.
         self.border_buffers.clear();
+        // Warm the font index BEFORE taking the guard so this
+        // guard-holding loop is self-sufficient and does not depend on
+        // startup ordering. `border_run_specs_with` (below) resolves
+        // font pins by reading FAMILY_INDEX / COMPILED_FONT_ID_MAP;
+        // their lazy build acquires FONT_SYSTEM.write via load_fonts,
+        // which would re-enter our guard and time out. `init()` builds
+        // both and is idempotent — a no-op after the app's startup
+        // call (§B5: the app crate may call it).
+        fonts::init();
         let mut font_system = fonts::acquire_font_system_write("rebuild_border_buffers");
 
         for elem in border_elements {
             let font_size = elem.border_style.font_size_pt;
-            let specs = baumhard::mindmap::border::border_run_specs(
+            // Guard-threading variant: this loop already holds the
+            // FONT_SYSTEM write guard, so a cold corner / fill
+            // grapheme must measure through the held guard. Calling
+            // the lock-acquiring `border_run_specs` here would
+            // re-enter the same-thread write lock and deadlock
+            // (issue P0-06).
+            let specs = baumhard::mindmap::border::border_run_specs_with(
+                &mut font_system,
                 &elem.border_style,
                 elem.node_position,
                 elem.node_size,

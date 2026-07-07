@@ -132,6 +132,24 @@ access to it.
   the write lock across a long computation serialises the whole
   renderer — which on a single-threaded event loop means stalling the
   entire frame.
+- **Never take the write lock with a raw `FONT_SYSTEM.write()`.**
+  Exactly two shapes are sanctioned (see the
+  `acquire_font_system_write` doc for the full list): (1)
+  blocking-with-timeout through `acquire_font_system_write(site)` —
+  the default; a re-entrant same-thread acquire panics with `site`
+  instead of hanging forever on the futex; (2) non-blocking
+  `FONT_SYSTEM.try_write()` + frame-degrade, used only by the
+  renderer's interactive overlay/prepare paths that skip a frame on
+  contention. A raw blocking `.write()` is neither and is a latent
+  self-deadlock — `grep`-guard against it.
+- **A caller already holding the guard measures via a `*_with`
+  variant, never a nested acquire.** Thread the live
+  `&mut FontSystem` into the composable API — `metric_cache::glyph_*_with`,
+  `border_run_specs_with`, `measure_glyph_ink_bounds`,
+  `measure_text_block_unbounded` — so a cold key shapes through the
+  guard the caller holds. A second acquire on the same thread is a
+  guaranteed deadlock (issue P0-06). The lock-acquiring wrapper is for
+  callers that hold no guard.
 - **Cosmic-text usage is concentrated in `lib/baumhard/src/font/`.**
   `font/fonts.rs` owns the `FONT_SYSTEM` lock, font-id table, and
   measurement primitives (`measure_glyph_ink_bounds`,

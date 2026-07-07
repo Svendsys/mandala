@@ -11,6 +11,11 @@ use serde::{Deserialize, Serialize};
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::core::primitives::{ColorFontRegion, ColorFontRegions, Range};
+// `FontSystem` is re-exported by `crate::font` (§B5: code outside
+// `font/` does not name `cosmic_text` directly). Threaded through
+// `border_run_specs_with` so guard-holding callers measure without a
+// nested `FONT_SYSTEM` acquire.
+use crate::font::FontSystem;
 use crate::mindmap::border_pattern::SidePattern;
 use crate::mindmap::model::{Canvas, ColorGroup, CustomBorderGlyphs, GlyphBorderConfig, MindSection};
 use crate::util::color::FloatRgba;
@@ -463,6 +468,13 @@ pub struct BorderRunSpec {
 /// path, the initial-build tree path, and the flat-pipeline
 /// `rebuild_border_buffers` previously reproduced independently.
 ///
+/// This is the **lock-acquiring wrapper** for callers that do NOT
+/// already hold the `FONT_SYSTEM` write guard (the tree-builder
+/// paths, unit tests). Callers inside a write-guard scope — the
+/// renderer's `rebuild_border_buffers` loop — must use
+/// [`border_run_specs_with`] instead, or the nested same-thread
+/// acquire deadlocks (issue P0-06).
+///
 /// Channels:
 /// - `1` = top, `2` = bottom, `3` = left, `4` = right.
 ///
@@ -474,16 +486,49 @@ pub struct BorderRunSpec {
 /// per visible glyph, so the indices line up with the per-cluster
 /// regions [`build_border_regions`] emits.
 ///
-/// Cost: 4 `String` allocations (one per side text), 4
-/// `count_grapheme_clusters` walks. No font-system access, no
-/// shaping. Pure: same inputs → same array.
+/// Cost: acquires the `FONT_SYSTEM` **write** guard once per call —
+/// unconditionally, even when every glyph is a cache hit (unlike the
+/// metric-cache wrappers, which check the cache before locking).
+/// Shapes each corner + fill grapheme once through the metric cache
+/// (hot re-renders hit the cache; only cold keys touch cosmic-text),
+/// 4 `String` allocations, 4 `count_grapheme_clusters` walks. Same
+/// inputs → same array.
 pub fn border_run_specs(
     border_style: &BorderStyle,
     node_pos: (f32, f32),
     node_size: (f32, f32),
 ) -> Vec<BorderRunSpec> {
+    // Warm the font lazy-statics BEFORE taking the guard. Resolving a
+    // face under the guard lazily builds `FAMILY_INDEX` /
+    // `COMPILED_FONT_ID_MAP`, and that build acquires `FONT_SYSTEM`
+    // via `load_fonts` — a same-thread re-entry that would time out.
+    // Production warms this at `fonts::init()`, so this is a no-op
+    // there; it only matters for unlocked callers that skip `init()`
+    // (the tree-builder path, unit tests). See `fonts::ensure_warm`.
+    crate::font::fonts::ensure_warm();
+    let mut font_system = crate::font::fonts::acquire_font_system_write("border_run_specs");
+    border_run_specs_with(&mut font_system, border_style, node_pos, node_size)
+}
+
+/// [`border_run_specs`] for callers that already hold the
+/// `FONT_SYSTEM` write guard (the renderer's `rebuild_border_buffers`
+/// loop). Threads the guard into every metric-cache measurement so a
+/// cold corner / fill grapheme shapes through the held guard instead
+/// of blocking on a second acquire of the same lock — the composable
+/// design §B5 and the `measure_glyph_ink_bounds` primitive share.
+///
+/// Assumes `fonts::init()` has run (the standard §B5 invariant): the
+/// face-resolution and pin lookups here read the already-built
+/// `FAMILY_INDEX` / `COMPILED_FONT_ID_MAP` without triggering
+/// `load_fonts`, so nothing under this guard re-acquires it.
+pub fn border_run_specs_with(
+    font_system: &mut FontSystem,
+    border_style: &BorderStyle,
+    node_pos: (f32, f32),
+    node_size: (f32, f32),
+) -> Vec<BorderRunSpec> {
     use crate::font::fonts::app_font_by_family;
-    use crate::font::metric_cache::glyph_ink;
+    use crate::font::metric_cache::glyph_ink_with;
 
     let font_size = border_style.font_size_pt;
     let face = border_style
@@ -498,10 +543,10 @@ pub fn border_run_specs(
     // never landing on the node's actual corner pixel.
     // Per-corner positioning makes corner placement
     // structurally exact.
-    let tl_ink = glyph_ink(face, font_size, &border_style.corners.top_left);
-    let tr_ink = glyph_ink(face, font_size, &border_style.corners.top_right);
-    let bl_ink = glyph_ink(face, font_size, &border_style.corners.bottom_left);
-    let br_ink = glyph_ink(face, font_size, &border_style.corners.bottom_right);
+    let tl_ink = glyph_ink_with(font_system, face, font_size, &border_style.corners.top_left);
+    let tr_ink = glyph_ink_with(font_system, face, font_size, &border_style.corners.top_right);
+    let bl_ink = glyph_ink_with(font_system, face, font_size, &border_style.corners.bottom_left);
+    let br_ink = glyph_ink_with(font_system, face, font_size, &border_style.corners.bottom_right);
 
     // Top fill rail spans the horizontal gap between TL and TR
     // corners. Its position.x is `node.x + tl_w`; its bounds.0
@@ -512,9 +557,15 @@ pub fn border_run_specs(
     let top_fill_avail = (node_size.0 - tl_ink.advance - tr_ink.advance).max(0.0);
     let bottom_fill_avail = (node_size.0 - bl_ink.advance - br_ink.advance).max(0.0);
 
-    let (top_fill_text, top_fill_clusters, _top_fill_w) =
-        fit_pattern_to_width(&border_style.side_patterns.top, top_fill_avail, face, font_size);
+    let (top_fill_text, top_fill_clusters, _top_fill_w) = fit_pattern_to_width(
+        font_system,
+        &border_style.side_patterns.top,
+        top_fill_avail,
+        face,
+        font_size,
+    );
     let (bottom_fill_text, bottom_fill_clusters, _bottom_fill_w) = fit_pattern_to_width(
+        font_system,
         &border_style.side_patterns.bottom,
         bottom_fill_avail,
         face,
@@ -530,12 +581,12 @@ pub fn border_run_specs(
     let left_first_glyph = side_pattern_first_grapheme(&border_style.side_patterns.left);
     let right_first_glyph = side_pattern_first_grapheme(&border_style.side_patterns.right);
     let left_line_h = if !left_first_glyph.is_empty() {
-        glyph_ink(face, font_size, &left_first_glyph).ink_height
+        glyph_ink_with(font_system, face, font_size, &left_first_glyph).ink_height
     } else {
         font_size
     };
     let right_line_h = if !right_first_glyph.is_empty() {
-        glyph_ink(face, font_size, &right_first_glyph).ink_height
+        glyph_ink_with(font_system, face, font_size, &right_first_glyph).ink_height
     } else {
         font_size
     };
@@ -564,11 +615,13 @@ pub fn border_run_specs(
     let right_v_height = right_row_count as f32 * right_line_h;
 
     let left_v_width = side_pattern_max_advance(
+        font_system,
         &border_style.side_patterns.left,
         face,
         font_size,
     ) + 1.0;
     let right_v_width = side_pattern_max_advance(
+        font_system,
         &border_style.side_patterns.right,
         face,
         font_size,
@@ -729,12 +782,13 @@ fn side_pattern_first_grapheme(
 /// that fit. The leftover sub-cluster pixels stay blank, so the
 /// rail terminates flush with the right corner.
 fn fit_pattern_to_width(
+    font_system: &mut FontSystem,
     pattern: &SidePattern,
     available_pt: f32,
     face: Option<crate::font::fonts::AppFont>,
     font_size: f32,
 ) -> (String, usize, f32) {
-    use crate::font::metric_cache::glyph_advance;
+    use crate::font::metric_cache::glyph_advance_with;
     use crate::mindmap::border_pattern::SidePattern;
     match pattern {
         SidePattern::AtomicRepeat { cluster } => {
@@ -748,7 +802,7 @@ fn fit_pattern_to_width(
             // of the smallest grapheme in the cluster.
             let g_widths: Vec<f32> = cluster
                 .iter()
-                .map(|g| glyph_advance(face, font_size, g))
+                .map(|g| glyph_advance_with(font_system, face, font_size, g))
                 .collect();
             let cluster_w: f32 = g_widths.iter().sum();
             if cluster_w <= 0.0 {
@@ -780,15 +834,15 @@ fn fit_pattern_to_width(
         SidePattern::PrefixFillSuffix { prefix, fill, suffix } => {
             let prefix_widths: Vec<f32> = prefix
                 .iter()
-                .map(|g| glyph_advance(face, font_size, g))
+                .map(|g| glyph_advance_with(font_system, face, font_size, g))
                 .collect();
             let suffix_widths: Vec<f32> = suffix
                 .iter()
-                .map(|g| glyph_advance(face, font_size, g))
+                .map(|g| glyph_advance_with(font_system, face, font_size, g))
                 .collect();
             let fill_widths: Vec<f32> = fill
                 .iter()
-                .map(|g| glyph_advance(face, font_size, g))
+                .map(|g| glyph_advance_with(font_system, face, font_size, g))
                 .collect();
             let prefix_w: f32 = prefix_widths.iter().sum();
             let suffix_w: f32 = suffix_widths.iter().sum();
@@ -855,11 +909,12 @@ fn fit_pattern_to_width(
 /// (`bounds.0`) so cosmic-text doesn't wrap. Slack handling
 /// happens in the caller.
 fn side_pattern_max_advance(
+    font_system: &mut FontSystem,
     pattern: &SidePattern,
     face: Option<crate::font::fonts::AppFont>,
     font_size: f32,
 ) -> f32 {
-    use crate::font::metric_cache::glyph_advance;
+    use crate::font::metric_cache::glyph_advance_with;
     use crate::mindmap::border_pattern::SidePattern;
     let graphemes: &[String] = match pattern {
         SidePattern::AtomicRepeat { cluster } => cluster.as_slice(),
@@ -867,7 +922,7 @@ fn side_pattern_max_advance(
     };
     graphemes
         .iter()
-        .map(|g| glyph_advance(face, font_size, g))
+        .map(|g| glyph_advance_with(font_system, face, font_size, g))
         .fold(0.0_f32, |acc: f32, w: f32| acc.max(w))
 }
 
@@ -1508,4 +1563,3 @@ fn build_vertical_text(pattern: &SidePattern, rows: usize) -> String {
 pub(crate) fn count_clusters(s: &str) -> usize {
     s.graphemes(true).count()
 }
-
