@@ -1,6 +1,8 @@
 /target
+/release
 /.idea
 /dist
 /target/llvm-cov
 lcov.info
+.rustc_info.json
 *.profraw
