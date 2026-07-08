@@ -1,0 +1,345 @@
+#!/usr/bin/env bash
+#
+# agent-skills-sync — vendor and update agent-skills from upstream into a
+# downstream repository, honoring a per-repo config that selects which skills
+# to keep.
+#
+# Run it from anywhere inside your downstream repo:
+#
+#     ./vendor/agent-skills/bin/agent-skills-sync
+#
+# Every run:
+#   1. Shallow-clones the upstream agent-skills repo to a temp dir.
+#   2. Reads your config (default: <repo-root>/agent-skills.config) to learn
+#      which skills you want. Default is all of them.
+#   3. Copies those skills into <prefix>/skills/ as real, committed files.
+#   4. Deletes any skill under <prefix>/skills/ your config no longer lists —
+#      everything under the prefix came from upstream, so the config is the
+#      single source of truth for what stays.
+#   5. Updates this script and the bootstrap guide from upstream, so the tooling
+#      that synced you can itself be synced.
+#   6. Best-effort: refreshes the per-tool discovery symlinks (.claude/skills,
+#      .agents/skills) for the selected skills and prunes the ones it removed.
+#   7. Vendors agent-specific skills (e.g. claude/skills/) into
+#      <prefix>/<agent>/skills/, wired into that agent's discovery dir only.
+#
+# It only writes inside <prefix> and those discovery dirs, and never overwrites
+# your config. Review and commit the result yourself.
+#
+set -euo pipefail
+
+UPSTREAM_REPO="${AGENT_SKILLS_REPO:-https://github.com/Svendsys/agent-skills.git}"
+UPSTREAM_REF="${AGENT_SKILLS_REF:-master}"
+PREFIX_REL="${AGENT_SKILLS_PREFIX:-vendor/agent-skills}"
+CONFIG_REL="${AGENT_SKILLS_CONFIG:-agent-skills.config}"
+DRY_RUN=0
+
+# Discovery dirs this CLI will wire up if they already exist in the repo.
+#
+# KEEP IN STEP with bin/skills-check: its AGNOSTIC_SRC + DISCOVERY_DIRS mirror
+# TOOL_DIRS + AGENT_SKILL_SRCS here. This tool wires these links into consumers;
+# skills-check enforces the same set upstream. Add an agent's discovery dir to one
+# and you must add it to the other, or the two drift silently.
+TOOL_DIRS=".claude/skills .agents/skills"
+
+# Agent-specific skill sources: "<upstream-rel>=<tool-dir>". Each is vendored to
+# <prefix>/<upstream-rel>/ and wired only into <tool-dir> (never the agnostic set).
+AGENT_SKILL_SRCS="claude/skills=.claude/skills"
+
+usage() {
+  cat <<'EOF'
+agent-skills-sync — vendor and update agent-skills from upstream, honoring a
+per-repo config that selects which skills to keep.
+
+Usage: agent-skills-sync [options]
+
+Options:
+  --repo URL     Upstream git URL          (env AGENT_SKILLS_REPO)
+  --ref REF      Upstream branch/tag/sha   (env AGENT_SKILLS_REF; default master)
+  --prefix DIR   Vendor prefix, relative to repo root
+                 (env AGENT_SKILLS_PREFIX; default vendor/agent-skills)
+  --config PATH  Config path, relative to repo root
+                 (env AGENT_SKILLS_CONFIG; default agent-skills.config)
+  --dry-run      Show what would change without writing anything
+  -h, --help     Show this help
+
+Config format: one skill name per line; '#' starts a comment; blank lines are
+ignored; a single line of '*' (or 'all') selects every upstream skill. Skills
+listed are vendored; vendored skills not listed are deleted. Default is all.
+EOF
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --repo)    UPSTREAM_REPO="${2:?--repo needs a value}"; shift 2 ;;
+    --ref)     UPSTREAM_REF="${2:?--ref needs a value}"; shift 2 ;;
+    --prefix)  PREFIX_REL="${2:?--prefix needs a value}"; shift 2 ;;
+    --config)  CONFIG_REL="${2:?--config needs a value}"; shift 2 ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) printf 'agent-skills-sync: unknown argument: %s\n\n' "$1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+log()  { printf '%s\n' "$*"; }
+step() { printf '  %s\n' "$*"; }
+die()  { printf 'agent-skills-sync: %s\n' "$*" >&2; exit 1; }
+
+command -v git >/dev/null 2>&1 || die "git is required but was not found on PATH"
+
+# --- Resolve the downstream repo root (the repo we sync INTO) ----------------
+if ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"; then :; else
+  ROOT="$(pwd)"
+  log "Not inside a git repo; using the current directory as the root: $ROOT"
+fi
+PREFIX="$ROOT/$PREFIX_REL"
+CONFIG="$ROOT/$CONFIG_REL"
+
+[ "$DRY_RUN" -eq 1 ] && log "(dry run — no files will be written)"
+
+# --- Fetch upstream ----------------------------------------------------------
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+log "Fetching $UPSTREAM_REPO @ $UPSTREAM_REF ..."
+git clone --quiet --depth 1 --branch "$UPSTREAM_REF" "$UPSTREAM_REPO" "$TMP/src" \
+  || die "could not clone $UPSTREAM_REPO @ $UPSTREAM_REF"
+[ -d "$TMP/src/skills" ] || die "upstream has no skills/ directory — wrong --repo or --ref?"
+
+list_dirs() { # list immediate subdirectory names of $1, sorted
+  ( cd "$1" 2>/dev/null && find . -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort ) || true
+}
+upstream_skills="$(list_dirs "$TMP/src/skills")"
+[ -n "$upstream_skills" ] || die "upstream skills/ has no skills in it"
+
+# All agent-specific skill names upstream (across every AGENT_SKILL_SRCS source), so the
+# config resolution below recognizes them and neither mis-warns nor mis-dies on a config
+# that names one.
+agent_upstream_all=""
+for spec in $AGENT_SKILL_SRCS; do
+  _sr="${spec%%=*}"
+  [ -d "$TMP/src/$_sr" ] && agent_upstream_all="$agent_upstream_all
+$(list_dirs "$TMP/src/$_sr")"
+done
+agent_upstream_all="$(printf '%s\n' "$agent_upstream_all" | grep -v '^$' | sort -u || true)"
+
+# --- Seed the config on first run (default: all skills) ----------------------
+if [ ! -f "$CONFIG" ]; then
+  log "No config at $CONFIG_REL — creating it (default: all skills)."
+  if [ "$DRY_RUN" -eq 0 ]; then
+    if [ -f "$TMP/src/$CONFIG_REL" ]; then
+      cp "$TMP/src/$CONFIG_REL" "$CONFIG"          # canonical default template
+    else
+      printf '# agent-skills.config — one skill per line; * = all.\n*\n' > "$CONFIG"
+    fi
+  fi
+fi
+
+# --- Resolve the desired skill set from the config ---------------------------
+if [ -f "$CONFIG" ]; then
+  cfg="$(sed -e 's/#.*$//' -e 's/[[:space:]]//g' "$CONFIG" | grep -v '^$' || true)"
+else
+  cfg="*"   # dry-run before the config exists
+fi
+
+if [ -z "$cfg" ] || printf '%s\n' "$cfg" | grep -Fxq -e '*' -e 'all'; then
+  desired="$upstream_skills"
+  if [ -n "$agent_upstream_all" ]; then agent_selected_any=1; else agent_selected_any=0; fi
+else
+  desired=""; agent_selected_any=0
+  while IFS= read -r name; do
+    [ -z "$name" ] && continue
+    if printf '%s\n' "$upstream_skills" | grep -Fxq "$name"; then
+      desired="$desired$name
+"
+    elif printf '%s\n' "$agent_upstream_all" | grep -Fxq "$name"; then
+      agent_selected_any=1   # agent-specific skill; selected + vendored in the agent pass below
+    else
+      log "  ! config lists \"$name\", which upstream does not offer — skipping it"
+    fi
+  done <<EOF
+$cfg
+EOF
+  desired="$(printf '%s' "$desired" | grep -v '^$' | sort -u || true)"
+fi
+[ -n "$desired" ] || [ "$agent_selected_any" = 1 ] || die "config selects no valid skills — nothing to do"
+
+# --- Apply: copy the desired skills, delete the rest -------------------------
+added=0; updated=0; unchanged=0; deleted=0
+[ "$DRY_RUN" -eq 0 ] && mkdir -p "$PREFIX/skills"
+
+while IFS= read -r name; do
+  [ -z "$name" ] && continue
+  src="$TMP/src/skills/$name"; dst="$PREFIX/skills/$name"
+  if [ -e "$dst" ]; then
+    if diff -qr "$src" "$dst" >/dev/null 2>&1; then unchanged=$((unchanged+1)); continue; fi
+    step "update  skills/$name"; updated=$((updated+1))
+  else
+    step "add     skills/$name"; added=$((added+1))
+  fi
+  if [ "$DRY_RUN" -eq 0 ]; then
+    rm -rf "$dst"; mkdir -p "$(dirname "$dst")"; cp -R "$src" "$dst"
+  fi
+done <<EOF
+$desired
+EOF
+
+deleted_names=""
+if [ -d "$PREFIX/skills" ]; then
+  while IFS= read -r name; do
+    [ -z "$name" ] && continue
+    if ! printf '%s\n' "$desired" | grep -Fxq "$name"; then
+      step "delete  skills/$name (not in config)"; deleted=$((deleted+1))
+      deleted_names="$deleted_names$name
+"
+      [ "$DRY_RUN" -eq 0 ] && rm -rf "$PREFIX/skills/$name"
+    fi
+  done <<EOF
+$(list_dirs "$PREFIX/skills")
+EOF
+fi
+
+# --- Update the tooling itself, so the syncer can be synced ------------------
+update_file() { # repo-relative path
+  rel="$1"; src="$TMP/src/$rel"; dst="$PREFIX/$rel"
+  [ -f "$src" ] || return 0
+  if [ -e "$dst" ] && diff -q "$src" "$dst" >/dev/null 2>&1; then return 0; fi
+  step "update  $PREFIX_REL/$rel"
+  [ "$DRY_RUN" -eq 1 ] && return 0
+  mkdir -p "$(dirname "$dst")"
+  # write via temp + mv so this script overwriting itself stays atomic
+  cp "$src" "$dst.tmp.$$"
+  [ -x "$src" ] && chmod +x "$dst.tmp.$$"
+  mv "$dst.tmp.$$" "$dst"
+}
+update_file "bin/agent-skills-sync"
+update_file "BOOTSTRAP.md"
+
+# --- Best-effort: wire up per-tool discovery symlinks ------------------------
+# Only manages a tool dir that already exists. The link target is relative, so
+# it survives the repo being moved or cloned elsewhere.
+rel_target() { # tool_dir_rel skill_name  ->  ../../<prefix>/skills/<name>
+  ups="$(printf '%s' "$1" | awk -F/ '{c=0; for(i=1;i<=NF;i++) if($i!="") c++; print c}')"
+  dots=""; i=0; while [ "$i" -lt "$ups" ]; do dots="../$dots"; i=$((i+1)); done
+  printf '%s%s/skills/%s' "$dots" "$PREFIX_REL" "$2"
+}
+rel_target_dir() { # tool_dir_rel  dst_subrel  skill_name  ->  ../…/<prefix>/<dst_subrel>/<name>
+  ups="$(printf '%s' "$1" | awk -F/ '{c=0; for(i=1;i<=NF;i++) if($i!="") c++; print c}')"
+  dots=""; i=0; while [ "$i" -lt "$ups" ]; do dots="../$dots"; i=$((i+1)); done
+  printf '%s%s/%s/%s' "$dots" "$PREFIX_REL" "$2" "$3"
+}
+for td in $TOOL_DIRS; do
+  [ -d "$ROOT/$td" ] || continue
+  while IFS= read -r name; do
+    [ -z "$name" ] && continue
+    link="$ROOT/$td/$name"; target="$(rel_target "$td" "$name")"
+    if [ -e "$link" ] && [ ! -L "$link" ]; then
+      log "  ! $td/$name exists and is not a symlink — leaving it alone"; continue
+    fi
+    [ -L "$link" ] && [ "$(readlink "$link")" = "$target" ] && continue
+    step "link    $td/$name"
+    [ "$DRY_RUN" -eq 0 ] && ln -sfn "$target" "$link"
+  done <<EOF
+$desired
+EOF
+  while IFS= read -r name; do
+    [ -z "$name" ] && continue
+    if [ -L "$ROOT/$td/$name" ]; then
+      step "unlink  $td/$name"
+      [ "$DRY_RUN" -eq 0 ] && rm -f "$ROOT/$td/$name"
+    fi
+  done <<EOF
+$deleted_names
+EOF
+done
+
+# --- Agent-specific skills: <agent>/skills/ → that agent's discovery dir ------
+# A skill that genuinely needs one agent lives upstream under <agent>/skills/ and is
+# vendored to <prefix>/<agent>/skills/, wired ONLY into that agent's discovery dir
+# (never the tool-agnostic set). The same config selects them, by name.
+# Sources are declared in AGENT_SKILL_SRCS near the top of this script.
+agent_selected=0
+
+for spec in $AGENT_SKILL_SRCS; do
+  a_src_rel="${spec%%=*}"; a_tool="${spec##*=}"
+  [ -d "$TMP/src/$a_src_rel" ] || continue
+  a_upstream="$(list_dirs "$TMP/src/$a_src_rel")"
+  [ -n "$a_upstream" ] || continue
+
+  if [ -z "$cfg" ] || printf '%s\n' "$cfg" | grep -Fxq -e '*' -e 'all'; then
+    a_desired="$a_upstream"
+  else
+    a_desired=""
+    while IFS= read -r name; do
+      [ -z "$name" ] && continue
+      if printf '%s\n' "$cfg" | grep -Fxq "$name"; then a_desired="$a_desired$name
+"; fi
+    done <<EOF
+$a_upstream
+EOF
+    a_desired="$(printf '%s' "$a_desired" | grep -v '^$' | sort -u || true)"
+  fi
+
+  asel="$(printf '%s\n' "$a_desired" | grep -cv '^$' || true)"; agent_selected=$((agent_selected + asel))
+  [ "$DRY_RUN" -eq 0 ] && mkdir -p "$PREFIX/$a_src_rel"
+  while IFS= read -r name; do
+    [ -z "$name" ] && continue
+    s="$TMP/src/$a_src_rel/$name"; d="$PREFIX/$a_src_rel/$name"
+    if [ -e "$d" ]; then
+      if diff -qr "$s" "$d" >/dev/null 2>&1; then unchanged=$((unchanged+1)); continue; fi
+      step "update  $a_src_rel/$name"; updated=$((updated+1))
+    else
+      step "add     $a_src_rel/$name"; added=$((added+1))
+    fi
+    if [ "$DRY_RUN" -eq 0 ]; then
+      rm -rf "$d"; mkdir -p "$(dirname "$d")"; cp -R "$s" "$d"
+    fi
+  done <<EOF
+$a_desired
+EOF
+
+  a_deleted=""
+  while IFS= read -r name; do
+    [ -z "$name" ] && continue
+    if ! printf '%s\n' "$a_desired" | grep -Fxq "$name"; then
+      step "delete  $a_src_rel/$name (not in config)"; deleted=$((deleted+1))
+      a_deleted="$a_deleted$name
+"
+      [ "$DRY_RUN" -eq 0 ] && rm -rf "$PREFIX/$a_src_rel/$name"
+    fi
+  done <<EOF
+$(list_dirs "$PREFIX/$a_src_rel")
+EOF
+
+  [ -d "$ROOT/$a_tool" ] || continue
+  while IFS= read -r name; do
+    [ -z "$name" ] && continue
+    link="$ROOT/$a_tool/$name"; target="$(rel_target_dir "$a_tool" "$a_src_rel" "$name")"
+    if [ -e "$link" ] && [ ! -L "$link" ]; then
+      log "  ! $a_tool/$name exists and is not a symlink — leaving it alone"; continue
+    fi
+    [ -L "$link" ] && [ "$(readlink "$link")" = "$target" ] && continue
+    step "link    $a_tool/$name"
+    [ "$DRY_RUN" -eq 0 ] && ln -sfn "$target" "$link"
+  done <<EOF
+$a_desired
+EOF
+  while IFS= read -r name; do
+    [ -z "$name" ] && continue
+    if [ -L "$ROOT/$a_tool/$name" ]; then
+      step "unlink  $a_tool/$name"
+      [ "$DRY_RUN" -eq 0 ] && rm -f "$ROOT/$a_tool/$name"
+    fi
+  done <<EOF
+$a_deleted
+EOF
+done
+
+# --- Summary -----------------------------------------------------------------
+selected_count="$(( $(printf '%s\n' "$desired" | grep -cv '^$' || true) + agent_selected ))"
+log ""
+log "Done. ${selected_count} skill(s) selected — ${added} added, ${updated} updated, ${unchanged} unchanged, ${deleted} deleted."
+if [ "$DRY_RUN" -eq 1 ]; then
+  log "Dry run: nothing was written."
+else
+  log "Review the changes under $PREFIX_REL/ and commit them."
+fi
