@@ -16,11 +16,11 @@
 //!
 //! Per `SECTIONS_BORDERS_RESIZE_PLAN.md` §4.5 (Batch 5).
 
-use baumhard::mindmap::model::{MindNode, MindSection};
+use baumhard::mindmap::model::{validate, MindNode, MindSection};
 
 use super::super::undo_action::UndoAction;
 use super::super::{MindMapDocument, SectionSel, SelectionState};
-use super::{grow_one_node_to_fit_border, validate_section_aabb};
+use super::grow_one_node_to_fit_border;
 
 /// Wrap a node-mutating closure with the snapshot+undo+
 /// floor-pass+cleanup envelope every structural section
@@ -215,7 +215,7 @@ impl MindMapDocument {
             ));
         }
         let insert_at = at.unwrap_or(len).min(len);
-        validate_section_aabb(node.size, insert_at, section.offset, section.size)?;
+        validate::section_candidate_aabb(node.size, insert_at, section.offset, section.size)?;
 
         Ok(mutate_node_with_style_undo(self, node_id, |node| {
             node.sections.insert(insert_at, section);
@@ -711,7 +711,6 @@ mod tests {
     /// `EditNodeStyle` only restored `style` + `sections`, leaving
     /// the node visibly inflated after undo. Now restored
     /// alongside.
-    #[test]
     /// Hostile-mindmap defense: `add_section` rejects when the
     /// node is already at the section-count cap. Pre-fix the
     /// cap was unenforced and a Map-tier macro firing AddSection

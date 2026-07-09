@@ -54,6 +54,20 @@ pub const SHAPE_ID_RECTANGLE: u32 = 0;
 /// shader.
 pub const SHAPE_ID_ELLIPSE: u32 = 1;
 
+/// Canonical named-enum spellings for `NodeStyle.shape`, as used by
+/// `format/enums.md` and by `maptool verify`. The runtime accepts
+/// these case-insensitively (and treats `"circle"` as an alias for
+/// `"ellipse"`); verify normalises to lowercase before matching.
+pub const KNOWN_SHAPES: &[&str] = &[
+    "rectangle",
+    "rounded_rectangle",
+    "ellipse",
+    "circle",
+    "diamond",
+    "parallelogram",
+    "hexagon",
+];
+
 impl NodeShape {
     /// Stable id fed to the fragment shader. Must stay in lock-step
     /// with the `SHAPE_*` constants in

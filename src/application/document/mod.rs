@@ -14,7 +14,7 @@ use log::{error, info};
 
 use baumhard::mindmap::custom_mutation::CustomMutation;
 use baumhard::mindmap::loader;
-use baumhard::mindmap::model::MindMap;
+use baumhard::mindmap::model::{MindMap, MAX_NODE_AXIS};
 use baumhard::mindmap::scene_builder::{self, RenderScene};
 use baumhard::mindmap::tree_builder::{self, MindMapTree};
 
@@ -90,6 +90,7 @@ pub use types::{
 // callers across the application crate that already
 // `use crate::application::document::*` for the doc API don't have
 // to reach across into baumhard's scene_builder for the value type.
+pub use baumhard::mindmap::model::MAX_SECTIONS_PER_NODE;
 pub use baumhard::mindmap::scene_builder::InteractionModeOverrides;
 // Native-only: consumed by `app/click.rs`'s reparent / connect mode
 // rendering. WASM doesn't dispatch `EnterReparentMode` /
@@ -97,13 +98,6 @@ pub use baumhard::mindmap::scene_builder::InteractionModeOverrides;
 #[cfg(not(target_arch = "wasm32"))]
 pub use types::{REPARENT_SOURCE_COLOR, REPARENT_TARGET_COLOR};
 pub use undo_action::UndoAction;
-
-/// Hard cap on `MindNode.sections.len()` enforced by `add_section`
-/// and the loader. Defends against hostile mindmaps with `"sections":
-/// [{},{},…10M…]` that would OOM on load. The number is generous
-/// (no real authoring use case approaches 1024 sections per node)
-/// and bounded enough to make exhaustion-style attacks visible.
-pub const MAX_SECTIONS_PER_NODE: usize = 1024;
 
 /// Owns the MindMap data model and provides scene-building for the Renderer.
 pub struct MindMapDocument {
@@ -247,6 +241,7 @@ pub(super) fn grow_one_node_to_fit_text(node: &mut baumhard::mindmap::model::Min
     if node.size.height < floor_h {
         node.size.height = floor_h;
     }
+    clamp_node_size_to_ceiling(node);
 }
 
 /// Pure floor-compute extracted from [`grow_one_node_to_fit_text`]
@@ -387,6 +382,21 @@ pub(super) fn grow_one_node_to_fit_border(
     }
     if size.y < need_h {
         node.size.height = need_h as f64;
+    }
+    clamp_node_size_to_ceiling(node);
+}
+
+/// Clamp `node.size` to the shared `MAX_NODE_AXIS` ceiling. The
+/// explicit setters (`set_node_size`, `set_node_aabb`) already reject
+/// sizes above this bound; the grow-to-fit floor functions must also
+/// honour it so the editor cannot produce a saved map that `maptool
+/// verify` would reject.
+fn clamp_node_size_to_ceiling(node: &mut baumhard::mindmap::model::MindNode) {
+    if node.size.width > MAX_NODE_AXIS {
+        node.size.width = MAX_NODE_AXIS;
+    }
+    if node.size.height > MAX_NODE_AXIS {
+        node.size.height = MAX_NODE_AXIS;
     }
 }
 

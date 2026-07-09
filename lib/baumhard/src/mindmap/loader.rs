@@ -5,7 +5,7 @@
 //! `portals[]` array, rejecting the latter with a concrete migration
 //! pointer instead of silently dropping data.
 
-use crate::mindmap::model::MindMap;
+use crate::mindmap::model::{validate, MindMap};
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
@@ -61,6 +61,10 @@ pub fn load_from_str(json: &str) -> Result<MindMap, String> {
             if let Some(err) = detect_parent_cycle(&map) {
                 return Err(err);
             }
+            if let Some(err) = detect_section_count_cap(&map) {
+                return Err(err);
+            }
+            warn_on_duplicate_edges(&map);
             Ok(map)
         }
         Err(e) => {
@@ -211,6 +215,48 @@ fn detect_parent_cycle(map: &MindMap) -> Option<String> {
                     break;
                 }
             }
+        }
+    }
+    None
+}
+
+/// Warn at load time when the same `(from_id, to_id, edge_type)`
+/// tuple appears more than once. Duplicates render deterministically
+/// as the last edge in the array, but every `EdgeRef` lookup and
+/// scene-cache key is ambiguous, so hand-edited maps should degrade
+/// loudly rather than silently overwrite geometry.
+fn warn_on_duplicate_edges(map: &MindMap) {
+    use std::collections::HashMap;
+    let mut seen: HashMap<(&str, &str, &str), usize> = HashMap::new();
+    for (i, edge) in map.edges.iter().enumerate() {
+        let key = (edge.from_id.as_str(), edge.to_id.as_str(), edge.edge_type.as_str());
+        if let Some(&first) = seen.get(&key) {
+            log::warn!(
+                "duplicate edge tuple (from_id={:?}, to_id={:?}, edge_type={:?}) \
+                 at edges[{}] and edges[{}]; EdgeRef / scene-cache lookups are unstable",
+                edge.from_id,
+                edge.to_id,
+                edge.edge_type,
+                first,
+                i
+            );
+        } else {
+            seen.insert(key, i);
+        }
+    }
+}
+
+/// Reject maps whose typed `sections` vectors exceed the shared
+/// per-node cap. The JSON has already been parsed by this point,
+/// so this is not a parser-level allocation limit; it is the
+/// loader's honest model-entry invariant, matching the document
+/// mutator cap and `maptool verify`.
+fn detect_section_count_cap(map: &MindMap) -> Option<String> {
+    let mut nodes: Vec<&crate::mindmap::model::MindNode> = map.nodes.values().collect();
+    nodes.sort_by(|a, b| a.id.cmp(&b.id));
+    for node in nodes {
+        if let Err(message) = validate::section_count(node) {
+            return Some(format!("node {:?}: {}", node.id, message));
         }
     }
     None
@@ -420,6 +466,42 @@ mod tests {
         assert!(
             err.contains("zero sections"),
             "error must explain the invariant: {err}"
+        );
+    }
+
+    #[test]
+    fn test_section_count_cap_rejected() {
+        let sections = (0..=crate::mindmap::model::MAX_SECTIONS_PER_NODE)
+            .map(|i| format!(r#"{{"text":"section {i}"}}"#))
+            .collect::<Vec<_>>()
+            .join(",");
+        let raw = format!(
+            r##"{{
+            "version": "1.0",
+            "name": "too-many-sections",
+            "canvas": {{"background_color": "#000", "default_border": null,
+                       "default_connection": null, "theme_variables": {{}},
+                       "theme_variants": {{}}}},
+            "nodes": {{"0": {{
+                "id": "0", "parent_id": null,
+                "position": {{"x": 0, "y": 0}},
+                "size": {{"width": 100, "height": 50}},
+                "sections": [{sections}],
+                "style": {{"background_color":"#000","frame_color":"#000",
+                          "text_color":"#fff","shape":"rectangle",
+                          "corner_radius_percent":0,"frame_thickness":0,
+                          "show_frame":false,"show_shadow":false}},
+                "layout": {{"type":"map","direction":"auto","spacing":0}},
+                "folded": false, "notes": "",
+                "color_schema": null
+            }}}},
+            "edges": []
+        }}"##
+        );
+        let err = load_from_str(&raw).expect_err("over-cap sections must be rejected");
+        assert!(
+            err.contains("node.sections.len()=1025 exceeds cap 1024"),
+            "error must use the shared cap message: {err}"
         );
     }
 
