@@ -1325,6 +1325,83 @@ pub fn do_delta_glyph_line_delete_clears_line() {
     assert_eq!(model.glyph_matrix.get(0).unwrap().line.len(), 0);
 }
 
+/// Destructive operations on a single-line delta must not grow an
+/// absent row. They mirror `GlyphMatrix::{sub,mul}_assign`, where
+/// missing rows fall away.
+#[test]
+pub fn test_delta_glyph_line_destructive_ops_do_not_grow_missing_line() {
+    do_delta_glyph_line_destructive_ops_do_not_grow_missing_line();
+}
+
+pub fn do_delta_glyph_line_destructive_ops_do_not_grow_missing_line() {
+    for operation in [
+        ApplyOperation::Subtract,
+        ApplyOperation::Multiply,
+        ApplyOperation::Delete,
+    ] {
+        let mut model = GlyphModel::new();
+        model.add_line(GlyphLine::new_with(GlyphComponent::text(
+            "kept",
+            AppFont::AppleTea,
+            Color::black(),
+        )));
+
+        let delta = DeltaGlyphModel::new(vec![
+            GlyphModelField::Operation(operation),
+            GlyphModelField::GlyphLine(
+                3,
+                GlyphLine::new_with(GlyphComponent::text("stale", AppFont::Any, Color::white())),
+            ),
+        ]);
+
+        delta.apply_to(&mut model);
+
+        assert_eq!(model.glyph_matrix.matrix.len(), 1);
+        assert_eq!(
+            model.glyph_matrix.get(0).unwrap().get(0).unwrap().as_str(),
+            "kept"
+        );
+    }
+}
+
+/// Multi-line deltas use the same absent-row rule as single-line
+/// deltas for destructive operations.
+#[test]
+pub fn test_delta_glyph_lines_destructive_ops_do_not_grow_missing_lines() {
+    do_delta_glyph_lines_destructive_ops_do_not_grow_missing_lines();
+}
+
+pub fn do_delta_glyph_lines_destructive_ops_do_not_grow_missing_lines() {
+    for operation in [
+        ApplyOperation::Subtract,
+        ApplyOperation::Multiply,
+        ApplyOperation::Delete,
+    ] {
+        let mut model = GlyphModel::new();
+        model.add_line(GlyphLine::new_with(GlyphComponent::text(
+            "kept",
+            AppFont::AppleTea,
+            Color::black(),
+        )));
+
+        let delta = DeltaGlyphModel::new(vec![
+            GlyphModelField::Operation(operation),
+            GlyphModelField::GlyphLines(vec![(
+                3,
+                GlyphLine::new_with(GlyphComponent::text("stale", AppFont::Any, Color::white())),
+            )]),
+        ]);
+
+        delta.apply_to(&mut model);
+
+        assert_eq!(model.glyph_matrix.matrix.len(), 1);
+        assert_eq!(
+            model.glyph_matrix.get(0).unwrap().get(0).unwrap().as_str(),
+            "kept"
+        );
+    }
+}
+
 /// `Subtract` on the layer field must saturate at zero instead of
 /// underflowing `usize`. Regression for the raw `operation.apply`
 /// path in `GlyphModel::apply_operation`.
