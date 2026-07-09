@@ -249,7 +249,7 @@ pub fn build_border_mutator_tree_from_nodes(
             let mut area = GlyphArea::new_with_str(
                 &spec.text,
                 spec.font_size_pt,
-                spec.font_size_pt,
+                spec.line_height_pt,
                 Vec2::new(spec.position.0, spec.position.1),
                 Vec2::new(spec.bounds.0, spec.bounds.1),
             );
@@ -304,6 +304,7 @@ fn append_border_sub_tree(
             *unique_id,
             &spec.text,
             spec.font_size_pt,
+            spec.line_height_pt,
             spec.position,
             spec.bounds,
             node.color_rgba,
@@ -327,6 +328,7 @@ pub(super) fn append_border_run(
     unique_id: usize,
     text: &str,
     font_size: f32,
+    line_height: f32,
     position: (f32, f32),
     bounds: (f32, f32),
     color_rgba: [f32; 4],
@@ -338,7 +340,7 @@ pub(super) fn append_border_run(
     let mut area = GlyphArea::new_with_str(
         text,
         font_size,
-        font_size,
+        line_height,
         Vec2::new(position.0, position.1),
         Vec2::new(bounds.0, bounds.1),
     );
