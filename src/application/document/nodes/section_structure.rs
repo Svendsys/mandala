@@ -711,7 +711,6 @@ mod tests {
     /// `EditNodeStyle` only restored `style` + `sections`, leaving
     /// the node visibly inflated after undo. Now restored
     /// alongside.
-    #[test]
     /// Hostile-mindmap defense: `add_section` rejects when the
     /// node is already at the section-count cap. Pre-fix the
     /// cap was unenforced and a Map-tier macro firing AddSection

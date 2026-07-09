@@ -11,6 +11,21 @@ use serde::{Deserialize, Serialize};
 use crate::gfx_structs::zoom_visibility::ZoomVisibility;
 use crate::mindmap::custom_mutation::{CustomMutation, TriggerBinding};
 
+/// Absolute ceiling on `MindNode.size.{width,height}` in canvas units.
+/// Shared by the app's node-size setters and `maptool verify` so a
+/// hand-edited map cannot pass verify with a size the interactive
+/// editor would refuse to produce. The value is large enough to
+/// swallow any realistic canvas extent and small enough to flag an
+/// extra zero or two as the canonical typo.
+pub const MAX_NODE_AXIS: f64 = 1_000_000.0;
+
+/// Hard cap on `MindNode.sections.len()`. Defends against hostile
+/// mindmaps with `"sections": [{},{},…10M…]` that would OOM on load.
+/// The number is generous (no real authoring use case approaches 1024
+/// sections per node) and bounded enough to make exhaustion-style
+/// attacks visible. Shared with `maptool verify`.
+pub const MAX_SECTIONS_PER_NODE: usize = 1024;
+
 /// A single node in the mindmap: a styled rectangle that hosts one
 /// or more [`MindSection`]s carrying the text content. The node
 /// itself owns the visual chrome (background, frame, shape, border,

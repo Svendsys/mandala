@@ -2,30 +2,23 @@
 
 //! Named-enum invariants: check string fields against the known value sets.
 
-use baumhard::mindmap::model::MindMap;
+use baumhard::gfx_structs::shape::KNOWN_SHAPES;
+use baumhard::mindmap::model::{DISPLAY_MODE_LINE, DISPLAY_MODE_PORTAL, MindMap};
 
 use super::Violation;
 
-const SHAPES: &[&str] = &[
-    "rectangle",
-    "rounded_rectangle",
-    "ellipse",
-    "diamond",
-    "parallelogram",
-    "hexagon",
-];
 const LAYOUT_TYPES: &[&str] = &["map", "tree", "outline"];
 const DIRECTIONS: &[&str] = &["auto", "up", "down", "left", "right", "balanced"];
 const LINE_STYLES: &[&str] = &["solid", "dashed"];
 const ANCHORS: &[&str] = &["auto", "top", "right", "bottom", "left"];
 const EDGE_TYPES: &[&str] = &["parent_child", "cross_link"];
-const DISPLAY_MODES: &[&str] = &["line", "portal"];
+const DISPLAY_MODES: &[&str] = &[DISPLAY_MODE_LINE, DISPLAY_MODE_PORTAL];
 
 pub fn check(map: &MindMap) -> Vec<Violation> {
     let mut out = Vec::new();
 
     for (loc, node) in map.node_locations() {
-        check_value(&mut out, &loc, "style.shape", &node.style.shape, SHAPES);
+        check_value(&mut out, &loc, "style.shape", &node.style.shape, KNOWN_SHAPES);
         check_value(
             &mut out,
             &loc,
@@ -56,7 +49,7 @@ pub fn check(map: &MindMap) -> Vec<Violation> {
 }
 
 fn check_value(out: &mut Vec<Violation>, location: &str, field: &str, value: &str, allowed: &[&str]) {
-    if !allowed.contains(&value) {
+    if !allowed.iter().any(|&known| known.eq_ignore_ascii_case(value)) {
         out.push(Violation::at(
             "enums",
             location.to_string(),
@@ -75,6 +68,24 @@ mod tests {
         let mut map = MindMap::new_blank("t");
         map.nodes.insert("0".into(), node("0", None));
         assert!(check(&map).is_empty());
+    }
+
+    #[test]
+    fn circle_shape_is_valid() {
+        let mut map = MindMap::new_blank("t");
+        let mut n = node("0", None);
+        n.style.shape = "circle".into();
+        map.nodes.insert("0".into(), n);
+        assert!(check(&map).is_empty(), "circle is an ellipse alias");
+    }
+
+    #[test]
+    fn shape_matching_is_case_insensitive() {
+        let mut map = MindMap::new_blank("t");
+        let mut n = node("0", None);
+        n.style.shape = "Rectangle".into();
+        map.nodes.insert("0".into(), n);
+        assert!(check(&map).is_empty(), "runtime accepts Rectangle, so verify must too");
     }
 
     #[test]

@@ -90,6 +90,7 @@ pub use types::{
 // callers across the application crate that already
 // `use crate::application::document::*` for the doc API don't have
 // to reach across into baumhard's scene_builder for the value type.
+pub use baumhard::mindmap::model::MAX_SECTIONS_PER_NODE;
 pub use baumhard::mindmap::scene_builder::InteractionModeOverrides;
 // Native-only: consumed by `app/click.rs`'s reparent / connect mode
 // rendering. WASM doesn't dispatch `EnterReparentMode` /
@@ -97,13 +98,6 @@ pub use baumhard::mindmap::scene_builder::InteractionModeOverrides;
 #[cfg(not(target_arch = "wasm32"))]
 pub use types::{REPARENT_SOURCE_COLOR, REPARENT_TARGET_COLOR};
 pub use undo_action::UndoAction;
-
-/// Hard cap on `MindNode.sections.len()` enforced by `add_section`
-/// and the loader. Defends against hostile mindmaps with `"sections":
-/// [{},{},…10M…]` that would OOM on load. The number is generous
-/// (no real authoring use case approaches 1024 sections per node)
-/// and bounded enough to make exhaustion-style attacks visible.
-pub const MAX_SECTIONS_PER_NODE: usize = 1024;
 
 /// Owns the MindMap data model and provides scene-building for the Renderer.
 pub struct MindMapDocument {

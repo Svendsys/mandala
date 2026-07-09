@@ -19,7 +19,7 @@ pub use edge::{
 };
 pub use node::{
     ColorGroup, ColorSchema, CustomBorderGlyphs, GlyphBorderConfig, MindNode, MindSection, NodeLayout,
-    NodeStyle, Position, Size, TextRun,
+    NodeStyle, Position, Size, TextRun, MAX_NODE_AXIS, MAX_SECTIONS_PER_NODE,
 };
 pub use palette::Palette;
 

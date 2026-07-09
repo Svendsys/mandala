@@ -61,6 +61,7 @@ pub fn load_from_str(json: &str) -> Result<MindMap, String> {
             if let Some(err) = detect_parent_cycle(&map) {
                 return Err(err);
             }
+            warn_on_duplicate_edges(&map);
             Ok(map)
         }
         Err(e) => {
@@ -214,6 +215,32 @@ fn detect_parent_cycle(map: &MindMap) -> Option<String> {
         }
     }
     None
+}
+
+/// Warn at load time when the same `(from_id, to_id, edge_type)`
+/// tuple appears more than once. Duplicates render deterministically
+/// as the last edge in the array, but every `EdgeRef` lookup and
+/// scene-cache key is ambiguous, so hand-edited maps should degrade
+/// loudly rather than silently overwrite geometry.
+fn warn_on_duplicate_edges(map: &MindMap) {
+    use std::collections::HashMap;
+    let mut seen: HashMap<(&str, &str, &str), usize> = HashMap::new();
+    for (i, edge) in map.edges.iter().enumerate() {
+        let key = (edge.from_id.as_str(), edge.to_id.as_str(), edge.edge_type.as_str());
+        if let Some(&first) = seen.get(&key) {
+            log::warn!(
+                "duplicate edge tuple (from_id={:?}, to_id={:?}, edge_type={:?}) \
+                 at edges[{}] and edges[{}]; EdgeRef / scene-cache lookups are unstable",
+                edge.from_id,
+                edge.to_id,
+                edge.edge_type,
+                first,
+                i
+            );
+        } else {
+            seen.insert(key, i);
+        }
+    }
 }
 
 /// Serialize a `MindMap` to pretty-printed JSON and write it to disk

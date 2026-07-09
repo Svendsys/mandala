@@ -14,7 +14,7 @@
 //! and the offending section index inlined into the message, so
 //! a multi-section node still pinpoints which section failed.
 
-use baumhard::mindmap::model::MindMap;
+use baumhard::mindmap::model::{MAX_NODE_AXIS, MAX_SECTIONS_PER_NODE, MindMap};
 
 use super::Violation;
 
@@ -24,11 +24,12 @@ pub fn check(map: &MindMap) -> Vec<Violation> {
     let mut out = Vec::new();
 
     for (_loc, node) in map.node_locations() {
-        // Node-level finite check before walking sections —
-        // a NaN/inf at `node.size` poisons every section's
-        // AABB-containment math, so flagging here surfaces the
-        // root cause before downstream "section overflow" cascades.
+        // Node-level finite/positive/ceiling check before walking
+        // sections — a NaN/inf at `node.size` poisons every section's
+        // AABB-containment math, and an astronomical size is refused
+        // by the app's setters, so verify must catch it too.
         check_node_size_finite(node, &mut out);
+        check_node_size_ceiling(node, &mut out);
         check_section_count_cap(node, &mut out);
         check_section_channel_collisions(node, &mut out);
         for (s_idx, section) in node.sections.iter().enumerate() {
@@ -90,6 +91,36 @@ fn check_node_size_finite(
     }
 }
 
+/// Absolute node-size ceiling shared with the application's
+/// `set_node_size` / `set_node_aabb` / `fit_node_to_content`
+/// setters. Mirrors the typo guard so a hand-edited map cannot
+/// pass verify with a size the app would refuse to produce.
+fn check_node_size_ceiling(
+    node: &baumhard::mindmap::model::MindNode,
+    out: &mut Vec<Violation>,
+) {
+    if node.size.width.is_finite() && node.size.width > MAX_NODE_AXIS {
+        out.push(Violation::node(
+            CATEGORY,
+            node,
+            format!(
+                "node.size.width ({}) exceeds the {} ceiling; likely a typo (e.g. an extra zero)",
+                node.size.width, MAX_NODE_AXIS
+            ),
+        ));
+    }
+    if node.size.height.is_finite() && node.size.height > MAX_NODE_AXIS {
+        out.push(Violation::node(
+            CATEGORY,
+            node,
+            format!(
+                "node.size.height ({}) exceeds the {} ceiling; likely a typo (e.g. an extra zero)",
+                node.size.height, MAX_NODE_AXIS
+            ),
+        ));
+    }
+}
+
 /// Defends against hostile mindmaps with absurd section counts
 /// — a `"sections": [{},{},…10M…]` JSON payload would OOM at
 /// load. Mirrors the `add_section`'s runtime cap so the model
@@ -98,7 +129,6 @@ fn check_section_count_cap(
     node: &baumhard::mindmap::model::MindNode,
     out: &mut Vec<Violation>,
 ) {
-    const MAX_SECTIONS_PER_NODE: usize = 1024;
     if node.sections.len() > MAX_SECTIONS_PER_NODE {
         out.push(Violation::node(
             CATEGORY,
@@ -137,7 +167,7 @@ fn check_section_channel_collisions(
     }
     for (channel, indices) in by_channel.iter() {
         if indices.len() > 1 {
-            out.push(Violation::node(
+            out.push(Violation::node_warn(
                 CATEGORY,
                 node,
                 format!(
@@ -589,5 +619,45 @@ mod tests {
         );
         map.nodes.insert("0".into(), n);
         assert!(check(&map).is_empty());
+    }
+
+    #[test]
+    fn channel_collision_is_warning_not_error() {
+        let mut map = MindMap::new_blank("t");
+        let mut n = node("0", None);
+        let mut s0 = MindSection::new_default(String::new(), Vec::new());
+        s0.channel = Some(2);
+        let mut s1 = MindSection::new_default(String::new(), Vec::new());
+        s1.channel = Some(2);
+        n.sections = vec![s0, s1];
+        map.nodes.insert("0".into(), n);
+        let v = check(&map);
+        let collision = v
+            .iter()
+            .find(|x| x.message.contains("channel 2 shared by sections"))
+            .expect("expected collision");
+        assert_eq!(collision.severity, super::super::Severity::Warning);
+    }
+
+    #[test]
+    fn astronomical_node_width_flagged() {
+        let mut map = MindMap::new_blank("t");
+        let mut n = node("0", None);
+        n.size.width = 1e30;
+        map.nodes.insert("0".into(), n);
+        let v = check(&map);
+        assert!(v.iter().any(|x| x.message.contains("exceeds the 1000000 ceiling")));
+    }
+
+    #[test]
+    fn section_count_cap_uses_shared_constant() {
+        let mut map = MindMap::new_blank("t");
+        let mut n = node("0", None);
+        while n.sections.len() <= MAX_SECTIONS_PER_NODE {
+            n.sections.push(MindSection::new_default(String::new(), Vec::new()));
+        }
+        map.nodes.insert("0".into(), n);
+        let v = check(&map);
+        assert!(v.iter().any(|x| x.message.contains("exceeds cap 1024")));
     }
 }

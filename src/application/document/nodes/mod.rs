@@ -6,7 +6,7 @@
 //! state into an `UndoAction`, mutates, sets `dirty`, and
 //! returns whether anything changed.
 
-use baumhard::mindmap::model::{NodeStyle, TextRun};
+use baumhard::mindmap::model::{NodeStyle, TextRun, MAX_NODE_AXIS};
 
 use super::compute_one_node_text_floor;
 use super::grow_one_node_to_fit_border;
@@ -851,8 +851,6 @@ fn validate_section_aabb(
 /// (`MAX_NODE_AXIS`) is large enough to swallow any sane canvas
 /// extent and small enough to flag an extra zero or two as the
 /// "extra zero" canonical typo.
-const MAX_NODE_AXIS: f64 = 1_000_000.0;
-
 fn check_node_size_typo(size: baumhard::mindmap::model::Size) -> Result<(), String> {
     if size.width > MAX_NODE_AXIS {
         return Err(format!(

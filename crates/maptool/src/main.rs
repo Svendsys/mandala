@@ -242,15 +242,31 @@ fn run(args: &[String]) -> Result<(), CliError> {
                 println!("{}: valid", map_path);
                 Ok(())
             } else {
+                let mut errors = 0usize;
+                let mut warnings = 0usize;
                 for v in &violations {
-                    eprintln!("{v}");
+                    match v.severity {
+                        verify::Severity::Warning => {
+                            warnings += 1;
+                            eprintln!("warning: {v}");
+                        }
+                        verify::Severity::Error => {
+                            errors += 1;
+                            eprintln!("{v}");
+                        }
+                    }
                 }
-                eprintln!("{} violation(s)", violations.len());
-                Err(CliError::NotFound(format!(
-                    "{} violation(s) in {}",
-                    violations.len(),
-                    map_path
-                )))
+                if errors == 0 {
+                    eprintln!("{warnings} warning(s)",);
+                    Ok(())
+                } else {
+                    eprintln!("{} violation(s)", violations.len());
+                    Err(CliError::NotFound(format!(
+                        "{} violation(s) in {}",
+                        violations.len(),
+                        map_path
+                    )))
+                }
             }
         }
         "-h" | "--help" | "help" => {
@@ -789,6 +805,66 @@ mod tests {
     fn run_verify_missing_map_is_usage_error() {
         let args = as_strings(&["verify"]);
         assert!(matches!(run(&args), Err(CliError::Usage(_))));
+    }
+
+    #[test]
+    fn run_verify_warns_but_succeeds_on_broadcast_channel() {
+        use baumhard::mindmap::model::MindSection;
+        let mut map = MindMap::new_blank("broadcast");
+        let mut n = baumhard::mindmap::model::MindNode {
+            id: "0".into(),
+            parent_id: None,
+            position: baumhard::mindmap::model::Position { x: 0.0, y: 0.0 },
+            size: baumhard::mindmap::model::Size { width: 100.0, height: 40.0 },
+            sections: vec![
+                {
+                    let mut s = MindSection::new_default("a".into(), Vec::new());
+                    s.channel = Some(1);
+                    s
+                },
+                {
+                    let mut s = MindSection::new_default("b".into(), Vec::new());
+                    s.channel = Some(1);
+                    s
+                },
+            ],
+            style: baumhard::mindmap::model::NodeStyle {
+                background_color: "#000000".into(),
+                frame_color: "#ffffff".into(),
+                text_color: "#ffffff".into(),
+                shape: "rectangle".into(),
+                corner_radius_percent: 0.0,
+                frame_thickness: 0.0,
+                show_frame: false,
+                show_shadow: false,
+                border: None,
+            },
+            layout: baumhard::mindmap::model::NodeLayout {
+                layout_type: "map".into(),
+                direction: "auto".into(),
+                spacing: 0.0,
+            },
+            folded: false,
+            notes: String::new(),
+            color_schema: None,
+            channel: 0,
+            trigger_bindings: Vec::new(),
+            inline_mutations: Vec::new(),
+            inline_macros: Vec::new(),
+            min_zoom_to_render: None,
+            max_zoom_to_render: None,
+        };
+        n.sections[0].offset = baumhard::mindmap::model::Position { x: 0.0, y: 0.0 };
+        n.sections[0].size = Some(baumhard::mindmap::model::Size { width: 10.0, height: 10.0 });
+        n.sections[1].offset = baumhard::mindmap::model::Position { x: 0.0, y: 10.0 };
+        n.sections[1].size = Some(baumhard::mindmap::model::Size { width: 10.0, height: 10.0 });
+        map.nodes.insert("0".into(), n);
+
+        let path = std::env::temp_dir().join("mandala_verify_broadcast_channel.mindmap.json");
+        save_to_file(&path, &map).unwrap();
+        let args = as_strings(&["verify", path.to_str().unwrap()]);
+        assert!(run(&args).is_ok(), "warning-only verify must exit 0");
+        let _ = std::fs::remove_file(&path);
     }
 
     // --- apply: fixture + tmpfile helpers ---------------------------
