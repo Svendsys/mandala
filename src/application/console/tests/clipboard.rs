@@ -588,6 +588,20 @@ fn edge_paste_invalid_content_reports_invalid() {
 }
 
 #[test]
+fn edge_paste_rejects_bare_hex_like_words() {
+    let mut doc = load_test_doc();
+    let er = select_first_edge(&mut doc);
+    for word in ["bad", "fade", "decade"] {
+        let tid = TargetId::Edge(er.clone());
+        let mut view = view_for(&mut doc, &tid);
+        match view.clipboard_paste(word) {
+            Outcome::Invalid(_) => {}
+            other => panic!("expected Invalid for bare hex-like word {word:?}, got {other:?}"),
+        }
+    }
+}
+
+#[test]
 fn edge_paste_rejects_malformed_var_forms() {
     // Tightened `is_valid_color_literal`: reject trailing
     // garbage after the closing `)`, empty var name, and nested

@@ -582,13 +582,13 @@ impl<'a> HandlesCut for TargetView<'a> {
 }
 
 /// Minimal recognizer for the two color-literal forms the document
-/// model accepts: Baumhard hex colors and `var(--name)` theme
-/// references. Keeps the paste path from writing arbitrary strings
-/// into the color field — anything else the user might paste (prose,
-/// a URL, a number) should surface as `Outcome::Invalid` instead of
-/// a corrupt model value.
+/// paste path accepts: `#`-prefixed Baumhard hex colors and
+/// `var(--name)` theme references. Clipboard content is arbitrary
+/// text, so paste requires the `#` prefix for hex even though
+/// Baumhard's canonical parser also accepts bare hex.
 fn is_valid_color_literal(s: &str) -> bool {
-    baumhard::util::color::is_valid_hex_color(s) || baumhard::util::color::is_var_ref(s)
+    (s.starts_with('#') && baumhard::util::color::is_valid_hex_color(s))
+        || baumhard::util::color::is_var_ref(s)
 }
 
 fn read_edge_label(doc: &MindMapDocument, er: &EdgeRef) -> Option<String> {
