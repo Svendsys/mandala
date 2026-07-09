@@ -582,27 +582,13 @@ impl<'a> HandlesCut for TargetView<'a> {
 }
 
 /// Minimal recognizer for the two color-literal forms the document
-/// model accepts: `#rrggbb` / `#rrggbbaa` hex codes and
-/// `var(--name)` theme references. Keeps the paste path from
-/// writing arbitrary strings into the color field — anything else
-/// the user might paste (prose, a URL, a number) should surface
-/// as `Outcome::Invalid` instead of a corrupt model value.
-///
-/// Hex: `#` plus exactly 6 or 8 ASCII hex digits, case-insensitive
-/// (mixed case `#ABcDef` is accepted — matches CSS semantics).
-///
-/// `var(...)`: `var(--name)` with a non-empty name. Trailing
-/// characters after the closing `)` are rejected —
-/// `var(--accent)garbage` previously slipped through a `starts_with
-/// / ends_with` pair.
+/// model accepts: Baumhard hex colors and `var(--name)` theme
+/// references. Keeps the paste path from writing arbitrary strings
+/// into the color field — anything else the user might paste (prose,
+/// a URL, a number) should surface as `Outcome::Invalid` instead of
+/// a corrupt model value.
 fn is_valid_color_literal(s: &str) -> bool {
-    if let Some(rest) = s.strip_prefix('#') {
-        return (rest.len() == 6 || rest.len() == 8) && rest.chars().all(|c| c.is_ascii_hexdigit());
-    }
-    if let Some(inner) = s.strip_prefix("var(--").and_then(|s| s.strip_suffix(')')) {
-        return !inner.is_empty() && !inner.contains(|c: char| c == '(' || c == ')');
-    }
-    false
+    baumhard::util::color::is_valid_hex_color(s) || baumhard::util::color::is_var_ref(s)
 }
 
 fn read_edge_label(doc: &MindMapDocument, er: &EdgeRef) -> Option<String> {

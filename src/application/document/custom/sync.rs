@@ -18,7 +18,7 @@ use baumhard::core::primitives::ColorFontRegion;
 use baumhard::font::fonts::family_name_of;
 use baumhard::mindmap::model::TextRun;
 use baumhard::mindmap::tree_builder::MindMapTree;
-use baumhard::util::color_conversion::rgba_to_hex;
+use baumhard::util::color_conversion::{is_var_ref, rgba_to_hex};
 
 use super::super::nodes::clamp_runs_to_text;
 use super::super::MindMapDocument;
@@ -183,7 +183,7 @@ pub(crate) fn region_to_text_run(region: &ColorFontRegion, prior: Option<&TextRu
     // deliberate `SetRegionColor` on a `var()`-bearing run is
     // silently swallowed here — the run keeps the variable.
     let prior_var_color: Option<&str> = prior.and_then(|p| {
-        if p.color.starts_with("var(") && p.start == region.range.start && p.end == region.range.end {
+        if is_var_ref(&p.color) && p.start == region.range.start && p.end == region.range.end {
             Some(p.color.as_str())
         } else {
             None
@@ -491,7 +491,7 @@ impl MindMapDocument {
                     } else {
                         None
                     };
-                    let model_is_var = run.color.starts_with("var(");
+                    let model_is_var = is_var_ref(&run.color);
                     let colors_equal = match (region_color_hex.as_deref(), model_color_hex.as_deref()) {
                         (Some(a), Some(b)) => str::eq_ignore_ascii_case(a, b),
                         (None, None) => true,
