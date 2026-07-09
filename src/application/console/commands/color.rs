@@ -367,11 +367,9 @@ fn apply_section_colours(
                         continue;
                     }
                 };
-                let resolved = match color_value {
-                    ColorValue::Hex(h) => h,
-                    ColorValue::Var(name) => format!("var(--{})", name),
-                    ColorValue::Reset => "#ffffff".to_string(),
-                };
+                let resolved = color_value
+                    .as_model_string()
+                    .unwrap_or_else(|| "#ffffff".to_string());
                 let applied = match range {
                     Some((rs, re)) => {
                         let ok = doc.set_section_text_color_range(
@@ -575,6 +573,70 @@ mod tests {
             node.sections[1].text_runs.iter().all(|r| r.color == "#ff0000"),
             "section 1 must receive the new colour"
         );
+    }
+
+    /// `color text=<theme-token> section=K` takes the explicit
+    /// section-index branch. That branch must persist the same
+    /// complete `var(--name)` model string as the trait-dispatch
+    /// branch, not wrap it a second time.
+    #[test]
+    fn color_text_section_kv_preserves_named_vars() {
+        use crate::application::console::tests::fixtures::{assert_exec_ok, run};
+
+        for (token, expected) in [
+            ("accent", "var(--accent)"),
+            ("fg", "var(--fg)"),
+            ("edge", "var(--edge)"),
+        ] {
+            let (mut doc, id) = doc_with_two_sections();
+            doc.selection = SelectionState::Single(id.clone());
+            assert_exec_ok(run(&format!("color text={token} section=1"), &mut doc));
+            let node = doc.mindmap.nodes.get(&id).unwrap();
+            assert!(
+                node.sections[1].text_runs.iter().all(|r| r.color == expected),
+                "{token} must persist as {expected}, got {:?}",
+                node.sections[1].text_runs
+            );
+        }
+    }
+
+    /// Same regression through the range-aware explicit
+    /// `section=K range=A..B` path: the carved middle run must carry
+    /// the complete `var(--name)` reference.
+    #[test]
+    fn color_text_section_range_kv_preserves_named_vars() {
+        use crate::application::console::tests::fixtures::{assert_exec_ok, run};
+
+        for (token, expected) in [
+            ("accent", "var(--accent)"),
+            ("fg", "var(--fg)"),
+            ("edge", "var(--edge)"),
+        ] {
+            let (mut doc, id) = doc_with_two_sections();
+            {
+                let section = &mut doc.mindmap.nodes.get_mut(&id).unwrap().sections[1];
+                section.text = "abcdefghij".into();
+                section.text_runs = vec![baumhard::mindmap::model::TextRun {
+                    start: 0,
+                    end: 10,
+                    bold: false,
+                    italic: false,
+                    underline: false,
+                    font: "LiberationSans".into(),
+                    size_pt: 14,
+                    color: "#aaaaaa".into(),
+                    hyperlink: None,
+                }];
+            }
+            doc.selection = SelectionState::Single(id.clone());
+            assert_exec_ok(run(&format!("color text={token} section=1 range=3..7"), &mut doc));
+            let runs = &doc.mindmap.nodes.get(&id).unwrap().sections[1].text_runs;
+            assert_eq!(runs.len(), 3);
+            assert_eq!(runs[0].color, "#aaaaaa");
+            assert_eq!(runs[1].color, expected);
+            assert_eq!((runs[1].start, runs[1].end), (3, 7));
+            assert_eq!(runs[2].color, "#aaaaaa");
+        }
     }
 
     /// Build a node with two sections, both pinned to the cascade
