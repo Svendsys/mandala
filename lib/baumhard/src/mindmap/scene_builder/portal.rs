@@ -24,7 +24,7 @@
 //! All five stages go through `resolve_var` so `var(--name)`
 //! references render correctly.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use glam::Vec2;
 
@@ -391,6 +391,7 @@ pub(super) fn build_portal_elements(
     selected_portal_label: Option<SelectedPortalLabel<'_>>,
     portal_color_preview: Option<PortalColorPreview<'_>>,
     camera_zoom: f32,
+    hidden_set: &HashSet<&str>,
 ) -> Vec<PortalElement> {
     let mut portal_elements: Vec<PortalElement> = Vec::new();
 
@@ -409,7 +410,7 @@ pub(super) fn build_portal_elements(
             Some(n) => n,
             None => continue,
         };
-        if map.is_hidden_by_fold(node_a) || map.is_hidden_by_fold(node_b) {
+        if hidden_set.contains(node_a.id.as_str()) || hidden_set.contains(node_b.id.as_str()) {
             continue;
         }
         let edge_key = EdgeKey::from_edge(edge);

@@ -25,7 +25,7 @@ pub use palette::Palette;
 
 use crate::mindmap::custom_mutation::CustomMutation;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// The whole-map value type — what [`crate::mindmap::loader`]
 /// deserializes from a `.mindmap.json` file and what the document
@@ -37,7 +37,10 @@ use std::collections::HashMap;
 /// allocations serde performs. Tree-shape queries
 /// ([`Self::root_nodes`], [`Self::children_of`],
 /// [`Self::is_ancestor_or_self`], etc.) walk the node map lazily —
-/// see each method for its per-call cost.
+/// see each method for its per-call cost. For bulk walks, build a
+/// [`ChildIndex`] with [`Self::child_index`] or the fold-hidden set
+/// with [`Self::fold_hidden_set`] once rather than paying the
+/// per-call cost repeatedly.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MindMap {
     pub version: String,
@@ -112,6 +115,10 @@ impl MindMap {
     }
 
     /// Returns root nodes (nodes with no parent), sorted by ID segment.
+    ///
+    /// Cost: O(N) scan + O(R log R) sort, where R is the root count.
+    /// For repeated tree-shape walks, build a [`ChildIndex`] once with
+    /// [`Self::child_index`] instead of calling this per node.
     pub fn root_nodes(&self) -> Vec<&MindNode> {
         let mut roots: Vec<&MindNode> = self.nodes.values().filter(|n| n.parent_id.is_none()).collect();
         roots.sort_by_key(|n| id_sort_key(&n.id));
@@ -119,6 +126,11 @@ impl MindMap {
     }
 
     /// Returns children of a given node, sorted by ID segment.
+    ///
+    /// Cost: O(N) scan + O(C log C) sort per call. Do not call this in
+    /// a loop over every node — that is O(N²). Build a [`ChildIndex`]
+    /// with [`Self::child_index`] and call [`ChildIndex::children_of`]
+    /// instead for O(N) total.
     pub fn children_of(&self, parent_id: &str) -> Vec<&MindNode> {
         let mut children: Vec<&MindNode> = self
             .nodes
@@ -131,6 +143,11 @@ impl MindMap {
 
     /// Returns true if any ancestor of this node is folded, meaning
     /// this node should be hidden from view.
+    ///
+    /// Cost: O(depth) parent-chain walk per call. When testing many
+    /// nodes in one build (e.g. every node / edge endpoint in a scene),
+    /// build the hidden set once with [`Self::fold_hidden_set`] and
+    /// test membership instead.
     ///
     /// Defense in depth against a `parent_id` cycle that somehow
     /// reaches this walker despite the loader's load-time rejection
@@ -165,37 +182,47 @@ impl MindMap {
     }
 
     /// Collect all descendant IDs of a node (recursive), not including the node itself.
+    ///
+    /// Cost: builds a [`ChildIndex`] once (O(N)) then walks the subtree
+    /// in O(descendants). Prefer [`ChildIndex::all_descendant_ids`] when
+    /// you already hold an index.
     pub fn all_descendants(&self, node_id: &str) -> Vec<String> {
-        let mut result = Vec::new();
-        self.collect_descendants(node_id, &mut result, self.nodes.len());
-        result
+        let index = ChildIndex::build(self);
+        index.all_descendant_ids(node_id, self.nodes.len())
     }
 
-    /// Defense in depth against a `parent_id` cycle: `budget` bounds
-    /// the number of nodes this walk may still push onto `result`
-    /// before it bails out with a `log::error!` instead of recursing
-    /// forever (a cycle turns this into infinite mutual recursion —
-    /// an uncatchable stack overflow — since a cycle has no leaf to
-    /// stop at). A valid tree can never push more than
-    /// `self.nodes.len()` entries, so the cap never fires on
-    /// legitimate input.
-    fn collect_descendants(&self, node_id: &str, result: &mut Vec<String>, budget: usize) {
-        for child in self.children_of(node_id) {
-            if result.len() >= budget {
-                log::error!(
-                    "collect_descendants: parent_id cycle detected walking down from node {:?}; truncating",
-                    node_id
-                );
-                return;
-            }
-            result.push(child.id.clone());
-            self.collect_descendants(&child.id, result, budget);
+    /// Returns the set of node IDs hidden because an ancestor is folded.
+    /// Computed in one O(N) pass over a [`ChildIndex`]; use this once
+    /// per scene / tree build and thread the result through the passes
+    /// instead of calling [`Self::is_hidden_by_fold`] per element.
+    pub fn fold_hidden_set(&self) -> HashSet<&str> {
+        let index = ChildIndex::build(self);
+        let mut hidden = HashSet::new();
+        for root in index.roots() {
+            Self::mark_hidden_with_index(&index, root, false, &mut hidden);
+        }
+        hidden
+    }
+
+    fn mark_hidden_with_index<'a, 'b>(
+        index: &'b ChildIndex<'a>,
+        node: &'a MindNode,
+        ancestors_folded: bool,
+        hidden: &mut HashSet<&'a str>,
+    ) {
+        if ancestors_folded {
+            hidden.insert(&node.id);
+        }
+        for child in index.children_of(&node.id) {
+            Self::mark_hidden_with_index(index, child, ancestors_folded || node.folded, hidden);
         }
     }
 
     /// Returns true if `candidate_ancestor` equals `node_id` or is a (transitive)
     /// ancestor of it. Used to prevent reparenting a node under itself or under
     /// one of its own descendants (which would create a cycle).
+    ///
+    /// Cost: O(depth) parent-chain walk per call.
     ///
     /// Defense in depth: caps the walk at `self.nodes.len()` steps
     /// so a `parent_id` cycle can't hang this call — see
@@ -233,6 +260,83 @@ impl MindMap {
             Some(&palette.groups[level])
         } else {
             palette.groups.last()
+        }
+    }
+
+    /// Build a one-pass parent → sorted-children index for tree-shape
+    /// walks. Returns a [`ChildIndex`] that answers `children_of` in
+    /// O(1) (plus the length of the child list) and `roots` in O(1).
+    ///
+    /// Cost: one O(N) scan over `nodes` plus sorting each child list.
+    /// Use this whenever you would otherwise call [`Self::children_of`]
+    /// in a loop — that pattern is O(N²); this index makes it O(N).
+    pub fn child_index(&self) -> ChildIndex<'_> {
+        ChildIndex::build(self)
+    }
+}
+
+/// O(N) parent → sorted-children lookup. Build once with
+/// [`MindMap::child_index`] and reuse for any walk that would otherwise
+/// call [`MindMap::children_of`] in a loop.
+#[derive(Debug, Clone)]
+pub struct ChildIndex<'a> {
+    roots: Vec<&'a MindNode>,
+    by_parent: HashMap<&'a str, Vec<&'a MindNode>>,
+}
+
+impl<'a> ChildIndex<'a> {
+    /// Build the index from `map`. Roots and each child list are sorted
+    /// by [`id_sort_key`], matching the order returned by
+    /// [`MindMap::root_nodes`] and [`MindMap::children_of`].
+    pub fn build(map: &'a MindMap) -> Self {
+        let mut roots: Vec<&'a MindNode> = Vec::new();
+        let mut by_parent: HashMap<&'a str, Vec<&'a MindNode>> = HashMap::new();
+        for node in map.nodes.values() {
+            match &node.parent_id {
+                None => roots.push(node),
+                Some(pid) => by_parent.entry(pid.as_str()).or_default().push(node),
+            }
+        }
+        roots.sort_by_key(|n| id_sort_key(&n.id));
+        for children in by_parent.values_mut() {
+            children.sort_by_key(|n| id_sort_key(&n.id));
+        }
+        Self { roots, by_parent }
+    }
+
+    /// Root nodes, sorted by ID segment.
+    pub fn roots(&self) -> &[&'a MindNode] {
+        &self.roots
+    }
+
+    /// Children of `parent_id`, sorted by ID segment. Returns an empty
+    /// slice when the parent has no children.
+    pub fn children_of(&self, parent_id: &str) -> &[&'a MindNode] {
+        self.by_parent.get(parent_id).map(Vec::as_slice).unwrap_or(&[])
+    }
+
+    /// Collect all descendant IDs of `node_id` (recursive), not
+    /// including `node_id` itself.
+    ///
+    /// `budget` bounds the walk as defense in depth against a
+    /// `parent_id` cycle; a valid tree never reaches the budget.
+    pub fn all_descendant_ids(&self, node_id: &str, budget: usize) -> Vec<String> {
+        let mut result = Vec::new();
+        self.collect_descendants(node_id, &mut result, budget);
+        result
+    }
+
+    fn collect_descendants(&self, node_id: &str, result: &mut Vec<String>, budget: usize) {
+        for child in self.children_of(node_id) {
+            if result.len() >= budget {
+                log::error!(
+                    "collect_descendants: parent_id cycle detected walking down from node {:?}; truncating",
+                    node_id
+                );
+                return;
+            }
+            result.push(child.id.clone());
+            self.collect_descendants(&child.id, result, budget);
         }
     }
 }

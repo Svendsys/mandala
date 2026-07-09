@@ -1015,3 +1015,71 @@ fn is_ancestor_or_self_does_not_hang_on_parent_cycle() {
     // walk up "a"'s cyclic parent chain must terminate and say so.
     assert!(!map.is_ancestor_or_self("c", "a"));
 }
+
+/// `ChildIndex` exposes the same root/child order as `root_nodes` /
+/// `children_of` but in O(N) total instead of O(N²).
+#[test]
+fn child_index_matches_root_nodes_and_children_of_order() {
+    let map = loader::load_from_file(&test_map_path()).unwrap();
+    let index = map.child_index();
+
+    let expected_roots = map.root_nodes();
+    assert_eq!(index.roots().len(), expected_roots.len());
+    for (a, b) in index.roots().iter().zip(expected_roots.iter()) {
+        assert_eq!(a.id, b.id);
+    }
+
+    for node in map.nodes.values() {
+        let expected = map.children_of(&node.id);
+        let actual = index.children_of(&node.id);
+        assert_eq!(actual.len(), expected.len(), "children_of mismatch for {}", node.id);
+        for (a, b) in actual.iter().zip(expected.iter()) {
+            assert_eq!(a.id, b.id);
+        }
+    }
+}
+
+/// `ChildIndex::all_descendant_ids` matches `MindMap::all_descendants`
+/// without rebuilding the index on every recursive step.
+#[test]
+fn child_index_all_descendant_ids_matches_all_descendants() {
+    let map = loader::load_from_file(&test_map_path()).unwrap();
+    let index = map.child_index();
+    for node in map.nodes.values() {
+        let expected = map.all_descendants(&node.id);
+        let mut actual = index.all_descendant_ids(&node.id, map.nodes.len());
+        actual.sort();
+        let mut expected_sorted = expected;
+        expected_sorted.sort();
+        assert_eq!(actual, expected_sorted, "descendants mismatch for {}", node.id);
+    }
+}
+
+/// `fold_hidden_set` captures every node under a folded ancestor and
+/// nothing else.
+#[test]
+fn fold_hidden_set_hides_descendants_of_folded_nodes() {
+    let mut root = synthetic_node_full("0", None, 0.0, 0.0, 10.0, 10.0, false);
+    root.folded = true;
+    let child = synthetic_node_full("0.0", Some("0"), 0.0, 0.0, 10.0, 10.0, false);
+    let grand = synthetic_node_full("0.0.0", Some("0.0"), 0.0, 0.0, 10.0, 10.0, false);
+    let other_root = synthetic_node_full("1", None, 0.0, 0.0, 10.0, 10.0, false);
+    let map = synthetic_map(vec![root, child, grand, other_root], vec![]);
+
+    let hidden: std::collections::HashSet<&str> = map.fold_hidden_set();
+    assert!(hidden.contains("0.0"), "child of folded root should be hidden");
+    assert!(hidden.contains("0.0.0"), "grandchild of folded root should be hidden");
+    assert!(!hidden.contains("0"), "folded root itself is visible");
+    assert!(!hidden.contains("1"), "unrelated root is visible");
+}
+
+/// `fold_hidden_set` tolerates a parent cycle by treating the cycle
+/// nodes as visible rather than hanging.
+#[test]
+fn fold_hidden_set_does_not_hang_on_parent_cycle() {
+    let a = synthetic_node_full("a", Some("b"), 0.0, 0.0, 10.0, 10.0, false);
+    let b = synthetic_node_full("b", Some("a"), 0.0, 0.0, 10.0, 10.0, false);
+    let map = synthetic_map(vec![a, b], vec![]);
+    let hidden = map.fold_hidden_set();
+    assert!(hidden.is_empty());
+}

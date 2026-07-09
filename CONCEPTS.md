@@ -1340,13 +1340,13 @@ A boolean per node; folded subtrees are excluded
 from the display tree but persist in the model.
 
 Hide subtrees without losing data. The user
-can collapse a region of the map; reopening restores it. The
-scene builder and tree builder both consult
-`MindMap::is_hidden_by_fold`, which walks the parent chain.
-
-`MindNode.folded: bool`; the cascading
-visibility check is `O(depth)` per node and runs once per scene
-build.
+can collapse a region of the map; reopening restores it. Each
+build computes the hidden set once with
+`MindMap::fold_hidden_set` (an O(N) pass) and tests membership
+per element; the tree builder passes a `parent_folded` flag down
+the recursive walk so the same cascade is checked by construction.
+One-off callers can still use `MindMap::is_hidden_by_fold`, which
+walks the parent chain at O(depth) per call.
 
 ### Tree builder
 

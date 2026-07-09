@@ -6,7 +6,7 @@
 //! channel is stable across rebuilds — the precondition for the
 //! in-place mutator path `build_border_mutator_tree_from_nodes`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use glam::Vec2;
 use indextree::NodeId;
@@ -60,7 +60,15 @@ pub struct BorderNodeData {
 ///
 /// Skips hidden-by-fold and `show_frame = false` nodes, mirroring
 /// the filter in `scene_builder::build_scene`.
-pub fn border_node_data(map: &MindMap, offsets: &HashMap<String, (f32, f32)>) -> Vec<BorderNodeData> {
+///
+/// `hidden_set` is the output of [`MindMap::fold_hidden_set`]. The
+/// caller should build it once per frame and share it across the
+/// scene / border / portal passes instead of recomputing it here.
+pub fn border_node_data(
+    map: &MindMap,
+    offsets: &HashMap<String, (f32, f32)>,
+    hidden_set: &HashSet<&str>,
+) -> Vec<BorderNodeData> {
     let vars = &map.canvas.theme_variables;
     let mut sorted_ids: Vec<&String> = map.nodes.keys().collect();
     sorted_ids.sort();
@@ -71,7 +79,7 @@ pub fn border_node_data(map: &MindMap, offsets: &HashMap<String, (f32, f32)>) ->
         let Some(node) = map.nodes.get(node_id) else {
             continue;
         };
-        if map.is_hidden_by_fold(node) {
+        if hidden_set.contains(node.id.as_str()) {
             continue;
         }
         if !node.style.show_frame {
@@ -181,7 +189,8 @@ pub fn build_border_tree(
     map: &MindMap,
     offsets: &HashMap<String, (f32, f32)>,
 ) -> Tree<GfxElement, GfxMutator> {
-    build_border_tree_from_nodes(&border_node_data(map, offsets))
+    let hidden_set = map.fold_hidden_set();
+    build_border_tree_from_nodes(&border_node_data(map, offsets, &hidden_set))
 }
 
 /// Variant of [`build_border_tree`] that consumes pre-computed
@@ -216,7 +225,8 @@ pub fn build_border_mutator_tree(
     map: &MindMap,
     offsets: &HashMap<String, (f32, f32)>,
 ) -> crate::gfx_structs::tree::MutatorTree<GfxMutator> {
-    build_border_mutator_tree_from_nodes(&border_node_data(map, offsets))
+    let hidden_set = map.fold_hidden_set();
+    build_border_mutator_tree_from_nodes(&border_node_data(map, offsets, &hidden_set))
 }
 
 /// Variant of [`build_border_mutator_tree`] that consumes

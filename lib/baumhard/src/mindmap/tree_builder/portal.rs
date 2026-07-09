@@ -28,7 +28,7 @@
 //! [`scene_builder::portal`]: crate::mindmap::scene_builder::portal
 //! [`scene_builder::portal::resolve_portal_endpoint_style`]: crate::mindmap::scene_builder::portal::resolve_portal_endpoint_style
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use glam::Vec2;
 
@@ -151,6 +151,10 @@ pub struct PortalPairData {
 /// Compute the visible portal-mode-edge layout for the given
 /// map state. Single source of truth shared by
 /// [`build_portal_tree`] and [`build_portal_mutator_tree`].
+///
+/// `hidden_set` is the output of [`MindMap::fold_hidden_set`]. The
+/// caller should build it once per frame and share it across the
+/// scene / border / portal passes instead of recomputing it here.
 pub fn portal_pair_data(
     map: &MindMap,
     offsets: &HashMap<String, (f32, f32)>,
@@ -159,6 +163,7 @@ pub fn portal_pair_data(
     color_preview: Option<PortalColorPreviewRef>,
     portal_text_edit: Option<PortalTextEditOverride<'_>>,
     camera_zoom: f32,
+    hidden_set: &HashSet<&str>,
 ) -> Vec<PortalPairData> {
     let mut pairs: Vec<PortalPairData> = Vec::new();
     let mut pair_channel: usize = 1;
@@ -176,7 +181,7 @@ pub fn portal_pair_data(
         let Some(node_b) = map.nodes.get(&edge.to_id) else {
             continue;
         };
-        if map.is_hidden_by_fold(node_a) || map.is_hidden_by_fold(node_b) {
+        if hidden_set.contains(node_a.id.as_str()) || hidden_set.contains(node_b.id.as_str()) {
             continue;
         }
 
@@ -344,6 +349,7 @@ pub fn build_portal_tree(
     portal_text_edit: Option<PortalTextEditOverride<'_>>,
     camera_zoom: f32,
 ) -> PortalTree {
+    let hidden_set = map.fold_hidden_set();
     let pairs = portal_pair_data(
         map,
         offsets,
@@ -352,6 +358,7 @@ pub fn build_portal_tree(
         color_preview,
         portal_text_edit,
         camera_zoom,
+        &hidden_set,
     );
     build_portal_tree_from_pairs(&pairs)
 }
@@ -432,6 +439,7 @@ pub fn build_portal_mutator_tree(
     portal_text_edit: Option<PortalTextEditOverride<'_>>,
     camera_zoom: f32,
 ) -> PortalMutator {
+    let hidden_set = map.fold_hidden_set();
     let pairs = portal_pair_data(
         map,
         offsets,
@@ -440,6 +448,7 @@ pub fn build_portal_mutator_tree(
         color_preview,
         portal_text_edit,
         camera_zoom,
+        &hidden_set,
     );
     build_portal_mutator_tree_from_pairs(&pairs)
 }

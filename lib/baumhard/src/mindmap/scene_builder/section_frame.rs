@@ -22,7 +22,7 @@
 //! caller (`build_scene_with_cache`) gates emission on
 //! `node_edit_for == Some(active)`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::node_pass::section_aabb;
 use super::{SectionFrameElement, SELECTED_EDGE_COLOR};
@@ -58,6 +58,7 @@ pub fn build_section_frames(
     active_node: Option<&str>,
     focused_section: Option<(&str, usize)>,
     border_preview: Option<super::BorderPreview<'_>>,
+    hidden_set: &HashSet<&str>,
 ) -> Vec<SectionFrameElement> {
     let Some(active_id) = active_node else {
         return Vec::new();
@@ -65,7 +66,7 @@ pub fn build_section_frames(
     let Some(node) = map.nodes.get(active_id) else {
         return Vec::new();
     };
-    if map.is_hidden_by_fold(node) {
+    if hidden_set.contains(node.id.as_str()) {
         return Vec::new();
     }
     if node.sections.len() <= 1 {

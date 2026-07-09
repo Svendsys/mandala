@@ -720,6 +720,9 @@ impl MindMapDocument {
 
     /// Collect the IDs of all nodes affected by a mutation with the given scope.
     pub(super) fn collect_affected_node_ids(&self, node_id: &str, scope: &TargetScope) -> Vec<String> {
+        // Bulk scopes walk the tree; build an index once instead of
+        // calling `children_of` repeatedly (O(N²)).
+        let index = self.mindmap.child_index();
         match scope {
             // `SectionsOnly` lives on the triggering node — every
             // affected section belongs to that one node. The
@@ -727,16 +730,15 @@ impl MindMapDocument {
             // undo (whole-`MindNode` clone covers section state),
             // so a single entry is correct.
             TargetScope::SelfOnly | TargetScope::SectionsOnly => vec![node_id.to_string()],
-            TargetScope::Children => self
-                .mindmap
+            TargetScope::Children => index
                 .children_of(node_id)
                 .iter()
                 .map(|n| n.id.clone())
                 .collect(),
-            TargetScope::Descendants => self.mindmap.all_descendants(node_id),
+            TargetScope::Descendants => index.all_descendant_ids(node_id, self.mindmap.nodes.len()),
             TargetScope::SelfAndDescendants => {
                 let mut ids = vec![node_id.to_string()];
-                ids.extend(self.mindmap.all_descendants(node_id));
+                ids.extend(index.all_descendant_ids(node_id, self.mindmap.nodes.len()));
                 ids
             }
             TargetScope::Parent => self
@@ -752,7 +754,7 @@ impl MindMapDocument {
                 .get(node_id)
                 .and_then(|n| n.parent_id.as_deref())
                 .map(|pid| {
-                    self.mindmap
+                    index
                         .children_of(pid)
                         .iter()
                         .filter(|n| n.id != node_id)

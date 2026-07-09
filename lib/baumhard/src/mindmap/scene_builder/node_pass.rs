@@ -16,7 +16,7 @@
 //! an imbalanced `layout.rs` that returns three vectors — defeating
 //! the role-per-file goal.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use glam::Vec2;
 
@@ -75,6 +75,7 @@ pub(super) fn build_node_elements(
     offsets: &HashMap<String, (f32, f32)>,
     node_edit_for: Option<&str>,
     border_preview: Option<super::BorderPreview<'_>>,
+    hidden_set: &HashSet<&str>,
 ) -> (Vec<TextElement>, Vec<BorderElement>, Vec<(Vec2, Vec2)>) {
     // Hoist the preview-target match out of the per-node loop:
     // most rebuilds run with `border_preview = None` and we want
@@ -127,7 +128,7 @@ pub(super) fn build_node_elements(
     let mut dim_cache: HashMap<String, String> = HashMap::new();
 
     for node in map.nodes.values() {
-        if map.is_hidden_by_fold(node) {
+        if hidden_set.contains(node.id.as_str()) {
             continue;
         }
 

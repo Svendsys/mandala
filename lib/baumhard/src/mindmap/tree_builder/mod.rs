@@ -48,6 +48,7 @@ pub use portal::{
 pub use section_frame::{build_section_frame_tree, section_frame_identity_sequence};
 
 use node::{append_node_sections, build_children_recursive, mindnode_container_area};
+use crate::mindmap::model::ChildIndex;
 
 /// Result of building a Baumhard tree from a MindMap. The tree
 /// mirrors the MindMap's parent-child hierarchy. Each MindNode
@@ -133,11 +134,9 @@ pub fn build_mindmap_tree(map: &MindMap) -> MindMapTree {
 
     let vars = &map.canvas.theme_variables;
     let canvas_default_border = map.canvas.default_border.as_ref();
-    let roots = map.root_nodes();
-    for root in &roots {
-        if map.is_hidden_by_fold(root) {
-            continue;
-        }
+    let index = ChildIndex::build(map);
+    for root in index.roots() {
+        // Roots have no ancestors, so they are never hidden by fold.
         let area = mindnode_container_area(root, vars, canvas_default_border);
         let element = GfxElement::new_area_non_indexed_with_id(area, root.channel, id_counter);
         id_counter += 1;
@@ -150,7 +149,9 @@ pub fn build_mindmap_tree(map: &MindMap) -> MindMapTree {
 
         build_children_recursive(
             map,
+            &index,
             &root.id,
+            root.folded,
             node_id,
             &mut tree,
             &mut node_map,
