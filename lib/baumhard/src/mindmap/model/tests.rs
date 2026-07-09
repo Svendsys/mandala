@@ -1083,3 +1083,17 @@ fn fold_hidden_set_does_not_hang_on_parent_cycle() {
     let hidden = map.fold_hidden_set();
     assert!(hidden.is_empty());
 }
+
+/// Nodes whose parent_id is missing from the map are treated as
+/// root-like by the loader; folding such an orphan must still hide
+/// its descendants.
+#[test]
+fn fold_hidden_set_traverses_orphan_component() {
+    let mut orphan = synthetic_node_full("0", Some("missing"), 0.0, 0.0, 10.0, 10.0, false);
+    orphan.folded = true;
+    let child = synthetic_node_full("0.0", Some("0"), 0.0, 0.0, 10.0, 10.0, false);
+    let map = synthetic_map(vec![orphan, child], vec![]);
+    let hidden = map.fold_hidden_set();
+    assert!(hidden.contains("0.0"), "child of folded orphan should be hidden");
+    assert!(!hidden.contains("0"), "folded orphan itself is visible");
+}

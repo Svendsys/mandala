@@ -198,8 +198,20 @@ impl MindMap {
     pub fn fold_hidden_set(&self) -> HashSet<&str> {
         let index = ChildIndex::build(self);
         let mut hidden = HashSet::new();
+        // True roots first...
         for root in index.roots() {
             Self::mark_hidden_with_index(&index, root, false, &mut hidden);
+        }
+        // ...then any node whose parent_id is missing from the map.
+        // The loader treats these as root-like, and their children must
+        // still be hidden when the node is folded (the old
+        // `is_hidden_by_fold` parent-chain walk produced that result).
+        for node in self.nodes.values() {
+            if let Some(pid) = &node.parent_id {
+                if !self.nodes.contains_key(pid) {
+                    Self::mark_hidden_with_index(&index, node, false, &mut hidden);
+                }
+            }
         }
         hidden
     }
