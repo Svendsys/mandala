@@ -6,7 +6,7 @@
 //! state into an `UndoAction`, mutates, sets `dirty`, and
 //! returns whether anything changed.
 
-use baumhard::mindmap::model::{NodeStyle, TextRun, MAX_NODE_AXIS};
+use baumhard::mindmap::model::{validate, NodeStyle, TextRun};
 
 use super::compute_one_node_text_floor;
 use super::grow_one_node_to_fit_border;
@@ -134,7 +134,7 @@ impl MindMapDocument {
             return Ok(());
         };
         let new_offset = baumhard::mindmap::model::Position { x, y };
-        validate_section_aabb(node.size, section_idx, new_offset, section.size)
+        validate::section_candidate_aabb(node.size, section_idx, new_offset, section.size)
     }
 
     /// Set one section's `size`. `None` means fill-parent;
@@ -154,7 +154,7 @@ impl MindMapDocument {
         let Some(section) = node.sections.get(section_idx) else {
             return Ok(false);
         };
-        validate_section_aabb(node.size, section_idx, section.offset, size)?;
+        validate::section_candidate_aabb(node.size, section_idx, section.offset, size)?;
         if section.size == size {
             return Ok(false);
         }
@@ -192,7 +192,7 @@ impl MindMapDocument {
         let Some(section) = node.sections.get(section_idx) else {
             return Ok(false);
         };
-        validate_section_aabb(node.size, section_idx, new_offset, Some(new_size))?;
+        validate::section_candidate_aabb(node.size, section_idx, new_offset, Some(new_size))?;
         if section.offset == new_offset && section.size == Some(new_size) {
             return Ok(false);
         }
@@ -234,8 +234,7 @@ impl MindMapDocument {
         node_id: &str,
         new_size: baumhard::mindmap::model::Size,
     ) -> Result<bool, String> {
-        validate_node_size(new_size)?;
-        check_node_size_typo(new_size)?;
+        validate::node_size(new_size)?;
         if !self.mindmap.nodes.contains_key(node_id) {
             return Ok(false);
         }
@@ -286,8 +285,7 @@ impl MindMapDocument {
         new_size: baumhard::mindmap::model::Size,
     ) -> Result<bool, String> {
         validate_node_position(new_position)?;
-        validate_node_size(new_size)?;
-        check_node_size_typo(new_size)?;
+        validate::node_size(new_size)?;
         if !self.mindmap.nodes.contains_key(node_id) {
             return Ok(false);
         }
@@ -359,8 +357,7 @@ impl MindMapDocument {
         // propagates through the floor) can't bypass the
         // absolute ceiling. Cheap arithmetic; defends future
         // regressions in `compute_one_node_text_floor`.
-        validate_node_size(candidate)?;
-        check_node_size_typo(candidate)?;
+        validate::node_size(candidate)?;
         let before_position = node.position;
         let before_size = node.size;
         let canvas_default = self.mindmap.canvas.default_border.clone();
@@ -735,138 +732,6 @@ impl MindMapDocument {
 /// Cost: O(runs.len() * text grapheme count) — one
 /// `count_grapheme_clusters` call per section, plus a linear pass
 /// over the runs. Trivial for typical single-run sections.
-/// Verify-parity guard for the section-position/size setters: a
-/// corrupt save with `node.size.{width,height}` non-finite or
-/// non-positive is caught upstream by `verify::sections::check`,
-/// but if the loader hands such a node to a setter and the AABB
-/// compares silently NaN-skip, the setter would write into a node
-/// that shouldn't accept any size at all. Return the same
-/// rejection messages verify produces.
-/// Finite + strictly-positive guard on a candidate node `Size`.
-/// Same rejection messages `verify::sections` emits.
-fn validate_node_size(size: baumhard::mindmap::model::Size) -> Result<(), String> {
-    if !size.width.is_finite() || !size.height.is_finite() {
-        return Err(format!(
-            "node.size has non-finite component (width={}, height={})",
-            size.width, size.height
-        ));
-    }
-    if size.width <= 0.0 {
-        return Err(format!("node.size.width is not positive ({})", size.width));
-    }
-    if size.height <= 0.0 {
-        return Err(format!("node.size.height is not positive ({})", size.height));
-    }
-    Ok(())
-}
-
-/// Validate a candidate post-mutation section AABB against its
-/// parent's size. Folds finite/positive guards on both node and
-/// section, the 100× typo guard, and right/bottom edge
-/// containment. `size = None` means fill-parent (effective size
-/// = node_size for the containment check). Mirrors
-/// `verify::sections` rejection messages so model invariants are
-/// pinned at write time.
-fn validate_section_aabb(
-    node_size: baumhard::mindmap::model::Size,
-    section_idx: usize,
-    offset: baumhard::mindmap::model::Position,
-    size: Option<baumhard::mindmap::model::Size>,
-) -> Result<(), String> {
-    validate_node_size(node_size)?;
-    if !offset.x.is_finite() || !offset.y.is_finite() {
-        return Err(format!(
-            "section[{}].offset has non-finite component (x={}, y={})",
-            section_idx, offset.x, offset.y
-        ));
-    }
-    if offset.x < 0.0 {
-        return Err(format!(
-            "section[{}].offset.x is negative ({})",
-            section_idx, offset.x
-        ));
-    }
-    if offset.y < 0.0 {
-        return Err(format!(
-            "section[{}].offset.y is negative ({})",
-            section_idx, offset.y
-        ));
-    }
-    if let Some(s) = size {
-        if !s.width.is_finite() || !s.height.is_finite() {
-            return Err(format!(
-                "section[{}].size has non-finite component (width={}, height={})",
-                section_idx, s.width, s.height
-            ));
-        }
-        if s.width <= 0.0 {
-            return Err(format!(
-                "section[{}].size.width is not positive ({})",
-                section_idx, s.width
-            ));
-        }
-        if s.height <= 0.0 {
-            return Err(format!(
-                "section[{}].size.height is not positive ({})",
-                section_idx, s.height
-            ));
-        }
-        if s.width > node_size.width * 100.0 {
-            return Err(format!(
-                "section[{}].size.width ({}) is over 100× the node's width ({}); \
-                 likely a typo (e.g. an extra zero)",
-                section_idx, s.width, node_size.width
-            ));
-        }
-        if s.height > node_size.height * 100.0 {
-            return Err(format!(
-                "section[{}].size.height ({}) is over 100× the node's height ({}); \
-                 likely a typo (e.g. an extra zero)",
-                section_idx, s.height, node_size.height
-            ));
-        }
-    }
-    let effective = size.unwrap_or(node_size);
-    let right = offset.x + effective.width;
-    let bottom = offset.y + effective.height;
-    if right > node_size.width {
-        return Err(format!(
-            "section[{}] extends past node right edge ({} > {})",
-            section_idx, right, node_size.width
-        ));
-    }
-    if bottom > node_size.height {
-        return Err(format!(
-            "section[{}] extends past node bottom edge ({} > {})",
-            section_idx, bottom, node_size.height
-        ));
-    }
-    Ok(())
-}
-
-/// Astronomical-typo guard for a candidate node `Size` — fixed
-/// absolute bound rather than a multiplier against the prior
-/// size, so a gesture that legitimately enlarges a tiny node by
-/// many factors at release isn't silently rejected. The bound
-/// (`MAX_NODE_AXIS`) is large enough to swallow any sane canvas
-/// extent and small enough to flag an extra zero or two as the
-/// "extra zero" canonical typo.
-fn check_node_size_typo(size: baumhard::mindmap::model::Size) -> Result<(), String> {
-    if size.width > MAX_NODE_AXIS {
-        return Err(format!(
-            "node.size.width ({}) exceeds the {} ceiling; likely a typo (e.g. an extra zero)",
-            size.width, MAX_NODE_AXIS
-        ));
-    }
-    if size.height > MAX_NODE_AXIS {
-        return Err(format!(
-            "node.size.height ({}) exceeds the {} ceiling; likely a typo (e.g. an extra zero)",
-            size.height, MAX_NODE_AXIS
-        ));
-    }
-    Ok(())
-}
-
 /// Validate a candidate `(x, y)` for a node — finite components
 /// only. Nodes float freely on the canvas (no parent AABB), so
 /// negative coordinates are legal — a node can sit at a negative

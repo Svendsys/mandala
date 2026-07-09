@@ -10,6 +10,7 @@ pub mod edge;
 pub mod node;
 pub mod palette;
 pub mod text_run_ops;
+pub mod validate;
 
 pub use canvas::Canvas;
 pub use edge::{

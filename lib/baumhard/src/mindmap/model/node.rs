@@ -403,6 +403,13 @@ impl MindSection {
     pub fn effective_size(&self, node_size: Size) -> Size {
         self.size.unwrap_or(node_size)
     }
+
+    /// Effective mutation channel for this section. An authored
+    /// channel wins; otherwise the section's index becomes its
+    /// channel, matching the tree-builder routing rule.
+    pub fn effective_channel(&self, section_idx: usize) -> usize {
+        self.channel.unwrap_or(section_idx)
+    }
 }
 
 /// A styled slice of a section's `text`, matching miMind's text-run
