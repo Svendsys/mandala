@@ -199,6 +199,27 @@ pub fn do_scene_remove_drops_entry() {
 }
 
 #[test]
+pub fn test_scene_entry_into_tree_returns_ownership() {
+    do_scene_entry_into_tree_returns_ownership();
+}
+
+/// `Scene::remove` returns a `SceneEntry`; `SceneEntry::into_tree`
+/// consumes it to recover the owned tree. Verifies the ownership seam
+/// promised by the public API.
+pub fn do_scene_entry_into_tree_returns_ownership() {
+    let (tree, leaf) = tree_with_area(Vec2::new(0.0, 0.0), Vec2::new(50.0, 50.0), 0);
+    let expected_aabb = tree.descendants_aabb();
+    let mut scene = Scene::new();
+    let id = scene.insert(tree, 0, Vec2::ZERO);
+
+    let entry = scene.remove(id).expect("entry was just inserted");
+    let mut recovered = entry.into_tree();
+    // The recovered tree carries the same structure and remains hit-testable.
+    assert_eq!(recovered.descendants_aabb(), expected_aabb);
+    assert_eq!(recovered.descendant_at(Vec2::new(10.0, 10.0)), Some(leaf));
+}
+
+#[test]
 pub fn test_scene_ids_in_layer_order_is_stable_by_insertion() {
     do_scene_ids_in_layer_order_is_stable_by_insertion();
 }

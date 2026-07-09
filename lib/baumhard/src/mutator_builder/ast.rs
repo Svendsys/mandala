@@ -116,6 +116,7 @@ pub enum MutatorNode {
 /// Where a `Single`'s channel comes from. Inside a `Repeat`,
 /// `SectionIndex` resolves to `channel_base + iter_index`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ChannelSrc {
     /// A baked-in channel index.
     Literal(usize),
@@ -126,6 +127,7 @@ pub enum ChannelSrc {
 
 /// Static or runtime-supplied cell count.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum CountSrc {
     /// Count baked into the AST at deserialize time.
     Literal(usize),
@@ -137,6 +139,7 @@ pub enum CountSrc {
 
 /// Where a single `Mutation` comes from.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum MutationSrc {
     /// `Mutation::AreaDelta` whose fields are filled at apply time —
     /// bare `CellField` variants pull from the area lookup; tagged
@@ -181,6 +184,7 @@ pub enum MutationListSrc {
 // fields; renaming them would break the on-the-wire contract.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(non_camel_case_types)]
+#[non_exhaustive]
 pub enum CellField {
     /// Pull the cell's text payload from the per-section area
     /// lookup at apply time.
@@ -208,9 +212,15 @@ pub enum CellField {
 }
 
 /// Serializable shadow of [`Instruction`].
-/// `RepeatWhileAlwaysTrue` is spelled out as a named variant to avoid
-/// forcing every caller to serialize a full always-true `Predicate`.
+///
+/// The variants are intentionally 1:1 with [`Instruction`] except for
+/// `RepeatWhileAlwaysTrue`, which is sugar: it serializes as a plain
+/// named variant instead of forcing every JSON author to write out a
+/// full always-true [`Predicate`]. The seam is preserved — a later
+/// format revision can collapse the sugar into a serde alias without
+/// breaking existing documents.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum InstructionSpec {
     /// `Instruction::RepeatWhile(Predicate::always_true())`.
     RepeatWhileAlwaysTrue,

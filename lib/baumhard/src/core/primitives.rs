@@ -401,6 +401,10 @@ impl ColorFontRegions {
     /// interactive paths** — production callers must use [`Self::get`]
     /// and handle the `None` arm; CODE_CONVENTIONS §7 forbids panics
     /// after the first frame.
+    ///
+    /// Hidden from public docs because it is a test helper, not part of the
+    /// supported API surface.
+    #[doc(hidden)]
     pub fn hard_get(&self, range: Range) -> ColorFontRegion {
         debug!("hard_get({}..{}); current regions:", range.start, range.end);
         for r in self.regions.iter() {
@@ -591,7 +595,9 @@ pub enum Flag {
     /// describing which corners / edges are constrained against
     /// which target.
     Anchored(AnchorBox),
-    /// If set in an element, all mutations should also create a corresponding event
+    /// Reserved: when implemented, mutations on this element will
+    /// also emit a corresponding event to its subscribers. Not yet
+    /// emitted by the walker today.
     MutationEvents,
     /// Marks every element belonging to a *section* subtree — both
     /// the section-area `GlyphArea` and the structural section-model

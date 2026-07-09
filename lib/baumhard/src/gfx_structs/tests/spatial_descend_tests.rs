@@ -12,8 +12,10 @@
 
 use glam::Vec2;
 
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use crate::core::primitives::{Applicable, ApplyOperation};
 use crate::font::fonts;
@@ -53,7 +55,7 @@ pub fn do_spatial_descend_delivers_event_to_leaf() {
     let mut tree = build_test_tree();
     let received = Arc::new(AtomicBool::new(false));
     let rc = received.clone();
-    let sub: EventSubscriber = Arc::new(Mutex::new(
+    let sub: EventSubscriber = Rc::new(RefCell::new(
         move |_: &mut GfxElement, _: GlyphTreeEventInstance| {
             rc.store(true, Ordering::SeqCst);
         },
@@ -83,7 +85,7 @@ pub fn do_spatial_descend_miss_is_noop() {
     let mut tree = build_test_tree();
     let received = Arc::new(AtomicBool::new(false));
     let rc = received.clone();
-    let sub: EventSubscriber = Arc::new(Mutex::new(
+    let sub: EventSubscriber = Rc::new(RefCell::new(
         move |_: &mut GfxElement, _: GlyphTreeEventInstance| {
             rc.store(true, Ordering::SeqCst);
         },
@@ -115,13 +117,13 @@ pub fn do_spatial_descend_finds_innermost_node() {
     let child_received = Arc::new(AtomicBool::new(false));
 
     let lr = left_received.clone();
-    let left_sub: EventSubscriber = Arc::new(Mutex::new(
+    let left_sub: EventSubscriber = Rc::new(RefCell::new(
         move |_: &mut GfxElement, _: GlyphTreeEventInstance| {
             lr.store(true, Ordering::SeqCst);
         },
     ));
     let cr = child_received.clone();
-    let child_sub: EventSubscriber = Arc::new(Mutex::new(
+    let child_sub: EventSubscriber = Rc::new(RefCell::new(
         move |_: &mut GfxElement, _: GlyphTreeEventInstance| {
             cr.store(true, Ordering::SeqCst);
         },
@@ -161,7 +163,7 @@ pub fn do_spatial_descend_deep_chain_delivers_to_leaf() {
     let mut tree = build_deep_chain();
     let received = Arc::new(AtomicBool::new(false));
     let rc = received.clone();
-    let sub: EventSubscriber = Arc::new(Mutex::new(
+    let sub: EventSubscriber = Rc::new(RefCell::new(
         move |_: &mut GfxElement, _: GlyphTreeEventInstance| {
             rc.store(true, Ordering::SeqCst);
         },
@@ -197,14 +199,14 @@ fn test_spatial_descend_wide_tree_hits_correct_child() {
 
 pub fn do_spatial_descend_wide_tree_hits_correct_child() {
     let mut tree = build_wide_tree();
-    let hit_ids: Arc<Mutex<Vec<usize>>> = Arc::new(Mutex::new(Vec::new()));
+    let hit_ids: Rc<RefCell<Vec<usize>>> = Rc::new(RefCell::new(Vec::new()));
 
     let children: Vec<_> = tree.root.children(&tree.arena).collect();
     for (i, &cid) in children.iter().enumerate() {
         let ids = hit_ids.clone();
-        let sub: EventSubscriber = Arc::new(Mutex::new(
+        let sub: EventSubscriber = Rc::new(RefCell::new(
             move |_: &mut GfxElement, _: GlyphTreeEventInstance| {
-                ids.lock().unwrap().push(i);
+                ids.borrow_mut().push(i);
             },
         ));
         tree.arena
@@ -218,7 +220,7 @@ pub fn do_spatial_descend_wide_tree_hits_correct_child() {
     let mtree = spatial_descend_mutator(760.0, 10.0);
     let root = tree.root;
     walk_tree_from(&mut tree, &mtree, root, mtree.root);
-    assert_eq!(*hit_ids.lock().unwrap(), vec![15]);
+    assert_eq!(*hit_ids.borrow(), vec![15]);
 }
 
 // ── Mutation::None payload ────────────────────────────────────────
@@ -232,7 +234,7 @@ pub fn do_spatial_descend_no_mutation_is_noop() {
     let mut tree = build_test_tree();
     let received = Arc::new(AtomicBool::new(false));
     let rc = received.clone();
-    let sub: EventSubscriber = Arc::new(Mutex::new(
+    let sub: EventSubscriber = Rc::new(RefCell::new(
         move |_: &mut GfxElement, _: GlyphTreeEventInstance| {
             rc.store(true, Ordering::SeqCst);
         },
@@ -274,7 +276,7 @@ pub fn do_spatial_descend_ignores_channel_mismatch() {
 
     let received = Arc::new(AtomicBool::new(false));
     let rc = received.clone();
-    let sub: EventSubscriber = Arc::new(Mutex::new(
+    let sub: EventSubscriber = Rc::new(RefCell::new(
         move |_: &mut GfxElement, _: GlyphTreeEventInstance| {
             rc.store(true, Ordering::SeqCst);
         },
@@ -368,7 +370,7 @@ pub fn do_walker_redirties_subtree_aabbs_between_spatial_descends() {
 
     let received = Arc::new(AtomicBool::new(false));
     let rc = received.clone();
-    let sub: EventSubscriber = Arc::new(Mutex::new(
+    let sub: EventSubscriber = Rc::new(RefCell::new(
         move |_: &mut GfxElement, _: GlyphTreeEventInstance| {
             rc.store(true, Ordering::SeqCst);
         },

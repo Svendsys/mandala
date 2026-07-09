@@ -3,11 +3,12 @@
 //! Tests for [`crate::gfx_structs::tree::Tree`] — arena operations,
 //! mutations, events, and subscriber dispatch (§T1).
 
-use crossbeam_channel::unbounded;
 use glam::Vec2;
 use indextree::NodeId;
 use lazy_static::lazy_static;
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use strum::IntoEnumIterator;
 
@@ -365,7 +366,11 @@ pub fn model_block_commands() {
                     GlyphModelField::GlyphLine(num, line) => {
                         let mut my_reference = reference_model.clone();
                         apply_operation.apply(
-                            my_reference.glyph_model_mut().unwrap().glyph_matrix.ensure_line(num),
+                            my_reference
+                                .glyph_model_mut()
+                                .unwrap()
+                                .glyph_matrix
+                                .ensure_line(num),
                             line,
                         );
                         assert_eq!(my_reference, my_model);
@@ -1033,9 +1038,8 @@ pub fn test_event_propagation_complex_symmetric() {
 pub fn event_propagation_complex_symmetric() {
     // This is necessary to initialize lazy statics
     fonts::init();
-    let (mock_sender, _mock_receiver) = unbounded();
-    let region_params = Arc::new(RegionParams::new(10, (1000, 1000)));
-    let mut model: Tree<GfxElement, GfxMutator> = Tree::new(region_params, mock_sender);
+    let region_params = Rc::new(RegionParams::new(10, (1000, 1000)));
+    let mut model: Tree<GfxElement, GfxMutator> = Tree::new(region_params);
     let mut mutator: MutatorTree<GfxMutator> = MutatorTree::new();
 
     let mut model_index: FxHashMap<String, NodeId> = FxHashMap::default();
@@ -1045,7 +1049,7 @@ pub fn event_propagation_complex_symmetric() {
 
     let subscriber: EventSubscriber = {
         let results_index = Arc::clone(&results_index);
-        Arc::new(Mutex::new(
+        Rc::new(RefCell::new(
             move |gfx_element: &mut GfxElement, event: GlyphTreeEventInstance| {
                 // Example logic for handling the event
                 println!(
@@ -1127,7 +1131,7 @@ pub fn event_propagation_simple() {
     let mut model_root = GfxElement::new_void_with_id(0, incr(&mut id_head));
     let mut model_baby = GfxElement::new_void_with_id(0, incr(&mut id_head));
 
-    let subscriber: EventSubscriber = Arc::new(Mutex::new(
+    let subscriber: EventSubscriber = Rc::new(RefCell::new(
         |gfx_element: &mut GfxElement, event: GlyphTreeEventInstance| {
             // Example logic for handling the event
             println!(

@@ -154,18 +154,12 @@ index ride along so hit-testing stays cheap.
 Defined in
 `lib/baumhard/src/gfx_structs/tree.rs`. Wraps `indextree::Arena<T>`;
 adds `root: NodeId`, `layer: usize`, an AABB cache (`Cell<Option<...>>`
-because the values are `Copy`), a subtree-AABB dirty flag, an
-optional `RegionParams` + `RegionIndexer` for spatial queries, a
-`position: Vec2` offset, and a `pending_mutations` vector for
-deferred application. The blessed iteration primitives are
+because the values are `Copy`), a subtree-AABB dirty flag, and an
+optional `RegionParams` + `RegionIndexer` seam for future spatial
+queries. The blessed iteration primitives are
 `NodeId::children(&arena)` and `descendants(&arena)`; collecting
 into a `Vec<NodeId>` is a code smell. Every `MutatorTree::apply_to`
 call invalidates the AABB cache once, not per-field.
-
-`position` and `pending_mutations` are seams: the first
-admits multi-viewport rendering without rework, the second lets
-event subscribers queue reactive mutations without fighting the
-walker. Both are used narrowly today and preserved at full width.
 
 ### `MutatorTree<M>`
 
@@ -814,16 +808,14 @@ that don't factor cleanly (primes, near-primes) still get a
 sensible subdivision.
 
 `lib/baumhard/src/gfx_structs/util/`.
-`RegionError::{Updating, InvalidParameters, Poisoned}` covers
-the three failure modes; callers match and decide rather than
-panicking. The indexer keeps in sync with the tree via the
-`MutatorTree::apply_to` path — never mutate regions outside
-that path, or the index drifts silently.
-
-Per-tree spatial indexing is a seam
-([`Tree::region_params` / `region_index` fields](#treet-m));
-currently the index is scene-wide but the plumbing to push it
-per-tree already exists.
+`RegionError::{InvalidParameters, Poisoned}` covers the failure
+modes; callers match and decide rather than panicking. The indexer
+and its parameters are a tested-but-unwired subsystem: they are
+allocated by `Tree::new` but `MutatorTree::apply_to` does not
+currently maintain them. Per-tree BVH descent (`Tree::descendant_at`)
+handles hit-testing today; when the region index is wired, region
+mutations must go through the mutator pipeline or the index will
+drift silently.
 
 ### Animation primitives — `AnimationDef`, `AnimationInstance`, `Timeline`, `TimelineEvent`
 
