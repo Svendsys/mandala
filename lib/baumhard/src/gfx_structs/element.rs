@@ -577,13 +577,15 @@ impl Clone for GfxElement {
 
 impl TreeEventConsumer for GfxElement {
     fn accept_event(&mut self, event: &GlyphTreeEventInstance) {
-        // Snapshot only the length, then re-borrow the subscriber list
-        // for each index so the callback receives an unaliased `&mut
-        // self`. Cloning the `Rc` is cheap (one refcount bump); the
-        // previous `Vec::clone` per event is gone.
-        let count = self.subscribers_as_ref().len();
-        for i in 0..count {
-            let sub = Rc::clone(&self.subscribers_as_ref()[i]);
+        // Snapshot the `Rc` handles before invoking any callback.
+        // Callbacks receive `&mut self` and may mutate the subscriber
+        // list (e.g. remove themselves), so we must not index the live
+        // list during delivery. The previous code cloned the whole
+        // `Vec<EventSubscriber>`; we clone only the `Rc` handles, which
+        // is one refcount bump per subscriber instead of an allocation
+        // per event per element.
+        let subs: Vec<_> = self.subscribers_as_ref().iter().map(Rc::clone).collect();
+        for sub in subs {
             let mut callback = match sub.try_borrow_mut() {
                 Ok(cb) => cb,
                 Err(_) => {

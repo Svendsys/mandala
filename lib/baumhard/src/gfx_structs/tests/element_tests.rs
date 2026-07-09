@@ -271,3 +271,50 @@ pub fn do_event_subscriber_can_capture_rc_refcell_state() {
     assert_eq!(recorded[0], GlyphTreeEvent::AppEvent);
     assert!(matches!(recorded[1], GlyphTreeEvent::MouseEvent(_)));
 }
+
+#[test]
+fn test_event_subscriber_can_mutate_subscriber_list_during_delivery() {
+    do_event_subscriber_can_mutate_subscriber_list_during_delivery();
+}
+
+/// A subscriber that mutates the subscriber list during delivery
+/// (e.g. removes itself) must not panic or dispatch the wrong
+/// subscribers. Regression for the review on #90.
+pub fn do_event_subscriber_can_mutate_subscriber_list_during_delivery() {
+    use crate::gfx_structs::mutator::GlyphTreeEvent;
+    use crate::gfx_structs::tree::TreeEventConsumer;
+
+    let mut elem = GfxElement::new_void_with_id(0, 0);
+
+    let fired = Rc::new(RefCell::new(Vec::new()));
+
+    // First subscriber removes itself and the second subscriber from
+    // the list during delivery.
+    let fired_a = fired.clone();
+    let removable: EventSubscriber = Rc::new(RefCell::new(
+        move |elem: &mut GfxElement, _evt: GlyphTreeEventInstance| {
+            fired_a.borrow_mut().push('a');
+            elem.subscribers_mut().clear();
+        },
+    ));
+
+    let fired_b = fired.clone();
+    let second: EventSubscriber = Rc::new(RefCell::new(
+        move |_elem: &mut GfxElement, _evt: GlyphTreeEventInstance| {
+            fired_b.borrow_mut().push('b');
+        },
+    ));
+
+    elem.subscribers_mut().push(removable);
+    elem.subscribers_mut().push(second);
+
+    elem.accept_event(&GlyphTreeEventInstance::new(GlyphTreeEvent::AppEvent, 1));
+
+    let recorded = fired.borrow();
+    // Snapshotting the Rc handles before delivery means both
+    // subscribers in the snapshot fire, even though the first
+    // subscriber cleared the live list. The important thing is that
+    // we do not panic or index the mutated list.
+    assert_eq!(*recorded, vec!['a', 'b']);
+    assert!(elem.subscribers_as_ref().is_empty());
+}
