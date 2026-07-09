@@ -140,6 +140,7 @@ fn append_frame_runs(
             *unique_id,
             &spec.text,
             spec.font_size_pt,
+            spec.line_height_pt,
             spec.position,
             spec.bounds,
             color_rgba,
