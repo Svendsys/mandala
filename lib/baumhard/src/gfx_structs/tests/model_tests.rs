@@ -3,9 +3,9 @@
 //! Tests for [`crate::gfx_structs::model::GlyphModel`] — line/matrix
 //! construction and component layout (§T1).
 
-use crate::core::primitives::{ColorFontRegions, Range};
+use crate::core::primitives::{Applicable, ApplyOperation, ColorFontRegions, Range};
 use crate::font::fonts::AppFont;
-use crate::gfx_structs::model::{GlyphComponent, GlyphLine, GlyphMatrix};
+use crate::gfx_structs::model::{DeltaGlyphModel, GlyphComponent, GlyphLine, GlyphMatrix, GlyphModel, GlyphModelField};
 use crate::util::color::Color;
 
 /// The tests are written in a non-test-annotated function and then wrapped by an annotated test function
@@ -1211,4 +1211,138 @@ pub fn overriding_insert_13() {
     assert_eq!(glyph_line.get(1).unwrap().color, Color::invisible());
     assert_eq!(glyph_line.get(2).unwrap().font, AppFont::AppleTea);
     assert_eq!(glyph_line.get(2).unwrap().color, Color::black());
+}
+// ── Mutation-surface completeness: model deltas (P1-10) ─────────────
+
+/// `GlyphModelField::GlyphLine` deltas must apply through the
+/// `Applicable` path, not just when hand-applied. Regression for the
+/// missing branch in `GlyphModel::apply_operation`.
+#[test]
+pub fn test_delta_glyph_line_assign_applies_through_apply_to() {
+    do_delta_glyph_line_assign_applies_through_apply_to();
+}
+
+pub fn do_delta_glyph_line_assign_applies_through_apply_to() {
+    let mut model = GlyphModel::new();
+    model.add_line(GlyphLine::new_with(GlyphComponent::text(
+        "first",
+        AppFont::AppleTea,
+        Color::black(),
+    )));
+
+    let replacement = GlyphLine::new_with(GlyphComponent::text(
+        "replaced",
+        AppFont::Evilz,
+        Color::white(),
+    ));
+    let delta = DeltaGlyphModel::new(vec![
+        GlyphModelField::Operation(ApplyOperation::Assign),
+        GlyphModelField::GlyphLine(1, replacement),
+    ]);
+
+    delta.apply_to(&mut model);
+
+    assert_eq!(model.glyph_matrix.matrix.len(), 2);
+    assert_eq!(
+        model.glyph_matrix.get(0).unwrap().get(0).unwrap().as_str(),
+        "first"
+    );
+    assert_eq!(
+        model.glyph_matrix.get(1).unwrap().get(0).unwrap().as_str(),
+        "replaced"
+    );
+}
+
+/// `GlyphModelField::GlyphLines` deltas must apply through the
+/// `Applicable` path. Mirrors the single-line regression test above.
+#[test]
+pub fn test_delta_glyph_lines_assign_applies_through_apply_to() {
+    do_delta_glyph_lines_assign_applies_through_apply_to();
+}
+
+pub fn do_delta_glyph_lines_assign_applies_through_apply_to() {
+    let mut model = GlyphModel::new();
+
+    let lines = vec![
+        (
+            0,
+            GlyphLine::new_with(GlyphComponent::text(
+                "line zero",
+                AppFont::AppleTea,
+                Color::black(),
+            )),
+        ),
+        (
+            2,
+            GlyphLine::new_with(GlyphComponent::text(
+                "line two",
+                AppFont::Evilz,
+                Color::white(),
+            )),
+        ),
+    ];
+    let delta = DeltaGlyphModel::new(vec![
+        GlyphModelField::Operation(ApplyOperation::Assign),
+        GlyphModelField::GlyphLines(lines),
+    ]);
+
+    delta.apply_to(&mut model);
+
+    assert_eq!(model.glyph_matrix.matrix.len(), 3);
+    assert_eq!(
+        model.glyph_matrix.get(0).unwrap().get(0).unwrap().as_str(),
+        "line zero"
+    );
+    assert_eq!(model.glyph_matrix.get(1).unwrap().line.len(), 0);
+    assert_eq!(
+        model.glyph_matrix.get(2).unwrap().get(0).unwrap().as_str(),
+        "line two"
+    );
+}
+
+/// `ApplyOperation::Delete` on a `GlyphLine` delta clears the target
+/// line. Part of the per-field operation-table work for P1-10.
+#[test]
+pub fn test_delta_glyph_line_delete_clears_line() {
+    do_delta_glyph_line_delete_clears_line();
+}
+
+pub fn do_delta_glyph_line_delete_clears_line() {
+    let mut model = GlyphModel::new();
+    model.add_line(GlyphLine::new_with(GlyphComponent::text(
+        "to clear",
+        AppFont::AppleTea,
+        Color::black(),
+    )));
+
+    let delta = DeltaGlyphModel::new(vec![
+        GlyphModelField::Operation(ApplyOperation::Delete),
+        GlyphModelField::GlyphLine(0, GlyphLine::new()),
+    ]);
+
+    delta.apply_to(&mut model);
+
+    assert_eq!(model.glyph_matrix.get(0).unwrap().line.len(), 0);
+}
+
+/// `Subtract` on the layer field must saturate at zero instead of
+/// underflowing `usize`. Regression for the raw `operation.apply`
+/// path in `GlyphModel::apply_operation`.
+#[test]
+pub fn test_model_layer_subtract_saturates_at_zero() {
+    do_model_layer_subtract_saturates_at_zero();
+}
+
+pub fn do_model_layer_subtract_saturates_at_zero() {
+    let mut model = GlyphModel::new();
+    model.layer = 2;
+
+    let delta = DeltaGlyphModel::new(vec![
+        GlyphModelField::Operation(ApplyOperation::Subtract),
+        GlyphModelField::Layer(5),
+    ]);
+
+    delta.apply_to(&mut model);
+
+    assert_eq!(model.layer, 0);
 }

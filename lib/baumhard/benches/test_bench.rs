@@ -134,6 +134,18 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("overriding_insert_11", |b| b.iter(|| overriding_insert_11()));
     c.bench_function("overriding_insert_12", |b| b.iter(|| overriding_insert_12()));
     c.bench_function("overriding_insert_13", |b| b.iter(|| overriding_insert_13()));
+    c.bench_function("delta_glyph_line_assign_applies_through_apply_to", |b| {
+        b.iter(|| do_delta_glyph_line_assign_applies_through_apply_to())
+    });
+    c.bench_function("delta_glyph_lines_assign_applies_through_apply_to", |b| {
+        b.iter(|| do_delta_glyph_lines_assign_applies_through_apply_to())
+    });
+    c.bench_function("delta_glyph_line_delete_clears_line", |b| {
+        b.iter(|| do_delta_glyph_line_delete_clears_line())
+    });
+    c.bench_function("model_layer_subtract_saturates_at_zero", |b| {
+        b.iter(|| do_model_layer_subtract_saturates_at_zero())
+    });
     // glyph_area //
     c.bench_function("outline_assign_round_trip", |b| {
         b.iter(|| do_outline_assign_round_trip())
@@ -157,6 +169,15 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("shape_changes_hash", |b| b.iter(|| do_shape_changes_hash()));
     c.bench_function("shape_field_add_picks_rhs", |b| {
         b.iter(|| do_shape_field_add_picks_rhs())
+    });
+    c.bench_function("change_region_range_missing_region_warns_and_leaves_area_intact", |b| {
+        b.iter(|| do_change_region_range_missing_region_warns_and_leaves_area_intact())
+    });
+    c.bench_function("delta_text_delete_clears_text", |b| {
+        b.iter(|| do_delta_text_delete_clears_text())
+    });
+    c.bench_function("delta_regions_delete_clears_regions", |b| {
+        b.iter(|| do_delta_regions_delete_clears_regions())
     });
     // zoom_visibility //
     c.bench_function("zoom_visibility_unbounded_contains_full_camera_range", |b| {

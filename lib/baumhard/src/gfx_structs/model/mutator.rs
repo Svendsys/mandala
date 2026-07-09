@@ -48,11 +48,21 @@ pub enum GlyphModelFieldType {
 /// `Assign`/`Add`/`Subtract` for the rest of the delta.
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, Eq)]
 pub enum GlyphModelField {
-    /// Replace the entire matrix.
+    /// Replace the entire matrix. Operation semantics: `Assign` and
+    /// `Add` both overwrite the matrix (matrix addition is defined as
+    /// per-line overwrite via [`GlyphMatrix::add_assign`]); `Subtract`
+    /// and `Multiply` use the matching `*Assign` impls; `Delete`
+    /// clears the matrix to its default empty state.
     GlyphMatrix(GlyphMatrix),
-    /// Replace one line at `line_num` with `GlyphLine`.
+    /// Replace one line at `line_num` with `GlyphLine`. Missing lines
+    /// are grown with empty lines as needed. Operation semantics mirror
+    /// `GlyphMatrix`: `Assign`/`Add` overwrite the target line,
+    /// `Subtract`/`Multiply` use the line's `*Assign` impls, `Delete`
+    /// clears the line.
     GlyphLine(usize, GlyphLine),
     /// Replace many lines in one go, identified by `(line_num, line)`.
+    /// Each line is applied independently with the delta's operation;
+    /// semantics per line match [`GlyphModelField::GlyphLine`].
     GlyphLines(Vec<(usize, GlyphLine)>),
     /// Replace the draw-order layer.
     Layer(usize),
