@@ -424,6 +424,23 @@ pub fn do_insert_str_at_grapheme_counted() {
     let delta = insert_str_at_grapheme_counted(&mut s, 0, family);
     assert_eq!(s, family);
     assert_eq!(delta, 1);
+
+    // Regression: inserting a base character before a standalone
+    // combining mark must advance the cursor past the newly composed
+    // cluster. The old total-count delta returned 0 because the buffer
+    // had one grapheme both before and after the insertion.
+    let mut s = String::from("\u{0301}");
+    let delta = insert_str_at_grapheme_counted(&mut s, 0, "e");
+    assert_eq!(s, "e\u{0301}");
+    assert_eq!(delta, 1);
+
+    // Same scenario with an additional trailing cluster: the cursor
+    // stops after the composed "e + combining mark" cluster, not at
+    // the end of the buffer.
+    let mut s = String::from("\u{0301}x");
+    let delta = insert_str_at_grapheme_counted(&mut s, 0, "e");
+    assert_eq!(s, "e\u{0301}x");
+    assert_eq!(delta, 1);
 }
 
 #[test]
