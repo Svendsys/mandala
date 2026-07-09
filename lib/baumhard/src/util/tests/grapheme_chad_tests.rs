@@ -5,9 +5,9 @@ use lazy_static::lazy_static;
 use crate::util::grapheme_chad::{
     count_grapheme_clusters, count_number_lines, delete_back_unicode, delete_front_unicode,
     delete_grapheme_at, find_byte_index_of_grapheme, find_nth_line_byte_range, find_nth_line_grapheme_range,
-    grapheme_display_width, insert_new_lines, insert_str_at_grapheme, push_spaces,
-    replace_graphemes_until_newline, scalar_display_width, slice_to_newline, split_off_graphemes,
-    truncate_to_display_width, word_left, word_right,
+    grapheme_display_width, insert_new_lines, insert_str_at_grapheme, insert_str_at_grapheme_counted,
+    push_spaces, replace_graphemes_until_newline, scalar_display_width, slice_to_newline,
+    split_off_graphemes, truncate_to_display_width, word_left, word_right,
 };
 
 lazy_static! {
@@ -391,6 +391,39 @@ pub fn do_insert_str_at_grapheme() {
     let mut s = String::from("ab🧑‍🚀cd");
     insert_str_at_grapheme(&mut s, 3, "Z");
     assert_eq!(s, "ab🧑‍🚀Zcd");
+}
+
+#[test]
+pub fn test_insert_str_at_grapheme_counted() {
+    do_insert_str_at_grapheme_counted();
+}
+
+pub fn do_insert_str_at_grapheme_counted() {
+    let mut s = String::new();
+    let delta = insert_str_at_grapheme_counted(&mut s, 0, "abc");
+    assert_eq!(s, "abc");
+    assert_eq!(delta, 3);
+
+    let mut s = String::new();
+    let delta = insert_str_at_grapheme_counted(&mut s, 0, "e\u{0301}");
+    assert_eq!(s, "e\u{0301}");
+    assert_eq!(delta, 1);
+
+    let mut s = String::from("e");
+    let delta = insert_str_at_grapheme_counted(&mut s, 1, "\u{0301}");
+    assert_eq!(s, "e\u{0301}");
+    assert_eq!(delta, 0);
+
+    let mut s = String::new();
+    let delta = insert_str_at_grapheme_counted(&mut s, 0, "\u{1112}\u{1161}\u{11AB}");
+    assert_eq!(s, "\u{1112}\u{1161}\u{11AB}");
+    assert_eq!(delta, 1);
+
+    let mut s = String::new();
+    let family = "\u{1F469}\u{200D}\u{1F469}\u{200D}\u{1F466}";
+    let delta = insert_str_at_grapheme_counted(&mut s, 0, family);
+    assert_eq!(s, family);
+    assert_eq!(delta, 1);
 }
 
 #[test]

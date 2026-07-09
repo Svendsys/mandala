@@ -138,8 +138,7 @@ const TEXT_EDIT_CARET: char = '|';
 /// Insert one character at grapheme index `cursor` in `buffer`,
 /// returning the new cursor position (one grapheme past the insert).
 pub(in crate::application::app) fn insert_at_cursor(buffer: &mut String, cursor: usize, ch: char) -> usize {
-    grapheme_chad::insert_str_at_grapheme(buffer, cursor, &ch.to_string());
-    cursor + 1
+    cursor + grapheme_chad::insert_str_at_grapheme_counted(buffer, cursor, &ch.to_string())
 }
 
 /// Delete the grapheme cluster immediately before `cursor` (Backspace

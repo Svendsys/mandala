@@ -14,7 +14,7 @@ use crate::application::keybinds::{InputContext, ResolvedKeybinds};
 use crate::application::renderer::Renderer;
 
 use super::scene_rebuild::{rebuild_all, update_connection_label_tree, update_portal_tree};
-use super::text_edit::{insert_at_cursor, insert_caret};
+use super::text_edit::insert_caret;
 
 /// Pure router for the label-edit *character-input* path. Inserts
 /// printable chars from a `Key::Character` payload into the buffer.
@@ -34,22 +34,16 @@ pub(super) fn route_label_edit_key(
     cursor: &mut usize,
 ) -> bool {
     if let Key::Character(c) = logical_key {
-        // `Key::Character` payloads can carry IME / dead-key multi-
-        // char sequences, so iterate. Control chars (and any non-
-        // printing payload winit attaches to a structural key) are
-        // filtered, which mirrors the original guard intent — the
-        // "huge pause icon on backspace" hole is also closed by the
-        // structural-key migration to actions, since Backspace is now
-        // dispatched as `Action::LabelEditDeleteBack` before this
-        // router ever runs.
-        let mut changed = false;
-        for ch in c.as_str().chars() {
-            if !ch.is_control() {
-                *cursor = insert_at_cursor(buffer, *cursor, ch);
-                changed = true;
-            }
+        // Control chars (and any non-printing payload winit attaches
+        // to a structural key) are filtered, which mirrors the
+        // original guard intent. Insert the remaining payload as one
+        // counted splice so IME / dead-key multi-codepoint clusters
+        // advance the grapheme cursor by their visible delta.
+        let filtered: String = c.as_str().chars().filter(|ch| !ch.is_control()).collect();
+        if !filtered.is_empty() {
+            *cursor += grapheme_chad::insert_str_at_grapheme_counted(buffer, *cursor, &filtered);
+            return true;
         }
-        return changed;
     }
     false
 }
@@ -694,8 +688,8 @@ mod tests {
     }
 
     /// IME / dead-key sequences can arrive as multi-char strings.
-    /// Each non-control char inserts in order and the cursor
-    /// advances past them.
+    /// The cursor advances by visible grapheme clusters, not by
+    /// codepoints.
     #[test]
     fn test_route_label_edit_multichar_typed_payload() {
         let mut buf = String::from("");
@@ -704,6 +698,27 @@ mod tests {
         assert!(changed);
         assert_eq!(buf, "né");
         assert_eq!(cursor, 2);
+    }
+
+    #[test]
+    fn test_route_label_edit_ime_payload_advances_by_grapheme_delta() {
+        let mut buf = String::from("");
+        let mut cursor = 0;
+        let jamo = "\u{1112}\u{1161}\u{11AB}";
+        let changed = route_label_edit_key(&ch(jamo), &mut buf, &mut cursor);
+        assert!(changed);
+        assert_eq!(buf, jamo);
+        assert_eq!(cursor, 1);
+    }
+
+    #[test]
+    fn test_route_label_edit_combining_mark_merge_does_not_overadvance_cursor() {
+        let mut buf = String::from("e");
+        let mut cursor = 1;
+        let changed = route_label_edit_key(&ch("\u{0301}"), &mut buf, &mut cursor);
+        assert!(changed);
+        assert_eq!(buf, "e\u{0301}");
+        assert_eq!(cursor, 1);
     }
 
     /// Control characters in a typed payload are filtered out.

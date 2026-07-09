@@ -242,6 +242,25 @@ pub fn insert_str_at_grapheme(s: &mut String, idx: usize, source: &str) {
     }
 }
 
+/// Insert `source` into `s` at grapheme-cluster index `idx`, returning
+/// the net change in grapheme-cluster count.
+///
+/// This is the cursor-safe form for editor payloads that may contain
+/// multiple codepoints but fewer user-visible clusters: IME commits,
+/// dead-key combining marks, and ZWJ emoji sequences. The returned
+/// delta is computed from the buffer's pre/post cluster counts so a
+/// combining mark that merges into the previous cluster advances by
+/// zero while a multi-codepoint cluster advances by one.
+///
+/// Cost: two `count_grapheme_clusters` walks around
+/// [`insert_str_at_grapheme`].
+pub fn insert_str_at_grapheme_counted(s: &mut String, idx: usize, source: &str) -> usize {
+    let before = count_grapheme_clusters(s);
+    insert_str_at_grapheme(s, idx, source);
+    let after = count_grapheme_clusters(s);
+    after.saturating_sub(before)
+}
+
 /// Delete the grapheme cluster at grapheme index `idx`. No-op if `idx`
 /// is past the end.
 ///
