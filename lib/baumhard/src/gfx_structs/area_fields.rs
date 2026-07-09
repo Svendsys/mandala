@@ -139,7 +139,9 @@ pub enum GlyphAreaFieldType {
 pub enum GlyphAreaField {
     /// Replace or append to the area's text content. Under
     /// `ApplyOperation::Assign` the string replaces the current text;
-    /// under `Add` it is concatenated.
+    /// under `Add` it is concatenated; under `Delete` the text is
+    /// cleared. `Subtract` and `Multiply` are not defined and are
+    /// ignored with a `log::warn!`.
     Text(String),
     /// Font size in points. Under `Add`/`Subtract` the value is added
     /// to / subtracted from the current scale; under `Assign` it
@@ -158,7 +160,8 @@ pub enum GlyphAreaField {
     /// Character-range colour / font runs. Under `Add` each run in
     /// the delta is submitted (merged) into the existing set; under
     /// `Assign` the entire set is replaced; under `Subtract` matching
-    /// runs are removed.
+    /// runs are removed; under `Delete` the set is cleared.
+    /// `Multiply` is not defined and is ignored with a `log::warn!`.
     ColorFontRegions(ColorFontRegions),
     /// Replace the area's
     /// [`outline`](crate::gfx_structs::area::GlyphArea#structfield.outline)

@@ -19,8 +19,8 @@ use std::hash::{Hash, Hasher};
 
 use glam::f32::Vec2;
 
-use crate::core::primitives::ApplyOperation;
-use crate::gfx_structs::area::{DeltaGlyphArea, GlyphArea, GlyphAreaField, OutlineStyle};
+use crate::core::primitives::{Applicable, ApplyOperation, ColorFontRegions, Range};
+use crate::gfx_structs::area::{DeltaGlyphArea, GlyphArea, GlyphAreaCommand, GlyphAreaField, OutlineStyle};
 use crate::gfx_structs::shape::NodeShape;
 
 /// A halo style suitable for "add a 3 px black outline" — the
@@ -289,4 +289,67 @@ pub fn do_shape_field_add_picks_rhs() {
     let rhs = GlyphAreaField::Shape(NodeShape::Ellipse);
     let combined = lhs + rhs.clone();
     assert_eq!(combined, rhs);
+}
+// ── Mutation-surface completeness: area commands / deltas (P1-10) ────
+
+/// `GlyphAreaCommand::ChangeRegionRange` must not panic when the
+/// requested source range is missing — interactive mutation paths
+/// must survive stale JSON-authored ranges.
+#[test]
+pub fn test_change_region_range_missing_region_warns_and_leaves_area_intact() {
+    do_change_region_range_missing_region_warns_and_leaves_area_intact();
+}
+
+pub fn do_change_region_range_missing_region_warns_and_leaves_area_intact() {
+    let mut area = GlyphArea::new_with_str("hello", 14.0, 14.0, Vec2::new(0.0, 0.0), Vec2::new(100.0, 20.0));
+    area.regions = ColorFontRegions::single_span(5, Some([1.0, 0.0, 0.0, 1.0]), None);
+
+    let before = area.regions.clone();
+    let stale_current = Range::new(99, 105);
+    let new_range = Range::new(0, 5);
+    let command = GlyphAreaCommand::ChangeRegionRange(stale_current, new_range);
+
+    command.apply_to(&mut area);
+
+    assert_eq!(area.regions, before, "missing-range command must not mutate regions");
+}
+
+/// `ApplyOperation::Delete` on the `Text` field clears the area's
+/// text. Part of the per-field operation-table work for P1-10.
+#[test]
+pub fn test_delta_text_delete_clears_text() {
+    do_delta_text_delete_clears_text();
+}
+
+pub fn do_delta_text_delete_clears_text() {
+    let mut area = GlyphArea::new_with_str("hello", 14.0, 14.0, Vec2::new(0.0, 0.0), Vec2::new(100.0, 20.0));
+
+    let delta = DeltaGlyphArea::new(vec![
+        GlyphAreaField::Text("ignored".to_string()),
+        GlyphAreaField::Operation(ApplyOperation::Delete),
+    ]);
+    delta.apply_to(&mut area);
+
+    assert_eq!(area.text, "");
+}
+
+/// `ApplyOperation::Delete` on the `ColorFontRegions` field clears
+/// the area's region set. Part of the per-field operation-table work
+/// for P1-10.
+#[test]
+pub fn test_delta_regions_delete_clears_regions() {
+    do_delta_regions_delete_clears_regions();
+}
+
+pub fn do_delta_regions_delete_clears_regions() {
+    let mut area = GlyphArea::new_with_str("hello", 14.0, 14.0, Vec2::new(0.0, 0.0), Vec2::new(100.0, 20.0));
+    area.regions = ColorFontRegions::single_span(5, Some([1.0, 0.0, 0.0, 1.0]), None);
+
+    let delta = DeltaGlyphArea::new(vec![
+        GlyphAreaField::ColorFontRegions(ColorFontRegions::default()),
+        GlyphAreaField::Operation(ApplyOperation::Delete),
+    ]);
+    delta.apply_to(&mut area);
+
+    assert_eq!(area.regions.num_regions(), 0);
 }

@@ -21,6 +21,7 @@ use crate::gfx_structs::zoom_visibility::ZoomVisibility;
 use crate::util::color::FloatRgba;
 use crate::util::grapheme_chad;
 use crate::util::ordered_vec2::OrderedVec2;
+use log::warn;
 use derivative::Derivative;
 use glam::f32::Vec2;
 
@@ -313,7 +314,11 @@ impl GlyphArea {
                         self.regions.remove(delta_region);
                     }
                 }
-                _ => {}
+                ApplyOperation::Delete => self.regions = ColorFontRegions::default(),
+                ApplyOperation::Multiply => {
+                    warn!("Multiply is not defined for ColorFontRegions; ignoring")
+                }
+                ApplyOperation::Noop => {}
             }
         }
 
@@ -324,7 +329,11 @@ impl GlyphArea {
                     self.text.push_str(text);
                 }
                 ApplyOperation::Add => self.text += text,
-                _ => {}
+                ApplyOperation::Delete => self.text.clear(),
+                ApplyOperation::Subtract | ApplyOperation::Multiply => {
+                    warn!("{:?} is not defined for text; ignoring", operation)
+                }
+                ApplyOperation::Noop => {}
             }
         }
 
@@ -414,10 +423,17 @@ impl GlyphArea {
     /// Move an existing region's span from `current_range` to
     /// `new_range`. O(n) in region count.
     ///
-    /// # Panics
-    /// Panics if no region exists at `current_range`.
+    /// If no region exists at `current_range`, the call is a no-op
+    /// after logging a warning — interactive mutation paths must not
+    /// abort the editor over a stale range (CODE_CONVENTIONS.md §9).
     pub fn change_region_range(&mut self, current_range: &Range, new_range: &Range) {
-        let mut current = *self.regions.get(*current_range).expect("No region found");
+        let Some(mut current) = self.regions.get(*current_range).copied() else {
+            warn!(
+                "change_region_range skipped: no region at {}..{}",
+                current_range.start, current_range.end
+            );
+            return;
+        };
         current.range = *new_range;
         self.regions.remove_range(*current_range);
         self.regions.submit_region(current);
