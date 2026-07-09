@@ -63,6 +63,13 @@ impl SceneEntry {
         &self.tree
     }
 
+    /// Consume this entry and return the tree it owned. After this
+    /// call the entry no longer exists in the scene; use
+    /// [`Scene::remove`] to obtain an entry before calling this.
+    pub fn into_tree(self) -> Tree<GfxElement, GfxMutator> {
+        self.tree
+    }
+
     /// Higher layers draw on top. Equal layers break ties by
     /// insertion order (older entries draw first).
     pub fn layer(&self) -> i32 {

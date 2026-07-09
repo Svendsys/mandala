@@ -31,10 +31,10 @@ use log::{debug, warn};
 /// walker.
 ///
 /// The after-mutations attached under `mutator_id` are treated as a
-/// channel-sorted stream, just like [`align_child_walks`]: arena
-/// order is not assumed to be ascending. Every after-mutation whose
-/// channel equals `t_chan` is dispatched via [`walk_tree_from`];
-/// the scan stops as soon as it passes `t_chan`.
+/// channel-sorted stream (same logic as the normal child-alignment
+/// walk): arena order is not assumed to be ascending. Every
+/// after-mutation whose channel equals `t_chan` is dispatched via
+/// [`walk_tree_from`]; the scan stops as soon as it passes `t_chan`.
 pub const DEFAULT_TERMINATOR: fn(
     &mut Tree<GfxElement, GfxMutator>,
     &MutatorTree<GfxMutator>,
@@ -472,8 +472,16 @@ fn zip_map_children(
     }
 }
 
-/// As long as the condition holds true, keep applying it recursively
-fn repeat_while(
+/// As long as `condition` holds true, keep applying `mutator_id`
+/// (and its descendants) to `target_id` (and its descendants). When
+/// the condition fails, call `terminator` to resume the normal walk.
+///
+/// This is the engine behind [`Instruction::RepeatWhile`]; it is
+/// exposed so mutator authors can supply a custom `terminator`
+/// without forking the walker (see [`DEFAULT_TERMINATOR`] for the
+/// default continuation). The `terminator` receives the same tree
+/// pair and the current target/mutator ids.
+pub fn repeat_while(
     gfx_tree: &mut Tree<GfxElement, GfxMutator>,
     mutator_tree: &MutatorTree<GfxMutator>,
     target_id: NodeId,

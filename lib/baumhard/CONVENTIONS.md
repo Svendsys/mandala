@@ -166,12 +166,17 @@ access to it.
 `RegionIndexer` (`lib/baumhard/src/gfx_structs/util/regions.rs`)
 maintains a spatial index over the tree's color and font regions so
 that hit-testing and selection highlighting are O(log n) instead of
-O(n). It is maintained as a side effect of `MutatorTree::apply_to`.
+O(n). The index and its companion `RegionParams` are a tested-but-
+unwired subsystem: `RegionParams` and `RegionIndexer` are allocated by
+`Tree::new`, but `MutatorTree::apply_to` does **not** currently update
+them. Per-tree BVH descent (`Tree::descendant_at`) handles hit-testing
+today.
 
 - **Never mutate `ColorFontRegions` outside the mutator pipeline.**
-  Direct writes skip the index update, the index drifts, and selection
-  starts pointing at the wrong glyphs. Every region change is a
-  `GlyphAreaField::ColorFontRegions(...)` mutator.
+  Direct writes skip whatever index update path eventually lands, the
+  index drifts, and selection starts pointing at the wrong glyphs.
+  Every region change is a `GlyphAreaField::ColorFontRegions(...)`
+  mutator.
 - **Region math has benchmarks.** `region_indexer_initialise`,
   `region_indexer_insert`,
   `region_params_calculate_pixel_from_region`,

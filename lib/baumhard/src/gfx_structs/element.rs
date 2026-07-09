@@ -19,9 +19,11 @@ use crate::util::color::FloatRgba;
 use crate::util::geometry::clockwise_rotation_around_pivot;
 use crate::util::ordered_vec2::OrderedVec2;
 use glam::Vec2;
+use log::warn;
 use rustc_hash::FxHashSet;
 use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Formatter};
+use std::rc::Rc;
 
 /// Identifies a single field-level change to a [`GfxElement`].
 ///
@@ -575,9 +577,26 @@ impl Clone for GfxElement {
 
 impl TreeEventConsumer for GfxElement {
     fn accept_event(&mut self, event: &GlyphTreeEventInstance) {
-        let subscribers = self.subscribers_as_ref().clone();
-        for sub in subscribers {
-            sub.lock().expect("Failed to acquire lock for EventSubscriber")(self, event.clone());
+        // Snapshot the `Rc` handles before invoking any callback.
+        // Callbacks receive `&mut self` and may mutate the subscriber
+        // list (e.g. remove themselves), so we must not index the live
+        // list during delivery. The previous code cloned the whole
+        // `Vec<EventSubscriber>`; we clone only the `Rc` handles, which
+        // is one refcount bump per subscriber instead of an allocation
+        // per event per element.
+        let subs: Vec<_> = self.subscribers_as_ref().iter().map(Rc::clone).collect();
+        for sub in subs {
+            let mut callback = match sub.try_borrow_mut() {
+                Ok(cb) => cb,
+                Err(_) => {
+                    // Re-entrant delivery: a subscriber's reaction
+                    // re-delivered an event to the same element.
+                    // Skip rather than deadlock/panic.
+                    warn!("EventSubscriber already borrowed (re-entrant delivery); skipping");
+                    continue;
+                }
+            };
+            callback(self, event.clone());
         }
     }
 }

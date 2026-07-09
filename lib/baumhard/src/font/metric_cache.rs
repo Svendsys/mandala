@@ -57,16 +57,18 @@
 //!
 //! ## Public API
 //!
-//! - [`glyph_advance`] — horizontal advance of a single grapheme
-//!   cluster (used by horizontal-rail char-count math).
-//! - [`glyph_ink_height`] — vertical extent of a single grapheme
-//!   cluster's rasterized ink (used by vertical-rail line-height
-//!   math; without this, vertical glyphs are stacked at the full
-//!   `font_size` line-height even when their natural height is
-//!   smaller, producing visible gaps between glyphs).
+//! - [`glyph_advance`](crate::font::metric_cache::glyph_advance) —
+//!   horizontal advance of a single grapheme cluster (used by
+//!   horizontal-rail char-count math).
+//! - [`glyph_ink_height`](crate::font::metric_cache::glyph_ink_height)
+//!   — vertical extent of a single grapheme cluster's rasterized ink
+//!   (used by vertical-rail line-height math; without this, vertical
+//!   glyphs are stacked at the full `font_size` line-height even when
+//!   their natural height is smaller, producing visible gaps between
+//!   glyphs).
 
-use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping};
 use cosmic_text::SwashCache;
+use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping};
 use lazy_static::lazy_static;
 use ordered_float::OrderedFloat;
 use rustc_hash::FxHashMap;
@@ -74,8 +76,8 @@ use std::sync::{Mutex, RwLock};
 use std::time::Duration;
 
 use crate::font::fonts::{
-    acquire_font_system_write, acquire_font_system_write_with_timeout, ensure_warm,
-    face_family_name_for_pin, measure_glyph_ink_bounds, AppFont,
+    acquire_font_system_write, acquire_font_system_write_with_timeout, ensure_warm, face_family_name_for_pin,
+    measure_glyph_ink_bounds, AppFont,
 };
 
 type CacheKey = (Option<AppFont>, OrderedFloat<f32>, String);
@@ -173,8 +175,7 @@ pub(crate) fn glyph_advance_with_timeout(
     // `load_fonts` (see `ensure_warm`), then acquire through the
     // timeout-guarded helper (never a raw `.write()`) and shape.
     ensure_warm();
-    let mut guard =
-        acquire_font_system_write_with_timeout("metric_cache::glyph_advance", acquire_timeout);
+    let mut guard = acquire_font_system_write_with_timeout("metric_cache::glyph_advance", acquire_timeout);
     glyph_advance_with(&mut guard, face, size_pt, grapheme)
 }
 
@@ -263,10 +264,7 @@ pub(crate) fn glyph_ink_height_with(
 /// Convenience for the border-rail math where the side pattern's
 /// `cluster: Vec<String>` field is already split per grapheme.
 pub fn cluster_width(face: Option<AppFont>, size_pt: f32, graphemes: &[String]) -> f32 {
-    graphemes
-        .iter()
-        .map(|g| glyph_advance(face, size_pt, g))
-        .sum()
+    graphemes.iter().map(|g| glyph_advance(face, size_pt, g)).sum()
 }
 
 /// Full ink extent of `grapheme` at `face` × `size_pt`:
@@ -333,13 +331,7 @@ fn shape_ink_extent_with(
     let mut swash_guard = SWASH_CACHE
         .lock()
         .expect("SWASH_CACHE poisoned in metric_cache::shape_ink_extent");
-    let bounds = measure_glyph_ink_bounds(
-        font_system,
-        &mut swash_guard,
-        face,
-        grapheme,
-        size_pt,
-    );
+    let bounds = measure_glyph_ink_bounds(font_system, &mut swash_guard, face, grapheme, size_pt);
     let ink_height = (bounds.y_max - bounds.y_min).max(0.0);
     if ink_height > 0.0 && bounds.advance > 0.0 {
         InkExtent {
@@ -482,7 +474,8 @@ mod tests {
         assert!(
             (summed - direct).abs() < 0.01,
             "cluster_width should equal sum of per-grapheme advances; got {} vs {}",
-            summed, direct
+            summed,
+            direct
         );
     }
 
@@ -499,7 +492,8 @@ mod tests {
         assert!(
             big > small,
             "24pt advance ({}) should exceed 12pt advance ({})",
-            big, small
+            big,
+            small
         );
         let ratio = big / small;
         assert!(
@@ -588,8 +582,7 @@ mod tests {
             glyph_advance_with_timeout(None, 41.5, cold, Duration::from_millis(200))
         }));
         drop(guard);
-        let payload =
-            outcome.expect_err("re-entrant glyph_advance miss must panic, not hang");
+        let payload = outcome.expect_err("re-entrant glyph_advance miss must panic, not hang");
         let msg = payload
             .downcast_ref::<String>()
             .map(String::as_str)

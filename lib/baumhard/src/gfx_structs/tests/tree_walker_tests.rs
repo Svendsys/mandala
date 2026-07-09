@@ -500,7 +500,7 @@ pub fn test_repeat_while_aligns_non_ascending_target_channels() {
 
 /// Regression for P1-08: `compare_apply_repeat_while` walked siblings in raw
 /// arena order and dropped matches when the target row was not channel-
-/// ascending. Target children on channels [2,0,1] and a single ch-0 mutator
+/// ascending. Target children on channels `[2,0,1]` and a single ch-0 mutator
 /// must still match the ch-0 child.
 pub fn repeat_while_aligns_non_ascending_target_channels() {
     fonts::init();
@@ -547,8 +547,8 @@ pub fn test_repeat_while_merge_advance_does_not_drop_mutator_without_target() {
 
 /// Regression for P1-08: the old advance rule advanced **both** cursors when
 /// `m_chan < t_chan`, so a mutator on channel 2 following a ch-1 mutator never
-/// reached a ch-2 target. Targets [2,3] vs mutators [1,2] must apply the ch-2
-/// mutator to the ch-2 target.
+/// reached a ch-2 target. Targets `[2,3]` vs mutators `[1,2]` must apply the
+/// ch-2 mutator to the ch-2 target.
 pub fn repeat_while_merge_advance_does_not_drop_mutator_without_target() {
     fonts::init();
 
