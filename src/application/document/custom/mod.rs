@@ -727,16 +727,27 @@ impl MindMapDocument {
             // undo (whole-`MindNode` clone covers section state),
             // so a single entry is correct.
             TargetScope::SelfOnly | TargetScope::SectionsOnly => vec![node_id.to_string()],
+            // Tree-walking scopes build the child index once, inside
+            // the arm that actually needs it. Building it before the
+            // match would make self-only / parent-only mutations O(N).
             TargetScope::Children => self
                 .mindmap
+                .child_index()
                 .children_of(node_id)
                 .iter()
                 .map(|n| n.id.clone())
                 .collect(),
-            TargetScope::Descendants => self.mindmap.all_descendants(node_id),
+            TargetScope::Descendants => self
+                .mindmap
+                .child_index()
+                .all_descendant_ids(node_id, self.mindmap.nodes.len()),
             TargetScope::SelfAndDescendants => {
                 let mut ids = vec![node_id.to_string()];
-                ids.extend(self.mindmap.all_descendants(node_id));
+                ids.extend(
+                    self.mindmap
+                        .child_index()
+                        .all_descendant_ids(node_id, self.mindmap.nodes.len()),
+                );
                 ids
             }
             TargetScope::Parent => self
@@ -746,20 +757,24 @@ impl MindMapDocument {
                 .and_then(|n| n.parent_id.clone())
                 .into_iter()
                 .collect(),
-            TargetScope::Siblings => self
-                .mindmap
-                .nodes
-                .get(node_id)
-                .and_then(|n| n.parent_id.as_deref())
-                .map(|pid| {
-                    self.mindmap
-                        .children_of(pid)
-                        .iter()
-                        .filter(|n| n.id != node_id)
-                        .map(|n| n.id.clone())
-                        .collect()
-                })
-                .unwrap_or_default(),
+            TargetScope::Siblings => {
+                let parent_id = self
+                    .mindmap
+                    .nodes
+                    .get(node_id)
+                    .and_then(|n| n.parent_id.clone());
+                let index = self.mindmap.child_index();
+                parent_id
+                    .map(|pid| {
+                        index
+                            .children_of(&pid)
+                            .iter()
+                            .filter(|n| n.id != node_id)
+                            .map(|n| n.id.clone())
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            }
         }
     }
 }

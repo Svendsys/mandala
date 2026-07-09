@@ -15,7 +15,7 @@
 //!    for the very first character of a fresh label wouldn't be
 //!    visible.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use glam::Vec2;
 
@@ -103,6 +103,7 @@ pub(super) fn build_label_elements(
     edge_color_preview: Option<EdgeColorPreview<'_>>,
     selected_edge_label: Option<&EdgeKey>,
     camera_zoom: f32,
+    hidden_set: &HashSet<&str>,
 ) -> Vec<ConnectionLabelElement> {
     let mut connection_label_elements: Vec<ConnectionLabelElement> = Vec::new();
     let mut label_override_emitted = false;
@@ -124,7 +125,7 @@ pub(super) fn build_label_elements(
             Some(n) => n,
             None => continue,
         };
-        if map.is_hidden_by_fold(from_node) || map.is_hidden_by_fold(to_node) {
+        if hidden_set.contains(from_node.id.as_str()) || hidden_set.contains(to_node.id.as_str()) {
             continue;
         }
 
@@ -213,7 +214,7 @@ pub(super) fn build_label_elements(
                 if let (Some(from_node), Some(to_node)) =
                     (map.nodes.get(&edge.from_id), map.nodes.get(&edge.to_id))
                 {
-                    if !map.is_hidden_by_fold(from_node) && !map.is_hidden_by_fold(to_node) {
+                    if !hidden_set.contains(from_node.id.as_str()) && !hidden_set.contains(to_node.id.as_str()) {
                         // Synthesized path is for an edge being
                         // edited with an empty committed label — no
                         // selection-highlight branch here (the edited

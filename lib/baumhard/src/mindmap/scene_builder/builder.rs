@@ -14,7 +14,7 @@
 //! between both pipelines so a selected edge highlights cyan
 //! whichever form it renders as.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::mindmap::model::MindMap;
 use crate::mindmap::scene_cache::{EdgeKey, SceneConnectionCache};
@@ -242,12 +242,17 @@ pub fn build_scene_with_cache(
     // stale spacing doesn't leak into this frame.
     cache.ensure_zoom(camera_zoom);
 
+    // Compute the fold-hidden set once for this scene build. All
+    // passes below test membership instead of re-walking the parent
+    // chain per element.
+    let hidden_set: HashSet<&str> = map.fold_hidden_set();
+
     // Per-node pass: emits `TextElement`s + `BorderElement`s and
     // computes the clip AABBs the connection pass below consumes.
     // `node_edit_for` dims chrome on every other node — see
     // `node_pass::INACTIVE_NODE_ALPHA_MULTIPLIER`.
     let (text_elements, border_elements, node_aabbs) =
-        build_node_elements(map, offsets, node_edit_for, border_preview);
+        build_node_elements(map, offsets, node_edit_for, border_preview, &hidden_set);
 
     // Connection pass — fast/slow cache path, clip filter against
     // `node_aabbs`, edge-handle emission for the selected edge.
@@ -261,6 +266,7 @@ pub fn build_scene_with_cache(
         edge_color_preview,
         cache,
         camera_zoom,
+        &hidden_set,
     );
 
     // Label pass — sub-builder rebuilds paths per labeled edge
@@ -280,6 +286,7 @@ pub fn build_scene_with_cache(
         edge_color_preview,
         selected_edge_label_highlight_key.as_ref(),
         camera_zoom,
+        &hidden_set,
     );
 
     // Portal pass — one marker per endpoint of every visible
@@ -295,6 +302,7 @@ pub fn build_scene_with_cache(
         selected_portal_label,
         portal_color_preview,
         camera_zoom,
+        &hidden_set,
     );
 
     // Section resize handles — only emitted for the currently-
@@ -302,13 +310,13 @@ pub fn build_scene_with_cache(
     // fill-parent section has no per-section AABB to stretch).
     // Selection-gated here, mirroring edge-handle "only on
     // selected edge" precedent.
-    let section_resize_handles = build_selected_section_handles(map, offsets, selected_section);
+    let section_resize_handles = build_selected_section_handles(map, offsets, selected_section, &hidden_set);
 
     // Node resize handles — emitted only for the currently-
     // selected node. Selection-gated like edge handles and
     // section resize handles. Hidden-by-fold and missing-node
     // cases produce zero handles.
-    let node_resize_handles = build_selected_node_handles(map, offsets, selected_node_for_resize);
+    let node_resize_handles = build_selected_node_handles(map, offsets, selected_node_for_resize, &hidden_set);
 
     // Section frames — one per section of the active NodeEdit
     // node so the user sees the per-section subdivisions. Empty
@@ -321,6 +329,7 @@ pub fn build_scene_with_cache(
         node_edit_for,
         focused_section,
         border_preview,
+        &hidden_set,
     );
 
     RenderScene {
@@ -346,6 +355,7 @@ fn build_selected_node_handles(
     map: &MindMap,
     offsets: &HashMap<String, (f32, f32)>,
     selected_node_for_resize: Option<&str>,
+    hidden_set: &HashSet<&str>,
 ) -> Vec<NodeResizeHandleElement> {
     let node_id = match selected_node_for_resize {
         Some(s) => s,
@@ -355,7 +365,7 @@ fn build_selected_node_handles(
         Some(n) => n,
         None => return Vec::new(),
     };
-    if map.is_hidden_by_fold(node) {
+    if hidden_set.contains(node.id.as_str()) {
         return Vec::new();
     }
     let (ox, oy) = offsets.get(&node.id).copied().unwrap_or((0.0, 0.0));
@@ -374,6 +384,7 @@ fn build_selected_section_handles(
     map: &MindMap,
     offsets: &HashMap<String, (f32, f32)>,
     selected_section: Option<(&str, usize)>,
+    hidden_set: &HashSet<&str>,
 ) -> Vec<SectionResizeHandleElement> {
     let (node_id, section_idx) = match selected_section {
         Some(s) => s,
@@ -383,7 +394,7 @@ fn build_selected_section_handles(
         Some(n) => n,
         None => return Vec::new(),
     };
-    if map.is_hidden_by_fold(node) {
+    if hidden_set.contains(node.id.as_str()) {
         return Vec::new();
     }
     let section = match node.sections.get(section_idx) {

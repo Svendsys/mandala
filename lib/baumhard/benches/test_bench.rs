@@ -895,6 +895,7 @@ fn section_frame_emission_benchmark(c: &mut Criterion) {
         .expect("synthetic map has at least one node")
         .clone();
     let offsets: HashMap<String, (f32, f32)> = HashMap::new();
+    let hidden_set = bench_map.fold_hidden_set();
     c.bench_function("section_frame_emission_50x5_with_node_edit_active", |b| {
         b.iter(|| {
             let _ = build_section_frames(
@@ -903,6 +904,7 @@ fn section_frame_emission_benchmark(c: &mut Criterion) {
                 Some(any_node_id.as_str()),
                 None,
                 None,
+                &hidden_set,
             );
         })
     });

@@ -528,8 +528,17 @@ pub(super) fn handle_cursor_moved(
                     // the keyed-edge rebuild picks up the moving
                     // node's edges from scratch.
                     ctx.scene_cache.clear();
+                    let individual = ctx.modifiers.alt_key();
+                    let mut descendant_ids = std::collections::HashSet::new();
+                    if !individual {
+                        if let Some(doc) = ctx.document.as_ref() {
+                            for nid in &node_ids {
+                                descendant_ids.extend(doc.mindmap.all_descendants(nid));
+                            }
+                        }
+                    }
                     *ctx.drag_state = DragState::Throttled(ThrottledDrag::MovingNode(
-                        MovingNodeInteraction::new(node_ids, ctx.modifiers.alt_key()),
+                        MovingNodeInteraction::new(node_ids, individual, descendant_ids),
                     ));
                 } else if ctx.modifiers.shift_key() {
                     // Shift+drag on empty space: rubber-band selection

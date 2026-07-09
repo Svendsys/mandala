@@ -137,7 +137,7 @@ fn portal_pair_channels_are_strictly_ascending() {
     map.edges.push(synthetic_portal_edge("a", "b", "#ff0000"));
     map.edges.push(synthetic_portal_edge("b", "c", "#00ff00"));
 
-    let pairs = portal_pair_data(&map, &HashMap::new(), None, None, None, None, 1.0);
+    let pairs = portal_pair_data(&map, &HashMap::new(), None, None, None, None, 1.0, &map.fold_hidden_set());
     assert_eq!(pairs.len(), 2);
     let channels: Vec<usize> = pairs.iter().map(|p| p.pair_channel).collect();
     let mut prev = 0;
@@ -240,7 +240,7 @@ fn portal_identity_sequence_drops_folded_pairs() {
     map.edges.push(synthetic_portal_edge("a", "b", "#ff0000"));
     map.edges.push(synthetic_portal_edge("b", "child", "#00ff00"));
 
-    let pairs_before = portal_pair_data(&map, &HashMap::new(), None, None, None, None, 1.0);
+    let pairs_before = portal_pair_data(&map, &HashMap::new(), None, None, None, None, 1.0, &map.fold_hidden_set());
     assert_eq!(
         portal_identity_sequence(&pairs_before),
         vec![
@@ -250,7 +250,7 @@ fn portal_identity_sequence_drops_folded_pairs() {
     );
 
     map.nodes.get_mut("parent").unwrap().folded = true;
-    let pairs_after = portal_pair_data(&map, &HashMap::new(), None, None, None, None, 1.0);
+    let pairs_after = portal_pair_data(&map, &HashMap::new(), None, None, None, None, 1.0, &map.fold_hidden_set());
     assert_eq!(
         portal_identity_sequence(&pairs_after),
         vec![EdgeKey::new("a", "b", "cross_link")]

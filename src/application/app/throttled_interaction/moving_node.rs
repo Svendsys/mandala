@@ -13,7 +13,7 @@
 
 #![cfg(not(target_arch = "wasm32"))]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use glam::Vec2;
 
@@ -45,19 +45,33 @@ pub(in crate::application::app) struct MovingNodeInteraction {
     /// Per-interaction adaptive throttle. See
     /// [`crate::application::frame_throttle`].
     pub throttle: MutationFrequencyThrottle,
+    /// Snapshot of every descendant of every anchor node. Captured
+    /// once at drag start because the descendant set cannot change
+    /// mid-drag; reused in every `drain` instead of re-walking the
+    /// model with `all_descendants` per frame.
+    pub descendant_ids: HashSet<String>,
 }
 
 impl MovingNodeInteraction {
     /// Start a fresh move-node drag. The throttle begins at the
     /// default budget; `pending_delta` and `total_delta` start
     /// zeroed — the `CursorMoved` handler fills them.
-    pub(in crate::application::app) fn new(node_ids: Vec<String>, individual: bool) -> Self {
+    ///
+    /// `descendant_ids` must contain every descendant of every node
+    /// in `node_ids` when `individual` is `false`; it is ignored when
+    /// `individual` is `true`.
+    pub(in crate::application::app) fn new(
+        node_ids: Vec<String>,
+        individual: bool,
+        descendant_ids: HashSet<String>,
+    ) -> Self {
         Self {
             node_ids,
             total_delta: Vec2::ZERO,
             pending_delta: Vec2::ZERO,
             individual,
             throttle: MutationFrequencyThrottle::with_default_budget(),
+            descendant_ids,
         }
     }
 }
@@ -113,10 +127,10 @@ impl ThrottledInteraction for MovingNodeInteraction {
             let delta = (self.total_delta.x, self.total_delta.y);
             for nid in &self.node_ids {
                 offsets.insert(nid.clone(), delta);
-                if !self.individual {
-                    for desc_id in doc.mindmap.all_descendants(nid) {
-                        offsets.insert(desc_id, delta);
-                    }
+            }
+            if !self.individual {
+                for desc_id in &self.descendant_ids {
+                    offsets.insert(desc_id.clone(), delta);
                 }
             }
 
@@ -165,7 +179,11 @@ mod tests {
 
     #[test]
     fn test_new_initialises_fields_with_zero_deltas() {
-        let i = MovingNodeInteraction::new(vec!["a".to_string(), "b".to_string()], true);
+        let i = MovingNodeInteraction::new(
+            vec!["a".to_string(), "b".to_string()],
+            true,
+            HashSet::new(),
+        );
         assert_eq!(i.node_ids, vec!["a".to_string(), "b".to_string()]);
         assert_eq!(i.pending_delta, Vec2::ZERO);
         assert_eq!(i.total_delta, Vec2::ZERO);
@@ -175,13 +193,13 @@ mod tests {
 
     #[test]
     fn test_has_pending_false_for_zero_delta() {
-        let i = MovingNodeInteraction::new(vec!["n".into()], false);
+        let i = MovingNodeInteraction::new(vec!["n".into()], false, HashSet::new());
         assert!(!i.has_pending());
     }
 
     #[test]
     fn test_has_pending_true_for_nonzero_delta() {
-        let mut i = MovingNodeInteraction::new(vec!["n".into()], false);
+        let mut i = MovingNodeInteraction::new(vec!["n".into()], false, HashSet::new());
         i.pending_delta = Vec2::new(3.0, -2.0);
         assert!(i.has_pending());
     }
@@ -192,14 +210,14 @@ mod tests {
         // accumulator from one high-frequency cursor tick must still
         // count as pending, because the sum across skipped frames is
         // the contract drive() relies on.
-        let mut i = MovingNodeInteraction::new(vec!["n".into()], false);
+        let mut i = MovingNodeInteraction::new(vec!["n".into()], false, HashSet::new());
         i.pending_delta = Vec2::new(1e-6, 0.0);
         assert!(i.has_pending());
     }
 
     #[test]
     fn test_throttle_accessor_reaches_owned_instance() {
-        let mut i = MovingNodeInteraction::new(vec!["n".into()], false);
+        let mut i = MovingNodeInteraction::new(vec!["n".into()], false, HashSet::new());
         drive_throttle_over_budget(i.throttle());
         // The accessor must hand out the field, not a transient copy —
         // mutations through it have to survive into the struct.
@@ -208,7 +226,7 @@ mod tests {
 
     #[test]
     fn test_reset_resets_only_throttle() {
-        let mut i = MovingNodeInteraction::new(vec!["a".into(), "b".into()], true);
+        let mut i = MovingNodeInteraction::new(vec!["a".into(), "b".into()], true, HashSet::new());
         i.pending_delta = Vec2::new(5.0, 7.0);
         i.total_delta = Vec2::new(11.0, 13.0);
         drive_throttle_over_budget(&mut i.throttle);
@@ -226,7 +244,7 @@ mod tests {
     }
 
     trait_default_tests_for_throttled_interaction! {
-        build = || MovingNodeInteraction::new(vec!["n".into()], false),
+        build = || MovingNodeInteraction::new(vec!["n".into()], false, HashSet::new()),
         set_pending = |i: &mut MovingNodeInteraction| {
             i.pending_delta = Vec2::new(1.0, 0.0);
         },

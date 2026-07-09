@@ -600,7 +600,8 @@ pub(in crate::application::app) fn update_border_tree_with_offsets(
         build_border_tree_from_nodes,
     };
 
-    let nodes = border_node_data(&doc.mindmap, offsets);
+    let hidden_set = doc.mindmap.fold_hidden_set();
+    let nodes = border_node_data(&doc.mindmap, offsets, &hidden_set);
     let signature = hash_canvas_signature(&border_identity_sequence(&nodes));
 
     match app_scene.canvas_dispatch(CanvasRole::Borders, signature) {
@@ -683,6 +684,7 @@ pub(in crate::application::app) fn update_portal_tree(
             },
         );
 
+    let hidden_set = doc.mindmap.fold_hidden_set();
     let pairs = portal_pair_data(
         &doc.mindmap,
         offsets,
@@ -691,6 +693,7 @@ pub(in crate::application::app) fn update_portal_tree(
         preview,
         portal_text_edit,
         renderer.camera_zoom(),
+        &hidden_set,
     );
     let signature = hash_canvas_signature(&portal_identity_sequence(&pairs));
 

@@ -208,7 +208,7 @@ fn border_mutator_round_trip_matches_full_rebuild() {
     let mut offsets = HashMap::new();
     offsets.insert("a".to_string(), (12.5, -6.0));
 
-    let nodes_b = border_node_data(&map, &offsets);
+    let nodes_b = border_node_data(&map, &offsets, &map.fold_hidden_set());
     let mutator = build_border_mutator_tree_from_nodes(&nodes_b);
     mutator.apply_to(&mut tree_a);
 
@@ -303,11 +303,11 @@ fn border_identity_sequence_changes_on_show_frame_toggle() {
         ],
         vec![],
     );
-    let before = border_identity_sequence(&border_node_data(&map, &HashMap::new()));
+    let before = border_identity_sequence(&border_node_data(&map, &HashMap::new(), &map.fold_hidden_set()));
     assert_eq!(before, vec!["a".to_string(), "b".to_string()]);
 
     map.nodes.get_mut("b").unwrap().style.show_frame = false;
-    let after = border_identity_sequence(&border_node_data(&map, &HashMap::new()));
+    let after = border_identity_sequence(&border_node_data(&map, &HashMap::new(), &map.fold_hidden_set()));
     assert_eq!(after, vec!["a".to_string()]);
     assert_ne!(before, after);
 }
@@ -525,7 +525,7 @@ fn border_mutator_picks_up_pattern_change() {
         .unwrap()
         .top = "###(*)###".into();
 
-    let nodes_b = border_node_data(&map, &HashMap::new());
+    let nodes_b = border_node_data(&map, &HashMap::new(), &map.fold_hidden_set());
     let mutator = build_border_mutator_tree_from_nodes(&nodes_b);
     mutator.apply_to(&mut tree_a);
 
@@ -624,7 +624,7 @@ fn border_tree_uses_spec_line_height_for_vertical_rails() {
         color_palette_field: None,
     });
 
-    let nodes = border_node_data(&map, &HashMap::new());
+    let nodes = border_node_data(&map, &HashMap::new(), &map.fold_hidden_set());
     let node_data = &nodes[0];
     let specs = border_run_specs(
         &node_data.border_style,

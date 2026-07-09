@@ -36,14 +36,14 @@ fn other_node() -> crate::mindmap::model::MindNode {
 #[test]
 fn test_section_frames_default_mode_emits_none() {
     let map = synthetic_map(vec![three_section_node(), other_node()], vec![]);
-    let frames = build_section_frames(&map, &HashMap::new(), None, None, None);
+    let frames = build_section_frames(&map, &HashMap::new(), None, None, None, &map.fold_hidden_set());
     assert!(frames.is_empty(), "no NodeEdit target → no frames");
 }
 
 #[test]
 fn test_section_frames_node_edit_on_multi_section_emits_per_section() {
     let map = synthetic_map(vec![three_section_node(), other_node()], vec![]);
-    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None, None);
+    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None, None, &map.fold_hidden_set());
     assert_eq!(frames.len(), 3, "one frame per section");
     // Frames are emitted in section order.
     assert_eq!(frames[0].section_idx, 0);
@@ -58,7 +58,7 @@ fn test_section_frames_node_edit_on_multi_section_emits_per_section() {
 #[test]
 fn test_section_frames_inactive_node_emits_no_frames() {
     let map = synthetic_map(vec![three_section_node(), other_node()], vec![]);
-    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None, None);
+    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None, None, &map.fold_hidden_set());
     // Only sections of "active" appear; "other" never gets frames.
     assert!(frames.iter().all(|f| f.node_id == "active"));
 }
@@ -68,7 +68,7 @@ fn test_section_frames_single_section_node_skips_frames() {
     let mut node = synthetic_node("solo", 0.0, 0.0, 200.0, 50.0, true);
     node.sections = vec![section("only", 0.0, 0.0, 200.0, 50.0)];
     let map = synthetic_map(vec![node], vec![]);
-    let frames = build_section_frames(&map, &HashMap::new(), Some("solo"), None, None);
+    let frames = build_section_frames(&map, &HashMap::new(), Some("solo"), None, None, &map.fold_hidden_set());
     assert!(
         frames.is_empty(),
         "single-section nodes skip frames (would duplicate the border)"
@@ -79,14 +79,14 @@ fn test_section_frames_single_section_node_skips_frames() {
 fn test_section_frames_missing_active_node_emits_no_frames() {
     let map = synthetic_map(vec![three_section_node()], vec![]);
     // Stale NodeEdit target after a custom mutation deletion.
-    let frames = build_section_frames(&map, &HashMap::new(), Some("nonexistent"), None, None);
+    let frames = build_section_frames(&map, &HashMap::new(), Some("nonexistent"), None, None, &map.fold_hidden_set());
     assert!(frames.is_empty(), "missing active node → no frames");
 }
 
 #[test]
 fn test_section_frames_track_section_aabb() {
     let map = synthetic_map(vec![three_section_node(), other_node()], vec![]);
-    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None, None);
+    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None, None, &map.fold_hidden_set());
 
     // Section 0 lives at node.position + section.offset = (100, 200).
     let f0 = &frames[0];
@@ -109,6 +109,7 @@ fn test_section_frames_focused_section_marks_only_matching_idx() {
         Some("active"),
         Some(("active", 1)),
         None,
+        &map.fold_hidden_set(),
     );
     assert_eq!(frames.len(), 3);
     assert!(!frames[0].focused);
@@ -128,6 +129,7 @@ fn test_section_frames_focused_section_owner_mismatch_marks_none() {
         Some("active"),
         Some(("other", 0)),
         None,
+        &map.fold_hidden_set(),
     );
     assert!(frames.iter().all(|f: &SectionFrameElement| !f.focused));
 }
@@ -147,7 +149,7 @@ fn test_section_frames_skip_zero_size_section() {
         },
     ];
     let map = synthetic_map(vec![node], vec![]);
-    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None, None);
+    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None, None, &map.fold_hidden_set());
     assert_eq!(frames.len(), 1, "degenerate section is skipped");
     assert_eq!(frames[0].section_idx, 0);
 }
@@ -156,7 +158,7 @@ fn test_section_frames_skip_zero_size_section() {
 fn test_section_frames_uses_selected_edge_color_when_no_override() {
     use crate::mindmap::SELECTION_HIGHLIGHT_HEX;
     let map = synthetic_map(vec![three_section_node()], vec![]);
-    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None, None);
+    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None, None, &map.fold_hidden_set());
     // With no per-section or canvas override, the resolver falls
     // through to the hardcoded floor (no `color` set) → resolved
     // BorderStyle.color is the SELECTION_HIGHLIGHT_HEX cyan the
@@ -194,7 +196,7 @@ fn test_section_frames_per_section_override_wins_over_canvas_default() {
         color_palette: None,
         color_palette_field: None,
     });
-    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None, None);
+    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None, None, &map.fold_hidden_set());
     assert_eq!(frames[0].border_style.color, "#00ff00", "section 0 uses canvas default");
     assert_eq!(frames[1].border_style.color, "#ff8800", "section 1 uses per-section override");
     assert_eq!(frames[2].border_style.color, "#00ff00", "section 2 uses canvas default");
@@ -215,7 +217,7 @@ fn test_section_frames_canvas_default_drives_unset_sections() {
         color_palette: None,
         color_palette_field: None,
     });
-    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None, None);
+    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None, None, &map.fold_hidden_set());
     for f in &frames {
         assert_eq!(f.border_style.color, "#abcdef");
     }
@@ -252,6 +254,7 @@ fn test_section_frames_focused_uses_focused_canvas_default() {
         Some("active"),
         Some(("active", 1)),
         None,
+        &map.fold_hidden_set(),
     );
     assert_eq!(frames[0].border_style.color, "#aaaaaa", "section 0 unfocused → unfocused default");
     assert_eq!(frames[1].border_style.color, "#ffffff", "section 1 focused → focused default");
@@ -284,6 +287,7 @@ fn test_section_frames_focused_falls_back_to_unfocused_canvas_default() {
         Some("active"),
         Some(("active", 1)),
         None,
+        &map.fold_hidden_set(),
     );
     assert_eq!(
         frames[1].border_style.color, "#abcdef",
@@ -318,6 +322,7 @@ fn test_section_frames_unfocused_does_not_bleed_focused_canvas_default() {
         Some("active"),
         Some(("active", 1)),
         None,
+        &map.fold_hidden_set(),
     );
     assert_eq!(frames[0].border_style.color, SELECTION_HIGHLIGHT_HEX);
     assert_eq!(frames[1].border_style.color, "#ff00ff");
@@ -369,7 +374,7 @@ fn test_section_frames_palette_cycle_resolves_for_named_palette() {
             ],
         },
     );
-    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None, None);
+    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None, None, &map.fold_hidden_set());
     let palette = &frames[0].palette_cycle;
     assert_eq!(palette.len(), 3, "palette cycle has one entry per ColorGroup");
     // Spot-check the first entry is RGBA red.
@@ -384,7 +389,7 @@ fn test_section_frames_palette_cycle_resolves_for_named_palette() {
 #[test]
 fn test_section_frames_no_palette_yields_empty_cycle() {
     let map = synthetic_map(vec![three_section_node()], vec![]);
-    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None, None);
+    let frames = build_section_frames(&map, &HashMap::new(), Some("active"), None, None, &map.fold_hidden_set());
     for f in &frames {
         assert!(f.palette_cycle.is_empty(), "single-color frame has no palette cycle");
     }
@@ -423,6 +428,7 @@ fn test_border_preview_section_target_renders_through_scene_builder() {
         Some("active"),
         None,
         Some(preview),
+        &map.fold_hidden_set(),
     );
     // Section 1 should have the heavy preset's top corner glyph
     // (`┏` U+250F); sections 0 and 2 should retain the floor.
@@ -481,6 +487,7 @@ fn test_border_preview_canvas_section_frame_unfocused_branch() {
         Some("active"),
         Some(("active", 1)),
         Some(preview),
+        &map.fold_hidden_set(),
     );
     assert_eq!(
         frames[0].border_style.corners.top_left, "\u{2554}",
@@ -520,6 +527,7 @@ fn test_border_preview_canvas_section_frame_focused_branch() {
         Some("active"),
         Some(("active", 1)),
         Some(preview),
+        &map.fold_hidden_set(),
     );
     assert_eq!(
         frames[1].border_style.corners.top_left, "\u{2554}",
@@ -569,6 +577,7 @@ fn test_border_preview_inactive_target_matches_baseline() {
         Some("active"),
         Some(("active", 1)),
         Some(preview),
+        &map.fold_hidden_set(),
     );
     let baseline = build_section_frames(
         &map,
@@ -576,6 +585,7 @@ fn test_border_preview_inactive_target_matches_baseline() {
         Some("active"),
         Some(("active", 1)),
         None,
+        &map.fold_hidden_set(),
     );
     assert_eq!(with_preview.len(), baseline.len());
     for (a, b) in with_preview.iter().zip(baseline.iter()) {

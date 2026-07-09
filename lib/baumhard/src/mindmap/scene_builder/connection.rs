@@ -30,6 +30,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+
 use glam::Vec2;
 
 use crate::font::metrics::monospace_advance;
@@ -113,6 +114,7 @@ pub(super) fn build_connection_elements(
     edge_color_preview: Option<EdgeColorPreview<'_>>,
     cache: &mut SceneConnectionCache,
     camera_zoom: f32,
+    hidden_set: &HashSet<&str>,
 ) -> (Vec<ConnectionElement>, Vec<EdgeHandleElement>) {
     let vars = &map.canvas.theme_variables;
     let default_config = GlyphConnectionConfig::default();
@@ -143,7 +145,7 @@ pub(super) fn build_connection_elements(
             Some(n) => n,
             None => continue,
         };
-        if map.is_hidden_by_fold(from_node) || map.is_hidden_by_fold(to_node) {
+        if hidden_set.contains(from_node.id.as_str()) || hidden_set.contains(to_node.id.as_str()) {
             continue;
         }
 

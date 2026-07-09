@@ -204,7 +204,7 @@ mod tests {
 
     #[test]
     fn test_as_dyn_mut_routes_to_moving_node() {
-        let mut inner = MovingNodeInteraction::new(vec!["x".into()], false);
+        let mut inner = MovingNodeInteraction::new(vec!["x".into()], false, std::collections::HashSet::new());
         // Non-zero pending flips `has_pending` to true; if dispatch
         // reached the wrong struct the bit wouldn't survive.
         inner.pending_delta = Vec2::new(1.0, 0.0);
@@ -247,7 +247,7 @@ mod tests {
 
     #[test]
     fn test_as_dyn_mut_throttle_mutations_reach_underlying_struct() {
-        let inner = MovingNodeInteraction::new(vec!["x".into()], false);
+        let inner = MovingNodeInteraction::new(vec!["x".into()], false, std::collections::HashSet::new());
         let mut drag = ThrottledDrag::MovingNode(inner);
         let n = drive_throttle_over_budget(drag.as_dyn_mut().throttle());
         assert!(n > 1, "expected n > 1 after over-budget work, got {}", n);
@@ -264,7 +264,7 @@ mod tests {
         // The trait's default `reset` impl is "throttle().reset()" and
         // nothing else — pending / domain state must survive. Exercise
         // through a real implementor that does NOT override `reset`.
-        let mut inner = MovingNodeInteraction::new(vec!["n".into()], true);
+        let mut inner = MovingNodeInteraction::new(vec!["n".into()], true, std::collections::HashSet::new());
         inner.pending_delta = Vec2::new(3.0, 4.0);
         inner.total_delta = Vec2::new(7.0, 0.0);
         drive_throttle_over_budget(&mut inner.throttle);
@@ -290,14 +290,14 @@ mod tests {
         // enum routes via `as_dyn_mut`. If routing returned a stale or
         // wrong-variant borrow the predicate would disagree with the
         // real struct's state.
-        let mut idle = MovingNodeInteraction::new(vec!["n".into()], false);
+        let mut idle = MovingNodeInteraction::new(vec!["n".into()], false, std::collections::HashSet::new());
         let mut idle_drag = ThrottledDrag::MovingNode(idle);
         assert!(
             !idle_drag.as_dyn_mut().should_perform_drain(),
             "idle interaction through dyn_mut must report no drain"
         );
 
-        idle = MovingNodeInteraction::new(vec!["n".into()], false);
+        idle = MovingNodeInteraction::new(vec!["n".into()], false, std::collections::HashSet::new());
         idle.pending_delta = Vec2::new(1.0, 0.0);
         let mut pending_drag = ThrottledDrag::MovingNode(idle);
         assert!(
@@ -312,7 +312,7 @@ mod tests {
         // `has_pending`. An idle interaction with no pending state
         // does not require the event loop to keep iterating —
         // `ControlFlow::Wait` can park.
-        let inner = MovingNodeInteraction::new(vec!["n".into()], false);
+        let inner = MovingNodeInteraction::new(vec!["n".into()], false, std::collections::HashSet::new());
         let drag = ThrottledDrag::MovingNode(inner);
         assert!(!drag.as_dyn().needs_continuation());
     }
@@ -324,7 +324,7 @@ mod tests {
         // would otherwise park indefinitely until the next cursor
         // event. `needs_continuation` forces another iteration so
         // the deferred work flushes.
-        let mut inner = MovingNodeInteraction::new(vec!["n".into()], false);
+        let mut inner = MovingNodeInteraction::new(vec!["n".into()], false, std::collections::HashSet::new());
         inner.pending_delta = Vec2::new(1.0, 0.0);
         let drag = ThrottledDrag::MovingNode(inner);
         assert!(drag.as_dyn().needs_continuation());
@@ -338,7 +338,7 @@ mod tests {
         // pending drain stuck under `Wait`.
         use baumhard::mindmap::scene_builder::EdgeHandleKind;
 
-        let mut moving_node = MovingNodeInteraction::new(vec!["n".into()], false);
+        let mut moving_node = MovingNodeInteraction::new(vec!["n".into()], false, std::collections::HashSet::new());
         moving_node.pending_delta = Vec2::new(1.0, 0.0);
         assert!(ThrottledDrag::MovingNode(moving_node).as_dyn().needs_continuation());
 

@@ -41,7 +41,7 @@ use crate::gfx_structs::mutator::GfxMutator;
 use crate::gfx_structs::shape::NodeShape;
 use crate::gfx_structs::tree::Tree;
 use crate::mindmap::border::{resolve_border_style, BORDER_APPROX_CHAR_WIDTH_FRAC};
-use crate::mindmap::model::{MindMap, MindNode, MindSection};
+use crate::mindmap::model::{ChildIndex, MindMap, MindNode, MindSection};
 use crate::util::color::{self, Color as BaumhardColor};
 use glam::Vec2;
 
@@ -297,9 +297,16 @@ pub(super) fn append_node_sections(
 /// container, sections, and child mind-nodes as a flat sibling
 /// list under the parent container — same shape as the
 /// pre-section tree, just with extra section siblings.
+///
+/// `parent_folded` is `true` when an ancestor (including the
+/// immediate parent) is folded. Children of a folded node are
+/// hidden by construction, so the recursive fold check from the
+/// old `is_hidden_by_fold` path is redundant here.
 pub(super) fn build_children_recursive(
     map: &MindMap,
+    index: &ChildIndex<'_>,
     parent_mind_id: &str,
+    parent_folded: bool,
     parent_node_id: NodeId,
     tree: &mut Tree<GfxElement, GfxMutator>,
     node_map: &mut HashMap<String, NodeId>,
@@ -308,9 +315,9 @@ pub(super) fn build_children_recursive(
 ) {
     let vars = &map.canvas.theme_variables;
     let canvas_default_border = map.canvas.default_border.as_ref();
-    let children = map.children_of(parent_mind_id);
-    for child in &children {
-        if map.is_hidden_by_fold(child) {
+    let children = index.children_of(parent_mind_id);
+    for child in children {
+        if parent_folded {
             continue;
         }
         let area = mindnode_container_area(child, vars, canvas_default_border);
@@ -325,7 +332,9 @@ pub(super) fn build_children_recursive(
 
         build_children_recursive(
             map,
+            index,
             &child.id,
+            child.folded,
             child_node_id,
             tree,
             node_map,
