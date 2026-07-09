@@ -84,12 +84,13 @@ pub fn walk_tree_from(
     mutator_id: NodeId,
 ) {
     let mutator = get_mutator(&mutator_tree.arena, mutator_id).get();
-    let target = get_target(&mut gfx_tree.arena, target_id).get_mut();
 
     match mutator {
         GfxMutator::Single { .. } | GfxMutator::Macro { .. } => {
             debug!("Processing Delta Node...");
-            apply_if_matching_channel(mutator, target);
+            if apply_if_matching_channel(gfx_tree, target_id, mutator) {
+                gfx_tree.invalidate_caches();
+            }
         }
         GfxMutator::Void { .. } => {
             debug!("Void mutator node, skipping")
@@ -102,7 +103,9 @@ pub fn walk_tree_from(
             debug!("Processing Instruction node...");
             if section.is_some() {
                 debug!("This instruction node has a Delta..");
-                apply_if_matching_channel(mutator, target);
+                if apply_if_matching_channel(gfx_tree, target_id, mutator) {
+                    gfx_tree.invalidate_caches();
+                }
             }
             process_instruction_node(gfx_tree, mutator_tree, target_id, mutator_id, instruction);
             return;
@@ -112,12 +115,19 @@ pub fn walk_tree_from(
 }
 
 #[inline]
-fn apply_if_matching_channel(mutator: &GfxMutator, target: &mut GfxElement) {
+fn apply_if_matching_channel(
+    gfx_tree: &mut Tree<GfxElement, GfxMutator>,
+    target_id: NodeId,
+    mutator: &GfxMutator,
+) -> bool {
+    let target = get_target(&mut gfx_tree.arena, target_id).get_mut();
     if mutator.channel() == target.channel() {
         debug!("Delta and target channel match, applying..");
         mutator.apply_to(target);
+        true
     } else {
-        debug!("Delta mutator channel does not match target channel.")
+        debug!("Delta mutator channel does not match target channel.");
+        false
     }
 }
 
@@ -411,6 +421,7 @@ fn zip_map_children(
                 _ => None,
             }
         };
+        gfx_tree.invalidate_caches();
         match forwarded_instruction {
             Some(instruction) => {
                 // Nested instruction: dispatch at the paired target.
@@ -475,14 +486,21 @@ fn repeat_while(
         mutator_id: NodeId,
     ),
 ) {
-    let target = get_target(&mut gfx_tree.arena, target_id).get_mut();
-    if condition.test(&target) {
+    let condition_matches = {
+        let target = get_target(&mut gfx_tree.arena, target_id).get_mut();
+        condition.test(&target)
+    };
+    if condition_matches {
         debug!(
             "Condition is met, applying mutator {} to target {}",
             mutator_id, target_id
         );
         let mutator = get_mutator(&mutator_tree.arena, mutator_id).get();
-        mutator.apply_to(target);
+        {
+            let target = get_target(&mut gfx_tree.arena, target_id).get_mut();
+            mutator.apply_to(target);
+        }
+        gfx_tree.invalidate_caches();
         apply_repeat_while_to_children(
             gfx_tree,
             mutator_tree,
@@ -574,8 +592,11 @@ fn spatial_descend(
     let mutator = get_mutator(&mutator_tree.arena, mutator_id).get();
     if let GfxMutator::Instruction { mutation, .. } = mutator {
         if mutation.is_some() {
-            let target = get_target(&mut gfx_tree.arena, hit_id).get_mut();
-            mutation.apply_to(target);
+            {
+                let target = get_target(&mut gfx_tree.arena, hit_id).get_mut();
+                mutation.apply_to(target);
+            }
+            gfx_tree.invalidate_caches();
         }
     }
 }

@@ -99,9 +99,9 @@ impl Applicable<Tree<GfxElement, GfxMutator>> for MutatorTree<GfxMutator> {
         // Any mutator may touch GlyphArea position or bounds; the
         // safe default is to drop the bbox memos and let the next
         // query recompute. Cheap (one Cell write each).
-        target.aabb_cache.set(None);
-        target.subtree_aabbs_dirty.set(true);
-        walk_tree_from(target, &self, target.root, self.root)
+        target.invalidate_caches();
+        walk_tree_from(target, &self, target.root, self.root);
+        target.invalidate_caches();
     }
 }
 
@@ -316,7 +316,6 @@ impl Tree<GfxElement, GfxMutator> {
         crate::gfx_structs::tree_walker::bvh_find(&self.arena, self.root, point, slack, true, &mut best);
         best.map(|(id, _)| id)
     }
-
 
     /// Conservative AABB covering every `GlyphArea` descendant of
     /// [`Self::root`]. Returns `(top_left, bottom_right)` or `None`
