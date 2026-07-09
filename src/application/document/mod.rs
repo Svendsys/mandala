@@ -14,7 +14,7 @@ use log::{error, info};
 
 use baumhard::mindmap::custom_mutation::CustomMutation;
 use baumhard::mindmap::loader;
-use baumhard::mindmap::model::MindMap;
+use baumhard::mindmap::model::{MindMap, MAX_NODE_AXIS};
 use baumhard::mindmap::scene_builder::{self, RenderScene};
 use baumhard::mindmap::tree_builder::{self, MindMapTree};
 
@@ -241,6 +241,7 @@ pub(super) fn grow_one_node_to_fit_text(node: &mut baumhard::mindmap::model::Min
     if node.size.height < floor_h {
         node.size.height = floor_h;
     }
+    clamp_node_size_to_ceiling(node);
 }
 
 /// Pure floor-compute extracted from [`grow_one_node_to_fit_text`]
@@ -381,6 +382,21 @@ pub(super) fn grow_one_node_to_fit_border(
     }
     if size.y < need_h {
         node.size.height = need_h as f64;
+    }
+    clamp_node_size_to_ceiling(node);
+}
+
+/// Clamp `node.size` to the shared `MAX_NODE_AXIS` ceiling. The
+/// explicit setters (`set_node_size`, `set_node_aabb`) already reject
+/// sizes above this bound; the grow-to-fit floor functions must also
+/// honour it so the editor cannot produce a saved map that `maptool
+/// verify` would reject.
+fn clamp_node_size_to_ceiling(node: &mut baumhard::mindmap::model::MindNode) {
+    if node.size.width > MAX_NODE_AXIS {
+        node.size.width = MAX_NODE_AXIS;
+    }
+    if node.size.height > MAX_NODE_AXIS {
+        node.size.height = MAX_NODE_AXIS;
     }
 }
 
