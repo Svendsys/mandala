@@ -314,6 +314,7 @@ pub fn write_atomic(path: &Path, contents: &str) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::mindmap::test_helpers::testament_map_path as test_map_path;
+    use crate::util::test_temp::TempDir;
     use std::path::PathBuf;
 
     #[test]
@@ -821,16 +822,14 @@ mod tests {
     #[test]
     fn test_save_to_file_is_deterministic() {
         let map = load_from_file(&test_map_path()).unwrap();
-        let dir = std::env::temp_dir();
-        let path_a = dir.join("mandala_determinism_a.mindmap.json");
-        let path_b = dir.join("mandala_determinism_b.mindmap.json");
+        let dir = TempDir::new("determinism");
+        let path_a = dir.join("a.mindmap.json");
+        let path_b = dir.join("b.mindmap.json");
         save_to_file(&path_a, &map).expect("save a failed");
         save_to_file(&path_b, &map).expect("save b failed");
         let bytes_a = std::fs::read(&path_a).unwrap();
         let bytes_b = std::fs::read(&path_b).unwrap();
         assert_eq!(bytes_a, bytes_b, "save output must be deterministic");
-        let _ = std::fs::remove_file(&path_a);
-        let _ = std::fs::remove_file(&path_b);
     }
 
     /// `save_to_file` writes to `<dir>/.<name>.<pid>.tmp` then renames
@@ -841,19 +840,18 @@ mod tests {
     #[test]
     fn test_save_to_file_leaves_no_tmp_file_on_success() {
         let map = MindMap::new_blank("no-tmp");
-        let dir = std::env::temp_dir();
-        let path = dir.join("mandala_no_tmp_leftover.mindmap.json");
+        let dir = TempDir::new("no-tmp-leftover");
+        let path = dir.join("map.mindmap.json");
         save_to_file(&path, &map).expect("save failed");
 
         let pid = std::process::id();
         let file_name = path.file_name().unwrap().to_string_lossy().to_string();
-        let leftover = dir.join(format!(".{file_name}.{pid}.tmp"));
+        let leftover = dir.join(&format!(".{file_name}.{pid}.tmp"));
         assert!(
             !leftover.exists(),
             "atomic writer left a temp file behind: {}",
             leftover.display()
         );
-        let _ = std::fs::remove_file(&path);
     }
 
     /// `save_to_file` → `load_from_file` reproduces the same `MindMap`
@@ -866,7 +864,8 @@ mod tests {
         let blank = MindMap::new_blank("untitled");
 
         for (label, original) in [("testament", testament), ("blank", blank)] {
-            let tmp = std::env::temp_dir().join(format!("mandala_save_round_trip_{label}.mindmap.json"));
+            let dir = TempDir::new("save-round-trip");
+            let tmp = dir.join(&format!("{label}.mindmap.json"));
             save_to_file(&tmp, &original).expect("save failed");
             let reloaded = load_from_file(&tmp).expect("reload failed");
 
@@ -891,15 +890,15 @@ mod tests {
         // Empty case: no `macros` key written, no key on reload.
         let blank = MindMap::new_blank("macro-rt");
         assert!(blank.macros.is_empty());
-        let tmp_empty = std::env::temp_dir().join("mandala_macros_empty.mindmap.json");
+        let dir = TempDir::new("macros-round-trip");
+        let tmp_empty = dir.join("empty.mindmap.json");
         save_to_file(&tmp_empty, &blank).expect("save failed");
         let reloaded_empty = load_from_file(&tmp_empty).expect("reload failed");
         assert!(reloaded_empty.macros.is_empty());
 
         // Verify the key is absent on disk (skip_serializing_if).
         let raw = std::fs::read_to_string(&tmp_empty).expect("read raw");
-        assert!(!raw.contains("\"macros\""), "empty macros must not be serialised");
-        let _ = std::fs::remove_file(&tmp_empty);
+        assert!(!raw.contains("\"macros\""), "empty macros must not be serialized");
 
         // Non-empty case: round-trip preserves the JSON shape.
         let mut populated = MindMap::new_blank("macro-rt-2");
@@ -909,12 +908,11 @@ mod tests {
             "description": "",
             "steps": [{"kind": "Action", "action": "SaveDocument"}]
         })];
-        let tmp_full = std::env::temp_dir().join("mandala_macros_full.mindmap.json");
+        let tmp_full = dir.join("full.mindmap.json");
         save_to_file(&tmp_full, &populated).expect("save failed");
         let reloaded_full = load_from_file(&tmp_full).expect("reload failed");
         assert_eq!(reloaded_full.macros.len(), 1);
         assert_eq!(reloaded_full.macros, populated.macros);
-        let _ = std::fs::remove_file(&tmp_full);
     }
 
     /// `MindNode.inline_macros` round-trips through save+load
@@ -990,7 +988,8 @@ mod tests {
             macros: Vec::new(),
         };
 
-        let tmp = std::env::temp_dir().join("mandala_inline_macros_rt.mindmap.json");
+        let dir = TempDir::new("inline-macros-round-trip");
+        let tmp = dir.join("map.mindmap.json");
         save_to_file(&tmp, &map).expect("save failed");
         let reloaded = load_from_file(&tmp).expect("reload failed");
 

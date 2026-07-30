@@ -114,7 +114,8 @@ fn legacy_theme_demo_map_round_trips_through_canonical_save() {
     );
 
     // Save to a temp file using the canonical on-save path.
-    let tmp_path = std::env::temp_dir().join("mandala_test_theme_demo_roundtrip.mindmap.json");
+    let scratch = crate::util::test_temp::TempDir::new("theme-demo-roundtrip");
+    let tmp_path = scratch.join("map.mindmap.json");
     save_to_file(&tmp_path, &original).expect("save_to_file succeeds");
 
     // Reload and compare field-by-field on every custom_mutation.
