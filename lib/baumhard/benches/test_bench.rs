@@ -72,7 +72,7 @@ fn do_subtree_drag_translate_path(
     );
 }
 
-/// Baseline: simulate the pre-translate-path behaviour by clearing
+/// Baseline: simulate the pre-translate-path behavior by clearing
 /// the cache before every drain. Every edge falls into the slow
 /// path (`build_connection_path` + `sample_path`). The ratio
 /// between this and `do_subtree_drag_translate_path` is the
@@ -222,8 +222,8 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("shape_rectangle_contains_local", |b| {
         b.iter(|| do_shape_rectangle_contains_local())
     });
-    c.bench_function("shape_ellipse_contains_centre_and_rim", |b| {
-        b.iter(|| do_shape_ellipse_contains_centre_and_rim())
+    c.bench_function("shape_ellipse_contains_center_and_rim", |b| {
+        b.iter(|| do_shape_ellipse_contains_center_and_rim())
     });
     c.bench_function("shape_ellipse_rejects_aabb_corners", |b| {
         b.iter(|| do_shape_ellipse_rejects_aabb_corners())
@@ -283,7 +283,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("region_params_new_sunny_day", |b| {
         b.iter(|| do_region_params_new_sunny_day())
     });
-    c.bench_function("region_indexer_initialise", |b| {
+    c.bench_function("region_indexer_initialize", |b| {
         b.iter(|| do_region_indexer_initialize())
     });
     c.bench_function("region_indexer_insert_and_remove", |b| {
