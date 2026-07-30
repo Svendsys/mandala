@@ -860,11 +860,11 @@ mod tests {
         n.sections[1].size = Some(baumhard::mindmap::model::Size { width: 10.0, height: 10.0 });
         map.nodes.insert("0".into(), n);
 
-        let path = std::env::temp_dir().join("mandala_verify_broadcast_channel.mindmap.json");
+        let scratch = baumhard::util::test_temp::TempDir::new("verify-broadcast-channel");
+        let path = scratch.join("map.mindmap.json");
         save_to_file(&path, &map).unwrap();
         let args = as_strings(&["verify", path.to_str().unwrap()]);
         assert!(run(&args).is_ok(), "warning-only verify must exit 0");
-        let _ = std::fs::remove_file(&path);
     }
 
     // --- apply: fixture + tmpfile helpers ---------------------------
