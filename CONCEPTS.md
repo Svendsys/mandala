@@ -2559,7 +2559,17 @@ Each variant documents its arg shape on the `Action` definition;
 wrong arg counts emit a warn-log and are skipped (never panic).
 The dispatch arms call `pub(crate)` mutation cores extracted
 from each console verb, so the same setter path runs whether
-the user types the verb or fires the bound key. Filesystem
+the user types the verb or fires the bound key — including
+`CycleBorderPreset` / `ToggleBorderVisible` (cores in
+`console/commands/border/execute.rs`) and the font-size slots
+(one selection dispatcher in `console/commands/font.rs`).
+Section-targeted Action variants resolve their `(node_id,
+section_idx)` through the shared cascade in
+`console/commands/section/target.rs`, whose
+`SectionTargetPolicy` names the two places the Action path
+legitimately differs from the verb path (no document to count
+sections, so no single-section auto-resolve; a genuine
+multi-section selection is rejected rather than collapsed). Filesystem
 variants (`OpenDocument`, `SaveDocumentAs`, `NewDocumentAt`) are
 `NativeOnly` and denylisted from non-User macro tiers per the
 privilege gate.

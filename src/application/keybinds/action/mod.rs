@@ -266,7 +266,7 @@ pub enum Action {
     /// **WASM:** the underlying `clipboard::write_clipboard` is a
     /// log-and-no-op stub today (async-clipboard integration
     /// pending). The Action is classified `Compatible` because it
-    /// doesn't crash, but the user-visible behaviour is "nothing
+    /// doesn't crash, but the user-visible behavior is "nothing
     /// happens." Tracked in `WASM_CONVERGENCE.md`.
     #[action(context = Document, wasm = Compatible, destructive)]
     Copy,
@@ -692,7 +692,7 @@ pub enum Action {
     ToggleBorderVisible,
     /// Stage a single-kv border preview against the live
     /// selection. `target_kind: BorderPreviewTargetKind` is a
-    /// typed enum (kebab-case-serialised: `node` / `section` /
+    /// typed enum (kebab-case-serialized: `node` / `section` /
     /// `canvas-border` / `canvas-sf` / `canvas-sf-focused`)
     /// that picks the committing setter `commit_border_preview`
     /// will route to; replaces the prior stringly-typed
@@ -845,12 +845,14 @@ pub enum Action {
     /// model invariant).Destructive.
     #[action(context = Document, wasm = Compatible, destructive)]
     DeleteSection,
-    /// Mirror `section split [at=<grapheme>]` — macro-only
-    /// target (not bindable to a key today; no `KeybindConfig`
-    /// field). `at_grapheme = ""` → end of text; `"K"` → split
-    /// at grapheme K. Field name disambiguates from
-    /// `AddSection { at }`'s section-vector index (different
-    /// units).Destructive.
+    /// Mirror `section split at=<grapheme>` — macro-only target
+    /// (not bindable to a key today; no `KeybindConfig` field).
+    /// `"K"` → split at grapheme K; `at_grapheme = ""` is
+    /// **rejected** with a warn-log, matching the verb, which
+    /// requires `at=` because split-at-end-of-text silently
+    /// creates an empty suffix section nobody wants. Field name
+    /// disambiguates from `AddSection { at }`'s section-vector
+    /// index (different units).Destructive.
     #[action(context = Document, wasm = Compatible, destructive)]
     SplitSection { at_grapheme: String },
     /// Mirror `open <path>` — replace the current document with the

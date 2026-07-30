@@ -36,7 +36,11 @@
 //! command surface in completion + help.
 
 mod frame;
+pub(crate) mod target;
 
+use self::target::{
+    multi_section_single_target_error, parse_section_target_kv, resolve_section_index, SectionTargetPolicy,
+};
 use super::Command;
 use crate::application::console::completion::{
     kv_key_completions_with_hints, prefix_filter, Completion, CompletionContext, CompletionState,
@@ -44,7 +48,7 @@ use crate::application::console::completion::{
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::node_or_section_selected_single_node;
 use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
-use crate::application::document::{MindMapDocument, SectionSel, SelectionState};
+use crate::application::document::{MindMapDocument, SelectionState};
 
 pub const KEYS: &[&str] = &["section"];
 pub const VERBS: &[&str] = &[
@@ -248,7 +252,7 @@ fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     // CRIT-1 (whole-PR review): validate the verb against the known
     // set BEFORE the per-section resolver runs. Pre-fix a `section
     // <typo>` against `Single(node)` (multi-section) ran
-    // `resolve_section_idx` first, which surfaced the
+    // the per-section resolver first, which surfaced the
     // "node 'X' has N sections — pick one" error — making the
     // typo masquerade as a selection problem. Surface the actual
     // typo with a grouped subverb listing (mirrors the `border`
@@ -287,17 +291,22 @@ fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             }
         }
     }
-    let target_idx = match resolve_section_idx(args, &eff.document.selection, eff.document) {
-        Ok(idx) => idx,
+    // Parse `section=K` BEFORE resolving the node. A malformed
+    // `section=abc` is a syntax error the user can see and fix; if
+    // the selection resolver ran first, `MultiSection` would answer
+    // "single-target only; pass section=<idx>" — which is exactly
+    // what the user did, with a typo. Same defect class as the
+    // CRIT-1 note above, in the opposite direction. Order matches
+    // the pre-dedup `resolve_section_idx`, which read the kv on its
+    // first line.
+    let kv_idx = match parse_section_target_kv(args, "section") {
+        Ok(v) => v,
         Err(msg) => return ExecResult::err(msg),
     };
     let node_id = match resolve_node_id(&eff.document.selection) {
         Ok(id) => id,
         Err(msg) => return ExecResult::err(msg),
     };
-    // Verify the index resolves before delegating — explicit
-    // `section=99` should error, not silently return "no change"
-    // (indistinguishable from a successful idempotent set).
     let section_count = eff
         .document
         .mindmap
@@ -305,6 +314,19 @@ fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         .get(&node_id)
         .map(|n| n.sections.len())
         .unwrap_or(0);
+    let target_idx = match resolve_section_index(
+        &eff.document.selection,
+        &node_id,
+        kv_idx,
+        Some(section_count),
+        SectionTargetPolicy::Verb,
+    ) {
+        Ok(idx) => idx,
+        Err(msg) => return ExecResult::err(msg),
+    };
+    // Verify the index resolves before delegating — explicit
+    // `section=99` should error, not silently return "no change"
+    // (indistinguishable from a successful idempotent set).
     if target_idx >= section_count {
         return ExecResult::err(format!("section[{}] not found on node '{}'", target_idx, node_id));
     }
@@ -326,69 +348,14 @@ fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     }
 }
 
-/// Resolve `(node_id, section_idx)` from the current selection +
-/// optional `section=K` kv.§906-920 selection rules:
-///
-/// 1. `section=K` kv → that index, with the selection's
-///    primary node id.
-/// 2. `Section(s)` / `SectionRange { sel, .. }` → `s.section_idx`.
-/// 3. `Single(id)` AND `mindmap.nodes[id].sections.len() == 1`
-///    → `(id, 0)` — single-section nodes don't need an explicit
-///    `section=K` because there's only one option.///    rule 3 (line 914): closes the §5.7 hostile error.
-/// 4. `Single(id)` on a multi-section node → error (the user
-///    needs to pick one).
-/// 5. `MultiSection(_)` → error with the single-target hint.
-fn resolve_section_idx(
-    args: &Args,
-    selection: &SelectionState,
-    doc: &MindMapDocument,
-) -> Result<usize, String> {
-    let kv_idx = parse_section_kv(args)?;
-    match (selection, kv_idx) {
-        (_, Some(idx)) => Ok(idx),
-        (SelectionState::Section(SectionSel { section_idx, .. }), None) => Ok(*section_idx),
-        (SelectionState::SectionRange { sel: SectionSel { section_idx, .. }, .. }, None) => {
-            Ok(*section_idx)
-        }
-        (SelectionState::Single(id), None) => {
-            //rule 3: a single-section node implies idx 0.
-            // Multi-section nodes still require explicit selection.
-            let n_sections = doc.mindmap.nodes.get(id).map(|n| n.sections.len()).unwrap_or(0);
-            if n_sections == 1 {
-                Ok(0)
-            } else {
-                Err(format!(
-                    "section: node '{}' has {} sections — pick one (click) or pass section=<idx>",
-                    id, n_sections
-                ))
-            }
-        }
-        (SelectionState::MultiSection(_), None) => Err(
-            "section: multi-section selection — single-target only; pass section=<idx> or click one section first".into(),
-        ),
-        _ => Err("section: requires a node or section selection".into()),
-    }
-}
-
 fn resolve_node_id(selection: &SelectionState) -> Result<String, String> {
     if let Some(id) = selection.primary_node_id() {
         return Ok(id.to_string());
     }
     if matches!(selection, SelectionState::MultiSection(_)) {
-        return Err(
-            "section: multi-section selection — single-target only; pass section=<idx> or click one section first".into(),
-        );
+        return Err(multi_section_single_target_error("section"));
     }
     Err("section: requires a node or section selection".into())
-}
-
-fn parse_section_kv(args: &Args) -> Result<Option<usize>, String> {
-    for (k, v) in args.kvs() {
-        if k == "section" {
-            return super::range_kv::parse_section_kv("section", v).map(Some);
-        }
-    }
-    Ok(None)
 }
 
 /// Reject any kv whose key isn't in `allowed`. Used by each
@@ -573,7 +540,7 @@ fn execute_text(args: &Args, doc: &mut MindMapDocument, node_id: &str, idx: usiz
         Some("preserve") | None => false,
         Some(other) => {
             return ExecResult::err(format!(
-                "section text: runs='{}' not recognised; use 'preserve' or 'clear'",
+                "section text: runs='{}' not recognized; use 'preserve' or 'clear'",
                 other
             ));
         }
@@ -971,6 +938,7 @@ mod tests {
     use crate::application::console::tests::fixtures::{assert_exec_err_contains, assert_exec_ok, run};
     use crate::application::console::ExecResult;
     use crate::application::document::tests_common::{load_test_doc, pinned_two_section_node};
+    use crate::application::document::SectionSel;
 
     #[test]
     fn section_move_writes_offset_when_section_selection_supplies_idx() {
@@ -1203,9 +1171,82 @@ mod tests {
         assert_exec_err_contains(run("section frobnicate 1 2", &mut doc), "unknown subverb");
     }
 
+    // ─── kv-parse-before-selection ordering ───────────────────
+    //
+    // `execute_section` reads `section=K` before it resolves the
+    // node. Skipping that order makes a typo'd `section=abc`
+    // masquerade as a selection problem — the resolver would
+    // answer "pass section=<idx>" to a user who did exactly that.
+    // The `target.rs` unit tests exercise the resolver in
+    // isolation, so only a verb-level pin catches the caller
+    // reordering; these are those pins.
+
+    /// A malformed `section=` outranks the `MultiSection`
+    /// single-target rejection on every per-section subverb.
+    #[test]
+    fn section_malformed_section_kv_outranks_multi_section_rejection() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::MultiSection(vec![
+            SectionSel {
+                node_id: id.clone(),
+                section_idx: 0,
+            },
+            SectionSel {
+                node_id: id,
+                section_idx: 1,
+            },
+        ]);
+        for line in [
+            "section delete section=abc",
+            "section show section=abc",
+            "section split section=abc at=1",
+            "section resize w=10 h=10 section=abc",
+            "section move x=1 y=1 section=abc",
+            "section text \"hi\" section=abc",
+            "section edit section=abc",
+        ] {
+            assert_exec_err_contains(run(line, &mut doc), "is not a non-negative integer");
+        }
+    }
+
+    /// Same precedence for the selections that have no primary
+    /// node at all (`Multi`, `Edge`, `None`) — the parse error is
+    /// the actionable one.
+    #[test]
+    fn section_malformed_section_kv_outranks_no_node_selection() {
+        let mut doc = load_test_doc();
+        let ids: Vec<String> = doc.mindmap.nodes.keys().take(2).cloned().collect();
+        for selection in [SelectionState::Multi(ids), SelectionState::None] {
+            doc.selection = selection;
+            assert_exec_err_contains(
+                run("section delete section=abc", &mut doc),
+                "is not a non-negative integer",
+            );
+        }
+    }
+
+    /// A *well-formed* `section=K` must still lose to the
+    /// `MultiSection` single-target rejection — the hoisted parse
+    /// changes which error wins, not which selections are legal.
+    #[test]
+    fn section_well_formed_section_kv_still_rejects_multi_section() {
+        let (mut doc, id) = pinned_two_section_node();
+        doc.selection = SelectionState::MultiSection(vec![
+            SectionSel {
+                node_id: id.clone(),
+                section_idx: 0,
+            },
+            SectionSel {
+                node_id: id,
+                section_idx: 1,
+            },
+        ]);
+        assert_exec_err_contains(run("section delete section=0", &mut doc), "single-target only");
+    }
+
     /// Whole-PR review CRIT-1: a `section <typo>` against
     /// `Single(node)` (multi-section) used to run
-    /// `resolve_section_idx` first, surfacing the
+    /// the per-section resolver first, surfacing the
     /// "node 'X' has N sections — pick one" error and making the
     /// typo masquerade as a selection problem. After the fix, the
     /// verb-match runs first → the user sees "unknown subverb" +
@@ -1584,7 +1625,7 @@ mod tests {
             node_id: id,
             section_idx: 1,
         });
-        assert_exec_err_contains(run("section text \"x\" runs=invalid", &mut doc), "not recognised");
+        assert_exec_err_contains(run("section text \"x\" runs=invalid", &mut doc), "not recognized");
     }
 
     #[test]
@@ -1704,7 +1745,7 @@ mod tests {
 
     /// Explicit `at=N` still works — pin the happy path post-
     /// requirement-tightening to match the old default
-    /// (empty-suffix) behaviour at the user's explicit choice.
+    /// (empty-suffix) behavior at the user's explicit choice.
     #[test]
     fn section_split_at_end_of_text_creates_empty_suffix() {
         let (mut doc, id) = pinned_two_section_node();
@@ -1924,7 +1965,7 @@ mod tests {
     /// `section move x=A y=B` (absolute) against MultiSection
     /// stays single-target — fan-out would collide every
     /// section at the same offset, which is never the intent.
-    /// The verb path falls through to `resolve_section_idx`
+    /// The verb path falls through to the shared resolver
     /// which rejects with the existing single-target message.
     #[test]
     fn section_move_absolute_form_on_multi_section_rejects_single_target() {

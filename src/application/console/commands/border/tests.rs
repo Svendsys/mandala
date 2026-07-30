@@ -93,8 +93,8 @@ fn border_preset_custom_with_glyph_field_skips_hint() {
     };
     let blob = join_lines(&lines);
     // The hint string identifies itself via "preset=custom" plus a
-    // catalogue of side / corner keys joined together. Confirm that
-    // *catalogue text* doesn't appear when at least one glyph
+    // catalog of side / corner keys joined together. Confirm that
+    // *catalog text* doesn't appear when at least one glyph
     // field is set — the preset-was-promoted note can still fire,
     // but the orientation hint shouldn't.
     assert!(
@@ -1349,4 +1349,102 @@ fn apply_border_field_to_selection_auto_promotes_preset_to_custom() {
          (kv-form back-compat — verb path errors instead, see \
          border_side_on_non_custom_preset_errors_with_hint)"
     );
+}
+
+// ─── P1-28 verb ↔ Action single-core pins ────────────────────────
+//
+// `Action::CycleBorderPreset` and `Action::ToggleBorderVisible`
+// used to re-derive the verb's body in
+// `dispatch/cross_dispatch/style.rs`. Both now call the mutation
+// cores below; these tests pin that the Action lands exactly where
+// the verb does, so a future edit to one can't quietly move the
+// other.
+
+#[test]
+fn cycle_core_and_verb_land_on_the_same_preset() {
+    let mut via_verb = fixture_doc();
+    let id = first_node_id(&via_verb);
+    via_verb.selection = SelectionState::Single(id.clone());
+    assert_exec_ok(run("border preset light", &mut via_verb));
+    assert_exec_ok(run("border preset cycle", &mut via_verb));
+
+    let mut via_action = fixture_doc();
+    via_action.selection = SelectionState::Single(id.clone());
+    assert_exec_ok(run("border preset light", &mut via_action));
+    assert!(super::cycle_border_preset_on_selection(&mut via_action));
+
+    assert_eq!(
+        via_verb
+            .mindmap
+            .nodes
+            .get(&id)
+            .and_then(|n| n.style.border.as_ref())
+            .map(|c| c.preset.as_str()),
+        via_action
+            .mindmap
+            .nodes
+            .get(&id)
+            .and_then(|n| n.style.border.as_ref())
+            .map(|c| c.preset.as_str()),
+    );
+}
+
+/// The cycle core samples the canvas default when the node has no
+/// per-node border — the same cascade `border preset cycle` uses.
+#[test]
+fn cycle_core_samples_the_canvas_default_when_the_node_has_none() {
+    let mut doc = fixture_doc();
+    let id = first_node_id(&doc);
+    doc.selection = SelectionState::Single(id.clone());
+    assert_exec_ok(run("canvas border preset double", &mut doc));
+    assert!(super::cycle_border_preset_on_selection(&mut doc));
+    assert_eq!(
+        doc.mindmap
+            .nodes
+            .get(&id)
+            .and_then(|n| n.style.border.as_ref())
+            .map(|c| c.preset.as_str()),
+        Some("rounded"),
+        "cycle must advance from the canvas default, not from 'light'"
+    );
+}
+
+/// A selection borders can't attach to leaves the model alone.
+#[test]
+fn cycle_core_is_a_no_op_without_a_border_applicable_selection() {
+    let mut doc = fixture_doc();
+    doc.selection = SelectionState::None;
+    assert!(!super::cycle_border_preset_on_selection(&mut doc));
+}
+
+#[test]
+fn toggle_core_and_verb_flip_the_same_nodes() {
+    let mut doc = fixture_doc();
+    let ids: Vec<String> = doc.mindmap.nodes.keys().take(2).cloned().collect();
+    doc.selection = SelectionState::Multi(ids.clone());
+    let before: Vec<bool> = ids
+        .iter()
+        .map(|id| doc.mindmap.nodes.get(id).unwrap().style.show_frame)
+        .collect();
+
+    let report = super::toggle_border_visible_on_selection(&mut doc)
+        .unwrap_or_else(|_| panic!("Multi node selection is border-applicable"));
+    assert_eq!(report.toggled, ids.len());
+    assert_eq!(report.now_on + report.now_off, report.toggled);
+    for (id, was) in ids.iter().zip(&before) {
+        assert_eq!(doc.mindmap.nodes.get(id).unwrap().style.show_frame, !was);
+    }
+
+    // The verb runs the same core, so it flips straight back.
+    assert_exec_ok(run("border toggle", &mut doc));
+    for (id, was) in ids.iter().zip(&before) {
+        assert_eq!(doc.mindmap.nodes.get(id).unwrap().style.show_frame, *was);
+    }
+}
+
+#[test]
+fn toggle_core_rejects_a_non_node_selection() {
+    let mut doc = fixture_doc();
+    doc.selection = SelectionState::None;
+    assert!(super::toggle_border_visible_on_selection(&mut doc).is_err());
 }
