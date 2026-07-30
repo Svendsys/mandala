@@ -44,6 +44,19 @@ pub const MAX_FALLBACK_LEN: usize = 20;
 /// duplicate variant.
 pub const ANY_VARIANT: &str = "Any";
 
+/// Variant names [`select_font_variants`] will not hand to a font,
+/// renaming the font with a numeric suffix instead.
+///
+/// - [`ANY_VARIANT`] is the sentinel the generated enum defines
+///   itself; a second `Any` would not compile.
+/// - `Self` is a Rust keyword, and the *only* one reachable here:
+///   every other keyword is lowercase, and [`capitalize_first`]
+///   uppercases the first character of every derived name. It is
+///   also one of the few keywords with no raw-identifier escape —
+///   `r#Self` is rejected — so a font named "self" can only be
+///   renamed or dropped, and renaming keeps the font.
+pub const RESERVED_VARIANTS: [&str; 2] = [ANY_VARIANT, "Self"];
+
 /// Text encoding of a raw OpenType `name`-table record.
 ///
 /// The `name` table stores one string per (platform, encoding,
@@ -135,6 +148,9 @@ pub fn ascii_font_name(decoded: &str) -> String {
 /// Return the extension's lowercase form when it names a font
 /// container we compile in, `None` otherwise. Case-insensitive, so
 /// `Foo.TTF` and `Foo.ttf` are the same kind of file.
+///
+/// Costs: one `String` allocation for the lowercased extension,
+/// then a linear scan of [`FONT_EXTENSIONS`] (two entries).
 pub fn is_font_extension(extension: &str) -> Option<String> {
     let lowered = extension.to_ascii_lowercase();
     FONT_EXTENSIONS.contains(&lowered.as_str()).then_some(lowered)
@@ -144,6 +160,10 @@ pub fn is_font_extension(extension: &str) -> Option<String> {
 /// collision between two files describing the same font: the TTF is
 /// preferred over the OTF, matching the historical behavior of the
 /// scan. An unknown extension ranks last.
+///
+/// Costs: no allocation; a linear scan of [`FONT_EXTENSIONS`] (two
+/// entries). `extension` is expected already lowercased by
+/// [`is_font_extension`].
 pub fn extension_rank(extension: &str) -> usize {
     FONT_EXTENSIONS
         .iter()
@@ -157,8 +177,19 @@ pub fn extension_rank(extension: &str) -> usize {
 /// Font hosts ship the same face as both a TTF and an OTF with the
 /// same stem prefix and different random suffixes
 /// (`AppleTea-jELql.otf` / `AppleTea-z8R1a.ttf`). Both describe one
-/// font, so only one becomes an `AppFont` variant; this key is what
-/// groups them.
+/// font, and this key is what brings the pair together.
+///
+/// **It is a coarse key, not a statement that two files are the
+/// same face.** `NotoSerifTibetan-Bold.ttf` and
+/// `NotoSerifTibetan-Regular.ttf` — the `Family-Style.ttf` shape
+/// Google Fonts ships, and four fonts in this tree already use —
+/// share a key and are two different faces. So this key alone must
+/// never decide that a file is redundant; [`select_font_variants`]
+/// pairs it with the derived variant name and only collapses files
+/// that agree on *both*. Grouping on the key alone silently deleted
+/// a live variant the moment a second style landed beside it.
+///
+/// Costs: one `String` allocation for the lowercased prefix.
 pub fn family_key(file_stem: &str) -> String {
     file_stem
         .split_once('-')
@@ -171,6 +202,8 @@ pub fn family_key(file_stem: &str) -> String {
 /// Deliberately *not* a lowercasing pass over the tail: font names
 /// carry meaningful internal capitalization (`GalatiaSIL`,
 /// `RCRocket`, `NIGHTCROW`) that a naive title-case would destroy.
+///
+/// Costs: one `String` allocation, one pass over `word`.
 pub fn capitalize_first(word: &str) -> String {
     let mut chars = word.chars();
     match chars.next() {
@@ -186,6 +219,14 @@ pub fn capitalize_first(word: &str) -> String {
 /// in the tree do (`212 Keyboard`, `2Peas Hearts Delight`).
 /// Rotating rather than dropping keeps the digits — they are part
 /// of the font's identity — while producing a legal variant name.
+///
+/// Rotation exposes a character that was in the *middle* of the
+/// name, so callers capitalize *after* rotating, never before:
+/// `8bit Wonder` rotates to `bitWonder8`, and only a following
+/// [`capitalize_first`] makes it the `BitWonder8` that CamelCase
+/// requires.
+///
+/// Costs: one `String` allocation, one pass over `name`.
 pub fn rotate_leading_digits(name: &str) -> String {
     let split = name.find(|ch: char| !ch.is_ascii_digit()).unwrap_or(name.len());
     if split == 0 {
@@ -206,10 +247,17 @@ pub fn rotate_leading_digits(name: &str) -> String {
 /// single spaces — so that the "which characters survive" decision
 /// lives in exactly one place.
 ///
-/// Costs: two `String` allocations, one pass per word.
+/// The final [`capitalize_first`] runs *after* the rotation, not
+/// before: rotating `8bit Wonder` promotes the `b` of `bit` — a
+/// character that was never word-initial — to the front, and
+/// without the second pass the result is `bitWonder8`, which rustc
+/// flags as `variant should have an upper camel case name`.
+///
+/// Costs: three `String` allocations, one pass per word plus two
+/// passes over the joined name.
 pub fn camel_case(ascii_name: &str) -> Option<String> {
     let joined: String = ascii_name.split_whitespace().map(capitalize_first).collect();
-    let rotated = rotate_leading_digits(&joined);
+    let rotated = capitalize_first(&rotate_leading_digits(&joined));
     if rotated.is_empty() || rotated.chars().all(|ch| ch.is_ascii_digit()) {
         return None;
     }
@@ -231,8 +279,11 @@ pub fn camel_case(ascii_name: &str) -> Option<String> {
 /// - otherwise the tokens are capitalized and joined while the
 ///   result fits [`MAX_FALLBACK_LEN`].
 ///
-/// Either way the result is capped at [`MAX_FALLBACK_LEN`] and has
-/// its leading digits rotated by [`rotate_leading_digits`].
+/// Either way the result is capped at [`MAX_FALLBACK_LEN`], has its
+/// leading digits rotated by [`rotate_leading_digits`], and is
+/// capitalized once more afterwards — for the reason spelled out on
+/// [`camel_case`], so both derivation paths produce the same shape
+/// of identifier.
 ///
 /// Takes the *stem*, not the file name: sanitizing `1234.ttf` would
 /// otherwise yield the variant name `ttf`.
@@ -240,6 +291,9 @@ pub fn camel_case(ascii_name: &str) -> Option<String> {
 /// Returns an empty string when the stem yields no legal
 /// identifier — the caller (the build script) warns and skips the
 /// file rather than emitting source that will not compile.
+///
+/// Costs: one `Vec` of per-token `String`s plus a few `String`
+/// allocations for the joined result. Runs once per font file.
 pub fn fallback_sanitize(file_stem: &str) -> String {
     let tokens: Vec<String> = file_stem
         .split(|ch: char| ch.is_whitespace() || ch == '-' || ch == '_')
@@ -280,7 +334,7 @@ pub fn fallback_sanitize(file_stem: &str) -> String {
         }
     }
 
-    let rotated = rotate_leading_digits(&out);
+    let rotated = capitalize_first(&rotate_leading_digits(&out));
     if rotated.chars().all(|ch| ch.is_ascii_digit()) {
         // All-digit stems ("2000.ttf") cannot become an identifier.
         return String::new();
@@ -298,6 +352,10 @@ pub fn fallback_sanitize(file_stem: &str) -> String {
 /// takes the first this accepts, so a font that carries a usable
 /// name anywhere in its table is named from it rather than from its
 /// file name.
+///
+/// Costs: a full [`ascii_font_name`] + [`camel_case`] derivation,
+/// whose result is discarded. Runs once per `FULL_NAME` record, so
+/// a handful of times per font file.
 pub fn is_usable_font_name(decoded: &str) -> bool {
     camel_case(&ascii_font_name(decoded)).is_some()
 }
@@ -309,6 +367,13 @@ pub fn is_usable_font_name(decoded: &str) -> bool {
 /// [`decode_name_record`]) or `None` when the file has no readable
 /// one. An empty return means neither source yielded a legal
 /// identifier.
+///
+/// The returned name is not yet guaranteed unique or available —
+/// [`select_font_variants`] owns collisions and the
+/// [`RESERVED_VARIANTS`] check.
+///
+/// Costs: one [`ascii_font_name`] + [`camel_case`] pass, or one
+/// [`fallback_sanitize`] pass. Runs once per font file.
 pub fn variant_name(font_full_name: Option<&str>, file_stem: &str) -> String {
     font_full_name
         .map(ascii_font_name)
@@ -354,6 +419,10 @@ impl FontCandidate {
     /// empty when neither the name table nor the stem yields a legal
     /// identifier; [`select_font_variants`] skips those with a
     /// warning.
+    ///
+    /// Costs: takes ownership of the two paths, and allocates the
+    /// derived variant name, display name, and family key. Runs
+    /// once per font file during the build script's walk.
     pub fn new(
         absolute_path: String,
         relative_path: String,
@@ -378,9 +447,16 @@ impl FontCandidate {
     }
 
     /// Collision-preference key: TTF before OTF, then the
-    /// lexicographically smallest relative path. Total over any set
-    /// of distinct files, which is what makes selection independent
-    /// of directory-walk order.
+    /// lexicographically smallest relative path.
+    ///
+    /// Total over any set of candidates with **distinct relative
+    /// paths**, which is what makes selection independent of
+    /// directory-walk order. Two candidates sharing a relative path
+    /// compare equal and their relative order would be decided by
+    /// the caller's sort — not reachable from a filesystem walk,
+    /// which yields each path once, but the guarantee is scoped to
+    /// what the key actually distinguishes rather than to "any set
+    /// of distinct files".
     fn preference(&self) -> (usize, &str) {
         (extension_rank(&self.extension), self.relative_path.as_str())
     }
@@ -409,18 +485,41 @@ pub struct FontSelection {
 /// 1. **Unnamable files are dropped** with a warning — a file whose
 ///    name table and stem both yield nothing would otherwise emit an
 ///    empty variant and fail the crate build.
-/// 2. **One variant per family.** Font hosts ship the same face as
-///    both `.ttf` and `.otf`; [`family_key`] groups them and
-///    `FontCandidate::preference` picks the survivor. Silent —
-///    this is the expected shape of the tree, not a problem.
+/// 2. **Redundant containers are collapsed.** Font hosts ship one
+///    face as both `.ttf` and `.otf`, and `FontCandidate::preference`
+///    picks which of the pair is embedded. This is the only pass
+///    that discards a font, so its key is deliberately narrow:
+///    candidates collapse only when they agree on *both*
+///    [`family_key`] **and** the derived variant name — that is,
+///    only when keeping both could not produce two distinguishable
+///    variants anyway. Silent, because it is the expected shape of
+///    the tree rather than a problem.
+///
+///    Grouping on [`family_key`] alone is what the previous
+///    revision did, and it was wrong in a way that lost data:
+///    `Family-Regular.ttf` and `Family-Bold.ttf` share a key and
+///    are two faces, so dropping a font a **new file caused to be
+///    dropped** could silently delete an `AppFont` variant that
+///    code elsewhere still referenced, breaking the build with a
+///    diagnostic that named an unrelated font. Two styles of one
+///    family now both survive and get their own variants.
 /// 3. **Distinct fonts that derive the same name are renamed**, not
 ///    dropped: the preferred one keeps the bare name and the rest
 ///    take the first free `Name2`, `Name3`, … suffix, each with a
 ///    warning. Dropping them would break the documented "drop a
 ///    font file in and the variant appears" workflow. The
-///    [`ANY_VARIANT`] sentinel is reserved up front, so a font
-///    genuinely named "Any" is renamed rather than colliding with
-///    it.
+///    [`RESERVED_VARIANTS`] names are taken up front, so a font
+///    that derives `Any` or `Self` is renamed rather than emitting
+///    an enum that does not compile.
+///
+///    Suffixes are assigned in variant order and skip names already
+///    spoken for, so a suffixed name can displace a font that
+///    legitimately derives it: two fonts deriving `Regal` plus one
+///    deriving `Regal 2` emit `Regal`, `Regal2`, `Regal22`, with
+///    the genuine `Regal 2` pushed to `Regal22` if it sorts last.
+///    Deterministic and warned about, which is what matters here;
+///    picking a "better" claimant would mean ranking a derived name
+///    against a generated one, and there is no principled order.
 ///
 /// Costs: O(n log n) in the number of font files, a handful of
 /// `String` clones per file. Runs once per build-script execution.
@@ -443,25 +542,29 @@ pub fn select_font_variants(candidates: Vec<FontCandidate>) -> FontSelection {
     // though the walk that produced them is not.
     selection.warnings.sort();
 
-    let mut by_family: std::collections::BTreeMap<String, FontCandidate> = std::collections::BTreeMap::new();
+    // Keyed on (family, derived name) rather than family alone: see
+    // pass 2 above. Collapsing on the family alone deletes a face.
+    let mut by_face: std::collections::BTreeMap<(String, String), FontCandidate> =
+        std::collections::BTreeMap::new();
     for candidate in named {
-        match by_family.get(&candidate.family_key) {
+        let key = (candidate.family_key.clone(), candidate.variant.clone());
+        match by_face.get(&key) {
             Some(incumbent) if incumbent.preference() <= candidate.preference() => {}
             _ => {
-                by_family.insert(candidate.family_key.clone(), candidate);
+                by_face.insert(key, candidate);
             }
         }
     }
 
-    let mut survivors: Vec<FontCandidate> = by_family.into_values().collect();
+    let mut survivors: Vec<FontCandidate> = by_face.into_values().collect();
     survivors.sort_by(|left, right| {
         left.variant
             .cmp(&right.variant)
             .then_with(|| left.preference().cmp(&right.preference()))
     });
 
-    let mut taken: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    taken.insert(ANY_VARIANT.to_string());
+    let mut taken: std::collections::BTreeSet<String> =
+        RESERVED_VARIANTS.iter().map(|name| name.to_string()).collect();
     for candidate in survivors.iter_mut() {
         if taken.insert(candidate.variant.clone()) {
             continue;
@@ -475,10 +578,14 @@ pub fn select_font_variants(candidates: Vec<FontCandidate>) -> FontSelection {
             }
             ordinal += 1;
         };
+        let reason = if RESERVED_VARIANTS.contains(&base.as_str()) {
+            "is reserved"
+        } else {
+            "is already taken"
+        };
         selection.warnings.push(format!(
-            "font '{}' derives the variant name '{}', which is already taken; emitting it as \
-             '{}' instead",
-            candidate.relative_path, base, renamed
+            "font '{}' derives the variant name '{}', which {}; emitting it as '{}' instead",
+            candidate.relative_path, base, reason, renamed
         ));
         candidate.variant = renamed;
     }

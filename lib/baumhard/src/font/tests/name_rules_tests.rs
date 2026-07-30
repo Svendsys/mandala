@@ -146,6 +146,9 @@ fn test_camel_case_joins_and_rotates_digits() {
 /// rotations below are live in the tree today (`212 Keyboard`,
 /// `2Peas Hearts Delight`), so a regression here renames real
 /// variants.
+///
+/// See [`do_camel_case_capitalizes_after_rotating`] for the case
+/// where rotation exposes a character that was not word-initial.
 pub fn do_camel_case_joins_and_rotates_digits() {
     assert_eq!(
         camel_case("Alice In Wonderland").as_deref(),
@@ -160,6 +163,38 @@ pub fn do_camel_case_joins_and_rotates_digits() {
         camel_case("picto people Regular").as_deref(),
         Some("PictoPeopleRegular")
     );
+}
+
+#[test]
+fn test_camel_case_capitalizes_after_rotating() {
+    do_camel_case_capitalizes_after_rotating();
+}
+
+/// Rotation can promote a character that was in the middle of a
+/// word, so the capitalization pass has to run *after* it. Every
+/// name here has a leading digit run followed by a lowercase letter
+/// — `8bit Wonder` joins to `8bitWonder`, and rotating alone leaves
+/// `bitWonder8`, which rustc rejects with `variant should have an
+/// upper camel case name`. Asserted as a property as well as by
+/// example, because the failure is a lowercase first character and
+/// nothing else about the name looks wrong.
+pub fn do_camel_case_capitalizes_after_rotating() {
+    assert_eq!(camel_case("8bit Wonder").as_deref(), Some("BitWonder8"));
+    assert_eq!(camel_case("3d Blocks").as_deref(), Some("DBlocks3"));
+    assert_eq!(camel_case("1st Place").as_deref(), Some("StPlace1"));
+    assert_eq!(camel_case("2nd").as_deref(), Some("Nd2"));
+    // The stem path rotates too, and owes the same guarantee.
+    assert_eq!(fallback_sanitize("1abcd"), "Abcd1");
+    assert_eq!(fallback_sanitize("8bit-wonder"), "BitWonder8");
+
+    for name in ["8bit Wonder", "3d Blocks", "1st Place", "212 Keyboard"] {
+        let variant = camel_case(name).expect("every sample yields a variant name");
+        let first = variant.chars().next().expect("a non-empty variant name");
+        assert!(
+            first.is_ascii_uppercase(),
+            "'{name}' derived '{variant}', which does not start with an uppercase letter"
+        );
+    }
 }
 
 #[test]
@@ -298,9 +333,14 @@ fn test_family_key_groups_container_pairs() {
 
 /// Font hosts ship one face as both `.ttf` and `.otf` with different
 /// random suffixes. The stem prefix up to the first `-`, lowercased,
-/// is what groups the pair into a single `AppFont` variant — and
-/// what keeps `Norse` and `NorseBold` apart, since they are two
-/// faces, not two containers.
+/// is what brings the pair together — and what keeps `Norse` and
+/// `NorseBold` apart, since the style is part of the stem prefix
+/// there rather than after the dash.
+///
+/// The last pair is the key's blind spot, and the reason
+/// [`select_font_variants`] never collapses on it alone: two styles
+/// written as `Family-Style` share a key while being two different
+/// faces.
 pub fn do_family_key_groups_container_pairs() {
     assert_eq!(family_key("AppleTea-jELql"), "appletea");
     assert_eq!(family_key("AppleTea-z8R1a"), "appletea");
@@ -308,6 +348,11 @@ pub fn do_family_key_groups_container_pairs() {
     assert_eq!(family_key("TreeRoot-ZVgOl"), "treeroot");
     assert_ne!(family_key("Norse-KaWl"), family_key("NorseBold-2Kge"));
     assert_eq!(family_key("Novem"), "novem");
+    assert_eq!(
+        family_key("NotoSerifTibetan-Bold"),
+        family_key("NotoSerifTibetan-Regular"),
+        "the key cannot tell two styles apart; the selection pass must not rely on it alone"
+    );
 }
 
 /// The five-file sample the selection tests share: two containers of
@@ -377,11 +422,12 @@ fn test_select_font_variants_prefers_ttf_container() {
     do_select_font_variants_prefers_ttf_container();
 }
 
-/// `AppleTea` ships as both `.otf` and `.ttf`. One face, so one
-/// variant — and the TTF is the one embedded, matching the
-/// preference the scan has always had. Silent by design: this is the
-/// expected shape of the font tree, not a problem worth a build
-/// warning.
+/// `AppleTea` ships as both `.otf` and `.ttf` under one family key
+/// *and* derives the same variant name from both, which is what
+/// makes the pair redundant. One face, so one variant — and the TTF
+/// is the one embedded, matching the preference the scan has always
+/// had. Silent by design: this is the expected shape of the font
+/// tree, not a problem worth a build warning.
 pub fn do_select_font_variants_prefers_ttf_container() {
     let selection = select_font_variants(scrambled_sample());
     let apple_tea = selection
@@ -409,6 +455,47 @@ pub fn do_select_font_variants_breaks_ties_by_path() {
     ]);
     assert_eq!(selection.fonts.len(), 1);
     assert_eq!(selection.fonts[0].relative_path, "regal-font/Regal-aaaa.ttf");
+}
+
+#[test]
+fn test_select_font_variants_keeps_distinct_styles_of_one_family() {
+    do_select_font_variants_keeps_distinct_styles_of_one_family();
+}
+
+/// The `Family-Style.ttf` shape — what Google Fonts ships and what
+/// four fonts in this tree already use — puts two *different faces*
+/// under one [`family_key`]. Collapsing on the key alone made
+/// dropping the second one look like ordinary container dedup: add
+/// `NotoSerifTibetan-Bold.ttf` beside the existing Regular and the
+/// `NotoSerifTibetanRegular` variant vanished, taking twelve call
+/// sites' worth of compilation with it, and the only build
+/// diagnostic named an unrelated font.
+///
+/// Both styles must survive with their own variants, and silently:
+/// two faces that derive two names are not a collision, so there is
+/// nothing to warn about. The container pair in the same input still
+/// collapses, which is the distinction the pass turns on.
+pub fn do_select_font_variants_keeps_distinct_styles_of_one_family() {
+    let selection = select_font_variants(vec![
+        candidate("noto-font/NotoSerifTibetan-Bold.ttf", Some("Noto Serif Tibetan Bold")),
+        candidate(
+            "noto-font/NotoSerifTibetan-Regular.ttf",
+            Some("Noto Serif Tibetan Regular"),
+        ),
+        candidate("a-apple-tea-font/AppleTea-jELql.otf", Some("Apple Tea")),
+        candidate("a-apple-tea-font/AppleTea-z8R1a.ttf", Some("Apple Tea")),
+    ]);
+    let names: Vec<&str> = selection.fonts.iter().map(|font| font.variant.as_str()).collect();
+    assert_eq!(
+        names,
+        ["AppleTea", "NotoSerifTibetanBold", "NotoSerifTibetanRegular"],
+        "two styles of one family are two faces; only the container pair is redundant"
+    );
+    assert!(
+        selection.warnings.is_empty(),
+        "distinct names are not a collision: {:?}",
+        selection.warnings
+    );
 }
 
 #[test]
@@ -456,6 +543,80 @@ pub fn do_select_font_variants_reserves_the_any_sentinel() {
     assert_eq!(selection.fonts.len(), 1);
     assert_eq!(selection.fonts[0].variant, format!("{ANY_VARIANT}2"));
     assert_eq!(selection.warnings.len(), 1);
+    assert!(
+        selection.warnings[0].contains("is reserved"),
+        "the warning should say why the name was unavailable: {}",
+        selection.warnings[0]
+    );
+}
+
+#[test]
+fn test_select_font_variants_reserves_the_self_keyword() {
+    do_select_font_variants_reserves_the_self_keyword();
+}
+
+/// `Self` is the one Rust keyword this derivation can produce:
+/// every other keyword is lowercase and [`capitalize_first`]
+/// uppercases the first character, so `self` — from a name table or
+/// from a file stem — arrives as `Self`. `enum AppFont { Any, Self
+/// }` does not parse, and `Self` is not expressible as a raw
+/// identifier either, so the name has to be refused somewhere.
+///
+/// It is refused here rather than in [`camel_case`], so the font is
+/// renamed and still compiled in; skipping the file would lose it
+/// over a name clash it did not choose. Every route to the name is
+/// covered below, because the two derivation paths reject
+/// separately.
+pub fn do_select_font_variants_reserves_the_self_keyword() {
+    for (path, full_name) in [
+        ("self-font/Self-1234.ttf", Some("Self")),
+        ("self-font/self-1234.ttf", Some("self")),
+        ("self-font/self.ttf", None),
+        ("self-font/Self.ttf", None),
+    ] {
+        let selection = select_font_variants(vec![candidate(path, full_name)]);
+        assert_eq!(selection.fonts.len(), 1, "'{path}' should still be compiled in");
+        assert_eq!(
+            selection.fonts[0].variant, "Self2",
+            "'{path}' must not emit the Rust keyword 'Self' as a variant"
+        );
+        assert_eq!(selection.warnings.len(), 1);
+        assert!(selection.warnings[0].contains("is reserved"));
+    }
+}
+
+#[test]
+fn test_no_variant_is_a_rust_keyword() {
+    do_no_variant_is_a_rust_keyword();
+}
+
+/// Belt and braces over the real generated enum: no compiled-in
+/// font is named with a Rust keyword. The build would fail to parse
+/// if one were, but the failure would point at generated source in
+/// `OUT_DIR` with no hint of which font caused it, so the property
+/// is asserted where it can be read.
+///
+/// The whole strict-and-reserved list is checked, not just `Self`.
+/// Only `Self` is reachable while [`capitalize_first`] uppercases
+/// the first character of every derived name — the rest are here so
+/// that relaxing that (a font name arriving pre-lowercased, say)
+/// fails as a named assertion rather than as a parse error in
+/// generated source.
+pub fn do_no_variant_is_a_rust_keyword() {
+    const KEYWORDS: [&str; 51] = [
+        "as", "break", "const", "continue", "crate", "dyn", "else", "enum", "extern", "false", "fn",
+        "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref",
+        "return", "Self", "self", "static", "struct", "super", "trait", "true", "type", "unsafe",
+        "use", "where", "while", "async", "await", "abstract", "become", "box", "do", "final",
+        "macro", "override", "priv", "try", "typeof", "unsized", "virtual", "yield",
+    ];
+    for (app_font, _) in crate::font::fonts::FONT_DATA.iter() {
+        let name = format!("{app_font:?}");
+        assert!(
+            !KEYWORDS.contains(&name.as_str()),
+            "AppFont::{name} is a Rust keyword"
+        );
+    }
 }
 
 #[test]
