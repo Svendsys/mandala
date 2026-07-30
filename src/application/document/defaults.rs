@@ -91,17 +91,9 @@ pub(in crate::application) fn default_parent_child_edge(from_id: &str, to_id: &s
 /// `position` and marked as a root (`parent_id = None`).
 pub(in crate::application) fn default_orphan_node(id: &str, position: Vec2) -> MindNode {
     let text = "New node".to_string();
-    let text_runs = vec![TextRun {
-        start: 0,
-        end: baumhard::util::grapheme_chad::count_grapheme_clusters(&text),
-        bold: false,
-        italic: false,
-        underline: false,
-        font: "LiberationSans".to_string(),
-        size_pt: 24,
-        color: "#ffffff".to_string(),
-        hyperlink: None,
-    }];
+    let text_runs = vec![default_text_run(
+        baumhard::util::grapheme_chad::count_grapheme_clusters(&text),
+    )];
     MindNode {
         id: id.to_string(),
         parent_id: None,

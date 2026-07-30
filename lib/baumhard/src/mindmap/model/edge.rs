@@ -153,6 +153,89 @@ impl MindEdge {
             None => edge_window,
         }
     }
+
+    /// This edge's **body** colour, as authored — the raw string
+    /// before `var(--name)` theme resolution.
+    ///
+    /// Cascade: the `color` of the connection config
+    /// [`GlyphConnectionConfig::resolved_for`] selects
+    /// (`edge.glyph_connection` → `canvas.default_connection` →
+    /// hardcoded default) → `edge.color`.
+    ///
+    /// **Struct-level, not field-level.** Once an edge has forked
+    /// a `glyph_connection` of its own, the canvas default drops
+    /// out of the cascade entirely, even for fields the fork left
+    /// at `None` — the "computed style copy" rule the document
+    /// mutation layer establishes when it forks. Resolving
+    /// `color` field-by-field would silently re-attach a forked
+    /// edge to the canvas default. The hardcoded default's
+    /// `color` is `None`, so the chain bottoms out at
+    /// `edge.color`, which the model always carries: the result
+    /// is never empty and is always safe to hand to
+    /// `resolve_var`.
+    ///
+    /// Single source of truth for the body colour cascade — the
+    /// sibling of [`Self::zoom_window`] on the colour axis.
+    /// Scene-builder connection emission and the document layer's
+    /// clipboard resolver both read through here, so a future
+    /// third tier is one edit. O(1), no allocation.
+    pub fn body_color<'a>(&'a self, canvas: &'a Canvas) -> &'a str {
+        self.glyph_connection
+            .as_ref()
+            .or(canvas.default_connection.as_ref())
+            .and_then(|cfg| cfg.color.as_deref())
+            .unwrap_or(self.color.as_str())
+    }
+
+    /// This edge's **label** colour, as authored (line-mode
+    /// edges). Cascade: `label_config.color` → the body cascade
+    /// ([`Self::body_color`]).
+    ///
+    /// The label channel's own override wins; absent an override
+    /// the label follows the edge body so the two stay visually
+    /// consistent unless deliberately detached. O(1).
+    pub fn label_color<'a>(&'a self, canvas: &'a Canvas) -> &'a str {
+        self.label_config
+            .as_ref()
+            .and_then(|c| c.color.as_deref())
+            .unwrap_or_else(|| self.body_color(canvas))
+    }
+
+    /// One portal endpoint's **icon** colour, as authored.
+    /// Cascade: `endpoint.color` → the body cascade
+    /// ([`Self::body_color`]).
+    ///
+    /// `endpoint` is the state for the side being drawn — resolve
+    /// it with [`portal_endpoint_state`] first. `None` means the
+    /// endpoint carries no overrides and inherits the body colour
+    /// verbatim. O(1).
+    pub fn portal_endpoint_color<'a>(
+        &'a self,
+        canvas: &'a Canvas,
+        endpoint: Option<&'a PortalEndpointState>,
+    ) -> &'a str {
+        endpoint
+            .and_then(|s| s.color.as_deref())
+            .unwrap_or_else(|| self.body_color(canvas))
+    }
+
+    /// One portal endpoint's **text** colour, as authored.
+    /// Cascade: `endpoint.text_color` → the endpoint icon cascade
+    /// ([`Self::portal_endpoint_color`]).
+    ///
+    /// The two channels are independent by design so a coloured
+    /// badge can carry a differently-coloured annotation beside
+    /// it; falling through to the icon colour keeps a
+    /// half-styled portal coherent. O(1).
+    pub fn portal_endpoint_text_color<'a>(
+        &'a self,
+        canvas: &'a Canvas,
+        endpoint: Option<&'a PortalEndpointState>,
+    ) -> &'a str {
+        endpoint
+            .and_then(|s| s.text_color.as_deref())
+            .unwrap_or_else(|| self.portal_endpoint_color(canvas, endpoint))
+    }
 }
 
 /// Per-endpoint overrides for a portal-mode edge's marker (the

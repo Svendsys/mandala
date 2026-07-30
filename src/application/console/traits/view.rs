@@ -10,6 +10,7 @@ use super::capabilities::{
 };
 use super::color_value::ColorValue;
 use super::outcome::{ClipboardContent, Outcome};
+use crate::application::document::defaults::default_text_run;
 use crate::application::document::{EdgeRef, MindMapDocument, SectionPayload, SelectionState};
 
 /// A mutable view into one selected component, holding the doc ref
@@ -751,15 +752,8 @@ fn cut_section_range(
         .first()
         .cloned()
         .unwrap_or_else(|| baumhard::mindmap::model::TextRun {
-            start: 0,
-            end: 0,
-            bold: false,
-            italic: false,
-            underline: false,
-            font: "LiberationSans".to_string(),
-            size_pt: 24,
             color: node.style.text_color.clone(),
-            hyperlink: None,
+            ..default_text_run(0)
         });
     baumhard::mindmap::model::text_run_ops::splice_range(
         &mut new_runs,
@@ -842,15 +836,8 @@ fn paste_section_range(
     .map(|idx| section.text_runs[idx].clone())
     .or_else(|| section.text_runs.first().cloned())
     .unwrap_or_else(|| baumhard::mindmap::model::TextRun {
-        start: 0,
-        end: 0,
-        bold: false,
-        italic: false,
-        underline: false,
-        font: "LiberationSans".to_string(),
-        size_pt: 24,
         color: node.style.text_color.clone(),
-        hyperlink: None,
+        ..default_text_run(0)
     });
     baumhard::mindmap::model::text_run_ops::splice_range(
         &mut new_runs,

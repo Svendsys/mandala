@@ -30,7 +30,6 @@
 
 use std::collections::{HashMap, HashSet};
 
-
 use glam::Vec2;
 
 use crate::font::metrics::monospace_advance;
@@ -335,8 +334,7 @@ pub(super) fn build_connection_elements(
             // The color we STORE in the cache is the resolved-but-unselected
             // color. Selection overrides are applied at read time above so
             // selection changes don't invalidate the cache.
-            let raw = config.color.as_deref().unwrap_or(edge.color.as_str());
-            resolve_var(raw, vars).to_string()
+            resolve_var(edge.body_color(&map.canvas), vars).to_string()
         };
         let color = if let Some(p) = preview_for_this_edge {
             resolve_var(p, vars).to_string()

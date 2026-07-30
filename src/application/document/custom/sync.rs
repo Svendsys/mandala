@@ -26,12 +26,26 @@ use super::super::MindMapDocument;
 /// Default text-run colour when neither the tree-side region nor
 /// a prior model run carries one. Matches the renderer's
 /// fall-through-to-`#ffffff` floor on a node with no explicit
-/// `style.text_color` override.
+/// `style.text_color` override — the same white
+/// [`crate::application::document::defaults::DEFAULT_RUN_COLOR`]
+/// gives a freshly-authored run.
 pub(super) const DEFAULT_TEXT_RUN_COLOR: &str = "#ffffff";
 
-/// Default font-size used by the renderer when no run pins one.
-/// Mirrors `cosmic_text`'s 14pt fallback used at scene-build time.
-pub(super) const DEFAULT_TEXT_RUN_SIZE_PT: u32 = 14;
+/// Default font-size the *renderer* uses when a section pins none,
+/// pinned to the forward path's
+/// [`baumhard::mindmap::tree_builder::DEFAULT_SECTION_FONT_SCALE`]
+/// so the reverse converter's delta arithmetic can never drift
+/// from the scale the forward converter actually wrote.
+///
+/// Deliberately **not**
+/// [`crate::application::document::defaults::DEFAULT_RUN_SIZE_PT`]
+/// (24): that is the *authoring* default for a run the user
+/// creates, while this is the size a run-less section is already
+/// being rendered at. Answering "what size is this section on
+/// screen right now?" with the authoring default would make every
+/// `grow-font` on a run-less section jump 10pt.
+pub(super) const DEFAULT_TEXT_RUN_SIZE_PT: u32 =
+    baumhard::mindmap::tree_builder::DEFAULT_SECTION_FONT_SCALE as u32;
 
 /// Floor the reverse converter clamps `size_pt` to. A
 /// `shrink-font` mutation drives tree-side `scale` toward (and

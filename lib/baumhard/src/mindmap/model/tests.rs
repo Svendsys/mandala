@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Mindmap-model tests: ancestry, connection config resolution, label
-//! position + display_mode round-trips. Kept in a sibling file so
+//! position + display_mode round-trips, and the edge colour cascade.
+//! Kept in a sibling file so
 //! the `mod.rs` itself reads purely as the public surface.
 
 use super::*;
 use crate::mindmap::loader;
 use crate::mindmap::test_helpers::{
-    blank_canvas, synthetic_map, synthetic_node_full, testament_map_path as test_map_path,
+    blank_canvas, synthetic_edge, synthetic_map, synthetic_node_full, synthetic_portal_edge,
+    testament_map_path as test_map_path,
 };
 use crate::util::geometry::is_positive_finite;
 
@@ -1096,4 +1098,144 @@ fn fold_hidden_set_traverses_orphan_component() {
     let hidden = map.fold_hidden_set();
     assert!(hidden.contains("0.0"), "child of folded orphan should be hidden");
     assert!(!hidden.contains("0"), "folded orphan itself is visible");
+}
+
+// ── Edge colour cascade (`MindEdge::*_color`) ──────────────────
+//
+// The three channels' precedence used to be re-typed at six call
+// sites across two crates. These pin the cascade the helpers now
+// own; the scene builder and the document's clipboard resolvers
+// read through them.
+
+/// With no overrides anywhere, every channel bottoms out at
+/// `edge.color` — the field the model always carries, so a
+/// resolver can never hand back an empty string.
+#[test]
+fn test_edge_colors_bottom_out_at_edge_color() {
+    let edge = synthetic_edge("a", "b", "auto", "auto");
+    let canvas = blank_canvas();
+    assert_eq!(edge.body_color(&canvas), "#fff");
+    assert_eq!(edge.label_color(&canvas), "#fff");
+    assert_eq!(edge.portal_endpoint_color(&canvas, None), "#fff");
+    assert_eq!(edge.portal_endpoint_text_color(&canvas, None), "#fff");
+}
+
+/// The canvas default connection supplies the body colour for an
+/// edge that has not forked a `glyph_connection` of its own, and
+/// every downstream channel inherits it.
+#[test]
+fn test_edge_body_color_falls_back_to_canvas_default_connection() {
+    let edge = synthetic_edge("a", "b", "auto", "auto");
+    let mut canvas = blank_canvas();
+    canvas.default_connection = Some(GlyphConnectionConfig {
+        color: Some("#canvas".into()),
+        ..GlyphConnectionConfig::default()
+    });
+    assert_eq!(edge.body_color(&canvas), "#canvas");
+    assert_eq!(edge.label_color(&canvas), "#canvas");
+}
+
+/// **Struct-level, not field-level.** Once an edge forks a
+/// `glyph_connection`, the canvas default drops out of the
+/// cascade entirely — even for `color`, which the fork left at
+/// `None`. Resolving field-by-field would silently re-attach a
+/// forked edge to the canvas default; this is the regression
+/// guard for that.
+#[test]
+fn test_edge_body_color_ignores_canvas_default_once_forked() {
+    let mut edge = synthetic_edge("a", "b", "auto", "auto");
+    edge.glyph_connection = Some(GlyphConnectionConfig::default());
+    let mut canvas = blank_canvas();
+    canvas.default_connection = Some(GlyphConnectionConfig {
+        color: Some("#canvas".into()),
+        ..GlyphConnectionConfig::default()
+    });
+    assert_eq!(
+        edge.body_color(&canvas),
+        "#fff",
+        "a forked edge with color=None uses edge.color, not the canvas default"
+    );
+}
+
+/// A per-edge `glyph_connection.color` wins over both the canvas
+/// default and `edge.color`.
+#[test]
+fn test_edge_body_color_prefers_glyph_connection_override() {
+    let mut edge = synthetic_edge("a", "b", "auto", "auto");
+    edge.glyph_connection = Some(GlyphConnectionConfig {
+        color: Some("#body".into()),
+        ..GlyphConnectionConfig::default()
+    });
+    let mut canvas = blank_canvas();
+    canvas.default_connection = Some(GlyphConnectionConfig {
+        color: Some("#canvas".into()),
+        ..GlyphConnectionConfig::default()
+    });
+    assert_eq!(edge.body_color(&canvas), "#body");
+}
+
+/// The label channel detaches from the body when it authors its
+/// own colour, and follows it otherwise.
+#[test]
+fn test_edge_label_color_override_detaches_from_body() {
+    let mut edge = synthetic_edge("a", "b", "auto", "auto");
+    edge.glyph_connection = Some(GlyphConnectionConfig {
+        color: Some("#body".into()),
+        ..GlyphConnectionConfig::default()
+    });
+    let canvas = blank_canvas();
+    assert_eq!(edge.label_color(&canvas), "#body");
+    edge.label_config = Some(EdgeLabelConfig {
+        color: Some("#label".into()),
+        ..EdgeLabelConfig::default()
+    });
+    assert_eq!(edge.label_color(&canvas), "#label");
+    assert_eq!(edge.body_color(&canvas), "#body", "body is unaffected");
+}
+
+/// A portal endpoint's icon colour overrides the body cascade,
+/// and its text colour overrides the icon — the two portal
+/// channels are independent so a coloured badge can carry a
+/// differently-coloured annotation.
+#[test]
+fn test_portal_endpoint_color_channels_are_independent() {
+    let mut edge = synthetic_portal_edge("a", "b", "#edge");
+    let canvas = blank_canvas();
+    edge.portal_from = Some(PortalEndpointState {
+        color: Some("#icon".into()),
+        ..PortalEndpointState::default()
+    });
+    let from = portal_endpoint_state(&edge, "a");
+    assert_eq!(edge.portal_endpoint_color(&canvas, from), "#icon");
+    assert_eq!(
+        edge.portal_endpoint_text_color(&canvas, from),
+        "#icon",
+        "text with no override follows the icon"
+    );
+
+    edge.portal_from = Some(PortalEndpointState {
+        color: Some("#icon".into()),
+        text_color: Some("#text".into()),
+        ..PortalEndpointState::default()
+    });
+    let from = portal_endpoint_state(&edge, "a");
+    assert_eq!(edge.portal_endpoint_color(&canvas, from), "#icon");
+    assert_eq!(edge.portal_endpoint_text_color(&canvas, from), "#text");
+}
+
+/// An endpoint with no state at all inherits the body cascade on
+/// both channels, and one endpoint's override never leaks to the
+/// other side.
+#[test]
+fn test_portal_endpoint_color_does_not_leak_across_endpoints() {
+    let mut edge = synthetic_portal_edge("a", "b", "#edge");
+    let canvas = blank_canvas();
+    edge.portal_from = Some(PortalEndpointState {
+        color: Some("#icon".into()),
+        ..PortalEndpointState::default()
+    });
+    let to = portal_endpoint_state(&edge, "b");
+    assert!(to.is_none());
+    assert_eq!(edge.portal_endpoint_color(&canvas, to), "#edge");
+    assert_eq!(edge.portal_endpoint_text_color(&canvas, to), "#edge");
 }
