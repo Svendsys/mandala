@@ -409,7 +409,7 @@ fn shape_ink_height_with(
     buffer.shape_until_scroll(font_system, false);
     // For our use, "ink height" == the line_height that, when
     // used as the buffer's per-line stride, produces stacked
-    // glyphs that touch their neighbours without empty rows.
+    // glyphs that touch their neighbors without empty rows.
     // For box-drawing chars and other glyphs that fill their
     // em-box, this is `size_pt`. For glyphs with shorter ink,
     // we'd want less. cosmic-text doesn't expose glyph ink
@@ -423,10 +423,13 @@ fn shape_ink_height_with(
     // glyph and rely on the caller to use this value as the
     // per-line stride. Future refinement: use `swash::shape::Glyph`
     // bounds for a tighter measure.
-    for _run in buffer.layout_runs() {
-        return size_pt;
+    // A buffer that produced no layout run has nothing to measure —
+    // an empty or unshapeable grapheme — so it has no ink height.
+    if buffer.layout_runs().next().is_some() {
+        size_pt
+    } else {
+        0.0
     }
-    0.0
 }
 
 #[cfg(test)]
