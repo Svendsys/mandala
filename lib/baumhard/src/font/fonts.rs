@@ -135,10 +135,10 @@ static FAMILY_INDEX: OnceLock<Vec<(String, AppFont)>> = OnceLock::new();
 fn build_family_index() -> Vec<(String, AppFont)> {
     // Force `COMPILED_FONT_ID_MAP`'s lazy-static init **before** we
     // grab the `FONT_SYSTEM` read lock. `load_fonts()` (the lazy
-    // initialiser) needs `FONT_SYSTEM.write()`, and a same-thread
+    // initializer) needs `FONT_SYSTEM.write()`, and a same-thread
     // read-then-write deadlocks the worker. `init()` documents this
     // ordering at the top of the module and explicitly does both
-    // initialisations in the right order, but tests / call paths
+    // initializations in the right order, but tests / call paths
     // that reach `app_font_by_family` without going through
     // `init()` first (the cosmic-text tree builder, the inline text
     // editor, the console completion popup) would otherwise hit the
@@ -175,7 +175,7 @@ fn build_family_index() -> Vec<(String, AppFont)> {
             None => {
                 // The codebase owns the fontdb today (see `build.rs`
                 // and the comment at the top of this file), so any
-                // face we don't recognise comes from a future
+                // face we don't recognize comes from a future
                 // system-fonts loader or a test that registered
                 // fonts directly. Surface that at `debug` so it's
                 // observable without spamming `warn`.
@@ -217,7 +217,7 @@ pub fn loaded_families_iter() -> impl Iterator<Item = &'static str> {
         .map(|(name, _)| name.as_str())
 }
 
-/// Materialise [`loaded_families_iter`] as `Vec<String>` — kept for
+/// Materialize [`loaded_families_iter`] as `Vec<String>` — kept for
 /// callers that need an owned list (tests, future external API
 /// consumers). Allocates one `Vec<String>` per call.
 pub fn list_loaded_families() -> Vec<String> {
@@ -246,7 +246,7 @@ pub fn app_font_by_family(name: &str) -> Option<AppFont> {
 /// `FAMILY_INDEX`. Returns the *first* family name registered
 /// for the variant (alphabetical-by-name, matching
 /// `loaded_families_iter`'s order); when a single AppFont
-/// surfaces multiple aliases (localised names, postscript names),
+/// surfaces multiple aliases (localized names, postscript names),
 /// only the first is returned.
 ///
 /// Used by the post-mutation reverse converter in
@@ -254,7 +254,7 @@ pub fn app_font_by_family(name: &str) -> Option<AppFont> {
 /// `ColorFontRegion.font: Option<AppFont>` rolls back into the
 /// model's `TextRun.font: String` shape. `None` falls through to
 /// the empty string at that site, matching the pre-section
-/// behaviour for runs without a family pin.
+/// behavior for runs without a family pin.
 ///
 /// Costs: O(n) over `FAMILY_INDEX`, but `n` is the small set of
 /// compiled-in families (~30 today), so the scan is cheaper than
@@ -430,7 +430,7 @@ pub fn get_some_font() -> Source {
     return FONT_SOURCES.values().choose(&mut rng).unwrap().clone();
 }
 
-/// Opaque black. The default foreground colour for newly-built
+/// Opaque black. The default foreground color for newly-built
 /// `AttrsList`s.
 /// Ink bounding box of a shaped glyph string, measured at a specific
 /// font size. Sibling of the `measure_max_glyph_advance` scalar
@@ -635,14 +635,14 @@ impl TextBlockSize {
 /// `font` pins the cosmic-text [`Family`] so the measurement uses
 /// the same face the renderer will eventually shape with. Pass
 /// `None` to fall back to cosmic-text's default (typically a
-/// monospace) — historical behaviour, but a fragile floor for
+/// monospace) — historical behavior, but a fragile floor for
 /// nodes whose `TextRun.font` pins a wider display face. The pin
 /// follows the same `COMPILED_FONT_ID_MAP → face.families.first()`
 /// path [`measure_glyph_ink_bounds`] uses, so the two measurement
 /// primitives agree on which face name to pin.
 ///
 /// Costs: one scratch `Buffer`, one shaping pass, O(lines) fold
-/// over `layout_runs`. No rasterisation (no `SwashCache` required).
+/// over `layout_runs`. No rasterization (no `SwashCache` required).
 pub fn measure_text_block_unbounded(
     font_system: &mut cosmic_text::FontSystem,
     text: &str,

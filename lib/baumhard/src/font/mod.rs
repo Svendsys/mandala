@@ -13,8 +13,8 @@
 /// `Buffer::set_rich_text`).
 pub mod attrs;
 /// Float-RGBA ↔ `cosmic_text::Color` bridge — the boundary helpers
-/// every render path uses to hand cosmic-text a colour or read one
-/// back. Single source of byte↔float quantisation at the cosmic-text
+/// every render path uses to hand cosmic-text a color or read one
+/// back. Single source of byte↔float quantization at the cosmic-text
 /// wall.
 pub mod color;
 /// Compiled-in font table, shared `FONT_SYSTEM`, cosmic-text editor
@@ -22,13 +22,13 @@ pub mod color;
 pub mod fonts;
 /// Hex-string → `cosmic_text::Color` bridge — the single entry point
 /// renderer code uses to resolve a theme-variable hex into the
-/// cosmic-text colour type without importing `cosmic_text` itself.
+/// cosmic-text color type without importing `cosmic_text` itself.
 /// Routes through [`color::cosmic_color_from_rgba`] for the actual
-/// quantisation.
+/// quantization.
 pub mod hex;
 /// Font-metric approximations (`monospace_advance` + the underlying
 /// `MONOSPACE_ADVANCE_RATIO`) usable without a live `FontSystem`.
-/// Deprecated in favour of [`metric_cache::glyph_advance`] for any
+/// Deprecated in favor of [`metric_cache::glyph_advance`] for any
 /// caller that has an `AppFont` in scope — the cache returns the
 /// measured advance from cosmic-text and the ratio's static
 /// calibration drift goes away.
@@ -92,7 +92,7 @@ pub use cosmic_text::Align;
 /// to glyphon. Constructors are wrapped in [`buffer::create`] so the
 /// `Metrics::new(...)` boilerplate doesn't repeat at every callsite.
 pub use cosmic_text::Buffer;
-/// Packed-RGBA colour. See [`COLOR_WHITE`] / [`COLOR_BLACK`] for the
+/// Packed-RGBA color. See [`COLOR_WHITE`] / [`COLOR_BLACK`] for the
 /// common defaults the renderer used to write inline.
 pub use cosmic_text::Color;
 /// Long-lived font system (database + atlas). One per process;
@@ -111,7 +111,7 @@ pub use cosmic_text::SwashCache;
 
 /// Opaque white in cosmic-text's packed-RGBA representation. Used
 /// as the FPS-overlay default and the unbranded text-renderer
-/// fallback colour.
+/// fallback color.
 pub const COLOR_WHITE: Color = Color::rgba(255, 255, 255, 255);
 /// Opaque black in cosmic-text's packed-RGBA representation. Used
 /// as the universal fallback when a theme-variable lookup fails.

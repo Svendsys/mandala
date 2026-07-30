@@ -411,7 +411,7 @@ pub struct FontSelection {
 ///    empty variant and fail the crate build.
 /// 2. **One variant per family.** Font hosts ship the same face as
 ///    both `.ttf` and `.otf`; [`family_key`] groups them and
-///    [`FontCandidate::preference`] picks the survivor. Silent —
+///    `FontCandidate::preference` picks the survivor. Silent —
 ///    this is the expected shape of the tree, not a problem.
 /// 3. **Distinct fonts that derive the same name are renamed**, not
 ///    dropped: the preferred one keeps the bare name and the rest
