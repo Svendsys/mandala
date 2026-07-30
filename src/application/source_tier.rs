@@ -116,24 +116,6 @@ impl SourceTier {
 mod tests {
     use super::*;
 
-    /// The load-bearing pin: the ladder is `App < User < Map <
-    /// Inline` and nothing else. Both the mutation registry's
-    /// override order and the macro registry's slot array depend on
-    /// this exact sequence, and it used to be duplicated across two
-    /// enums with only a comment holding them together.
-    #[test]
-    fn test_tier_order_is_app_user_map_inline() {
-        assert_eq!(
-            SourceTier::ALL,
-            [
-                SourceTier::App,
-                SourceTier::User,
-                SourceTier::Map,
-                SourceTier::Inline
-            ],
-        );
-    }
-
     /// The user tier outranks the built-in tier — a user's
     /// `macros.json` / `mutations.json` entry overrides the bundled
     /// one with the same id, never the other way around. This is the
@@ -152,10 +134,24 @@ mod tests {
         assert!(SourceTier::Map < SourceTier::Inline);
     }
 
-    /// `Ord` and `index()` must agree. `Ord` is what precedence
-    /// comparisons use; `index()` is what the macro registry's slot
-    /// array uses. If they ever disagreed, a macro would resolve
-    /// from a different tier than `mutation help` reports.
+    /// The load-bearing pin on the ladder itself: `ALL` is in
+    /// ascending precedence, `index()` agrees with it position for
+    /// position, and `Ord` agrees with both.
+    ///
+    /// `Ord` is what precedence comparisons use; `index()` is what
+    /// the macro registry's slot array uses. If they ever disagreed,
+    /// a macro would resolve from a different tier than `mutation
+    /// help` reports.
+    ///
+    /// Note what this pins that a literal `assert_eq!(ALL, [App,
+    /// User, Map, Inline])` would not: because `index()` is a
+    /// hand-written exhaustive `match` and `Ord` is derived from the
+    /// *declaration* order, reordering the variants in the `enum`
+    /// turns this test red, whereas a literal spelled with the same
+    /// variant names would reorder along with it and stay green. The
+    /// first loop also proves `ALL` lists all four tiers exactly once
+    /// — four distinct indices across four slots leaves no room for a
+    /// duplicate or an omission.
     #[test]
     fn test_tier_ord_agrees_with_index() {
         for (i, tier) in SourceTier::ALL.iter().enumerate() {

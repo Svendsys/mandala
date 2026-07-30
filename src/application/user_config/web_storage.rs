@@ -53,7 +53,7 @@ pub fn load_web_layered<T>(
 /// Read a URL query parameter by name, percent-decoding the value.
 /// Returns `None` if `web_sys::window()`/location is missing, the
 /// query string is empty, the param is absent, or the decode fails.
-/// Recognises `?name=value` and `&name=value` (interior).
+/// Recognizes `?name=value` and `&name=value` (interior).
 ///
 /// Allocates the formatted prefix and the decoded `String` on the
 /// success path. O(n) over the query-string length.

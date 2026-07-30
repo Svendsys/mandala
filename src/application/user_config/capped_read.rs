@@ -41,11 +41,10 @@ mod tests {
     use super::*;
     use crate::application::user_config::MAX_USER_PAYLOAD_BYTES;
 
-    /// Unique scratch path per test so the suite's default
-    /// multi-threaded runner cannot have two tests fighting over one
-    /// filename.
+    use crate::application::user_config::scratch_path;
+
     fn scratch(name: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!("mandala_read_capped_{}", name))
+        scratch_path(&format!("read_capped_{}", name))
     }
 
     #[test]

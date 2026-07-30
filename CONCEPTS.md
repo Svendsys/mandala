@@ -2576,7 +2576,7 @@ variants (`OpenDocument`, `SaveDocumentAs`, `NewDocumentAt`) are
 `NativeOnly` and denylisted from non-User macro tiers per the
 privilege gate.
 
-### User-tier config loading — `check_cap`, `read_capped`, `ConfigLayer`
+### User-tier config loading — `check_cap`, `read_capped`, `load_layered`
 
 The three user-owned JSON files (`keybinds.json`,
 `mutations.json`, `macros.json`) are all found the same way, so
@@ -2598,14 +2598,23 @@ the finding is written once in
   `None` and the caller substitutes its defaults. Nothing here is
   platform-specific, so the precedence logic is unit-tested on
   native even for the browser's layers.
-- `web_storage::load_web_layered(label, param, key, parse)` names
-  the browser's two layers — `?<param>=<json>` then
-  `localStorage[key]` — once for all three web loaders.
+- Each target names its own layers exactly once, in the
+  composition wrapper that sits on the driver:
+  `desktop::load_desktop_layered(label, filename, explicit, parse)`
+  for the explicit CLI path before the XDG path, and
+  `web_storage::load_web_layered(label, param, key, parse)` for
+  `?<param>=<json>` before `localStorage[key]`. All six platform
+  loaders (three configs × two targets) are now a filename and a
+  parser.
+- The one deliberate asymmetry lives in the desktop wrapper: only
+  the XDG layer is filtered on `exists()`. An absent user config
+  is the normal case and stays silent, whereas an explicit
+  `--keybinds <path>` that does not resolve is a user error worth
+  a warning. Changing that is a change to one function.
 
-Native layers are `--<name> <path>` before the XDG path; web
-layers are the query param before `localStorage`. Adding a fourth
-user-tier config file is a matter of naming its filename, query
-param, and storage key, then handing the driver a parser.
+Adding a fourth user-tier config file is a matter of naming its
+filename, query param, and storage key, then handing each
+wrapper a parser — no new read, cap, layer, or fallback code.
 
 ### `SourceTier`
 

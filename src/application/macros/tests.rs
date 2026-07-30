@@ -215,7 +215,7 @@ fn step_allowed(step: &MacroStep, src: SourceTier) -> bool {
     }
 }
 
-fn run_until_rejected<'a>(steps: &'a [MacroStep], src: SourceTier) -> &'a [MacroStep] {
+fn run_until_rejected(steps: &[MacroStep], src: SourceTier) -> &[MacroStep] {
     let mut executed = 0;
     for s in steps {
         if !step_allowed(s, src) {

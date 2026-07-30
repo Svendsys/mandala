@@ -10,28 +10,35 @@
 //!   through [`check_cap`] — the single place the cap message is
 //!   worded.
 //! - *How is one candidate source turned into text?*
-//!   [`read_capped`] for the filesystem tier (native),
+//!   `capped_read::read_capped` for the filesystem tier (native),
 //!   `web_storage::read_query_param` / `read_local_storage` for the
 //!   browser tiers.
 //! - *How do candidate sources compose into a fallback chain?*
-//!   [`layered::load_layered`] — explicit CLI path before the XDG
-//!   path on native, URL query param before `localStorage` on web,
-//!   with the same "absent is silent, broken is logged, first good
-//!   one wins" policy either way.
+//!   [`layered::load_layered`] — with the same "absent is silent,
+//!   broken is logged, first good one wins" policy on either target.
+//!   Each platform names its own layers exactly once, in the
+//!   composition wrapper the driver sits under:
+//!   `desktop::load_desktop_layered` (explicit CLI path, then the XDG
+//!   path) and `web_storage::load_web_layered` (URL query param, then
+//!   `localStorage`).
 //!
 //! Adding a fourth user-tier config file is therefore a matter of
 //! naming its filename / query-param / storage key and handing the
-//! driver a parser; no new read, cap, or fallback code.
+//! wrapper a parser; no new read, cap, or fallback code, and no new
+//! layer construction.
 //!
-//! Native path resolution is [`xdg::xdg_mandala_path`]
+//! Native path resolution is `xdg::xdg_mandala_path`
 //! (`$XDG_CONFIG_HOME/mandala/<file>.json`, or the `$HOME/.config`
-//! fallback); the browser equivalents live in `web_storage`. Both of
-//! those modules are cfg-gated to their target, so this header uses
-//! plain backticks rather than intra-doc links for whichever one is
-//! not compiled.
+//! fallback); the browser equivalents live in `web_storage`. The
+//! per-target modules named above are all cfg-gated, so this header
+//! uses plain backticks rather than intra-doc links for whichever
+//! ones are not compiled.
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod capped_read;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub mod desktop;
 
 pub mod layered;
 
@@ -43,6 +50,8 @@ pub mod web_storage;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use capped_read::read_capped;
+#[cfg(not(target_arch = "wasm32"))]
+pub use desktop::load_desktop_layered;
 pub use layered::{load_layered, ConfigLayer};
 
 /// Upper bound on a user-tier JSON payload (file or web string),
@@ -75,6 +84,26 @@ pub fn check_cap(byte_len: u64) -> Result<(), String> {
     } else {
         Ok(())
     }
+}
+
+/// Scratch paths for the loader tests, named once.
+///
+/// Every user-config loader test needs a real file on disk, and the
+/// obvious spelling — `temp_dir().join("mandala_test_thing.json")` —
+/// is a fixed path shared by every process on the machine. Two
+/// `cargo test` runs in sibling worktrees then race on it: one
+/// truncates while the other reads, and the failure looks like a bug
+/// in the code under test rather than in the test. The `name`
+/// separates tests within a run; `pid` separates the runs.
+///
+/// Interim: this is a naming helper, not a scratch-directory guard,
+/// so a test that panics still leaks its file. It is expected to
+/// collapse into `baumhard::util::test_temp::TempDir` — which is RAII
+/// and cleans up on panic — once that lands; this crate deliberately
+/// does not depend on that branch yet.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) fn scratch_path(name: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("mandala_{}_{}", std::process::id(), name))
 }
 
 #[cfg(test)]

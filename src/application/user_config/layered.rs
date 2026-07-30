@@ -13,12 +13,14 @@
 //! every platform, so it lives here exactly once.
 //!
 //! The driver itself is platform-neutral: it only knows how to walk
-//! [`ConfigLayer`]s. The filesystem-backed layers are built by the
-//! native loaders on top of [`super::read_capped`]; the
-//! query-param / `localStorage` layers are built by
-//! `super::web_storage::load_web_layered`. That split keeps the
-//! precedence logic testable on native (TEST_CONVENTIONS §T9) even
-//! though half the layers only exist in a browser.
+//! [`ConfigLayer`]s. The filesystem-backed layers are built by
+//! `super::desktop::load_desktop_layered` on top of
+//! `super::read_capped`; the query-param / `localStorage` layers are
+//! built by `super::web_storage::load_web_layered`. Both of those
+//! wrappers are cfg-gated to their target, so this header names them
+//! in plain backticks rather than intra-doc links. That split keeps
+//! the precedence logic testable on native (TEST_CONVENTIONS §T9)
+//! even though half the layers only exist in a browser.
 
 use super::check_cap;
 
