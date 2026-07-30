@@ -37,6 +37,40 @@ pub mod metrics;
 /// heights, cached. Replaces `metrics::monospace_advance` at every
 /// border-rail callsite.
 pub mod metric_cache;
+/// Naming and ordering rules for the compiled-in font table.
+///
+/// `build.rs` scans `src/font/fonts/` and emits the `AppFont` enum
+/// plus the `FONT_DATA` byte table into `OUT_DIR`. Every decision
+/// that turns a directory listing into that generated source —
+/// which files count as fonts, how a font's `name` table becomes a
+/// Rust identifier, which of two files wins a collision, and what
+/// order the variants are emitted in — lives here rather than in
+/// the build script, for two reasons:
+///
+/// 1. **It is testable.** Cargo never compiles a build script under
+///    `cfg(test)`, so logic that lives only in `build.rs` cannot be
+///    unit-tested. This module is `include!`d by `build.rs` *and*
+///    compiled into the library, so the same code the build script
+///    runs is the code the test suite exercises.
+/// 2. **It is the documented contract.** "Drop a font file into
+///    `src/font/fonts/`, recompile, and the variant appears"
+///    (CONCEPTS §2) is a promise about these rules; a reader
+///    looking for what variant name their file will produce should
+///    find the answer in the library, not in a build script.
+///
+/// Everything here is a pure function over plain values: no
+/// filesystem access, no `ttf-parser`, no allocations beyond the
+/// returned `String`s. The build script owns the I/O and the
+/// OpenType parsing and feeds the results in.
+///
+/// # Determinism
+///
+/// [`name_rules::select_font_variants`] is a total function of its
+/// input *set*: the order candidates are discovered in cannot
+/// affect the result, because every tie is broken by an explicit
+/// comparator rather than by insertion order. That is what makes
+/// two clean builds emit byte-identical generated source.
+pub mod name_rules;
 /// Test bodies exposed via `pub mod tests` so `benches/test_bench.rs`
 /// can reuse the `do_*()` functions as micro-benchmarks (§B8).
 pub mod tests;

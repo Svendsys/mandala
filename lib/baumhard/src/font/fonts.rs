@@ -20,11 +20,11 @@ use rand::seq::IteratorRandom;
 use rustc_hash::FxHashMap;
 use tinyvec::TinyVec;
 
-use crate::font::fonts::AppFont::*;
 // Serde derives are used by the generated AppFont enum below.
-//@formatter:off
 use serde::{Deserialize, Serialize};
-// Build-time generated: defines `AppFont` and `FONT_DATA`.
+// Build-time generated: defines `AppFont` and `FONT_DATA`. The
+// naming and ordering rules the generator follows live in
+// `crate::font::name_rules`, which `build.rs` shares by `include!`.
 include!(concat!(env!("OUT_DIR"), "/generated_fonts_data.rs"));
 
 fn load_font_sources() -> FxHashMap<AppFont, Source> {
