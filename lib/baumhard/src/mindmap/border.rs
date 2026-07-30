@@ -63,14 +63,25 @@ pub struct BorderGlyphSet {
 
 /// Single source of truth for the four canonical Unicode
 /// box-drawing presets. Each row is `(name, [top, bottom, left,
-/// right, tl, tr, bl, br])`. Adding a fifth preset is a one-row
-/// extension here, plus an entry in [`BORDER_PRESETS`] (which the
-/// console's `border preset=` completion surfaces).
-const PRESET_TABLE: &[(&str, [char; 8])] = &[
-    ("light", ['─', '─', '│', '│', '┌', '┐', '└', '┘']),
-    ("heavy", ['━', '━', '┃', '┃', '┏', '┓', '┗', '┛']),
-    ("double", ['═', '═', '║', '║', '╔', '╗', '╚', '╝']),
-    ("rounded", ['─', '─', '│', '│', '╭', '╮', '╰', '╯']),
+/// right, tl, tr, bl, br], hint)`, where `hint` is the one-line
+/// human description [`border_preset_hint`] serves to the console's
+/// completion popup. Adding a fifth preset is a one-row extension
+/// here — [`BORDER_PRESETS`] and the hint lookup both derive from
+/// this table, and the tuple's third slot means a new preset cannot
+/// land without a description.
+const PRESET_TABLE: &[(&str, [char; 8], &str)] = &[
+    (
+        "light",
+        ['─', '─', '│', '│', '┌', '┐', '└', '┘'],
+        "thin lines (default)",
+    ),
+    ("heavy", ['━', '━', '┃', '┃', '┏', '┓', '┗', '┛'], "bold lines"),
+    ("double", ['═', '═', '║', '║', '╔', '╗', '╚', '╝'], "double lines"),
+    (
+        "rounded",
+        ['─', '─', '│', '│', '╭', '╮', '╰', '╯'],
+        "thin lines with rounded corners",
+    ),
 ];
 
 impl BorderGlyphSet {
@@ -1178,16 +1189,19 @@ const SECTION_FRAME_FLOOR_FONT_SIZE_PT: f32 = 10.0;
 /// is `const &[…; 4]` (non-empty by construction).
 pub fn preset_glyph_set(preset: &str) -> BorderGlyphSet {
     let name = preset.to_ascii_lowercase();
-    let row = PRESET_TABLE.iter().find(|(n, _)| *n == name).unwrap_or_else(|| {
-        // "custom" is in `BORDER_PRESETS` but absent from the
-        // glyph table — it signals "user-supplied glyphs
-        // override these defaults," with the per-side fallback
-        // to `light`. Anything else gets a warn-log.
-        if name != CUSTOM_PRESET_NAME {
-            log::warn!("border preset '{}' unknown; using 'light'", preset);
-        }
-        &PRESET_TABLE[0]
-    });
+    let row = PRESET_TABLE
+        .iter()
+        .find(|(n, _, _)| *n == name)
+        .unwrap_or_else(|| {
+            // "custom" is in `BORDER_PRESETS` but absent from the
+            // glyph table — it signals "user-supplied glyphs
+            // override these defaults," with the per-side fallback
+            // to `light`. Anything else gets a warn-log.
+            if name != CUSTOM_PRESET_NAME {
+                log::warn!("border preset '{}' unknown; using 'light'", preset);
+            }
+            &PRESET_TABLE[0]
+        });
     BorderGlyphSet::from_glyphs(row.1)
 }
 
@@ -1197,6 +1211,37 @@ pub fn preset_glyph_set(preset: &str) -> BorderGlyphSet {
 /// `"custom"` checks reach for this to keep the meaning single-
 /// sourced.
 pub const CUSTOM_PRESET_NAME: &str = "custom";
+
+/// Description of [`CUSTOM_PRESET_NAME`] for
+/// [`border_preset_hint`]. Lives beside the sentinel rather than in
+/// `PRESET_TABLE` for the same reason the sentinel does: `custom`
+/// has no glyph row.
+const CUSTOM_PRESET_HINT: &str = "user-supplied per-side / per-corner glyphs";
+
+/// One-line human description of a preset name, for a UI that
+/// offers presets to pick from — the console's `border preset=`
+/// completion is the consumer today.
+///
+/// Matching is case-insensitive, mirroring [`preset_glyph_set`].
+/// Returns `None` for a name that is not in [`BORDER_PRESETS`];
+/// every name that *is* in `BORDER_PRESETS` returns `Some`, because
+/// both this lookup and that list derive from the same
+/// `PRESET_TABLE` (plus the `custom` sentinel). That is what keeps a
+/// newly added preset from silently completing with a blank
+/// description.
+///
+/// O(n) over the four-row table, no allocation beyond the
+/// lowercased needle.
+pub fn border_preset_hint(preset: &str) -> Option<&'static str> {
+    let name = preset.to_ascii_lowercase();
+    if name == CUSTOM_PRESET_NAME {
+        return Some(CUSTOM_PRESET_HINT);
+    }
+    PRESET_TABLE
+        .iter()
+        .find(|(n, _, _)| *n == name)
+        .map(|(_, _, hint)| *hint)
+}
 
 /// Every preset name accepted by the schema's
 /// `GlyphBorderConfig.preset` field — the four typed glyph rows
