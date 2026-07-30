@@ -11,177 +11,18 @@
 //! variant captures `before_sections: Vec<MindSection>` so undo
 //! restores the entire structure (including text, runs, channels,
 //! and trigger bindings on every section that was added / deleted /
-//! split). Same envelope the index-preserving setters use; no new
-//! undo variant required.
+//! split). Same envelope the index-preserving setters use
+//! (`undo_envelope.rs`); no new undo variant required. All three
+//! ask for [`NodeEditTail::GrowAndCleanup`], the only tail that
+//! also repairs a selection or border preview left pointing at a
+//! section index that no longer exists.
 //!
 //! Per `SECTIONS_BORDERS_RESIZE_PLAN.md` §4.5 (Batch 5).
 
-use baumhard::mindmap::model::{validate, MindNode, MindSection};
+use baumhard::mindmap::model::{validate, MindSection};
 
-use super::super::undo_action::UndoAction;
-use super::super::{MindMapDocument, SectionSel, SelectionState};
-use super::grow_one_node_to_fit_border;
-
-/// Wrap a node-mutating closure with the snapshot+undo+
-/// floor-pass+cleanup envelope every structural section
-/// mutator (`add_section` / `delete_section` / `split_section`)
-/// shares. Captures pre-mutation `style` / `sections` /
-/// `position` / `size` for undo, runs the closure, pushes
-/// `EditNodeStyle`, sets `dirty`, runs the floor passes, and
-/// fires `cleanup_after_structural_mutation`.
-///
-/// Caller is responsible for validating against the immutable
-/// node *before* calling this helper — pre-validation lives
-/// outside so callers can return verb-specific error messages
-/// using fields the closure doesn't see (`node.size` for AABB
-/// validation, `sections.len()` for the "≥1 section" invariant).
-/// Once the closure runs, the mutation is committed; no
-/// rollback path.
-///
-/// CODE_CONVENTIONS §5: pre-fix the three structural mutators
-/// triplicated a 25-line snapshot+undo dance. This helper
-/// folds them to one site.
-fn mutate_node_with_style_undo<F, R>(
-    doc: &mut MindMapDocument,
-    node_id: &str,
-    mutate: F,
-) -> R
-where
-    F: FnOnce(&mut MindNode) -> R,
-{
-    let node = doc
-        .mindmap
-        .nodes
-        .get(node_id)
-        .expect("caller verified node exists");
-    let before_style = node.style.clone();
-    let before_sections = node.sections.clone();
-    let before_position = node.position;
-    let before_size = node.size;
-    let before_selection = doc.selection.clone();
-    let canvas_default = doc.mindmap.canvas.default_border.clone();
-
-    let node = doc
-        .mindmap
-        .nodes
-        .get_mut(node_id)
-        .expect("just confirmed exists");
-    let result = mutate(node);
-
-    doc.undo_stack.push(UndoAction::EditNodeStyle {
-        node_id: node_id.to_string(),
-        before_style,
-        before_sections,
-        before_position,
-        before_size,
-        before_selection,
-    });
-    doc.dirty = true;
-
-    let node = doc
-        .mindmap
-        .nodes
-        .get_mut(node_id)
-        .expect("just mutated");
-    super::super::grow_one_node_to_fit_text(node);
-    grow_one_node_to_fit_border(node, canvas_default.as_ref());
-
-    cleanup_after_structural_mutation(doc, node_id);
-    result
-}
-
-/// In-doc cleanup hook that runs after a structural section
-/// mutation (add / delete / split) on `node_id`. Cancels any
-/// active border preview that targeted the affected sections
-/// (its index reference is now potentially stale), and clamps
-/// the live `selection` so a `Section` / `SectionRange` /
-/// `MultiSection` selection that pointed past the new section
-/// count gets retargeted to a valid index (or demoted to a
-/// whole-node selection when the original section is gone).
-///
-/// **Scope**: covers the doc-side state (`border_preview` and
-/// `selection`). App-side state — `TextEditState`,
-/// `DragState::Throttled(SectionResize)`, `LabelEditState` —
-/// lives in `InitState` and is reachable only from the app
-/// layer; those concerns are handled at the console verb
-/// dispatch site (see `console::commands::section::mod.rs`).
-fn cleanup_after_structural_mutation(doc: &mut MindMapDocument, node_id: &str) {
-    let new_count = doc
-        .mindmap
-        .nodes
-        .get(node_id)
-        .map(|n| n.sections.len())
-        .unwrap_or(0);
-
-    // Cancel any active border preview whose Section / Sections
-    // target lands on this node — a structural mutation
-    // invalidates the preview's idx reference. The drift
-    // mechanism in `border_preview_covers_live_selection` only
-    // catches selection-vs-target drift, not target-shift after
-    // a structural mutation.
-    let preview_targets_this_node = doc
-        .border_preview
-        .as_ref()
-        .map(|p| match &p.target {
-            super::BorderPreviewTarget::Sections(pairs) => {
-                pairs.iter().any(|(id, _)| id == node_id)
-            }
-            super::BorderPreviewTarget::Nodes(ids) => ids.iter().any(|id| id == node_id),
-            // Canvas-default previews are orthogonal to per-section
-            // structural changes — they don't reference the node.
-            _ => false,
-        })
-        .unwrap_or(false);
-    if preview_targets_this_node {
-        doc.cancel_border_preview();
-    }
-
-    // Clamp the selection's section_idx to the new count. A
-    // `Section` selection past the end demotes to `Single(node)`
-    // (the natural "section is gone" lift). `SectionRange`
-    // clamps both ends; if the range collapses to nothing,
-    // demote. `MultiSection` filters out the dead pairs; if
-    // none survive, demote.
-    match &doc.selection {
-        SelectionState::Section(s) if s.node_id == node_id && s.section_idx >= new_count => {
-            doc.selection = SelectionState::Single(node_id.to_string());
-        }
-        SelectionState::SectionRange { sel, range } if sel.node_id == node_id => {
-            let max_idx = new_count.saturating_sub(1);
-            let lo = range.0.min(range.1).min(max_idx);
-            let hi = range.0.max(range.1).min(max_idx);
-            if new_count == 0 {
-                doc.selection = SelectionState::Single(node_id.to_string());
-            } else if sel.section_idx >= new_count {
-                // Anchor section gone — demote to a single
-                // surviving section selection at the closest
-                // remaining idx.
-                doc.selection = SelectionState::Section(SectionSel {
-                    node_id: node_id.to_string(),
-                    section_idx: lo,
-                });
-            } else {
-                doc.selection = SelectionState::SectionRange {
-                    sel: sel.clone(),
-                    range: (lo, hi),
-                };
-            }
-        }
-        SelectionState::MultiSection(sels) => {
-            let surviving: Vec<SectionSel> = sels
-                .iter()
-                .filter(|s| s.node_id != node_id || s.section_idx < new_count)
-                .cloned()
-                .collect();
-            doc.selection = match surviving.len() {
-                0 => SelectionState::Single(node_id.to_string()),
-                1 => SelectionState::Section(surviving.into_iter().next().expect("len==1")),
-                _ => SelectionState::MultiSection(surviving),
-            };
-        }
-        _ => {} // Single / Multi / Edge / Portal / None — no idx to clamp.
-    }
-}
+use super::super::MindMapDocument;
+use super::NodeEditTail;
 
 impl MindMapDocument {
     /// Insert a new section into `node_id.sections` at `at` (default
@@ -211,16 +52,19 @@ impl MindMapDocument {
         if len >= crate::application::document::MAX_SECTIONS_PER_NODE {
             return Err(format!(
                 "section add: node '{}' already has {} sections (cap = {})",
-                node_id, len, crate::application::document::MAX_SECTIONS_PER_NODE
+                node_id,
+                len,
+                crate::application::document::MAX_SECTIONS_PER_NODE
             ));
         }
         let insert_at = at.unwrap_or(len).min(len);
         validate::section_candidate_aabb(node.size, insert_at, section.offset, section.size)?;
 
-        Ok(mutate_node_with_style_undo(self, node_id, |node| {
+        self.mutate_node_with_style_undo(node_id, NodeEditTail::GrowAndCleanup, move |node| {
             node.sections.insert(insert_at, section);
-            insert_at
-        }))
+            Some(insert_at)
+        })
+        .ok_or_else(|| format!("section add: node '{}' not found", node_id))
     }
 
     /// Remove the section at `idx` from `node_id.sections`. Returns
@@ -234,11 +78,7 @@ impl MindMapDocument {
     /// `before_sections` snapshot fully restores the deleted
     /// section on undo (including text, runs, channels, trigger
     /// bindings, frame border).
-    pub fn delete_section(
-        &mut self,
-        node_id: &str,
-        idx: usize,
-    ) -> Result<MindSection, String> {
+    pub fn delete_section(&mut self, node_id: &str, idx: usize) -> Result<MindSection, String> {
         let node = match self.mindmap.nodes.get(node_id) {
             Some(n) => n,
             None => return Err(format!("section delete: node '{}' not found", node_id)),
@@ -261,9 +101,10 @@ impl MindMapDocument {
             ));
         }
 
-        Ok(mutate_node_with_style_undo(self, node_id, |node| {
-            node.sections.remove(idx)
-        }))
+        self.mutate_node_with_style_undo(node_id, NodeEditTail::GrowAndCleanup, |node| {
+            Some(node.sections.remove(idx))
+        })
+        .ok_or_else(|| format!("section delete: node '{}' not found", node_id))
     }
 
     /// Split the section at `idx` into two adjacent sections.
@@ -381,12 +222,14 @@ impl MindMapDocument {
         new_section.text_runs = suffix_runs;
 
         let new_idx = idx + 1;
-        Ok(mutate_node_with_style_undo(self, node_id, move |node| {
-            node.sections[idx].text = prefix_text;
-            node.sections[idx].text_runs = prefix_runs;
+        self.mutate_node_with_style_undo(node_id, NodeEditTail::GrowAndCleanup, move |node| {
+            let target = node.sections.get_mut(idx)?;
+            target.text = prefix_text;
+            target.text_runs = prefix_runs;
             node.sections.insert(new_idx, new_section);
-            new_idx
-        }))
+            Some(new_idx)
+        })
+        .ok_or_else(|| format!("section split: node '{}' not found", node_id))
     }
 }
 
@@ -421,10 +264,7 @@ mod tests {
             doc.mindmap.nodes.get(&id).unwrap().sections.len(),
             original_len + 1
         );
-        assert_eq!(
-            doc.mindmap.nodes.get(&id).unwrap().sections[idx].text,
-            "appended"
-        );
+        assert_eq!(doc.mindmap.nodes.get(&id).unwrap().sections[idx].text, "appended");
     }
 
     #[test]
@@ -467,10 +307,7 @@ mod tests {
         assert!(doc.dirty);
         // Undo restores the original section count.
         assert!(doc.undo());
-        assert_eq!(
-            doc.mindmap.nodes.get(&id).unwrap().sections.len(),
-            original_len
-        );
+        assert_eq!(doc.mindmap.nodes.get(&id).unwrap().sections.len(), original_len);
     }
 
     #[test]
@@ -501,10 +338,7 @@ mod tests {
         let removed_text = doc.mindmap.nodes.get(&id).unwrap().sections[0].text.clone();
         let removed = doc.delete_section(&id, 0).expect("delete ok");
         assert_eq!(removed.text, removed_text);
-        assert_eq!(
-            doc.mindmap.nodes.get(&id).unwrap().sections.len(),
-            len_before - 1
-        );
+        assert_eq!(doc.mindmap.nodes.get(&id).unwrap().sections.len(), len_before - 1);
     }
 
     #[test]
@@ -553,9 +387,7 @@ mod tests {
         let id = first_testament_node_id(&doc);
         // Set up: replace section[0]'s text with a known string.
         doc.set_section_text(&id, 0, "abcdef".to_string());
-        let new_idx = doc
-            .split_section(&id, 0, Some(3))
-            .expect("split ok");
+        let new_idx = doc.split_section(&id, 0, Some(3)).expect("split ok");
         assert_eq!(new_idx, 1);
         let sections = &doc.mindmap.nodes.get(&id).unwrap().sections;
         assert_eq!(sections[0].text, "abc");
@@ -606,10 +438,7 @@ mod tests {
         doc.split_section(&id, 0, Some(3)).unwrap();
         assert_eq!(doc.undo_stack.len(), 1);
         assert!(doc.dirty);
-        assert_eq!(
-            doc.mindmap.nodes.get(&id).unwrap().sections.len(),
-            len_before + 1
-        );
+        assert_eq!(doc.mindmap.nodes.get(&id).unwrap().sections.len(), len_before + 1);
         assert!(doc.undo());
         assert_eq!(
             doc.mindmap.nodes.get(&id).unwrap().sections.len(),
@@ -729,11 +558,7 @@ mod tests {
         let result = doc.add_section(&id, None, empty_section());
         match result {
             Err(msg) => {
-                assert!(
-                    msg.contains("cap = 1024"),
-                    "error should name the cap: {}",
-                    msg
-                );
+                assert!(msg.contains("cap = 1024"), "error should name the cap: {}", msg);
             }
             Ok(idx) => panic!("expected cap-rejection error, got Ok({})", idx),
         }
@@ -814,10 +639,10 @@ mod tests {
         let after_set_size = doc.mindmap.nodes.get(&id).unwrap().size;
         // Sanity: the floor pass actually grew the node.
         assert!(
-            after_set_size.width > before_size.width
-                || after_set_size.height > before_size.height,
+            after_set_size.width > before_size.width || after_set_size.height > before_size.height,
             "fixture-validity check: long text must trigger floor-pass growth (before: {:?}, after: {:?})",
-            before_size, after_set_size
+            before_size,
+            after_set_size
         );
         assert!(doc.undo());
         let after_undo_size = doc.mindmap.nodes.get(&id).unwrap().size;
@@ -888,10 +713,11 @@ mod tests {
         // Two sections so delete is allowed; selection on the last.
         doc.add_section(&id, None, empty_section()).unwrap();
         let last_idx = doc.mindmap.nodes.get(&id).unwrap().sections.len() - 1;
-        doc.selection = crate::application::document::SelectionState::Section(crate::application::document::SectionSel {
-            node_id: id.clone(),
-            section_idx: last_idx,
-        });
+        doc.selection =
+            crate::application::document::SelectionState::Section(crate::application::document::SectionSel {
+                node_id: id.clone(),
+                section_idx: last_idx,
+            });
         doc.delete_section(&id, last_idx).unwrap();
         // Selection demotes to Single — the section is gone.
         assert!(
@@ -909,18 +735,16 @@ mod tests {
         use crate::application::document::{BorderConfigEdits, BorderPreviewTarget, OptionEdit};
         let mut doc = load_test_doc();
         let id = first_testament_node_id(&doc);
-        doc.selection = crate::application::document::SelectionState::Section(crate::application::document::SectionSel {
-            node_id: id.clone(),
-            section_idx: 0,
-        });
+        doc.selection =
+            crate::application::document::SelectionState::Section(crate::application::document::SectionSel {
+                node_id: id.clone(),
+                section_idx: 0,
+            });
 
         // Stage a section-targeted border preview.
         let mut edits = BorderConfigEdits::default();
         edits.preset = OptionEdit::Set("heavy".into());
-        let _ = doc.set_border_preview(
-            BorderPreviewTarget::Sections(vec![(id.clone(), 0)]),
-            edits,
-        );
+        let _ = doc.set_border_preview(BorderPreviewTarget::Sections(vec![(id.clone(), 0)]), edits);
         assert!(doc.border_preview.is_some());
 
         // Add a section — preview must cancel because the idx
