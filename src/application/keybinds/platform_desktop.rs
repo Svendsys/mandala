@@ -16,9 +16,10 @@ use super::config::KeybindConfig;
 use crate::application::user_config::{load_layered, read_capped, xdg::xdg_mandala_path, ConfigLayer};
 
 impl KeybindConfig {
-    /// Load a config on desktop, with layered fallback: explicit CLI path
-    /// > default user-config path > hardcoded defaults. Never fails —
-    /// missing or invalid files are logged and the next layer is tried.
+    /// Load a config on desktop, with layered fallback: the explicit
+    /// CLI path first, then the default user-config path, then the
+    /// hardcoded defaults. Never fails — missing or invalid files are
+    /// logged and the next layer is tried.
     pub fn load_for_desktop(explicit_path: Option<&Path>) -> Self {
         let default_path = xdg_mandala_path("keybinds.json");
         let explicit_source = display_or_empty(explicit_path);

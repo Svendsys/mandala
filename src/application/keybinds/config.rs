@@ -269,7 +269,7 @@ pub struct KeybindConfig {
     pub set_section_size_fill_parent: Vec<ParametricBinding>,
     /// Filesystem-touching parametric variants — NativeOnly +
     /// denylisted from non-User macro tiers (see
-    /// `MacroSource::allows_action`).
+    /// `SourceTier::allows_action`).
     pub open_document: Vec<ParametricBinding>,
     pub save_document_as: Vec<ParametricBinding>,
     pub new_document_at: Vec<ParametricBinding>,

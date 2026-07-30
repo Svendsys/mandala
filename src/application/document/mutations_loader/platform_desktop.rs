@@ -16,10 +16,11 @@ use baumhard::mindmap::custom_mutation::CustomMutation;
 
 use crate::application::user_config::{load_layered, read_capped, xdg::xdg_mandala_path, ConfigLayer};
 
-/// Load user mutations, with layered fallback: explicit CLI path >
-/// `$XDG_CONFIG_HOME/mandala/mutations.json` >
-/// `$HOME/.config/mandala/mutations.json` > empty. Never fails —
-/// missing or invalid files are logged and the next layer is tried.
+/// Load user mutations, with layered fallback: the explicit CLI
+/// path first, then `$XDG_CONFIG_HOME/mandala/mutations.json` (or
+/// `$HOME/.config/mandala/mutations.json`), then empty. Never fails
+/// — missing or invalid files are logged and the next layer is
+/// tried.
 pub fn load_user(explicit_path: Option<&Path>) -> Vec<CustomMutation> {
     let default_path = xdg_mandala_path("mutations.json");
     let explicit_source = display_or_empty(explicit_path);

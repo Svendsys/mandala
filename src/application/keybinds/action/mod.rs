@@ -106,7 +106,7 @@ pub enum ZoomBound {
 ///
 /// `#[non_exhaustive]` because new variants need to be reviewed
 /// against the macro privilege gate
-/// (`MacroSource::allows_action`) before they ship — the gate uses
+/// (`SourceTier::allows_action`) before they ship — the gate uses
 /// a denylist of destructive Actions, and a new I/O / clipboard /
 /// document-lifecycle variant added without updating the denylist
 /// would silently bypass the gate from non-User macro tiers. The
@@ -164,7 +164,7 @@ pub enum Action {
     /// NativeOnly today because the click-handler path that surfaces
     /// the hit target lives natively only; the mode enum itself is
     /// cross-platform. Classified `is_destructive = true` so the
-    /// privilege gate (`MacroSource::allows_action`) denylists non-User
+    /// privilege gate (`SourceTier::allows_action`) denylists non-User
     /// macro tiers; the arm body's `mem::replace(.., Default)` is
     /// an additional runtime guard (stale fire outside Reparent
     /// mode is a no-op).
@@ -337,7 +337,7 @@ pub enum Action {
     /// batch (§6.6) lands the `TwoFingerDrag` synthetic gesture.
     ///
     /// Marked `destructive` so the macro privilege gate
-    /// (`MacroSource::allows_action`) blocks System / Plugin /
+    /// (`SourceTier::allows_action`) blocks System / Plugin /
     /// Project tiers; only User-tier macros (the user's keybind
     /// config + interactive console) can fire it.   
     #[action(context = Document, wasm = NativeOnly, destructive)]

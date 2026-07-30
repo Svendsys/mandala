@@ -152,7 +152,7 @@ impl CustomMutation {
 /// safe to expose. **Any new variant that performs file I/O, network
 /// access, arbitrary content load, or cross-process side effects MUST
 /// be gated at the `dispatch_macro` site** (parallel to the
-/// `MacroSource::allows_console_line` gate) to prevent a hostile
+/// `SourceTier::allows_console_line` gate) to prevent a hostile
 /// shared mindmap from invoking it. Marked `#[non_exhaustive]` so
 /// adding such a variant outside this crate is impossible — review
 /// the privilege model when extending.

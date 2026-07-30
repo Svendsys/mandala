@@ -268,7 +268,7 @@ mod tests {
         crate::application::document::mutations::register_builtin_handlers(&mut doc);
         doc.mutation_sources.insert(
             "tree-cascade".to_string(),
-            crate::application::document::mutations_loader::MutationSource::App,
+            crate::application::source_tier::SourceTier::App,
         );
         doc.apply_custom_mutation(&cm, &target_id, None);
 

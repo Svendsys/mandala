@@ -445,7 +445,7 @@ rules:
   the epic's charter ("as well as a human"), and any weaker tier
   would contradict it.
 - **Macros keep their own tier.** `act.macro` fires
-  `dispatch_macro`, and the macro's loader-pinned `MacroSource`
+  `dispatch_macro`, and the macro's loader-pinned `SourceTier`
   gates it exactly as if a keybind had fired it: a Map- or
   Inline-tier macro still cannot run `ConsoleLine` or destructive
   Actions just because IPC pulled the trigger. IPC is a User-tier
@@ -455,7 +455,7 @@ rules:
 - Provenance is a logging concern, not a privilege concern: IPC
   dispatch sites attribute their origin in diagnostics (and, once
   IPC-14 lands, in events), which covers auditability without a
-  `MacroSource::Ipc` variant that would either duplicate `User` or
+  `SourceTier::Ipc` variant that would either duplicate `User` or
   cripple the feature.
 - The threat model of opening a hostile `.mindmap.json` is
   **unchanged** by IPC (tiers and gates as in `format/macros.md`).
