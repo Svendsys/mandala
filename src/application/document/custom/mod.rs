@@ -59,13 +59,13 @@ fn mutation_targets_absolute_position(m: &baumhard::gfx_structs::mutator::Mutati
             // `Assign` on the position field sets it absolutely;
             // `Add` / `Sub` are deltas (safe to fan out).
             // `DeltaGlyphArea.fields` carries the touched fields
-            // and a sibling `GlyphAreaFieldType::ApplyOperation`
+            // and a sibling `GlyphAreaFieldType::Operation`
             // entry naming the global op. Inspect both.
             if !delta.fields.contains_key(&GlyphAreaFieldType::Position) {
                 return false;
             }
             matches!(
-                delta.fields.get(&GlyphAreaFieldType::ApplyOperation),
+                delta.fields.get(&GlyphAreaFieldType::Operation),
                 Some(GlyphAreaField::Operation(ApplyOperation::Assign))
             )
         }
@@ -758,11 +758,7 @@ impl MindMapDocument {
                 .into_iter()
                 .collect(),
             TargetScope::Siblings => {
-                let parent_id = self
-                    .mindmap
-                    .nodes
-                    .get(node_id)
-                    .and_then(|n| n.parent_id.clone());
+                let parent_id = self.mindmap.nodes.get(node_id).and_then(|n| n.parent_id.clone());
                 let index = self.mindmap.child_index();
                 parent_id
                     .map(|pid| {

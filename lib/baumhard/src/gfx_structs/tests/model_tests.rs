@@ -5,7 +5,9 @@
 
 use crate::core::primitives::{Applicable, ApplyOperation, ColorFontRegions, Range};
 use crate::font::fonts::AppFont;
-use crate::gfx_structs::model::{DeltaGlyphModel, GlyphComponent, GlyphLine, GlyphMatrix, GlyphModel, GlyphModelField};
+use crate::gfx_structs::model::{
+    DeltaGlyphModel, GlyphComponent, GlyphLine, GlyphMatrix, GlyphModel, GlyphModelField,
+};
 use crate::util::color::Color;
 
 /// The tests are written in a non-test-annotated function and then wrapped by an annotated test function
@@ -1230,11 +1232,7 @@ pub fn do_delta_glyph_line_assign_applies_through_apply_to() {
         Color::black(),
     )));
 
-    let replacement = GlyphLine::new_with(GlyphComponent::text(
-        "replaced",
-        AppFont::Evilz,
-        Color::white(),
-    ));
+    let replacement = GlyphLine::new_with(GlyphComponent::text("replaced", AppFont::Evilz, Color::white()));
     let delta = DeltaGlyphModel::new(vec![
         GlyphModelField::Operation(ApplyOperation::Assign),
         GlyphModelField::GlyphLine(1, replacement),
@@ -1274,11 +1272,7 @@ pub fn do_delta_glyph_lines_assign_applies_through_apply_to() {
         ),
         (
             2,
-            GlyphLine::new_with(GlyphComponent::text(
-                "line two",
-                AppFont::Evilz,
-                Color::white(),
-            )),
+            GlyphLine::new_with(GlyphComponent::text("line two", AppFont::Evilz, Color::white())),
         ),
     ];
     let delta = DeltaGlyphModel::new(vec![
@@ -1422,4 +1416,207 @@ pub fn do_model_layer_subtract_saturates_at_zero() {
     delta.apply_to(&mut model);
 
     assert_eq!(model.layer, 0);
+}
+
+/// A `Noop` matrix delta must leave the target matrix untouched, and
+/// a `Delete` matrix delta must clear it — both without reading the
+/// payload. Regression for `DeltaGlyphModel::glyph_matrix` returning
+/// a deep clone on every apply (P1-24): the borrow-plus-`apply_ref`
+/// path only clones on the arms that consume the payload, so these
+/// two operations must still produce exactly the documented result.
+#[test]
+pub fn test_delta_glyph_matrix_noop_and_delete_ignore_payload() {
+    do_delta_glyph_matrix_noop_and_delete_ignore_payload();
+}
+
+pub fn do_delta_glyph_matrix_noop_and_delete_ignore_payload() {
+    let payload = || {
+        let mut matrix = GlyphMatrix::new();
+        matrix.push(GlyphLine::new_with(GlyphComponent::text(
+            "payload",
+            AppFont::AppleTea,
+            Color::white(),
+        )));
+        matrix
+    };
+
+    let mut noop_model = GlyphModel::new();
+    noop_model.add_line(GlyphLine::new_with(GlyphComponent::text(
+        "original",
+        AppFont::AppleTea,
+        Color::black(),
+    )));
+    DeltaGlyphModel::new(vec![
+        GlyphModelField::Operation(ApplyOperation::Noop),
+        GlyphModelField::GlyphMatrix(payload()),
+    ])
+    .apply_to(&mut noop_model);
+    assert_eq!(noop_model.glyph_matrix.matrix.len(), 1);
+    assert_eq!(
+        noop_model.glyph_matrix.get(0).unwrap().get(0).unwrap().as_str(),
+        "original"
+    );
+
+    let mut delete_model = GlyphModel::new();
+    delete_model.add_line(GlyphLine::new_with(GlyphComponent::text(
+        "original",
+        AppFont::AppleTea,
+        Color::black(),
+    )));
+    DeltaGlyphModel::new(vec![
+        GlyphModelField::Operation(ApplyOperation::Delete),
+        GlyphModelField::GlyphMatrix(payload()),
+    ])
+    .apply_to(&mut delete_model);
+    assert!(delete_model.glyph_matrix.matrix.is_empty());
+}
+
+/// The same delta applies more than once with the same result — the
+/// borrowing accessors hand out references, so nothing about the
+/// delta is consumed by an apply.
+#[test]
+pub fn test_delta_glyph_matrix_applies_repeatedly() {
+    do_delta_glyph_matrix_applies_repeatedly();
+}
+
+pub fn do_delta_glyph_matrix_applies_repeatedly() {
+    let mut payload = GlyphMatrix::new();
+    payload.push(GlyphLine::new_with(GlyphComponent::text(
+        "assigned",
+        AppFont::AppleTea,
+        Color::white(),
+    )));
+
+    let delta = DeltaGlyphModel::new(vec![
+        GlyphModelField::Operation(ApplyOperation::Assign),
+        GlyphModelField::GlyphMatrix(payload.clone()),
+    ]);
+
+    // The accessors borrow, so the payload is still readable between
+    // applies and identical afterwards.
+    assert_eq!(delta.glyph_matrix(), Some(&payload));
+
+    let mut first = GlyphModel::new();
+    let mut second = GlyphModel::new();
+    delta.apply_to(&mut first);
+    delta.apply_to(&mut second);
+
+    assert_eq!(first.glyph_matrix, payload);
+    assert_eq!(second.glyph_matrix, payload);
+    assert_eq!(delta.glyph_matrix(), Some(&payload));
+}
+
+/// `GlyphMatrix::add_assign` moves surplus rhs rows into self rather
+/// than cloning them, and keeps the row order. Locks the
+/// `into_iter()` rewrite (the previous `insert(i, ..)` would panic if
+/// a caller ever grew self non-contiguously).
+#[test]
+pub fn test_matrix_add_assign_absorbs_taller_rhs() {
+    do_matrix_add_assign_absorbs_taller_rhs();
+}
+
+pub fn do_matrix_add_assign_absorbs_taller_rhs() {
+    let mut matrix = GlyphMatrix::new();
+    let mut rhs = GlyphMatrix::new();
+    for text in ["one", "two", "three"] {
+        rhs.push(GlyphLine::new_with(GlyphComponent::text(
+            text,
+            AppFont::AppleTea,
+            Color::black(),
+        )));
+    }
+
+    matrix += rhs;
+
+    assert_eq!(matrix.matrix.len(), 3);
+    assert_eq!(matrix.get(0).unwrap().get(0).unwrap().as_str(), "one");
+    assert_eq!(matrix.get(1).unwrap().get(0).unwrap().as_str(), "two");
+    assert_eq!(matrix.get(2).unwrap().get(0).unwrap().as_str(), "three");
+}
+
+/// `GlyphMatrix::{sub,mul}_assign` drop rhs rows that self does not
+/// have, and leave self's row count alone.
+#[test]
+pub fn test_matrix_destructive_assigns_drop_surplus_rhs_rows() {
+    do_matrix_destructive_assigns_drop_surplus_rhs_rows();
+}
+
+pub fn do_matrix_destructive_assigns_drop_surplus_rhs_rows() {
+    for subtract in [true, false] {
+        let mut matrix = GlyphMatrix::new();
+        matrix.push(GlyphLine::new_with(GlyphComponent::text(
+            "keep",
+            AppFont::AppleTea,
+            Color::black(),
+        )));
+
+        let mut rhs = GlyphMatrix::new();
+        for text in ["a", "b", "c"] {
+            rhs.push(GlyphLine::new_with(GlyphComponent::text(
+                text,
+                AppFont::AppleTea,
+                Color::black(),
+            )));
+        }
+
+        if subtract {
+            matrix -= rhs;
+        } else {
+            matrix *= rhs;
+        }
+
+        assert_eq!(matrix.matrix.len(), 1);
+    }
+}
+
+/// `GlyphComponent::add_assign` appends the rhs run in place. Locks
+/// the `push_str` rewrite that removed a whole-string clone per
+/// concatenation.
+#[test]
+pub fn test_component_add_assign_appends_text() {
+    do_component_add_assign_appends_text();
+}
+
+pub fn do_component_add_assign_appends_text() {
+    let mut left = GlyphComponent::text("héllo ", AppFont::AppleTea, Color::black());
+    let right = GlyphComponent::text("wörld🌍", AppFont::Evilz, Color::black());
+
+    left += right.clone();
+    assert_eq!(left.text, "héllo wörld🌍");
+
+    // An empty rhs must not touch the lhs text.
+    let mut untouched = GlyphComponent::text("stay", AppFont::AppleTea, Color::black());
+    untouched += GlyphComponent::text("", AppFont::AppleTea, Color::black());
+    assert_eq!(untouched.text, "stay");
+
+    // `Add` reuses the same path without cloning the lhs first.
+    let summed = GlyphComponent::text("a", AppFont::AppleTea, Color::black()) + right;
+    assert_eq!(summed.text, "awörld🌍");
+}
+
+/// `GlyphModelCommand::Rotate` swings the model's position around a
+/// displaced pivot. Uses the geometry epsilon rather than bit
+/// equality — the trig is `f32`, so `model_block_commands` can only
+/// assert the pivot-is-the-position fixed point exactly.
+#[test]
+pub fn test_model_rotate_moves_position_around_pivot() {
+    do_model_rotate_moves_position_around_pivot();
+}
+
+pub fn do_model_rotate_moves_position_around_pivot() {
+    use crate::gfx_structs::model::GlyphModelCommand;
+    use crate::util::geometry::almost_equal_vec2;
+    use glam::Vec2;
+
+    let mut model = GlyphModel::new();
+    model.position = crate::util::ordered_vec2::OrderedVec2::new_f32(10.0, 0.0);
+
+    GlyphModelCommand::Rotate {
+        pivot: Vec2::ZERO,
+        degrees: 90.0,
+    }
+    .apply_to(&mut model);
+
+    // Clockwise 90° takes `+x` onto `-y` (screen space has `+y` down).
+    assert!(almost_equal_vec2(model.position.to_vec2(), Vec2::new(0.0, -10.0)));
 }

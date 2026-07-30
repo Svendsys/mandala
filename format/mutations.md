@@ -110,6 +110,50 @@ The full vocabulary lives in
 `lib/baumhard/src/gfx_structs/area_mutators.rs` under
 `GlyphAreaCommand`. Same enum-variant-as-JSON-tag convention.
 
+### Delta mutations and their field-map keys
+
+`{"AreaDelta": …}` and `{"ModelDelta": …}` carry a *set* of field
+payloads rather than one named command. On the wire the payload is
+an object with a single `fields` member, and **the keys of that map
+are field-type tag names** — one per touched field, plus a sibling
+`Operation` entry naming the arithmetic that governs all of them:
+
+```json
+{
+  "AreaDelta": {
+    "fields": {
+      "Position": { "Position": { "x": 100.0, "y": 200.0 } },
+      "Operation": { "Operation": "Assign" }
+    }
+  }
+}
+```
+
+The valid keys are exactly the variants of `GlyphAreaField`
+(`Text`, `Scale`, `LineHeight`, `Position`, `Bounds`,
+`ColorFontRegions`, `Outline`, `Shape`, `ZoomVisibility`,
+`Operation`) and of `GlyphModelField` (`GlyphMatrix`, `GlyphLine`,
+`GlyphLines`, `Layer`, `Position`, `Operation`). Both tag sets are
+*derived* from the field enums, so the key list can never drift from
+the fields that actually exist.
+
+> **Breaking change (pre-V1, per `CODE_CONVENTIONS.md` §10).** The
+> area-side operation key was previously spelled `ApplyOperation`;
+> it is now `Operation`, matching the field variant it tags and the
+> model-side key of the same meaning. The write-only keys `Flags`
+> (both sides) and the `SetFlag` command tag have been removed —
+> they named no field or command and were never applicable. A
+> hand-authored `.mindmap.json`, `~/.config/mandala/mutations.json`,
+> or `assets/mutations/*.json` still using `ApplyOperation` or
+> `Flags` as a map key will fail to deserialize with
+> `unknown variant`, and because mutations are parsed as part of the
+> enclosing document, **the whole file fails to load** — not just
+> the offending mutation. Rename the key to `Operation`; drop any
+> `Flags` entry. No alias or migration shim is provided (§10:
+> rename rather than alias). No in-repo fixture, bundled asset, or
+> `maptool` path used these keys, so there was nothing to migrate in
+> the same commit.
+
 ### Document-actions-only mutation
 
 A mutation can carry only canvas-level work (e.g. a theme switch)

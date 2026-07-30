@@ -15,7 +15,7 @@ use glam::Vec2;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::core::primitives::{Flag, Flaggable};
+use crate::core::primitives::{Discriminated, Flag, Flaggable};
 use crate::font::fonts;
 use crate::gfx_structs::area::GlyphArea;
 use crate::gfx_structs::element::{GfxElement, GfxElementType};
@@ -37,7 +37,7 @@ pub fn do_new_area_constructs_glyph_area_variant() {
     let area = GlyphArea::new_with_str("hello", 14.0, 14.0, Vec2::new(0.0, 0.0), Vec2::new(100.0, 20.0));
     let elem = GfxElement::new_area_non_indexed_with_id(area, 7, 42);
 
-    assert_eq!(elem.get_type(), GfxElementType::GlyphArea);
+    assert_eq!(elem.variant(), GfxElementType::GlyphArea);
     assert_eq!(elem.channel(), 7);
     assert_eq!(elem.unique_id(), 42);
 }
@@ -53,7 +53,7 @@ fn test_new_void_constructs_void_variant() {
 pub fn do_new_void_constructs_void_variant() {
     let elem = GfxElement::new_void_with_id(3, 99);
 
-    assert_eq!(elem.get_type(), GfxElementType::Void);
+    assert_eq!(elem.variant(), GfxElementType::Void);
     assert_eq!(elem.channel(), 3);
     assert_eq!(elem.unique_id(), 99);
 }

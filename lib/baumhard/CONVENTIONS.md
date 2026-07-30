@@ -110,11 +110,20 @@ it with respect.
   If you find yourself linear-scanning the arena to find a node, you have lost a `NodeId`
   somewhere up the call stack. Find it and thread it through.
 - **`GfxElement` and its field enums are the mutation surface.**
-  `GlyphAreaField` (in `lib/baumhard/src/gfx_structs/area.rs`) and
-  `GlyphModelField` (in `lib/baumhard/src/gfx_structs/model.rs`) are
+  `GlyphAreaField` (in
+  `lib/baumhard/src/gfx_structs/area_fields.rs`) and
+  `GlyphModelField` (in
+  `lib/baumhard/src/gfx_structs/model/mutator.rs`) are
   where new kinds of change land. A new mutation variant is a new
   field variant plus a branch in `DeltaGlyphArea::apply_to` /
   `DeltaGlyphModel::apply_to`, not a new wrapper struct.
+  Everything else that a variant needs is generated: the `*Type`
+  tag comes from `#[derive(EnumDiscriminants)]`, and the delta
+  storage / `new()` / `operation_variant()` / merge come from the
+  shared `Delta<F>` container in
+  `lib/baumhard/src/gfx_structs/delta.rs`. **Do not hand-write a
+  discriminant enum or a second delta struct** — the two surfaces
+  were hand-kept twins once and drifted (issues #10, #24).
 - **Do not rebuild the arena to change one field.** If you catch
   yourself writing `Arena::default()` to fix a typo in a node's text,
   stop and use a mutator.
@@ -197,10 +206,23 @@ worst target.
   `Vec::new()` or a `String::new()` on the hot path without a
   benchmark to justify it.
 - **`#[inline]` on true hot paths, not everywhere.** Use it when a
-  benchmark demonstrates an improvement. `GlyphModelField::same_type`
-  in `lib/baumhard/src/gfx_structs/model.rs` is the exemplar: tiny,
-  called in the tight loop, inlined on purpose. `#[inline]` on a cold
-  function just slows down compilation.
+  benchmark demonstrates an improvement. `Discriminated::variant` /
+  `Discriminated::same_type` in
+  `lib/baumhard/src/core/primitives.rs` are the exemplar: tiny,
+  called in the tight loop, inlined on purpose. (This is the same
+  exemplar that used to be named as `GlyphModelField::same_type`;
+  the predicate moved into the shared trait, the standard did not
+  move with it.) `#[inline]` on a cold function just slows down
+  compilation — and note the corollary: a *new* `#[inline]` needs a
+  benchmark that resolves the effect. On a contended machine where a
+  main-against-main control run swings ±10%, that bar is not met and
+  the attribute does not go in.
+- **A borrowed delta must not clone a payload it will not use.**
+  `Applicable::apply_to` takes `&self`, so moving an owned value out
+  of a delta costs a clone. Route it through
+  `ApplyOperation::apply_ref`, which clones only on the arms that
+  consume the payload — `Noop` and `Delete` must never deep-copy a
+  `GlyphMatrix` just to discard it.
 - **`unsafe` is forbidden.** There is no `unsafe` block anywhere in
   Baumhard today; keep it that way. New `unsafe` is a roadmap-scale
   decision and needs a benchmark plus a review. `unsafe` for lifetime

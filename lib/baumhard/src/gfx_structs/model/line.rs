@@ -88,8 +88,7 @@ impl GlyphLine {
         // `splice` takes a range where to splice in the iterator of elements.
         // Since we're inserting at a specific index, the range starts and ends at `index`.
         // The second argument is the source Vec's into_iter(), which takes ownership of its items.
-        self.line
-            .splice(effective_index..effective_index, source.into_iter());
+        self.line.splice(effective_index..effective_index, source);
     }
 
     /// Line containing one component. O(1).
@@ -160,7 +159,9 @@ impl GlyphLine {
         for i in begin_comp..rhs.line.len() {
             if self.line.get(i).is_some() {
                 let index_of_comp = self.index_of_component(i);
-                self.overriding_insert(index_of_comp, &rhs.get(i).unwrap().clone());
+                // `overriding_insert` clones the component itself, so
+                // cloning here too was a second copy of the run (§B7).
+                self.overriding_insert(index_of_comp, rhs.get(i).unwrap());
             } else {
                 self.line.insert(i, rhs.line[i].clone());
             }
@@ -345,12 +346,10 @@ impl GlyphLine {
 
         if self.length() <= begin {
             let spaces_we_need_to_add = begin - self.length();
-            if self.line.len() > 0 {
+            if !self.line.is_empty() {
                 self.last_comp_mut().unwrap().space_back(spaces_we_need_to_add);
-            } else {
-                if spaces_we_need_to_add > 0 {
-                    self.push(GlyphComponent::space(spaces_we_need_to_add));
-                }
+            } else if spaces_we_need_to_add > 0 {
+                self.push(GlyphComponent::space(spaces_we_need_to_add));
             }
             self.push(item.clone());
             return;
