@@ -67,7 +67,10 @@ impl MulAssign for GlyphComponent {
 impl AddAssign for GlyphComponent {
     fn add_assign(&mut self, rhs: Self) {
         if !rhs.text.is_empty() {
-            self.text = self.text.clone() + &*rhs.text;
+            // Append in place: the old `self.text.clone() + &rhs.text`
+            // allocated a second String for every concatenation on a
+            // hot path (§B7).
+            self.text.push_str(&rhs.text);
         }
         if self.font == AppFont::Any {
             self.font = rhs.font;
@@ -81,10 +84,11 @@ impl AddAssign for GlyphComponent {
 impl Add for GlyphComponent {
     type Output = Self;
 
-    fn add(self, rhs: Self) -> Self::Output {
-        let mut output = self.clone();
-        output += rhs;
-        output
+    fn add(mut self, rhs: Self) -> Self::Output {
+        // `self` is already owned — cloning it first was a wasted
+        // allocation of the whole text run.
+        self += rhs;
+        self
     }
 }
 
