@@ -27,8 +27,9 @@
 //! - [`console_pass`] / [`console_geometry`] — the console
 //!   overlay's glyph-tree pass + pure-function layout math.
 //! - [`color_picker`] — the glyph-wheel picker overlay.
-//! - [`hit`] — screen-space → canvas-space hit math
-//!   (`screen_to_canvas`, `canvas_to_screen`, AABB resolution).
+//! - [`camera`] — camera framing and the screen-space ↔
+//!   canvas-space mapping (`screen_to_canvas`,
+//!   `canvas_per_pixel`, `fit_camera_to_tree`).
 //! - [`decree`] — the `RenderDecree` queue the event loop
 //!   feeds the renderer (resize, zoom, camera-pan, etc.).
 //! - [`overlay_dispatch`] — overlay-vs-canvas slot routing
@@ -36,11 +37,11 @@
 //!   tree handles.
 
 mod borders;
+mod camera;
 mod color_picker;
 mod console_geometry;
 mod console_pass;
 mod decree;
-mod hit;
 mod overlay_dispatch;
 mod pipeline;
 mod render;
@@ -88,7 +89,6 @@ use baumhard::font::fonts;
 #[cfg(test)]
 use baumhard::gfx_structs::area::GlyphArea;
 use baumhard::gfx_structs::camera::Camera2D;
-use baumhard::mindmap::scene_cache::EdgeKey;
 use glam::Vec2;
 
 /// Inline WGSL shader for the colored-rectangle pipeline. Draws a
@@ -352,31 +352,6 @@ pub struct Renderer {
     /// wins via `insert`); the vec preserves emission order so
     /// halos stay behind the main glyph at render time.
     mindmap_buffers: FxHashMap<String, Vec<MindMapTextBuffer>>,
-    /// AABB hitbox for each rendered label, keyed by `EdgeKey`.
-    /// Handed over wholesale by `update_connection_label_tree` (the
-    /// tree builder owns the AABB math); consulted by
-    /// `hit_test_edge_label` when the app dispatches inline
-    /// click-to-edit. Stored as `(min, max)` canvas-space corners so
-    /// the hit test is a pair of comparisons per edge.
-    connection_label_hitboxes: FxHashMap<EdgeKey, (Vec2, Vec2)>,
-    /// AABB hitbox for each rendered portal marker, keyed by
-    /// `(edge_key, endpoint_node_id)`. Portal glyph buffers
-    /// themselves flow through `canvas_scene_buffers` via the
-    /// tree pipeline (see `tree_builder::portal`); this map
-    /// carries only the hit-test rectangles the event loop
-    /// needs. Consulted by `hit_test_portal` when
-    /// `handle_click` resolves a click on a portal glyph to an
-    /// `EdgeKey` + the endpoint the marker sits above (the
-    /// double-click jump target is the *other* endpoint).
-    /// Split between the icon's AABB and the text's AABB so the
-    /// event loop can route clicks on text to
-    /// `SelectionState::PortalText` and clicks on the icon to
-    /// `SelectionState::PortalLabel`. Text entries are absent
-    /// when the endpoint has no visible text (see
-    /// `tree_builder::portal` for the load-bearing phantom-hot-
-    /// zone invariant).
-    portal_icon_hitboxes: FxHashMap<(EdgeKey, String), (Vec2, Vec2)>,
-    portal_text_hitboxes: FxHashMap<(EdgeKey, String), (Vec2, Vec2)>,
     /// Command palette / console overlay buffers. Rendered above
     /// everything else in screen coordinates. Populated only when
     /// the console is open; cleared otherwise.
@@ -720,9 +695,6 @@ impl Renderer {
             viewport,
             camera,
             mindmap_buffers: Default::default(),
-            connection_label_hitboxes: FxHashMap::default(),
-            portal_icon_hitboxes: FxHashMap::default(),
-            portal_text_hitboxes: FxHashMap::default(),
             console_overlay_buffers: Vec::new(),
             color_picker_backdrop: None,
             overlay_buffers: Vec::new(),

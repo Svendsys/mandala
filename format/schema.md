@@ -268,6 +268,7 @@ rendered differently.
   "width": 3,
   "line_style": "solid",
   "visible": true,
+  "label": null,
   "anchor_from": "auto",
   "anchor_to": "auto",
   "control_points": [],

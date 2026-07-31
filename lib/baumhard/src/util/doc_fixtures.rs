@@ -1,0 +1,214 @@
+// SPDX-License-Identifier: MPL-2.0
+
+//! Read published examples out of the `format/` specs so tests pin
+//! code against the *documentation*, not against a copy of it.
+//!
+//! The failure this exists to prevent: a test that restates a doc's
+//! JSON as a string literal pins the code against that literal. Edit
+//! the doc and the literal keeps agreeing with the code while the
+//! spec drifts away from both — the test passes, the reader gets a
+//! shape that no longer loads. `format/` is a normative spec; a
+//! documented wire shape that does not parse has, in this repo,
+//! already taken whole-document loading down.
+//!
+//! The precedent is
+//! `gfx_structs::tests::area_tests::documented_rotate_example`, which
+//! reads its inline-code example straight out of
+//! `format/mutations.md` for exactly this reason. This module
+//! generalizes the fenced-block half of that idea so every doc pin
+//! shares one reader.
+//!
+//! Everything here panics loudly rather than degrading: a silent
+//! fallback when the heading or the block has moved would defeat the
+//! entire point.
+//!
+//! Native-only — the specs live on the filesystem, and wasm32 has no
+//! filesystem to read them from. Cross-platform wire shapes are
+//! pinned once on native (`TEST_CONVENTIONS.md` §T9).
+
+use std::path::{Path, PathBuf};
+
+/// Absolute path to `<repo>/format/<file_name>`.
+///
+/// Resolved from baumhard's own `CARGO_MANIFEST_DIR`, which `env!`
+/// expands when *this crate* compiles — so the answer is
+/// `<repo>/format/...` no matter which crate's test calls it, and
+/// callers do not each hand-roll a `../..` hop of their own depth.
+///
+/// Cost: one `PathBuf` allocation. No I/O; the file is not opened
+/// and its existence is not checked here — [`documented_json_block`]
+/// reports that with a better message.
+pub fn format_doc_path(file_name: &str) -> PathBuf {
+    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../format")).join(file_name)
+}
+
+/// Return the `nth` (0-based) fenced ```` ```json ```` block that
+/// appears after the Markdown heading line `heading` in the file at
+/// `path`, with the fences stripped and surrounding whitespace
+/// trimmed.
+///
+/// `heading` is matched as a whole line after trimming, so pass it
+/// exactly as written including its `#` markers (e.g.
+/// `"### Portal-mode edges"`). The search stops at the next heading
+/// of the *same or shallower* depth, so a block belonging to a later
+/// section can never be picked up by accident.
+///
+/// Panics — never returns a fallback — when the file is unreadable,
+/// the heading is absent, or the section holds fewer than `nth + 1`
+/// JSON blocks. Each message names the file and the heading, because
+/// the caller is a test whose whole purpose is to notice that the
+/// doc moved.
+///
+/// Cost: one full read of the Markdown file plus a single line scan
+/// — O(file_size), paid once per test that pins a block.
+pub fn documented_json_block(path: &Path, heading: &str, nth: usize) -> String {
+    let doc =
+        std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{} must be readable: {e}", path.display()));
+
+    let heading_depth = heading_depth_of(heading).unwrap_or_else(|| {
+        panic!("{heading:?} is not a Markdown heading — pass it with its leading '#' markers")
+    });
+
+    let mut lines = doc.lines();
+    lines
+        .find(|line| line.trim_end() == heading)
+        .unwrap_or_else(|| panic!("{} no longer publishes the heading {heading:?}", path.display()));
+
+    let mut seen = 0usize;
+    let mut current: Option<Vec<&str>> = None;
+    for line in lines {
+        // A heading at the same or a shallower level ends the
+        // section; anything past it belongs to a different concept.
+        if current.is_none() {
+            if let Some(depth) = heading_depth_of(line.trim_end()) {
+                if depth <= heading_depth {
+                    break;
+                }
+            }
+        }
+
+        match (&mut current, line.trim_end()) {
+            (None, "```json") => current = Some(Vec::new()),
+            (Some(_), "```") => {
+                let block = current.take().expect("in-block by construction");
+                if seen == nth {
+                    return block.join("\n").trim().to_string();
+                }
+                seen += 1;
+            }
+            (Some(body), _) => body.push(line),
+            (None, _) => {}
+        }
+    }
+
+    panic!(
+        "{} §{heading} publishes {seen} json block(s); block {nth} was requested. \
+         Update the doc or the test — they are meant to move together.",
+        path.display()
+    );
+}
+
+/// Depth of a Markdown ATX heading (`## x` → 2), or `None` when the
+/// line is not a heading. A run of `#` must be followed by a space
+/// to count, so a `#[derive(...)]` inside a fenced block cannot be
+/// mistaken for one.
+fn heading_depth_of(line: &str) -> Option<usize> {
+    let depth = line.chars().take_while(|c| *c == '#').count();
+    if depth > 0 && line[depth..].starts_with(' ') {
+        Some(depth)
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::util::test_temp::TempDir;
+
+    fn write_doc(dir: &TempDir, body: &str) -> PathBuf {
+        let path = dir.join("doc.md");
+        std::fs::write(&path, body).expect("write scratch doc");
+        path
+    }
+
+    const SAMPLE: &str = "\
+# Title
+
+## First
+
+```json
+{ \"a\": 1 }
+```
+
+```json
+{ \"a\": 2 }
+```
+
+### Nested
+
+```json
+{ \"a\": 3 }
+```
+
+## Second
+
+```json
+{ \"b\": 1 }
+```
+";
+
+    #[test]
+    fn test_documented_json_block_returns_the_requested_block() {
+        let dir = TempDir::new("doc-fixtures-nth");
+        let path = write_doc(&dir, SAMPLE);
+        assert_eq!(documented_json_block(&path, "## First", 0), "{ \"a\": 1 }");
+        assert_eq!(documented_json_block(&path, "## First", 1), "{ \"a\": 2 }");
+    }
+
+    /// A deeper heading is still inside the section, so its blocks
+    /// keep counting — that is what lets a caller name the outer
+    /// section and index through everything under it.
+    #[test]
+    fn test_documented_json_block_descends_into_deeper_headings() {
+        let dir = TempDir::new("doc-fixtures-nested");
+        let path = write_doc(&dir, SAMPLE);
+        assert_eq!(documented_json_block(&path, "## First", 2), "{ \"a\": 3 }");
+        assert_eq!(documented_json_block(&path, "### Nested", 0), "{ \"a\": 3 }");
+    }
+
+    /// A sibling heading ends the section: `## First` must not reach
+    /// into `## Second`, or a doc reshuffle would silently repoint a
+    /// pin at someone else's example.
+    #[test]
+    fn test_documented_json_block_stops_at_the_next_sibling_heading() {
+        let dir = TempDir::new("doc-fixtures-stop");
+        let path = write_doc(&dir, SAMPLE);
+        let err = std::panic::catch_unwind(|| documented_json_block(&path, "## First", 3))
+            .expect_err("block 3 is under ## Second and must not be found");
+        let msg = err.downcast_ref::<String>().expect("panic payload is a String");
+        assert!(msg.contains("publishes 3 json block(s)"), "got: {msg}");
+    }
+
+    #[test]
+    fn test_documented_json_block_panics_when_the_heading_is_gone() {
+        let dir = TempDir::new("doc-fixtures-missing");
+        let path = write_doc(&dir, SAMPLE);
+        let err = std::panic::catch_unwind(|| documented_json_block(&path, "## Absent", 0))
+            .expect_err("a missing heading must panic, not fall back");
+        let msg = err.downcast_ref::<String>().expect("panic payload is a String");
+        assert!(msg.contains("no longer publishes the heading"), "got: {msg}");
+    }
+
+    /// The `format/` docs this module exists to read are reachable
+    /// from wherever the suite runs.
+    #[test]
+    fn test_format_doc_path_resolves_to_the_repo_specs() {
+        let path = format_doc_path("schema.md");
+        assert!(
+            path.is_file(),
+            "format/schema.md must be readable at {}",
+            path.display()
+        );
+    }
+}

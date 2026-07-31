@@ -51,9 +51,7 @@ pub fn load_from_str(json: &str) -> Result<MindMap, String> {
             //   here when the typed map carries the symptom
             //   (zero-section node, or the substring marker
             //   indicates a dropped field).
-            if map.nodes.values().any(|n| n.sections.is_empty())
-                || has_legacy_marker(json)
-            {
+            if map.nodes.values().any(|n| n.sections.is_empty()) || has_legacy_marker(json) {
                 if let Some(err) = detect_legacy_shape(json) {
                     return Err(err);
                 }
@@ -229,7 +227,11 @@ fn warn_on_duplicate_edges(map: &MindMap) {
     use std::collections::HashMap;
     let mut seen: HashMap<(&str, &str, &str), usize> = HashMap::new();
     for (i, edge) in map.edges.iter().enumerate() {
-        let key = (edge.from_id.as_str(), edge.to_id.as_str(), edge.edge_type.as_str());
+        let key = (
+            edge.from_id.as_str(),
+            edge.to_id.as_str(),
+            edge.edge_type.as_str(),
+        );
         if let Some(&first) = seen.get(&key) {
             log::warn!(
                 "duplicate edge tuple (from_id={:?}, to_id={:?}, edge_type={:?}) \
@@ -280,8 +282,7 @@ fn detect_section_count_cap(map: &MindMap) -> Option<String> {
 /// error describing the path + underlying cause.
 pub fn save_to_file(path: &Path, map: &MindMap) -> Result<(), String> {
     let value = serde_json::to_value(map).map_err(|e| format!("failed to serialize map: {e}"))?;
-    let json =
-        serde_json::to_string_pretty(&value).map_err(|e| format!("failed to render map JSON: {e}"))?;
+    let json = serde_json::to_string_pretty(&value).map_err(|e| format!("failed to render map JSON: {e}"))?;
     write_atomic(path, &json)
 }
 
@@ -289,8 +290,32 @@ pub fn save_to_file(path: &Path, map: &MindMap) -> Result<(), String> {
 /// Cleans up the temp file on rename failure so a partially-written
 /// staging file is never left behind. Used by [`save_to_file`] for the
 /// typed-`MindMap` save path; also exposed for legacy-migration tools
-/// (`maptool convert --portals` etc.) that ship raw `serde_json::Value`
-/// to disk without a `MindMap` round-trip.
+/// — every `maptool convert` verb routes through it — that ship raw
+/// `serde_json::Value` to disk without a `MindMap` round-trip.
+///
+/// The existing file at `path` is never opened for writing, which is
+/// what makes an in-place migration (input path == output path) safe:
+/// the old bytes survive untouched until the rename swaps the
+/// finished file in.
+///
+/// **The saved file is a new inode.** That is the mechanism, not an
+/// incidental detail, and it has consequences a caller must know:
+/// hard links to the old file keep the old content, and a symlink at
+/// `path` is replaced by a regular file rather than followed. What
+/// does *not* change is the mode — when `path` already exists its
+/// permissions are carried onto the staging file, so a map the user
+/// deliberately `chmod 600`'d does not come back world-readable at
+/// the process umask. A new file takes the umask default, as it
+/// would from any other writer.
+///
+/// The mode is applied **at creation, before any content lands** —
+/// see [`write_staging_file`]. Nothing ever exists on disk holding
+/// the caller's bytes at a wider mode than the target had.
+///
+/// Cost: one `stat` of the target, one create + one write of
+/// `contents`, and one rename. Reading the target's mode is
+/// best-effort: a target whose metadata cannot be read falls through
+/// to umask defaults rather than failing a save the user asked for.
 pub fn write_atomic(path: &Path, contents: &str) -> Result<(), String> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     let file_name = path
@@ -298,8 +323,14 @@ pub fn write_atomic(path: &Path, contents: &str) -> Result<(), String> {
         .ok_or_else(|| format!("invalid path: {}", path.display()))?
         .to_string_lossy();
     let tmp_path = dir.join(format!(".{}.{}.tmp", file_name, std::process::id()));
-    fs::write(&tmp_path, contents)
+
+    // The mode of the file being replaced, if there is one to
+    // inherit. Read before the staging file is created, because
+    // that is when it has to be applied.
+    let inherited = fs::metadata(path).ok().map(|meta| meta.permissions());
+    write_staging_file(&tmp_path, contents, inherited)
         .map_err(|e| format!("failed to write {}: {e}", tmp_path.display()))?;
+
     fs::rename(&tmp_path, path).map_err(|e| {
         let _ = fs::remove_file(&tmp_path);
         format!(
@@ -310,12 +341,99 @@ pub fn write_atomic(path: &Path, contents: &str) -> Result<(), String> {
     })
 }
 
+/// Create `tmp_path` already carrying `inherited`'s permissions, then
+/// write `contents` into it.
+///
+/// The **order is the whole point**. Creating at the process umask
+/// and chmod-ing afterwards would leave a complete copy of the map
+/// sitting at the wider mode for the entire duration of the write —
+/// precisely the exposure the inheritance exists to prevent, and a
+/// window a reader only has to be unlucky to hit. So the mode goes on
+/// at `open(2)` time, when the file is still empty.
+///
+/// `OpenOptions::mode` applies only when the file is *created*, so a
+/// stale staging file — left by a crashed run that happened to hold
+/// this pid — is removed first. Without that it would keep its own
+/// (possibly wide) mode straight through the truncate and inherit
+/// nothing.
+///
+/// Permissions are advisory to the save, never fatal to it: on
+/// platforms without a create-time mode the post-creation fallback
+/// logs and continues rather than losing content the caller asked to
+/// persist.
+fn write_staging_file(
+    tmp_path: &Path,
+    contents: &str,
+    inherited: Option<fs::Permissions>,
+) -> std::io::Result<()> {
+    use std::io::Write;
+
+    let _ = fs::remove_file(tmp_path);
+    let mut file = create_with_mode(tmp_path, inherited)?;
+    file.write_all(contents.as_bytes())
+}
+
+/// Create an empty file at `tmp_path` with `inherited`'s mode applied
+/// from the moment it exists.
+#[cfg(unix)]
+fn create_with_mode(tmp_path: &Path, inherited: Option<fs::Permissions>) -> std::io::Result<fs::File> {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    if let Some(permissions) = inherited {
+        options.mode(permissions.mode());
+    }
+    options.open(tmp_path)
+}
+
+/// Non-Unix fallback: no create-time mode exists, so the only
+/// carryable bit (the read-only flag) is applied immediately after
+/// creation, while the file is still empty. That flag is not a
+/// confidentiality control, so the ordering carries no exposure here
+/// the way it does on Unix.
+#[cfg(not(unix))]
+fn create_with_mode(tmp_path: &Path, inherited: Option<fs::Permissions>) -> std::io::Result<fs::File> {
+    let file = fs::File::create(tmp_path)?;
+    if let Some(permissions) = inherited {
+        if let Err(e) = file.set_permissions(permissions) {
+            log::warn!("could not carry permissions onto {}: {e}", tmp_path.display());
+        }
+    }
+    Ok(file)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::mindmap::test_helpers::testament_map_path as test_map_path;
     use crate::util::test_temp::TempDir;
     use std::path::PathBuf;
+
+    /// `format/README.md` §"Minimum-viable example" claims to print
+    /// "a complete, valid mindmap with a single root node". Nothing
+    /// checked that claim, and the loader is strict enough —
+    /// required keys, zero-section rejection, the legacy-shape
+    /// screens — that a stale example would quietly become a broken
+    /// starting point for anyone hand-authoring a map.
+    ///
+    /// The example is **read out of the spec**, not restated here, so
+    /// the pin follows the doc when the doc moves rather than
+    /// agreeing with a copy of its old self.
+    #[test]
+    fn test_documented_minimum_viable_example_loads() {
+        let doc = crate::util::doc_fixtures::format_doc_path("README.md");
+        let published =
+            crate::util::doc_fixtures::documented_json_block(&doc, "## Minimum-viable example", 0);
+
+        let map = load_from_str(&published).unwrap_or_else(|e| {
+            panic!("format/README.md's minimum-viable example must load: {e}\n{published}")
+        });
+        assert_eq!(map.name, "hello");
+        assert_eq!(map.nodes.len(), 1);
+        assert_eq!(map.nodes["0"].sections[0].text, "Hello");
+        assert!(map.edges.is_empty());
+    }
 
     #[test]
     fn test_load_testament_map() {
@@ -624,16 +742,8 @@ mod tests {
         let offsets = std::collections::HashMap::new();
         let aabbs = node_clip_aabbs(&map, &offsets, None, &hidden);
         let mut cache = SceneConnectionCache::new();
-        let (connection_elements, _handles) = build_connection_elements(
-            &map,
-            &offsets,
-            &aabbs,
-            None,
-            None,
-            &mut cache,
-            1.0,
-            &hidden,
-        );
+        let (connection_elements, _handles) =
+            build_connection_elements(&map, &offsets, &aabbs, None, None, &mut cache, 1.0, &hidden);
 
         // All visible edges should produce connection elements
         let visible_edges = map.edges.iter().filter(|e| e.visible).count();
@@ -871,6 +981,92 @@ mod tests {
             "atomic writer left a temp file behind: {}",
             leftover.display()
         );
+    }
+
+    /// The temp-file + rename that buys atomicity replaces the
+    /// target's inode, so a naive implementation hands the user's map
+    /// back at whatever the umask says — a map deliberately
+    /// `chmod 600`'d because it carries private notes would come back
+    /// world-readable after a save or an in-place `maptool convert`.
+    /// `write_atomic` copies the existing mode onto the staging file
+    /// before the swap; this pins that.
+    ///
+    /// Unix-only: `PermissionsExt` is where a mode bit is even
+    /// expressible. The behavior is not — the `set_permissions` call
+    /// it guards runs on every target.
+    #[cfg(unix)]
+    #[test]
+    fn test_write_atomic_preserves_the_targets_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new("atomic-permissions");
+        let path = dir.join("private.mindmap.json");
+        fs::write(&path, "{}").expect("seed the target");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).expect("chmod 600");
+
+        write_atomic(&path, "{\"replaced\":true}").expect("write_atomic failed");
+
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "an owner-only map must not be widened by the atomic swap"
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), "{\"replaced\":true}");
+    }
+
+    /// The mode is applied when the staging file is *created*, not
+    /// after the content lands, so nothing ever holds the caller's
+    /// bytes at a wider mode than the target had.
+    ///
+    /// The window itself is not observable from a single-threaded
+    /// test, but the mechanism that closes it is: `OpenOptions::mode`
+    /// only takes effect on creation, which forces the writer to
+    /// clear any stale staging file first. This plants one at `0666`
+    /// with **no** target to inherit from — the case where the old
+    /// write-then-chmod shape had no chmod to run at all, so the
+    /// leftover's mode rode straight onto a brand-new map.
+    #[cfg(unix)]
+    #[test]
+    fn test_write_atomic_does_not_inherit_a_stale_staging_files_mode() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new("atomic-stale-staging");
+        let path = dir.join("fresh.mindmap.json");
+        let pid = std::process::id();
+        let stale = dir.join(&format!(".fresh.mindmap.json.{pid}.tmp"));
+        fs::write(&stale, "leftover from a crashed run").expect("plant the stale staging file");
+        fs::set_permissions(&stale, fs::Permissions::from_mode(0o666)).expect("chmod 666");
+
+        write_atomic(&path, "{\"fresh\":true}").expect("write_atomic failed");
+
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_ne!(
+            mode, 0o666,
+            "a stale staging file's mode must not ride onto a brand-new map"
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), "{\"fresh\":true}");
+        assert!(!stale.exists(), "the staging file must not survive the rename");
+    }
+
+    /// A target that does not exist yet has no mode to inherit, so
+    /// the new file takes the umask default like any other writer —
+    /// and the write still succeeds rather than failing on the
+    /// missing metadata.
+    #[cfg(unix)]
+    #[test]
+    fn test_write_atomic_creates_a_new_file_without_a_target_to_inherit_from() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new("atomic-permissions-new");
+        let path = dir.join("fresh.mindmap.json");
+        write_atomic(&path, "{}").expect("write_atomic failed");
+
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert!(
+            mode & 0o600 == 0o600,
+            "a fresh file must at least be owner-readable/writable, got {mode:o}"
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), "{}");
     }
 
     /// `save_to_file` → `load_from_file` reproduces the same `MindMap`

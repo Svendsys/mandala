@@ -99,13 +99,7 @@ impl super::WasmApp {
         // in `app/mod.rs`), so the previously-duplicated
         // hit-routing block now lives in one place.
         let now = now_ms();
-        let parts = {
-            let renderer_borrow = self.renderer.borrow();
-            let Some(renderer) = renderer_borrow.as_ref() else {
-                return;
-            };
-            compute_click_hit(canvas_pos, input.mindmap_tree.as_mut(), renderer)
-        };
+        let parts = compute_click_hit(canvas_pos, input.mindmap_tree.as_mut(), &mut input.app_scene);
         let ClickHitParts {
             click_hit,
             hit_node,

@@ -258,27 +258,34 @@ pub(super) struct ClickHitParts {
 }
 
 /// Pure router for "what did this click target?". Runs the
-/// node → portal-text → portal-icon → edge-label priority
-/// chain and folds the four hits into a single
-/// [`ClickHitParts`]. Both the native click handler and the
-/// WASM click handler previously open-coded byte-identical
-/// versions of this body — they now both call here.
+/// node → portal → edge-label priority chain and folds the
+/// resolved hits into a single [`ClickHitParts`]. Both the
+/// native click handler and the WASM click handler previously
+/// open-coded byte-identical versions of this body — they now
+/// both call here.
 ///
 /// Priority rationale: node hits beat portal hits (a node
-/// under a portal marker is the more common target).
-/// Portal sub-parts are resolved text-first, then icon — the
-/// two AABBs don't overlap in practice but the ordering keeps
-/// routing deterministic if geometry ever places them
-/// adjacent. Edge-label hits only register when no node /
-/// portal sub-part has claimed the click — labels sit along
-/// the connection path, and placing them behind the portal
-/// check keeps the portal's "floating over a node" behavior
-/// correct even if a label happens to overlap.
+/// under a portal marker is the more common target). Edge-label
+/// hits only register when no node / portal sub-part has claimed
+/// the click — labels sit along the connection path, and placing
+/// them behind the portal check keeps the portal's "floating over
+/// a node" behavior correct even if a label happens to overlap.
+///
+/// The portal rung is a **single** query. Icon and text are
+/// sibling leaves of one tree, so
+/// [`AppScene::portal_at`](crate::application::scene_host::AppScene::portal_at)
+/// resolves both in one BVH descent and names which sub-part won;
+/// `portal_text_hit` and `portal_icon_hit` are two views of that
+/// one answer and can never both be `Some`. The predecessor ran
+/// two independent scans over two hash maps and relied on
+/// check-text-first to break a tie the maps could not see.
 pub(super) fn compute_click_hit(
     canvas_pos: glam::Vec2,
     mindmap_tree: Option<&mut baumhard::mindmap::tree_builder::MindMapTree>,
-    renderer: &crate::application::renderer::Renderer,
+    app_scene: &mut crate::application::scene_host::AppScene,
 ) -> ClickHitParts {
+    use baumhard::mindmap::tree_builder::PortalPart;
+
     let (hit_node, hit_section_idx) = match mindmap_tree {
         Some(tree) => match crate::application::document::hit_test_target(canvas_pos, tree) {
             Some(crate::application::document::HitTarget::NodeContainer { node_id }) => (Some(node_id), None),
@@ -290,18 +297,24 @@ pub(super) fn compute_click_hit(
         None => (None, None),
     };
 
-    let portal_text_hit = if hit_node.is_none() {
-        renderer.hit_test_portal_text(canvas_pos)
+    let portal_hit = if hit_node.is_none() {
+        app_scene.portal_at(canvas_pos)
     } else {
         None
     };
-    let portal_icon_hit = if hit_node.is_none() && portal_text_hit.is_none() {
-        renderer.hit_test_portal(canvas_pos)
-    } else {
-        None
+    let portal_claimed = portal_hit.is_some();
+    let (portal_text_hit, portal_icon_hit) = match portal_hit {
+        Some(hit) => {
+            let endpoint = (hit.edge_key, hit.endpoint_node_id);
+            match hit.part {
+                PortalPart::Text => (Some(endpoint), None),
+                PortalPart::Icon => (None, Some(endpoint)),
+            }
+        }
+        None => (None, None),
     };
-    let edge_label_hit = if hit_node.is_none() && portal_text_hit.is_none() && portal_icon_hit.is_none() {
-        renderer.hit_test_any_edge_label(canvas_pos)
+    let edge_label_hit = if hit_node.is_none() && !portal_claimed {
+        app_scene.edge_label_at(canvas_pos)
     } else {
         None
     };

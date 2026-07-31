@@ -14,6 +14,10 @@
 //!   across hex, empty, transparent, theme-var, malformed, 3-digit.
 //! - [`border`] — border tree: void-per-framed, filters, drag
 //!   offset, theme var, channel stability, mutator round-trip.
+//! - [`canvas_hit`] — canvas click routing over the portal and
+//!   connection-label trees: overlap resolution by smallest area,
+//!   node-id independence, and a differential sweep against a
+//!   linear-scan oracle over the same rectangles.
 //! - [`portal`] — portal tree: marker pairs, fold filter,
 //!   selection highlight, ascending channels, mutator round-trip,
 //!   identity sequence.
@@ -53,6 +57,7 @@
 mod fixtures;
 
 mod border;
+mod canvas_hit;
 mod connection;
 mod connection_cache;
 mod connection_clipping;

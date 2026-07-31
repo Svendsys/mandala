@@ -88,7 +88,7 @@ impl ThrottledInteraction for EdgeLabelInteraction {
                     interaction_mode.resize_handle_overrides(),
                     renderer.camera_zoom(),
                 )
-                .update_connection_label_tree(app_scene, renderer);
+                .update_connection_label_tree(app_scene);
                 flush_canvas_scene_buffers(app_scene, renderer);
             }
         }

@@ -114,8 +114,8 @@ pub(super) fn drain_camera_geometry_rebuild(
             // until the next full rebuild (they ride along with
             // `update_connection_trees`).
             frame.update_connection_trees(scene_cache, app_scene);
-            frame.update_connection_label_tree(app_scene, renderer);
-            frame.update_portal_tree(app_scene, renderer);
+            frame.update_connection_label_tree(app_scene);
+            frame.update_portal_tree(app_scene);
             flush_canvas_scene_buffers(app_scene, renderer);
         }
     }
