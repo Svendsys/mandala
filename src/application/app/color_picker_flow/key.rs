@@ -130,9 +130,20 @@ pub(in crate::application::app) enum PickerDecline {
 /// Decide whether the funnel arm can run `op`, or why it can't.
 /// `None` means "run it".
 ///
-/// Order matters: `PickerClosed` is checked first because a closed
-/// picker is neither standalone nor contextual, so reporting
-/// `StandaloneCancel` for it would name the wrong reason.
+/// `PickerClosed` is checked first so the reported reason is the
+/// right one for any input, including the `(is_open: false,
+/// is_standalone: true)` pair. That pair cannot occur at the sole
+/// call site — `ColorPickerState::is_standalone()` is
+/// `matches!(self, Open { mode: Standalone, .. })`, so it implies
+/// open — which means swapping the two checks would be
+/// behaviorally identical in production today. The order is a
+/// contract of this pure function, not a property of any state the
+/// program can reach; it is pinned so a future caller that derives
+/// the two flags separately still gets a truthful reason.
+///
+/// Taking `&ColorPickerState` instead of two dependent booleans
+/// would make the impossible pair unrepresentable and retire the
+/// question. Left as-is here to keep the fix scoped.
 pub(in crate::application::app) fn picker_decline_reason(
     op: PickerOp,
     is_open: bool,

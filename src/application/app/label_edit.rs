@@ -142,11 +142,13 @@ pub(in crate::application::app) enum EdgeEditorPlan {
 /// `PortalLabel` and `PortalText` both open the portal-text editor:
 /// the label is the endpoint's glyph and the text is its caption,
 /// and the editor edits the caption in both cases.
-#[cfg(not(target_arch = "wasm32"))]
+///
 /// The match is deliberately **exhaustive** rather than
-/// `_ => None`: a tenth `SelectionState` variant should be a build
-/// error here, so whoever adds it has to decide whether it names a
-/// single-line editor instead of silently inheriting "no".
+/// `_ => None`: `SelectionState` has ten variants today, and an
+/// eleventh should be a build error here, so whoever adds it has to
+/// decide whether it names a single-line editor instead of silently
+/// inheriting "no".
+#[cfg(not(target_arch = "wasm32"))]
 pub(in crate::application::app) fn resolve_edge_editor_plan(
     selection: &crate::application::document::SelectionState,
 ) -> EdgeEditorPlan {
