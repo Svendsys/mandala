@@ -44,52 +44,51 @@ impl IndexMut<usize> for GlyphMatrix {
 }
 
 impl SubAssign for GlyphMatrix {
+    /// Rows absent from `self` fall away — there is no such thing as
+    /// a negative glyph. `rhs` is consumed line by line, so no line
+    /// is cloned.
     fn sub_assign(&mut self, rhs: Self) {
-        for (i, line) in (&rhs.matrix).iter().enumerate() {
+        for (i, line) in rhs.matrix.into_iter().enumerate() {
             debug!("Looking at rhs line {}", i);
-            if self.get(i).is_none() {
-                // There's no way we can have negative glyphs, for now at least.
-                // I suppose it depends on what we want a subtraction operation to
-                // mean on a GlyphMatrix
-                debug!("line {} does not exist in self, so falls away", i);
-                continue;
-            } else {
-                self.get_mut(i).unwrap().sub_assign(line.clone())
+            match self.get_mut(i) {
+                Some(target) => target.sub_assign(line),
+                None => debug!("line {} does not exist in self, so falls away", i),
             }
         }
     }
 }
 
 impl MulAssign for GlyphMatrix {
+    /// Row-wise product. Rows absent from `self` fall away — pairing
+    /// them with nothing is multiplication by zero. `rhs` is consumed
+    /// line by line, so no line is cloned.
     fn mul_assign(&mut self, rhs: Self) {
-        // wtf does it mean to multiply two glyphmatrices
-        // Well let's see
-        for (i, line) in (&rhs.matrix).iter().enumerate() {
+        for (i, line) in rhs.matrix.into_iter().enumerate() {
             debug!("Looking at rhs line {}", i);
-            if self.get(i).is_none() {
-                // Don't copy over lines that don't exist in self
-                // because that would be considered multiplication by 0
-                debug!("line {} does not exist in self, so falls away", i);
-                continue;
-            } else {
-                self.get_mut(i).unwrap().mul_assign(line.clone())
+            match self.get_mut(i) {
+                Some(target) => target.mul_assign(line),
+                None => debug!("line {} does not exist in self, so falls away", i),
             }
         }
     }
 }
 
 impl AddAssign for GlyphMatrix {
+    /// Overriding row-wise add: `rhs` may be taller than `self`, in
+    /// which case the surplus rows are appended. `rhs` is consumed
+    /// line by line, so no line is cloned — and the append is a
+    /// `push` (the iteration is contiguous from 0, so a missing row
+    /// is always exactly one past the end; `insert` would be a
+    /// panic waiting for a non-contiguous caller).
     fn add_assign(&mut self, rhs: Self) {
-        // rhs might be dimensionally bigger than self.
-        // This will be an overriding add_assign
-        for (i, line) in (&rhs.matrix).iter().enumerate() {
+        for (i, line) in rhs.matrix.into_iter().enumerate() {
             debug!("Looking at rhs line {}", i);
-            if self.get(i).is_none() {
-                self.matrix.insert(i, line.clone());
-                debug!("Cloned line {} from rhs into self", i);
-                continue;
-            } else {
-                self.get_mut(i).unwrap().add_assign(line.clone())
+            match self.get_mut(i) {
+                Some(target) => target.add_assign(line),
+                None => {
+                    self.matrix.push(line);
+                    debug!("Moved line {} from rhs into self", i);
+                }
             }
         }
     }
@@ -160,7 +159,7 @@ impl GlyphMatrix {
     /// `replace_graphemes_until_newline` call is O(line length).
     pub fn place_in(&self, string: &mut String, regions: &mut ColorFontRegions, offset: (usize, usize)) {
         // Ensure that there's enough lines present in the string
-        let num_lines = count_number_lines(&string);
+        let num_lines = count_number_lines(string);
         let needed_lines = self.matrix.len() + offset.1;
 
         if needed_lines > num_lines {
@@ -180,7 +179,7 @@ impl GlyphMatrix {
                     }
                 } else {
                     // Important that this is done before pushing spaces
-                    graph_line_start_index = count_grapheme_clusters(&string);
+                    graph_line_start_index = count_grapheme_clusters(string);
                     push_spaces(string, offset.0);
                 }
             }
@@ -213,12 +212,11 @@ impl GlyphMatrix {
             for _ in 0..line_delta {
                 self.matrix.push(GlyphLine::new());
             }
-            let line: GlyphLine;
-            if idx > 0 {
-                line = GlyphLine::new_with(GlyphComponent::space(idx));
+            let line = if idx > 0 {
+                GlyphLine::new_with(GlyphComponent::space(idx))
             } else {
-                line = GlyphLine::new();
-            }
+                GlyphLine::new()
+            };
             self.matrix.push(line);
         }
     }

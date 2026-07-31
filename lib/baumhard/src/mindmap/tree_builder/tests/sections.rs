@@ -19,7 +19,7 @@
 
 use super::super::*;
 use super::fixtures::*;
-use crate::core::primitives::{Flag, Flaggable};
+use crate::core::primitives::{Discriminated, Flag, Flaggable};
 use crate::gfx_structs::element::GfxElementType;
 use crate::mindmap::model::{MindSection, Position, Size};
 
@@ -64,7 +64,7 @@ fn test_section_model_is_glyph_model_child_of_section_area() {
         .expect("section-area has a model child");
     let model_element = result.tree.arena.get(model_id).unwrap().get();
     assert_eq!(
-        model_element.get_type(),
+        model_element.variant(),
         GfxElementType::GlyphModel,
         "section-model is a GlyphModel"
     );

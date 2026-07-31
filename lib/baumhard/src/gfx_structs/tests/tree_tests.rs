@@ -30,7 +30,7 @@ use crate::gfx_structs::tree_walker::walk_tree_from;
 use crate::util::color::{add_rgba, Color, FloatRgba};
 
 use crate::core::primitives::{
-    Applicable, ApplyOperation, ColorFontRegion, ColorFontRegionField, ColorFontRegions, Range,
+    Applicable, ApplyOperation, ColorFontRegion, ColorFontRegionField, ColorFontRegions, Discriminated, Range,
 };
 use crate::gfx_structs::predicate::{Comparator, Predicate};
 use crate::gfx_structs::util::regions::RegionParams;
@@ -197,6 +197,35 @@ lazy_static!(
                    vec![(GfxElementField::GlyphModel(GlyphModelField::position(0.0, 200.0)), ApplyOperation::Add)]),
                (GlyphModelCommand::NudgeDown(200.0),
                    vec![(GfxElementField::GlyphModel(GlyphModelField::position(0.0, 200.0)), ApplyOperation::Assign)]),
+               (GlyphModelCommand::NudgeUp(200.0),
+                   vec![(GfxElementField::GlyphModel(GlyphModelField::position(0.0, -200.0)), ApplyOperation::Add)]),
+               (GlyphModelCommand::NudgeLeft(75.0),
+                   vec![(GfxElementField::GlyphModel(GlyphModelField::position(-75.0, 0.0)), ApplyOperation::Add)]),
+               (GlyphModelCommand::NudgeRight(75.0),
+                   vec![(GfxElementField::GlyphModel(GlyphModelField::position(75.0, 0.0)), ApplyOperation::Add)]),
+
+               // Rotating about the element's own position is the one
+               // rotation with a bit-exact expectation (the translated
+               // vector is exactly zero, so no trig error can leak in).
+               // `model_rotate_moves_position_around_pivot` covers a
+               // displaced pivot with the geometry epsilon.
+               (GlyphModelCommand::Rotate { pivot: Vec2::new(0.0, 0.0), degrees: 90.0 },
+                   vec![(GfxElementField::GlyphModel(GlyphModelField::position(0.0, 0.0)), ApplyOperation::Assign)]),
+
+               // Polite (expanding) insert into the middle of the
+               // reference line's two-space run splits it in half and
+               // sandwiches the new component, rather than overwriting
+               // as `RudeInsert` does.
+               (GlyphModelCommand::PoliteInsert {
+                           line_num: 0,
+                           at_idx: 1,
+                           component: GlyphComponent::text("hi", AlphaMusicMan, Color::black())},
+                   vec![(GfxElementField::GlyphModel(
+                   GlyphModelField::GlyphLine(0, GlyphLine::new_with_vec(vec![
+                       GlyphComponent::space(1),
+                       GlyphComponent::text("hi", AlphaMusicMan, Color::black()),
+                       GlyphComponent::space(1)], false))),
+                   ApplyOperation::Assign)]),
 
                // this is the operation to be tested
                (GlyphModelCommand::RudeInsert {
@@ -403,6 +432,17 @@ pub fn model_block_commands() {
                 _ => {}
             }
         }
+    }
+    // Every model command kind must be represented in MODEL_COMMANDS,
+    // mirroring the area-side assertion below. The tag enum is derived
+    // from `GlyphModelCommand`, so a newly added command shows up here
+    // as an untested type rather than slipping through unnoticed.
+    for command_type in GlyphModelCommandType::iter() {
+        assert!(
+            command_type_set.contains(&command_type),
+            "The type {} was not tested",
+            command_type
+        );
     }
 }
 

@@ -133,8 +133,11 @@ impl GlyphModel {
             }
         }
 
+        // `apply_ref` clones the payload only on the arms that
+        // consume it — a `Noop` or `Delete` model delta no longer
+        // deep-copies the whole matrix just to discard it.
         if let Some(glyph_matrix) = delta.glyph_matrix() {
-            operation.apply(&mut self.glyph_matrix, glyph_matrix);
+            operation.apply_ref(&mut self.glyph_matrix, glyph_matrix);
         }
 
         if let Some((line_num, line)) = delta.glyph_line() {
@@ -143,24 +146,32 @@ impl GlyphModel {
 
         if let Some(lines) = delta.glyph_lines() {
             for (line_num, line) in lines {
-                self.apply_line_delta(operation, line_num, line);
+                self.apply_line_delta(operation, *line_num, line);
             }
         }
     }
 
-    fn apply_line_delta(&mut self, operation: ApplyOperation, line_num: usize, line: GlyphLine) {
+    fn apply_line_delta(&mut self, operation: ApplyOperation, line_num: usize, line: &GlyphLine) {
         match operation {
             ApplyOperation::Add | ApplyOperation::Assign => {
-                operation.apply(self.glyph_matrix.ensure_line(line_num), line);
+                operation.apply_ref(self.glyph_matrix.ensure_line(line_num), line);
             }
             ApplyOperation::Subtract
             | ApplyOperation::Multiply
             | ApplyOperation::Delete
             | ApplyOperation::Noop => {
                 if let Some(target_line) = self.glyph_matrix.get_mut(line_num) {
-                    operation.apply(target_line, line);
+                    operation.apply_ref(target_line, line);
                 }
             }
         }
+    }
+}
+
+/// Mirrors [`GlyphMatrix`] and [`GlyphLine`], which both carry one —
+/// an empty model at the origin on layer 0.
+impl Default for GlyphModel {
+    fn default() -> Self {
+        GlyphModel::new()
     }
 }

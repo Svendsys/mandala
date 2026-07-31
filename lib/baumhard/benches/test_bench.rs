@@ -6,6 +6,7 @@ use baumhard::font::tests::fonts_tests::*;
 use baumhard::font::tests::hex_tests::*;
 use baumhard::font::tests::metrics_tests::*;
 use baumhard::gfx_structs::tests::area_tests::*;
+use baumhard::gfx_structs::tests::delta_tests::*;
 use baumhard::gfx_structs::tests::model_tests::*;
 use baumhard::gfx_structs::tests::mutator_tests::*;
 use baumhard::gfx_structs::tests::region_indexer_tests::*;
@@ -146,6 +147,55 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("model_layer_subtract_saturates_at_zero", |b| {
         b.iter(|| do_model_layer_subtract_saturates_at_zero())
     });
+    c.bench_function("delta_glyph_matrix_noop_and_delete_ignore_payload", |b| {
+        b.iter(|| do_delta_glyph_matrix_noop_and_delete_ignore_payload())
+    });
+    c.bench_function("delta_glyph_matrix_applies_repeatedly", |b| {
+        b.iter(|| do_delta_glyph_matrix_applies_repeatedly())
+    });
+    c.bench_function("matrix_add_assign_absorbs_taller_rhs", |b| {
+        b.iter(|| do_matrix_add_assign_absorbs_taller_rhs())
+    });
+    c.bench_function("matrix_destructive_assigns_drop_surplus_rhs_rows", |b| {
+        b.iter(|| do_matrix_destructive_assigns_drop_surplus_rhs_rows())
+    });
+    c.bench_function("component_add_assign_appends_text", |b| {
+        b.iter(|| do_component_add_assign_appends_text())
+    });
+    c.bench_function("model_rotate_moves_position_around_pivot", |b| {
+        b.iter(|| do_model_rotate_moves_position_around_pivot())
+    });
+    // shared delta plumbing //
+    c.bench_function("area_field_tags_cover_every_field", |b| {
+        b.iter(|| do_area_field_tags_cover_every_field())
+    });
+    c.bench_function("model_field_tags_cover_every_field", |b| {
+        b.iter(|| do_model_field_tags_cover_every_field())
+    });
+    c.bench_function("same_type_ignores_payload", |b| {
+        b.iter(|| do_same_type_ignores_payload())
+    });
+    c.bench_function("pipeline_tags_are_derived", |b| {
+        b.iter(|| do_pipeline_tags_are_derived())
+    });
+    c.bench_function("delta_new_collapses_duplicates_and_defaults_to_noop", |b| {
+        b.iter(|| do_delta_new_collapses_duplicates_and_defaults_to_noop())
+    });
+    c.bench_function("delta_add_merges_both_sides", |b| {
+        b.iter(|| do_delta_add_merges_both_sides())
+    });
+    c.bench_function("operation_key_matches_control_variant", |b| {
+        b.iter(|| do_operation_key_matches_control_variant())
+    });
+    c.bench_function("apply_ref_matches_apply", |b| {
+        b.iter(|| do_apply_ref_matches_apply())
+    });
+    c.bench_function("apply_reaches_every_area_field", |b| {
+        b.iter(|| do_apply_reaches_every_area_field())
+    });
+    c.bench_function("apply_reaches_every_model_field", |b| {
+        b.iter(|| do_apply_reaches_every_model_field())
+    });
     // glyph_area //
     c.bench_function("outline_assign_round_trip", |b| {
         b.iter(|| do_outline_assign_round_trip())
@@ -170,9 +220,10 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("shape_field_add_picks_rhs", |b| {
         b.iter(|| do_shape_field_add_picks_rhs())
     });
-    c.bench_function("change_region_range_missing_region_warns_and_leaves_area_intact", |b| {
-        b.iter(|| do_change_region_range_missing_region_warns_and_leaves_area_intact())
-    });
+    c.bench_function(
+        "change_region_range_missing_region_warns_and_leaves_area_intact",
+        |b| b.iter(|| do_change_region_range_missing_region_warns_and_leaves_area_intact()),
+    );
     c.bench_function("delta_text_delete_clears_text", |b| {
         b.iter(|| do_delta_text_delete_clears_text())
     });
@@ -610,7 +661,11 @@ fn criterion_benchmark(c: &mut Criterion) {
 /// `baumhard::mindmap::test_helpers::synthetic_node_full` is
 /// `pub(crate)` so external benches can't reach it. Mirrors the
 /// shape that helper produces (no border, simple style).
-fn bench_node(id: &str, x: f64, sections: Vec<baumhard::mindmap::model::MindSection>) -> baumhard::mindmap::model::MindNode {
+fn bench_node(
+    id: &str,
+    x: f64,
+    sections: Vec<baumhard::mindmap::model::MindSection>,
+) -> baumhard::mindmap::model::MindNode {
     use baumhard::mindmap::model::{MindNode, NodeLayout, NodeStyle, Position, Size};
     MindNode {
         id: id.to_string(),
@@ -756,12 +811,7 @@ fn resize_mode_rebuild_benchmark(c: &mut Criterion) {
     });
 
     let mut node_cache = SceneConnectionCache::new();
-    do_scene_rebuild_with_handle_overrides(
-        &bench_map,
-        &mut node_cache,
-        Some(any_node_id.as_str()),
-        None,
-    );
+    do_scene_rebuild_with_handle_overrides(&bench_map, &mut node_cache, Some(any_node_id.as_str()), None);
     c.bench_function("scene_rebuild_resize_mode_node_target", |b| {
         b.iter(|| {
             do_scene_rebuild_with_handle_overrides(
