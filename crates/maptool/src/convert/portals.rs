@@ -19,13 +19,23 @@ use std::path::Path;
 
 /// Fold every entry of the legacy top-level `portals[]` array into a
 /// portal-mode edge appended to `edges[]`, removing the `portals` key.
-/// Returns the number of portals folded.
+/// Returns the number of edges actually appended.
+///
+/// That return value is the *only* signal a one-shot migration gives
+/// the user, so it counts pushes rather than input length: an entry
+/// that is not a JSON object cannot become an edge, and reporting it
+/// as folded would turn silent data loss into a plausible-looking
+/// success. Each such entry is named on stderr with its index so the
+/// drop is diagnosable rather than invisible.
 ///
 /// Idempotent: a tree with no `portals` key (already migrated) folds
 /// zero portals and is left byte-identical. A `portals` value that is
-/// present but not an array is dropped as unreadable rather than
-/// failing the conversion — the current loader rejects the key in any
-/// shape, so leaving it behind would keep the map unloadable.
+/// present but not an array is dropped rather than carried through —
+/// no legacy writer produced that shape, and preserving it would
+/// keep nothing the loader or the app can read while leaving a key
+/// the format no longer defines. (The loader itself only rejects a
+/// *non-empty array* `portals`; the other shapes load, they just
+/// mean nothing.)
 ///
 /// Errors only on a root that is not a JSON object, or an `edges`
 /// key that is not an array — both of which make the file unusable
@@ -36,21 +46,33 @@ pub(super) fn fold_portals_into_edges(root: &mut Value) -> Result<usize, String>
         .ok_or_else(|| "map root must be a JSON object".to_string())?;
     let portals_array = match obj.remove("portals") {
         Some(Value::Array(a)) => a,
-        // No portals field, or an unexpected shape: nothing to fold.
-        Some(_) | None => return Ok(0),
+        Some(other) => {
+            eprintln!(
+                "warning: `portals` is {}, not an array; dropped (no legacy writer emits this shape)",
+                json_kind(&other)
+            );
+            return Ok(0);
+        }
+        None => return Ok(0),
     };
 
-    let folded = portals_array.len();
     let edges = obj
         .entry("edges")
         .or_insert_with(|| Value::Array(Vec::new()))
         .as_array_mut()
         .ok_or("map `edges` field is not an array")?;
 
-    for portal in portals_array {
+    let mut folded = 0usize;
+    for (index, portal) in portals_array.into_iter().enumerate() {
         let obj = match portal {
             Value::Object(o) => o,
-            _ => continue,
+            other => {
+                eprintln!(
+                    "warning: portals[{index}] is {}, not an object; dropped",
+                    json_kind(&other)
+                );
+                continue;
+            }
         };
         let endpoint_a = obj
             .get("endpoint_a")
@@ -109,9 +131,24 @@ pub(super) fn fold_portals_into_edges(root: &mut Value) -> Result<usize, String>
             "display_mode": "portal",
         });
         edges.push(edge);
+        folded += 1;
     }
 
     Ok(folded)
+}
+
+/// Name a JSON value's kind for a warning message. `serde_json` has
+/// no public accessor for this, and the value itself may be a whole
+/// subtree not worth printing at the user.
+fn json_kind(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "a boolean",
+        Value::Number(_) => "a number",
+        Value::String(_) => "a string",
+        Value::Array(_) => "an array",
+        Value::Object(_) => "an object",
+    }
 }
 
 /// Read `input_path`, convert any `portals[]` entries into
@@ -133,7 +170,7 @@ mod tests {
     use std::io::Write;
 
     #[test]
-    fn no_portals_field_is_noop() {
+    fn test_no_portals_field_is_noop() {
         let mut src = tempfile::NamedTempFile::new().unwrap();
         writeln!(
             src,
@@ -147,7 +184,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_glyph_falls_back_to_default_marker() {
+    fn test_empty_glyph_falls_back_to_default_marker() {
         // A legacy portal with `glyph: ""` would migrate to an edge
         // with an empty `glyph_connection.body`, rendering as a
         // zero-width marker that's impossible to interact with.
@@ -174,7 +211,7 @@ mod tests {
     // shared `write_atomic` helper that this migration now uses.
 
     #[test]
-    fn legacy_portal_becomes_portal_mode_edge() {
+    fn test_legacy_portal_becomes_portal_mode_edge() {
         let mut src = tempfile::NamedTempFile::new().unwrap();
         writeln!(
             src,
@@ -206,47 +243,30 @@ mod tests {
     /// of this transform as literal JSON. A doc example that drifts
     /// from the converter is worse than no example — a reader hand-
     /// migrating a map by that block would produce a file the loader
-    /// rejects. Both string literals below are the verbatim text of
-    /// those two fenced blocks; the assertion is that the converter
-    /// turns the first into the second.
+    /// rejects.
+    ///
+    /// Both blocks are **read out of the spec** rather than restated
+    /// here: a hard-copied literal would pin the converter against
+    /// the test's own copy and let the doc drift away from both
+    /// undetected, which is precisely the failure this test exists to
+    /// catch.
     #[test]
-    fn documented_fold_matches_converter_output() {
-        const DOC_LEGACY_PORTAL: &str = r##"{
-  "endpoint_a": "0.0",
-  "endpoint_b": "0.1",
-  "label": "Cross-reference",
-  "glyph": "⬢",
-  "color": "#ff00aa",
-  "font": "LiberationSans",
-  "font_size_pt": 18.0
-}"##;
-        const DOC_PORTAL_EDGE: &str = r##"{
-  "from_id": "0.0",
-  "to_id": "0.1",
-  "type": "cross_link",
-  "color": "#ff00aa",
-  "width": 3,
-  "line_style": "solid",
-  "visible": true,
-  "label": null,
-  "anchor_from": "auto",
-  "anchor_to": "auto",
-  "control_points": [],
-  "glyph_connection": {
-    "body": "⬢",
-    "font": "LiberationSans",
-    "font_size_pt": 18.0
-  },
-  "display_mode": "portal"
-}"##;
+    fn test_documented_fold_matches_converter_output() {
+        use baumhard::util::doc_fixtures::{documented_json_block, format_doc_path};
 
-        let legacy_portal: Value = serde_json::from_str(DOC_LEGACY_PORTAL)
-            .expect("the documented legacy portal block must be valid JSON");
+        let doc = format_doc_path("migration.md");
+        let published_legacy = documented_json_block(&doc, "### The fold, exactly", 0);
+        let published_edge = documented_json_block(&doc, "### The fold, exactly", 1);
+
+        let legacy_portal: Value = serde_json::from_str(&published_legacy).unwrap_or_else(|e| {
+            panic!("the documented legacy portal block must be valid JSON: {e}\n{published_legacy}")
+        });
         let mut root = json!({ "edges": [], "portals": [legacy_portal] });
         assert_eq!(fold_portals_into_edges(&mut root).unwrap(), 1);
 
-        let expected: Value = serde_json::from_str(DOC_PORTAL_EDGE)
-            .expect("the documented portal-edge block must be valid JSON");
+        let expected: Value = serde_json::from_str(&published_edge).unwrap_or_else(|e| {
+            panic!("the documented portal-edge block must be valid JSON: {e}\n{published_edge}")
+        });
         let produced = &root["edges"].as_array().unwrap()[0];
         assert_eq!(
             produced, &expected,
@@ -255,16 +275,18 @@ mod tests {
 
         // ...and the documented shape is one the typed model accepts,
         // so a reader who copies the block by hand gets a loadable map.
-        serde_json::from_str::<baumhard::mindmap::model::MindEdge>(DOC_PORTAL_EDGE)
+        serde_json::from_str::<baumhard::mindmap::model::MindEdge>(&published_edge)
             .expect("the documented portal edge must deserialize as a MindEdge");
     }
 
     /// A `portals` key holding something other than an array is
-    /// dropped rather than carried through: the loader rejects the
-    /// key in every shape, so preserving it would leave the output
-    /// unloadable for no gain.
+    /// dropped rather than carried through. Note the loader does
+    /// *not* reject this shape — it only rejects a non-empty array —
+    /// so the reason is that no legacy writer emits it and carrying
+    /// it forward would preserve a key the format no longer defines
+    /// while conveying nothing the app can read.
     #[test]
-    fn non_array_portals_key_is_dropped() {
+    fn test_non_array_portals_key_is_dropped() {
         let mut root = json!({ "edges": [], "portals": "not an array" });
         assert_eq!(fold_portals_into_edges(&mut root).unwrap(), 0);
         assert!(root.get("portals").is_none());
@@ -273,7 +295,7 @@ mod tests {
     /// A legacy map with no `edges` key at all still gets its portals:
     /// the fold creates the array rather than silently dropping them.
     #[test]
-    fn fold_creates_edges_array_when_absent() {
+    fn test_fold_creates_edges_array_when_absent() {
         let mut root = json!({
             "portals": [{ "endpoint_a": "0", "endpoint_b": "1" }]
         });
@@ -286,5 +308,30 @@ mod tests {
         assert_eq!(edges[0]["color"], "#aa88cc");
         assert_eq!(edges[0]["glyph_connection"]["font_size_pt"], 16.0);
         assert!(edges[0]["glyph_connection"].get("font").is_none());
+    }
+
+    /// The returned count is the only signal a one-shot migration
+    /// gives the user, so it must equal the edges actually written.
+    /// Counting the input array instead reported `3 folded` for an
+    /// array holding one usable portal and two junk entries — a
+    /// plausible number over silent data loss, with nothing left on
+    /// disk for `verify` to notice.
+    #[test]
+    fn test_count_reflects_edges_written_not_entries_seen() {
+        let mut root = json!({
+            "edges": [],
+            "portals": [
+                "oops-a-string",
+                { "endpoint_a": "0", "endpoint_b": "1" },
+                42
+            ]
+        });
+        let folded = fold_portals_into_edges(&mut root).unwrap();
+        let written = root["edges"].as_array().unwrap().len();
+        assert_eq!(written, 1, "only the object entry can become an edge");
+        assert_eq!(
+            folded, written,
+            "the reported count must equal the edges actually written"
+        );
     }
 }

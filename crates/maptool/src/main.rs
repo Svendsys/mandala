@@ -811,7 +811,7 @@ mod tests {
     /// Guards the fixture itself: if a future edit made it loadable,
     /// the round-trip test below would pass without proving anything.
     #[test]
-    fn legacy_with_portals_fixture_is_rejected_by_the_loader() {
+    fn test_legacy_with_portals_fixture_is_rejected_by_the_loader() {
         let err = load_from_file(&legacy_with_portals_path())
             .expect_err("the legacy fixture must not load as a current-format map");
         assert!(
@@ -821,7 +821,7 @@ mod tests {
     }
 
     #[test]
-    fn run_convert_legacy_on_portal_bearing_map_loads_and_verifies_in_one_hop() {
+    fn test_run_convert_legacy_on_portal_bearing_map_loads_and_verifies_in_one_hop() {
         let dir = TempDir::new("convert-legacy-portals");
         let output = dir.join("converted.mindmap.json");
         let args = as_strings(&[
@@ -875,7 +875,7 @@ mod tests {
     /// Running the standalone portal verb over an already-folded map
     /// is a no-op, so the two paths compose instead of double-folding.
     #[test]
-    fn run_convert_portals_after_legacy_is_a_no_op() {
+    fn test_run_convert_portals_after_legacy_is_a_no_op() {
         let dir = TempDir::new("convert-legacy-then-portals");
         let output = dir.join("converted.mindmap.json");
         let legacy = as_strings(&[
@@ -894,10 +894,13 @@ mod tests {
             output.to_str().unwrap(),
         ]);
         run(&portals).unwrap();
-        // Compared as a boolean: both sides are whole map files, and a
-        // value-diff on failure buries the point (TEST_CONVENTIONS §T5).
-        assert!(
-            fs::read_to_string(&output).unwrap() == once,
+        // Parsed trees, not raw text: a failure here should report
+        // which key drifted, not two screens of identical JSON
+        // (TEST_CONVENTIONS §T5 — improve the values, keep the macro).
+        let before: serde_json::Value = serde_json::from_str(&once).unwrap();
+        let after: serde_json::Value = serde_json::from_str(&fs::read_to_string(&output).unwrap()).unwrap();
+        assert_eq!(
+            after, before,
             "convert --portals must not change an already-folded map"
         );
     }

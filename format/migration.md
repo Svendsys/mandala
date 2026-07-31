@@ -87,10 +87,26 @@ unclickable), `color` to `#aa88cc`, `font_size_pt` to `16.0`, and
 silently — `maptool verify` then flags it as a dangling edge
 reference, which is the diagnosable outcome.
 
-Both blocks above are pinned by
-`convert::portals::tests::documented_fold_matches_converter_output`,
-which parses this exact text and compares it against what the
-converter emits.
+Entries that are not JSON objects cannot become edges and are
+**dropped**, each named on stderr with its index:
+
+```
+warning: portals[0] is a string, not an object; dropped
+```
+
+The reported count is the number of edges actually written, not the
+length of the input array, so a summary line of `1 folded in from
+legacy portals` next to three warnings tells you exactly what
+survived. A `portals` key that is not an array at all is dropped the
+same way, with the same kind of warning. (The loader only rejects a
+*non-empty array* `portals`; the other shapes load fine — they just
+carry nothing the app can read, and no legacy writer produced them.)
+
+Both blocks above are read straight out of this file by
+`convert::portals::tests::test_documented_fold_matches_converter_output`,
+which parses them and compares against what the converter emits — so
+editing either block fails that test rather than silently drifting
+away from the code.
 
 ## Also: migrating node text into sections
 
@@ -130,7 +146,23 @@ for writing, so an interrupted run — a kill, a full disk, a crash —
 leaves either the original file intact or the converted file
 complete, never a truncated partial. That is what makes passing the
 same path for input and output safe on every verb, not just
-`--portals`.
+`--portals`. The app's own save path (`save_to_file`) uses the same
+writer.
+
+**The output is a new inode.** That is the mechanism, not a detail:
+
+- The file's **permissions are preserved** when the output path
+  already exists — a map you `chmod 600` because it carries private
+  notes stays owner-only across an in-place convert, rather than
+  reverting to the umask default.
+- **Hard links are detached.** Another name for the old file keeps
+  the *old* content; it does not follow the conversion.
+- **A symlink at the output path is replaced**, not followed: after
+  the convert, that path is a regular file holding the converted map,
+  and the link's former target is untouched.
+
+If you rely on either of the last two, convert to a distinct output
+path and move the result into place yourself.
 
 ## What it does
 

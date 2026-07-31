@@ -507,38 +507,33 @@ fn display_mode_portal_round_trips_through_json() {
 /// literal JSON, and `maptool convert` emits exactly this shape for
 /// every folded legacy portal. A documented example that does not
 /// deserialize is worse than none — a reader hand-authoring an edge
-/// from it produces a file the loader refuses. The literal below is
-/// the verbatim text of that fenced block, so a field rename or a
-/// dropped `#[serde(default)]` fails here instead of in someone's
-/// editor.
+/// from it produces a file the loader refuses.
 ///
-/// Note what it omits: `label`, which carries no `#[serde(default)]`
-/// and is unconditionally serialized. It parses anyway because serde
-/// supplies `None` for a missing `Option<T>`. Anything that turns
-/// that field into a non-`Option` breaks the documented example, and
-/// this test is where that shows up.
+/// The example is **read out of the spec**, not restated here: a
+/// hard-copied literal would pin this test against itself and let
+/// the doc drift away from the code undetected (the same reasoning
+/// as `gfx_structs::tests::area_tests::documented_rotate_example`).
 #[test]
-fn documented_portal_edge_example_deserializes() {
-    const DOC_PORTAL_EDGE: &str = r##"{
-  "from_id": "0.3",
-  "to_id": "1.7.2",
-  "type": "cross_link",
-  "color": "#30b082",
-  "width": 3,
-  "line_style": "solid",
-  "visible": true,
-  "anchor_from": "auto",
-  "anchor_to": "auto",
-  "control_points": [],
-  "glyph_connection": { "body": "◈", "font_size_pt": 16.0 },
-  "display_mode": "portal"
-}"##;
-    let edge: MindEdge = serde_json::from_str(DOC_PORTAL_EDGE)
-        .expect("format/schema.md's portal-edge example must deserialize");
+fn test_documented_portal_edge_example_deserializes() {
+    let doc = crate::util::doc_fixtures::format_doc_path("schema.md");
+    let published =
+        crate::util::doc_fixtures::documented_json_block(&doc, "### Portal-mode edges", 0);
+
+    let edge: MindEdge = serde_json::from_str(&published).unwrap_or_else(|e| {
+        panic!("format/schema.md's portal-edge example must deserialize: {e}\n{published}")
+    });
     assert!(is_portal_edge(&edge));
     assert_eq!(edge.from_id, "0.3");
     assert_eq!(edge.to_id, "1.7.2");
     assert_eq!(edge.glyph_connection.as_ref().unwrap().body, "◈");
+
+    // `label` has no `skip_serializing_if`, so every serializer
+    // writes it. The spec must show it, or the two portal-edge
+    // examples in `format/` disagree about the shape on disk.
+    assert!(
+        published.contains("\"label\""),
+        "the published portal edge must carry `label`, which is always serialized:\n{published}"
+    );
 }
 
 #[test]

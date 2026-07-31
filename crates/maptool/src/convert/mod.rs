@@ -39,8 +39,9 @@ fn edges_arr_mut(root: &mut Value) -> Option<&mut Vec<Value>> {
     root.get_mut("edges").and_then(|v| v.as_array_mut())
 }
 
-/// Mutable handle to legacy `root.portals` (rejected by the
-/// current-format loader; only legacy passes touch it).
+/// Mutable handle to legacy `root.portals` — a non-empty one is
+/// rejected by the current-format loader, and only legacy passes
+/// touch it.
 fn portals_arr_mut(root: &mut Value) -> Option<&mut Vec<Value>> {
     root.get_mut("portals").and_then(|v| v.as_array_mut())
 }
@@ -152,6 +153,19 @@ mod tests {
         p
     }
 
+    /// A whole map file is the wrong thing to put in an assertion:
+    /// on failure the diff is two screens of JSON and the one bit
+    /// that matters is invisible. Comparing digests keeps
+    /// `assert_eq!` (TEST_CONVENTIONS §T5's "improve the values you
+    /// are comparing, not the assertion macro") while the failure
+    /// output stays two numbers plus the message that explains them.
+    fn digest(contents: &str) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        contents.hash(&mut hasher);
+        hasher.finish()
+    }
+
     /// The atomicity contract, tested rather than asserted: a
     /// converter must never write *through* the file already at the
     /// output path. It stages the new content elsewhere and renames
@@ -166,7 +180,7 @@ mod tests {
     /// old inode alone and the witness still reads the old file.
     /// Deterministic, no kill required.
     #[test]
-    fn convert_verbs_never_write_through_the_existing_file() {
+    fn test_convert_verbs_never_write_through_the_existing_file() {
         for (name, verb) in VERBS {
             let dir = TempDir::new("convert-atomic");
             let target = dir.join("map.mindmap.json");
@@ -180,17 +194,16 @@ mod tests {
             // the user's only copy.
             verb(&target, &target).unwrap_or_else(|e| panic!("{name}: {e}"));
 
-            // Compared as booleans, not as values: both sides are
-            // whole map files, and printing them on failure buries
-            // the one bit that matters (TEST_CONVENTIONS §T5).
             let after = std::fs::read_to_string(&target).unwrap();
-            assert!(
-                after != before,
+            assert_ne!(
+                digest(&after),
+                digest(&before),
                 "{name}: fixture must actually change, or the test proves nothing"
             );
             let witness_content = std::fs::read_to_string(&witness).unwrap();
-            assert!(
-                witness_content == before,
+            assert_eq!(
+                digest(&witness_content),
+                digest(&before),
                 "{name}: wrote through the existing file instead of renaming a staging \
                  file over it — an interrupted in-place run would truncate the original"
             );
@@ -203,7 +216,7 @@ mod tests {
     /// at the maptool seam, where a verb that quietly went back to
     /// `fs::write` plus a hand-rolled temp file would show up.
     #[test]
-    fn convert_verbs_leave_no_staging_file() {
+    fn test_convert_verbs_leave_no_staging_file() {
         for (name, verb) in VERBS {
             let dir = TempDir::new("convert-staging");
             let input = dir.join("in.mindmap.json");
@@ -228,7 +241,7 @@ mod tests {
     /// Every verb reports its input path in the read error rather
     /// than a bare OS message, so a mistyped path is diagnosable.
     #[test]
-    fn convert_verbs_name_the_missing_input() {
+    fn test_convert_verbs_name_the_missing_input() {
         for (name, verb) in VERBS {
             let dir = TempDir::new("convert-missing-input");
             let missing = dir.join("nope.mindmap.json");
@@ -247,7 +260,7 @@ mod tests {
     /// happens. `convert_legacy` is the only verb with a failing
     /// transform (a root without a usable `nodes` object).
     #[test]
-    fn failed_legacy_transform_writes_nothing() {
+    fn test_failed_legacy_transform_writes_nothing() {
         let dir = TempDir::new("convert-failed-transform");
         let input = dir.join("in.mindmap.json");
         std::fs::write(&input, r#"{"version":"1.0","name":"t"}"#).unwrap();

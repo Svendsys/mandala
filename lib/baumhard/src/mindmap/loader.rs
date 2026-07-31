@@ -297,6 +297,22 @@ pub fn save_to_file(path: &Path, map: &MindMap) -> Result<(), String> {
 /// what makes an in-place migration (input path == output path) safe:
 /// the old bytes survive untouched until the rename swaps the
 /// finished file in.
+///
+/// **The saved file is a new inode.** That is the mechanism, not an
+/// incidental detail, and it has consequences a caller must know:
+/// hard links to the old file keep the old content, and a symlink at
+/// `path` is replaced by a regular file rather than followed. What
+/// does *not* change is the mode — when `path` already exists its
+/// permissions are copied onto the staging file before the rename,
+/// so a map the user deliberately `chmod 600`'d does not come back
+/// world-readable at the process umask. A new file takes the umask
+/// default, as it would from any other writer.
+///
+/// Cost: one write of `contents`, one `stat` + one `chmod` when the
+/// target exists, and one rename. The permission copy is best-effort
+/// on the read side — a target whose metadata cannot be read falls
+/// through to umask defaults rather than failing a save the user
+/// asked for.
 pub fn write_atomic(path: &Path, contents: &str) -> Result<(), String> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     let file_name = path
@@ -305,6 +321,18 @@ pub fn write_atomic(path: &Path, contents: &str) -> Result<(), String> {
         .to_string_lossy();
     let tmp_path = dir.join(format!(".{}.{}.tmp", file_name, std::process::id()));
     fs::write(&tmp_path, contents).map_err(|e| format!("failed to write {}: {e}", tmp_path.display()))?;
+    // Inherit the target's mode before the swap. Skipped silently
+    // when the target is new (nothing to inherit) or unreadable;
+    // a failure to widen/narrow permissions must not lose the
+    // user's content, which is already safely written above.
+    if let Ok(existing) = fs::metadata(path) {
+        if let Err(e) = fs::set_permissions(&tmp_path, existing.permissions()) {
+            log::warn!(
+                "could not carry {}'s permissions onto the staging file: {e}",
+                path.display()
+            );
+        }
+    }
     fs::rename(&tmp_path, path).map_err(|e| {
         let _ = fs::remove_file(&tmp_path);
         format!(
@@ -324,47 +352,23 @@ mod tests {
 
     /// `format/README.md` §"Minimum-viable example" claims to print
     /// "a complete, valid mindmap with a single root node". Nothing
-    /// checked that claim, and the loader is strict enough — required
-    /// keys, zero-section rejection, the legacy-shape screens — that
-    /// a stale example would quietly become a broken starting point
-    /// for anyone hand-authoring a map. The literal below is the
-    /// verbatim text of that fenced block.
+    /// checked that claim, and the loader is strict enough —
+    /// required keys, zero-section rejection, the legacy-shape
+    /// screens — that a stale example would quietly become a broken
+    /// starting point for anyone hand-authoring a map.
+    ///
+    /// The example is **read out of the spec**, not restated here, so
+    /// the pin follows the doc when the doc moves rather than
+    /// agreeing with a copy of its old self.
     #[test]
     fn test_documented_minimum_viable_example_loads() {
-        const DOC_MINIMUM_MAP: &str = r##"{
-  "version": "1.0",
-  "name": "hello",
-  "canvas": { "background_color": "#000000" },
-  "nodes": {
-    "0": {
-      "id": "0",
-      "parent_id": null,
-      "position": { "x": 0.0, "y": 0.0 },
-      "size": { "width": 200.0, "height": 60.0 },
-      "sections": [
-        { "text": "Hello" }
-      ],
-      "style": {
-        "background_color": "#141414",
-        "frame_color": "#30b082",
-        "text_color": "#ffffff",
-        "shape": "rectangle",
-        "corner_radius_percent": 10.0,
-        "frame_thickness": 4.0,
-        "show_frame": true,
-        "show_shadow": false
-      },
-      "layout": { "type": "map", "direction": "auto", "spacing": 50.0 },
-      "folded": false,
-      "notes": "",
-      "color_schema": null,
-      "channel": 0
-    }
-  },
-  "edges": []
-}"##;
-        let map =
-            load_from_str(DOC_MINIMUM_MAP).expect("format/README.md's minimum-viable example must load");
+        let doc = crate::util::doc_fixtures::format_doc_path("README.md");
+        let published =
+            crate::util::doc_fixtures::documented_json_block(&doc, "## Minimum-viable example", 0);
+
+        let map = load_from_str(&published).unwrap_or_else(|e| {
+            panic!("format/README.md's minimum-viable example must load: {e}\n{published}")
+        });
         assert_eq!(map.name, "hello");
         assert_eq!(map.nodes.len(), 1);
         assert_eq!(map.nodes["0"].sections[0].text, "Hello");
@@ -917,6 +921,58 @@ mod tests {
             "atomic writer left a temp file behind: {}",
             leftover.display()
         );
+    }
+
+    /// The temp-file + rename that buys atomicity replaces the
+    /// target's inode, so a naive implementation hands the user's map
+    /// back at whatever the umask says — a map deliberately
+    /// `chmod 600`'d because it carries private notes would come back
+    /// world-readable after a save or an in-place `maptool convert`.
+    /// `write_atomic` copies the existing mode onto the staging file
+    /// before the swap; this pins that.
+    ///
+    /// Unix-only: `PermissionsExt` is where a mode bit is even
+    /// expressible. The behavior is not — the `set_permissions` call
+    /// it guards runs on every target.
+    #[cfg(unix)]
+    #[test]
+    fn test_write_atomic_preserves_the_targets_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new("atomic-permissions");
+        let path = dir.join("private.mindmap.json");
+        fs::write(&path, "{}").expect("seed the target");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).expect("chmod 600");
+
+        write_atomic(&path, "{\"replaced\":true}").expect("write_atomic failed");
+
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "an owner-only map must not be widened by the atomic swap"
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), "{\"replaced\":true}");
+    }
+
+    /// A target that does not exist yet has no mode to inherit, so
+    /// the new file takes the umask default like any other writer —
+    /// and the write still succeeds rather than failing on the
+    /// missing metadata.
+    #[cfg(unix)]
+    #[test]
+    fn test_write_atomic_creates_a_new_file_without_a_target_to_inherit_from() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new("atomic-permissions-new");
+        let path = dir.join("fresh.mindmap.json");
+        write_atomic(&path, "{}").expect("write_atomic failed");
+
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert!(
+            mode & 0o600 == 0o600,
+            "a fresh file must at least be owner-readable/writable, got {mode:o}"
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), "{}");
     }
 
     /// `save_to_file` → `load_from_file` reproduces the same `MindMap`

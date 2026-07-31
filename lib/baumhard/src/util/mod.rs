@@ -12,6 +12,11 @@ pub mod arena_utils;
 pub mod color;
 /// Hex ↔ RGB ↔ HSV plus theme-variable resolution.
 pub mod color_conversion;
+/// Readers that pull published examples straight out of the
+/// `format/` specs, so a doc pin tests the doc rather than a copy of
+/// it. Native-only — the specs live on the filesystem.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod doc_fixtures;
 /// Small-scale 2D geometry: pivot rotation, epsilon compare,
 /// pixel-space ordering.
 pub mod geometry;
