@@ -40,7 +40,10 @@ pub fn load_user(explicit_path: Option<&Path>) -> Vec<CustomMutation> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::user_config::{scratch_path, MAX_USER_PAYLOAD_BYTES};
+
+    use baumhard::util::test_temp::TempDir;
+
+    use crate::application::user_config::MAX_USER_PAYLOAD_BYTES;
 
     #[test]
     fn test_load_user_missing_file_returns_empty_vec() {
@@ -51,28 +54,29 @@ mod tests {
 
     #[test]
     fn test_load_user_malformed_file_returns_empty_vec() {
-        let tmp = scratch_path("bad_mutations.json");
+        let scratch = TempDir::new("bad-mutations");
+        let tmp = scratch.join("mutations.json");
         std::fs::write(&tmp, "{ this is not json").unwrap();
         let v = load_user(Some(&tmp));
         assert!(v.is_empty());
-        let _ = std::fs::remove_file(&tmp);
     }
 
     #[test]
     fn test_load_user_oversized_file_is_rejected() {
-        let tmp = scratch_path("oversized_mutations.json");
+        let scratch = TempDir::new("oversized-mutations");
+        let tmp = scratch.join("mutations.json");
         // Write a 2 MiB file — twice the 1 MiB cap. Content is
         // irrelevant; the rejection happens before serde runs.
         let blob = vec![b' '; MAX_USER_PAYLOAD_BYTES * 2];
         std::fs::write(&tmp, &blob).unwrap();
         let v = load_user(Some(&tmp));
         assert!(v.is_empty(), "oversized file must produce an empty result");
-        let _ = std::fs::remove_file(&tmp);
     }
 
     #[test]
     fn test_load_user_valid_file_loads_mutations() {
-        let tmp = scratch_path("good_mutations.json");
+        let scratch = TempDir::new("good-mutations");
+        let tmp = scratch.join("mutations.json");
         let src = r#"{
             "mutations": [{
                 "id": "user-mut",
@@ -85,6 +89,5 @@ mod tests {
         let v = load_user(Some(&tmp));
         assert_eq!(v.len(), 1);
         assert_eq!(v[0].id, "user-mut");
-        let _ = std::fs::remove_file(&tmp);
     }
 }

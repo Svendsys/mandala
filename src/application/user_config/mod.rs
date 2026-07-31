@@ -86,26 +86,6 @@ pub fn check_cap(byte_len: u64) -> Result<(), String> {
     }
 }
 
-/// Scratch paths for the loader tests, named once.
-///
-/// Every user-config loader test needs a real file on disk, and the
-/// obvious spelling — `temp_dir().join("mandala_test_thing.json")` —
-/// is a fixed path shared by every process on the machine. Two
-/// `cargo test` runs in sibling worktrees then race on it: one
-/// truncates while the other reads, and the failure looks like a bug
-/// in the code under test rather than in the test. The `name`
-/// separates tests within a run; `pid` separates the runs.
-///
-/// Interim: this is a naming helper, not a scratch-directory guard,
-/// so a test that panics still leaks its file. It is expected to
-/// collapse into `baumhard::util::test_temp::TempDir` — which is RAII
-/// and cleans up on panic — once that lands; this crate deliberately
-/// does not depend on that branch yet.
-#[cfg(all(test, not(target_arch = "wasm32")))]
-pub(crate) fn scratch_path(name: &str) -> std::path::PathBuf {
-    std::env::temp_dir().join(format!("mandala_{}_{}", std::process::id(), name))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

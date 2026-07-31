@@ -35,7 +35,10 @@ impl KeybindConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::user_config::{scratch_path, MAX_USER_PAYLOAD_BYTES};
+
+    use baumhard::util::test_temp::TempDir;
+
+    use crate::application::user_config::MAX_USER_PAYLOAD_BYTES;
 
     #[test]
     fn test_load_for_desktop_missing_explicit_path_falls_back_to_defaults() {
@@ -45,25 +48,26 @@ mod tests {
 
     #[test]
     fn test_load_for_desktop_oversized_file_falls_back_to_defaults() {
-        let tmp = scratch_path("oversized_keybinds.json");
+        let scratch = TempDir::new("oversized-keybinds");
+        let tmp = scratch.join("keybinds.json");
         std::fs::write(&tmp, vec![b' '; MAX_USER_PAYLOAD_BYTES + 1]).unwrap();
         let cfg = KeybindConfig::load_for_desktop(Some(&tmp));
         assert_eq!(cfg.undo, KeybindConfig::default().undo);
-        let _ = std::fs::remove_file(&tmp);
     }
 
     #[test]
     fn test_load_for_desktop_malformed_file_falls_back_to_defaults() {
-        let tmp = scratch_path("bad_keybinds.json");
+        let scratch = TempDir::new("bad-keybinds");
+        let tmp = scratch.join("keybinds.json");
         std::fs::write(&tmp, "{ this is not json").unwrap();
         let cfg = KeybindConfig::load_for_desktop(Some(&tmp));
         assert_eq!(cfg.undo, KeybindConfig::default().undo);
-        let _ = std::fs::remove_file(&tmp);
     }
 
     #[test]
     fn test_load_for_desktop_valid_explicit_file_wins() {
-        let tmp = scratch_path("good_keybinds.json");
+        let scratch = TempDir::new("good-keybinds");
+        let tmp = scratch.join("keybinds.json");
         std::fs::write(&tmp, r#"{"undo": ["Ctrl+Alt+U"]}"#).unwrap();
         let cfg = KeybindConfig::load_for_desktop(Some(&tmp));
         assert_eq!(
@@ -71,6 +75,5 @@ mod tests {
             vec!["Ctrl+Alt+U".to_string()],
             "the explicit file must win over the defaults"
         );
-        let _ = std::fs::remove_file(&tmp);
     }
 }

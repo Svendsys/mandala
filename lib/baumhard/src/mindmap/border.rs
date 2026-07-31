@@ -300,7 +300,7 @@ impl PaletteField {
         }
     }
 
-    /// Static list of recognised values (used by the console
+    /// Static list of recognized values (used by the console
     /// command's completion).
     pub const ALL: &'static [&'static str] = &["frame", "background", "text", "title"];
 }
@@ -465,7 +465,7 @@ pub struct BorderRunSpec {
     /// Glyph-index offset into the per-cycle palette so a palette-cycling
     /// border sweeps continuously around the rectangle in
     /// top → right → bottom → left order. Zero when the upstream
-    /// palette is empty (single-colour border).
+    /// palette is empty (single-color border).
     pub palette_offset: usize,
     /// Pre-computed `count_grapheme_clusters(text)`. Carried on
     /// the spec so consumers handing it to [`build_border_regions`]
@@ -1007,7 +1007,7 @@ fn parse_legacy_glyph(c: char) -> SidePattern {
 
 /// Resolve a node's effective `BorderStyle` from its optional
 /// `GlyphBorderConfig`, the canvas-level default, and the resolved
-/// frame colour. Single source of truth — every border-build path
+/// frame color. Single source of truth — every border-build path
 /// (scene_builder, tree_builder, renderer) goes through this so
 /// preset / font / size / color / pattern resolution can't drift
 /// between pipelines.
@@ -1342,12 +1342,12 @@ pub fn default_custom_glyphs() -> CustomBorderGlyphs {
 }
 
 /// Resolve `border_style.color_palette` (a name) to a list of
-/// per-cycle-position RGBA colours, reading the configured
+/// per-cycle-position RGBA colors, reading the configured
 /// `palette_field` channel out of each `ColorGroup`. Returns an
 /// empty `Vec` when the name is unset or the named palette is not
 /// in the map (logs a warning in the latter case per
 /// `CODE_CONVENTIONS.md` §9). Pre-resolution lets the renderer and
-/// tree builder consume the colour list without re-walking the
+/// tree builder consume the color list without re-walking the
 /// Apply a [`crate::mindmap::scene_builder::BorderConfigEditsView`]
 /// to a slot for live-preview rendering. Mirrors the application-
 /// crate's `apply_glyph_border_edits_to_slot` shape but consumes
@@ -1360,12 +1360,12 @@ pub fn default_custom_glyphs() -> CustomBorderGlyphs {
 /// post-state as `apply_glyph_border_edits_to_slot` for any
 /// committing edit. Both paths derive from the same field rules:
 /// per-field set-or-keep, side / corner edits force preset to
-/// `"custom"`, the `glyphs` slot materialises on first edit. A
+/// `"custom"`, the `glyphs` slot materializes on first edit. A
 /// parity regression here means the preview lies about what
 /// commit will produce — Risk #1 in the plan.
 ///
 /// `view.clear == true` empties the slot and short-circuits.
-/// Otherwise the helper materialises a fresh `GlyphBorderConfig`
+/// Otherwise the helper materializes a fresh `GlyphBorderConfig`
 /// on first edit (mirroring the committing path's
 /// `default_glyph_border_config`) and folds each per-field
 /// override.
@@ -1460,11 +1460,11 @@ pub fn apply_view_to_slot(
 
 /// Default `GlyphBorderConfig` shape — light preset, 14pt, no
 /// font, 4px padding, no palette. Used by the application-side
-/// committing setters as the "first edit materialises this" base
+/// committing setters as the "first edit materializes this" base
 /// (`set_node_border_config` etc.) and by the scene-side preview
 /// apply path so the two share one constant. Mirrors the
 /// loader-time defaults in
-/// [`crate::mindmap::model::node`]; centralised here so callers
+/// [`crate::mindmap::model::node`]; centralized here so callers
 /// don't reach into the model module's private `default_*`
 /// factories.
 pub fn default_glyph_border_config() -> GlyphBorderConfig {
@@ -1492,7 +1492,7 @@ pub fn resolve_palette_cycle(
     };
     let Some(palette) = palettes.get(name) else {
         log::warn!(
-            "border color_palette '{}' not found in map; falling back to single colour",
+            "border color_palette '{}' not found in map; falling back to single color",
             name
         );
         return Vec::new();
@@ -1509,13 +1509,13 @@ pub fn resolve_palette_cycle(
 
 /// Build a [`ColorFontRegions`] that paints `cluster_count` glyph
 /// clusters. When `palette_cycle` is non-empty, each cluster
-/// picks its colour from `palette_cycle[(offset + i) % len]`. When
+/// picks its color from `palette_cycle[(offset + i) % len]`. When
 /// it's empty, a single uniform region is emitted using
 /// `fallback_rgba`.
 ///
 /// `glyph_index_offset` lets callers chain side runs into one
 /// continuous cycle around the rectangle (top → right → bottom →
-/// left), so a colour sweep wraps cleanly across corners.
+/// left), so a color sweep wraps cleanly across corners.
 ///
 /// # Newlines in vertical sides
 ///
@@ -1526,7 +1526,7 @@ pub fn resolve_palette_cycle(
 /// positions `[offset, offset+2, offset+4, …]` rather than
 /// `[offset, offset+1, offset+2, …]`. This matches the tree
 /// builder's per-side region emission, which means the flat-scene
-/// renderer and the Baumhard-tree renderer paint identical colour
+/// renderer and the Baumhard-tree renderer paint identical color
 /// sequences. Callers that want a denser cycle on a column can
 /// shorten the palette to compensate.
 ///

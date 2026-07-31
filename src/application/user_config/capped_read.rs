@@ -39,20 +39,17 @@ pub fn read_capped(path: &Path) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use baumhard::util::test_temp::TempDir;
+
     use crate::application::user_config::MAX_USER_PAYLOAD_BYTES;
-
-    use crate::application::user_config::scratch_path;
-
-    fn scratch(name: &str) -> std::path::PathBuf {
-        scratch_path(&format!("read_capped_{}", name))
-    }
 
     #[test]
     fn test_read_capped_small_file_round_trips() {
-        let p = scratch("small.json");
+        let scratch = TempDir::new("read-capped-small");
+        let p = scratch.join("small.json");
         std::fs::write(&p, "{\"a\": 1}").unwrap();
         assert_eq!(read_capped(&p).unwrap(), "{\"a\": 1}");
-        let _ = std::fs::remove_file(&p);
     }
 
     /// A file of exactly `MAX_USER_PAYLOAD_BYTES` is *within* the
@@ -60,11 +57,11 @@ mod tests {
     /// off-by-one here silently rejects the largest legal config.
     #[test]
     fn test_read_capped_file_exactly_at_cap_is_accepted() {
-        let p = scratch("exact.json");
+        let scratch = TempDir::new("read-capped-exact");
+        let p = scratch.join("exact.json");
         std::fs::write(&p, vec![b' '; MAX_USER_PAYLOAD_BYTES]).unwrap();
         let got = read_capped(&p).expect("a file exactly at the cap must be readable");
         assert_eq!(got.len(), MAX_USER_PAYLOAD_BYTES);
-        let _ = std::fs::remove_file(&p);
     }
 
     /// One byte over the cap is rejected, and rejected *before* the
@@ -72,7 +69,8 @@ mod tests {
     /// error.
     #[test]
     fn test_read_capped_file_one_byte_over_cap_is_rejected() {
-        let p = scratch("over.json");
+        let scratch = TempDir::new("read-capped-over");
+        let p = scratch.join("over.json");
         std::fs::write(&p, vec![b' '; MAX_USER_PAYLOAD_BYTES + 1]).unwrap();
         let err = read_capped(&p).expect_err("one byte over the cap must be rejected");
         assert!(
@@ -80,13 +78,14 @@ mod tests {
             "expected the shared cap message, got: {}",
             err
         );
-        let _ = std::fs::remove_file(&p);
     }
 
     #[test]
     fn test_read_capped_missing_file_reports_stat_failure() {
-        let p = scratch("definitely-absent.json");
-        let _ = std::fs::remove_file(&p);
+        // The scratch directory exists and is empty, so the file is
+        // absent by construction — nothing to clean up first.
+        let scratch = TempDir::new("read-capped-missing");
+        let p = scratch.join("definitely-absent.json");
         let err = read_capped(&p).expect_err("a missing file must be an error");
         assert!(err.starts_with("stat: "), "expected a stat error, got: {}", err);
     }
@@ -97,11 +96,10 @@ mod tests {
     /// enforced — this case fails identically for every uid.
     #[test]
     fn test_read_capped_unreadable_path_reports_read_failure() {
-        let p = scratch("as-a-directory");
-        let _ = std::fs::remove_file(&p);
+        let scratch = TempDir::new("read-capped-directory");
+        let p = scratch.join("as-a-directory");
         std::fs::create_dir_all(&p).unwrap();
         let err = read_capped(&p).expect_err("a directory must not read as config text");
         assert!(err.starts_with("read: "), "expected a read error, got: {}", err);
-        let _ = std::fs::remove_dir(&p);
     }
 }
