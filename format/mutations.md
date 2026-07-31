@@ -306,10 +306,11 @@ pick the smallest scope that covers every node the AST will touch.
 ### Which scopes admit a tree-walking mutator
 
 The application resolves a scope to a target set and then **anchors
-the mutator at each target in turn**. So the pairing is safe only
-when the target set is *closed* under whatever the mutator walks:
-everything a mutator anchored at a target can reach must itself be a
-target, or the undo snapshot ends up narrower than the write set.
+the mutator at each target in turn**. So the pairing has complete
+undo coverage only when the target set is *closed* under whatever
+the mutator walks: everything a mutator anchored at a target can
+reach must itself be a target, or the undo snapshot ends up narrower
+than the write set.
 
 Only `Descendants` and `SelfAndDescendants` are closed — a
 descendant's children are still descendants. Every other scope,
@@ -318,11 +319,24 @@ including `Children` and `Siblings`, requires a mutator that touches
 child reaches the *grandchildren*, and at each sibling reaches that
 sibling's children, neither of which the snapshot captured.
 
+Closure is a statement about **undo coverage, and nothing else**. It
+does not say the mutation applies once per node. Per-target
+anchoring means a mutator with a reach wider than `SelfOnly` runs
+once for *every* target that reaches a given node, so under a
+`SelfAndDescendants` scope a `Descendants`-reach mutator is anchored
+at each node of the subtree and a node at depth *k* below the anchor
+is written *k + 1* times. The snapshot still covers all of it —
+closure holds, `covers_reach` is right to approve — but a
+non-idempotent payload (a relative nudge, say) compounds. Today's
+flat-apply path collapses the AST to one list and applies it once
+per target, so nothing compounds yet; the announced walker path is
+where this becomes real.
+
 `baumhard::mindmap::custom_mutation::mutator_reach` computes the
 widest set an AST can reach and `TargetScope::covers_reach` checks
 the pairing; a mismatch is a `warn!` at apply time, not a rejection —
 the mutation still runs, but its undo coverage is incomplete. The
-`mutation info <id>` console verb prints the computed reach.
+`mutation inspect <id>` console verb prints the computed reach.
 
 ## `predicate` — top-level filter gate
 
@@ -397,6 +411,12 @@ Four top-level variants:
     `RepeatWhile` that isn't `always_match` and warns instead of
     applying — the alternative would be landing the payload on the
     whole scope set, the inverse of what the AST says.
+    Extraction is **all-or-nothing**: one such `RepeatWhile`
+    *anywhere* in the AST declines the whole mutator, nested just as
+    much as at the root. Honoring a root while dropping a nested
+    branch would be the worse failure of the two — the root's payload
+    would blanket every target, the nested payload would land
+    nowhere, and nothing would warn.
   - `RotateWhile(<f32>, <Predicate>)` — rotation stub (reserved).
   - `SpatialDescend(<OrderedVec2>)` — descend by AABB containment to
     the deepest node that holds the point, deliver the instruction's

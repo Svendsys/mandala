@@ -823,6 +823,7 @@ mod covers_reach_differential_tests {
     use super::*;
     use crate::application::document::tests_common::load_test_doc;
     use baumhard::mindmap::custom_mutation::MutatorReach;
+    use baumhard::mindmap::model::ChildIndex;
     use std::collections::BTreeSet;
 
     /// Every scope whose target set is a set of *model nodes*.
@@ -854,19 +855,29 @@ mod covers_reach_differential_tests {
     ///
     /// Derived from `child_index()` only; deliberately does not call
     /// `covers_reach` or any of its helpers.
-    fn reference_touch_set(doc: &MindMapDocument, anchor: &str, reach: MutatorReach) -> BTreeSet<String> {
+    ///
+    /// The index is passed in rather than rebuilt: this runs once per
+    /// (trigger, target, reach) triple over a 252-node fixture, and
+    /// `child_index()` is an O(N) scan plus a sort per child list —
+    /// building it inside the loop dominated the whole test binary's
+    /// runtime.
+    fn reference_touch_set(
+        index: &ChildIndex<'_>,
+        budget: usize,
+        anchor: &str,
+        reach: MutatorReach,
+    ) -> BTreeSet<String> {
         let mut out = BTreeSet::new();
         out.insert(anchor.to_string());
         match reach {
             MutatorReach::SelfOnly => {}
             MutatorReach::Children => {
-                for child in doc.mindmap.child_index().children_of(anchor) {
+                for child in index.children_of(anchor) {
                     out.insert(child.id.clone());
                 }
             }
             MutatorReach::Descendants => {
-                let budget = doc.mindmap.nodes.len();
-                out.extend(doc.mindmap.child_index().all_descendant_ids(anchor, budget));
+                out.extend(index.all_descendant_ids(anchor, budget));
             }
         }
         out
@@ -879,7 +890,13 @@ mod covers_reach_differential_tests {
     /// The returned string names the trigger node and one node that
     /// escaped the snapshot, so a failure message points at a
     /// reproducible case rather than just "false".
-    fn closure_witness(doc: &MindMapDocument, scope: TargetScope, reach: MutatorReach) -> Option<String> {
+    fn closure_witness(
+        doc: &MindMapDocument,
+        index: &ChildIndex<'_>,
+        scope: TargetScope,
+        reach: MutatorReach,
+    ) -> Option<String> {
+        let budget = doc.mindmap.nodes.len();
         let mut node_ids: Vec<&String> = doc.mindmap.nodes.keys().collect();
         node_ids.sort();
         for trigger in node_ids {
@@ -888,7 +905,7 @@ mod covers_reach_differential_tests {
                 .into_iter()
                 .collect();
             for anchor in &targets {
-                for touched in reference_touch_set(doc, anchor, reach) {
+                for touched in reference_touch_set(index, budget, anchor, reach) {
                     if !targets.contains(&touched) {
                         return Some(format!(
                             "trigger '{}' with scope {:?}: anchoring a {:?}-reach mutator at \
@@ -916,10 +933,14 @@ mod covers_reach_differential_tests {
             doc.mindmap.nodes.len() > 100,
             "fixture too small to be a meaningful reference model"
         );
+        // Built once and threaded through: the reference model
+        // consults it 6 x 3 x (targets per trigger) times, and
+        // rebuilding it per call is an O(N) scan each time.
+        let index = doc.mindmap.child_index();
         let mut mismatches: Vec<String> = Vec::new();
         for scope in NODE_SCOPES {
             for reach in REACHES {
-                let witness = closure_witness(&doc, scope.clone(), reach);
+                let witness = closure_witness(&doc, &index, scope.clone(), reach);
                 let reference_says_safe = witness.is_none();
                 let gate_says_safe = scope.covers_reach(reach);
                 if gate_says_safe && !reference_says_safe {

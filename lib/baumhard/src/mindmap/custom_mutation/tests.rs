@@ -504,6 +504,57 @@ mod flat_mutations_tests {
         );
     }
 
+    /// A match-nothing `RepeatWhile` nested *below* a `Macro` root is
+    /// the same defect one level down: the root arm used to return its
+    /// literal list regardless of `children`, so `L1` blanketed the
+    /// whole scope set, `L2` landed nowhere, and — unlike the root
+    /// case — nothing warned. Extraction is all-or-nothing precisely
+    /// so this shape declines.
+    #[test]
+    fn macro_root_over_a_match_nothing_repeat_while_is_not_flat_extractable() {
+        let node = MutatorNode::Macro {
+            channel: 0,
+            mutations: MutationListSrc::Literal(vec![nudge()]),
+            children: vec![repeat_while(Predicate::new())],
+        };
+        assert!(
+            flat_mutations(&node).is_none(),
+            "a Macro root must not extract past an unevaluatable child"
+        );
+    }
+
+    /// The wrapper arms have to be all-or-nothing for the same reason:
+    /// `find_map` took the first extractable child and silently
+    /// dropped a match-nothing sibling, which is the `Macro`-root
+    /// defect reachable through a `scope::descendants`-shaped root.
+    #[test]
+    fn repeat_while_wrapper_declines_when_any_child_is_unevaluatable() {
+        let node = MutatorNode::Instruction {
+            channel: 0,
+            instruction: InstructionSpec::RepeatWhileAlwaysTrue,
+            mutation: MutationSrc::None,
+            children: vec![macro_child(), repeat_while(Predicate::new())],
+        };
+        assert!(
+            flat_mutations(&node).is_none(),
+            "an extractable first child must not mask an unevaluatable sibling"
+        );
+    }
+
+    /// The all-or-nothing rule keys on *extractability*, not on child
+    /// count: a wrapper whose children are all extractable still
+    /// yields the first payload found.
+    #[test]
+    fn repeat_while_wrapper_with_several_extractable_children_still_extracts() {
+        let node = MutatorNode::Instruction {
+            channel: 0,
+            instruction: InstructionSpec::RepeatWhileAlwaysTrue,
+            mutation: MutationSrc::None,
+            children: vec![macro_child(), macro_child()],
+        };
+        assert_eq!(flat_mutations(&node).map(|m| m.len()), Some(1));
+    }
+
     /// `MapChildren` has no flat equivalent — the flat path iterates
     /// scope-collected model nodes, not the zip-by-position pairing
     /// the instruction means.

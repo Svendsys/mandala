@@ -1604,11 +1604,19 @@ window). Scope helpers in `custom_mutation::scope` produce
 matching `MutatorNode` shapes for the AST walker.
 
 The scope resolves to a target set and the mutator is anchored at
-**each target in turn**, so a pairing is only safe when that set
-is closed under the mutator's reach. Only the two descendant
-scopes are; every other scope needs a mutator that touches its
-anchor alone. `TargetScope::covers_reach` encodes that table and
-`warn!`s on a mismatch — see `format/mutations.md`.
+**each target in turn**, so a pairing has complete undo coverage
+only when that set is closed under the mutator's reach. Only the
+two descendant scopes are; every other scope needs a mutator that
+touches its anchor alone. `TargetScope::covers_reach` encodes that
+table and `warn!`s on a mismatch — see `format/mutations.md`.
+
+Closure is about undo coverage alone, not about how often the
+payload lands. Per-target anchoring runs a wider-than-`SelfOnly`
+mutator once per ancestor target, so a `SelfAndDescendants` scope
+paired with a `Descendants` reach writes a node at depth *k*
+*k + 1* times — covered by the snapshot, but compounding for a
+non-idempotent payload. The flat-apply path applies once per
+target and so avoids this today.
 
 ### Behaviors — `Persistent` vs. `Toggle`
 

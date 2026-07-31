@@ -291,13 +291,50 @@ pub fn apply_mutations_to_element(
 /// and-apply-per-target semantics while the richer `mutator_builder`
 /// walker path is phased in for size-aware mutations in a separate
 /// session.
+///
+/// # Extraction is all-or-nothing
+///
+/// A node is extractable only when **every** node beneath it is too.
+/// A single unevaluatable node anywhere in the AST declines the whole
+/// mutator, so the apply site warns and skips instead of applying a
+/// partial reading of it.
+///
+/// That is not fussiness — it is the only way the extracted list can
+/// mean what the AST says. Extraction collapses a tree into one flat
+/// list that the app applies once per scope-collected target, so any
+/// sub-tree the flat path cannot honor would simply vanish while the
+/// surviving payload blanketed the entire target set. Accepting
+/// `Macro{[L1], children: [Instruction{RepeatWhile(matches-nothing)}
+/// {Macro[L2]}]}` on the strength of its root alone would land `L1`
+/// everywhere and `L2` nowhere — the same "applied result differs
+/// from the authored AST" defect the `always_match` guard below
+/// exists to prevent, just one level down and without the warning.
 pub fn flat_mutations(mutator: &MutatorNode) -> Option<Vec<crate::gfx_structs::mutator::Mutation>> {
     use crate::mutator_builder::{InstructionSpec, MutationListSrc, MutatorNode as N};
+    /// Extract from a control-flow wrapper's children: every child
+    /// must be extractable (see "all-or-nothing" above), and the
+    /// wrapper's payload is the first list found among them. Returns
+    /// `None` for a childless wrapper, which carries no mutations.
+    fn from_children(children: &[MutatorNode]) -> Option<Vec<crate::gfx_structs::mutator::Mutation>> {
+        let mut payload = None;
+        for child in children {
+            let list = flat_mutations(child)?;
+            payload.get_or_insert(list);
+        }
+        payload
+    }
     match mutator {
+        // The root's literal list is the payload, but only once every
+        // child is extractable too — otherwise the child's mutations
+        // would be dropped silently while this list blanketed the
+        // whole target set. `scope::self_only` has no children, and
+        // `scope::self_and_descendants`'s single `Instruction` child
+        // is extractable via the arm below, so both stay admitted.
         N::Macro {
             mutations: MutationListSrc::Literal(list),
+            children,
             ..
-        } => Some(list.clone()),
+        } if children.iter().all(|c| flat_mutations(c).is_some()) => Some(list.clone()),
         // `Instruction(RepeatWhile(always_true))` wrappers
         // (built by `scope::descendants` and the inner branch of
         // `scope::self_and_descendants`) carry a child Macro
@@ -313,7 +350,7 @@ pub fn flat_mutations(mutator: &MutatorNode) -> Option<Vec<crate::gfx_structs::m
             instruction: InstructionSpec::RepeatWhileAlwaysTrue,
             children,
             ..
-        } => children.iter().find_map(flat_mutations),
+        } => from_children(children),
         // `always_match` is the *only* admissible test, because it
         // is the only thing [`Predicate::test`] short-circuits on.
         // Everything else — including an empty field list — is a
@@ -328,7 +365,7 @@ pub fn flat_mutations(mutator: &MutatorNode) -> Option<Vec<crate::gfx_structs::m
             instruction: InstructionSpec::RepeatWhile(p),
             children,
             ..
-        } if p.always_match => children.iter().find_map(flat_mutations),
+        } if p.always_match => from_children(children),
         _ => None,
     }
 }
@@ -419,12 +456,25 @@ impl TargetScope {
     /// scope and what the announced walker path will do too. The undo
     /// snapshot is exactly that same target set.
     ///
-    /// So the pairing is safe iff the target set is **closed** under
-    /// the mutator's reach: for every target `t`, everything a
-    /// `reach`-wide mutator anchored at `t` can write is itself a
-    /// target. Note this is a property of the *target set*, not of
-    /// the triggering node — the trigger is only in the set for the
-    /// three scopes that name it.
+    /// So the pairing has complete **undo coverage** iff the target
+    /// set is **closed** under the mutator's reach: for every target
+    /// `t`, everything a `reach`-wide mutator anchored at `t` can
+    /// write is itself a target. Note this is a property of the
+    /// *target set*, not of the triggering node — the trigger is only
+    /// in the set for the three scopes that name it.
+    ///
+    /// **Closure is about undo coverage and nothing else.** It is not
+    /// a claim that the payload lands once per node. Per-target
+    /// anchoring runs the mutator once for every target that reaches
+    /// a given node, so `SelfAndDescendants` paired with a
+    /// `Descendants` reach anchors at each node of the subtree and
+    /// writes a node at depth `k` below the anchor `k + 1` times.
+    /// `covers_reach` still returns `true`, correctly — the snapshot
+    /// covers every one of those writes — but a non-idempotent
+    /// payload (a relative nudge, say) compounds. Today's flat-apply
+    /// path collapses the AST to one list and applies it once per
+    /// target, so nothing compounds yet; the walker path is where
+    /// this needs an answer.
     ///
     /// Applying that test to each scope, with `n` the triggering node:
     ///
