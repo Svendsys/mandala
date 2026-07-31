@@ -263,7 +263,7 @@ pub(in crate::application::app) fn open_label_edit(
         crate::application::document::InteractionModeOverrides::none(),
         renderer.camera_zoom(),
     )
-    .update_connection_label_tree(app_scene, renderer);
+    .update_connection_label_tree(app_scene);
 }
 
 /// Route a keystroke to the inline label editor. Cancel and commit
@@ -344,7 +344,7 @@ pub(in crate::application::app) fn handle_label_edit_key(
             crate::application::document::InteractionModeOverrides::none(),
             renderer.camera_zoom(),
         )
-        .update_connection_label_tree(app_scene, renderer);
+        .update_connection_label_tree(app_scene);
     }
 }
 
@@ -427,8 +427,10 @@ impl PortalTextEditState {
     /// Borrow the `(edge_ref, endpoint_node_id)` currently under
     /// edit, if any. Mirrors [`LabelEditState::edited_edge_ref`]
     /// — the click-outside-to-commit check needs both the edge
-    /// identity and the endpoint so it can compare against
-    /// `hit_test_portal_text`.
+    /// identity and the endpoint so it can compare against the
+    /// `PortalHit` that
+    /// [`AppScene::portal_at`](crate::application::scene_host::AppScene::portal_at)
+    /// returns.
     pub(in crate::application::app) fn edited_endpoint(
         &self,
     ) -> Option<(&crate::application::document::EdgeRef, &str)> {
@@ -511,7 +513,7 @@ pub(in crate::application::app) fn open_portal_text_edit(
         crate::application::document::InteractionModeOverrides::none(),
         renderer.camera_zoom(),
     )
-    .update_portal_tree(app_scene, renderer);
+    .update_portal_tree(app_scene);
 }
 
 /// Route a keystroke to the inline portal-text editor. Mirrors
@@ -620,7 +622,7 @@ pub(in crate::application::app) fn handle_portal_text_edit_key(
             crate::application::document::InteractionModeOverrides::none(),
             renderer.camera_zoom(),
         )
-        .update_portal_tree(app_scene, renderer);
+        .update_portal_tree(app_scene);
     }
 }
 

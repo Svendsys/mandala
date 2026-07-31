@@ -19,19 +19,22 @@
 //!    for the very first character of a fresh label would not be
 //!    visible.
 //!
-//! The tree half emits one `GlyphArea` per labeled edge, keyed by
-//! `EdgeKey`, and returns per-edge AABB hitboxes so the renderer
-//! can resolve label clicks back to the edge.
+//! The tree half emits one `GlyphArea` per labeled edge at a
+//! 1-based insertion channel, and returns a
+//! [`ConnectionLabelHitIndex`] mapping that channel back to the
+//! owning `EdgeKey` — so a BVH hit inside the tree resolves to an
+//! edge without a second copy of the label rectangles.
 
 use std::collections::{HashMap, HashSet};
 
 use glam::Vec2;
+use indextree::NodeId;
 
 use crate::core::primitives::ColorFontRegions;
 use crate::gfx_structs::area::GlyphArea;
 use crate::gfx_structs::element::GfxElement;
 use crate::gfx_structs::mutator::GfxMutator;
-use crate::gfx_structs::tree::Tree;
+use crate::gfx_structs::tree::{BranchChannel, Tree};
 use crate::mindmap::connection;
 use crate::mindmap::model::{EdgeLabelConfig, GlyphConnectionConfig, MindEdge, MindMap, MindNode};
 use crate::mindmap::scene_cache::EdgeKey;
@@ -50,9 +53,10 @@ use super::overrides::EdgeColorPreview;
 /// perpendicular to the path by
 /// `MindEdge.label_config.perpendicular_offset`.
 ///
-/// The AABB (`position`, `bounds`) is used by the Renderer both to
-/// build the text buffer and to populate the label-hit-test index so
-/// the app can detect clicks on the label for inline editing.
+/// The AABB (`position`, `bounds`) becomes the leaf `GlyphArea`'s
+/// rectangle, which serves double duty: the renderer shapes the
+/// text buffer inside it, and the tree's BVH hit-tests against it
+/// so the app can route clicks on the label to inline editing.
 pub struct ConnectionLabelElement {
     /// Stable identity of the edge carrying this label.
     pub edge_key: EdgeKey,
@@ -318,12 +322,78 @@ fn apply_perpendicular_offset(path: &connection::ConnectionPath, t: f32, anchor:
 }
 
 /// Output of [`build_connection_label_tree`]: the baumhard tree of
-/// per-label GlyphAreas plus a per-edge AABB map so the renderer can
-/// resolve label clicks back to the owning edge.
+/// per-label GlyphAreas plus the [`ConnectionLabelHitIndex`] that
+/// names them. The AABBs live in the tree's `GlyphArea`s and
+/// nowhere else; the index carries only channel → edge identity.
 pub struct ConnectionLabelTree {
     pub tree: Tree<GfxElement, GfxMutator>,
-    /// `EdgeKey → AABB` for click hit-testing on the label.
-    pub hitboxes: HashMap<EdgeKey, (Vec2, Vec2)>,
+    /// Channel → owning [`EdgeKey`] for every label leaf in
+    /// `tree`.
+    pub hit_index: ConnectionLabelHitIndex,
+}
+
+/// The channel → edge-identity map for one built connection-label
+/// tree.
+///
+/// The label tree is flat: one `GlyphArea` leaf per labeled edge,
+/// at the 1-based insertion channel. A BVH hit inside the tree
+/// therefore names its edge by reading the hit leaf's own channel
+/// — this index supplies the `EdgeKey` behind that channel, and
+/// nothing else. Sibling of
+/// [`PortalHitIndex`](super::portal::PortalHitIndex) for the
+/// deeper portal shape.
+///
+/// # Costs
+///
+/// Construction is O(labels) with one `EdgeKey` clone each.
+/// [`Self::resolve`] is O(1): one arena lookup plus a slice index.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ConnectionLabelHitIndex {
+    edges: Vec<EdgeKey>,
+}
+
+impl ConnectionLabelHitIndex {
+    /// Build the index from the same element slice the tree (or
+    /// mutator) is built from, so channel assignment cannot
+    /// diverge between the two.
+    ///
+    /// # Costs
+    ///
+    /// O(labels); one vector allocation plus one `EdgeKey` clone
+    /// per label.
+    pub fn from_elements(elements: &[ConnectionLabelElement]) -> Self {
+        ConnectionLabelHitIndex {
+            edges: connection_label_identity_sequence(elements),
+        }
+    }
+
+    /// Number of labeled edges the index names.
+    pub fn len(&self) -> usize {
+        self.edges.len()
+    }
+
+    /// Whether the index names no labels — i.e. no click can
+    /// resolve to an edge label.
+    pub fn is_empty(&self) -> bool {
+        self.edges.is_empty()
+    }
+
+    /// Name the edge a hit `NodeId` belongs to.
+    ///
+    /// `hit` must come from the tree this index was built
+    /// alongside. Returns `None` for the tree root and for a
+    /// channel the index does not cover, so a mismatched
+    /// tree/index pair degrades to "no hit" rather than naming
+    /// the wrong edge.
+    ///
+    /// # Costs
+    ///
+    /// O(1) — one arena lookup, one slice index, one `EdgeKey`
+    /// clone on a hit.
+    pub fn resolve(&self, tree: &Tree<GfxElement, GfxMutator>, hit: NodeId) -> Option<EdgeKey> {
+        let channel = tree.arena.get(hit)?.get().channel();
+        self.edges.get(channel.checked_sub(1)?).cloned()
+    }
 }
 
 /// Identity sequence for a slice of `ConnectionLabelElement`s — the
@@ -337,14 +407,13 @@ pub fn connection_label_identity_sequence(elements: &[ConnectionLabelElement]) -
     elements.iter().map(|e| e.edge_key.clone()).collect()
 }
 
-/// Lay out one connection-label as the
-/// `(channel, GlyphArea, hitbox_min, hitbox_max)` tuple both build
-/// paths emit. Channel is the 1-based label index, matching the
-/// ascending insertion order. Single source of truth — the
-/// initial-build path ([`build_connection_label_tree`]) and the
-/// in-place mutator path ([`build_connection_label_mutator_tree`])
-/// cannot drift.
-fn connection_label_layout(channel: usize, elem: &ConnectionLabelElement) -> (usize, GlyphArea, Vec2, Vec2) {
+/// Lay out one connection-label as the `(channel, GlyphArea)`
+/// pair both build paths emit. Channel is the 1-based label
+/// index, matching the ascending insertion order. Single source
+/// of truth — the initial-build path
+/// ([`build_connection_label_tree`]) and the in-place mutator
+/// path ([`build_connection_label_mutator_tree`]) cannot drift.
+fn connection_label_layout(channel: usize, elem: &ConnectionLabelElement) -> (usize, GlyphArea) {
     let color_rgba = color::hex_to_rgba_safe(&elem.color, [0.92, 0.92, 0.92, 1.0]);
     let pos = Vec2::new(elem.position.0, elem.position.1);
     let bounds = Vec2::new(elem.bounds.0, elem.bounds.1);
@@ -354,7 +423,7 @@ fn connection_label_layout(channel: usize, elem: &ConnectionLabelElement) -> (us
     let cluster_count = crate::util::grapheme_chad::count_grapheme_clusters(&elem.text);
     area.regions = ColorFontRegions::single_span(cluster_count, Some(color_rgba), None);
 
-    (channel, area, pos, pos + bounds)
+    (channel, area)
 }
 
 /// Build a baumhard tree of every connection-label glyph from a
@@ -368,30 +437,29 @@ fn connection_label_layout(channel: usize, elem: &ConnectionLabelElement) -> (us
 /// matches.
 pub fn build_connection_label_tree(elements: &[ConnectionLabelElement]) -> ConnectionLabelTree {
     let mut tree: Tree<GfxElement, GfxMutator> = Tree::new_non_indexed();
-    let mut hitboxes: HashMap<EdgeKey, (Vec2, Vec2)> = HashMap::new();
     let mut unique_id: usize = 1;
 
     for (idx, elem) in elements.iter().enumerate() {
-        let (channel, area, hb_min, hb_max) = connection_label_layout(idx + 1, elem);
+        let (channel, area) = connection_label_layout(idx + 1, elem);
         let element_node = GfxElement::new_area_non_indexed_with_id(area, channel, unique_id);
         unique_id += 1;
         let leaf = tree.arena.new_node(element_node);
         tree.root.append(leaf, &mut tree.arena);
-
-        hitboxes.insert(elem.edge_key.clone(), (hb_min, hb_max));
     }
 
-    ConnectionLabelTree { tree, hitboxes }
+    ConnectionLabelTree {
+        tree,
+        hit_index: ConnectionLabelHitIndex::from_elements(elements),
+    }
 }
 
 /// Result of [`build_connection_label_mutator_tree`]. The `mutator`
 /// is applied to the tree returned by [`build_connection_label_tree`]
-/// via `MutatorTree::apply_to`; `hitboxes` replaces the renderer's
-/// label hitbox map (label position can move with the edge it
-/// belongs to even when the structural identity is unchanged).
+/// via `MutatorTree::apply_to`; `hit_index` is re-stamped alongside
+/// it so both build paths hand back interchangeable values.
 pub struct ConnectionLabelMutator {
     pub mutator: crate::gfx_structs::tree::MutatorTree<GfxMutator>,
-    pub hitboxes: HashMap<EdgeKey, (Vec2, Vec2)>,
+    pub hit_index: ConnectionLabelHitIndex,
 }
 
 /// Build a [`MutatorTree`](crate::gfx_structs::tree::MutatorTree)
@@ -408,20 +476,18 @@ pub fn build_connection_label_mutator_tree(elements: &[ConnectionLabelElement]) 
     use crate::gfx_structs::tree::MutatorTree;
 
     let mut mt: MutatorTree<GfxMutator> = MutatorTree::new_with(GfxMutator::new_void(0));
-    let mut hitboxes: HashMap<EdgeKey, (Vec2, Vec2)> = HashMap::new();
 
     for (idx, elem) in elements.iter().enumerate() {
-        let (channel, area, hb_min, hb_max) = connection_label_layout(idx + 1, elem);
+        let (channel, area) = connection_label_layout(idx + 1, elem);
         let delta = DeltaGlyphArea::full_assign_from(&area);
         let leaf = mt
             .arena
             .new_node(GfxMutator::new(Mutation::AreaDelta(Box::new(delta)), channel));
         mt.root.append(leaf, &mut mt.arena);
-        hitboxes.insert(elem.edge_key.clone(), (hb_min, hb_max));
     }
 
     ConnectionLabelMutator {
         mutator: mt,
-        hitboxes,
+        hit_index: ConnectionLabelHitIndex::from_elements(elements),
     }
 }

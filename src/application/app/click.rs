@@ -8,6 +8,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use baumhard::mindmap::custom_mutation::PlatformContext;
+use baumhard::mindmap::tree_builder::PortalPart;
 
 use super::click_triggers::fire_onclick_triggers;
 use super::scene_rebuild::{build_overlaid_tree, rebuild_all, rebuild_scene_only};
@@ -74,22 +75,21 @@ pub(super) fn handle_click(
             // separately by the event loop and pans the camera
             // to the opposite endpoint.
             let canvas_pos = renderer.screen_to_canvas(cursor_pos.0 as f32, cursor_pos.1 as f32);
-            // Portal sub-part precedence: text first, icon next.
-            // Text and icon AABBs don't overlap in practice (text
-            // sits beside the icon along the border normal), so
-            // only one of these hits at a time — the ordering
-            // keeps routing deterministic even if future layout
-            // changes make them adjacent.
-            if let Some((edge_key, endpoint)) = renderer.hit_test_portal_text(canvas_pos) {
-                doc.selection = SelectionState::PortalText(crate::application::document::PortalLabelSel {
-                    edge_key,
-                    endpoint_node_id: endpoint,
-                });
-            } else if let Some((edge_key, endpoint)) = renderer.hit_test_portal(canvas_pos) {
-                doc.selection = SelectionState::PortalLabel(crate::application::document::PortalLabelSel {
-                    edge_key,
-                    endpoint_node_id: endpoint,
-                });
+            // One BVH descent over the portal tree names both the
+            // endpoint and which of its two sibling leaves — icon
+            // or text — the click landed on, so the sub-part
+            // precedence is decided by geometry (smallest area
+            // wins) rather than by the order two side maps happen
+            // to be scanned in.
+            if let Some(hit) = app_scene.portal_at(canvas_pos) {
+                let sel = crate::application::document::PortalLabelSel {
+                    edge_key: hit.edge_key,
+                    endpoint_node_id: hit.endpoint_node_id,
+                };
+                doc.selection = match hit.part {
+                    PortalPart::Text => SelectionState::PortalText(sel),
+                    PortalPart::Icon => SelectionState::PortalLabel(sel),
+                };
             } else {
                 let tolerance = EDGE_HIT_TOLERANCE_PX * renderer.canvas_per_pixel();
                 let edge_hit = hit_test_edge(canvas_pos, &doc.mindmap, tolerance);

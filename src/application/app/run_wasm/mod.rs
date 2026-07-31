@@ -698,8 +698,8 @@ pub(super) fn run(mut app: Application) {
                     );
                     frame.update_connection_trees(&mut init_scene_cache, &mut init_app_scene);
                     frame.update_border_tree(&mut init_app_scene);
-                    frame.update_portal_tree(&mut init_app_scene, &mut renderer);
-                    frame.update_connection_label_tree(&mut init_app_scene, &mut renderer);
+                    frame.update_portal_tree(&mut init_app_scene);
+                    frame.update_connection_label_tree(&mut init_app_scene);
                     frame.update_section_frame_tree(&mut init_app_scene);
                     // Register the three handle-tree canvas roles
                     // with fresh-load (empty-slice) signatures.

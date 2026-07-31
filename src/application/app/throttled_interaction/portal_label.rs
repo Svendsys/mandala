@@ -93,7 +93,7 @@ impl ThrottledInteraction for PortalLabelInteraction {
                     baumhard::mindmap::tree_builder::InteractionModeOverrides::none(),
                     renderer.camera_zoom(),
                 )
-                .update_portal_tree(app_scene, renderer);
+                .update_portal_tree(app_scene);
                 flush_canvas_scene_buffers(app_scene, renderer);
             }
         }

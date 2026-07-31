@@ -140,8 +140,8 @@ impl ThrottledInteraction for MovingNodeInteraction {
             );
             frame.update_connection_trees(scene_cache, app_scene);
             frame.update_border_tree(app_scene);
-            frame.update_connection_label_tree(app_scene, renderer);
-            frame.update_portal_tree(app_scene, renderer);
+            frame.update_connection_label_tree(app_scene);
+            frame.update_portal_tree(app_scene);
             // The 8 resize handles for a Single-selected dragged
             // node anchor on the node's AABB, so they have to be
             // re-emitted against the in-flight offsets. Without

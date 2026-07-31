@@ -308,7 +308,9 @@ pub(crate) const PORTAL_TEXT_PADDING_FRAC: f32 = 0.25;
 /// Layout result for a portal text label: top-left AABB corner
 /// and extent in canvas space. Sits outward of the icon along
 /// the border normal so the text always extends away from the
-/// owning node rather than toward it.
+/// owning node rather than toward it. `bounds` is
+/// [`Vec2::ZERO`] for empty text — see [`layout_portal_text`] for
+/// why that is the phantom-hot-zone invariant and not an accident.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PortalTextLayout {
     pub top_left: Vec2,
@@ -343,13 +345,28 @@ pub(crate) fn layout_portal_text(
     text: &str,
 ) -> PortalTextLayout {
     // Grapheme-cluster count as a cheap proxy for shaped width —
-    // cosmic-text will reshape on render anyway. Empty strings get
-    // a minimum 1-grapheme-wide slot so the buffer is never
-    // zero-sized, matching the connection-label helper. Counting
-    // graphemes (not Unicode scalars) keeps a family-ZWJ emoji at
-    // one slot wide instead of eleven (§B3).
-    let grapheme_count = count_grapheme_clusters(text).max(1) as f32;
-    let bounds = Vec2::new(grapheme_count * text_font_size_pt * 0.6, text_font_size_pt * 1.3);
+    // cosmic-text will reshape on render anyway. Counting graphemes
+    // (not Unicode scalars) keeps a family-ZWJ emoji at one slot
+    // wide instead of eleven (§B3).
+    //
+    // Empty text collapses to a **zero-extent** box, and that is
+    // load-bearing rather than cosmetic. The portal tree always
+    // emits a text slot (the channel layout has to stay stable for
+    // the §B2 in-place mutator path), so a text-less endpoint would
+    // otherwise carry a ~30×65 px rectangle beside its icon that
+    // renders nothing but still answers hit-tests — a phantom hot
+    // zone stealing clicks from whatever sits beneath. Both
+    // consumers already skip zero-extent areas: the renderer's
+    // tree walker returns early on empty text, and
+    // `Tree::descendant_at`'s BVH requires strictly positive
+    // bounds. Suppression therefore lives in the geometry itself,
+    // with no side table to keep in sync.
+    let grapheme_count = count_grapheme_clusters(text) as f32;
+    let bounds = if grapheme_count == 0.0 {
+        Vec2::ZERO
+    } else {
+        Vec2::new(grapheme_count * text_font_size_pt * 0.6, text_font_size_pt * 1.3)
+    };
     let t = endpoint_state
         .and_then(|s| s.border_t)
         .unwrap_or_else(|| default_border_t(owner_pos, owner_size, partner_center));
@@ -366,17 +383,20 @@ pub(crate) fn layout_portal_text(
     );
     // Distance along the outward normal needed to keep the text
     // AABB entirely outside the icon AABB. Both AABBs are world-
-    // axis-aligned; their half-extent along an arbitrary normal
-    // is the "support function" of the rectangle —
-    // `|half.x * normal.x| + |half.y * normal.y|`. For cardinal
-    // normals (top/right/bottom/left sides) this collapses to the
-    // half-width and the old `icon.bounds.x * 0.5 + bounds.x * 0.5`
-    // formula. For the cardinal-corner transitions where
-    // `border_outward_normal` briefly returns a diagonal
-    // (Y-down canvas, normal from a corner), the old formula
-    // under-estimated the clearance and the text AABB could
-    // cross into the icon AABB — mis-routing icon clicks to
-    // `ClickHit::PortalText`.
+    // axis-aligned; their half-extent along an arbitrary normal is
+    // the "support function" of the rectangle —
+    // `|half.x * normal.x| + |half.y * normal.y|`.
+    //
+    // `border_outward_normal` returns only the four axis-aligned
+    // unit vectors today, so this collapses to the half-width or
+    // half-height and the general form is not currently load-
+    // bearing. It is written in the general form anyway because it
+    // is the *reason* icon and text can never overlap — with
+    // `padding` strictly positive, the normal is a separating axis
+    // between the two boxes for any normal, not just the cardinal
+    // four. That separation is what lets click routing resolve the
+    // portal's two sub-parts in a single BVH descent instead of
+    // needing a text-before-icon precedence rule.
     let icon_half = icon.bounds * 0.5;
     let text_half = bounds * 0.5;
     let abs_normal = Vec2::new(normal.x.abs(), normal.y.abs());
