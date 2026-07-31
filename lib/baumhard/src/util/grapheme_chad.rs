@@ -662,12 +662,12 @@ pub fn delete_front_unicode(s: &mut String, n: usize) {
 ///
 /// **Cost**: one O(n) `grapheme_indices` walk bounded by `cursor`
 /// (collects byte offsets into a `Vec<usize>` of capacity
-/// `cursor + 1`), then a backward array-index scan of that vector —
-/// the second scan is O(cursor) byte-slice + `is_alphanumeric`
-/// checks, no grapheme decoding. Allocates
-/// `(cursor + 1) * size_of::<usize>()` bytes; the prior in-app
-/// version allocated a `Vec<&str>` over the **whole** buffer (per
-/// `CONVENTIONS §B7` hot-path posture).
+/// `min(cursor, buffer.len()) + 1`), then a backward array-index scan
+/// of that vector — the second scan is O(cursor) byte-slice +
+/// `is_alphanumeric` checks, no grapheme decoding. Allocates one
+/// `usize` per cluster walked; the prior in-app version allocated a
+/// `Vec<&str>` over the **whole** buffer (per `CONVENTIONS §B7`
+/// hot-path posture).
 ///
 /// `is_alphanumeric` is applied to the grapheme's *first* scalar.
 /// For ZWJ clusters and combining-mark sequences this matches the
@@ -700,8 +700,8 @@ pub fn word_left(buffer: &str, cursor: usize) -> usize {
 /// [`first_non_whitespace_grapheme`].
 ///
 /// **Cost**: same shape as [`word_left`] — one `grapheme_indices`
-/// walk bounded by `cursor` collecting `cursor + 1` byte offsets,
-/// then a backward scan over that vector.
+/// walk bounded by `cursor` collecting one byte offset per cluster
+/// walked, then a backward scan over that vector.
 pub fn prev_word_boundary_ws(buffer: &str, cursor: usize) -> usize {
     scan_back(buffer, cursor, grapheme_is_not_whitespace, true)
 }
@@ -765,9 +765,12 @@ fn scan_back(buffer: &str, cursor: usize, in_word: fn(&str) -> bool, skip_leadin
 /// the end of the buffer).
 ///
 /// Cost: one `grapheme_indices` walk bounded by `cursor`; allocates
-/// `cursor + 1` `usize`s, not the cluster slices themselves.
+/// `min(cursor, buffer.len()) + 1` `usize`s, not the cluster slices
+/// themselves. The reservation is clamped by the byte length — which
+/// is an upper bound on the cluster count — so an out-of-range
+/// `cursor` from a stale caller cannot ask for a huge allocation.
 fn grapheme_start_offsets(buffer: &str, cursor: usize) -> Vec<usize> {
-    let mut starts: Vec<usize> = Vec::with_capacity(cursor + 1);
+    let mut starts: Vec<usize> = Vec::with_capacity(cursor.min(buffer.len()) + 1);
     for (idx, (byte, _)) in buffer.grapheme_indices(true).enumerate() {
         starts.push(byte);
         if idx == cursor {

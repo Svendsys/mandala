@@ -156,10 +156,11 @@ impl GlyphMatrix {
     /// section is one `GlyphComponent` carrying the author's whole
     /// multi-line string — so painting row `n` can push every row
     /// after it further down the target. `place_in` tracks that drift
-    /// from [`crate::util::grapheme_chad::LineReplacement::added_lines`] and offsets its
-    /// subsequent row lookups by it; without that, row `n + 1` used
-    /// to be painted into the middle of the text row `n` had just
-    /// inserted.
+    /// from the `added_lines` field of
+    /// [`LineReplacement`](crate::util::grapheme_chad::LineReplacement)
+    /// and offsets its subsequent row lookups by it; without that, row
+    /// `n + 1` used to be painted into the middle of the text row `n`
+    /// had just inserted.
     ///
     /// # Costs
     ///
