@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Leaf utilities shared across baumhard: small-scale geometry,
-//! grapheme-aware string ops, colour math, prime sieve, hashable
+//! grapheme-aware string ops, color math, prime sieve, hashable
 //! vectors, and arena-tree helpers. Nothing here depends on the
 //! renderer, the GPU, or the mindmap model.
 
 /// Arena-wide subtree copy helpers built on `indextree`.
 pub mod arena_utils;
-/// Core `Color` type, arithmetic, and compile-time colour-literal
+/// Core `Color` type, arithmetic, and compile-time color-literal
 /// macros.
 pub mod color;
 /// Hex ↔ RGB ↔ HSV plus theme-variable resolution.
@@ -18,7 +18,7 @@ pub mod geometry;
 /// Grapheme-cluster aware text primitives — reach for these from
 /// the app crate rather than byte-indexing a `String` (§B3).
 pub mod grapheme_chad;
-/// Logger initialisation — `init()` selects the right backend per
+/// Logger initialization — `init()` selects the right backend per
 /// target. Macro callsites keep using `log::warn!` etc. directly,
 /// since `log` is the universal Rust facade.
 pub mod log;
@@ -30,6 +30,11 @@ pub mod palettes;
 /// Lazy Sieve of Eratosthenes — the prime table the region-params
 /// grid chooser consults to avoid prime dimension factors.
 pub mod primes;
+/// Collision-free scratch directories for filesystem tests, so
+/// concurrent `cargo test` runs cannot race on a shared path.
+/// Native-only — there is no filesystem to scratch on under wasm32.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod test_temp;
 /// Test bodies exposed via `pub mod tests` so `benches/test_bench.rs`
 /// can reuse the `do_*()` functions as micro-benchmarks (§B8).
 pub mod tests;

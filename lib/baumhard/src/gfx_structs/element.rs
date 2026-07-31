@@ -24,6 +24,7 @@ use rustc_hash::FxHashSet;
 use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Formatter};
 use std::rc::Rc;
+use strum_macros::EnumDiscriminants;
 
 /// Identifies a single field-level change to a [`GfxElement`].
 ///
@@ -49,20 +50,6 @@ pub enum GfxElementField {
     Flag(Flag),
 }
 
-/// Discriminant tag for [`GfxElement`] variants.
-///
-/// Returned by [`GfxElement::get_type`]. Useful for branching on the
-/// variant without destructuring the full enum. O(1), no allocation.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum GfxElementType {
-    /// The element wraps a [`GlyphArea`].
-    GlyphArea,
-    /// The element wraps a [`GlyphModel`].
-    GlyphModel,
-    /// The element is a placeholder void node.
-    Void,
-}
-
 /// A node element in the Baumhard glyph tree.
 ///
 /// Every node in a [`Tree<GfxElement, GfxMutator>`](crate::gfx_structs::tree::Tree)
@@ -77,6 +64,16 @@ pub enum GfxElementType {
 ///
 /// Cost: construction allocates a `Box` for the inner glyph type
 /// (except `Void`). Field access is O(1) with a single match.
+///
+/// The payload-free `GfxElementType` tag is derived from this enum
+/// and reached through
+/// [`Discriminated::variant`](crate::core::primitives::Discriminated::variant).
+#[derive(EnumDiscriminants)]
+#[strum_discriminants(name(GfxElementType))]
+#[strum_discriminants(derive(Hash))]
+#[strum_discriminants(doc = "Payload-free tag for [`GfxElement`], derived by strum. Lets a")]
+#[strum_discriminants(doc = "caller branch on the variant without destructuring the full")]
+#[strum_discriminants(doc = "element. O(1), no allocation.")]
 pub enum GfxElement {
     /// A text region rendered through cosmic-text layout.
     ///
@@ -257,13 +254,13 @@ impl GfxElement {
         match self {
             GfxElement::GlyphArea {
                 event_subscribers, ..
-            } => event_subscribers.as_ref(),
+            } => event_subscribers,
             GfxElement::GlyphModel {
                 event_subscribers, ..
-            } => event_subscribers.as_ref(),
+            } => event_subscribers,
             GfxElement::Void {
                 event_subscribers, ..
-            } => event_subscribers.as_ref(),
+            } => event_subscribers,
         }
     }
 
@@ -277,17 +274,6 @@ impl GfxElement {
             GfxElement::GlyphArea { unique_id, .. } => *unique_id = id,
             GfxElement::GlyphModel { unique_id, .. } => *unique_id = id,
             GfxElement::Void { unique_id, .. } => *unique_id = id,
-        }
-    }
-
-    /// Return the discriminant tag for this element.
-    ///
-    /// O(1), no allocation. Useful for branching without destructuring.
-    pub fn get_type(&self) -> GfxElementType {
-        match self {
-            GfxElement::GlyphArea { .. } => GfxElementType::GlyphArea,
-            GfxElement::Void { .. } => GfxElementType::Void,
-            GfxElement::GlyphModel { .. } => GfxElementType::GlyphModel,
         }
     }
 
@@ -532,7 +518,7 @@ impl Debug for GfxElement {
 impl PartialEq for GfxElement {
     fn eq(&self, other: &Self) -> bool {
         // Match both discriminants in one step so each arm binds the
-        // payload directly — no `get_type()` + `unwrap()` dance, and
+        // payload directly — no `variant()` + `unwrap()` dance, and
         // no mixed-variant unwrap panic is reachable by construction.
         match (self, other) {
             (GfxElement::GlyphArea { glyph_area: a, .. }, GfxElement::GlyphArea { glyph_area: b, .. }) => {
@@ -551,7 +537,7 @@ impl PartialEq for GfxElement {
 impl Clone for GfxElement {
     fn clone(&self) -> Self {
         // Direct pattern-match on `self` binds the payload without
-        // needing a second `get_type()` dispatch + `unwrap()` on the
+        // needing a second `variant()` dispatch + `unwrap()` on the
         // accessor. The subscriber copy is a common tail handled once.
         let mut output = match self {
             GfxElement::GlyphArea { glyph_area, .. } => {

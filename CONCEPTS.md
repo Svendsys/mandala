@@ -244,7 +244,14 @@ allocation per element of that kind); `Void` has no payload.
 There is a companion `GfxElementType` enum for cheap variant
 checks without destructuring, and a `GfxElementField` enum used
 by predicates and field-level mutations to name "which part of
-which variant".
+which variant". `GfxElementType` — like every other `*Type` tag in
+the pipeline (`MutatorType`, `MutationType`, `GlyphAreaFieldType`,
+`GlyphModelFieldType`, `GlyphAreaCommandType`,
+`GlyphModelCommandType`) — is *derived* from its enum via strum's
+`EnumDiscriminants`, so a tag can never drift from the variants it
+names. All of them are read through one trait,
+`core::primitives::Discriminated`, which supplies `variant()` and
+`same_type()`.
 
 ### `GlyphArea`
 
