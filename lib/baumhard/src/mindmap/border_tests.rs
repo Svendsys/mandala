@@ -12,8 +12,8 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::mindmap::border::{border_run_specs, count_clusters,
-                                 resolve_border_style, BorderGlyphSet, BorderStyle};
+    use crate::mindmap::border::{border_run_specs, resolve_border_style, BorderGlyphSet, BorderStyle};
+    use crate::util::grapheme_chad::count_grapheme_clusters;
 
 
     /// `border_run_specs` produces four runs in the contractually
@@ -78,7 +78,7 @@ mod tests {
         for spec in &specs {
             assert_eq!(
                 spec.cluster_count,
-                count_clusters(&spec.text),
+                count_grapheme_clusters(&spec.text),
                 "spec channel {} cluster_count mismatch",
                 spec.channel
             );

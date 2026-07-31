@@ -35,8 +35,10 @@
 //! ## Grapheme awareness
 //!
 //! After parsing, each section's string is split into grapheme
-//! clusters via `unicode-segmentation` (`graphemes(true)`) — the
-//! same API every other Mandala text path uses. Cluster counts,
+//! clusters via `grapheme_chad::split_graphemes_owned` — the same
+//! `unicode-segmentation` walk every other Mandala text path uses,
+//! reached through the one module allowed to name it
+//! (CONVENTIONS §B3). Cluster counts,
 //! not codepoint counts, drive fitter math; combining-mark glyphs
 //! and ZWJ emoji each occupy one cell.
 //!
@@ -49,7 +51,7 @@
 //! so it compiles for `wasm32` by construction and is easy to
 //! unit-test.
 
-use unicode_segmentation::UnicodeSegmentation;
+use crate::util::grapheme_chad::split_graphemes_owned;
 
 /// A parsed side pattern. The two variants reflect the two
 /// well-formed inputs the grammar accepts; everything else
@@ -95,8 +97,9 @@ pub enum SidePattern {
 pub struct RenderedSide {
     /// Concatenated grapheme clusters, ready for layout.
     pub text: String,
-    /// Cluster count of `text`. Equals `text.graphemes(true).count()`
-    /// by construction; carried inline so callers don't need to
+    /// Cluster count of `text`. Equals
+    /// `grapheme_chad::count_grapheme_clusters(text)` by
+    /// construction; carried inline so callers don't need to
     /// re-walk the string.
     pub cluster_count: usize,
 }
@@ -180,7 +183,7 @@ impl SidePattern {
             // No fill region — the entire input is one atomic
             // cluster sequence to repeat.
             return Ok(SidePattern::AtomicRepeat {
-                cluster: clusters(&outside),
+                cluster: split_graphemes_owned(&outside),
             });
         }
 
@@ -194,9 +197,9 @@ impl SidePattern {
         }
 
         Ok(SidePattern::PrefixFillSuffix {
-            prefix: clusters(&prefix_str),
-            fill: clusters(&inside),
-            suffix: clusters(&suffix_str),
+            prefix: split_graphemes_owned(&prefix_str),
+            fill: split_graphemes_owned(&inside),
+            suffix: split_graphemes_owned(&suffix_str),
         })
     }
 
@@ -310,14 +313,6 @@ impl SidePattern {
             }
         }
     }
-}
-
-/// Split a string into grapheme clusters, owning each as a
-/// `String`. Wrapper around `UnicodeSegmentation::graphemes(true)`
-/// — kept private so callers route through `SidePattern` and the
-/// cluster-vector layout is an internal contract.
-fn clusters(s: &str) -> Vec<String> {
-    s.graphemes(true).map(|g| g.to_string()).collect()
 }
 
 #[cfg(test)]

@@ -8,7 +8,6 @@
 //! handles, and drag previews all attach to these geometry hints.
 
 use serde::{Deserialize, Serialize};
-use unicode_segmentation::UnicodeSegmentation;
 
 use crate::core::primitives::{ColorFontRegion, ColorFontRegions, Range};
 // `FontSystem` is re-exported by `crate::font` (§B5: code outside
@@ -19,6 +18,7 @@ use crate::font::FontSystem;
 use crate::mindmap::border_pattern::SidePattern;
 use crate::mindmap::model::{Canvas, ColorGroup, CustomBorderGlyphs, GlyphBorderConfig, MindSection};
 use crate::util::color::FloatRgba;
+use crate::util::grapheme_chad::{count_grapheme_clusters, join_graphemes};
 
 /// Fraction of `font_size` by which a border's top/bottom runs
 /// are pulled inward so their glyph visible extents overlap with
@@ -386,10 +386,10 @@ impl BorderStyle {
     /// the auto-resize pass so they speak in the same units.
     pub fn corner_clusters(&self) -> CornerClusterCounts {
         CornerClusterCounts {
-            top_left: count_clusters(&self.corners.top_left),
-            top_right: count_clusters(&self.corners.top_right),
-            bottom_left: count_clusters(&self.corners.bottom_left),
-            bottom_right: count_clusters(&self.corners.bottom_right),
+            top_left: count_grapheme_clusters(&self.corners.top_left),
+            top_right: count_grapheme_clusters(&self.corners.top_right),
+            bottom_left: count_grapheme_clusters(&self.corners.bottom_left),
+            bottom_right: count_grapheme_clusters(&self.corners.bottom_right),
         }
     }
 }
@@ -632,8 +632,8 @@ pub fn border_run_specs_with(
     // → bottom → left clockwise).
     let top_clusters = top_fill_clusters;
     let bottom_clusters = bottom_fill_clusters;
-    let left_clusters = count_clusters(&left_text);
-    let right_clusters = count_clusters(&right_text);
+    let left_clusters = count_grapheme_clusters(&left_text);
+    let right_clusters = count_grapheme_clusters(&right_text);
 
     // Side rail y-position: start just below the top corner's
     // ink-bottom (which is `node.y + top_corner_h`).
@@ -641,7 +641,7 @@ pub fn border_run_specs_with(
 
     let mut specs: Vec<BorderRunSpec> = Vec::with_capacity(8);
     // Channel 1: top fill rail.
-    let top_fill_clusters_n = count_clusters(&top_fill_text);
+    let top_fill_clusters_n = count_grapheme_clusters(&top_fill_text);
     specs.push(BorderRunSpec {
         channel: 1,
         text: top_fill_text,
@@ -653,7 +653,7 @@ pub fn border_run_specs_with(
         cluster_count: top_fill_clusters_n,
     });
     // Channel 2: bottom fill rail.
-    let bottom_fill_clusters_n = count_clusters(&bottom_fill_text);
+    let bottom_fill_clusters_n = count_grapheme_clusters(&bottom_fill_text);
     specs.push(BorderRunSpec {
         channel: 2,
         text: bottom_fill_text,
@@ -696,7 +696,7 @@ pub fn border_run_specs_with(
         position: (node_pos.0, top_corner_y),
         bounds: (tl_ink.advance.max(1.0), font_size * 1.5),
         palette_offset: 0,
-        cluster_count: count_clusters(&border_style.corners.top_left),
+        cluster_count: count_grapheme_clusters(&border_style.corners.top_left),
     });
     // Channel 6: TR corner.
     specs.push(BorderRunSpec {
@@ -710,7 +710,7 @@ pub fn border_run_specs_with(
         ),
         bounds: (tr_ink.advance.max(1.0), font_size * 1.5),
         palette_offset: 1 + top_clusters,
-        cluster_count: count_clusters(&border_style.corners.top_right),
+        cluster_count: count_grapheme_clusters(&border_style.corners.top_right),
     });
     // Channel 7: BL corner.
     specs.push(BorderRunSpec {
@@ -721,7 +721,7 @@ pub fn border_run_specs_with(
         position: (node_pos.0, bottom_corner_y),
         bounds: (bl_ink.advance.max(1.0), font_size * 1.5),
         palette_offset: 1 + top_clusters + 1 + right_clusters,
-        cluster_count: count_clusters(&border_style.corners.bottom_left),
+        cluster_count: count_grapheme_clusters(&border_style.corners.bottom_left),
     });
     // Channel 8: BR corner.
     specs.push(BorderRunSpec {
@@ -735,7 +735,7 @@ pub fn border_run_specs_with(
         ),
         bounds: (br_ink.advance.max(1.0), font_size * 1.5),
         palette_offset: 1 + top_clusters + 1 + right_clusters + 1 + bottom_clusters,
-        cluster_count: count_clusters(&border_style.corners.bottom_right),
+        cluster_count: count_grapheme_clusters(&border_style.corners.bottom_right),
     });
     specs
 }
@@ -1584,18 +1584,5 @@ fn build_vertical_text(pattern: &SidePattern, rows: usize) -> String {
         return String::new();
     }
     let rendered = pattern.render(rows);
-    let mut s = String::with_capacity(rendered.text.len() + rows);
-    let mut first = true;
-    for g in rendered.text.graphemes(true) {
-        if !first {
-            s.push('\n');
-        }
-        s.push_str(g);
-        first = false;
-    }
-    s
-}
-
-pub(crate) fn count_clusters(s: &str) -> usize {
-    s.graphemes(true).count()
+    join_graphemes(&rendered.text, "\n")
 }
