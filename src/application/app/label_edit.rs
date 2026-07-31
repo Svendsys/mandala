@@ -109,6 +109,94 @@ impl LabelEditState {
     }
 }
 
+/// Which single-line editor a selection names. Pure classification
+/// of [`crate::application::document::SelectionState`], resolved by
+/// [`resolve_edge_editor_plan`].
+///
+/// Three call sites open a single-line editor off the current
+/// selection — `Action::EditSelection` / `EditSelectionClean`'s
+/// non-node fall-through, `Action::LabelEditOnSelection`, and the
+/// type-to-edit path in `event_keyboard.rs`. They used to carry
+/// three copies of this match; the plan is the one copy.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::application::app) enum EdgeEditorPlan {
+    /// The selection names no single-line editor target (a node /
+    /// section / plain-edge / empty selection). Callers no-op.
+    None,
+    /// Open the edge-label editor on this edge.
+    Label {
+        edge_ref: crate::application::document::EdgeRef,
+    },
+    /// Open the portal-text editor on this edge endpoint.
+    PortalText {
+        edge_ref: crate::application::document::EdgeRef,
+        endpoint_node_id: String,
+    },
+}
+
+/// Resolve the [`EdgeEditorPlan`] a selection names. Pure — no
+/// document lookup, no renderer — so the routing is testable
+/// without standing up the app.
+///
+/// `PortalLabel` and `PortalText` both open the portal-text editor:
+/// the label is the endpoint's glyph and the text is its caption,
+/// and the editor edits the caption in both cases.
+///
+/// The match is deliberately **exhaustive** rather than
+/// `_ => None`: `SelectionState` has ten variants today, and an
+/// eleventh should be a build error here, so whoever adds it has to
+/// decide whether it names a single-line editor instead of silently
+/// inheriting "no".
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::application::app) fn resolve_edge_editor_plan(
+    selection: &crate::application::document::SelectionState,
+) -> EdgeEditorPlan {
+    use crate::application::document::SelectionState;
+    match selection {
+        SelectionState::EdgeLabel(s) => EdgeEditorPlan::Label {
+            edge_ref: s.edge_ref.clone(),
+        },
+        SelectionState::PortalLabel(s) | SelectionState::PortalText(s) => EdgeEditorPlan::PortalText {
+            edge_ref: s.edge_ref(),
+            endpoint_node_id: s.endpoint_node_id.clone(),
+        },
+        // Node-scoped selections belong to the node text editor
+        // (`apply_enter_node_edit` owns them, cross-platform); a
+        // bare `Edge` selection has a body but no label under edit;
+        // `None` has no target at all.
+        SelectionState::None
+        | SelectionState::Single(_)
+        | SelectionState::Multi(_)
+        | SelectionState::Section(_)
+        | SelectionState::MultiSection(_)
+        | SelectionState::SectionRange { .. }
+        | SelectionState::Edge(_) => EdgeEditorPlan::None,
+    }
+}
+
+/// Seed a single-line editor's `(buffer, cursor)` pair on open.
+///
+/// `clean` is `Action::EditSelectionClean`'s empty-buffer contract
+/// — the single-line counterpart of `open_text_edit`'s
+/// `from_creation`. The cursor always lands at the end of whatever
+/// was seeded (0 on the clean path, end-of-text otherwise), and it
+/// is counted in grapheme clusters so an existing label ending in
+/// an emoji or ZWJ sequence puts the caret after the whole cluster.
+///
+/// Shared by [`open_label_edit`] and [`open_portal_text_edit`] so
+/// the two editors cannot disagree about what `clean` means.
+#[cfg(not(target_arch = "wasm32"))]
+fn seed_edit_buffer(clean: bool, original: Option<&str>) -> (String, usize) {
+    let buffer = if clean {
+        String::new()
+    } else {
+        original.unwrap_or_default().to_string()
+    };
+    let cursor = grapheme_chad::count_grapheme_clusters(&buffer);
+    (buffer, cursor)
+}
+
 /// Transition into inline label edit mode for the given edge. Seeds
 /// the buffer from the edge's current label (or the empty string)
 /// and installs a preview override on the renderer so the caret
@@ -117,9 +205,16 @@ impl LabelEditState {
 /// gesture), logs via `log::warn!` and returns without mutating
 /// state — callers read `label_edit_state.is_open()` to detect
 /// this case.
+///
+/// `clean` opens on an empty buffer instead of the existing label
+/// — `Action::EditSelectionClean`'s documented contract, and the
+/// single-line counterpart of `open_text_edit`'s `from_creation`.
+/// `original` still holds the pre-edit label either way, so Esc
+/// restores it and an unchanged commit still skips the undo push.
 #[cfg(not(target_arch = "wasm32"))]
 pub(in crate::application::app) fn open_label_edit(
     edge_ref: &crate::application::document::EdgeRef,
+    clean: bool,
     doc: &mut MindMapDocument,
     label_edit_state: &mut LabelEditState,
     app_scene: &mut crate::application::scene_host::AppScene,
@@ -138,10 +233,7 @@ pub(in crate::application::app) fn open_label_edit(
         }
     };
     let original = edge.label.clone();
-    let buffer = original.clone().unwrap_or_default();
-    // Cursor lands at the end of the existing label, matching the
-    // `TextEditState` open-on-existing-text behaviour.
-    let cursor_grapheme_pos = grapheme_chad::count_grapheme_clusters(&buffer);
+    let (buffer, cursor_grapheme_pos) = seed_edit_buffer(clean, original.as_deref());
     *label_edit_state = LabelEditState::Open {
         edge_ref: edge_ref.clone(),
         buffer: buffer.clone(),
@@ -351,10 +443,14 @@ impl PortalTextEditState {
 /// installs a preview override on the document so the caret
 /// shows up immediately, and runs a portal-tree update so the
 /// caret renders on the next frame.
+///
+/// `clean` opens on an empty buffer instead of the endpoint's
+/// existing text — same contract as [`open_label_edit`]'s `clean`.
 #[cfg(not(target_arch = "wasm32"))]
 pub(in crate::application::app) fn open_portal_text_edit(
     edge_ref: &crate::application::document::EdgeRef,
     endpoint_node_id: &str,
+    clean: bool,
     doc: &mut MindMapDocument,
     state: &mut PortalTextEditState,
     app_scene: &mut crate::application::scene_host::AppScene,
@@ -389,8 +485,7 @@ pub(in crate::application::app) fn open_portal_text_edit(
     }
     let original =
         baumhard::mindmap::model::portal_endpoint_state(edge, endpoint_node_id).and_then(|s| s.text.clone());
-    let buffer = original.clone().unwrap_or_default();
-    let cursor_grapheme_pos = grapheme_chad::count_grapheme_clusters(&buffer);
+    let (buffer, cursor_grapheme_pos) = seed_edit_buffer(clean, original.as_deref());
     *state = PortalTextEditState::Open {
         edge_ref: edge_ref.clone(),
         endpoint_node_id: endpoint_node_id.to_string(),
@@ -550,13 +645,14 @@ pub(in crate::application::app) fn close_portal_text_edit(
 #[cfg(not(target_arch = "wasm32"))]
 mod tests {
     //! Label-edit key-routing tests — backspace / delete / arrow /
-    //! home / end / printable-char behaviour for
+    //! home / end / printable-char behavior for
     //! [`super::route_label_edit_key`], the pure keyboard router
     //! both the label editor and its text-edit sibling consume.
     //! No winit event loop needed; the router is a pure function.
 
     use super::*;
     use crate::application::app::dispatch::apply_label_edit_action_to_buffer;
+    use crate::application::document::{EdgeLabelSel, EdgeRef, PortalLabelSel, SectionSel, SelectionState};
     use crate::application::keybinds::Action;
     use crate::application::platform::input::{Key, SmolStr};
 
@@ -564,7 +660,108 @@ mod tests {
         Key::Character(SmolStr::new(s))
     }
 
-    // Structural-key behaviour (Backspace / Delete / Arrow*/Home/End)
+    // ── Selection → single-line editor routing ──────────────────
+    //
+    // One resolver behind `Action::EditSelection*`,
+    // `Action::LabelEditOnSelection` and the type-to-edit path;
+    // these pin the mapping the three used to each re-derive.
+
+    #[test]
+    fn test_resolve_edge_editor_plan_routes_edge_label_to_the_label_editor() {
+        let er = EdgeRef::new("a", "b", "cross_link");
+        let sel = SelectionState::EdgeLabel(EdgeLabelSel::new(er.clone()));
+        assert_eq!(
+            resolve_edge_editor_plan(&sel),
+            EdgeEditorPlan::Label { edge_ref: er }
+        );
+    }
+
+    /// `PortalLabel` and `PortalText` are two selections on the same
+    /// endpoint (its glyph and its caption) and both edit the
+    /// caption, so both route to the portal-text editor.
+    #[test]
+    fn test_resolve_edge_editor_plan_routes_both_portal_selections_to_the_portal_editor() {
+        let er = EdgeRef::new("a", "b", "portal");
+        let expected = EdgeEditorPlan::PortalText {
+            edge_ref: er.clone(),
+            endpoint_node_id: "a".to_string(),
+        };
+        let label_sel = PortalLabelSel {
+            edge_key: baumhard::mindmap::scene_cache::EdgeKey::from(&er),
+            endpoint_node_id: "a".to_string(),
+        };
+        assert_eq!(
+            resolve_edge_editor_plan(&SelectionState::PortalLabel(label_sel.clone())),
+            expected
+        );
+        assert_eq!(
+            resolve_edge_editor_plan(&SelectionState::PortalText(label_sel)),
+            expected
+        );
+    }
+
+    /// Node-scoped and empty selections belong to the node text
+    /// editor (or to nothing) — the single-line editors decline.
+    /// All seven non-editor variants, so the list plus the three
+    /// editor cases above covers every `SelectionState` arm.
+    #[test]
+    fn test_resolve_edge_editor_plan_declines_non_edge_selections() {
+        for sel in [
+            SelectionState::None,
+            SelectionState::Single("a".into()),
+            SelectionState::Multi(vec!["a".into(), "b".into()]),
+            SelectionState::Section(SectionSel::new("a", 0)),
+            SelectionState::MultiSection(vec![SectionSel::new("a", 0), SectionSel::new("b", 1)]),
+            SelectionState::SectionRange {
+                sel: SectionSel::new("a", 0),
+                range: (0, 2),
+            },
+            SelectionState::Edge(EdgeRef::new("a", "b", "cross_link")),
+        ] {
+            assert_eq!(
+                resolve_edge_editor_plan(&sel),
+                EdgeEditorPlan::None,
+                "{:?} must not open a single-line editor",
+                sel
+            );
+        }
+    }
+
+    // ── `clean` buffer seeding ──────────────────────────────────
+    //
+    // `Action::EditSelectionClean`'s empty-buffer contract. Before
+    // the fix the dispatch arm computed the flag into `let _clean`
+    // and threw it away, so the contract held on nodes and silently
+    // didn't on edge labels / portal endpoints.
+
+    #[test]
+    fn test_seed_edit_buffer_clean_opens_empty_with_the_cursor_at_zero() {
+        assert_eq!(seed_edit_buffer(true, Some("existing label")), (String::new(), 0));
+    }
+
+    #[test]
+    fn test_seed_edit_buffer_non_clean_seeds_existing_text_cursor_at_end() {
+        assert_eq!(seed_edit_buffer(false, Some("café")), ("café".to_string(), 4));
+    }
+
+    /// The cursor is counted in grapheme clusters, so an existing
+    /// label ending in a ZWJ emoji sequence puts the caret after
+    /// the whole cluster rather than mid-sequence.
+    #[test]
+    fn test_seed_edit_buffer_counts_the_cursor_in_grapheme_clusters() {
+        let family = "a\u{1F469}\u{200D}\u{1F467}";
+        assert_eq!(seed_edit_buffer(false, Some(family)), (family.to_string(), 2));
+    }
+
+    /// An unlabeled edge opens on an empty buffer either way — the
+    /// `clean` path differs only when there is text to suppress.
+    #[test]
+    fn test_seed_edit_buffer_handles_a_missing_original() {
+        assert_eq!(seed_edit_buffer(false, None), (String::new(), 0));
+        assert_eq!(seed_edit_buffer(true, None), (String::new(), 0));
+    }
+
+    // Structural-key behavior (Backspace / Delete / Arrow*/Home/End)
     // moved from `route_label_edit_key` to
     // `dispatch::apply_label_edit_action_to_buffer` in Phase 5. Tests
     // migrated alongside.
@@ -741,7 +938,7 @@ mod tests {
     /// `Key::Character` printable payloads are inserted. This pins
     /// the new contract — a future regression that re-introduces
     /// `Key::Named(Backspace) → delete` would leak the structural
-    /// behaviour past the action layer and let users no longer
+    /// behavior past the action layer and let users no longer
     /// disable the key by clearing the binding.
     #[test]
     fn test_route_named_key_is_noop_post_phase_5() {

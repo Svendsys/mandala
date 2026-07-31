@@ -4,7 +4,7 @@
 //! bodies on native. Mouse handlers and the keyboard handler funnel
 //! through here. WASM has its own dispatch path today; the
 //! convergence track is documented in `WASM_CONVERGENCE.md`.
-//! Adding a new behaviour
+//! Adding a new behavior
 //! is variant + default + arm, in that order; never inline a body in
 //! a handler.
 
@@ -16,7 +16,11 @@ use crate::application::document::{EdgeRef, SelectionState, UndoAction};
 use crate::application::keybinds::Action;
 
 use super::super::click::rebuild_all_with_mode;
-use super::super::color_picker_flow::{close_color_picker_standalone, open_color_picker_standalone};
+use super::super::color_picker_flow::{
+    apply_picker_nudge, cancel_color_picker, close_color_picker_standalone, commit_color_picker,
+    commit_color_picker_to_selection, open_color_picker_standalone, picker_decline_reason, picker_op_for,
+    PickerOp,
+};
 use super::super::console_input::{
     rebuild_console_overlay, save_console_history, save_document_to_bound_path,
 };
@@ -404,32 +408,12 @@ pub(in crate::application::app) fn dispatch_action(
             // which means selection was non-Single — so we go
             // straight to the EdgeLabel / Portal native-only
             // branches without re-checking Single.
-            let _clean = matches!(action, Action::EditSelectionClean);
-            if let Some(doc) = ctx.document.as_mut() {
-                match doc.selection.clone() {
-                    SelectionState::PortalLabel(s) | SelectionState::PortalText(s) => {
-                        let er = s.edge_ref();
-                        open_portal_text_edit(
-                            &er,
-                            &s.endpoint_node_id,
-                            doc,
-                            ctx.portal_text_edit_state,
-                            ctx.app_scene,
-                            ctx.renderer,
-                        );
-                    }
-                    SelectionState::EdgeLabel(s) => {
-                        open_label_edit(
-                            &s.edge_ref,
-                            doc,
-                            ctx.label_edit_state,
-                            ctx.app_scene,
-                            ctx.renderer,
-                        );
-                    }
-                    _ => {}
-                }
-            }
+            //
+            // `clean` is threaded into the single-line editors so
+            // `EditSelectionClean` keeps its empty-buffer contract
+            // on edge-label / portal selections, not just on nodes.
+            let clean = matches!(action, Action::EditSelectionClean);
+            open_editor_for_edge_selection(clean, ctx);
             DispatchOutcome::Handled
         }
         Action::SaveDocument => {
@@ -539,7 +523,9 @@ pub(in crate::application::app) fn dispatch_action(
                             ctx.renderer,
                             ctx.scene_cache,
                         );
-                        open_label_edit(&er, doc, ctx.label_edit_state, ctx.app_scene, ctx.renderer);
+                        // Double-click on an edge label edits the
+                        // existing text — not clean.
+                        open_label_edit(&er, false, doc, ctx.label_edit_state, ctx.app_scene, ctx.renderer);
                     }
                 }
                 ClickHit::Empty => {
@@ -600,36 +586,10 @@ pub(in crate::application::app) fn dispatch_action(
         }
         Action::LabelEditOnSelection => {
             // Mirror `label edit`: open the inline editor on the
-            // currently-selected edge / portal-endpoint.
-            if let Some(doc) = ctx.document.as_mut() {
-                match doc.selection.clone() {
-                    SelectionState::EdgeLabel(s) => {
-                        open_label_edit(
-                            &s.edge_ref,
-                            doc,
-                            ctx.label_edit_state,
-                            ctx.app_scene,
-                            ctx.renderer,
-                        );
-                    }
-                    SelectionState::PortalLabel(s) | SelectionState::PortalText(s) => {
-                        let er = s.edge_ref();
-                        open_portal_text_edit(
-                            &er,
-                            &s.endpoint_node_id,
-                            doc,
-                            ctx.portal_text_edit_state,
-                            ctx.app_scene,
-                            ctx.renderer,
-                        );
-                    }
-                    _ => {
-                        log::debug!(
-                            "LabelEditOnSelection: selection is not an edge / portal endpoint; no-op"
-                        );
-                    }
-                }
-            }
+            // currently-selected edge / portal-endpoint, seeded
+            // with the existing text (the console verb has no
+            // "clean" spelling).
+            open_editor_for_edge_selection(false, ctx);
             DispatchOutcome::Handled
         }
 
@@ -759,6 +719,35 @@ pub(in crate::application::app) fn dispatch_action(
             DispatchOutcome::Handled
         }
 
+        // ── Color-picker modal Actions (NativeOnly) ─────────────
+        // `PickerCancel` / `PickerCommit` / the six `PickerNudge*`.
+        // These used to run entirely inside the picker's own key
+        // handler, which made `MacroStep::Action { PickerCommit }`
+        // a silent no-op while `TextEditCommit` from a macro
+        // worked — the third modal was the odd one out. Same
+        // rationale as the `LabelEdit*` arms above: commit /
+        // cancel / nudge are user-named effects, not the §3
+        // carve-out for literal Key payloads.
+        //
+        // The guard is `picker_op_for`, the picker module's single
+        // source of truth for "the picker owns this Action". The
+        // keyboard pre-filter (`event_keyboard.rs`) and the click
+        // router (`color_picker_flow::click`) resolve through the
+        // same fn, so nothing can be routed toward this funnel
+        // without an arm here to receive it, and a ninth `Picker*`
+        // variant is live on all three surfaces the moment it is
+        // added there.
+        ref a if picker_op_for(a).is_some() => {
+            let Some(op) = picker_op_for(a) else {
+                // The guard just proved `Some`; a mismatch means
+                // `picker_op_for` is not a pure function any more.
+                // Fail safe per CODE_CONVENTIONS §9.
+                log::error!("picker arm guard/body disagreement on {:?}", a);
+                return DispatchOutcome::Unhandled;
+            };
+            dispatch_picker_op(op, ctx)
+        }
+
         // Console / Picker / LabelEdit / TextEdit modal-context actions
         // not handled above (e.g. cancel/commit) are dispatched by their
         // respective modal handlers. Falling through to `Unhandled`
@@ -768,6 +757,136 @@ pub(in crate::application::app) fn dispatch_action(
             DispatchOutcome::Unhandled
         }
     }
+}
+
+/// Open the single-line editor the current selection names: the
+/// edge-label editor for an `EdgeLabel` selection, the portal-text
+/// editor for `PortalLabel` / `PortalText`. Any other selection
+/// logs and no-ops.
+///
+/// One body for two arms. `Action::EditSelection` /
+/// `EditSelectionClean` reach it as the native residual after
+/// `dispatch_compatible` declines the node-scoped selections;
+/// `Action::LabelEditOnSelection` (the `label edit` console verb's
+/// Action mirror) reaches it directly. The two used to carry
+/// byte-identical match bodies, and the `EditSelectionClean` half
+/// computed a `clean` flag it then discarded — so the "empty
+/// buffer" contract held on nodes and silently didn't on edge
+/// labels and portal endpoints.
+///
+/// A selection whose target evaporated between the selection and
+/// the dispatch leaves the editor closed; the `open_*` helpers own
+/// that `log::warn!` themselves, so there is nothing for callers
+/// here to branch on.
+fn open_editor_for_edge_selection(clean: bool, ctx: &mut InputHandlerContext<'_>) {
+    use super::super::label_edit::{resolve_edge_editor_plan, EdgeEditorPlan};
+
+    let Some(doc) = ctx.document.as_mut() else {
+        return;
+    };
+    match resolve_edge_editor_plan(&doc.selection) {
+        EdgeEditorPlan::Label { edge_ref } => open_label_edit(
+            &edge_ref,
+            clean,
+            doc,
+            ctx.label_edit_state,
+            ctx.app_scene,
+            ctx.renderer,
+        ),
+        EdgeEditorPlan::PortalText {
+            edge_ref,
+            endpoint_node_id,
+        } => open_portal_text_edit(
+            &edge_ref,
+            &endpoint_node_id,
+            clean,
+            doc,
+            ctx.portal_text_edit_state,
+            ctx.app_scene,
+            ctx.renderer,
+        ),
+        EdgeEditorPlan::None => {
+            log::debug!(
+                "open_editor_for_edge_selection: selection is not an edge label / portal endpoint; no-op"
+            );
+        }
+    }
+}
+
+/// Run a [`PickerOp`] against the live picker. Body of the
+/// `dispatch_action` picker arm, lifted out so the arm stays a
+/// two-liner and the mode branches read in one place.
+///
+/// Returns `Unhandled` whenever nothing ran — see
+/// [`picker_decline_reason`] for the three cases and why each one
+/// must not report `Handled`. `Handled` means the op reached its
+/// effect, so a nudge that the picker state rejected also reports
+/// `Unhandled` rather than claiming success.
+fn dispatch_picker_op(op: PickerOp, ctx: &mut InputHandlerContext<'_>) -> DispatchOutcome {
+    let standalone = ctx.color_picker_state.is_standalone();
+    if let Some(reason) = picker_decline_reason(
+        op,
+        ctx.color_picker_state.is_open(),
+        standalone,
+        ctx.document.is_some(),
+    ) {
+        log::debug!("picker action {:?} declined: {:?}", op, reason);
+        return DispatchOutcome::Unhandled;
+    }
+    // `picker_decline_reason` just proved the document is present.
+    let Some(doc) = ctx.document.as_mut() else {
+        log::error!("picker arm: decline check and document borrow disagree");
+        return DispatchOutcome::Unhandled;
+    };
+    match op {
+        PickerOp::Cancel => cancel_color_picker(
+            ctx.color_picker_state,
+            doc,
+            ctx.interaction_mode,
+            ctx.mindmap_tree,
+            ctx.app_scene,
+            ctx.renderer,
+            ctx.scene_cache,
+        ),
+        PickerOp::Commit => {
+            if standalone {
+                // Standalone: fan the wheel color across the
+                // document selection and stay open.
+                commit_color_picker_to_selection(
+                    ctx.color_picker_state,
+                    doc,
+                    ctx.interaction_mode,
+                    ctx.mindmap_tree,
+                    ctx.app_scene,
+                    ctx.renderer,
+                    ctx.scene_cache,
+                );
+            } else {
+                // Contextual: write the bound handle and close.
+                commit_color_picker(
+                    ctx.color_picker_state,
+                    doc,
+                    ctx.interaction_mode,
+                    ctx.mindmap_tree,
+                    ctx.app_scene,
+                    ctx.renderer,
+                    ctx.scene_cache,
+                );
+            }
+        }
+        PickerOp::Nudge(nudge) => {
+            // Renderer-free: the preview stamp marks
+            // `picker_hover.dirty` and the per-frame drain rebuilds.
+            // The helper's `false` means the picker state rejected
+            // the nudge, so the op did not take effect — report
+            // that rather than a blanket `Handled`.
+            if !apply_picker_nudge(nudge, ctx.color_picker_state, doc, ctx.picker_hover) {
+                log::debug!("picker nudge {:?} did not apply; reporting Unhandled", nudge);
+                return DispatchOutcome::Unhandled;
+            }
+        }
+    }
+    DispatchOutcome::Handled
 }
 
 /// Apply a LabelEdit cursor / delete primitive to a generic
@@ -924,7 +1043,7 @@ impl<'a, 'b> super::macro_core::MacroDispatchTarget for NativeMacroDispatchTarge
         // `&mut MindMapDocument`, not `Option`). Macros fired before
         // any document is loaded silently skip and return false so
         // the macro's `any_ran` doesn't bump on the no-op path —
-        // matches pre-Track-B behaviour where the warn arm left
+        // matches pre-Track-B behavior where the warn arm left
         // `any_ran` unchanged.
         let Some(doc) = self.ctx.document.as_mut() else {
             log::warn!("macro step ConsoleLine: no document loaded; skipping '{}'", line,);

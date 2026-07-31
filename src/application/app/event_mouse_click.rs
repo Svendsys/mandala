@@ -11,7 +11,7 @@ use glam::Vec2;
 use crate::application::platform::input::{ElementState, MouseButton};
 
 use super::click::handle_click;
-use super::color_picker_flow::{end_color_picker_gesture, handle_color_picker_click};
+use super::color_picker_flow::{end_color_picker_gesture, handle_color_picker_click, PickerClick};
 use super::console_input::save_console_history;
 use super::edge_drag::apply_edge_handle_drag;
 use super::input_context::InputHandlerContext;
@@ -63,21 +63,29 @@ pub(super) fn handle_mouse_input(
     // everything; outside-click cancels.
     if ctx.color_picker_state.is_open() && matches!(button, MouseButton::Left | MouseButton::Right) {
         let consumed = if state == ElementState::Pressed {
-            if let Some(doc) = ctx.document.as_mut() {
+            let route = if let Some(doc) = ctx.document.as_mut() {
                 handle_color_picker_click(
                     cursor_pos_val,
                     button,
                     ctx.color_picker_state,
                     doc,
-                    ctx.interaction_mode,
-                    ctx.mindmap_tree,
-                    ctx.app_scene,
-                    ctx.renderer,
-                    ctx.scene_cache,
                     ctx.picker_hover,
                 )
             } else {
-                true
+                PickerClick::Consumed
+            };
+            match route {
+                PickerClick::Consumed => true,
+                PickerClick::FallThrough => false,
+                // The ࿕ commit button and the contextual
+                // outside-click cancel are user-named effects, so
+                // the router hands back an Action and the §3
+                // funnel runs it — same shape as the text editor's
+                // click-outside `Action::TextEditCommit` below.
+                PickerClick::Dispatch(action) => {
+                    let _ = super::dispatch::dispatch_action(action, ctx, None);
+                    true
+                }
             }
         } else {
             // Release — end any active wheel gesture.
@@ -97,14 +105,14 @@ pub(super) fn handle_mouse_input(
                 // Middle-click press: lookup what's bound to MiddleClick
                 // (default `PanCanvas`). The dispatch arm sets
                 // `DragState::Panning`. Release unconditionally resets
-                // drag state below — mirrors today's behaviour where
+                // drag state below — mirrors today's behavior where
                 // any drag's release goes to None regardless of which
                 // gesture started it.
                 let name = crate::application::keybinds::MouseGesture::MiddleClick.key_name();
                 // Modifier-fallback: Ctrl+MiddleClick matches the bare
                 // MiddleClick binding when no exact-modifier match
                 // exists. Preserves pre-branch modifier-agnostic
-                // behaviour for mouse gestures.
+                // behavior for mouse gestures.
                 let action = ctx.keybinds.action_for_gesture(
                     name,
                     ctx.modifiers.control_key(),
@@ -453,7 +461,7 @@ pub(super) fn handle_mouse_input(
                         // open. Without this branch, the only way
                         // to close the editor was Esc / Enter,
                         // and clicking elsewhere felt unresponsive.
-                        // Mirrors the node text editor's behaviour
+                        // Mirrors the node text editor's behavior
                         // so the same muscle memory transfers.
                         if ctx.label_edit_state.is_open() {
                             let release_canvas = ctx

@@ -218,11 +218,21 @@ fn handle_post_rebuild_side_effect(
 ) -> bool {
     let Some(eff) = side_effect else { return false };
     match eff {
+        // `label edit` seeds the editor with the existing text —
+        // the verb has no "clean" spelling, so `clean = false`.
         ConsoleSideEffect::OpenLabelEdit(er) => {
-            open_label_edit(&er, doc, label_edit_state, app_scene, renderer);
+            open_label_edit(&er, false, doc, label_edit_state, app_scene, renderer);
         }
         ConsoleSideEffect::OpenPortalTextEdit(er, endpoint) => {
-            open_portal_text_edit(&er, &endpoint, doc, portal_text_edit_state, app_scene, renderer);
+            open_portal_text_edit(
+                &er,
+                &endpoint,
+                false,
+                doc,
+                portal_text_edit_state,
+                app_scene,
+                renderer,
+            );
         }
         ConsoleSideEffect::OpenColorPicker(target) => {
             open_color_picker_contextual(target, doc, color_picker_state, interaction_mode, app_scene, renderer, scene_cache);

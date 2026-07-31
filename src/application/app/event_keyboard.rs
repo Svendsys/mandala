@@ -11,14 +11,14 @@ use winit::event_loop::ActiveEventLoop;
 
 use crate::application::platform::input::Key;
 
-use super::color_picker_flow::handle_color_picker_key;
+use super::color_picker_flow::{handle_color_picker_clipboard_key, picker_op_for};
 use super::console_input::handle_console_key;
 use super::input_context::InputHandlerContext;
 use super::label_edit::{
     handle_label_edit_key, handle_portal_text_edit_key, open_label_edit, open_portal_text_edit,
+    resolve_edge_editor_plan, EdgeEditorPlan,
 };
 use super::text_edit::handle_text_edit_key;
-use crate::application::document::SelectionState;
 use crate::application::keybinds::Action;
 
 pub(super) fn handle_keyboard_input(
@@ -46,28 +46,51 @@ pub(super) fn handle_keyboard_input(
     // trigger `/` — falls through so the Standalone
     // persistent palette doesn't deadlock the user
     // out of the normal keybind dispatch.
+    //
+    // Commit / cancel / nudge pre-filter: dispatch through the
+    // funnel BEFORE the modal handler runs, exactly like the
+    // `LabelEdit*` and `TextEdit*` blocks below. `picker_op_for`
+    // is the shared predicate the `dispatch_action` arm guards
+    // on, so the two sides cannot drift. Only the clipboard verbs
+    // (which carry a hex payload no `Action` body can express)
+    // stay modal-local.
     if ctx.color_picker_state.is_open() {
-        let consumed = if let Some(doc) = ctx.document.as_mut() {
-            handle_color_picker_key(
-                &key_name,
+        let picker_action = key_name.as_deref().and_then(|n| {
+            ctx.keybinds.action_for_context(
+                crate::application::keybinds::InputContext::ColorPicker,
+                n,
                 ctx.modifiers.control_key(),
                 ctx.modifiers.shift_key(),
                 ctx.modifiers.alt_key(),
-                ctx.keybinds,
-                ctx.color_picker_state,
-                doc,
-                ctx.interaction_mode,
-                ctx.mindmap_tree,
-                ctx.picker_hover,
-                ctx.app_scene,
-                ctx.renderer,
-                ctx.scene_cache,
             )
+        });
+        if picker_action.as_ref().is_some_and(|a| picker_op_for(a).is_some()) {
+            // Funnel-owned: commit / cancel / nudge.
+            // `Unhandled` comes back for the Standalone-cancel and
+            // no-document cases — the picker declined the key, so
+            // it falls through to Document dispatch below.
+            if let Some(modal_action) = picker_action {
+                if matches!(
+                    super::dispatch::dispatch_action(modal_action, ctx, None),
+                    super::dispatch::DispatchOutcome::Handled
+                ) {
+                    return;
+                }
+            }
         } else {
-            false
-        };
-        if consumed {
-            return;
+            let consumed = if let Some(doc) = ctx.document.as_mut() {
+                handle_color_picker_clipboard_key(
+                    picker_action.as_ref(),
+                    ctx.color_picker_state,
+                    doc,
+                    ctx.picker_hover,
+                )
+            } else {
+                false
+            };
+            if consumed {
+                return;
+            }
         }
     }
 
@@ -272,7 +295,15 @@ pub(super) fn handle_keyboard_input(
 /// characters and route them to the inline editor: open the
 /// right editor for the current selection, then replay the
 /// keystroke into it so the typed character lands as the first
-/// edit. Mirrors the `EditSelectionClean`-on-node flow.
+/// edit.
+///
+/// Mirrors the **shape** of the `EditSelectionClean`-on-node flow
+/// (open the editor, replay the keystroke into it) but not its
+/// buffer contract: this path seeds the existing text and the
+/// typed character appends at the cursor. See the `clean = false`
+/// note on the `resolve_edge_editor_plan` match below — switching
+/// to an empty buffer would change what typing over a selected
+/// label does, which is a product decision, not a funnel fix.
 ///
 /// Returns `true` when the keystroke was consumed (editor
 /// opened or selection was stale and the keystroke was dropped
@@ -303,10 +334,20 @@ fn try_type_to_edit(
     let Some(doc) = ctx.document.as_mut() else {
         return false;
     };
-    let opened = match doc.selection.clone() {
-        SelectionState::EdgeLabel(s) => {
+    // Same selection → editor mapping the `EditSelection` /
+    // `LabelEditOnSelection` dispatch arms use.
+    //
+    // `clean = false`: the editor seeds with the existing text and
+    // the typed character appends at the cursor. This is the
+    // historical behavior and it is deliberately NOT
+    // `EditSelectionClean`'s empty-buffer contract — retyping over
+    // a selected label would be a separate, user-visible product
+    // decision.
+    let opened = match resolve_edge_editor_plan(&doc.selection) {
+        EdgeEditorPlan::Label { edge_ref } => {
             open_label_edit(
-                &s.edge_ref,
+                &edge_ref,
+                false,
                 doc,
                 ctx.label_edit_state,
                 ctx.app_scene,
@@ -314,11 +355,14 @@ fn try_type_to_edit(
             );
             ctx.label_edit_state.is_open()
         }
-        SelectionState::PortalLabel(s) | SelectionState::PortalText(s) => {
-            let er = s.edge_ref();
+        EdgeEditorPlan::PortalText {
+            edge_ref,
+            endpoint_node_id,
+        } => {
             open_portal_text_edit(
-                &er,
-                &s.endpoint_node_id,
+                &edge_ref,
+                &endpoint_node_id,
+                false,
                 doc,
                 ctx.portal_text_edit_state,
                 ctx.app_scene,
@@ -326,7 +370,7 @@ fn try_type_to_edit(
             );
             ctx.portal_text_edit_state.is_open()
         }
-        _ => return false,
+        EdgeEditorPlan::None => return false,
     };
     if opened {
         if ctx.label_edit_state.is_open() {

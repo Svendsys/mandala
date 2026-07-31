@@ -308,6 +308,73 @@ mod tests {
         );
     }
 
+    /// **Issue #31 acceptance criterion 1, at the macro loop.**
+    /// `MacroStep::Action` must be able to drive every picker
+    /// Action. Pre-fix the eight `Picker*` bodies lived inside the
+    /// picker's key handler and `dispatch_action` had no arms for
+    /// them, so a macro step reached the dispatcher and fell to
+    /// `_ => Unhandled` — a silent no-op. This pins the step loop
+    /// half of the contract: the gate lets them through and each
+    /// one lands on `target.dispatch_action`. The arm that
+    /// receives them is pinned separately by `picker_op_for`'s
+    /// exhaustiveness walk (which is that arm's match guard).
+    #[test]
+    fn user_tier_macro_drives_every_picker_action() {
+        let picker_actions = [
+            Action::PickerCancel,
+            Action::PickerCommit,
+            Action::PickerNudgeHueDown,
+            Action::PickerNudgeHueUp,
+            Action::PickerNudgeSatDown,
+            Action::PickerNudgeSatUp,
+            Action::PickerNudgeValDown,
+            Action::PickerNudgeValUp,
+        ];
+        let steps: Vec<MacroStep> = picker_actions
+            .iter()
+            .map(|a| MacroStep::Action { action: a.clone() })
+            .collect();
+        let m = macro_with_steps("picker", steps);
+        let mut t = MockTarget::new(registry_with(vec![(m, SourceTier::User)]));
+        assert!(dispatch_macro("picker", &mut t));
+        let expected: Vec<String> = picker_actions.iter().map(|a| format!("action:{:?}", a)).collect();
+        assert_eq!(t.calls, expected, "every picker Action must reach the dispatcher");
+    }
+
+    /// The picker Actions are non-destructive, so the privilege
+    /// gate lets them through from every tier — a map-authored
+    /// macro can drive the wheel. Pinned value-explicitly because
+    /// a future reclassification of `PickerCommit` as destructive
+    /// would silently take this away, and the abort is fail-closed
+    /// (the whole rest of the macro stops).
+    #[test]
+    fn non_user_tiers_may_drive_the_picker() {
+        for tier in [SourceTier::App, SourceTier::Map, SourceTier::Inline] {
+            let m = macro_with_steps(
+                "p",
+                vec![
+                    MacroStep::Action {
+                        action: Action::PickerNudgeHueUp,
+                    },
+                    MacroStep::Action {
+                        action: Action::PickerCommit,
+                    },
+                ],
+            );
+            let mut t = MockTarget::new(registry_with(vec![(m, tier)]));
+            assert!(dispatch_macro("p", &mut t), "{:?} tier", tier);
+            assert_eq!(
+                t.calls,
+                vec![
+                    "action:PickerNudgeHueUp".to_string(),
+                    "action:PickerCommit".to_string(),
+                ],
+                "{:?} tier must reach both picker steps",
+                tier
+            );
+        }
+    }
+
     #[test]
     fn map_tier_console_line_fail_closed_aborts_remaining_steps() {
         // `[Undo, ConsoleLine, SaveDocument]` from Map tier:

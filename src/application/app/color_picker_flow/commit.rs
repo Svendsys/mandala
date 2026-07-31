@@ -370,7 +370,7 @@ fn hsv_bits_equal(a: (f32, f32, f32), b: (f32, f32, f32)) -> bool {
 /// out to. The picker handle binds to a single node at open time
 /// (the first node in a `Multi` per
 /// `commands/color::picker_target_outcome`); for a `Multi(ids)`
-/// selection, the commit applies the chosen colour to every
+/// selection, the commit applies the chosen color to every
 /// selected node. Single / Section / MultiSection / Edge / non-
 /// node selections fall back to the bound handle's `id` — the
 /// handle is authoritative when the current selection isn't a
@@ -379,7 +379,7 @@ fn hsv_bits_equal(a: (f32, f32, f32), b: (f32, f32, f32)) -> bool {
 ///
 /// `Multi` is dedup'd by id in first-seen order — `from_ids`
 /// doesn't enforce uniqueness, and a stale dup would otherwise
-/// produce a redundant setter call (idempotent on the colour
+/// produce a redundant setter call (idempotent on the color
 /// value but doc-state churn / extra undo work).
 pub(super) fn node_commit_targets(
     sel: &crate::application::document::SelectionState,
@@ -436,7 +436,7 @@ pub(super) fn section_commit_targets(
     out
 }
 
-/// Decide the colour string a Contextual picker commit writes.
+/// Decide the color string a Contextual picker commit writes.
 /// When the user never moved the wheel from its open seed AND
 /// the seed was a `var(--name)` reference, the reference is
 /// preserved verbatim — otherwise the freshly-rendered hex from
@@ -481,8 +481,8 @@ mod tests {
 
     /// User moved the wheel — commit writes the new hex even if
     /// the seed was a var ref. The reference is no longer "what
-    /// the user picked"; honouring it would silently discard the
-    /// new colour.
+    /// the user picked"; honoring it would silently discard the
+    /// new color.
     #[test]
     fn test_picker_commit_overwrites_var_ref_when_hue_moved() {
         let seed_hsv = (24.0_f32, 0.8_f32, 0.95_f32);
@@ -537,7 +537,7 @@ mod tests {
     /// **Handle-as-fallback.** If the user changed selection
     /// between picker open and commit (now `Section`, was
     /// `Single` when bound), the bound handle's id wins — the
-    /// picker doesn't silently drop the colour onto a node the
+    /// picker doesn't silently drop the color onto a node the
     /// user no longer has selected.
     #[test]
     fn test_node_commit_targets_falls_back_to_handle_when_selection_diverged() {
