@@ -23,7 +23,7 @@ use super::throttled_interaction::{
 };
 use super::DragState;
 use crate::application::common::RenderDecree;
-use crate::application::document::{apply_tree_highlights, hit_test, SelectionState};
+use crate::application::document::{hit_test, SelectionState};
 
 pub(super) fn handle_cursor_moved(
     position: PhysicalPosition<f64>,
@@ -366,6 +366,7 @@ pub(super) fn handle_cursor_moved(
                                     doc.selection = new_sel;
                                     rebuild_selection_highlight(
                                         doc,
+                                        ctx.interaction_mode,
                                         ctx.mindmap_tree,
                                         ctx.renderer,
                                     );
@@ -424,6 +425,7 @@ pub(super) fn handle_cursor_moved(
                                         doc.selection = new_sel;
                                         rebuild_selection_highlight(
                                             doc,
+                                            ctx.interaction_mode,
                                             ctx.mindmap_tree,
                                             ctx.renderer,
                                         );
@@ -480,7 +482,7 @@ pub(super) fn handle_cursor_moved(
                                 section_idx,
                             ) {
                                 doc.selection = new_sel;
-                                rebuild_selection_highlight(doc, ctx.mindmap_tree, ctx.renderer);
+                                rebuild_selection_highlight(doc, ctx.interaction_mode, ctx.mindmap_tree, ctx.renderer);
                             }
                         }
                         ctx.scene_cache.clear();
@@ -505,7 +507,7 @@ pub(super) fn handle_cursor_moved(
                             selection_after_node_drag_press(&doc.selection, &node_id)
                         {
                             doc.selection = new_sel;
-                            rebuild_selection_highlight(doc, ctx.mindmap_tree, ctx.renderer);
+                            rebuild_selection_highlight(doc, ctx.interaction_mode, ctx.mindmap_tree, ctx.renderer);
                         }
                     }
                     // Shift+drag: move all selected nodes together.
@@ -729,9 +731,9 @@ fn emits_first_pan_delta(drag_state: &DragState) -> bool {
 /// handle-driven Resize-mode drags and right-button fast-resize
 /// gestures (`SECTIONS_BORDERS_RESIZE_PLAN.md` §6.5).
 fn cursor_icon_for_resize_side(
-    side: baumhard::mindmap::scene_builder::ResizeHandleSide,
+    side: baumhard::mindmap::tree_builder::ResizeHandleSide,
 ) -> CursorIcon {
-    use baumhard::mindmap::scene_builder::ResizeHandleSide as S;
+    use baumhard::mindmap::tree_builder::ResizeHandleSide as S;
     match side {
         // Diagonal corners — NW/SE share \ axis, NE/SW share / axis.
         S::NW | S::SE => CursorIcon::NwseResize,
@@ -842,17 +844,24 @@ pub(super) fn selection_after_node_drag_press(
 /// + renderer buffers refreshed to reflect the new highlight.
 fn rebuild_selection_highlight(
     doc: &mut crate::application::document::MindMapDocument,
+    interaction_mode: &super::InteractionMode,
     mindmap_tree: &mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
     renderer: &mut crate::application::renderer::Renderer,
 ) {
     if let Some(tree) = mindmap_tree.as_mut() {
-        let mut new_tree = doc.build_tree();
-        // Routes through the canonical
-        // `selection_highlight_entries` helper — Section /
-        // MultiSection narrow the highlight to the selected
-        // sections, whole-node selections paint every section.
-        let highlights = super::scene_rebuild::selection_highlight_entries(&doc.selection);
-        apply_tree_highlights(&mut new_tree, highlights);
+        // Every overlay, in the one correct order — see
+        // `build_overlaid_tree`. Highlights route through the
+        // canonical `selection_highlight_entries` helper: Section /
+        // MultiSection narrow to the selected sections, whole-node
+        // selections paint every section. `interaction_mode` is
+        // threaded in for the `NodeEdit` dim; without it a section
+        // drag mid-edit snapped every other node's text back to
+        // full opacity while its border stayed dimmed.
+        let new_tree = super::scene_rebuild::build_overlaid_tree(
+            doc,
+            interaction_mode,
+            super::scene_rebuild::selection_highlight_entries(&doc.selection),
+        );
         renderer.rebuild_buffers_from_tree(&new_tree.tree);
         *tree = new_tree;
     }
@@ -864,7 +873,7 @@ mod tests {
         cursor_icon_for_resize_side, emits_first_pan_delta, resolve_section_drag_target,
         selection_after_node_drag_press, selection_after_section_drag_press, DragState,
     };
-    use baumhard::mindmap::scene_builder::ResizeHandleSide;
+    use baumhard::mindmap::tree_builder::ResizeHandleSide;
     use crate::application::app::InteractionMode;
     use crate::application::document::tests_common::{load_test_doc, pinned_two_section_node};
     use crate::application::document::{SectionSel, SelectionState};

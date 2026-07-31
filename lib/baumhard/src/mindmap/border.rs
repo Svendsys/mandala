@@ -369,29 +369,6 @@ impl BorderStyle {
         }
     }
 
-    /// Concatenated full top-edge text for `cluster_width` cluster
-    /// columns: `top_left + top_pattern + top_right`. Cluster math
-    /// trims the side fill so the corners fit.
-    pub fn top_text(&self, cluster_width: usize) -> String {
-        build_horizontal_text(
-            &self.corners.top_left,
-            &self.corners.top_right,
-            &self.side_patterns.top,
-            cluster_width,
-        )
-    }
-
-    /// Concatenated full bottom-edge text for `cluster_width`
-    /// cluster columns.
-    pub fn bottom_text(&self, cluster_width: usize) -> String {
-        build_horizontal_text(
-            &self.corners.bottom_left,
-            &self.corners.bottom_right,
-            &self.side_patterns.bottom,
-            cluster_width,
-        )
-    }
-
     /// Vertical column for the left side at `rows` rows. Each
     /// rendered cluster occupies one line; clusters are separated
     /// by `'\n'` and the last cluster has no trailing newline,
@@ -417,10 +394,10 @@ impl BorderStyle {
     }
 }
 
-/// Per-side run geometry the three border-emit pipelines (the
+/// Per-side run geometry the three border-emit paths (the
 /// in-place mutator path, the initial-build tree path, and the
-/// flat-pipeline `rebuild_border_buffers` in the renderer) each
-/// previously open-coded with byte-identical math.
+/// section-frame tree path) each previously open-coded with
+/// byte-identical math.
 ///
 /// One spec describes one side (top / bottom / left / right):
 /// where the run sits in canvas space, how big its text bounds
@@ -476,13 +453,12 @@ pub struct BorderRunSpec {
 /// Compute the four-side run geometry for one node's border.
 /// Single source of truth for the per-side `(text, position,
 /// bounds, palette_offset)` arithmetic that the in-place mutator
-/// path, the initial-build tree path, and the flat-pipeline
-/// `rebuild_border_buffers` previously reproduced independently.
+/// path, the initial-build tree path, and the section-frame tree
+/// path previously reproduced independently.
 ///
 /// This is the **lock-acquiring wrapper** for callers that do NOT
 /// already hold the `FONT_SYSTEM` write guard (the tree-builder
-/// paths, unit tests). Callers inside a write-guard scope — the
-/// renderer's `rebuild_border_buffers` loop — must use
+/// paths, unit tests). A caller inside a write-guard scope must use
 /// [`border_run_specs_with`] instead, or the nested same-thread
 /// acquire deadlocks (issue P0-06).
 ///
@@ -522,9 +498,9 @@ pub fn border_run_specs(
 }
 
 /// [`border_run_specs`] for callers that already hold the
-/// `FONT_SYSTEM` write guard (the renderer's `rebuild_border_buffers`
-/// loop). Threads the guard into every metric-cache measurement so a
-/// cold corner / fill grapheme shapes through the held guard instead
+/// `FONT_SYSTEM` write guard. Threads the guard into every
+/// metric-cache measurement so a cold corner / fill grapheme
+/// shapes through the held guard instead
 /// of blocking on a second acquire of the same lock — the composable
 /// design §B5 and the `measure_glyph_ink_bounds` primitive share.
 ///
@@ -1008,9 +984,9 @@ fn parse_legacy_glyph(c: char) -> SidePattern {
 /// Resolve a node's effective `BorderStyle` from its optional
 /// `GlyphBorderConfig`, the canvas-level default, and the resolved
 /// frame color. Single source of truth — every border-build path
-/// (scene_builder, tree_builder, renderer) goes through this so
-/// preset / font / size / color / pattern resolution can't drift
-/// between pipelines.
+/// (the border pass, the section-frame pass, the clip-AABB pass)
+/// goes through this so preset / font / size / color / pattern
+/// resolution can't drift between them.
 ///
 /// Cascade for each field, most-specific wins:
 /// 1. Per-node `GlyphBorderConfig` (the `cfg` arg).
@@ -1073,6 +1049,38 @@ pub fn resolve_border_style(
         color,
         visible: true,
     }
+}
+
+/// The `font_size_pt` half of [`resolve_border_style`]'s cascade,
+/// on its own.
+///
+/// A caller that only needs the border's *extent* — the clip-AABB
+/// pass behind
+/// [`crate::mindmap::tree_builder::node_clip_aabbs`], which grows a
+/// node's clip box by the rendered frame's thickness — would
+/// otherwise pay for a whole [`BorderStyle`]: four corner
+/// `String`s, four `SidePattern`s each carrying a `Vec`, the color
+/// `String`, and the optional font / palette clones, all discarded
+/// after reading one `f32`.
+///
+/// **Parity contract:** this must stay byte-identical to what
+/// [`resolve_border_style`] writes into
+/// [`BorderStyle::font_size_pt`] — same `cfg.or(canvas_default)`
+/// chosen-slot rule, same `14.0` floor. It deliberately takes no
+/// `frame_color`: that argument feeds only `BorderStyle::color`,
+/// and the size cascade is independent of both it and the preset.
+/// `resolve_border_font_size_pt_matches_resolve_border_style` pins
+/// the equivalence across presets, per-node overrides,
+/// canvas-default fall-through, and the unset floor.
+///
+/// # Costs
+///
+/// Two `Option` derefs and a copy. No allocation, no parsing.
+pub fn resolve_border_font_size_pt(
+    cfg: Option<&GlyphBorderConfig>,
+    canvas_default: Option<&GlyphBorderConfig>,
+) -> f32 {
+    cfg.or(canvas_default).map(|c| c.font_size_pt).unwrap_or(14.0)
 }
 
 /// Resolve a section-frame's [`BorderStyle`] against the same
@@ -1341,13 +1349,13 @@ pub fn default_custom_glyphs() -> CustomBorderGlyphs {
     }
 }
 
-/// Apply a [`crate::mindmap::scene_builder::BorderConfigEditsView`]
+/// Apply a [`crate::mindmap::tree_builder::BorderConfigEditsView`]
 /// to a slot for live-preview rendering. Mirrors the application-
 /// crate's `apply_glyph_border_edits_to_slot` shape but consumes
-/// borrowed strings rather than `OptionEdit<T>` so the scene
-/// builder can fold the staged preview edits into a clone of the
-/// committed slot without round-tripping back through the
-/// application layer.
+/// borrowed strings rather than `OptionEdit<T>` so the border and
+/// section-frame passes can fold the staged preview edits into a
+/// clone of the committed slot without round-tripping back through
+/// the application layer.
 ///
 /// **Parity contract:** this function must produce the same
 /// post-state as `apply_glyph_border_edits_to_slot` for any
@@ -1364,9 +1372,9 @@ pub fn default_custom_glyphs() -> CustomBorderGlyphs {
 /// override.
 pub fn apply_view_to_slot(
     slot: &mut Option<GlyphBorderConfig>,
-    view: &crate::mindmap::scene_builder::BorderConfigEditsView<'_>,
+    view: &crate::mindmap::tree_builder::BorderConfigEditsView<'_>,
 ) {
-    use crate::mindmap::scene_builder::EditView;
+    use crate::mindmap::tree_builder::EditView;
     // Top-level slot clear — empties the entire slot, falls back
     // to the canvas default / hardcoded floor on resolve.
     if view.clear {
@@ -1565,27 +1573,6 @@ pub fn build_border_regions(
         ));
     }
     regions
-}
-
-/// Concatenate corner + side fill + corner into one horizontal
-/// border row. `cluster_width` is the row's total cluster width
-/// (corners included); the side pattern fills the gap between
-/// the corners.
-fn build_horizontal_text(
-    corner_left: &str,
-    corner_right: &str,
-    pattern: &SidePattern,
-    cluster_width: usize,
-) -> String {
-    let cl = count_clusters(corner_left);
-    let cr = count_clusters(corner_right);
-    let between = cluster_width.saturating_sub(cl + cr);
-    let rendered = pattern.render(between);
-    let mut s = String::with_capacity(corner_left.len() + rendered.text.len() + corner_right.len());
-    s.push_str(corner_left);
-    s.push_str(&rendered.text);
-    s.push_str(corner_right);
-    s
 }
 
 /// Render a side pattern as a vertical column of `rows` rows.

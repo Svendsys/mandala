@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Node data model: `MindNode` and the small structs that travel with
-//! it — position, size, text runs, node style, layout, colour schema,
+//! it — position, size, text runs, node style, layout, color schema,
 //! and the glyph-border config. Borders belong here because they are
 //! always per-node (no edge-level borders exist).
 
@@ -68,16 +68,16 @@ pub struct MindNode {
     ///   intent.
     ///
     /// `#[serde(default)]` lets the typed shape parse a node
-    /// without `sections` (deserialising as empty) so unit tests
-    /// that synthesise `MindNode` from raw JSON skipping
+    /// without `sections` (deserializing as empty) so unit tests
+    /// that synthesize `MindNode` from raw JSON skipping
     /// section authoring still parse — the *loader* is the layer
     /// that rejects zero-section maps with a migration pointer.
     #[serde(default)]
     pub sections: Vec<MindSection>,
-    /// Background / frame / text colours, border, shape, and the
-    /// visible-frame toggle. The text colour here acts as the
+    /// Background / frame / text colors, border, shape, and the
+    /// visible-frame toggle. The text color here acts as the
     /// node-level default — sections without their own per-run
-    /// colour override fall through to it.
+    /// color override fall through to it.
     pub style: NodeStyle,
     /// Layout descriptor carried through from miMind-format source
     /// maps. Mandala drives layout through custom mutations instead
@@ -92,7 +92,7 @@ pub struct MindNode {
     /// notes annotate the whole node, not any one stratum of data
     /// inside it.
     pub notes: String,
-    /// Optional palette binding that colours this node and its
+    /// Optional palette binding that colors this node and its
     /// descendants at a given depth level.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color_schema: Option<ColorSchema>,
@@ -152,15 +152,13 @@ impl MindNode {
     ///
     /// Borders inherit this window verbatim via
     /// [`BorderNodeData::zoom_visibility`] in
-    /// `tree_builder/border.rs` (stamped onto all four runs in
-    /// `border_node_data`) and via the same field on
-    /// `BorderElement` in `scene_builder/node_pass.rs` — both
-    /// paths call this method directly. No separate
-    /// per-border override exists today; the floating-frame-
-    /// fragment case a non-inheriting border would produce is
-    /// prevented by construction. A future
+    /// `tree_builder/border.rs`, stamped onto all four runs in
+    /// `border_node_data`. No separate per-border override
+    /// exists today; the floating-frame-fragment case a
+    /// non-inheriting border would produce is prevented by
+    /// construction. A future
     /// `GlyphBorderConfig.min_zoom_to_render` field would need
-    /// to revisit those two call sites together.
+    /// to revisit that call site.
     ///
     /// [`BorderNodeData::zoom_visibility`]: crate::mindmap::tree_builder::BorderNodeData
     pub fn zoom_window(&self) -> ZoomVisibility {
@@ -179,7 +177,7 @@ impl MindNode {
     /// (`glam::Vec2` is `#[repr(C)] [f32; 2]`). Lossy past ~16M
     /// canvas pixels — beyond f32's 24-bit integer-precise range —
     /// but well clear of any realistic mindmap canvas size.
-    /// Inlinable; the optimiser folds construction-then-`.x`/`.y`
+    /// Inlinable; the optimizer folds construction-then-`.x`/`.y`
     /// access into bare register loads.
     pub fn pos_vec2(&self) -> Vec2 {
         Vec2::new(self.position.x as f32, self.position.y as f32)
@@ -189,7 +187,7 @@ impl MindNode {
     /// `glam::Vec2`. Sibling of [`Self::pos_vec2`].
     ///
     /// **Costs.** Same as [`Self::pos_vec2`] — two f64→f32 casts,
-    /// no allocation, optimiser-foldable.
+    /// no allocation, optimizer-foldable.
     pub fn size_vec2(&self) -> Vec2 {
         Vec2::new(self.size.width as f32, self.size.height as f32)
     }
@@ -226,7 +224,7 @@ impl MindNode {
 
     /// Center of the node's AABB in canvas space — `pos + size / 2`.
     /// Used by edge-anchor and connection-routing math that needs
-    /// the node's geometric centre rather than its top-left corner.
+    /// the node's geometric center rather than its top-left corner.
     ///
     /// **Costs.** Four f64→f32 casts (two from each helper) plus a
     /// componentwise `Vec2 * f32` and `Vec2 + Vec2`. With glam's
@@ -274,7 +272,7 @@ pub struct Size {
 /// `text` + `text_runs` pair onto each section.
 ///
 /// In the Baumhard tree (see [`crate::mindmap::tree_builder`])
-/// each section materialises as a `GfxElement::GlyphArea` child
+/// each section materializes as a `GfxElement::GlyphArea` child
 /// of the owning node's container area, with a single
 /// `GfxElement::GlyphModel` grandchild that paints the section's
 /// glyphs into the section-area's buffer. The section-area is the
@@ -284,7 +282,7 @@ pub struct Size {
 ///
 /// **Defaults / inheritance.** A section without `text_runs`
 /// renders at cosmic-text's defaults clamped by `node.style`:
-/// the section's effective colour falls through to
+/// the section's effective color falls through to
 /// `node.style.text_color`, and the size to `14.0pt`. Per-grapheme
 /// styling layers via `text_runs`.
 ///
@@ -301,7 +299,7 @@ pub struct MindSection {
     /// JSON file with `{"sections": [{}]}` loads as one empty
     /// section (text = "") rather than failing the typed loader
     /// with a confusing "missing field `text`" serde error. The
-    /// `convert --sections` migration synthesises the field
+    /// `convert --sections` migration synthesizes the field
     /// explicitly when lifting legacy node text, so on-disk
     /// shape is unchanged for migrated files.
     #[serde(default)]
@@ -325,7 +323,7 @@ pub struct MindSection {
     /// the section's index" — which is the migration default and
     /// what most authored sections want. `Some(0)` means "the
     /// author explicitly chose channel 0", which the builder
-    /// honours even when the section's index is `> 0` (so
+    /// honors even when the section's index is `> 0` (so
     /// authored 0 can intentionally collide with a sibling
     /// mind-node on channel 0 to broadcast).
     ///
@@ -433,11 +431,11 @@ pub struct TextRun {
     /// Underline decoration flag.
     pub underline: bool,
     /// Font-family name; matched against `AppFont` at layout time
-    /// with a fallback for unrecognised families.
+    /// with a fallback for unrecognized families.
     pub font: String,
     /// Font size in points.
     pub size_pt: u32,
-    /// `#RRGGBB` or `var(--name)` text colour.
+    /// `#RRGGBB` or `var(--name)` text color.
     pub color: String,
     /// Optional hyperlink target URL; the renderer decorates the
     /// run's underline when set.
@@ -450,11 +448,11 @@ pub struct TextRun {
 /// rasterizing. Plain data; no runtime cost.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeStyle {
-    /// Fill colour (`#RRGGBB` or `var(--name)`).
+    /// Fill color (`#RRGGBB` or `var(--name)`).
     pub background_color: String,
-    /// Border / frame colour (`#RRGGBB` or `var(--name)`).
+    /// Border / frame color (`#RRGGBB` or `var(--name)`).
     pub frame_color: String,
-    /// Default text colour for the node's primary text (`#RRGGBB`
+    /// Default text color for the node's primary text (`#RRGGBB`
     /// or `var(--name)`).
     pub text_color: String,
     /// Background shape spelling — matched against
@@ -500,11 +498,11 @@ pub struct GlyphBorderConfig {
     #[serde(default = "default_border_padding")]
     pub padding: f32,
     /// Optional palette name (key in `MindMap.palettes`) whose
-    /// colours cycle per glyph around the border. When absent, the
-    /// resolved single colour (cascade `border.color` →
+    /// colors cycle per glyph around the border. When absent, the
+    /// resolved single color (cascade `border.color` →
     /// `style.frame_color`) paints every glyph. When present but
     /// missing from the map, the renderer logs a warning and falls
-    /// back to the single-colour path — interactive paths must not
+    /// back to the single-color path — interactive paths must not
     /// panic per `CODE_CONVENTIONS.md` §9.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color_palette: Option<String>,
@@ -512,7 +510,7 @@ pub struct GlyphBorderConfig {
     /// set: `"frame" | "background" | "text" | "title"`. Defaults
     /// to `"frame"` (the channel whose meaning matches the border
     /// today). Unknown values warn-and-fall-back to `"frame"`.
-    /// Open seam for "cycle title colours" without redesigning the
+    /// Open seam for "cycle title colors" without redesigning the
     /// field later.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color_palette_field: Option<String>,
@@ -596,7 +594,7 @@ fn default_br_glyph() -> String {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeLayout {
     /// Layout-algorithm name from the miMind format — round-tripped
-    /// but not currently honoured by the renderer.
+    /// but not currently honored by the renderer.
     #[serde(rename = "type")]
     pub layout_type: String,
     /// Growth direction hint carried through from miMind.
@@ -615,7 +613,7 @@ pub struct NodeLayout {
 /// effective colors. Plain data; no runtime cost.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColorSchema {
-    /// Named palette to bind this node's colours to — keys into
+    /// Named palette to bind this node's colors to — keys into
     /// [`super::MindMap::palettes`].
     pub palette: String,
     /// Index into the palette's `groups` for this node's depth.
@@ -627,7 +625,7 @@ pub struct ColorSchema {
     /// transparent and children start at level 0.
     pub starts_at_root: bool,
     /// When `true`, outgoing connections inherit the palette's
-    /// colour at this node's level instead of the edge's own colour.
+    /// color at this node's level instead of the edge's own color.
     pub connections_colored: bool,
 }
 
@@ -636,13 +634,13 @@ pub struct ColorSchema {
 /// [`super::Palette::groups`]. Plain data; no runtime cost.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColorGroup {
-    /// Background-fill colour for a node at this level.
+    /// Background-fill color for a node at this level.
     pub background: String,
-    /// Frame-stroke colour for a node at this level.
+    /// Frame-stroke color for a node at this level.
     pub frame: String,
-    /// Text colour for a node at this level.
+    /// Text color for a node at this level.
     pub text: String,
-    /// First-line / title colour — overrides `text` for the first
+    /// First-line / title color — overrides `text` for the first
     /// line of a node's text when present.
     pub title: String,
 }

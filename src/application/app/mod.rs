@@ -15,9 +15,9 @@
 //! [`dispatch::dispatch_action`] (CODE_CONVENTIONS §3). Per-event
 //! handlers (in `event_keyboard`, `event_mouse_click`,
 //! `event_cursor_moved` on native; the per-arm methods of
-//! `run_wasm::WasmApp` on WASM) recognise an input gesture,
+//! `run_wasm::WasmApp` on WASM) recognize an input gesture,
 //! resolve it to an [`crate::application::keybinds::Action`],
-//! and call into the funnel. Adding a new behaviour is variant
+//! and call into the funnel. Adding a new behavior is variant
 //! + default + arm, in that order; never inline a body in a
 //! handler.
 //!
@@ -160,7 +160,7 @@ pub(crate) enum ClickHit {
     /// when the click resolved to a specific section of a multi-
     /// section node (mirroring `HitTarget::Section`); `None` for
     /// single-section nodes and chrome-only hits. The
-    /// `PartialEq`-derived double-click compare honours the
+    /// `PartialEq`-derived double-click compare honors the
     /// section index, so two slow clicks on different sections
     /// of the same node correctly *don't* count as a double-click,
     /// and a genuine same-section double-click routes the
@@ -180,7 +180,7 @@ pub(crate) enum ClickHit {
     /// `SelectionState::PortalText`, distinct from the icon so
     /// per-channel operations (color / font) target only the
     /// clicked sub-part. Double-click inherits the same
-    /// pan-to-partner behaviour as `PortalMarker` — the
+    /// pan-to-partner behavior as `PortalMarker` — the
     /// endpoint identity is shared between icon and text.
     PortalText {
         edge: baumhard::mindmap::scene_cache::EdgeKey,
@@ -272,7 +272,7 @@ pub(super) struct ClickHitParts {
 /// adjacent. Edge-label hits only register when no node /
 /// portal sub-part has claimed the click — labels sit along
 /// the connection path, and placing them behind the portal
-/// check keeps the portal's "floating over a node" behaviour
+/// check keeps the portal's "floating over a node" behavior
 /// correct even if a label happens to overlap.
 pub(super) fn compute_click_hit(
     canvas_pos: glam::Vec2,
@@ -418,7 +418,7 @@ enum DragState {
         /// transition in `CursorMoved`. Takes precedence over
         /// `hit_node` — clicking a handle always wins over clicking
         /// the node behind it.
-        hit_edge_handle: Option<(EdgeRef, baumhard::mindmap::scene_builder::EdgeHandleKind)>,
+        hit_edge_handle: Option<(EdgeRef, baumhard::mindmap::tree_builder::EdgeHandleKind)>,
         /// If the cursor landed on a portal marker at mouse-down,
         /// this records `(edge_key, endpoint_node_id)` so a drag
         /// past threshold transitions to `Throttled(PortalLabel)`.
@@ -443,7 +443,7 @@ enum DragState {
         /// the section's edge and clicking it is a resize, not
         /// a section drag.
         hit_section_resize_handle:
-            Option<(String, usize, baumhard::mindmap::scene_builder::ResizeHandleSide)>,
+            Option<(String, usize, baumhard::mindmap::tree_builder::ResizeHandleSide)>,
         /// If a node is currently `Single`-selected and the
         /// cursor landed on one of its 8 resize handles, this
         /// records `(node_id, side)` so a drag past threshold
@@ -451,7 +451,7 @@ enum DragState {
         /// precedence over `hit_node` — clicking a handle on
         /// a selected node is a resize, not a re-selection or
         /// a move-node drag.
-        hit_node_resize_handle: Option<(String, baumhard::mindmap::scene_builder::ResizeHandleSide)>,
+        hit_node_resize_handle: Option<(String, baumhard::mindmap::tree_builder::ResizeHandleSide)>,
     },
     /// Right-button is down + cursor hasn't moved past the drag
     /// threshold. Press-time hit captures the body of any node /
@@ -534,7 +534,7 @@ pub struct Application {
 /// **Native variant.** Native creates the window inside winit's
 /// `ApplicationHandler::resumed` callback (the modern winit 0.30
 /// path), so the struct here only carries [`Options`]. The window
-/// itself lives on the run-loop's `InitState`, materialised lazily
+/// itself lives on the run-loop's `InitState`, materialized lazily
 /// on first resume.
 #[cfg(not(target_arch = "wasm32"))]
 pub struct Application {
@@ -547,7 +547,7 @@ impl Application {
         let event_loop = EventLoop::new().expect("Could not create an EventLoop");
 
         // Pre-creating the window here on winit 0.30 is deprecated in
-        // favour of `ActiveEventLoop::create_window` inside
+        // favor of `ActiveEventLoop::create_window` inside
         // `ApplicationHandler::resumed`. The native path takes that
         // route; the WASM path still pre-creates because
         // `run_wasm::run` attaches the canvas and installs DOM event
@@ -600,7 +600,7 @@ pub struct Options {
     /// to verify a single render pass succeeds. The interactive
     /// run never sets this.
     pub should_exit: bool,
-    /// Window startup mode (windowed / fullscreen / maximised);
+    /// Window startup mode (windowed / fullscreen / maximized);
     /// see [`WindowMode`].
     pub window_mode: WindowMode,
     /// User-config UI-scale offset. The renderer scales every

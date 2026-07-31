@@ -20,12 +20,12 @@ use crate::application::document::{EdgeRef, MindMapDocument};
 pub(in crate::application::app) fn apply_edge_handle_drag(
     doc: &mut MindMapDocument,
     edge_ref: &EdgeRef,
-    handle: baumhard::mindmap::scene_builder::EdgeHandleKind,
+    handle: baumhard::mindmap::tree_builder::EdgeHandleKind,
     start_handle_pos: Vec2,
     total_delta: Vec2,
-) -> baumhard::mindmap::scene_builder::EdgeHandleKind {
+) -> baumhard::mindmap::tree_builder::EdgeHandleKind {
     use baumhard::mindmap::model::ControlPoint;
-    use baumhard::mindmap::scene_builder::EdgeHandleKind;
+    use baumhard::mindmap::tree_builder::EdgeHandleKind;
 
     let idx = match doc.edge_index(edge_ref) {
         Some(i) => i,

@@ -41,7 +41,7 @@ pub enum Instruction {
     /// Rotate every predicate-matching descendant around the pivot
     /// element's position by `f32` degrees. **Stub**: the tree walker
     /// currently no-ops this; the slot exists so adding the
-    /// implementation later doesn't break serialised trees.
+    /// implementation later doesn't break serialized trees.
     RotateWhile(f32, Predicate),
     /// Descend the target tree using per-node subtree AABBs to find
     /// the deepest node whose own AABB contains the given point,
@@ -165,7 +165,7 @@ pub enum GlyphTreeEvent {
 ///
 /// The payload-free `MutationType` tag is derived from this enum and
 /// reached through
-/// [`Discriminated::variant`](crate::core::primitives::Discriminated::variant).
+/// [`crate::core::primitives::Discriminated::variant`].
 #[derive(Clone, Debug, Serialize, Deserialize, EnumDiscriminants)]
 #[strum_discriminants(name(MutationType))]
 #[strum_discriminants(derive(Hash, Serialize, Deserialize))]
@@ -336,7 +336,7 @@ impl Mutation {
 ///
 /// The payload-free `MutatorType` tag is derived from this enum and
 /// reached through
-/// [`Discriminated::variant`](crate::core::primitives::Discriminated::variant).
+/// [`crate::core::primitives::Discriminated::variant`].
 #[derive(Clone, Debug, Serialize, Deserialize, EnumDiscriminants)]
 #[strum_discriminants(name(MutatorType))]
 #[strum_discriminants(derive(Hash, Serialize, Deserialize))]

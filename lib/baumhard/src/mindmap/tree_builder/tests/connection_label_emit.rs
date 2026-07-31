@@ -2,7 +2,6 @@
 
 //! Connection-label emission: label present, missing/empty, position_t follow, color inheritance, GlyphConnectionConfig override.
 
-use super::super::*;
 use super::fixtures::*;
 use crate::mindmap::model::{EdgeLabelConfig, GlyphConnectionConfig};
 use crate::util::geometry::almost_equal;
@@ -10,13 +9,13 @@ use crate::util::geometry::almost_equal;
 #[test]
 fn test_label_element_emitted_for_edge_with_label() {
     let nodes = vec![
-        synthetic_node("a", 0.0, 0.0, 40.0, 40.0, false),
-        synthetic_node("b", 200.0, 0.0, 40.0, 40.0, false),
+        sized_node("a", 0.0, 0.0, 40.0, 40.0, false),
+        sized_node("b", 200.0, 0.0, 40.0, 40.0, false),
     ];
     let mut edge = synthetic_edge("a", "b", "auto", "auto");
     edge.label = Some("hello".to_string());
     let map = synthetic_map(nodes, vec![edge]);
-    let scene = build_scene(&map, 1.0);
+    let scene = project(&map, 1.0);
     assert_eq!(scene.connection_label_elements.len(), 1);
     assert_eq!(scene.connection_label_elements[0].text, "hello");
 }
@@ -25,19 +24,19 @@ fn test_label_element_emitted_for_edge_with_label() {
 fn test_no_label_element_for_missing_or_empty_label() {
     // label = None → no element.
     let nodes = vec![
-        synthetic_node("a", 0.0, 0.0, 40.0, 40.0, false),
-        synthetic_node("b", 200.0, 0.0, 40.0, 40.0, false),
+        sized_node("a", 0.0, 0.0, 40.0, 40.0, false),
+        sized_node("b", 200.0, 0.0, 40.0, 40.0, false),
     ];
     let edge = synthetic_edge("a", "b", "auto", "auto");
     let map = synthetic_map(nodes.clone(), vec![edge]);
-    let scene = build_scene(&map, 1.0);
+    let scene = project(&map, 1.0);
     assert_eq!(scene.connection_label_elements.len(), 0);
 
     // label = Some("") → no element (empty-string special case).
     let mut edge = synthetic_edge("a", "b", "auto", "auto");
     edge.label = Some(String::new());
     let map = synthetic_map(nodes, vec![edge]);
-    let scene = build_scene(&map, 1.0);
+    let scene = project(&map, 1.0);
     assert_eq!(scene.connection_label_elements.len(), 0);
 }
 
@@ -47,8 +46,8 @@ fn test_label_position_follows_label_config_position_t() {
     // At t=0, label should sit near the from-anchor; at t=1, near the
     // to-anchor; midpoints differ substantially.
     let nodes = vec![
-        synthetic_node("a", 0.0, 0.0, 40.0, 40.0, false),
-        synthetic_node("b", 1000.0, 0.0, 40.0, 40.0, false),
+        sized_node("a", 0.0, 0.0, 40.0, 40.0, false),
+        sized_node("b", 1000.0, 0.0, 40.0, 40.0, false),
     ];
     let make = |t: f32| {
         let mut e = synthetic_edge("a", "b", "auto", "auto");
@@ -59,11 +58,11 @@ fn test_label_position_follows_label_config_position_t() {
         });
         e
     };
-    let scene_start = build_scene(&synthetic_map(nodes.clone(), vec![make(0.0)]), 1.0);
-    let scene_end = build_scene(&synthetic_map(nodes.clone(), vec![make(1.0)]), 1.0);
-    let scene_mid = build_scene(&synthetic_map(nodes, vec![make(0.5)]), 1.0);
+    let scene_start = project(&synthetic_map(nodes.clone(), vec![make(0.0)]), 1.0);
+    let scene_end = project(&synthetic_map(nodes.clone(), vec![make(1.0)]), 1.0);
+    let scene_mid = project(&synthetic_map(nodes, vec![make(0.5)]), 1.0);
 
-    let pos_x = |s: &RenderScene| {
+    let pos_x = |s: &ProjectedRoles| {
         let e = &s.connection_label_elements[0];
         // Return the center x (position + half width).
         e.position.0 + e.bounds.0 * 0.5
@@ -81,23 +80,23 @@ fn test_label_position_follows_label_config_position_t() {
 #[test]
 fn test_label_color_inherits_edge_color_when_config_color_none() {
     let nodes = vec![
-        synthetic_node("a", 0.0, 0.0, 40.0, 40.0, false),
-        synthetic_node("b", 200.0, 0.0, 40.0, 40.0, false),
+        sized_node("a", 0.0, 0.0, 40.0, 40.0, false),
+        sized_node("b", 200.0, 0.0, 40.0, 40.0, false),
     ];
     let mut edge = synthetic_edge("a", "b", "auto", "auto");
     edge.label = Some("lbl".to_string());
     edge.color = "#abcdef".to_string();
     // glyph_connection is None → falls back to edge.color.
     let map = synthetic_map(nodes, vec![edge]);
-    let scene = build_scene(&map, 1.0);
+    let scene = project(&map, 1.0);
     assert_eq!(scene.connection_label_elements[0].color, "#abcdef");
 }
 
 #[test]
 fn test_label_color_follows_glyph_connection_color_override() {
     let nodes = vec![
-        synthetic_node("a", 0.0, 0.0, 40.0, 40.0, false),
-        synthetic_node("b", 200.0, 0.0, 40.0, 40.0, false),
+        sized_node("a", 0.0, 0.0, 40.0, 40.0, false),
+        sized_node("b", 200.0, 0.0, 40.0, 40.0, false),
     ];
     let mut edge = synthetic_edge("a", "b", "auto", "auto");
     edge.label = Some("lbl".to_string());
@@ -107,7 +106,7 @@ fn test_label_color_follows_glyph_connection_color_override() {
         ..GlyphConnectionConfig::default()
     });
     let map = synthetic_map(nodes, vec![edge]);
-    let scene = build_scene(&map, 1.0);
+    let scene = project(&map, 1.0);
     // The glyph_connection.color override wins over edge.color.
     assert_eq!(scene.connection_label_elements[0].color, "#112233");
 }
@@ -122,8 +121,8 @@ fn test_label_zoom_visibility_inherits_edge_window_when_absent() {
     use crate::gfx_structs::zoom_visibility::ZoomVisibility;
 
     let nodes = vec![
-        synthetic_node("a", 0.0, 0.0, 40.0, 40.0, false),
-        synthetic_node("b", 200.0, 0.0, 40.0, 40.0, false),
+        sized_node("a", 0.0, 0.0, 40.0, 40.0, false),
+        sized_node("b", 200.0, 0.0, 40.0, 40.0, false),
     ];
     let mut edge = synthetic_edge("a", "b", "auto", "auto");
     edge.label = Some("lbl".to_string());
@@ -131,7 +130,7 @@ fn test_label_zoom_visibility_inherits_edge_window_when_absent() {
     edge.max_zoom_to_render = Some(2.0);
     // No label_config → inherit.
     let map = synthetic_map(nodes, vec![edge]);
-    let scene = build_scene(&map, 1.0);
+    let scene = project(&map, 1.0);
     assert_eq!(
         scene.connection_label_elements[0].zoom_visibility,
         ZoomVisibility {
@@ -153,8 +152,8 @@ fn test_label_zoom_visibility_replace_not_intersect() {
     use crate::gfx_structs::zoom_visibility::ZoomVisibility;
 
     let nodes = vec![
-        synthetic_node("a", 0.0, 0.0, 40.0, 40.0, false),
-        synthetic_node("b", 200.0, 0.0, 40.0, 40.0, false),
+        sized_node("a", 0.0, 0.0, 40.0, 40.0, false),
+        sized_node("b", 200.0, 0.0, 40.0, 40.0, false),
     ];
     let mut edge = synthetic_edge("a", "b", "auto", "auto");
     edge.label = Some("lbl".to_string());
@@ -166,7 +165,7 @@ fn test_label_zoom_visibility_replace_not_intersect() {
         ..EdgeLabelConfig::default()
     });
     let map = synthetic_map(nodes, vec![edge]);
-    let scene = build_scene(&map, 1.0);
+    let scene = project(&map, 1.0);
     assert_eq!(
         scene.connection_label_elements[0].zoom_visibility,
         ZoomVisibility {
@@ -185,13 +184,13 @@ fn test_label_zoom_visibility_defaults_to_unbounded() {
     use crate::gfx_structs::zoom_visibility::ZoomVisibility;
 
     let nodes = vec![
-        synthetic_node("a", 0.0, 0.0, 40.0, 40.0, false),
-        synthetic_node("b", 200.0, 0.0, 40.0, 40.0, false),
+        sized_node("a", 0.0, 0.0, 40.0, 40.0, false),
+        sized_node("b", 200.0, 0.0, 40.0, 40.0, false),
     ];
     let mut edge = synthetic_edge("a", "b", "auto", "auto");
     edge.label = Some("lbl".to_string());
     let map = synthetic_map(nodes, vec![edge]);
-    let scene = build_scene(&map, 1.0);
+    let scene = project(&map, 1.0);
     assert_eq!(
         scene.connection_label_elements[0].zoom_visibility,
         ZoomVisibility::unbounded(),
@@ -213,8 +212,8 @@ fn test_label_zoom_visibility_inherits_when_config_has_no_zoom_bounds() {
     use crate::gfx_structs::zoom_visibility::ZoomVisibility;
 
     let nodes = vec![
-        synthetic_node("a", 0.0, 0.0, 40.0, 40.0, false),
-        synthetic_node("b", 200.0, 0.0, 40.0, 40.0, false),
+        sized_node("a", 0.0, 0.0, 40.0, 40.0, false),
+        sized_node("b", 200.0, 0.0, 40.0, 40.0, false),
     ];
     let mut edge = synthetic_edge("a", "b", "auto", "auto");
     edge.label = Some("lbl".to_string());
@@ -231,7 +230,7 @@ fn test_label_zoom_visibility_inherits_when_config_has_no_zoom_bounds() {
         ..EdgeLabelConfig::default()
     });
     let map = synthetic_map(nodes, vec![edge]);
-    let scene = build_scene(&map, 1.0);
+    let scene = project(&map, 1.0);
     assert_eq!(
         scene.connection_label_elements[0].zoom_visibility,
         ZoomVisibility {
@@ -252,8 +251,8 @@ fn test_label_zoom_visibility_inherits_when_config_has_no_zoom_bounds() {
 #[test]
 fn test_invisible_edge_emits_no_label_even_with_zoom_window() {
     let nodes = vec![
-        synthetic_node("a", 0.0, 0.0, 40.0, 40.0, false),
-        synthetic_node("b", 200.0, 0.0, 40.0, 40.0, false),
+        sized_node("a", 0.0, 0.0, 40.0, 40.0, false),
+        sized_node("b", 200.0, 0.0, 40.0, 40.0, false),
     ];
     let mut edge = synthetic_edge("a", "b", "auto", "auto");
     edge.label = Some("lbl".to_string());
@@ -261,7 +260,7 @@ fn test_invisible_edge_emits_no_label_even_with_zoom_window() {
     edge.min_zoom_to_render = Some(0.5);
     edge.max_zoom_to_render = Some(2.0);
     let map = synthetic_map(nodes, vec![edge]);
-    let scene = build_scene(&map, 1.0);
+    let scene = project(&map, 1.0);
     assert_eq!(scene.connection_label_elements.len(), 0);
 }
 
@@ -274,8 +273,8 @@ fn test_invisible_edge_emits_no_label_even_with_zoom_window() {
 #[test]
 fn test_label_bounds_use_grapheme_count_not_scalar_count() {
     let nodes = vec![
-        synthetic_node("a", 0.0, 0.0, 40.0, 40.0, false),
-        synthetic_node("b", 1000.0, 0.0, 40.0, 40.0, false),
+        sized_node("a", 0.0, 0.0, 40.0, 40.0, false),
+        sized_node("b", 1000.0, 0.0, 40.0, 40.0, false),
     ];
     let plain = {
         let mut e = synthetic_edge("a", "b", "auto", "auto");
@@ -289,8 +288,8 @@ fn test_label_bounds_use_grapheme_count_not_scalar_count() {
         e.label = Some("A\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}B".to_string());
         e
     };
-    let plain_scene = build_scene(&synthetic_map(nodes.clone(), vec![plain]), 1.0);
-    let zwj_scene = build_scene(&synthetic_map(nodes, vec![zwj]), 1.0);
+    let plain_scene = project(&synthetic_map(nodes.clone(), vec![plain]), 1.0);
+    let zwj_scene = project(&synthetic_map(nodes, vec![zwj]), 1.0);
     assert_eq!(plain_scene.connection_label_elements.len(), 1);
     assert_eq!(zwj_scene.connection_label_elements.len(), 1);
     let plain_w = plain_scene.connection_label_elements[0].bounds.0;
@@ -330,8 +329,8 @@ fn test_label_bounds_combining_mark_is_single_grapheme() {
 /// label produces. Helper for the grapheme-class tests above.
 fn assert_label_one_grapheme_equivalent(label: &str) {
     let nodes = vec![
-        synthetic_node("a", 0.0, 0.0, 40.0, 40.0, false),
-        synthetic_node("b", 1000.0, 0.0, 40.0, 40.0, false),
+        sized_node("a", 0.0, 0.0, 40.0, 40.0, false),
+        sized_node("b", 1000.0, 0.0, 40.0, 40.0, false),
     ];
     let baseline = {
         let mut e = synthetic_edge("a", "b", "auto", "auto");
@@ -343,8 +342,8 @@ fn assert_label_one_grapheme_equivalent(label: &str) {
         e.label = Some(label.to_string());
         e
     };
-    let baseline_scene = build_scene(&synthetic_map(nodes.clone(), vec![baseline]), 1.0);
-    let actual_scene = build_scene(&synthetic_map(nodes, vec![under_test]), 1.0);
+    let baseline_scene = project(&synthetic_map(nodes.clone(), vec![baseline]), 1.0);
+    let actual_scene = project(&synthetic_map(nodes, vec![under_test]), 1.0);
     let baseline_w = baseline_scene.connection_label_elements[0].bounds.0;
     let actual_w = actual_scene.connection_label_elements[0].bounds.0;
     assert!(

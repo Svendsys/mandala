@@ -44,9 +44,8 @@ use winit::platform::web::EventLoopExtWebSys;
 use winit::window::WindowId;
 
 use super::scene_rebuild::{
-    flush_canvas_scene_buffers, rebuild_all, update_border_tree_static, update_connection_label_tree,
-    update_connection_tree, update_edge_handle_tree, update_node_resize_handle_tree, update_portal_tree,
-    update_section_resize_handle_tree, warm_handle_tree_arenas,
+    flush_canvas_scene_buffers, rebuild_all, update_edge_handle_tree_from_slice,
+    warm_handle_tree_arenas, CanvasFrame,
 };
 use super::text_edit::TextEditState;
 use super::{Application, LastClick};
@@ -125,7 +124,7 @@ pub(super) struct WasmInputState {
     /// `SECTIONS_BORDERS_RESIZE_PLAN.md` — the enum is target-agnostic
     /// even though some mode transitions still depend on native-only
     /// dispatch arms (Reparent / Connect). WASM construction
-    /// initialises to `Default`; later batches add mode-aware click
+    /// initializes to `Default`; later batches add mode-aware click
     /// routing here.
     pub interaction_mode: super::InteractionMode,
     /// Mirror of native's `app_scene` so the canvas-scene tree
@@ -134,7 +133,7 @@ pub(super) struct WasmInputState {
     /// `rebuild_all` / `rebuild_scene_only` call below.
     pub app_scene: crate::application::scene_host::AppScene,
     /// Mirror of native's `scene_cache` so the cache-aware
-    /// `build_scene_with_cache` entry point skips `sample_path`
+    /// cache-aware connection pass skips `sample_path`
     /// work for unchanged edges. Threaded into every rebuild
     /// helper the same way native does.
     pub scene_cache: baumhard::mindmap::scene_cache::SceneConnectionCache,
@@ -144,7 +143,7 @@ pub(super) struct WasmInputState {
     /// document is loaded. Consulted by the keyboard handler's
     /// Action → Macro → CustomMutation fall-through.
     pub macros: crate::application::macros::MacroRegistry,
-    /// Touch gesture recogniser. Cross-platform peer of native's
+    /// Touch gesture recognizer. Cross-platform peer of native's
     /// `InitState.touch_recognizer`. WASM mobile is the *primary*
     /// surface this targets (mobile-browser tap-and-hold is
     /// unreachable through `MouseInput`/`CursorMoved` events
@@ -686,34 +685,30 @@ pub(super) fn run(mut app: Application) {
                     renderer.rebuild_buffers_from_tree(&mindmap_tree.tree);
                     renderer.fit_camera_to_tree(&mindmap_tree.tree);
 
-                    // Use `build_scene_with_cache` so the per-edge
+                    // Project every canvas role once so the per-edge
                     // Bezier-sample cache is populated at load and
                     // first interactions don't pay the full cost.
                     // WASM init runs in Default mode — no handles emit.
-                    let scene = doc.build_scene_with_cache(
-                        &std::collections::HashMap::new(),
-                        &mut init_scene_cache,
-                        renderer.camera_zoom(),
-                        crate::application::document::InteractionModeOverrides::none(),
-                    );
-                    update_connection_tree(&scene, &mut init_app_scene);
-                    update_border_tree_static(&doc, &mut init_app_scene);
-                    update_portal_tree(
+                    let init_offsets = std::collections::HashMap::new();
+                    let frame = CanvasFrame::new(
                         &doc,
-                        &std::collections::HashMap::new(),
-                        &mut init_app_scene,
-                        &mut renderer,
+                        &init_offsets,
+                        crate::application::document::InteractionModeOverrides::none(),
+                        renderer.camera_zoom(),
                     );
-                    update_connection_label_tree(&scene, &mut init_app_scene, &mut renderer);
+                    frame.update_connection_trees(&mut init_scene_cache, &mut init_app_scene);
+                    frame.update_border_tree(&mut init_app_scene);
+                    frame.update_portal_tree(&mut init_app_scene, &mut renderer);
+                    frame.update_connection_label_tree(&mut init_app_scene, &mut renderer);
+                    frame.update_section_frame_tree(&mut init_app_scene);
                     // Register the three handle-tree canvas roles
                     // with fresh-load (empty-slice) signatures.
                     // First real selection still takes FullRebuild
                     // (8-handle signature differs from empty), but
                     // every subsequent return to "nothing selected"
                     // hits InPlaceMutator. Mirrors the native init.
-                    update_edge_handle_tree(&scene, &mut init_app_scene);
-                    update_section_resize_handle_tree(&scene, &mut init_app_scene);
-                    update_node_resize_handle_tree(&scene, &mut init_app_scene);
+                    frame.update_section_resize_handle_tree(&mut init_app_scene);
+                    frame.update_node_resize_handle_tree(&mut init_app_scene);
                     // Synthetic-handle allocator warm; mirrors
                     // native init. See `warm_handle_tree_arenas`
                     // doc for what this does and what it doesn't.
@@ -724,9 +719,9 @@ pub(super) fn run(mut app: Application) {
                     // these via `rebuild_scene_only`, but we do it
                     // here too so correctness doesn't depend on
                     // `rebuild_all` running.
-                    update_edge_handle_tree(&scene, &mut init_app_scene);
-                    update_section_resize_handle_tree(&scene, &mut init_app_scene);
-                    update_node_resize_handle_tree(&scene, &mut init_app_scene);
+                    update_edge_handle_tree_from_slice(&[], &mut init_app_scene);
+                    frame.update_section_resize_handle_tree(&mut init_app_scene);
+                    frame.update_node_resize_handle_tree(&mut init_app_scene);
                     flush_canvas_scene_buffers(&mut init_app_scene, &mut renderer);
                     tree_opt = Some(mindmap_tree);
                     doc_opt = Some(doc);

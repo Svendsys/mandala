@@ -127,17 +127,33 @@ decision, not a drive-by edit.
     connection down instead.
 - **Model / view separation.** `MindMapDocument` owns the data model;
   `Renderer` owns GPU resources. The renderer reads intermediate
-  representations (`Tree<GfxElement, GfxMutator>`, `RenderScene`). The
-  renderer never reaches into the document; the document never holds
-  GPU handles.
-- **Render through the Baumhard tree.** All visuals — nodes,
-  connections, borders, portals — converge on
-  `Tree<GfxElement, GfxMutator>` and are shaped by
-  `src/application/renderer/tree_walker.rs`. Some element types
-  still travel through a flat scene intermediary
-  (`scene_builder/`) before reaching the walker, but that's a
-  consolidation seam, not a permanent second pipeline. New
-  visuals belong in the Baumhard tree.
+  representation (`Tree<GfxElement, GfxMutator>`, one per canvas
+  role). The renderer never reaches into the document; the document
+  never holds GPU handles.
+- **Render document content through the Baumhard tree.** Every
+  visual that comes from the model — nodes, connections, borders,
+  portals, labels, section frames, handles — converges on
+  `Tree<GfxElement, GfxMutator>` and is shaped by
+  `src/application/renderer/tree_walker.rs`. There is exactly one
+  pipeline for them: a data pass plus a tree projection under
+  `lib/baumhard/src/mindmap/tree_builder/`, driven by `CanvasFrame`
+  in `src/application/app/scene_rebuild.rs`. Model-derived content
+  reaching the GPU any other way is a second pipeline; do not add
+  one.
+
+  **Transient chrome is the carve-out**, and the list is small and
+  closed: the rubber-band selection rectangle
+  (`renderer/selection_overlay.rs`), the console overlay
+  (`renderer/console_pass.rs`), the glyph-wheel color picker
+  (`renderer/color_picker.rs`), and the FPS / mode-status overlays.
+  The discriminator is *what the visual is a projection of*, not
+  whether it ever reads the model: each of these belongs to an
+  interaction rather than to document content, so it has no model
+  element to be the projection *of* — even where it quotes one (the
+  mode-status line reports the active `MindNode`'s id and section
+  count, but the overlay is a property of the mode, not of the
+  node). A new visual qualifies only on that test; if it is a
+  rendering of document content, it belongs in the tree.
 - **Mutation-first interaction.** Where a user action can be expressed
   as a `MutatorTree<GfxMutator>`, express it that way. Every user-facing
   mutation gets a matching `UndoAction` variant and an `undo()` branch.

@@ -192,9 +192,9 @@ pub(in crate::application::app) fn commit_color_picker(
 
     renderer.rebuild_color_picker_overlay_buffers(app_scene, None);
     // `set_edge_color` / `set_node_*_color` mutate edge/node color
-    // fields that `build_scene_with_cache` caches per-edge (body
-    // glyph, color, font). Clear so the rebuild re-samples against
-    // the committed model.
+    // fields the connection pass caches per-edge (body glyph, color,
+    // font). Clear so the rebuild re-samples against the committed
+    // model.
     scene_cache.clear();
     rebuild_all(doc, interaction_mode, mindmap_tree, app_scene, renderer, scene_cache);
 }

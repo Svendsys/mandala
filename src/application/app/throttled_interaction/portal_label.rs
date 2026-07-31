@@ -19,7 +19,7 @@ use crate::application::document::EdgeRef;
 use crate::application::frame_throttle::MutationFrequencyThrottle;
 
 use super::super::portal_label_drag::apply_portal_label_drag;
-use super::super::scene_rebuild::{flush_canvas_scene_buffers, update_portal_tree};
+use super::super::scene_rebuild::{flush_canvas_scene_buffers, CanvasFrame};
 use super::{DrainContext, ThrottledInteraction};
 
 /// Drag state for repositioning one portal endpoint along its
@@ -83,7 +83,17 @@ impl ThrottledInteraction for PortalLabelInteraction {
         if let Some(doc) = document.as_mut() {
             let changed = apply_portal_label_drag(doc, &self.edge_ref, &self.endpoint_node_id, cursor);
             if changed {
-                update_portal_tree(doc, &std::collections::HashMap::new(), app_scene, renderer);
+                let offsets = std::collections::HashMap::new();
+                CanvasFrame::new(
+                    doc,
+                    &offsets,
+                    // Portal markers ignore resize-handle /
+                    // NodeEdit overrides, so the empty bundle keeps
+                    // this drag off the mode-threading path.
+                    baumhard::mindmap::tree_builder::InteractionModeOverrides::none(),
+                    renderer.camera_zoom(),
+                )
+                .update_portal_tree(app_scene, renderer);
                 flush_canvas_scene_buffers(app_scene, renderer);
             }
         }
@@ -106,7 +116,7 @@ mod tests {
     }
 
     #[test]
-    fn test_new_initialises_pending_cursor_to_none() {
+    fn test_new_initializes_pending_cursor_to_none() {
         let i = fixture_interaction();
         assert_eq!(i.edge_ref.from_id, "a");
         assert_eq!(i.endpoint_node_id, "a");

@@ -13,7 +13,7 @@ use crate::application::document::MindMapDocument;
 use crate::application::keybinds::{InputContext, ResolvedKeybinds};
 use crate::application::renderer::Renderer;
 
-use super::scene_rebuild::{rebuild_all, update_connection_label_tree, update_portal_tree};
+use super::scene_rebuild::{rebuild_all, CanvasFrame};
 use super::text_edit::insert_caret;
 
 /// Pure router for the label-edit *character-input* path. Inserts
@@ -48,10 +48,10 @@ pub(super) fn route_label_edit_key(
     false
 }
 
-// (`update_portal_tree` imported above is used by the portal-text
+// (`CanvasFrame::update_portal_tree` is used by the portal-text
 // editor; the line-mode label editor deliberately does NOT touch
 // the portal canvas because `label_edit_preview` only feeds
-// `RenderScene::connection_label_elements` — see the scene builder.)
+// the connection-label pass — see `tree_builder::connection_label`.)
 
 /// Inline-edit state for a connection's label. When `Open`, all
 /// keyboard input is routed to the label-edit handler (just like
@@ -63,7 +63,7 @@ pub(super) fn route_label_edit_key(
 /// Mirrors `TextEditState` in shape (buffer + grapheme cursor): every
 /// keystroke routes through `grapheme_chad` so backspace over an
 /// emoji removes the whole cluster, not a stray byte. The buffer is
-/// threaded into the scene_builder via
+/// threaded into the connection-label pass via
 /// `MindMapDocument::label_edit_preview`; the connection-label tree's
 /// in-place mutator path picks up the new text + caret without
 /// rebuilding the arena.
@@ -241,25 +241,29 @@ pub(in crate::application::app) fn open_label_edit(
         original,
     };
     // Store the preview on the document so every subsequent
-    // `doc.build_scene_*` call picks it up automatically — no renderer
-    // field, no read-time override, no belt-and-suspenders branch.
+    // `doc.frame_overrides` call picks it up automatically — no
+    // renderer field, no read-time override, no belt-and-suspenders
+    // branch.
     let edge_key = baumhard::mindmap::scene_cache::EdgeKey::from(edge_ref);
     doc.label_edit_preview = Some((edge_key, insert_caret(&buffer, cursor_grapheme_pos)));
     // Rebuild the connection-label canvas so the caret is visible
     // immediately. The caller already ran `rebuild_all` before this,
-    // so the scene is fresh elsewhere. We deliberately skip
-    // `update_portal_tree` — `label_edit_preview` only threads into
-    // `RenderScene::connection_label_elements`, and portal-mode
-    // edges have no line label to preview, so the portal canvas
-    // doesn't change on any label-edit keystroke. Keeping that call
-    // out of the hot path is the core "fast label typing" fix.
-    // Label-edit preview only reads connection-label elements;
-    // resize-handle overrides are irrelevant here.
-    let scene = doc.build_scene_with_selection(
-        renderer.camera_zoom(),
+    // so the rest of the canvas is fresh. We deliberately touch only
+    // the label role — `label_edit_preview` reaches no other pass,
+    // and portal-mode edges have no line label to preview, so the
+    // portal canvas cannot change on a label-edit keystroke. Keeping
+    // the other roles out of the hot path is the core "fast label
+    // typing" fix. Resize-handle overrides are irrelevant here, so
+    // this passes `none()` rather than threading mode through every
+    // caller.
+    let offsets = std::collections::HashMap::new();
+    CanvasFrame::new(
+        doc,
+        &offsets,
         crate::application::document::InteractionModeOverrides::none(),
-    );
-    update_connection_label_tree(&scene, app_scene, renderer);
+        renderer.camera_zoom(),
+    )
+    .update_connection_label_tree(app_scene, renderer);
 }
 
 /// Route a keystroke to the inline label editor. Cancel and commit
@@ -329,17 +333,18 @@ pub(in crate::application::app) fn handle_label_edit_key(
         let edge_key = baumhard::mindmap::scene_cache::EdgeKey::from(&*edge_ref);
         doc.label_edit_preview = Some((edge_key, insert_caret(buffer, *cursor_grapheme_pos)));
         // Same scope as `open_label_edit`: only the connection-
-        // label canvas reads `label_edit_preview`, so the portal
-        // tree stays untouched on every keystroke.
-        // Label-edit preview only reads connection-label elements
-        // out of the scene; resize-handle overrides are irrelevant.
-        // Pass `none()` so this hot path doesn't have to thread mode
-        // through every caller.
-        let scene = doc.build_scene_with_selection(
-            renderer.camera_zoom(),
+        // label canvas reads `label_edit_preview`, so every other
+        // role stays untouched on every keystroke. Resize-handle
+        // overrides are irrelevant, so pass `none()` rather than
+        // threading mode through every caller.
+        let offsets = std::collections::HashMap::new();
+        CanvasFrame::new(
+            doc,
+            &offsets,
             crate::application::document::InteractionModeOverrides::none(),
-        );
-        update_connection_label_tree(&scene, app_scene, renderer);
+            renderer.camera_zoom(),
+        )
+        .update_connection_label_tree(app_scene, renderer);
     }
 }
 
@@ -499,7 +504,14 @@ pub(in crate::application::app) fn open_portal_text_edit(
         endpoint_node_id.to_string(),
         insert_caret(&buffer, cursor_grapheme_pos),
     ));
-    update_portal_tree(doc, &std::collections::HashMap::new(), app_scene, renderer);
+    let offsets = std::collections::HashMap::new();
+    CanvasFrame::new(
+        doc,
+        &offsets,
+        crate::application::document::InteractionModeOverrides::none(),
+        renderer.camera_zoom(),
+    )
+    .update_portal_tree(app_scene, renderer);
 }
 
 /// Route a keystroke to the inline portal-text editor. Mirrors
@@ -601,7 +613,14 @@ pub(in crate::application::app) fn handle_portal_text_edit_key(
             endpoint_node_id.clone(),
             insert_caret(buffer, *cursor_grapheme_pos),
         ));
-        update_portal_tree(doc, &std::collections::HashMap::new(), app_scene, renderer);
+        let offsets = std::collections::HashMap::new();
+        CanvasFrame::new(
+            doc,
+            &offsets,
+            crate::application::document::InteractionModeOverrides::none(),
+            renderer.camera_zoom(),
+        )
+        .update_portal_tree(app_scene, renderer);
     }
 }
 

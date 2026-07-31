@@ -1,21 +1,83 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Edge-handle emission for the currently-selected edge. One
-//! function, called at most once per scene build (single-edge
-//! selection). Emits `EdgeHandleElement`s the generic handle
-//! tree-builder (`tree_builder::handle`) projects into the
+//! Edge grab-handles for the currently-selected edge — the
+//! connection reshape surface. Owns the [`EdgeHandleKind`] /
+//! [`EdgeHandleElement`] pair, the glyph + size constants, the
+//! per-kind channel mapping, and the emission pass that turns one
+//! selected edge into its handle set.
+//!
+//! Emission runs at most once per rebuild (selection is
+//! single-edge), so the cost is trivial and there is no cache.
+//! [`super::handle`] projects the emitted elements into the
 //! `EdgeHandles` canvas tree.
 
 use glam::Vec2;
 
 use crate::mindmap::connection;
 use crate::mindmap::scene_cache::EdgeKey;
-use crate::mindmap::tree_builder::HandleVisual;
+use crate::mindmap::SELECTION_HIGHLIGHT_HEX;
 
-use super::{
-    EdgeHandleElement, EdgeHandleKind, EDGE_HANDLE_FONT_SIZE_PT, EDGE_HANDLE_GLYPH,
-    EDGE_MIDPOINT_HANDLE_GLYPH, SELECTED_EDGE_COLOR,
-};
+use super::HandleVisual;
+
+/// Which part of a selected edge a grab-handle targets. The
+/// connection reshape surface: anchor endpoints can be dragged to
+/// change which side of a node an edge attaches to, control points
+/// can be dragged to reshape a curve, and the `Midpoint` handle on a
+/// straight edge inserts a control point on first drag to convert
+/// the straight line into a quadratic Bezier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EdgeHandleKind {
+    /// Endpoint anchor on the `from_id` side.
+    AnchorFrom,
+    /// Endpoint anchor on the `to_id` side.
+    AnchorTo,
+    /// Existing control point at `edge.control_points[index]`.
+    ControlPoint(usize),
+    /// Only emitted for straight edges (empty `control_points`).
+    /// Dragging this handle inserts a new control point to curve
+    /// the edge. After insertion, subsequent frames treat the drag
+    /// as a `ControlPoint(0)` drag.
+    Midpoint,
+}
+
+/// One grab-handle glyph emitted on top of a selected edge. Rendered
+/// as a small cosmic-text buffer in canvas space — the Renderer
+/// treats `edge_handles` as its own buffer family since the handle
+/// set is small, bounded, and only exists for the currently-selected
+/// edge.
+pub struct EdgeHandleElement {
+    pub edge_key: EdgeKey,
+    pub kind: EdgeHandleKind,
+    /// Canvas-space position of the handle, already resolved from
+    /// the edge's current `control_points` and anchors.
+    pub position: (f32, f32),
+    /// Glyph string (usually a single char like ◆).
+    pub glyph: String,
+    /// Color as `#RRGGBB` hex.
+    pub color: String,
+    /// Font size in points.
+    pub font_size_pt: f32,
+}
+
+/// Glyph used for anchor and control-point edge grab-handles. A
+/// solid black diamond reads as a clickable control point across
+/// most fonts.
+const EDGE_HANDLE_GLYPH: &str = "\u{25C6}"; // ◆
+
+/// Distinct glyph for the `Midpoint` handle that appears only on
+/// straight edges and bootstraps the "curve this line" gesture on
+/// drag. A curved arrow reads as "bend me" — specifically an
+/// counterclockwise hook (`↺`) so nothing about the handle looks like
+/// a plain re-selection target. Without this second glyph the
+/// midpoint handle is visually identical to the anchor handles and
+/// the gesture is undiscoverable (see `commands/edge.rs` for the
+/// console-side counterpart, `edge reset=curve`).
+const EDGE_MIDPOINT_HANDLE_GLYPH: &str = "\u{21BA}"; // ↺
+
+/// Font size (in points) for the edge handle glyphs. Slightly larger
+/// than the default connection glyph size so handles stand out on top
+/// of the selected edge.
+const EDGE_HANDLE_FONT_SIZE_PT: f32 = 14.0;
 
 /// Map a handle kind to its stable tree channel. Anchors take 1/2,
 /// the midpoint takes 3, and control points stride from 100 by
@@ -101,7 +163,7 @@ pub fn build_edge_handles(
             kind,
             position: (position.x, position.y),
             glyph: glyph.to_string(),
-            color: SELECTED_EDGE_COLOR.to_string(),
+            color: SELECTION_HIGHLIGHT_HEX.to_string(),
             font_size_pt: EDGE_HANDLE_FONT_SIZE_PT,
         }
     };

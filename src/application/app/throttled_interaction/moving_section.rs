@@ -4,7 +4,7 @@
 
 #![cfg(not(target_arch = "wasm32"))]
 
-use baumhard::mindmap::scene_builder::build_section_resize_handles;
+use baumhard::mindmap::tree_builder::build_section_resize_handles;
 use glam::Vec2;
 
 use crate::application::document::apply_section_drag_delta_and_collect_patches;
@@ -144,7 +144,7 @@ mod tests {
     };
 
     #[test]
-    fn test_new_initialises_fields_with_zero_deltas() {
+    fn test_new_initializes_fields_with_zero_deltas() {
         let i = MovingSectionInteraction::new("0".to_string(), 1, (10.0, 10.0));
         assert_eq!(i.node_id, "0");
         assert_eq!(i.section_idx, 1);

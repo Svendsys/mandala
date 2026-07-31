@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Portal marker emission. One `PortalElement` per endpoint per
-//! edge with `display_mode = "portal"` (so two markers per such
-//! edge), attached to its owning node's border at the point that
-//! faces the opposite endpoint (the directional default, overridden
-//! by a user-dragged `PortalEndpointState.border_t`). Edges whose
-//! endpoints are missing or hidden by fold are skipped silently.
+//! Portal endpoint style + layout resolution — the per-endpoint
+//! cascade that turns a `display_mode = "portal"` edge into the
+//! icon glyph, the text glyph, and the two canvas-space AABBs
+//! [`super::portal`] projects into the `Portals` canvas tree.
+//!
+//! Split from the tree builder because the cascade is a
+//! self-contained pure function over `(edge, endpoint_state,
+//! canvas, override, zoom)`: the clipboard resolver, the console
+//! verbs, and the tests all want the resolved style without
+//! building an arena.
 //!
 //! Color resolution cascade, per-endpoint:
 //!
@@ -24,22 +28,15 @@
 //! All five stages go through `resolve_var` so `var(--name)`
 //! references render correctly.
 
-use std::collections::{HashMap, HashSet};
-
 use glam::Vec2;
 
 use crate::mindmap::model::{
-    is_portal_edge, portal_endpoint_state, Canvas, GlyphConnectionConfig, MindEdge, MindMap,
-    PortalEndpointState, PORTAL_GLYPH_PRESETS,
+    Canvas, GlyphConnectionConfig, MindEdge, PortalEndpointState, PORTAL_GLYPH_PRESETS,
 };
 use crate::mindmap::portal_geometry::{border_outward_normal, border_point_at, default_border_t};
 use crate::mindmap::scene_cache::EdgeKey;
-use crate::mindmap::SELECTION_HIGHLIGHT_HEX;
 use crate::util::color::resolve_var;
-use crate::util::geometry::aabb_center;
 use crate::util::grapheme_chad::count_grapheme_clusters;
-
-use super::{PortalColorPreview, PortalElement};
 
 /// Default portal marker font size when no `glyph_connection`
 /// override is set. Matches the creation-time default in
@@ -179,8 +176,8 @@ pub fn resolve_portal_endpoint_style(
 
 /// Resolve the text-channel style for one portal endpoint. Sibling
 /// of [`resolve_portal_endpoint_style`] — the text label carries
-/// its own color + size cascade so a coloured badge can hold a
-/// differently-coloured annotation beside it (parity with
+/// its own color + size cascade so a colored badge can hold a
+/// differently-colored annotation beside it (parity with
 /// line-mode edge labels).
 ///
 /// Color cascade, in order of precedence:
@@ -193,12 +190,14 @@ pub fn resolve_portal_endpoint_style(
 ///    channel that matches the icon automatically.
 ///
 /// Font size inheritance:
+///
 /// - Base: `endpoint_state.text_font_size_pt` → edge's
 ///   `glyph_connection.font_size_pt` (or the hardcoded portal
 ///   default when the edge carries no glyph_connection, matching
 ///   the icon's fallback).
 /// - Clamps: `endpoint_state.text_min_font_size_pt` /
 ///   `text_max_font_size_pt` → the edge's `glyph_connection` clamps.
+///
 /// The clamping formula mirrors
 /// [`GlyphConnectionConfig::effective_font_size_pt`]: clamp the
 /// target-screen size into `[min, max]` and divide back through
@@ -289,7 +288,7 @@ pub(crate) fn layout_portal_label(
     // Drag-authored perpendicular slide. Sums into the outset so the
     // user can pull the label further away from the border (positive)
     // or back toward it (negative). `None` falls through to a flush
-    // outset, matching the pre-field behaviour.
+    // outset, matching the pre-field behavior.
     let perp = endpoint_state.and_then(|s| s.perpendicular_offset).unwrap_or(0.0);
     // Translate from anchor to AABB top-left: shift by half-extent
     // toward the label origin, then outward along the normal so the
@@ -329,6 +328,10 @@ pub(crate) struct PortalTextLayout {
 /// of the **icon** font size") so the visible gap stays stable
 /// when the text is resized independently. `text_font_size_pt`
 /// drives only the text AABB dimensions.
+// `clippy::too_many_arguments`: the geometry needs both AABBs, both
+// font sizes, the owning rect, the partner center, and the text —
+// every one an independent input to the placement math.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn layout_portal_text(
     icon: PortalLabelLayout,
     owner_pos: Vec2,
@@ -383,105 +386,4 @@ pub(crate) fn layout_portal_text(
     let text_center = icon_center + normal * outward_offset;
     let top_left = Vec2::new(text_center.x - bounds.x * 0.5, text_center.y - bounds.y * 0.5);
     PortalTextLayout { top_left, bounds }
-}
-
-/// Emit one `PortalElement` per endpoint of every visible
-/// portal-mode edge. Only covers the marker icon — per-endpoint
-/// text labels (the adjacent-glyph concept) render exclusively
-/// through the tree-builder path (`tree_builder::portal`), which
-/// is the live portal render pipeline; the scene-level path
-/// exists for tests and stringly-typed inspection, not for the
-/// GPU.
-pub(super) fn build_portal_elements(
-    map: &MindMap,
-    offsets: &HashMap<String, (f32, f32)>,
-    selected_edge: Option<(&str, &str, &str)>,
-    selected_portal_label: Option<SelectedPortalLabel<'_>>,
-    portal_color_preview: Option<PortalColorPreview<'_>>,
-    camera_zoom: f32,
-    hidden_set: &HashSet<&str>,
-) -> Vec<PortalElement> {
-    let mut portal_elements: Vec<PortalElement> = Vec::new();
-
-    for edge in &map.edges {
-        if !is_portal_edge(edge) {
-            continue;
-        }
-        if !edge.visible {
-            continue;
-        }
-        let node_a = match map.nodes.get(&edge.from_id) {
-            Some(n) => n,
-            None => continue,
-        };
-        let node_b = match map.nodes.get(&edge.to_id) {
-            Some(n) => n,
-            None => continue,
-        };
-        if hidden_set.contains(node_a.id.as_str()) || hidden_set.contains(node_b.id.as_str()) {
-            continue;
-        }
-        let edge_key = EdgeKey::from_edge(edge);
-        let is_edge_selected = selected_edge.map_or(false, |(f, t, ty)| {
-            f == edge.from_id && t == edge.to_id && ty == edge.edge_type
-        });
-        let preview_for_this_edge: Option<&str> = portal_color_preview.and_then(|p| {
-            if *p.edge_key == edge_key {
-                Some(p.color)
-            } else {
-                None
-            }
-        });
-
-        let endpoints = [(node_a, node_b), (node_b, node_a)];
-        for (owner, partner) in endpoints {
-            let (ox, oy) = offsets.get(&owner.id).copied().unwrap_or((0.0, 0.0));
-            let owner_pos = owner.pos_vec2() + Vec2::new(ox, oy);
-            let owner_size = owner.size_vec2();
-            let (px, py) = offsets.get(&partner.id).copied().unwrap_or((0.0, 0.0));
-            let partner_pos = partner.pos_vec2() + Vec2::new(px, py);
-            let partner_size = partner.size_vec2();
-
-            let endpoint_state = portal_endpoint_state(edge, &owner.id);
-            let is_this_label_selected = selected_portal_label.map_or(false, |s| {
-                *s.edge_key == edge_key && s.endpoint_node_id == owner.id
-            });
-            let raw_color_override: Option<&str> = if let Some(p) = preview_for_this_edge {
-                Some(p)
-            } else if is_edge_selected || is_this_label_selected {
-                Some(SELECTION_HIGHLIGHT_HEX)
-            } else {
-                None
-            };
-
-            let style = resolve_portal_endpoint_style(
-                edge,
-                endpoint_state,
-                &map.canvas,
-                raw_color_override,
-                camera_zoom,
-            );
-            let layout = layout_portal_label(
-                owner_pos,
-                owner_size,
-                aabb_center(partner_pos, partner_size),
-                endpoint_state,
-                style.font_size_pt,
-            );
-
-            portal_elements.push(PortalElement {
-                edge_key: edge_key.clone(),
-                endpoint_node_id: owner.id.clone(),
-                glyph: style.glyph.clone(),
-                position: (layout.top_left.x, layout.top_left.y),
-                bounds: (layout.bounds.x, layout.bounds.y),
-                color: style.color.clone(),
-                font: style.font.clone(),
-                font_size_pt: style.font_size_pt,
-                zoom_visibility: edge.portal_endpoint_zoom_window(endpoint_state),
-            });
-        }
-    }
-
-    portal_elements
 }

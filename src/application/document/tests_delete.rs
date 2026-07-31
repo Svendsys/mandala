@@ -657,12 +657,12 @@ fn test_delete_node_grandchild_would_reclaim_deleted_id() {
 }
 
 #[test]
-fn test_scene_builder_highlights_selected_edge() {
+fn test_connection_pass_highlights_selected_edge() {
     let mut doc = load_test_doc();
     let (edge_ref, _) = pick_test_edge(&doc);
 
     // Without selection: the edge renders with its model color
-    let scene_normal = doc.build_scene_with_selection(1.0, InteractionModeOverrides::none());
+    let scene_normal = crate::application::document::tests_common::project_roles(&doc, 1.0, InteractionModeOverrides::none());
     let normal_colors: Vec<String> = scene_normal
         .connection_elements
         .iter()
@@ -671,7 +671,7 @@ fn test_scene_builder_highlights_selected_edge() {
 
     // With edge selected: its element color should be the cyan highlight
     doc.selection = SelectionState::Edge(edge_ref);
-    let scene_selected = doc.build_scene_with_selection(1.0, InteractionModeOverrides::none());
+    let scene_selected = crate::application::document::tests_common::project_roles(&doc, 1.0, InteractionModeOverrides::none());
     let highlighted_count = scene_selected
         .connection_elements
         .iter()

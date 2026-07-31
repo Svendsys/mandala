@@ -208,7 +208,12 @@ fn border_mutator_round_trip_matches_full_rebuild() {
     let mut offsets = HashMap::new();
     offsets.insert("a".to_string(), (12.5, -6.0));
 
-    let nodes_b = border_node_data(&map, &offsets, &map.fold_hidden_set());
+    let nodes_b = border_node_data(
+        &map,
+        &offsets,
+        BorderChromeOverrides::default(),
+        &map.fold_hidden_set(),
+    );
     let mutator = build_border_mutator_tree_from_nodes(&nodes_b);
     mutator.apply_to(&mut tree_a);
 
@@ -291,7 +296,7 @@ fn border_runs_default_to_unbounded_when_node_has_no_window() {
 
 /// Toggling `show_frame = false` on a node shifts the
 /// identity sequence so the dispatcher in
-/// `update_border_tree_with_offsets` falls back to a full
+/// `CanvasFrame::update_border_tree` falls back to a full
 /// rebuild. Without this, applying a mutator against a tree
 /// whose parent set has changed would silently misalign.
 #[test]
@@ -303,11 +308,21 @@ fn border_identity_sequence_changes_on_show_frame_toggle() {
         ],
         vec![],
     );
-    let before = border_identity_sequence(&border_node_data(&map, &HashMap::new(), &map.fold_hidden_set()));
+    let before = border_identity_sequence(&border_node_data(
+        &map,
+        &HashMap::new(),
+        BorderChromeOverrides::default(),
+        &map.fold_hidden_set(),
+    ));
     assert_eq!(before, vec!["a".to_string(), "b".to_string()]);
 
     map.nodes.get_mut("b").unwrap().style.show_frame = false;
-    let after = border_identity_sequence(&border_node_data(&map, &HashMap::new(), &map.fold_hidden_set()));
+    let after = border_identity_sequence(&border_node_data(
+        &map,
+        &HashMap::new(),
+        BorderChromeOverrides::default(),
+        &map.fold_hidden_set(),
+    ));
     assert_eq!(after, vec!["a".to_string()]);
     assert_ne!(before, after);
 }
@@ -413,7 +428,7 @@ fn append_border_run_region_sized_by_grapheme_cluster_count_not_codepoints() {
 /// builder's resolved style consumes it through
 /// `BorderStyle::top_text` / `bottom_text` etc. Pre-fix, the
 /// builder ignored `node.style.border` entirely; this test fails
-/// loudly on a regression to that behaviour.
+/// loudly on a regression to that behavior.
 #[test]
 fn border_tree_honors_custom_side_pattern() {
     use crate::mindmap::model::{CustomBorderGlyphs, GlyphBorderConfig};
@@ -525,7 +540,12 @@ fn border_mutator_picks_up_pattern_change() {
         .unwrap()
         .top = "###(*)###".into();
 
-    let nodes_b = border_node_data(&map, &HashMap::new(), &map.fold_hidden_set());
+    let nodes_b = border_node_data(
+        &map,
+        &HashMap::new(),
+        BorderChromeOverrides::default(),
+        &map.fold_hidden_set(),
+    );
     let mutator = build_border_mutator_tree_from_nodes(&nodes_b);
     mutator.apply_to(&mut tree_a);
 
@@ -624,7 +644,12 @@ fn border_tree_uses_spec_line_height_for_vertical_rails() {
         color_palette_field: None,
     });
 
-    let nodes = border_node_data(&map, &HashMap::new(), &map.fold_hidden_set());
+    let nodes = border_node_data(
+        &map,
+        &HashMap::new(),
+        BorderChromeOverrides::default(),
+        &map.fold_hidden_set(),
+    );
     let node_data = &nodes[0];
     let specs = border_run_specs(
         &node_data.border_style,
@@ -675,7 +700,7 @@ fn border_tree_uses_spec_line_height_for_vertical_rails() {
 }
 
 /// `color_palette` resolution: when the cfg names a palette that
-/// exists, the per-cluster regions on each run pick up colours
+/// exists, the per-cluster regions on each run pick up colors
 /// from that palette (one region per cluster). The
 /// `BorderNodeData.palette_cycle` resolution fans out per-side
 /// from a single name → group mapping.
@@ -739,7 +764,7 @@ fn border_tree_honors_palette_cycling() {
     let area = tree.arena.get(top_id).unwrap().get().glyph_area().unwrap();
     let regions = area.regions.all_regions();
     assert!(
-        regions.len() >= 1,
+        !regions.is_empty(),
         "top fill should emit at least one region (got {})",
         regions.len()
     );

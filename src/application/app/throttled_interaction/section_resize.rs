@@ -5,7 +5,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use baumhard::mindmap::model::{Position, Size};
-use baumhard::mindmap::scene_builder::{build_section_resize_handles, ResizeHandleSide};
+use baumhard::mindmap::tree_builder::{build_section_resize_handles, ResizeHandleSide};
 use glam::Vec2;
 
 use crate::application::document::apply_section_resize_to_tree;
@@ -168,7 +168,7 @@ mod tests {
     }
 
     #[test]
-    fn test_new_initialises_fields_with_zero_deltas() {
+    fn test_new_initializes_fields_with_zero_deltas() {
         let i = fixture(ResizeHandleSide::SE);
         assert_eq!(i.node_id, "n");
         assert_eq!(i.section_idx, 0);

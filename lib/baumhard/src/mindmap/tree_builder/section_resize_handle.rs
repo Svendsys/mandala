@@ -4,11 +4,13 @@
 //! `Some`-sized selected section; `None`-sized (fill-parent)
 //! sections have no AABB to stretch and produce no handles.
 
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use glam::Vec2;
 
-use super::SELECTED_EDGE_COLOR;
+use crate::mindmap::model::MindMap;
+use crate::mindmap::SELECTION_HIGHLIGHT_HEX;
 
 /// Which of the eight resize handles on a `Some`-sized section
 /// the cursor is targeting. Order is the conventional clockwise-
@@ -137,14 +139,10 @@ impl ResizeHandleSide {
 /// targeting; the fast-resize gesture is "grab a corner from
 /// anywhere in this body".
 ///
-/// Quadrant boundaries are split at the AABB centre. A cursor
-/// exactly on the centreline rounds south and east (`>=` on both
+/// Quadrant boundaries are split at the AABB center. A cursor
+/// exactly on the centerline rounds south and east (`>=` on both
 /// axes). Tested as a pure function — no GPU, no scene state.
-pub fn infer_resize_anchor(
-    cursor_canvas: Vec2,
-    aabb_pos: Vec2,
-    aabb_size: Vec2,
-) -> ResizeHandleSide {
+pub fn infer_resize_anchor(cursor_canvas: Vec2, aabb_pos: Vec2, aabb_size: Vec2) -> ResizeHandleSide {
     let center = aabb_pos + aabb_size * 0.5;
     let east = cursor_canvas.x >= center.x;
     let south = cursor_canvas.y >= center.y;
@@ -227,10 +225,7 @@ pub const SECTION_RESIZE_HANDLE_FONT_SIZE_PT: f32 = 14.0;
 /// when the size is non-finite or non-positive — no meaningful
 /// handles can be drawn. Single source of truth for the position
 /// layout shared by node and section resize-handle builders.
-pub fn resize_handle_positions(
-    pos: Vec2,
-    size: Vec2,
-) -> Option<[(ResizeHandleSide, (f32, f32)); 8]> {
+pub fn resize_handle_positions(pos: Vec2, size: Vec2) -> Option<[(ResizeHandleSide, (f32, f32)); 8]> {
     if !size.x.is_finite() || !size.y.is_finite() || size.x <= 0.0 || size.y <= 0.0 {
         return None;
     }
@@ -274,10 +269,56 @@ pub fn build_section_resize_handles(
             side,
             position,
             glyph: SECTION_RESIZE_HANDLE_GLYPH.to_string(),
-            color: SELECTED_EDGE_COLOR.to_string(),
+            color: SELECTION_HIGHLIGHT_HEX.to_string(),
             font_size_pt: SECTION_RESIZE_HANDLE_FONT_SIZE_PT,
         })
         .collect()
+}
+
+/// Resolve `selected_section` into the section's canvas-space
+/// `(position, size)` and dispatch to
+/// [`build_section_resize_handles`]. Returns `Vec::new()` when no
+/// section is selected, the named node / section is missing or
+/// hidden by fold, or the section is `None`-sized (fill-parent —
+/// there is no per-section AABB to stretch, so the builder itself
+/// also returns empty).
+///
+/// The selection gate lives here rather than at the call site so
+/// every rebuild path applies the same rule.
+///
+/// # Costs
+///
+/// O(1) — one hash lookup plus, at most, the eight-element
+/// allocation [`build_section_resize_handles`] returns.
+pub fn build_selected_section_handles(
+    map: &MindMap,
+    offsets: &HashMap<String, (f32, f32)>,
+    selected_section: Option<(&str, usize)>,
+    hidden_set: &HashSet<&str>,
+) -> Vec<SectionResizeHandleElement> {
+    let Some((node_id, section_idx)) = selected_section else {
+        return Vec::new();
+    };
+    let Some(node) = map.nodes.get(node_id) else {
+        return Vec::new();
+    };
+    if hidden_set.contains(node.id.as_str()) {
+        return Vec::new();
+    }
+    let Some(section) = node.sections.get(section_idx) else {
+        return Vec::new();
+    };
+    let (ox, oy) = offsets.get(&node.id).copied().unwrap_or((0.0, 0.0));
+    let node_pos = node.pos_vec2();
+    let section_pos = Vec2::new(
+        node_pos.x + ox + section.offset.x as f32,
+        node_pos.y + oy + section.offset.y as f32,
+    );
+    let section_size = section
+        .size
+        .as_ref()
+        .map(|s| Vec2::new(s.width as f32, s.height as f32));
+    build_section_resize_handles(node_id, section_idx, section_pos, section_size)
 }
 
 #[cfg(test)]
@@ -368,10 +409,10 @@ mod tests {
 
     #[test]
     fn infer_resize_anchor_picks_quadrant_corner() {
-        // 100×80 AABB at (10, 20) → centre (60, 60).
+        // 100×80 AABB at (10, 20) → center (60, 60).
         let pos = Vec2::new(10.0, 20.0);
         let size = Vec2::new(100.0, 80.0);
-        // Strictly NW of centre.
+        // Strictly NW of center.
         assert_eq!(
             infer_resize_anchor(Vec2::new(20.0, 30.0), pos, size),
             ResizeHandleSide::NW
@@ -394,12 +435,12 @@ mod tests {
     }
 
     #[test]
-    fn infer_resize_anchor_centre_rounds_south_east() {
-        // Cursor exactly on the AABB centre — tie-breaker rounds
+    fn infer_resize_anchor_center_rounds_south_east() {
+        // Cursor exactly on the AABB center — tie-breaker rounds
         // SE (the `>=` comparison on both axes). The convention
-        // matters only for cursor-on-centre; in practice the press
-        // is almost never exactly at centre, but pinning the
-        // tie-break behaviour locks the code path.
+        // matters only for cursor-on-center; in practice the press
+        // is almost never exactly at center, but pinning the
+        // tie-break behavior locks the code path.
         let pos = Vec2::new(0.0, 0.0);
         let size = Vec2::new(100.0, 100.0);
         assert_eq!(
@@ -411,7 +452,7 @@ mod tests {
     #[test]
     fn infer_resize_anchor_off_aabb_still_resolves_a_quadrant() {
         // The function doesn't bounds-check; a cursor outside the
-        // AABB still resolves to whichever quadrant the centre-
+        // AABB still resolves to whichever quadrant the center-
         // relative coords land in. Keeps the function pure and
         // composable with off-AABB hit-tests downstream.
         let pos = Vec2::new(0.0, 0.0);
