@@ -309,7 +309,8 @@ pub fn save_to_file(path: &Path, map: &MindMap) -> Result<(), String> {
 /// would from any other writer.
 ///
 /// The mode is applied **at creation, before any content lands** —
-/// see [`write_staging_file`]. Nothing ever exists on disk holding
+/// see the private `write_staging_file` helper below. Nothing ever
+/// exists on disk holding
 /// the caller's bytes at a wider mode than the target had.
 ///
 /// Cost: one `stat` of the target, one create + one write of

@@ -195,9 +195,25 @@ pub enum TargetScope {
     Descendants,
     /// Apply to the triggering node AND all descendants.
     SelfAndDescendants,
-    /// Apply to the parent of the triggering node.
+    /// Apply to the parent of the triggering node. Resolves to the
+    /// empty set on a root node, which has no parent — the mutation
+    /// then snapshots nothing, mutates nothing, and pushes no undo
+    /// entry.
     Parent,
-    /// Apply to all siblings of the triggering node.
+    /// Apply to all siblings of the triggering node — every *other*
+    /// child of its parent. The triggering node itself is excluded;
+    /// pair with `SelfAndDescendants` on the parent if you want it
+    /// included.
+    ///
+    /// **A root node has no siblings.** "Sibling" here means "shares
+    /// my parent", and a root has no parent to share, so the other
+    /// roots of a multi-root map are deliberately *not* treated as
+    /// siblings — there is no `parent_id` the application layer could
+    /// key the sibling list on, and "every other root" is a different
+    /// relation that would silently fan a node-local mutation across
+    /// unrelated trees. A `Siblings` mutation triggered on a root is
+    /// therefore a well-defined no-op: the target set is empty,
+    /// nothing is snapshotted, and no undo entry is pushed.
     Siblings,
     /// Apply to every section of the triggering node — bypasses
     /// the container fan-out so text / font / region mutations
@@ -277,7 +293,6 @@ pub fn apply_mutations_to_element(
 /// session.
 pub fn flat_mutations(mutator: &MutatorNode) -> Option<Vec<crate::gfx_structs::mutator::Mutation>> {
     use crate::mutator_builder::{InstructionSpec, MutationListSrc, MutatorNode as N};
-    use crate::gfx_structs::predicate::Comparator;
     match mutator {
         N::Macro {
             mutations: MutationListSrc::Literal(list),
@@ -290,7 +305,7 @@ pub fn flat_mutations(mutator: &MutatorNode) -> Option<Vec<crate::gfx_structs::m
         // the iteration via `collect_affected_node_ids` so the
         // wrapper's repeat-while semantics are redundant — we
         // can extract the Macro's literal list directly. Only
-        // honour `always_true` predicates: a predicate-filtered
+        // honor `always_true` predicates: a predicate-filtered
         // wrapper would need walker-based evaluation, which the
         // flat-apply path can't provide; falling through to
         // `None` makes that case warn at the apply site.
@@ -299,15 +314,21 @@ pub fn flat_mutations(mutator: &MutatorNode) -> Option<Vec<crate::gfx_structs::m
             children,
             ..
         } => children.iter().find_map(flat_mutations),
+        // `always_match` is the *only* admissible test, because it
+        // is the only thing [`Predicate::test`] short-circuits on.
+        // Everything else — including an empty field list — is a
+        // predicate that filters. In particular a bare
+        // `Predicate::new()` (`fields: []`, `always_match: false`)
+        // matches **nothing**, the footgun documented on
+        // [`CustomMutation::predicate`]; unwrapping it here would
+        // land the Macro's payload on every node the scope
+        // collected, which is the exact inverse of what the AST
+        // authorizes.
         N::Instruction {
             instruction: InstructionSpec::RepeatWhile(p),
             children,
             ..
-        } if p.always_match
-            || p.fields.iter().all(|(_, c)| matches!(c, Comparator::Equals(_))) && p.fields.is_empty() =>
-        {
-            children.iter().find_map(flat_mutations)
-        }
+        } if p.always_match => children.iter().find_map(flat_mutations),
         _ => None,
     }
 }
@@ -385,16 +406,69 @@ impl TargetScope {
     /// `true` iff this scope's undo-snapshot window covers every
     /// node `reach` could touch. Used to flag mismatched scope +
     /// mutator pairs at apply time.
+    ///
+    /// # The anchoring model this encodes
+    ///
+    /// The application layer resolves a scope to a **target set**
+    /// (`collect_affected_node_ids` in
+    /// `src/application/document/custom/mod.rs`) and then anchors the
+    /// mutator **at each target in turn** — see the [`scope`] module
+    /// header: "the application layer is responsible for iterating
+    /// the right set of targets ... and anchoring the mutator at each
+    /// of them", which is what the flat-apply path does for every
+    /// scope and what the announced walker path will do too. The undo
+    /// snapshot is exactly that same target set.
+    ///
+    /// So the pairing is safe iff the target set is **closed** under
+    /// the mutator's reach: for every target `t`, everything a
+    /// `reach`-wide mutator anchored at `t` can write is itself a
+    /// target. Note this is a property of the *target set*, not of
+    /// the triggering node — the trigger is only in the set for the
+    /// three scopes that name it.
+    ///
+    /// Applying that test to each scope, with `n` the triggering node:
+    ///
+    /// | scope | target set | closed under `Children` reach? |
+    /// |---|---|---|
+    /// | `SelfOnly` | `{n}` | no — `n`'s children are not targets |
+    /// | `Parent` | `{parent(n)}` | no — `n` itself is not a target |
+    /// | `Children` | `children(n)` | no — the **grandchildren** are not targets |
+    /// | `Siblings` | `siblings(n)` | no — a sibling's children are not targets |
+    /// | `SectionsOnly` | `{n}` | conservatively no — see below |
+    /// | `Descendants` | `descendants(n)` | yes — a descendant's children are descendants |
+    /// | `SelfAndDescendants` | `{n} ∪ descendants(n)` | yes — same closure |
+    ///
+    /// Only the two descendant scopes are closed under anything wider
+    /// than the anchor itself, so every other scope requires
+    /// `MutatorReach::SelfOnly`. The `Children` and `Siblings` rows
+    /// are the ones that used to read `reach <= Children`: that
+    /// encoded an anchor-at-the-trigger model the application layer
+    /// never implemented, and approved pairings whose snapshot was a
+    /// level shallower than the write set (issue #19-B).
+    ///
+    /// **`SectionsOnly` is deliberately stricter than it has to be.**
+    /// Its targets are the anchor's section-areas, and a section's
+    /// arena subtree holds only that section's own `GlyphModel` — all
+    /// of it inside the anchor's `MindNode`, hence inside the
+    /// one-node snapshot. A wider reach would in fact be covered.
+    /// The gate still demands `SelfOnly` because the asymmetry is
+    /// not symmetric in cost: over-strict yields a spurious `warn!`,
+    /// over-permissive yields silently unrecoverable undo.
+    ///
+    /// This gate is advisory — the apply path logs a `warn!` on a
+    /// `false` verdict and still applies the mutation. It does not
+    /// widen or narrow the snapshot, which is governed solely by
+    /// `collect_affected_node_ids`.
+    ///
+    /// Costs: O(1) — a match over two payload-free enums, no
+    /// allocation, no tree access.
     pub fn covers_reach(&self, reach: MutatorReach) -> bool {
         match self {
-            // Sections of the triggering node are children of the
-            // container in the arena; a `MutatorReach::SelfOnly`
-            // mutator is the right pairing — sections-only
-            // mutations don't recurse into child mind-nodes.
-            TargetScope::SelfOnly | TargetScope::Parent | TargetScope::SectionsOnly => {
-                reach == MutatorReach::SelfOnly
-            }
-            TargetScope::Children | TargetScope::Siblings => reach <= MutatorReach::Children,
+            TargetScope::SelfOnly
+            | TargetScope::Parent
+            | TargetScope::SectionsOnly
+            | TargetScope::Children
+            | TargetScope::Siblings => reach == MutatorReach::SelfOnly,
             TargetScope::Descendants | TargetScope::SelfAndDescendants => true,
         }
     }
@@ -415,5 +489,8 @@ impl TargetScope {
 //
 // The reverse direction is the bug shape `covers_reach` does
 // catch: a `MutatorReach::Children` mutator paired with
-// `target_scope: SelfOnly` would recurse into descendants the
-// snapshot didn't capture, dropping their state on undo.
+// `target_scope: SelfOnly` writes the anchor's children, which
+// the one-node snapshot didn't capture, dropping their state on
+// undo. The same argument one level down is why `Children` and
+// `Siblings` also demand `SelfOnly` reach — see the closure table
+// on `covers_reach`.
