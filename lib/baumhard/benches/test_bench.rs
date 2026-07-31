@@ -5,6 +5,7 @@ use baumhard::font::tests::attrs_tests::*;
 use baumhard::font::tests::fonts_tests::*;
 use baumhard::font::tests::hex_tests::*;
 use baumhard::font::tests::metrics_tests::*;
+use baumhard::font::tests::name_rules_tests::*;
 use baumhard::gfx_structs::tests::area_tests::*;
 use baumhard::gfx_structs::tests::delta_tests::*;
 use baumhard::gfx_structs::tests::model_tests::*;
@@ -72,7 +73,7 @@ fn do_subtree_drag_translate_path(
     );
 }
 
-/// Baseline: simulate the pre-translate-path behaviour by clearing
+/// Baseline: simulate the pre-translate-path behavior by clearing
 /// the cache before every drain. Every edge falls into the slow
 /// path (`build_connection_path` + `sample_path`). The ratio
 /// between this and `do_subtree_drag_translate_path` is the
@@ -272,8 +273,8 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("shape_rectangle_contains_local", |b| {
         b.iter(|| do_shape_rectangle_contains_local())
     });
-    c.bench_function("shape_ellipse_contains_centre_and_rim", |b| {
-        b.iter(|| do_shape_ellipse_contains_centre_and_rim())
+    c.bench_function("shape_ellipse_contains_center_and_rim", |b| {
+        b.iter(|| do_shape_ellipse_contains_center_and_rim())
     });
     c.bench_function("shape_ellipse_rejects_aabb_corners", |b| {
         b.iter(|| do_shape_ellipse_rejects_aabb_corners())
@@ -333,7 +334,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("region_params_new_sunny_day", |b| {
         b.iter(|| do_region_params_new_sunny_day())
     });
-    c.bench_function("region_indexer_initialise", |b| {
+    c.bench_function("region_indexer_initialize", |b| {
         b.iter(|| do_region_indexer_initialize())
     });
     c.bench_function("region_indexer_insert_and_remove", |b| {
@@ -406,6 +407,89 @@ fn criterion_benchmark(c: &mut Criterion) {
     // font / metrics //
     c.bench_function("monospace_advance_scales_linearly", |b| {
         b.iter(|| do_monospace_advance_scales_linearly())
+    });
+    // font / name rules //
+    c.bench_function("decode_name_record_utf16_be_ascii", |b| {
+        b.iter(do_decode_name_record_utf16_be_ascii)
+    });
+    c.bench_function("decode_name_record_utf16_be_non_ascii_does_not_panic", |b| {
+        b.iter(do_decode_name_record_utf16_be_non_ascii_does_not_panic)
+    });
+    c.bench_function("decode_name_record_survives_malformed_input", |b| {
+        b.iter(do_decode_name_record_survives_malformed_input)
+    });
+    c.bench_function("ascii_font_name_reduces_to_identifier_material", |b| {
+        b.iter(do_ascii_font_name_reduces_to_identifier_material)
+    });
+    c.bench_function("camel_case_joins_and_rotates_digits", |b| {
+        b.iter(do_camel_case_joins_and_rotates_digits)
+    });
+    c.bench_function("camel_case_capitalizes_after_rotating", |b| {
+        b.iter(do_camel_case_capitalizes_after_rotating)
+    });
+    c.bench_function("camel_case_rejects_unusable_names", |b| {
+        b.iter(do_camel_case_rejects_unusable_names)
+    });
+    c.bench_function("rotate_leading_digits", |b| b.iter(do_rotate_leading_digits));
+    c.bench_function("capitalize_first_preserves_internal_case", |b| {
+        b.iter(do_capitalize_first_preserves_internal_case)
+    });
+    c.bench_function("fallback_sanitize_from_file_stem", |b| {
+        b.iter(do_fallback_sanitize_from_file_stem)
+    });
+    c.bench_function("fallback_sanitize_respects_length_ceiling", |b| {
+        b.iter(do_fallback_sanitize_respects_length_ceiling)
+    });
+    c.bench_function("variant_name_prefers_name_table_then_stem", |b| {
+        b.iter(do_variant_name_prefers_name_table_then_stem)
+    });
+    c.bench_function("font_extension_matching_is_case_insensitive", |b| {
+        b.iter(do_font_extension_matching_is_case_insensitive)
+    });
+    c.bench_function("family_key_groups_container_pairs", |b| {
+        b.iter(do_family_key_groups_container_pairs)
+    });
+    c.bench_function("font_candidate_display_name_falls_back_to_stem", |b| {
+        b.iter(do_font_candidate_display_name_falls_back_to_stem)
+    });
+    c.bench_function("select_font_variants_sorts_by_variant_name", |b| {
+        b.iter(do_select_font_variants_sorts_by_variant_name)
+    });
+    c.bench_function("select_font_variants_is_order_independent", |b| {
+        b.iter(do_select_font_variants_is_order_independent)
+    });
+    c.bench_function("select_font_variants_prefers_ttf_container", |b| {
+        b.iter(do_select_font_variants_prefers_ttf_container)
+    });
+    c.bench_function("select_font_variants_breaks_ties_by_path", |b| {
+        b.iter(do_select_font_variants_breaks_ties_by_path)
+    });
+    c.bench_function("select_font_variants_keeps_distinct_styles_of_one_family", |b| {
+        b.iter(do_select_font_variants_keeps_distinct_styles_of_one_family)
+    });
+    c.bench_function("select_font_variants_keeps_same_container_faces_of_one_family", |b| {
+        b.iter(do_select_font_variants_keeps_same_container_faces_of_one_family)
+    });
+    c.bench_function("select_font_variants_collapses_one_face_in_two_containers", |b| {
+        b.iter(do_select_font_variants_collapses_one_face_in_two_containers)
+    });
+    c.bench_function("select_font_variants_renames_name_collisions", |b| {
+        b.iter(do_select_font_variants_renames_name_collisions)
+    });
+    c.bench_function("select_font_variants_reserves_the_any_sentinel", |b| {
+        b.iter(do_select_font_variants_reserves_the_any_sentinel)
+    });
+    c.bench_function("select_font_variants_reserves_the_self_keyword", |b| {
+        b.iter(do_select_font_variants_reserves_the_self_keyword)
+    });
+    c.bench_function("no_variant_is_a_rust_keyword", |b| {
+        b.iter(do_no_variant_is_a_rust_keyword)
+    });
+    c.bench_function("select_font_variants_skips_unnamable_files", |b| {
+        b.iter(do_select_font_variants_skips_unnamable_files)
+    });
+    c.bench_function("generated_app_font_table_is_ordered_and_unique", |b| {
+        b.iter(do_generated_app_font_table_is_ordered_and_unique)
     });
     // color //
     c.bench_function("from_hex", |b| b.iter(|| do_from_hex()));
