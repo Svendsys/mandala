@@ -488,7 +488,7 @@ fn test_apply_custom_mutation_sections_only_targets_section_areas() {
 /// `sync_node_from_tree` writes per-section text + runs back to
 /// the model after a custom mutation that touches regions.
 /// Pre-fix only `position` was synced, so a custom mutation that
-/// recoloured a section's runs would land on the live tree but
+/// recolored a section's runs would land on the live tree but
 /// be reverted on the next `rebuild_all`. The merge-with-prior
 /// reverse converter preserves bold / italic / underline /
 /// size_pt / hyperlink across the round trip. Pins the
@@ -542,7 +542,7 @@ fn test_sync_node_from_tree_writes_back_section_run_color() {
     let section0_run = &doc.mindmap.nodes.get(&nid).unwrap().sections[0].text_runs[0];
     assert_eq!(
         section0_run.color, "#ff0000",
-        "section 0 colour must round-trip through rgba_to_hex"
+        "section 0 color must round-trip through rgba_to_hex"
     );
     assert!(
         section0_run.bold,
@@ -666,7 +666,7 @@ fn test_sync_node_from_tree_section_1_untouched_when_section_0_mutated() {
 /// the gate *does* run the round-trip — but `region_to_text_run`
 /// inherits from prior on the var-bearing case via the empty
 /// `region.color`. Pin the contract: a position-only mutation
-/// (`NudgeRight`) on a `var(--name)`-coloured section preserves
+/// (`NudgeRight`) on a `var(--name)`-colored section preserves
 /// the variable verbatim.
 #[test]
 fn test_sync_node_from_tree_var_color_preserved_when_regions_untouched() {
@@ -848,7 +848,7 @@ fn test_apply_custom_mutation_move_to_does_not_collapse_section_offsets() {
         s1.offset = Position { x: 50.0, y: 30.0 };
         node.sections.push(s1);
     }
-    let pre_offset = doc.mindmap.nodes.get(&nid).unwrap().sections[1].offset.clone();
+    let pre_offset = doc.mindmap.nodes.get(&nid).unwrap().sections[1].offset;
     let cm = CustomMutation {
         id: "move-to".into(),
         name: "MoveTo".into(),
@@ -865,7 +865,7 @@ fn test_apply_custom_mutation_move_to_does_not_collapse_section_offsets() {
     };
     let mut tree = doc.build_tree();
     doc.apply_custom_mutation(&cm, &nid, Some(&mut tree));
-    let post_offset = doc.mindmap.nodes.get(&nid).unwrap().sections[1].offset.clone();
+    let post_offset = doc.mindmap.nodes.get(&nid).unwrap().sections[1].offset;
     assert!(
         (post_offset.x - pre_offset.x).abs() < 1e-3 && (post_offset.y - pre_offset.y).abs() < 1e-3,
         "section.offset must survive a MoveTo on the parent (was {:?}, now {:?})",
@@ -1165,6 +1165,92 @@ fn test_apply_custom_mutation_persistent_sets_dirty() {
     doc.apply_custom_mutation(&cm, "0", Some(&mut tree));
     assert!(doc.dirty, "Persistent mutation should set dirty flag");
     assert_eq!(doc.undo_stack.len(), 1, "Should push undo action");
+}
+
+/// A `RepeatWhile` wrapper whose predicate is `Predicate::new()`
+/// matches **nothing**. Its Macro payload must not reach the tree:
+/// the flat-apply path has no predicate evaluator, so extracting
+/// the literal list would land the mutations on every node the
+/// scope collected — the exact opposite of what the AST authorizes.
+///
+/// Red on `eddd53a`: `flat_mutations`'s guard parsed as
+/// `always_match || (all_equals && fields.is_empty())`, which
+/// collapses to `always_match || fields.is_empty()`, so this shape
+/// was extracted and the nudge landed on the whole
+/// `SelfAndDescendants` set.
+#[test]
+fn test_apply_custom_mutation_match_nothing_repeat_while_does_not_apply() {
+    use baumhard::gfx_structs::area::GlyphAreaCommand;
+    use baumhard::gfx_structs::mutator::Mutation;
+    use baumhard::gfx_structs::predicate::Predicate;
+    use baumhard::mutator_builder::{InstructionSpec, MutationListSrc, MutationSrc, MutatorNode};
+
+    let mut doc = load_test_doc();
+    let mut cm = make_test_mutation("match-nothing", TS::SelfAndDescendants);
+    cm.mutator = Some(MutatorNode::Instruction {
+        channel: 0,
+        instruction: InstructionSpec::RepeatWhile(Predicate::new()),
+        mutation: MutationSrc::None,
+        children: vec![MutatorNode::Macro {
+            channel: 0,
+            mutations: MutationListSrc::Literal(vec![Mutation::area_command(GlyphAreaCommand::NudgeRight(
+                10.0,
+            ))]),
+            children: vec![],
+        }],
+    });
+    doc.mindmap.custom_mutations.push(cm.clone());
+    doc.build_mutation_registry();
+    let mut tree = doc.build_tree();
+
+    let before: Vec<(String, f64)> = doc
+        .mindmap
+        .nodes
+        .iter()
+        .map(|(id, n)| (id.clone(), n.position.x))
+        .collect();
+    doc.apply_custom_mutation(&cm, "0", Some(&mut tree));
+
+    for (id, x) in &before {
+        assert_eq!(
+            doc.mindmap.nodes.get(id).unwrap().position.x,
+            *x,
+            "node '{}' must be untouched by a match-nothing RepeatWhile",
+            id
+        );
+    }
+    assert!(
+        doc.undo_stack.is_empty(),
+        "a skipped apply must not push an undo entry"
+    );
+    assert!(!doc.dirty, "a skipped apply must not mark the document dirty");
+}
+
+/// The same mutation with an always-true predicate *does* apply —
+/// the control row proving the test above pins the predicate, not
+/// the `Instruction`-rooted shape.
+#[test]
+fn test_apply_custom_mutation_always_true_repeat_while_still_applies() {
+    use baumhard::gfx_structs::area::GlyphAreaCommand;
+    use baumhard::gfx_structs::mutator::Mutation;
+    use baumhard::mindmap::custom_mutation::scope;
+
+    let mut doc = load_test_doc();
+    let mut cm = make_test_mutation("always-true", TS::SelfAndDescendants);
+    cm.mutator = Some(scope::descendants(vec![Mutation::area_command(
+        GlyphAreaCommand::NudgeRight(10.0),
+    )]));
+    doc.mindmap.custom_mutations.push(cm.clone());
+    doc.build_mutation_registry();
+    let mut tree = doc.build_tree();
+
+    let before = doc.mindmap.nodes.get("0").unwrap().position.x;
+    doc.apply_custom_mutation(&cm, "0", Some(&mut tree));
+    assert!(
+        (doc.mindmap.nodes.get("0").unwrap().position.x - before - 10.0).abs() < 1e-3,
+        "an always-true RepeatWhile stays flat-extractable and applies"
+    );
+    assert_eq!(doc.undo_stack.len(), 1);
 }
 
 #[test]
@@ -1583,7 +1669,7 @@ fn test_tick_completion_live_tree_relative_no_double_apply() {
 fn test_tick_completion_live_tree_absolute_lands_and_undo_restores() {
     let mut doc = load_test_doc();
     let node_id = first_testament_node_id(&doc);
-    let orig = doc.mindmap.nodes.get(&node_id).unwrap().position.clone();
+    let orig = doc.mindmap.nodes.get(&node_id).unwrap().position;
 
     let target = (orig.x + 250.0, orig.y - 120.0);
     let cm = make_animated_moveto_mutation("anim-live-abs", 1000, target.0 as f32, target.1 as f32);
@@ -1600,7 +1686,7 @@ fn test_tick_completion_live_tree_absolute_lands_and_undo_restores() {
     // would be +75 on x by t=0.3). The tolerance clears the f32
     // round-trip noise of the lerp (~3e-6 at these magnitudes) while
     // staying far below any real movement.
-    let mid = doc.mindmap.nodes.get(&node_id).unwrap().position.clone();
+    let mid = doc.mindmap.nodes.get(&node_id).unwrap().position;
     assert!(
         (mid.x - orig.x).abs() < 1e-3 && (mid.y - orig.y).abs() < 1e-3,
         "absolute MoveTo must not drift the model mid-tween; got ({}, {}), expected ({}, {})",
@@ -1616,7 +1702,7 @@ fn test_tick_completion_live_tree_absolute_lands_and_undo_restores() {
     assert!(!doc.has_active_animations());
 
     // Absolute mutation commits the exact target position.
-    let final_pos = doc.mindmap.nodes.get(&node_id).unwrap().position.clone();
+    let final_pos = doc.mindmap.nodes.get(&node_id).unwrap().position;
     assert!(
         (final_pos.x - target.0).abs() < 0.05 && (final_pos.y - target.1).abs() < 0.05,
         "animated absolute mutation must land at the MoveTo target ({}, {}); got ({}, {})",
@@ -1628,7 +1714,7 @@ fn test_tick_completion_live_tree_absolute_lands_and_undo_restores() {
 
     // Ctrl-Z restores the exact pre-animation position.
     assert!(doc.undo());
-    let after = doc.mindmap.nodes.get(&node_id).unwrap().position.clone();
+    let after = doc.mindmap.nodes.get(&node_id).unwrap().position;
     assert!(
         (after.x - orig.x).abs() < 1e-6 && (after.y - orig.y).abs() < 1e-6,
         "undo of an animated absolute mutation must restore the pre-animation position; \
@@ -1731,7 +1817,7 @@ fn test_tick_completion_no_tree_relative_is_undoable() {
 fn test_tick_completion_no_tree_noop_pushes_no_undo() {
     let mut doc = load_test_doc();
     let node_id = first_testament_node_id(&doc);
-    let orig = doc.mindmap.nodes.get(&node_id).unwrap().position.clone();
+    let orig = doc.mindmap.nodes.get(&node_id).unwrap().position;
     let cm = make_animated_moveto_mutation(
         "anim-notree-abs",
         1000,
@@ -1745,7 +1831,7 @@ fn test_tick_completion_no_tree_noop_pushes_no_undo() {
     doc.tick_animations(1200, None);
     assert!(!doc.has_active_animations());
 
-    let after = doc.mindmap.nodes.get(&node_id).unwrap().position.clone();
+    let after = doc.mindmap.nodes.get(&node_id).unwrap().position;
     assert!(
         (after.x - orig.x).abs() < 1e-9 && (after.y - orig.y).abs() < 1e-9,
         "no-tree absolute completion is inert (to == from); got ({}, {})",
@@ -1953,7 +2039,7 @@ fn test_shrink_font_clamps_to_minimum() {
 /// single run to carry the new size — the change would otherwise
 /// have nowhere to live and evaporate on the next rebuild. The
 /// synthesized run spans the whole text and inherits the node's
-/// default text colour so rendering is unchanged except for size.
+/// default text color so rendering is unchanged except for size.
 #[test]
 fn test_grow_font_on_runless_section_synthesizes_run() {
     use baumhard::gfx_structs::area::GlyphAreaCommand;
@@ -1987,7 +2073,7 @@ fn test_grow_font_on_runless_section_synthesizes_run() {
     );
     assert_eq!(
         run.color, "#abcdef",
-        "synthesized run inherits the node's default text colour"
+        "synthesized run inherits the node's default text color"
     );
 }
 
@@ -2153,7 +2239,9 @@ fn test_persistent_apply_does_not_leak_highlight_overlay_into_model() {
     use crate::application::document::{apply_tree_highlights, HIGHLIGHT_COLOR};
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
-    let orig_color = doc.mindmap.nodes.get(&nid).unwrap().sections[0].text_runs[0].color.clone();
+    let orig_color = doc.mindmap.nodes.get(&nid).unwrap().sections[0].text_runs[0]
+        .color
+        .clone();
     let orig_x = doc.mindmap.nodes.get(&nid).unwrap().position.x;
 
     // Simulate `rebuild_all`'s stored render tree: a pure projection
@@ -2174,7 +2262,9 @@ fn test_persistent_apply_does_not_leak_highlight_overlay_into_model() {
         "the nudge itself must persist to the model"
     );
     // ...but the highlight overlay must NOT be written back.
-    let after_color = doc.mindmap.nodes.get(&nid).unwrap().sections[0].text_runs[0].color.clone();
+    let after_color = doc.mindmap.nodes.get(&nid).unwrap().sections[0].text_runs[0]
+        .color
+        .clone();
     assert_eq!(
         after_color, orig_color,
         "selection-highlight overlay must not leak into the persisted model"
@@ -2274,7 +2364,7 @@ fn test_font_size_delta_ignores_run_dropped_by_round_trip() {
         ];
     }
     // Delete the region carrying the largest (40pt) run. The tree's
-    // `scale` stays 40 (deleting a colour region doesn't touch it),
+    // `scale` stays 40 (deleting a color region doesn't touch it),
     // and the round-trip rebuilds the model with only the 14pt run.
     let cm = CustomMutation {
         id: "drop-large".into(),
@@ -2356,7 +2446,17 @@ fn test_active_toggles_replay_in_activation_order() {
     let mut tree = doc.build_tree();
     doc.reapply_active_toggles(&mut tree);
     let aid = tree.arena_id_for(&nid).unwrap();
-    let x = tree.tree.arena.get(aid).unwrap().get().glyph_area().unwrap().position.x.0;
+    let x = tree
+        .tree
+        .arena
+        .get(aid)
+        .unwrap()
+        .get()
+        .glyph_area()
+        .unwrap()
+        .position
+        .x
+        .0;
     assert!(
         (x - 222.0).abs() < 1e-3,
         "ordered replay must apply move-a then move-b, leaving x at 222 (got {x})"

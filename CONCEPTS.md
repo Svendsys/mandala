@@ -1584,7 +1584,7 @@ they did not author.
 
 ### Target scopes
 
-Six variants telling the dispatcher which nodes the
+Seven variants telling the dispatcher which nodes the
 mutation covers — also used as the snapshot window for undo.
 
 A mutation declares "I touch this node only" or
@@ -1596,9 +1596,19 @@ fully reverse it.
 
 Variants: `SelfOnly`, `Children`,
 `Descendants` (not the anchor), `SelfAndDescendants`, `Parent`,
-`Siblings` (the anchor's siblings, excluding itself). Scope
-helpers in `custom_mutation::scope` produce matching
-`MutatorNode` shapes for the AST walker.
+`Siblings` (the anchor's siblings, excluding itself — a root has
+none, since "sibling" means "shares my parent" and the other
+roots of a multi-root map do not), `SectionsOnly` (the anchor's
+section-areas; the anchor `MindNode` is still the snapshot
+window). Scope helpers in `custom_mutation::scope` produce
+matching `MutatorNode` shapes for the AST walker.
+
+The scope resolves to a target set and the mutator is anchored at
+**each target in turn**, so a pairing is only safe when that set
+is closed under the mutator's reach. Only the two descendant
+scopes are; every other scope needs a mutator that touches its
+anchor alone. `TargetScope::covers_reach` encodes that table and
+`warn!`s on a mismatch — see `format/mutations.md`.
 
 ### Behaviors — `Persistent` vs. `Toggle`
 

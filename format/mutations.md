@@ -84,8 +84,9 @@ Fields the shape above uses:
 - `predicate` — optional `Predicate` filter gate; defaults to none.
   See [predicate](#predicate--top-level-filter-gate) below.
 - `target_scope` — one of `SelfOnly` / `Children` / `Descendants` /
-  `SelfAndDescendants` / `Parent` / `Siblings`. Governs both what
-  nodes the mutations apply to *and* the undo-snapshot window.
+  `SelfAndDescendants` / `Parent` / `Siblings` / `SectionsOnly`.
+  Governs both what nodes the mutations apply to *and* the
+  undo-snapshot window.
 
 When the legacy shape isn't enough — a mutation that needs
 per-child positioning, runtime-computed values, or the
@@ -292,8 +293,8 @@ writes won't be reverted by `Ctrl+Z` and won't reach the saved model.
 | `Children` | Direct children of the anchor. |
 | `Descendants` | All descendants recursively (not the anchor). |
 | `SelfAndDescendants` | Anchor + all descendants. |
-| `Parent` | The anchor's parent node. |
-| `Siblings` | The anchor's siblings (excluding itself). |
+| `Parent` | The anchor's parent node. Empty on a root — the mutation is a no-op. |
+| `Siblings` | The anchor's siblings (excluding itself). **Empty on a root**: "sibling" means "shares my parent", and a root shares none, so the other roots of a multi-root map are *not* siblings. A `Siblings` mutation on a root snapshots nothing, mutates nothing, and pushes no undo entry. |
 | `SectionsOnly` | Every section of the anchor — bypasses the chrome-only container fan-out so text / font / region mutations land on the section-areas only. The anchor `MindNode` is still the snapshot window (whole-node clone covers per-section state). Use this when a mutation must avoid colliding with a sibling mind-node sharing the section's channel. |
 
 For scope-helper-generated MutatorNodes (via
@@ -301,6 +302,27 @@ For scope-helper-generated MutatorNodes (via
 matches the `target_scope` value — `scope::self_and_descendants(...)`
 pairs with `SelfAndDescendants`, etc. For hand-authored MutatorNodes,
 pick the smallest scope that covers every node the AST will touch.
+
+### Which scopes admit a tree-walking mutator
+
+The application resolves a scope to a target set and then **anchors
+the mutator at each target in turn**. So the pairing is safe only
+when the target set is *closed* under whatever the mutator walks:
+everything a mutator anchored at a target can reach must itself be a
+target, or the undo snapshot ends up narrower than the write set.
+
+Only `Descendants` and `SelfAndDescendants` are closed — a
+descendant's children are still descendants. Every other scope,
+including `Children` and `Siblings`, requires a mutator that touches
+**only its anchor**: anchoring a `MapChildren`-reach mutator at each
+child reaches the *grandchildren*, and at each sibling reaches that
+sibling's children, neither of which the snapshot captured.
+
+`baumhard::mindmap::custom_mutation::mutator_reach` computes the
+widest set an AST can reach and `TargetScope::covers_reach` checks
+the pairing; a mismatch is a `warn!` at apply time, not a rejection —
+the mutation still runs, but its undo coverage is incomplete. The
+`mutation info <id>` console verb prints the computed reach.
 
 ## `predicate` — top-level filter gate
 
@@ -368,6 +390,13 @@ Four top-level variants:
   - `RepeatWhileAlwaysTrue` — apply children to every descendant.
   - `RepeatWhile(<Predicate>)` — apply children to every descendant
     for which the predicate holds, short-circuit once it fails.
+    Note the predicate genuinely filters: a `RepeatWhile` whose
+    predicate is the bare `{ "fields": [] }` shape (no fields,
+    `always_match` absent/false) matches **nothing**. Today's
+    flat-apply path has no predicate evaluator, so it declines any
+    `RepeatWhile` that isn't `always_match` and warns instead of
+    applying — the alternative would be landing the payload on the
+    whole scope set, the inverse of what the AST says.
   - `RotateWhile(<f32>, <Predicate>)` — rotation stub (reserved).
   - `SpatialDescend(<OrderedVec2>)` — descend by AABB containment to
     the deepest node that holds the point, deliver the instruction's

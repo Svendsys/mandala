@@ -292,7 +292,7 @@ see [`border-patterns.md`](./border-patterns.md) for the grammar.
 | `color` | string\|null | `#RRGGBB`, falls back to `style.frame_color` |
 | `glyphs` | object\|null | Custom glyphs when `preset == "custom"`. Sides (`top`, `bottom`, `left`, `right`) accept the [side-pattern grammar](./border-patterns.md); corners (`top_left`, `top_right`, `bottom_left`, `bottom_right`) are static glyph strings. |
 | `padding` | number | Border-to-content padding in pixels |
-| `color_palette` | string\|null | Optional palette name (key in top-level `palettes`) whose colours cycle per glyph around the border. When unset, every glyph paints in `color`. A missing palette name warns and falls back to the single-colour path. |
+| `color_palette` | string\|null | Optional palette name (key in top-level `palettes`) whose colors cycle per glyph around the border. When unset, every glyph paints in `color`. A missing palette name warns and falls back to the single-color path. |
 | `color_palette_field` | string\|null | Which `ColorGroup` channel is cycled when `color_palette` is set: `"frame"` (default), `"background"`, `"text"`, or `"title"`. Unknown values warn and fall back to `"frame"`. |
 
 ## GlyphConnectionConfig
@@ -357,7 +357,8 @@ and the imperative `DynamicMutationHandler` seam (used for
 size-aware layouts like `flower-layout` / `tree-cascade`).
 
 `target_scope` is one of `"SelfOnly"`, `"Children"`,
-`"Descendants"`, `"SelfAndDescendants"`, `"Parent"`, `"Siblings"`.
+`"Descendants"`, `"SelfAndDescendants"`, `"Parent"`, `"Siblings"`,
+`"SectionsOnly"`.
 `behavior` defaults to `"Persistent"`; `"Toggle"` reverses on
 second trigger.
 

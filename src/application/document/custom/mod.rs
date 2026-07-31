@@ -255,7 +255,7 @@ impl MindMapDocument {
             // model diff to gate on. Treat a dispatched handler as a
             // real change; the snapshot taken above is its undo home.
             true
-        } else if let Some(tree) = tree.as_deref_mut() {
+        } else if let Some(tree) = tree {
             // Surface any mutator field the sync-back can't persist
             // *before* applying, so a partially-supported mutation
             // doesn't silently drop half its effect on the next
@@ -719,7 +719,18 @@ impl MindMapDocument {
             .collect()
     }
 
-    /// Collect the IDs of all nodes affected by a mutation with the given scope.
+    /// Collect the IDs of all nodes affected by a mutation with the
+    /// given scope. This list is simultaneously the apply-time target
+    /// set and the undo-snapshot window — the equivalence CONCEPTS §4
+    /// calls the load-bearing detail — so the two can never drift.
+    ///
+    /// Two scopes resolve to the empty set on a root node, by design:
+    /// `Parent` (a root has no parent) and `Siblings` (a root shares
+    /// no parent, so the other roots of a multi-root map are *not*
+    /// siblings — see [`TargetScope::Siblings`]). Both are no-ops
+    /// rather than errors: nothing is snapshotted, `apply_to_tree`
+    /// iterates an empty list, and the `changed` verdict stays
+    /// `false` so no dead undo entry is pushed.
     pub(super) fn collect_affected_node_ids(&self, node_id: &str, scope: &TargetScope) -> Vec<String> {
         match scope {
             // `SectionsOnly` lives on the triggering node — every
@@ -758,12 +769,13 @@ impl MindMapDocument {
                 .and_then(|n| n.parent_id.clone())
                 .into_iter()
                 .collect(),
+            // A root node (`parent_id == None`) short-circuits to
+            // the empty set here — `and_then` yields `None` and
+            // `unwrap_or_default` returns an empty `Vec`. That is the
+            // documented semantic, not an oversight: see
+            // [`TargetScope::Siblings`].
             TargetScope::Siblings => {
-                let parent_id = self
-                    .mindmap
-                    .nodes
-                    .get(node_id)
-                    .and_then(|n| n.parent_id.clone());
+                let parent_id = self.mindmap.nodes.get(node_id).and_then(|n| n.parent_id.clone());
                 let index = self.mindmap.child_index();
                 parent_id
                     .map(|pid| {
@@ -777,6 +789,244 @@ impl MindMapDocument {
                     .unwrap_or_default()
             }
         }
+    }
+}
+
+/// Differential harness for [`TargetScope::covers_reach`].
+///
+/// `covers_reach` is a *static* gate: it answers "is this
+/// scope + reach pairing safe?" from two enum values alone. What it
+/// is really claiming is a structural property of the real tree —
+/// that the scope's target set (which is exactly the undo-snapshot
+/// window, see [`MindMapDocument::collect_affected_node_ids`]) is
+/// **closed** under the mutator's reach, given that the application
+/// anchors the mutator at every target in turn.
+///
+/// This module rebuilds that property from scratch against the
+/// testament map's 252 real nodes — the reference model — and
+/// compares it cell-by-cell with what `covers_reach` returns. Neither
+/// side consults the other: the reference walks `child_index()`, the
+/// gate matches on enums.
+///
+/// Two directions are checked, because either alone is trivially
+/// satisfiable:
+///
+/// - **Soundness** — every approved cell really is closed, for
+///   *every* trigger node in the fixture. A single counterexample
+///   means the gate green-lights a pairing whose undo snapshot is
+///   narrower than what the mutator touches.
+/// - **Tightness** — every rejected cell has a witness node where
+///   closure actually fails. Without this a gate that returns
+///   `false` everywhere would pass the soundness half.
+#[cfg(test)]
+mod covers_reach_differential_tests {
+    use super::*;
+    use crate::application::document::tests_common::load_test_doc;
+    use baumhard::mindmap::custom_mutation::MutatorReach;
+    use std::collections::BTreeSet;
+
+    /// Every scope whose target set is a set of *model nodes*.
+    /// `SectionsOnly` is excluded — its anchors are section-areas
+    /// inside one `MindNode`, not model nodes, so the closure
+    /// argument doesn't transfer. It gets
+    /// [`sections_only_gate_is_sound_and_deliberately_conservative`]
+    /// instead.
+    const NODE_SCOPES: [TargetScope; 6] = [
+        TargetScope::SelfOnly,
+        TargetScope::Children,
+        TargetScope::Descendants,
+        TargetScope::SelfAndDescendants,
+        TargetScope::Parent,
+        TargetScope::Siblings,
+    ];
+
+    const REACHES: [MutatorReach; 3] = [
+        MutatorReach::SelfOnly,
+        MutatorReach::Children,
+        MutatorReach::Descendants,
+    ];
+
+    /// Reference model: the model nodes a mutator of `reach`, anchored
+    /// at `anchor`, can write to. `MutatorReach` is cumulative
+    /// (`SelfOnly <= Children <= Descendants`), so each set includes
+    /// the narrower ones — the anchor itself is always in reach
+    /// because every non-empty mutator carries a payload at its root.
+    ///
+    /// Derived from `child_index()` only; deliberately does not call
+    /// `covers_reach` or any of its helpers.
+    fn reference_touch_set(doc: &MindMapDocument, anchor: &str, reach: MutatorReach) -> BTreeSet<String> {
+        let mut out = BTreeSet::new();
+        out.insert(anchor.to_string());
+        match reach {
+            MutatorReach::SelfOnly => {}
+            MutatorReach::Children => {
+                for child in doc.mindmap.child_index().children_of(anchor) {
+                    out.insert(child.id.clone());
+                }
+            }
+            MutatorReach::Descendants => {
+                let budget = doc.mindmap.nodes.len();
+                out.extend(doc.mindmap.child_index().all_descendant_ids(anchor, budget));
+            }
+        }
+        out
+    }
+
+    /// Walk every node of the fixture as the trigger and report the
+    /// first node where the scope's target set is *not* closed under
+    /// `reach`, or `None` when the pairing is closed everywhere.
+    ///
+    /// The returned string names the trigger node and one node that
+    /// escaped the snapshot, so a failure message points at a
+    /// reproducible case rather than just "false".
+    fn closure_witness(doc: &MindMapDocument, scope: TargetScope, reach: MutatorReach) -> Option<String> {
+        let mut node_ids: Vec<&String> = doc.mindmap.nodes.keys().collect();
+        node_ids.sort();
+        for trigger in node_ids {
+            let targets: BTreeSet<String> = doc
+                .collect_affected_node_ids(trigger, &scope)
+                .into_iter()
+                .collect();
+            for anchor in &targets {
+                for touched in reference_touch_set(doc, anchor, reach) {
+                    if !targets.contains(&touched) {
+                        return Some(format!(
+                            "trigger '{}' with scope {:?}: anchoring a {:?}-reach mutator at \
+                             target '{}' touches '{}', which is not in the {}-node snapshot",
+                            trigger,
+                            scope,
+                            reach,
+                            anchor,
+                            touched,
+                            targets.len()
+                        ));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// The differential run: 6 scopes x 3 reaches, gate verdict
+    /// against reference verdict, both directions.
+    #[test]
+    fn covers_reach_matches_structural_closure_on_the_testament_map() {
+        let doc = load_test_doc();
+        assert!(
+            doc.mindmap.nodes.len() > 100,
+            "fixture too small to be a meaningful reference model"
+        );
+        let mut mismatches: Vec<String> = Vec::new();
+        for scope in NODE_SCOPES {
+            for reach in REACHES {
+                let witness = closure_witness(&doc, scope.clone(), reach);
+                let reference_says_safe = witness.is_none();
+                let gate_says_safe = scope.covers_reach(reach);
+                if gate_says_safe && !reference_says_safe {
+                    mismatches.push(format!(
+                        "UNSOUND: covers_reach({:?}, {:?}) == true but {}",
+                        scope,
+                        reach,
+                        witness.unwrap_or_default()
+                    ));
+                } else if !gate_says_safe && reference_says_safe {
+                    mismatches.push(format!(
+                        "OVER-STRICT: covers_reach({:?}, {:?}) == false but the target set is \
+                         closed under that reach for every node in the fixture",
+                        scope, reach
+                    ));
+                }
+            }
+        }
+        assert!(
+            mismatches.is_empty(),
+            "covers_reach disagrees with the structural reference model:\n  {}",
+            mismatches.join("\n  ")
+        );
+    }
+
+    /// `SectionsOnly`'s targets are the anchor's section-areas, which
+    /// live inside the anchor's own `MindNode` — so the one-node
+    /// snapshot covers them whatever the reach does *within* the
+    /// section subtree. The gate still demands `SelfOnly`, which is
+    /// strictly conservative: over-strict costs a spurious `warn!`,
+    /// while over-permissive costs undo coverage. This pins the
+    /// direction of the asymmetry so a later "optimization" can't
+    /// flip it silently.
+    #[test]
+    fn sections_only_gate_is_sound_and_deliberately_conservative() {
+        let doc = load_test_doc();
+        let mut node_ids: Vec<&String> = doc.mindmap.nodes.keys().collect();
+        node_ids.sort();
+        for trigger in node_ids {
+            let targets = doc.collect_affected_node_ids(trigger, &TargetScope::SectionsOnly);
+            assert_eq!(
+                targets,
+                vec![trigger.clone()],
+                "SectionsOnly snapshots exactly the anchor node"
+            );
+        }
+        assert!(TargetScope::SectionsOnly.covers_reach(MutatorReach::SelfOnly));
+        assert!(!TargetScope::SectionsOnly.covers_reach(MutatorReach::Children));
+        assert!(!TargetScope::SectionsOnly.covers_reach(MutatorReach::Descendants));
+    }
+
+    /// `Siblings` on a root node resolves to the empty set: "sibling"
+    /// means "shares my parent", and a root shares no parent — the
+    /// other roots of a multi-root map are deliberately *not*
+    /// siblings. The testament map has four roots, so this is a live
+    /// case, not a hypothetical. Pins the documented semantics on
+    /// [`TargetScope::Siblings`].
+    #[test]
+    fn siblings_of_a_root_node_is_the_empty_set() {
+        let doc = load_test_doc();
+        let roots: Vec<String> = doc
+            .mindmap
+            .nodes
+            .values()
+            .filter(|n| n.parent_id.is_none())
+            .map(|n| n.id.clone())
+            .collect();
+        assert!(roots.len() > 1, "testament map is expected to have several roots");
+        for root in &roots {
+            assert!(
+                doc.collect_affected_node_ids(root, &TargetScope::Siblings)
+                    .is_empty(),
+                "root '{}' must have no siblings even though {} other roots exist",
+                root,
+                roots.len() - 1
+            );
+        }
+    }
+
+    /// A non-root node's siblings exclude the node itself — the other
+    /// half of the `Siblings` contract, and the reason
+    /// `Siblings` + `MutatorReach::SelfOnly` is closed while
+    /// `Siblings` + `Parent`-style reaches are not.
+    #[test]
+    fn siblings_excludes_the_trigger_node() {
+        let doc = load_test_doc();
+        let index = doc.mindmap.child_index();
+        let mut checked = 0usize;
+        let mut node_ids: Vec<&String> = doc.mindmap.nodes.keys().collect();
+        node_ids.sort();
+        for id in node_ids {
+            let Some(parent_id) = doc.mindmap.nodes.get(id).and_then(|n| n.parent_id.clone()) else {
+                continue;
+            };
+            if index.children_of(&parent_id).len() < 2 {
+                continue;
+            }
+            let siblings = doc.collect_affected_node_ids(id, &TargetScope::Siblings);
+            assert!(
+                !siblings.contains(id),
+                "node '{}' must not be its own sibling",
+                id
+            );
+            assert_eq!(siblings.len(), index.children_of(&parent_id).len() - 1);
+            checked += 1;
+        }
+        assert!(checked > 0, "fixture has no node with a sibling");
     }
 }
 
