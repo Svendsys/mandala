@@ -303,16 +303,19 @@ pub fn save_to_file(path: &Path, map: &MindMap) -> Result<(), String> {
 /// hard links to the old file keep the old content, and a symlink at
 /// `path` is replaced by a regular file rather than followed. What
 /// does *not* change is the mode — when `path` already exists its
-/// permissions are copied onto the staging file before the rename,
-/// so a map the user deliberately `chmod 600`'d does not come back
-/// world-readable at the process umask. A new file takes the umask
-/// default, as it would from any other writer.
+/// permissions are carried onto the staging file, so a map the user
+/// deliberately `chmod 600`'d does not come back world-readable at
+/// the process umask. A new file takes the umask default, as it
+/// would from any other writer.
 ///
-/// Cost: one write of `contents`, one `stat` + one `chmod` when the
-/// target exists, and one rename. The permission copy is best-effort
-/// on the read side — a target whose metadata cannot be read falls
-/// through to umask defaults rather than failing a save the user
-/// asked for.
+/// The mode is applied **at creation, before any content lands** —
+/// see [`write_staging_file`]. Nothing ever exists on disk holding
+/// the caller's bytes at a wider mode than the target had.
+///
+/// Cost: one `stat` of the target, one create + one write of
+/// `contents`, and one rename. Reading the target's mode is
+/// best-effort: a target whose metadata cannot be read falls through
+/// to umask defaults rather than failing a save the user asked for.
 pub fn write_atomic(path: &Path, contents: &str) -> Result<(), String> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     let file_name = path
@@ -320,19 +323,14 @@ pub fn write_atomic(path: &Path, contents: &str) -> Result<(), String> {
         .ok_or_else(|| format!("invalid path: {}", path.display()))?
         .to_string_lossy();
     let tmp_path = dir.join(format!(".{}.{}.tmp", file_name, std::process::id()));
-    fs::write(&tmp_path, contents).map_err(|e| format!("failed to write {}: {e}", tmp_path.display()))?;
-    // Inherit the target's mode before the swap. Skipped silently
-    // when the target is new (nothing to inherit) or unreadable;
-    // a failure to widen/narrow permissions must not lose the
-    // user's content, which is already safely written above.
-    if let Ok(existing) = fs::metadata(path) {
-        if let Err(e) = fs::set_permissions(&tmp_path, existing.permissions()) {
-            log::warn!(
-                "could not carry {}'s permissions onto the staging file: {e}",
-                path.display()
-            );
-        }
-    }
+
+    // The mode of the file being replaced, if there is one to
+    // inherit. Read before the staging file is created, because
+    // that is when it has to be applied.
+    let inherited = fs::metadata(path).ok().map(|meta| meta.permissions());
+    write_staging_file(&tmp_path, contents, inherited)
+        .map_err(|e| format!("failed to write {}: {e}", tmp_path.display()))?;
+
     fs::rename(&tmp_path, path).map_err(|e| {
         let _ = fs::remove_file(&tmp_path);
         format!(
@@ -341,6 +339,68 @@ pub fn write_atomic(path: &Path, contents: &str) -> Result<(), String> {
             path.display()
         )
     })
+}
+
+/// Create `tmp_path` already carrying `inherited`'s permissions, then
+/// write `contents` into it.
+///
+/// The **order is the whole point**. Creating at the process umask
+/// and chmod-ing afterwards would leave a complete copy of the map
+/// sitting at the wider mode for the entire duration of the write —
+/// precisely the exposure the inheritance exists to prevent, and a
+/// window a reader only has to be unlucky to hit. So the mode goes on
+/// at `open(2)` time, when the file is still empty.
+///
+/// `OpenOptions::mode` applies only when the file is *created*, so a
+/// stale staging file — left by a crashed run that happened to hold
+/// this pid — is removed first. Without that it would keep its own
+/// (possibly wide) mode straight through the truncate and inherit
+/// nothing.
+///
+/// Permissions are advisory to the save, never fatal to it: on
+/// platforms without a create-time mode the post-creation fallback
+/// logs and continues rather than losing content the caller asked to
+/// persist.
+fn write_staging_file(
+    tmp_path: &Path,
+    contents: &str,
+    inherited: Option<fs::Permissions>,
+) -> std::io::Result<()> {
+    use std::io::Write;
+
+    let _ = fs::remove_file(tmp_path);
+    let mut file = create_with_mode(tmp_path, inherited)?;
+    file.write_all(contents.as_bytes())
+}
+
+/// Create an empty file at `tmp_path` with `inherited`'s mode applied
+/// from the moment it exists.
+#[cfg(unix)]
+fn create_with_mode(tmp_path: &Path, inherited: Option<fs::Permissions>) -> std::io::Result<fs::File> {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    if let Some(permissions) = inherited {
+        options.mode(permissions.mode());
+    }
+    options.open(tmp_path)
+}
+
+/// Non-Unix fallback: no create-time mode exists, so the only
+/// carryable bit (the read-only flag) is applied immediately after
+/// creation, while the file is still empty. That flag is not a
+/// confidentiality control, so the ordering carries no exposure here
+/// the way it does on Unix.
+#[cfg(not(unix))]
+fn create_with_mode(tmp_path: &Path, inherited: Option<fs::Permissions>) -> std::io::Result<fs::File> {
+    let file = fs::File::create(tmp_path)?;
+    if let Some(permissions) = inherited {
+        if let Err(e) = file.set_permissions(permissions) {
+            log::warn!("could not carry permissions onto {}: {e}", tmp_path.display());
+        }
+    }
+    Ok(file)
 }
 
 #[cfg(test)]
@@ -952,6 +1012,40 @@ mod tests {
             "an owner-only map must not be widened by the atomic swap"
         );
         assert_eq!(fs::read_to_string(&path).unwrap(), "{\"replaced\":true}");
+    }
+
+    /// The mode is applied when the staging file is *created*, not
+    /// after the content lands, so nothing ever holds the caller's
+    /// bytes at a wider mode than the target had.
+    ///
+    /// The window itself is not observable from a single-threaded
+    /// test, but the mechanism that closes it is: `OpenOptions::mode`
+    /// only takes effect on creation, which forces the writer to
+    /// clear any stale staging file first. This plants one at `0666`
+    /// with **no** target to inherit from — the case where the old
+    /// write-then-chmod shape had no chmod to run at all, so the
+    /// leftover's mode rode straight onto a brand-new map.
+    #[cfg(unix)]
+    #[test]
+    fn test_write_atomic_does_not_inherit_a_stale_staging_files_mode() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new("atomic-stale-staging");
+        let path = dir.join("fresh.mindmap.json");
+        let pid = std::process::id();
+        let stale = dir.join(&format!(".fresh.mindmap.json.{pid}.tmp"));
+        fs::write(&stale, "leftover from a crashed run").expect("plant the stale staging file");
+        fs::set_permissions(&stale, fs::Permissions::from_mode(0o666)).expect("chmod 666");
+
+        write_atomic(&path, "{\"fresh\":true}").expect("write_atomic failed");
+
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_ne!(
+            mode, 0o666,
+            "a stale staging file's mode must not ride onto a brand-new map"
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), "{\"fresh\":true}");
+        assert!(!stale.exists(), "the staging file must not survive the rename");
     }
 
     /// A target that does not exist yet has no mode to inherit, so

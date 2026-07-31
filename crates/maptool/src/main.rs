@@ -894,14 +894,27 @@ mod tests {
             output.to_str().unwrap(),
         ]);
         run(&portals).unwrap();
-        // Parsed trees, not raw text: a failure here should report
-        // which key drifted, not two screens of identical JSON
-        // (TEST_CONVENTIONS §T5 — improve the values, keep the macro).
+        let twice = fs::read_to_string(&output).unwrap();
+
+        // Parsed trees first: when something *has* drifted, this
+        // failure names the key instead of printing two screens of
+        // near-identical JSON (TEST_CONVENTIONS §T5 — improve the
+        // values being compared, not the macro).
         let before: serde_json::Value = serde_json::from_str(&once).unwrap();
-        let after: serde_json::Value = serde_json::from_str(&fs::read_to_string(&output).unwrap()).unwrap();
+        let after: serde_json::Value = serde_json::from_str(&twice).unwrap();
         assert_eq!(
             after, before,
             "convert --portals must not change an already-folded map"
+        );
+        // ...then byte equality, which is the stronger claim and the
+        // one `convert/sections.rs` leans on when it keeps converted
+        // maps "byte-stable". Equal trees can still differ in key
+        // order or number rendering; a second hop must reproduce the
+        // identical file, not merely an equivalent one.
+        assert_eq!(
+            convert::content_digest(&twice),
+            convert::content_digest(&once),
+            "a second convert --portals hop must be byte-identical, not just equivalent"
         );
     }
 

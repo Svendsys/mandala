@@ -127,6 +127,24 @@ pub fn convert_legacy(input_path: &Path, output_path: &Path) -> Result<(), Strin
     })
 }
 
+/// Digest of a whole map file, for tests that assert byte stability.
+///
+/// A converted map is two screens of JSON; putting one in an
+/// assertion means a failure prints both copies and buries the single
+/// key that moved. Comparing digests keeps `assert_eq!` and the exact
+/// byte-for-byte property (TEST_CONVENTIONS §T5 — improve the values
+/// being compared, not the macro) while the failure output stays two
+/// numbers and the message that explains them. Pair it with a parsed
+/// `serde_json::Value` comparison when the test also wants to name
+/// *which* key drifted.
+#[cfg(test)]
+pub(crate) fn content_digest(contents: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    contents.hash(&mut hasher);
+    hasher.finish()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -153,18 +171,7 @@ mod tests {
         p
     }
 
-    /// A whole map file is the wrong thing to put in an assertion:
-    /// on failure the diff is two screens of JSON and the one bit
-    /// that matters is invisible. Comparing digests keeps
-    /// `assert_eq!` (TEST_CONVENTIONS §T5's "improve the values you
-    /// are comparing, not the assertion macro") while the failure
-    /// output stays two numbers plus the message that explains them.
-    fn digest(contents: &str) -> u64 {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        contents.hash(&mut hasher);
-        hasher.finish()
-    }
+    use super::content_digest as digest;
 
     /// The atomicity contract, tested rather than asserted: a
     /// converter must never write *through* the file already at the
