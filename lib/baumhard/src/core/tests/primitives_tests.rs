@@ -149,10 +149,16 @@ fn test_split_and_separate_truth_table() {
 }
 
 /// Walks [`SPLIT_AND_SEPARATE_TABLE`], asserting the exact resulting
-/// region set for each case plus two invariants the primitive must
-/// never break: no range is inverted or empty, and the total number of
-/// covered grapheme clusters is conserved (splitting moves coverage,
-/// it never creates or destroys any).
+/// region set for each case plus two invariants: no range is inverted
+/// or empty, and the total number of covered grapheme clusters is
+/// conserved (splitting moves coverage, it never creates or destroys
+/// any).
+///
+/// Both invariants hold only above the primitive's documented
+/// precondition — a non-degenerate, non-overlapping input set — so
+/// every row here satisfies it. The two violation shapes and what
+/// they actually do live in
+/// [`do_split_and_separate_precondition_violations_propagate`].
 pub fn do_split_and_separate_truth_table() {
     for (name, initial, inserted, expected) in SPLIT_AND_SEPARATE_TABLE.iter() {
         let mut regions = ColorFontRegions::new_empty();
@@ -182,6 +188,74 @@ pub fn do_split_and_separate_truth_table() {
             name
         );
     }
+}
+
+#[test]
+fn test_split_and_separate_overflow_drops_the_whole_call() {
+    do_split_and_separate_overflow_drops_the_whole_call();
+}
+
+/// A shift that would carry a region's `end` past `usize::MAX` is
+/// refused before anything is written, so the set is left exactly as
+/// it was rather than partly shifted. Pairs with the inverted-range
+/// and zero-magnitude guards: the primitive now has no input that
+/// panics it.
+pub fn do_split_and_separate_overflow_drops_the_whole_call() {
+    let mut regions = ColorFontRegions::new_empty();
+    regions.submit_region(ColorFontRegion::new_key_only(Range::new(0, 8)));
+    regions.submit_region(ColorFontRegion::new_key_only(Range::new(10, usize::MAX)));
+
+    regions.split_and_separate(Range::new(2, 5));
+
+    assert_eq!(regions.num_regions(), 2);
+    assert!(regions.get(Range::new(0, 8)).is_some());
+    assert!(regions.get(Range::new(10, usize::MAX)).is_some());
+}
+
+#[test]
+fn test_split_and_separate_precondition_violations_propagate() {
+    do_split_and_separate_precondition_violations_propagate();
+}
+
+/// Pins what the primitive does when its documented precondition — a
+/// non-degenerate, non-overlapping region set — is violated.
+///
+/// This records the consequence; it does not endorse it. The
+/// primitive is a per-region rewrite over a `BTreeSet` keyed on the
+/// range alone, so it has no way to detect either violation, and the
+/// doc comment states the precondition rather than pretending
+/// otherwise. The invariants asserted by
+/// [`do_split_and_separate_truth_table`] — no degenerate output, and
+/// conserved coverage — hold only above that precondition, which is
+/// why these two shapes live here instead of as rows in that table.
+pub fn do_split_and_separate_precondition_violations_propagate() {
+    // Degenerate input: an empty region stays empty, shifted.
+    let mut degenerate = ColorFontRegions::new_empty();
+    degenerate.submit_region(ColorFontRegion::new_key_only(Range::new(5, 5)));
+    degenerate.split_and_separate(Range::new(0, 2));
+    assert_eq!(degenerate.num_regions(), 1);
+    assert!(degenerate.get(Range::new(7, 7)).is_some());
+
+    // Overlapping input: the straddler's tail and the shifted region
+    // land on the same range, collide in the one `BTreeSet` slot that
+    // range keys, and coverage is lost with them.
+    let gold = [1.0, 0.84, 0.0, 1.0];
+    let mut overlapping = ColorFontRegions::new_empty();
+    overlapping.submit_region(ColorFontRegion::new_key_only(Range::new(0, 5)));
+    overlapping.submit_region(ColorFontRegion::new(Range::new(3, 5), None, Some(gold)));
+    let covered_before: usize = overlapping
+        .all_regions()
+        .iter()
+        .map(|r| r.range.magnitude())
+        .sum();
+    assert_eq!(covered_before, 7);
+
+    overlapping.split_and_separate(Range::new(3, 4));
+
+    let after: Vec<Range> = overlapping.all_regions().iter().map(|r| r.range).collect();
+    assert_eq!(after, vec![Range::new(0, 3), Range::new(4, 6)]);
+    let covered_after: usize = after.iter().map(Range::magnitude).sum();
+    assert_eq!(covered_after, 5, "coverage is lost, as the precondition warns");
 }
 
 #[test]

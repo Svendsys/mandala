@@ -124,34 +124,45 @@ impl GlyphLine {
     }
 
     /// Composition workhorse behind the three `*Assign` impls: paint
-    /// `rhs`'s runs onto `self`, component slot by component slot,
-    /// with `operation` deciding how the two colors combine.
+    /// every run of `rhs` onto `self` at **the grapheme offset that
+    /// run occupies inside `rhs`**, with `operation` deciding how the
+    /// two colors combine.
+    ///
+    /// That offset — the rhs's own column, not the lhs's run ordinal
+    /// — is the whole contract. `self` and `rhs` never have to agree
+    /// on where their run boundaries fall, and after the first paint
+    /// they generally do not: `overriding_insert` splits and merges
+    /// `self`'s runs as it goes. Indexing `self` by an `rhs` ordinal
+    /// therefore drifts a little further with each run painted, which
+    /// scrambled the order of any surplus runs and mislaid them by
+    /// however much the partitions had diverged.
     ///
     /// When `rhs.ignore_initial_space` is set, `rhs`'s leading
     /// whitespace is transparent rather than opaque: the all-space
     /// runs in front are skipped entirely, and the first run carrying
-    /// content is painted at *its own* grapheme offset inside `rhs`
-    /// — its indent counted into the offset, excluded from the
-    /// inserted text — so the rhs shows through onto the lhs instead
-    /// of blanking it.
+    /// content is painted at its own offset with its indent counted
+    /// in but not written, so the rhs shows through onto the lhs
+    /// instead of blanking it. Runs after that one paint at their own
+    /// offsets in the same way.
     ///
     /// Every offset here is a grapheme-cluster count:
     /// [`GlyphComponent::index_of_first_non_space_grapheme`],
-    /// [`Self::index_of_component`], and
+    /// [`Self::index_of_component`], [`GlyphComponent::length`], and
     /// [`split_off_graphemes`] all speak that one unit. The path used
     /// to mix three — a `char` ordinal, fed to a byte-indexed
     /// `String::split_off` (a panic on any multi-byte leading space
     /// such as U+3000), then reused as a cluster offset (CONVENTIONS
     /// §B3).
     ///
-    /// `self` and `rhs` need not agree on how their text is cut into
-    /// runs, so slot `i` may be absent on either side; every access
-    /// here is guarded. Neither a longer rhs nor a shorter lhs
-    /// panics.
+    /// Nothing here can panic on a shape mismatch: every `self`
+    /// access is guarded, and painting past the end of `self` is
+    /// `overriding_insert`'s whitespace-padding case rather than an
+    /// out-of-bounds insert.
     ///
     /// Costs: O(rhs runs), each doing one `overriding_insert` — an
-    /// O(line length) grapheme walk plus a splice. Clones the text of
-    /// each painted run once.
+    /// O(line length) grapheme walk plus a splice — over a running
+    /// offset that costs one grapheme walk per run. Clones the text
+    /// of each painted run once.
     pub(crate) fn perform_op(&mut self, rhs: &Self, operation: GlyphLineOp) {
         let mut begin_comp: usize = 0;
         if rhs.ignore_initial_space {
@@ -186,20 +197,19 @@ impl GlyphLine {
                 break;
             }
         }
-        for i in begin_comp..rhs.line.len() {
-            if self.line.get(i).is_some() {
-                let index_of_comp = self.index_of_component(i);
-                // `overriding_insert` clones the component itself, so
-                // cloning here too was a second copy of the run (§B7).
-                self.overriding_insert(index_of_comp, &rhs.line[i]);
-            } else {
-                // Surplus rhs runs append. `insert(i, …)` panicked
-                // whenever the head path left `self` more than one
-                // slot short of `i`; appending is the same rule
-                // `GlyphMatrix::add_assign` already applies to
-                // surplus rows.
-                self.line.push(rhs.line[i].clone());
-            }
+        // Where run `begin_comp` starts inside `rhs`. Skipped leading
+        // whitespace still occupies columns, so it counts toward the
+        // offset even though it painted nothing.
+        let mut rhs_offset: usize = rhs.line.iter().take(begin_comp).map(GlyphComponent::length).sum();
+        for run in rhs.line.iter().skip(begin_comp) {
+            // `overriding_insert` clones the component itself, so
+            // cloning here too was a second copy of the run (§B7). It
+            // also pads with whitespace when `rhs_offset` is past the
+            // end of `self`, which is why a shorter lhs needs no
+            // special case — and cannot panic the way the old
+            // `Vec::insert(i, …)` did.
+            self.overriding_insert(rhs_offset, run);
+            rhs_offset += run.length();
         }
     }
 
@@ -273,10 +283,22 @@ impl GlyphLine {
     ) -> bool {
         let comp_len = comp.length();
         if e_idx_head == begin {
-            // This whole comp can be spared
+            // This whole comp can be spared: the insert starts exactly
+            // on the boundary after it, so it goes into the next slot.
             *idx_comp_drain_begin = comp_index + 2; // next will be used
             *idx_insert = comp_index + 1; // insert into next
-            *should_overwrite = false;
+                                          // Whether that next slot is *consumed* by the insert is not
+                                          // knowable from here — it depends on the item's length
+                                          // against a component this call has not seen. Defer to the
+                                          // drain window: the caller only honors this flag when
+                                          // `idx_comp_drain_end > idx_insert`, which is precisely
+                                          // "the run in the insertion slot was fully overridden".
+                                          // Hard-coding `false` here made the result depend on how
+                                          // the line happened to be cut into runs — the same insert
+                                          // over the same text overwrote a character when the line
+                                          // was one run and grew the line by one when the boundary
+                                          // fell at the insertion point.
+            *should_overwrite = true;
             return true;
         } else if e_begin_comp == begin && (end - begin) >= comp_len {
             // This whole comp will be replaced, so we can hijack
@@ -318,7 +340,18 @@ impl GlyphLine {
             // This whole comp will be overridden
             *idx_comp_drain_end = comp_index + 1;
             return true;
-        } else if e_begin_comp == end {
+        } else if e_begin_comp >= end {
+            // This comp starts at or after the end of the insert, so
+            // none of it is overridden and none of it is trimmed —
+            // the drain stops before it.
+            //
+            // The `>` half of this used to fall through to the
+            // `discard_front` branch below and underflow
+            // `end - e_begin_comp`. It is reachable whenever the
+            // insert is shorter than the run it starts on and another
+            // run follows — `overriding_insert(0, one_cluster)` on any
+            // multi-run line, which `GlyphModelCommand::RudeInsert`
+            // hands straight to a `.mindmap.json` author.
             *idx_comp_drain_end = comp_index;
             return true;
         } else if e_idx_head > end {

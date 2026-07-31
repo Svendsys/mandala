@@ -219,7 +219,22 @@ impl ColorFontRegions {
     /// this primitive is reachable from the same interactive
     /// mutation pipeline (CODE_CONVENTIONS.md §9). A zero-magnitude
     /// `range` is a no-op: nothing was inserted, so there is nothing
-    /// to split around.
+    /// to split around. A shift that would carry any region's `end`
+    /// past `usize::MAX` is likewise dropped whole, leaving the set
+    /// untouched rather than half-shifted.
+    ///
+    /// **Precondition: the region set is non-degenerate and
+    /// non-overlapping.** Each region must satisfy `start < end`, and
+    /// no two may cover the same cluster. The primitive is a
+    /// per-region rewrite over a `BTreeSet` keyed on the range alone,
+    /// so it cannot repair violations and will propagate them: an
+    /// empty `[n, n)` region shifts to another empty region, and two
+    /// regions that the rewrite maps onto the *same* range collapse
+    /// into one set slot, silently dropping the loser's color and
+    /// font. Its sibling [`Self::shift_regions_after`] carries the
+    /// same precondition for the same reason. Callers building a
+    /// region set from text runs satisfy it by construction; callers
+    /// merging sets from elsewhere must enforce it themselves.
     ///
     /// Contrast with [`Self::insert_regions_at`], where the straddling
     /// region *absorbs* the insertion instead of splitting around it,
@@ -245,13 +260,27 @@ impl ColorFontRegions {
         // pathological inputs with several straddlers simply grow.
         let mut updated: Vec<ColorFontRegion> = Vec::with_capacity(self.regions.len() + 1);
         for region in self.regions.iter() {
+            // Both the shift and the split move `end` right by
+            // `magnitude`, and `start <= end`, so this one check covers
+            // every arm. Bailing here is safe precisely because
+            // `self.regions` is not touched until the loop completes —
+            // the set is left exactly as it was rather than half
+            // shifted (§5: no half-state).
+            let Some(shifted_end) = region.range.end.checked_add(magnitude) else {
+                warn!(
+                    "split_and_separate dropped: shifting region {}..{} right by {} overflows usize",
+                    region.range.start, region.range.end, magnitude
+                );
+                return;
+            };
             let mut head = *region;
             if head.range.start >= range.start {
-                head.range.push_right(magnitude);
+                head.range.start += magnitude;
+                head.range.end = shifted_end;
             } else if head.range.end > range.start {
                 let mut tail = *region;
                 tail.range.start = range.end;
-                tail.range.end += magnitude;
+                tail.range.end = shifted_end;
                 head.range.end = range.start;
                 updated.push(tail);
             }

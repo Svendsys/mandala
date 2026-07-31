@@ -140,6 +140,15 @@ fn criterion_benchmark(c: &mut Criterion) {
         "line_ignore_initial_space_all_whitespace_rhs_paints_nothing",
         |b| b.iter(do_line_ignore_initial_space_all_whitespace_rhs_paints_nothing),
     );
+    c.bench_function("line_surplus_runs_paint_at_their_own_rhs_offsets", |b| {
+        b.iter(do_line_surplus_runs_paint_at_their_own_rhs_offsets)
+    });
+    c.bench_function("line_surplus_runs_overwrite_a_longer_lhs_in_place", |b| {
+        b.iter(do_line_surplus_runs_overwrite_a_longer_lhs_in_place)
+    });
+    c.bench_function("overriding_insert_is_partition_independent", |b| {
+        b.iter(do_overriding_insert_is_partition_independent)
+    });
     c.bench_function("component_of_index", |b| b.iter(|| component_of_index()));
     c.bench_function("index_of_component", |b| b.iter(|| index_of_component()));
     c.bench_function("expanding_insert_1", |b| b.iter(|| expanding_insert_1()));
@@ -268,6 +277,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("area_rotate_command_applies", |b| {
         b.iter(do_area_rotate_command_applies)
+    });
+    c.bench_function("area_rotate_command_json_wire_shape", |b| {
+        b.iter(do_area_rotate_command_json_wire_shape)
     });
     // zoom_visibility //
     c.bench_function("zoom_visibility_unbounded_contains_full_camera_range", |b| {
@@ -568,6 +580,12 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("split_and_separate_preserves_payload_on_both_halves", |b| {
         b.iter(do_split_and_separate_preserves_payload_on_both_halves)
+    });
+    c.bench_function("split_and_separate_overflow_drops_the_whole_call", |b| {
+        b.iter(do_split_and_separate_overflow_drops_the_whole_call)
+    });
+    c.bench_function("split_and_separate_precondition_violations_propagate", |b| {
+        b.iter(do_split_and_separate_precondition_violations_propagate)
     });
     c.bench_function("submit_region_drops_inverted_range", |b| {
         b.iter(|| do_submit_region_drops_inverted_range())

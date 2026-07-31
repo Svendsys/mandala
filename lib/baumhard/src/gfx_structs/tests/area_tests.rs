@@ -23,6 +23,7 @@ use crate::core::primitives::{Applicable, ApplyOperation, ColorFontRegions, Rang
 use crate::gfx_structs::area::{DeltaGlyphArea, GlyphArea, GlyphAreaCommand, GlyphAreaField, OutlineStyle};
 use crate::gfx_structs::element::GfxElement;
 use crate::gfx_structs::model::GlyphModel;
+use crate::gfx_structs::mutator::Mutation;
 use crate::gfx_structs::shape::NodeShape;
 use crate::util::geometry::{almost_equal_vec2, clockwise_rotation_around_pivot};
 use crate::util::ordered_vec2::OrderedVec2;
@@ -456,4 +457,57 @@ pub fn do_area_rotate_command_applies() {
     .apply_to(&mut area);
 
     assert!(almost_equal_vec2(area.position(), Vec2::new(0.0, -10.0)));
+}
+
+/// The exact JSON an author has to type for the new command, pinned
+/// against the wire.
+///
+/// `Rotate` is the first `GlyphAreaCommand` variant carrying a
+/// `Vec2`, and glam serializes `Vec2` as a **2-element sequence**
+/// (`serialize_tuple_struct`; its visitor implements only
+/// `visit_seq`), *not* as an `{ "x": …, "y": … }` map. Nothing else
+/// in the suite touches this command's serialization, so a doc
+/// example in the wrong shape would sail past every other test and
+/// then fail at load time — and `MindMap.custom_mutations` is a
+/// required-shape field, so one bad example takes the whole document
+/// down with it. This test is the guard: it asserts the emitted
+/// string, parses the shape `format/mutations.md` publishes, and
+/// asserts the map shape is rejected so the doc cannot quietly drift
+/// back.
+#[test]
+pub fn test_area_rotate_command_json_wire_shape() {
+    do_area_rotate_command_json_wire_shape();
+}
+
+pub fn do_area_rotate_command_json_wire_shape() {
+    let command = Mutation::AreaCommand(Box::new(GlyphAreaCommand::Rotate {
+        pivot: Vec2::new(1.0, 2.0),
+        degrees: 90.0,
+    }));
+
+    let emitted = serde_json::to_string(&command).expect("Rotate must serialize");
+    assert_eq!(
+        emitted,
+        r#"{"AreaCommand":{"Rotate":{"pivot":[1.0,2.0],"degrees":90.0}}}"#
+    );
+
+    // Byte-for-byte the example published in `format/mutations.md`.
+    let documented = r#"{"AreaCommand": { "Rotate": { "pivot": [0.0, 0.0], "degrees": 90.0 } }}"#;
+    let parsed: Mutation = serde_json::from_str(documented).expect("the documented example must parse");
+    match parsed {
+        Mutation::AreaCommand(command) => match *command {
+            GlyphAreaCommand::Rotate { pivot, degrees } => {
+                assert_eq!(pivot, Vec2::ZERO);
+                assert_eq!(degrees, 90.0);
+            }
+            other => panic!("expected Rotate, got {:?}", other),
+        },
+        other => panic!("expected AreaCommand, got {:?}", other),
+    }
+
+    // The `{ "x": …, "y": … }` shape is *not* accepted by glam's
+    // `Vec2` deserializer. Pinned so a future doc edit that reaches
+    // for the intuitive-looking map shape fails here first.
+    let map_shaped = r#"{"AreaCommand": { "Rotate": { "pivot": { "x": 0.0, "y": 0.0 }, "degrees": 90.0 } }}"#;
+    assert!(serde_json::from_str::<Mutation>(map_shaped).is_err());
 }
