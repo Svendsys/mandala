@@ -41,6 +41,7 @@ pub const MAX_SECTIONS_PER_NODE: usize = 1024;
 /// Plain data; no runtime cost beyond the `String` allocations serde
 /// performs on deserialize.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MindNode {
     /// Dewey-decimal node id (e.g. `"0"`, `"0.1"`, `"0.1.3"`); the
     /// parent prefix establishes the tree structure redundantly with
@@ -244,6 +245,7 @@ impl MindNode {
 /// (the camera transforms to screen space at render time). Plain
 /// data; no runtime cost.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Position {
     /// Canvas-space x coordinate (or node-local offset for sections).
     #[serde(default)]
@@ -258,6 +260,7 @@ pub struct Position {
 /// scene-builder code guards against zero-size nodes on its own.
 /// Plain data; no runtime cost.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Size {
     /// Width in canvas units.
     pub width: f64,
@@ -289,6 +292,7 @@ pub struct Size {
 /// Plain data; no runtime cost beyond the `String` allocations
 /// serde performs on deserialize.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MindSection {
     /// Primary text content. Styled-slice overrides live in
     /// [`Self::text_runs`]; the empty-runs / partial-runs trade-off
@@ -419,6 +423,7 @@ impl MindSection {
 ///
 /// Plain data; no runtime cost beyond the string allocations.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TextRun {
     /// Grapheme-cluster index where this run begins (inclusive).
     pub start: usize,
@@ -447,6 +452,7 @@ pub struct TextRun {
 /// `util::color::resolve_var` against the canvas theme map before
 /// rasterizing. Plain data; no runtime cost.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct NodeStyle {
     /// Fill color (`#RRGGBB` or `var(--name)`).
     pub background_color: String,
@@ -478,6 +484,7 @@ pub struct NodeStyle {
 /// Configures how a node's border is rendered using font glyphs.
 /// All fields are optional with sensible defaults so the format stays forgiving.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GlyphBorderConfig {
     /// Which glyph preset to use: "light", "heavy", "double", "rounded", or "custom"
     #[serde(default = "default_border_preset")]
@@ -537,6 +544,7 @@ fn default_border_padding() -> f32 {
 /// Custom glyphs for each part of the border.
 /// Each field is a string (single char or multi-char glyph).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CustomBorderGlyphs {
     /// Glyph used for the horizontal top edge.
     #[serde(default = "default_h_glyph")]
@@ -592,6 +600,7 @@ fn default_br_glyph() -> String {
 /// custom mutations (see `format/mutations.md`) are the active
 /// layout mechanism. Plain data; no runtime cost.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct NodeLayout {
     /// Layout-algorithm name from the miMind format — round-tripped
     /// but not currently honored by the renderer.
@@ -612,6 +621,7 @@ pub struct NodeLayout {
 /// miMind-compat flags that the renderer interprets when resolving
 /// effective colors. Plain data; no runtime cost.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ColorSchema {
     /// Named palette to bind this node's colors to — keys into
     /// [`super::MindMap::palettes`].
@@ -633,6 +643,7 @@ pub struct ColorSchema {
 /// given depth level. Referenced from [`ColorSchema::level`] via
 /// [`super::Palette::groups`]. Plain data; no runtime cost.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ColorGroup {
     /// Background-fill color for a node at this level.
     pub background: String,

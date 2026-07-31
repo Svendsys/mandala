@@ -1,11 +1,30 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! `.mindmap.json` loader + saver. Accepts both the current edge-based
-//! portal shape and pre-refactor files that still ship a top-level
-//! `portals[]` array, rejecting the latter with a concrete migration
-//! pointer instead of silently dropping data.
+//! `.mindmap.json` loader + saver.
+//!
+//! **The loader never drops what it does not understand.** A key the
+//! model has no field for is a load error, not a shrug: the editor
+//! resaves the map it loaded, so a key ignored at load is a key
+//! deleted at save, and the file the author hand-wrote was the only
+//! copy. Every type reachable from a load therefore carries
+//! `#[serde(deny_unknown_fields)]` — enforced against the model that
+//! exists, not a list of it, by
+//! `tests::test_every_loadable_type_rejects_unknown_keys`.
+//!
+//! That posture is what the pre-refactor rejections were always an
+//! instance of: a top-level `portals[]` array or per-node `text` /
+//! `text_runs` is a shape serde would otherwise ignore, and those get
+//! a concrete `maptool convert ...` pointer instead of the generic
+//! message.
+//!
+//! Everything expensive lives on the failure path. A successful load
+//! parses the document exactly once; the raw JSON is re-examined only
+//! to explain a parse that already failed.
 
-use crate::mindmap::model::{validate, MindMap};
+use crate::mindmap::custom_mutation::CustomMutation;
+use crate::mindmap::model::{validate, Canvas, MindEdge, MindMap, MindNode, Palette};
+use serde::Deserialize;
+use serde_json::Value;
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
@@ -24,130 +43,225 @@ pub fn load_from_file(path: &Path) -> Result<MindMap, String> {
     load_from_str(&content)
 }
 
-/// Parse a `MindMap` from a JSON string. Rejects pre-refactor files
-/// that still carry a top-level `portals[]` array, or per-node
-/// `text` / `text_runs` instead of `sections[]`, with concrete
-/// migration pointers (`maptool convert ...`) so a stale map
-/// doesn't silently lose its content — serde would otherwise
-/// ignore the unknown fields.
+/// Parse a `MindMap` from a JSON string.
 ///
-/// Cost: one typed parse on the happy path. The legacy-shape
-/// detection (`Value` walk) runs only when the typed parse
-/// fails OR when the typed result has zero-section nodes
-/// (`sections: []` is silently legal for serde but a current-
-/// invariant violation we surface as a migration hint) OR when
-/// the cheap substring screen flags a dropped field. The
-/// substring screen requires the marker to be followed by `":`
-/// so node text containing the literal word "portals" or
-/// "text_runs" doesn't false-positive — JSON keys always have
-/// `":` after them.
+/// A key the model does not know is rejected rather than dropped —
+/// see the module header for why that is the only policy that keeps
+/// a hand-authored file intact across a load / save cycle. Legacy
+/// shapes (a top-level `portals[]`, per-node `text` / `text_runs`)
+/// get a concrete `maptool convert ...` pointer instead of serde's
+/// generic complaint.
+///
+/// Cost on the happy path: **exactly one parse of `json`**, and
+/// nothing that walks the text again. The raw string is not even in
+/// scope below the parse — every remaining invariant is expressed
+/// against the typed map, which is what keeps that property true as
+/// the invariant list grows. A failed parse pays a second
+/// `serde_json::Value` parse to say *where* the failure is; that is a
+/// cost the load is not going to complete anyway.
 pub fn load_from_str(json: &str) -> Result<MindMap, String> {
-    match serde_json::from_str::<MindMap>(json) {
-        Ok(map) => {
-            // Post-typed-parse invariants serde can't enforce:
-            // - empty `sections[]` (every node needs one section);
-            // - silently-dropped legacy `portals` / `text` /
-            //   `text_runs` fields. We only inspect the raw JSON
-            //   here when the typed map carries the symptom
-            //   (zero-section node, or the substring marker
-            //   indicates a dropped field).
-            if map.nodes.values().any(|n| n.sections.is_empty()) || has_legacy_marker(json) {
-                if let Some(err) = detect_legacy_shape(json) {
-                    return Err(err);
-                }
-            }
-            if let Some(err) = detect_parent_cycle(&map) {
-                return Err(err);
-            }
-            if let Some(err) = detect_section_count_cap(&map) {
-                return Err(err);
-            }
-            warn_on_duplicate_edges(&map);
-            Ok(map)
-        }
-        Err(e) => {
-            // Typed parse failed. Try the Value-based legacy
-            // detector — if it fingers a known legacy shape,
-            // surface the migration pointer; otherwise fall
-            // through to the raw serde error so the caller sees
-            // the actual parse failure (line / column included).
-            if let Some(err) = detect_legacy_shape(json) {
-                return Err(err);
-            }
-            Err(format!("Failed to parse mindmap JSON: {}", e))
-        }
+    let map = match serde_json::from_str::<MindMap>(json) {
+        Ok(map) => map,
+        Err(e) => return Err(diagnose_rejected_json(json, &e)),
+    };
+    // `json` deliberately ends here. `check_invariants` is not given
+    // it, so no future invariant can quietly reintroduce a second
+    // pass over the document text.
+    check_invariants(map)
+}
+
+/// Post-parse invariants that live in the typed model rather than in
+/// the JSON: they are checked against `MindMap` values, never against
+/// the source text.
+///
+/// Cost: O(nodes + edges) — one sorted pass for the zero-section and
+/// section-cap checks, one memoized parent walk, one edge-tuple scan.
+fn check_invariants(map: MindMap) -> Result<MindMap, String> {
+    if let Some(err) = detect_zero_section_node(&map) {
+        return Err(err);
     }
+    if let Some(err) = detect_parent_cycle(&map) {
+        return Err(err);
+    }
+    if let Some(err) = detect_section_count_cap(&map) {
+        return Err(err);
+    }
+    warn_on_duplicate_edges(&map);
+    Ok(map)
 }
 
-/// Cheap pre-screen for the substring patterns that legacy JSON
-/// keys produce. Requires the trailing `":` so user text
-/// containing the literal word `"portals"` (e.g. a node titled
-/// `My "portals"`) doesn't trigger the deeper [`detect_legacy_shape`]
-/// pass — JSON keys always emit as `"key":`, while string
-/// content emits as `\"key\"` with escape backslashes that
-/// break the substring match.
-fn has_legacy_marker(json: &str) -> bool {
-    json.contains("\"portals\":") || json.contains("\"text_runs\":")
+/// Reject a map where any node ships zero sections. `sections` is
+/// `#[serde(default)]` so serde accepts the omission — it has to, or
+/// a node without the key would fail with a confusing "missing
+/// field" — which makes this the loader's invariant to hold. Nodes
+/// are visited in sorted-id order so the reported node is
+/// deterministic across `HashMap` iteration order.
+fn detect_zero_section_node(map: &MindMap) -> Option<String> {
+    let mut ids: Vec<&String> = map.nodes.keys().collect();
+    ids.sort();
+    let id = ids
+        .into_iter()
+        .find(|id| map.nodes[*id].sections.is_empty())?;
+    Some(format!(
+        "node {:?} ships zero sections — every renderable node \
+         needs at least one. Run `maptool convert --sections <file>` \
+         to migrate, or add an explicit `sections` array.",
+        id
+    ))
 }
 
-/// Inspect `json` for legacy field shapes that the typed parse
-/// would silently drop or misread, returning a migration-pointing
-/// error message on first hit. Walks `serde_json::Value` once;
-/// only called when the cheap substring screen suggests a legacy
-/// marker is present.
-fn detect_legacy_shape(json: &str) -> Option<String> {
-    let raw: serde_json::Value = serde_json::from_str(json).ok()?;
-    // Pre-refactor maps stored portals in a separate `portals[]` array.
-    // Post-refactor portals are edges with `display_mode = "portal"`.
-    if let Some(arr) = raw.get("portals").and_then(|p| p.as_array()) {
-        if !arr.is_empty() {
-            return Some(
-                "legacy `portals` field present; run `maptool convert --portals <file>` \
-                 to migrate to portal-mode edges"
-                    .to_string(),
-            );
-        }
+/// Turn a failed typed parse into a message that names *what* the
+/// loader choked on and *where*.
+///
+/// serde reports the first thing it could not accept, as a byte
+/// offset into a file that can be thousands of lines long. That is
+/// enough to fix a typo and not much else. So the failure path parses
+/// the document once more as a `serde_json::Value` and asks three
+/// questions in order:
+///
+/// 1. is this a pre-refactor shape we have a migration verb for?
+/// 2. which *part* of the document fails on its own — the canvas, one
+///    named palette, one node, one edge, one custom mutation? Each
+///    part is re-deserialized against its own typed shape, so the
+///    answer carries the node id or the edge index that the raw serde
+///    error does not.
+/// 3. neither — the failure is at the top level, where serde's own
+///    message already names the key.
+///
+/// Only reached when the load has already failed, so the extra parse
+/// costs nothing anybody gets to keep.
+fn diagnose_rejected_json(json: &str, error: &serde_json::Error) -> String {
+    let Ok(raw) = serde_json::from_str::<Value>(json) else {
+        // Not valid JSON at all. serde's message carries the line and
+        // column, which is the entire diagnosis for a syntax error.
+        return format!("Failed to parse mindmap JSON: {error}");
+    };
+    if let Some(message) = detect_legacy_shape(&raw) {
+        return message;
+    }
+    if let Some(message) = locate_typed_failure(&raw) {
+        return message;
+    }
+    format!("Failed to parse mindmap JSON: {}", explain(error.to_string()))
+}
+
+/// Legacy field shapes that predate the current format, each with the
+/// `maptool convert` verb that migrates it. These win over the
+/// generic per-part diagnosis because "unknown field `text`" is a
+/// true but useless thing to tell someone holding a pre-section map.
+fn detect_legacy_shape(raw: &Value) -> Option<String> {
+    // Pre-refactor maps stored portals in a separate `portals[]`
+    // array. Post-refactor portals are edges with
+    // `display_mode = "portal"`. The key's presence is the signal —
+    // an empty array still has to come out of the file, and
+    // `convert --portals` is what removes it.
+    if raw.get("portals").is_some() {
+        return Some(
+            "legacy `portals` field present; run `maptool convert --portals <file>` \
+             to migrate to portal-mode edges"
+                .to_string(),
+        );
     }
     // Pre-section-refactor maps put `text` and `text_runs` directly
     // on each node. Post-refactor those live on
     // `MindNode.sections[].{text, text_runs}`.
-    if let Some(nodes) = raw.get("nodes").and_then(|n| n.as_object()) {
-        if let Some((id, _)) = nodes
-            .iter()
-            .find(|(_, v)| v.get("text").is_some() || v.get("text_runs").is_some())
-        {
-            return Some(format!(
-                "legacy `text` / `text_runs` on node {:?}; run \
-                 `maptool convert --sections <file>` to migrate node \
-                 text into `sections[]`",
-                id
-            ));
+    let nodes = raw.get("nodes").and_then(|n| n.as_object())?;
+    if let Some((id, _)) = nodes
+        .iter()
+        .find(|(_, v)| v.get("text").is_some() || v.get("text_runs").is_some())
+    {
+        return Some(format!(
+            "legacy `text` / `text_runs` on node {:?}; run \
+             `maptool convert --sections <file>` to migrate node \
+             text into `sections[]`",
+            id
+        ));
+    }
+    if let Some((id, _)) = nodes
+        .iter()
+        .find(|(_, v)| v.get("sections").map(|s| !s.is_array()).unwrap_or(false))
+    {
+        return Some(format!(
+            "node {:?} has `sections` but it is not an array — \
+             see format/sections.md",
+            id
+        ));
+    }
+    None
+}
+
+/// Re-deserialize each addressable part of the document against its
+/// own typed shape and report the first that fails, prefixed with the
+/// part's location.
+///
+/// Borrows the `Value` rather than cloning it: `&Value` is itself a
+/// `Deserializer`, so a part is checked in place.
+fn locate_typed_failure(raw: &Value) -> Option<String> {
+    if let Some(value) = raw.get("canvas") {
+        if let Some(message) = part_failure::<Canvas>("canvas", value) {
+            return Some(message);
         }
-        if let Some((id, _)) = nodes
-            .iter()
-            .find(|(_, v)| v.get("sections").map(|s| !s.is_array()).unwrap_or(false))
-        {
-            return Some(format!(
-                "node {:?} has `sections` but it is not an array — \
-                 see format/sections.md",
-                id
-            ));
+    }
+    if let Some(palettes) = raw.get("palettes").and_then(Value::as_object) {
+        for (name, value) in palettes {
+            if let Some(message) = part_failure::<Palette>(&format!("palette {name:?}"), value) {
+                return Some(message);
+            }
         }
-        if let Some((id, _)) = nodes.iter().find(|(_, v)| {
-            v.get("sections")
-                .and_then(|s| s.as_array())
-                .map(|arr| arr.is_empty())
-                .unwrap_or(true)
-        }) {
-            return Some(format!(
-                "node {:?} ships zero sections — every renderable node \
-                 needs at least one. Run `maptool convert --sections <file>` \
-                 to migrate, or add an explicit `sections` array.",
-                id
-            ));
+    }
+    if let Some(nodes) = raw.get("nodes").and_then(Value::as_object) {
+        for (id, value) in nodes {
+            if let Some(message) = part_failure::<MindNode>(&format!("node {id:?}"), value) {
+                return Some(message);
+            }
+        }
+    }
+    if let Some(edges) = raw.get("edges").and_then(Value::as_array) {
+        for (i, value) in edges.iter().enumerate() {
+            if let Some(message) = part_failure::<MindEdge>(&format!("edge[{i}]"), value) {
+                return Some(message);
+            }
+        }
+    }
+    if let Some(mutations) = raw.get("custom_mutations").and_then(Value::as_array) {
+        for (i, value) in mutations.iter().enumerate() {
+            let label = format!("custom_mutations[{i}]");
+            if let Some(message) = part_failure::<CustomMutation>(&label, value) {
+                return Some(message);
+            }
         }
     }
     None
+}
+
+/// `Some(message)` when `value` does not deserialize as `T`, naming
+/// `label` so the reader knows which part of the map it is.
+fn part_failure<'de, T: Deserialize<'de>>(label: &str, value: &'de Value) -> Option<String> {
+    let error = T::deserialize(value).err()?;
+    Some(format!("{label}: {}", explain(error.to_string())))
+}
+
+/// Spell out the unknown-key policy on the one message where a reader
+/// would otherwise assume the friendlier behavior.
+///
+/// serde words a `deny_unknown_fields` rejection as ``unknown field
+/// `x`, expected one of ...``, which reads like pedantry until you
+/// know what the alternative was: the key silently gone from the file
+/// after the next save. Matching on serde's wording is a message
+/// nicety, not a control-flow decision — a reworded serde would cost
+/// the extra sentence and nothing else, and
+/// `test_unknown_node_key_is_rejected_with_the_policy` fails loudly
+/// if that day comes.
+fn explain(message: String) -> String {
+    if message.starts_with("unknown field") {
+        format!(
+            "{message} — unknown keys are rejected, not dropped: a load that ignored \
+             this key would erase it from the file on the next save. \
+             See format/schema.md."
+        )
+    } else {
+        message
+    }
 }
 
 /// Reject a `MindMap` whose `parent_id` links form a cycle. A cycle
@@ -309,8 +423,9 @@ pub fn save_to_file(path: &Path, map: &MindMap) -> Result<(), String> {
 /// would from any other writer.
 ///
 /// The mode is applied **at creation, before any content lands** —
-/// see [`write_staging_file`]. Nothing ever exists on disk holding
-/// the caller's bytes at a wider mode than the target had.
+/// see `write_staging_file` (private; `cargo doc
+/// --document-private-items` renders it). Nothing ever exists on disk
+/// holding the caller's bytes at a wider mode than the target had.
 ///
 /// Cost: one `stat` of the target, one create + one write of
 /// `contents`, and one rename. Reading the target's mode is
@@ -433,6 +548,48 @@ mod tests {
         assert_eq!(map.nodes.len(), 1);
         assert_eq!(map.nodes["0"].sections[0].text, "Hello");
         assert!(map.edges.is_empty());
+    }
+
+    /// **The unknown-key policy, enforced against the model that
+    /// exists rather than a list of the model as it once was.**
+    ///
+    /// A `.mindmap.json` key the model does not know must be a load
+    /// error. Without `deny_unknown_fields` serde drops it in
+    /// silence, the app resaves what it loaded, and a hand-authored
+    /// field is gone — the file was the only copy.
+    ///
+    /// The set of types this applies to is not written down here.
+    /// [`crate::util::serde_coverage`] parses baumhard's own sources
+    /// and walks outward from `MindMap` through every deserializable
+    /// field, so a new field of a new type extends the covered set
+    /// on its own and this test fails until that type opts in. Two
+    /// shapes are exempt, and only two: a container that delegates
+    /// its on-disk shape to a proxy via `#[serde(from = "...")]`
+    /// (the requirement follows the proxy, which the walk also
+    /// reaches), and an `#[serde(untagged)]` enum, where denying
+    /// unknown fields changes which variant matches rather than
+    /// merely tightening a check.
+    #[test]
+    fn test_every_loadable_type_rejects_unknown_keys() {
+        use crate::util::serde_coverage::{crate_src_root, TypeGraph};
+
+        let graph = TypeGraph::build(&crate_src_root());
+        let mut missing: Vec<String> = Vec::new();
+        for info in graph.reachable_from("MindMap") {
+            let exempt = info.deserialize_proxy.is_some() || info.untagged;
+            if !info.derives_deserialize || !info.has_named_fields || exempt {
+                continue;
+            }
+            if !info.denies_unknown_fields {
+                missing.push(format!("{} — {}", info.name, info.file.display()));
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "these types are reachable from a `.mindmap.json` load and would \
+             silently drop an unknown key (add `#[serde(deny_unknown_fields)]`):\n  {}",
+            missing.join("\n  ")
+        );
     }
 
     #[test]
@@ -1245,9 +1402,16 @@ mod tests {
         assert!(!map.is_hidden_by_fold(children[0]));
     }
 
-    /// Minimal single-node-per-id JSON fragment for cycle tests —
-    /// only `id` and `parent_id` vary between call sites.
+    /// Minimal single-node-per-id JSON fragment — only `id` and
+    /// `parent_id` vary between call sites.
     fn node_json(id: &str, parent_id: &str) -> String {
+        node_json_with(id, parent_id, "")
+    }
+
+    /// [`node_json`] plus `extra`, spliced in as trailing object
+    /// members (`", \"key\": value"`). Lets a rejection test add the
+    /// one key under test without restating a whole node around it.
+    fn node_json_with(id: &str, parent_id: &str, extra: &str) -> String {
         format!(
             r##""{id}": {{
                 "id": "{id}", "parent_id": {parent_id},
@@ -1259,24 +1423,317 @@ mod tests {
                           "corner_radius_percent":0,"frame_thickness":0,
                           "show_frame":false,"show_shadow":false}},
                 "layout": {{"type":"map","direction":"auto","spacing":0}},
-                "folded": false, "notes": "",
-                "color_schema": null
+                "folded": false, "notes": ""{extra}
             }}"##
         )
     }
 
     fn map_json_with_nodes(nodes_json: &str) -> String {
+        map_json(nodes_json, "")
+    }
+
+    /// A whole map around the given `nodes` and `edges` object /
+    /// array bodies.
+    ///
+    /// Every key here is one the author had to write: nothing
+    /// optional is spelled out at its default value. That is what
+    /// lets a round-trip test compare the key set before and after a
+    /// save without having to except the keys `skip_serializing_if`
+    /// legitimately omits.
+    fn map_json(nodes_json: &str, edges_json: &str) -> String {
         format!(
             r##"{{
                 "version": "1.0",
-                "name": "cycle-test",
-                "canvas": {{"background_color": "#000", "default_border": null,
-                           "default_connection": null, "theme_variables": {{}},
-                           "theme_variants": {{}}}},
+                "name": "loader-edges",
+                "canvas": {{"background_color": "#000"}},
                 "nodes": {{{nodes_json}}},
-                "edges": []
+                "edges": [{edges_json}]
             }}"##
         )
+    }
+
+    /// A single line-mode edge, with `extra` spliced in the same way
+    /// [`node_json_with`] takes it.
+    fn edge_json_with(extra: &str) -> String {
+        format!(
+            r##"{{
+                "from_id": "a", "to_id": "b", "type": "parent_child",
+                "color": "#fff", "width": 1, "line_style": "solid",
+                "visible": true, "label": null,
+                "anchor_from": "auto", "anchor_to": "auto",
+                "control_points": []{extra}
+            }}"##
+        )
+    }
+
+    /// Every `/`-joined key path in a JSON tree. Array indices
+    /// collapse to `[]` so the comparison is about *which keys
+    /// exist*, not how many elements carry them — the question a
+    /// round-trip has to answer is "did any authored key stop being
+    /// written", and an index would answer a different one.
+    fn key_paths(value: &serde_json::Value, prefix: &str, out: &mut std::collections::BTreeSet<String>) {
+        match value {
+            serde_json::Value::Object(members) => {
+                for (key, child) in members {
+                    let path = format!("{prefix}/{key}");
+                    out.insert(path.clone());
+                    key_paths(child, &path, out);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                let path = format!("{prefix}[]");
+                for child in items {
+                    key_paths(child, &path, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn key_path_set(json: &str) -> std::collections::BTreeSet<String> {
+        let value: serde_json::Value = serde_json::from_str(json).expect("valid JSON");
+        let mut out = std::collections::BTreeSet::new();
+        key_paths(&value, "", &mut out);
+        out
+    }
+
+    /// **The policy, spelled out where authors read it.**
+    /// `format/schema.md` publishes one map that must be rejected
+    /// for a mistyped key and one that must load once the spelling
+    /// is fixed. Both are read out of the spec rather than restated
+    /// here, so the pin follows the doc when the doc moves instead
+    /// of agreeing with a copy of its old self.
+    #[test]
+    fn test_documented_unknown_key_rejection_matches_the_spec() {
+        let doc = crate::util::doc_fixtures::format_doc_path("schema.md");
+        let heading = "## Unknown keys are rejected";
+
+        let rejected = crate::util::doc_fixtures::documented_json_block(&doc, heading, 0);
+        let err = load_from_str(&rejected)
+            .expect_err("the spec's mistyped-key example must not load:\n{rejected}");
+        assert!(
+            err.contains("min_zoom_to_rendr"),
+            "the error must name the key the author wrote: {err}"
+        );
+
+        let accepted = crate::util::doc_fixtures::documented_json_block(&doc, heading, 1);
+        let map = load_from_str(&accepted)
+            .unwrap_or_else(|e| panic!("the spec's corrected example must load: {e}\n{accepted}"));
+        assert_eq!(map.nodes["0"].min_zoom_to_render, Some(2.0));
+    }
+
+    /// An unknown key on a node names the node, names the key, and
+    /// says what the loader did about it. The last part is the point:
+    /// "unknown field" reads like pedantry until you know the
+    /// alternative was the key silently gone from the file after the
+    /// next save.
+    #[test]
+    fn test_unknown_node_key_is_rejected_with_the_policy() {
+        let json = map_json_with_nodes(&node_json_with("1.2", "null", r#", "portal_form": {"x": 1}"#));
+        let err = load_from_str(&json).expect_err("an unknown node key must be rejected");
+        assert!(err.contains("node \"1.2\""), "must name the node: {err}");
+        assert!(err.contains("portal_form"), "must name the key: {err}");
+        assert!(
+            err.contains("rejected, not dropped"),
+            "must state the policy, not just the symptom: {err}"
+        );
+        assert!(
+            err.contains("format/schema.md"),
+            "must point at the spec: {err}"
+        );
+        assert!(
+            err.contains("expected one of") && err.contains("`inline_mutations`"),
+            "must list what the loader would have accepted: {err}"
+        );
+    }
+
+    /// The same rejection reaches keys nested inside a node — a typo
+    /// in `style` is as destructive as one at the node level, and
+    /// the message still resolves to the node the author has to open.
+    #[test]
+    fn test_unknown_key_inside_node_style_names_the_node() {
+        let json = map_json_with_nodes(
+            &node_json("0", "null").replace(r#""show_shadow":false"#, r#""show_shadow":false,"shpe":"star""#),
+        );
+        let err = load_from_str(&json).expect_err("an unknown style key must be rejected");
+        assert!(err.contains("node \"0\""), "must name the node: {err}");
+        assert!(err.contains("shpe"), "must name the key: {err}");
+    }
+
+    /// Edges are addressed by index, matching `MindMap::edge_locations`
+    /// and `maptool verify`'s `edge[<i>]` stamp, because an edge has
+    /// no id to name it by.
+    #[test]
+    fn test_unknown_edge_key_names_the_edge_index() {
+        let nodes = format!("{},{}", node_json("a", "null"), node_json("b", "\"a\""));
+        let json = map_json(&nodes, &edge_json_with(r#", "arrowhead": "open""#));
+        let err = load_from_str(&json).expect_err("an unknown edge key must be rejected");
+        assert!(err.contains("edge[0]"), "must name the edge index: {err}");
+        assert!(err.contains("arrowhead"), "must name the key: {err}");
+    }
+
+    /// The canvas is a single named part rather than a collection,
+    /// so it is stamped by name.
+    #[test]
+    fn test_unknown_canvas_key_names_the_canvas() {
+        let json = map_json_with_nodes(&node_json("0", "null")).replace(
+            r##""background_color": "#000""##,
+            r##""background_color": "#000", "grid_snap": 8"##,
+        );
+        let err = load_from_str(&json).expect_err("an unknown canvas key must be rejected");
+        assert!(err.contains("canvas:"), "must name the canvas: {err}");
+        assert!(err.contains("grid_snap"), "must name the key: {err}");
+    }
+
+    /// A key the model does not know at the top level has no
+    /// sub-object to attribute it to, so serde's own message — which
+    /// already names the key and the accepted set — carries the
+    /// report, with the policy sentence appended.
+    #[test]
+    fn test_unknown_top_level_key_is_rejected() {
+        let json = map_json_with_nodes(&node_json("0", "null"))
+            .replace(r#""version": "1.0","#, r#""version": "1.0", "authors": ["me"],"#);
+        let err = load_from_str(&json).expect_err("an unknown top-level key must be rejected");
+        assert!(err.contains("authors"), "must name the key: {err}");
+        assert!(
+            err.contains("rejected, not dropped"),
+            "must state the policy: {err}"
+        );
+    }
+
+    /// **The data-loss scenario, end to end.** Load the canonical
+    /// fixture, save it through the editor's own save path, and
+    /// confirm no key present on the way in is missing on the way
+    /// out. This is the failure the unknown-key policy exists to
+    /// prevent, checked against the file rather than argued about:
+    /// before, a key the model did not know made it through load as
+    /// nothing at all and came back out of `save_to_file` deleted.
+    ///
+    /// Key *paths* rather than bytes, because saving is allowed to
+    /// reorder keys and re-indent — but never to lose one.
+    #[test]
+    fn test_no_authored_key_is_lost_across_load_and_save() {
+        let source = std::fs::read_to_string(test_map_path()).expect("read fixture");
+        let map = load_from_str(&source).expect("fixture loads");
+
+        let dir = TempDir::new("round-trip-keys");
+        let saved_path = dir.join("resaved.mindmap.json");
+        save_to_file(&saved_path, &map).expect("save failed");
+        let saved = std::fs::read_to_string(&saved_path).expect("read resaved");
+
+        let before = key_path_set(&source);
+        let after = key_path_set(&saved);
+        let lost: Vec<&String> = before.difference(&after).collect();
+        assert!(
+            lost.is_empty(),
+            "load → save dropped authored keys: {lost:?}"
+        );
+    }
+
+    /// The same round trip for a key the model knows but that no
+    /// fixture happens to carry, so the guarantee is not resting on
+    /// what testament was written with.
+    #[test]
+    fn test_an_authored_zoom_window_survives_load_and_save() {
+        let json = map_json_with_nodes(&node_json_with(
+            "0",
+            "null",
+            r#", "min_zoom_to_render": 0.25, "max_zoom_to_render": 4.0"#,
+        ));
+        let map = load_from_str(&json).expect("a fully-spelled map loads");
+
+        let dir = TempDir::new("round-trip-zoom");
+        let saved_path = dir.join("zoom.mindmap.json");
+        save_to_file(&saved_path, &map).expect("save failed");
+        let saved = std::fs::read_to_string(&saved_path).expect("read resaved");
+
+        let before = key_path_set(&json);
+        let after = key_path_set(&saved);
+        let lost: Vec<&String> = before.difference(&after).collect();
+        assert!(lost.is_empty(), "load → save dropped authored keys: {lost:?}");
+        let reloaded = load_from_str(&saved).expect("resaved map loads");
+        assert_eq!(reloaded.nodes["0"].min_zoom_to_render, Some(0.25));
+        assert_eq!(reloaded.nodes["0"].max_zoom_to_render, Some(4.0));
+    }
+
+    /// **The screen that used to false-positive.** `"text_runs":`
+    /// appears in every styled section of every current map —
+    /// testament carries hundreds — and a substring screen looking
+    /// for that marker flagged all of them, buying a second full
+    /// parse of the document on essentially every real load. The
+    /// marker is gone; a styled map is just a map.
+    #[test]
+    fn test_section_text_runs_are_not_a_legacy_marker() {
+        let styled = node_json("0", "null").replace(
+            r#""sections": [{"text": "n"}]"#,
+            r##""sections": [{"text": "n", "text_runs": [
+                {"start":0,"end":1,"bold":true,"italic":false,"underline":false,
+                 "font":"LiberationSans","size_pt":14,"color":"#fff","hyperlink":null}]}]"##,
+        );
+        let map = load_from_str(&map_json_with_nodes(&styled))
+            .expect("a styled section is not a legacy shape");
+        assert_eq!(map.nodes["0"].sections[0].text_runs.len(), 1);
+    }
+
+    /// A legacy `portals` key still gets its migration verb, and now
+    /// does so even when the array is empty: the key itself has to
+    /// come out of the file, and `convert --portals` is what removes
+    /// it. Previously an empty array parsed as a map with no portals
+    /// and the stale key survived every save.
+    #[test]
+    fn test_legacy_portals_key_is_rejected_even_when_empty() {
+        for portals in ["[]", r#"[{"endpoint_a":"0","endpoint_b":"0"}]"#] {
+            let json = map_json_with_nodes(&node_json("0", "null"))
+                .replace(r#""edges": []"#, &format!(r#""edges": [], "portals": {portals}"#));
+            let err = load_from_str(&json).expect_err("a legacy portals key must be rejected");
+            assert!(
+                err.contains("maptool convert --portals"),
+                "must point at the migration verb: {err}"
+            );
+        }
+    }
+
+    /// Malformed JSON is a syntax error, not a schema one — serde's
+    /// line and column is the whole diagnosis, and the loader must
+    /// not bury it behind a schema-shaped guess.
+    #[test]
+    fn test_malformed_json_reports_line_and_column() {
+        let err = load_from_str("{\n  \"version\": \"1.0\",\n  \"name\":\n}")
+            .expect_err("malformed JSON must be rejected");
+        assert!(
+            err.starts_with("Failed to parse mindmap JSON:"),
+            "must read as a parse failure: {err}"
+        );
+        assert!(err.contains("line 4"), "must carry the position: {err}");
+    }
+
+    /// A required field left out is attributed to the part that left
+    /// it out, the same way an unknown key is — the loader's job
+    /// either way is to say which node to open.
+    #[test]
+    fn test_missing_required_field_names_the_node() {
+        let json = map_json_with_nodes(&node_json("0", "null").replace(r#", "notes": """#, ""));
+        let err = load_from_str(&json).expect_err("a missing required field must be rejected");
+        assert!(err.contains("node \"0\""), "must name the node: {err}");
+        assert!(err.contains("notes"), "must name the field: {err}");
+    }
+
+    /// `edge_type` is an **open vocabulary**, not a closed enum:
+    /// `"parent_child"` and `"cross_link"` are what the renderer
+    /// knows, but the field is a `String` and an unrecognized value
+    /// loads and round-trips. Closedness in this format is about
+    /// keys; values with open vocabularies stay open, and
+    /// `maptool verify` is where an unknown one gets flagged.
+    #[test]
+    fn test_unknown_edge_type_value_loads_and_round_trips() {
+        let nodes = format!("{},{}", node_json("a", "null"), node_json("b", "\"a\""));
+        let edge = edge_json_with("").replace(r#""type": "parent_child""#, r#""type": "annotates""#);
+        let map = load_from_str(&map_json(&nodes, &edge)).expect("an open vocabulary value loads");
+        assert_eq!(map.edges[0].edge_type, "annotates");
+
+        let json = serde_json::to_string(&map).expect("serializes");
+        let back: MindMap = serde_json::from_str(&json).expect("round-trips");
+        assert_eq!(back.edges[0].edge_type, "annotates");
     }
 
     /// A 2-cycle `a → b → a` (`P0-05`) must be rejected at load time
