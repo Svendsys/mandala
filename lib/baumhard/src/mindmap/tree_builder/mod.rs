@@ -40,6 +40,7 @@ pub use connection_label::{
     ConnectionLabelMutator, ConnectionLabelTree,
 };
 pub use handle::{build_handle_mutator_tree, build_handle_tree, handle_identity_sequence, HandleVisual};
+pub use node::DEFAULT_SECTION_FONT_SCALE;
 pub use portal::{
     build_portal_mutator_tree, build_portal_mutator_tree_from_pairs, build_portal_tree,
     build_portal_tree_from_pairs, portal_identity_sequence, portal_pair_data, PortalColorPreviewRef,
@@ -47,8 +48,8 @@ pub use portal::{
 };
 pub use section_frame::{build_section_frame_tree, section_frame_identity_sequence};
 
-use node::{append_node_sections, build_children_recursive, mindnode_container_area};
 use crate::mindmap::model::ChildIndex;
+use node::{append_node_sections, build_children_recursive, mindnode_container_area};
 
 /// Result of building a Baumhard tree from a MindMap. The tree
 /// mirrors the MindMap's parent-child hierarchy. Each MindNode

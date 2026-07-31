@@ -159,8 +159,6 @@ pub(super) fn build_label_elements(
         // `resolve_var` (inside compute_label_layout) runs after
         // selection so a preview value like `var(--accent)` still
         // theme-resolves correctly.
-        let label_cfg = edge.label_config.as_ref();
-        let config = GlyphConnectionConfig::resolved_for(edge, &map.canvas);
         let is_selected = selected_edge_label.map_or(false, |key| *key == edge_key);
         let raw_color: &str = if is_selected {
             SELECTION_HIGHLIGHT_HEX
@@ -173,12 +171,7 @@ pub(super) fn build_label_elements(
                         None
                     }
                 })
-                .unwrap_or_else(|| {
-                    label_cfg
-                        .and_then(|c| c.color.as_deref())
-                        .or(config.color.as_deref())
-                        .unwrap_or(edge.color.as_str())
-                })
+                .unwrap_or_else(|| edge.label_color(&map.canvas))
         };
 
         if is_edited {
@@ -214,14 +207,14 @@ pub(super) fn build_label_elements(
                 if let (Some(from_node), Some(to_node)) =
                     (map.nodes.get(&edge.from_id), map.nodes.get(&edge.to_id))
                 {
-                    if !hidden_set.contains(from_node.id.as_str()) && !hidden_set.contains(to_node.id.as_str()) {
+                    if !hidden_set.contains(from_node.id.as_str())
+                        && !hidden_set.contains(to_node.id.as_str())
+                    {
                         // Synthesized path is for an edge being
                         // edited with an empty committed label — no
                         // selection-highlight branch here (the edited
                         // edge IS the label, and the color picker
                         // preview wins where it applies).
-                        let label_cfg = edge.label_config.as_ref();
-                        let config = GlyphConnectionConfig::resolved_for(edge, &map.canvas);
                         let raw_color: &str = edge_color_preview
                             .and_then(|p| {
                                 if p.edge_key == target_key {
@@ -230,12 +223,7 @@ pub(super) fn build_label_elements(
                                     None
                                 }
                             })
-                            .unwrap_or_else(|| {
-                                label_cfg
-                                    .and_then(|c| c.color.as_deref())
-                                    .or(config.color.as_deref())
-                                    .unwrap_or(edge.color.as_str())
-                            });
+                            .unwrap_or_else(|| edge.label_color(&map.canvas));
                         connection_label_elements.push(compute_label_layout(
                             edge,
                             target_key.clone(),

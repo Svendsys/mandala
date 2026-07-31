@@ -26,12 +26,40 @@ use super::super::MindMapDocument;
 /// Default text-run colour when neither the tree-side region nor
 /// a prior model run carries one. Matches the renderer's
 /// fall-through-to-`#ffffff` floor on a node with no explicit
-/// `style.text_color` override.
+/// `style.text_color` override — the same white
+/// [`crate::application::document::defaults::DEFAULT_RUN_COLOR`]
+/// gives a freshly-authored run.
 pub(super) const DEFAULT_TEXT_RUN_COLOR: &str = "#ffffff";
 
-/// Default font-size used by the renderer when no run pins one.
-/// Mirrors `cosmic_text`'s 14pt fallback used at scene-build time.
-pub(super) const DEFAULT_TEXT_RUN_SIZE_PT: u32 = 14;
+/// Default font-size the *renderer* uses when a section pins none,
+/// pinned to the forward path's
+/// [`baumhard::mindmap::tree_builder::DEFAULT_SECTION_FONT_SCALE`]
+/// so the reverse converter's delta arithmetic can never drift
+/// from the scale the forward converter actually wrote.
+///
+/// Deliberately **not**
+/// [`crate::application::document::defaults::DEFAULT_RUN_SIZE_PT`]
+/// (24): that is the *authoring* default for a run the user
+/// creates, while this is the size a run-less section is already
+/// being rendered at. Answering "what size is this section on
+/// screen right now?" with the authoring default would make every
+/// `grow-font` on a run-less section jump 10pt.
+///
+/// The `f32 → u32` narrowing is checked, not silent: model
+/// `size_pt` is integral, so a future fractional scale (`14.5`)
+/// is a real design question about how the reverse converter
+/// should round it, not something to truncate away. The `assert!`
+/// evaluates at compile time and fails the build instead.
+pub(super) const DEFAULT_TEXT_RUN_SIZE_PT: u32 = {
+    let scale = baumhard::mindmap::tree_builder::DEFAULT_SECTION_FONT_SCALE;
+    let truncated = scale as u32;
+    assert!(
+        truncated as f32 == scale,
+        "DEFAULT_SECTION_FONT_SCALE is not integral; decide how the reverse \
+         converter should round it rather than letting the cast truncate"
+    );
+    truncated
+};
 
 /// Floor the reverse converter clamps `size_pt` to. A
 /// `shrink-font` mutation drives tree-side `scale` toward (and

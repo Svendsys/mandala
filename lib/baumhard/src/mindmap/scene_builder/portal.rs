@@ -163,11 +163,11 @@ pub fn resolve_portal_endpoint_style(
     };
 
     // Color cascade. Preview and selection overrides (passed via
-    // `raw_color_override`) always win so live feedback is visible.
-    let raw_color: &str = raw_color_override
-        .or_else(|| endpoint_state.and_then(|s| s.color.as_deref()))
-        .or(cfg.color.as_deref())
-        .unwrap_or(&edge.color);
+    // `raw_color_override`) always win so live feedback is
+    // visible; the committed cascade below them is
+    // `MindEdge::portal_endpoint_color`'s.
+    let raw_color: &str =
+        raw_color_override.unwrap_or_else(|| edge.portal_endpoint_color(canvas, endpoint_state));
 
     ResolvedPortalStyle {
         glyph,
@@ -235,6 +235,14 @@ pub fn resolve_portal_endpoint_text_style(
     // back to the icon color (as a fully-resolved hex) rather than
     // re-running the icon cascade keeps the two channels in sync
     // for portals the user has only half-styled.
+    //
+    // Deliberately *not*
+    // [`MindEdge::portal_endpoint_text_color`](crate::mindmap::model::MindEdge::portal_endpoint_text_color):
+    // that helper resolves the committed model cascade, while
+    // `icon_color` here may carry a preview / selection override
+    // the text is supposed to follow. The model helper is what
+    // the document layer's clipboard resolver reads, where no
+    // transient override exists.
     let resolved_text_color: String = if let Some(hex) = raw_color_override {
         resolve_var(hex, &canvas.theme_variables).to_string()
     } else if let Some(hex) = endpoint_state.and_then(|s| s.text_color.as_deref()) {

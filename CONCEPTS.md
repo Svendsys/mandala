@@ -2058,7 +2058,7 @@ budget does not bias an edge-label drag's average.
 
 ### `UndoAction`
 
-A 12-variant tagged union; one variant per
+A 13-variant tagged union; one variant per
 user-facing mutation, dispatched through `MindMapDocument::undo`
 to reverse it.
 
@@ -2069,16 +2069,61 @@ mutation means adding a new variant, snapshotting the right
 "before" state, and writing the matching `undo()` arm in the
 same commit.
 
-`src/application/document/undo_action.rs:10-88`. The twelve
+`src/application/document/undo_action.rs`. The thirteen
 variants: `MoveNodes`, `CustomMutation`, `ReparentNodes`,
 `DeleteEdge`, `CreateEdge`, `EditEdge`, `CreateNode`,
 `EditNodeText`, `EditNodeStyle`, `EditNodeZoom`,
-`CanvasSnapshot`, `DeleteNode`. `CustomMutation` is the general
-bucket — it snapshots the `target_scope`-defined window so any
-declarative or imperative mutation replays cleanly. Every arm is
-bounds-checked (e.g. `index < edges.len()`) before mutating, so
-undo is always safe — never panics, even on a partially-deleted
-state.
+`CanvasSnapshot`, `EditNodeAabb`, `DeleteNode`. `CustomMutation`
+is the general bucket — it snapshots the `target_scope`-defined
+window so any declarative or imperative mutation replays
+cleanly. Every arm is bounds-checked (e.g. `index <
+edges.len()`) before mutating, so undo is always safe — never
+panics, even on a partially-deleted state.
+
+### The node-edit envelope and `NodeEditTail`
+
+The one place the *push* side of an `UndoAction` is written for
+node-scoped edits: snapshot → closure verdict → undo-push →
+auto-fit.
+
+`UndoAction` says what a reversal looks like; the envelope says
+how a setter records one. Three of the variants describe a
+per-node edit — `EditNodeStyle`, `EditNodeText`, `EditNodeAabb`
+— and each used to be open-coded at every setter that produced
+it, together with the `grow_one_node_to_fit_text` /
+`grow_one_node_to_fit_border` tail. That fan-out drifted into
+shipped bugs twice: a copy was corrected, its siblings were not.
+
+`src/application/document/nodes/undo_envelope.rs` holds one
+implementation. `mutate_node_with_style_undo` and
+`mutate_node_with_text_undo` take a closure returning
+`Some(value)` to commit or `None` to declare a no-op — on `None`
+the envelope restores exactly the fields the undo entry would
+have restored and pushes nothing, which is what lets a caller
+mutate speculatively instead of reaching for the
+`undo_stack.pop()` anti-pattern. `mutate_node_with_aabb_undo`
+computes its own verdict by comparing `(position, size)`
+**after** the auto-fit tail, which is what makes repeated writes
+idempotent on a framed node whose border-grow overshoots the
+requested size. Two section-scoped wrappers narrow the closure
+to one `MindSection` and fold the index lookup in, so a stale
+index is a no-op rather than a panic.
+
+`NodeEditTail` is the fourth argument and the named policy for
+what runs after a commit: `None` (color-only edits, which must
+not re-measure), `Border` (the explicit-shrink and
+border-config paths), `Grow` (anything that can change measured
+text extent), `GrowAndCleanup` (the structural mutators — the
+only edits that can strand a selection or a border preview on a
+dead section index). Naming it is the point: an auto-fit pass
+that is a copied suffix is a pass nobody chose.
+
+The edge side has the same shape one layer over:
+`MindMapDocument::mutate_edge` is the single `EditEdge`
+envelope, and `edges/font_triple.rs` holds the one
+`(size, min, max)` resolution — request ordering, inverted-bounds
+guard, clamp — that the body, label, and portal-text font
+channels share.
 
 ### `Renderer`
 

@@ -45,6 +45,27 @@ use crate::mindmap::model::{ChildIndex, MindMap, MindNode, MindSection};
 use crate::util::color::{self, Color as BaumhardColor};
 use glam::Vec2;
 
+/// Nominal font scale, in points, for a mindmap `GlyphArea` with
+/// no `text_runs` to take a size from — the historical
+/// `cosmic_text` fall-through this builder has always used.
+///
+/// Two areas land here. A **section** with no runs is measured
+/// and laid out at this scale. A **node container area** carries
+/// it as its nominal scale but renders no glyphs of its own
+/// (sections do), so there it keeps the area's scale field
+/// well-defined rather than sizing anything drawn.
+///
+/// This is the **renderer's** fallback, deliberately distinct from
+/// the *authoring* default a newly-created run gets (24pt, in the
+/// app crate's `document::defaults`). A run-less legacy section
+/// keeps rendering at 14pt; the moment something authors a run
+/// onto it, the authoring default applies instead. Named so the
+/// reverse converter
+/// (`document::custom::sync::DEFAULT_TEXT_RUN_SIZE_PT`) can pin
+/// itself to the forward path's number rather than repeating the
+/// literal and drifting from it.
+pub const DEFAULT_SECTION_FONT_SCALE: f32 = 14.0;
+
 /// Build the *container* `GlyphArea` for a mind node — the chrome-
 /// bearing area that owns background fill, border padding, shape,
 /// and zoom window, but renders no glyphs of its own (sections do).
@@ -70,7 +91,12 @@ pub(super) fn mindnode_container_area(
     // so the subtree-AABB cache stays well-defined.
     let position = node.pos_vec2();
     let bounds = node.size_vec2();
-    let mut area = GlyphArea::new(14.0, 14.0 * 1.2, position, bounds);
+    let mut area = GlyphArea::new(
+        DEFAULT_SECTION_FONT_SCALE,
+        DEFAULT_SECTION_FONT_SCALE * 1.2,
+        position,
+        bounds,
+    );
 
     // `background_padding` math — see `mindmap/border.rs` for the
     // derivation. Same shape as pre-section nodes; the container
@@ -132,8 +158,8 @@ pub(super) fn mindnode_section_area(
     // Effective scale: pick the *largest* run size so a multi-run
     // section with a small first run and a 96pt later run gets a
     // line-height tall enough to keep the larger glyphs from
-    // clipping. Falls through to the cosmic-text / historical
-    // default (14pt) when the section has no runs. The single-
+    // clipping. Falls through to [`DEFAULT_SECTION_FONT_SCALE`]
+    // when the section has no runs. The single-
     // section default-migration shape (one run spanning all of
     // `text`) round-trips with the pre-section behaviour because
     // there's only one size to pick. Mirrors the same `max`
@@ -143,7 +169,11 @@ pub(super) fn mindnode_section_area(
         .iter()
         .map(|r| r.size_pt as f32)
         .fold(0.0_f32, f32::max);
-    let scale = if scale_max > 0.0 { scale_max } else { 14.0 };
+    let scale = if scale_max > 0.0 {
+        scale_max
+    } else {
+        DEFAULT_SECTION_FONT_SCALE
+    };
     let line_height = scale * 1.2;
     let position = node.pos_vec2() + Vec2::new(section.offset.x as f32, section.offset.y as f32);
     let bounds = section
