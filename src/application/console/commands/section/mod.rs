@@ -170,7 +170,7 @@ fn verb_hint(v: &str) -> &'static str {
 /// primary node, with each row's hint showing a short text
 /// preview so the user can tell which section is which.
 fn section_idx_value_completions(ctx: &ConsoleContext, partial: &str) -> Vec<Completion> {
-    use unicode_segmentation::UnicodeSegmentation;
+    use baumhard::util::grapheme_chad::take_graphemes;
     let Some(primary_id) = ctx.document.selection.primary_node_id() else {
         return Vec::new();
     };
@@ -185,11 +185,13 @@ fn section_idx_value_completions(ctx: &ConsoleContext, partial: &str) -> Vec<Com
             // Short text preview (≤20 graphemes, grapheme-aware so
             // a multi-codepoint emoji doesn't slice mid-cluster).
             // Empty sections render `(empty)` so the row isn't
-            // a bare bullet.
-            let preview: String = section.text.graphemes(true).take(20).collect();
+            // a bare bullet. One walk, no prefix allocation —
+            // `take_graphemes` returns the borrowed prefix and the
+            // overflow flag together.
+            let (preview, overflow) = take_graphemes(&section.text, 20);
             let hint = if preview.is_empty() {
                 "(empty)".to_string()
-            } else if section.text.graphemes(true).count() > 20 {
+            } else if overflow {
                 format!("\"{}…\"", preview)
             } else {
                 format!("\"{}\"", preview)
@@ -407,24 +409,15 @@ fn execute_show(args: &Args, doc: &MindMapDocument, node_id: &str, idx: usize) -
 
     // Text preview: cap at ~40 graphemes so a long section
     // doesn't overflow the readout. Stay grapheme-aware so we
-    // don't slice mid-cluster. Single-pass: take 41 graphemes;
-    // if 41 came back, we're past the cap and need an ellipsis.
-    // Pre-fix this walked the iterator twice (`take(40).collect()`
-    // + `count() > 40`), which is O(n) per call for the second
-    // walk. The completion popup hits this path on every key
-    // press in some flows.
-    use unicode_segmentation::UnicodeSegmentation;
-    let mut preview = String::with_capacity(160);
-    let mut grapheme_count = 0usize;
-    let mut overflow = false;
-    for g in section.text.graphemes(true) {
-        if grapheme_count == 40 {
-            overflow = true;
-            break;
-        }
-        preview.push_str(g);
-        grapheme_count += 1;
-    }
+    // don't slice mid-cluster. `take_graphemes` is the single-pass
+    // primitive for that: it borrows the prefix (no `String` to
+    // build) and reports overflow from the same walk. This file
+    // used to carry two different hand-rolled truncations — the
+    // other one, in `section_idx_value_completions`, walked the
+    // iterator twice, and the completion popup hits that path on
+    // every key press in some flows.
+    use baumhard::util::grapheme_chad::take_graphemes;
+    let (preview, overflow) = take_graphemes(&section.text, 40);
     let text_display = if overflow {
         format!("\"{}…\"", preview)
     } else {

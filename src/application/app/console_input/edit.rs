@@ -12,8 +12,8 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use baumhard::util::grapheme_chad::{
-    count_grapheme_clusters, delete_front_unicode, delete_grapheme_at, find_byte_index_of_grapheme,
-    insert_str_at_grapheme_counted,
+    count_grapheme_clusters, delete_front_unicode, delete_grapheme_at, insert_str_at_grapheme_counted,
+    prev_word_boundary_ws,
 };
 
 use crate::application::console::ConsoleState;
@@ -167,7 +167,6 @@ pub(super) fn kill_to_start(state: &mut ConsoleState) -> EditOutcome {
 }
 
 pub(super) fn kill_word(state: &mut ConsoleState) -> EditOutcome {
-    use unicode_segmentation::UnicodeSegmentation;
     let ConsoleState::Open { input, cursor, .. } = state else {
         return EditOutcome::Unchanged;
     };
@@ -175,15 +174,9 @@ pub(super) fn kill_word(state: &mut ConsoleState) -> EditOutcome {
     if end_g == 0 {
         return EditOutcome::Unchanged;
     }
-    let prefix_bytes = find_byte_index_of_grapheme(input, end_g).unwrap_or(input.len());
-    let clusters: Vec<&str> = input[..prefix_bytes].graphemes(true).collect();
-    let mut start_g = clusters.len();
-    while start_g > 0 && clusters[start_g - 1].chars().all(|c| c.is_whitespace()) {
-        start_g -= 1;
-    }
-    while start_g > 0 && !clusters[start_g - 1].chars().all(|c| c.is_whitespace()) {
-        start_g -= 1;
-    }
+    // Whitespace-delimited, not alphanumeric-run: `Ctrl+W` kills a
+    // whole shell token, so `key=value` goes in one stroke.
+    let start_g = prev_word_boundary_ws(input, end_g);
     if start_g == end_g {
         return EditOutcome::Unchanged;
     }

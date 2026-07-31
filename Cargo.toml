@@ -14,7 +14,11 @@ license.workspace = true
 
 [dependencies]
 rustc-hash = "2.1.2"
-unicode-segmentation = "1.13.2"
+# NOTE: `unicode-segmentation` is deliberately NOT a dependency of the
+# app crate. Every grapheme primitive lives in
+# `baumhard::util::grapheme_chad` (lib/baumhard/CONVENTIONS.md §B3);
+# leaving the crate out makes that containment compiler-enforced
+# rather than a review convention.
 wgpu = { version = "29.0", features = ["webgl"] }
 bytemuck = "1.16"
 glyphon = "0.11.0"

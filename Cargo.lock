@@ -1634,7 +1634,6 @@ dependencies = [
  "syn 2.0.117",
  "tinyvec",
  "ttf-parser",
- "unicode-segmentation",
  "walkdir",
  "wasm-bindgen",
  "wasm-bindgen-futures",

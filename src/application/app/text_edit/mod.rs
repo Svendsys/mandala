@@ -163,36 +163,27 @@ pub(in crate::application::app) fn delete_at_cursor(buffer: &mut String, cursor:
 }
 
 /// Return the grapheme index of the start of the line containing
-/// `cursor` — i.e. the position just after the most recent `\n`
-/// strictly before `cursor`, or 0 if no prior `\n`. `\n` is always its
-/// own grapheme cluster, so walking by graphemes is correct here.
+/// `cursor` — i.e. the position just after the most recent line
+/// terminator strictly before `cursor`, or 0 if no terminator
+/// precedes it.
+///
+/// Editor-vocabulary name for the first half of
+/// [`grapheme_chad::line_bounds_at`], which owns the walk
+/// (`lib/baumhard/CONVENTIONS.md` §B3). Prefer calling
+/// `line_bounds_at` directly when the caller wants both bounds — it
+/// produces them from one walk.
 pub(in crate::application::app) fn cursor_to_line_start(buffer: &str, cursor: usize) -> usize {
-    use unicode_segmentation::UnicodeSegmentation;
-    let mut line_start = 0usize;
-    for (i, g) in buffer.graphemes(true).enumerate() {
-        if i >= cursor {
-            break;
-        }
-        if g == "\n" {
-            line_start = i + 1;
-        }
-    }
-    line_start
+    grapheme_chad::line_bounds_at(buffer, cursor).0
 }
 
 /// Return the grapheme index of the end of the line containing
-/// `cursor` — the position of the next `\n` at or after `cursor`, or
-/// the total grapheme count if no `\n` follows.
+/// `cursor` — the position of the next line terminator at or after
+/// `cursor`, or the total grapheme count if none follows.
+///
+/// Editor-vocabulary name for the second half of
+/// [`grapheme_chad::line_bounds_at`].
 pub(in crate::application::app) fn cursor_to_line_end(buffer: &str, cursor: usize) -> usize {
-    use unicode_segmentation::UnicodeSegmentation;
-    let mut total = 0usize;
-    for (i, g) in buffer.graphemes(true).enumerate() {
-        total = i + 1;
-        if i >= cursor && g == "\n" {
-            return i;
-        }
-    }
-    total
+    grapheme_chad::line_bounds_at(buffer, cursor).1
 }
 
 /// Move the cursor up one line, preserving the visual column. Column
@@ -216,8 +207,8 @@ pub(in crate::application::app) fn move_cursor_up_line(buffer: &str, cursor: usi
 /// No-op if already on the last line.
 pub(in crate::application::app) fn move_cursor_down_line(buffer: &str, cursor: usize) -> usize {
     let total = grapheme_chad::count_grapheme_clusters(buffer);
-    let line_start = cursor_to_line_start(buffer, cursor);
-    let line_end = cursor_to_line_end(buffer, cursor);
+    // One walk for both bounds of the current line.
+    let (line_start, line_end) = grapheme_chad::line_bounds_at(buffer, cursor);
     if line_end == total {
         return cursor;
     }

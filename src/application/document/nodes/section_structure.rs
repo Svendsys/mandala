@@ -166,7 +166,7 @@ impl MindMapDocument {
         at_grapheme: Option<usize>,
     ) -> Result<usize, String> {
         use baumhard::mindmap::model::text_run_ops;
-        use unicode_segmentation::UnicodeSegmentation;
+        use baumhard::util::grapheme_chad::{count_grapheme_clusters, find_byte_index_of_grapheme};
 
         let node = match self.mindmap.nodes.get(node_id) {
             Some(n) => n,
@@ -187,7 +187,7 @@ impl MindMapDocument {
         // grapheme index (for partitioning the runs — `TextRun.start`
         // / `.end` are grapheme-cluster indices per
         // `format/text-runs.md`). Walking once gives us both.
-        let total_graphemes = original_text.graphemes(true).count();
+        let total_graphemes = count_grapheme_clusters(original_text);
         let split_grapheme = match at_grapheme {
             Some(g) if g > total_graphemes => {
                 return Err(format!(
@@ -204,11 +204,7 @@ impl MindMapDocument {
         } else {
             // The g-th grapheme boundary is the byte offset of
             // the start of the g-th grapheme cluster.
-            original_text
-                .grapheme_indices(true)
-                .nth(split_grapheme)
-                .map(|(b, _)| b)
-                .unwrap_or(original_text.len())
+            find_byte_index_of_grapheme(original_text, split_grapheme).unwrap_or(original_text.len())
         };
 
         let prefix_text = original_text[..split_byte].to_string();
