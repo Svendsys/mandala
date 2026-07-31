@@ -25,9 +25,9 @@ use baumhard::mindmap::custom_mutation::{
 use baumhard::mindmap::model::MindNode;
 use baumhard::mindmap::tree_builder::MindMapTree;
 
-use super::mutations_loader::MutationSource;
 use super::undo_action::UndoAction;
 use super::MindMapDocument;
+use crate::application::source_tier::SourceTier;
 
 /// Warn at apply time when a predicate gate filtered every
 /// candidate out. Catches both authoring mistakes (a bare
@@ -136,7 +136,7 @@ impl MindMapDocument {
     /// at apply time. Two conditions must hold:
     ///
     /// - A handler is registered for this id.
-    /// - The mutation's source layer is [`MutationSource::App`] — i.e.
+    /// - The mutation's source layer is [`SourceTier::App`] — i.e.
     ///   the definition the user sees actually is the one the handler
     ///   was written for. If the user / map / inline layer overrode
     ///   the id, their declarative shape wins and the bundled handler
@@ -149,7 +149,7 @@ impl MindMapDocument {
     /// declared `mutator` and `target_scope`.
     pub fn will_dispatch_to_handler(&self, mutation_id: &str) -> bool {
         self.mutation_handlers.contains_key(mutation_id)
-            && self.mutation_sources.get(mutation_id) == Some(&MutationSource::App)
+            && self.mutation_sources.get(mutation_id) == Some(&SourceTier::App)
     }
 
     /// Apply a custom mutation to the tree and optionally sync to the model.
@@ -421,7 +421,7 @@ impl MindMapDocument {
                 // Any new variant that performs file I/O, network
                 // access, or arbitrary content load MUST be gated
                 // at the macro-dispatcher site — see
-                // `MacroSource::allows_console_line` and
+                // `SourceTier::allows_console_line` and
                 // `lib/baumhard/src/mindmap/custom_mutation/mod.rs`
                 // doc-comment on `DocumentAction`.
                 _ => {

@@ -187,14 +187,14 @@ decision, not a drive-by edit.
   **Macro-tier privilege gates are mandatory.** Macros loaded from
   `~/.config/mandala/macros.json` share
   trust posture with `keybinds.json` — the user owns the file. The
-  dispatcher gates two things on `MacroSource`:
+  dispatcher gates two things on `SourceTier`:
   - `MacroStep::ConsoleLine` runs an arbitrary console verb, so it's
-    User-tier-only via `MacroSource::allows_console_line`.
+    User-tier-only via `SourceTier::allows_console_line`.
   - Destructive / I/O / clipboard `Action` variants
     (`SaveDocument`, `DeleteSelection`, `Cut`, `Paste`, `Copy`,
     `OrphanSelection`, `CreateOrphanNode`, `CreateOrphanNodeAndEdit`,
     `NewDocument`) are User-tier-only via
-    `MacroSource::allows_action`.
+    `SourceTier::allows_action`.
   Privilege rejections **fail-closed** — the rest of the macro
   aborts so a `[DeleteSelection, ConsoleLine(rejected),
   SaveDocument]` pattern can't sneak its outer steps past the gate.
@@ -208,7 +208,7 @@ decision, not a drive-by edit.
   performs file I/O, network access, arbitrary content load, or
   cross-process side effects MUST add a parallel gate at the
   `dispatch_macro` site** (look up the existing `allows_*` pattern
-  on `MacroSource` and extend it).
+  on `SourceTier` and extend it).
 
   Source-tier assignment is loader-pinned. Each loader call site
   hardcodes the tier; nothing in the on-disk format can affect it.

@@ -24,8 +24,9 @@ precedence (later writers override earlier ones with the same `id`):
 <!-- SOURCE-OF-TRUTH: the tier order below is also encoded in
      five other places that must move together when the order or
      set of tiers changes:
-       1. src/application/macros/mod.rs — MacroSource enum variant
-          order.
+       1. src/application/source_tier.rs — the SourceTier enum
+          variant order, shared with the custom-mutation registry
+          and pinned by that module's tests.
        2. src/application/app/run_native_init.rs::build — the load
           order of the App + User tier calls AND the
           rebuild_map_macros + rebuild_inline_macros calls.
@@ -43,25 +44,25 @@ precedence (later writers override earlier ones with the same `id`):
 
 1. **Application bundle** — `assets/macros/application.json`,
    compiled into the binary via `include_str!`. Lowest precedence so
-   users can customise anything shipped by the app. Tier:
-   `MacroSource::App`. Cross-platform (native + WASM).
+   users can customize anything shipped by the app. Tier:
+   `SourceTier::App`. Cross-platform (native + WASM).
 2. **User file** — `$XDG_CONFIG_HOME/mandala/macros.json` on native
    (falls back to `$HOME/.config/mandala/macros.json`). On WASM,
    `?macros=<urlencoded-json>` query param > `localStorage` under
    the `mandala_macros` key > empty. Both targets parse through
    the shared `loader::parse_user_macros_json`. Tier:
-   `MacroSource::User`.
+   `SourceTier::User`.
 3. **Map-inline** — `MindMap.macros` on the loaded document.
    Refreshed at initial load on both targets, plus every `open` /
-   `new` console verb on native. Tier: `MacroSource::Map`.
+   `new` console verb on native. Tier: `SourceTier::Map`.
 4. **Node-inline** — `MindNode.inline_macros` on individual nodes.
    Loaded alongside Map tier (same trigger sites). Highest
    precedence — overrides Map / User / App on id collisions.
    Authors should namespace ids (e.g. `"node-id.action"`) to
    avoid collisions across nodes since the registry is
-   id-keyed flat. Tier: `MacroSource::Inline`. Cross-platform.
+   id-keyed flat. Tier: `SourceTier::Inline`. Cross-platform.
 
-The `MacroSource` tier is **loader-pinned** — assigned at the
+The `SourceTier` of a macro is **loader-pinned** — assigned at the
 loader call site, never read from the on-disk content. A user
 editing `~/.config/mandala/macros.json` cannot smuggle `App` tier
 into their entries.
@@ -104,16 +105,16 @@ the Inline-tier note above.
 
 ## Privilege model — read this before shipping a non-User loader
 
-The dispatcher gates two surfaces on `MacroSource` tier:
+The dispatcher gates two surfaces on the macro's `SourceTier`:
 
 - **`MacroStep::ConsoleLine`** runs an arbitrary console verb
   (`save`, `open`, `mutation apply`, kv-shaped style setters, etc.).
-  User-tier-only via `MacroSource::allows_console_line`.
+  User-tier-only via `SourceTier::allows_console_line`.
 - **Destructive / I/O / clipboard `Action` variants**
   (`SaveDocument`, `DeleteSelection`, `Cut`, `Paste`, `Copy`,
   `OrphanSelection`, `CreateOrphanNode`, `CreateOrphanNodeAndEdit`,
   `NewDocument`) are User-tier-only via
-  `MacroSource::allows_action`. Navigation / view-state Actions
+  `SourceTier::allows_action`. Navigation / view-state Actions
   (zoom, pan, selection traversal, undo, etc.) pass freely.
 
 Privilege rejections **fail-closed** — the dispatcher aborts the

@@ -11,14 +11,21 @@
 //! afterwards. The failures look like flaky assertions in the code
 //! under test, which is the expensive kind of wrong.
 //!
-//! [`TempDir`] hands each caller its own directory, keyed by process
-//! id plus a per-process counter, and removes it on drop. Nothing is
-//! shared, so nothing races, and a panicking test leaves one
-//! identifiable directory behind rather than corrupting the next run.
+//! [`TempDir`](crate::util::test_temp::TempDir) hands each caller its
+//! own directory, keyed by process id plus a per-process counter, and
+//! removes it on drop. Nothing is shared, so nothing races, and a
+//! panicking test leaves one identifiable directory behind rather
+//! than corrupting the next run.
 //!
 //! Native-only: the whole module is `cfg`-gated away on `wasm32`,
 //! where there is no filesystem to scratch on. Browser-side tests
 //! that need a fixture should build it in memory.
+
+// The `TempDir` link in the header names its full path deliberately.
+// `util` carries an outer `///` summary on `pub mod test_temp;`, and
+// rustdoc merges that with this inner header before resolving links —
+// in the *parent* module's scope, where a bare `[`TempDir`]` binds to
+// nothing and rustdoc warns.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -113,9 +120,9 @@ mod tests {
     /// traceable to the test that leaked it.
     #[test]
     fn test_temp_dir_name_carries_the_label_and_pid() {
-        let dir = TempDir::new("labelled-probe");
+        let dir = TempDir::new("labeled-probe");
         let name = dir.path().file_name().unwrap().to_string_lossy().to_string();
-        assert!(name.contains("labelled-probe"), "name must carry the label: {name}");
+        assert!(name.contains("labeled-probe"), "name must carry the label: {name}");
         assert!(
             name.contains(&std::process::id().to_string()),
             "name must carry the pid: {name}"

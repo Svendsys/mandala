@@ -15,11 +15,12 @@ Four sources contribute to a document's active registry, in
 ascending precedence (later writers override earlier ones with the
 same `id`):
 
-<!-- SOURCE-OF-TRUTH: the precedence order below is also encoded in
-     src/application/document/mutations_loader/mod.rs as the
-     MutationSource enum variant order and in the doc comment on
-     build_mutation_registry_with_app_and_user. When the order or
-     set of sources changes, update all three in the same commit. -->
+<!-- SOURCE-OF-TRUTH: the precedence order below is encoded once in
+     code, as the SourceTier enum variant order in
+     src/application/source_tier.rs, and pinned by that module's
+     tests. The macro registry shares the same enum. When the order
+     or set of sources changes, update this list and
+     build_mutation_registry_with_app_and_user in the same commit. -->
 
 1. **Application bundle** — `assets/mutations/application.json`,
    compiled into the binary via `include_str!`. Lowest precedence so

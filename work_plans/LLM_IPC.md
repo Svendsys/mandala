@@ -43,7 +43,7 @@ time:
   the `act.console` command extracts that result (see D7 and
   `format/ipc.md` §act); the parse → execute → drain-effects path is
   the reusable seam.
-- **`MacroSource { App | User | Map | Inline }`** — the
+- **`SourceTier { App | User | Map | Inline }`** — the
   loader-pinned, fail-closed privilege model (`format/macros.md`).
 - **The winit event loop** (`src/application/app/run_native.rs`) —
   `NativeApp: ApplicationHandler`, `about_to_wait` drains and then
@@ -351,7 +351,7 @@ what lets ~10 issues build in parallel without drift.
 ## D4 — Trust tier: IPC executes as `User`; no new tier
 
 **Decision.** IPC commands execute at the existing
-`MacroSource::User` posture. No `MacroSource::Ipc` variant is
+`SourceTier::User` posture. No `SourceTier::Ipc` variant is
 added. `act.macro` runs macros under their own loader-pinned tier —
 IPC initiates, it never escalates. `format/macros.md`'s
 SOURCE-OF-TRUTH tier list gains a pointer recording this mapping
@@ -384,7 +384,7 @@ cheaper and safer:
   protocol-level redesign (this document), not a dormant enum
   variant waiting to confuse someone.
 - Against those non-benefits: a fifth variant ripples through every
-  entry in the SOURCE-OF-TRUTH list (`MacroSource` order, two
+  entry in the SOURCE-OF-TRUTH list (`SourceTier` order, two
   loader call-site groups, the loader helpers) plus the registry's
   hand-written tier walk beside that list, forces an answer to
   "does `Ipc` allow
