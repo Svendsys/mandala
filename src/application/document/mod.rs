@@ -18,6 +18,8 @@ use baumhard::mindmap::model::{MindMap, MAX_NODE_AXIS};
 use baumhard::mindmap::scene_builder::{self, RenderScene};
 use baumhard::mindmap::tree_builder::{self, MindMapTree};
 
+use crate::application::source_tier::SourceTier;
+
 pub mod animations;
 mod custom;
 pub(in crate::application) mod defaults;
@@ -114,7 +116,7 @@ pub struct MindMapDocument {
     /// alongside `mutation_registry` so `mutation help <id>` can
     /// report "source: app / user / map / inline" without re-walking
     /// the layers.
-    pub mutation_sources: HashMap<String, mutations_loader::MutationSource>,
+    pub mutation_sources: HashMap<String, SourceTier>,
     /// Per-mutation-id imperative handlers. When a handler is
     /// registered for a mutation's id, `apply_custom_mutation`
     /// delegates to it instead of the default flat-apply path — the

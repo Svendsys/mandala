@@ -205,12 +205,12 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
     let mut macros = crate::application::macros::MacroRegistry::new();
     let mut app_count = 0usize;
     for m in crate::application::macros::loader::load_app_macros() {
-        macros.insert(m, crate::application::macros::MacroSource::App);
+        macros.insert(m, crate::application::source_tier::SourceTier::App);
         app_count += 1;
     }
     let mut user_count = 0usize;
     for m in crate::application::macros::loader::load_user_macros() {
-        macros.insert(m, crate::application::macros::MacroSource::User);
+        macros.insert(m, crate::application::source_tier::SourceTier::User);
         user_count += 1;
     }
     if app_count > 0 || user_count > 0 {

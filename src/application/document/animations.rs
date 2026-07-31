@@ -12,10 +12,10 @@ use baumhard::mindmap::custom_mutation::{CustomMutation, PlatformContext, Trigge
 use baumhard::mindmap::model::MindNode;
 use baumhard::mindmap::tree_builder::MindMapTree;
 
-use super::mutations_loader::MutationSource;
 use super::types::AnimationInstance;
 use super::undo_action::UndoAction;
 use super::MindMapDocument;
+use crate::application::source_tier::SourceTier;
 
 /// Apply position-bearing `Mutation`s to a `MindNode` to derive
 /// the `to` snapshot for an animation. Mirrors the GlyphArea
@@ -51,11 +51,10 @@ fn apply_position_mutations_to_node(mutations: &[Mutation], node: &mut MindNode)
     }
 }
 
-// `MutationSource` lives in `mutations_loader::MutationSource` —
-// imported here via `use` at the top so registry-building can stamp
-// source layers into `self.mutation_sources` alongside the registry
-// writes. Keeping the type in the loader module groups it with the
-// precedence definition it's inseparable from.
+// `SourceTier` lives in `crate::application::source_tier` — one
+// ladder shared with the macro registry rather than a per-registry
+// copy. Imported here so registry-building can stamp source layers
+// into `self.mutation_sources` alongside the registry writes.
 
 impl MindMapDocument {
     /// Build the mutation registry from map-level and inline node mutations.
@@ -73,8 +72,8 @@ impl MindMapDocument {
     /// Build the registry from all four sources. See the
     /// "Where mutations come from" section in `format/mutations.md`
     /// for the canonical precedence description; this method's
-    /// loop order (below) mirrors it and the [`MutationSource`]
-    /// enum variants at the loader's module doc. Later writers
+    /// loop order (below) mirrors it and the [`SourceTier`]
+    /// variant order, which that module's tests pin. Later writers
     /// override earlier ones with the same `id`.
     pub fn build_mutation_registry_with_app_and_user(
         &mut self,
@@ -85,21 +84,20 @@ impl MindMapDocument {
         self.mutation_sources.clear();
         for cm in app_mutations {
             self.mutation_registry.insert(cm.id.clone(), cm.clone());
-            self.mutation_sources.insert(cm.id.clone(), MutationSource::App);
+            self.mutation_sources.insert(cm.id.clone(), SourceTier::App);
         }
         for cm in user_mutations {
             self.mutation_registry.insert(cm.id.clone(), cm.clone());
-            self.mutation_sources.insert(cm.id.clone(), MutationSource::User);
+            self.mutation_sources.insert(cm.id.clone(), SourceTier::User);
         }
         for cm in &self.mindmap.custom_mutations {
             self.mutation_registry.insert(cm.id.clone(), cm.clone());
-            self.mutation_sources.insert(cm.id.clone(), MutationSource::Map);
+            self.mutation_sources.insert(cm.id.clone(), SourceTier::Map);
         }
         for node in self.mindmap.nodes.values() {
             for cm in &node.inline_mutations {
                 self.mutation_registry.insert(cm.id.clone(), cm.clone());
-                self.mutation_sources
-                    .insert(cm.id.clone(), MutationSource::Inline);
+                self.mutation_sources.insert(cm.id.clone(), SourceTier::Inline);
             }
         }
     }

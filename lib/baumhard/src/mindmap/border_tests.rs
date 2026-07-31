@@ -398,4 +398,42 @@ mod tests {
         assert_eq!(style.font_size_pt, 14.0);
         assert!(style.visible);
     }
+
+    /// Every name the schema accepts has a non-empty description.
+    /// The console's `border preset=` completion renders one row per
+    /// entry of `BORDER_PRESETS` and takes its hint from
+    /// `border_preset_hint`; before the hint moved into
+    /// `PRESET_TABLE`, the app-side lookup was a hand-maintained
+    /// `match` with a `_ => ""` arm, so a fifth preset would have
+    /// completed with a blank description and nobody would have
+    /// noticed. This pins the coverage even though the tuple shape
+    /// now makes omitting one a compile error.
+    #[test]
+    fn every_border_preset_has_a_non_empty_hint() {
+        use crate::mindmap::border::{border_preset_hint, BORDER_PRESETS};
+        for preset in BORDER_PRESETS {
+            let hint = border_preset_hint(preset)
+                .unwrap_or_else(|| panic!("preset '{}' has no completion hint", preset));
+            assert!(!hint.is_empty(), "preset '{}' has an empty hint", preset);
+        }
+    }
+
+    /// Hint lookup is case-insensitive, matching `preset_glyph_set`
+    /// — the schema accepts `"Rounded"` as readily as `"rounded"`,
+    /// and a completion row must not lose its description over
+    /// casing.
+    #[test]
+    fn border_preset_hint_is_case_insensitive() {
+        use crate::mindmap::border::border_preset_hint;
+        assert_eq!(border_preset_hint("ROUNDED"), border_preset_hint("rounded"));
+        assert_eq!(border_preset_hint("Custom"), border_preset_hint("custom"));
+    }
+
+    /// An unknown preset has no hint rather than a blank one, so a
+    /// caller can tell "no such preset" from "described as nothing".
+    #[test]
+    fn border_preset_hint_unknown_name_is_none() {
+        use crate::mindmap::border::border_preset_hint;
+        assert!(border_preset_hint("no-such-preset").is_none());
+    }
 }

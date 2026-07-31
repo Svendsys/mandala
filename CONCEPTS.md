@@ -1511,8 +1511,10 @@ and skip; app bundle failures log an error (a build-time invariant
 violation).
 
 The provenance of each merged mutation is tracked in
-`MindMapDocument::mutation_sources` as a `MutationSource`
-enum (`App` / `User` / `Map` / `Inline`), so
+`MindMapDocument::mutation_sources` as a `SourceTier`
+(`src/application/source_tier.rs` — the same four-rung
+`App` / `User` / `Map` / `Inline` ladder the macro registry
+resolves against), so
 `mutation help <id>` on the console can report which layer
 won a given id.
 
@@ -2326,7 +2328,7 @@ Action's keybind (set `copy: []`) and then bind the macro. Same
 applies for built-in vs. custom-mutation collision.
 
 **Macro privilege model.** Macros are tagged by their loader tier
-(`MacroSource { App | User | Map | Inline }`); the dispatcher
+(`SourceTier { App | User | Map | Inline }`); the dispatcher
 fail-closes on tier-restricted surfaces (`ConsoleLine` and
 destructive / I/O `Action` variants). Authoritative threat model
 + surface enumeration + tier-by-tier permissions:
@@ -2625,6 +2627,62 @@ multi-section selection is rejected rather than collapsed). Filesystem
 variants (`OpenDocument`, `SaveDocumentAs`, `NewDocumentAt`) are
 `NativeOnly` and denylisted from non-User macro tiers per the
 privilege gate.
+
+### User-tier config loading — `check_cap`, `read_capped`, `load_layered`
+
+The three user-owned JSON files (`keybinds.json`,
+`mutations.json`, `macros.json`) are all found the same way, so
+the finding is written once in
+`src/application/user_config/`.
+
+- `MAX_USER_PAYLOAD_BYTES` (1 MiB) and `check_cap` are the single
+  wording and enforcement of the size cap. A real config is a few
+  KB; a multi-megabyte one is accidental or hostile and is
+  rejected before serde ever sees it.
+- `read_capped(path)` is the native filesystem read: stat, cap,
+  read. Native-only, like its neighbor `xdg_mandala_path` — the
+  filesystem tier of a user config exists only on desktop.
+- `load_layered(label, layers, parse)` is the fallback walk over
+  an ordered list of `ConfigLayer`s. Each layer is a name plus a
+  lazy fetch; the first layer whose payload fits the cap *and*
+  parses wins. An absent layer is skipped silently; a broken one
+  is logged and the walk continues; exhausting the list returns
+  `None` and the caller substitutes its defaults. Nothing here is
+  platform-specific, so the precedence logic is unit-tested on
+  native even for the browser's layers.
+- Each target names its own layers exactly once, in the
+  composition wrapper that sits on the driver:
+  `desktop::load_desktop_layered(label, filename, explicit, parse)`
+  for the explicit CLI path before the XDG path, and
+  `web_storage::load_web_layered(label, param, key, parse)` for
+  `?<param>=<json>` before `localStorage[key]`. All six platform
+  loaders (three configs × two targets) are now a filename and a
+  parser.
+- The one deliberate asymmetry lives in the desktop wrapper: only
+  the XDG layer is filtered on `exists()`. An absent user config
+  is the normal case and stays silent, whereas an explicit
+  `--keybinds <path>` that does not resolve is a user error worth
+  a warning. Changing that is a change to one function.
+
+Adding a fourth user-tier config file is a matter of naming its
+filename, query param, and storage key, then handing each
+wrapper a parser — no new read, cap, layer, or fallback code.
+
+### `SourceTier`
+
+The `App < User < Map < Inline` ladder in
+`src/application/source_tier.rs`, shared by the custom-mutation
+registry and the macro registry — both are id-keyed and both take
+definitions from the same four places. The ladder means two
+things at once: **precedence** (later tiers override earlier ones
+on an id collision, which the derived `Ord` encodes) and **trust**
+(`App` ships with the binary and `User` is the user's own file,
+while `Map` and `Inline` arrive inside a possibly-shared
+`.mindmap.json`). The macro dispatcher's privilege gates —
+`allows_console_line`, `allows_action`, both `impl SourceTier`
+blocks in `src/application/macros/mod.rs` — key off exactly that
+trust split. Tier assignment is loader-pinned: nothing in an
+on-disk file can raise its own tier.
 
 ### Clipboard
 

@@ -63,14 +63,25 @@ pub struct BorderGlyphSet {
 
 /// Single source of truth for the four canonical Unicode
 /// box-drawing presets. Each row is `(name, [top, bottom, left,
-/// right, tl, tr, bl, br])`. Adding a fifth preset is a one-row
-/// extension here, plus an entry in [`BORDER_PRESETS`] (which the
-/// console's `border preset=` completion surfaces).
-const PRESET_TABLE: &[(&str, [char; 8])] = &[
-    ("light", ['─', '─', '│', '│', '┌', '┐', '└', '┘']),
-    ("heavy", ['━', '━', '┃', '┃', '┏', '┓', '┗', '┛']),
-    ("double", ['═', '═', '║', '║', '╔', '╗', '╚', '╝']),
-    ("rounded", ['─', '─', '│', '│', '╭', '╮', '╰', '╯']),
+/// right, tl, tr, bl, br], hint)`, where `hint` is the one-line
+/// human description [`border_preset_hint`] serves to the console's
+/// completion popup. Adding a fifth preset is a one-row extension
+/// here — [`BORDER_PRESETS`] and the hint lookup both derive from
+/// this table, and the tuple's third slot means a new preset cannot
+/// land without a description.
+const PRESET_TABLE: &[(&str, [char; 8], &str)] = &[
+    (
+        "light",
+        ['─', '─', '│', '│', '┌', '┐', '└', '┘'],
+        "thin lines (default)",
+    ),
+    ("heavy", ['━', '━', '┃', '┃', '┏', '┓', '┗', '┛'], "bold lines"),
+    ("double", ['═', '═', '║', '║', '╔', '╗', '╚', '╝'], "double lines"),
+    (
+        "rounded",
+        ['─', '─', '│', '│', '╭', '╮', '╰', '╯'],
+        "thin lines with rounded corners",
+    ),
 ];
 
 impl BorderGlyphSet {
@@ -289,7 +300,7 @@ impl PaletteField {
         }
     }
 
-    /// Static list of recognised values (used by the console
+    /// Static list of recognized values (used by the console
     /// command's completion).
     pub const ALL: &'static [&'static str] = &["frame", "background", "text", "title"];
 }
@@ -454,7 +465,7 @@ pub struct BorderRunSpec {
     /// Glyph-index offset into the per-cycle palette so a palette-cycling
     /// border sweeps continuously around the rectangle in
     /// top → right → bottom → left order. Zero when the upstream
-    /// palette is empty (single-colour border).
+    /// palette is empty (single-color border).
     pub palette_offset: usize,
     /// Pre-computed `count_grapheme_clusters(text)`. Carried on
     /// the spec so consumers handing it to [`build_border_regions`]
@@ -996,7 +1007,7 @@ fn parse_legacy_glyph(c: char) -> SidePattern {
 
 /// Resolve a node's effective `BorderStyle` from its optional
 /// `GlyphBorderConfig`, the canvas-level default, and the resolved
-/// frame colour. Single source of truth — every border-build path
+/// frame color. Single source of truth — every border-build path
 /// (scene_builder, tree_builder, renderer) goes through this so
 /// preset / font / size / color / pattern resolution can't drift
 /// between pipelines.
@@ -1178,16 +1189,19 @@ const SECTION_FRAME_FLOOR_FONT_SIZE_PT: f32 = 10.0;
 /// is `const &[…; 4]` (non-empty by construction).
 pub fn preset_glyph_set(preset: &str) -> BorderGlyphSet {
     let name = preset.to_ascii_lowercase();
-    let row = PRESET_TABLE.iter().find(|(n, _)| *n == name).unwrap_or_else(|| {
-        // "custom" is in `BORDER_PRESETS` but absent from the
-        // glyph table — it signals "user-supplied glyphs
-        // override these defaults," with the per-side fallback
-        // to `light`. Anything else gets a warn-log.
-        if name != CUSTOM_PRESET_NAME {
-            log::warn!("border preset '{}' unknown; using 'light'", preset);
-        }
-        &PRESET_TABLE[0]
-    });
+    let row = PRESET_TABLE
+        .iter()
+        .find(|(n, _, _)| *n == name)
+        .unwrap_or_else(|| {
+            // "custom" is in `BORDER_PRESETS` but absent from the
+            // glyph table — it signals "user-supplied glyphs
+            // override these defaults," with the per-side fallback
+            // to `light`. Anything else gets a warn-log.
+            if name != CUSTOM_PRESET_NAME {
+                log::warn!("border preset '{}' unknown; using 'light'", preset);
+            }
+            &PRESET_TABLE[0]
+        });
     BorderGlyphSet::from_glyphs(row.1)
 }
 
@@ -1197,6 +1211,37 @@ pub fn preset_glyph_set(preset: &str) -> BorderGlyphSet {
 /// `"custom"` checks reach for this to keep the meaning single-
 /// sourced.
 pub const CUSTOM_PRESET_NAME: &str = "custom";
+
+/// Description of [`CUSTOM_PRESET_NAME`] for
+/// [`border_preset_hint`]. Lives beside the sentinel rather than in
+/// `PRESET_TABLE` for the same reason the sentinel does: `custom`
+/// has no glyph row.
+const CUSTOM_PRESET_HINT: &str = "user-supplied per-side / per-corner glyphs";
+
+/// One-line human description of a preset name, for a UI that
+/// offers presets to pick from — the console's `border preset=`
+/// completion is the consumer today.
+///
+/// Matching is case-insensitive, mirroring [`preset_glyph_set`].
+/// Returns `None` for a name that is not in [`BORDER_PRESETS`];
+/// every name that *is* in `BORDER_PRESETS` returns `Some`, because
+/// both this lookup and that list derive from the same
+/// `PRESET_TABLE` (plus the `custom` sentinel). That is what keeps a
+/// newly added preset from silently completing with a blank
+/// description.
+///
+/// O(n) over the four-row table, no allocation beyond the
+/// lowercased needle.
+pub fn border_preset_hint(preset: &str) -> Option<&'static str> {
+    let name = preset.to_ascii_lowercase();
+    if name == CUSTOM_PRESET_NAME {
+        return Some(CUSTOM_PRESET_HINT);
+    }
+    PRESET_TABLE
+        .iter()
+        .find(|(n, _, _)| *n == name)
+        .map(|(_, _, hint)| *hint)
+}
 
 /// Every preset name accepted by the schema's
 /// `GlyphBorderConfig.preset` field — the four typed glyph rows
@@ -1296,13 +1341,6 @@ pub fn default_custom_glyphs() -> CustomBorderGlyphs {
     }
 }
 
-/// Resolve `border_style.color_palette` (a name) to a list of
-/// per-cycle-position RGBA colours, reading the configured
-/// `palette_field` channel out of each `ColorGroup`. Returns an
-/// empty `Vec` when the name is unset or the named palette is not
-/// in the map (logs a warning in the latter case per
-/// `CODE_CONVENTIONS.md` §9). Pre-resolution lets the renderer and
-/// tree builder consume the colour list without re-walking the
 /// Apply a [`crate::mindmap::scene_builder::BorderConfigEditsView`]
 /// to a slot for live-preview rendering. Mirrors the application-
 /// crate's `apply_glyph_border_edits_to_slot` shape but consumes
@@ -1315,12 +1353,12 @@ pub fn default_custom_glyphs() -> CustomBorderGlyphs {
 /// post-state as `apply_glyph_border_edits_to_slot` for any
 /// committing edit. Both paths derive from the same field rules:
 /// per-field set-or-keep, side / corner edits force preset to
-/// `"custom"`, the `glyphs` slot materialises on first edit. A
+/// `"custom"`, the `glyphs` slot materializes on first edit. A
 /// parity regression here means the preview lies about what
 /// commit will produce — Risk #1 in the plan.
 ///
 /// `view.clear == true` empties the slot and short-circuits.
-/// Otherwise the helper materialises a fresh `GlyphBorderConfig`
+/// Otherwise the helper materializes a fresh `GlyphBorderConfig`
 /// on first edit (mirroring the committing path's
 /// `default_glyph_border_config`) and folds each per-field
 /// override.
@@ -1415,11 +1453,11 @@ pub fn apply_view_to_slot(
 
 /// Default `GlyphBorderConfig` shape — light preset, 14pt, no
 /// font, 4px padding, no palette. Used by the application-side
-/// committing setters as the "first edit materialises this" base
+/// committing setters as the "first edit materializes this" base
 /// (`set_node_border_config` etc.) and by the scene-side preview
 /// apply path so the two share one constant. Mirrors the
 /// loader-time defaults in
-/// [`crate::mindmap::model::node`]; centralised here so callers
+/// [`crate::mindmap::model::node`]; centralized here so callers
 /// don't reach into the model module's private `default_*`
 /// factories.
 pub fn default_glyph_border_config() -> GlyphBorderConfig {
@@ -1435,6 +1473,17 @@ pub fn default_glyph_border_config() -> GlyphBorderConfig {
     }
 }
 
+/// Resolve `border_style.color_palette` (a name) to a list of
+/// per-cycle-position RGBA colors, reading the configured
+/// `palette_field` channel out of each `ColorGroup`. Returns an
+/// empty `Vec` when the name is unset or the named palette is not
+/// in the map (logs a warning in the latter case per
+/// `CODE_CONVENTIONS.md` §9). Pre-resolution lets the renderer and
+/// tree builder consume the color list without re-walking the
+/// palette map and re-parsing its hex strings — [`build_border_regions`]
+/// indexes the returned slice once per glyph cluster, so the walk
+/// happens once per border rather than once per glyph.
+///
 /// Cost: O(groups.len()) hex parses on names that resolve, O(1) on
 /// the unset / missing fallback paths.
 pub fn resolve_palette_cycle(
@@ -1447,7 +1496,7 @@ pub fn resolve_palette_cycle(
     };
     let Some(palette) = palettes.get(name) else {
         log::warn!(
-            "border color_palette '{}' not found in map; falling back to single colour",
+            "border color_palette '{}' not found in map; falling back to single color",
             name
         );
         return Vec::new();
@@ -1464,13 +1513,13 @@ pub fn resolve_palette_cycle(
 
 /// Build a [`ColorFontRegions`] that paints `cluster_count` glyph
 /// clusters. When `palette_cycle` is non-empty, each cluster
-/// picks its colour from `palette_cycle[(offset + i) % len]`. When
+/// picks its color from `palette_cycle[(offset + i) % len]`. When
 /// it's empty, a single uniform region is emitted using
 /// `fallback_rgba`.
 ///
 /// `glyph_index_offset` lets callers chain side runs into one
 /// continuous cycle around the rectangle (top → right → bottom →
-/// left), so a colour sweep wraps cleanly across corners.
+/// left), so a color sweep wraps cleanly across corners.
 ///
 /// # Newlines in vertical sides
 ///
@@ -1481,7 +1530,7 @@ pub fn resolve_palette_cycle(
 /// positions `[offset, offset+2, offset+4, …]` rather than
 /// `[offset, offset+1, offset+2, …]`. This matches the tree
 /// builder's per-side region emission, which means the flat-scene
-/// renderer and the Baumhard-tree renderer paint identical colour
+/// renderer and the Baumhard-tree renderer paint identical color
 /// sequences. Callers that want a denser cycle on a column can
 /// shorten the palette to compensate.
 ///
