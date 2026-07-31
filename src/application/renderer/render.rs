@@ -49,7 +49,7 @@ impl Renderer {
         let sid = shape_id as f32;
         // UVs match the quad's local frame: TL = (0, 0), TR = (1, 0),
         // BR = (1, 1), BL = (0, 1). The SDF cases in the fragment
-        // shader assume exactly this parameterisation.
+        // shader assume exactly this parameterization.
         let push = |out: &mut Vec<f32>, x: f32, y: f32, u: f32, v: f32| {
             out.extend_from_slice(&[x, y, u, v, r, g, b, a, sid]);
         };
@@ -280,8 +280,9 @@ impl Renderer {
     }
 
     /// Collect every visible text-area from the renderer's buffer
-    /// maps (mindmap nodes, borders, connection labels, edge
-    /// handles, overlays, canvas-scene, console, color picker, FPS
+    /// maps (mindmap nodes, overlays, canvas-scene — which carries
+    /// borders, connections, labels, and handles through the tree
+    /// pipeline — console, color picker, FPS
     /// overlay) and run both `text_renderer.prepare()` and
     /// `console_text_renderer.prepare()` against the atlas. Returns
     /// `false` (and skips the rest of the caller's frame) on
@@ -308,19 +309,18 @@ impl Renderer {
         };
         let default_color = COLOR_WHITE;
 
-        // Collect "main" text areas: the mindmap + borders +
-        // connections + edge handles + overlays + arena buffers.
+        // Collect "main" text areas: the mindmap node buffers +
+        // overlays + canvas-scene arena buffers (borders,
+        // connections, labels, portals, handles all arrive here
+        // through the tree walker).
         // Palette buffers go into a separate list so they render
         // in a second glyphon pass (with the backdrop rect
         // between them, hence the split).
         // Upper-bound capacity so the per-frame `Vec` doesn't grow
         // through several reallocs. Visibility-culling reduces the
-        // realised count below this; allocating once at the ceiling
+        // realized count below this; allocating once at the ceiling
         // is still cheaper than `push` reallocations.
         let main_capacity = self.mindmap_buffers.values().map(|v| v.len()).sum::<usize>()
-            + self.border_buffers.values().map(|v| v.len()).sum::<usize>()
-            + self.connection_label_buffers.len()
-            + self.edge_handle_buffers.len()
             + self.overlay_buffers.len()
             + self.canvas_scene_buffers.len();
         let mut main_text_areas: Vec<TextArea> = Vec::with_capacity(main_capacity);
@@ -328,9 +328,6 @@ impl Renderer {
             self.mindmap_buffers
                 .values()
                 .flat_map(|v| v.iter())
-                .chain(self.border_buffers.values().flat_map(|v| v.iter()))
-                .chain(self.connection_label_buffers.values())
-                .chain(self.edge_handle_buffers.iter())
                 .chain(self.overlay_buffers.iter())
                 .chain(self.canvas_scene_buffers.iter())
                 .filter_map(|tb| {

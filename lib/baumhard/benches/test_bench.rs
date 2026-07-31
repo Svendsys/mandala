@@ -30,8 +30,97 @@ use std::path::PathBuf;
 
 use baumhard::mindmap::loader;
 use baumhard::mindmap::model::MindMap;
-use baumhard::mindmap::scene_builder::{build_scene_with_cache, SceneSelectionContext};
+use baumhard::mindmap::tree_builder::{self, SceneSelectionContext};
 use baumhard::mindmap::scene_cache::SceneConnectionCache;
+
+/// Run every per-role projection pass for one frame, in the order
+/// the application's `CanvasFrame::update_all` does — one shared
+/// fold-hidden set, one clip-AABB pass, then the seven role passes.
+///
+/// The benchmarks below measure "the cost of a canvas rebuild", and
+/// this is what a canvas rebuild *is* after the dual-pipeline
+/// consolidation: there is no single entry point in the library any
+/// more, because each role's data pass feeds its own canvas tree.
+/// Keeping the sequence here rather than in the library is
+/// deliberate — the library must not grow an orchestrator whose
+/// only consumer is a benchmark.
+#[allow(clippy::too_many_arguments)]
+fn project_all_roles(
+    map: &MindMap,
+    offsets: &HashMap<String, (f32, f32)>,
+    selection: SceneSelectionContext<'_>,
+    cache: &mut SceneConnectionCache,
+    camera_zoom: f32,
+) {
+    use baumhard::mindmap::scene_cache::EdgeKey;
+    use baumhard::mindmap::tree_builder::BorderChromeOverrides;
+
+    cache.ensure_zoom(camera_zoom);
+    let hidden = map.fold_hidden_set();
+    let node_aabbs = tree_builder::node_clip_aabbs(map, offsets, None, &hidden);
+    let _ = tree_builder::build_connection_elements(
+        map,
+        offsets,
+        &node_aabbs,
+        selection.edge,
+        None,
+        cache,
+        camera_zoom,
+        &hidden,
+    );
+    let highlight_key: Option<EdgeKey> = selection
+        .edge_label
+        .clone()
+        .or_else(|| selection.edge.map(|(f, t, ty)| EdgeKey::new(f, t, ty)));
+    let _ = tree_builder::build_label_elements(
+        map,
+        offsets,
+        selection.label_edit,
+        None,
+        highlight_key.as_ref(),
+        camera_zoom,
+        &hidden,
+    );
+    let _ = tree_builder::build_section_frames(
+        map,
+        offsets,
+        selection.node_edit_for,
+        selection.focused_section,
+        None,
+        &hidden,
+    );
+    let _ = tree_builder::build_selected_node_handles(
+        map,
+        offsets,
+        selection.selected_node_for_resize,
+        &hidden,
+    );
+    let _ = tree_builder::build_selected_section_handles(
+        map,
+        offsets,
+        selection.selected_section,
+        &hidden,
+    );
+    let _ = tree_builder::border_node_data(
+        map,
+        offsets,
+        BorderChromeOverrides {
+            preview: None,
+            node_edit_for: selection.node_edit_for,
+        },
+        &hidden,
+    );
+    let _ = tree_builder::portal_pair_data(
+        map,
+        offsets,
+        selection.edge,
+        selection.portal_label,
+        None,
+        None,
+        camera_zoom,
+        &hidden,
+    );
+}
 
 /// Load the testament fixture for the drag-drain benchmark. Panics
 /// if the fixture is missing — this is benchmark code, not a test,
@@ -44,7 +133,7 @@ fn load_testament_map() -> MindMap {
     loader::load_from_file(&path).expect("testament map should load for bench")
 }
 
-/// One drain of the translate path: re-enter `build_scene_with_cache`
+/// One drain of the translate path: re-enter the role passes
 /// with a fresh offset carrying the same delta for every dragged
 /// node. The cache is already warm from the previous drain, so
 /// every internal edge of the "subtree" falls into the translate
@@ -61,16 +150,7 @@ fn do_subtree_drag_translate_path(
     for id in dragged_ids {
         offsets.insert(id.clone(), (dx, dy));
     }
-    let _ = build_scene_with_cache(
-        map,
-        &offsets,
-        SceneSelectionContext::default(),
-        None,
-        None,
-        None,
-        cache,
-        zoom,
-    );
+    project_all_roles(map, &offsets, SceneSelectionContext::default(), cache, zoom);
 }
 
 /// Baseline: simulate the pre-translate-path behavior by clearing
@@ -91,16 +171,7 @@ fn do_subtree_drag_slow_path(
     for id in dragged_ids {
         offsets.insert(id.clone(), (dx, dy));
     }
-    let _ = build_scene_with_cache(
-        map,
-        &offsets,
-        SceneSelectionContext::default(),
-        None,
-        None,
-        None,
-        cache,
-        zoom,
-    );
+    project_all_roles(map, &offsets, SceneSelectionContext::default(), cache, zoom);
 }
 
 fn criterion_benchmark(c: &mut Criterion) {
@@ -931,22 +1002,14 @@ fn do_scene_rebuild_with_handle_overrides(
     selected_node_for_resize: Option<&str>,
     selected_section: Option<(&str, usize)>,
 ) {
-    let _ = build_scene_with_cache(
+    project_all_roles(
         map,
         &HashMap::new(),
         SceneSelectionContext {
-            edge: None,
-            edge_label: None,
-            portal_label: None,
-            label_edit: None,
             selected_section,
             selected_node_for_resize,
-            node_edit_for: None,
-            focused_section: None,
+            ..SceneSelectionContext::default()
         },
-        None,
-        None,
-        None,
         cache,
         1.0,
     );
@@ -1025,43 +1088,25 @@ fn node_edit_mode_rebuild_benchmark(c: &mut Criterion) {
         .clone();
     let mut cache = SceneConnectionCache::new();
     // Warm cache once so the bench measures steady-state.
-    let _ = build_scene_with_cache(
+    project_all_roles(
         &bench_map,
         &HashMap::new(),
         SceneSelectionContext {
-            edge: None,
-            edge_label: None,
-            portal_label: None,
-            label_edit: None,
-            selected_section: None,
-            selected_node_for_resize: None,
             node_edit_for: Some(any_node_id.as_str()),
-            focused_section: None,
+            ..SceneSelectionContext::default()
         },
-        None,
-        None,
-        None,
         &mut cache,
         1.0,
     );
     c.bench_function("scene_rebuild_node_edit_mode_active", |b| {
         b.iter(|| {
-            let _ = build_scene_with_cache(
+            project_all_roles(
                 &bench_map,
                 &HashMap::new(),
                 SceneSelectionContext {
-                    edge: None,
-                    edge_label: None,
-                    portal_label: None,
-                    label_edit: None,
-                    selected_section: None,
-                    selected_node_for_resize: None,
                     node_edit_for: Some(any_node_id.as_str()),
-                    focused_section: None,
+                    ..SceneSelectionContext::default()
                 },
-                None,
-                None,
-                None,
                 &mut cache,
                 1.0,
             );
@@ -1073,7 +1118,7 @@ fn node_edit_mode_rebuild_benchmark(c: &mut Criterion) {
 /// quadrant-math helper; sub-microsecond per call. Pin against
 /// the eight quadrant cases.
 fn fast_resize_anchor_inference_benchmark(c: &mut Criterion) {
-    use baumhard::mindmap::scene_builder::infer_resize_anchor;
+    use baumhard::mindmap::tree_builder::infer_resize_anchor;
     use glam::Vec2;
     let aabb_pos = Vec2::new(0.0, 0.0);
     let aabb_size = Vec2::new(200.0, 100.0);
@@ -1101,7 +1146,7 @@ fn fast_resize_anchor_inference_benchmark(c: &mut Criterion) {
 /// map; pins the chrome-emission cost separate from the rest of
 /// the scene rebuild.
 fn section_frame_emission_benchmark(c: &mut Criterion) {
-    use baumhard::mindmap::scene_builder::build_section_frames;
+    use baumhard::mindmap::tree_builder::build_section_frames;
     let bench_map = synthetic_multi_section_map(50, 5);
     let any_node_id: String = bench_map
         .nodes

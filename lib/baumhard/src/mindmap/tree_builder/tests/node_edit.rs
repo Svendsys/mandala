@@ -1,19 +1,23 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! NodeEdit-mode visual indicators emitted by the scene builder.
-//! Today: inactive-node dimming — when one node is the active
-//! NodeEdit target, every other visible node renders chrome + text
-//! at half alpha.
+//! NodeEdit-mode chrome on the border pass: when one node is the
+//! active NodeEdit target, every *other* visible node's frame
+//! renders at [`INACTIVE_NODE_ALPHA_MULTIPLIER`] alpha.
 //!
-//! Section frames + status-bar overlay land in adjacent passes (B.1
-//! / B.3) and have their own tests when those passes ship.
+//! The matching **text-run** dimming is a render-layer overlay
+//! applied to the node tree by the application crate — the node
+//! tree itself is a pure model projection (see
+//! `MindMapDocument::build_tree`), so the dimming cannot live here.
+//! Its tests sit next to that overlay in
+//! `src/application/document/hit_test.rs`.
+//!
+//! Border-preview integration rides along in this file because it
+//! reaches the border pass through the same
+//! [`BorderChromeOverrides`] bundle.
 
 use super::fixtures::*;
 use crate::mindmap::model::MindSection;
-use crate::mindmap::scene_builder::node_pass::INACTIVE_NODE_ALPHA_MULTIPLIER;
-use crate::mindmap::scene_builder::{
-    build_scene_with_offsets_selection_and_overrides, SceneSelectionContext,
-};
+use crate::mindmap::tree_builder::{SceneSelectionContext, INACTIVE_NODE_ALPHA_MULTIPLIER};
 use std::collections::HashMap;
 
 /// Parse an `#RRGGBB` / `#RRGGBBAA` hex into the alpha channel as a
@@ -38,7 +42,7 @@ fn ctx_with_node_edit_for<'a>(active: &'a str) -> SceneSelectionContext<'a> {
 }
 
 fn node_with_text(id: &str, x: f64, y: f64, text: &str) -> crate::mindmap::model::MindNode {
-    let mut node = synthetic_node(id, x, y, 200.0, 200.0, true);
+    let mut node = sized_node(id, x, y, 200.0, 200.0, true);
     node.sections = vec![MindSection::new_default(text.into(), vec![])];
     // Pin a known opaque text color so the half-alpha is unambiguous.
     let grapheme_count = text.chars().count();
@@ -63,10 +67,13 @@ fn node_with_text(id: &str, x: f64, y: f64, text: &str) -> crate::mindmap::model
 #[test]
 fn test_node_edit_dim_off_renders_full_alpha() {
     let map = synthetic_map(
-        vec![node_with_text("a", 0.0, 0.0, "alpha"), node_with_text("b", 400.0, 0.0, "beta")],
+        vec![
+            node_with_text("a", 0.0, 0.0, "alpha"),
+            node_with_text("b", 400.0, 0.0, "beta"),
+        ],
         vec![],
     );
-    let scene = build_scene_with_offsets_selection_and_overrides(
+    let scene = project_with_overrides(
         &map,
         &HashMap::new(),
         SceneSelectionContext::default(),
@@ -75,18 +82,8 @@ fn test_node_edit_dim_off_renders_full_alpha() {
         None,
         1.0,
     );
-    for el in &scene.text_elements {
-        for run in &el.text_runs {
-            assert!(
-                (alpha_of(&run.color) - 1.0).abs() < 1e-3,
-                "default mode: {} run #{} alpha = {} (expected 1.0)",
-                el.node_id,
-                el.section_idx,
-                alpha_of(&run.color),
-            );
-        }
-    }
-    for b in &scene.border_elements {
+    assert_eq!(scene.border_nodes.len(), 2, "both framed nodes emit a border");
+    for b in &scene.border_nodes {
         assert!(
             (alpha_of(&b.border_style.color) - 1.0).abs() < 1e-3,
             "default mode: {} border alpha = {} (expected 1.0)",
@@ -99,10 +96,13 @@ fn test_node_edit_dim_off_renders_full_alpha() {
 #[test]
 fn test_node_edit_active_node_keeps_full_alpha() {
     let map = synthetic_map(
-        vec![node_with_text("a", 0.0, 0.0, "alpha"), node_with_text("b", 400.0, 0.0, "beta")],
+        vec![
+            node_with_text("a", 0.0, 0.0, "alpha"),
+            node_with_text("b", 400.0, 0.0, "beta"),
+        ],
         vec![],
     );
-    let scene = build_scene_with_offsets_selection_and_overrides(
+    let scene = project_with_overrides(
         &map,
         &HashMap::new(),
         ctx_with_node_edit_for("a"),
@@ -111,34 +111,28 @@ fn test_node_edit_active_node_keeps_full_alpha() {
         None,
         1.0,
     );
-    let active_text: Vec<_> = scene.text_elements.iter().filter(|e| e.node_id == "a").collect();
-    assert!(!active_text.is_empty(), "active node 'a' must emit text");
-    for el in &active_text {
-        for run in &el.text_runs {
-            assert!(
-                (alpha_of(&run.color) - 1.0).abs() < 1e-3,
-                "active node 'a' run alpha must stay 1.0; got {}",
-                alpha_of(&run.color),
-            );
-        }
-    }
-    let active_border = scene.border_elements.iter().find(|b| b.node_id == "a");
-    if let Some(b) = active_border {
-        assert!(
-            (alpha_of(&b.border_style.color) - 1.0).abs() < 1e-3,
-            "active node border alpha must stay 1.0; got {}",
-            alpha_of(&b.border_style.color),
-        );
-    }
+    let active_border = scene
+        .border_nodes
+        .iter()
+        .find(|b| b.node_id == "a")
+        .expect("active node 'a' must emit a border");
+    assert!(
+        (alpha_of(&active_border.border_style.color) - 1.0).abs() < 1e-3,
+        "active node border alpha must stay 1.0; got {}",
+        alpha_of(&active_border.border_style.color),
+    );
 }
 
 #[test]
 fn test_node_edit_inactive_node_dims_to_half_alpha() {
     let map = synthetic_map(
-        vec![node_with_text("a", 0.0, 0.0, "alpha"), node_with_text("b", 400.0, 0.0, "beta")],
+        vec![
+            node_with_text("a", 0.0, 0.0, "alpha"),
+            node_with_text("b", 400.0, 0.0, "beta"),
+        ],
         vec![],
     );
-    let scene = build_scene_with_offsets_selection_and_overrides(
+    let scene = project_with_overrides(
         &map,
         &HashMap::new(),
         ctx_with_node_edit_for("a"),
@@ -147,27 +141,25 @@ fn test_node_edit_inactive_node_dims_to_half_alpha() {
         None,
         1.0,
     );
-    let inactive_text: Vec<_> = scene.text_elements.iter().filter(|e| e.node_id == "b").collect();
-    assert!(!inactive_text.is_empty(), "inactive node 'b' must emit text");
-    for el in &inactive_text {
-        for run in &el.text_runs {
-            assert!(
-                (alpha_of(&run.color) - INACTIVE_NODE_ALPHA_MULTIPLIER).abs() < 1e-2,
-                "inactive node 'b' run alpha must be {} (got {})",
-                INACTIVE_NODE_ALPHA_MULTIPLIER,
-                alpha_of(&run.color),
-            );
-        }
-    }
-    let inactive_border = scene.border_elements.iter().find(|b| b.node_id == "b");
-    if let Some(b) = inactive_border {
-        assert!(
-            (alpha_of(&b.border_style.color) - INACTIVE_NODE_ALPHA_MULTIPLIER).abs() < 1e-2,
-            "inactive node 'b' border alpha must be {} (got {})",
-            INACTIVE_NODE_ALPHA_MULTIPLIER,
-            alpha_of(&b.border_style.color),
-        );
-    }
+    let inactive_border = scene
+        .border_nodes
+        .iter()
+        .find(|b| b.node_id == "b")
+        .expect("inactive node 'b' must emit a border");
+    assert!(
+        (alpha_of(&inactive_border.border_style.color) - INACTIVE_NODE_ALPHA_MULTIPLIER).abs() < 1e-2,
+        "inactive node 'b' border alpha must be {} (got {})",
+        INACTIVE_NODE_ALPHA_MULTIPLIER,
+        alpha_of(&inactive_border.border_style.color),
+    );
+    // The dimmed color must still be a resolvable hex, not a
+    // pass-through of an unparsed input — the tree builder feeds it
+    // straight to `hex_to_rgba_safe` for the region colors.
+    assert!(
+        inactive_border.color_rgba[3] < 0.75,
+        "dimmed border rgba alpha must follow the hex; got {:?}",
+        inactive_border.color_rgba
+    );
 }
 
 // ─── border preview integration: per-node target ────────────────
@@ -176,8 +168,8 @@ fn test_node_edit_inactive_node_dims_to_half_alpha() {
 /// config for the matching node's resolved style, leaving other
 /// visible nodes' borders unchanged.
 #[test]
-fn test_border_preview_node_target_renders_through_scene_builder() {
-    use crate::mindmap::scene_builder::{
+fn test_border_preview_node_target_renders_through_border_pass() {
+    use crate::mindmap::tree_builder::{
         BorderConfigEditsView, BorderPreview, BorderPreviewTargetRef, EditView,
     };
     let map = synthetic_map(
@@ -197,7 +189,7 @@ fn test_border_preview_node_target_renders_through_scene_builder() {
         edits,
         force_show_frame: true,
     };
-    let scene = build_scene_with_offsets_selection_and_overrides(
+    let scene = project_with_overrides(
         &map,
         &HashMap::new(),
         SceneSelectionContext::default(),
@@ -207,7 +199,7 @@ fn test_border_preview_node_target_renders_through_scene_builder() {
         1.0,
     );
     let target = scene
-        .border_elements
+        .border_nodes
         .iter()
         .find(|b| b.node_id == "a")
         .expect("a's border emitted (force_show_frame)");
@@ -215,7 +207,7 @@ fn test_border_preview_node_target_renders_through_scene_builder() {
         target.border_style.corners.top_left, "\u{250F}",
         "preview-targeted node 'a' resolves to heavy preset"
     );
-    if let Some(other) = scene.border_elements.iter().find(|b| b.node_id == "b") {
+    if let Some(other) = scene.border_nodes.iter().find(|b| b.node_id == "b") {
         // 'b' isn't in the preview target — its border resolves
         // through the committed cascade (light floor / fixture's
         // configured shape).
@@ -233,16 +225,16 @@ fn test_border_preview_node_target_renders_through_scene_builder() {
 /// user would think the verb was broken.
 #[test]
 fn test_border_preview_force_show_frame_on_hidden_node() {
-    use crate::mindmap::scene_builder::{
+    use crate::mindmap::tree_builder::{
         BorderConfigEditsView, BorderPreview, BorderPreviewTargetRef, EditView,
     };
     // Build a node with `show_frame = false`.
-    let mut hidden_node = synthetic_node("hidden", 0.0, 0.0, 200.0, 100.0, false);
+    let mut hidden_node = sized_node("hidden", 0.0, 0.0, 200.0, 100.0, false);
     hidden_node.sections = vec![MindSection::new_default("hidden text".into(), vec![])];
     let map = synthetic_map(vec![hidden_node], vec![]);
 
-    // Sanity: with no preview, the node emits no `BorderElement`.
-    let baseline = build_scene_with_offsets_selection_and_overrides(
+    // Sanity: with no preview, the node emits no border data.
+    let baseline = project_with_overrides(
         &map,
         &HashMap::new(),
         SceneSelectionContext::default(),
@@ -252,12 +244,12 @@ fn test_border_preview_force_show_frame_on_hidden_node() {
         1.0,
     );
     assert!(
-        baseline.border_elements.iter().all(|b| b.node_id != "hidden"),
-        "no preview + show_frame=false → no BorderElement"
+        baseline.border_nodes.iter().all(|b| b.node_id != "hidden"),
+        "no preview + show_frame=false → no border emitted"
     );
 
     // With a preview that has `force_show_frame = true`, the node
-    // emits a previewed `BorderElement` even though the committed
+    // emits a previewed border even though the committed
     // `show_frame` is still `false`.
     let target_ids = [String::from("hidden")];
     let edits = BorderConfigEditsView {
@@ -269,7 +261,7 @@ fn test_border_preview_force_show_frame_on_hidden_node() {
         edits,
         force_show_frame: true,
     };
-    let scene = build_scene_with_offsets_selection_and_overrides(
+    let scene = project_with_overrides(
         &map,
         &HashMap::new(),
         SceneSelectionContext::default(),
@@ -279,10 +271,10 @@ fn test_border_preview_force_show_frame_on_hidden_node() {
         1.0,
     );
     let target = scene
-        .border_elements
+        .border_nodes
         .iter()
         .find(|b| b.node_id == "hidden")
-        .expect("force_show_frame must materialise the BorderElement");
+        .expect("force_show_frame must materialize the border");
     assert_eq!(
         target.border_style.corners.top_left, "\u{250F}",
         "preview's heavy preset rendered through"

@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Connection glyph clipping behaviour: inside-node clip, frame-area clip, cap survival for unframed endpoints, cap clip for framed endpoints.
+//! Connection glyph clipping behavior: inside-node clip, frame-area clip, cap survival for unframed endpoints, cap clip for framed endpoints.
 
-use super::super::*;
 use super::fixtures::*;
 
 #[test]
@@ -13,14 +12,14 @@ fn test_scene_clips_connection_glyphs_inside_node() {
     // AABB clipping is exercised here.
     let map = synthetic_map(
         vec![
-            synthetic_node("a", 0.0, 0.0, 40.0, 40.0, false),
-            synthetic_node("b", 400.0, 0.0, 40.0, 40.0, false),
-            synthetic_node("c", 180.0, 0.0, 60.0, 40.0, false),
+            sized_node("a", 0.0, 0.0, 40.0, 40.0, false),
+            sized_node("b", 400.0, 0.0, 40.0, 40.0, false),
+            sized_node("c", 180.0, 0.0, 60.0, 40.0, false),
         ],
         vec![synthetic_edge("a", "b", "right", "left")], // right edge of A → left edge of B
     );
 
-    let scene = build_scene(&map, 1.0);
+    let scene = project(&map, 1.0);
     assert_eq!(scene.connection_elements.len(), 1);
     let conn = &scene.connection_elements[0];
 
@@ -50,14 +49,14 @@ fn test_scene_clips_connection_glyphs_in_frame_area() {
 
     let map = synthetic_map(
         vec![
-            synthetic_node("a", 0.0, 0.0, 40.0, 40.0, false),
-            synthetic_node("b", 400.0, 0.0, 40.0, 40.0, false),
-            synthetic_node("c", 180.0, 0.0, 60.0, 40.0, true),
+            sized_node("a", 0.0, 0.0, 40.0, 40.0, false),
+            sized_node("b", 400.0, 0.0, 40.0, 40.0, false),
+            sized_node("c", 180.0, 0.0, 60.0, 40.0, true),
         ],
         vec![synthetic_edge("a", "b", "right", "left")],
     );
 
-    let scene = build_scene(&map, 1.0);
+    let scene = project(&map, 1.0);
     assert_eq!(scene.connection_elements.len(), 1);
     let conn = &scene.connection_elements[0];
 
@@ -103,12 +102,12 @@ fn test_scene_caps_survive_for_unframed_endpoints() {
     });
     let map = synthetic_map(
         vec![
-            synthetic_node("a", 0.0, 0.0, 40.0, 40.0, false),
-            synthetic_node("b", 400.0, 0.0, 40.0, 40.0, false),
+            sized_node("a", 0.0, 0.0, 40.0, 40.0, false),
+            sized_node("b", 400.0, 0.0, 40.0, 40.0, false),
         ],
         vec![edge],
     );
-    let scene = build_scene(&map, 1.0);
+    let scene = project(&map, 1.0);
     let conn = &scene.connection_elements[0];
     assert!(
         conn.cap_start.is_some(),
@@ -140,12 +139,12 @@ fn test_scene_caps_clipped_for_framed_endpoints() {
     });
     let map = synthetic_map(
         vec![
-            synthetic_node("a", 0.0, 0.0, 40.0, 40.0, false),
-            synthetic_node("b", 400.0, 0.0, 40.0, 40.0, true), // framed!
+            sized_node("a", 0.0, 0.0, 40.0, 40.0, false),
+            sized_node("b", 400.0, 0.0, 40.0, 40.0, true), // framed!
         ],
         vec![edge],
     );
-    let scene = build_scene(&map, 1.0);
+    let scene = project(&map, 1.0);
     let conn = &scene.connection_elements[0];
     // Source is unframed — cap_start still shows at A's right edge.
     assert!(

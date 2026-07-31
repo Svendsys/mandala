@@ -615,24 +615,38 @@ mod tests {
 
     #[test]
     fn test_testament_scene_has_connections() {
-        use crate::mindmap::scene_builder;
+        use crate::mindmap::scene_cache::SceneConnectionCache;
+        use crate::mindmap::tree_builder::{build_connection_elements, node_clip_aabbs};
 
         let path = test_map_path();
         let map = load_from_file(&path).unwrap();
-        let scene = scene_builder::build_scene(&map, 1.0);
+        let hidden = map.fold_hidden_set();
+        let offsets = std::collections::HashMap::new();
+        let aabbs = node_clip_aabbs(&map, &offsets, None, &hidden);
+        let mut cache = SceneConnectionCache::new();
+        let (connection_elements, _handles) = build_connection_elements(
+            &map,
+            &offsets,
+            &aabbs,
+            None,
+            None,
+            &mut cache,
+            1.0,
+            &hidden,
+        );
 
         // All visible edges should produce connection elements
         let visible_edges = map.edges.iter().filter(|e| e.visible).count();
         assert_eq!(
-            scene.connection_elements.len(),
+            connection_elements.len(),
             visible_edges,
             "Expected {} connection elements, got {}",
             visible_edges,
-            scene.connection_elements.len()
+            connection_elements.len()
         );
 
         // Each connection element should have glyph positions
-        for elem in &scene.connection_elements {
+        for elem in &connection_elements {
             assert!(
                 !elem.glyph_positions.is_empty(),
                 "Connection has no glyph positions"
@@ -793,14 +807,19 @@ mod tests {
         assert_eq!(map.custom_mutations.len(), 3);
     }
 
+    /// The canvas background is a theme-variable reference in the
+    /// fixture; the renderer reads `Canvas.background_color` and
+    /// resolves it through `theme_variables` at clear-color time.
+    /// Pin the resolution here so a broken variant table shows up
+    /// as a loader test rather than a black canvas.
     #[test]
-    fn test_theme_demo_scene_resolves_background() {
-        use crate::mindmap::scene_builder;
+    fn test_theme_demo_resolves_background_through_theme_vars() {
         let path = theme_demo_path();
         let map = load_from_file(&path).unwrap();
-        let scene = scene_builder::build_scene(&map, 1.0);
-        // Background should resolve through the dark theme var set.
-        assert_eq!(scene.background_color, "#141414");
+        assert_eq!(
+            crate::util::color::resolve_var(&map.canvas.background_color, &map.canvas.theme_variables),
+            "#141414"
+        );
     }
 
     #[test]
@@ -815,7 +834,7 @@ mod tests {
 
     /// Two consecutive `save_to_file` calls on the same `MindMap`
     /// produce byte-identical files. `MindMap.nodes` is a `HashMap`
-    /// whose iteration order is randomised per-process; routing
+    /// whose iteration order is randomized per-process; routing
     /// through `serde_json::Value` (a `BTreeMap` under the hood)
     /// pins the order. Without this, every save would diff against
     /// the previous one even when nothing changed.
@@ -1000,15 +1019,15 @@ mod tests {
         // Empty-case absence: a node with no inline_macros must
         // not have the key on disk (skip_serializing_if).
         let raw = std::fs::read_to_string(&tmp).expect("read raw");
-        // The serialised node has `"inline_macros":` exactly once
+        // The serialized node has `"inline_macros":` exactly once
         // (the populated one). A second occurrence would mean
-        // empty Vecs were serialised. Today the map has exactly
+        // empty Vecs were serialized. Today the map has exactly
         // one node, so 1 match is correct; if we had a second
         // node with no inline_macros it should be absent.
         assert_eq!(
             raw.matches("\"inline_macros\"").count(),
             1,
-            "non-empty inline_macros must be serialised; empty must not"
+            "non-empty inline_macros must be serialized; empty must not"
         );
 
         let _ = std::fs::remove_file(&tmp);

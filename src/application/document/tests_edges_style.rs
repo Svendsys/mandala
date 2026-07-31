@@ -9,7 +9,7 @@ use super::*;
 
 use baumhard::mindmap::model::ControlPoint;
 use baumhard::mindmap::model::GlyphConnectionConfig;
-use baumhard::mindmap::scene_builder::EdgeHandleKind;
+use baumhard::mindmap::tree_builder::EdgeHandleKind;
 use glam::Vec2;
 
 #[test]
@@ -633,8 +633,8 @@ fn test_color_picker_preview_does_not_push_undo_or_dirty() {
     // And the scene builder substitutes the preview color into
     // the matching edge's label element.
     doc.selection = SelectionState::Edge(er.clone());
-    let scene = doc.build_scene_with_selection(1.0, InteractionModeOverrides::none());
-    // The edge has a glyph label → scene_builder should emit a
+    let scene = crate::application::document::tests_common::project_roles(&doc, 1.0, InteractionModeOverrides::none());
+    // The edge has a glyph label → the label pass should emit a
     // ConnectionLabelElement for it. If the edge has no label
     // this test case simply verifies nothing crashes.
     let edge_key = baumhard::mindmap::scene_cache::EdgeKey::from_edge(&doc.mindmap.edges[idx]);
@@ -671,8 +671,11 @@ fn test_edge_label_selection_paints_label_cyan() {
     // Baseline: no selection, label takes the committed color
     // (whatever the cascade resolves to from the model).
     doc.selection = SelectionState::None;
-    let baseline = doc
-        .build_scene_with_selection(1.0, InteractionModeOverrides::none())
+    let baseline = crate::application::document::tests_common::project_roles(
+        &doc,
+        1.0,
+        InteractionModeOverrides::none(),
+    )
         .connection_label_elements
         .iter()
         .find(|c| c.edge_key == edge_key)
@@ -687,8 +690,11 @@ fn test_edge_label_selection_paints_label_cyan() {
 
     // EdgeLabel selection: label tints cyan.
     doc.selection = SelectionState::EdgeLabel(EdgeLabelSel::new(er.clone()));
-    let highlighted = doc
-        .build_scene_with_selection(1.0, InteractionModeOverrides::none())
+    let highlighted = crate::application::document::tests_common::project_roles(
+        &doc,
+        1.0,
+        InteractionModeOverrides::none(),
+    )
         .connection_label_elements
         .iter()
         .find(|c| c.edge_key == edge_key)
@@ -701,8 +707,11 @@ fn test_edge_label_selection_paints_label_cyan() {
     // the user reads "selected" the same way regardless of
     // which sub-part the click landed on.
     doc.selection = SelectionState::Edge(er.clone());
-    let edge_selected = doc
-        .build_scene_with_selection(1.0, InteractionModeOverrides::none())
+    let edge_selected = crate::application::document::tests_common::project_roles(
+        &doc,
+        1.0,
+        InteractionModeOverrides::none(),
+    )
         .connection_label_elements
         .iter()
         .find(|c| c.edge_key == edge_key)
@@ -726,7 +735,7 @@ fn test_color_picker_preview_cleared_returns_to_committed() {
         key,
         color: "#112233".to_string(),
     });
-    // ... hover frames would call build_scene here ...
+    // ... hover frames would re-run the projection here ...
     doc.color_picker_preview = None;
 
     // Model is untouched across the full preview session.
@@ -1413,7 +1422,7 @@ fn test_edge_label_font_rejects_inversion_against_inherited_body_max() {
     assert!(!doc.dirty);
 }
 
-/// One labelled edge setter in a table-driven battery — the
+/// One labeled edge setter in a table-driven battery — the
 /// `EdgeRef` sibling of `tests_nodes::NodeSetterCase`, aliased
 /// for the same `clippy::type_complexity` reason.
 type EdgeSetterCase = (&'static str, Box<dyn Fn(&mut MindMapDocument, &EdgeRef) -> bool>);
@@ -1494,7 +1503,7 @@ fn test_edge_font_setters_no_op_on_missing_edge() {
     assert!(!doc.dirty);
 }
 
-/// Forking is undoable: an edit that materialises a
+/// Forking is undoable: an edit that materializes a
 /// `label_config` / `PortalEndpointState` on an edge that had
 /// none must restore the pre-fork `None` on undo. `mutate_edge`
 /// snapshots before the fork, which is what makes this hold

@@ -19,14 +19,11 @@
 //!         └── GlyphArea slot=2 (text)
 //! ```
 //!
-//! Mirrors the [`scene_builder::portal`] emission rule: color,
-//! glyph, font size, and text all resolve through
-//! [`scene_builder::portal::resolve_portal_endpoint_style`] plus
-//! the `layout_portal_label` / `layout_portal_text` helpers so
-//! the scene-path and tree-path cannot drift.
-//!
-//! [`scene_builder::portal`]: crate::mindmap::scene_builder::portal
-//! [`scene_builder::portal::resolve_portal_endpoint_style`]: crate::mindmap::scene_builder::portal::resolve_portal_endpoint_style
+//! Color, glyph, font size, and text all resolve through
+//! [`super::portal_style`] — [`resolve_portal_endpoint_style`],
+//! [`resolve_portal_endpoint_text_style`], `layout_portal_label`,
+//! and `layout_portal_text` — so this file owns projection only
+//! and never re-derives a style.
 
 use std::collections::{HashMap, HashSet};
 
@@ -38,12 +35,13 @@ use crate::gfx_structs::element::GfxElement;
 use crate::gfx_structs::mutator::GfxMutator;
 use crate::gfx_structs::tree::Tree;
 use crate::mindmap::model::{is_portal_edge, portal_endpoint_state, MindMap, MindNode};
-use crate::mindmap::scene_builder::portal::{
+use crate::util::geometry::aabb_center;
+
+use super::overrides::{PortalColorPreview, PortalTextEditOverride};
+use super::portal_style::{
     layout_portal_label, layout_portal_text, resolve_portal_endpoint_style,
     resolve_portal_endpoint_text_style, SelectedPortalLabel,
 };
-use crate::util::geometry::aabb_center;
-use crate::mindmap::scene_builder::PortalTextEditOverride;
 use crate::mindmap::scene_cache::EdgeKey;
 use crate::mindmap::SELECTION_HIGHLIGHT_HEX;
 use crate::util::color;
@@ -54,16 +52,6 @@ use crate::util::color;
 /// `EdgeKey` shape elsewhere. Per-label selection travels through
 /// `SelectedPortalLabel` instead.
 pub type SelectedEdgeRef<'a> = (&'a str, &'a str, &'a str);
-
-/// Optional live preview of one portal-mode edge's color, mirroring
-/// `scene_builder::PortalColorPreview`. Wins over selection on the
-/// previewed edge so the live HSV feedback is visible on both
-/// markers.
-#[derive(Debug, Clone, Copy)]
-pub struct PortalColorPreviewRef<'a> {
-    pub edge_key: &'a EdgeKey,
-    pub color: &'a str,
-}
 
 /// Result of [`build_portal_tree`]. Bundles the tree with two
 /// hitbox maps — one per clickable sub-part of a portal label
@@ -154,13 +142,20 @@ pub struct PortalPairData {
 ///
 /// `hidden_set` is the output of [`MindMap::fold_hidden_set`]. The
 /// caller should build it once per frame and share it across the
-/// scene / border / portal passes instead of recomputing it here.
+/// border / connection / portal passes instead of recomputing it
+/// here.
+// `clippy::too_many_arguments`: three of these are independent
+// selection channels (whole edge, per-label, inline text edit) and
+// two more are the color preview and the camera zoom. Collapsing
+// them into one struct would hide which channel a caller is
+// actually setting, which is the whole point of the split.
+#[allow(clippy::too_many_arguments)]
 pub fn portal_pair_data(
     map: &MindMap,
     offsets: &HashMap<String, (f32, f32)>,
     selected_edge: Option<SelectedEdgeRef>,
     selected_portal_label: Option<SelectedPortalLabel<'_>>,
-    color_preview: Option<PortalColorPreviewRef>,
+    color_preview: Option<PortalColorPreview<'_>>,
     portal_text_edit: Option<PortalTextEditOverride<'_>>,
     camera_zoom: f32,
     hidden_set: &HashSet<&str>,
@@ -186,7 +181,7 @@ pub fn portal_pair_data(
         }
 
         let edge_key = EdgeKey::from_edge(edge);
-        let is_edge_selected = selected_edge.map_or(false, |(f, t, ty)| {
+        let is_edge_selected = selected_edge.is_some_and(|(f, t, ty)| {
             f == edge.from_id && t == edge.to_id && ty == edge.edge_type
         });
         let preview_for_this_edge: Option<&str> = color_preview.and_then(|p| {
@@ -206,9 +201,8 @@ pub fn portal_pair_data(
             let partner_size = partner.size_vec2();
 
             let endpoint_state = portal_endpoint_state(edge, &owner.id);
-            let is_this_label_selected = selected_portal_label.map_or(false, |s| {
-                *s.edge_key == edge_key && s.endpoint_node_id == owner.id
-            });
+            let is_this_label_selected = selected_portal_label
+                .is_some_and(|s| *s.edge_key == edge_key && s.endpoint_node_id == owner.id);
             let raw_color_override: Option<&str> = if let Some(p) = preview_for_this_edge {
                 Some(p)
             } else if is_edge_selected || is_this_label_selected {
@@ -345,7 +339,7 @@ pub fn build_portal_tree(
     offsets: &HashMap<String, (f32, f32)>,
     selected_edge: Option<SelectedEdgeRef>,
     selected_portal_label: Option<SelectedPortalLabel<'_>>,
-    color_preview: Option<PortalColorPreviewRef>,
+    color_preview: Option<PortalColorPreview<'_>>,
     portal_text_edit: Option<PortalTextEditOverride<'_>>,
     camera_zoom: f32,
 ) -> PortalTree {
@@ -435,7 +429,7 @@ pub fn build_portal_mutator_tree(
     offsets: &HashMap<String, (f32, f32)>,
     selected_edge: Option<SelectedEdgeRef>,
     selected_portal_label: Option<SelectedPortalLabel<'_>>,
-    color_preview: Option<PortalColorPreviewRef>,
+    color_preview: Option<PortalColorPreview<'_>>,
     portal_text_edit: Option<PortalTextEditOverride<'_>>,
     camera_zoom: f32,
 ) -> PortalMutator {

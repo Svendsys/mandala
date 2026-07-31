@@ -42,8 +42,8 @@ test harness.
 Representative exemplars:
 - `src/application/document.rs` — fundamentals coverage of
   hit-testing, selection, undo stacks, portal mutations.
-- `lib/baumhard/src/mindmap/scene_builder.rs` — connection and border
-  rendering math.
+- `lib/baumhard/src/mindmap/border.rs` — border run-spec geometry
+  and the resolver cascade.
 - `lib/baumhard/src/mindmap/connection.rs` — anchor points, path
   sampling, Bezier curves.
 

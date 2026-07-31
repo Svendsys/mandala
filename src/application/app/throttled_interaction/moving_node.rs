@@ -21,9 +21,7 @@ use crate::application::document::apply_drag_delta_and_collect_patches;
 use crate::application::frame_throttle::MutationFrequencyThrottle;
 
 use super::super::scene_rebuild::{
-    flush_canvas_scene_buffers, update_border_tree_with_offsets, update_connection_label_tree,
-    update_connection_tree, update_edge_handle_tree, update_node_resize_handle_tree, update_portal_tree,
-    update_section_frame_tree,
+    flush_canvas_scene_buffers, CanvasFrame,
 };
 use super::{DrainContext, ThrottledInteraction};
 
@@ -134,35 +132,29 @@ impl ThrottledInteraction for MovingNodeInteraction {
                 }
             }
 
-            let scene = doc.build_scene_with_cache(
+            let frame = CanvasFrame::new(
+                doc,
                 &offsets,
-                scene_cache,
-                renderer.camera_zoom(),
                 interaction_mode.resize_handle_overrides(),
+                renderer.camera_zoom(),
             );
-
-            update_connection_tree(&scene, app_scene);
-            update_border_tree_with_offsets(doc, &offsets, app_scene);
-            update_connection_label_tree(&scene, app_scene, renderer);
-            update_portal_tree(doc, &offsets, app_scene, renderer);
-            update_edge_handle_tree(&scene, app_scene);
+            frame.update_connection_trees(scene_cache, app_scene);
+            frame.update_border_tree(app_scene);
+            frame.update_connection_label_tree(app_scene, renderer);
+            frame.update_portal_tree(app_scene, renderer);
             // The 8 resize handles for a Single-selected dragged
-            // node anchor on the node's AABB; the cache-aware scene
-            // build above already populated `scene.node_resize_handles`
-            // with the in-flight offsets, so we just push those
-            // through to the app-scene tree. Without this the
-            // handles freeze at the pre-drag position while the
-            // node visibly slides under them.
-            update_node_resize_handle_tree(&scene, app_scene);
-            // Section frames render only while in NodeEdit mode but
-            // are emitted into the same `RenderScene.section_frames`
-            // that the cache-aware build above populated. Without
-            // this drain call, dragging the active node mid-edit
-            // leaves every section frame stuck at the pre-drag
+            // node anchor on the node's AABB, so they have to be
+            // re-emitted against the in-flight offsets. Without
+            // this the handles freeze at the pre-drag position
+            // while the node visibly slides under them.
+            frame.update_node_resize_handle_tree(app_scene);
+            // Section frames render only while in NodeEdit mode.
+            // Without this drain call, dragging the active node
+            // mid-edit leaves every frame stuck at the pre-drag
             // origin while the node and its borders slide under
-            // them — the no-NodeEdit case is already a no-op
-            // (`scene.section_frames` is empty).
-            update_section_frame_tree(&scene, app_scene);
+            // them — the no-NodeEdit case is already a no-op (the
+            // pass emits nothing).
+            frame.update_section_frame_tree(app_scene);
             flush_canvas_scene_buffers(app_scene, renderer);
         }
 
@@ -178,7 +170,7 @@ mod tests {
     };
 
     #[test]
-    fn test_new_initialises_fields_with_zero_deltas() {
+    fn test_new_initializes_fields_with_zero_deltas() {
         let i = MovingNodeInteraction::new(
             vec!["a".to_string(), "b".to_string()],
             true,

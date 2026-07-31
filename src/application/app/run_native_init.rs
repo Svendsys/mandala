@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! First-run initialisation for the native event loop. Called once
+//! First-run initialization for the native event loop. Called once
 //! from `super::run_native::NativeApp::resumed`.
 
 #![cfg(not(target_arch = "wasm32"))]
@@ -17,9 +17,8 @@ use super::console_input::load_console_history;
 use super::label_edit::{LabelEditState, PortalTextEditState};
 use super::run_native::InitState;
 use super::scene_rebuild::{
-    flush_canvas_scene_buffers, rebuild_all, update_border_tree_static, update_connection_label_tree,
-    update_connection_tree, update_edge_handle_tree, update_node_resize_handle_tree, update_portal_tree,
-    update_section_resize_handle_tree, warm_handle_tree_arenas,
+    flush_canvas_scene_buffers, rebuild_all, update_edge_handle_tree_from_slice,
+    warm_handle_tree_arenas, CanvasFrame,
 };
 use super::text_edit::TextEditState;
 use super::{DragState, InteractionMode, Options};
@@ -29,7 +28,7 @@ use crate::application::document::MindMapDocument;
 use crate::application::keybinds::ResolvedKeybinds;
 use crate::application::renderer::Renderer;
 
-/// Build the fully-initialised [`InitState`] around a freshly-created
+/// Build the fully-initialized [`InitState`] around a freshly-created
 /// `Window`. Mindmap load is best-effort (on failure the document
 /// stays `None` and the canvas renders empty).
 pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
@@ -46,7 +45,7 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
     let mut mindmap_tree: Option<MindMapTree> = None;
     // Keyed incremental rebuild: document-side cache of per-edge
     // pre-clip sample geometry. Populated at load by
-    // `build_scene_with_cache` so first interactions don't pay the
+    // the cache-aware connection pass so first interactions don't pay the
     // full Bezier-sample cost; cleared by `rebuild_all` so any
     // structural change forces a fresh scene build.
     let mut scene_cache = baumhard::mindmap::scene_cache::SceneConnectionCache::new();
@@ -79,35 +78,33 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
             renderer.rebuild_buffers_from_tree(&tree.tree);
             renderer.fit_camera_to_tree(&tree.tree);
 
-            // Connections + borders: flat pipeline from RenderScene.
-            // `fit_camera_to_tree` above settled the zoom, so pass
-            // it through — the scene builder sizes connection
-            // glyphs against the actual final zoom rather than the
-            // default-init value.
+            // Every canvas role, projected once at load, so
+            // `scene_cache` is hot before the first interaction (the
+            // first drag / zoom no longer pays the full per-edge
+            // Bezier-sample cost) and every role's canvas signature
+            // is stamped where §B2 dispatch can find it.
             //
-            // Use `build_scene_with_cache` (not `build_scene`) so
-            // `scene_cache` is hot before the first interaction; the
-            // first drag/zoom no longer pays the full per-edge
-            // Bezier-sample cost.
-            // Init runs before any interaction — mode is `Default` and
-            // no resize handles emit. Pre-warm path uses the explicit
-            // `none()` overrides so the warm scene matches the first
+            // `fit_camera_to_tree` above settled the zoom, so the
+            // frame reads `renderer.camera_zoom()` — connection
+            // glyphs size against the actual final zoom rather than
+            // the default-init value.
+            //
+            // Init runs before any interaction — mode is `Default`
+            // and no resize handles emit. The explicit `none()`
+            // overrides make the warm projection match the first
             // post-init frame's shape.
-            let scene = doc.build_scene_with_cache(
-                &std::collections::HashMap::new(),
-                &mut scene_cache,
-                renderer.camera_zoom(),
-                crate::application::document::InteractionModeOverrides::none(),
-            );
-            update_connection_tree(&scene, &mut app_scene);
-            update_border_tree_static(&doc, &mut app_scene);
-            update_portal_tree(
+            let init_offsets = std::collections::HashMap::new();
+            let frame = CanvasFrame::new(
                 &doc,
-                &std::collections::HashMap::new(),
-                &mut app_scene,
-                &mut renderer,
+                &init_offsets,
+                crate::application::document::InteractionModeOverrides::none(),
+                renderer.camera_zoom(),
             );
-            update_connection_label_tree(&scene, &mut app_scene, &mut renderer);
+            frame.update_connection_trees(&mut scene_cache, &mut app_scene);
+            frame.update_border_tree(&mut app_scene);
+            frame.update_portal_tree(&mut app_scene, &mut renderer);
+            frame.update_connection_label_tree(&mut app_scene, &mut renderer);
+            frame.update_section_frame_tree(&mut app_scene);
             // Register the three handle-tree canvas roles with their
             // fresh-load (empty-slice) signatures. The first real
             // selection still takes `CanvasDispatch::FullRebuild`
@@ -120,9 +117,8 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
             // interaction would force a register-and-rebuild, the
             // second a rebuild, and only steady-state drags would
             // be cheap.
-            update_edge_handle_tree(&scene, &mut app_scene);
-            update_section_resize_handle_tree(&scene, &mut app_scene);
-            update_node_resize_handle_tree(&scene, &mut app_scene);
+            frame.update_section_resize_handle_tree(&mut app_scene);
+            frame.update_node_resize_handle_tree(&mut app_scene);
             // Synthetic-handle allocator warm: feed the handle-tree
             // dispatch path 8-element slices once so its arena
             // allocates from cold pools at load instead of on the
@@ -141,9 +137,9 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
             // correctness doesn't depend on `rebuild_all` running
             // — if a future change makes it conditional or moves
             // it, the canvas state stays well-defined.
-            update_edge_handle_tree(&scene, &mut app_scene);
-            update_section_resize_handle_tree(&scene, &mut app_scene);
-            update_node_resize_handle_tree(&scene, &mut app_scene);
+            update_edge_handle_tree_from_slice(&[], &mut app_scene);
+            frame.update_section_resize_handle_tree(&mut app_scene);
+            frame.update_node_resize_handle_tree(&mut app_scene);
             flush_canvas_scene_buffers(&mut app_scene, &mut renderer);
 
             mindmap_tree = Some(tree);
@@ -255,7 +251,7 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
         // Last cursor icon written via Window::set_cursor — used by
         // the cursor_moved handler to skip redundant per-frame
         // set_cursor calls on platforms (Windows, Wayland) where
-        // winit doesn't dedup. Initialised to Default to match the
+        // winit doesn't dedup. Initialized to Default to match the
         // as-launched cursor.
         cursor_icon_last: winit::window::CursorIcon::Default,
         // Picker hover gate: cursor-moves into the picker update
@@ -268,7 +264,7 @@ pub(super) fn build(options: &Options, window: Arc<Window>) -> InitState {
         keybinds,
         macros,
         anim_pause_start_ms: None,
-        // Touch gesture recogniser. State machine starts Idle;
+        // Touch gesture recognizer. State machine starts Idle;
         // first `WindowEvent::Touch` lands a finger.
         touch_recognizer: super::touch_gesture::TouchGestureRecognizer::new(),
     }

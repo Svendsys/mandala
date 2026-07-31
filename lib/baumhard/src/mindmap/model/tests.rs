@@ -603,7 +603,7 @@ fn zoom_window_skip_default_and_round_trip_on_every_struct() {
 
 /// `MindNode` round-trip — node-level pair follows the same
 /// pattern; the border inherits the resolved window by
-/// construction (see `scene_builder::node_pass`), so there is
+/// construction (see `tree_builder::node_clip`), so there is
 /// no separate border serde surface.
 #[test]
 fn mindnode_zoom_window_round_trips() {
@@ -695,24 +695,24 @@ fn edge_locations_uses_bracket_index_stamp() {
 
 /// `MindSection` defaults round-trip cleanly on a freshly-built
 /// node. The default shape — `offset=(0,0)`, `size=None`,
-/// `channel=None`, no runs — must serialise to a minimal JSON
-/// form (only `text` is serialised) so the on-disk file stays
+/// `channel=None`, no runs — must serialize to a minimal JSON
+/// form (only `text` is serialized) so the on-disk file stays
 /// tight for the migration-default case where every node ships
 /// exactly one default section. Pins the `skip_serializing_if`
 /// contracts on `text_runs`, `offset`, `size`, and `channel`.
 #[test]
 fn mindsection_defaults_serialize_minimally() {
     let section = MindSection::new_default("hi".into(), Vec::new());
-    let json = serde_json::to_string(&section).expect("serialises");
+    let json = serde_json::to_string(&section).expect("serializes");
     // Only the `text` field should be present.
     assert!(json.contains("\"text\":\"hi\""), "json: {json}");
-    assert!(!json.contains("text_runs"), "empty runs must not serialise");
-    assert!(!json.contains("offset"), "default offset must not serialise");
-    assert!(!json.contains("\"size\""), "None size must not serialise");
-    assert!(!json.contains("channel"), "default channel must not serialise");
+    assert!(!json.contains("text_runs"), "empty runs must not serialize");
+    assert!(!json.contains("offset"), "default offset must not serialize");
+    assert!(!json.contains("\"size\""), "None size must not serialize");
+    assert!(!json.contains("channel"), "default channel must not serialize");
     assert!(
         !json.contains("trigger_bindings"),
-        "empty trigger_bindings must not serialise"
+        "empty trigger_bindings must not serialize"
     );
 
     // Round-trip: parse the minimal JSON back; defaults must hold.
@@ -756,7 +756,7 @@ fn mindsection_effective_size_falls_back_to_node_size_when_none() {
             width: 50.0,
             height: 30.0
         },
-        "Some-sized honours the explicit pin"
+        "Some-sized honors the explicit pin"
     );
 }
 
@@ -820,7 +820,7 @@ fn mindsection_channel_option_round_trip() {
 /// stamp it; the runtime ignores it today (whole-node bindings
 /// still live on `MindNode.trigger_bindings`). The field must
 /// round-trip through serde, and an empty bindings vec must not
-/// serialise (skip-empty contract for forward compatibility).
+/// serialize (skip-empty contract for forward compatibility).
 #[test]
 fn mindsection_trigger_bindings_round_trip() {
     use crate::mindmap::custom_mutation::{Trigger, TriggerBinding};
@@ -837,7 +837,7 @@ fn mindsection_trigger_bindings_round_trip() {
         }],
         frame_border: None,
     };
-    let json = serde_json::to_string(&section).expect("serialises");
+    let json = serde_json::to_string(&section).expect("serializes");
     assert!(json.contains("trigger_bindings"));
     assert!(json.contains("m_focus"));
     let back: MindSection = serde_json::from_str(&json).expect("round-trips");
@@ -846,7 +846,7 @@ fn mindsection_trigger_bindings_round_trip() {
 }
 
 /// `MindSection.frame_border` is `Option<GlyphBorderConfig>` —
-/// `None` (the default) must skip serialisation entirely so
+/// `None` (the default) must skip serialization entirely so
 /// existing maps round-trip byte-identical, and `Some(cfg)` must
 /// preserve every field on the round trip.
 #[test]
@@ -854,10 +854,10 @@ fn test_mindsection_frame_border_round_trip() {
     use crate::mindmap::model::{CustomBorderGlyphs, GlyphBorderConfig};
     // Default-constructed section: no `frame_border` key in JSON.
     let plain = MindSection::new_default("hi".into(), Vec::new());
-    let json = serde_json::to_string(&plain).expect("serialises");
+    let json = serde_json::to_string(&plain).expect("serializes");
     assert!(
         !json.contains("frame_border"),
-        "None must skip serialisation: {}",
+        "None must skip serialization: {}",
         json
     );
 
@@ -884,7 +884,7 @@ fn test_mindsection_frame_border_round_trip() {
         color_palette: Some("rainbow".into()),
         color_palette_field: Some("frame".into()),
     });
-    let json = serde_json::to_string(&authored).expect("serialises");
+    let json = serde_json::to_string(&authored).expect("serializes");
     assert!(json.contains("frame_border"));
     assert!(json.contains("+=##=+"));
     let back: MindSection = serde_json::from_str(&json).expect("round-trips");
@@ -900,7 +900,7 @@ fn test_mindsection_frame_border_round_trip() {
 
 /// `Canvas.default_section_frame_border` and
 /// `default_focused_section_frame_border` round-trip the same way
-/// — `None` skips serialisation, `Some(cfg)` survives the
+/// — `None` skips serialization, `Some(cfg)` survives the
 /// full serialize → deserialize cycle.
 #[test]
 fn test_canvas_section_frame_defaults_round_trip() {
@@ -917,7 +917,7 @@ fn test_canvas_section_frame_defaults_round_trip() {
         theme_variables: HashMap::new(),
         theme_variants: HashMap::new(),
     };
-    let json = serde_json::to_string(&plain).expect("serialises");
+    let json = serde_json::to_string(&plain).expect("serializes");
     assert!(!json.contains("default_section_frame_border"), "None skips: {}", json);
     assert!(!json.contains("default_focused_section_frame_border"));
 
@@ -943,7 +943,7 @@ fn test_canvas_section_frame_defaults_round_trip() {
         color_palette: None,
         color_palette_field: None,
     });
-    let json = serde_json::to_string(&authored).expect("serialises");
+    let json = serde_json::to_string(&authored).expect("serializes");
     let back: Canvas = serde_json::from_str(&json).expect("round-trips");
     let unfocused = back.default_section_frame_border.expect("unfocused survives");
     let focused = back.default_focused_section_frame_border.expect("focused survives");
@@ -956,7 +956,7 @@ fn test_canvas_section_frame_defaults_round_trip() {
 /// `MindNode.display_text` joins every section's text with `'\n'`
 /// — the legacy bridge for export / clipboard / copy paths that
 /// want one rendered string per node. Single-section nodes
-/// round-trip identically with the pre-section behaviour.
+/// round-trip identically with the pre-section behavior.
 #[test]
 fn mindnode_display_text_joins_sections() {
     use crate::mindmap::test_helpers::synthetic_node_full;

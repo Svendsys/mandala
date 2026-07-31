@@ -21,7 +21,7 @@ mod tests {
     /// and assigns palette offsets that sweep continuously
     /// top→right→bottom→left. The invariant the three border
     /// pipelines (initial-build tree, in-place mutator tree,
-    /// flat-pipeline scene_buffers) all rely on.
+    /// section-frame tree) all rely on.
     #[test]
     fn border_run_specs_channels_and_palette_offsets() {
         let style = BorderStyle::default_with_color("#ffffff");
@@ -435,5 +435,60 @@ mod tests {
     fn border_preset_hint_unknown_name_is_none() {
         use crate::mindmap::border::border_preset_hint;
         assert!(border_preset_hint("no-such-preset").is_none());
+    }
+
+    /// **Parity guard for the clip-AABB fast path.**
+    /// `resolve_border_font_size_pt` exists so `node_clip_aabbs`
+    /// can skip a whole `BorderStyle` allocation for the one `f32`
+    /// it needs. If the two ever disagree, connection glyphs clip
+    /// against a different frame thickness than the one drawn —
+    /// a silent visual defect with no other test to catch it.
+    ///
+    /// Covers every arm of the cascade: per-node override, canvas
+    /// default fall-through, per-node winning over canvas default,
+    /// the unset floor, and (because the cheap resolver skips both)
+    /// independence from the preset and the frame color.
+    #[test]
+    fn resolve_border_font_size_pt_matches_resolve_border_style() {
+        use crate::mindmap::border::resolve_border_font_size_pt;
+        use crate::mindmap::model::GlyphBorderConfig;
+
+        fn cfg(preset: &str, size: f32) -> GlyphBorderConfig {
+            GlyphBorderConfig {
+                preset: preset.to_string(),
+                font: None,
+                font_size_pt: size,
+                color: None,
+                glyphs: None,
+                padding: 4.0,
+                color_palette: None,
+                color_palette_field: None,
+            }
+        }
+
+        let node = cfg("heavy", 22.0);
+        let canvas = cfg("double", 9.5);
+        let cases: [(Option<&GlyphBorderConfig>, Option<&GlyphBorderConfig>); 4] = [
+            (Some(&node), Some(&canvas)),
+            (Some(&node), None),
+            (None, Some(&canvas)),
+            (None, None),
+        ];
+        // Frame color must not move the answer — the cheap
+        // resolver doesn't take one.
+        for frame_color in ["#ffffff", "#123456", ""] {
+            for (per_node, canvas_default) in cases {
+                let full = resolve_border_style(per_node, canvas_default, frame_color).font_size_pt;
+                let cheap = resolve_border_font_size_pt(per_node, canvas_default);
+                assert!(
+                    (full - cheap).abs() < f32::EPSILON,
+                    "cascade drift for ({:?}, {:?}, {frame_color:?}): full {full} vs cheap {cheap}",
+                    per_node.map(|c| c.font_size_pt),
+                    canvas_default.map(|c| c.font_size_pt),
+                );
+            }
+        }
+        // And the documented floor.
+        assert!((resolve_border_font_size_pt(None, None) - 14.0).abs() < f32::EPSILON);
     }
 }

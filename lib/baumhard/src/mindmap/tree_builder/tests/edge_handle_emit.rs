@@ -11,7 +11,7 @@ use std::collections::HashMap;
 #[test]
 fn test_no_edge_handles_when_nothing_selected() {
     let map = loader::load_from_file(&test_map_path()).unwrap();
-    let scene = build_scene(&map, 1.0);
+    let scene = project(&map, 1.0);
     assert!(scene.edge_handles.is_empty(), "no selection → no handles emitted");
 }
 
@@ -25,7 +25,7 @@ fn test_edge_handles_straight_edge_emits_midpoint() {
         .find(|e| e.visible && e.control_points.is_empty())
         .expect("testament map should have a straight edge");
     let mut cache = SceneConnectionCache::new();
-    let scene = build_scene_with_cache(
+    let scene = project_with_cache(
         &map,
         &HashMap::new(),
         SceneSelectionContext {
@@ -59,7 +59,7 @@ fn test_edge_handles_curved_edge_emits_control_points_not_midpoint() {
         .push(crate::mindmap::model::ControlPoint { x: 20.0, y: 30.0 });
     let edge = map.edges[edge_idx].clone();
     let mut cache = SceneConnectionCache::new();
-    let scene = build_scene_with_cache(
+    let scene = project_with_cache(
         &map,
         &HashMap::new(),
         SceneSelectionContext {
@@ -96,7 +96,7 @@ fn test_edge_handles_cubic_edge_emits_both_control_points() {
         .push(crate::mindmap::model::ControlPoint { x: 40.0, y: 40.0 });
     let edge = map.edges[edge_idx].clone();
     let mut cache = SceneConnectionCache::new();
-    let scene = build_scene_with_cache(
+    let scene = project_with_cache(
         &map,
         &HashMap::new(),
         SceneSelectionContext {
@@ -136,7 +136,7 @@ fn test_edge_handle_control_point_position_is_absolute_canvas() {
     let from_center_y = from_node.position.y as f32 + from_node.size.height as f32 * 0.5;
 
     let mut cache = SceneConnectionCache::new();
-    let scene = build_scene_with_cache(
+    let scene = project_with_cache(
         &map,
         &HashMap::new(),
         SceneSelectionContext {

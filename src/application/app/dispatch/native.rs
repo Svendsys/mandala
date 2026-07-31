@@ -1156,7 +1156,7 @@ pub(in crate::application::app) fn dispatch_custom_mutation_for_key(
 /// In each case the state resets to `None` so the cursor doesn't
 /// re-fire the threshold-cross.
 fn apply_fast_resize_start(ctx: &mut InputHandlerContext<'_>, hit: Option<&DispatchHit>) {
-    use baumhard::mindmap::scene_builder::infer_resize_anchor;
+    use baumhard::mindmap::tree_builder::infer_resize_anchor;
     use glam::Vec2;
 
     use super::super::throttled_interaction::{

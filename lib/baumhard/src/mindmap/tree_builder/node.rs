@@ -161,7 +161,7 @@ pub(super) fn mindnode_section_area(
     // clipping. Falls through to [`DEFAULT_SECTION_FONT_SCALE`]
     // when the section has no runs. The single-
     // section default-migration shape (one run spanning all of
-    // `text`) round-trips with the pre-section behaviour because
+    // `text`) round-trips with the pre-section behavior because
     // there's only one size to pick. Mirrors the same `max`
     // posture in `grow_one_node_to_fit_text`.
     let scale_max = section
@@ -195,11 +195,9 @@ pub(super) fn mindnode_section_area(
     // family resolves to `None` (cosmic-text picks; warns at
     // attrs-build time).
     //
-    // The cascade for a section without runs falls through to
-    // `node.style.text_color` at scene-emit time (see
-    // `scene_builder/node_pass.rs`); the tree-walker side keeps
-    // the section's own `regions` empty, which the renderer
-    // interprets as "use defaults".
+    // A section without runs keeps its `regions` empty, which the
+    // renderer interprets as "use defaults" — `node.style.text_color`
+    // never enters the region table.
     let mut regions = ColorFontRegions::new_empty();
     for run in &section.text_runs {
         let resolved = color::resolve_var(&run.color, vars);
@@ -238,7 +236,7 @@ pub(super) fn mindnode_section_model(section: &MindSection, area: &GlyphArea) ->
     }
 
     // Same dominant-style trick as the picker overlay: read the
-    // first region's font + colour as the model's effective
+    // first region's font + color as the model's effective
     // styling. Sections without runs fall through to
     // `(Any, black)`, mirroring cosmic-text's defaults — the
     // structural model is conservative; per-component refinement
@@ -264,8 +262,38 @@ pub(super) fn mindnode_section_model(section: &MindSection, area: &GlyphArea) ->
     model
 }
 
+/// Whether a section has an on-screen surface at all.
+///
+/// A non-finite offset or a non-finite / non-positive explicit size
+/// produces a degenerate or NaN AABB. Emitting one poisons the
+/// subtree-AABB cache, hands cosmic-text a zero-area or NaN buffer,
+/// and gives hit-testing a rectangle that can never be hit — so the
+/// section is skipped entirely and `maptool verify` reports it to
+/// the author instead.
+///
+/// Shared with [`super::build_section_frames`], which must frame
+/// exactly the sections that render: the two would otherwise agree
+/// only by both open-coding the same four comparisons, which is how
+/// they drifted apart in the first place. (The clip-AABB pass is
+/// node-level and has no section logic, so it is not a consumer.)
+///
+/// Note this is *not* an empty-text check: a section with no text
+/// still owns a real rectangle (it is where the user's next
+/// keystroke lands), so it keeps its area and its `section_map`
+/// entry.
+pub(super) fn renderable_section(section: &MindSection) -> bool {
+    if !section.offset.x.is_finite() || !section.offset.y.is_finite() {
+        return false;
+    }
+    match section.size.as_ref() {
+        Some(sz) => sz.width.is_finite() && sz.height.is_finite() && sz.width > 0.0 && sz.height > 0.0,
+        None => true,
+    }
+}
+
 /// Append the section subtree (one `GlyphArea` + one `GlyphModel`
-/// per [`MindSection`]) under `parent_node_id` and record the
+/// per renderable [`MindSection`] — see [`renderable_section`])
+/// under `parent_node_id` and record the
 /// section-area's `NodeId` in `section_map`. Each section element
 /// carries `Flag::SectionRoot` so click-routing and per-section
 /// scene rebuild can discriminate them from sibling child mind-
@@ -287,6 +315,9 @@ pub(super) fn append_node_sections(
     id_counter: &mut usize,
 ) {
     for (section_idx, section) in node.sections.iter().enumerate() {
+        if !renderable_section(section) {
+            continue;
+        }
         // Effective channel: use the authored value when the
         // user explicitly set one (`Some(_)`); otherwise default
         // to the section's index. The `Option<usize>` shape
@@ -332,6 +363,12 @@ pub(super) fn append_node_sections(
 /// immediate parent) is folded. Children of a folded node are
 /// hidden by construction, so the recursive fold check from the
 /// old `is_hidden_by_fold` path is redundant here.
+// `clippy::too_many_arguments`: a recursive arena walk threading
+// four out-parameters (`tree`, `node_map`, `section_map`,
+// `id_counter`) plus the read-only `(map, index, parent)` triple.
+// Bundling the out-params into a struct would just add a borrow
+// indirection on every recursion step.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn build_children_recursive(
     map: &MindMap,
     index: &ChildIndex<'_>,

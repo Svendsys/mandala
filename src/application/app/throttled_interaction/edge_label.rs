@@ -20,7 +20,7 @@ use crate::application::document::EdgeRef;
 use crate::application::frame_throttle::MutationFrequencyThrottle;
 
 use super::super::edge_label_drag::apply_edge_label_drag;
-use super::super::scene_rebuild::{flush_canvas_scene_buffers, update_connection_label_tree};
+use super::super::scene_rebuild::{flush_canvas_scene_buffers, CanvasFrame};
 use super::{DrainContext, ThrottledInteraction};
 
 /// Drag state for repositioning one line-mode edge's label along
@@ -65,7 +65,6 @@ impl ThrottledInteraction for EdgeLabelInteraction {
             document,
             app_scene,
             renderer,
-            scene_cache,
             interaction_mode,
             ..
         } = ctx;
@@ -78,16 +77,18 @@ impl ThrottledInteraction for EdgeLabelInteraction {
             let changed = apply_edge_label_drag(doc, &self.edge_ref, cursor);
             if changed {
                 // A label move never invalidates connection-path
-                // geometry, so every edge hits the cache's fast
-                // path and only `build_label_elements` (which
-                // runs per-frame regardless) produces new work.
-                let scene = doc.build_scene_with_cache(
-                    &HashMap::new(),
-                    scene_cache,
-                    renderer.camera_zoom(),
+                // geometry, so the connection role does not need
+                // re-projecting at all — only `build_label_elements`
+                // (which runs per-frame regardless) produces new
+                // work.
+                let offsets = HashMap::new();
+                CanvasFrame::new(
+                    doc,
+                    &offsets,
                     interaction_mode.resize_handle_overrides(),
-                );
-                update_connection_label_tree(&scene, app_scene, renderer);
+                    renderer.camera_zoom(),
+                )
+                .update_connection_label_tree(app_scene, renderer);
                 flush_canvas_scene_buffers(app_scene, renderer);
             }
         }
@@ -106,7 +107,7 @@ mod tests {
     }
 
     #[test]
-    fn test_new_initialises_pending_cursor_to_none() {
+    fn test_new_initializes_pending_cursor_to_none() {
         let i = fixture_interaction();
         assert_eq!(i.edge_ref.from_id, "a");
         assert_eq!(i.edge_ref.to_id, "b");

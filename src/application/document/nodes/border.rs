@@ -15,13 +15,13 @@
 //! `commit_border_preview`, `cancel_border_preview`) — the
 //! live-preview surface for the four border verbs (per-node,
 //! per-section, two canvas defaults). Same discipline as
-//! `color_picker_preview`: never serialised, never push undo,
+//! `color_picker_preview`: never serialized, never push undo,
 //! never flip `dirty`. Cancel / commit clears the slot
 //! atomically; drift detection is lazy
 //! (`border_preview_covers_live_selection`); implicit cancel
 //! happens at the first line of each committing setter so a
 //! non-preview edit always wins. The scene-build plumbing
-//! lives in `assemble_scene_overrides`.
+//! lives in `frame_overrides`.
 
 use baumhard::mindmap::border::PaletteField;
 use baumhard::mindmap::border_pattern::SidePattern;
@@ -113,7 +113,7 @@ impl BorderSide {
 /// preset auto-promotion side effect so the console verb can
 /// tell the user when their `preset=heavy top=…` request landed
 /// as `preset=custom` (because setting any side or corner glyph
-/// requires the custom preset for the data model to honour the
+/// requires the custom preset for the data model to honor the
 /// override at render time).
 #[derive(Clone, Debug, Default)]
 pub struct BorderEditOutcome {
@@ -134,7 +134,7 @@ pub struct BorderEditOutcome {
 
 /// Active live-preview substitution captured on
 /// [`MindMapDocument::border_preview`]. The scene builder reads
-/// this through a borrowed view (`scene_builder::BorderPreview<'a>`)
+/// this through a borrowed view (`tree_builder::BorderPreview<'a>`)
 /// and substitutes the previewed `edits` for the resolved border
 /// at the matching target. The model is never mutated; commit
 /// dispatches to the matching committing setter and clears the
@@ -233,7 +233,8 @@ impl MindMapDocument {
     /// trusted to have been validated upstream
     /// (via [`BorderConfigEdits::with_side_pattern`]).
     ///
-    /// After mutation, runs [`grow_one_node_to_fit_border`] so
+    /// After mutation, runs
+    /// [`crate::application::document::grow_one_node_to_fit_border`] so
     /// the node grows to fit the new static parts; the same
     /// `EditNodeStyle` undo envelope captures both the style
     /// change and the size change.

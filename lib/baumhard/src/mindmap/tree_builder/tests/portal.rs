@@ -137,7 +137,16 @@ fn portal_pair_channels_are_strictly_ascending() {
     map.edges.push(synthetic_portal_edge("a", "b", "#ff0000"));
     map.edges.push(synthetic_portal_edge("b", "c", "#00ff00"));
 
-    let pairs = portal_pair_data(&map, &HashMap::new(), None, None, None, None, 1.0, &map.fold_hidden_set());
+    let pairs = portal_pair_data(
+        &map,
+        &HashMap::new(),
+        None,
+        None,
+        None,
+        None,
+        1.0,
+        &map.fold_hidden_set(),
+    );
     assert_eq!(pairs.len(), 2);
     let channels: Vec<usize> = pairs.iter().map(|p| p.pair_channel).collect();
     let mut prev = 0;
@@ -240,7 +249,16 @@ fn portal_identity_sequence_drops_folded_pairs() {
     map.edges.push(synthetic_portal_edge("a", "b", "#ff0000"));
     map.edges.push(synthetic_portal_edge("b", "child", "#00ff00"));
 
-    let pairs_before = portal_pair_data(&map, &HashMap::new(), None, None, None, None, 1.0, &map.fold_hidden_set());
+    let pairs_before = portal_pair_data(
+        &map,
+        &HashMap::new(),
+        None,
+        None,
+        None,
+        None,
+        1.0,
+        &map.fold_hidden_set(),
+    );
     assert_eq!(
         portal_identity_sequence(&pairs_before),
         vec![
@@ -250,7 +268,16 @@ fn portal_identity_sequence_drops_folded_pairs() {
     );
 
     map.nodes.get_mut("parent").unwrap().folded = true;
-    let pairs_after = portal_pair_data(&map, &HashMap::new(), None, None, None, None, 1.0, &map.fold_hidden_set());
+    let pairs_after = portal_pair_data(
+        &map,
+        &HashMap::new(),
+        None,
+        None,
+        None,
+        None,
+        1.0,
+        &map.fold_hidden_set(),
+    );
     assert_eq!(
         portal_identity_sequence(&pairs_after),
         vec![EdgeKey::new("a", "b", "cross_link")]
@@ -264,7 +291,7 @@ fn portal_identity_sequence_drops_folded_pairs() {
 /// (5). Guards against a revert to `.chars().count()` on the
 /// region-building path; `.chars().count()` would produce 5 here
 /// and the region would extend past the rendered glyph, bleeding
-/// the marker colour into empty space.
+/// the marker color into empty space.
 #[test]
 fn portal_marker_region_sized_by_grapheme_cluster_count_not_codepoints() {
     let mut map = synthetic_map(
@@ -343,7 +370,7 @@ fn portal_tree_text_area_carries_text_color_and_size_overrides() {
     let regions = text_area.regions.all_regions();
     assert_eq!(regions.len(), 1);
     let expected = hex_to_rgba_safe("#11bb33", [0.0; 4]);
-    let actual = regions[0].color.expect("text region should be coloured");
+    let actual = regions[0].color.expect("text region should be colored");
     for i in 0..4 {
         assert!(
             (actual[i] - expected[i]).abs() < 1.0e-4,

@@ -20,8 +20,7 @@ use crate::application::frame_throttle::MutationFrequencyThrottle;
 
 use super::super::edge_drag::apply_edge_handle_drag;
 use super::super::scene_rebuild::{
-    flush_canvas_scene_buffers, update_connection_label_tree, update_connection_tree,
-    update_edge_handle_tree, update_portal_tree,
+    flush_canvas_scene_buffers, CanvasFrame,
 };
 use super::{DrainContext, ThrottledInteraction};
 
@@ -32,7 +31,7 @@ pub(in crate::application::app) struct EdgeHandleInteraction {
     /// initial kind — after the first drain frame inserts a
     /// fresh control point, this mutates in place to
     /// `ControlPoint(0)` so subsequent frames take the CP path.
-    pub handle: baumhard::mindmap::scene_builder::EdgeHandleKind,
+    pub handle: baumhard::mindmap::tree_builder::EdgeHandleKind,
     /// Full snapshot of the edge at drag start, consumed by the
     /// release path for the `UndoAction::EditEdge` entry and the
     /// no-op skip check.
@@ -52,7 +51,7 @@ pub(in crate::application::app) struct EdgeHandleInteraction {
 impl EdgeHandleInteraction {
     pub(in crate::application::app) fn new(
         edge_ref: EdgeRef,
-        handle: baumhard::mindmap::scene_builder::EdgeHandleKind,
+        handle: baumhard::mindmap::tree_builder::EdgeHandleKind,
         original: baumhard::mindmap::model::MindEdge,
         start_handle_pos: Vec2,
     ) -> Self {
@@ -101,16 +100,15 @@ impl ThrottledInteraction for EdgeHandleInteraction {
             scene_cache.invalidate_edge(&edge_key);
 
             let offsets: HashMap<String, (f32, f32)> = HashMap::new();
-            let scene = doc.build_scene_with_cache(
+            let frame = CanvasFrame::new(
+                doc,
                 &offsets,
-                scene_cache,
-                renderer.camera_zoom(),
                 interaction_mode.resize_handle_overrides(),
+                renderer.camera_zoom(),
             );
-            update_connection_tree(&scene, app_scene);
-            update_edge_handle_tree(&scene, app_scene);
-            update_connection_label_tree(&scene, app_scene, renderer);
-            update_portal_tree(doc, &offsets, app_scene, renderer);
+            frame.update_connection_trees(scene_cache, app_scene);
+            frame.update_connection_label_tree(app_scene, renderer);
+            frame.update_portal_tree(app_scene, renderer);
             flush_canvas_scene_buffers(app_scene, renderer);
         }
 
@@ -124,7 +122,7 @@ mod tests {
     use crate::application::app::throttled_interaction::test_utils::{
         drive_throttle_over_budget, fixture_edge, trait_default_tests_for_throttled_interaction,
     };
-    use baumhard::mindmap::scene_builder::EdgeHandleKind;
+    use baumhard::mindmap::tree_builder::EdgeHandleKind;
 
     fn fixture_interaction() -> EdgeHandleInteraction {
         EdgeHandleInteraction::new(
@@ -136,7 +134,7 @@ mod tests {
     }
 
     #[test]
-    fn test_new_initialises_fields_with_zero_deltas() {
+    fn test_new_initializes_fields_with_zero_deltas() {
         let i = fixture_interaction();
         assert_eq!(i.edge_ref.from_id, "a");
         assert_eq!(i.edge_ref.to_id, "b");

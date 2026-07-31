@@ -69,7 +69,7 @@ pub(super) fn run(app: Application) {
 
 /// winit 0.30 `ApplicationHandler` implementor. Holds options
 /// pre-resume; on the first `resumed()` it creates the window and
-/// builds the fully-initialised [`InitState`]. Subsequent resume
+/// builds the fully-initialized [`InitState`]. Subsequent resume
 /// callbacks (mobile resume-after-suspend) are idempotent thanks
 /// to the `is_some()` guard.
 struct NativeApp {
@@ -225,7 +225,7 @@ pub(super) struct InitState {
     /// Windows (every call → `LoadCursorW` + `SetCursor` + mutex
     /// lock) or Wayland (calls into pointer manager every time),
     /// so the per-event cursor icon update needs an
-    /// application-side gate. Initialised to `Default` to match
+    /// application-side gate. Initialized to `Default` to match
     /// the as-launched cursor.
     pub(super) cursor_icon_last: CursorIcon,
     /// Throttled, coexistent-with-drag color-picker hover.
@@ -291,7 +291,7 @@ impl InitState {
         }
     }
 
-    /// Translate a winit `Touch` event into a recogniser ingest +
+    /// Translate a winit `Touch` event into a recognizer ingest +
     /// tick + dispatch step. Returns true when the event drove
     /// any state transition or dispatched a gesture (the caller
     /// should request a redraw on true). Modifier state is fixed
@@ -307,7 +307,7 @@ impl InitState {
     /// jitter `Moved` events constantly while a finger is down,
     /// so the gap is theoretical. A future improvement would set
     /// `ControlFlow::WaitUntil(started_at + LONG_PRESS_MS)` from
-    /// the recogniser's `OneFinger` state — deferred to keep
+    /// the recognizer's `OneFinger` state — deferred to keep
     /// Batch 7's diff small.
     pub(super) fn dispatch_touch_event(&mut self, touch: winit::event::Touch) -> bool {
         use super::touch_gesture::Phase;
@@ -326,8 +326,8 @@ impl InitState {
         // recognition per call. If both fired the ingest one
         // wins (it's the more recent transition); the tick's
         // emission is queued for the next call.
-        let recognised = from_ingest.or(from_tick);
-        if let Some(g) = recognised {
+        let recognized = from_ingest.or(from_tick);
+        if let Some(g) = recognized {
             self.cursor_pos = g.pos();
             let mut ctx = self.input_context();
             let name = g.mouse_gesture().key_name();
@@ -337,7 +337,7 @@ impl InitState {
                 return true;
             }
         }
-        // No gesture recognised — but the recogniser may have
+        // No gesture recognized — but the recognizer may have
         // moved its internal state (e.g. Started → OneFinger).
         // The caller still wants a redraw on Started/Moved so
         // any cursor-following overlay (long-press preview,
@@ -472,7 +472,7 @@ impl InitState {
                     // binding when no exact-modifier match exists, so
                     // `Ctrl+Wheel` keeps zooming even though only
                     // `WheelUp` / `WheelDown` are bound in defaults —
-                    // pre-branch behaviour was modifier-agnostic and
+                    // pre-branch behavior was modifier-agnostic and
                     // we preserve it here without forcing every user
                     // to enumerate modifier permutations.
                     let action = self.keybinds.action_for_gesture(
@@ -659,6 +659,7 @@ impl InitState {
                 *start_canvas,
                 *current_canvas,
                 &self.document,
+                &self.interaction_mode,
                 &mut self.mindmap_tree,
                 &mut self.renderer,
             );
@@ -730,7 +731,7 @@ impl InitState {
     /// are intentionally event-driven only — they update on
     /// `CursorMoved` and don't need self-driven continuation. The
     /// FPS overlay is also intentionally NOT a continuation source:
-    /// a diagnostic should observe behaviour, not change it. When
+    /// a diagnostic should observe behavior, not change it. When
     /// the app idles, the overlay flips to "-" (see
     /// [`crate::application::renderer::Renderer::set_fps_idle`])
     /// rather than forcing the loop to keep rendering.

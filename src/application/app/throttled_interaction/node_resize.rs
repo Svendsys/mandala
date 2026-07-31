@@ -5,7 +5,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use baumhard::mindmap::model::{Position, Size};
-use baumhard::mindmap::scene_builder::{build_node_resize_handles, ResizeHandleSide};
+use baumhard::mindmap::tree_builder::{build_node_resize_handles, ResizeHandleSide};
 use glam::Vec2;
 
 use crate::application::document::apply_node_resize_to_tree;
@@ -139,7 +139,7 @@ mod tests {
     }
 
     #[test]
-    fn test_new_initialises_fields() {
+    fn test_new_initializes_fields() {
         let i = fixture(ResizeHandleSide::SE);
         assert_eq!(i.node_id, "n");
         assert_eq!(i.side, ResizeHandleSide::SE);

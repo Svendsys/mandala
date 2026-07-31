@@ -6,7 +6,6 @@
 use baumhard::gfx_structs::element::GfxElement;
 use baumhard::gfx_structs::mutator::GfxMutator;
 use baumhard::gfx_structs::tree::Tree;
-use baumhard::mindmap::scene_builder::RenderScene;
 use baumhard::mindmap::scene_cache::EdgeKey;
 use glam::Vec2;
 use rustc_hash::FxHashMap;
@@ -29,31 +28,6 @@ fn find_first_aabb_hit<K: Clone + Hash + Eq>(map: &FxHashMap<K, (Vec2, Vec2)>, p
 }
 
 impl Renderer {
-    /// Fit the camera to show a RenderScene's content.
-    pub fn fit_camera_to_scene(&mut self, scene: &RenderScene) {
-        if scene.text_elements.is_empty() {
-            return;
-        }
-        let mut min_x = f32::MAX;
-        let mut min_y = f32::MAX;
-        let mut max_x = f32::MIN;
-        let mut max_y = f32::MIN;
-        for elem in &scene.text_elements {
-            let (x, y) = elem.position;
-            let (w, h) = elem.size;
-            min_x = min_x.min(x);
-            min_y = min_y.min(y);
-            max_x = max_x.max(x + w);
-            max_y = max_y.max(y + h);
-        }
-        self.camera
-            .apply_mutation(&baumhard::gfx_structs::camera::CameraMutation::FitToBounds {
-                min: Vec2::new(min_x, min_y),
-                max: Vec2::new(max_x, max_y),
-                padding_fraction: 0.05,
-            });
-    }
-
     /// AABB hit test against the rendered label hitboxes. Returns
     /// true when `canvas_pos` falls inside the hitbox of the given
     /// edge's label. Used by the app to dispatch inline click-to-edit
@@ -146,7 +120,7 @@ impl Renderer {
         find_first_aabb_hit(&self.portal_text_hitboxes, canvas_pos)
     }
 
-    /// Pan the camera so `target` (canvas coordinates) is centred
+    /// Pan the camera so `target` (canvas coordinates) is centered
     /// on the viewport at the current zoom. Used by the portal
     /// double-click handler to jump to the other side of a portal
     /// edge. Pure pan — no dirty flag raised; the shader transform

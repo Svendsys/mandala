@@ -17,35 +17,32 @@ use std::collections::HashMap;
 #[test]
 fn portal_emits_two_elements_per_edge() {
     let nodes = vec![
-        synthetic_node("a", 0.0, 0.0, 60.0, 40.0, false),
-        synthetic_node("b", 500.0, 500.0, 60.0, 40.0, false),
+        sized_node("a", 0.0, 0.0, 60.0, 40.0, false),
+        sized_node("b", 500.0, 500.0, 60.0, 40.0, false),
     ];
     let mut map = synthetic_map(nodes, vec![]);
     map.edges.push(synthetic_portal_edge("a", "b", "#aa88cc"));
-    let scene = build_scene(&map, 1.0);
-    assert_eq!(scene.portal_elements.len(), 2);
+    let scene = project(&map, 1.0);
+    assert_eq!(scene.portal_markers.len(), 2);
     let ids: Vec<&str> = scene
-        .portal_elements
+        .portal_markers
         .iter()
         .map(|e| e.endpoint_node_id.as_str())
         .collect();
     assert!(ids.contains(&"a"));
     assert!(ids.contains(&"b"));
     // Both markers share the same edge identity.
-    assert_eq!(
-        scene.portal_elements[0].edge_key,
-        scene.portal_elements[1].edge_key
-    );
+    assert_eq!(scene.portal_markers[0].edge_key, scene.portal_markers[1].edge_key);
 }
 
 #[test]
 fn portal_skipped_when_endpoint_missing_from_map() {
-    let nodes = vec![synthetic_node("a", 0.0, 0.0, 60.0, 40.0, false)];
+    let nodes = vec![sized_node("a", 0.0, 0.0, 60.0, 40.0, false)];
     let mut map = synthetic_map(nodes, vec![]);
     map.edges.push(synthetic_portal_edge("a", "ghost", "#aa88cc"));
-    let scene = build_scene(&map, 1.0);
+    let scene = project(&map, 1.0);
     assert!(
-        scene.portal_elements.is_empty(),
+        scene.portal_markers.is_empty(),
         "missing endpoint should silently drop the portal-mode edge"
     );
 }
@@ -55,16 +52,16 @@ fn portal_skipped_when_either_endpoint_hidden_by_fold() {
     // A parent holding a folded child — the child is hidden by
     // fold from its ancestor. A portal edge pointing into a folded
     // subtree has no visible anchor, so it must be skipped.
-    let mut root = synthetic_node("root", 0.0, 0.0, 60.0, 40.0, false);
+    let mut root = sized_node("root", 0.0, 0.0, 60.0, 40.0, false);
     root.folded = true;
-    let mut child = synthetic_node("child", 200.0, 0.0, 60.0, 40.0, false);
+    let mut child = sized_node("child", 200.0, 0.0, 60.0, 40.0, false);
     child.parent_id = Some("root".to_string());
-    let other = synthetic_node("other", 500.0, 0.0, 60.0, 40.0, false);
+    let other = sized_node("other", 500.0, 0.0, 60.0, 40.0, false);
     let mut map = synthetic_map(vec![root, child, other], vec![]);
     map.edges.push(synthetic_portal_edge("child", "other", "#aa88cc"));
-    let scene = build_scene(&map, 1.0);
+    let scene = project(&map, 1.0);
     assert!(
-        scene.portal_elements.is_empty(),
+        scene.portal_markers.is_empty(),
         "portal edge should be dropped when one endpoint is hidden by fold"
     );
 }
@@ -72,32 +69,79 @@ fn portal_skipped_when_either_endpoint_hidden_by_fold() {
 #[test]
 fn portal_color_resolves_through_theme_variable() {
     let nodes = vec![
-        synthetic_node("a", 0.0, 0.0, 60.0, 40.0, false),
-        synthetic_node("b", 200.0, 0.0, 60.0, 40.0, false),
+        sized_node("a", 0.0, 0.0, 60.0, 40.0, false),
+        sized_node("b", 200.0, 0.0, 60.0, 40.0, false),
     ];
     let mut map = synthetic_map(nodes, vec![]);
     map.canvas
         .theme_variables
         .insert("--accent".to_string(), "#ff00aa".to_string());
     map.edges.push(synthetic_portal_edge("a", "b", "var(--accent)"));
-    let scene = build_scene(&map, 1.0);
+    let scene = project(&map, 1.0);
     assert_eq!(
-        scene.portal_elements[0].color, "#ff00aa",
+        scene.portal_markers[0].color, "#ff00aa",
         "var(--accent) must resolve through theme_variables"
     );
-    assert_eq!(scene.portal_elements[1].color, "#ff00aa");
+    assert_eq!(scene.portal_markers[1].color, "#ff00aa");
+}
+
+/// The projected icon area must carry exactly what
+/// [`resolve_portal_endpoint_style`] returned — glyph string and
+/// canvas-space font size both. A builder that resolves the style
+/// correctly and then stamps the wrong field would pass every
+/// resolver-level test in this file and still render a hairline
+/// middle dot; this closes that gap.
+#[test]
+fn portal_marker_stamps_the_resolved_glyph_and_font_size() {
+    use super::super::portal_style::resolve_portal_endpoint_style;
+    use crate::mindmap::model::portal_endpoint_state;
+
+    let nodes = vec![
+        sized_node("a", 0.0, 0.0, 60.0, 40.0, false),
+        sized_node("b", 200.0, 0.0, 60.0, 40.0, false),
+    ];
+    let mut map = synthetic_map(nodes, vec![]);
+    map.edges.push(synthetic_portal_edge("a", "b", "#aa88cc"));
+    let scene = project(&map, 1.0);
+
+    let edge = &map.edges[0];
+    for marker in &scene.portal_markers {
+        let expected = resolve_portal_endpoint_style(
+            edge,
+            portal_endpoint_state(edge, &marker.endpoint_node_id),
+            &map.canvas,
+            None,
+            1.0,
+        );
+        assert_eq!(
+            marker.glyph, expected.glyph,
+            "endpoint {} must render the resolved glyph",
+            marker.endpoint_node_id
+        );
+        assert!(
+            (marker.font_size_pt - expected.font_size_pt).abs() < 1e-3,
+            "endpoint {} font size {} != resolved {}",
+            marker.endpoint_node_id,
+            marker.font_size_pt,
+            expected.font_size_pt
+        );
+        assert!(
+            !marker.glyph.is_empty(),
+            "a portal marker with no glyph renders nothing"
+        );
+    }
 }
 
 #[test]
 fn selected_portal_edge_rendered_with_highlight_color() {
     let nodes = vec![
-        synthetic_node("a", 0.0, 0.0, 60.0, 40.0, false),
-        synthetic_node("b", 200.0, 0.0, 60.0, 40.0, false),
+        sized_node("a", 0.0, 0.0, 60.0, 40.0, false),
+        sized_node("b", 200.0, 0.0, 60.0, 40.0, false),
     ];
     let mut map = synthetic_map(nodes, vec![]);
     map.edges.push(synthetic_portal_edge("a", "b", "#aa88cc"));
     let mut cache = SceneConnectionCache::new();
-    let scene = build_scene_with_cache(
+    let scene = project_with_cache(
         &map,
         &HashMap::new(),
         SceneSelectionContext {
@@ -111,8 +155,8 @@ fn selected_portal_edge_rendered_with_highlight_color() {
         1.0,
     );
     // Both emitted markers flip to the cyan highlight color.
-    assert_eq!(scene.portal_elements[0].color, "#00E5FF");
-    assert_eq!(scene.portal_elements[1].color, "#00E5FF");
+    assert_eq!(scene.portal_markers[0].color, "#00e5ff");
+    assert_eq!(scene.portal_markers[1].color, "#00e5ff");
 }
 
 #[test]
@@ -123,14 +167,14 @@ fn portal_marker_points_at_partner_endpoint() {
     // south-east of "a", so a's marker anchors on the
     // right / bottom side.
     let nodes = vec![
-        synthetic_node("a", 100.0, 200.0, 80.0, 40.0, false),
-        synthetic_node("b", 500.0, 500.0, 80.0, 40.0, false),
+        sized_node("a", 100.0, 200.0, 80.0, 40.0, false),
+        sized_node("b", 500.0, 500.0, 80.0, 40.0, false),
     ];
     let mut map = synthetic_map(nodes, vec![]);
     map.edges.push(synthetic_portal_edge("a", "b", "#aa88cc"));
-    let scene = build_scene(&map, 1.0);
+    let scene = project(&map, 1.0);
     let marker_a = scene
-        .portal_elements
+        .portal_markers
         .iter()
         .find(|e| e.endpoint_node_id == "a")
         .expect("marker for endpoint a");
@@ -157,24 +201,24 @@ fn portal_marker_follows_drag_offsets() {
     // moved node's border — so its delta has the same sign and
     // similar magnitude in each axis.
     let nodes = vec![
-        synthetic_node("a", 0.0, 0.0, 60.0, 40.0, false),
-        synthetic_node("b", 500.0, 0.0, 60.0, 40.0, false),
+        sized_node("a", 0.0, 0.0, 60.0, 40.0, false),
+        sized_node("b", 500.0, 0.0, 60.0, 40.0, false),
     ];
     let mut map = synthetic_map(nodes, vec![]);
     map.edges.push(synthetic_portal_edge("a", "b", "#aa88cc"));
 
-    let baseline = build_scene(&map, 1.0);
+    let baseline = project(&map, 1.0);
     let baseline_a = baseline
-        .portal_elements
+        .portal_markers
         .iter()
         .find(|e| e.endpoint_node_id == "a")
         .expect("marker for endpoint a in baseline");
 
     let mut offsets = HashMap::new();
     offsets.insert("a".to_string(), (100.0f32, 50.0f32));
-    let dragged = build_scene_with_offsets(&map, &offsets, 1.0);
+    let dragged = project_with_offsets(&map, &offsets, 1.0);
     let dragged_a = dragged
-        .portal_elements
+        .portal_markers
         .iter()
         .find(|e| e.endpoint_node_id == "a")
         .expect("marker for endpoint a in dragged scene");
@@ -188,7 +232,7 @@ fn portal_marker_follows_drag_offsets() {
     // direction.
     assert!(dx > 50.0, "marker x should follow node rightward, got {dx}");
     assert!(
-        dy >= -10.0 && dy <= 60.0,
+        (-10.0..=60.0).contains(&dy),
         "marker y shift {dy} within node move range"
     );
 }
@@ -199,17 +243,17 @@ fn portal_mode_edge_skipped_by_connection_pipeline() {
     // (no line, no body glyphs). The connection pass is the one
     // place where this would leak into rendering.
     let nodes = vec![
-        synthetic_node("a", 0.0, 0.0, 60.0, 40.0, false),
-        synthetic_node("b", 500.0, 0.0, 60.0, 40.0, false),
+        sized_node("a", 0.0, 0.0, 60.0, 40.0, false),
+        sized_node("b", 500.0, 0.0, 60.0, 40.0, false),
     ];
     let mut map = synthetic_map(nodes, vec![]);
     map.edges.push(synthetic_portal_edge("a", "b", "#aa88cc"));
-    let scene = build_scene(&map, 1.0);
+    let scene = project(&map, 1.0);
     assert!(
         scene.connection_elements.is_empty(),
         "portal-mode edges must not produce connection elements"
     );
-    assert_eq!(scene.portal_elements.len(), 2);
+    assert_eq!(scene.portal_markers.len(), 2);
 }
 
 #[test]
@@ -217,8 +261,8 @@ fn portal_color_preview_wins_over_selection() {
     // Picker hover feedback on a selected portal edge must show the
     // preview color on both markers, not the cyan selection highlight.
     let nodes = vec![
-        synthetic_node("a", 0.0, 0.0, 60.0, 40.0, false),
-        synthetic_node("b", 200.0, 0.0, 60.0, 40.0, false),
+        sized_node("a", 0.0, 0.0, 60.0, 40.0, false),
+        sized_node("b", 200.0, 0.0, 60.0, 40.0, false),
     ];
     let mut map = synthetic_map(nodes, vec![]);
     map.edges.push(synthetic_portal_edge("a", "b", "#aa88cc"));
@@ -228,7 +272,7 @@ fn portal_color_preview_wins_over_selection() {
         color: "#112233",
     };
     let mut cache = SceneConnectionCache::new();
-    let scene = build_scene_with_cache(
+    let scene = project_with_cache(
         &map,
         &HashMap::new(),
         SceneSelectionContext {
@@ -241,8 +285,8 @@ fn portal_color_preview_wins_over_selection() {
         &mut cache,
         1.0,
     );
-    assert_eq!(scene.portal_elements[0].color, "#112233");
-    assert_eq!(scene.portal_elements[1].color, "#112233");
+    assert_eq!(scene.portal_markers[0].color, "#112233");
+    assert_eq!(scene.portal_markers[1].color, "#112233");
 }
 
 // ---- portal text-style resolver (text_color / text_font_size_pt /
@@ -252,11 +296,11 @@ fn portal_color_preview_wins_over_selection() {
 fn portal_text_style_inherits_icon_color_when_override_absent() {
     // Per-endpoint `text_color` is absent → resolver returns the
     // already-resolved icon color. Preserves the pre-refactor
-    // behaviour for maps that don't opt into the new text channel.
-    use super::super::portal::resolve_portal_endpoint_text_style;
+    // behavior for maps that don't opt into the new text channel.
+    use super::super::portal_style::resolve_portal_endpoint_text_style;
     let nodes = vec![
-        synthetic_node("a", 0.0, 0.0, 60.0, 40.0, false),
-        synthetic_node("b", 500.0, 0.0, 60.0, 40.0, false),
+        sized_node("a", 0.0, 0.0, 60.0, 40.0, false),
+        sized_node("b", 500.0, 0.0, 60.0, 40.0, false),
     ];
     let mut map = synthetic_map(nodes, vec![]);
     map.edges.push(synthetic_portal_edge("a", "b", "#aa88cc"));
@@ -268,11 +312,11 @@ fn portal_text_style_inherits_icon_color_when_override_absent() {
 
 #[test]
 fn portal_text_color_override_wins_over_icon_cascade() {
-    use super::super::portal::resolve_portal_endpoint_text_style;
+    use super::super::portal_style::resolve_portal_endpoint_text_style;
     use crate::mindmap::model::PortalEndpointState;
     let nodes = vec![
-        synthetic_node("a", 0.0, 0.0, 60.0, 40.0, false),
-        synthetic_node("b", 500.0, 0.0, 60.0, 40.0, false),
+        sized_node("a", 0.0, 0.0, 60.0, 40.0, false),
+        sized_node("b", 500.0, 0.0, 60.0, 40.0, false),
     ];
     let mut map = synthetic_map(nodes, vec![]);
     map.edges.push(synthetic_portal_edge("a", "b", "#aa88cc"));
@@ -290,11 +334,11 @@ fn portal_text_color_transient_override_wins_over_endpoint_override() {
     // Selection cyan / preview hex must beat the per-endpoint
     // `text_color` so wheel drag stays visible while a label is
     // selected.
-    use super::super::portal::resolve_portal_endpoint_text_style;
+    use super::super::portal_style::resolve_portal_endpoint_text_style;
     use crate::mindmap::model::PortalEndpointState;
     let nodes = vec![
-        synthetic_node("a", 0.0, 0.0, 60.0, 40.0, false),
-        synthetic_node("b", 500.0, 0.0, 60.0, 40.0, false),
+        sized_node("a", 0.0, 0.0, 60.0, 40.0, false),
+        sized_node("b", 500.0, 0.0, 60.0, 40.0, false),
     ];
     let mut map = synthetic_map(nodes, vec![]);
     map.edges.push(synthetic_portal_edge("a", "b", "#aa88cc"));
@@ -316,13 +360,13 @@ fn portal_text_color_transient_override_wins_over_endpoint_override() {
 #[test]
 fn portal_text_font_size_override_wins_over_icon_base() {
     // Per-endpoint `text_font_size_pt` detaches the text from the
-    // icon so a coloured badge can host a smaller annotation beside
+    // icon so a colored badge can host a smaller annotation beside
     // it without shrinking the badge itself.
-    use super::super::portal::resolve_portal_endpoint_text_style;
+    use super::super::portal_style::resolve_portal_endpoint_text_style;
     use crate::mindmap::model::PortalEndpointState;
     let nodes = vec![
-        synthetic_node("a", 0.0, 0.0, 60.0, 40.0, false),
-        synthetic_node("b", 500.0, 0.0, 60.0, 40.0, false),
+        sized_node("a", 0.0, 0.0, 60.0, 40.0, false),
+        sized_node("b", 500.0, 0.0, 60.0, 40.0, false),
     ];
     let mut map = synthetic_map(nodes, vec![]);
     map.edges.push(synthetic_portal_edge("a", "b", "#aa88cc"));
@@ -362,10 +406,10 @@ fn portal_text_font_size_inherits_icon_default_when_absent() {
     // No `text_font_size_pt` override → text size equals the icon
     // size (which inherits from `glyph_connection` or the portal
     // default).
-    use super::super::portal::{resolve_portal_endpoint_style, resolve_portal_endpoint_text_style};
+    use super::super::portal_style::{resolve_portal_endpoint_style, resolve_portal_endpoint_text_style};
     let nodes = vec![
-        synthetic_node("a", 0.0, 0.0, 60.0, 40.0, false),
-        synthetic_node("b", 500.0, 0.0, 60.0, 40.0, false),
+        sized_node("a", 0.0, 0.0, 60.0, 40.0, false),
+        sized_node("b", 500.0, 0.0, 60.0, 40.0, false),
     ];
     let mut map = synthetic_map(nodes, vec![]);
     map.edges.push(synthetic_portal_edge("a", "b", "#aa88cc"));
@@ -386,7 +430,7 @@ fn portal_text_aabb_never_overlaps_icon_aabb() {
     // around the border — including the cardinal-corner
     // transitions in `border_outward_normal` — and every text
     // length from 1 char to a realistic long label.
-    use super::super::portal::{layout_portal_label, layout_portal_text};
+    use super::super::portal_style::{layout_portal_label, layout_portal_text};
     use crate::mindmap::model::PortalEndpointState;
 
     let owner_pos = Vec2::new(100.0, 100.0);
@@ -444,29 +488,29 @@ fn portal_text_aabb_never_overlaps_icon_aabb() {
     // Ensure the synthetic_* helpers are still reachable from
     // this test module under the new test — touching to prevent
     // a future import-pruning pass from silently deleting.
-    let _ = synthetic_node("a", 0.0, 0.0, 60.0, 40.0, false);
+    let _ = sized_node("a", 0.0, 0.0, 60.0, 40.0, false);
     let _ = synthetic_portal_edge("a", "b", "#aa88cc");
 }
 
-/// Zoom-visibility cascade (scene-builder path): when both
-/// endpoint bounds are `None`, the emitted `PortalElement`
-/// inherits the edge's window verbatim.
+/// Zoom-visibility cascade: when both endpoint bounds are
+/// `None`, the emitted marker inherits the edge's window
+/// verbatim.
 #[test]
 fn portal_zoom_visibility_inherits_edge_window_when_endpoint_absent() {
     use crate::gfx_structs::zoom_visibility::ZoomVisibility;
 
     let nodes = vec![
-        synthetic_node("a", 0.0, 0.0, 60.0, 40.0, false),
-        synthetic_node("b", 500.0, 0.0, 60.0, 40.0, false),
+        sized_node("a", 0.0, 0.0, 60.0, 40.0, false),
+        sized_node("b", 500.0, 0.0, 60.0, 40.0, false),
     ];
     let mut map = synthetic_map(nodes, vec![]);
     let mut edge = synthetic_portal_edge("a", "b", "#aa88cc");
     edge.min_zoom_to_render = Some(0.5);
     edge.max_zoom_to_render = Some(2.0);
     map.edges.push(edge);
-    let scene = build_scene(&map, 1.0);
-    assert_eq!(scene.portal_elements.len(), 2);
-    for pe in &scene.portal_elements {
+    let scene = project(&map, 1.0);
+    assert_eq!(scene.portal_markers.len(), 2);
+    for pe in &scene.portal_markers {
         assert_eq!(
             pe.zoom_visibility,
             ZoomVisibility {
@@ -489,8 +533,8 @@ fn portal_zoom_visibility_endpoint_override_replaces_edge_window() {
     use crate::mindmap::model::PortalEndpointState;
 
     let nodes = vec![
-        synthetic_node("a", 0.0, 0.0, 60.0, 40.0, false),
-        synthetic_node("b", 500.0, 0.0, 60.0, 40.0, false),
+        sized_node("a", 0.0, 0.0, 60.0, 40.0, false),
+        sized_node("b", 500.0, 0.0, 60.0, 40.0, false),
     ];
     let mut map = synthetic_map(nodes, vec![]);
     let mut edge = synthetic_portal_edge("a", "b", "#aa88cc");
@@ -502,15 +546,15 @@ fn portal_zoom_visibility_endpoint_override_replaces_edge_window() {
         ..Default::default()
     });
     map.edges.push(edge);
-    let scene = build_scene(&map, 1.0);
-    assert_eq!(scene.portal_elements.len(), 2);
+    let scene = project(&map, 1.0);
+    assert_eq!(scene.portal_markers.len(), 2);
     let from = scene
-        .portal_elements
+        .portal_markers
         .iter()
         .find(|pe| pe.endpoint_node_id == "a")
         .expect("portal_from endpoint present");
     let to = scene
-        .portal_elements
+        .portal_markers
         .iter()
         .find(|pe| pe.endpoint_node_id == "b")
         .expect("portal_to endpoint present");
@@ -539,13 +583,13 @@ fn portal_zoom_visibility_defaults_to_unbounded() {
     use crate::gfx_structs::zoom_visibility::ZoomVisibility;
 
     let nodes = vec![
-        synthetic_node("a", 0.0, 0.0, 60.0, 40.0, false),
-        synthetic_node("b", 500.0, 0.0, 60.0, 40.0, false),
+        sized_node("a", 0.0, 0.0, 60.0, 40.0, false),
+        sized_node("b", 500.0, 0.0, 60.0, 40.0, false),
     ];
     let mut map = synthetic_map(nodes, vec![]);
     map.edges.push(synthetic_portal_edge("a", "b", "#aa88cc"));
-    let scene = build_scene(&map, 1.0);
-    for pe in &scene.portal_elements {
+    let scene = project(&map, 1.0);
+    for pe in &scene.portal_markers {
         assert_eq!(pe.zoom_visibility, ZoomVisibility::unbounded());
     }
 }
@@ -564,8 +608,8 @@ fn portal_zoom_visibility_inherits_when_endpoint_has_no_zoom_bounds() {
     use crate::mindmap::model::PortalEndpointState;
 
     let nodes = vec![
-        synthetic_node("a", 0.0, 0.0, 60.0, 40.0, false),
-        synthetic_node("b", 500.0, 0.0, 60.0, 40.0, false),
+        sized_node("a", 0.0, 0.0, 60.0, 40.0, false),
+        sized_node("b", 500.0, 0.0, 60.0, 40.0, false),
     ];
     let mut map = synthetic_map(nodes, vec![]);
     let mut edge = synthetic_portal_edge("a", "b", "#aa88cc");
@@ -580,9 +624,9 @@ fn portal_zoom_visibility_inherits_when_endpoint_has_no_zoom_bounds() {
         ..Default::default()
     });
     map.edges.push(edge);
-    let scene = build_scene(&map, 1.0);
+    let scene = project(&map, 1.0);
     let from = scene
-        .portal_elements
+        .portal_markers
         .iter()
         .find(|pe| pe.endpoint_node_id == "a")
         .expect("portal_from endpoint present");
@@ -603,7 +647,7 @@ fn portal_zoom_visibility_inherits_when_endpoint_has_no_zoom_bounds() {
 /// `.chars().count()` on the portal-text layout path.
 #[test]
 fn test_portal_text_bounds_use_grapheme_count_not_scalar_count() {
-    use super::super::portal::{layout_portal_label, layout_portal_text};
+    use super::super::portal_style::{layout_portal_label, layout_portal_text};
     use crate::mindmap::model::PortalEndpointState;
 
     let owner_pos = Vec2::new(100.0, 100.0);
@@ -673,7 +717,7 @@ fn test_portal_text_bounds_combining_mark_is_single_grapheme() {
 /// divide by. Pins that clamp.
 #[test]
 fn test_portal_text_bounds_empty_string_uses_one_grapheme_floor() {
-    use super::super::portal::{layout_portal_label, layout_portal_text};
+    use super::super::portal_style::{layout_portal_label, layout_portal_text};
     use crate::mindmap::model::PortalEndpointState;
 
     let owner_pos = Vec2::new(100.0, 100.0);
@@ -721,7 +765,7 @@ fn test_portal_text_bounds_empty_string_uses_one_grapheme_floor() {
 /// Helper — build a portal-text layout for a one-grapheme string
 /// and assert its bounds match a single-ASCII-character baseline.
 fn assert_portal_text_one_grapheme_equivalent(text: &str) {
-    use super::super::portal::{layout_portal_label, layout_portal_text};
+    use super::super::portal_style::{layout_portal_label, layout_portal_text};
     use crate::mindmap::model::PortalEndpointState;
 
     let owner_pos = Vec2::new(100.0, 100.0);

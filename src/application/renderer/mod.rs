@@ -3,9 +3,9 @@
 //! GPU-side presentation: every wgpu device, every cosmic-text
 //! rasterization, every text/rect/border buffer Mandala paints
 //! lives under [`Renderer`]. `Renderer` reads two intermediate
-//! representations the document layer hands it
-//! (`Tree<GfxElement, GfxMutator>` for canvas content,
-//! `Scene` for connection / portal / label overlays); it never
+//! representation the document layer hands it
+//! (`Tree<GfxElement, GfxMutator>`, one per canvas role — nodes,
+//! borders, connections, labels, portals, handles); it never
 //! reaches into the document directly, and the document never
 //! holds GPU resources (CODE_CONVENTIONS §3 "Model / view
 //! separation").
@@ -20,8 +20,8 @@
 //! - [`tree_buffers`] / [`tree_walker`] — `GfxElement` tree
 //!   → text-buffer + rect-buffer projection. The tree walker
 //!   is where the bulk of canvas-content shaping happens.
-//! - [`scene_buffers`] — connection paths, edge handles,
-//!   portal markers, edge labels. Scene-graph projection.
+//! - [`selection_overlay`] — the rubber-band selection
+//!   rectangle, the one canvas visual with no model behind it.
 //! - [`borders`] — node-frame buffers (the box-drawing
 //!   glyph runs around each node).
 //! - [`console_pass`] / [`console_geometry`] — the console
@@ -44,7 +44,7 @@ mod hit;
 mod overlay_dispatch;
 mod pipeline;
 mod render;
-mod scene_buffers;
+mod selection_overlay;
 mod tree_buffers;
 mod tree_walker;
 
@@ -352,23 +352,9 @@ pub struct Renderer {
     /// wins via `insert`); the vec preserves emission order so
     /// halos stay behind the main glyph at render time.
     mindmap_buffers: FxHashMap<String, Vec<MindMapTextBuffer>>,
-    /// Per-node border glyph buffers, keyed by `node_id`. Each entry is
-    /// a `Vec` of 4 buffers (top/bottom/left/right) emitted by
-    /// `rebuild_border_buffers`.
-    border_buffers: FxHashMap<String, Vec<MindMapTextBuffer>>,
-    /// Edge grab-handle buffers for the connection reshape surface.
-    /// Populated only when an edge is selected; rebuilt fresh every
-    /// time the scene is rebuilt with a selected edge. Bounded cost
-    /// (≤ 5 glyph buffers per selected edge) so no keyed cache is
-    /// warranted.
-    edge_handle_buffers: Vec<MindMapTextBuffer>,
-    /// Per-edge label buffers, keyed by `EdgeKey`. Each entry is the
-    /// shaped cosmic-text buffer for that edge's label (if any).
-    /// Labels are ≤ 1 per edge and rebuilt every scene build — no
-    /// incremental-reuse cache is warranted.
-    connection_label_buffers: FxHashMap<EdgeKey, MindMapTextBuffer>,
     /// AABB hitbox for each rendered label, keyed by `EdgeKey`.
-    /// Populated alongside `connection_label_buffers`; consulted by
+    /// Handed over wholesale by `update_connection_label_tree` (the
+    /// tree builder owns the AABB math); consulted by
     /// `hit_test_edge_label` when the app dispatches inline
     /// click-to-edit. Stored as `(min, max)` canvas-space corners so
     /// the hit test is a pair of comparisons per edge.
@@ -507,7 +493,7 @@ pub(super) struct NodeBackgroundRect {
     /// reshape paths ([`Renderer::reshape_buffer_for`]) drop the
     /// stale rect for a single element before re-collecting it
     /// — otherwise repeated keystrokes leak duplicate rects per
-    /// edit. Always populated by the tree walker; tests synthesise
+    /// edit. Always populated by the tree walker; tests synthesize
     /// rects with any sentinel value (matching by `unique_id`
     /// during reshape is the only consumer today).
     pub unique_id: usize,
@@ -734,9 +720,6 @@ impl Renderer {
             viewport,
             camera,
             mindmap_buffers: Default::default(),
-            border_buffers: FxHashMap::default(),
-            edge_handle_buffers: Vec::new(),
-            connection_label_buffers: FxHashMap::default(),
             connection_label_hitboxes: FxHashMap::default(),
             portal_icon_hitboxes: FxHashMap::default(),
             portal_text_hitboxes: FxHashMap::default(),
@@ -764,9 +747,9 @@ impl Renderer {
         }
     }
 
-    /// Current camera zoom level, used by the event loop when it needs
-    /// to pass the active zoom into `Document::build_scene*` (the scene
-    /// builder consumes it via
+    /// Current camera zoom level, used by the event loop when it
+    /// needs to pass the active zoom into `CanvasFrame::new` (the
+    /// connection, label, and portal passes consume it via
     /// `GlyphConnectionConfig::effective_font_size_pt`).
     pub fn camera_zoom(&self) -> f32 {
         self.camera.zoom
@@ -994,7 +977,7 @@ impl Renderer {
             .unwrap_or(0);
         self.last_frame_instant = Some(now);
 
-        // Honour a pending idle paint queued by `set_fps_idle`: this
+        // Honor a pending idle paint queued by `set_fps_idle`: this
         // transition render must show "-" even if the rolling avg
         // would compute a value from prior active samples. Clear
         // the rolling window so the next active session starts

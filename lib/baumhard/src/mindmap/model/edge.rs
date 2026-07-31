@@ -32,7 +32,7 @@ pub struct MindEdge {
     /// (unstable) identity.
     #[serde(rename = "type")]
     pub edge_type: String,
-    /// Stroke colour as `#RRGGBB[AA]` or `var(--name)`.
+    /// Stroke color as `#RRGGBB[AA]` or `var(--name)`.
     pub color: String,
     /// Stroke width in points.
     pub width: i32,
@@ -254,8 +254,8 @@ impl MindEdge {
 ///
 /// Text color cascade (for the per-endpoint text label, highest
 /// first): `PortalEndpointState.text_color` → icon color cascade.
-/// The two channels are deliberately independent so a coloured
-/// badge can carry a differently-coloured label beside it — the
+/// The two channels are deliberately independent so a colored
+/// badge can carry a differently-colored label beside it — the
 /// user asked for this parity with line-mode edge labels.
 ///
 /// Position: `border_t` parameterizes a point on the owning node's
@@ -599,7 +599,7 @@ pub struct EdgeLabelConfig {
 /// adjacent text inherits the icon size at 1:1, not 1.1× — a
 /// multiplied text would overflow beside a 50pt badge. The
 /// factor applies only to line-mode edge labels. See
-/// `scene_builder::portal::resolve_portal_endpoint_text_style`
+/// `tree_builder::portal::resolve_portal_endpoint_text_style`
 /// for the portal-text cascade.
 pub const DEFAULT_LABEL_SIZE_FACTOR: f32 = 1.1;
 

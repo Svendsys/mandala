@@ -5,13 +5,17 @@
 //! positive; zero handles otherwise. Nodes have no parent AABB
 //! containment guard.
 
+use std::collections::{HashMap, HashSet};
+
 use glam::Vec2;
+
+use crate::mindmap::model::MindMap;
 
 use super::section_resize_handle::{
     resize_handle_positions, ResizeHandleSide, SECTION_RESIZE_HANDLE_FONT_SIZE_PT,
     SECTION_RESIZE_HANDLE_GLYPH,
 };
-use super::SELECTED_EDGE_COLOR;
+use crate::mindmap::SELECTION_HIGHLIGHT_HEX;
 
 /// One resize-handle glyph emitted on top of a selected node.
 /// Sibling of [`super::SectionResizeHandleElement`]; differs only in
@@ -71,10 +75,46 @@ pub fn build_node_resize_handles(
             side,
             position,
             glyph: SECTION_RESIZE_HANDLE_GLYPH.to_string(),
-            color: SELECTED_EDGE_COLOR.to_string(),
+            color: SELECTION_HIGHLIGHT_HEX.to_string(),
             font_size_pt: SECTION_RESIZE_HANDLE_FONT_SIZE_PT,
         })
         .collect()
+}
+
+/// Resolve `selected_node` into the node's canvas-space
+/// `(position, size)` and dispatch to
+/// [`build_node_resize_handles`]. Returns `Vec::new()` when no
+/// node is selected, the named node is missing or hidden by fold,
+/// or the node's size has any non-finite / non-positive
+/// component.
+///
+/// The selection gate lives here rather than at the call site so
+/// every rebuild path (drag drain, console verb, mode change)
+/// applies the same "only the selected node grows handles" rule.
+///
+/// # Costs
+///
+/// O(1) — one hash lookup plus, at most, the eight-element
+/// allocation [`build_node_resize_handles`] returns.
+pub fn build_selected_node_handles(
+    map: &MindMap,
+    offsets: &HashMap<String, (f32, f32)>,
+    selected_node: Option<&str>,
+    hidden_set: &HashSet<&str>,
+) -> Vec<NodeResizeHandleElement> {
+    let Some(node_id) = selected_node else {
+        return Vec::new();
+    };
+    let Some(node) = map.nodes.get(node_id) else {
+        return Vec::new();
+    };
+    if hidden_set.contains(node.id.as_str()) {
+        return Vec::new();
+    }
+    let (ox, oy) = offsets.get(&node.id).copied().unwrap_or((0.0, 0.0));
+    let node_pos = node.pos_vec2();
+    let canvas_pos = Vec2::new(node_pos.x + ox, node_pos.y + oy);
+    build_node_resize_handles(node_id, canvas_pos, node.size_vec2())
 }
 
 #[cfg(test)]

@@ -902,8 +902,9 @@ palettes, custom mutations.
 Everything a user can save and reload is here.
 The `MindMap` is a plain serialisable struct — no derived state, no
 runtime caches. The loader deserialises it from JSON; the
-[scene builder](#scene-builder) and [tree builder](#tree-builder)
-project it into renderable form; mutations transform it in place.
+[canvas-role projection](#canvas-role-projection) and
+[tree builder](#tree-builder) turn it into renderable form;
+mutations transform it in place.
 Helper methods (`children_of`, `all_descendants`,
 `is_hidden_by_fold`, `is_ancestor_or_self`, `resolve_theme_colors`)
 walk the data on demand rather than caching.
@@ -1375,47 +1376,58 @@ arena edges (model → section → container) to find the owning
 mind-node. Section-areas (and section-models) carry
 `Flag::SectionRoot`. Folded nodes are excluded.
 
-### Scene builder
+### Canvas-role projection
 
-Projects a `MindMap` into a flat `RenderScene` of
-plain-data elements (text, borders, connections, portals,
-labels, handles) for direct GPU consumption.
+Projects a `MindMap` into one `Tree<GfxElement, GfxMutator>` per
+canvas role — nodes, borders, connections, connection labels,
+portals, section frames, and the three handle families. There is
+no flat intermediate scene: the walker in
+`src/application/renderer/tree_walker.rs` is the only consumer,
+and every role reaches it as a tree.
 
-The renderer wants flat element lists, not a
-tree. The scene builder walks the model, applies style cascades
-(theme variables, palette resolution, zoom windows, transient
-edit previews), samples connection paths, and emits a transient
-`RenderScene` rebuilt every frame. Caching at the
-[`scene_cache`](#scene-cache) level reuses sampled positions when
-endpoints don't move.
+Each role file under `lib/baumhard/src/mindmap/tree_builder/`
+follows the same **courier** shape:
 
-`lib/baumhard/src/mindmap/scene_builder/`.
-Per-role modules: `node_pass` (text + borders + clip AABBs),
-`connection`, `label`, `portal`, `edge_handle`. Output is the
-`RenderScene` struct, whose fields are plain-data element
-lists:
+1. a *data pass* that resolves the model plus this frame's
+   [overrides](#frame-overrides) into plain per-element data —
+   `border_node_data`, `build_connection_elements`,
+   `build_label_elements`, `portal_pair_data`,
+   `build_section_frames`, `build_selected_node_handles`,
+   `build_selected_section_handles`;
+2. a *full-rebuild projection* (`build_*_tree`) and an *in-place
+   projection* (`build_*_mutator_tree`) over that data.
 
-- `text_elements: Vec<TextElement>` — node text, position,
-  size, style runs.
-- `border_elements: Vec<BorderElement>` — glyph-drawn frames
-  around nodes, including zoom visibility.
-- `connection_elements: Vec<ConnectionElement>` — sampled
-  glyph positions along each line-mode edge, with body/cap
-  glyphs and colour.
-- `portal_elements: Vec<PortalElement>` — per-endpoint glyph
-  markers for portal-mode edges.
-- `connection_label_elements: Vec<ConnectionLabelElement>` —
-  positioned text labels along connection paths.
-- `edge_handles: Vec<EdgeHandleElement>` — grab-handle glyphs
-  on the selected edge (anchors, control points, midpoint).
-- `background_color: String` — canvas fill colour.
+Style is resolved exactly once, in the data pass; neither
+projection re-resolves it. `node_clip::node_clip_aabbs` is the one
+cross-role input — the connection sampler clips glyph samples
+against it, and it reads only the resolved border `font_size_pt`.
 
-These element structs are the intermediate representation that
-sits between the Baumhard tree side of the pipeline and the GPU
-commands the renderer actually submits. Selection highlight is
-applied at emission time, not stored on the model; drag-preview
-offsets and color-picker previews are read from the document
-but never committed back.
+The application layer drives the sequence through
+`CanvasFrame` (`src/application/app/scene_rebuild.rs`), which owns
+the shared per-frame inputs (the fold-hidden set, the assembled
+overrides) and exposes one `update_*` per role so a caller can
+refresh only the roles its interaction can change — a scroll-wheel
+zoom touches connections, labels, portals, and edge handles but
+never a border or a resize handle.
+
+Selection highlight, drag-preview offsets, NodeEdit dimming, and
+color-picker previews are all applied at projection time and never
+committed back to the model. Caching at the
+[`scene_cache`](#scene-cache) level reuses sampled connection
+positions when endpoints don't move.
+
+### Frame overrides
+
+`tree_builder::overrides` holds the transient, frame-local
+substitutions the projection folds on top of the committed model:
+`SceneSelectionContext` (selection plus the inline label / portal
+text editors' uncommitted buffers), `EdgeColorPreview` /
+`PortalColorPreview` (color-picker hover), `BorderPreview` (staged
+`border preview …` edits), and `InteractionModeOverrides` (the
+mode-derived resize / NodeEdit targets). `FrameOverrides` bundles
+all four; `MindMapDocument::frame_overrides` assembles one per
+rebuild so no two roles can disagree about what the user is
+pointing at.
 
 ### Scene cache
 
@@ -2186,10 +2198,15 @@ only touches portal markers (portal-only rebuild). Each tier
 is dispatched explicitly so the cheapest one runs.
 
 `src/application/app/scene_rebuild.rs`.
-Functions: `rebuild_all` (full tree + scene), `rebuild_scene_only`
-(reuse tree, rebuild scene), `update_connection_tree` (edges
-only), `update_portal_tree` (portals only),
-`update_border_tree_static` (borders only).
+Functions: `rebuild_all` (node tree + every canvas role),
+`rebuild_scene_only` (reuse the node tree, refresh every canvas
+role), and the per-role methods on
+[`CanvasFrame`](#canvas-role-projection) —
+`update_connection_trees` (edges + their grab handles),
+`update_portal_tree`, `update_border_tree`,
+`update_connection_label_tree`, `update_section_frame_tree`, and
+the two resize-handle updaters — each callable on its own so a
+caller refreshes only what its interaction can change.
 
 ### Dirty flag
 
@@ -2441,8 +2458,8 @@ with sat/value crosshairs and theme-variable quick-pick chips.
 Picking a colour for the current selection
 without leaving the canvas. Hover live-previews through the
 `color_picker_preview` transient on `MindMapDocument`; the
-scene builder reads it during render and substitutes the
-preview colour for the targeted element. Click commits, click
+connection, label, and portal passes read it during projection
+and substitute the preview colour for the targeted element. Click commits, click
 outside cancels. Keyboard: h/H nudges hue, s/S sat, v/V value,
 Tab cycles theme chips, Enter commits, Esc cancels.
 
@@ -2479,8 +2496,8 @@ edit is a commit-then-undo cycle and the visual feedback comes
 depends on the user seeing changes before they land.
 
 `src/application/document/nodes/border.rs` (the slot type +
-setters) and `lib/baumhard/src/mindmap/scene_builder/builder.rs`
-(the borrowed scene-side view + injection in `node_pass.rs`,
+setters) and `lib/baumhard/src/mindmap/tree_builder/overrides.rs`
+(the borrowed view + injection in `border.rs` / `node_clip.rs`,
 `section_frame.rs`). Same discipline as `ColorPickerPreview`:
 never serialised, never push undo, never flip `dirty`. Cancel
 or commit clears the slot; a fresh `set_border_preview` call
@@ -2516,10 +2533,10 @@ streams every identity-bearing field directly into a hasher
 (no intermediate Vec) so the signature comparison runs
 allocation-free per `Plan §7.4`.
 
-`lib/baumhard/src/mindmap/scene_builder/section_frame.rs`
-(the element shape and the build pass) +
-`lib/baumhard/src/mindmap/tree_builder/section_frame.rs`
-(the tree builder + identity hasher). Three style cascades
+`lib/baumhard/src/mindmap/tree_builder/section_frame.rs` holds
+all three halves — the `SectionFrameElement` shape, the
+`build_section_frames` emission pass, and the tree builder +
+identity hasher. Three style cascades
 feed the resolution: per-section `frame_border` →
 `canvas.default_section_frame_border` (or
 `default_focused_section_frame_border` for focused) →

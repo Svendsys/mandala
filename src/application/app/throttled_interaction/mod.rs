@@ -64,7 +64,7 @@ pub(in crate::application::app) struct DrainContext<'a> {
     pub scene_cache: &'a mut baumhard::mindmap::scene_cache::SceneConnectionCache,
     pub color_picker_state: &'a mut ColorPickerState,
     /// Active interaction mode — drives `InteractionModeOverrides` for
-    /// every per-frame `build_scene_with_cache` call here. Read-only
+    /// every per-frame `CanvasFrame` built here. Read-only
     /// because per-frame drains never mutate mode (mode transitions
     /// are discrete actions, not gestures).
     pub interaction_mode: &'a super::InteractionMode,
@@ -199,7 +199,7 @@ mod tests {
         drive_throttle_over_budget, fixture_edge,
     };
     use crate::application::document::EdgeRef;
-    use baumhard::mindmap::scene_builder::EdgeHandleKind;
+    use baumhard::mindmap::tree_builder::EdgeHandleKind;
     use glam::Vec2;
 
     #[test]
@@ -336,7 +336,7 @@ mod tests {
         // `needs_continuation` to its underlying struct's
         // `has_pending`; any mis-routing would silently leave a
         // pending drain stuck under `Wait`.
-        use baumhard::mindmap::scene_builder::EdgeHandleKind;
+        use baumhard::mindmap::tree_builder::EdgeHandleKind;
 
         let mut moving_node = MovingNodeInteraction::new(vec!["n".into()], false, std::collections::HashSet::new());
         moving_node.pending_delta = Vec2::new(1.0, 0.0);

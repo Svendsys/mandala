@@ -73,13 +73,14 @@ fn mutation_targets_absolute_position(m: &baumhard::gfx_structs::mutator::Mutati
     }
 }
 
-/// The tree-side `GlyphArea` fields a single [`Mutation`] touches
+/// The tree-side `GlyphArea` fields a single
+/// [`baumhard::gfx_structs::mutator::Mutation`] touches
 /// that [`MindMapDocument::sync_node_from_tree`] has **no model
 /// home for** — so a mutation writing them lands on the display
 /// tree for one frame and reverts on the next rebuild-from-model.
 ///
 /// The sync-back persists position, section offset / size, text,
-/// colour / font runs, and font size (`scale`). Everything else a
+/// color / font runs, and font size (`scale`). Everything else a
 /// `GfxMutator` can reach — line-height (derived as `scale * 1.2`,
 /// no independent home), the outline halo, the node shape, and the
 /// zoom-visibility window — has a tree representation but no
@@ -234,7 +235,7 @@ impl MindMapDocument {
         // Handler dispatch: only fires when the mutation at this id
         // actually came from the app bundle — a user / map / inline
         // override of the same id keeps the declarative path so the
-        // user's mutator is honoured. See
+        // user's mutator is honored. See
         // [`Self::will_dispatch_to_handler`] for the rationale.
         //
         // `changed` is the load-bearing verdict: only a mutation that
@@ -338,7 +339,7 @@ impl MindMapDocument {
             log::warn!(
                 "mutation '{}': writes field(s) [{}] that have no model home; the change \
                  applies to the display tree but is NOT persisted and reverts on the next \
-                 rebuild. Persisted fields: position, section offset/size, text, colour/font \
+                 rebuild. Persisted fields: position, section offset/size, text, color/font \
                  runs, font size.",
                 custom.id,
                 fields.join(", "),
@@ -626,7 +627,7 @@ impl MindMapDocument {
             // borrows the arena immutably; the loop body needs
             // `&mut tree.tree.arena.get_mut(...)` to apply the
             // mutation. Holding the iterator across the mutable
-            // borrow won't compile, so the fix is to materialise the
+            // borrow won't compile, so the fix is to materialize the
             // section ids first and drop the immutable borrow
             // before the mutation pass starts. The vec is `O(sections
             // per node)` — bounded by user authoring (typically 1–4

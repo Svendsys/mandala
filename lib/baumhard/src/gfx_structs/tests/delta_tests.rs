@@ -3,7 +3,7 @@
 //! Tests for the shared mutation-surface plumbing (§T1 — mutations
 //! are a fundamental): the [`Delta`](crate::gfx_structs::delta::Delta)
 //! container both element types instantiate, the
-//! [`Discriminated`](crate::core::primitives::Discriminated) tag
+//! [`crate::core::primitives::Discriminated`] tag
 //! access derived by strum, and
 //! [`ApplyOperation::apply_ref`](crate::core::primitives::ApplyOperation::apply_ref).
 //!

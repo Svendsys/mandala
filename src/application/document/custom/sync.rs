@@ -23,7 +23,7 @@ use baumhard::util::color_conversion::{is_var_ref, rgba_to_hex};
 use super::super::nodes::clamp_runs_to_text;
 use super::super::MindMapDocument;
 
-/// Default text-run colour when neither the tree-side region nor
+/// Default text-run color when neither the tree-side region nor
 /// a prior model run carries one. Matches the renderer's
 /// fall-through-to-`#ffffff` floor on a node with no explicit
 /// `style.text_color` override — the same white
@@ -97,12 +97,12 @@ pub(super) const MIN_TEXT_RUN_SIZE_PT: u32 = 1;
 /// `scale` is sufficient and the next rebuild reproduces the right
 /// line-height for free. A mutation that touches *only* line-height
 /// is surfaced at apply time by
-/// [`super::warn_unsupported_mutator_fields`].
+/// `MindMapDocument::warn_unsupported_mutator_fields`.
 ///
 /// **Runless sections** have nowhere to store a size, so the change
-/// would evaporate. To honour it we synthesize one run spanning the
+/// would evaporate. To honor it we synthesize one run spanning the
 /// whole text carrying the new size and the section's effective
-/// default colour (`default_color`) so rendering is unchanged
+/// default color (`default_color`) so rendering is unchanged
 /// except for the size.
 ///
 /// `old_scale` is the section's effective scale **before** this
@@ -129,7 +129,7 @@ fn sync_section_font_size(
     let delta = tree_scale - old_scale;
     // `size_pt` is an integer point size, so a sub-half-point delta
     // rounds to no change on every run. Treat it as "scale
-    // untouched" so a position-only or colour-only mutation doesn't
+    // untouched" so a position-only or color-only mutation doesn't
     // churn run sizes (or spuriously report a change).
     if delta.abs() < 0.5 {
         return false;
@@ -190,7 +190,7 @@ fn sync_section_font_size(
 /// authored run before the mutation ran).
 ///
 /// Limitations:
-/// - `var(--name)` colour references collapse to their resolved
+/// - `var(--name)` color references collapse to their resolved
 ///   hex on the round trip *unless* the prior run shares the
 ///   region's range — see the `prior_var_color` short-circuit
 ///   below.
@@ -204,9 +204,9 @@ pub(crate) fn region_to_text_run(region: &ColorFontRegion, prior: Option<&TextRu
     // Preserve `var(--name)` references when the prior run
     // shares the region's range and carries one. Without theme-
     // variables resolution at sync time we can't tell whether a
-    // mutation deliberately recoloured the run away from the
+    // mutation deliberately recolored the run away from the
     // variable; trusting the prior keeps the variable reference
-    // verbatim across mutations that didn't touch the colour.
+    // verbatim across mutations that didn't touch the color.
     // Same documented trade-off as the selective gate: a
     // deliberate `SetRegionColor` on a `var()`-bearing run is
     // silently swallowed here — the run keeps the variable.
@@ -252,7 +252,7 @@ pub(crate) fn region_to_text_run(region: &ColorFontRegion, prior: Option<&TextRu
 /// `sync_node_from_tree`'s reverse converter so a custom mutation
 /// that resizes / splits a region (e.g. `ChangeRegionRange`)
 /// still inherits authored styling instead of zeroing every
-/// field. Ties broken in favour of earlier `start`.
+/// field. Ties broken in favor of earlier `start`.
 ///
 /// Returns `None` only when no prior run overlaps the new range
 /// at all (e.g. a fresh region inserted by the mutation).
@@ -295,7 +295,7 @@ impl MindMapDocument {
     /// skips the lossy text/regions round-trip when the tree side
     /// hasn't diverged from the model. Position / offset / size /
     /// font-size always write back; text + runs gate on the
-    /// `(range, colour, font)` triple.
+    /// `(range, color, font)` triple.
     ///
     /// Used by the `Persistent` apply path to commit a custom
     /// mutation's tree-side mutations to the model so the next
@@ -393,9 +393,9 @@ impl MindMapDocument {
         let node_pos_y = tree_py;
         let node_size_x = model_node.size.width as f32;
         let node_size_y = model_node.size.height as f32;
-        // Effective default colour for a runless section, captured
+        // Effective default color for a runless section, captured
         // before the section loop takes `&mut section` — used to
-        // colour a synthesized run when a font-size mutation lands
+        // color a synthesized run when a font-size mutation lands
         // on a section that carries no runs (see
         // [`sync_section_font_size`]).
         let node_text_color = model_node.style.text_color.clone();
@@ -453,9 +453,9 @@ impl MindMapDocument {
             // Write `section.size` back when the model carries an
             // explicit size. `None` size means "fill the parent
             // node", which the tree resolves to the node's full
-            // render_bounds — *don't* eagerly materialise it as
+            // render_bounds — *don't* eagerly materialize it as
             // `Some(node.size)`, that would surprise authors who
-            // chose the inheriting shape. Materialise only when the
+            // chose the inheriting shape. Materialize only when the
             // tree's render_bounds diverges from the node's full
             // size (i.e. the mutation explicitly resized the
             // section, or the model already carried a Some).
@@ -484,7 +484,7 @@ impl MindMapDocument {
             // Selective gate: tree-side state matches the model
             // snapshot? Skip the text/regions round-trip so
             // untouched sections keep their bold / italic /
-            // underline / size_pt / hyperlink. Range / colour /
+            // underline / size_pt / hyperlink. Range / color /
             // font are everything the forward conversion
             // preserves.
             //
@@ -506,7 +506,7 @@ impl MindMapDocument {
                     let Some(run) = model_runs_by_range.get(&key) else {
                         return false;
                     };
-                    // Colour comparison is **case-insensitive on
+                    // Color comparison is **case-insensitive on
                     // hex**: `rgba_to_hex` always emits lowercase,
                     // but model-side `run.color` may have been
                     // hand-authored as `#FFFFFF` or mixed case. A
@@ -528,7 +528,7 @@ impl MindMapDocument {
                         // variable resolves to the tree-side hex
                         // and treat as equal. Documented limit: a
                         // custom mutation that *deliberately*
-                        // recolours a `var()`-bearing run is
+                        // recolors a `var()`-bearing run is
                         // silently swallowed; the run keeps the
                         // variable.
                         (Some(_), None) if model_is_var => true,
