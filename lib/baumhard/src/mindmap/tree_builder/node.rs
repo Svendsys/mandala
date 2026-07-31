@@ -45,10 +45,15 @@ use crate::mindmap::model::{ChildIndex, MindMap, MindNode, MindSection};
 use crate::util::color::{self, Color as BaumhardColor};
 use glam::Vec2;
 
-/// Font scale, in points, a section is measured and laid out at
-/// when it carries no `text_runs` to take a size from — the
-/// historical `cosmic_text` fall-through this builder has always
-/// used.
+/// Nominal font scale, in points, for a mindmap `GlyphArea` with
+/// no `text_runs` to take a size from — the historical
+/// `cosmic_text` fall-through this builder has always used.
+///
+/// Two areas land here. A **section** with no runs is measured
+/// and laid out at this scale. A **node container area** carries
+/// it as its nominal scale but renders no glyphs of its own
+/// (sections do), so there it keeps the area's scale field
+/// well-defined rather than sizing anything drawn.
 ///
 /// This is the **renderer's** fallback, deliberately distinct from
 /// the *authoring* default a newly-created run gets (24pt, in the

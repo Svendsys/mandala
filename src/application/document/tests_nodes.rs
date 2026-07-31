@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Node text / background / border / text-colour / font-size
+//! Node text / background / border / text-color / font-size
 //! setters, plus the per-call-site contract of the shared
 //! `nodes/undo_envelope.rs` envelope they all route through.
 //!
@@ -2903,6 +2903,12 @@ fn test_node_setters_are_no_ops_when_value_is_unchanged() {
         let s = doc.mindmap.nodes.get(nid).unwrap().sections[0].size;
         doc.set_section_size(nid, 0, s).expect("valid size")
     });
+    assert_setter_no_op("set_section_text_color", |doc, nid| {
+        let current = doc.mindmap.nodes.get(nid).unwrap().sections[0].text_runs[0]
+            .color
+            .clone();
+        doc.set_section_text_color(nid, 0, current)
+    });
     assert_setter_no_op("set_node_border_config", |doc, nid| {
         doc.set_node_border_config(nid, BorderConfigEdits::default())
             .changed
@@ -3015,13 +3021,19 @@ fn test_section_setters_no_op_on_out_of_range_section_index() {
     assert!(!doc.dirty);
 }
 
+/// One labelled node setter in a table-driven battery: the name
+/// to report on failure, and a boxed call taking the document and
+/// a node id. Aliased because the bare tuple trips
+/// `clippy::type_complexity`.
+type NodeSetterCase = (&'static str, Box<dyn Fn(&mut MindMapDocument, &str) -> bool>);
+
 /// A real change through any of these setters pushes exactly one
 /// undo entry, and one `undo()` puts the node back. The other
 /// half of the envelope contract: the no-op path must not be so
 /// eager that it swallows genuine edits.
 #[test]
 fn test_node_setters_push_exactly_one_undo_entry_and_round_trip() {
-    let cases: Vec<(&str, Box<dyn Fn(&mut MindMapDocument, &str) -> bool>)> = vec![
+    let cases: Vec<NodeSetterCase> = vec![
         (
             "set_node_bg_color",
             Box::new(|doc: &mut MindMapDocument, nid: &str| doc.set_node_bg_color(nid, "#0b0b0b".into())),
@@ -3161,7 +3173,7 @@ fn test_set_node_border_visible_off_does_not_grow() {
     assert_eq!(doc.mindmap.nodes.get(&nid).expect("node").size.width, 4.0);
 }
 
-/// A colour-only setter must not run the text-fit pass: a node
+/// A color-only setter must not run the text-fit pass: a node
 /// the user deliberately shrank below its text floor stays where
 /// they put it. Pins the `NodeEditTail::None` choice, which is
 /// otherwise invisible until someone "helpfully" upgrades it to
@@ -3198,7 +3210,7 @@ fn test_color_setters_do_not_run_the_text_fit_pass() {
 fn test_range_setter_no_op_does_not_leak_dirty() {
     let mut doc = load_test_doc();
     let nid = first_testament_node_id(&doc);
-    // Give the section a uniform, known colour so the range
+    // Give the section a uniform, known color so the range
     // rewrite below is provably a no-op.
     assert!(doc.set_section_text_color(&nid, 0, "#abcdef".into()));
     doc.undo_stack.clear();
@@ -3209,7 +3221,7 @@ fn test_range_setter_no_op_does_not_leak_dirty() {
 
     let changed = doc.set_section_text_color_range(&nid, 0, 0, 3, "#abcdef".into());
 
-    assert!(!changed, "re-applying the same colour must be a no-op");
+    assert!(!changed, "re-applying the same color must be a no-op");
     assert!(doc.undo_stack.is_empty(), "no-op must push no undo entry");
     assert!(!doc.dirty, "no-op must not leave dirty set");
     assert_eq!(

@@ -217,8 +217,8 @@ impl MindMapDocument {
     /// Reads the model cascade directly rather than calling the
     /// scene builder's `resolve_portal_endpoint_style`: that
     /// resolver also does glyph substitution and zoom-clamped
-    /// font sizing, none of which a colour read needs, and its
-    /// colour tier is now the same model helper.
+    /// font sizing, none of which a color read needs, and its
+    /// color tier is now the same model helper.
     pub fn resolve_portal_label_color(&self, edge_ref: &EdgeRef, endpoint_node_id: &str) -> Option<String> {
         let edge = self.mindmap.edges.iter().find(|e| edge_ref.matches(e))?;
         let endpoint_state = baumhard::mindmap::model::portal_endpoint_state(edge, endpoint_node_id);

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Mindmap-model tests: ancestry, connection config resolution, label
-//! position + display_mode round-trips, and the edge colour cascade.
+//! position + display_mode round-trips, and the edge color cascade.
 //! Kept in a sibling file so
 //! the `mod.rs` itself reads purely as the public surface.
 
@@ -1100,7 +1100,7 @@ fn fold_hidden_set_traverses_orphan_component() {
     assert!(!hidden.contains("0"), "folded orphan itself is visible");
 }
 
-// ── Edge colour cascade (`MindEdge::*_color`) ──────────────────
+// ── Edge color cascade (`MindEdge::*_color`) ──────────────────
 //
 // The three channels' precedence used to be re-typed at six call
 // sites across two crates. These pin the cascade the helpers now
@@ -1120,7 +1120,7 @@ fn test_edge_colors_bottom_out_at_edge_color() {
     assert_eq!(edge.portal_endpoint_text_color(&canvas, None), "#fff");
 }
 
-/// The canvas default connection supplies the body colour for an
+/// The canvas default connection supplies the body color for an
 /// edge that has not forked a `glyph_connection` of its own, and
 /// every downstream channel inherits it.
 #[test]
@@ -1175,7 +1175,7 @@ fn test_edge_body_color_prefers_glyph_connection_override() {
 }
 
 /// The label channel detaches from the body when it authors its
-/// own colour, and follows it otherwise.
+/// own color, and follows it otherwise.
 #[test]
 fn test_edge_label_color_override_detaches_from_body() {
     let mut edge = synthetic_edge("a", "b", "auto", "auto");
@@ -1193,10 +1193,10 @@ fn test_edge_label_color_override_detaches_from_body() {
     assert_eq!(edge.body_color(&canvas), "#body", "body is unaffected");
 }
 
-/// A portal endpoint's icon colour overrides the body cascade,
-/// and its text colour overrides the icon — the two portal
-/// channels are independent so a coloured badge can carry a
-/// differently-coloured annotation.
+/// A portal endpoint's icon color overrides the body cascade,
+/// and its text color overrides the icon — the two portal
+/// channels are independent so a colored badge can carry a
+/// differently-colored annotation.
 #[test]
 fn test_portal_endpoint_color_channels_are_independent() {
     let mut edge = synthetic_portal_edge("a", "b", "#edge");

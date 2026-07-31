@@ -24,6 +24,20 @@ use baumhard::mindmap::model::{validate, MindSection};
 use super::super::MindMapDocument;
 use super::NodeEditTail;
 
+/// Error for a structural section mutation whose envelope came
+/// back empty.
+///
+/// All three callers pre-validate the node id *and* the index, so
+/// reaching this means the document moved underneath us rather
+/// than that the user asked for something impossible. Naming only
+/// one of the two possible causes — as all three messages
+/// previously did, each saying "node not found" — sends a reader
+/// hunting a missing node when a stale index is equally suspect.
+/// This says both.
+fn section_envelope_miss(op: &str, node_id: &str, idx: usize) -> String {
+    format!("section {op}: node '{node_id}' or section[{idx}] no longer exists")
+}
+
 impl MindMapDocument {
     /// Insert a new section into `node_id.sections` at `at` (default
     /// end). Validates the new section's AABB against the parent
@@ -52,9 +66,7 @@ impl MindMapDocument {
         if len >= crate::application::document::MAX_SECTIONS_PER_NODE {
             return Err(format!(
                 "section add: node '{}' already has {} sections (cap = {})",
-                node_id,
-                len,
-                crate::application::document::MAX_SECTIONS_PER_NODE
+                node_id, len, crate::application::document::MAX_SECTIONS_PER_NODE
             ));
         }
         let insert_at = at.unwrap_or(len).min(len);
@@ -64,7 +76,7 @@ impl MindMapDocument {
             node.sections.insert(insert_at, section);
             Some(insert_at)
         })
-        .ok_or_else(|| format!("section add: node '{}' not found", node_id))
+        .ok_or_else(|| section_envelope_miss("add", node_id, insert_at))
     }
 
     /// Remove the section at `idx` from `node_id.sections`. Returns
@@ -101,10 +113,15 @@ impl MindMapDocument {
             ));
         }
 
+        // `idx` is bounds-checked above, so the `get` can only
+        // fail if the node changed underneath us; expressing it
+        // as a `?` rather than calling `Vec::remove` directly
+        // keeps the closure panic-free on its own terms (§9).
         self.mutate_node_with_style_undo(node_id, NodeEditTail::GrowAndCleanup, |node| {
+            node.sections.get(idx)?;
             Some(node.sections.remove(idx))
         })
-        .ok_or_else(|| format!("section delete: node '{}' not found", node_id))
+        .ok_or_else(|| section_envelope_miss("delete", node_id, idx))
     }
 
     /// Split the section at `idx` into two adjacent sections.
@@ -229,7 +246,7 @@ impl MindMapDocument {
             node.sections.insert(new_idx, new_section);
             Some(new_idx)
         })
-        .ok_or_else(|| format!("section split: node '{}' not found", node_id))
+        .ok_or_else(|| section_envelope_miss("split", node_id, idx))
     }
 }
 
@@ -639,10 +656,10 @@ mod tests {
         let after_set_size = doc.mindmap.nodes.get(&id).unwrap().size;
         // Sanity: the floor pass actually grew the node.
         assert!(
-            after_set_size.width > before_size.width || after_set_size.height > before_size.height,
+            after_set_size.width > before_size.width
+                || after_set_size.height > before_size.height,
             "fixture-validity check: long text must trigger floor-pass growth (before: {:?}, after: {:?})",
-            before_size,
-            after_set_size
+            before_size, after_set_size
         );
         assert!(doc.undo());
         let after_undo_size = doc.mindmap.nodes.get(&id).unwrap().size;
@@ -713,11 +730,10 @@ mod tests {
         // Two sections so delete is allowed; selection on the last.
         doc.add_section(&id, None, empty_section()).unwrap();
         let last_idx = doc.mindmap.nodes.get(&id).unwrap().sections.len() - 1;
-        doc.selection =
-            crate::application::document::SelectionState::Section(crate::application::document::SectionSel {
-                node_id: id.clone(),
-                section_idx: last_idx,
-            });
+        doc.selection = crate::application::document::SelectionState::Section(crate::application::document::SectionSel {
+            node_id: id.clone(),
+            section_idx: last_idx,
+        });
         doc.delete_section(&id, last_idx).unwrap();
         // Selection demotes to Single — the section is gone.
         assert!(
@@ -735,11 +751,10 @@ mod tests {
         use crate::application::document::{BorderConfigEdits, BorderPreviewTarget, OptionEdit};
         let mut doc = load_test_doc();
         let id = first_testament_node_id(&doc);
-        doc.selection =
-            crate::application::document::SelectionState::Section(crate::application::document::SectionSel {
-                node_id: id.clone(),
-                section_idx: 0,
-            });
+        doc.selection = crate::application::document::SelectionState::Section(crate::application::document::SectionSel {
+            node_id: id.clone(),
+            section_idx: 0,
+        });
 
         // Stage a section-targeted border preview.
         let mut edits = BorderConfigEdits::default();

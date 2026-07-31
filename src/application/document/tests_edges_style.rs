@@ -1413,12 +1413,17 @@ fn test_edge_label_font_rejects_inversion_against_inherited_body_max() {
     assert!(!doc.dirty);
 }
 
+/// One labelled edge setter in a table-driven battery — the
+/// `EdgeRef` sibling of `tests_nodes::NodeSetterCase`, aliased
+/// for the same `clippy::type_complexity` reason.
+type EdgeSetterCase = (&'static str, Box<dyn Fn(&mut MindMapDocument, &EdgeRef) -> bool>);
+
 /// A real font edit on any channel pushes exactly one `EditEdge`
 /// entry, and one `undo()` restores the whole edge — including
 /// un-forking a config the edit created.
 #[test]
 fn test_edge_font_setters_round_trip_through_undo() {
-    let cases: Vec<(&str, Box<dyn Fn(&mut MindMapDocument, &EdgeRef) -> bool>)> = vec![
+    let cases: Vec<EdgeSetterCase> = vec![
         (
             "set_edge_font",
             Box::new(|doc: &mut MindMapDocument, er: &EdgeRef| doc.set_edge_font(er, Some(21.0), None, None)),
@@ -1521,7 +1526,7 @@ fn test_edge_font_setters_undo_restores_the_pre_fork_none() {
     );
 }
 
-/// The clipboard colour resolvers read the same
+/// The clipboard color resolvers read the same
 /// `MindEdge::*_color` cascade the scene builder does. A label
 /// override detaches the label; the portal text channel falls
 /// through to the icon.

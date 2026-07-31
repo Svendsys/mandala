@@ -382,7 +382,7 @@ impl MindMapDocument {
     /// convention in `baumhard::util::color::hex_to_rgba_safe` —
     /// colors are strings in the model and comparisons are literal.
     pub fn set_node_text_color(&mut self, node_id: &str, color: String) -> bool {
-        // `NodeEditTail::None`: colour never shifts a glyph
+        // `NodeEditTail::None`: color never shifts a glyph
         // advance, so there is nothing to re-measure.
         self.mutate_node_with_style_undo(node_id, NodeEditTail::None, move |node| {
             let old_default = node.style.text_color.clone();

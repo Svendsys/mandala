@@ -163,7 +163,7 @@ impl MindMapDocument {
         // The predicate's fallback is the *node's*
         // `style.text_color`, so this one reaches for the
         // node-scoped envelope rather than the section wrapper.
-        // `NodeEditTail::None`: colour never shifts a glyph
+        // `NodeEditTail::None`: color never shifts a glyph
         // advance.
         self.mutate_node_with_style_undo(node_id, NodeEditTail::None, move |node| {
             let node_default = node.style.text_color.clone();
@@ -377,7 +377,7 @@ impl MindMapDocument {
     /// Range-setter pre-flight: clamps `range_end` to the
     /// section's grapheme count and builds the gap-fill
     /// template from the section's first run (cascade source)
-    /// or the authoring defaults recoloured to the node's
+    /// or the authoring defaults recolored to the node's
     /// `style.text_color` when the section has no runs. Caller
     /// overwrites the one attribute it's setting.
     fn clamp_range_and_build_template(
@@ -402,6 +402,15 @@ impl MindMapDocument {
     /// `EditNodeStyle` undo entry — a single Ctrl+Z restores the
     /// pre-write shape. Returns `true` on a real change; no-op
     /// when the section is missing or every field matches.
+    ///
+    /// Uses the *style* envelope even though it rewrites `text`,
+    /// which cuts across the usual text/style split. Deliberate,
+    /// and unchanged from before the envelope fold: the payload
+    /// spans geometry (`offset`, `size`) and `channel` alongside
+    /// the text, and `EditNodeText` carries no `before_style`, so
+    /// it could not reverse the whole write. `EditNodeStyle`
+    /// restores a superset and is the correct variant here, not
+    /// merely the convenient one.
     pub fn apply_section_payload(
         &mut self,
         node_id: &str,

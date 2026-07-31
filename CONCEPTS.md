@@ -2103,7 +2103,7 @@ to one `MindSection` and fold the index lookup in, so a stale
 index is a no-op rather than a panic.
 
 `NodeEditTail` is the fourth argument and the named policy for
-what runs after a commit: `None` (colour-only edits, which must
+what runs after a commit: `None` (color-only edits, which must
 not re-measure), `Border` (the explicit-shrink and
 border-config paths), `Grow` (anything that can change measured
 text extent), `GrowAndCleanup` (the structural mutators — the

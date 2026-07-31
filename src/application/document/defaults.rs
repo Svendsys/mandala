@@ -29,7 +29,7 @@ pub(in crate::application) const DEFAULT_RUN_FONT_FAMILY: &str = "LiberationSans
 /// run onto it.
 pub(in crate::application) const DEFAULT_RUN_SIZE_PT: u32 = 24;
 
-/// Colour a freshly-authored [`TextRun`] carries — the same
+/// Color a freshly-authored [`TextRun`] carries — the same
 /// fall-through-to-white floor the renderer applies to a node
 /// with no explicit `style.text_color`.
 pub(in crate::application) const DEFAULT_RUN_COLOR: &str = "#ffffff";

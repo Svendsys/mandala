@@ -19,7 +19,7 @@
 //!
 //! - [`NodeEditTail`] — the post-commit passes a setter opts into.
 //!   Auto-fit is a *policy* of the edit, not of the envelope: a
-//!   colour-only setter must not pay for a text re-measure, and a
+//!   color-only setter must not pay for a text re-measure, and a
 //!   structural setter must additionally repair selection state.
 //! - [`MindMapDocument::mutate_node_with_style_undo`] /
 //!   [`MindMapDocument::mutate_node_with_text_undo`] — the two
@@ -34,15 +34,32 @@
 //! - The two section-scoped wrappers, which narrow the closure to
 //!   one [`MindSection`] and fold the index lookup in.
 //!
-//! **No-op semantics.** A `None` verdict restores exactly the
-//! fields the undo entry would have restored (`style`, `sections`,
-//! `position`, `size`) from the snapshot already taken for the
-//! undo entry, pushes nothing, and leaves `dirty` alone. That is
-//! the whole point of the closure-verdict shape: a caller can
-//! mutate first and decide afterwards without reaching for the
-//! `undo_stack.pop()` anti-pattern (which cannot restore `dirty`
-//! and breaks the undo-LIFO invariant if any other entry slips in
-//! between the push and the pop).
+//! **No-op semantics.** A `None` verdict restores `style`,
+//! `sections`, `position` and `size` from the snapshot already
+//! taken for the undo entry, pushes nothing, and leaves `dirty`
+//! alone. That is the whole point of the closure-verdict shape: a
+//! caller can mutate first and decide afterwards without reaching
+//! for the `undo_stack.pop()` anti-pattern (which cannot restore
+//! `dirty` and breaks the undo-LIFO invariant if any other entry
+//! slips in between the push and the pop).
+//!
+//! **The restore set is the contract, and it is not the whole
+//! node.** Those four fields are exactly what
+//! [`UndoAction::EditNodeStyle`] reverses, and a superset of what
+//! [`UndoAction::EditNodeText`] reverses (which carries no
+//! `before_style`). A closure passed to any envelope here must
+//! therefore confine itself to `style`, `sections`, `position` and
+//! `size`. Everything else on [`MindNode`] is **out of bounds**:
+//! `notes`, `folded`, `color_schema`, `channel`,
+//! `trigger_bindings`, `inline_mutations`, `inline_macros`,
+//! `min_zoom_to_render`, `max_zoom_to_render`, `parent_id`, `id`,
+//! `layout`. A closure that writes one of those persists it on a
+//! no-op verdict *and* leaves it un-undoable on a commit — the
+//! `EditNodeStyle` / `EditNodeText` arms of `undo()` will not put
+//! it back. No caller does this today; a mutation that needs one
+//! of those fields wants `UndoAction::CustomMutation` (which
+//! snapshots a whole `target_scope` window) or a new variant, not
+//! this envelope.
 //!
 //! **Missing node.** Every envelope resolves the id first and
 //! yields the no-op result when it does not exist, so callers
@@ -55,6 +72,59 @@ use super::super::{grow_one_node_to_fit_border, grow_one_node_to_fit_text};
 use super::super::{MindMapDocument, SectionSel, SelectionState};
 use super::BorderPreviewTarget;
 
+/// The fields [`UndoAction::EditNodeStyle`] restores, and so the
+/// restore set of the two closure-verdict envelopes.
+const STYLE_RESTORE_SET: &[&str] = &["style", "sections", "position", "size"];
+
+/// The fields [`UndoAction::EditNodeAabb`] restores — a strict
+/// subset of [`STYLE_RESTORE_SET`], which is why
+/// [`MindMapDocument::mutate_node_with_aabb_undo`] holds its
+/// closures to a tighter contract than the other two.
+const AABB_RESTORE_SET: &[&str] = &["position", "size"];
+
+/// Debug-only fingerprint of every [`MindNode`] field *outside*
+/// `restore_set` — see the "restore set is the contract" note in
+/// the module header.
+///
+/// Derived by serializing the node and deleting the permitted
+/// keys rather than by listing the forbidden ones, so a field
+/// added to `MindNode` later is guarded from the moment it
+/// exists instead of from whenever someone remembers to extend a
+/// list here. Returns `()` in release builds, so the guard
+/// compiles away entirely.
+#[cfg(debug_assertions)]
+fn fields_outside_restore_set(node: &MindNode, restore_set: &[&str]) -> String {
+    let mut value = serde_json::to_value(node).unwrap_or(serde_json::Value::Null);
+    if let Some(map) = value.as_object_mut() {
+        for key in restore_set {
+            map.remove(*key);
+        }
+    }
+    value.to_string()
+}
+
+#[cfg(not(debug_assertions))]
+fn fields_outside_restore_set(_node: &MindNode, _restore_set: &[&str]) {}
+
+/// Fail loudly in debug when a closure wrote a field outside its
+/// envelope's restore set. Such a write is silently wrong in two
+/// directions at once — persisted on a no-op verdict, and left
+/// un-undoable on a commit, because the matching `undo()` arm
+/// never captured it. No-op in release.
+#[cfg(debug_assertions)]
+fn debug_assert_restore_set_respected(node: &MindNode, restore_set: &[&str], before: &str) {
+    debug_assert_eq!(
+        fields_outside_restore_set(node, restore_set),
+        before,
+        "a node-edit closure wrote outside its envelope's restore set ({restore_set:?}); \
+         that write is neither undoable nor rolled back on a no-op verdict \
+         — see the undo_envelope module header"
+    );
+}
+
+#[cfg(not(debug_assertions))]
+fn debug_assert_restore_set_respected(_node: &MindNode, _restore_set: &[&str], _before: &()) {}
+
 /// Post-commit passes a node edit opts into. Named rather than
 /// boolean because the four shapes are genuinely different
 /// policies, and picking the wrong one is the class of bug this
@@ -63,7 +133,7 @@ use super::BorderPreviewTarget;
 pub(in crate::application::document) enum NodeEditTail {
     /// Nothing runs. For edits that cannot change either the
     /// measured text extent or the rendered border extent —
-    /// colours, visibility of things that do not occupy space,
+    /// colors, visibility of things that do not occupy space,
     /// per-section frame overrides (which live inside the node
     /// AABB).
     None,
@@ -166,6 +236,8 @@ impl MindMapDocument {
         let before_selection = self.selection.clone();
         let canvas_default = self.mindmap.canvas.default_border.clone();
 
+        let before_untouched = fields_outside_restore_set(node, STYLE_RESTORE_SET);
+
         let node = self
             .mindmap
             .nodes
@@ -183,9 +255,11 @@ impl MindMapDocument {
                 node.sections = before_sections;
                 node.position = before_position;
                 node.size = before_size;
+                debug_assert_restore_set_respected(node, STYLE_RESTORE_SET, &before_untouched);
                 return None;
             }
         };
+        debug_assert_restore_set_respected(node, STYLE_RESTORE_SET, &before_untouched);
 
         self.undo_stack.push(match kind {
             NodeUndoKind::Style => UndoAction::EditNodeStyle {
@@ -243,6 +317,7 @@ impl MindMapDocument {
         };
         let before_position = node.position;
         let before_size = node.size;
+        let before_untouched = fields_outside_restore_set(node, AABB_RESTORE_SET);
         let canvas_default = self.mindmap.canvas.default_border.clone();
 
         let node = self
@@ -258,6 +333,7 @@ impl MindMapDocument {
             .nodes
             .get_mut(node_id)
             .expect("id resolved immutably above");
+        debug_assert_restore_set_respected(node, AABB_RESTORE_SET, &before_untouched);
         // Position is untouched by the auto-fit passes, so the
         // comparison against `before_position` is exact; `size` is
         // compared post-grow for the idempotency reason above.
@@ -291,7 +367,12 @@ impl MindMapDocument {
             return;
         };
         match tail {
-            NodeEditTail::None => unreachable!("short-circuited above"),
+            // Already returned above; spelled as a no-op rather
+            // than `unreachable!` so that if the early return and
+            // this arm ever drift apart the result is a skipped
+            // pass, not a panic on a document-mutation path
+            // (`CODE_CONVENTIONS.md` §9).
+            NodeEditTail::None => {}
             NodeEditTail::Border => grow_one_node_to_fit_border(node, canvas_default),
             NodeEditTail::Grow | NodeEditTail::GrowAndCleanup => {
                 grow_one_node_to_fit_text(node);
@@ -595,7 +676,7 @@ mod tests {
     }
 
     /// `NodeEditTail::None` really does skip the auto-fit — a
-    /// colour-only setter must not pay for a text re-measure,
+    /// color-only setter must not pay for a text re-measure,
     /// and must not silently inflate a node the user shrank.
     #[test]
     fn test_tail_none_leaves_size_untouched() {

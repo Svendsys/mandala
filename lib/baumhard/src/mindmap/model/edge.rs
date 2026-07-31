@@ -154,7 +154,7 @@ impl MindEdge {
         }
     }
 
-    /// This edge's **body** colour, as authored — the raw string
+    /// This edge's **body** color, as authored — the raw string
     /// before `var(--name)` theme resolution.
     ///
     /// Cascade: the `color` of the connection config
@@ -174,8 +174,8 @@ impl MindEdge {
     /// is never empty and is always safe to hand to
     /// `resolve_var`.
     ///
-    /// Single source of truth for the body colour cascade — the
-    /// sibling of [`Self::zoom_window`] on the colour axis.
+    /// Single source of truth for the body color cascade — the
+    /// sibling of [`Self::zoom_window`] on the color axis.
     /// Scene-builder connection emission and the document layer's
     /// clipboard resolver both read through here, so a future
     /// third tier is one edit. O(1), no allocation.
@@ -187,7 +187,7 @@ impl MindEdge {
             .unwrap_or(self.color.as_str())
     }
 
-    /// This edge's **label** colour, as authored (line-mode
+    /// This edge's **label** color, as authored (line-mode
     /// edges). Cascade: `label_config.color` → the body cascade
     /// ([`Self::body_color`]).
     ///
@@ -201,13 +201,13 @@ impl MindEdge {
             .unwrap_or_else(|| self.body_color(canvas))
     }
 
-    /// One portal endpoint's **icon** colour, as authored.
+    /// One portal endpoint's **icon** color, as authored.
     /// Cascade: `endpoint.color` → the body cascade
     /// ([`Self::body_color`]).
     ///
     /// `endpoint` is the state for the side being drawn — resolve
     /// it with [`portal_endpoint_state`] first. `None` means the
-    /// endpoint carries no overrides and inherits the body colour
+    /// endpoint carries no overrides and inherits the body color
     /// verbatim. O(1).
     pub fn portal_endpoint_color<'a>(
         &'a self,
@@ -219,13 +219,13 @@ impl MindEdge {
             .unwrap_or_else(|| self.body_color(canvas))
     }
 
-    /// One portal endpoint's **text** colour, as authored.
+    /// One portal endpoint's **text** color, as authored.
     /// Cascade: `endpoint.text_color` → the endpoint icon cascade
     /// ([`Self::portal_endpoint_color`]).
     ///
-    /// The two channels are independent by design so a coloured
-    /// badge can carry a differently-coloured annotation beside
-    /// it; falling through to the icon colour keeps a
+    /// The two channels are independent by design so a colored
+    /// badge can carry a differently-colored annotation beside
+    /// it; falling through to the icon color keeps a
     /// half-styled portal coherent. O(1).
     pub fn portal_endpoint_text_color<'a>(
         &'a self,
